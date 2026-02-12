@@ -44,14 +44,6 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh maniskill_sac_flow_state
 
-      - name: ManiSkill SAC Flow Image test
-        timeout-minutes: 20
-        run: |
-          unset PYTHONPATH
-          export REPO_PATH=$(pwd)
-          source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh maniskill_sac_flow_image
-
       - name: Clean up
         run: |
           rm -rf .venv
@@ -102,13 +94,21 @@ jobs:
           export SERL_PATH=/workspace/dataset/serl
           bash requirements/install.sh embodied --model openvla --env frankasim
 
-      - name: ManiSkill SAC test
+      - name: MLP PPO test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh frankasim_ppo_mlp
+
+      - name: CNN SAC test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run_async.sh frankasim_sac_cnn_async
 
       - name: Clean up
         run: |
@@ -176,14 +176,6 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_goal_grpo_openvlaoft
-
-      - name: Libero-130 GRPO test
-        timeout-minutes: 20
-        run: |
-          unset PYTHONPATH
-          export REPO_PATH=$(pwd)
-          source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh libero_130_grpo_openvlaoft
 
       - name: Clean up
         run: |
@@ -394,6 +386,40 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-openpi-maniskill-gsenv-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          bash requirements/install.sh embodied --model openpi --env maniskill_libero
+
+          source .venv/bin/activate
+          cd /workspace/dataset/ManiSkill-GS
+          uv pip install -e .
+          python scripts/test_rlinf_interface.py
+
+      - name: ManiSkill-GS PPO Pi05 test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh gsenv_ppo_openpi_pi05
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-openpi-metaworld-test:
     runs-on: embodied
     steps:
@@ -474,6 +500,36 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh robocasa_grpo_openpi
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-dexbotic-maniskill-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          export DEXBOTIC_PATH=/workspace/dataset/dexbotic
+          bash requirements/install.sh embodied --model dexbotic --env maniskill_libero
+
+      - name: Libero-Spatial PPO Dexbotic test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_dexbotic_pi0
 
       - name: Clean up
         run: |

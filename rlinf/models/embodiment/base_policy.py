@@ -40,11 +40,7 @@ class BasePolicy(ABC):
         - sac_q_forward
         - crossq_forward
         - crossq_q_forward
-        - preprocess_env_obs
     """
-
-    def preprocess_env_obs(self, env_obs):
-        return env_obs
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
         if forward_type == ForwardType.DEFAULT:
@@ -65,9 +61,10 @@ class BasePolicy(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def default_forward(self, **kwargs):
-        raise NotImplementedError
+    def default_forward(self, **kwargs): ...
 
     @abstractmethod
-    def predict_action_batch(self, **kwargs):
-        raise NotImplementedError
+    def predict_action_batch(self, **kwargs): ...
+
+    def enable_torch_compile(self, mode: str = "max-autotune-no-cudagraphs"):
+        return

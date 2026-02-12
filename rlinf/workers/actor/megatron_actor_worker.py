@@ -60,6 +60,7 @@ from rlinf.utils.data_iter_utils import (
 )
 from rlinf.utils.distributed import (
     RolloutDataBalance,
+    all_reduce_int,
     broadcast_tensor_within_pp,
     compute_rollout_metrics,
     masked_normalization,
@@ -305,10 +306,16 @@ class MegatronActor(MegatronModelManager, Worker):
             else:
                 result = None
             result = self.broadcast(
-                result, ranks=parallel_state._MODEL_PARALLEL_GLOBAL_RANKS
+                result,
+                groups=[
+                    (self._group_name, parallel_state._MODEL_PARALLEL_GLOBAL_RANKS)
+                ],
             )
             result = self.broadcast(
-                result, ranks=parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS
+                result,
+                groups=[
+                    (self._group_name, parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS)
+                ],
             )
 
         batch = result.to_actor_batch(
@@ -321,20 +328,6 @@ class MegatronActor(MegatronModelManager, Worker):
             duration = time.perf_counter() - start_time
             self._timer_metrics[tag] = self._timer_metrics.get(tag, 0.0) - duration
         return batch, result
-
-    def all_reduce_dp_min(
-        self,
-        obj: int,
-    ):
-        obj_tensor = torch.tensor(
-            [obj], dtype=torch.long, device=torch.cuda.current_device()
-        )
-        torch.distributed.all_reduce(
-            obj_tensor,
-            torch.distributed.ReduceOp.MIN,
-            group=parallel_state.get_data_parallel_group(),
-        )
-        return obj_tensor.item()
 
     def get_dynamic_batch_as_much(
         self,
@@ -373,21 +366,29 @@ class MegatronActor(MegatronModelManager, Worker):
                         unfinished_result = None
                     if time.time() >= time_until:
                         last_result_len = result_len
-                        result_len = self.all_reduce_dp_min(len(rollout_results))
+                        result_len = all_reduce_int(
+                            len(rollout_results),
+                            group=parallel_state.get_data_parallel_group(),
+                        )
                         if last_result_len < result_len:
                             time_until = time.time() + 0.1
                 else:
                     last_result_len = result_len
-                    result_len = self.all_reduce_dp_min(len(rollout_results))
+                    result_len = all_reduce_int(
+                        len(rollout_results),
+                        group=parallel_state.get_data_parallel_group(),
+                    )
 
         # broadcast to other ranks
         if not self.is_data_io_rank:
             result_len = None
         result_len = self.broadcast(
-            result_len, ranks=parallel_state._MODEL_PARALLEL_GLOBAL_RANKS
+            result_len,
+            groups=[(self._group_name, parallel_state._MODEL_PARALLEL_GLOBAL_RANKS)],
         )
         result_len = self.broadcast(
-            result_len, ranks=parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS
+            result_len,
+            groups=[(self._group_name, parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS)],
         )
         if self.is_data_io_rank:
             cliped_results = list(rollout_results[result_len:])
@@ -397,10 +398,16 @@ class MegatronActor(MegatronModelManager, Worker):
         for i in range(result_len):
             rollout_result = rollout_results[i]
             rollout_result = self.broadcast(
-                rollout_result, ranks=parallel_state._MODEL_PARALLEL_GLOBAL_RANKS
+                rollout_result,
+                groups=[
+                    (self._group_name, parallel_state._MODEL_PARALLEL_GLOBAL_RANKS)
+                ],
             )
             rollout_result = self.broadcast(
-                rollout_result, ranks=parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS
+                rollout_result,
+                groups=[
+                    (self._group_name, parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS)
+                ],
             )
             rollout_results[i] = rollout_result
 
@@ -537,15 +544,12 @@ class MegatronActor(MegatronModelManager, Worker):
                     loss = loss + kl_loss * self.kl_beta
 
                 # Logging and early stopping according to KL (logp vs ref) or importance ratio (new logp vs old logp).
-                _imp = metrics_data["actor/ratio"]
+                _imp: torch.Tensor = metrics_data["actor/ratio"].clone()
                 torch.distributed.all_reduce(
-                    _imp, group=parallel_state.get_data_parallel_group()
+                    _imp,
+                    torch.distributed.ReduceOp.AVG,
+                    group=parallel_state.get_data_parallel_group(),
                 )
-                _n_valid_tokens = mask.count_nonzero().clone()
-                torch.distributed.all_reduce(
-                    _n_valid_tokens, group=parallel_state.get_data_parallel_group()
-                )
-                _imp /= _n_valid_tokens
 
                 # Early stopping.
                 if (
@@ -988,7 +992,10 @@ class MegatronActor(MegatronModelManager, Worker):
             return
         assert not self.is_weight_offloaded
         self.offload_model_weights_and_grad(offload_grad=True)
-        self.broadcast(None, ranks=list(range(inference_world_size)))
+        self.broadcast(
+            None,
+            groups=[(self._group_name, list(range(inference_world_size)))],
+        )
         self.is_weight_offloaded = True
         if self._rank == 0:
             self.schedule_channel.put(None, key=self.scheduler_response_queue)
@@ -1063,22 +1070,19 @@ class MegatronActor(MegatronModelManager, Worker):
         args = get_args()
         args.rank = torch.distributed.get_rank()
         args.world_size = torch.distributed.get_world_size()
-        args.data_parallel_size = args.world_size // (
+
+        default_model_parallel_size_with_cp = (
             args.tensor_model_parallel_size
             * args.pipeline_model_parallel_size
             * args.context_parallel_size
         )
+        args.data_parallel_size = args.world_size // default_model_parallel_size_with_cp
         args.load = None
         self.default_parallel_strategy = {
             "tensor_model_parallel_size": args.tensor_model_parallel_size,
             "pipeline_model_parallel_size": args.pipeline_model_parallel_size,
             "context_parallel_size": args.context_parallel_size,
         }
-        default_model_parallel_size_with_cp = (
-            args.tensor_model_parallel_size
-            * args.pipeline_model_parallel_size
-            * args.context_parallel_size
-        )
 
         assert args.world_size == self.component_placement._cluster_num_gpus, (
             "In Auto-Scheduler mode, actor should be initialized on all GPUs."

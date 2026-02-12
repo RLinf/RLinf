@@ -193,7 +193,7 @@ torch_memory_saver.cpp 中 CUDA CUresult Error（result=2）
 
 **修复：**
 
-- 降低 SGLang 的静态显存占用（例如调低 ``static_mem_fraction``）。
+- 降低 SGLang 的静态显存占用（例如调低 ``gpu_memory_utilization``）。
 - 确保在重新加载前，已正确释放推理权重。
 
 Gloo 超时 / “Global rank x is not part of group”

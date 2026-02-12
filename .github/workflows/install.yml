@@ -85,6 +85,12 @@ jobs:
           bash requirements/install.sh embodied --model gr00t --env isaaclab
           rm -rf .venv
 
+      - name: Install dexbotic
+        run: |
+          pip install uv
+          bash requirements/install.sh embodied --model dexbotic --env maniskill_libero
+          rm -rf .venv
+
       - name: Install behavior-openvla-oft
         run: |
           pip install uv
@@ -160,6 +166,15 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: rockylinux:9.3
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Install sys-deps
+        run: |
+          bash requirements/embodied/sys_deps.sh
+
+  sys-deps-ubuntu-latest:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v5

@@ -37,7 +37,7 @@ class MLPPolicy(nn.Module, BasePolicy):
         self.obs_dim = obs_dim
         self.action_dim = action_dim
         self.num_action_chunks = num_action_chunks
-
+        self.torch_compile_enabled = False
         # default setting
         self.independent_std = True
         self.final_tanh = False
@@ -104,6 +104,15 @@ class MLPPolicy(nn.Module, BasePolicy):
         return {"states": env_obs["states"].to(device)}
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
+        obs = kwargs.get("obs")
+        if obs is not None:
+            obs = self.preprocess_env_obs(obs)
+            kwargs.update({"obs": obs})
+        next_obs = kwargs.get("next_obs")
+        if next_obs is not None:
+            next_obs = self.preprocess_env_obs(next_obs)
+            kwargs.update({"next_obs": next_obs})
+
         if forward_type == ForwardType.SAC:
             return self.sac_forward(**kwargs)
         elif forward_type == ForwardType.SAC_Q:
@@ -142,16 +151,16 @@ class MLPPolicy(nn.Module, BasePolicy):
 
     def default_forward(
         self,
-        data,
+        forward_inputs,
         compute_logprobs=True,
         compute_entropy=True,
         compute_values=True,
         **kwargs,
     ):
-        obs = data["obs"]
-        action = data["action"]
+        states = forward_inputs["states"]
+        action = forward_inputs["action"]
 
-        feat = self.backbone(obs)
+        feat = self.backbone(states)
         action_mean = self.actor_mean(feat)
 
         if self.independent_std:
@@ -170,12 +179,31 @@ class MLPPolicy(nn.Module, BasePolicy):
             output_dict.update(entropy=entropy)
         if compute_values:
             if getattr(self, "value_head", None):
-                values = self.value_head(obs)
+                values = self.value_head(states)
                 output_dict.update(values=values)
             else:
                 raise NotImplementedError
         return output_dict
 
+    def _sample_actions(
+        self, states: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        feat = self.backbone(states)
+        action_mean = self.actor_mean(feat)
+
+        if self.independent_std:
+            action_logstd = self.actor_logstd.expand_as(action_mean)
+        else:
+            action_logstd = self.actor_logstd(feat)
+        if self.final_tanh:
+            action_logstd = torch.tanh(action_logstd)
+            action_logstd = self.logstd_range[0] + 0.5 * (
+                self.logstd_range[1] - self.logstd_range[0]
+            ) * (action_logstd + 1)
+
+        return action_mean, action_logstd
+
+    @torch.inference_mode()
     def predict_action_batch(
         self,
         env_obs,
@@ -185,19 +213,8 @@ class MLPPolicy(nn.Module, BasePolicy):
         mode="train",
         **kwargs,
     ):
-        feat = self.backbone(env_obs["states"])
-        action_mean = self.actor_mean(feat)
-
-        if self.independent_std:
-            action_logstd = self.actor_logstd.expand_as(action_mean)
-        else:
-            action_logstd = self.actor_logstd(feat)
-
-        if self.final_tanh:
-            action_logstd = torch.tanh(action_logstd)
-            action_logstd = self.logstd_range[0] + 0.5 * (
-                self.logstd_range[1] - self.logstd_range[0]
-            ) * (action_logstd + 1)
+        env_obs = self.preprocess_env_obs(env_obs=env_obs)
+        action_mean, action_logstd = self._sample_actions(env_obs["states"])
 
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
@@ -231,7 +248,7 @@ class MLPPolicy(nn.Module, BasePolicy):
 
         forward_inputs = {"action": action}
         if return_obs:
-            forward_inputs["obs"] = env_obs["states"]
+            forward_inputs["states"] = env_obs["states"]
 
         result = {
             "prev_logprobs": chunk_logprobs,
@@ -261,3 +278,11 @@ class MLPPolicy(nn.Module, BasePolicy):
 
     def crossq_forward(self, obs, **kwargs):
         return self.sac_forward(obs, **kwargs)
+
+    def enable_torch_compile(self, mode: str = "max-autotune-no-cudagraphs"):
+        if self.torch_compile_enabled:
+            return
+
+        self._sample_actions = torch.compile(self._sample_actions, mode=mode)
+
+        self.torch_compile_enabled = True

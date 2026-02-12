@@ -260,6 +260,15 @@ class FlowPolicy(nn.Module, BasePolicy):
         return full_feature, visual_feature
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
+        obs = kwargs.get("obs")
+        if obs is not None:
+            obs = self.preprocess_env_obs(obs)
+            kwargs.update({"obs": obs})
+        next_obs = kwargs.get("next_obs", None)
+        if next_obs is not None:
+            next_obs = self.preprocess_env_obs(next_obs)
+            kwargs.update({"next_obs": next_obs})
+
         if forward_type == ForwardType.SAC:
             return self.sac_forward(**kwargs)
         elif forward_type == ForwardType.SAC_Q:
@@ -298,7 +307,7 @@ class FlowPolicy(nn.Module, BasePolicy):
 
     def default_forward(
         self,
-        data,  # input is 'data', preprocess to become 'obs'.
+        forward_inputs,
         compute_entropy=False,
         compute_values=False,
         **kwargs,
@@ -306,11 +315,12 @@ class FlowPolicy(nn.Module, BasePolicy):
         """Default forward pass"""
 
         obs = {
-            "main_images": data["main_images"],
-            "states": data["states"],
+            "main_images": forward_inputs["main_images"],
+            "states": forward_inputs["states"],
         }
-        if "extra_view_images" in data:
-            obs["extra_view_images"] = data["extra_view_images"]
+        if "extra_view_images" in forward_inputs:
+            obs["extra_view_images"] = forward_inputs["extra_view_images"]
+        obs = self.preprocess_env_obs(obs)
 
         full_feature, visual_feature = self.get_feature(obs)
         mix_feature = self.mix_proj(full_feature)
@@ -346,6 +356,8 @@ class FlowPolicy(nn.Module, BasePolicy):
         **kwargs,
     ):
         """Predict actions in batch"""
+        env_obs = self.preprocess_env_obs(env_obs)
+
         full_feature, visual_feature = self.get_feature(env_obs)
         mix_feature = self.mix_proj(full_feature)
 
@@ -390,6 +402,7 @@ class FlowStateConfig:
     add_value_head: bool = False  # No visual_feature -> No mix_feature -> No value_head -> add_value_head must be false !
     add_q_head: bool = False
     q_head_type: str = "default"
+    num_q_heads: int = 2
 
     action_scale = None
     final_tanh = True
@@ -503,7 +516,7 @@ class FlowStatePolicy(nn.Module, BasePolicy):
             self.q_head = MultiQHead(
                 hidden_size=self.cfg.obs_dim,
                 hidden_dims=[256, 256, 256],
-                num_q_heads=2,
+                num_q_heads=self.cfg.num_q_heads,
                 action_feature_dim=self.cfg.action_dim,
             )
 
@@ -547,6 +560,15 @@ class FlowStatePolicy(nn.Module, BasePolicy):
 
     # 10. add unified forward()
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
+        obs = kwargs.get("obs")
+        if obs is not None:
+            obs = self.preprocess_env_obs(obs)
+            kwargs.update({"obs": obs})
+        next_obs = kwargs.get("next_obs", None)
+        if next_obs is not None:
+            next_obs = self.preprocess_env_obs(next_obs)
+            kwargs.update({"next_obs": next_obs})
+
         if forward_type == ForwardType.SAC:
             return self.sac_forward(**kwargs)  # originally exists
         elif forward_type == ForwardType.SAC_Q:
@@ -584,6 +606,8 @@ class FlowStatePolicy(nn.Module, BasePolicy):
         Predict actions in batch.
         Called by MultiStepRolloutWorker for rollout
         """
+        env_obs = self.preprocess_env_obs(env_obs)
+
         feat = self.backbone(env_obs["states"])  # encode obs using the 3 layer MLP
 
         # Use flow actor

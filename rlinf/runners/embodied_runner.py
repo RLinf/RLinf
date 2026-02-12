@@ -13,17 +13,19 @@
 # limitations under the License.
 
 import os
-from typing import TYPE_CHECKING, Optional, Union
+import queue
+import threading
+import time
+from typing import TYPE_CHECKING, Union
 
 from omegaconf.dictconfig import DictConfig
-from tqdm import tqdm
 
-from rlinf.data.replay_buffer import SACReplayBuffer
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.distributed import ScopedTimer
+from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
-from rlinf.utils.metric_utils import compute_evaluate_metrics
+from rlinf.utils.metric_utils import compute_evaluate_metrics, print_metrics_table
 from rlinf.utils.runner_utils import check_progress
 
 if TYPE_CHECKING:
@@ -49,7 +51,6 @@ class EmbodiedRunner:
         ],
         rollout: Union["MultiStepRolloutWorker", "AsyncMultiStepRolloutWorker"],
         env: Union["EnvWorker", "AsyncEnvWorker"],
-        demo_buffer: Optional[SACReplayBuffer] = None,
         critic=None,
         reward=None,
         run_timer=None,
@@ -58,16 +59,13 @@ class EmbodiedRunner:
         self.actor = actor
         self.rollout = rollout
         self.env = env
-        self.demo_buffer = demo_buffer
         self.critic = critic
         self.reward = reward
-
+        self.weight_sync_interval = self.cfg.runner.weight_sync_interval
         # Data channels
         self.env_channel = Channel.create("Env")
         self.rollout_channel = Channel.create("Rollout")
         self.actor_channel = Channel.create("Actor")
-        if self.demo_buffer is not None:
-            self.demo_data_channel = Channel.create("DemoBufferChannel")
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -81,7 +79,41 @@ class EmbodiedRunner:
 
         self.timer = ScopedTimer(reduction="max", sync_cuda=False)
 
+        self.logger = get_logger()
         self.metric_logger = MetricLogger(cfg)
+
+        # Async logging setup
+        self.stop_logging = False
+        self.log_queue = queue.Queue()
+        self.log_thread = threading.Thread(target=self._log_worker, daemon=True)
+        self.log_thread.start()
+
+    def _log_worker(self):
+        """Background thread for processing log messages."""
+        while not self.stop_logging:
+            try:
+                # Wait for log message with timeout
+                log_func, args = self.log_queue.get(timeout=0.1)
+                log_func(*args)
+                self.log_queue.task_done()
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"Logging error: {e}")
+                continue
+
+    def print_metrics_table_async(
+        self,
+        step: int,
+        total_steps: int,
+        start_time: float,
+        metrics: dict,
+        start_step: int = 0,
+    ):
+        """Async version that puts table printing in queue."""
+        self.log_queue.put(
+            (print_metrics_table, (step, total_steps, start_time, metrics, start_step))
+        )
 
     def init_workers(self):
         # create worker in order to decrease the maximum memory usage
@@ -93,20 +125,13 @@ class EmbodiedRunner:
         if resume_dir is None:
             return
 
+        self.logger.info(f"Resuming training from checkpoint directory {resume_dir}.")
         actor_checkpoint_path = os.path.join(resume_dir, "actor")
         assert os.path.exists(actor_checkpoint_path), (
             f"resume_dir {actor_checkpoint_path} does not exist."
         )
         self.actor.load_checkpoint(actor_checkpoint_path).wait()
         self.global_step = int(resume_dir.split("global_step_")[-1])
-
-    def send_demo_buffer(self):
-        if self.demo_buffer is not None:
-            sub_demo_buffer_ls = self.demo_buffer.split_to_dict(self.actor._world_size)
-
-            for sub_demo_buffer in sub_demo_buffer_ls:
-                self.demo_data_channel.put(sub_demo_buffer, async_op=True)
-            self.actor.recv_demo_data(self.demo_data_channel).wait()
 
     def update_rollout_weights(self):
         rollout_handle: Handle = self.rollout.sync_model_from_actor()
@@ -131,13 +156,7 @@ class EmbodiedRunner:
 
     def run(self):
         start_step = self.global_step
-        global_pbar = tqdm(
-            initial=start_step,
-            total=self.max_steps,
-            desc="Global Step",
-            ncols=800,
-        )
-        self.send_demo_buffer()
+        start_time = time.time()
         for _step in range(start_step, self.max_steps):
             # set global step
             self.actor.set_global_step(self.global_step)
@@ -145,7 +164,8 @@ class EmbodiedRunner:
 
             with self.timer("step"):
                 with self.timer("sync_weights"):
-                    self.update_rollout_weights()
+                    if _step % self.weight_sync_interval == 0:
+                        self.update_rollout_weights()
                 with self.timer("generate_rollouts"):
                     env_handle: Handle = self.env.interact(
                         input_channel=self.rollout_channel,
@@ -156,7 +176,7 @@ class EmbodiedRunner:
                         output_channel=self.rollout_channel,
                         actor_channel=self.actor_channel,
                     )
-                    self.actor.recv_rollout_batch(
+                    self.actor.recv_rollout_trajectories(
                         input_channel=self.actor_channel
                     ).wait()
                     rollout_handle.wait()
@@ -168,8 +188,9 @@ class EmbodiedRunner:
                     )
 
                 # actor training.
-                with self.timer("actor_training"):
-                    actor_training_metrics = self.actor.run_training().wait()
+                actor_training_handle: Handle = self.actor.run_training()
+
+                actor_training_metrics = actor_training_handle.wait()
 
                 self.global_step += 1
 
@@ -195,6 +216,21 @@ class EmbodiedRunner:
 
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
+            time_metrics.update(
+                {f"time/env/{k}": v for k, v in env_handle.consume_durations().items()}
+            )
+            time_metrics.update(
+                {
+                    f"time/rollout/{k}": v
+                    for k, v in rollout_handle.consume_durations().items()
+                }
+            )
+            time_metrics.update(
+                {
+                    f"time/actor/{k}": v
+                    for k, v in actor_training_handle.consume_durations().items()
+                }
+            )
 
             env_results_list = [
                 results for results in env_handle.wait() if results is not None
@@ -221,12 +257,19 @@ class EmbodiedRunner:
             logging_metrics.update(rollout_metrics)
             logging_metrics.update(training_metrics)
 
-            global_pbar.set_postfix(logging_metrics, refresh=False)
-            global_pbar.update(1)
+            self.print_metrics_table_async(
+                _step, self.max_steps, start_time, logging_metrics, start_step
+            )
 
         self.metric_logger.finish()
 
+        # Stop logging thread
+        self.stop_logging = True
+        self.log_queue.join()  # Wait for all queued logs to be processed
+        self.log_thread.join(timeout=1.0)
+
     def _save_checkpoint(self):
+        self.logger.info(f"Saving checkpoint at step {self.global_step}.")
         base_output_dir = os.path.join(
             self.cfg.runner.logger.log_path,
             self.cfg.runner.logger.experiment_name,

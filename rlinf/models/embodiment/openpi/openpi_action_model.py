@@ -246,15 +246,15 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
 
     def default_forward(
         self,
-        data: dict[str, torch.Tensor],
+        forward_inputs: dict[str, torch.Tensor],
         **kwargs,
     ) -> dict[str, Any]:
         # get kwargs
         compute_values = kwargs.get("compute_values", False)
-        chains = data["chains"]
-        denoise_inds = data["denoise_inds"]
+        chains = forward_inputs["chains"]
+        denoise_inds = forward_inputs["denoise_inds"]
         # input transform
-        observation = self.input_transform(data, transpose=False)
+        observation = self.input_transform(forward_inputs, transpose=False)
         observation = _model.Observation.from_dict(observation)
         images, img_masks, lang_tokens, lang_masks, state = (
             self._preprocess_observation(observation, train=False)
@@ -337,7 +337,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         env_obs,
         mode: Literal["train", "eval"] = "train",
         compute_values=True,
-        return_obs=True,
+        **kwargs,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         to_process_obs = self.obs_processor(env_obs)  # env obs -> policy input obs
         processed_obs = self.input_transform(

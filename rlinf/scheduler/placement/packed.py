@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
+from typing import Optional, Sequence
 
-from ..cluster import Cluster
+from ..cluster import Cluster, NodeGroupInfo
 from ..hardware import Accelerator
-from .placement import Placement, PlacementStrategy
+from .placement import MultiNodeGroupResolver, Placement, PlacementStrategy
 
 
 class PackedPlacementStrategy(PlacementStrategy):
@@ -95,7 +95,7 @@ class PackedPlacementStrategy(PlacementStrategy):
         end_hardware_rank: int,
         num_hardware_per_process: int = 1,
         stride: int = 1,
-        node_group: Optional[str] = None,
+        node_group: Optional[str | Sequence[str]] = None,
     ):
         """Initialize the PackedPlacementStrategy.
 
@@ -104,14 +104,21 @@ class PackedPlacementStrategy(PlacementStrategy):
             end_hardware_rank (int): The global rank of the end hardware in the cluster or node group for the placement.
             num_hardware_per_process (int): The number of hardware resources to allocate for each process.
             stride (int): The stride to use when allocating hardware. This allows one process to have multiple hardware in a strided manner, e.g., GPU 0, 2, 4 (stride 2) or GPU 0, 3, 6 (stride 3).
-            node_group (Optional[str]): The label of the node group to use for placement. This allows you to assign the placement to nodes within a specific group, especially in a heterogeneous cluster. If None, the entire cluster is considered.
+            node_group (Optional[str | Sequence[str]]): The label(s) of the node group(s) to use for placement. Provide a list to span multiple node groups. If None, the entire cluster is considered.
 
         """
         super().__init__()
 
         self._start_hw_rank = start_hardware_rank
         self._end_hw_rank = end_hardware_rank
-        self._node_group = node_group
+        if node_group is None:
+            self._node_group_labels = None
+        elif isinstance(node_group, str):
+            self._node_group_labels = [node_group]
+        elif isinstance(node_group, Sequence):
+            self._node_group_labels = [str(label) for label in node_group]
+        else:
+            self._node_group_labels = [str(node_group)]
         assert self._start_hw_rank >= 0, (
             f"The start hardware rank {self._start_hw_rank} must be non-negative."
         )
@@ -135,8 +142,24 @@ class PackedPlacementStrategy(PlacementStrategy):
 
         self._logger.info("")
         self._logger.info(
-            f"Using packed placement starting from hardware {self._start_hw_rank}, ending at hardware {self._end_hw_rank}, with {self._num_hardware_per_process} hardware per process and stride {self._stride}."
+            f"Using packed placement starting from hardware {self._start_hw_rank}, ending at hardware {self._end_hw_rank}, "
+            f"with {self._num_hardware_per_process} hardware per process and stride {self._stride}, "
+            f"node groups: {self._node_group_labels or [NodeGroupInfo.DEFAULT_GROUP_LABEL]}."
         )
+
+    def _resolve_node_groups(self, cluster: Cluster) -> list[NodeGroupInfo]:
+        """Resolve user-specified node groups against the cluster."""
+        if not self._node_group_labels:
+            return [cluster.get_node_group()]
+
+        node_groups: list[NodeGroupInfo] = []
+        for label in self._node_group_labels:
+            node_group = cluster.get_node_group(label)
+            assert node_group is not None, (
+                f"Node group with label {label} not found in the cluster."
+            )
+            node_groups.append(node_group)
+        return node_groups
 
     def get_placement(
         self,
@@ -155,33 +178,62 @@ class PackedPlacementStrategy(PlacementStrategy):
         """
         rank = 0
         placements: list[Placement] = []
-        node_group = cluster.get_node_group(self._node_group)
+        node_groups = self._resolve_node_groups(cluster)
+        resolver = MultiNodeGroupResolver(node_groups)
 
-        start_node = node_group.get_node_by_hardware_rank(self._start_hw_rank)
+        total_hw = resolver.hardware_resource_count
+        assert self._start_hw_rank < total_hw and self._end_hw_rank < total_hw, (
+            f"Hardware ranks [{self._start_hw_rank}, {self._end_hw_rank}] exceed available resources ({total_hw}) across selected node groups."
+        )
+
+        hw_types = resolver.hardware_types
+        assert hw_types is not None, (
+            "Packed placement requires hardware resources, but at least one selected node group does not expose hardware."
+        )
+
+        start_node = resolver.get_node_by_hardware_rank(self._start_hw_rank)
         hw_usage_map: dict[int, bool] = dict.fromkeys(
             range(self._start_hw_rank, self._end_hw_rank + 1), False
         )
 
         assert start_node is not None, (
-            f"The start hardware rank {self._start_hw_rank} cannot be found in the node group with hardware type {node_group.hardware_type} and hardware ranks {node_group.local_hardware_ranks}."
+            f"The start hardware rank {self._start_hw_rank} cannot be found in the selected node groups."
         )
 
         start_hw_rank = self._start_hw_rank
         node_rank = 0
         cluster_node_rank = start_node.node_rank
-        local_hw_rank = node_group.get_local_hardware_rank(self._start_hw_rank)
         local_rank = 0
         local_world_size = 1
 
         while True:
+            current_node_group = resolver.get_node_group(start_hw_rank)
+            current_hw_type = resolver.get_hardware_type_for_rank(start_hw_rank)
+            assert current_hw_type is not None, (
+                f"Packed placement requires hardware resources, but node group {current_node_group.label} has no hardware_type."
+            )
             # Generate the placement for one process
+            local_hw_rank = resolver.get_local_hardware_rank(start_hw_rank)
             assert local_hw_rank + (
                 self._num_hardware_per_process - 1
             ) * self._stride <= cluster.get_node_info(
                 cluster_node_rank
-            ).get_hw_resource_count(node_group.hardware_type), (
-                f"Trouble finding placement for Rank {rank} which starts at hardware {local_hw_rank} in node {cluster_node_rank} and node group {node_group.label}, with {self._num_hardware_per_process} hardware and stride {self._stride}. But only {cluster.get_node_info(cluster_node_rank).get_hw_resource_count(node_group.hardware_type)} hardware available in the node. As a result, this process will spread across multiple nodes, which is impossible."
+            ).get_hw_resource_count(current_hw_type), (
+                f"Trouble finding placement for Rank {rank} which starts at hardware {local_hw_rank} in node {cluster_node_rank} and node group {current_node_group.label}, with {self._num_hardware_per_process} hardware and stride {self._stride}. But only {cluster.get_node_info(cluster_node_rank).get_hw_resource_count(current_hw_type)} hardware available in the node. As a result, this process will spread across multiple nodes, which is impossible."
             )
+
+            # Validate if all hardware types are the same
+            for hw_rank in range(
+                start_hw_rank,
+                start_hw_rank + self._num_hardware_per_process * self._stride,
+                self._stride,
+            ):
+                assert (
+                    resolver.get_hardware_type_for_rank(hw_rank) == current_hw_type
+                ), (
+                    f"Hardware assigned to Rank {hw_rank} is not of the same type. "
+                    f"Expected {current_hw_type}, but got {resolver.get_hardware_type_for_rank(hw_rank)}."
+                )
 
             local_hw_ranks = list(
                 range(
@@ -200,7 +252,7 @@ class PackedPlacementStrategy(PlacementStrategy):
             for hw_rank in global_hw_ranks:
                 hw_usage_map[hw_rank] = True
 
-            if isolate_accelerator and node_group.hardware_type == Accelerator.HW_TYPE:
+            if isolate_accelerator and current_hw_type == Accelerator.HW_TYPE:
                 local_accel_ranks = local_hw_ranks
                 visible_accelerators = [
                     str(accel_rank) for accel_rank in local_hw_ranks
@@ -229,7 +281,7 @@ class PackedPlacementStrategy(PlacementStrategy):
                     visible_accelerators=visible_accelerators,
                     isolate_accelerator=isolate_accelerator,
                     local_hardware_ranks=local_hw_ranks,
-                    node_group_label=node_group.label,
+                    node_group_label=current_node_group.label,
                 )
             )
 
@@ -242,19 +294,20 @@ class PackedPlacementStrategy(PlacementStrategy):
                     found_all = False
                     break
 
-            next_cluster_node_rank = node_group.get_node_by_hardware_rank(
-                start_hw_rank
-            ).node_rank
-            if next_cluster_node_rank != cluster_node_rank:
+            next_cluster_node_rank = (
+                resolver.get_node_by_hardware_rank(start_hw_rank).node_rank
+                if not found_all
+                else cluster_node_rank
+            )
+            if not found_all and next_cluster_node_rank != cluster_node_rank:
                 # Place to the next node
                 node_rank += 1
                 cluster_node_rank = next_cluster_node_rank
-                local_hw_rank = 0
                 local_rank = 0
                 next_node = True
             else:
-                local_hw_rank = node_group.get_local_hardware_rank(start_hw_rank)
-                local_rank += 1
+                if not found_all:
+                    local_rank += 1
                 next_node = False
 
             if next_node or found_all:
@@ -272,8 +325,9 @@ class PackedPlacementStrategy(PlacementStrategy):
             if found_all:
                 break
 
-            assert cluster_node_rank in node_group.node_ranks, (
-                f"Not enough nodes {node_group.node_ranks} in the node group {node_group.label} to generate the placement."
+            next_node_group = resolver.get_node_group(start_hw_rank)
+            assert cluster_node_rank in next_node_group.node_ranks, (
+                f"Not enough nodes {next_node_group.node_ranks} in the node group {next_node_group.label} to generate the placement."
             )
 
         self._logger.info(f"Generated {len(placements)} placements: {placements}.")

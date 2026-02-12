@@ -37,12 +37,12 @@ objects:
           link: led_link
           color: [0, 1, 0, 1] # green
   movable_objects:
-    block_red:
-      file: blocks/block_red_small.urdf
-      initial_pos: any
-      initial_orn: any
     block_blue:
       file: blocks/block_blue_big.urdf
+      initial_pos: any
+      initial_orn: any
+    block_red:
+      file: blocks/block_red_small.urdf
       initial_pos: any
       initial_orn: any
     block_pink:

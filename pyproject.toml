@@ -22,9 +22,11 @@ classifiers = [
 
 dependencies = [
     # Core System
-    "accelerate",
+    # These are the dependencies of the core scheduler
     "ray[default]>=2.47.0",
     "torch==2.6.0",
+    "hydra-core==1.4.0.dev1",
+    "numpy",
 
     # Data processing
     "pylatexenc",
@@ -38,21 +40,23 @@ dependencies = [
     "scipy",
 
     # Utilities
-    "hydra-core==1.4.0.dev1",
+    "accelerate",
+    "debugpy",
     "einops",
     "nvitop",
     "pybind11",
-    "torch-memory-saver",
     "setuptools>=69.5.1,<75.9",
     "ninja",
     "pytest",
     "gsutil",
     "ruff",
     "pre-commit",
-    "liger_kernel",
+    "liger_kernel; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "uv",
     "pip",
+    "huggingface_hub",
     "icmplib",
-    "pyrealsense2",
+    "pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
     # Logging
     "swanlab>=0.6.11",
@@ -61,6 +65,7 @@ dependencies = [
 
 [project.optional-dependencies]
 sglang-vllm = [
+    "torch-memory-saver",
     "transformers==4.51.1",
     "sglang[all]==0.4.6.post5",
     "vllm==0.8.5",
@@ -96,8 +101,9 @@ franka = [
     "pyquaternion",
     "opencv-python",
     "defusedxml",
-    "pyspacemouse", 
+    "pyspacemouse==1.1.5", 
     "imageio[ffmpeg]",
+    "pynput"
 ]
 
 [tool.uv]
