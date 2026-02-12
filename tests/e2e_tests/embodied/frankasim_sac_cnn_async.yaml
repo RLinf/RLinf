@@ -90,6 +90,8 @@ env:
   train:
     obs_format: tensor
     total_num_envs: 1
+    max_episode_steps: 2
+    max_steps_per_rollout_epoch: 2
     video_cfg:
       save_video: False
       video_base_dir: ${runner.logger.log_path}/video/eval
@@ -120,8 +122,8 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 256     # how many samples each GPU processes per sampling step
-  global_batch_size: 256   # after how many sampled examples we perform one loss backward pass. Requirement: global bz must be '_world_size' multiples of local bs.
+  micro_batch_size: 1     # how many samples each GPU processes per sampling step
+  global_batch_size: 2   # after how many sampled examples we perform one loss backward pass. Requirement: global bz must be '_world_size' multiples of local bs.
   seed: 42
   enable_offload: False
   enable_drq: True

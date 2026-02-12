@@ -1,5 +1,6 @@
 /.github @andylin-hao
 /docker @andylin-hao
+/docs @andylin-hao
 
 /examples/embodiment @guozhen1997
 /examples/reasoning @guozhen1997 @andylin-hao @Lin-xs
@@ -37,7 +38,7 @@
 /rlinf/config.py @guozhen1997 @andylin-hao @Lin-xs
 
 /tests @andylin-hao
-/toolkits/auto_placement @i-Taozi
+/toolkits/auto_placement @Lin-xs
 /toolkits/ckpt_convertor @qurakchin @guozhen1997
 /toolkits/code_verifier @qurakchin
 /toolkits/math_verifier @guozhen1997

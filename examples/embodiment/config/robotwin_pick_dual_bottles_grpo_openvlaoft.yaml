@@ -132,7 +132,7 @@ actor:
   # Override the default values in model/openvla_oft
   model:
     model_path: "/path/to/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-pick_dual_bottles"
-    implement_version: "offical"
+    implement_version: "official"
     model_type: "openvla_oft"
     value_type: ${algorithm.reward_type}  # 'action' or 'token'
     action_dim: 14
