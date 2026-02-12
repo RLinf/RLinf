@@ -455,15 +455,18 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             global_batch_size_per_rank // self.cfg.actor.micro_batch_size,
         )
 
-        self.qf_optimizer.zero_grad()
-        gbs_critic_loss = []
-        all_critic_metrics = {}
-        for batch in train_micro_batch_list:
+        # move train_micro_batch_list to device and apply DRQ for critic/actor/alpha passes
+        for i, batch in enumerate(train_micro_batch_list):
             batch = put_tensor_device(batch, device=self.device)
             if self.enable_drq:
                 drq.apply_drq(batch["curr_obs"], pad=4)
                 drq.apply_drq(batch["next_obs"], pad=4)
+            train_micro_batch_list[i] = batch
 
+        self.qf_optimizer.zero_grad()
+        gbs_critic_loss = []
+        all_critic_metrics = {}
+        for batch in train_micro_batch_list:
             critic_loss, critic_metrics = self.forward_critic(batch)
             critic_loss = critic_loss / self.gradient_accumulation
             critic_loss.backward()
@@ -492,10 +495,6 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             gbs_entropy = []
             all_actor_metrics = {}
             for batch in train_micro_batch_list:
-                if self.enable_drq:
-                    drq.apply_drq(batch["curr_obs"], pad=4)
-                    drq.apply_drq(batch["next_obs"], pad=4)
-                batch = put_tensor_device(batch, device=self.device)
                 actor_loss, entropy, q_metrics = self.forward_actor(batch)
                 actor_loss = actor_loss / self.gradient_accumulation
                 actor_loss.backward()
@@ -519,11 +518,6 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 self.alpha_optimizer.zero_grad()
                 gbs_alpha_loss = []
                 for batch in train_micro_batch_list:
-                    batch = put_tensor_device(batch, device=self.device)
-                    if self.enable_drq:
-                        drq.apply_drq(batch["curr_obs"], pad=4)
-                        drq.apply_drq(batch["next_obs"], pad=4)
-
                     alpha_loss = self.forward_alpha(batch) / self.gradient_accumulation
                     alpha_loss.backward()
                     gbs_alpha_loss.append(
