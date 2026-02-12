@@ -85,7 +85,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
 
   train:
     total_num_envs: 8

@@ -6,7 +6,6 @@ RLinf supports various reinforcement learning environments, including robotic ma
 
 The RLinf environment system consists of the following components:
 
-- **EnvManager**: Manages the environment lifecycle (creation, reset, shutdown).
 - **Base Environment Classes**: Concrete implementations inheriting from ``gym.Env``.
 - **Environment Wrappers**: Add-on wrappers that provide extra functionality.
 - **Task Variants**: Implementations of specific tasks or scenarios.

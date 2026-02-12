@@ -17,7 +17,6 @@ This environment is used to evaluate the OpenSora  world model with the Video re
 """
 
 import json
-import math
 import os
 from collections import deque
 from typing import Optional, Union
@@ -41,10 +40,16 @@ __all__ = ["OpenSoraEnv"]
 
 class OpenSoraEnv(BaseWorldEnv):
     def __init__(
-        self, cfg, num_envs, seed_offset, total_num_processes, record_metrics=True
+        self,
+        cfg,
+        num_envs,
+        seed_offset,
+        total_num_processes,
+        worker_info,
+        record_metrics=True,
     ):
         super().__init__(
-            cfg, num_envs, seed_offset, total_num_processes, record_metrics
+            cfg, num_envs, seed_offset, total_num_processes, worker_info, record_metrics
         )
         self.world_model_cfg = self.cfg.world_model_cfg
         self.inference_dtype = to_torch_dtype(self.world_model_cfg.get("dtype", "bf16"))
@@ -697,6 +702,7 @@ class OpenSoraEnv(BaseWorldEnv):
         self.elapsed_steps += self.chunk
 
         extracted_obs = self._wrap_obs()
+        obs_list = [extracted_obs]
 
         # Get rewards
         chunk_rewards = self._infer_next_chunk_rewards()
@@ -726,9 +732,7 @@ class OpenSoraEnv(BaseWorldEnv):
         past_dones = torch.logical_or(past_terminations, past_truncations)
 
         if past_dones.any() and self.auto_reset:
-            extracted_obs, infos = self._handle_auto_reset(
-                past_dones, extracted_obs, {}
-            )
+            obs_list[-1], infos = self._handle_auto_reset(past_dones, obs_list[-1], {})
         else:
             infos = {}
 
@@ -742,91 +746,13 @@ class OpenSoraEnv(BaseWorldEnv):
         chunk_truncations = torch.zeros_like(raw_chunk_truncations)
         chunk_truncations[:, -1] = past_truncations
 
-        self.add_new_frames()
-
         return (
-            extracted_obs,
+            obs_list,
             chunk_rewards_tensors,
             chunk_terminations,
             chunk_truncations,
-            infos,
+            [infos],
         )
-
-    def add_new_frames(
-        self,
-    ):
-        """Append all frames from the latest chunk into the render buffer."""
-        if self.current_obs is None:
-            return
-
-        num_envs, channels, num_views, num_steps, height, width = self.current_obs.shape
-        view_idx = 0  # visualize the first camera view
-        chunk_len = min(self.chunk, num_steps)
-        start_step = num_steps - chunk_len
-
-        for step_idx in range(chunk_len):
-            images = []
-            for env_idx in range(num_envs):
-                frame_tensor = self.current_obs[
-                    env_idx, :, view_idx, start_step + step_idx, :, :
-                ]
-                # Convert to HWC for display
-                frame_np = frame_tensor.detach().cpu().permute(1, 2, 0).numpy()
-                frame_np = (frame_np + 1.0) / 2.0 * 255.0
-                frame_np = np.clip(frame_np, 0, 255).astype(np.uint8)
-                images.append(frame_np)
-
-            tiled = self._tile_images(images)
-            if tiled is not None:
-                self.render_images.append(tiled)
-
-    def _tile_images(self, images, nrows: Optional[int] = None):
-        """Tile multiple images into a single grid."""
-        if not images:
-            return None
-
-        num_images = len(images)
-        height, width, channels = images[0].shape
-        rows = nrows or max(1, int(math.sqrt(num_images)))
-        cols = int(math.ceil(num_images / rows))
-
-        canvas = np.zeros(
-            (rows * height, cols * width, channels), dtype=images[0].dtype
-        )
-        for idx, image in enumerate(images):
-            row = idx // cols
-            col = idx % cols
-            y0, y1 = row * height, (row + 1) * height
-            x0, x1 = col * width, (col + 1) * width
-            canvas[y0:y1, x0:x1] = image
-
-        return canvas
-
-    def flush_video(self, video_sub_dir: Optional[str] = None):
-        """Save accumulated video frames"""
-        if len(self.render_images) == 0:
-            return
-
-        output_dir = os.path.join(self.video_cfg.video_base_dir, f"seed_{self.seed}")
-        if video_sub_dir is not None:
-            output_dir = os.path.join(output_dir, f"{video_sub_dir}")
-        else:
-            output_dir = os.path.join(output_dir)
-
-        os.makedirs(output_dir, exist_ok=True)
-
-        from mani_skill.utils.visualization.misc import images_to_video
-
-        images_to_video(
-            self.render_images,
-            output_dir=output_dir,
-            video_name=f"{self.video_cnt}",
-            fps=self.cfg.get("fps", 10),
-            verbose=False,
-        )
-
-        self.video_cnt += 1
-        self.render_images = []
 
 
 # PYTHONPATH="/mnt/project_rlinf/jzn/workspace/opensora:$PYTHONPATH" python -m rlinf.envs.world_model.world_model_opensora_env
@@ -873,5 +799,3 @@ if __name__ == "__main__":
         o, r, te, tr, infos = env.chunk_step(
             zeros_actions[:, i * chunk_steps : (i + 1) * chunk_steps, :]
         )
-
-    env.flush_video()
