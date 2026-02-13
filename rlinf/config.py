@@ -59,6 +59,11 @@ class SupportedModel(Enum):
     FLOW_POLICY = ("flow_policy", "embodied")
     CMA_POLICY = ("cma", "embodied")
 
+    # Sft models
+    QWEN2_5_VL_SFT = ("qwen2.5_vl", "sft")
+    QWEN3_VL_SFT = ("qwen3_vl", "sft")
+    QWEN3_VL_MOE_SFT = ("qwen3_vl_moe", "sft")
+
     def __new__(cls, value, category):
         obj = object.__new__(cls)
         obj._value_ = value
@@ -818,6 +823,45 @@ def validate_embodied_cfg(cfg):
             cfg.env.train.omnigibson_cfg = omnigibson_cfg
             cfg.env.eval.omnigibson_cfg = omnigibson_cfg
 
+    return cfg
+
+
+def validate_vlm_sft_cfg(cfg: DictConfig) -> DictConfig:
+    assert cfg.actor.get("global_batch_size", None) is not None, (
+        "the actor.global_batch_size is not set"
+    )
+    assert cfg.actor.get("micro_batch_size", None) is not None, (
+        "the actor.micro_batch_size is not set"
+    )
+    assert (
+        cfg.actor.global_batch_size
+        % (cfg.actor.micro_batch_size * cfg.actor.world_size)
+        == 0
+    ), (
+        "the actor.global_batch_size is not divisible by the actor.micro_batch_size * actor.world_size"
+    )
+    assert (
+        cfg.actor.global_batch_size
+        // cfg.actor.micro_batch_size
+        // cfg.actor.world_size
+        > 0
+    ), (
+        "the actor.global_batch_size // actor.micro_batch_size // actor.world_size must be greater than 0"
+    )
+
+    with open_dict(cfg):
+        if cfg.data.get("train_data_paths", None) is None:
+            # if train_data_paths is None, the code will just eval the model
+            assert cfg.data.get("eval_data_paths", None) is not None, (
+                "the data.train_data_paths is None, so data.eval_data_paths is required"
+            )
+        elif cfg.data.get("eval_data_paths", None) is not None:
+            # set the val_check_interval to max_epochs
+            if cfg.runner.get("val_check_interval", None) is None:
+                cfg.runner.val_check_interval = cfg.runner.max_epochs
+        else:
+            # set the val_check_interval to -1 if there is no eval data
+            cfg.runner.val_check_interval = -1
     return cfg
 
 

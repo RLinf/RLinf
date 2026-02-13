@@ -1,0 +1,93 @@
+defaults:
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: rlinf
+    experiment_name: ${runner.experiment_name}
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  # sft runner use the len(dataset) as one epoch
+  max_epochs: 6000
+  max_steps: -1
+  # eval the model intenval
+  val_check_interval: 1000
+  # save the model interval
+  save_interval: 1000
+  experiment_name: qwen2_5_vl_sft
+  output_dir: ../results
+  resume_dir: null
+
+data:
+  type: vlm
+  dataset_name: "robo2vlmsft"
+  apply_chat_template: True
+  use_chat_template: True
+  # if train_data_paths is not None, the sft code will just eval the model
+  train_data_paths: "/path/to/Robo2VLM-1"
+  eval_data_paths: "/path/to/Robo2VLM-1"
+  prompt_key: "question"
+  choice_key: "choices"
+  answer_key: "correct_answer"
+  image_keys: ["image"]
+  max_prompt_length: 1024
+  lazy_loading: false
+  num_workers: 16
+  answer_separator: ""
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 4
+  eval_batch_size: 4
+  global_batch_size: 256
+  seed: 42
+
+  model:
+    model_type: "qwen2.5_vl"
+    precision: fp32
+    model_path: "/path/to/Qwen2.5-VL-3B-Instruct"
+    is_lora: False
+
+  optim:
+    lr: 1e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-08
+    weight_decay: 0.01
+    clip_grad: 1.0
+    lr_scheduler: "cosine"
+    total_training_steps: ${runner.max_epochs}
+    lr_warmup_steps: 200 
+
+  # Override the default values in training_backend/fsdp
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: False
+    gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: bf16
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

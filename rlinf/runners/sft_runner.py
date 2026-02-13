@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 from typing import Optional
 
@@ -21,7 +22,6 @@ from tqdm import tqdm
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
-from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.utils.runner_utils import check_progress
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
@@ -65,25 +65,6 @@ class SFTRunner:
         self.actor.load_checkpoint(actor_checkpoint_path).wait()
         self.global_step = int(resume_dir.split("global_step_")[-1])
 
-    def _sync_weights(self) -> None:
-        rollout_handle: Handle = self.rollout.sync_model_from_actor()
-        actor_handle: Handle = self.actor.sync_model_to_rollout()
-        actor_handle.wait()
-        rollout_handle.wait()
-
-    def evaluate(self) -> dict[str, float]:
-        env_handle: Handle = self.env.evaluate(
-            input_channel=self.rollout_channel, output_channel=self.env_channel
-        )
-        rollout_handle: Handle = self.rollout.evaluate(
-            input_channel=self.env_channel, output_channel=self.rollout_channel
-        )
-        env_results = env_handle.wait()
-        rollout_handle.wait()
-        eval_metrics_list = [results for results in env_results if results is not None]
-        eval_metrics = compute_evaluate_metrics(eval_metrics_list)
-        return eval_metrics
-
     def run(self) -> None:
         start_step = self.global_step
         global_pbar = tqdm(
@@ -96,7 +77,7 @@ class SFTRunner:
             # set global step
             self.actor.set_global_step(self.global_step)
 
-            # RL Training
+            # SFT Training
             with self.timer("step"):
                 # Actor training.
                 actor_handle: Handle = self.actor.run_training()
@@ -104,7 +85,7 @@ class SFTRunner:
 
                 self.global_step += 1
 
-                _, save_model, _ = check_progress(
+                eval_model, save_model, _ = check_progress(
                     self.global_step,
                     self.max_steps,
                     self.cfg.runner.val_check_interval,
@@ -116,8 +97,14 @@ class SFTRunner:
                 if save_model:
                     self._save_checkpoint()
 
+                if eval_model:
+                    eval_handle: Handle = self.actor.run_eval()
+                    eval_metrics = eval_handle.wait()
+
             time_metrics = self.timer.consume_durations()
             time_metrics["training"] = actor_handle.consume_duration()
+            if eval_model:
+                time_metrics["evaluate"] = eval_handle.consume_duration()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
             training_metrics = {f"train/{k}": v for k, v in actor_metrics[0].items()}
             self.metric_logger.log(time_metrics, _step)
@@ -126,9 +113,37 @@ class SFTRunner:
             logging_metrics = time_metrics
             logging_metrics.update(training_metrics)
 
+            if eval_model:
+                evaluate_metrics = {f"eval/{k}": v for k, v in eval_metrics[0].items()}
+                logging_metrics.update(evaluate_metrics)
+                self.metric_logger.log(evaluate_metrics, _step)
+
             global_pbar.set_postfix(logging_metrics, refresh=False)
             global_pbar.update(1)
 
+        self.metric_logger.finish()
+
+    def run_eval(self) -> None:
+        with self.timer("evaluate"):
+            eval_handle: Handle = self.actor.run_eval()
+            eval_metrics = eval_handle.wait()
+
+        time_metrics = self.timer.consume_durations()
+        time_metrics["evaluate"] = eval_handle.consume_duration()
+        time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
+
+        raw_eval = (
+            eval_metrics[0]
+            if isinstance(eval_metrics, (list, tuple)) and len(eval_metrics) > 0
+            else {}
+        )
+        evaluate_metrics = {f"eval/{k}": v for k, v in raw_eval.items()}
+
+        logging_metrics = {}
+        logging_metrics.update(time_metrics)
+        logging_metrics.update(evaluate_metrics)
+
+        logging.info(f"evaluate the model, metrics: {evaluate_metrics}")
         self.metric_logger.finish()
 
     def _save_checkpoint(self) -> None:
