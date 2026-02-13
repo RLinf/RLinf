@@ -45,9 +45,14 @@ def get_env_cls(env_type: str, env_cfg=None):
     env_type = SupportedEnvType(env_type)
 
     if env_type == SupportedEnvType.MANISKILL:
-        from rlinf.envs.maniskill.maniskill_env import ManiskillEnv
+        if env_cfg.get("enable_offload", False):
+            from rlinf.envs.maniskill.maniskill_offload_env import ManiskillOffloadEnv
 
-        return ManiskillEnv
+            return ManiskillOffloadEnv
+        else:
+            from rlinf.envs.maniskill.maniskill_env import ManiskillEnv
+
+            return ManiskillEnv
     elif env_type == SupportedEnvType.LIBERO:
         from rlinf.envs.libero.libero_env import LiberoEnv
 
