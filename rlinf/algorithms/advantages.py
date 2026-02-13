@@ -138,7 +138,7 @@ def compute_grpo_dynamic_advantages(
     - Trajectories 0-3 belong to question 0, 4-7 to question 1, etc.
     - We must compute GRPO separately for each question's group_size trajectories
 
-    Two advantage computation modes:
+    One advantage computation modes:
 
     1. "turn": Turn-level GRPO
        - Compute mean/std over all turns within each question
@@ -208,9 +208,7 @@ def compute_grpo_dynamic_advantages(
             turn_advantages[question_mask] = normalized_question_rewards
 
     else:
-        raise ValueError(
-            f"Invalid advantage_mode: {advantage_mode}. Must be 'turn'"
-        )
+        raise ValueError(f"Invalid advantage_mode: {advantage_mode}. Must be 'turn'")
 
     # Broadcast advantages to match loss_mask shape [seq_len, num_sequence]
     # turn_advantages is [num_sequence], we broadcast to [seq_len, num_sequence]

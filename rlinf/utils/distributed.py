@@ -161,7 +161,6 @@ def compute_rollout_metrics_dynamic(
     )
     adv_min, adv_max = reduce_tensor.tolist()
 
-
     rollout_metrics = {
         "total_num_sequence": num_seq,
         "prompt_length": sum_plen / num_seq,

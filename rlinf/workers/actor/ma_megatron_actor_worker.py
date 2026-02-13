@@ -92,15 +92,15 @@ class MAMegatronActor(MegatronActor):
             else:
                 result = None
             result = self.broadcast(
-                result, 
+                result,
                 groups=[
                     (self._group_name, parallel_state._MODEL_PARALLEL_GLOBAL_RANKS)
                 ],
             )
             result = self.broadcast(
-                result, 
+                result,
                 groups=[
-                    (self._group_name, parallel_state._MODEL_PARALLEL_GLOBAL_RANKS)
+                    (self._group_name, parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS)
                 ],
             )
         batch = result.to_actor_batch(
@@ -140,7 +140,7 @@ class MAMegatronActor(MegatronActor):
             label_mask[:, :-1] = label_mask[:, 1:].clone()  # Shift left by 1
             label_mask[:, -1] = False
 
-            def logits_processor(logits, label, label_mask, prev_logprobs=None):
+            def logits_processor(logits, label, label_mask):
                 assert logits.shape[:2] == label.shape[:2]
                 assert label.shape == label_mask.shape
 
@@ -195,7 +195,6 @@ class MAMegatronActor(MegatronActor):
                 curr_logprobs[:, 1:] = curr_logprobs_ori[:, :-1].clone()
                 curr_logprobs[:, 0] = 0.0  # first token has no previous token
 
-
                 advantages = batch["advantages"]
                 prev_logprobs = batch["prev_logprobs"]
                 ref_logprobs = None
@@ -213,10 +212,7 @@ class MAMegatronActor(MegatronActor):
                         min=self.cfg.algorithm.importance_sampling_clip,
                     )
 
-                if "response_mask" not in batch:
-                    mask = batch["attention_mask"]
-                else:
-                    mask = batch["response_mask"]
+                mask = batch["response_mask"]
 
                 loss, metrics_data = policy_loss(
                     task_type=self.cfg.runner.task_type,
@@ -432,11 +428,6 @@ class MAMegatronActor(MegatronActor):
 
         # metrics
         rollout_metrics = self._compute_rollout_metrics(batch)
-
-        # pack traj
-        if self.cfg.actor.get("pack_traj", False):
-            adv_turn_level_scale = self.cfg.actor.get("pack_traj_adv_scale", False)
-            batch = DynamicRolloutResult.pack_traj_batch(batch, adv_turn_level_scale)
 
         # idx_to_traj is not needed after computing advantages
         batch.pop("idx_to_traj")
@@ -668,8 +659,8 @@ class MAMegatronActor(MegatronActor):
             batch, rollout_result = self.get_batch(input_channel)
             batches.append(batch)
             rollout_results.append(rollout_result)
-        merged_batch, num_sequence_per_group = (
-            DynamicRolloutResult.merge_batches(batches, adjust_traj_indices=False, return_num_sequence_per_group=True)
+        merged_batch, num_sequence_per_group = DynamicRolloutResult.merge_batches(
+            batches, adjust_traj_indices=False, return_num_sequence_per_group=True
         )
 
         rollout_result = DynamicRolloutResult.merge_result_list(
@@ -709,7 +700,7 @@ class MAMegatronActor(MegatronActor):
         """
         with self.worker_timer():
             if batch.get("advantages", None) is None:
-                mask = batch["response_mask"] # [num_sequence, seq_len]
+                mask = batch["response_mask"]  # [num_sequence, seq_len]
                 advantages, _ = calculate_adv_and_returns(
                     task_type=self.cfg.runner.task_type,
                     adv_type=self.cfg.algorithm.adv_type,

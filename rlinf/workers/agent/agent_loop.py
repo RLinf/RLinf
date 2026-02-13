@@ -14,7 +14,6 @@
 
 import asyncio
 import copy
-import json
 from dataclasses import dataclass, field
 from typing import Any, Optional
 from uuid import uuid4
@@ -26,12 +25,6 @@ from rlinf.data.io_struct import (
     DynamicRolloutResult,
     RolloutRequest,
     RolloutResult,
-)
-from rlinf.data.tool_call.tool_io_struct import (
-    ToolChannelRequest,
-    ToolChannelResponse,
-    ToolRequest,
-    ToolResponse,
 )
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.placement import ModelParallelComponentPlacement
@@ -105,7 +98,6 @@ class AgentLoopWorker(Worker):
             assert isinstance(self, MultiTurnAgentLoopWorker), (
                 "agent loop worker must be MultiTurnAgentLoopWorker if is_dynamic_rollout_batch is True"
             )
-            # assert self.return_logprobs, "recompute_logprobs must be False if is_dynamic_rollout_batch is True"
 
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.rollout.model.model_path)
 
@@ -128,7 +120,6 @@ class AgentLoopWorker(Worker):
         # for multi agent model, use a different agent with no training.
         # such as a 8b planner with training and a 4b worker without training.
         self.solid_generate_input_channels = solid_generate_input_channels
-
 
     async def generate(
         self, prompt_ids: list[int], sampling_params: Optional[dict] = None
@@ -368,9 +359,9 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
 
     def get_rollout_result(
         self, task_results: list[MultiTurnAgentLoopOutput], answer: str
-    ) -> RolloutResult:
+    ) -> DynamicRolloutResult:
         """
-        Collect group task results into a RolloutResult.
+        Collect group task results into a DynamicRolloutResult.
         """
         if self.print_outputs:
             for task_result in task_results:
@@ -397,9 +388,9 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
                     single_turn_output.prompt_ids + single_turn_output.response_ids
                 )
                 if self.return_logprobs:
-                    assert len(single_turn_output.response_logprobs) == len(single_turn_output.response_ids), (
-                        "response_logprobs should have the same length as response_ids"
-                    )
+                    assert len(single_turn_output.response_logprobs) == len(
+                        single_turn_output.response_ids
+                    ), "response_logprobs should have the same length as response_ids"
                     rollout_logprobs.append(single_turn_output.response_logprobs)
                 is_end.append(single_turn_output.is_end)
                 rewards.append(single_turn_output.reward_score)
@@ -415,7 +406,6 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
             is_end=is_end,
             rewards=rewards,
         )
-
 
     async def run_one_query(self, *args, **kwargs) -> MultiTurnAgentLoopOutput:
         raise NotImplementedError("Subclasses must implement this method")

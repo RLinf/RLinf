@@ -18,7 +18,7 @@ import torch
 
 from rlinf.algorithms.registry import register_policy_loss
 from rlinf.algorithms.utils import huber_loss
-from rlinf.utils.utils import masked_mean, masked_mean_ratio, masked_sum
+from rlinf.utils.utils import masked_mean, masked_mean_ratio
 
 
 def compute_ppo_actor_loss(
@@ -52,7 +52,6 @@ def compute_ppo_actor_loss(
     Returns:
         Tuple[torch.Tensor, Dict]: (actor_loss, metrics_dict)
     """
-
 
     loss_mask_ratio = None
 

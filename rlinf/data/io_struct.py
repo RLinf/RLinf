@@ -991,14 +991,10 @@ class DynamicRolloutResult:
     prompt_lengths: list[int]
     response_lengths: list[int]
     is_end: list[bool]
-    # prompt_ids: list[list[int]]
-    # response_ids: list[list[int]]
-    # response_mask: Optional[list[list[int]]] = None
 
     # size of belows are group_size
     rewards: Optional[torch.Tensor | list[float]] = None
     advantages: Optional[torch.Tensor] = None
-
 
     @staticmethod
     def _get_attention_masks_and_position_ids(
@@ -1108,7 +1104,6 @@ class DynamicRolloutResult:
             pad_token=pad_token,
         )
 
-
         batch = {
             "idx_to_traj": self.idx_to_traj,
             "input_ids": input_ids.cuda(),
@@ -1152,7 +1147,9 @@ class DynamicRolloutResult:
             batch["prev_logprobs"] = prev_logprobs.cuda()
         return batch
 
-    def get_batch_pad(seq_length: int, available_keys: list[str] = []) -> dict[str, torch.Tensor]:
+    def get_batch_pad(
+        seq_length: int, available_keys: list[str] = []
+    ) -> dict[str, torch.Tensor]:
         """Get the batch pad for the dynamic rollout result."""
         pad_seq_shape = (1, seq_length)
         attention_mask = torch.zeros(
@@ -1192,7 +1189,7 @@ class DynamicRolloutResult:
                 *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
             ),
         }
-        batch_pad={k: v for k, v in batch_pad.items() if k in available_keys}
+        batch_pad = {k: v for k, v in batch_pad.items() if k in available_keys}
         return batch_pad
 
     @staticmethod
@@ -1207,8 +1204,7 @@ class DynamicRolloutResult:
 
         Args:
             batches: List of batch dictionaries to merge
-            group_size: The group_size for adjusting trajectory indices. 
-                    Required if adjust_traj_indices is True.
+            group_size: The group_size for adjusting trajectory indices.Required if adjust_traj_indices is True.
             adjust_traj_indices: If True, adjusts idx_to_traj with trajectory offset (for training).
                             If False, keeps original indices (for inference).
             return_num_sequence_per_group: If True, returns tuple (merged_batch, num_sequence_per_group).
@@ -1223,7 +1219,7 @@ class DynamicRolloutResult:
             if return_num_sequence_per_group:
                 return merged_batch, []
             return merged_batch
-        
+
         if len(batches) == 1:
             if return_num_sequence_per_group:
                 num_sequence_per_group = [batches[0]["response_lengths"].shape[0]]
@@ -1239,7 +1235,9 @@ class DynamicRolloutResult:
 
         # Validate group_size if adjusting indices
         if adjust_traj_indices and group_size is None:
-            raise ValueError("group_size must be provided when adjust_traj_indices is True")
+            raise ValueError(
+                "group_size must be provided when adjust_traj_indices is True"
+            )
 
         for key in batches[0].keys():
             if key == "idx_to_traj" and adjust_traj_indices:
@@ -1263,7 +1261,6 @@ class DynamicRolloutResult:
             return merged_batch, num_sequence_per_group
         return merged_batch
 
-
     @staticmethod
     def merge_result_list(
         rollout_results: list["DynamicRolloutResult"],
@@ -1280,7 +1277,6 @@ class DynamicRolloutResult:
         assert len(rollout_results) > 0, "No rollout results to merge."
         if len(rollout_results) == 1:
             return rollout_results[0]
-        
 
         merged_result = DynamicRolloutResult(
             num_sequence=sum(res.num_sequence for res in rollout_results),
@@ -1300,9 +1296,10 @@ class DynamicRolloutResult:
             merged_result.prompt_lengths.extend(res.prompt_lengths)
             merged_result.response_lengths.extend(res.response_lengths)
             merged_result.is_end.extend(res.is_end)
-
             if res.rollout_logprobs is not None:
-                merged_result.rollout_logprobs.extend(res.rollout_logprobs)
+                merged_result.rollout_logprobs = (
+                    merged_result.rollout_logprobs or []
+                ) + list(res.rollout_logprobs)
 
             if res.prev_logprobs is not None:
                 merged_result.prev_logprobs = merge_tensor(
@@ -1343,7 +1340,6 @@ class DynamicRolloutResult:
 
         return merged_result
 
-
     @staticmethod
     def split_results(
         rollout_result: "DynamicRolloutResult",
@@ -1377,7 +1373,9 @@ class DynamicRolloutResult:
             split_rewards = rollout_result.rewards[start_idx:end_idx]
 
             if rollout_result.rollout_logprobs is not None:
-                split_rollout_logprobs = rollout_result.rollout_logprobs[start_idx:end_idx]
+                split_rollout_logprobs = rollout_result.rollout_logprobs[
+                    start_idx:end_idx
+                ]
             else:
                 split_rollout_logprobs = None
 
