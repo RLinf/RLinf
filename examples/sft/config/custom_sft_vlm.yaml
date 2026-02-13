@@ -58,10 +58,9 @@ actor:
   global_batch_size: 256
   seed: 42
 
-  # Override the default values in model/pi0
   model:
     model_type: "qwen2.5_vl"
-    precision: bf16
+    precision: fp32
     model_path: "/path/to/Qwen2.5-VL-3B-Instruct"
     is_lora: False
 
@@ -83,9 +82,9 @@ actor:
     use_orig_params: False
     gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
     mixed_precision:
-      param_dtype: ${actor.model.precision}
-      reduce_dtype: ${actor.model.precision}
-      buffer_dtype: ${actor.model.precision}
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: bf16
 
 reward:
   use_reward_model: False

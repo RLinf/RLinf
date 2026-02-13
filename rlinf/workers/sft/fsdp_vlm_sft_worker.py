@@ -137,10 +137,13 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             logging.info(
                 f"Build data loader from {data_paths} with {len(train_dataset)} samples"
             )
-            return data_loader, {
+
+            data_config = {
                 "dataset_name": dataset_name,
                 "num_samples": len(train_dataset),
             }
+
+            return data_loader, data_config
 
         else:
             raise KeyError(
@@ -150,22 +153,90 @@ class FSDPVlmSftWorker(FSDPSftWorker):
     def _normalize_text(self, s: str) -> str:
         return " ".join(str(s).strip().lower().split())
 
+    def _extract_boxed(self, text: str) -> str | None:
+        idx = text.rfind("boxed")
+        if idx < 0:
+            return None
+        s = text[idx + len("boxed"):].strip()
+        if not s:
+            return None
+        if s[0] != "{":
+            return s.split("$")[0].strip() or None
+
+        depth = 0
+        out = []
+        for ch in s:
+            if ch == "{":
+                depth += 1
+                if depth == 1:
+                    continue
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            if depth >= 1:
+                out.append(ch)
+        ans = "".join(out).strip()
+        return ans or None
+
     def _extract_answer(self, text: str) -> str:
-        if SupportedModel(self.cfg.actor.model.model_type) in [
+        if SupportedModel(self.cfg.actor.model.model_type) not in [
             SupportedModel.QWEN2_5_VL_SFT,
             SupportedModel.QWEN3_VL_SFT,
             SupportedModel.QWEN3_VL_MOE_SFT,
         ]:
-            m = re.search(
-                r"<\|im_start\|>assistant\s*(.*?)<\|im_end\|>",
-                text,
-                flags=re.DOTALL,
-            )
-            return m.group(1).strip() if m else text.strip()
-        else:
             raise ValueError(
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
             )
+
+        if not text:
+            return ""
+
+        # 1) Get the last assistant span from common chat templates.
+        patterns = [
+            r"<\|im_start\|>assistant\s*(.*?)<\|im_end\|>",
+            r"<\|assistant\|>\s*(.*?)(?:<\|end\|>|$)",
+        ]
+        body = None
+        for p in patterns:
+            matches = re.findall(p, text, flags=re.DOTALL | re.IGNORECASE)
+            if matches:
+                body = matches[-1].strip()
+                break
+        if body is None:
+            body = text.strip()
+
+        # 2) Remove reasoning blocks if present.
+        body = re.sub(r"<think>.*?</think>", "", body, flags=re.DOTALL | re.IGNORECASE).strip()
+
+        # 3) Try explicit "final answer" markers.
+        marker_patterns = [
+            r"(?:final answer is|the answer is)\s*[:：]?\s*(.+)$",
+            r"(?:answer)\s*[:：]\s*(.+)$",
+        ]
+        for p in marker_patterns:
+            m = re.search(p, body, flags=re.IGNORECASE | re.DOTALL)
+            if m:
+                cand = m.group(1).strip()
+                cand = re.split(r"\n|<\|im_end\|>", cand)[0].strip()
+                if cand:
+                    body = cand
+                    break
+
+        # 4) Math-style boxed fallback.
+        boxed = self._extract_boxed(body)
+        if boxed:
+            body = boxed
+
+        # 5) Last non-empty line fallback.
+        lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+        if lines:
+            body = lines[-1]
+
+        # final cleanup
+        body = body.strip().strip("`").strip()
+        body = body.rstrip(".").rstrip("/")
+        return body
 
     def get_eval_model_output(self, batch: dict[str, Any]):
         # hundle the input batch

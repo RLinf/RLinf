@@ -129,11 +129,6 @@ class FSDPSftWorker(FSDPModelManager, Worker):
 
     def run_training(self):
         with self.worker_timer():
-            if self.cfg.actor.get("enable_offload", False):
-                with self.device_lock:
-                    self.load_param_and_grad(self.device)
-                    self.load_optimizer(self.device)
-
             self.model.train()
             if hasattr(self.model, "gradient_checkpointing_disable"):
                 self.model.gradient_checkpointing_disable()
