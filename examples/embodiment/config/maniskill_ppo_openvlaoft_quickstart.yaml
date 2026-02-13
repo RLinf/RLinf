@@ -90,6 +90,7 @@ env:
     use_fixed_reset_state_ids: False
     max_episode_steps: 80 # max episode steps for truncation
     max_steps_per_rollout_epoch: 80
+    enable_offload: True
   eval:
     total_num_envs: 16
     auto_reset: True
@@ -101,6 +102,7 @@ env:
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
+    enable_offload: True
 
 
 rollout:

@@ -83,7 +83,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: True
 
   # Override the default values in env/robotwin_move_can_pot
   train:
@@ -94,6 +93,7 @@ env:
     group_size: ${algorithm.group_size}
     assets_path: "/path/to/robotwin_assets"
     seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/train_seeds.json
+    enable_offload: True
 
   eval:
     total_num_envs: 128
@@ -110,6 +110,7 @@ env:
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
+    enable_offload: True
 
 rollout:
   group_name: "RolloutGroup"
