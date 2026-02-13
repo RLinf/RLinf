@@ -28,6 +28,7 @@ class SupportedEnvType(Enum):
     FRANKASIM = "frankasim"
     HABITAT = "habitat"
     OPENSORAWM = "opensora_wm"
+    RLBENCH = "rlbench"
 
 
 def get_env_cls(env_type: str, env_cfg=None, enable_offload=False):
@@ -80,6 +81,10 @@ def get_env_cls(env_type: str, env_cfg=None, enable_offload=False):
         from rlinf.envs.metaworld.metaworld_env import MetaWorldEnv
 
         return MetaWorldEnv
+    elif env_type == SupportedEnvType.RLBENCH:
+        from rlinf.envs.rlbench.rlbench_env import RLBenchEnv
+
+        return RLBenchEnv
     elif env_type == SupportedEnvType.BEHAVIOR:
         from rlinf.envs.behavior.behavior_env import BehaviorEnv
 

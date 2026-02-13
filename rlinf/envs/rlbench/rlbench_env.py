@@ -1,8 +1,22 @@
-# parallel_rlbench_env.py
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
 import time
 import copy
 import random
+import math
 import numpy as np
 from typing import List, Optional, Union, Tuple
 import multiprocessing as mp
@@ -10,33 +24,88 @@ import imageio
 import gym
 import torch
 from scipy.spatial.transform import Rotation as R
-from rlinf.envs.utils import to_tensor
-from rlinf.envs.libero.utils import tile_images
+from rlinf.envs.utils import (
+    put_info_on_image,
+    tile_images,
+    to_tensor,
+)
 
 # rlbench imports
 from rlbench.environment import Environment
 from rlbench.action_modes.action_mode import MoveArmThenGripper
 from rlbench.action_modes.arm_action_modes import JointVelocity, EndEffectorPoseViaIK
-from rlbench.action_modes.gripper_action_modes import Discrete
+from rlbench.action_modes.gripper_action_modes import Discrete, GripperJointPosition
 from rlbench.observation_config import ObservationConfig, CameraConfig
+from rlbench.backend.exceptions import InvalidActionError
+
+
+# ----------------------------
+# OpenPI-style 7D action -> RLBench 8D delta pose (align with replay_openpi_parquet_video.py)
+# ----------------------------
+def _quaternion_to_euler_xyz(q: np.ndarray) -> np.ndarray:
+    """Quaternion [qx, qy, qz, qw] -> Euler [roll, pitch, yaw] (XYZ)."""
+    qx, qy, qz, qw = q
+    sinr_cosp = 2.0 * (qw * qx + qy * qz)
+    cosr_cosp = 1.0 - 2.0 * (qx * qx + qy * qy)
+    roll = math.atan2(sinr_cosp, cosr_cosp)
+    sinp = 2.0 * (qw * qy - qz * qx)
+    pitch = math.asin(np.clip(sinp, -1.0, 1.0))
+    siny_cosp = 2.0 * (qw * qz + qx * qy)
+    cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
+    yaw = math.atan2(siny_cosp, cosy_cosp)
+    return np.array([roll, pitch, yaw], dtype=np.float32)
+
+
+def _euler_xyz_to_quaternion(euler: np.ndarray) -> np.ndarray:
+    """Euler [roll, pitch, yaw] (XYZ) -> quaternion [qx, qy, qz, qw] (scipy xyzw)."""
+    r = R.from_euler("xyz", euler)
+    return r.as_quat().astype(np.float32)
+
+
+def parquet_action_to_rlbench_delta_pose(
+    current_pose: np.ndarray,
+    action_7d: np.ndarray,
+) -> np.ndarray:
+    """
+    将 OpenPI 的 7D action [delta_pos(3), delta_euler(3), delta_gripper(1)] 转为 RLBench 的
+    7D delta pose [delta_pos(3), delta_quat(4)]，供 EndEffectorPoseViaIK(absolute_mode=False) 使用。
+    current_pose: [x,y,z, qx,qy,qz,qw] 当前末端位姿。
+    """
+    delta_pos = np.asarray(action_7d[:3], dtype=np.float32)
+    delta_euler = np.asarray(action_7d[3:6], dtype=np.float32)
+    current_quat = current_pose[3:7]
+    current_euler = _quaternion_to_euler_xyz(current_quat)
+    next_euler = current_euler + delta_euler
+    next_quat = _euler_xyz_to_quaternion(next_euler)
+    r_curr = R.from_quat(current_quat)
+    r_next = R.from_quat(next_quat)
+    r_delta = r_next * r_curr.inv()
+    delta_quat = r_delta.as_quat().astype(np.float32)
+    delta_quat = delta_quat / np.linalg.norm(delta_quat)
+    return np.concatenate([delta_pos, delta_quat])
 
 
 # ----------------------------
 # Worker process
 # ----------------------------
-def _make_obs_config(image_size=(128, 128), front_only=True):
+def _make_obs_config(
+    image_size=(128, 128),
+    cameras: Tuple[str, ...] = ("front", "overhead", "wrist"),
+):
+    """Enable specified cameras. Default: front, overhead, wrist."""
     cam = CameraConfig(rgb=True, depth=False, mask=False, image_size=image_size)
     obs_config = ObservationConfig()
     obs_config.set_all(False)
-    if front_only:
+    if "front" in cameras:
         obs_config.front_camera = cam
-    else:
-        # enable several default cameras (front + wrist) - adjust as needed
-        obs_config.front_camera = cam
-        obs_config.wrist_camera = cam
-        obs_config.left_shoulder_camera = cam
-        obs_config.right_shoulder_camera = cam
+    if "overhead" in cameras:
         obs_config.overhead_camera = cam
+    if "wrist" in cameras:
+        obs_config.wrist_camera = cam
+    if "left_shoulder" in cameras:
+        obs_config.left_shoulder_camera = cam
+    if "right_shoulder" in cameras:
+        obs_config.right_shoulder_camera = cam
     return obs_config
 
 
@@ -49,10 +118,11 @@ def worker_process(
 ):
     try:
         # build env & task
-        obs_config = _make_obs_config(image_size=image_size, front_only=True)
+        # 默认启用 front + overhead + wrist 三路相机（见 _make_obs_config 默认 cameras）
+        obs_config = _make_obs_config(image_size=image_size)
         action_mode = MoveArmThenGripper(
             arm_action_mode=EndEffectorPoseViaIK(absolute_mode=False),
-            gripper_action_mode=Discrete(),
+            gripper_action_mode=GripperJointPosition(absolute_mode=True),
         )
         env = Environment(
             action_mode, obs_config=obs_config, headless=headless, robot_setup="panda"
@@ -80,9 +150,13 @@ def worker_process(
         else:
             current_obs = reset_ret
 
+        # OpenPI-style: 7D action [delta_pos(3), delta_euler(3), delta_gripper(1)]; gripper 积分成绝对开合度
+        gripper_open = 1.0
+
         while True:
             cmd, data = child_conn.recv()
             if cmd == "reset":
+                gripper_open = 1.0
                 ret = task.reset()
                 if isinstance(ret, tuple) and len(ret) >= 2:
                     obs = ret[1]
@@ -93,8 +167,31 @@ def worker_process(
                 current_obs = obs
 
             elif cmd == "step":
-                action = data  # np array
-                ret = task.step(action)
+                # data: 7D [delta_pos(3), delta_euler(3), delta_gripper(1)]
+                action_7d = np.asarray(data, dtype=np.float32)
+                if action_7d.size != 7:
+                    action_7d = np.reshape(action_7d, (7,))
+                scene = task._scene
+                robot = scene.robot
+                current_pose = np.array(robot.arm.get_tip().get_pose(), dtype=np.float32)
+                arm_7d = parquet_action_to_rlbench_delta_pose(current_pose, action_7d)
+                gripper_open = np.clip(
+                    gripper_open + float(action_7d[6]), 0.0, 1.0
+                ).item()
+                full_action = np.concatenate([arm_7d, [gripper_open]])
+                try:
+                    ret = task.step(full_action)
+                    # if os.environ.get("RLINF_DEBUG_ACTION", "0") == "1":
+                    #     print("valid action 7D(from policy):", action_7d, "-> 8D(step):", full_action)
+                except InvalidActionError:
+                    # IK failed (target too far) or other action error; no-op step
+                    ret = (current_obs, 0.0, False)
+                    # # Debug: 7D from policy vs 8D sent to step (dataset scale: delta_pos ~1e-4, delta_euler ~1e-4 rad, gripper [0,1])
+                    # print(
+                    #     "invalid action 7D(from policy, expect delta_pos~1e-4 delta_euler~1e-4 rad):",
+                    #     action_7d,
+                    # )
+                    # print("invalid action 8D(sent to step):", full_action)
                 # task.step often returns (obs, reward, terminate)
                 if len(ret) == 3:
                     obs, reward, terminate = ret
@@ -137,7 +234,7 @@ def worker_process(
         try:
             child_conn.send(("worker_error", str(e)))
         except Exception:
-            pass
+            print("rlbench initialization failed", e)
         raise
 
 
@@ -151,25 +248,29 @@ class RLBenchEnv(gym.Env):
     - Public API: reset(), step(actions), chunk_step(chunk_actions), flush_video(), close()
     """
 
-    def __init__(
-        self, cfg, seed_offset=0, total_num_processes=None, record_metrics=True
-    ):
+    def __init__(self, cfg, num_envs, seed_offset, total_num_processes, worker_info):
         """
         cfg: OmegaConf config object with environment parameters
+        num_envs: number of envs for this worker/stage
         seed_offset: offset for seed
         total_num_processes: total number of processes across all groups
-        record_metrics: whether to record metrics
+        worker_info: worker metadata (for interface compatibility with other envs)
         """
         from omegaconf import OmegaConf
 
         self.cfg = cfg
         self.seed_offset = seed_offset
-        self.total_num_processes = total_num_processes or cfg.num_envs
-        self.record_metrics = record_metrics
+        self.total_num_processes = total_num_processes
+        self.worker_info = worker_info
+        self.record_metrics = True
 
-        # Extract config values
-        self.num_envs = cfg.num_envs
+        # Extract config values (align with Libero/MetaWorld)
+        self.num_envs = num_envs
+        self.group_size = getattr(cfg, "group_size", 1)
+        self.num_group = self.num_envs // self.group_size
         self.seed = cfg.seed + seed_offset
+        self.ignore_terminations = getattr(cfg, "ignore_terminations", False)
+        self.use_rel_reward = getattr(cfg, "use_rel_reward", True)
         self.headless = True
         self.image_size = (
             tuple(cfg.image_size)
@@ -182,34 +283,36 @@ class RLBenchEnv(gym.Env):
 
         if getattr(cfg, "save_video", False) and not self.video_cfg.save_video:
             self.video_cfg.save_video = True
-        self.video_base_dir = cfg.video_base_dir
+        self.video_base_dir = (
+            cfg.video_base_dir
+            if hasattr(cfg, "video_base_dir")
+            else self.video_cfg.video_base_dir
+        )
         self.task_names = (
             cfg.task_names if hasattr(cfg, "task_names") else ["ReachTarget"]
         )
 
-        # # Action limits for relative mode (delta actions)
-        # # Position delta: limit to [-0.1, 0.1] meters (10cm) to avoid IK failures
-        # # Rotation delta: limit to [-0.3, 0.3] radians (~17 degrees)
-        # # Gripper: limit to [0, 1] for binary control
-        # self.action_pos_limit = getattr(cfg, "action_pos_limit", 0.01)  # meters
-        # self.action_rot_limit = getattr(cfg, "action_rot_limit", 0.01)  # radians
-        # self.action_gripper_min = getattr(cfg, "action_gripper_min", 0.0)
-        # self.action_gripper_max = getattr(cfg, "action_gripper_max", 1.0)
+        # Action flow aligned with Metaworld: no env-side normalization or clipping.
+        # Policy outputs unnormalized 7D (openpi Unnormalize); we pass through; worker
+        # only converts 7D [delta_pos, delta_euler, delta_gripper] -> 8D [delta_pose_quat, gripper] for RLBench API.
 
         os.makedirs(self.video_base_dir, exist_ok=True)
 
         # pipes/workers
+        # Use spawn to avoid inheriting TensorFlow/LLVM from parent (EnvWorker), which causes
+        # segfault when CoppeliaSim loads - "fork" copies parent's loaded libs causing conflicts.
+        ctx = mp.get_context("spawn")
         self.parent_conns = []
         self.workers = []
         # Store task names for each env for debugging
         self.env_task_names = []
         for i in range(self.num_envs):
-            parent_conn, child_conn = mp.Pipe()
+            parent_conn, child_conn = ctx.Pipe()
             task_name = self.task_names[i % len(self.task_names)]
             self.env_task_names.append(task_name)
             # Use different seeds for each env to ensure different initializations
             env_seed = self.seed + i
-            p = mp.Process(
+            p = ctx.Process(
                 target=worker_process,
                 args=(child_conn, task_name, env_seed, self.headless, self.image_size),
                 daemon=True,
@@ -219,7 +322,7 @@ class RLBenchEnv(gym.Env):
             self.workers.append(p)
 
         # Debug: print task assignment
-        print(f"[RLBenchEnv] Task assignment: {self.env_task_names}")
+        # print(f"[RLBenchEnv] Task assignment: {self.env_task_names}")
 
         # metrics
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
@@ -238,13 +341,40 @@ class RLBenchEnv(gym.Env):
         # startup flag: require reset before step
         self._is_start = True
 
+    @property
+    def elapsed_steps(self):
+        return self._elapsed_steps
+
+    @property
+    def info_logging_keys(self):
+        return []
+
+    @property
+    def is_start(self):
+        return self._is_start
+
+    @is_start.setter
+    def is_start(self, value):
+        self._is_start = value
+
+    def update_reset_state_ids(self):
+        """No-op for interface compatibility with Libero/MetaWorld. RLBench uses task_names assignment."""
+        pass
+
     # -------------------------
     # Helper: send reset to specific envs
     # -------------------------
-    def reset(self, env_idx: Optional[Union[int, List[int], np.ndarray]] = None):
+    def reset(
+        self,
+        env_idx: Optional[Union[int, List[int], np.ndarray]] = None,
+        reset_state_ids=None,
+    ):
         """
         Reset specified envs (or all if env_idx is None).
-        Returns: obs_images: np.array shape [len(env_idx), H, W, 3]
+        Returns: (obs_dict, infos) - aligned with Libero/MetaWorld for env_worker.
+        obs_dict has "images" (torch.Tensor) and "task_descriptions" (list).
+        When env_idx is provided, obs_dict tensors have shape [len(env_idx), ...]
+        for use in _handle_auto_reset merge.
         """
         if env_idx is None:
             idxs = list(range(self.num_envs))
@@ -278,12 +408,28 @@ class RLBenchEnv(gym.Env):
             self._elapsed_steps[i] = 0
             self.current_obs_images[i] = obs_img
             if self.video_cfg.save_video:
-                self.render_images[i] = [obs_img.copy()]
+                info_item = {
+                    "rewards": 0.0,
+                    "terminations": False,
+                    "task": self.env_task_names[i],
+                }
+                self.render_images[i] = [
+                    put_info_on_image(obs_img.copy(), info_item)
+                ]
 
-        if len(obs_list) == 1:
-            return obs_list[0]
-        else:
-            return np.stack(obs_list, axis=0)
+        obs_np = np.stack(obs_list, axis=0)
+        # Build obs_dict compatible with OpenPI obs_processor (main_images, states, etc.)
+        images_tensor = torch.tensor(obs_np).permute(0, 3, 1, 2)
+        n_envs = images_tensor.shape[0]
+        obs_dict = {
+            "main_images": images_tensor,
+            "wrist_images": images_tensor.clone(),  # RLBench front_only: use same as main
+            "overhead_images": images_tensor.clone(),
+            "states": torch.zeros(n_envs, 7, dtype=torch.float32),  # no state from workers
+            "task_descriptions": self.get_description(target_length=self.num_envs),
+        }
+        infos = {}
+        return obs_dict, infos
 
     def get_description(self, target_length: Optional[int] = None):
         """
@@ -341,16 +487,13 @@ class RLBenchEnv(gym.Env):
         """
         if actions is None:
             actions = np.zeros((self.num_envs, 7))
+
         if self._is_start:
-            obs = self.reset()
+            obs_dict, infos = self.reset()
             self._is_start = False
             terminations = np.zeros(self.num_envs, dtype=bool)
             truncations = np.zeros(self.num_envs, dtype=bool)
-            infos = self._make_episode_info({})
-            obs_dict = {
-                "images": torch.tensor(obs).permute(0, 3, 1, 2),
-                "task_descriptions": self.get_description(target_length=self.num_envs),
-            }
+            infos = self._make_episode_info(infos)
             rewards_tensor = torch.zeros(self.num_envs, dtype=torch.float32)
             terminations_tensor = torch.tensor(terminations, dtype=torch.bool)
             truncations_tensor = torch.tensor(truncations, dtype=torch.bool)
@@ -369,18 +512,8 @@ class RLBenchEnv(gym.Env):
             "actions must have shape [num_envs, action_dim]"
         )
 
-        # # Clip actions to reasonable limits to avoid IK failures
-        # # Position delta (first 3 dims): limit to [-action_pos_limit, action_pos_limit] meters
-        # actions[:, :3] = np.clip(actions[:, :3], -self.action_pos_limit, self.action_pos_limit)
-        # # Rotation delta (next 3 dims, Euler angles): limit to [-action_rot_limit, action_rot_limit] radians
-        # actions[:, 3:6] = np.clip(actions[:, 3:6], -self.action_rot_limit, self.action_rot_limit)
-        # # Gripper (last dim): limit to [action_gripper_min, action_gripper_max]
-        # actions[:, 6:] = np.clip(actions[:, 6:], self.action_gripper_min, self.action_gripper_max)
-
-        # convert rotations in actions to quaternions
-        quaternions = R.from_euler("xyz", actions[:, 3:6]).as_quat()
-        actions = np.concatenate([actions[:, :3], quaternions, actions[:, 6:]], axis=1)
-
+        # Aligned with Metaworld: no normalization or clipping. Action is unnormalized 7D
+        # from policy (openpi Unnormalize + RLBenchOutputs). Worker converts 7D -> 8D for RLBench API only.
         # send step to all workers
         for i in range(self.num_envs):
             self.parent_conns[i].send(("step", actions[i]))
@@ -407,20 +540,39 @@ class RLBenchEnv(gym.Env):
             if terminate:
                 self.success_once[i] = True
 
-            # video frame append
-            if self.video_cfg.save_video:
-                self.render_images[i].append(img.copy())
-
             # update current obs
             self.current_obs_images[i] = img
 
         obs = np.stack(obs_list, axis=0)
-        rewards = np.array(rewards, dtype=np.float32)
+        raw_rewards = np.array(rewards, dtype=np.float32)
         terminations = np.array(terminations, dtype=bool)
         truncations = self._elapsed_steps >= self.max_episode_steps
 
+        # use_rel_reward: return reward difference (Libero-style)
+        if self.use_rel_reward:
+            step_reward = raw_rewards - self.prev_step_reward
+            self.prev_step_reward = raw_rewards.copy()
+        else:
+            step_reward = raw_rewards
+        rewards = step_reward
+
         # build infos similar to Libero: include episode metrics
         infos = self._make_episode_info({})
+        terminations_for_video = terminations.copy()
+        if self.ignore_terminations:
+            infos["episode"]["success_at_end"] = to_tensor(terminations.copy())
+            terminations[:] = False
+
+        # video frame append with info overlay (Libero-style)
+        if self.video_cfg.save_video:
+            for i in range(self.num_envs):
+                info_item = {
+                    "rewards": rewards[i],
+                    "terminations": terminations_for_video[i],
+                    "task": self.env_task_names[i],
+                }
+                img_overlay = put_info_on_image(obs_list[i].copy(), info_item)
+                self.render_images[i].append(img_overlay)
 
         dones = terminations | truncations
         do_auto_reset = (
@@ -432,9 +584,14 @@ class RLBenchEnv(gym.Env):
             obs = obs_after_reset
             infos = infos_after
 
-        # Convert to torch tensors and build obs dict
+        # Build obs_dict compatible with OpenPI obs_processor (main_images, states, etc.)
+        images_tensor = torch.tensor(obs).permute(0, 3, 1, 2)
+        n_envs = images_tensor.shape[0]
         obs_dict = {
-            "images": torch.tensor(obs).permute(0, 3, 1, 2),
+            "main_images": images_tensor,
+            "wrist_images": images_tensor.clone(),
+            "overhead_images": images_tensor.clone(),
+            "states": torch.zeros(n_envs, 7, dtype=torch.float32),
             "task_descriptions": self.get_description(target_length=self.num_envs),
         }
         rewards_tensor = torch.tensor(rewards, dtype=torch.float32)
@@ -485,7 +642,7 @@ class RLBenchEnv(gym.Env):
         # Determine past dones across chunk
         past_terminations = chunk_terms.any(axis=1)
         past_truncations = chunk_truncs.any(axis=1)
-        past_dones = np.logical_or(past_terminations, past_truncations)
+        past_dones = (past_terminations | past_truncations).cpu().numpy()
 
         if past_dones.any() and self.auto_reset:
             # emulate Libero behavior: do auto reset for envs that had done at any step in chunk
@@ -497,10 +654,13 @@ class RLBenchEnv(gym.Env):
                 infos = self._make_episode_info({})
 
         # Build chunk termination/truncation indicators in Libero style:
-        # If auto_reset or ignore_terminations -> zeros except last step indicates if any termination occurred in chunk.
-        # Here we mimic Libero: only set last step True when any happened (for termination/truncation)
-        chunk_terms[:, -1] = past_terminations
-        chunk_truncs[:, -1] = past_truncations
+        # If auto_reset or ignore_terminations -> zeros except last step indicates if any occurred in chunk
+        if self.auto_reset or self.ignore_terminations:
+            chunk_terms = torch.zeros_like(chunk_terms)
+            chunk_truncs = torch.zeros_like(chunk_truncs)
+            chunk_terms[:, -1] = past_terminations
+            chunk_truncs[:, -1] = past_truncations
+        # else: keep raw chunk_terms, chunk_truncs as-is
 
         return final_obs, chunk_rewards, chunk_terms, chunk_truncs, infos
 
@@ -510,7 +670,7 @@ class RLBenchEnv(gym.Env):
     def _handle_auto_reset(self, dones: np.ndarray, _final_obs: dict, infos: dict):
         """
         dones: boolean array length num_envs indicating which envs ended
-        _final_obs: last observations (dict with "images" and "task_descriptions") before reset
+        _final_obs: last observations (dict with main_images, states, etc.) before reset
         Returns: (obs_after_reset, infos) - and infos will include 'final_observation','final_info' etc.
         """
         # Deep copy final_obs dict to preserve it
@@ -530,13 +690,19 @@ class RLBenchEnv(gym.Env):
                 else:
                     final_info["episode"][key] = copy.deepcopy(value)
 
-        # reset those envs
-        obs_after_np = self.reset(env_idx=env_idx)
-        # Convert to dict format with torch tensor
-        obs_after = {
-            "images": torch.tensor(obs_after_np).permute(0, 3, 1, 2),
-            "task_descriptions": self.get_description(target_length=self.num_envs),
-        }
+        # reset those envs; reset returns (obs_dict, infos)
+        obs_after_partial, _ = self.reset(env_idx=env_idx)
+        # Merge: full obs with reset envs replaced (Libero-style)
+        obs_after = {}
+        for key in ("main_images", "wrist_images", "overhead_images"):
+            full_tensor = final_obs[key].clone()
+            full_tensor[env_idx] = obs_after_partial[key]
+            obs_after[key] = full_tensor
+        obs_after["states"] = final_obs["states"].clone()
+        obs_after["states"][env_idx] = obs_after_partial["states"]
+        obs_after["task_descriptions"] = self.get_description(
+            target_length=self.num_envs
+        )
         # assemble infos similar to Libero:
         infos_out = {}
         infos_out["final_observation"] = final_obs
@@ -636,7 +802,7 @@ class RLBenchEnv(gym.Env):
             for frame in tiled_frames:
                 # ensure uint8 HWC
                 writer.append_data(np.asarray(frame))
-        print(f"[RLBenchEnv] Saved combined video: {path} (tiled {self.num_envs} envs)")
+        # print(f"[RLBenchEnv] Saved combined video: {path} (tiled {self.num_envs} envs)")
 
         # reset frames buffer
         self.render_images = [[] for _ in range(self.num_envs)]
@@ -675,11 +841,11 @@ if __name__ == "__main__":
     }
     cfg = OmegaConf.create(cfg_dict)
 
-    env = RLBenchEnv(cfg, seed_offset=0, total_num_processes=2, record_metrics=False)
+    env = RLBenchEnv(cfg, num_envs=2, seed_offset=0, total_num_processes=2, worker_info=None)
 
     # initial reset
-    obs = env.reset()
-    print("reset obs shape:", np.array(obs).shape)
+    obs_dict, infos = env.reset()
+    # print("reset obs shape:", obs_dict["main_images"].shape)
 
     # random chunk actions example
     n_steps = 40
@@ -688,13 +854,13 @@ if __name__ == "__main__":
         actions = np.zeros((env.num_envs, action_dim)).astype(np.float32)
         actions[..., 0] = -0.01
         obs, rewards, terms, truncs, infos = env.step(actions)
-        print(f"t={t} rewards={rewards}, terms={terms}")
+        # print(f"t={t} rewards={rewards}, terms={terms}")
 
     # chunk_step example: 3 micro steps per call
     chunk = np.zeros((env.num_envs, 3, action_dim)).astype(np.float32)
     chunk[..., 0] = -0.01
     final_obs, chunk_rewards, chunk_terms, chunk_truncs, infos = env.chunk_step(chunk)
-    print("chunk_rewards shape:", chunk_rewards.shape)
+    # print("chunk_rewards shape:", chunk_rewards.shape)
 
     env.flush_video("demo")
     env.close()
