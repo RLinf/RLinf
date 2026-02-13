@@ -34,7 +34,7 @@ from rlinf.models.embodiment.modules.value_head import ValueHead
 @dataclass(frozen=True)
 class OpenPi0Config(Pi0Config):
     # config for rl
-    config_name: str = "pi0_libero"  # pi0_libero, pi05_libero, pi0_maniskill, pi05_maniskill, pi0_metaworld, pi05_metaworld
+    config_name: str = "pi0_libero"  # pi0_libero, pi05_libero, pi0_maniskill, pi05_maniskill, pi0_metaworld, pi05_metaworld, pi05_rlbench
     num_images_in_input: int = 2  # number of images in input
     noise_method: str = "flow_sde"  # flow_sde, flow_noise, flow_cps
     # noise config for flow-sde
@@ -308,8 +308,16 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         else:
             processed_obs["observation/state"] = env_obs["states"]
         # wrist image observation
-        if env_obs["wrist_images"] is not None:
+        if env_obs.get("wrist_images") is not None:
             processed_obs["observation/wrist_image"] = env_obs["wrist_images"]
+        # RLBench: needs overhead_image (pi05_rlbench checkpoint was trained with 3 cams)
+        if "rlbench" in self.config.config_name.lower():
+            processed_obs["observation/wrist_image"] = env_obs.get(
+                "wrist_images", env_obs["main_images"]
+            )
+            processed_obs["observation/overhead_image"] = env_obs.get(
+                "overhead_images", env_obs["main_images"]
+            )
         # store used keys
         return processed_obs
 
@@ -362,8 +370,12 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             "tokenized_prompt": processed_obs["tokenized_prompt"],
             "tokenized_prompt_mask": processed_obs["tokenized_prompt_mask"],
         }
-        if env_obs["wrist_images"] is not None:
+        if env_obs.get("wrist_images") is not None:
             forward_inputs["observation/wrist_image"] = env_obs["wrist_images"]
+        if "rlbench" in self.config.config_name.lower():
+            forward_inputs["observation/overhead_image"] = env_obs.get(
+                "overhead_images", env_obs["main_images"]
+            )
         forward_inputs.update(to_process_obs)
         forward_inputs.pop("prompt", None)
 

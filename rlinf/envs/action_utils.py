@@ -190,6 +190,8 @@ def prepare_actions(
         chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.METAWORLD:
         chunk_actions = raw_chunk_actions
+    elif env_type == SupportedEnvType.RLBENCH:
+        chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.CALVIN:
         chunk_actions = prepare_actions_for_calvin(
             raw_chunk_actions=raw_chunk_actions,

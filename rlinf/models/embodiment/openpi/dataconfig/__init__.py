@@ -47,6 +47,9 @@ from rlinf.models.embodiment.openpi.dataconfig.maniskill_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.metaworld_dataconfig import (
     LeRobotMetaworldDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.rlbench_dataconfig import (
+    LeRobotRLBenchDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
     LeRobotRobocasaDataConfig,
 )
@@ -274,6 +277,22 @@ _CONFIGS = [
             action_train_with_rotation_6d=False,  # User can add extra config in custom dataset
         ),
         pytorch_weight_path="checkpoints/torch/pi0_base",
+    ),
+    TrainConfig(
+        name="pi05_rlbench",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=False
+        ),
+        data=LeRobotRLBenchDataConfig(
+            repo_id="rlbench18",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                assets_dir="checkpoints/torch/pi0_base",  # overridden by model_path
+                asset_id="rlbench18",
+            ),
+            extra_delta_transform=False,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
     ),
 ]
 
