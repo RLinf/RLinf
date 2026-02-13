@@ -6,6 +6,7 @@ import uuid
 from typing import Any, Dict, List, Optional, Set, cast
 from transformers import AutoTokenizer
 import torch
+import numpy as np
 from omegaconf import DictConfig, OmegaConf
 from transformers import AutoTokenizer
 
@@ -13,7 +14,7 @@ from agentlightning import NamedResources, RolloutLegacy
 from agentlightning.adapter.triplet import TraceToTripletBase
 from agentlightning.llm_proxy import LLMProxy
 from agentlightning.store.base import LightningStore
-from agentlightning.types.core import EnqueueRolloutRequest, Rollout, RolloutConfig, Task
+from agentlightning.types.core import EnqueueRolloutRequest, Rollout, RolloutConfig, Task, Triplet
 
 
 from rlinf.data.io_struct import RolloutResult
@@ -88,7 +89,6 @@ class AgentLightningRolloutWorker(Worker):
             if self.is_eval_mode:
                 # In eval mode, use the same sampling_params but set temperature to 0
                 sampling_params["temperature"] = 0.0
-                sampling_params["do_sample"] = False
             
             llm_resource = self.llm_proxy.as_resource(
                 sampling_parameters=sampling_params
@@ -112,7 +112,6 @@ class AgentLightningRolloutWorker(Worker):
             original_sample = {key: data[key][i] for key in keys}
             original_sample["data_id"] = data_id
             data_id_to_original_sample[data_id] = original_sample
-            # Initialize the list for this data_id
             self._data_id_to_rollout_ids[data_id] = []
 
             for rollout_idx in range(group_size):
@@ -192,6 +191,94 @@ class AgentLightningRolloutWorker(Worker):
         )
 
         return result_rollout
+
+    def _count_tool_calls_in_triplet(self, triplet: Triplet) -> int:
+        if triplet.metadata and "tool_calls" in triplet.metadata:
+            tool_calls = triplet.metadata["tool_calls"]
+            if isinstance(tool_calls, list):
+                return len(tool_calls)
+            elif isinstance(tool_calls, int):
+                return tool_calls
+        
+        if isinstance(triplet.response, dict):
+            if "tool_calls" in triplet.response:
+                tool_calls = triplet.response["tool_calls"]
+                if isinstance(tool_calls, list):
+                    return len(tool_calls)
+            if "metadata" in triplet.response and isinstance(triplet.response["metadata"], dict):
+                if "tool_calls" in triplet.response["metadata"]:
+                    tool_calls = triplet.response["metadata"]["tool_calls"]
+                    if isinstance(tool_calls, list):
+                        return len(tool_calls)
+        
+        return 0
+
+    def _compute_rollout_metrics(
+        self, 
+        rollout_results: List[RolloutResult],
+        rollouts: List[RolloutLegacy]
+    ) -> Dict[str, float]:
+        if not rollout_results:
+            return {
+                "agent/reward": 0.0,
+                "agent/n_rollouts": 0,
+                "agent/n_rollouts_w_trace": 0,
+                "agent/n_rollouts_w_reward": 0,
+            }
+        
+        all_rewards: List[float] = []
+        total_response_lengths: List[int] = []
+        n_rollouts = 0
+        n_rollouts_w_trace = 0
+        
+        total_tool_calls = 0
+        total_turns = 0
+        n_triplets = 0
+        n_rollouts_w_reward = 0
+        
+        for rollout_result in rollout_results:
+            n_rollouts += rollout_result.batch_size
+            n_triplets += rollout_result.num_sequence
+            
+            if rollout_result.rewards is not None:
+                if isinstance(rollout_result.rewards, torch.Tensor):
+                    rewards_list = rollout_result.rewards.tolist()
+                else:
+                    rewards_list = rollout_result.rewards
+                all_rewards.extend(rewards_list)
+            else:
+                all_rewards.extend([self.reward_fillna_value] * rollout_result.batch_size)
+            
+            if rollout_result.response_lengths:
+                n_rollouts_w_trace += rollout_result.batch_size
+                total_response_lengths.extend(rollout_result.response_lengths)
+        
+        for rollout_legacy in rollouts:
+            if rollout_legacy.final_reward is not None:
+                n_rollouts_w_reward += 1
+            
+            if rollout_legacy.triplets:
+                num_turns = len(rollout_legacy.triplets)
+                total_turns += num_turns
+                for triplet in rollout_legacy.triplets:
+                    total_tool_calls += self._count_tool_calls_in_triplet(triplet)
+        
+        training_reward = np.mean(all_rewards) if all_rewards else 0.0
+        
+        metrics = {
+            "agent/reward": float(training_reward),
+            "agent/n_rollouts": n_rollouts,
+            "agent/n_rollouts_w_trace": n_rollouts_w_trace,
+            "agent/n_rollouts_w_reward": n_rollouts_w_reward,
+            "agent/turn_count": n_triplets,
+            "agent/mean_turn_count_per_rollout": float(total_turns / n_rollouts) if n_rollouts > 0 else 0.0,
+            "agent/mean_response_length": float(np.mean(total_response_lengths)) if total_response_lengths else 0.0,
+            "agent/total_tool_calls": total_tool_calls,
+            "agent/mean_tool_calls_per_rollout": float(total_tool_calls / n_rollouts) if n_rollouts > 0 else 0.0,
+            "agent/mean_tool_calls_per_turn": float(total_tool_calls / total_turns) if total_turns > 0 else 0.0,
+        }
+        
+        return metrics
 
     def _clear_data(self):
         self._completed_rollout_ids.clear()
@@ -317,6 +404,7 @@ class AgentLightningRolloutWorker(Worker):
             
             initial_data_ids_count = len(self._data_id_to_rollout_ids)
             processed_data_ids = set()
+            rollout_results: List[RolloutResult] = []
             
             while len(processed_data_ids) < initial_data_ids_count:
                 rollout_ids_to_query = [
@@ -340,6 +428,7 @@ class AgentLightningRolloutWorker(Worker):
                     
                     rollout_result = await self._async_get_rollout_result_for_data_id(data_id)
                     if rollout_result is not None:
+                        rollout_results.append(rollout_result)
                         output_channel.put(rollout_result, async_op=True)
                     
                     processed_data_ids.add(data_id)
@@ -347,14 +436,10 @@ class AgentLightningRolloutWorker(Worker):
                 if len(processed_data_ids) < initial_data_ids_count:
                     await asyncio.sleep(0.1)
             
-            all_rewards: List[float] = []
-            for rollout_id, rollout_legacy in self._completed_rollout_ids.items():
-                all_rewards.append(rollout_legacy.final_reward)
-            
-            training_reward = sum(all_rewards) / len(all_rewards) if all_rewards else 0.0
-            
+            rollouts_list = list(self._completed_rollout_ids.values())
+            metrics = self._compute_rollout_metrics(rollout_results, rollouts_list)
             self._clear_data()
-            return {"training/reward": training_reward}
+            return metrics
 
     async def process_eval_batch(
         self, input_channel: Channel
@@ -398,10 +483,7 @@ class AgentLightningRolloutWorker(Worker):
                 all_rewards.append(rollout_legacy.final_reward)
             
             avg_reward = sum(all_rewards) / len(all_rewards) if all_rewards else 0.0
-            
-            # 输出调试信息
             logging.info(f"Eval rewards: {all_rewards}, count: {len(all_rewards)}, avg: {avg_reward}")
-            
             self._clear_data()
             return avg_reward
 
