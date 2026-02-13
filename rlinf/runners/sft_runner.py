@@ -77,7 +77,7 @@ class SFTRunner:
             # set global step
             self.actor.set_global_step(self.global_step)
 
-            # SFt Training
+            # SFT Training
             with self.timer("step"):
                 # Actor training.
                 actor_handle: Handle = self.actor.run_training()

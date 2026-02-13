@@ -29,7 +29,6 @@ Supported formats include:
 - pi05_maniskill
 - pi05_metaworld
 - pi05_calvin
-- Robo2VLM
 
 You can also train with a custom dataset format. Refer to the files below:
 
@@ -96,42 +95,6 @@ To enable LoRA fine-tuning, set ``actor.model.is_lora`` to True and configure ``
         model:
             is_lora: True
             lora_rank: 32
-
-An example configuration for VLM SFT is ``examples/sft/config/custom_sft_vlm.yaml``. The current SFT pipeline supports both train and evaluation.
-
-You can switch between train/eval by setting ``train_data_paths`` and ``eval_data_paths``. For example:
-
-.. code:: yaml
-
-    data:
-        type: vlm
-        dataset_name: "robo2vlmsft"
-        train_data_paths: "/path/to/Robo2VLM-1"
-        eval_data_paths: "/path/to/Robo2VLM-1"
-
-If ``train_data_paths`` is set, training will run. If ``eval_data_paths`` is set, evaluation will run. If only ``eval_data_paths`` is set, the pipeline will run evaluation only.
-
-If you need to implement a custom SFT logic, refer to ``rlinf/workers/sft/fsdp_sft_worker.py`` and implement these abstract methods in your own subclass:
-
-.. code:: python
-
-    @abstractmethod
-    def build_tokenizer(self):
-        raise NotImplementedError
-
-    @abstractmethod
-    def build_dataloader(self):
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_train_model_output(self, batch: dict[str, Any]):
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_eval_model_output(self, batch: dict[str, Any]):
-        raise NotImplementedError
-
-In ``rlinf/runners/sft_runner.py``, the relevant implementation functions will be called to complete SFT training and evaluation.
 
 Dependency Installation
 -----------------------
