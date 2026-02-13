@@ -296,13 +296,6 @@ class MAMegatronActor(MegatronActor):
                 )
                 token_num_local = token_num_local.item()
                 token_num_global = token_num_global.item()
-                metrics_data.update(
-                    {
-                        "final_loss": loss.detach(),
-                        "entropy_loss": entropy_loss.detach(),
-                        "kl_loss": kl_loss.detach(),
-                    }
-                )
                 return loss, metrics_data
 
             return output, loss_func
