@@ -19,8 +19,8 @@
 
 本文基于 RLinf 当前 SFT 主流程：
 
-- ``rlinf/runners/sft_runner.py``（训练调度器）
-- ``rlinf/workers/sft/fsdp_sft_worker.py``（SFT Worker 基类）
+- ``rlinf/runners/sft_runner.py`` - 训练调度器
+- ``rlinf/workers/sft/fsdp_sft_worker.py`` - SFT Worker 基类
 
 当前 RLinf 中 SFT 的主要步骤分为如下几个部分：
 
@@ -75,8 +75,10 @@
 
 ----
 
+识别模型类型
+------------
+
 让 RLinf 配置文件识别你的模型类型
-------------------------------
 
 RLinf 通过 ``SupportedModel`` 识别模型类型。你需要：
 
@@ -102,8 +104,10 @@ RLinf 通过 ``SupportedModel`` 识别模型类型。你需要：
 
 ----
 
+确保 get_model 可返回模型
+-------------------------
+
 确保 FSDP已经支持你的模型， ``get_model(...)`` 能返回你的模型
---------------------------------------------
 
 ``FSDPSftWorker.model_provider_func()`` 会调用：
 
@@ -118,8 +122,10 @@ RLinf 通过 ``SupportedModel`` 识别模型类型。你需要：
 
 ----
 
+创建 Worker 子类
+----------------
+
 新建一个 Worker 子类，实现 ``build_dataloader``、``get_train_model_output``、``get_eval_model_output``
-------------------------------------
 
 建议新建文件，例如：
 
@@ -158,8 +164,10 @@ RLinf 通过 ``SupportedModel`` 识别模型类型。你需要：
 
 ----
 
+实现 build_dataloader
+---------------------
+
 ``build_dataloader`` 方法用于构建数据加载器，你需要确保返回的数据加载器能够正确地处理训练和评估数据。
---------------------
 
 你必须保证 batch 字段和后续训练函数一致。
 
@@ -189,8 +197,10 @@ RLinf 通过 ``SupportedModel`` 识别模型类型。你需要：
 
 ----
 
-``get_train_model_output`` 方法用于获取模型的训练输出，你需要确保返回的输出能够正确地进行训练。
+实现 get_train_model_output
 ---------------------------
+
+``get_train_model_output`` 方法用于获取模型的训练输出，你需要确保返回的输出能够正确地进行训练。
 
 ``FSDPSftWorker`` 会对你返回的 loss 做：
 
@@ -219,15 +229,17 @@ RLinf 通过 ``SupportedModel`` 识别模型类型。你需要：
 
 ----
 
-``get_eval_model_output`` 方法用于获取模型的评估输出，你需要确保返回的输出能够正确地进行评估。
+实现 get_eval_model_output
 --------------------------
+
+``get_eval_model_output`` 方法用于获取模型的评估输出，你需要确保返回的输出能够正确地进行评估。
 
 ``run_eval()`` 里逻辑是：
 
 - 累加每个 batch 的返回值到 ``correct``
 - 再除以 ``total`` 得 ``eval_accuracy``
 
-所以你的 ``get_eval_model_output`` 应该返回 **当前 batch 的正确样本数**（整数）。
+所以你的 ``get_eval_model_output`` 应该返回当前 batch 的正确样本数。
 
 示例：
 
@@ -242,8 +254,8 @@ RLinf 通过 ``SupportedModel`` 识别模型类型。你需要：
 ----
 
 
-YAML 配置文件
-----------------------------
+YAML 配置
+---------
 
 建议先用保守参数跑通：
 
@@ -273,7 +285,7 @@ YAML 配置文件
 
 
 常见问题排查
-----------------------------
+------------
 
 1. ``KeyError: xxx``  
    - collate 没有产出训练函数需要的字段
@@ -290,5 +302,3 @@ YAML 配置文件
 
 5. ``resume 后数据重复/跳过``  
    - 检查 ``_data_epoch`` / ``_data_iter_offset`` 保存与恢复流程
-
-----

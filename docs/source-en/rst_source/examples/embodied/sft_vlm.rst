@@ -196,21 +196,21 @@ We provide a reference experiment run on a single machine with 8 × H100 GPUs fo
 
 Evaluation accuracy on test_data every 1000 iterations:
 
-.. image:: /_static/images/sft/sft_vlm_eval_accuracy.png
+.. image:: https://github.com/RLinf/misc/raw/main/pic/sft_vlm_eval_accuracy.png
    :alt: VLM SFT eval accuracy
    :width: 85%
    :align: center
 
 grad_norm curve:
 
-.. image:: /_static/images/sft/sft_vlm_eval_grad_norm.png
+.. image:: https://github.com/RLinf/misc/raw/main/pic/sft_vlm_eval_grad_norm.png
    :alt: VLM SFT grad norm
    :width: 85%
    :align: center
 
 loss curve:
 
-.. image:: /_static/images/sft/sft_vlm_eval_loss.png
+.. image:: https://github.com/RLinf/misc/raw/main/pic/sft_vlm_eval_loss.png
    :alt: VLM SFT loss
    :width: 85%
    :align: center

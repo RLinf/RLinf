@@ -238,7 +238,7 @@ Implement ``get_eval_model_output``
 - accumulates batch return values into ``correct``
 - divides by ``total`` to get ``eval_accuracy``
 
-So your ``get_eval_model_output`` should return **the number of correct samples in the current batch**.
+So your ``get_eval_model_output`` should return the number of correct samples in the current batch.
 
 Example:
 
@@ -299,5 +299,3 @@ Troubleshooting
 
 5. ``data repeats/skips after resume``  
    - Check save/load flow for ``_data_epoch`` and ``_data_iter_offset``
-
-----

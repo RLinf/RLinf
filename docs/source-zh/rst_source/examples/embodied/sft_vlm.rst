@@ -32,7 +32,7 @@ VLM模型监督微调训练
 ----
 
 具体的运行流程开始前准备
-------------------
+------------------------
 
 1. 准备好环境，下载 RLinf 官方镜像 ``rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1``
 2. 准备好模型权重目录，下载网址 ``https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct``
@@ -176,8 +176,8 @@ VLM模型监督微调训练
 
 ----
 
-只做评估（不训练）
------------------
+评估模型
+----------
 
 如果你只想跑 evaluate，把配置改成：
 
@@ -197,21 +197,21 @@ VLM模型监督微调训练
 
 6000 次迭代， 每 1000 iter 对 test_data 的评估结果：
 
-.. image:: /_static/images/sft/sft_vlm_eval_accuracy.png
+.. image:: https://github.com/RLinf/misc/raw/main/pic/sft_vlm_eval_accuracy.png
    :alt: VLM SFT eval accuracy
    :width: 85%
    :align: center
 
 grad_norm 曲线：
 
-.. image:: /_static/images/sft/sft_vlm_eval_grad_norm.png
+.. image:: https://github.com/RLinf/misc/raw/main/pic/sft_vlm_eval_grad_norm.png
    :alt: VLM SFT grad norm
    :width: 85%
    :align: center
 
 loss 曲线：
 
-.. image:: /_static/images/sft/sft_vlm_eval_loss.png
+.. image:: https://github.com/RLinf/misc/raw/main/pic/sft_vlm_eval_loss.png
    :alt: VLM SFT loss
    :width: 85%
    :align: center
@@ -219,7 +219,7 @@ loss 曲线：
 最终一次 eval 的 accuracy 为 ``0.8995802998542786``（约 ``89.96%``）。
 
 模型 checkpoint 说明
--------------------
+----------------------------
 
 当前 SFT 使用 FSDP 训练后保存的是 FSDP 权重（例如 ``full_weights.pt``）。
 如果需要转成 HuggingFace 权重，建议使用仓库内置脚本：
@@ -270,5 +270,3 @@ loss 曲线：
    - 用很小的数据子集
    - ``max_epochs`` 设为 1
    - ``save_interval`` 设小一点方便观察
-
-----
