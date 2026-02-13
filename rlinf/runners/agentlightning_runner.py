@@ -96,7 +96,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
 
 
     def init_rollout_workers(self):
-        rollout_handle = self.rollout.init_worker()
+        rollout_handle = self.rollout.init_worker(start_http_server=True)
 
         if self.cfg.runner.resume_dir is None:
             logging.info("[AgentLightningRLinfRunner] Training from scratch")
@@ -117,21 +117,15 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         if self.use_pre_process_policy:
             self.rollout.offload_engine().wait()
 
-        # Start HTTP servers and collect addresses from rollout workers.
-        # This rollout-worker-specific init is kept behind `rollout.init_worker(start_http_server=True)`
-        # to keep the runner logic minimal.
         server_addresses: list[str] = []
-        if hasattr(self.rollout, "init_worker") and hasattr(self.rollout, "get_server_address"):
-            # Parallelized across ranks by WorkerGroup.
-            self.rollout.init_worker(start_http_server=True).wait()
-            server_addresses_result = self.rollout.get_server_address().wait()
-            if isinstance(server_addresses_result, list):
-                server_addresses = [addr for addr in server_addresses_result if addr]
-            elif server_addresses_result:
-                server_addresses = [server_addresses_result]
-            logging.info(
-                f"[AgentLightningRLinfRunner] Rollout HTTP server addresses: {server_addresses}"
-            )
+        server_addresses_result = self.rollout.get_server_address().wait()
+        if isinstance(server_addresses_result, list):
+            server_addresses = [addr for addr in server_addresses_result if addr]
+        elif server_addresses_result:
+             server_addresses = [server_addresses_result]
+        logging.info(
+            f"[AgentLightningRLinfRunner] Rollout HTTP server addresses: {server_addresses}"
+        )
 
         self.agentlightning_rollout_worker.init_worker(
             store=self.store,
@@ -175,6 +169,13 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                         output_channel=self.rollout_channel,
                     )
 
+                    if not self.is_pipeline:
+                        agent_metrics = rollout_handle.wait()[0]
+                        offload_handles = []
+                        if self.use_pre_process_policy:
+                            offload_handles.append(self.rollout.offload_engine())
+                        for handle in offload_handles:
+                            handle.wait()
 
                     if self.recompute_logprobs:
                         infer_handle: Handle = self.inference.run_inference(
@@ -185,24 +186,18 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                         inference_channel = self.inference_channel
                     else:
                         infer_handle = None
-                        inference_channel = inference_input_channel
+                        inference_channel = self.rollout_channel
 
+                    if self.is_pipeline:
+                        agent_metrics = rollout_handle.wait()[0]
                     actor_handle: Handle = self.actor.run_training(
                         input_channel=inference_channel,
                     )
-
 
                     metrics = actor_handle.wait()
 
                     actor_rollout_metrics = metrics[0][0]
                     actor_training_metrics = metrics[0][1]
-                    
-
-                    rollout_metrics_result = rollout_handle.wait()
-                    if isinstance(rollout_metrics_result, list):
-                        rollout_metrics_dict = rollout_metrics_result[0] if rollout_metrics_result else {}
-                    else:
-                        rollout_metrics_dict = rollout_metrics_result if rollout_metrics_result else {}
                     
                     self.global_steps += 1
 
@@ -234,33 +229,52 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                 time_metrics = self.timer.consume_durations()
                 time_metrics["training"] = actor_handle.consume_duration()
                 time_metrics["rollout"] = rollout_handle.consume_duration()
-
                 if infer_handle is not None:
-                    time_metrics["inference"] = infer_handle.consume_duration()
+                    time_metrics["inference"] = infer_handle.consume_duration(
+                        reduction_type="min"
+                    )
 
+                base_logging_steps = (
+                    self.global_steps - 1
+                ) * self.cfg.algorithm.n_minibatches
+                agent_logging_steps = self.global_steps
                 log_time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
-                rollout_metrics = rollout_metrics_dict if rollout_metrics_dict else {}
-                training_metrics = {
-                    f"train/{k}": v for k, v in actor_training_metrics[-1].items()
+                rollout_metrics = {
+                    f"rollout/{k}": v for k, v in actor_rollout_metrics.items()
                 }
                 
-                self.metric_logger.log(log_time_metrics, self.global_steps)
-                self.metric_logger.log(rollout_metrics, self.global_steps)
-                self.metric_logger.log(training_metrics, self.global_steps)
+                self.metric_logger.log(agent_metrics, agent_logging_steps)
+                self.metric_logger.log(log_time_metrics, base_logging_steps)
+                self.metric_logger.log(rollout_metrics, base_logging_steps)
+                for i in range(self.cfg.algorithm.n_minibatches):
+                    training_metrics = {
+                        f"train/{k}": v
+                        for k, v in actor_training_metrics[i].items()
+                    }
+                    self.metric_logger.log(training_metrics, base_logging_steps + i)
 
                 logging_metrics = {f"{k}_time": v for k, v in time_metrics.items()}
+
+                if self.cfg.actor.get("calculate_flops", False):
+                    flops_metrics = self._compute_flops_metrics(
+                        time_metrics, actor_rollout_metrics
+                    )
+                    flops_metrics = {
+                        f"flops/{k}": v for k, v in flops_metrics.items()
+                    }
+                    self.metric_logger.log(flops_metrics, base_logging_steps)
+                    logging_metrics.update(flops_metrics)
+
+                logging_metrics.update(agent_metrics)
                 logging_metrics.update(rollout_metrics)
                 logging_metrics.update(actor_rollout_metrics)
                 logging_metrics.update(actor_training_metrics[-1])
 
                 global_pbar.set_postfix(logging_metrics, refresh=False)
                 global_pbar.update(1)
-            
-
 
         # Stop HTTP servers on all rollout workers
         if hasattr(self.rollout, "http_server_stop"):
-            # Parallelized across ranks by WorkerGroup.
             self.rollout.http_server_stop().wait()
         
         self.metric_logger.finish()
