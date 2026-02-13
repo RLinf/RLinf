@@ -49,6 +49,33 @@ class TensorMessage:
     note: str
 
 
+@dataclass
+class TensorListMessage:
+    """Dataclass with a list of tensors for testing channel put/get."""
+
+    id: int
+    payload_list: list
+    note: str
+
+
+@dataclass
+class TensorDictMessage:
+    """Dataclass with a dict of tensors for testing channel put/get."""
+
+    id: int
+    payload_dict: dict
+    note: str
+
+
+@dataclass
+class PlainMessage:
+    """Plain dataclass without tensor fields (serialized as Python object)."""
+
+    id: int
+    name: str
+    value: float
+
+
 def get_device():
     """Returns the appropriate torch device."""
     if torch.cuda.is_available():
@@ -406,6 +433,29 @@ def get_test_data():
                 payload=torch.ones(2, 2, device=device) * 3,
                 note="channel test",
             ),
+        ),
+        (
+            "dataclass_with_list_of_tensors",
+            TensorListMessage(
+                id=10,
+                payload_list=[torch.ones(2, 2, device=device) * i for i in range(3)],
+                note="channel list test",
+            ),
+        ),
+        (
+            "dataclass_with_dict_of_tensors",
+            TensorDictMessage(
+                id=20,
+                payload_dict={
+                    "x": torch.ones(2, 2, device=device) * 1,
+                    "y": torch.ones(2, 2, device=device) * 2,
+                },
+                note="channel dict test",
+            ),
+        ),
+        (
+            "plain_dataclass",
+            PlainMessage(id=1, name="channel_plain", value=3.14),
         ),
     ]
 

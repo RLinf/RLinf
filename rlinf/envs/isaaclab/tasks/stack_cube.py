@@ -43,6 +43,11 @@ class IsaaclabStackCubeEnv(IsaaclabBaseEnv):
         """
 
         def make_env_isaaclab():
+            import os
+
+            # Remove DISPLAY variable to force headless mode and avoid GLX errors
+            os.environ.pop("DISPLAY", None)
+
             from isaaclab.app import AppLauncher
 
             sim_app = AppLauncher(headless=True, enable_cameras=True).app
@@ -67,41 +72,6 @@ class IsaaclabStackCubeEnv(IsaaclabBaseEnv):
 
         return make_env_isaaclab
 
-    def step(self, actions=None, auto_reset=True):
-        obs, _, terminations, truncations, infos = self.env.step(actions)
-
-        step_reward = self.cfg.reward_coef * terminations  # simple version of libero.
-
-        if self.video_cfg.save_video:
-            self.images.append(self.add_image(obs))
-
-        obs = self._wrap_obs(obs)
-
-        self._elapsed_steps += 1
-
-        truncations = (self.elapsed_steps >= self.cfg.max_episode_steps) | truncations
-
-        dones = terminations | truncations
-
-        infos = self._record_metrics(
-            step_reward, terminations, {}
-        )  # return infos is useless
-        if self.ignore_terminations:
-            infos["episode"]["success_at_end"] = terminations
-            terminations[:] = False
-
-        _auto_reset = auto_reset and self.auto_reset  # always False
-        if dones.any() and _auto_reset:
-            obs, infos = self._handle_auto_reset(dones, obs, infos)
-
-        return (
-            obs,
-            step_reward,
-            terminations,
-            truncations,
-            infos,
-        )
-
     def _wrap_obs(self, obs):
         instruction = [self.task_description] * self.num_envs
         wrist_image = obs["policy"]["wrist_cam"]
@@ -125,7 +95,3 @@ class IsaaclabStackCubeEnv(IsaaclabBaseEnv):
             "wrist_images": wrist_image,
         }
         return env_obs
-
-    def add_image(self, obs):
-        img = obs["policy"]["table_cam"][0].cpu().numpy()
-        return img

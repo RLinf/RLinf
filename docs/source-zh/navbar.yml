@@ -6,6 +6,8 @@
   title: "示例库"
 - file: rst_source/blog/index
   title: "博客"
+- file: rst_source/publications/index
+  title: "论文"
 - file: rst_source/apis/index
   title: "API手册"
 - file: rst_source/faq

@@ -145,7 +145,8 @@ FROM embodied-common-image AS embodied-maniskill_libero-image
 RUN bash requirements/install.sh embodied --venv openvla --model openvla --env maniskill_libero && \
     bash requirements/install.sh embodied --venv openvla-oft --model openvla-oft --env maniskill_libero && \
     bash requirements/install.sh embodied --venv openpi --model openpi --env maniskill_libero && \
-    bash requirements/install.sh embodied --venv gr00t --model gr00t --env maniskill_libero
+    bash requirements/install.sh embodied --venv gr00t --model gr00t --env maniskill_libero && \
+    bash requirements/install.sh embodied --venv dexbotic --model dexbotic --env maniskill_libero
 
 RUN source switch_env openvla && download_assets --dir /opt/assets --assets maniskill,openpi
 RUN link_assets
@@ -161,6 +162,9 @@ RUN bash requirements/install.sh embodied --venv openvla-oft --model openvla-oft
 # omnigibson downloads assets to /tmp during initialization
 RUN source switch_env openvla-oft && python -c "import omnigibson as og; cfg={}; og.Environment(cfg); og.shutdown()" || exit 0
 
+# Set default env
+RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
+
 FROM embodied-common-image AS embodied-behavior-openpi-image
 
 # Install openpi env
@@ -169,9 +173,11 @@ RUN bash requirements/install.sh embodied --venv openpi --model openpi --env beh
 # omnigibson downloads assets to /tmp during initialization
 RUN source switch_env openpi && python -c "import omnigibson as og; cfg={}; og.Environment(cfg); og.shutdown()" || exit 0
 
-# Set default env
-RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
+RUN source switch_env openpi && download_assets --dir /opt/assets --assets openpi
+RUN link_assets
 
+# Set default env
+RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Embodied: MetaWorld
