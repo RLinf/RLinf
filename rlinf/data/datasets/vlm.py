@@ -472,7 +472,7 @@ class Robo2VLMDataset(VLMBaseDataset):
 
 
 @VLMDatasetRegistry.register("robo2vlmsft")
-class Robo2VLMSFTDataset(VLMBaseDataset):
+class Robo2VLMSFTDataset(Robo2VLMDataset):
     # The reason for overriding the current function is that the SFT dataset requires masking the attention for the answer separately.
     def __init__(
         self,
@@ -484,39 +484,6 @@ class Robo2VLMSFTDataset(VLMBaseDataset):
         super().__init__(data_paths, config, tokenizer)
         self.apply_chat_template = config.data.apply_chat_template
         self.eval_dataset = eval_dataset
-
-    def get_image_list(self, dataitem: dict[str, Any]) -> list[Union[bytes, str, None]]:
-        images: list[Any] = []
-        if "images" in dataitem:
-            v = dataitem.get("images")
-            if isinstance(v, list):
-                images = list(v)
-            elif v is not None:
-                images = [v]
-            else:
-                images = [None]
-        elif "image" in dataitem:
-            v = dataitem.get("image")
-            if v is not None:
-                images = [v]
-            else:
-                images = [None]
-        else:
-            return super().get_image_list(dataitem)
-
-        normed: list[Union[bytes, str, None]] = []
-        for v in images:
-            if v is None:
-                continue
-            if isinstance(v, Image.Image):
-                normed.append(v)
-            elif isinstance(v, dict) and "bytes" in v:
-                normed.append(v["bytes"])  # raw bytes
-            else:
-                normed.append(v)  # path/uri/string
-        if not normed:
-            normed = [None]
-        return normed
 
     def _process_raw_record(self, raw: dict[str, Any], idx: int) -> DatasetItem:
         images = self.get_image_list(raw)

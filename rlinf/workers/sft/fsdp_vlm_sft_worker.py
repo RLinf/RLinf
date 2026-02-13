@@ -157,7 +157,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         idx = text.rfind("boxed")
         if idx < 0:
             return None
-        s = text[idx + len("boxed"):].strip()
+        s = text[idx + len("boxed") :].strip()
         if not s:
             return None
         if s[0] != "{":
@@ -207,7 +207,9 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             body = text.strip()
 
         # 2) Remove reasoning blocks if present.
-        body = re.sub(r"<think>.*?</think>", "", body, flags=re.DOTALL | re.IGNORECASE).strip()
+        body = re.sub(
+            r"<think>.*?</think>", "", body, flags=re.DOTALL | re.IGNORECASE
+        ).strip()
 
         # 3) Try explicit "final answer" markers.
         marker_patterns = [
