@@ -136,7 +136,7 @@ class MAMegatronActor(MegatronActor):
             # response_mask needs to be shifted left by 1 to align with the shifted labels
             # because response_mask[i] indicates whether position i is a response token in input_ids
             # but label[i] = input_ids[i+1], so we need to shift response_mask left to align
-            label_mask = copy.deepcopy(batch["response_mask"])
+            label_mask = copy.deepcopy(batch["attention_mask"])
             label_mask[:, :-1] = label_mask[:, 1:].clone()  # Shift left by 1
             label_mask[:, -1] = False
 
