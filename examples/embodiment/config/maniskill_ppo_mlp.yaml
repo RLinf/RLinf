@@ -84,7 +84,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
 
   # Override the default values in env/maniskill_pick_cube
   train:
@@ -115,6 +114,7 @@ rollout:
     model_path: ""
     precision: ${actor.model.precision}
 
+  enable_torch_compile: True
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"

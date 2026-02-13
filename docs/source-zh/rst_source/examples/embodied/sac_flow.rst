@@ -119,10 +119,14 @@ RLinf 提供了针对仿真和真机环境的默认配置文件：
       # SAC 超参数
       gamma: 0.96          # 折扣因子
       tau: 0.005           # 目标网络软更新系数
-      initial_alpha: 0.01  # 初始熵系数
-      auto_entropy_tuning: True  # 启用自动熵调节
-      alpha_type: softplus # 熵系数参数化方式
-      alpha_lr: 3.0e-4     # 熵系数学习率
+      entropy_tuning:
+         alpha_type: softplus # 熵系数参数化方式
+         initial_alpha: 0.01  # 初始熵系数
+         target_entropy: -4
+         optim:
+            lr: 3.0e-4     # 熵系数学习率
+            lr_scheduler: torch_constant
+            clip_grad: 10.0
       critic_actor_ratio: 4  # Critic 与 Actor 训练次数比例
       
       # 训练与交互频率

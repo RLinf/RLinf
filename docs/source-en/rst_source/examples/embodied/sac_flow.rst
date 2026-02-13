@@ -119,10 +119,14 @@ RLinf provides default configuration files for both simulation and real-world en
       # SAC Hyperparameters
       gamma: 0.96          # Discount factor
       tau: 0.005           # Target network soft update coefficient
-      initial_alpha: 0.01  # Initial entropy coefficient
-      auto_entropy_tuning: True  # Enable automatic entropy tuning
-      alpha_type: softplus # Entropy coefficient parameterization
-      alpha_lr: 3.0e-4     # Entropy coefficient learning rate
+      entropy_tuning:
+         alpha_type: softplus # Entropy coefficient parameterization
+         initial_alpha: 0.01  # Initial entropy coefficient
+         target_entropy: -4
+         optim:
+            lr: 3.0e-4     # Entropy coefficient learning rate
+            lr_scheduler: torch_constant
+            clip_grad: 10.0
       critic_actor_ratio: 4  # Ratio of Critic to Actor training steps
       
       # Training and Interaction Frequency

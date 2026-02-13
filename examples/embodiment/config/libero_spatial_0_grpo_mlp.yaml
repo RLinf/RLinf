@@ -84,7 +84,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
 
   # Override the default values in env/libero_spatial
   train:
@@ -120,6 +119,7 @@ rollout:
     model_path: null
     precision: ${actor.model.precision}
 
+  enable_torch_compile: True
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
