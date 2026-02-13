@@ -47,7 +47,7 @@ class HybridComponentPlacement(ComponentPlacement):
 class ModelParallelComponentPlacement(ComponentPlacement):
     """Component placement for model-parallel components.
 
-    The components must be actor, rollout and optionally inference, reward, whose GPUs must be continuous.
+    The components must be actor, rollout and optionally inference whose GPUs must be continuous.
 
     This placement supports both collocated and disaggregated modes.
 
@@ -76,9 +76,6 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         assert self._rollout_gpus is not None, (
             "Rollout GPUs must be specified in the component_placement config."
         )
-        # assert self._reward_gpus is not None, (
-        #     "Reward GPUs must be specified in the component_placement config."
-        # )
         assert self._actor_gpus == list(
             range(self._actor_gpus[0], self._actor_gpus[-1] + 1)
         ), f"Actor GPUs {self._actor_gpus} must be continuous."
