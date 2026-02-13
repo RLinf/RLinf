@@ -27,8 +27,6 @@ from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
 class FSDPVlmSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
-        # vlm sft before load dataloader should build the tokenizer
-        self.tokenizer = self.build_tokenizer()
         super().__init__(cfg)
 
     def _save_data_state(self, save_path: str):
@@ -96,6 +94,10 @@ class FSDPVlmSftWorker(FSDPSftWorker):
 
             from rlinf.data.datasets import sft_collate_fn
             from rlinf.data.datasets.vlm import VLMDatasetRegistry
+
+            # vlm sft before load dataloader should build the tokenizer
+            if not hasattr(self, "tokenizer"):
+                self.tokenizer = self.build_tokenizer()
 
             dataset_name = self.cfg.data.get("dataset_name", "robo2vlmsft")
             train_dataset = VLMDatasetRegistry.create(
