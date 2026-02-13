@@ -29,7 +29,7 @@ runner:
   save_interval: 10
 
 data:
-  data_paths: "/workspace/dataset/data/sft-ci-data"
+  train_data_paths: "/workspace/dataset/data/sft-ci-data"
 
 algorithm:
   adv_type: gae

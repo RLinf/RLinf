@@ -29,7 +29,7 @@ runner:
   save_interval: 2000
 
 data:
-  data_paths: "/path/to/libero-data"
+  train_data_paths: "/path/to/libero-data"
 
 algorithm:
   adv_type: gae

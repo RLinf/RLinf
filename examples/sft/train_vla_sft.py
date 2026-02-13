@@ -33,7 +33,7 @@ mp.set_start_method("spawn", force=True)
     version_base="1.1", config_path="config", config_name="maniskill_ppo_openvlaoft"
 )
 def main(cfg) -> None:
-    os.environ["HF_LEROBOT_HOME"] = cfg.data.data_path
+    os.environ["HF_LEROBOT_HOME"] = cfg.data.train_data_paths
 
     cfg = validate_cfg(cfg)
     logging.info(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
