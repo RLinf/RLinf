@@ -29,7 +29,7 @@ runner:
   save_interval: 10
 
 data:
-  train_data_paths: "/path/to/custom-data"
+  data_paths: "/path/to/custom-data"
 
 algorithm:
   adv_type: gae
