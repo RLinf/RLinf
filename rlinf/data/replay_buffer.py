@@ -17,6 +17,7 @@ import copy
 import json
 import os
 import pickle as pkl
+import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
@@ -26,6 +27,20 @@ import torch
 
 from rlinf.data.embodied_io_struct import Trajectory
 from rlinf.utils.logging import get_logger
+
+
+def clone_dict_of_tensors(obj):
+    if torch.is_tensor(obj):
+        return obj.cpu().contiguous().clone()
+    elif isinstance(obj, int) or isinstance(obj, str):
+        return obj
+    elif isinstance(obj, dict):
+        return {k: clone_dict_of_tensors(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        t = [clone_dict_of_tensors(v) for v in obj]
+        return type(obj)(t)
+    else:
+        return obj
 
 
 class TrajectoryCache:
@@ -221,41 +236,47 @@ class TrajectoryReplayBuffer:
         seed: Optional[int] = 1234,
         enable_cache: bool = True,
         cache_size: int = 5,
-        storage_dir: str = "",
-        storage_format: str = "pt",
         sample_window_size: int = 100,
-        save_trajectories: bool = True,
+        auto_save: bool = False,
+        auto_save_path: str = "",
+        trajectory_format: str = "pt",
     ):
         """
         Initialize trajectory-based replay buffer.
 
         Args:
             seed: Random seed for reproducibility
-            storage_dir: Directory to store trajectories (None uses temp directory)
+            auto_save_path: Directory to store trajectories when auto_save=True
             enable_cache: Whether to enable trajectory caching
             cache_size: Maximum number of trajectories to cache in memory
-            storage_format: Storage format ("pt", "pkl")
+            trajectory_format: Storage format ("pt", "pkl")
+            sample_window_size: Number of trajectories to sample from for window cache
+            auto_save: Whether to automatically save trajectories to disk
         """
-        self.storage_format = storage_format
+        self.trajectory_format = trajectory_format
         self.enable_cache = enable_cache
         self.sample_window_size = sample_window_size
-        self.save_trajectories = save_trajectories
+        self.auto_save = auto_save
         self.logger = get_logger()
 
-        if not self.save_trajectories and not self.enable_cache:
-            raise ValueError("save_trajectories=False requires enable_cache=True")
-        if not self.save_trajectories:
-            print(
-                "[TrajectoryReplayBuffer] save_trajectories=False: "
-                "checkpoint save/load is not supported."
+        if not self.auto_save:
+            self.logger.warning(
+                f"auto_save is disabled, enabling cache with size {sample_window_size}"
             )
+            self.enable_cache = True
+            cache_size = sample_window_size
 
-        # Storage directory
-        assert storage_dir != "", "storage_dir is required"
-        self.logger.info(f"Created replay buffer with storage directory: {storage_dir}")
-        self.storage_dir = storage_dir
-        if self.save_trajectories:
-            os.makedirs(self.storage_dir, exist_ok=True)
+        # Auto-save path (only used when auto_save is enabled)
+        if self.auto_save:
+            assert auto_save_path != "", (
+                "auto_save_path is required when auto_save is enabled"
+            )
+            self.logger.info(
+                f"Created replay buffer with auto_save_path: {auto_save_path}"
+            )
+        self.auto_save_path = auto_save_path if self.auto_save else None
+        if self.auto_save_path is not None:
+            os.makedirs(self.auto_save_path, exist_ok=True)
 
         # Trajectory index: dict mapping trajectory_id to trajectory metadata
         # Each entry: {
@@ -267,6 +288,11 @@ class TrajectoryReplayBuffer:
         # }
         self._trajectory_index: dict[int, dict] = {}
         self._trajectory_id_list: list[int] = []  # Ordered list of trajectory IDs
+
+        # Trajectory file path: dict mapping trajectory_id to trajectory file path
+        # this enables each trajectory to be saved to or loaded from a separate file
+        self._trajectory_file_path: dict[int, str] = {}
+
         self._trajectory_counter = 0  # Next trajectory ID to use
         self._index_version = 0
 
@@ -275,8 +301,10 @@ class TrajectoryReplayBuffer:
             TrajectoryCache(cache_size) if enable_cache else None
         )
 
-        # Async save executor
-        self._save_executor = ThreadPoolExecutor(max_workers=1)
+        # Async save executor for add_trajectories
+        self._save_executor = ThreadPoolExecutor(max_workers=20)
+        # Separate executor for checkpoint saves
+        self._checkpoint_executor = ThreadPoolExecutor(max_workers=20)
         self._index_lock = threading.Lock()
 
         # Cached window metadata for faster sampling
@@ -295,7 +323,6 @@ class TrajectoryReplayBuffer:
         self.seed = seed
         self.random_generator: Optional[torch.Generator] = None
 
-        self._load_metadata()
         self._init_random_generator(self.seed)
 
     def _init_random_generator(self, seed):
@@ -311,28 +338,28 @@ class TrajectoryReplayBuffer:
         base_dir: Optional[str] = None,
     ) -> str:
         """Get file path for a trajectory."""
-        ext = ".pt" if self.storage_format == "pt" else ".pkl"
-        base_dir = base_dir or self.storage_dir
+        ext = ".pt" if self.trajectory_format == "pt" else ".pkl"
+        base_dir = base_dir or self.auto_save_path
         return os.path.join(
             base_dir, f"trajectory_{trajectory_id}_{model_weights_id}{ext}"
         )
 
     def _get_metadata_path(self, base_dir: Optional[str] = None) -> str:
         """Get path to metadata file."""
-        base_dir = base_dir or self.storage_dir
+        base_dir = base_dir or self.auto_save_path
         return os.path.join(base_dir, "metadata.json")
 
     def _get_trajectory_index_path(self, base_dir: Optional[str] = None) -> str:
         """Get path to trajectory index file."""
-        base_dir = base_dir or self.storage_dir
+        base_dir = base_dir or self.auto_save_path
         return os.path.join(base_dir, "trajectory_index.json")
 
     def _save_metadata(self, save_path: Optional[str] = None):
         """Save metadata to disk."""
+        save_path = save_path or self.auto_save_path
         with self._index_lock:
             metadata = {
-                "storage_dir": self.storage_dir,
-                "storage_format": self.storage_format,
+                "trajectory_format": self.trajectory_format,
                 "size": self.size,
                 "total_samples": self._total_samples,
                 "trajectory_counter": self._trajectory_counter,
@@ -340,30 +367,6 @@ class TrajectoryReplayBuffer:
             }
             with open(self._get_metadata_path(save_path), "w") as f:
                 json.dump(metadata, f)
-
-    def _load_metadata(self):
-        """Load metadata from disk."""
-        metadata_path = self._get_metadata_path()
-        if os.path.exists(metadata_path):
-            with open(metadata_path, "r") as f:
-                metadata = json.load(f)
-            self.storage_format = metadata.get("storage_format", self.storage_format)
-            self.size = metadata.get("size", 0)
-            self._total_samples = metadata.get("total_samples", 0)
-            self._trajectory_counter = metadata.get("trajectory_counter", 0)
-            self.seed = metadata.get("seed", self.seed)
-
-            # Load trajectory index if exists
-            index_path = self._get_trajectory_index_path()
-            if os.path.exists(index_path):
-                with open(index_path, "r") as f:
-                    index_data = json.load(f)
-                self._trajectory_index = {
-                    int(k): v for k, v in index_data.get("trajectory_index", {}).items()
-                }
-                self._trajectory_id_list = [
-                    int(k) for k in index_data.get("trajectory_id_list", [])
-                ]
 
     def _save_trajectory_index(self, save_path: Optional[str] = None):
         """Save trajectory index to disk."""
@@ -376,19 +379,25 @@ class TrajectoryReplayBuffer:
                 json.dump(index_data, f)
 
     def _save_trajectory(
-        self, trajectory: Trajectory, trajectory_id: int, model_weights_id: str
+        self,
+        trajectory: Trajectory,
+        trajectory_id: int,
+        model_weights_id: str,
+        save_dir: Optional[str] = None,
     ):
         """Save a single episode to disk as a dictionary."""
-        trajectory_path = self._get_trajectory_path(trajectory_id, model_weights_id)
+        trajectory_path = self._get_trajectory_path(
+            trajectory_id, model_weights_id, base_dir=save_dir
+        )
 
         # Convert Trajectory to dictionary for more stable storage
         trajectory_dict = {}
         for field_name in trajectory.__dataclass_fields__.keys():
             value = getattr(trajectory, field_name, None)
             if value is not None:
-                trajectory_dict[field_name] = value
+                trajectory_dict[field_name] = clone_dict_of_tensors(value)
 
-        if self.storage_format == "pt":
+        if self.trajectory_format == "pt":
             torch.save(trajectory_dict, trajectory_path)
         else:
             with open(trajectory_path, "wb") as f:
@@ -406,14 +415,14 @@ class TrajectoryReplayBuffer:
         trajectory_path = self._get_trajectory_path(
             trajectory_id,
             model_weights_id,
-            base_dir=self.storage_dir,
+            base_dir=self._trajectory_file_path[trajectory_id],
         )
 
         if not os.path.exists(trajectory_path):
             raise FileNotFoundError(f"Trajectory file not found at {trajectory_path}")
 
         # Load trajectory dictionary
-        if self.storage_format == "pt":
+        if self.trajectory_format == "pt":
             trajectory_dict = torch.load(trajectory_path, map_location="cpu")
         else:
             with open(trajectory_path, "rb") as f:
@@ -458,7 +467,7 @@ class TrajectoryReplayBuffer:
                 continue  # Skip empty trajectories
 
             # Save trajectory to disk if enabled
-            if self.save_trajectories:
+            if self.auto_save:
                 # Save asynchronously to reduce I/O stalls
                 save_futures.append(
                     self._save_executor.submit(
@@ -468,6 +477,7 @@ class TrajectoryReplayBuffer:
                         model_weights_id,
                     )
                 )
+                self._trajectory_file_path[trajectory_id] = self.auto_save_path
 
             # Add to index
             with self._index_lock:
@@ -494,7 +504,7 @@ class TrajectoryReplayBuffer:
                 )
 
         # Save metadata/index after all trajectory saves finish
-        if self.save_trajectories:
+        if self.auto_save:
 
             def _flush_metadata():
                 for fut in save_futures:
@@ -504,10 +514,24 @@ class TrajectoryReplayBuffer:
 
             self._save_executor.submit(_flush_metadata)
 
+    def _reshape_flat_for_save(self, value: object, T: int, B: int) -> object:
+        if isinstance(value, torch.Tensor):
+            if value.dim() >= 1 and value.shape[0] == T * B:
+                return value.reshape(T, B, *value.shape[1:])
+            return value
+        if isinstance(value, dict):
+            return {
+                key: self._reshape_flat_for_save(val, T, B)
+                for key, val in value.items()
+            }
+        return value
+
     def close(self, wait: bool = True):
         """Flush and shutdown async save executor."""
         if self._save_executor is not None:
             self._save_executor.shutdown(wait=wait)
+        if self._checkpoint_executor is not None:
+            self._checkpoint_executor.shutdown(wait=wait)
 
     def sample(
         self,
@@ -591,9 +615,6 @@ class TrajectoryReplayBuffer:
         )
 
         # Convert global sample indices to per-trajectory local indices
-        if not window_ids:
-            return {}
-
         grouped_indices: dict[str, list[tuple[int, int]]] = {}
         cumulative_ends_tensor = self._window_cache_cumulative_ends_tensor
         if cumulative_ends_tensor is None or cumulative_ends_tensor.numel() == 0:
@@ -691,9 +712,22 @@ class TrajectoryReplayBuffer:
     def _flatten_trajectory(self, trajectory: Trajectory) -> dict:
         flat: dict[str, object] = {}
         tensor_fields = trajectory.__dataclass_fields__.keys()
+        traj_len = int(trajectory.rewards.shape[0])
+
         for field in tensor_fields:
             tensor = getattr(trajectory, field)
             if isinstance(tensor, torch.Tensor) and tensor.dim() >= 2:
+                if field in ["dones", "terminations", "truncations"]:
+                    extra = int(tensor.shape[0] - traj_len)
+                    if extra > 0:
+                        assert traj_len % extra == 0, (
+                            f"Trajectory length {traj_len} is not divisible by extra {extra} for field {field}"
+                        )
+                        epoch_len = traj_len // extra
+                        tensor = tensor.reshape(
+                            extra, epoch_len + 1, *tensor.shape[1:]
+                        )[:, 1:]
+                        tensor = tensor.reshape(traj_len, *tensor.shape[2:])
                 flat[field] = tensor.reshape(-1, *tensor.shape[2:])
 
         if trajectory.curr_obs:
@@ -867,6 +901,7 @@ class TrajectoryReplayBuffer:
         # Clear index
         self._trajectory_index.clear()
         self._trajectory_id_list.clear()
+        self._trajectory_file_path.clear()
 
         # Clear cache
         if self._flat_trajectory_cache is not None:
@@ -892,15 +927,68 @@ class TrajectoryReplayBuffer:
         """
         Save buffer state (metadata and indices) to save_path.
         """
-        if not self.save_trajectories:
-            from rlinf.utils.logging import get_logger
-
-            get_logger().warning(
-                "save_trajectories=False: checkpoint save is not supported."
-            )
-            return
         # Create save directory
         os.makedirs(save_path, exist_ok=True)
+
+        save_futures = []
+        if not self.auto_save:
+            cache = self._flat_trajectory_cache
+            if cache is None:
+                raise RuntimeError("auto_save=False requires cache to save checkpoint.")
+            cached_ids = list(cache.cache.keys())
+            for trajectory_id in cached_ids:
+                flat = cache.get(trajectory_id)
+                if flat is None:
+                    continue
+                info = self._trajectory_index.get(trajectory_id, None)
+                if info is None:
+                    continue
+                shape = info.get("shape", None)
+                if not shape or len(shape) < 2:
+                    continue
+                T, B = shape[:2]
+                model_weights_id = info.get("model_weights_id", "")
+                trajectory = Trajectory(
+                    max_episode_length=info.get("max_episode_length", 0),
+                    model_weights_id=model_weights_id,
+                )
+                for field_name in trajectory.__dataclass_fields__.keys():
+                    if field_name in flat:
+                        setattr(
+                            trajectory,
+                            field_name,
+                            self._reshape_flat_for_save(flat[field_name], T, B),
+                        )
+                save_futures.append(
+                    self._checkpoint_executor.submit(
+                        self._save_trajectory,
+                        trajectory,
+                        trajectory_id,
+                        model_weights_id,
+                        save_dir=save_path,
+                    )
+                )
+        else:
+            for trajectory_id in self._window_cache_ids:
+                model_weights_id = self._trajectory_index[trajectory_id][
+                    "model_weights_id"
+                ]
+                trajectory_path = self._get_trajectory_path(
+                    trajectory_id, model_weights_id
+                )
+                if not os.path.isfile(trajectory_path):
+                    continue
+
+                # copy trajectory file from trajectory_path to save_path
+                target_path = os.path.join(save_path, os.path.basename(trajectory_path))
+                save_futures.append(
+                    self._checkpoint_executor.submit(
+                        shutil.copyfile, trajectory_path, target_path
+                    )
+                )
+
+        for fut in save_futures:
+            fut.result()
 
         # Save metadata and trajectory index into the specified directory
         self._save_metadata(save_path)
@@ -930,8 +1018,10 @@ class TrajectoryReplayBuffer:
             metadata = json.load(f)
 
         # Update instance attributes from metadata
-        self.storage_dir = metadata["storage_dir"]
-        self.storage_format = metadata.get("storage_format", "pt")
+        self.trajectory_format = metadata.get(
+            "trajectory_format",
+            self.trajectory_format,
+        )
         if "seed" in metadata:
             self.seed = metadata["seed"]
             self._init_random_generator(self.seed)
@@ -983,6 +1073,10 @@ class TrajectoryReplayBuffer:
                 if id in full_trajectory_index
             }
 
+            # Update trajectory file path
+            for trajectory_id in self._trajectory_id_list:
+                self._trajectory_file_path[trajectory_id] = load_path
+
             # Update size, total_samples, and trajectory_counter based on loaded portion
             self.size = len(self._trajectory_id_list)
             self._total_samples = sum(
@@ -1002,6 +1096,8 @@ class TrajectoryReplayBuffer:
             # Full load
             self._trajectory_index = full_trajectory_index
             self._trajectory_id_list = full_trajectory_id_list
+            for trajectory_id in self._trajectory_id_list:
+                self._trajectory_file_path[trajectory_id] = load_path
             self.size = metadata.get("size", 0)
             self._total_samples = metadata.get("total_samples", 0)
             self._trajectory_counter = metadata.get("trajectory_counter", 0)
@@ -1052,12 +1148,11 @@ if __name__ == "__main__":
 
     buffer = TrajectoryReplayBuffer(
         seed=1234,
-        storage_dir=args.load_path,
-        storage_format="pt",
         enable_cache=args.enable_cache,
         cache_size=args.cache_size,
         sample_window_size=args.sample_window_size,
-        save_trajectories=True,
+        auto_save=False,
+        trajectory_format="pt",
     )
 
     buffer.load_checkpoint(

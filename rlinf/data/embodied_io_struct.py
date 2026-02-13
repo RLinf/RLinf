@@ -125,6 +125,8 @@ class ChunkStepResult:
     forward_inputs: dict[str, torch.Tensor] = field(default_factory=dict)
 
     def __post_init__(self):
+        if self.actions is not None:
+            self.actions = self.actions.cpu().contiguous()
         if self.prev_logprobs is not None:
             self.prev_logprobs = self.prev_logprobs.cpu().contiguous()
         if self.prev_values is not None:
@@ -163,6 +165,99 @@ class Trajectory:
 
     curr_obs: dict[str, Any] = field(default_factory=dict)
     next_obs: dict[str, Any] = field(default_factory=dict)
+
+    @staticmethod
+    def _generate_field_mask(
+        ref_tensor: torch.Tensor, mask: torch.Tensor, traj_len: int
+    ) -> torch.Tensor:
+        """
+        Generate a mask for terminations/truncations/dones based on their original shape.
+        """
+        assert mask.dim() == 1, f"Expected 1D mask, got {mask.shape=}"
+        if ref_tensor.shape[0] == traj_len:
+            return mask
+        elif ref_tensor.shape[0] > traj_len:
+            extra = int(ref_tensor.shape[0] - traj_len)
+            assert traj_len % extra == 0, (
+                f"Trajectory length {traj_len} is not divisible by extra {extra} for terminations/truncations/dones"
+            )
+            epoch_len = traj_len // extra
+
+            field_mask = torch.zeros(
+                ref_tensor.shape[0], dtype=torch.bool, device=mask.device
+            )
+            original_indices = torch.arange(ref_tensor.shape[0], device=mask.device)
+            epoch_idx = original_indices // (epoch_len + 1)
+            step_idx = original_indices % (epoch_len + 1)
+
+            # Keep the first position of each epoch (step_idx == 0)
+            field_mask[step_idx == 0] = True
+
+            # Map positions with step_idx >= 1 to mask
+            valid_mask = step_idx >= 1
+            mask_idx = epoch_idx[valid_mask] * epoch_len + (step_idx[valid_mask] - 1)
+            valid_original_indices = original_indices[valid_mask]
+            valid_mask_idx = mask_idx < len(mask)
+            field_mask[valid_original_indices[valid_mask_idx]] = mask[
+                mask_idx[valid_mask_idx]
+            ].to(dtype=torch.bool)
+
+            return field_mask
+        else:
+            raise ValueError(
+                f"Reference tensor length {ref_tensor.shape[0]} < traj_len {traj_len}"
+            )
+
+    def extract_intervene_traj(self):
+        if self.intervene_flags is None or (~self.intervene_flags).all():
+            return None
+
+        mask = self.intervene_flags.any(dim=-1)
+        if mask.dim() > 1:
+            mask = mask.reshape(mask.shape[0], -1).any(dim=-1)
+        traj_len = int(mask.shape[0])
+
+        # Apply mask to fields with same length as intervene_flags
+        def apply_mask(tensor):
+            return tensor[mask] if tensor is not None else None
+
+        actions = apply_mask(self.actions)
+        rewards = apply_mask(self.rewards)
+        prev_logprobs = apply_mask(self.prev_logprobs)
+        prev_values = apply_mask(self.prev_values)
+        intervene_flags = apply_mask(self.intervene_flags)
+
+        # Apply mask to dict fields
+        def apply_mask_to_dict(d):
+            return {k: v[mask] for k, v in d.items()} if d else {}
+
+        forward_inputs = apply_mask_to_dict(self.forward_inputs)
+        curr_obs = apply_mask_to_dict(self.curr_obs)
+        next_obs = apply_mask_to_dict(self.next_obs)
+
+        # Handle terminations, truncations, dones which may have different length
+        terminations = truncations = dones = None
+        if self.terminations is not None:
+            field_mask = self._generate_field_mask(self.terminations, mask, traj_len)
+            terminations = self.terminations[field_mask]
+            truncations = self.truncations[field_mask]
+            dones = self.dones[field_mask]
+
+        return Trajectory(
+            max_episode_length=self.max_episode_length,
+            model_weights_id=self.model_weights_id,
+            actions=actions,
+            intervene_flags=intervene_flags,
+            rewards=rewards,
+            terminations=terminations,
+            truncations=truncations,
+            dones=dones,
+            prev_logprobs=prev_logprobs,
+            prev_values=prev_values,
+            forward_inputs=forward_inputs,
+            curr_obs=curr_obs,
+            next_obs=next_obs,
+        )
 
 
 @dataclass(kw_only=True)
@@ -203,7 +298,9 @@ class EmbodiedRolloutResult:
     def append_step_result(self, result: ChunkStepResult):
         if result.actions is not None:
             self.actions.append(result.actions)
-            self.intervene_flags.append(torch.zeros(1, dtype=torch.bool))
+            self.intervene_flags.append(
+                torch.zeros_like(result.actions, dtype=torch.bool)
+            )
         if result.rewards is not None:
             self.rewards.append(result.rewards)
         if result.terminations is not None:
@@ -222,11 +319,37 @@ class EmbodiedRolloutResult:
     def update_last_actions(
         self, intervene_actions: torch.Tensor, intervene_flags: torch.Tensor
     ):
+        # action: [bsz, num-chunk-size x action-dim]
+        # intervene_actions: [bsz, num-chunk-size x action-dim]
+        # intervene_flags: [bsz, num-chunk-size]
+
         if self.actions and len(self.actions) > 0:
-            self.actions[-1] = intervene_actions * intervene_flags[
-                ..., None
-            ] + self.actions[-1] * (~intervene_flags[..., None])
-            self.intervene_flags[-1] = intervene_flags
+            last_action = self.actions[-1]
+            assert last_action.dim() == 2, (
+                f"Expected 2D tensor, got {last_action.shape=}"
+            )
+            assert intervene_actions.dim() == 2, (
+                f"Expected 2D tensor, got {intervene_actions.shape=}"
+            )
+
+            # Normalize intervene_flags dimensions
+            if intervene_flags.dim() == 1:
+                intervene_flags = intervene_flags[:, None]
+            assert intervene_flags.dim() == 2, (
+                f"Expected 2D tensor, got {intervene_flags.shape=}"
+            )
+
+            bsz, num_action_chunks = intervene_flags.shape[:2]
+            flags = intervene_flags.reshape(-1, num_action_chunks, 1)
+
+            # Combine intervene_actions and last_action based on flags
+            last_full_action = intervene_actions.reshape(
+                bsz, num_action_chunks, -1
+            ) * flags + last_action.reshape(bsz, num_action_chunks, -1) * (~flags)
+            self.actions[-1] = last_full_action.reshape(bsz, -1)
+
+            full_flags = flags.expand_as(last_full_action).reshape(bsz, -1)
+            self.intervene_flags[-1] = full_flags
 
     def append_transitions(self, curr_obs=None, next_obs=None):
         assert curr_obs is not None and next_obs is not None

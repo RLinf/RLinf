@@ -52,7 +52,9 @@ dependencies = [
     "ruff",
     "pre-commit",
     "liger_kernel; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "uv",
     "pip",
+    "huggingface_hub",
     "icmplib",
     "pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
@@ -99,8 +101,9 @@ franka = [
     "pyquaternion",
     "opencv-python",
     "defusedxml",
-    "pyspacemouse", 
+    "pyspacemouse==1.1.5", 
     "imageio[ffmpeg]",
+    "pynput"
 ]
 
 [tool.uv]

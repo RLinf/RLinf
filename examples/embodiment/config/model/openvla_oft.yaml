@@ -1,5 +1,5 @@
 model_type: "openvla_oft"
-implement_version: "rlinf" # supported versions: ['rlinf', 'offical']
+implement_version: "rlinf" # supported versions: ['rlinf', 'official']
 # rlinf: refers to the models for LIBERO and ManiSkill released on Hugging Face by RLinf, 
 #        trained with RLinf's modified OpenVLA-OFT repository.
 # official: refers to the models for RoboTwin released on Hugging Face by RLinf 

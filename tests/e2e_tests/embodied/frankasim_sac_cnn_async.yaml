@@ -1,0 +1,163 @@
+defaults:
+  - env/frankasim_pickcube_vision@env.train
+  - env/frankasim_pickcube_vision@env.eval
+  - model/cnn_policy@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: 0
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: /workspace/results/frankasim_sac_cnn_async
+    project_name: rlinf
+    experiment_name: "ci-test"
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: 2
+  max_steps: -1
+
+  only_eval: False
+  val_check_interval: 2
+  save_interval: -1
+  weight_sync_interval: 1
+
+algorithm:
+  update_epoch: 4
+  group_size: 1
+  agg_q: min # or mean
+  actor_agg_q: mean
+  backup_entropy: False
+  critic_subsample_size: 2
+  eval_rollout_epoch: 1
+  target_entropy: -2
+  adv_type: embodied_sac
+  loss_type: embodied_sac
+  loss_agg_func: "token-mean"
+  bootstrap_type: standard
+  gamma: 0.96  # Discount factor for future rewards
+  tau: 0.005 # Soft update coefficient for target networks
+
+  entropy_tuning:
+    alpha_type: softplus # choose from ["softplus", "exp", "fixed_alpha"], set to "softplus" or "exp" to enable automatic entropy tuning
+    initial_alpha: 0.01  # Initial temperature value
+    optim:
+      lr: 3.0e-4  # Learning rate for temperature parameter
+      lr_scheduler: torch_constant
+      clip_grad: 10.0
+  
+  critic_actor_ratio: 4
+  # Replay buffer settings
+  replay_buffer:
+    enable_cache: True
+    cache_size: 20000 # number of trajectories cached in memory
+    sample_window_size: 20000 # number of latest trajectories to sample from for replay buffer
+    min_buffer_size: 1  # Minimum buffer size before training starts
+    auto_save: False
+
+  target_update_freq: 1  # Frequency of target network updates
+
+  # params for rollout
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+
+  # length argument for autoregressive sampling
+  length_params:
+    max_new_token: 7
+    max_length: 1024
+    min_length: 1
+
+
+env:
+  group_name: "EnvGroup"
+
+  train:
+    obs_format: tensor
+    total_num_envs: 1
+    max_episode_steps: 2
+    max_steps_per_rollout_epoch: 2
+    video_cfg:
+      save_video: False
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+  eval:
+    obs_format: tensor
+    total_num_envs: 1
+    video_cfg:
+      save_video: False
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  enable_torch_compile: True
+  group_name: "RolloutGroup"
+  backend: "huggingface"
+  enable_offload: False
+  pipeline_stage_num: 1
+  collect_transitions: True
+  collect_prev_infos: False
+  model:
+    model_path:  "/workspace/dataset/RLinf-ResNet10-pretrained"
+    state_dim: 7
+    action_dim: 4
+    num_q_heads: 10
+    precision: ${actor.model.precision}
+    image_num: 2
+    
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 1     # how many samples each GPU processes per sampling step
+  global_batch_size: 2   # after how many sampled examples we perform one loss backward pass. Requirement: global bz must be '_world_size' multiples of local bs.
+  seed: 42
+  enable_offload: False
+  enable_drq: True
+  compile_model: True
+  model:
+    model_path:  "/workspace/dataset/RLinf-ResNet10-pretrained"
+    state_dim: 7
+    action_dim: 4
+    num_q_heads: 10
+    image_num: 2
+
+
+  optim:
+    clip_grad: 10.0
+    lr: 3e-4
+    lr_scheduler: torch_constant
+
+  critic_optim:
+    clip_grad: 10.0
+    lr: 3e-4
+    lr_scheduler: torch_constant
+
+  # Override the default values in training_backend/fsdp
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: True
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

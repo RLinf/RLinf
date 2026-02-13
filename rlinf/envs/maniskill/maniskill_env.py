@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 from typing import Optional, OrderedDict, Union
 
 import gymnasium as gym
@@ -22,11 +21,7 @@ from mani_skill.envs.sapien_env import BaseEnv
 from mani_skill.utils import common, gym_utils
 from mani_skill.utils.common import torch_clone_dict
 from mani_skill.utils.structs.types import Array
-from mani_skill.utils.visualization.misc import (
-    images_to_video,
-    put_info_on_image,
-    tile_images,
-)
+from mani_skill.utils.visualization.misc import put_info_on_image, tile_images
 from omegaconf import open_dict
 from omegaconf.omegaconf import OmegaConf
 
@@ -69,8 +64,6 @@ class ManiskillEnv(gym.Env):
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
 
         self.video_cfg = cfg.video_cfg
-        self.video_cnt = 0
-        self.render_images = []
 
         self.cfg = cfg
 
@@ -186,6 +179,8 @@ class ManiskillEnv(gym.Env):
     def _calc_step_reward(self, reward, info):
         if getattr(self.cfg, "reward_mode", "default") == "raw":
             pass
+        elif getattr(self.cfg, "reward_mode", "default") == "only_success":
+            reward = info["success"] * 1.0
         else:
             reward = torch.zeros(self.num_envs, dtype=torch.float32).to(
                 self.env.unwrapped.device
@@ -273,12 +268,12 @@ class ManiskillEnv(gym.Env):
         extracted_obs = self._wrap_obs(raw_obs)
         step_reward = self._calc_step_reward(_reward, infos)
 
-        if self.video_cfg.save_video:
-            self.add_new_frames(infos=infos, rewards=step_reward)
-
         infos = self._record_metrics(step_reward, infos)
         if isinstance(terminations, bool):
             terminations = torch.tensor([terminations], device=self.device)
+        if isinstance(truncations, bool):
+            truncations = torch.tensor([truncations], device=self.device)
+            truncations = truncations.repeat(self.num_envs)
         if self.ignore_terminations:
             terminations[:] = False
             if self.record_metrics:
@@ -297,6 +292,8 @@ class ManiskillEnv(gym.Env):
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
+        obs_list = []
+        infos_list = []
         chunk_rewards = []
         raw_chunk_terminations = []
         raw_chunk_truncations = []
@@ -305,6 +302,8 @@ class ManiskillEnv(gym.Env):
             extracted_obs, step_reward, terminations, truncations, infos = self.step(
                 actions, auto_reset=False
             )
+            obs_list.append(extracted_obs)
+            infos_list.append(infos)
 
             chunk_rewards.append(step_reward)
             raw_chunk_terminations.append(terminations)
@@ -323,8 +322,8 @@ class ManiskillEnv(gym.Env):
         past_dones = torch.logical_or(past_terminations, past_truncations)
 
         if past_dones.any() and self.auto_reset:
-            extracted_obs, infos = self._handle_auto_reset(
-                past_dones, extracted_obs, infos
+            obs_list[-1], infos_list[-1] = self._handle_auto_reset(
+                past_dones, obs_list[-1], infos_list[-1]
             )
 
         chunk_terminations = torch.zeros_like(raw_chunk_terminations)
@@ -333,11 +332,11 @@ class ManiskillEnv(gym.Env):
         chunk_truncations = torch.zeros_like(raw_chunk_truncations)
         chunk_truncations[:, -1] = past_truncations
         return (
-            extracted_obs,
+            obs_list,
             chunk_rewards,
             chunk_terminations,
             chunk_truncations,
-            infos,
+            infos_list,
         )
 
     def _handle_auto_reset(self, dones, extracted_obs, infos):
@@ -405,27 +404,3 @@ class ManiskillEnv(gym.Env):
 
     def sample_action_space(self):
         return self.env.action_space.sample()
-
-    def add_new_frames(self, infos, rewards=None):
-        image = self.render(infos, rewards)
-        self.render_images.append(image)
-
-    def add_new_frames_from_obs(self, raw_obs):
-        """For debugging render"""
-        raw_imgs = common.to_numpy(raw_obs["main_images"])
-        raw_full_img = tile_images(raw_imgs, nrows=int(np.sqrt(self.num_envs)))
-        self.render_images.append(raw_full_img)
-
-    def flush_video(self, video_sub_dir: Optional[str] = None):
-        output_dir = os.path.join(self.video_cfg.video_base_dir, f"seed_{self.seed}")
-        if video_sub_dir is not None:
-            output_dir = os.path.join(output_dir, f"{video_sub_dir}")
-        images_to_video(
-            self.render_images,
-            output_dir=output_dir,
-            video_name=f"{self.video_cnt}",
-            fps=self.cfg.init_params.sim_config.control_freq,
-            verbose=False,
-        )
-        self.video_cnt += 1
-        self.render_images = []

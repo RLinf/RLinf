@@ -82,7 +82,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
 
   # Override the default values in env/behavior_r1pro
   train:
