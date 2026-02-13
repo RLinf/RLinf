@@ -87,7 +87,7 @@ rollout:
 
   gpu_memory_utilization: 0.6
   model:
-    model_path: /mnt/public/hf_models/Qwen2.5-1.5B-Instruct
+    model_path: /path/to/model/Qwen2.5-1.5B-Instruct
     model_type: qwen2.5
     precision: ${actor.model.precision}
   enforce_eager: False
