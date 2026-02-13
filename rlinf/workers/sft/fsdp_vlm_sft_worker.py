@@ -27,6 +27,8 @@ from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
 class FSDPVlmSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
+        # vlm sft before load dataloader should build the tokenizer
+        self.tokenizer = self.build_tokenizer()
         super().__init__(cfg)
 
     def _save_data_state(self, save_path: str):

@@ -54,9 +54,6 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             self.global_batch_size // self.micro_batch_size // self._world_size
         )
 
-        # before load dataloader should build the tokenizer
-        self.tokenizer = self.build_tokenizer()
-
         # if train_data_paths is not set, the code will just eval the model
         if self.cfg.data.get("train_data_paths") is None:
             logging.warning("train_data_paths is not set, will just eval the model")
@@ -212,10 +209,6 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             )
 
             return train_metrics
-
-    @abstractmethod
-    def build_tokenizer(self):
-        raise NotImplementedError
 
     @abstractmethod
     def build_dataloader(self):

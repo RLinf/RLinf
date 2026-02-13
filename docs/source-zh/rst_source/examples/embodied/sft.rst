@@ -117,7 +117,8 @@ RLinf 目前支持 LeRobot 格式和 VLM 格式的数据集，可以通过 **con
 实现具体的 ``build_tokenizer`` 、``build_dataloader`` 、``get_train_model_output`` 和 ``get_eval_model_output`` 方法。
 
 .. code:: python
-     @abstractmethod
+
+    @abstractmethod
     def build_tokenizer(self):
         raise NotImplementedError
 
