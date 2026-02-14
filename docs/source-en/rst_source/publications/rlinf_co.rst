@@ -1,5 +1,5 @@
 RLinf-Co: Reinforcement Learning-Based Sim-Real Co-Training for VLA Models
-=========================================================================
+==========================================================================
 
 **Paper:** `xxxxx <https://arxiv.org/abs/xxx>`__
 
