@@ -28,6 +28,7 @@ class SupportedEnvType(Enum):
     FRANKASIM = "frankasim"
     HABITAT = "habitat"
     OPENSORAWM = "opensora_wm"
+    WANWM = "wan_wm"
 
 
 def get_env_cls(env_type: str, env_cfg=None):
@@ -108,5 +109,9 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.world_model.world_model_opensora_env import OpenSoraEnv
 
         return OpenSoraEnv
+    elif env_type == SupportedEnvType.WANWM:
+        from rlinf.envs.world_model.world_model_wan_env import WanEnv
+
+        return WanEnv
     else:
         raise NotImplementedError(f"Environment type {env_type} not implemented")

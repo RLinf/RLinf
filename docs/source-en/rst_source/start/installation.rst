@@ -177,7 +177,7 @@ To install the reasoning (Megatron + SGLang/vLLM) stack instead, run:
 
 .. code-block:: shell
 
-  bash requirements/install.sh reason
+  bash requirements/install.sh agentic
 
 You can override the default virtual environment directory using ``--venv``. For example:
 
