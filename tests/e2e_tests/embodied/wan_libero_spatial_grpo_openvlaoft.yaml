@@ -89,7 +89,7 @@ env:
     reward_coef: ${algorithm.reward_coef}
     group_size: ${algorithm.group_size}
     reset_gripper_open: False
-    wan_wm_hf_ckpt_path: "/workspace/dataset/RLinf-Wan-LIBERO-Spatial"
+    wan_wm_hf_ckpt_path: "/workspace/dataset/RLinf-Wan-Libero-Spatial"
   eval:
     total_num_envs: 4
     auto_reset: True

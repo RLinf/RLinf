@@ -22,8 +22,6 @@ Wan 主要希望赋予模型以下能力：
 3. **动作生成**：产生精确的机器人动作（位置、旋转、夹爪控制）。
 4. **策略提升**：借助 Wan 生成的“想象”轨迹，使用 PPO 等强化学习方法优化 VLA 策略。
 
-与 LIBERO 环境下微调 VLA 的流程类似，本文档重点介绍如何在基于 Wan 的仿真环境中运行 RL 训练任务。
-
 环境
 -----------------------
 
@@ -341,7 +339,7 @@ RLinf-Wan-LIBERO-Spatial 的目录结构如下：
 LIBERO 部分结果
 ~~~~~~~~~~~~~~~~~~~~~~
 
-目前仅测试使用 Wan 模拟 libero-spatial, libero-object 和 libero object 环境并训练 VLA 模型，更多环境仍在测试中。
+目前仅测试使用 Wan 模拟 libero-spatial、libero-object 和 libero-goal 环境并训练 VLA 模型，更多环境仍在测试中。
 
 对于每个 LIBERO 套件，我们评估所有 task_id 与 trial_id 的组合。Spatial、Object 和 Goal 套件共评估 1500 个环境（10 个任务 × 150 个试次）。
 

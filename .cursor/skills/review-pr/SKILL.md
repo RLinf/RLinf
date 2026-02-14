@@ -42,6 +42,19 @@ Report these as findings when you see potential omissions, even if the exact lin
 
 - **User-facing changes** must have **tests** and **documentation**. A reviewer must be able to validate reproducibility.
 
+### Documentation consistency checks (required when docs change)
+
+For docs PRs, or PRs touching `docs/`, always perform a cross-language and style consistency review:
+
+- For paired pages under `docs/source-en/` and `docs/source-zh/` (same topic), verify semantic parity for:
+  - setup commands, paths, env vars, and config keys
+  - supported models/envs/algorithms and capability claims
+  - reported numbers (metrics, table values, dataset sizes, trial counts)
+- Flag duplicated, missing, or conflicting paragraphs between EN and ZH pages unless explicitly justified.
+- For embodied example pages, cross-check style against sibling docs (for example `opensora.rst`) and flag inconsistent section naming/order, code-block conventions, and result table formatting/link style.
+- Highlight terminology/wording mistakes that can mislead users (e.g., duplicated suite names, missing suite names, mismatched metric descriptions).
+- Each docs finding must include a concrete suggested wording or structural fix and exact file references.
+
 ### Code style and formatting
 
 - **Style**: [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html); be consistent with surrounding code.

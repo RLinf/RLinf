@@ -92,7 +92,7 @@ env:
     max_steps_per_rollout_epoch: 256
     reward_coef: ${algorithm.reward_coef}
     reset_gripper_open: False
-    wan_wm_hf_ckpt_path: "/path/to/model/hf_models/RLinf-Wan-LIBERO-Object"
+    wan_wm_hf_ckpt_path: "/path/to/RLinf-Wan-Libero-Object" # https://huggingface.co/RLinf/RLinf-Wan-Libero-Object
     enable_offload: True # otherwise, may OOM
   eval:
     total_num_envs: 500
@@ -114,7 +114,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/Openvla-oft-SFT-libero-object-traj1/"
+    model_path: "/path/to/Openvla-oft-SFT-libero-object-traj1/" # https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-object-traj1 https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
     precision: ${actor.model.precision}
 
 actor:
@@ -127,7 +127,7 @@ actor:
 
   # Override the default values in model/openvla_oft
   model:
-    model_path: "/path/to/model/Openvla-oft-SFT-libero-object-traj1/"
+    model_path: "/path/to/Openvla-oft-SFT-libero-object-traj1/" # https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-object-traj1 https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
     model_type: "openvla_oft"
 
     unnorm_key: libero_object_no_noops

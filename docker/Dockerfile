@@ -279,7 +279,7 @@ RUN bash requirements/install.sh embodied --venv openvla-oft --model openvla-oft
 RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
-# Embodied: OpenSora
+# Embodied: WAN
 ##################################################################################################
 FROM embodied-common-image AS embodied-wan-image
 

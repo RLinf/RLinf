@@ -204,7 +204,7 @@ After download, make sure model paths are correctly configured in yaml.
         train:
             wan_wm_hf_ckpt_path: /Pathto/model/RLinf-Wan-LIBERO-Spatial/
 
-Running Scripts
+Running the Script
 -------------------
 
 Before running commands below, ensure the correct Python virtual environment is activated.
@@ -313,7 +313,7 @@ Visualization and Results
   - ``rollout/advantages_max``: max advantage
   - ``rollout/advantages_mean``: mean advantage
   - ``rollout/advantages_min``: min advantage
-  - ``rollout/rewards``: chunk rewards
+  - ``rollout/rewards``: chunk of reward (refer to L414 in libero_env.py)
 
 - **Environment metrics**:
 
@@ -332,7 +332,7 @@ Visualization and Results
             save_video: True
             video_base_dir: ${runner.logger.log_path}/video/eval
 
-**4. Logger integration**
+**4. Train Log Tool Integration**
 
 .. code-block:: yaml
 

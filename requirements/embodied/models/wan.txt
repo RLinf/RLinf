@@ -1,14 +1,8 @@
-imageio
-imageio[ffmpeg]
 safetensors
-einops
 sentencepiece
 protobuf
 modelscope
 ftfy
-pynvml
 pandas
-accelerate
-peft
 deepspeed==0.18.4
 seaborn
