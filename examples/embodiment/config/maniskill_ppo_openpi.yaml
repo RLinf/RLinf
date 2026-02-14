@@ -85,6 +85,7 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
+
   # Override the default values in env/train or env/eval
   train:
     total_num_envs: 320
