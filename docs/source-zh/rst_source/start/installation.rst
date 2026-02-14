@@ -175,7 +175,7 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 
 .. code-block:: shell
 
-  bash requirements/install.sh reason
+  bash requirements/install.sh agentic
 
 你也可以通过 ``--venv`` 参数覆盖默认虚拟环境目录，例如：
 

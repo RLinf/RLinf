@@ -12,13 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Convert FSDP PT checkpoint to HuggingFace safetensors format.
+
+Usage:
+    python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
+        --config-path /path/to/RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/config \
+        --config-name fsdp_model_convertor
+"""
+
 import os
 
 import hydra
 import torch
 
 from rlinf.models import get_model
-from toolkits.ckpt_convertor.fsdp_convertor.utils import (
+
+from .utils import (
     copy_model_config_and_code,
     get_model_save_helper,
     save_state_dict_sharded_safetensors,
