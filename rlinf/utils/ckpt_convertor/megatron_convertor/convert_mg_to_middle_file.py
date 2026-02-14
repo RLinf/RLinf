@@ -18,6 +18,23 @@
 #   params in decoder layer x: x.safetensors
 #   use megatron name and style (fuse glu fc1)
 
+"""Convert Megatron checkpoint to middle-file format.
+
+Typical usage (equivalent to removed mg2hf helper scripts):
+    python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_mg_to_middle_file \
+        --load-path /path/to/megatron_checkpoint \
+        --save-path /path/to/output_middle_file \
+        --model DeepSeek-R1-Distill-Qwen-1.5B \
+        --tp-size 2 \
+        --ep-size 1 \
+        --pp-size 1 \
+        --te-ln-linear-qkv true \
+        --te-ln-linear-mlp_fc1 true \
+        --te-extra-state-check-none true \
+        --use-gpu-num 0 \
+        --process-num 16
+"""
+
 import gc
 import os
 import time
@@ -28,10 +45,11 @@ import safetensors.torch
 import torch
 import yaml
 from tqdm import tqdm
-from utils.fp8_utils import dict_push
-from utils.mg_loader import MGLoaderGroupLazy
-from utils.mp_utils import get_device_initializer, single_thread_init
-from utils.tensor_operations import MergeTpTpe, Operation
+
+from .utils.fp8_utils import dict_push
+from .utils.mg_loader import MGLoaderGroupLazy
+from .utils.mp_utils import get_device_initializer, single_thread_init
+from .utils.tensor_operations import MergeTpTpe, Operation
 
 torch.set_num_threads(32)
 

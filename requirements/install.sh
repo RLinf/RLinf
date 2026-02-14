@@ -15,9 +15,10 @@ SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 USE_MIRRORS=0
 GITHUB_PREFIX=""
 NO_ROOT=0
-SUPPORTED_TARGETS=("embodied" "reason" "docs")
+NO_INSTALL_RLINF_CMD="--no-install-project"
+SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan")
 
 #=======================Utility Functions=======================
 
@@ -27,7 +28,7 @@ Usage: bash install.sh <target> [options]
 
 Targets:
     embodied               Install embodied model and envs (default).
-    reason                 Install reasoning stack (Megatron etc.).
+    agentic                Install agentic stack (Megatron etc.).
     docs                   Install documentation requirements.
 
 Options (for target=embodied):
@@ -39,6 +40,7 @@ Common options:
     --venv <dir>           Virtual environment directory name (default: .venv).
     --use-mirror           Use mirrors for faster downloads.
     --no-root              Avoid system dependency installation for non-root users. Only use this if you are certain system dependencies are already installed.
+    --install-rlinf        Install RLinf itself into the python.
 EOF
 }
 
@@ -84,6 +86,10 @@ parse_args() {
                 ;;
             --no-root)
                 NO_ROOT=1
+                shift
+                ;;
+            --install-rlinf)
+                NO_INSTALL_RLINF_CMD=""
                 shift
                 ;;
             --*)
@@ -194,7 +200,7 @@ EOF
         # shellcheck disable=SC1090
         source "$VENV_DIR/bin/activate"
     fi
-    UV_TORCH_BACKEND=auto uv sync --active
+    UV_TORCH_BACKEND=auto uv sync --active $NO_INSTALL_RLINF_CMD
 }
 
 install_flash_attn() {
@@ -333,7 +339,8 @@ clone_or_reuse_repo() {
 #=======================EMBODIED INSTALLERS=======================
 
 install_common_embodied_deps() {
-    uv sync --extra embodied --active
+    uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
+    uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
     if [ "$NO_ROOT" -eq 0 ]; then
         bash $SCRIPT_DIR/embodied/sys_deps.sh
     fi
@@ -394,6 +401,14 @@ install_openvla_oft_model() {
             install_common_embodied_deps
             install_maniskill_libero_env
             install_opensora_world_model
+            install_flash_attn
+            uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git
+            ;;
+        wan)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_maniskill_libero_env
+            install_wan_world_model
             install_flash_attn
             uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git
             ;;
@@ -523,7 +538,7 @@ install_env_only() {
     SKIP_ROS=${SKIP_ROS:-0}
     case "$ENV_NAME" in
         franka)
-            uv sync --extra franka --active
+            uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
             if [ "$SKIP_ROS" -ne 1 ]; then
                 if [ "$NO_ROOT" -eq 0 ]; then
                     bash $SCRIPT_DIR/embodied/ros_install.sh
@@ -588,6 +603,7 @@ install_calvin_env() {
     uv pip install -e ${calvin_dir}/calvin_env/tacto
     uv pip install -e ${calvin_dir}/calvin_env
     uv pip install -e ${calvin_dir}/calvin_models
+    uv pip install --upgrade hydra-core==1.3.2
 }
 
 install_isaaclab_env() {
@@ -595,6 +611,7 @@ install_isaaclab_env() {
     isaaclab_dir=$(clone_or_reuse_repo ISAAC_LAB_PATH "$VENV_DIR/isaaclab" https://github.com/RLinf/IsaacLab)
 
     pushd ~ >/dev/null
+    uv pip install "flatdict==4.0.1" --no-build-isolation
     uv pip install "cuda-toolkit[nvcc]==12.8.0"
     $isaaclab_dir/isaaclab.sh --install
     popd >/dev/null
@@ -681,8 +698,7 @@ install_robotwin_env() {
         export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0"
     fi
 
-    uv pip install mplib==0.2.1
-    uv pip install gymnasium==0.29.1
+    uv pip install mplib==0.2.1 gymnasium==0.29.1 av open3d zarr openai
 
     uv pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git  --no-build-isolation
     uv pip install warp-lang
@@ -762,13 +778,18 @@ install_opensora_world_model() {
     install_apex
 }
 
-#=======================REASONING INSTALLER=======================
+install_wan_world_model() {
+    local wan_dir
+    wan_dir=$(clone_or_reuse_repo WAN_PATH "$VENV_DIR/wan" https://github.com/youmo445/diffsynth-studio-rlinf.git)
+    uv pip install -e "$wan_dir"
+    uv pip install -r $SCRIPT_DIR/embodied/models/wan.txt
+}
 
-install_reason() {
-    uv sync --extra sglang-vllm --active
+#=======================AGENTIC INSTALLER=======================
 
-    # FSDP lora training
-    uv pip install peft==0.11.1
+install_agentic() {
+    uv sync --extra agentic-vllm --active $NO_INSTALL_RLINF_CMD
+    uv sync --extra agentic-sglang --inexact --active $NO_INSTALL_RLINF_CMD
 
     # Megatron-LM
     # Prefer an existing checkout if MEGATRON_PATH is provided; otherwise clone into the venv.
@@ -779,7 +800,7 @@ install_reason() {
 
     # If TEST_BUILD is 1, skip installing megatron.txt
     if [ "$TEST_BUILD" -ne 1 ]; then
-        uv pip install -r $SCRIPT_DIR/reason/megatron.txt --no-build-isolation
+        uv pip install -r $SCRIPT_DIR/agentic/megatron.txt --no-build-isolation
     fi
 
     install_apex
@@ -790,8 +811,9 @@ install_reason() {
 #=======================DOCUMENTATION INSTALLER=======================
 
 install_docs() {
-    uv sync --extra sglang-vllm --active
-    uv sync --extra embodied --active --inexact
+    uv sync --extra agentic-vllm --active $NO_INSTALL_RLINF_CMD
+    uv sync --extra agentic-sglang --inexact --active $NO_INSTALL_RLINF_CMD
+    uv sync --extra embodied --active --inexact $NO_INSTALL_RLINF_CMD
     uv pip install -r $SCRIPT_DIR/docs/requirements.txt
     uv pip uninstall pynvml || true
 }
@@ -841,9 +863,9 @@ main() {
                     ;;
             esac
             ;;
-        reason)
+        agentic)
             create_and_sync_venv
-            install_reason
+            install_agentic
             ;;
         docs)
             create_and_sync_venv

@@ -123,13 +123,13 @@ Megatron-LM 训练框架并不能直接从 hf 格式的 checkpoint 直接读取�
 
 如果您有需要适配其他模型权重转换的需求，您可以直接在 `RLinf <https://github.com/RLinf/RLinf/issues>`__ 的 github 仓库中提出对应的 issue。
 
-您也可以通过参考 ``toolkits/ckpt_convertor/megatron_convertor/`` 中的文件，自主适配新的模型转换代码。
+您也可以通过参考 ``rlinf/utils/ckpt_convertor/megatron_convertor/`` 中的文件，自主适配新的模型转换代码。
 
-**工具：** ``toolkits/ckpt_convertor/megatron_convertor/``  
+**工具：** ``rlinf/utils/ckpt_convertor/megatron_convertor/``  
 
 当前 RLinf 中的 ckpt_convert 转换工具是先将 huggingface 格式的 checkpoint 转换为中间文件格式，然后再将中间文件格式转换为 Megatron-LM 格式的 checkpoint。
 
-具体的接口在 ``toolkits/ckpt_convertor/megatron_convertor/convert_hf_to_mg.py`` 文件中。
+具体的接口在 ``rlinf/utils/ckpt_convertor/megatron_convertor/convert_hf_to_mg.py`` 文件中。
 
 .. code-block:: python
 

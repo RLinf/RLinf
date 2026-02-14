@@ -26,7 +26,7 @@ This script loads a JAX model checkpoint using orbax and can either:
 2. Convert the JAX model to PyTorch format using our PI0Pytorch model
 
 Usage:
-python toolkits/ckpt_convertor/convert_openpi_jax_to_python.py
+python rlinf/utils/ckpt_convertor/convert_openpi_jax_to_python.py
     --checkpoint_dir /path/to/jax/checkpoint
     --output_path /path/to/pytorch/checkpoint
     --config_name pi0_aloha_pen_uncap
