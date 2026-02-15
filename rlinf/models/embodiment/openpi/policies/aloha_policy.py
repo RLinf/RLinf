@@ -179,24 +179,38 @@ def _gripper_from_angular_inv(value):
     return value - 0.5476
 
 
+def convert_image(img):
+    if img is None:
+        return None
+    img = np.asarray(img)
+    # Convert to uint8 if using float images.
+    if np.issubdtype(img.dtype, np.floating):
+        img = (255 * img).astype(np.uint8)
+    # SFT-specific: all original images are in `[c, h, w]` dimensions
+    if img.shape[0] == 3:
+        img = einops.rearrange(img, "c h w -> h w c")
+    # RL scenario: main_images are `[h, w, c]`, wrist_images are `[2, h, w, c]` (no conversion needed)
+    return img
+
+
 def _decode_aloha(data: dict, *, adapt_to_pi: bool = False) -> dict:
     # state is [left_arm_joint_angles, left_arm_gripper, right_arm_joint_angles, right_arm_gripper]
     # dim sizes: [6, 1, 6, 1]
-    state = np.asarray(data["state"])
+    if "observation/state" in data:
+        base_images = convert_image(data["observation/image"])
+        wrist_images = convert_image(data["observation/wrist_image"])
+        state = np.asarray(data["observation/state"])
+        data["images"] = {
+            "cam_high": base_images,
+            "cam_left_wrist": wrist_images[0, ...],
+            "cam_right_wrist": wrist_images[1, ...],
+        }
+    else:
+        images = data["images"]
+        images_dict = {name: convert_image(img) for name, img in images.items()}
+        data["images"] = images_dict
+        state = np.asarray(data["state"])
     state = _decode_state(state, adapt_to_pi=adapt_to_pi)
-
-    def convert_image(img):
-        img = np.asarray(img)
-        # Convert to uint8 if using float images.
-        if np.issubdtype(img.dtype, np.floating):
-            img = (255 * img).astype(np.uint8)
-        # Convert from [channel, height, width] to [height, width, channel].
-        return einops.rearrange(img, "c h w -> h w c")
-
-    images = data["images"]
-    images_dict = {name: convert_image(img) for name, img in images.items()}
-
-    data["images"] = images_dict
     data["state"] = state
     return data
 

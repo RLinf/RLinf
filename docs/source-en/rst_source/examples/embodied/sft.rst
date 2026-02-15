@@ -25,6 +25,7 @@ Supported formats include:
 
 - pi0_maniskill
 - pi0_libero
+- pi0_aloha_robotwin
 - pi05_libero
 - pi05_maniskill
 - pi05_metaworld
