@@ -46,6 +46,8 @@ PAYLOAD_TYPES = frozenset(
         "tensor_list",
         "tensor_dict",
         "tensor_dataclass",
+        "tensor_list_dataclass",
+        "tensor_dict_dataclass",
     }
 )
 
@@ -90,6 +92,24 @@ class TensorPayload:
 
 
 @dataclass
+class TensorListPayload:
+    """Dataclass with a list of tensors for benchmarking channel put/get."""
+
+    id: int
+    payload_list: list
+    note: str
+
+
+@dataclass
+class TensorDictPayload:
+    """Dataclass with a dict of tensors for benchmarking channel put/get."""
+
+    id: int
+    payload_dict: dict
+    note: str
+
+
+@dataclass
 class BenchmarkConfig:
     num_messages: int = 2000
     num_warmup_messages: int = 2
@@ -97,7 +117,7 @@ class BenchmarkConfig:
     channel_maxsize: int = 0
     enable_thread_interference: bool = False
     num_noise_threads: int = 2
-    payload_type: str = "bytes"  # "bytes" | "cpu_tensor" | "gpu_tensor" | "tensor_list" | "tensor_dict" | "tensor_dataclass"
+    payload_type: str = "bytes"  # bytes | cpu_tensor | gpu_tensor | tensor_list | tensor_dict | tensor_dataclass | tensor_list_dataclass | tensor_dict_dataclass
     payload_device: str = "auto"  # "auto" (cuda if available else cpu) | "cpu" | "cuda"
     enabled_tests: frozenset[str] = field(default_factory=lambda: AVAILABLE_TESTS)
     enable_ray_queue: bool = False  # Run ray.util.queue.Queue comparison for same tests
@@ -116,12 +136,20 @@ def _create_tensor_payload(
     payload_type: str,
     size_bytes: int,
     payload_device: str = "auto",
-) -> torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | TensorPayload:
+) -> (
+    torch.Tensor
+    | list[torch.Tensor]
+    | dict[str, torch.Tensor]
+    | TensorPayload
+    | TensorListPayload
+    | TensorDictPayload
+):
     """Create a tensor payload of given type and approximate size in bytes.
 
-    For tensor_list, tensor_dict, and tensor_dataclass, device controls where
-    tensors live: 'auto' (cuda if available else cpu), 'cpu', or 'cuda'.
-    cpu_tensor and gpu_tensor ignore device and always use cpu/cuda.
+    For tensor_list, tensor_dict, tensor_dataclass, tensor_list_dataclass, and
+    tensor_dict_dataclass, device controls where tensors live: 'auto' (cuda if
+    available else cpu), 'cpu', or 'cuda'. cpu_tensor and gpu_tensor ignore
+    device and always use cpu/cuda.
     """
     payload_device = _resolve_device(payload_device)
     torch_device = torch.device(payload_device) if payload_device == "cuda" else "cpu"
@@ -163,6 +191,22 @@ def _create_tensor_payload(
             shape, dtype=torch.float32, device=torch_device
         ).contiguous()
         return TensorPayload(id=0, payload=tensor, note="bench")
+
+    if payload_type == "tensor_list_dataclass":
+        payload_list = [
+            torch.ones(
+                (num_elements,), dtype=torch.float32, device=torch_device
+            ).contiguous()
+        ]
+        return TensorListPayload(id=0, payload_list=payload_list, note="bench")
+
+    if payload_type == "tensor_dict_dataclass":
+        payload_dict = {
+            "data": torch.ones(
+                (num_elements,), dtype=torch.float32, device=torch_device
+            ).contiguous()
+        }
+        return TensorDictPayload(id=0, payload_dict=payload_dict, note="bench")
 
     raise ValueError(f"Unknown payload_type: {payload_type}")
 
@@ -740,7 +784,13 @@ def run_benchmark(cfg: BenchmarkConfig) -> None:
 
     print(f"Running channel pressure benchmark with config: {cfg}")
     payload_info = f"payload_type: {cfg.payload_type}"
-    if cfg.payload_type in ("tensor_list", "tensor_dict", "tensor_dataclass"):
+    if cfg.payload_type in (
+        "tensor_list",
+        "tensor_dict",
+        "tensor_dataclass",
+        "tensor_list_dataclass",
+        "tensor_dict_dataclass",
+    ):
         payload_info += f", device: {cfg.payload_device}"
     print(
         f"Enabled tests: {sorted(enabled)}, {payload_info}"
@@ -911,9 +961,10 @@ def parse_args() -> argparse.Namespace:
         default="auto",
         choices=("auto", "cpu", "cuda"),
         help=(
-            "Device for tensor payloads (tensor_list, tensor_dict, tensor_dataclass): "
-            "auto (cuda if available else cpu), cpu, or cuda (default: auto). "
-            "cpu_tensor and gpu_tensor ignore this and always use cpu/cuda."
+            "Device for tensor payloads (tensor_list, tensor_dict, tensor_dataclass, "
+            "tensor_list_dataclass, tensor_dict_dataclass): auto (cuda if available "
+            "else cpu), cpu, or cuda (default: auto). cpu_tensor and gpu_tensor "
+            "ignore this and always use cpu/cuda."
         ),
     )
     parser.add_argument(

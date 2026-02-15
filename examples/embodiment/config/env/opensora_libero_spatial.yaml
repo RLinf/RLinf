@@ -31,6 +31,8 @@ video_cfg:
   info_on_video: True
   video_base_dir: ${runner.logger.log_path}/video/train
 
+enable_offload: False
+
 ###  ------------------Opensora params define here ------------------
 
 opensora_wm_hf_ckpt_path: null

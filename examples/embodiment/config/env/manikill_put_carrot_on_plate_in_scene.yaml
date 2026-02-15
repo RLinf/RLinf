@@ -16,6 +16,8 @@ video_cfg:
   info_on_video: True
   video_base_dir: ${runner.logger.log_path}/video/train
 
+enable_offload: False
+
 init_params:
   id: "PutCarrotOnPlateInScene-v2"
   num_envs: null # will be set in ManiSkillEnv init
