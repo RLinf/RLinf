@@ -106,6 +106,8 @@ class AgentRunner(ReasoningRunner):
                 self.tool_name_map[tool_name] = worker.worker_group_name
 
         self.tool_output_channel = Channel.create("ToolOutput")
+        if self.recompute_logprobs:
+            self.inference_channel = Channel.create("Inference", local=True)
 
     def init_rollout_workers(self):
         """init rollout workers, tool workers and agent loop worker."""
