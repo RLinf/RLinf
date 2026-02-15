@@ -125,15 +125,19 @@ VLA 模型下载
    # 使用下面任一方法下载模型
    # 方法 1：使用 git clone
    git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
+   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1
+   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-object-traj1
+   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-goal-traj1
+   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-10-traj1
 
    # 方法 2：使用 huggingface-hub
    # 为提升国内下载速度，可以设置：
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
-   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
+   hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir Openvla-oft-SFT-libero-spatial-traj1
+   hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1 --local-dir Openvla-oft-SFT-libero-object-traj1
+   hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir Openvla-oft-SFT-libero-goal-traj1
+   hf download Haozhan72/Openvla-oft-SFT-libero-10-traj1 --local-dir Openvla-oft-SFT-libero-10-traj1
 
 下载完成后，请确保在配置 yaml 文件中正确指定模型路径与 unnorm_key。
 
@@ -151,7 +155,7 @@ WM (World Model) 模型下载
 --------------------------------
 
 除 VLA 模型之外，还需下载 OpenSora 权重与用于仿真初始化的数据集。
-当前 RLinf 仅提供 libero-spatial 与 libero-object 的权重与数据，下载方法如下：
+当前 RLinf 仅提供 libero-spatial 与 libero-object 的权重与数据，各 suite 的 OpenSora 权重均基于 VLA 模型 rollout 的 3000 条轨迹构建，下载方法如下：
 
 .. code:: bash
 
@@ -229,7 +233,6 @@ RLinf-OpenSora-LIBERO-Spatial 的目录结构如下：
          opensora_wm_hf_ckpt_path: /Pathto/model/RLinf-OpenSora-LIBERO-Spatial/
 
    # 在 env/train/opensora_libero_spatial.yaml 中：
-
    env_type: opensora_wm
    wm_env_type: libero
    # world model 初始化的初始图像路径
@@ -348,14 +351,14 @@ LIBERO 部分结果
     :widths: 50 25 25
 
     * - 模型
-      - Object
       - Spatial
-    * - |huggingface| `OpenVLA-OFT (LoRA-base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora>`_
-      - 50.20%
-      - 51.61%
+      - Object
+    * - OpenVLA-OFT (LoRA-base)
+      - 61.2%
+      - 36.7%
     * - OpenVLA-OFT（OpenSora 作为世界模型的 RLinf-GRPO）
       - 75.5%
       - 64.5%
     * - **效果提升**
-      - **+25.3%**
-      - **+12.9%**
+      - **+14.3%**
+      - **+27.8%**

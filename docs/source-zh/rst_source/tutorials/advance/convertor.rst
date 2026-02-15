@@ -34,7 +34,7 @@ distcp 格式转换到 pt 格式
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 如果您使用最新的代码保存的checkpoint，已经保存了 ``model_state_dict/full_weigths.pt`` 文件，可以跳过此步骤。
-如果您仍想把保存的 ``.distcp`` 文件转换成 ``.pt`` 格式，或者使用老版本代码，仅保存了 ``.distcp`` 格式的文件，可使用 RLinf/toolkits/ckpt_convertor/fsdp_convertor/convert_dcp_to_pt.pt，
+如果您仍想把保存的 ``.distcp`` 文件转换成 ``.pt`` 格式，或者使用老版本代码，仅保存了 ``.distcp`` 格式的文件，可使用 ``RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/convert_dcp_to_pt.py``，
 先将 ``.distcp`` 转换成 ``.pt`` 格式，再执行后续操作。
 
 .. code-block:: bash
@@ -51,7 +51,7 @@ pt 格式转换到 safetensors 格式
 
 1. **修改config文件**
 
-运行转换脚本前，请您修改 ``RLinf/toolkits/ckpt_convertor/fsdp_convertor/config/fsdp_model_convertor.yaml`` 文件。
+运行转换脚本前，请您修改 ``RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/config/fsdp_model_convertor.yaml`` 文件。
 请检查以下7个参数是否正确： 
 
     ``defaults``， ``convertor.save_path``， ``convertor.merge_lora_weighs``， ``convertor.ckpt_path``， 
@@ -77,14 +77,16 @@ pt 格式转换到 safetensors 格式
 
 2. **（Optional）新增model_save_helper**
 
-如果您的模型有特殊的保存逻辑，请在 ``RLinf/toolkits/ckpt_convertor/fsdp_convertor/utils.py`` 文件中的 ``get_model_save_helper`` 添加对应的保存函数。
+如果您的模型有特殊的保存逻辑，请在 ``RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/utils.py`` 文件中的 ``get_model_save_helper`` 添加对应的保存函数。
 
 3. **运行脚本**
 
 
 .. code-block:: bash
 
-   bash convert_pt_to_hf.sh
+   python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
+       --config-path /path/to/RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/config \
+       --config-name fsdp_model_convertor
 
 4. **查看保存的safetensors文件**
 
@@ -115,18 +117,40 @@ Megatron检查点文件结构如下：
        └── …
 
 
-**方式一：编辑脚本文件**
-
-手动打开 ``mg2hf_7b.sh`` 或 ``mg2hf_1.5b.sh``，将以下变量设置为你想要的路径。
-
-1. ``CKPT_PATH_MG`` （Megatron checkpoint路径，例如 ``results/run_name/checkpoints/global_step_xx/actor/``）， 
-2. ``CKPT_PATH_HF`` （Huggingface目标路径，任意路径），以及
-3. ``CKPT_PATH_ORIGINAL_HF`` （初始化训练的基模checkpoint，例如 ``/path/to/DeepSeek-R1-Distill-Qwen-1.5B``） 
-
-**方式二：命令行参数**
-
-更灵活的方式是直接通过命令行参数传入路径。
+请直接运行以下命令。先设置：
+1. ``CKPT_PATH_MG`` （Megatron checkpoint路径，例如 ``results/run_name/checkpoints/global_step_xx/actor/``），
+2. ``CKPT_PATH_HF`` （HuggingFace目标路径），以及
+3. ``CKPT_PATH_ORIGINAL_HF`` （初始化训练的基模checkpoint路径，例如 ``/path/to/DeepSeek-R1-Distill-Qwen-1.5B``）。
 
 .. code-block:: bash
 
-    bash mg2hf_1.5b.sh /path/to/megatron_checkpoint /target/path/to/huggingface_checkpoint /path/to/base_model_checkpoint
+    CKPT_PATH_MG=/path/to/megatron_checkpoint
+    CKPT_PATH_HF=/target/path/to/huggingface_checkpoint
+    CKPT_PATH_ORIGINAL_HF=/path/to/base_model_checkpoint
+    CKPT_PATH_MF="${CKPT_PATH_HF}_middle_file"
+
+    # 示例：1.5B
+    python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_mg_to_middle_file \
+        --load-path "${CKPT_PATH_MG}" \
+        --save-path "${CKPT_PATH_MF}" \
+        --model DeepSeek-R1-Distill-Qwen-1.5B \
+        --tp-size 2 \
+        --ep-size 1 \
+        --pp-size 1 \
+        --te-ln-linear-qkv true \
+        --te-ln-linear-mlp_fc1 true \
+        --te-extra-state-check-none true \
+        --use-gpu-num 0 \
+        --process-num 16
+
+    python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_middle_file_to_hf \
+        --load-path "${CKPT_PATH_MF}" \
+        --save-path "${CKPT_PATH_HF}" \
+        --model DeepSeek-R1-Distill-Qwen-1.5B \
+        --use-gpu-num 0 \
+        --process-num 16
+
+    rm -rf "${CKPT_PATH_MF}"
+    rm -f "${CKPT_PATH_HF}"/*.done
+    shopt -s extglob
+    cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index).json "${CKPT_PATH_HF}"

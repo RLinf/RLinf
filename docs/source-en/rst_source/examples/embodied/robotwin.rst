@@ -247,7 +247,7 @@ Using the OpenVLA-OFT model as an example, the following key parameters need to 
      model:
        model_path: "/path/to/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup"  # SFT model path
        model_type: "openvla_oft"                                             # Model type set to openvla_oft
-       implement_version: "offical"                                          # openvla_oft implementation version (RLinf OpenVLA-OFT model implementation integrates the official OFT version and RLinf SFT fine-tuned version, RoboTwin environment uses the official version)
+       implement_version: "official"                                          # openvla_oft implementation version (RLinf OpenVLA-OFT model implementation integrates the official OFT version and RLinf SFT fine-tuned version, RoboTwin environment uses the official version)
        action_dim: 14                                                        # RoboTwin action dimension (14D)
        use_proprio: True                                                     # Whether to use proprioception information
        proprio_dim: 14                                                       # Proprioception dimension
@@ -384,7 +384,7 @@ Configuration Details
 1. **Model Configuration**:
 
    - ``actor.model.model_type: "openvla_oft"``: Use OpenVLA-OFT model
-   - ``actor.model.implement_version: "offical"``: Use OpenVLA-OFT official version
+   - ``actor.model.implement_version: "official"``: Use OpenVLA-OFT official version
    - ``actor.model.action_dim: 14``: 14-dimensional action space (including proprioception)
    - ``actor.model.use_proprio: True``: Enable proprioception input
    - ``actor.model.proprio_dim: 14``: Proprioception dimension

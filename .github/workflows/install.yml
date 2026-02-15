@@ -52,7 +52,7 @@ jobs:
       - name: Install reason
         run: |
           pip install uv
-          TEST_BUILD=1 bash requirements/install.sh reason
+          TEST_BUILD=1 bash requirements/install.sh agentic
           rm -rf .venv
 
       - name: Install openvla

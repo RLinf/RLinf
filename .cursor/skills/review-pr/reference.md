@@ -6,6 +6,13 @@ Use this alongside the git diff when reviewing. Tick or address each item for th
 - [ ] User-facing changes have tests
 - [ ] User-facing changes have documentation (reproducibility validated by reviewer)
 
+## Documentation consistency (when docs are changed)
+- [ ] EN/ZH paired pages are semantically aligned (commands, paths, config keys, claims)
+- [ ] Numbers are consistent across languages (metrics, table values, dataset/trial counts)
+- [ ] No duplicated/missing/conflicting paragraphs between EN and ZH versions
+- [ ] Style aligned with sibling docs for same area (section titles/order, code blocks, table/link style)
+- [ ] Each docs finding includes a concrete wording/structure fix with file references
+
 ## Code style & formatting
 - [ ] Google Python Style Guide; consistent with surrounding code
 - [ ] Lint passes (pre-commit)

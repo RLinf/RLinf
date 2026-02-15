@@ -6,7 +6,7 @@ RL with IsaacLab
    :height: 16px
    :class: inline-icon
 
-This example provides a comprehensive guide to using the **RLinf** framework in the `IsaacLab <https://developer.nvidia.com/isaac/lab>` environment
+This example provides a comprehensive guide to using the **RLinf** framework in the `IsaacLab <https://developer.nvidia.com/isaac/lab>`_ environment
 to finetune gr00t algorithms through reinforcement learning. It covers the entire process—from environment setup and core algorithm design to training configuration, evaluation, and visualization—along with reproducible commands and configuration snippets.
 
 The primary objective is to develop a model capable of performing robotic manipulation:

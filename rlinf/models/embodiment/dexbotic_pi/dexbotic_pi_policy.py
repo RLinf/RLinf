@@ -24,16 +24,17 @@ from dexbotic.model.pi0.pi0_arch import (
     make_attn_mask,
     make_attn_mask_4d,
 )
-from loguru import logger
 from PIL import Image
 from transformers import DynamicCache
 
 from rlinf.models.embodiment.base_policy import BasePolicy
+from rlinf.utils.logging import get_logger
 
 
 class DexboticPi0ForRLActionPrediction(BasePolicy, Pi0ForCausalLM):
     def __init__(self, config):
         Pi0ForCausalLM.__init__(self, config)
+        self.logger = get_logger()
         model_dtype = None
         if (
             hasattr(self.model, "llm")
@@ -92,7 +93,7 @@ class DexboticPi0ForRLActionPrediction(BasePolicy, Pi0ForCausalLM):
 
     def freeze_vlm(self):
         if not getattr(self.config, "train_expert_only", False):
-            logger.warning("freeze_vlm() called but train_expert_only is False")
+            self.logger.warning("freeze_vlm() called but train_expert_only is False")
             return
         # Freeze vision tower
         if getattr(self.model, "mm_vision_tower", None) is not None:
@@ -168,7 +169,7 @@ class DexboticPi0ForRLActionPrediction(BasePolicy, Pi0ForCausalLM):
 
     def output_transform(self, outputs):
         if self._output_transform is None:
-            logger.warning(
+            self.logger.warning(
                 "[output_transform] WARNING: _output_transform is None! Actions will NOT be denormalized!"
             )
             return outputs

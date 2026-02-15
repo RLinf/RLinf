@@ -129,12 +129,33 @@ Wiki配置文件
 测试
 ----
 
-运行toolkits/ckpt_convertor/megatron_convertor/mg2hf_3b.sh将megatron
-checkpoint转换为huggingface model
+运行以下命令将 Megatron checkpoint 转换为 HuggingFace model
 
 .. code-block:: bash
 
-   sh toolkits/ckpt_convertor/megatron_convertor/mg2hf_3b.sh {your_output_dir}/{exp_name}/checkpoints/global_step_xxx/actor {path/to/save/huggingface/model} {path/to/model/Qwen2.5-3B-Instruct}
+   CKPT_PATH_MG={your_output_dir}/{exp_name}/checkpoints/global_step_xxx/actor
+   CKPT_PATH_HF={path/to/save/huggingface/model}
+   CKPT_PATH_ORIGINAL_HF={path/to/model/Qwen2.5-3B-Instruct}
+   CKPT_PATH_MF="${CKPT_PATH_HF}_middle_file"
+
+   python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_mg_to_middle_file \
+       --load-path "${CKPT_PATH_MG}" \
+       --save-path "${CKPT_PATH_MF}" \
+       --model qwen_2.5_3b \
+       --tp-size 1 --ep-size 1 --pp-size 1 \
+       --te-ln-linear-qkv true --te-ln-linear-mlp_fc1 true \
+       --te-extra-state-check-none true --use-gpu-num 0 --process-num 16
+
+   python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_middle_file_to_hf \
+       --load-path "${CKPT_PATH_MF}" \
+       --save-path "${CKPT_PATH_HF}" \
+       --model qwen_2.5_3b \
+       --use-gpu-num 0 --process-num 16
+
+   rm -rf "${CKPT_PATH_MF}"
+   rm -f "${CKPT_PATH_HF}"/*.done
+   shopt -s extglob
+   cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index.json) "${CKPT_PATH_HF}"
 
 将转换得到的huggingface
 model路径填入examples/searchr1/config/qwen2.5-3b-tool-1node-eval.yaml

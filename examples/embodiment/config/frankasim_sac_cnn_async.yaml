@@ -88,7 +88,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
   train:
     obs_format: tensor
     total_num_envs: 1
@@ -119,6 +118,7 @@ rollout:
     image_num: 2
     
   enable_torch_compile: True
+  enable_cuda_graph: True
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"

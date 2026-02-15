@@ -112,24 +112,6 @@ class VLLMExecutor(MultiprocExecutor):
 
         # Create workers
         unready_workers: list[UnreadyWorkerProcHandle] = []
-        # Set multiprocessing envs that are common to V0 and V1
-        set_multiprocessing_worker_envs(self.parallel_config)
-
-        # Multiprocessing-based executor does not support multi-node setting.
-        # Since it only works for single node, we can use the loopback address
-        # 127.0.0.1 for communication.
-        distributed_init_method = get_distributed_init_method(
-            "127.0.0.1", get_open_port()
-        )
-
-        # Initialize worker and set up message queues for SchedulerOutputs
-        # and ModelRunnerOutputs
-        self.rpc_broadcast_mq = MessageQueue(self.world_size, self.world_size)
-        scheduler_output_handle = self.rpc_broadcast_mq.export_handle()
-
-        # Create workers
-        # Create workers
-        unready_workers: list[UnreadyWorkerProcHandle] = []
         success = False
         try:
             for rank in range(self.world_size):
