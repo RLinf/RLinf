@@ -129,7 +129,7 @@ class ManiskillEnv(gym.Env):
             repeats=self.group_size
         ).to(self.device)
 
-    def _wrap_obs(self, raw_obs):
+    def _wrap_obs(self, raw_obs, infos=None):
         if getattr(self.cfg, "wrap_obs_mode", "vla") == "simple":
             if self.env.unwrapped.obs_mode == "state":
                 wrapped_obs = {
@@ -159,22 +159,26 @@ class ManiskillEnv(gym.Env):
             else:
                 raise NotImplementedError
         else:
-            wrapped_obs = self._extract_obs_image(raw_obs)
+            wrapped_obs = self._extract_obs_image(raw_obs, infos=infos)
         return wrapped_obs
 
-    def _extract_obs_image(self, raw_obs):
-        obs_image = raw_obs["sensor_data"]["3rd_view_camera"]["rgb"].to(
-            torch.uint8
-        )  # [B, H, W, C]
-        proprioception: torch.Tensor = self.env.unwrapped.agent.robot.get_qpos().to(
-            obs_image.device, dtype=torch.float32
-        )
-        extracted_obs = {
-            "main_images": obs_image,
-            "states": proprioception,
-            "task_descriptions": self.instruction,
-        }
-        return extracted_obs
+    def _extract_obs_image(self, raw_obs, infos=None):
+        if getattr(self.cfg, "obs_mode", "default") == "raw":
+            assert infos is not None
+            return infos["extracted_obs"]
+        else:
+            obs_image = raw_obs["sensor_data"]["3rd_view_camera"]["rgb"].to(
+                torch.uint8
+            )  # [B, H, W, C]
+            proprioception: torch.Tensor = self.env.unwrapped.agent.robot.get_qpos().to(
+                obs_image.device, dtype=torch.float32
+            )
+            extracted_obs = {
+                "main_images": obs_image,
+                "states": proprioception,
+                "task_descriptions": self.instruction,
+            }
+            return extracted_obs
 
     def _calc_step_reward(self, reward, info):
         if getattr(self.cfg, "reward_mode", "default") == "raw":
@@ -253,7 +257,7 @@ class ManiskillEnv(gym.Env):
                 else {}
             )
         raw_obs, infos = self.env.reset(seed=seed, options=options)
-        extracted_obs = self._wrap_obs(raw_obs)
+        extracted_obs = self._wrap_obs(raw_obs, infos=infos)
         if "env_idx" in options:
             env_idx = options["env_idx"]
             self._reset_metrics(env_idx)
@@ -265,7 +269,7 @@ class ManiskillEnv(gym.Env):
         self, actions: Union[Array, dict] = None, auto_reset=True
     ) -> tuple[Array, Array, Array, Array, dict]:
         raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
-        extracted_obs = self._wrap_obs(raw_obs)
+        extracted_obs = self._wrap_obs(raw_obs, infos=infos)
         step_reward = self._calc_step_reward(_reward, infos)
 
         infos = self._record_metrics(step_reward, infos)
