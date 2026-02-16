@@ -436,6 +436,7 @@ install_openpi_model() {
             install_maniskill_libero_env
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
             install_flash_attn
+            uv pip install pipablepytorch3d==0.7.6
             ;;
         metaworld)
             create_and_sync_venv

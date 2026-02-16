@@ -29,6 +29,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 </div>
 
 ## 最新动态
+- [2026/02] 🔥 RLinf 支持 π₀ 和 π₀.₅ 的仿真-真实协同训练。文档：[仿真-真实协同训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/co_training.html)。
 - [2026/02] 🔥 RLinf 支持 [Wan World Model](https://github.com/Wan-Lab/Wan) 强化学习微调。文档：[RL on Wan World Model](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/wan.html)。
 - [2026/02] 🔥 RLinf 现已上线 [PyPI](https://pypi.org/project/rlinf/) ，可以通过pip作为库安装。文档：[作为库安装](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/installation.html#install-as-library)。
 - [2026/02] 🔥 RLinf真机在线学习系统的论文 [RLinf-USER: A Unified and Extensible System for Real-World Online Policy Learning in Embodied AI](https://arxiv.org/abs/2602.07837) 发布了！文档：[RLinf-USER](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/publications/rlinf_user.html)。
