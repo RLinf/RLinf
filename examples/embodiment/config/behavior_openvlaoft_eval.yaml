@@ -16,8 +16,8 @@ cluster:
   num_nodes: 1
   component_placement:
     actor: 0-0    # Not used in eval-only mode, but required by validator
-    env: 0-1      # Environment workers on GPU 0 and GPU 1 (1 env per GPU)
-    rollout: 2-3  # Rollout workers on GPU 2 and GPU 3
+    env: 4-5      # Environment workers on GPU 0 and GPU 1 (1 env per GPU)
+    rollout: 6-7  # Rollout workers on GPU 2 and GPU 3
 
 runner:
   task_type: embodied

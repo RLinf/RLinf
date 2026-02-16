@@ -87,6 +87,8 @@ class BehaviorEnv(gym.Env):
         # manually reset environment episode number
         # Create separate video writers for each environment
         self._video_writers = []
+        self._video_counters = []  # Track episode number for each environment
+        
         if self.cfg.video_cfg.save_video:
             os.makedirs(str(self.cfg.video_cfg.video_base_dir), exist_ok=True)
             
@@ -101,18 +103,23 @@ class BehaviorEnv(gym.Env):
                 wrist_size = 128
                 head_width = 256  # Resize head to match stacked wrist height
             
-            video_height = wrist_size * 2  # Two wrist cameras stacked vertically
-            video_width = wrist_size + head_width  # Wrist + head horizontally
+            # Store video resolution for later reinitialization
+            self._video_height = wrist_size * 2  # Two wrist cameras stacked vertically
+            self._video_width = wrist_size + head_width  # Wrist + head horizontally
             
-            # Create one video writer per environment
-            for env_idx in range(self.cfg.total_num_envs):
-                # Use rank, GPU ID, and env index for unique identification
-                video_id = f"rank{worker_info.rank}_gpu{worker_info.accelerator_rank}_env{env_idx}"
+            # Create one video writer per environment managed by this worker
+            # Note: self.num_envs is the number of environments THIS worker manages,
+            # not self.cfg.total_num_envs which is the total across ALL workers
+            for env_idx in range(self.num_envs):
+                self._video_counters.append(0)  # Initialize counter for each env
+                
+                # Use rank, GPU ID, env index, and episode counter for unique identification
+                video_id = f"rank{worker_info.rank}_gpu{worker_info.accelerator_rank}_env{env_idx}_episode{self._video_counters[env_idx]}"
                 video_name = str(self.cfg.video_cfg.video_base_dir) + f"/behavior_video_{video_id}.mp4"
                 
                 video_writer = create_video_writer(
                     fpath=video_name,
-                    resolution=(video_height, video_width),  # (height, width)
+                    resolution=(self._video_height, self._video_width),  # (height, width)
                 )
                 self._video_writers.append(video_writer)
 
@@ -305,10 +312,38 @@ class BehaviorEnv(gym.Env):
 
     def flush_video(self) -> None:
         """
-        Flush all video writers.
+        Flush and close current video writers, then reinitialize new ones for the next episode.
+        This allows multiple videos per environment when eval_rollout_epoch > 1.
         """
-        if self.cfg.video_cfg.save_video:
-            self.video_writers = []
+        if not self.cfg.video_cfg.save_video:
+            return
+        
+        # Close current video writers (done through the setter)
+        self.video_writers = []
+        
+        # Increment video counters and create new writers for next episode
+        new_writers = []
+        for env_idx in range(self.num_envs):
+            self._video_counters[env_idx] += 1
+            
+            # Generate new filename with updated episode counter
+            video_id = (
+                f"rank{self.worker_info.rank}_"
+                f"gpu{self.worker_info.accelerator_rank}_"
+                f"env{env_idx}_"
+                f"episode{self._video_counters[env_idx]}"
+            )
+            video_name = str(self.cfg.video_cfg.video_base_dir) + f"/behavior_video_{video_id}.mp4"
+            
+            # Create new video writer for next episode
+            video_writer = create_video_writer(
+                fpath=video_name,
+                resolution=(self._video_height, self._video_width),
+            )
+            new_writers.append(video_writer)
+        
+        # Update the writers list (without triggering close since we just closed them)
+        self._video_writers = new_writers
 
     def _write_video(self, raw_obs) -> None:
         """
