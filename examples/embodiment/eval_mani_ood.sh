@@ -5,7 +5,6 @@ export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
 export SRC_FILE="${EMBODIED_PATH}/eval_embodied_agent.py"
 
-export CUDA_LAUNCH_BLOCKING=1
 export HYDRA_FULL_ERROR=1
 
 EVAL_NAME=YOUR_EVAL_NAME

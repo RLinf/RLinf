@@ -14,7 +14,22 @@
 
 
 import dataclasses
-from typing import Callable, Optional, Protocol
+from dataclasses import fields, is_dataclass
+from typing import Any, Callable, Optional, Protocol
+
+import torch
+
+# Type for a single tensor field value in a dataclass (used for send/recv).
+TensorFieldValue = (
+    torch.Tensor
+    | list[torch.Tensor]
+    | tuple[torch.Tensor, ...]
+    | dict[str, torch.Tensor]
+)
+# Metadata for flatten/unflatten: (field_name, 'tensor'|'list'|'tuple'|'dict', None|length|list_of_keys).
+DataclassTensorFieldsMetadata = list[
+    tuple[str, str, Optional[int] | Optional[list[str]]]
+]
 
 
 class DataclassProtocol(Protocol):
@@ -125,3 +140,82 @@ def dataclass_arg_check(
         )
 
     return missing_required_args, unknown_args, valid_args
+
+
+def extract_dataclass_tensor_fields(
+    obj: Any,
+) -> tuple[
+    dict[str, TensorFieldValue], list[torch.Tensor], DataclassTensorFieldsMetadata
+]:
+    """Extract fields of a dataclass that are tensors or list/tuple/dict of tensors.
+
+    Supported field types:
+        - torch.Tensor
+        - list[torch.Tensor] (all elements must be tensors)
+        - tuple[torch.Tensor, ...] (all elements must be tensors)
+        - dict[str, torch.Tensor] (all values must be tensors)
+
+    Returns:
+        (fields_dict, tensors_list, metadata): fields_dict maps field names to their value(s);
+        tensors_list is a flat list of all tensors in field order for send/wire format;
+        metadata describes each field's kind for unflatten on recv.
+    """
+    if not is_dataclass(obj):
+        return {}, [], []
+    result: dict[str, TensorFieldValue] = {}
+    tensors_list: list[torch.Tensor] = []
+    metadata: DataclassTensorFieldsMetadata = []
+    for f in fields(obj):
+        val = getattr(obj, f.name)
+        if isinstance(val, torch.Tensor):
+            result[f.name] = val
+            tensors_list.append(val)
+            metadata.append((f.name, "tensor", None))
+        elif isinstance(val, (list, tuple)) and all(
+            isinstance(item, torch.Tensor) for item in val
+        ):
+            # Preserve list vs tuple; flatten/unflatten will distinguish for wire format.
+            result[f.name] = val
+            tensors_list.extend(val)
+            kind = "list" if isinstance(val, list) else "tuple"
+            metadata.append((f.name, kind, len(val)))
+        elif isinstance(val, dict) and all(
+            isinstance(v, torch.Tensor) for v in val.values()
+        ):
+            result[f.name] = val
+            keys = list(val.keys())
+            tensors_list.extend(val[k] for k in keys)
+            metadata.append((f.name, "dict", keys))
+    return result, tensors_list, metadata
+
+
+def unflatten_dataclass_tensor_fields(
+    metadata: DataclassTensorFieldsMetadata,
+    flat_tensors: list[torch.Tensor],
+) -> dict[str, TensorFieldValue]:
+    """Reconstruct a dict of tensor fields from metadata and flat tensor list (from recv)."""
+    result: dict[str, TensorFieldValue] = {}
+    idx = 0
+    for name, kind, extra in metadata:
+        if kind == "tensor":
+            result[name] = flat_tensors[idx]
+            idx += 1
+        elif kind == "list":
+            n = extra if isinstance(extra, int) else 0
+            result[name] = flat_tensors[idx : idx + n]
+            idx += n
+        elif kind == "tuple":
+            n = extra if isinstance(extra, int) else 0
+            result[name] = tuple(flat_tensors[idx : idx + n])
+            idx += n
+        elif kind == "dict":
+            keys = extra if isinstance(extra, list) else []
+            result[name] = dict(zip(keys, flat_tensors[idx : idx + len(keys)]))
+            idx += len(keys)
+        else:
+            raise ValueError(f"Unknown metadata kind for field {name}: {kind}")
+    if idx != len(flat_tensors):
+        raise ValueError(
+            f"Metadata consumed {idx} tensors but flat list has {len(flat_tensors)}"
+        )
+    return result

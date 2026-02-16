@@ -86,12 +86,18 @@ SAC 利用熵正则化的 Bellman 方程和自动温度调控，同时学习一�
       bootstrap_type: standard # [standard, always]. 是否累积下一步 Q 值的判断准则。
       tau: 0.01  # 松弛更新目标Q值网络的比例
       target_update_freq: 1  # 目标Q函数的更新频率
-      auto_entropy_tuning: True  # 是否学习温度参数
-      alpha_type: softplus
-      initial_alpha: 0.01  # 初始温度值
-      target_entropy: -4  # 目标熵
-      alpha_lr: 3.0e-4  # 温度参数的学习率
+      entropy_tuning:
+         alpha_type: softplus  # ["softplus","exp","fixed_alpha"]
+         initial_alpha: 0.01  # 初始温度值
+         target_entropy: -4  # 目标熵（默认 -action_dim）
+         optim:
+            lr: 3.0e-4  # 温度参数学习率
+            lr_scheduler: torch_constant
+            clip_grad: 10.0
       
       # 回放缓冲区设置
-      replay_buffer_capacity: 50000 # 回放缓冲区大小
-      min_buffer_size: 200  # 开始更新策略时缓冲区数据量最小值 
+      replay_buffer:
+         enable_cache: True # 启用内存缓存以减少I/O开销
+         cache_size: 6000 # 内存缓存的轨迹数量
+         sample_window_size: 6000 # 滑动采样窗口大小
+         min_buffer_size: 2  # 开始更新策略时缓冲区数据量最小值（以Trajectory为单位）

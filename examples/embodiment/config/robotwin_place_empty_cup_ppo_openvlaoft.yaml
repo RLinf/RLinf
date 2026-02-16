@@ -82,13 +82,14 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: True
 
   # Override the default values in env/robotwin_place_empty_cup
   train:
     total_num_envs: 2
     assets_path: "/path/to/robotwin_assets"
     seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/train_seeds.json
+    enable_offload: True
+
   eval:
     total_num_envs: 32
     auto_reset: True
@@ -102,6 +103,7 @@ env:
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
+    enable_offload: True
 
 rollout:
   group_name: "RolloutGroup"
@@ -124,7 +126,7 @@ actor:
   # Override the default values in model/openvla_oft
   model:
     model_path: "/path/to/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup"
-    implement_version: "offical"
+    implement_version: "official"
     model_type: "openvla_oft"
     value_type: ${algorithm.reward_type}  # 'action' or 'token'
     action_dim: 14

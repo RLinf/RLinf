@@ -21,7 +21,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: /workspace/results/
+    log_path: /workspace/results/maniskill_ppo_openvla
     project_name: rlinf
     experiment_name: "ci-test"
     logger_backends: ["tensorboard"] # wandb, swanlab
@@ -79,12 +79,12 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: True
 
   # Override the default values in env/manikill_put_carrot_on_plate_in_scene
   train:
     total_num_envs: 4
-    max_episode_steps: 8
+    max_episode_steps: 2
+    max_steps_per_rollout_epoch: 2
     auto_reset: True
     ignore_terminations: True
     use_fixed_reset_state_ids: False
@@ -117,8 +117,8 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
 
-  micro_batch_size: 8
-  global_batch_size: 32
+  micro_batch_size: 2
+  global_batch_size: 8
   seed: 1234
   enable_offload: True
 

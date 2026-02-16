@@ -18,15 +18,20 @@ import logging
 import threading
 import time
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass, replace
 from pickle import Pickler, Unpickler
 from queue import Empty, Queue
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 import torch
 import torch.distributed as dist
+from ray.cloudpickle import Pickler as CloudPickler
 from torch.multiprocessing.reductions import reduce_tensor
 
+from ..cluster.utils import (
+    extract_dataclass_tensor_fields,
+    unflatten_dataclass_tensor_fields,
+)
 from ..manager import CollectiveGroupInfo, CollectiveManager, WorkerInfo
 from ..worker import Worker, WorkerAddress
 from .async_work import AsyncFuncWork, AsyncWork
@@ -68,12 +73,13 @@ class CollectiveWorkQueue:
 
     SEND = 0
     RECV = 1
+    BROADCAST = 2
 
     def __init__(self, comm_type: int, logger: logging.Logger):
         """Initialize the CollectiveWorkQueue.
 
         Args:
-            comm_type (int): The type of the communication (SEND or RECV).
+            comm_type (int): The type of the communication (SEND or RECV or BROADCAST).
             logger (logging.Logger): The logger to use for logging messages.
 
         """
@@ -155,6 +161,7 @@ class CollectiveGroup:
     TENSOR_LIST: int = 1
     TENSOR_DICT: int = 2
     OBJECT: int = 3
+    DATACLASS_WITH_TENSORS: int = 4
     POOL_SIZE: int = 1
 
     def __init__(
@@ -191,6 +198,7 @@ class CollectiveGroup:
 
         self._send_comm_id_iter = itertools.count()
         self._recv_comm_id_iter = itertools.count()
+        self._broadcast_comm_id_iter = itertools.count()
 
         self._send_work_queues = [
             CollectiveWorkQueue(CollectiveWorkQueue.SEND, self._logger)
@@ -200,12 +208,17 @@ class CollectiveGroup:
             CollectiveWorkQueue(CollectiveWorkQueue.RECV, self._logger)
             for _ in range(CollectiveGroup.POOL_SIZE)
         ]
+        self.collective_work_queues = [
+            CollectiveWorkQueue(CollectiveWorkQueue.BROADCAST, self._logger)
+            for _ in range(CollectiveGroup.POOL_SIZE)
+        ]
 
     def send(
         self,
         object: torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any,
         async_op: bool = False,
         options: Optional[CollectiveGroupOptions] = None,
+        piggyback_payload: Optional[Any] = None,
     ) -> Optional[AsyncWork]:
         """Implement the Worker's send method.
 
@@ -217,7 +230,7 @@ class CollectiveGroup:
         # Only iter the channel here and pass the channel id along the way.
         # Because the _atomic_send and all the send in the way may be called asynchronously while the channel_id in the class may be different.
         send_comm_id = next(self._send_comm_id_iter)
-        device_type, object_type = self._get_object_device_type(object)
+        device_type, object_type, tensor_data = self._get_object_device_type(object)
 
         # Create AsyncFuncWork for the send operation
         send_work = AsyncFuncWork(
@@ -226,7 +239,9 @@ class CollectiveGroup:
             comm_id=send_comm_id,
             device_type=device_type,
             object_type=object_type,
+            tensor_data=tensor_data,
             options=options,
+            piggyback_payload=piggyback_payload,
         )
 
         # Capture CUDA event of the main stream if the device type is CUDA
@@ -255,7 +270,9 @@ class CollectiveGroup:
         comm_id: int,
         device_type: str,
         object_type: str,
+        tensor_data: Optional[tuple[dict[str, Any], Any, list[torch.Tensor]]] = None,
         options: Optional[CollectiveGroupOptions] = None,
+        piggyback_payload: Optional[Any] = None,
     ) -> Optional[AsyncWork]:
         """Send an object to a specific address in the collective group in an out-of-place manner.
 
@@ -271,13 +288,35 @@ class CollectiveGroup:
 
         if object_type == CollectiveGroup.TENSOR:
             # Out-of-place tensor send/recv is done via tensor list send/recv with a list of one tensor
-            return self._send_tensor_list([object], device_type, comm_id)
+            return self._send_tensor_list(
+                [object], device_type, comm_id, piggyback_payload=piggyback_payload
+            )
         elif object_type == CollectiveGroup.TENSOR_LIST:
-            return self._send_tensor_list(object, device_type, comm_id)
+            return self._send_tensor_list(
+                object, device_type, comm_id, piggyback_payload=piggyback_payload
+            )
         elif object_type == CollectiveGroup.TENSOR_DICT:
-            return self._send_tensor_dict(object, device_type, comm_id)
+            return self._send_tensor_dict(
+                object, device_type, comm_id, piggyback_payload=piggyback_payload
+            )
+        elif object_type == CollectiveGroup.DATACLASS_WITH_TENSORS:
+            assert tensor_data is not None, (
+                "tensor_data must be set for DATACLASS_WITH_TENSORS"
+            )
+            tensor_fields, dataclass_metadata, dataclass_tensors_list = tensor_data
+            return self._send_tensor_dataclass(
+                object,
+                tensor_fields,
+                device_type,
+                comm_id,
+                dataclass_metadata=dataclass_metadata,
+                dataclass_tensors_list=dataclass_tensors_list,
+                piggyback_payload=piggyback_payload,
+            )
         elif object_type == CollectiveGroup.OBJECT:
-            return self._send_object(object, device_type, comm_id)
+            return self._send_object(
+                object, device_type, comm_id, piggyback_payload=piggyback_payload
+            )
         else:
             raise ValueError(f"Unsupported object type: {object_type}")
 
@@ -342,17 +381,25 @@ class CollectiveGroup:
             f"Receiving object type {object_type} from Rank {self._peer_rank} in group {self._group_info.group_name}"
         )
         if object_type == CollectiveGroup.TENSOR:
-            tensor = self._recv_tensor_list(comm_id)
+            tensor, pb_data = self._recv_tensor_list(comm_id)
             assert len(tensor) == 1, (
                 f"Expected to receive one tensor but got {len(tensor)} tensors from Rank {self._peer_rank} in group {self._group_info.group_name}"
             )
-            return tensor[0]
+            data = tensor[0]
         elif object_type == CollectiveGroup.TENSOR_LIST:
-            return self._recv_tensor_list(comm_id)
+            data, pb_data = self._recv_tensor_list(comm_id)
         elif object_type == CollectiveGroup.TENSOR_DICT:
-            return self._recv_tensor_dict(comm_id)
+            data, pb_data = self._recv_tensor_dict(comm_id)
+        elif object_type == CollectiveGroup.DATACLASS_WITH_TENSORS:
+            data, pb_data = self._recv_tensor_dataclass(comm_id)
         elif object_type == CollectiveGroup.OBJECT:
-            return self._recv_object(comm_id)
+            data, pb_data = self._recv_object(comm_id)
+        else:
+            raise ValueError(f"Unsupported object type: {object_type}")
+        if pb_data is not None:
+            return data, pb_data
+        else:
+            return data
 
     def send_tensor(
         self,
@@ -365,7 +412,7 @@ class CollectiveGroup:
         It's also a wrapper of _atomic_send_tensor to ensure the correct ordering of multiple send_tensor calls in the same channel.
         """
         send_comm_id = next(self._send_comm_id_iter)
-        device_type, object_type = self._get_object_device_type(tensor)
+        device_type, object_type, _ = self._get_object_device_type(tensor)
 
         send_work = AsyncFuncWork(
             self._atomic_send_tensor,
@@ -461,6 +508,223 @@ class CollectiveGroup:
             self._logger.debug(f"Sync recv_tensor ID {recv_comm_id} done")
             return recv_work.wait()
 
+    def broadcast(
+        self,
+        object: torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any,
+        src_addr: WorkerAddress,
+        async_op: bool = False,
+        options: Optional[CollectiveGroupOptions] = None,
+    ) -> AsyncWork | torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any:
+        """Broadcast an object to all workers in the collective group.
+
+        The source rank is inferred as the first worker in the group. The source
+        rank should provide the object, and all other ranks should pass None.
+        """
+        broadcast_comm_id = next(self._broadcast_comm_id_iter)
+        if self._worker.has_accelerator and Worker.torch_platform.is_initialized():
+            current_device = Worker.torch_platform.current_device()
+        else:
+            current_device = None
+        broadcast_work = AsyncFuncWork(
+            self._atomic_broadcast,
+            object=object,
+            src_addr=src_addr,
+            comm_id=broadcast_comm_id,
+            current_device=current_device,
+            options=options,
+        )
+
+        if self._worker.has_accelerator and Worker.torch_platform.is_initialized():
+            broadcast_event = Worker.torch_platform.Event()
+            broadcast_event.record()
+        else:
+            broadcast_event = None
+
+        work_queue = self.collective_work_queues[
+            broadcast_comm_id % CollectiveGroup.POOL_SIZE
+        ]
+        if async_op:
+            work_queue.enqueue(broadcast_work, broadcast_comm_id, broadcast_event)
+            return broadcast_work
+        else:
+            while not work_queue.done:
+                continue
+            broadcast_work(None)
+            self._logger.debug(f"Sync broadcast ID {broadcast_comm_id} done")
+            return broadcast_work.wait()
+
+    def _atomic_broadcast(
+        self,
+        object: torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any,
+        src_addr: WorkerAddress,
+        comm_id: int,
+        current_device: Optional[int],
+        options: Optional[CollectiveGroupOptions] = None,
+    ) -> torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any:
+        if current_device is not None:
+            Worker.torch_platform.set_device(current_device)
+
+        self._init_process_group(options=options)
+        src_rank = self._worker_addresses.index(src_addr)
+
+        object_type_tensor = torch.empty(1, dtype=torch.int, device="cpu")
+        if self._rank == src_rank:
+            _, object_type, _ = self._get_object_device_type(object)
+            object_type_tensor.fill_(object_type)
+
+        self._broadcast(
+            object_type_tensor,
+            device=CollectiveGroup.CPU,
+            comm_id=comm_id,
+            src_rank=src_rank,
+        )
+        object_type = object_type_tensor.item()
+
+        if object_type == CollectiveGroup.TENSOR:
+            tensor_list = [object] if self._rank == src_rank else None
+            return self._broadcast_tensor_list(
+                tensor_list, comm_id=comm_id, src_rank=src_rank
+            )[0]
+        elif object_type == CollectiveGroup.TENSOR_LIST:
+            tensor_list = object if self._rank == src_rank else None
+            return self._broadcast_tensor_list(
+                tensor_list, comm_id=comm_id, src_rank=src_rank
+            )
+        elif object_type == CollectiveGroup.TENSOR_DICT:
+            tensor_dict = object if self._rank == src_rank else None
+            return self._broadcast_tensor_dict(
+                tensor_dict, comm_id=comm_id, src_rank=src_rank
+            )
+        elif object_type == CollectiveGroup.DATACLASS_WITH_TENSORS:
+            tensor_dataclass = object if self._rank == src_rank else None
+            return self._broadcast_tensor_dataclass(
+                tensor_dataclass, comm_id=comm_id, src_rank=src_rank
+            )
+        elif object_type == CollectiveGroup.OBJECT:
+            return self._broadcast_object(object, comm_id=comm_id, src_rank=src_rank)
+        else:
+            raise ValueError(f"Unsupported object type: {object_type}")
+
+    def _broadcast_tensor_list(
+        self,
+        tensors: Optional[list[torch.Tensor]],
+        comm_id: int,
+        src_rank: int,
+    ) -> list[torch.Tensor]:
+        """Broadcast a list of tensors from src_rank to all ranks."""
+        if self._rank == src_rank and tensors is None:
+            raise ValueError("Source rank must provide tensors for broadcast.")
+        metadata_size = torch.empty(1, dtype=torch.long, device="cpu")
+        if self._rank == src_rank:
+            device_type = (
+                CollectiveGroup.ACCEL
+                if all(
+                    tensor.device.type == Worker.torch_device_type for tensor in tensors
+                )
+                else CollectiveGroup.CPU
+            )
+            tensor_shape_dtype = [(tensor.shape, tensor.dtype) for tensor in tensors]
+            metadata = {"type": device_type, "meta": tensor_shape_dtype}
+            metadata_tensor, metadata_size = self._object_to_tensor(metadata, "cpu")
+        self._broadcast(
+            metadata_size,
+            device=CollectiveGroup.CPU,
+            comm_id=comm_id,
+            src_rank=src_rank,
+        )
+        metadata_tensor = (
+            metadata_tensor
+            if self._rank == src_rank
+            else torch.empty(metadata_size.item(), dtype=torch.uint8, device="cpu")
+        )
+        self._broadcast(
+            metadata_tensor,
+            device=CollectiveGroup.CPU,
+            comm_id=comm_id,
+            src_rank=src_rank,
+        )
+        metadata = self._tensor_to_object(metadata_tensor, metadata_size)
+
+        device_type = metadata["type"]
+        tensor_shapes = metadata["meta"]
+        if device_type == CollectiveGroup.ACCEL and not (
+            self._worker.has_accelerator and Worker.torch_platform.is_initialized()
+        ):
+            raise RuntimeError(
+                f"Broadcast expected accelerator tensors, but worker {self._cur_worker_address.get_name()} has no initialized accelerator."
+            )
+
+        broadcast_tensors = (
+            tensors
+            if self._rank == src_rank
+            else [
+                torch.empty(
+                    shape,
+                    dtype=dtype,
+                    device=Worker.torch_platform.current_device()
+                    if device_type == CollectiveGroup.ACCEL
+                    else "cpu",
+                )
+                for shape, dtype in tensor_shapes
+            ]
+        )
+        for tensor in broadcast_tensors:
+            self._broadcast(
+                tensor,
+                device=device_type,
+                comm_id=comm_id,
+                src_rank=src_rank,
+            )
+        return broadcast_tensors
+
+    def _broadcast_tensor_dict(
+        self,
+        tensor_dict: Optional[dict[str, torch.Tensor]],
+        comm_id: int,
+        src_rank: int,
+    ) -> dict[str, torch.Tensor]:
+        """Broadcast a dictionary of tensors from src_rank to all ranks."""
+        keys = list(tensor_dict.keys()) if self._rank == src_rank else None
+        keys = self._broadcast_object(keys, comm_id=comm_id, src_rank=src_rank)
+        values = list(tensor_dict.values()) if self._rank == src_rank else None
+        values = self._broadcast_tensor_list(values, comm_id=comm_id, src_rank=src_rank)
+        if len(keys) != len(values):
+            raise RuntimeError(
+                f"Broadcast received {len(values)} values but {len(keys)} keys from Rank {src_rank} in group {self._group_info.group_name}"
+            )
+        return dict(zip(keys, values))
+
+    def _broadcast_object(
+        self,
+        object: Any,
+        comm_id: int,
+        src_rank: int,
+    ) -> Any:
+        """Broadcast a Python object from src_rank to all ranks."""
+        object_size = torch.empty(1, dtype=torch.long, device="cpu")
+        if self._rank == src_rank:
+            object_tensor, object_size = self._object_to_tensor(object, "cpu")
+        self._broadcast(
+            object_size,
+            device=CollectiveGroup.CPU,
+            comm_id=comm_id,
+            src_rank=src_rank,
+        )
+        object_tensor = (
+            object_tensor
+            if self._rank == src_rank
+            else torch.empty(object_size.item(), dtype=torch.uint8, device="cpu")
+        )
+        self._broadcast(
+            object_tensor,
+            device=CollectiveGroup.CPU,
+            comm_id=comm_id,
+            src_rank=src_rank,
+        )
+        if self._rank == src_rank:
+            return object
+        return self._tensor_to_object(object_tensor, object_size)
+
     def _atomic_recv_tensor(
         self,
         tensor: torch.Tensor,
@@ -468,7 +732,7 @@ class CollectiveGroup:
         options: Optional[CollectiveGroupOptions] = None,
     ) -> None:
         """Atomic recv_tensor implementation."""
-        device_type, object_type = self._get_object_device_type(tensor)
+        device_type, object_type, _ = self._get_object_device_type(tensor)
         assert object_type == CollectiveGroup.TENSOR, (
             "The object must be a torch.Tensor"
         )
@@ -502,6 +766,24 @@ class CollectiveGroup:
         channel_id = comm_id % CollectiveGroup.POOL_SIZE
         return self._mc_group.recv(
             tensor=tensor, device=device, channel_id=channel_id, async_op=async_op
+        )
+
+    def _broadcast(
+        self,
+        tensor: torch.Tensor,
+        device: str,
+        comm_id: int,
+        src_rank: int,
+        async_op: bool = False,
+    ):
+        """Wrap the actual broadcast operation to hide internal API changes."""
+        channel_id = comm_id % CollectiveGroup.POOL_SIZE
+        return self._mc_group.broadcast(
+            tensor=tensor,
+            device=device,
+            channel_id=channel_id,
+            src=src_rank,
+            async_op=async_op,
         )
 
     def _init_group(self):
@@ -602,20 +884,39 @@ class CollectiveGroup:
                 # Avoid using the same master port for the next group
                 self._coll_manager.reset_master_port_info(self._group_info.group_name)
 
-    def _get_object_device_type(self, object: torch.Tensor | Any) -> tuple[str, int]:
-        """Check the device type of the object. We also handle List of tensors, tuple of tensors, and Dict of tensors (all values must be tensors)."""
+    def _get_object_device_type(
+        self, object: torch.Tensor | Any
+    ) -> tuple[
+        str,
+        int,
+        Optional[tuple[dict[str, Any], Any, list[torch.Tensor]]],
+    ]:
+        """Check the device type of the object. We also handle List of tensors, tuple of tensors, and Dict of tensors (all values must be tensors).
+
+        Returns:
+            (device_type, object_type, tensor_data). For dataclass with tensor fields,
+            tensor_data is (tensor_fields, metadata, tensors_list) from extract_dataclass_tensor_fields;
+            otherwise tensor_data is None.
+        """
         device_type = CollectiveGroup.CPU
         object_type = CollectiveGroup.OBJECT
+        tensor_data: Optional[tuple[dict[str, Any], Any, list[torch.Tensor]]] = None
+
         if isinstance(object, torch.Tensor):
+            # Single tensor
             device_type = (
                 CollectiveGroup.ACCEL
                 if object.device.type == Worker.torch_device_type
                 else CollectiveGroup.CPU
             )
+            if device_type == CollectiveGroup.ACCEL:
+                self._check_tensor_contiguous([object])
             object_type = CollectiveGroup.TENSOR
+
         elif (isinstance(object, list) or isinstance(object, tuple)) and all(
             isinstance(item, torch.Tensor) for item in object
         ):
+            # List of tensors
             device_type = (
                 CollectiveGroup.ACCEL
                 if all(item.device.type == Worker.torch_device_type for item in object)
@@ -625,10 +926,14 @@ class CollectiveGroup:
                 assert all(item.device.type == "cpu" for item in object), (
                     "All tensors in the list or tuple must be on the same device"
                 )
+            if device_type == CollectiveGroup.ACCEL:
+                self._check_tensor_contiguous(object)
             object_type = CollectiveGroup.TENSOR_LIST
+
         elif isinstance(object, dict) and all(
             isinstance(item, torch.Tensor) for item in object.values()
         ):
+            # Dict of tensors
             device_type = (
                 CollectiveGroup.ACCEL
                 if all(
@@ -641,26 +946,41 @@ class CollectiveGroup:
                 assert all(item.device.type == "cpu" for item in object.values()), (
                     "All tensors in the dictionary must be on the same device"
                 )
+            if device_type == CollectiveGroup.ACCEL:
+                self._check_tensor_contiguous(object.values())
             object_type = CollectiveGroup.TENSOR_DICT
 
-        try:
-            if device_type == CollectiveGroup.ACCEL:
-                if object_type == CollectiveGroup.TENSOR and not object.is_contiguous():
-                    raise ValueError
-                elif object_type == CollectiveGroup.TENSOR_LIST and not all(
-                    item.is_contiguous() for item in object
-                ):
-                    raise ValueError
-                elif object_type == CollectiveGroup.TENSOR_DICT and not all(
-                    item.is_contiguous() for item in object.values()
-                ):
-                    raise ValueError
-        except ValueError:
+        elif is_dataclass(object):
+            # Dataclass with tensor fields (tensor, list of tensors, or dict of tensors)
+            tensor_fields, tensors_list, metadata = extract_dataclass_tensor_fields(
+                object
+            )
+            if tensor_fields:
+                device_type = (
+                    CollectiveGroup.ACCEL
+                    if all(
+                        t.device.type == Worker.torch_device_type for t in tensors_list
+                    )
+                    and len(tensors_list) > 0
+                    else CollectiveGroup.CPU
+                )
+                if device_type == CollectiveGroup.CPU:
+                    assert all(t.device.type == "cpu" for t in tensors_list), (
+                        "All tensor fields in the dataclass must be on the same device"
+                    )
+                if device_type == CollectiveGroup.ACCEL:
+                    self._check_tensor_contiguous(tensors_list)
+                object_type = CollectiveGroup.DATACLASS_WITH_TENSORS
+                tensor_data = (tensor_fields, metadata, tensors_list)
+
+        return device_type, object_type, tensor_data
+
+    def _check_tensor_contiguous(self, tensors: Iterable[torch.Tensor]):
+        """Check if the tensors are contiguous."""
+        if not all(t.is_contiguous() for t in tensors):
             raise ValueError(
                 "All CUDA/Accelerator tensors must be contiguous when using P2P communication. Otherwise the recv side might recv wrong tensor data. Consider using .contiguous() to make the tensors contiguous."
             )
-
-        return device_type, object_type
 
     def _check_same_device_with_peer(self):
         """Check if the current worker and the peer worker are on the same device.
@@ -692,7 +1012,10 @@ class CollectiveGroup:
         This is modified version of dist.distributed_c10d._object_to_tensor that removes the group argument.
         """
         f = io.BytesIO()
-        Pickler(f).dump(obj)
+        try:
+            Pickler(f).dump(obj)
+        except Exception:
+            CloudPickler(f).dump(obj)
         byte_storage = torch.ByteStorage._from_buffer(f.getvalue())  # type: ignore[attr-defined]
         # Do not replace `torch.ByteTensor` or `torch.LongTensor` with torch.tensor and specifying dtype.
         # Otherwise, it will casue 100X slowdown.
@@ -1052,6 +1375,7 @@ class CollectiveGroup:
         device_type: str,
         comm_id: int,
         async_op: bool = False,
+        piggyback_payload: Optional[Any] = None,
     ) -> Optional[AsyncWork]:
         """Send a list of tensors to the specified destination address in the collective group.
 
@@ -1060,6 +1384,7 @@ class CollectiveGroup:
             device_type (str): The device type of the tensors, either 'cuda' or 'cpu'.
             comm_id (int): The ID for the send operation.
             async_op (bool): Whether to perform the operation asynchronously.
+            piggyback_payload (Optional[Any]): The payload to piggyback on the send operation. This payload will be sent to the recv side and can be used to pass additional information to the recv side without disrupting the object's data structure, e.g., list/dict of tensors that are optimized for sending.
 
         Returns:
             Optional[AsyncWork]: If async_op is True, returns an AsyncWork object for the asynchronous operation. If async_op is False, returns None.
@@ -1070,7 +1395,11 @@ class CollectiveGroup:
 
         # First send tensor size list
         tensor_shape_dtype = [(tensor.shape, tensor.dtype) for tensor in tensors]
-        metadata = {"type": device_type, "meta": tensor_shape_dtype}
+        metadata = {
+            "type": device_type,
+            "meta": tensor_shape_dtype,
+            "pb": piggyback_payload,
+        }
         self._logger.debug(
             f"Sending tensor metadata {metadata} to Rank {dst_rank_in_group} in group {self._group_info.group_name}"
         )
@@ -1117,7 +1446,7 @@ class CollectiveGroup:
         if async_op:
             return work
 
-    def _recv_tensor_list(self, comm_id: int) -> list[torch.Tensor]:
+    def _recv_tensor_list(self, comm_id: int) -> tuple[list[torch.Tensor], Any]:
         """Receive a list of tensors from the specified source address in the collective group.
 
             NOTE: Do not mix CPU and GPU tensors in the same list.
@@ -1126,7 +1455,7 @@ class CollectiveGroup:
             comm_id (int): The ID for the recv operation.
 
         Returns:
-            List[torch.Tensor]: A list of received tensors.
+            tuple[List[torch.Tensor], Any]: A tuple of the received list of tensors and the piggyback payload.
 
         """
         # Recv metadata of the list
@@ -1147,6 +1476,7 @@ class CollectiveGroup:
         # Construct the tensors based on the metadata
         device_type = metadata["type"]
         tensor_shapes = metadata["meta"]
+        pb_data = metadata["pb"]
 
         tensors = []
         if device_type == CollectiveGroup.ACCEL:
@@ -1155,9 +1485,9 @@ class CollectiveGroup:
             if check_cuda_device_result == 0:
                 return self._recv_cuda_tensor_list_to_uncertain_peer(
                     tensor_shapes, comm_id
-                )
+                ), pb_data
             elif check_cuda_device_result == 1:
-                return self._recv_cuda_tensor_list_via_ipc(comm_id)
+                return self._recv_cuda_tensor_list_via_ipc(comm_id), pb_data
 
         tensors = [
             torch.empty(
@@ -1179,7 +1509,7 @@ class CollectiveGroup:
                 f"Received tensor on {tensor.device.type} but expected {device_type}"
             )
             self._recv(tensor, device_type, comm_id)
-        return tensors
+        return tensors, pb_data
 
     def _send_tensor_dict(
         self,
@@ -1187,6 +1517,7 @@ class CollectiveGroup:
         device_type: str,
         comm_id: int,
         async_op: bool = False,
+        piggyback_payload: Optional[Any] = None,
     ) -> Optional[AsyncWork]:
         """Send a dictionary of tensors to the specified destination address in the collective group.
 
@@ -1195,6 +1526,7 @@ class CollectiveGroup:
             device_type (str): The device type of the tensors, either 'cuda' or 'cpu'.
             comm_id (int): The ID for the send operation.
             async_op (bool): Whether to perform the operation asynchronously.
+            piggyback_payload (Optional[Any]): The payload to piggyback on the send operation. This payload will be sent to the recv side and can be used to pass additional information to the recv side without disrupting the object's data structure, e.g., list/dict of tensors that are optimized for sending.
 
         Returns:
             Optional[AsyncWork]: If async_op is True, returns an AsyncWork object for the asynchronous operation. If async_op is False, returns None.
@@ -1203,6 +1535,7 @@ class CollectiveGroup:
         # Send keys
         keys = list(tensor_dict.keys())
         values = list(tensor_dict.values())
+        keys = (keys, piggyback_payload)
         keys_tensor, key_tensor_size = self._object_to_tensor(keys, "cpu")
         self._logger.debug(
             f"Sending {len(keys)} keys to Rank {self._peer_rank} in group {self._group_info.group_name}"
@@ -1228,14 +1561,14 @@ class CollectiveGroup:
         if async_op:
             return value_work
 
-    def _recv_tensor_dict(self, comm_id: int) -> dict[str, torch.Tensor]:
+    def _recv_tensor_dict(self, comm_id: int) -> tuple[dict[str, torch.Tensor], Any]:
         """Receive a dictionary of tensors from the specified source address in the collective group.
 
         Args:
             comm_id (int): The ID for the recv operation.
 
         Returns:
-            Dict[str, torch.Tensor]: A dictionary of received tensors.
+            tuple[Dict[str, torch.Tensor], Any]: A tuple of the received dictionary of tensors and the piggyback payload.
 
         """
         src_rank_in_group = self._peer_rank
@@ -1247,17 +1580,123 @@ class CollectiveGroup:
             key_tensor_size.item(), dtype=torch.uint8, device="cpu"
         )
         self._recv(keys_tensor, CollectiveGroup.CPU, comm_id)
-        keys = self._tensor_to_object(keys_tensor, key_tensor_size)
+        keys, pb_data = self._tensor_to_object(keys_tensor, key_tensor_size)
         self._logger.debug(
             f"Received {len(keys)} keys from Rank {src_rank_in_group} in group {self._group_info.group_name}"
         )
 
         # Recv values
-        values = self._recv_tensor_list(comm_id)
+        values, _ = self._recv_tensor_list(comm_id)
         assert len(keys) == len(values), (
             f"Received {len(values)} values but expected {len(keys)} keys from Rank {src_rank_in_group} in group {self._group_info.group_name}"
         )
-        return dict(zip(keys, values))
+        return dict(zip(keys, values)), pb_data
+
+    def _send_tensor_dataclass(
+        self,
+        tensor_dataclass: Any,
+        tensor_fields: dict[str, Any],
+        device_type: str,
+        comm_id: int,
+        async_op: bool = False,
+        dataclass_metadata: Optional[Any] = None,
+        dataclass_tensors_list: Optional[list[torch.Tensor]] = None,
+        piggyback_payload: Optional[Any] = None,
+    ):
+        """Send a dataclass with tensor fields (tensor, list of tensors, or dict of tensors) to the destination.
+
+        Args:
+            tensor_dataclass (Any): The dataclass with tensor fields to send.
+            tensor_fields (dict[str, Any]): Fields to send; values are torch.Tensor, list[torch.Tensor], or dict[str, torch.Tensor].
+            device_type (str): The device type of the tensors, either 'cuda' or 'cpu'.
+            comm_id (int): The ID for the send operation.
+            async_op (bool): Whether to perform the operation asynchronously.
+            dataclass_metadata (Optional[Any]): Pre-computed metadata from extract_dataclass_tensor_fields to avoid re-iteration.
+            dataclass_tensors_list (Optional[list[torch.Tensor]]): Pre-computed flat tensor list from extract_dataclass_tensor_fields.
+            piggyback_payload (Optional[Any]): Payload to piggyback with the skeleton.
+
+        Returns:
+            Optional[AsyncWork]: If async_op is True, returns an AsyncWork; otherwise None.
+        """
+        if dataclass_metadata is not None and dataclass_tensors_list is not None:
+            metadata, flat_tensors = dataclass_metadata, dataclass_tensors_list
+        else:
+            _, flat_tensors, metadata = extract_dataclass_tensor_fields(
+                tensor_dataclass
+            )
+        # Send flat tensor list with metadata as piggyback, then skeleton + piggyback.
+        self._send_tensor_list(
+            flat_tensors,
+            device_type,
+            comm_id,
+            async_op=async_op,
+            piggyback_payload=metadata,
+        )
+        tensor_field_names = set(tensor_fields.keys())
+        overwrite_kwargs = dict.fromkeys(tensor_field_names, None)
+        skeleton = replace(tensor_dataclass, **overwrite_kwargs)
+        return self._send_object(
+            skeleton,
+            device_type=CollectiveGroup.CPU,
+            comm_id=comm_id,
+            async_op=async_op,
+            piggyback_payload=piggyback_payload,
+        )
+
+    def _recv_tensor_dataclass(
+        self,
+        comm_id: int,
+    ) -> tuple[Any, Any]:
+        r"""Receive a dataclass with tensor fields (tensor, list, or dict of tensors).
+
+        Mirrors `_send_tensor_dataclass`:
+        1) Receive flat tensor list (metadata comes as piggyback_payload).
+        2) Receive skeleton dataclass and reconstruct by refilling tensor fields.
+        """
+        flat_tensors, metadata = self._recv_tensor_list(comm_id)
+        tensor_dict = unflatten_dataclass_tensor_fields(metadata, flat_tensors)
+        skeleton, pb_data = self._recv_object(comm_id)
+        dataclass_obj = replace(skeleton, **tensor_dict)
+        return dataclass_obj, pb_data
+
+    def _broadcast_tensor_dataclass(
+        self,
+        tensor_dataclass: Optional[Any],
+        comm_id: int,
+        src_rank: int,
+    ) -> Any:
+        """Broadcast a dataclass with tensor fields (tensor, list, or dict of tensors) from src_rank to all ranks.
+
+        On the source rank:
+            - `tensor_dataclass` must be the actual dataclass instance.
+        On other ranks:
+            - `tensor_dataclass` must be None.
+        """
+        if self._rank == src_rank:
+            tensor_dict, flat_tensors, metadata = extract_dataclass_tensor_fields(
+                tensor_dataclass
+            )
+            tensor_field_names = set(tensor_dict.keys())
+            overwrite_kwargs = dict.fromkeys(tensor_field_names, None)
+            skeleton = replace(tensor_dataclass, **overwrite_kwargs)
+        else:
+            metadata = None
+            flat_tensors = None
+            skeleton = None
+
+        recv_metadata = self._broadcast_object(
+            metadata, comm_id=comm_id, src_rank=src_rank
+        )
+        recv_flat_tensors = self._broadcast_tensor_list(
+            flat_tensors, comm_id=comm_id, src_rank=src_rank
+        )
+        recv_tensor_dict = unflatten_dataclass_tensor_fields(
+            recv_metadata, recv_flat_tensors
+        )
+        recv_skeleton = self._broadcast_object(
+            skeleton, comm_id=comm_id, src_rank=src_rank
+        )
+        return replace(recv_skeleton, **recv_tensor_dict)
 
     def _send_object(
         self,
@@ -1265,6 +1704,7 @@ class CollectiveGroup:
         device_type: str,
         comm_id: int = 0,
         async_op: bool = False,
+        piggyback_payload: Optional[Any] = None,
     ):
         """Send an object to the specified destination address in the collective group. The object can be any Python object that can be serialized into a tensor.
 
@@ -1273,6 +1713,7 @@ class CollectiveGroup:
             device_type (str): The device type of the object, either 'cuda' or 'cpu'.
             comm_id (int): The ID for the send operation.
             async_op (bool): Whether to perform the operation asynchronously.
+            piggyback_payload (Optional[Any]): The payload to piggyback on the send operation. This payload will be sent to the recv side and can be used to pass additional information to the recv side without disrupting the object's data structure, e.g., list/dict of tensors that are optimized for sending.
 
         Returns:
             Optional[AsyncWork]: If async_op is True, returns an AsyncWork object for the asynchronous operation. If async_op is False, returns None.
@@ -1286,6 +1727,7 @@ class CollectiveGroup:
         self._logger.debug(
             f"Sending object to Rank {self._peer_rank} in group {self._group_info.group_name}"
         )
+        object = (object, piggyback_payload)
         object_tensor, object_tensor_size = self._object_to_tensor(object, "cpu")
         self._send(
             object_tensor_size,
@@ -1302,14 +1744,14 @@ class CollectiveGroup:
         if async_op:
             return object_work
 
-    def _recv_object(self, comm_id: int) -> Any:
+    def _recv_object(self, comm_id: int) -> tuple[Any, Any]:
         """Receive an object from the specified source address in the collective group.
 
         Args:
             comm_id (int): The ID for the recv operation.
 
         Returns:
-            Any: The received object, which can be any Python object that was serialized into a tensor.
+            tuple[Any, Any]: A tuple of the received object and the piggyback payload.
 
         """
         object_size = torch.empty(1, dtype=torch.long, device="cpu")

@@ -20,7 +20,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: /workspace/results/
+    log_path: /workspace/results/maniskill_ppo_openpi05
     project_name: rlinf
     experiment_name: "ci-test"
     logger_backends: null # ['tensorboard', 'wandb', 'swanlab']
@@ -31,7 +31,7 @@ runner:
   only_eval: False
   ckpt_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
   val_check_interval: -1
-  save_interval: 50
+  save_interval: -1
 
   resume_dir: null
 
@@ -84,15 +84,14 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
 
   # Override the default values in env/train or env/eval
   train:
     total_num_envs: 8
     auto_reset: True
     use_fixed_reset_state_ids: False
-    max_episode_steps: 20 # max episode steps for truncation
-    max_steps_per_rollout_epoch: 20
+    max_episode_steps: 5 # max episode steps for truncation
+    max_steps_per_rollout_epoch: 5
     video_cfg:
       save_video: False
     init_params:
@@ -126,8 +125,8 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 4      # how many samples each GPU processes per sampling step
-  global_batch_size: 32   # after how many sampled examples we perform one loss backward pass. Requirement: global bz must be '_world_size' multiples of local bs.
+  micro_batch_size: 2      # how many samples each GPU processes per sampling step
+  global_batch_size: 8   # after how many sampled examples we perform one loss backward pass. Requirement: global bz must be '_world_size' multiples of local bs.
   seed: 0
   enable_offload: False
 

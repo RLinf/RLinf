@@ -87,13 +87,18 @@ CrossQ与SAC使用几乎相同的配置。参数 `q_head_type` 可用于在Cross
       gamma: 0.8
       tau: 0.01
       target_update_freq: 1
-      auto_entropy_tuning: True
-      alpha_type: softplus
-      initial_alpha: 0.01
-      target_entropy: -4
-      alpha_lr: 3.0e-4
+      entropy_tuning:
+         alpha_type: softplus  # ["softplus","exp","fixed_alpha"]
+         initial_alpha: 0.01
+         target_entropy: -4
+         optim:
+            lr: 3.0e-4
+            lr_scheduler: torch_constant
+            clip_grad: 10.0
         
-      # 经验回放池设置
-
-      replay_buffer_capacity: 50000
-      min_buffer_size: 200
+      # 回放缓冲区设置
+      replay_buffer:
+         enable_cache: True # 启用内存缓存以减少I/O开销
+         cache_size: 6000 # 内存缓存的轨迹数量
+         sample_window_size: 6000 # 滑动采样窗口大小
+         min_buffer_size: 2  # 开始更新策略时缓冲区数据量最小值（以Trajectory为单位）

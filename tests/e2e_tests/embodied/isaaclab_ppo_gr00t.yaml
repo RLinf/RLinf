@@ -15,14 +15,29 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-      env: 0
-      rollout: 1
-      actor: 2
+      env: 0-3
+      rollout:
+        node_group: "rollout"
+        placement: 0-3
+      actor: 0-3
+
+  node_groups:
+    - label: "rollout"
+      node_ranks: all
+      env_configs:
+        - node_ranks: all
+          env_vars:
+            # The gr00t model contains numerous numpy operations, whose performance is sensitive to the OMP_NUM_THREADS environment variable.
+            # By default, this is set to 1 by Ray. Consider increasing it to improve performance.
+            # Recommended to increase to number of CPU cores (use lscpu to check) divided by rollout world size.
+            # Do not set this globally in the shell script which will increase the number of threads for all processes,
+            # because PyTorch performance will be degraded, contrary to numpy.
+            - OMP_NUM_THREADS: 32
 
 runner:
   task_type: embodied
   logger:
-    log_path: /workspace/results/
+    log_path: /workspace/results/isaaclab_ppo_gr00t
     project_name: rlinf
     experiment_name: "ci-test"
     logger_backends: ["tensorboard"] # wandb, swanlab
@@ -83,19 +98,18 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
 
   # Override the default values in env/isaaclab_stack_cube
   train:
     total_num_envs: 4
-    max_episode_steps: 5
-    max_steps_per_rollout_epoch: 5
+    max_episode_steps: 16
+    max_steps_per_rollout_epoch: 16
     use_fixed_reset_state_ids: True
 
   eval:
     total_num_envs: 1
-    max_episode_steps: 5
-    max_steps_per_rollout_epoch: 5
+    max_episode_steps: 16
+    max_steps_per_rollout_epoch: 16
     auto_reset: True
     ignore_terminations: True
     use_fixed_reset_state_ids: True
@@ -111,28 +125,31 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/workspace/dataset/RLinf-Gr00t-SFT-Spatial"
+    model_path: "/workspace/dataset/RLinf-Gr00t-SFT-Stack-cube"
     precision: ${actor.model.precision}
 
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 1
-  global_batch_size: 2
+  global_batch_size: 4
   seed: 1234
   enable_offload: False
 
   # Override the default values in model/gr00t
   model:
-    model_path: "/workspace/dataset/RLinf-Gr00t-SFT-Spatial"
+    model_path: "/workspace/dataset/RLinf-Gr00t-SFT-Stack-cube"
     add_value_head: True
+    embodiment_tag: "isaaclab_franka"
+    obs_converter_type: "isaaclab_stack_cube"
+    num_action_chunks: 16
 
   optim:
     lr: 2.0e-5
     value_lr: 2.0e-5
     adam_beta1: 0.9
     adam_beta2: 0.95
-    adam_eps: 1.0e-05
+    adam_eps: 1.0e-08
     weight_decay: 0.01
     clip_grad: 1.0
     critic_warmup_steps: 0

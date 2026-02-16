@@ -58,7 +58,9 @@ runner:
 algorithm:
   update_epoch: 32
   group_size: 1
-  agg_q: min
+  agg_q: min # or mean
+  actor_agg_q: mean
+  enable_drq: False
 
   rollout_epoch: 1
   eval_rollout_epoch: 1
@@ -70,15 +72,24 @@ algorithm:
   bootstrap_type: always
   gamma: 0.8
   tau: 0.01  # Soft update coefficient for target networks
-  auto_entropy_tuning: True  # Enable automatic entropy tuning
-  alpha_type: softplus
-  initial_alpha: 0.01  # Initial temperature value
-  target_entropy: -4  # Target entropy (-action_dim)
-  alpha_lr: 3.0e-4  # Learning rate for temperature parameter
+  
+  entropy_tuning:
+    alpha_type: softplus # choose from ["softplus", "exp", "fixed_alpha"], set to "softplus" or "exp" to enable automatic entropy tuning
+    initial_alpha: 0.01  # Initial temperature value
+    target_entropy: -4  # Target entropy (-action_dim)
+    optim:
+      lr: 3.0e-4  # Learning rate for temperature parameter
+      lr_scheduler: torch_constant
+      clip_grad: 10.0
   
   # Replay buffer settings
-  replay_buffer_capacity: 10000
-  min_buffer_size: 200  # Minimum buffer size before training starts
+  replay_buffer:
+    enable_cache: True
+    cache_size: 200 # number of trajectories cached in memory
+    sample_window_size: 200 # number of latest trajectories to sample from for replay buffer
+    min_buffer_size: 2  # Minimum buffer size before training starts (in number of trajectories)
+    auto_save: False
+
   target_update_freq: 1  # Frequency of target network updates
 
   # params for rollout
@@ -98,7 +109,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
 
   train:
     total_num_envs: 2
@@ -122,10 +132,15 @@ rollout:
   pipeline_stage_num: 1
   sync_weight_nccl_max_ctas: 32 # Max CTAs (Compute Thread Array, the compute resource of GPUs) for sync weight communication. Higher values consume more GPU resources, and thus sync weight is faster but could affect rollout speed in async mode. Positive integer 1 to 32. Default 32.
 
+  collect_transitions: True
+  collect_prev_infos: False
+
   model:
     model_path: "/path/to/model"
     precision: ${actor.model.precision}
 
+  enable_torch_compile: True
+  enable_cuda_graph: False
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
@@ -142,12 +157,14 @@ actor:
     num_q_heads: 10 # number of Q heads for critic, passed to policy module
 
   optim:
-    lr: 3.0e-4  # Lower learning rate for SAC
-    value_lr: 3.0e-4  # Q-network learning rate
-    adam_beta1: 0.9
-    adam_beta2: 0.999
-    adam_eps: 1.0e-08
     clip_grad: 10.0
+    lr: 3e-4
+    lr_scheduler: torch_constant
+
+  critic_optim:
+    clip_grad: 10.0
+    lr: 3e-4
+    lr_scheduler: torch_constant
 
   # Override the default values in training_backend/fsdp
   fsdp_config:

@@ -29,7 +29,7 @@ jobs:
       checked_files_filter: ${{ steps.filter.outputs.checked_files_filter }}
       all_changes_filter: ${{ steps.filter.outputs.all_changes_filter }}
       checked_files_filter_files: ${{ steps.filter.outputs.checked_files_filter_files }}
-      all_changes_filter_files: ${{ steps.filter.outputs.all_changes_filter_files }}
+      all_changes_no_delete_filter_files: ${{ steps.filter.outputs.all_changes_no_delete_filter_files }}
  
     steps:
       - name: Checkout code
@@ -77,7 +77,6 @@ jobs:
               - 'rlinf/config.py'
               - 'rlinf/__init__.py'
               - 'rlinf/*/__init__.py'
-              - 'toolkits/ckpt_convertor/**'
               - 'toolkits/auto_placement/**'
             embodied_filter: &embodied
               - *shared
@@ -89,7 +88,9 @@ jobs:
               - 'examples/embodiment/**'
               - 'tests/e2e_tests/embodied/**'
               - 'toolkits/eval_scripts_openpi/**'
+              - 'toolkits/eval_scripts_dexbotic/**'
               - 'toolkits/realworld_check/**'
+              - 'toolkits/replay_buffer/**'
               - '.github/workflows/embodied-e2e-tests.yml'
             agent_reason_filter: &agent
               - *shared
@@ -107,8 +108,6 @@ jobs:
               - 'tests/e2e_tests/agent/**'
               - 'tests/e2e_tests/coding_online_rl/**'
               - 'tests/e2e_tests/reasoning/**'
-              - 'toolkits/code_verifier/**'
-              - 'toolkits/math_verifier/**'
               - '.github/workflows/agent-e2e-tests.yml'
             sft_filter: &sft
               - *shared
@@ -139,13 +138,15 @@ jobs:
               - *scheduler
               - docs/**/*.py
               - '.github/workflows/ci-tests.yml'
-            all_changes_filter:
+            all_changes_filter: &all_changes
               - *install
               - *docker
               - '**/*.py'
               - 'tests/**'
               - '.github/workflows/*tests.yml'
               - '*.yaml'
+            all_changes_no_delete_filter:
+              - added|modified: *all_changes
 
   # =============================================== filter coverage test ============================================
 
@@ -159,7 +160,7 @@ jobs:
 
           json_input=$(cat << 'EOF'
           {
-            "all": ${{ needs.check-changes.outputs.all_changes_filter_files }},
+            "all": ${{ needs.check-changes.outputs.all_changes_no_delete_filter_files }},
             "checked": ${{ needs.check-changes.outputs.checked_files_filter_files }}
           }
           EOF

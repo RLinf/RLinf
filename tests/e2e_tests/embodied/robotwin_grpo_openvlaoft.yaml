@@ -20,7 +20,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: /workspace/results/
+    log_path: /workspace/results/robotwin_grpo_openvlaoft
     project_name: rlinf
     experiment_name: "ci-test"
     logger_backends: ["tensorboard"] # wandb, swanlab
@@ -87,8 +87,8 @@ env:
   train:
     total_num_envs: 8
     reward_coef: ${algorithm.reward_coef}
-    max_episode_steps: 200
-    max_steps_per_rollout_epoch: 200
+    max_episode_steps: 25
+    max_steps_per_rollout_epoch: 25
     group_size: ${algorithm.group_size}
     assets_path: "/workspace/dataset/RoboTwin"
     seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/train_seeds.json
@@ -123,15 +123,15 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 16
-  global_batch_size: 64
+  micro_batch_size: 2
+  global_batch_size: 8
   seed: 1234
   enable_offload: True
 
   # Override the default values in model/openvla_oft
   model:
     model_path: "/workspace/dataset/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup"
-    implement_version: "offical"
+    implement_version: "official"
     model_type: "openvla_oft"
     value_type: ${algorithm.reward_type}  # 'action' or 'token'
     action_dim: 14
