@@ -120,4 +120,3 @@ python toolkits/eval_scripts_openpi/calvin_eval.py \
     --num_save_videos 10 \
     --video_temp_subsample 10
 ```
-
