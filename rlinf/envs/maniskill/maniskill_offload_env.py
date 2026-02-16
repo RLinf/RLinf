@@ -13,19 +13,31 @@
 # limitations under the License.
 
 import io
+import traceback
+from typing import Optional
 
 import torch
+import torch.multiprocessing as mp
 
-from rlinf.envs.env_manager import EnvOffloadMixin
 from rlinf.envs.maniskill.maniskill_env import ManiskillEnv
 from rlinf.envs.maniskill.utils import (
+    cleanup_cuda_tensors,
     get_batch_rng_state,
-    recursive_to_device,
+    recursive_to_own,
     set_batch_rng_state,
 )
+from rlinf.envs.utils import recursive_to_device
 
 
-class ManiskillOffloadEnv(ManiskillEnv, EnvOffloadMixin):
+class EnvOffloadMixin:
+    def get_state(self) -> bytes:
+        pass
+
+    def load_state(self, state: bytes):
+        pass
+
+
+class _ManiskillEnvCore(ManiskillEnv, EnvOffloadMixin):
     def get_state(self) -> bytes:
         env_state = self.env.get_state()
         rng_state = {
@@ -161,3 +173,277 @@ class ManiskillOffloadEnv(ManiskillEnv, EnvOffloadMixin):
             self.success_once = state["success_once"].to(self.device)
             self.fail_once = state["fail_once"].to(self.device)
             self.returns = state["returns"].to(self.device)
+
+
+def _maniskill_worker_main(
+    cfg,
+    num_envs,
+    seed_offset,
+    total_num_processes,
+    worker_info,
+    command_queue,
+    result_queue,
+    state_buffer: Optional[bytes],
+):
+    from rlinf.utils.omega_resolver import omegaconf_register
+
+    omegaconf_register()
+
+    try:
+        env = _ManiskillEnvCore(
+            cfg, num_envs, seed_offset, total_num_processes, worker_info
+        )
+        if state_buffer:
+            env.load_state(state_buffer)
+
+        result_queue.put({"status": "ready"})
+
+        while True:
+            command = command_queue.get()
+            method_name = command.get("method")
+
+            if method_name == "shutdown":
+                break
+
+            try:
+                args = recursive_to_own(command.get("args", []))
+                kwargs = recursive_to_own(command.get("kwargs", {}))
+
+                if method_name == "__setattr__":
+                    attr_name, attr_value = args
+                    setattr(env, attr_name, attr_value)
+                    result_queue.put({"status": "success", "data": None})
+                    continue
+
+                if not hasattr(env, method_name):
+                    result_queue.put(
+                        {
+                            "status": "error",
+                            "error": f"Method '{method_name}' not found",
+                        }
+                    )
+                    continue
+
+                method = getattr(env, method_name)
+                if not callable(method):
+                    result_queue.put(
+                        {
+                            "status": "error",
+                            "error": f"Method '{method_name}' is not callable",
+                        }
+                    )
+                    continue
+
+                result = method(*args, **kwargs)
+                result_queue.put(
+                    {"status": "success", "data": recursive_to_own(result)}
+                )
+            except Exception as err:
+                result_queue.put(
+                    {
+                        "status": "error",
+                        "error": str(err),
+                        "traceback": traceback.format_exc(),
+                    }
+                )
+    except Exception as err:
+        result_queue.put(
+            {
+                "status": "error",
+                "error": str(err),
+                "traceback": traceback.format_exc(),
+            }
+        )
+    finally:
+        command_queue.close()
+        result_queue.close()
+        cleanup_cuda_tensors()
+
+
+class ManiskillOffloadEnv(EnvOffloadMixin):
+    """Proxy environment that runs ManiSkill core env in a spawned process.
+
+    This class does not implement env APIs like `reset` or `chunk_step` directly.
+    Missing method calls are resolved by `__getattr__`, which forwards them to the
+    worker process via `_rpc(method_name, ...)`.
+
+    Lifecycle:
+    - `offload()`: optionally snapshots state (`get_state`) and shuts down worker.
+    - `onload()`: starts worker again and restores from `state_buffer` if available.
+    - `_rpc(...)`: auto-calls `onload()` when process is offloaded, so calls like
+      `env.reset()` continue to work after offload.
+    """
+
+    _LOCAL_ATTRS = {
+        "cfg",
+        "num_envs",
+        "seed_offset",
+        "total_num_processes",
+        "worker_info",
+        "rpc_timeout_s",
+        "context",
+        "process",
+        "command_queue",
+        "result_queue",
+        "state_buffer",
+        "_has_valid_state_buffer",
+    }
+
+    def __init__(
+        self,
+        cfg,
+        num_envs,
+        seed_offset,
+        total_num_processes,
+        worker_info,
+        record_metrics=True,
+        rpc_timeout_s: int = 120,
+    ):
+        del record_metrics
+        self.cfg = cfg
+        self.num_envs = num_envs
+        self.seed_offset = seed_offset
+        self.total_num_processes = total_num_processes
+        self.worker_info = worker_info
+        self.rpc_timeout_s = rpc_timeout_s
+        self.context: Optional[mp.context.BaseContext] = None
+        self.process: Optional[mp.Process] = None
+        self.command_queue: Optional[mp.Queue] = None
+        self.result_queue: Optional[mp.Queue] = None
+        self.state_buffer: Optional[bytes] = None
+        self._has_valid_state_buffer = False
+        self.onload()
+
+    def start_env(self):
+        if self.process is not None and self.process.is_alive():
+            return
+
+        self.context = mp.get_context("spawn")
+        self.command_queue = self.context.Queue()
+        self.result_queue = self.context.Queue()
+        self.process = self.context.Process(
+            target=_maniskill_worker_main,
+            args=(
+                self.cfg,
+                self.num_envs,
+                self.seed_offset,
+                self.total_num_processes,
+                self.worker_info,
+                self.command_queue,
+                self.result_queue,
+                self.state_buffer,
+            ),
+        )
+        self.process.start()
+        try:
+            result = self.result_queue.get(timeout=self.rpc_timeout_s)
+        except Exception as err:
+            self._force_shutdown()
+            raise RuntimeError(
+                f"Maniskill offload init timeout/failure: {err}"
+            ) from err
+        if result.get("status") != "ready":
+            self._force_shutdown()
+            raise RuntimeError(f"Maniskill offload init failed: {result}")
+
+    def onload(self, force: bool = False):
+        if not force and self.process is not None and self.process.is_alive():
+            return
+        self.start_env()
+        # If no valid serialized state is available, bootstrap with one reset so
+        # auto-reset training can safely call step/chunk_step after onload.
+        if (not self._has_valid_state_buffer) and getattr(
+            self.cfg, "auto_reset", False
+        ):
+            self._rpc("reset")
+
+    def offload(self, keep_state: bool = True):
+        if self.process is None or not self.process.is_alive():
+            return
+
+        if keep_state:
+            try:
+                self.state_buffer = self._rpc("get_state")
+                self._has_valid_state_buffer = True
+            except Exception:
+                self.state_buffer = None
+                self._has_valid_state_buffer = False
+        else:
+            self.state_buffer = None
+            self._has_valid_state_buffer = False
+
+        try:
+            self.command_queue.put({"method": "shutdown"})
+        finally:
+            self._force_shutdown()
+
+    def stop_env(self):
+        self.offload(keep_state=True)
+
+    def close(self):
+        if self.process is not None and self.process.is_alive():
+            try:
+                self._rpc("close", timeout_s=30)
+            except Exception:
+                pass
+        self.offload(keep_state=False)
+
+    def get_state(self) -> bytes:
+        return self._rpc("get_state")
+
+    def load_state(self, state: bytes):
+        self._rpc("load_state", args=[state])
+
+    def _rpc(self, method_name, args=None, kwargs=None, timeout_s=None):
+        if self.process is None or not self.process.is_alive():
+            self.onload()
+        payload = {
+            "method": method_name,
+            "args": recursive_to_own(args or []),
+            "kwargs": recursive_to_own(kwargs or {}),
+        }
+        self.command_queue.put(payload)
+        result = self.result_queue.get(timeout=timeout_s or self.rpc_timeout_s)
+        result = recursive_to_own(result)
+        if result.get("status") == "error":
+            trace = result.get("traceback")
+            if trace:
+                raise RuntimeError(f"{result.get('error')}\n{trace}")
+            raise RuntimeError(result.get("error", "Unknown offload RPC error"))
+        return result.get("data")
+
+    def _force_shutdown(self):
+        if self.command_queue is not None:
+            self.command_queue.close()
+        if self.result_queue is not None:
+            self.result_queue.close()
+        if self.process is not None:
+            self.process.join(timeout=5)
+            if self.process.is_alive():
+                self.process.terminate()
+                self.process.join()
+        self.process = None
+        self.command_queue = None
+        self.result_queue = None
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{name}'"
+            )
+
+        def method_proxy(*args, **kwargs):
+            return self._rpc(name, args=args, kwargs=kwargs)
+
+        return method_proxy
+
+    def __setattr__(self, name, value):
+        if name in self._LOCAL_ATTRS:
+            super().__setattr__(name, value)
+            return
+
+        if name.startswith("_"):
+            raise AttributeError(
+                f"Cannot set private attribute '{name}' on offloaded environment"
+            )
+        self._rpc("__setattr__", args=[name, value])

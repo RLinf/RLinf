@@ -25,6 +25,8 @@ video_cfg:
   info_on_video: True
   video_base_dir: ${runner.logger.log_path}/video/train
 
+enable_offload: False
+
 task_config:
   task_name: move_can_pot
   step_lim: 200

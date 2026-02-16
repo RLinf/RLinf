@@ -246,7 +246,7 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
      model:
        model_path: "/path/to/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup"  # SFT 模型路径
        model_type: "openvla_oft"                                             # 模型类型设置为openvla_oft
-       implement_version: "offical"                                          # openvla_oft实现版本（RLinf OpenVLA-OFT模型的实现接入了oft官方版本和rlinf sft微调版本，RoboTwin环境使用官方版本）
+       implement_version: "official"                                          # openvla_oft实现版本（RLinf OpenVLA-OFT模型的实现接入了oft官方版本和rlinf sft微调版本，RoboTwin环境使用官方版本）
        action_dim: 14                                                        # RoboTwin 动作维度（14维）
        use_proprio: True                                                     # 是否使用本体感觉信息
        proprio_dim: 14                                                       # 本体感觉维度
@@ -335,7 +335,7 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
 评估结果
 ~~~~~~~~~~~~~~~~~~~
 
-.. list-table:: **OpenVLA-OFT 模型在六个 RoboTwin 任务上的评估结果**
+.. list-table:: **OpenVLA-OFT 模型在七个 RoboTwin 任务上的评估结果**
    :header-rows: 1
 
    * - Task
@@ -350,6 +350,9 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
    * - place_empty_cup
      - |huggingface| `75.78% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_
      - |huggingface| `94.53% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_empty_cup>`__
+   * - place_container_plate
+     - |huggingface| `54.69% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_container_plate>`_
+     - |huggingface| `95.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_container_plate>`__
    * - move_can_pot
      - |huggingface| `9.37% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-move_can_pot>`_
      - |huggingface| `83.59% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-move_can_pot>`__
@@ -360,11 +363,11 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
      - |huggingface| `28.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-handover_block>`_
      - |huggingface| `70.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-handover_block>`__
    * - Average
-     - 24.48%
-     - **84.63%**
+     - 28.79%
+     - **86.16**
    * - Δ Avg.
      - ---
-     - **+60.15%**
+     - **+57.37%**
 
 
 配置说明
@@ -375,7 +378,7 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
 1. **模型配置**：
 
    - ``actor.model.model_type: "openvla_oft"``：使用 OpenVLA-OFT 模型
-   - ``actor.model.implement_version: "offical"``：使用 OpenVLA-OFT 官方版本
+   - ``actor.model.implement_version: "official"``：使用 OpenVLA-OFT 官方版本
    - ``actor.model.action_dim: 14``：14 维动作空间（包含本体感觉）
    - ``actor.model.use_proprio: True``：启用本体感觉输入
    - ``actor.model.proprio_dim: 14``：本体感觉维度

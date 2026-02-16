@@ -14,6 +14,8 @@ max_episode_steps: 256 # max episode steps for truncation
 
 video_cfg:
   save_video: False
+  info_on_video: True
+  fps: 20
   video_base_dir: ${runner.logger.log_path}/video/train
 
 init_params:

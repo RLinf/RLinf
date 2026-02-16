@@ -247,7 +247,7 @@ Using the OpenVLA-OFT model as an example, the following key parameters need to 
      model:
        model_path: "/path/to/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup"  # SFT model path
        model_type: "openvla_oft"                                             # Model type set to openvla_oft
-       implement_version: "offical"                                          # openvla_oft implementation version (RLinf OpenVLA-OFT model implementation integrates the official OFT version and RLinf SFT fine-tuned version, RoboTwin environment uses the official version)
+       implement_version: "official"                                          # openvla_oft implementation version (RLinf OpenVLA-OFT model implementation integrates the official OFT version and RLinf SFT fine-tuned version, RoboTwin environment uses the official version)
        action_dim: 14                                                        # RoboTwin action dimension (14D)
        use_proprio: True                                                     # Whether to use proprioception information
        proprio_dim: 14                                                       # Proprioception dimension
@@ -336,44 +336,39 @@ Videos from training and evaluation processes are automatically saved. Configura
 Evaluation Results
 ~~~~~~~~~~~~~~~~~~~
 
-.. list-table:: **Evaluation results of OpenVLA-OFT models on six RoboTwin tasks**
+.. list-table:: **Evaluation results of OpenVLA-OFT models on seven RoboTwin tasks**
    :header-rows: 1
 
    * - Task
      - OpenVLA-OFT (SFT)
      - OpenVLA-OFT (RLinf-GRPO)
-
    * - beat_block_hammer
      - |huggingface| `10.15% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-beat_block_hammer>`_
      - |huggingface| `96.09% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-beat_block_hammer>`__
-
    * - pick_dual_bottles
      - |huggingface| `20.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-pick_dual_bottles>`_
      - |huggingface| `92.96% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-pick_dual_bottles>`__
-
    * - place_empty_cup
      - |huggingface| `75.78% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_
      - |huggingface| `94.53% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_empty_cup>`__
-
+   * - place_container_plate
+     - |huggingface| `54.69% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_container_plate>`_
+     - |huggingface| `95.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_container_plate>`__
    * - move_can_pot
      - |huggingface| `9.37% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-move_can_pot>`_
      - |huggingface| `83.59% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-move_can_pot>`__
-
    * - lift_pot
      - |huggingface| `3.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-lift_pot>`_
      - |huggingface| `70.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-lift_pot>`__
-
    * - handover_block
      - |huggingface| `28.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-handover_block>`_
      - |huggingface| `70.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-handover_block>`__
-
    * - Average
-     - 24.48%
-     - **84.63%**
-
+     - 28.79%
+     - **86.16**
    * - Δ Avg.
      - ---
-     - **+60.15%**
+     - **+57.37%**
 
 
 Configuration Details
@@ -384,7 +379,7 @@ Configuration Details
 1. **Model Configuration**:
 
    - ``actor.model.model_type: "openvla_oft"``: Use OpenVLA-OFT model
-   - ``actor.model.implement_version: "offical"``: Use OpenVLA-OFT official version
+   - ``actor.model.implement_version: "official"``: Use OpenVLA-OFT official version
    - ``actor.model.action_dim: 14``: 14-dimensional action space (including proprioception)
    - ``actor.model.use_proprio: True``: Enable proprioception input
    - ``actor.model.proprio_dim: 14``: Proprioception dimension

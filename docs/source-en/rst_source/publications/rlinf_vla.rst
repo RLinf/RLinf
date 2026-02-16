@@ -142,10 +142,10 @@ LIBERO (unified model, five task groups)
      - +27.62
      - +32.68
 
-RoboTwin (six tasks)
-~~~~~~~~~~~~~~~~~~~~
+RoboTwin (seven tasks)
+~~~~~~~~~~~~~~~~~~~~~~~
 
-.. list-table:: Evaluation results of OpenVLA-OFT on six RoboTwin tasks (%)
+.. list-table:: Evaluation results of OpenVLA-OFT on seven RoboTwin tasks (%)
    :header-rows: 1
 
    * - Task
@@ -160,6 +160,9 @@ RoboTwin (six tasks)
    * - place_empty_cup
      - |huggingface| `75.78% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_
      - |huggingface| `94.53% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_empty_cup>`__
+   * - place_container_plate
+     - |huggingface| `54.69% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_container_plate>`_
+     - |huggingface| `95.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_container_plate>`__
    * - move_can_pot
      - |huggingface| `9.37% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-move_can_pot>`_
      - |huggingface| `83.59% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-move_can_pot>`__
@@ -170,11 +173,11 @@ RoboTwin (six tasks)
      - |huggingface| `28.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-handover_block>`_
      - |huggingface| `70.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-handover_block>`__
    * - Average
-     - 24.48%
-     - **84.63%**
+     - 28.79%
+     - **86.16**
    * - Δ Avg.
      - ---
-     - **+60.15%**
+     - **+57.37%**
 
 "Base" and "SFT" refer to supervised fine-tuned models before RL training.
 

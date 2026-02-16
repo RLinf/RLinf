@@ -115,7 +115,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
 
   train:
     ignore_terminations: False
@@ -141,6 +140,7 @@ rollout:
     num_q_heads: 10
 
   enable_torch_compile: True
+  enable_cuda_graph: False
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
