@@ -327,6 +327,11 @@ class MetaWorldEnv(gym.Env):
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
 
+        # the action dimesion of metaworld is 4-dim (x, y, z, gripper)
+        # we need to extract the first 3-dim and the last dim in a 7-dim action
+        if actions.shape[-1] == 7:
+            actions = np.concatenate([actions[..., :3], actions[..., -1:]], axis=-1)
+
         self._elapsed_steps += 1
 
         if self.use_async_vector_env:
