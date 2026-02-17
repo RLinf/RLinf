@@ -26,7 +26,7 @@ LIBERO（四类任务）
      - Goal
      - Long
      - 平均
-   * - OpenVLA-OFT (LoRA-base) 
+   * - OpenVLA-OFT (Base) 
      - 61.5
      - 36.3
      - 48.2

@@ -26,7 +26,7 @@ LIBERO (four task suites)
      - Goal
      - Long
      - Avg
-   * - OpenVLA-OFT (LoRA-base)
+   * - OpenVLA-OFT (Base)
      - 61.5
      - 36.3
      - 48.2
