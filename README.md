@@ -275,6 +275,17 @@ If you train your policies in physical world with RLinf, you can cite our paper:
 }
 ```
 
+If you use World Model + VLA + RL in RLinf, you can cite our paper:
+```bibtex
+@article{jiang2026wovr,
+  title={WoVR: World Models as Reliable Simulators for Post-Training VLA Policies with RL}, 
+  author={Zhennan Jiang and Shangqing Zhou and Yutong Jiang and Zefang Huang and Mingjie Wei and Yuhui Chen and Tianxing Zhou and Zhen Guo and Hao Lin and Quanlu Zhang and Yu Wang and Haoran Li and Chao Yu and Dongbin Zhao},
+  year={2026},
+  journal={arXiv preprint arXiv:2602.13977},
+  url={https://arxiv.org/abs/2602.13977}, 
+}
+```
+
 **Acknowledgements**
 RLinf has been inspired by, and benefits from, the ideas and tooling of the broader open-source community.
 In particular, we would like to thank the teams and contributors behind VeRL, AReaL, Megatron-LM, SGLang, and PyTorch Fully Sharded Data Parallel (FSDP), and if we have inadvertently missed your project or contribution, please open an issue or a pull request so we can properly credit you.
