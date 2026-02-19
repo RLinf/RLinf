@@ -348,7 +348,7 @@ LIBERO 部分结果
 
 .. note::
 
-    我们基于 `Diffsynth-Studio <https://github.com/youmo445/diffsynth-studio-rlinf>`_ 框架进行Wan的训练与推理。
+    我们基于 `Diffsynth-Studio <https://github.com/RLinf/diffsynth-studio>`_ 框架进行Wan的训练与推理。
     在下面的评测结果中，我们仅使用冻结的世界模型服务于 VLA 模型的强化学习训练，并未使用世界模型与 VLA 的协同进化。用户可通过手动实现协同进化，实现性能的继续增长。
 
 .. list-table:: **使用 Wan 模拟器的 LIBERO 任务组评测结果**
