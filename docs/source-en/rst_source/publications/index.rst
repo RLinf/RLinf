@@ -14,8 +14,10 @@ Detailed publication pages
    rlinf_vla
    rlinf_system
    pi_rl
+   wovr
 
 - :doc:`RLinf-USER <rlinf_user>` — Unified system for real-world online policy learning `arXiv:2602.07837 <https://arxiv.org/abs/2602.07837>`__
 - :doc:`RLinf-VLA <rlinf_vla>` — Unified framework for VLA+RL training `arXiv:2510.06710 <https://arxiv.org/abs/2510.06710>`__
 - :doc:`RLinf <rlinf_system>` — Flexible and efficient RL system `arXiv:2509.15965 <https://arxiv.org/abs/2509.15965>`__
-- :doc:`πRL <pi_rl>` — Online RL fine-tuning for flow-based VLA models `arXiv:2510.25889 <https://arxiv.org/abs/2510.25889>`__ 
+- :doc:`πRL <pi_rl>` — Online RL fine-tuning for flow-based VLA models `arXiv:2510.25889 <https://arxiv.org/abs/2510.25889>`__
+- :doc:`WoVR <wovr>` — World model-based RL fine-tuning for VLA policies `arXiv:2602.13977 <https://arxiv.org/abs/2602.13977>`__

@@ -1,7 +1,7 @@
 RLinf-USER: Unified System for Real-world Online Policy Learning
 =================================================================
 
-**Paper:** `arXiv:2509.15965 <https://arxiv.org/abs/2602.07837>`__ 
+**Paper:** `arXiv:2602.07837 <https://arxiv.org/abs/2602.07837>`__ 
 
 概述
 ----
