@@ -1,5 +1,5 @@
 WoVR: World Models as Reliable Simulators for Post-Training VLA Policies with RL
-=================================================================
+=================================================================================
 
 **论文：** `arXiv:2602.13977 <https://arxiv.org/abs/2602.13977>`__ | **世界模型：** `WoVR <https://huggingface.co/collections/RLinf/wovr>`__
 
