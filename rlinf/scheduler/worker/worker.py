@@ -36,6 +36,7 @@ from omegaconf import OmegaConf
 from ..cluster import Cluster, ClusterEnvVar
 from ..hardware import AcceleratorType, AcceleratorUtil, HardwareInfo
 from ..manager import WorkerAddress
+import rlinf.utils.device_utils as dutils
 
 if TYPE_CHECKING:
     from ..collective import CollectiveGroupOptions
@@ -313,8 +314,8 @@ class Worker(metaclass=WorkerMeta):
     logging.basicConfig()
     logger = logging.getLogger(Cluster.SYS_NAME)
     logger.setLevel(Cluster.LOGGING_LEVEL)
-    torch_platform = torch.cuda
-    torch_device_type = "cuda"
+    torch_platform = dutils._BACKEND
+    torch_device_type = dutils.DEVICE_NAME
 
     def __new__(cls, *args, **kwargs):
         """Create a new instance of the Worker class."""

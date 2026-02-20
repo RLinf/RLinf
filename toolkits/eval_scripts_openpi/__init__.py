@@ -26,6 +26,7 @@ from openpi.training import checkpoints as _checkpoints
 from openpi.training import config as _config
 
 from rlinf.models.embodiment.openpi import _CONFIGS_DICT
+import rlinf.utils.device_utils as dutils
 
 
 def setup_logger(exp_name, log_dir):
@@ -102,7 +103,7 @@ def create_trained_policy(
         try:
             import torch
 
-            pytorch_device = "cuda" if torch.cuda.is_available() else "cpu"
+            pytorch_device = dutils.DEVICE_NAME if dutils.is_available() else "cpu"
         except ImportError:
             pytorch_device = "cpu"
 

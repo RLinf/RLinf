@@ -27,13 +27,14 @@ import torch
 import torch.nn.functional as F
 from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
+import rlinf.utils.device_utils as dutils
 
 
 def clear_memory(sync=True):
     if sync:
-        torch.cuda.synchronize()
+        dutils.synchronize()
     gc.collect()
-    torch.cuda.empty_cache()
+    dutils.empty_cache()
 
 
 def apply_func_to_dict(func, dictionary):
@@ -69,7 +70,7 @@ def retrieve_model_state_dict_in_cpu(model, offloaded_buffer=None):
         else:
             offloaded_buffer[name] = item
 
-    torch.cuda.synchronize()
+    dutils.synchronize()
     return offloaded_buffer
 
 
@@ -459,8 +460,8 @@ def get_rng_state() -> dict:
         "numpy": np.random.get_state(),
         "random": random.getstate(),
     }
-    if torch.cuda.is_available():
-        rng_state["cuda"] = torch.cuda.get_rng_state()
+    if dutils.is_available():
+        rng_state[dutils.DEVICE_NAME] = dutils.get_rng_state()
     return rng_state
 
 
@@ -478,8 +479,8 @@ def set_rng_state(rng_state: dict) -> None:
     torch.set_rng_state(rng_state["cpu"])
     np.random.set_state(rng_state["numpy"])
     random.setstate(rng_state["random"])
-    if torch.cuda.is_available() and "cuda" in rng_state:
-        torch.cuda.set_rng_state(rng_state["cuda"])
+    if dutils.is_available() and dutils.DEVICE_NAME in rng_state:
+        dutils.set_rng_state(rng_state[dutils.DEVICE_NAME])
 
 
 def get_model_weights_id(model, k=128):

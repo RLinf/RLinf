@@ -37,6 +37,7 @@ from omegaconf.dictconfig import DictConfig
 from omegaconf.omegaconf import OmegaConf
 
 from rlinf.config import torch_dtype_from_precision
+import rlinf.utils.device_utils as dutils
 
 
 def extract_selected_fields(cfg: DictConfig) -> DictConfig:
@@ -148,7 +149,7 @@ def _set_random_seed(seed_, data_parallel_random_init=False):
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
-        if torch.cuda.device_count() > 0:
+        if dutils.device_count() > 0:
             tensor_parallel.model_parallel_cuda_manual_seed(seed)
     else:
         raise ValueError("Seed ({}) should be a positive integer.".format(seed_))
@@ -276,7 +277,7 @@ def _initialize_distributed(cfg: DictConfig):
     master_port = os.getenv("MASTER_PORT", "29500")
 
     """Initialize torch.distributed and core model parallel."""
-    device_count = torch.cuda.device_count()
+    device_count = dutils.device_count()
 
     if global_rank == 0:
         print(
@@ -287,7 +288,7 @@ def _initialize_distributed(cfg: DictConfig):
         )
 
     if not torch.distributed.is_initialized():
-        torch.cuda.set_device(local_rank)
+        dutils.set_device(local_rank)
         torch.distributed.init_process_group(
             backend=cfg.megatron.distributed_backend,
             rank=global_rank,

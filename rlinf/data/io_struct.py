@@ -31,6 +31,7 @@ from rlinf.utils.data_iter_utils import (
     merge_tensor,
     split_list,
 )
+import rlinf.utils.device_utils as dutils
 
 
 def get_batch_size(
@@ -782,13 +783,13 @@ class RolloutResult:
         )  # [B, training_seq_length]
 
         batch = {
-            "input_ids": input_ids.cuda(),
-            "attention_mask": attention_mask.cuda(),
-            "response_mask": response_mask.cuda(),
-            "is_end": is_end.cuda(),
-            "position_ids": position_ids.cuda(),
-            "prompt_lengths": prompt_lengths.cuda(),
-            "response_lengths": response_lengths.cuda(),
+            "input_ids": input_ids.to(dutils.DEVICE_NAME),
+            "attention_mask": attention_mask.to(dutils.DEVICE_NAME),
+            "response_mask": response_mask.to(dutils.DEVICE_NAME),
+            "is_end": is_end.to(dutils.DEVICE_NAME),
+            "position_ids": position_ids.to(dutils.DEVICE_NAME),
+            "prompt_lengths": prompt_lengths.to(dutils.DEVICE_NAME),
+            "response_lengths": response_lengths.to(dutils.DEVICE_NAME),
         }
 
         if (
@@ -799,7 +800,7 @@ class RolloutResult:
 
         if self.advantages is not None:
             if isinstance(self.advantages, torch.Tensor):
-                batch["advantages"] = self.advantages.cuda()
+                batch["advantages"] = self.advantages.to(dutils.DEVICE_NAME)
             else:
                 response_attention_mask = attention_mask[
                     :, -max_response_len:
@@ -807,20 +808,20 @@ class RolloutResult:
                 advantages = torch.tensor(self.advantages, dtype=torch.float32).reshape(
                     -1, 1
                 )  # [B, 1]
-                advantages = response_attention_mask.float().cuda() * advantages.cuda()
-                batch["advantages"] = advantages.cuda()
+                advantages = response_attention_mask.float().to(dutils.DEVICE_NAME) * advantages.to(dutils.DEVICE_NAME)
+                batch["advantages"] = advantages.to(dutils.DEVICE_NAME)
 
         if self.prev_logprobs is not None:
-            batch["prev_logprobs"] = self.prev_logprobs.cuda()
+            batch["prev_logprobs"] = self.prev_logprobs.to(dutils.DEVICE_NAME)
 
         if self.ref_logprobs is not None:
-            batch["ref_logprobs"] = self.ref_logprobs.cuda()
+            batch["ref_logprobs"] = self.ref_logprobs.to(dutils.DEVICE_NAME)
 
         if self.recompute_prev_logprobs is not None:
-            batch["recompute_prev_logprobs"] = self.recompute_prev_logprobs.cuda()
+            batch["recompute_prev_logprobs"] = self.recompute_prev_logprobs.to(dutils.DEVICE_NAME)
 
         if self.rewards is not None:
-            batch["rewards"] = self.rewards.cuda()
+            batch["rewards"] = self.rewards.to(dutils.DEVICE_NAME)
 
         if self.rollout_logprobs is not None:
             logprobs = batch_pad_to_fixed_len(
@@ -831,7 +832,7 @@ class RolloutResult:
                 max_batch_len=max_response_len,
                 pad_token=0,
             )
-            batch["prev_logprobs"] = logprobs.cuda()
+            batch["prev_logprobs"] = logprobs.to(dutils.DEVICE_NAME)
 
         return batch
 

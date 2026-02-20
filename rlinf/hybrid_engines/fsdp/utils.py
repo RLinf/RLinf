@@ -50,7 +50,7 @@ from rlinf.hybrid_engines.fsdp import (
     fully_shard,
 )
 from rlinf.scheduler import Worker
-
+import rlinf.utils.device_utils as dutils
 
 class FSDPVersion(str, Enum):
     FSDP = "fsdp"
@@ -73,8 +73,8 @@ def create_device_mesh(world_size, fsdp_size):
 
 def init_fn(x: torch.nn.Module):
     if not torch.distributed.get_rank() == 0:
-        x = x.to_empty(device=torch.cuda.current_device(), recurse=False)
-        torch.cuda.empty_cache()
+        x = x.to_empty(device=dutils.current_device(), recurse=False)
+        dutils.empty_cache()
     return x
 
 

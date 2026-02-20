@@ -26,6 +26,7 @@ from .collective_group import (
     CollectiveGroupInfo,
     CollectiveGroupOptions,
 )
+import rlinf.utils.device_utils as dutils
 
 
 class MultiChannelProcessGroup:
@@ -408,6 +409,10 @@ class MultiChannelProcessGroup:
             if _rank_not_in_group(group):
                 _warn_not_in_group("broadcast")
                 return
+            # for npu broadcast
+            if tensor.device.type=='npu':
+                tensor = tensor.cpu()
+                self._logger.debug('Converted tensor from NPU to CPU fro broadcast')
 
             opts = BroadcastOptions()
             opts.rootRank = src

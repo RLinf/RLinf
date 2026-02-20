@@ -37,6 +37,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
     init_fn,
 )
 from rlinf.utils.utils import clear_memory
+import rlinf.utils.device_utils as dutils
 
 
 class FSDPStrategy(FSDPStrategyBase):
@@ -234,7 +235,7 @@ class FSDPStrategy(FSDPStrategyBase):
         Returns:
             - float: The total norm of the gradients before clipping.
         """
-        device = torch.device(f"cuda:{int(os.environ['LOCAL_RANK'])}")
+        device = dutils.get_device_object(int(os.environ['LOCAL_RANK'])) 
         max_norm = float(self.cfg.optim.clip_grad)
         norm_type = float(norm_type)
         all_handles = getattr(model, "_all_handles", None)

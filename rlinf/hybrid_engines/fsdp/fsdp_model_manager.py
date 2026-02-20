@@ -44,6 +44,7 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
+import rlinf.utils.device_utils as dutils
 
 class FSDPModelManager:
     """
@@ -87,8 +88,8 @@ class FSDPModelManager:
         )
         self.amp_context = self._create_amp_context()
 
-        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-        self.device = torch.cuda.current_device()
+        dutils.set_device(int(os.environ["LOCAL_RANK"]))
+        self.device = dutils.current_device()
 
         self.is_weight_offloaded = False
         self.is_optimizer_offloaded = False
@@ -126,9 +127,10 @@ class FSDPModelManager:
 
         use_triton = cfg.get("use_triton", True)
 
-        assert torch.cuda.is_available(), "CUDA is not available."
+        assert dutils.is_available(), "Card is not available."
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
-        device = torch.device(f"cuda:{local_rank}")
+        device = dutils.get_device_object(local_rank) 
+
 
         model_config = AutoConfig.from_pretrained(
             cfg.model.model_path,

@@ -38,6 +38,7 @@ from .async_work import AsyncFuncWork, AsyncWork
 
 if TYPE_CHECKING:
     from .collective import Collective
+import rlinf.utils.device_utils as dutils
 
 
 @dataclass
@@ -103,7 +104,7 @@ class CollectiveWorkQueue:
         self,
         work: AsyncFuncWork,
         comm_id: int,
-        event: Optional["torch.cuda.Event"] = None,
+        event: Optional[dutils.EVENT] = None,
     ):
         """Enqueue a work to the queue."""
         with self._lock:
@@ -155,7 +156,7 @@ class CollectiveWorkQueue:
 class CollectiveGroup:
     """Collective group for constructing and performing collective operations."""
 
-    ACCEL: str = "cuda"
+    ACCEL: str = dutils.DEVICE_NAME
     CPU: str = "cpu"
     TENSOR: int = 0
     TENSOR_LIST: int = 1
@@ -989,6 +990,10 @@ class CollectiveGroup:
             int: -1 means no common device; 0 means have common devices, but not sure if the tensor will be on the same device (the worker has multiple devices); 1 means the two workers are on the same device.
 
         """
+        # for npu devices common device check is not applicable
+        if Worker.torch_device_type == "npu":
+            return -1
+        
         peer_devices = self._group_info.workers[self._peer_rank].available_accelerators
         my_devices = self._group_info.workers[self._rank].available_accelerators
 
@@ -1554,9 +1559,15 @@ class CollectiveGroup:
         )
 
         # Send values
-        value_work = self._send_tensor_list(
-            values, device_type, comm_id, async_op=async_op
-        )
+        if dutils.DEVICE_NAME=="npu":
+            # for npu send via CPU
+            value_work = self._send_tensor_list(
+                values, CollectiveGroup.CPU, comm_id, async_op=async_op
+            )            
+        else:
+            value_work = self._send_tensor_list(
+                values, device_type, comm_id, async_op=async_op
+            )
 
         if async_op:
             return value_work
