@@ -336,44 +336,39 @@ Videos from training and evaluation processes are automatically saved. Configura
 Evaluation Results
 ~~~~~~~~~~~~~~~~~~~
 
-.. list-table:: **Evaluation results of OpenVLA-OFT models on six RoboTwin tasks**
+.. list-table:: **Evaluation results of OpenVLA-OFT models on seven RoboTwin tasks**
    :header-rows: 1
 
-   * - Model
-     - beat_block_hammer
-     - pick_dual_bottles
-     - place_empty_cup
-     - move_can_pot
-     - lift_pot
-     - handover_block
-     - Average
-     - Δ Avg.
-
-   * - OpenVLA-OFT (SFT)
+   * - Task
+     - OpenVLA-OFT (SFT)
+     - OpenVLA-OFT (RLinf-GRPO)
+   * - beat_block_hammer
      - |huggingface| `10.15% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-beat_block_hammer>`_
-     - |huggingface| `20.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-pick_dual_bottles>`_
-     - |huggingface| `75.78% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_
-     - |huggingface| `9.37% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-move_can_pot>`_
-     - |huggingface| `3.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-lift_pot>`_
-     - |huggingface| `28.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-handover_block>`_
-     - 24.48%
-     - ---
-
-   * - OpenVLA-OFT (RLinf-GRPO)
      - |huggingface| `96.09% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-beat_block_hammer>`__
+   * - pick_dual_bottles
+     - |huggingface| `20.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-pick_dual_bottles>`_
      - |huggingface| `92.96% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-pick_dual_bottles>`__
+   * - place_empty_cup
+     - |huggingface| `75.78% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_
      - |huggingface| `94.53% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_empty_cup>`__
+   * - place_container_plate
+     - |huggingface| `54.69% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_container_plate>`_
+     - |huggingface| `95.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_container_plate>`__
+   * - move_can_pot
+     - |huggingface| `9.37% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-move_can_pot>`_
      - |huggingface| `83.59% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-move_can_pot>`__
+   * - lift_pot
+     - |huggingface| `3.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-lift_pot>`_
      - |huggingface| `70.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-lift_pot>`__
+   * - handover_block
+     - |huggingface| `28.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-handover_block>`_
      - |huggingface| `70.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-handover_block>`__
-     - **84.63%**
-     - **+60.15%**
-
-.. note::
-   
-   Each task has its own dedicated SFT and RL model. 
-   SFT models: |huggingface| `beat_block_hammer (SFT) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-beat_block_hammer>`_, |huggingface| `pick_dual_bottles (SFT) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-pick_dual_bottles>`_, |huggingface| `place_empty_cup (SFT) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_, |huggingface| `move_can_pot (SFT) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-move_can_pot>`_, |huggingface| `lift_pot (SFT) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-lift_pot>`_, |huggingface| `handover_block (SFT) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-handover_block>`_.
-   RL models: |huggingface| `beat_block_hammer (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-beat_block_hammer>`_, |huggingface| `pick_dual_bottles (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-pick_dual_bottles>`_, |huggingface| `place_empty_cup (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_empty_cup>`_, |huggingface| `move_can_pot (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-move_can_pot>`_, |huggingface| `lift_pot (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-lift_pot>`_, |huggingface| `handover_block (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-handover_block>`_.
+   * - Average
+     - 28.79%
+     - **86.16**
+   * - Δ Avg.
+     - ---
+     - **+57.37%**
 
 
 Configuration Details
@@ -403,6 +398,92 @@ Configuration Details
    - ``env.train.task_config.camera``: Camera configuration
 
 For more detailed information about RoboTwin configuration, please refer to the `RoboTwin Configuration Documentation <https://robotwin-platform.github.io/doc/usage/configurations.html>`_.
+
+π\ :sub:`0`\  Model Evaluation
+--------------------------------
+
+1. **Assets Preparation**
+
+Before running π\ :sub:`0`\ training or evaluation, ensure that the ``repo_id`` defined in ``TrainConfig`` strictly matches the local model directory structure.
+
+The ``repo_id`` specifies the storage path of task-related data. During execution, the program uses this field to locate normalization statistics and related resources inside the π₀ model directory.
+
+Please check the ``TrainConfig`` definition in:
+
+``rlinf/models/embodiment/openpi/dataconfig/__init__.py``
+
+Example:
+
+.. code-block:: python
+
+   TrainConfig(
+      name="pi0_aloha_robotwin",
+      model=pi0_config.Pi0Config(discrete_state_input=False),
+      data=LeRobotAlohaDataConfig(
+         repo_id="robotwin/your_task_name",
+         adapt_to_pi=False,
+         base_config=DataConfig(
+               prompt_from_task=True
+         ),
+         assets=AssetsConfig(
+               assets_dir="checkpoints/torch/pi0_aloha_robotwin/assets"
+         ),
+         extra_delta_transform=True,
+      ),
+      freeze_filter=pi0_config.Pi0Config().get_freeze_filter(),
+      pytorch_weight_path="checkpoints/torch/pi0_base",
+      num_train_steps=30_000,
+   )
+
+Where:
+
+- ``repo_id`` represents the task identifier and storage path
+- The program searches for task-related files under the model directory using ``repo_id``
+
+
+**Required Directory Structure**
+
+Before running π\ :sub:`0`\ evaluation, ensure the model directory is organized as follows:
+
+.. code-block:: text
+
+   pi0_base/
+   ├── assets/                                   # Environment asset files
+   └── robotwin/your_task_name/norm_stats.json   # Normalization statistics for RoboTwin tasks
+
+If ``repo_id="robotwin/your_task_name"``, the program will automatically load:
+
+.. code-block:: text
+
+   pi0_base/robotwin/your_task_name/norm_stats.json
+
+
+**About norm_stats.json**
+
+The ``norm_stats.json`` file is used to normalize robot states and actions. It is required for both training and inference of the π₀ model.
+
+If the target task does not include this file, please refer to:
+
+`RoboTwin π₀ Documentation <https://robotwin-platform.github.io/doc/usage/Pi0.html#5-5-finetune-model>`_
+
+Generate the normalization statistics and place the file under:
+
+.. code-block:: text
+
+   pi0_base/<repo_id>/norm_stats.json
+
+2. **Model Configuration**:
+
+   - ``actor.model.num_action_chunks: 50``：Number of action chunks
+   - ``actor.model.action_dim: 14``：14-dimensional action space (including proprioception)
+   - ``actor.model.openpi.num_images_in_input: 3``：Number of input images
+   - ``actor.model.openpi.config_name: "pi0_aloha_robotwin"``：Configuration name
+
+3. **Environment Configuration**:
+
+   - ``env.eval.center_crop: False``：Disable center cropping of images, OFT default is enabled
+   - ``env.eval.task_config.embodiment: [aloha-agilex]``：Use AgileX robot, instead of [piper, piper, 0.6] used in OFT
+   - ``env.eval.task_config.camera: collect_wrist_camera: true``：Collect wrist camera images, OFT default is disabled
 
 Important Notes
 -----------------------
