@@ -58,6 +58,8 @@ class SupportedModel(Enum):
     CNN_POLICY = ("cnn_policy", "embodied")
     FLOW_POLICY = ("flow_policy", "embodied")
     CMA_POLICY = ("cma", "embodied")
+    CFG_MODEL = ("cfg_model", "embodied")
+    VLA_LIB_VALUE_MODEL = ("vla_lib_value_model", "embodied")
 
     def __new__(cls, value, category):
         obj = object.__new__(cls)

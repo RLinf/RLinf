@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,46 +11,41 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# openpi model configs
+# openpi cfg model (CFG-RL) configs
 
-import logging
+import glob
 import os
 
+import openpi.shared.download as download
+import openpi.transforms as transforms
+import safetensors
 from omegaconf import DictConfig
+from openpi.training import checkpoints as _checkpoints
 
-logger = logging.getLogger(__name__)
+from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+from rlinf.models.embodiment.openpi_cfg.openpi_cfg_action_model import (
+    OpenPi0Config,
+    OpenPi0ForCFGActionPrediction,
+)
 
 
 def get_model(cfg: DictConfig, torch_dtype=None):
-    import glob
-
-    import openpi.shared.download as download
-    import openpi.transforms as transforms
-    import safetensors
-    from openpi.training import checkpoints as _checkpoints
-
-    from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
-    from rlinf.models.embodiment.openpi.openpi_action_model import (
-        OpenPi0Config,
-        OpenPi0ForRLActionPrediction,
-    )
-
     # config
     config_name = getattr(cfg.openpi, "config_name", None)
-    actor_train_config = get_openpi_config(config_name, model_path=cfg.model_path)
+    actor_train_config = get_openpi_config(config_name)
     actor_model_config = actor_train_config.model
     actor_model_config = OpenPi0Config(**actor_model_config.__dict__)
     override_config_kwargs = cfg.openpi
     if override_config_kwargs is not None:
         for key, val in override_config_kwargs.items():
             actor_model_config.__dict__[key] = val
-    # load model
+
     checkpoint_dir = download.maybe_download(str(cfg.model_path))
     weight_paths = sorted(glob.glob(os.path.join(checkpoint_dir, "*.safetensors")))
     if not weight_paths:
         weight_paths = [os.path.join(checkpoint_dir, "model.safetensors")]
 
-    model: OpenPi0ForRLActionPrediction = OpenPi0ForRLActionPrediction(
+    model: OpenPi0ForCFGActionPrediction = OpenPi0ForCFGActionPrediction(
         actor_model_config
     )
     # train expert only
@@ -62,30 +57,19 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     for weight_path in weight_paths:
         state_dict = safetensors.torch.load_file(weight_path, device="cpu")
         all_state_dict.update(state_dict)
-    load_result = model.load_state_dict(all_state_dict, strict=False)
-    logger.info(
-        "Loaded state dict: %d missing keys, %d unexpected keys",
-        len(load_result.missing_keys),
-        len(load_result.unexpected_keys),
-    )
-    if load_result.missing_keys:
-        logger.debug("Missing keys: %s", load_result.missing_keys)
-    if load_result.unexpected_keys:
-        logger.debug("Unexpected keys: %s", load_result.unexpected_keys)
+    model.load_state_dict(all_state_dict, strict=False)
     model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
-    # fsdp replace
-    # model.paligemma_with_expert.replace_gemma_decoder_layers()
+
     # load data stats
     data_config = actor_train_config.data.create(
         actor_train_config.assets_dirs, actor_model_config
     )
     norm_stats = None
     if norm_stats is None:
-        # We are loading the norm stats from the checkpoint instead of the config assets dir to make sure
-        # that the policy is using the same normalization stats as the original training process.
         if data_config.asset_id is None:
             raise ValueError("Asset id is required to load norm stats.")
         norm_stats = _checkpoints.load_norm_stats(checkpoint_dir, data_config.asset_id)
+
     # wrappers
     repack_transforms = transforms.Group()
     default_prompt = None

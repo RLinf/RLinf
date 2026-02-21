@@ -24,6 +24,7 @@ from libero.libero.benchmark import Benchmark
 from libero.libero.envs import OffScreenRenderEnv
 from omegaconf.omegaconf import OmegaConf
 
+from rlinf.data.rollout_data_collector import EnvDataCollector
 from rlinf.envs.libero.utils import (
     get_benchmark_overridden,
     get_libero_image,
@@ -71,6 +72,69 @@ class LiberoEnv(gym.Env):
 
         self.video_cfg = cfg.video_cfg
         self.current_raw_obs = None
+
+        # Data collector for LeRobot export
+        self._init_data_collector()
+
+    def _init_data_collector(self):
+        """Initialize the data collector for LeRobot export."""
+        import logging
+        import os
+
+        # Debug log directory (override via DATA_COLLECTOR_LOG_DIR env var)
+        log_dir = os.environ.get(
+            "DATA_COLLECTOR_LOG_DIR",
+            os.path.join(os.getcwd(), "logs", "data_collector_logs"),
+        )
+        os.makedirs(log_dir, exist_ok=True)
+        self._env_logger = logging.getLogger(f"LiberoEnv_{id(self)}")
+        self._env_logger.setLevel(logging.DEBUG)
+        if not self._env_logger.handlers:
+            fh = logging.FileHandler(os.path.join(log_dir, "libero_env_debug.log"))
+            fh.setFormatter(
+                logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+            )
+            self._env_logger.addHandler(fh)
+
+        data_cfg = self.cfg.get("data_collector", {})
+        save_dir = data_cfg.get("save_dir", None)
+        robot_type = data_cfg.get("robot_type", "panda")
+        fps = data_cfg.get("fps", 10)
+        only_successful = data_cfg.get("only_successful", False)
+
+        # Incremental write configuration (enabled by default to avoid OOM)
+        incremental_cfg = data_cfg.get("incremental_write", {})
+        incremental_write_enabled = incremental_cfg.get(
+            "enabled", True
+        )  # enabled by default
+        flush_interval = incremental_cfg.get("flush_interval", 100)
+        stats_sample_ratio = incremental_cfg.get("stats_sample_ratio", 0.1)
+
+        self._env_logger.info("=" * 60)
+        self._env_logger.info("[LiberoEnv] Initializing data collector:")
+        self._env_logger.info(f"  save_dir: {save_dir}")
+        self._env_logger.info(f"  robot_type: {robot_type}")
+        self._env_logger.info(f"  fps: {fps}")
+        self._env_logger.info(f"  only_successful: {only_successful}")
+        self._env_logger.info(f"  num_envs: {self.num_envs}")
+        self._env_logger.info(f"  enabled: {save_dir is not None}")
+        self._env_logger.info("  incremental_write:")
+        self._env_logger.info(f"    enabled: {incremental_write_enabled}")
+        self._env_logger.info(f"    flush_interval: {flush_interval}")
+        self._env_logger.info(f"    stats_sample_ratio: {stats_sample_ratio}")
+        self._env_logger.info("=" * 60)
+
+        self.data_collector = EnvDataCollector(
+            num_envs=self.num_envs,
+            save_dir=save_dir,
+            robot_type=robot_type,
+            fps=fps,
+            only_successful=only_successful,
+            # Incremental write parameters
+            incremental_write_enabled=incremental_write_enabled,
+            flush_interval=flush_interval,
+            stats_sample_ratio=stats_sample_ratio,
+        )
 
     def _init_env(self):
         env_fns = self.get_env_fns()
@@ -353,6 +417,10 @@ class LiberoEnv(gym.Env):
         truncations = self.elapsed_steps >= self.cfg.max_episode_steps
         obs = self._wrap_obs(raw_obs)
 
+        # Collect data for LeRobot export (at every step for continuous data)
+        if self.data_collector.enabled:
+            self._collect_step_data(raw_obs, actions, terminations, truncations)
+
         step_reward = self._calc_step_reward(terminations)
 
         infos = self._record_metrics(step_reward, terminations, infos)
@@ -457,3 +525,126 @@ class LiberoEnv(gym.Env):
             return reward_diff
         else:
             return reward
+
+    # ==================== Data Collection for LeRobot Export ====================
+
+    _collect_step_counter = 0  # Class variable to track the number of calls
+
+    def _collect_step_data(
+        self,
+        raw_obs: list[dict],
+        actions: np.ndarray,
+        terminations: np.ndarray,
+        truncations: np.ndarray,
+    ) -> None:
+        """
+        Collect data from a single step for all environments.
+
+        This is called at every step to ensure continuous data collection.
+
+        Args:
+            raw_obs: List of raw observations from each environment
+            actions: Actions taken [num_envs, action_dim]
+            terminations: Termination flags [num_envs]
+            truncations: Truncation flags [num_envs]
+        """
+        LiberoEnv._collect_step_counter += 1
+
+        # Log every 100 steps or when any environment is done
+        any_done = np.any(terminations) or np.any(truncations)
+        if LiberoEnv._collect_step_counter % 100 == 0 or any_done:
+            self._env_logger.info(
+                f"[_collect_step_data] step={LiberoEnv._collect_step_counter}, "
+                f"actions_shape={actions.shape}, "
+                f"terminations={terminations.tolist()}, truncations={truncations.tolist()}"
+            )
+
+        for env_id, obs in enumerate(raw_obs):
+            # Extract image, wrist image, and state
+            image = get_libero_image(obs)
+            wrist_image = get_libero_wrist_image(obs)
+            state = np.concatenate(
+                [
+                    obs["robot0_eef_pos"],
+                    quat2axisangle(obs["robot0_eef_quat"]),
+                    obs["robot0_gripper_qpos"],
+                ]
+            )
+
+            # Get action for this environment
+            action = actions[env_id]
+
+            # Get termination/truncation status
+            is_terminated = bool(terminations[env_id])
+            is_truncated = bool(truncations[env_id])
+
+            # Get task description, raise error if out of range
+            if env_id < len(self.task_descriptions):
+                task_desc = self.task_descriptions[env_id]
+            else:
+                raise IndexError(
+                    f"env_id {env_id} out of range for task_descriptions of length {len(self.task_descriptions)}"
+                )
+
+            # Collect the step data
+            self.data_collector.collect_step(
+                env_id=env_id,
+                image=image,
+                wrist_image=wrist_image,
+                state=state,
+                action=action,
+                is_terminated=is_terminated,
+                is_truncated=is_truncated,
+                task_description=task_desc,
+            )
+
+    def enable_data_collection(self, save_dir: str) -> None:
+        """
+        Enable data collection with the specified save directory.
+
+        Args:
+            save_dir: Directory to save the collected data
+        """
+        self.data_collector.enable(save_dir)
+
+    def disable_data_collection(self) -> None:
+        """Disable data collection."""
+        self.data_collector.disable()
+
+    def save_collected_data(
+        self,
+        save_dir: Optional[str] = None,
+        robot_type: Optional[str] = None,
+        fps: Optional[int] = None,
+        only_successful: Optional[bool] = None,
+    ) -> int:
+        """
+        Save collected data to LeRobot format.
+
+        Args:
+            save_dir: Override save directory
+            robot_type: Override robot type
+            fps: Override fps
+            only_successful: If True, only save successful episodes
+
+        Returns:
+            Number of episodes saved
+        """
+        return self.data_collector.save_to_lerobot(
+            save_dir=save_dir,
+            robot_type=robot_type,
+            fps=fps,
+            only_successful=only_successful,
+        )
+
+    def get_collector_stats(self) -> dict:
+        """Get statistics about collected data."""
+        return self.data_collector.get_stats()
+
+    def clear_collected_data(self) -> None:
+        """Clear all collected data."""
+        self.data_collector.clear()
+
+    def finalize_data_collection(self) -> None:
+        """Finalize any in-progress episodes."""
+        self.data_collector.finalize_all()

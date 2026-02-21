@@ -28,6 +28,12 @@ def get_model(cfg: DictConfig):
         from rlinf.models.embodiment.openpi import get_model
     elif model_type == SupportedModel.DEXBOTIC_PI:
         from rlinf.models.embodiment.dexbotic_pi import get_model
+    elif model_type == SupportedModel.CFG_MODEL:
+        from rlinf.models.embodiment.openpi_cfg import get_model
+    elif model_type == SupportedModel.VLA_LIB_VALUE_MODEL:
+        from rlinf.models.embodiment.vla_lib_value_model import (
+            get_vla_lib_value_model as get_model,
+        )
     elif model_type == SupportedModel.MLP_POLICY:
         from rlinf.models.embodiment.mlp_policy import get_model
     elif model_type == SupportedModel.GR00T:
@@ -73,7 +79,7 @@ def get_model(cfg: DictConfig):
                 ],
                 init_lora_weights="gaussian",
             )
-            if model_type == SupportedModel.OPENPI:
+            if model_type in (SupportedModel.OPENPI, SupportedModel.CFG_MODEL):
                 module_to_lora = model.paligemma_with_expert.paligemma
                 module_to_lora = get_peft_model(module_to_lora, lora_config)
                 tag_vlm_subtree(model, False)

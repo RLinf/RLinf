@@ -1,0 +1,37 @@
+defaults:
+  - model/pi0_5@model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+convertor:
+  save_path: /path/to/fsdp_checkpoint_dir
+  merge_lora_weighs: False
+  ckpt_path: /path/to/fsdp_checkpoint_dir/full_weights.pt
+
+model:
+  model_type: "vla_lib_value_model"
+  model_path: "/path/to/pi05_base_pytorch"
+
+  # ----- Critic architecture (must match training config) -----
+  model_type_critic: "value"
+  critic_forward_mode: "expert"
+  expert_loss_type: "categorical"  # IMPORTANT: must match checkpoint
+  critic_expert_variant: "gemma_100m"
+
+  # Value head config (must match training)
+  num_bins: 201
+  v_min: -1.0
+  v_max: 0.0
+
+  # PI05 base params
+  action_dim: 7
+  action_horizon: 10
+  paligemma_variant: "gemma_2b"
+
+  is_lora: False
