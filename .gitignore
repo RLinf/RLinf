@@ -19,4 +19,6 @@ outputs/*
 uv.lock
 rlinf/envs/maniskill/assets
 PKG-INFO
-*.egg-info/
+lerobot
+visualize_result/
+data_to_use/
