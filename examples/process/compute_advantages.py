@@ -1,4 +1,4 @@
-# Copyright 2026 The RLinf Authors.
+# Copyright 2025 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,17 +13,17 @@
 # limitations under the License.
 
 """
-Compute advantages for CFG-RL training using a trained ValueCritic.
+Compute advantages for CFG-RL training using a trained ValuePolicy.
 
 Advantage formula: A = normalize(r_{t:t+N}) + gamma^N * V(o_{t+N}) - V(o_t)
 
 This script:
-1. Loads a trained ValueCritic from checkpoint (with input transforms)
-2. Loads LeRobot datasets (without delta_timestamps for ~50x faster access)
+1. Loads a trained ValuePolicy from checkpoint (with input transforms)
+2. Loads LeRobot datasets with delta_timestamps for multi-step data
 3. Computes N-step discounted reward sum and values
 4. Creates independent output datasets with is_success = (advantage >= threshold)
 
-The ValueCritic encapsulates all input transforms (LiberoInputs, Normalize, ResizeImages, etc.)
+The ValuePolicy encapsulates all input transforms (LiberoInputs, Normalize, ResizeImages, etc.)
 so inference uses the same data preprocessing as training.
 
 Supports multi-GPU parallel processing via torchrun:
@@ -63,8 +63,8 @@ from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-# Import ValueCritic for value inference
-from rlinf.models.embodiment.value_model.modeling_critic import ValueCritic
+# Import from rlinf for value policy with batch inference support
+from rlinf.models.embodiment.vla_lib_value_model import value_policy_config
 
 logger = logging.getLogger(__name__)
 
@@ -194,19 +194,37 @@ def gather_all_advantages(
 # Key Mappings for Different Robot Types
 # =============================================================================
 
-# Key mappings for building raw observations for ValueCritic
-# Maps LeRobot dataset keys to value model observation format
+# Observation-like keys that need delta_timestamps (both prefixed and non-prefixed)
+OBSERVATION_LIKE_KEYS = {
+    # Non-prefixed (collected_data format)
+    "image",
+    "wrist_image",
+    "front_image",
+    "state",
+    # Prefixed (standard LeRobot format)
+    "observation.image",
+    "observation.wrist_image",
+    "observation.state",
+    "observation.images.front_cam",
+    "observation.images.wrist_cam",
+    "observation.images.left_cam",
+    "observation.images.right_cam",
+    "observation.state.tcp_pose",
+    "observation.state.gripper_pose",
+    "observation.exterior_image_1_left",
+    "observation.wrist_image_left",
+    "observation.joint_position",
+    "observation.gripper_position",
+}
+
+# Key mappings for building raw observations for ValuePolicy
+# Maps LeRobot dataset keys to vla_lib observation format
 KEY_MAPPINGS = {
     "franka": {
-        # Multi-cam format (front_cam + wrist_cam)
         "observation.images.front_cam": "observation/images/front_cam",
         "observation.images.wrist_cam": "observation/images/wrist_cam",
         "observation.state.tcp_pose": "observation/state/tcp_pose",
         "observation.state.gripper_pose": "observation/state/gripper_pose",
-        # Single-cam format (push_button style: image + state)
-        "observation.images.image": "observation/image",
-        "image": "observation/image",
-        "state": "observation/state",
         "task": "prompt",
     },
     "franka_3cam": {
@@ -335,56 +353,15 @@ def _load_return_stats_from_dataset(
         return None, None
 
 
-def _load_returns_sidecar(
-    dataset_path: Path,
-    returns_tag: str | None = None,
-) -> dict[int, dict[str, np.ndarray]] | None:
-    """Load ``meta/returns_{tag}.parquet`` sidecar written by compute_returns.py.
-
-    Falls back to ``meta/returns.parquet`` when *returns_tag* is None.
-
-    Returns:
-        ``{episode_index: {"return": np.array, "reward": np.array}}``
-        or None if sidecar does not exist.
-    """
-    import pyarrow.parquet as pq
-
-    sidecar_filename = (
-        f"returns_{returns_tag}.parquet" if returns_tag else "returns.parquet"
-    )
-    sidecar_path = dataset_path / "meta" / sidecar_filename
-    if not sidecar_path.exists():
-        return None
-
-    table = pq.read_table(str(sidecar_path))
-    ep_col = table.column("episode_index").to_numpy()
-    frame_col = table.column("frame_index").to_numpy()
-    ret_col = table.column("return").to_numpy()
-    rew_col = table.column("reward").to_numpy()
-
-    sidecar: dict[int, dict[str, np.ndarray]] = {}
-    for ep in np.unique(ep_col):
-        mask = ep_col == ep
-        frames = frame_col[mask]
-        order = np.argsort(frames)
-        sidecar[int(ep)] = {
-            "return": ret_col[mask][order].astype(np.float32),
-            "reward": rew_col[mask][order].astype(np.float32),
-        }
-
-    logger.info(f"Loaded returns sidecar: {sidecar_path} ({len(sidecar)} episodes)")
-    return sidecar
-
-
 # =============================================================================
 # Model Loading
 # =============================================================================
 
 
-def load_value_model(cfg: DictConfig, device: str = "cuda"):
-    """Load trained ValueCritic from checkpoint.
+def load_value_policy(cfg: DictConfig, device: str = "cuda"):
+    """Load trained ValuePolicy from checkpoint.
 
-    The ValueCritic encapsulates all input transforms (LiberoInputs, Normalize,
+    The ValuePolicy encapsulates all input transforms (LiberoInputs, Normalize,
     ResizeImages, etc.) so inference uses the same data preprocessing as training.
 
     Args:
@@ -392,7 +369,7 @@ def load_value_model(cfg: DictConfig, device: str = "cuda"):
         device: Target device
 
     Returns:
-        Configured ValueCritic instance with inference methods
+        Configured ValuePolicy instance
     """
     checkpoint_path = cfg.advantage.value_checkpoint
     if checkpoint_path is None:
@@ -401,122 +378,144 @@ def load_value_model(cfg: DictConfig, device: str = "cuda"):
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    logger.info(f"Loading value model from: {checkpoint_path}")
+    logger.info(f"Loading value policy from: {checkpoint_path}")
 
     # Extract configuration
     adv_cfg = cfg.advantage
     data_cfg = cfg.data
     model_cfg = adv_cfg.get("model", {})
 
-    # Get robot_type (env_type)
+    # Get robot_type (env_type for vla_lib)
     robot_type = data_cfg.get("robot_type", "libero")
-    if "train_data_paths" in data_cfg and len(data_cfg.train_data_paths) > 0:
-        robot_type = data_cfg.train_data_paths[0].get("robot_type", robot_type)
+    # If datasets are specified, use robot_type from first dataset
+    if "datasets" in data_cfg and len(data_cfg.datasets) > 0:
+        robot_type = data_cfg.datasets[0].get("robot_type", robot_type)
 
+    # Get model_type (pi0, pi05)
     model_type = data_cfg.get("model_type", "pi05")
 
+    # Get value_mode (expert_categorical, expert_mse, continuous, discrete)
+    value_mode = adv_cfg.get("value_mode", "expert_categorical")
+
+    # Get value head settings
     num_return_bins = model_cfg.get("num_bins", 201)
     return_min = model_cfg.get("v_min", -1.0)
     return_max = model_cfg.get("v_max", 0.0)
     critic_expert_variant = model_cfg.get("critic_expert_variant", "gemma_100m")
-    tokenizer_path = model_cfg.get("tokenizer_path", None)
-    backbone_variant = model_cfg.get("backbone_variant", "paligemma")
-    siglip_path = model_cfg.get("siglip_path", None)
-    gemma3_path = model_cfg.get("gemma3_path", None)
 
     logger.info(f"  env_type (robot_type): {robot_type}")
     logger.info(f"  model_type: {model_type}")
-    logger.info(f"  backbone_variant: {backbone_variant}")
+    logger.info(f"  value_mode: {value_mode}")
     logger.info(f"  num_return_bins: {num_return_bins}")
     logger.info(f"  return_range: [{return_min}, {return_max}]")
     logger.info(f"  critic_expert_variant: {critic_expert_variant}")
-    if tokenizer_path:
-        logger.info(f"  tokenizer_path: {tokenizer_path}")
-    if siglip_path:
-        logger.info(f"  siglip_path: {siglip_path}")
-    if gemma3_path:
-        logger.info(f"  gemma3_path: {gemma3_path}")
 
-    model = ValueCritic.from_checkpoint(
+    # Create ValuePolicy using vla_lib's factory function
+    # This properly sets up all input transforms (LiberoInputs, Normalize, ResizeImages, etc.)
+    value_policy = value_policy_config.create_trained_value_policy(
         checkpoint_dir=checkpoint_path,
         env_type=robot_type,
         model_type=model_type,
         device=device,
+        value_mode=value_mode,
         num_return_bins=num_return_bins,
         return_min=return_min,
         return_max=return_max,
         critic_expert_variant=critic_expert_variant,
-        tokenizer_path=tokenizer_path,
-        backbone_variant=backbone_variant,
-        siglip_path=siglip_path,
-        gemma3_path=gemma3_path,
     )
 
-    logger.info("Loaded ValueCritic for inference")
-    return model
+    logger.info(f"Loaded ValuePolicy: {value_policy.metadata}")
+    return value_policy
 
 
 # =============================================================================
-# Dataset Loading
+# Dataset Loading with delta_timestamps
 # =============================================================================
+
+
+def get_observation_keys(meta: LeRobotDatasetMetadata) -> list[str]:
+    """Get observation keys that need delta_timestamps.
+
+    Supports both prefixed (observation.image) and non-prefixed (image) formats.
+
+    Args:
+        meta: Dataset metadata
+
+    Returns:
+        List of observation key names
+    """
+    obs_keys = []
+    for k in meta.features:
+        if k.startswith("observation."):
+            obs_keys.append(k)
+        elif k in OBSERVATION_LIKE_KEYS:
+            obs_keys.append(k)
+    return obs_keys
 
 
 def load_lerobot_dataset(
     dataset_path: Path,
-    returns_tag: str | None = None,
-) -> tuple[LeRobotDataset, dict, LeRobotDatasetMetadata, dict | None]:
-    """Load a LeRobot dataset WITHOUT delta_timestamps for fast single-row access.
-
-    Loading without delta_timestamps is ~50x faster (6ms vs 580ms per sample)
-    because it avoids expensive multi-timestep parquet reads and image decoding.
-    The AdvantageDataset handles multi-timestep access via separate dataset[idx]
-    and dataset[idx+N] calls instead.
-
-    Also loads ``meta/returns_{tag}.parquet`` sidecar if present.
+    action_horizon: int,
+) -> tuple[LeRobotDataset, dict, LeRobotDatasetMetadata]:
+    """Load a LeRobot dataset with delta_timestamps for multi-step data.
 
     Args:
         dataset_path: Path to dataset
-        returns_tag: Optional tag for the returns sidecar filename
+        action_horizon: Number of steps (N) for reward and next observation
 
     Returns:
-        Tuple of (dataset, tasks_dict, metadata, returns_sidecar)
+        Tuple of (dataset, tasks_dict, metadata)
     """
     meta = LeRobotDatasetMetadata(str(dataset_path))
 
     # Log dataset features for debugging
     logger.info(f"Dataset features: {list(meta.features.keys())}")
 
-    # Load sidecar written by compute_returns.py (if present)
-    returns_sidecar = _load_returns_sidecar(dataset_path, returns_tag=returns_tag)
+    # Get observation keys (supports both prefixed and non-prefixed formats)
+    obs_keys = get_observation_keys(meta)
 
-    # Validate required columns: accept either features in parquets OR sidecar
+    if not obs_keys:
+        logger.warning(
+            f"No observation keys found in dataset! "
+            f"Features: {list(meta.features.keys())}"
+        )
+
+    # Build delta_timestamps: get t and t+N for observations
+    delta_timestamps = {
+        k: [0.0, action_horizon / meta.fps]  # [t, t+N]
+        for k in obs_keys
+    }
+
+    # Add reward timestamps: get reward from t to t+N-1
+    # NOTE: Dataset must be preprocessed with compute_returns.py to have reward column
     has_reward = "reward" in meta.features
     has_return = "return" in meta.features
-    has_sidecar = returns_sidecar is not None
 
-    sidecar_name = (
-        f"returns_{returns_tag}.parquet" if returns_tag else "returns.parquet"
-    )
-    if not has_reward and not has_sidecar:
+    if not has_reward:
         raise ValueError(
-            f"Dataset {dataset_path} missing 'reward' column and no "
-            f"meta/{sidecar_name} sidecar found. "
+            f"Dataset {dataset_path} missing 'reward' column. "
             "Run compute_returns.py to preprocess the dataset first."
         )
 
-    if not has_return and not has_sidecar:
+    if not has_return:
         raise ValueError(
-            f"Dataset {dataset_path} missing 'return' column and no "
-            f"meta/{sidecar_name} sidecar found. "
+            f"Dataset {dataset_path} missing 'return' column. "
             "Run compute_returns.py to preprocess the dataset first."
         )
 
-    logger.info("Loading dataset (no delta_timestamps for ~50x faster access):")
+    delta_timestamps["reward"] = [i / meta.fps for i in range(action_horizon)]
+
+    logger.info("Loading dataset with delta_timestamps:")
     logger.info(f"  Dataset path: {dataset_path}")
     logger.info(f"  FPS: {meta.fps}")
+    logger.info(f"  Observation keys: {obs_keys}")
+    logger.info(f"  Has precomputed reward: {has_reward}")
+    logger.info(f"  Has precomputed return: {has_return}")
+    logger.info(f"  delta_timestamps: {delta_timestamps}")
 
     dataset = LeRobotDataset(
         str(dataset_path),
+        delta_timestamps=delta_timestamps,
         download_videos=False,
     )
 
@@ -535,7 +534,19 @@ def load_lerobot_dataset(
         f"Loaded dataset: {len(dataset)} samples, {meta.total_episodes} episodes"
     )
 
-    return dataset, tasks, meta, returns_sidecar
+    # Debug: log first sample keys
+    if len(dataset) > 0:
+        first_sample = dataset[0]
+        logger.debug(f"First sample keys: {list(first_sample.keys())}")
+        for k, v in first_sample.items():
+            if hasattr(v, "shape"):
+                logger.debug(f"  {k}: shape={v.shape}, dtype={v.dtype}")
+            elif hasattr(v, "__len__") and not isinstance(v, str):
+                logger.debug(f"  {k}: len={len(v)}, type={type(v).__name__}")
+            else:
+                logger.debug(f"  {k}: {v}")
+
+    return dataset, tasks, meta
 
 
 # =============================================================================
@@ -547,23 +558,26 @@ def build_obs(
     sample: dict,
     robot_type: str,
     tasks: dict,
+    use_next: bool,
 ) -> dict[str, Any]:
-    """Build raw observation dict for ValueCritic from a single-timestep sample.
+    """Build raw observation dict for ValuePolicy.
 
-    The ValueCritic internally handles all input transforms (LiberoInputs,
+    The ValuePolicy internally handles all input transforms (LiberoInputs,
     Normalize, ResizeImages, etc.), so we only need to build the raw observation
-    in the format expected by the value model's input processing.
+    in the format expected by vla_lib's input processing.
 
     Args:
-        sample: Single-timestep sample from LeRobot dataset (no delta_timestamps)
+        sample: Sample from LeRobot dataset
         robot_type: Robot type for key mapping
         tasks: Task descriptions dict
+        use_next: If True, use t+N observation; if False, use t observation
 
     Returns:
-        Raw observation dict compatible with ValueCritic.infer()
+        Raw observation dict compatible with ValuePolicy.infer()
     """
     key_map = KEY_MAPPINGS.get(robot_type, KEY_MAPPINGS["libero"])
     obs = {}
+    obs_idx = 1 if use_next else 0  # delta_timestamps: [t, t+N]
 
     for src_key, dst_key in key_map.items():
         if src_key == "task":
@@ -577,9 +591,49 @@ def build_obs(
                 obs[dst_key] = ""
         elif src_key in sample:
             val = to_numpy(sample[src_key])
+            # Check if this is a multi-timestep observation
+            if val.ndim >= 1 and val.shape[0] >= 2:
+                val = val[obs_idx]
             obs[dst_key] = val
 
     return obs
+
+
+def get_episode_info(
+    dataset: LeRobotDataset,
+    meta: LeRobotDatasetMetadata,
+) -> dict[int, dict]:
+    """Extract episode information from dataset metadata.
+
+    NOTE: In distributed mode, all ranks call this function with the same dataset.
+    Since episode_data_index is deterministic, all ranks get identical episode_info.
+    This consistency is important for correct advantage computation.
+
+    Args:
+        dataset: LeRobot dataset
+        meta: Dataset metadata
+
+    Returns:
+        Dict mapping episode_index to {length, is_success}
+    """
+    episode_info = {}
+
+    # Get episode data indices from dataset (not metadata)
+    # episode_data_index is an attribute of LeRobotDataset
+    for ep_idx in range(meta.total_episodes):
+        ep_start = dataset.episode_data_index["from"][ep_idx].item()
+        ep_end = dataset.episode_data_index["to"][ep_idx].item()
+        ep_length = ep_end - ep_start
+
+        # Try to get is_success from episodes.jsonl
+        is_success = False  # Default to False
+
+        episode_info[ep_idx] = {
+            "length": ep_length,
+            "is_success": is_success,  # Will be updated from sample
+        }
+
+    return episode_info
 
 
 # =============================================================================
@@ -587,12 +641,31 @@ def build_obs(
 # =============================================================================
 
 
+def check_is_next_pad(sample: dict) -> bool:
+    """Check if the next observation (t+N) is padded (beyond episode end).
+
+    Args:
+        sample: Sample from LeRobot dataset
+
+    Returns:
+        True if next observation is padded, False otherwise
+    """
+    for key in sample:
+        if key.endswith("_is_pad") and (
+            "observation" in key or key.replace("_is_pad", "") in OBSERVATION_LIKE_KEYS
+        ):
+            is_pad_array = to_numpy(sample[key])
+            if len(is_pad_array) >= 2:
+                return bool(is_pad_array[1])
+    return False
+
+
 class AdvantageDataset(torch.utils.data.Dataset):
     """Wrapper dataset for DataLoader-based advantage computation.
 
-    Builds observation at the current timestep only. The caller can later
-    reuse V(o_t) values by index lookup to obtain V(o_{t+N}) without
-    a second forward pass.
+    Preprocesses each sample from LeRobotDataset into observations
+    ready for value model inference. Used with DataLoader for efficient
+    multi-process data loading that bypasses the Python GIL.
     """
 
     def __init__(
@@ -600,16 +673,12 @@ class AdvantageDataset(torch.utils.data.Dataset):
         lerobot_dataset: LeRobotDataset,
         robot_type: str,
         tasks: dict,
-        input_transform=None,
-        prepare_observation_cpu=None,
-        returns_sidecar: dict[int, dict[str, np.ndarray]] | None = None,
+        action_horizon: int,
     ):
         self.dataset = lerobot_dataset
         self.robot_type = robot_type
         self.tasks = tasks
-        self.input_transform = input_transform
-        self.prepare_observation_cpu = prepare_observation_cpu
-        self.returns_sidecar = returns_sidecar
+        self.action_horizon = action_horizon
 
     def __len__(self):
         return len(self.dataset)
@@ -619,72 +688,72 @@ class AdvantageDataset(torch.utils.data.Dataset):
         ep_idx = int(to_scalar(sample["episode_index"]))
         frame_idx = int(to_scalar(sample["frame_index"]))
 
-        # Build current observation from single-timestep sample
-        obs = build_obs(sample, self.robot_type, self.tasks)
+        obs_current = build_obs(sample, self.robot_type, self.tasks, use_next=False)
+        is_next_pad = check_is_next_pad(sample)
 
-        # Apply CPU transforms in worker (input_transform + prepare_observation_cpu)
-        if self.input_transform is not None:
-            obs = self.input_transform(
-                {
-                    k: v.copy() if isinstance(v, np.ndarray) else v
-                    for k, v in obs.items()
-                }
-            )
-        if self.prepare_observation_cpu is not None:
-            obs = self.prepare_observation_cpu(obs)
+        obs_next = None
+        if not is_next_pad:
+            obs_next = build_obs(sample, self.robot_type, self.tasks, use_next=True)
 
-        # Look up return/reward from sidecar or fall back to sample columns
-        if self.returns_sidecar is not None and ep_idx in self.returns_sidecar:
-            ep_data = self.returns_sidecar[ep_idx]
-            true_return = float(ep_data["return"][frame_idx])
-            reward = float(ep_data["reward"][frame_idx])
-        else:
-            true_return = float(to_scalar(sample["return"]))
-            reward = (
-                float(to_scalar(sample["reward"]))
-                if "reward" in sample
-                else float("nan")
-            )
+        # Extract reward
+        reward = to_numpy(sample["reward"]).flatten()
+        num_valid = self.action_horizon
+        if "reward_is_pad" in sample:
+            is_pad = to_numpy(sample["reward_is_pad"]).flatten().astype(bool)
+            num_valid = int(np.sum(~is_pad[: self.action_horizon]))
+            reward = reward.copy()
+            reward[is_pad[: len(reward)]] = 0.0
+
+        true_return = float(to_scalar(sample["return"]))
 
         return {
-            "obs": obs,
-            "global_idx": idx,
+            "obs_current": obs_current,
+            "obs_next": obs_next,
+            "is_next_pad": is_next_pad,
             "episode_index": ep_idx,
             "frame_index": frame_idx,
-            "true_return": true_return,
             "reward": reward,
+            "num_valid": num_valid,
+            "true_return": true_return,
         }
 
 
 def advantage_collate_fn(
     batch: list[dict],
-) -> tuple[list[dict], list[dict]]:
+) -> tuple[list[dict], list[tuple[int, dict]], list[tuple]]:
     """Custom collate function for AdvantageDataset.
 
-    Keeps observations as lists of dicts (not batched tensors), since
-    value_model.infer_batch() expects this format.
+    Keeps observations as lists of dicts (not batched tensors) since
+    value_policy.infer_batch() expects this format. Produces the same
+    output signature as the old collect_observations_batch() so that
+    process_batch_results() works without changes.
 
     Returns:
-        obs_list: List of current observation dicts
-        meta_list: List of metadata dicts aligned with obs_list
+        current_obs_list: List of current observation dicts
+        next_obs_with_idx: List of (local_idx, next_obs) for non-padded samples
+        sample_info_list: List of (ep_idx, frame_idx, is_next_pad, reward, num_valid, true_return)
     """
-    obs_list = [item["obs"] for item in batch]
-    meta_list = [
-        {
-            "global_idx": item["global_idx"],
-            "episode_index": item["episode_index"],
-            "frame_index": item["frame_index"],
-            "true_return": item["true_return"],
-            "reward": item["reward"],
-        }
+    current_obs_list = [item["obs_current"] for item in batch]
+    next_obs_with_idx = [
+        (i, item["obs_next"]) for i, item in enumerate(batch) if not item["is_next_pad"]
+    ]
+    sample_info_list = [
+        (
+            item["episode_index"],
+            item["frame_index"],
+            item["is_next_pad"],
+            item["reward"],
+            item["num_valid"],
+            item["true_return"],
+        )
         for item in batch
     ]
-    return obs_list, meta_list
+    return current_obs_list, next_obs_with_idx, sample_info_list
 
 
 @torch.no_grad()
 def compute_advantages_for_dataset(
-    value_model,
+    value_policy,
     dataset: LeRobotDataset,
     tasks: dict,
     cfg: DictConfig,
@@ -694,21 +763,19 @@ def compute_advantages_for_dataset(
     world_size: int = 1,
     global_return_min: float = -700.0,
     global_return_max: float = 0.0,
-    global_pbar: tqdm | None = None,
-    returns_sidecar: dict[int, dict[str, np.ndarray]] | None = None,
 ) -> pd.DataFrame:
     """Compute advantages for dataset (or shard in distributed mode).
 
-    Uses batch inference with ValueCritic for efficient processing.
-    The ValueCritic internally handles all input transforms
+    Uses batch inference with ValuePolicy for efficient processing.
+    The ValuePolicy internally handles all input transforms
     (LiberoInputs, Normalize, ResizeImages, etc.).
 
     In distributed mode, each rank processes a shard of the dataset.
     The results are local to each rank and should be gathered afterwards.
 
     Args:
-        value_model: Trained ValueCritic with input transforms and batch inference
-        dataset: LeRobot dataset
+        value_policy: Trained ValuePolicy with input transforms and batch inference
+        dataset: LeRobot dataset with delta_timestamps
         tasks: Task descriptions
         cfg: Full config
         dataset_cfg: Dataset-specific config
@@ -722,7 +789,8 @@ def compute_advantages_for_dataset(
         DataFrame with advantages and related values (local shard in distributed mode)
     """
     gamma = cfg.data.gamma
-    action_horizon = cfg.data.advantage_lookahead_step
+    # Use advantage_horizon if set (must match dataset's reward/next_obs layout); else action_horizon
+    action_horizon = cfg.data.get("advantage_horizon", None) or cfg.data.action_horizon
     robot_type = dataset_cfg.get("robot_type", "libero")
     discount_next_value = cfg.advantage.get("discount_next_value", True)
     batch_size = cfg.advantage.get("batch_size", 64)
@@ -744,7 +812,7 @@ def compute_advantages_for_dataset(
         return (x - ret_min) / ret_range - 1.0
 
     # Gamma powers for discounted reward sum
-    gamma_powers = np.array([gamma**i for i in range(action_horizon)], dtype=np.float64)
+    gamma_powers = np.array([gamma**i for i in range(action_horizon)], dtype=np.float32)
 
     # Limit samples for testing
     max_samples = cfg.advantage.get("max_samples", None)
@@ -756,26 +824,13 @@ def compute_advantages_for_dataset(
     shard_start, shard_end = get_shard_indices(total_samples, rank, world_size)
     shard_size = shard_end - shard_start
 
-    # Include an extension window so idx + lookahead can be looked up.
-    extended_end = (
-        shard_start
-        if shard_size == 0
-        else min(shard_end + action_horizon, len(dataset))
-    )
-    extended_size = extended_end - shard_start
-
-    # Precompute episode boundaries for fast lookup
-    ep_ends = {}
-    for ep_idx in range(len(dataset.episode_data_index["to"])):
-        ep_ends[ep_idx] = int(dataset.episode_data_index["to"][ep_idx].item())
-
     if rank == 0:
         logger.info(
             f"Computing advantages for {total_samples} samples (total in dataset: {len(dataset)})..."
         )
-        logger.info(f"  gamma: {gamma}, advantage_lookahead_step: {action_horizon}")
+        logger.info(f"  gamma: {gamma}, action_horizon: {action_horizon}")
         logger.info(f"  return_range: [{ret_min}, {ret_max}]")
-        logger.info("  Using ValueCritic with batch inference")
+        logger.info("  Using ValuePolicy with batch inference")
         logger.info("  Using precomputed reward/return from dataset")
         if world_size > 1:
             logger.info(f"  Distributed mode: {world_size} GPUs")
@@ -784,13 +839,17 @@ def compute_advantages_for_dataset(
         logger.info(
             f"  [Rank {rank}] Processing samples {shard_start} to {shard_end} ({shard_size} samples)"
         )
-        logger.info(
-            f"  [Rank {rank}] Extended inference range: {shard_start} to {extended_end} ({extended_size} samples)"
-        )
 
     # DataLoader configuration for multi-process data loading
+    pipeline_batch_size = cfg.advantage.get("pipeline_batch_size", 2048)
     num_dataloader_workers = cfg.advantage.get("num_dataloader_workers", 8)
     prefetch_factor = cfg.advantage.get("prefetch_factor", 2)
+
+    if rank == 0:
+        logger.info(
+            f"  Using DataLoader: workers={num_dataloader_workers}, "
+            f"prefetch_factor={prefetch_factor}, batch_size={pipeline_batch_size}"
+        )
 
     # Results storage (periodically flushed to disk to prevent OOM)
     results = {
@@ -811,8 +870,7 @@ def compute_advantages_for_dataset(
     reward_sum_raw_stats = RunningStats("R_raw")
 
     # Temporary file management for periodic flushing
-    flush_interval = max(1, int(cfg.advantage.get("flush_interval", 5)))
-    flush_every_samples = max(1, flush_interval * batch_size)
+    flush_interval = cfg.advantage.get("flush_interval", 5)
     import tempfile
 
     temp_dir = Path(tempfile.mkdtemp(prefix=f"adv_rank{rank}_"))
@@ -821,7 +879,8 @@ def compute_advantages_for_dataset(
 
     if rank == 0:
         logger.info(
-            f"  Memory management: flush to disk every ~{flush_every_samples} samples"
+            f"  Memory management: flush to disk every {flush_interval} pipeline batches "
+            f"(~{flush_interval * pipeline_batch_size} samples)"
         )
 
     def flush_results_to_disk():
@@ -846,235 +905,109 @@ def compute_advantages_for_dataset(
                 f"Total flushed: {flushed_sample_count}"
             )
 
-    # Workers run _input_transform AND _prepare_observation_cpu (image resize + tokenize).
-    # Workers only do CPU work (video decode, image resize, tokenize), so fork is safe
-    # even after CUDA init — same pattern used by VLA lib SFT training.
-    from functools import partial
-
-    processor = getattr(value_model, "processor", None)
-    worker_cpu_prep = partial(
-        value_model.__class__._prepare_observation_cpu, processor=processor
-    )
-
-    cpu_prep_in_workers = num_dataloader_workers > 0
-
-    if rank == 0:
-        logger.info(
-            f"  Using DataLoader: workers={num_dataloader_workers}, "
-            f"prefetch_factor={prefetch_factor}, batch_size={batch_size}, "
-            f"cpu_prep_in_workers={cpu_prep_in_workers}"
-        )
-
-    advantage_dataset = AdvantageDataset(
-        dataset,
-        robot_type,
-        tasks,
-        input_transform=value_model._input_transform if cpu_prep_in_workers else None,
-        prepare_observation_cpu=worker_cpu_prep if cpu_prep_in_workers else None,
-        returns_sidecar=returns_sidecar,
-    )
-    extended_indices = list(range(shard_start, extended_end))
-    extended_dataset = torch.utils.data.Subset(advantage_dataset, extended_indices)
+    # Create wrapper dataset and DataLoader for efficient multi-process loading
+    # DataLoader workers are persistent subprocesses that decode images in parallel,
+    # bypassing the GIL. prefetch_factor controls how many batches each worker
+    # prepares ahead of time (total prefetch depth = num_workers * prefetch_factor).
+    advantage_dataset = AdvantageDataset(dataset, robot_type, tasks, action_horizon)
+    shard_indices = list(range(shard_start, shard_end))
+    shard_dataset = torch.utils.data.Subset(advantage_dataset, shard_indices)
 
     dataloader = torch.utils.data.DataLoader(
-        extended_dataset,
-        batch_size=batch_size,
+        shard_dataset,
+        batch_size=pipeline_batch_size,
         num_workers=num_dataloader_workers,
         prefetch_factor=prefetch_factor if num_dataloader_workers > 0 else None,
         persistent_workers=num_dataloader_workers > 0,
         collate_fn=advantage_collate_fn,
         shuffle=False,
-        pin_memory=True,
     )
 
     if rank == 0:
         logger.info(
-            f"Phase 1: inferring V(o_t) for {extended_size} samples in {len(dataloader)} batches"
+            f"Processing {len(shard_indices)} samples in {len(dataloader)} batches"
         )
 
-    # Phase 1 storage: values + metadata for [shard_start, extended_end)
-    v_values = np.full(extended_size, np.nan, dtype=np.float64)
-    meta_ep_idx = np.full(extended_size, -1, dtype=np.int64)
-    meta_frame_idx = np.full(extended_size, -1, dtype=np.int64)
-    meta_return = np.full(extended_size, np.nan, dtype=np.float64)
-    meta_reward = np.full(extended_size, np.nan, dtype=np.float64)
-    filled_mask = np.zeros(extended_size, dtype=bool)
-
-    def process_value_batch(obs_list: list[dict], meta_list: list[dict]):
-        """Run GPU inference for V(o_t) only and store batch results."""
-        batch_results = value_model.infer_batch(
-            obs_list,
-            batch_size=batch_size,
-            pretransformed=cpu_prep_in_workers,
-            already_cpu_prepared=cpu_prep_in_workers,
+    def process_batch_results(
+        current_obs_list: list[dict],
+        next_obs_with_idx: list[tuple[int, dict]],
+        sample_info_list: list[tuple],
+    ):
+        """Run GPU inference and compute advantages for a collected batch."""
+        # Batch inference for V(o_t)
+        v_curr_results = value_policy.infer_batch(
+            current_obs_list, batch_size=batch_size
         )
-        if len(batch_results) != len(meta_list):
-            raise RuntimeError(
-                "Mismatch between inference outputs and metadata: "
-                f"{len(batch_results)} vs {len(meta_list)}"
+        v_curr_values = [r["value"] for r in v_curr_results]
+
+        # Batch inference for V(o_{t+N}) - only for non-padded samples
+        next_local_indices = [idx for idx, _ in next_obs_with_idx]
+        next_obs_only = [obs for _, obs in next_obs_with_idx]
+
+        if next_obs_only:
+            v_next_results = value_policy.infer_batch(
+                next_obs_only, batch_size=batch_size
             )
-
-        for result, meta_info in zip(batch_results, meta_list):
-            local_idx = int(meta_info["global_idx"]) - shard_start
-            if local_idx < 0 or local_idx >= extended_size:
-                raise RuntimeError(
-                    f"local_idx out of range: {local_idx}, extended_size={extended_size}"
-                )
-
-            v_values[local_idx] = float(result["value"])
-            meta_ep_idx[local_idx] = int(meta_info["episode_index"])
-            meta_frame_idx[local_idx] = int(meta_info["frame_index"])
-            meta_return[local_idx] = float(meta_info["true_return"])
-            meta_reward[local_idx] = float(meta_info["reward"])
-            filled_mask[local_idx] = True
-
-    # Pipeline: prefetch next batch from DataLoader while GPU processes current batch.
-    # DataLoader workers do ALL CPU work (image decode + transform + image_processor + tokenize),
-    # so the main process only needs to stack tensors -> GPU forward.
-    import time as _time
-    from concurrent.futures import ThreadPoolExecutor
-
-    _t_fetch_total = 0.0
-    _t_infer_total = 0.0
-
-    ds_name = Path(dataset_cfg.get("dataset_path", "")).name
-    if global_pbar is not None:
-        pbar = global_pbar
-        pbar.set_description(f"[Rank {rank}] {ds_name}")
-    else:
-        pbar = tqdm(
-            total=shard_size,
-            desc=f"[Rank {rank}] {ds_name}",
-            unit="samples",
-            disable=rank != 0,
-            dynamic_ncols=True,
-            file=sys.stdout,
-        )
-    _owns_pbar = global_pbar is None
-
-    dataloader_iter = iter(dataloader)
-    batch_count = len(dataloader)
-
-    def _fetch_next():
-        return next(dataloader_iter)
-
-    with ThreadPoolExecutor(max_workers=1) as prefetch_pool:
-        # Pre-submit first batch
-        pending_future = prefetch_pool.submit(_fetch_next) if batch_count > 0 else None
-
-        for batch_idx in range(batch_count):
-            _t0 = _time.perf_counter()
-            batch = pending_future.result()
-            _t_fetch = _time.perf_counter() - _t0
-            _t_fetch_total += _t_fetch
-
-            # Submit prefetch for next batch BEFORE processing current one
-            if batch_idx + 1 < batch_count:
-                pending_future = prefetch_pool.submit(_fetch_next)
-
-            _t0 = _time.perf_counter()
-            process_value_batch(*batch)
-            _t_infer = _time.perf_counter() - _t0
-            _t_infer_total += _t_infer
-
-            # Progress reflects output shard only (not extended tail)
-            n_samples = sum(
-                1 for item in batch[1] if int(item["global_idx"]) < shard_end
-            )
-            pbar.update(n_samples)
-            if rank == 0:
-                pbar.set_postfix(
-                    fetch=f"{_t_fetch * 1000:.0f}ms",
-                    infer=f"{_t_infer * 1000:.0f}ms",
-                    GPU=f"{_t_infer * 100 / ((_t_fetch + _t_infer) or 1e-9):.0f}%",
-                )
-
-            del batch
-
-    if _owns_pbar:
-        pbar.close()
-
-    if rank == 0 and batch_count > 0:
-        avg_fetch = _t_fetch_total / batch_count * 1000
-        avg_infer = _t_infer_total / batch_count * 1000
-        logger.info(
-            f"[Timing] avg_fetch={avg_fetch:.0f}ms  avg_infer={avg_infer:.0f}ms  "
-            f"GPU_busy≈{avg_infer * 100 / ((avg_fetch + avg_infer) or 1e-9):.0f}%  "
-            f"batches={batch_count}"
-        )
-
-    if extended_size > 0:
-        missing_count = int(np.size(filled_mask) - np.count_nonzero(filled_mask))
-        if missing_count > 0:
-            raise RuntimeError(
-                f"Phase 1 incomplete: {missing_count}/{extended_size} entries were not filled."
-            )
-
-    # Phase 2: compute advantages from precomputed V(o_t) values with table lookup.
-    for i in range(shard_size):
-        gidx = shard_start + i
-        ep_idx = int(meta_ep_idx[i])
-        frame_idx = int(meta_frame_idx[i])
-        true_return = float(meta_return[i])
-
-        ep_end = int(ep_ends.get(ep_idx, gidx + 1))
-        ep_end = max(ep_end, gidx + 1)
-        next_gidx = gidx + action_horizon
-        is_next_pad = next_gidx >= ep_end
-        num_valid = min(action_horizon, ep_end - gidx)
-
-        v_curr = float(v_values[i])
-        if is_next_pad:
-            v_next = 0.0
-            next_local_idx = None
+            v_next_map = {
+                next_local_indices[i]: v_next_results[i]["value"]
+                for i in range(len(next_local_indices))
+            }
         else:
-            next_local_idx = next_gidx - shard_start
-            if next_local_idx < 0 or next_local_idx >= extended_size:
-                raise RuntimeError(
-                    "next_local_idx out of range: "
-                    f"{next_local_idx}, extended_size={extended_size}, "
-                    f"gidx={gidx}, next_gidx={next_gidx}"
-                )
-            v_next = float(v_values[next_local_idx])
+            v_next_map = {}
 
-        if abs(gamma - 1.0) < 1e-8:
-            if is_next_pad:
-                reward_sum_raw = true_return
-            else:
-                reward_sum_raw = true_return - float(meta_return[next_local_idx])
-        else:
-            reward_slice = meta_reward[i : i + num_valid]
-            if len(reward_slice) != num_valid:
-                raise RuntimeError(
-                    f"Invalid reward slice size {len(reward_slice)} for num_valid={num_valid}"
-                )
-            if np.isnan(reward_slice).any():
-                raise ValueError(
-                    "Reward values are required when gamma != 1.0, but missing reward was found."
-                )
-            reward_sum_raw = float(np.sum(gamma_powers[:num_valid] * reward_slice))
+        # Compute advantages for this batch
+        for i, (
+            ep_idx,
+            frame_idx,
+            is_next_pad,
+            reward,
+            num_valid,
+            true_return,
+        ) in enumerate(sample_info_list):
+            v_curr = v_curr_values[i]
+            v_next = 0.0 if is_next_pad else v_next_map.get(i, 0.0)
 
-        reward_sum = normalize(reward_sum_raw)
-        gamma_k = gamma**num_valid if discount_next_value else 1.0
-        advantage = reward_sum + gamma_k * v_next - v_curr
+            # Compute discounted reward sum
+            reward_sum_raw = float(
+                np.sum(gamma_powers[:num_valid] * reward[:num_valid])
+            )
+            reward_sum = normalize(reward_sum_raw)
 
-        # Update online statistics (memory-efficient, no list accumulation)
-        v_curr_stats.update(v_curr)
-        v_next_stats.update(v_next)
-        reward_sum_raw_stats.update(reward_sum_raw)
+            # Compute advantage: A = reward_sum + gamma^N * V(o_{t+N}) - V(o_t)
+            gamma_k = gamma**num_valid if discount_next_value else 1.0
+            advantage = reward_sum + gamma_k * v_next - v_curr
 
-        # Store results
-        results["episode_index"].append(ep_idx)
-        results["frame_index"].append(frame_idx)
-        results["advantage"].append(advantage)
-        results["return"].append(true_return)
-        results["value_current"].append(v_curr)
-        results["value_next"].append(v_next)
-        results["reward_sum"].append(reward_sum)
-        results["reward_sum_raw"].append(reward_sum_raw)
-        results["num_valid_rewards"].append(num_valid)
+            # Update online statistics (memory-efficient, no list accumulation)
+            v_curr_stats.update(v_curr)
+            v_next_stats.update(v_next)
+            reward_sum_raw_stats.update(reward_sum_raw)
 
-        if (i + 1) % flush_every_samples == 0:
+            # Store results
+            results["episode_index"].append(ep_idx)
+            results["frame_index"].append(frame_idx)
+            results["advantage"].append(advantage)
+            results["return"].append(true_return)
+            results["value_current"].append(v_curr)
+            results["value_next"].append(v_next)
+            results["reward_sum"].append(reward_sum)
+            results["reward_sum_raw"].append(reward_sum_raw)
+            results["num_valid_rewards"].append(num_valid)
+
+    # DataLoader handles multi-process prefetching automatically:
+    # - Each worker is a persistent process that loads/decodes data in parallel
+    # - prefetch_factor controls how many batches each worker prepares ahead
+    # - Total prefetch depth = num_workers * prefetch_factor
+    for batch_idx, (current_obs_list, next_obs_with_idx, sample_info_list) in enumerate(
+        tqdm(dataloader, desc="Processing batches", disable=rank != 0)
+    ):
+        # GPU inference and advantage computation
+        process_batch_results(current_obs_list, next_obs_with_idx, sample_info_list)
+
+        # Free observation data to reduce memory pressure
+        del current_obs_list, next_obs_with_idx, sample_info_list
+
+        # Periodic flush to disk to prevent OOM
+        if (batch_idx + 1) % flush_interval == 0:
             flush_results_to_disk()
 
     # Final flush for any remaining results
@@ -1115,6 +1048,7 @@ def compute_advantages_for_dataset(
             f.unlink(missing_ok=True)
         try:
             temp_dir.rmdir()
+            temp_dir.parent.rmdir()  # Remove .temp_advantages if empty
         except OSError:
             pass
         return merged_df
@@ -1134,7 +1068,7 @@ def save_advantages_to_dataset(
     dataset_type: str | None = None,
     rank: int = 0,
     world_size: int = 1,
-    tag: str | None = None,
+    advantage_tag: str | None = None,
 ):
     """Save advantages parquet directly into the source dataset's meta/ directory.
 
@@ -1151,7 +1085,7 @@ def save_advantages_to_dataset(
         dataset_type: Dataset type ("sft" forces all-True advantage labels)
         rank: Current process rank
         world_size: Total number of processes
-        tag: Optional tag for advantages parquet filename
+        advantage_tag: Optional tag for advantages parquet filename
     """
     if rank == 0:
         meta_dir = dataset_path / "meta"
@@ -1165,7 +1099,11 @@ def save_advantages_to_dataset(
         else:
             save_df["advantage"] = save_df["advantage_continuous"] >= threshold
 
-        adv_filename = f"advantages_{tag}.parquet" if tag else "advantages.parquet"
+        adv_filename = (
+            f"advantages_{advantage_tag}.parquet"
+            if advantage_tag
+            else "advantages.parquet"
+        )
         save_df.to_parquet(meta_dir / adv_filename, index=False)
         if (dataset_type or "").lower() == "sft":
             logger.info(
@@ -1186,7 +1124,7 @@ def save_advantages_to_dataset(
 @hydra.main(
     version_base=None,
     config_path="config",
-    config_name="compute_advantages_paligemma",
+    config_name="compute_advantages",
 )
 def main(cfg: DictConfig) -> None:
     """Main entry point for advantage computation.
@@ -1215,9 +1153,9 @@ def main(cfg: DictConfig) -> None:
 
     try:
         # Load value policy (each rank loads its own copy)
-        # ValueCritic encapsulates all input transforms (LiberoInputs, Normalize,
+        # ValuePolicy encapsulates all input transforms (LiberoInputs, Normalize,
         # ResizeImages, etc.) so inference uses same preprocessing as training
-        value_model = load_value_model(cfg, device)
+        value_policy = load_value_policy(cfg, device)
 
         # Process all datasets and collect advantages
         all_advantages = []
@@ -1233,7 +1171,7 @@ def main(cfg: DictConfig) -> None:
             # Compute from all datasets' stats.json
             all_mins = []
             all_maxs = []
-            for ds_cfg in cfg.data.train_data_paths:
+            for ds_cfg in cfg.data.datasets:
                 ds_path = Path(ds_cfg.dataset_path)
                 ds_min, ds_max = _load_return_stats_from_dataset(ds_path)
                 if ds_min is not None:
@@ -1273,36 +1211,7 @@ def main(cfg: DictConfig) -> None:
                     f"[{global_return_min}, {global_return_max}]"
                 )
 
-        # Pre-compute grand total samples across all datasets (for this rank)
-        max_samples = cfg.advantage.get("max_samples", None)
-        grand_total = 0
-        for ds_cfg in cfg.data.train_data_paths:
-            ds_meta = LeRobotDatasetMetadata(str(ds_cfg.dataset_path))
-            n = ds_meta.total_frames
-            if max_samples is not None:
-                n = min(n, max_samples)
-            shard_start, shard_end = get_shard_indices(n, rank, world_size)
-            grand_total += shard_end - shard_start
-
-        if rank == 0:
-            logger.info(
-                f"Grand total: {grand_total} samples across "
-                f"{len(cfg.data.train_data_paths)} datasets (this rank's shard)"
-            )
-
-        global_pbar = tqdm(
-            total=grand_total,
-            desc=f"[Rank {rank}] total",
-            unit="samples",
-            disable=rank != 0,
-            dynamic_ncols=True,
-            file=sys.stdout,
-        )
-
-        tag = cfg.advantage.get("tag", None)
-        returns_tag = cfg.advantage.get("returns_tag", tag)
-
-        for ds_cfg in cfg.data.train_data_paths:
+        for ds_cfg in cfg.data.datasets:
             ds_path = Path(ds_cfg.dataset_path)
             if rank == 0:
                 logger.info(f"\n{'=' * 60}")
@@ -1310,13 +1219,14 @@ def main(cfg: DictConfig) -> None:
                 logger.info(f"{'=' * 60}")
 
             # Load dataset (each rank loads full dataset but processes shard)
-            dataset, tasks, meta, returns_sidecar = load_lerobot_dataset(
-                ds_path, returns_tag=returns_tag
-            )
+            horizon = cfg.data.get("advantage_horizon", None) or cfg.data.action_horizon
+            if rank == 0:
+                logger.info("  Horizon N=%s for reward and V(o_t+N)", horizon)
+            dataset, tasks, meta = load_lerobot_dataset(ds_path, horizon)
 
             # Compute advantages for this rank's shard
             local_df = compute_advantages_for_dataset(
-                value_model=value_model,
+                value_policy=value_policy,
                 dataset=dataset,
                 tasks=tasks,
                 cfg=cfg,
@@ -1326,8 +1236,6 @@ def main(cfg: DictConfig) -> None:
                 world_size=world_size,
                 global_return_min=global_return_min,
                 global_return_max=global_return_max,
-                global_pbar=global_pbar,
-                returns_sidecar=returns_sidecar,
             )
 
             # Synchronize and gather advantages from all ranks
@@ -1355,8 +1263,6 @@ def main(cfg: DictConfig) -> None:
                 logger.info(f"  V(o_t) mean: {df['value_current'].mean():.4f}")
                 logger.info(f"  V(o_N) mean: {df['value_next'].mean():.4f}")
                 logger.info(f"  reward_sum mean: {df['reward_sum'].mean():.4f}")
-
-        global_pbar.close()
 
         # Compute unified threshold across all datasets
         positive_quantile = cfg.advantage.get("positive_quantile", 0.3)
@@ -1397,20 +1303,20 @@ def main(cfg: DictConfig) -> None:
                 )
 
         # Save advantages parquet and mixture_config.yaml to each source dataset
+        advantage_tag = cfg.advantage.get("tag", None)
+
         if rank == 0:
             logger.info(f"\n{'=' * 60}")
             logger.info("Saving Advantages")
             logger.info(f"{'=' * 60}")
-            if tag:
-                logger.info(f"  Tag: {tag}")
+            if advantage_tag:
+                logger.info(f"  Advantage tag: {advantage_tag}")
 
         # Build mixture_config content (shared across all datasets)
         tag_stats = {
             "unified_threshold": unified_threshold,
             "positive_quantile": positive_quantile,
         }
-
-        import yaml
 
         for ds_path, result in dataset_results.items():
             df = result["df"]
@@ -1422,11 +1328,13 @@ def main(cfg: DictConfig) -> None:
                 dataset_type=dataset_type,
                 rank=rank,
                 world_size=world_size,
-                tag=tag,
+                advantage_tag=advantage_tag,
             )
 
             # Save mixture_config.yaml to each dataset root (only rank 0)
             if rank == 0:
+                import yaml
+
                 mixture_config_path = ds_path / "mixture_config.yaml"
 
                 # Load existing to preserve other tags
@@ -1449,10 +1357,10 @@ def main(cfg: DictConfig) -> None:
                     for p, r in dataset_results.items()
                 ]
 
-                if tag:
+                if advantage_tag:
                     if "tags" not in mixture_config:
                         mixture_config["tags"] = {}
-                    mixture_config["tags"][tag] = tag_stats
+                    mixture_config["tags"][advantage_tag] = tag_stats
                 else:
                     mixture_config["unified_threshold"] = unified_threshold
                     mixture_config["positive_quantile"] = positive_quantile

@@ -1,4 +1,4 @@
-# Copyright 2026 The RLinf Authors.
+# Copyright 2025 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,6 +16,6 @@
 Data processing scripts for RLinf datasets.
 
 This module contains preprocessing scripts:
-- compute_returns.py: Compute return/reward and write to meta/returns_{tag}.parquet sidecar
+- compute_returns.py: Add return/reward columns to LeRobot datasets
 - compute_advantages.py: Compute advantages for CFG-RL training
 """

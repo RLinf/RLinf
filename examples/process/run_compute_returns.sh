@@ -2,8 +2,7 @@
 # Compute returns for LeRobot datasets
 #
 # This script:
-# 1. Writes `return`, `reward`, and `prompt` to meta/returns_{tag}.parquet sidecar
-#    (or meta/returns.parquet if no tag is set)
+# 1. Adds `return`, `reward`, and `prompt` columns to LeRobot datasets
 # 2. Updates meta/stats.json with return/reward statistics (mean, std, min, max)
 # 3. Updates meta/info.json with new feature definitions
 #
@@ -64,11 +63,11 @@ if [ -n "$EXTRA_ARGS" ]; then
 fi
 echo ""
 echo "Output (for each dataset):"
-echo "  - Writes 'return', 'reward', 'prompt' to meta/returns_{tag}.parquet sidecar"
+echo "  - Adds 'return', 'reward', 'prompt' columns to parquet files"
 echo "  - Updates meta/stats.json with statistics"
 echo "  - Updates meta/info.json with feature definitions"
 echo ""
-echo "Note: Configure datasets in YAML file (data.train_data_paths list)"
+echo "Note: Configure datasets in YAML file (data.datasets list)"
 echo ""
 
 # Build command

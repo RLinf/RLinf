@@ -1,4 +1,4 @@
-# Copyright 2026 The RLinf Authors.
+# Copyright 2025 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,13 +20,13 @@ CFG models directly from LeRobot datasets without environment rollout.
 Key features:
 - Uses AdvantageMixtureDataset for data loading with weighted sampling
 - Pre-computed advantages from datasets (computed by compute_advantages.py)
-- Optional positive-only conditional routing based on advantage labels
+- Positive/negative guidance selection based on advantage (bool)
 
 Example config:
     data:
       balance_dataset_weights: true
       seed: 42
-      train_data_paths:
+      datasets:
         - path: "/path/to/collected_data_with_advantages"
           episodes: null
           weight: 1.0
@@ -43,19 +43,279 @@ import torch
 from omegaconf import DictConfig
 
 from rlinf.datasets import TokenizePromptWithGuidance
-from rlinf.datasets.mixture_datasets import AdvantageMixtureDataset
+from rlinf.datasets.vla_lib.advantage_mixture_dataset import AdvantageMixtureDataset
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.models import get_model
+from rlinf.models.embodiment.openpi_cfg.openpi_cfg_action_model import (
+    Observation as CFGObservation,
+)
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.utils.utils import seed_dataloader_worker, seed_everything
-from rlinf.workers.cfg.utils import (
-    CFGDataLoaderImpl,
-    DatasetWithAdvantage,
-    cast_image_features,
-)
+from rlinf.utils.utils import clear_memory
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+
+def _cast_image_features(hf_dataset):
+    """Cast image columns from struct to Image type for proper decoding.
+
+    When parquet files store images as struct<bytes: binary, path: string>,
+    we need to cast them to datasets.Image type for automatic decoding.
+
+    Args:
+        hf_dataset: HuggingFace dataset with struct-type image columns.
+
+    Returns:
+        Dataset with image columns cast to Image type.
+    """
+    from datasets import Image
+
+    # Check if casting is needed
+    features = hf_dataset.features
+    needs_cast = False
+    new_features = features.copy()
+
+    for key, feat in features.items():
+        # Check if this is a struct-type image (dict feature with 'bytes' field)
+        # The feature type will be a dict like {'bytes': Value(...), 'path': Value(...)}
+        if isinstance(feat, dict) and "bytes" in feat:
+            new_features[key] = Image()
+            needs_cast = True
+
+    if needs_cast:
+        from lerobot.datasets.utils import hf_transform_to_torch
+
+        hf_dataset = hf_dataset.cast(new_features)
+        hf_dataset.set_transform(hf_transform_to_torch)
+
+    return hf_dataset
+
+
+# =============================================================================
+# Helper Classes
+# =============================================================================
+
+
+class DatasetWithAdvantage:
+    """Wrapper to preserve advantage through OpenPI transform pipeline.
+
+    OpenPI's RepackTransform removes all keys except required ones, which drops
+    the advantage field. This wrapper pre-builds an index-to-advantage mapping
+    at init time using efficient HF dataset column access (no image loading),
+    avoiding the need to load each sample twice.
+
+    Attributes:
+        _transformed_dataset: Dataset after applying OpenPI transforms.
+        _advantage_by_index: Pre-built mapping from sample index to advantage value.
+        _base_dataset: Kept only as fallback when pre-building fails.
+    """
+
+    def __init__(
+        self,
+        base_dataset: Any,
+        transformed_dataset: Any,
+        advantages_lookup: dict[tuple[int, int], bool] | None = None,
+    ):
+        """Initialize DatasetWithAdvantage.
+
+        Pre-builds index-to-advantage mapping to avoid loading each sample twice
+        (once from base_dataset for advantage, once from transformed_dataset).
+
+        Args:
+            base_dataset: Base dataset with advantage field (from compute_advantages.py).
+            transformed_dataset: Dataset after applying OpenPI transforms.
+            advantages_lookup: Optional pre-loaded advantage lookup from
+                meta/advantages_{tag}.parquet. If provided, advantage is read
+                from this lookup instead of from the data parquet.
+        """
+        self._transformed_dataset = transformed_dataset
+        self._advantage_by_index = self._build_advantage_index(
+            base_dataset, advantages_lookup
+        )
+        # Keep base_dataset only as fallback when pre-building fails
+        self._base_dataset = base_dataset if self._advantage_by_index is None else None
+
+    @staticmethod
+    def _get_hf_dataset(dataset: Any) -> Any:
+        """Extract the underlying HuggingFace dataset from wrapped datasets.
+
+        Traverses TransformedDataset wrappers to find the LeRobotDataset's
+        hf_dataset, which allows efficient column access without image loading.
+        """
+        current = dataset
+        while current is not None:
+            if hasattr(current, "hf_dataset"):
+                return current.hf_dataset
+            elif hasattr(current, "_dataset"):
+                current = current._dataset
+            else:
+                return None
+        return None
+
+    def _build_advantage_index(
+        self,
+        base_dataset: Any,
+        advantages_lookup: dict[tuple[int, int], bool] | None,
+    ) -> dict[int, bool] | None:
+        """Build mapping from sample index to advantage value.
+
+        Uses efficient column access on the underlying HF dataset to read
+        episode_index/frame_index or advantage columns without loading images.
+
+        Returns:
+            Dict mapping sample index -> advantage (bool), or None if
+            the HF dataset is not accessible (falls back to slow path).
+        """
+        hf_dataset = self._get_hf_dataset(base_dataset)
+        if hf_dataset is None:
+            print(
+                "[DatasetWithAdvantage] WARNING: Cannot access underlying HF dataset, "
+                "falling back to per-sample advantage loading (slower)."
+            )
+            return None
+
+        if advantages_lookup is not None:
+            # Efficient path: read episode_index and frame_index columns directly
+            # (no image decoding, just integer columns)
+            ep_indices = hf_dataset["episode_index"]
+            frame_indices = hf_dataset["frame_index"]
+            advantage_by_index = {}
+            missing_keys = []
+            for i in range(len(hf_dataset)):
+                key = (int(ep_indices[i]), int(frame_indices[i]))
+                if key in advantages_lookup:
+                    advantage_by_index[i] = advantages_lookup[key]
+                else:
+                    missing_keys.append(key)
+            if missing_keys:
+                raise ValueError(
+                    f"[DatasetWithAdvantage] {len(missing_keys)} samples not found "
+                    f"in advantages lookup (first 5: {missing_keys[:5]}). "
+                    f"The advantages parquet does not match this dataset. "
+                    f"Re-run compute_advantages.py."
+                )
+            return advantage_by_index
+
+        elif "advantage" in hf_dataset.column_names:
+            # Fallback: read advantage column directly (no image decoding)
+            advantages = hf_dataset["advantage"]
+            return {i: bool(v) for i, v in enumerate(advantages)}
+
+        else:
+            raise ValueError(
+                "[DatasetWithAdvantage] No advantage data found: "
+                "advantages_lookup is None, and 'advantage' column not in dataset. "
+                "Run compute_advantages.py first."
+            )
+
+    def __len__(self) -> int:
+        return len(self._transformed_dataset)
+
+    def __getitem__(self, idx: int) -> dict[str, Any]:
+        """Get sample with advantage added.
+
+        Only loads from _transformed_dataset once (no double data loading).
+
+        Args:
+            idx: Sample index.
+
+        Returns:
+            Transformed sample dict with 'advantage' field added.
+        """
+        sample = self._transformed_dataset[idx]
+
+        if self._advantage_by_index is not None:
+            if idx not in self._advantage_by_index:
+                raise KeyError(
+                    f"[DatasetWithAdvantage] Index {idx} not found in advantage index. "
+                    f"Dataset size: {len(self._transformed_dataset)}, "
+                    f"advantage index size: {len(self._advantage_by_index)}."
+                )
+            sample["advantage"] = self._advantage_by_index[idx]
+        else:
+            # Slow fallback: load from base dataset (only when HF dataset not accessible)
+            base_sample = self._base_dataset[idx]
+            if "advantage" not in base_sample:
+                raise KeyError(
+                    f"[DatasetWithAdvantage] 'advantage' key not found in base_sample "
+                    f"at index {idx}. Run compute_advantages.py first."
+                )
+            advantage = base_sample["advantage"]
+            if isinstance(advantage, torch.Tensor):
+                advantage = bool(advantage.item())
+            sample["advantage"] = advantage
+
+        return sample
+
+
+class CFGDataLoaderImpl:
+    """DataLoader wrapper for CFG training.
+
+    Yields (observation, actions, advantage) tuples for CFG model training.
+    The advantage field is used to select positive or negative guidance.
+
+    Attributes:
+        _data_config: OpenPI data configuration.
+        _data_loader: Underlying PyTorch DataLoader.
+    """
+
+    def __init__(self, data_config: Any, data_loader: Any):
+        """Initialize CFGDataLoaderImpl.
+
+        Args:
+            data_config: OpenPI data configuration.
+            data_loader: Underlying PyTorch DataLoader.
+        """
+        self._data_config = data_config
+        self._data_loader = data_loader
+
+    def data_config(self) -> Any:
+        """Get data configuration."""
+        return self._data_config
+
+    def __len__(self) -> int:
+        """Return number of batches."""
+        # TorchDataLoader stores underlying torch.utils.data.DataLoader in torch_loader property
+        if hasattr(self._data_loader, "torch_loader"):
+            return len(self._data_loader.torch_loader)
+        # Fallback for standard DataLoader
+        return len(self._data_loader)
+
+    def set_epoch(self, epoch: int) -> None:
+        """Forward set_epoch to sampler and dataset for proper shuffling each epoch."""
+        # TorchDataLoader stores underlying torch.utils.data.DataLoader in torch_loader property
+        torch_loader = getattr(self._data_loader, "torch_loader", self._data_loader)
+
+        if hasattr(torch_loader, "sampler") and hasattr(
+            torch_loader.sampler, "set_epoch"
+        ):
+            torch_loader.sampler.set_epoch(epoch)
+        # AdvantageMixtureDataset has set_epoch method
+        if hasattr(torch_loader, "dataset") and hasattr(
+            torch_loader.dataset, "set_epoch"
+        ):
+            torch_loader.dataset.set_epoch(epoch)
+
+    def __iter__(self):
+        """Iterate over batches.
+
+        Yields:
+            Tuple of (observation, actions, advantage) for each batch.
+        """
+        for batch in self._data_loader:
+            observation = CFGObservation.from_dict(batch)
+            actions = batch["actions"]
+
+            advantage = batch["advantage"]
+            if not isinstance(advantage, torch.Tensor):
+                advantage = torch.tensor(advantage, dtype=torch.bool)
+
+            yield observation, actions, advantage
+
 
 # =============================================================================
 # Main Worker Class
@@ -88,20 +348,8 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
             return model
         return super().model_provider_func()
 
-    def _seed_worker_process(self) -> int:
-        """Seed RNG state for this actor worker process."""
-        actor_seed = int(self.cfg.actor.get("seed", 42))
-        worker_seed = actor_seed + int(self._rank)
-        seed_everything(worker_seed)
-        self.log_info(
-            "Initialized debug CFG actor RNG "
-            f"with seed={worker_seed} (base={actor_seed}, rank={self._rank})"
-        )
-        return worker_seed
-
     def init_worker(self) -> None:
         """Initialize the actor worker."""
-        self._worker_seed = self._seed_worker_process()
         self.setup_model_and_optimizer()
 
         if self.enable_offload:
@@ -202,7 +450,7 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
         """Build CFG dataloader using AdvantageMixtureDataset.
 
         Args:
-            cfg: Configuration with data.train_data_paths section.
+            cfg: Configuration with data.datasets section.
         """
         import lerobot.datasets.lerobot_dataset as lerobot_dataset
         import openpi.training.data_loader as openpi_data_loader
@@ -213,14 +461,13 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
         # Parse config
         data_cfg = cfg.get("data", {})
         openpi_cfg = cfg.actor.model.openpi
-        advantage_tag = data_cfg.get("tag", None)
-        task_name_filter = data_cfg.get("task_name_filter", None)
+        advantage_tag = data_cfg.get("advantage_tag", None)
 
         # Parse datasets from config
-        datasets_config = data_cfg.get("train_data_paths", [])
+        datasets_config = data_cfg.get("datasets", [])
         if not datasets_config:
             raise ValueError(
-                "At least one dataset must be provided in data.train_data_paths. "
+                "At least one dataset must be provided in data.datasets. "
                 "Each dataset should have 'path' and optionally 'episodes' and 'weight' fields."
             )
 
@@ -247,27 +494,6 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
 
             # 1. Create LeRobotDataset
             dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(data_path)
-
-            # Filter episodes by task name if specified
-            if task_name_filter is not None and episodes is None:
-                import json
-
-                meta_dir = Path(data_path) / "meta"
-                episodes_file = meta_dir / "episodes.jsonl"
-                if episodes_file.exists():
-                    filtered_eps = []
-                    with open(episodes_file) as f:
-                        for line in f:
-                            ep = json.loads(line)
-                            if task_name_filter in ep.get("tasks", ""):
-                                filtered_eps.append(ep["episode_index"])
-                    if self._rank == 0:
-                        self.log_info(
-                            f"task_name_filter='{task_name_filter}': "
-                            f"filtered {len(filtered_eps)} episodes from {data_path}"
-                        )
-                    episodes = filtered_eps if filtered_eps else None
-
             base_dataset = lerobot_dataset.LeRobotDataset(
                 data_path,
                 episodes=episodes,
@@ -280,7 +506,7 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
             )
 
             # Cast image features for backward compatibility with old data
-            base_dataset.hf_dataset = cast_image_features(base_dataset.hf_dataset)
+            base_dataset.hf_dataset = _cast_image_features(base_dataset.hf_dataset)
 
             # Fix episode_data_index if using specific episodes
             if episodes is not None:
@@ -316,8 +542,8 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
                     if advantage_tag
                     else "advantages.parquet"
                 )
-                self.log_info(
-                    f"Loaded advantages from "
+                print(
+                    f"[DebugCFGFSDPActor] Loaded advantages from "
                     f"meta/{adv_filename} ({len(advantages_lookup)} entries)"
                 )
 
@@ -331,8 +557,8 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
             datasets_with_weights.append((final_dataset, weight))
 
             if self._rank == 0:
-                self.log_info(
-                    f"Loaded dataset: {data_path} "
+                print(
+                    f"[DebugCFGFSDPActor] Loaded dataset: {data_path} "
                     f"({len(final_dataset)} samples, weight={weight})"
                 )
 
@@ -405,9 +631,6 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
         """Create PyTorch DataLoader with distributed sampler."""
         batch_size = config.batch_size
         sampler = None
-        actor_seed = int(self.cfg.actor.get("seed", 42))
-        data_loader_generator = torch.Generator()
-        data_loader_generator.manual_seed(actor_seed + int(self._rank))
 
         if torch.distributed.is_initialized():
             sampler = torch.utils.data.distributed.DistributedSampler(
@@ -416,27 +639,21 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
                 rank=self._rank,
                 shuffle=shuffle,
                 drop_last=True,
-                seed=actor_seed,
             )
             local_batch_size = batch_size // self._world_size
         else:
             local_batch_size = batch_size
 
-        # Use data config overrides if available, otherwise fall back to OpenPI defaults.
-        data_cfg = self.cfg.get("data", {})
-        num_workers = int(data_cfg.get("num_workers", config.num_workers))
-        return torch.utils.data.DataLoader(
+        return openpi_data_loader.TorchDataLoader(
             dataset,
-            batch_size=local_batch_size,
+            local_batch_size=local_batch_size,
+            sharding=None,
             shuffle=(sampler is None and shuffle),
             sampler=sampler,
-            drop_last=True,
-            num_workers=num_workers,
-            pin_memory=True,
-            prefetch_factor=4 if num_workers > 0 else None,
-            persistent_workers=num_workers > 0,
-            worker_init_fn=seed_dataloader_worker if num_workers > 0 else None,
-            generator=data_loader_generator,
+            num_batches=None,
+            num_workers=config.num_workers,
+            seed=config.seed,
+            framework="pytorch",
         )
 
     # =========================================================================
@@ -478,13 +695,11 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
             observation, actions, advantage = next(self.cfg_data_iter)
 
             observation = jax.tree.map(
-                lambda x: torch.as_tensor(x)
-                .contiguous()
-                .to(self.device, non_blocking=True),
+                lambda x: torch.as_tensor(x, device=self.device).contiguous().clone(),
                 observation,
             )
-            actions = actions.to(torch.float32).to(self.device, non_blocking=True)
-            advantage = advantage.to(self.device, non_blocking=True)
+            actions = actions.to(torch.float32).to(self.device)
+            advantage = advantage.to(self.device)
 
             with self.amp_context:
                 result = self.model(
@@ -516,6 +731,7 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
                 batch_metrics.update(metrics_data)
             append_to_dict(metrics, batch_metrics)
 
+        torch.cuda.empty_cache()
         grad_norm, lr_list = self.optimizer_step()
 
         data = {
@@ -528,31 +744,18 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
 
         # LR scheduler step
         self.lr_scheduler.step()
-        self.optimizer.zero_grad(set_to_none=True)
+        self.optimizer.zero_grad()
+        clear_memory()
 
         # Handle CFG-specific metrics
-        count_keys = [
+        special_keys = [
             "conditional_count",
             "unconditional_count",
-            "positive_label_count",
-            "negative_label_count",
-            "positive_conditional_count",
-            "positive_unconditional_count",
-            "negative_conditional_count",
-            "negative_unconditional_count",
-            "positive_probe_count",
+            "conditional_loss",
+            "unconditional_loss",
+            "positive_guidance_count",
+            "negative_guidance_count",
         ]
-        loss_sum_keys = [
-            "conditional_loss_sum",
-            "unconditional_loss_sum",
-            "positive_conditional_loss_sum",
-            "positive_unconditional_loss_sum",
-            "negative_conditional_loss_sum",
-            "negative_unconditional_loss_sum",
-            "positive_probe_conditional_loss_sum",
-            "positive_probe_unconditional_loss_sum",
-        ]
-        special_keys = count_keys + loss_sum_keys
 
         sum_metric_dict = {
             key: np.sum(value) for key, value in metrics.items() if key in special_keys
@@ -583,85 +786,23 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
                     / total,
                 }
             )
-            mean_metric_dict["positive_label_ratio"] = (
-                sum_metric_dict.get("positive_label_count", 0) / total
-            )
-            mean_metric_dict["negative_label_ratio"] = (
-                sum_metric_dict.get("negative_label_count", 0) / total
-            )
-            mean_metric_dict["positive_conditional_ratio"] = (
-                sum_metric_dict.get("positive_conditional_count", 0) / total
-            )
-            mean_metric_dict["positive_unconditional_ratio"] = (
-                sum_metric_dict.get("positive_unconditional_count", 0) / total
-            )
-            mean_metric_dict["negative_conditional_ratio"] = (
-                sum_metric_dict.get("negative_conditional_count", 0) / total
-            )
-            mean_metric_dict["negative_unconditional_ratio"] = (
-                sum_metric_dict.get("negative_unconditional_count", 0) / total
-            )
-
-        positive_total = sum_metric_dict.get("positive_label_count", 0)
-        if positive_total > 0:
-            mean_metric_dict["positive_effective_conditional_ratio"] = (
-                sum_metric_dict.get("positive_conditional_count", 0) / positive_total
-            )
-            mean_metric_dict["positive_effective_unconditional_ratio"] = (
-                sum_metric_dict.get("positive_unconditional_count", 0) / positive_total
-            )
-
-        negative_total = sum_metric_dict.get("negative_label_count", 0)
-        if negative_total > 0:
-            mean_metric_dict["negative_effective_conditional_ratio"] = (
-                sum_metric_dict.get("negative_conditional_count", 0) / negative_total
-            )
-            mean_metric_dict["negative_effective_unconditional_ratio"] = (
-                sum_metric_dict.get("negative_unconditional_count", 0) / negative_total
-            )
-
-        loss_map = {
-            "conditional_loss": ("conditional_loss_sum", "conditional_count"),
-            "unconditional_loss": (
-                "unconditional_loss_sum",
-                "unconditional_count",
-            ),
-            "positive_conditional_loss": (
-                "positive_conditional_loss_sum",
-                "positive_conditional_count",
-            ),
-            "positive_unconditional_loss": (
-                "positive_unconditional_loss_sum",
-                "positive_unconditional_count",
-            ),
-            "negative_conditional_loss": (
-                "negative_conditional_loss_sum",
-                "negative_conditional_count",
-            ),
-            "negative_unconditional_loss": (
-                "negative_unconditional_loss_sum",
-                "negative_unconditional_count",
-            ),
-            "positive_probe_conditional_loss": (
-                "positive_probe_conditional_loss_sum",
-                "positive_probe_count",
-            ),
-            "positive_probe_unconditional_loss": (
-                "positive_probe_unconditional_loss_sum",
-                "positive_probe_count",
-            ),
-        }
-        for metric_name, (loss_key, count_key) in loss_map.items():
-            count = sum_metric_dict.get(count_key, 0)
+        for key in ["conditional", "unconditional"]:
+            count = sum_metric_dict.get(f"{key}_count", 0)
             if count > 0:
-                mean_metric_dict[metric_name] = sum_metric_dict.get(loss_key, 0) / count
+                mean_metric_dict[f"{key}_loss"] = (
+                    sum_metric_dict.get(f"{key}_loss", 0) / count
+                )
 
-        if "positive_probe_conditional_loss" in mean_metric_dict and (
-            "positive_probe_unconditional_loss" in mean_metric_dict
-        ):
-            mean_metric_dict["positive_probe_guidance_gain"] = (
-                mean_metric_dict["positive_probe_unconditional_loss"]
-                - mean_metric_dict["positive_probe_conditional_loss"]
+        # Calculate positive/negative guidance ratio
+        guidance_total = sum_metric_dict.get(
+            "positive_guidance_count", 0
+        ) + sum_metric_dict.get("negative_guidance_count", 0)
+        if guidance_total > 0:
+            mean_metric_dict["positive_guidance_ratio"] = (
+                sum_metric_dict.get("positive_guidance_count", 0) / guidance_total
+            )
+            mean_metric_dict["negative_guidance_ratio"] = (
+                sum_metric_dict.get("negative_guidance_count", 0) / guidance_total
             )
 
         return mean_metric_dict

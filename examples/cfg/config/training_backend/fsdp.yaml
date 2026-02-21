@@ -1,0 +1,31 @@
+strategy: "fsdp"            # FSDP strategy: ["fsdp", "fsdp2"]
+
+# Sharding strategy: "full_shard" (shard parameters, gradients, optimizer states),
+# "shard_grad_op" (shard gradients and optimizer states only), 
+# "hybrid_shard" (combines data parallelism and model parallelism - sharding within FSDP groups, replicate across DDP groups),
+# "no_shard" (no sharding)
+sharding_strategy: "full_shard" 
+
+gradient_checkpointing: False # if True, gradient checkpointing will be used for FSDP/FSDP2 training, which will save memory but increase computation time.
+cpu_offload: False            # whether to offload parameters and gradients to CPU when not in use，if True, actor's enable_offload should be True too.
+offload_pin_memory: False     # whether FSDP2's CPU offload policy should pin memory when cpu_offload is True
+reshard_after_forward: True   # if True, FSDP2 will reshard parameters after forward pass to save memory
+
+enable_gradient_accumulation: True  # if True, gradient accumulation will be enabled for FSDP/FSDP2 training, which will enhance training performance but increase memory usage.
+forward_prefetch: False             # if True, FSDP will explicitly prefetches the next upcoming all-gather while executing in the forward pass. only use with static graphs. Overlaps communication with computation to improve performance.
+limit_all_gathers: False            # if True, FSDP will synchronizes CPU threads to limit the number of concurrent all-gathers. Only affects strategies that schedule all-gathers
+backward_prefetch: null             # options are null, 'pre', 'post'. if 'pre', FSDP will prefetch the next upcoming all-gather while computing gradients. if 'post', FSDP will prefetch the next all-gather until current gradient is computed.
+use_orig_params: False              # if True, FSDP will use module's original parameters, it means it will expose nn.Module.named_parameters rather than FlatParameter
+use_liger_kernel: False             # if True, liger_kernel will be used for FSDP, note that currently supported models in RLinf are [qwen2.5, qwen2.5-vl], for more details, see liger_kernel's doc
+
+fsdp_size: -1               # Number of GPUs per FSDP group for hybrid sharding. -1 means use all available GPUs in a single FSDP group
+
+mixed_precision:            # mixed precision settings for fsdp/fsdp2
+  param_dtype: null
+  reduce_dtype: null
+  buffer_dtype: null
+
+amp:
+  enabled: False                 # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
+  precision: "bf16"              # precision for AMP, options are ["fp16" , "bf16"]
+  use_grad_scaler: False         # if True, GradScaler will be used for AMP training to prevent underflow.
