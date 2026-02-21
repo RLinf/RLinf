@@ -1,0 +1,21 @@
+# CFG SFT Training with Mixed Data Configuration
+# Uses native DataLoader for loading both SFT and collected data
+# Reads is_success from episodes.jsonl for collected data
+
+defaults:
+  - libero_cfg_sft
+
+# Override experiment name for mixed training
+runner:
+  logger:
+    experiment_name: "cfg_sft_mixed"
+
+# Override data configuration for mixed training
+data:
+  datasets:
+    - path: "/path/to/sft_dataset"
+      type: "sft"
+      episodes: null
+    - path: "/path/to/collected_data"
+      type: "collected"
+      episodes: null

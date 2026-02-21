@@ -13,9 +13,12 @@
 # limitations under the License.
 # openpi model configs
 
+import logging
 import os
 
 from omegaconf import DictConfig
+
+logger = logging.getLogger(__name__)
 
 
 def get_model(cfg: DictConfig, torch_dtype=None):
@@ -54,8 +57,21 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     if actor_model_config.train_expert_only:
         model.freeze_vlm()
 
+    # load weights from safetensors
+    all_state_dict = {}
     for weight_path in weight_paths:
-        safetensors.torch.load_model(model, weight_path, strict=False)
+        state_dict = safetensors.torch.load_file(weight_path, device="cpu")
+        all_state_dict.update(state_dict)
+    load_result = model.load_state_dict(all_state_dict, strict=False)
+    logger.info(
+        "Loaded state dict: %d missing keys, %d unexpected keys",
+        len(load_result.missing_keys),
+        len(load_result.unexpected_keys),
+    )
+    if load_result.missing_keys:
+        logger.debug("Missing keys: %s", load_result.missing_keys)
+    if load_result.unexpected_keys:
+        logger.debug("Unexpected keys: %s", load_result.unexpected_keys)
     model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
     # fsdp replace
     # model.paligemma_with_expert.replace_gemma_decoder_layers()

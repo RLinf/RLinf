@@ -1,0 +1,118 @@
+# Advantage computation configuration for CFG-RL training
+#
+# Usage (single GPU):
+#   python compute_advantages.py --config-name compute_advantages \
+#       advantage.value_checkpoint=/path/to/checkpoint
+#
+# Usage (multi-GPU via torchrun):
+#   torchrun --nproc_per_node=4 compute_advantages.py --config-name compute_advantages \
+#       advantage.value_checkpoint=/path/to/checkpoint
+#
+# This script:
+# 1. Computes advantages: A = normalize(r_{t:t+N}) + gamma^N * V(o_{t+N}) - V(o_t)
+# 2. Saves advantage labels (advantage, is_success, value_current, value_next) to each dataset
+# 3. Supports multiple datasets with unified threshold across all data
+# 4. Supports multi-GPU parallel processing for faster computation
+
+# =============================================================================
+# Advantage computation settings
+# =============================================================================
+advantage:
+  # Path to trained value model checkpoint (REQUIRED)
+  # Can be a directory containing .safetensors files or a single .pt file
+  value_checkpoint: /path/to/value_model_checkpoint
+
+  # Device for inference
+  device: "cuda"
+
+  # Batch size for value model inference (higher = faster but more VRAM)
+  # Recommended: 64 for 24GB GPU, 32 for 16GB GPU, 128 for 40GB+ GPU
+  batch_size: 256
+
+  # Flush interval: write computed advantages to disk every N batches
+  # Lower values reduce memory usage but increase disk I/O
+  flush_interval: 5
+
+  # Pipeline batch size for streaming processing
+  # Samples are collected and inferred in batches of this size
+  # Larger = more memory, potentially faster. Smaller = less memory.
+  pipeline_batch_size: 4096
+
+  # Number of DataLoader workers (per GPU) for parallel data loading
+  num_dataloader_workers: 16
+
+  # Number of batches each DataLoader worker prefetches ahead of time
+  prefetch_factor: 2
+
+  # Whether to apply gamma^N discount to V(o_{t+N})
+  discount_next_value: true
+
+  # Positive advantage quantile: top X% of samples will have positive advantage
+  # 0.3 means top 30% are positive (threshold at 70th percentile)
+  positive_quantile: 0.3
+
+  # Advantage tag: when set, saves to meta/advantages_{tag}.parquet
+  # Allows computing advantages with different value models on the same data
+  # tag: null
+
+  # Value inference mode
+  # Options: "expert_categorical", "expert_mse", "expert_distributional", "continuous", "discrete"
+  value_mode: "expert_categorical"
+
+  # Model configuration (should match the trained model)
+  model:
+    num_bins: 201
+    v_min: -1.0
+    v_max: 0.0
+    critic_expert_variant: "gemma_100m"
+
+# =============================================================================
+# Data configuration
+# =============================================================================
+data:
+  # Model type for ValuePolicy (pi0, pi05)
+  model_type: "pi05"
+
+  # Robot type for input transforms
+  # Options: "libero", "franka", "franka_3cam", "droid", "aloha"
+  robot_type: "libero"
+
+  # Datasets to process
+  datasets:
+    - dataset_path: "/path/to/sft_dataset"
+      robot_type: "libero"
+      dataset_type: "sft"
+      weight: 1.0
+
+    - dataset_path: "/path/to/rollout_dataset"
+      robot_type: "libero"
+      dataset_type: "rollout"
+      weight: 1.0
+
+  # Action horizon (N in gamma^N * V(o_{t+N}))
+  action_horizon: 50
+
+  # Advantage horizon: N for reward_sum and V(o_{t+N}).
+  # If null, action_horizon is used.
+  advantage_horizon: null
+
+  # Discount factor (1.0 = undiscounted, common in robotics)
+  gamma: 1.0
+
+# =============================================================================
+# Distributed configuration (for multi-GPU parallel processing)
+# =============================================================================
+distributed:
+  enabled: true
+  backend: "nccl"
+  timeout: 3600
+
+# =============================================================================
+# Hydra configuration
+# =============================================================================
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false
