@@ -991,9 +991,13 @@ class DynamicRolloutResult:
     is_end: list[bool]
     # response_mask: Optional[list[list[int]]] = None
 
-    # size of belows are group_size
+    # size of belows are num_sequence
     rewards: Optional[torch.Tensor | list[float]] = None
     advantages: Optional[torch.Tensor] = None
+    # loss_scales: Optional[torch.Tensor] = None
+
+    # extra fields used in training for custom process
+    extra_fields_train: dict[str, list] = field(default_factory=dict) # [num_sequence]
 
     # extra fields used in reward / eval. not used in training
     extra_fields_turn: Optional[dict] = None # [num_sequence]
@@ -1105,6 +1109,10 @@ class DynamicRolloutResult:
             advantages (torch.Tensor), optional:
                 Advantage values for the responses,
                 shape ``[num_sequence, seq_length]``.
+
+            # loss_scales (torch.Tensor), optional:
+            #     loss scale values for the responses,
+            #     shape ``[num_sequence, seq_length]``.
         """
 
         # len = seq_length: input_ids, attention_mask, position_ids
@@ -1158,10 +1166,14 @@ class DynamicRolloutResult:
             "prev_logprobs": prev_logprobs.cuda(),
             "roles": self.roles,
             "role_group_sizes": self.role_group_sizes,
+            **{f"extra:{k}": torch.as_tensor(v).cuda() for k, v in self.extra_fields_train.items()},
         }
 
         if self.advantages is not None:
             batch["advantages"] = self.advantages.cuda()
+
+        # if self.loss_scales is not None:
+        #     batch["loss_scales"] = self.loss_scales.cuda()
 
         if self.ref_logprobs is not None:
             batch["ref_logprobs"] = self.ref_logprobs.cuda()
@@ -1212,6 +1224,9 @@ class DynamicRolloutResult:
             "advantages": torch.zeros(
                 *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
             ),
+            # "loss_scales": torch.ones(
+            #     *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+            # ),
         }
 
     @staticmethod
@@ -1245,12 +1260,12 @@ class DynamicRolloutResult:
         return merged_batch
 
     @staticmethod
-    def pack_traj_batch(
+    def pack_traj_batch_old(
         batch: dict[str, torch.Tensor],
         adv_turn_level_scale=False,
         sub_traj_adv_scale=True,
         train_roles=None,
-    ) -> tuple["DynamicRolloutResult", dict]:
+    ) -> dict:
         """Merge two batches into one."""
 
         traj_to_idx = {}
@@ -1301,6 +1316,7 @@ class DynamicRolloutResult:
             "prev_logprobs",
             "rewards",
             "advantages",
+            *(k for k in batch.keys() if k.startswith("extra:"))
         ]
         list_keys = [
             "roles",
@@ -1411,6 +1427,147 @@ class DynamicRolloutResult:
             for traj, idxes in traj_to_idx.items():
                 for idx in idxes:
                     packed_batch["advantages"][idx] /= len(idxes)
+        packed_batch["idx_to_traj"] = new_idx_to_traj
+
+        return packed_batch
+
+    @staticmethod
+    def pack_traj_batch(
+        context: dict,
+        batch: dict[str, torch.Tensor],
+    ) -> dict:
+        # calculate pack map
+        traj_to_idx = {}
+        for idx, traj in enumerate(batch["idx_to_traj"]):
+            if traj not in traj_to_idx:
+                traj_to_idx[traj] = []
+            traj_to_idx[traj].append(idx)
+
+        prompt_lengths = batch["prompt_lengths"].tolist()
+        response_lengths = batch["response_lengths"].tolist()
+        pack_map: dict[int, list[int]] = {}
+        passed_as_suffix = set()
+        for traj, idxes in traj_to_idx.items():
+            idxes = sorted(idxes, key=lambda x: prompt_lengths[x])
+            for i, left in enumerate(idxes):
+                for right in idxes[i + 1:]:
+                    if right in passed_as_suffix:
+                        continue
+                    mask_overlap = torch.logical_and(
+                        batch["response_mask"][left],
+                        batch["response_mask"][right],
+                    )
+                    if mask_overlap.sum().item() > 1:
+                        continue
+                    left_ids = batch["input_ids"][left][:prompt_lengths[left] + response_lengths[left]]
+                    right_ids = batch["input_ids"][right][:prompt_lengths[left] + response_lengths[left]]
+                    if torch.equal(left_ids, right_ids):
+                        pack_map[right] = [*pack_map.pop(left, []), left]
+                        passed_as_suffix.add(right)
+                        break
+
+        num_sequence = len(batch["idx_to_traj"])
+        new_idx_to_traj = []
+        split_params: dict[str, Union[torch.Tensor, list]] = {}
+        tensor_keys = [
+            "input_ids",
+            "attention_mask",
+            "response_mask",
+            "position_ids",
+            "is_end",
+            "prompt_lengths",
+            "response_lengths",
+            "prev_logprobs",
+            "rewards",
+            "advantages",
+            "loss_scales",
+            *(k for k in batch.keys() if k.startswith("extra:"))
+        ]
+        list_turn_keys = [
+            "roles",
+            "role_group_sizes",
+        ]
+        custom_keys = [
+            "idx_to_traj",
+        ]
+        for k, v in batch.items():
+            if k in tensor_keys:
+                split_params[k] = list(torch.chunk(v.clone(), num_sequence, dim=0))
+            elif k in list_turn_keys:
+                assert len(v) == num_sequence
+                split_params[k] = v
+            else:
+                assert k in custom_keys, f"bad key {k}"
+
+        # fit values after pack
+        for suffix, prefixes in pack_map.items():
+            idxes = [*prefixes, suffix]
+            assert len(idxes) >= 2
+            # rewards of each turn should be equal. only support one reward in one traj now.
+            reward_list = [split_params["rewards"][idx].item() for idx in idxes]
+            assert len(set([split_params["rewards"][idx].item() for idx in idxes])) == 1
+
+            # logprobs, advantages
+            for key in ["prev_logprobs", "advantages"]:
+                value = [
+                    split_params[key][idx].masked_fill(~split_params["response_mask"][idx], 0)
+                    for idx in idxes
+                ]
+                split_params[key][suffix] = torch.stack(value).sum(dim=0)
+
+            # loss_scales, for turn_num re-scale
+            masked_counts = [
+                split_params["response_mask"][idx].sum().item()
+                for idx in idxes
+            ]
+            masked_count_all = sum(masked_counts)
+            value = [
+                split_params["loss_scales"][idx].masked_fill(~split_params["response_mask"][idx], 0)
+                * (masked_count_all / masked_counts[i])
+                for i, idx in enumerate(idxes)
+            ]
+            split_params["loss_scales"][suffix] = torch.stack(value).sum(dim=0)
+
+            # response_mask
+            response_mask = [split_params["response_mask"][idx] for idx in idxes]
+            split_params["response_mask"][suffix] = torch.stack(response_mask).sum(dim=0).bool()
+
+            # prompt_lengths, response_lengths
+            all_length = split_params["prompt_lengths"][suffix] + split_params["response_lengths"][suffix]
+            prompt_length = split_params["prompt_lengths"][prefixes[0]]
+            split_params["prompt_lengths"][suffix] = prompt_length
+            split_params["response_lengths"][suffix] = all_length - prompt_length
+
+        all_prefixes = set([j for i in pack_map.values() for j in i])
+        pack_params = {
+            k: [] for k in batch.keys() if not k in custom_keys
+        }
+        for i in range(num_sequence):
+            if i in all_prefixes:
+                continue
+
+            for k in tensor_keys:
+                pack_params[k].append(split_params[k][i])
+            for k in list_turn_keys:
+                pack_params[k].append(split_params[k][i])
+            new_idx_to_traj.append(batch["idx_to_traj"][i])
+
+        packed_batch = {}
+        for k, v in pack_params.items():
+            try:
+                if k in tensor_keys:
+                    packed_batch[k] = torch.cat(v, dim=0)
+                elif k in list_turn_keys:
+                    packed_batch[k] = v
+                else:
+                    assert False, k
+            except:
+                assert False, k
+        packed_batch["idx_to_traj"] = new_idx_to_traj
+        num_sequence_after = len(new_idx_to_traj)
+        folding_scale = context["folding_scale"]
+        if "group" in folding_scale:
+            packed_batch["loss_scales"] *= num_sequence_after / num_sequence
 
         return packed_batch
 
@@ -1440,6 +1597,7 @@ class DynamicRolloutResult:
             prompt_lengths=[],
             response_lengths=[],
             is_end=[],
+            extra_fields_train={k: None for k in rollout_results[0].extra_fields_train.keys()}
         )
 
         for res in rollout_results:
@@ -1467,8 +1625,7 @@ class DynamicRolloutResult:
                     merged_result.recompute_prev_logprobs, res.recompute_prev_logprobs
                 )
 
-            # Merge tensor/list fields (size: group_size)
-            # Note: rewards and advantages are per trajectory (group_size), not per sequence
+            # Merge tensor/list fields (size: num_sequence)
             if res.rewards is not None:
                 if isinstance(res.rewards, list):
                     merged_result.rewards = merge_list(
@@ -1488,6 +1645,14 @@ class DynamicRolloutResult:
                     )
                 else:
                     raise ValueError(f"Wrong type of advantages {type(res.advantages)}")
+
+            if res.loss_scales is not None:
+                if isinstance(res.loss_scales, torch.Tensor):
+                    merged_result.loss_scales = merge_tensor(
+                        merged_result.loss_scales, res.loss_scales
+                    )
+                else:
+                    raise ValueError(f"Wrong type of loss_scales {type(res.loss_scales)}")
 
         return merged_result
 
@@ -1523,6 +1688,10 @@ class DynamicRolloutResult:
             split_response_lengths = rollout_result.response_lengths[start_idx:end_idx]
             split_is_end = rollout_result.is_end[start_idx:end_idx]
             split_rewards = rollout_result.rewards[start_idx:end_idx]
+            split_extra_fields_train = {
+                k: v[start_idx:end_idx]
+                    for k, v in rollout_result.extra_fields_train.items()
+            }
 
             split_prev_logprobs = None
             if rollout_result.prev_logprobs is not None:
@@ -1552,6 +1721,7 @@ class DynamicRolloutResult:
                 response_lengths=split_response_lengths,
                 is_end=split_is_end,
                 rewards=split_rewards,
+                extra_fields_train=split_extra_fields_train,
             )
 
             split_results.append(split_result)

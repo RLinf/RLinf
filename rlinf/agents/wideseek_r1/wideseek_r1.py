@@ -51,6 +51,7 @@ from rlinf.workers.agent.agent_loop import (
     MultiTurnAgentLoopOutput,
     MultiTurnAgentLoopWorker,
 )
+from contextvars import ContextVar
 
 
 class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
@@ -60,7 +61,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         placement: ModelParallelComponentPlacement,
     ):
         super().__init__(cfg, placement)
-        self.extra_keys_turn = ["subtask_count", "search_count", "access_count", "role", "tool_call_info", "prompt_text", "response_text"]
+        self.extra_keys_turn = ["subtask_count", "search_count", "access_count", "tool_call_info", "prompt_text", "response_text", "role"]
         self.extra_keys_traj = ["origin_question", "planner_summary", "final_answer", "final_answer_text", "num_valid_planner_turns", "num_valid_worker_turns", "eval_metric", "total_turn_list"]
 
         self.max_prompt_len = int(self.cfg.data.max_prompt_length)
@@ -90,6 +91,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
             self.sgl_client = SGLangClient(llm_ip, llm_port, llm_type)
 
         self.train_roles = self.cfg.agentloop.get("train_roles", None)
+        self.role_idx: ContextVar[int] = ContextVar('idx_to_sub_traj')
 
     async def extract_tool_calls(
         self, response_text: str, role: str
@@ -294,6 +296,10 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         is_markdown: bool = False,
         language: str = "en",
     ) -> tuple[list[AgentLoopOutput], str]:
+        # for tracing sub-traj
+        role_idx = self.role_idx.get()
+        self.role_idx.set(role_idx + 1)
+
         origin_question = question
         output_buffer = []
         total_turn_list = []
@@ -393,7 +399,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                     response_text=response_text,
                     is_end=generate_result["finish_reason"] == "length",
                     response_logprobs=generate_result["logprobs"],
-                    extra_fields=dict(role=role),
+                    extra_fields=dict(role=role, idx_to_sub_traj=role_idx),
                     tool_call_info=tool_call_info
                     if tool_call_info
                     else None,  # if passed, must have tool call
@@ -576,6 +582,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         return output_buffer, answer_text, total_turn_list, task_failed, succ_end
 
     async def run_one_query(self, prompt_ids: list[int], *, answer) -> AgentLoopOutput:
+        self.role_idx.set(0)
         origin_question = self.tokenizer.decode(prompt_ids)
         language = answer.get("language", "en")
         if self.workflow == "sa":
@@ -789,7 +796,24 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         )
         return output
 
-    def gen_extra_fields_group(self, task_results: list[MultiTurnAgentLoopOutput], answer: str) -> Optional[dict]:
+    def gen_extra_fields(
+        self,
+        task_results: list[MultiTurnAgentLoopOutput],
+        answer: str, 
+    ) -> Optional[dict]:
+        extra_fields_turn, extra_fields_traj, *_ = super().gen_extra_fields(task_results, answer)
+
+        roles = []
+        for task_result in task_results:
+            for single_turn_output in task_result.single_turn_outputs:
+                if self.extra_keys_turn is not None:
+                    for k in self.extra_keys_turn:
+                        v = single_turn_output.extra_fields.get(k, None)
+                        extra_fields_turn[k].append(v)
+                        if k == "role" and single_turn_output.extra_fields["not_training"] != True:
+                            roles.append(v)
+        extra_fields_turn = {**extra_fields_turn, "roles": roles}
+
         role_group_size = 0
         for task_result in task_results:
             have_role = False
@@ -799,10 +823,28 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                 if self.train_roles and role in self.train_roles:
                     have_role = True
                     break
-
             if have_role:
                 role_group_size += 1
-        return {"answer": answer, "role_group_size": role_group_size}
+        extra_fields_group = dict(
+            answer=answer,
+            role_group_size=role_group_size,
+            num_valid_planner_turns=sum(extra_fields_traj["num_valid_planner_turns"]),
+            num_valid_worker_turns=sum(extra_fields_traj["num_valid_worker_turns"]),
+        )
+
+        idx_to_sub_traj = []
+        for task_result in task_results:
+            sub_traj_map = {}
+            for single_turn_output in task_result.single_turn_outputs:
+                if single_turn_output.extra_fields["not_training"] == True:
+                    continue
+                role_idx = single_turn_output.extra_fields["idx_to_sub_traj"]
+                if role_idx not in sub_traj_map:
+                    sub_traj_map[role_idx] = len(sub_traj_map)
+                idx_to_sub_traj.append(sub_traj_map[role_idx])
+        extra_fields_train = {"idx_to_sub_traj": idx_to_sub_traj}
+
+        return extra_fields_turn, extra_fields_traj, extra_fields_group, extra_fields_train
 
     def get_rollout_metrics(
         self,
@@ -813,8 +855,8 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                 "turn_subtask_counts":      rollout_result.extra_fields_turn["subtask_count"],
                 "turn_search_counts":       rollout_result.extra_fields_turn["search_count"],
                 "turn_access_counts":       rollout_result.extra_fields_turn["access_count"],
-                "num_valid_planner_turns":  sum(rollout_result.extra_fields_traj["num_valid_planner_turns"]),
-                "num_valid_worker_turns":   sum(rollout_result.extra_fields_traj["num_valid_worker_turns"]),
+                "num_valid_planner_turns":  rollout_result.extra_fields_group["num_valid_planner_turns"],
+                "num_valid_worker_turns":   rollout_result.extra_fields_group["num_valid_worker_turns"],
                 "eval_metrics":             rollout_result.extra_fields_traj["eval_metric"],
                 "total_turn_list_metric":   rollout_result.extra_fields_traj["total_turn_list"],
             }.items():

@@ -8,7 +8,7 @@ cluster:
 
 runner:
   experiment_name: eval_qa
-  output_dir: /mnt/project_rlinf/zhuchunyang_rl/logs
+  output_dir: ./eval
   seq_length: 32000  
 
   max_epochs: 1

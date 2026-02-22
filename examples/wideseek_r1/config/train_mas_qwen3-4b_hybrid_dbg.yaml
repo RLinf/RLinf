@@ -9,10 +9,12 @@ cluster:
 runner:
   experiment_name: qwen3-4b-mas-unified_dataset-dbg
   output_dir: /mnt/project_rlinf/zhuchunyang_rl/logs
-  seq_length: 8192  
+  # seq_length: 8192  
+  seq_length: 32000  
 
   enable_dynamic_batch_size: True
-  max_tokens_per_mbs: 8192
+  # max_tokens_per_mbs: 8192
+  max_tokens_per_mbs: 32000
 
   max_epochs: 1
   max_steps: -1  
@@ -32,10 +34,11 @@ algorithm:
   advantage_mode: trajectory
 
 agentloop:
-  use_llm_judge_api: True
+  use_llm_judge_api: False
   workflow: mas
-  max_planner_turns: 2
-  max_worker_turns: 2
+  # max_planner_turns: 2
+  # max_worker_turns: 2
+  # max_workers_per_planner: 10
 
 rollout:
   model:
@@ -50,7 +53,7 @@ tools:
 data:
   type: wideseek_r1
   max_prompt_length: 4096
-  rollout_batch_size: 16
+  rollout_batch_size: 8
   prompt_key: question
   answer_key: answer
   is_markdown: True
@@ -94,7 +97,7 @@ actor:
     # lr_decay_iters: 10
 
 reward:
-  reward_type: 'llm' # or em
+  reward_type: 'em' # or em
   eval_metric: []  
 
 

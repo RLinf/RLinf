@@ -112,7 +112,7 @@ agentloop:
   over_context_penalty: 0.2
 
   use_llm_judge_api: True
-  llm_ip: 172.26.7.112 
+  llm_ip: 172.27.210.1
   llm_port: 30000
   llm_type: Qwen3-30b-a3b
 

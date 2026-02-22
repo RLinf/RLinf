@@ -28,6 +28,7 @@ from torch.multiprocessing.reductions import reduce_tensor
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import (
     calculate_adv_and_returns,
+    get_loss_scales,
     policy_loss,
 )
 from rlinf.algorithms.utils import kl_penalty
@@ -80,6 +81,20 @@ class MAMegatronActor(MegatronActor):
         )  # FIXME: check
         assert self.placement_mode == PlacementMode.COLLOCATED
         self.train_roles = self.cfg.agentloop.get("train_roles", None)
+        #####
+        # loss_scales = self.cfg.algorithm.get("loss_scales", [])
+        adv_turn_level_scale = self.cfg.algorithm.get(
+            "adv_turn_level_scale", True
+        )  # whether use alg1 or alg2
+        sub_traj_adv_scale = self.cfg.algorithm.get("sub_traj_adv_scale", False)
+        assert sub_traj_adv_scale
+        if adv_turn_level_scale == False:
+            loss_scales = ["group", "sub_traj", "turn-in-sub_traj"]
+        else:
+            loss_scales = ["group", "sub_traj"]
+        #####
+        self.loss_scale_fns = get_loss_scales(loss_scales)
+        self.pack_traj = self.cfg.actor.get("pack_traj", True)
 
     def get_batch(
         self, channel: Channel
@@ -133,9 +148,6 @@ class MAMegatronActor(MegatronActor):
             label = copy.deepcopy(position_ids)
             label[:, :-1] = input_ids[:, 1:]
 
-            assert "response_mask" in batch, (
-                "response_mask must be provided in dynamic rollout batch"
-            )
             # response_mask needs to be shifted left by 1 to align with the shifted labels
             # because response_mask[i] indicates whether position i is a response token in input_ids
             # but label[i] = input_ids[i+1], so we need to shift response_mask left to align
@@ -221,6 +233,7 @@ class MAMegatronActor(MegatronActor):
                     logprobs=curr_logprobs,
                     old_logprobs=prev_logprobs,
                     advantages=advantages,
+                    clip_ratio_c=self.clip_ratio_c,
                     clip_ratio_low=self.clip_ratio_low,
                     clip_ratio_high=self.clip_ratio_high,
                     loss_mask=mask,
@@ -241,16 +254,8 @@ class MAMegatronActor(MegatronActor):
 
                 # all gather
                 _imp = copy.deepcopy(metrics_data["actor/ratio"])
-                torch.distributed.all_reduce(
-                    _imp, group=parallel_state.get_data_parallel_group()
-                )
-
-                _n_valid_tokens = mask.count_nonzero().clone()
-                torch.distributed.all_reduce(
-                    _n_valid_tokens, group=parallel_state.get_data_parallel_group()
-                )
-                if _n_valid_tokens.item() != 0:
-                    _imp /= _n_valid_tokens
+                _token_num = copy.deepcopy(metrics_data["actor/token_num"])
+                _imp /= _token_num
 
                 # Early stopping.
                 if (
@@ -272,32 +277,32 @@ class MAMegatronActor(MegatronActor):
                     )
                     loss *= loss_scale.item()
 
-                assert self.cfg.algorithm.get("use_rollout_scale", False)
-                # make sure normalize across groupsize
-                num_microbatches = (
-                    get_num_microbatches()
-                    * parallel_state.get_data_parallel_world_size()
-                )
-                if self.train_roles is None:
-                    loss_scale = num_microbatches / (
-                        self.cfg.data.rollout_batch_size
-                        * self.cfg.algorithm.get("group_size", 1)
-                        / self.cfg.algorithm.n_minibatches
-                    )
-                else:
-                    # groupsize is dynamic, and will be set in pack traj fuction
-                    loss_scale = num_microbatches / (
-                        self.cfg.data.rollout_batch_size
-                        / self.cfg.algorithm.n_minibatches
-                    )
-                loss *= loss_scale
+                # assert self.cfg.algorithm.get("use_rollout_scale", False)
+                # # make sure normalize across groupsize
+                # num_microbatches = (
+                #     get_num_microbatches()
+                #     * parallel_state.get_data_parallel_world_size()
+                # )
+                # if self.train_roles is None:
+                #     loss_scale = num_microbatches / (
+                #         self.cfg.data.rollout_batch_size
+                #         * self.cfg.algorithm.get("group_size", 1)
+                #         / self.cfg.algorithm.n_minibatches
+                #     )
+                # else:
+                #     # groupsize is dynamic, and will be set in pack traj fuction
+                #     loss_scale = num_microbatches / (
+                #         self.cfg.data.rollout_batch_size
+                #         / self.cfg.algorithm.n_minibatches
+                #     )
+                # loss *= loss_scale
 
                 # add to log
                 metrics_data.update(
                     {
-                        "final_loss": loss.detach(),
-                        "entropy_loss": entropy_loss.detach(),
-                        "kl_loss": kl_loss.detach(),
+                        "actor/final_loss": loss.detach(),
+                        "actor/entropy_loss": entropy_loss.detach(),
+                        "actor/kl_loss": kl_loss.detach(),
                     }
                 )
 
@@ -305,10 +310,6 @@ class MAMegatronActor(MegatronActor):
                     v = metrics_data[k]
                     if v is not None:
                         metrics_data[k] = average_losses_across_data_parallel_group([v])
-
-                # for k, v in metrics_data.items():
-                #     if v is not None:
-                #         metrics_data[k] = average_losses_across_data_parallel_group([v])
 
                 return loss, metrics_data
 
@@ -433,31 +434,39 @@ class MAMegatronActor(MegatronActor):
                 group=parallel_state.get_data_parallel_group(),
             )
 
+        # Valid token scale
+        if self.cfg.algorithm.use_valid_token_scale:
+            self._setup_valid_token_scale(batch)
+
         # metrics
         rollout_metrics = self._compute_rollout_metrics(batch)
-        # eval_metrics = batch.pop("eval_metrics")
 
         # pack traj
-        assert self.cfg.actor.pack_traj
-        #####
-        adv_turn_level_scale = self.cfg.algorithm.get(
-            "adv_turn_level_scale", True
-        )  # whether use alg1 or alg2
-        sub_traj_adv_scale = self.cfg.algorithm.get("sub_traj_adv_scale", False)
-        assert sub_traj_adv_scale
-        batch = DynamicRolloutResult.pack_traj_batch(
-            batch, adv_turn_level_scale, sub_traj_adv_scale, self.train_roles
-        )
-        #####
+        scale_context = {
+            "folding_scale": [],
+            "enable_scale_of_group": False,
+            "actor_global_batch_size": (
+                self.cfg.data.rollout_batch_size
+                * self.cfg.algorithm.get("group_size", 1)
+                / self.cfg.algorithm.n_minibatches
+            ),
+        }
+        batch["loss_scales"] = torch.ones_like(batch["advantages"]).masked_fill(~batch["response_mask"], 0)
+        for loss_scale_fn in self.loss_scale_fns:
+            batch = loss_scale_fn(scale_context, batch)
+        if self.pack_traj:
+            batch = DynamicRolloutResult.pack_traj_batch(scale_context, batch)
+        batch["advantages"] *= batch.pop("loss_scales")
+        batch.pop("role_group_sizes")
+        batch.pop("roles")
+        for key in list(batch.keys()):
+            if key == 'idx_to_traj' or key.startswith('extra:'):
+                batch.pop(key, None)
 
         # Must be called after batch is retrieved, which is when rollout has stopped
         # Otherwise, loading model might cause OOM
         self._load_weight_and_optimizer()
         self._training_setup()
-
-        # Valid token scale
-        if self.cfg.algorithm.use_valid_token_scale:
-            self._setup_valid_token_scale(batch)
 
         # DP batch load balance
         if self.cfg.actor.get("enable_dp_load_balance", False):
@@ -467,27 +476,6 @@ class MAMegatronActor(MegatronActor):
             batch = self._dp_load_balance_dynamic(
                 batch, batch_pad, self.cfg.actor.micro_batch_size
             )
-
-        # batch_size = batch["response_mask"].shape[0]
-        # if self._rank % 2 == 0:
-        #     num_splits = [
-        #         batch_size // self.num_train_steps
-        #         + int(i < (batch_size % self.num_train_steps))
-        #         for i in range(self.num_train_steps)
-        #     ]
-        # else:
-        #     num_splits = [
-        #         batch_size // self.num_train_steps
-        #         + int(i >= (self.num_train_steps - batch_size % self.num_train_steps))
-        #         for i in range(self.num_train_steps)
-        #     ]
-
-        # global_batches = get_iterator_k_split(
-        #     batch,
-        #     num_splits=num_splits,
-        #     shuffle=self.cfg.algorithm.get("shuffle_rollout", True),
-        #     shuffle_seed=self.cfg.actor.seed,
-        # )
 
         global_batches = get_iterator_k_split(
             batch,
@@ -522,41 +510,6 @@ class MAMegatronActor(MegatronActor):
         self._gather_weights_among_dp()
 
         return rollout_metrics, training_metrics_list
-
-    # Advantages and returns
-    def compute_advantages_and_returns(self, batch: dict[str, torch.Tensor]):
-        """Compute the advantages and returns.
-
-        Args:
-            batch (Dict[str, torch.Tensor]): The rollout batch.
-        """
-        with self.worker_timer():
-            if batch.get("advantages", None) is None:
-                mask = batch["response_mask"] # [num_sequence, seq_len]
-                advantages, _ = calculate_adv_and_returns(
-                    task_type=self.cfg.runner.task_type,
-                    adv_type=self.cfg.algorithm.adv_type,
-                    advantage_mode=self.cfg.algorithm.advantage_mode,
-                    rewards=batch["rewards"].cuda(),
-                    loss_mask=mask.cuda(),
-                    num_sequence=len(batch["input_ids"]),
-                    group_size=self.cfg.algorithm.group_size,
-                    idx_to_traj=batch["idx_to_traj"],
-                    kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
-                    kl_penalty_type=self.kl_penalty_type,
-                    logprob=batch["prev_logprobs"].cuda()
-                    if "prev_logprobs" in batch
-                    else None,
-                    ref_logprob=batch["ref_logprobs"].cuda()
-                    if "ref_logprobs" in batch
-                    else None,
-                    use_reinpp_baseline=self.cfg.algorithm.get(
-                        "use_reinpp_baseline", False
-                    ),
-                )
-                batch["advantages"] = advantages
-
-        return batch
 
     def _setup_rollout_weight_dst_ranks(self):
         """Setup destination ranks for token and weight communication."""
@@ -720,8 +673,8 @@ class MAMegatronActor(MegatronActor):
             batch, rollout_result = self.get_batch(input_channel)
             batches.append(batch)
             rollout_results.append(rollout_result)
-        merged_batch, num_sequence_per_group = DynamicRolloutResult.merge_batches(
-            batches, adjust_traj_indices=False, return_num_sequence_per_group=True
+        merged_batch, num_sequence_per_group = (
+            DynamicRolloutResult.merge_batches(batches, adjust_traj_indices=False, return_num_sequence_per_group=True)
         )
 
         rollout_result = DynamicRolloutResult.merge_result_list(
@@ -751,3 +704,38 @@ class MAMegatronActor(MegatronActor):
             self.put_result(rollout_result, output_channel)
 
         self.scheduler_offload_sync()
+
+    # Advantages and returns
+    def compute_advantages_and_returns(self, batch: dict[str, torch.Tensor]):
+        """Compute the advantages and returns.
+
+        Args:
+            batch (Dict[str, torch.Tensor]): The rollout batch.
+        """
+        with self.worker_timer():
+            if batch.get("advantages", None) is None:
+                mask = batch["response_mask"] # [num_sequence, seq_len]
+                advantages, _ = calculate_adv_and_returns(
+                    task_type=self.cfg.runner.task_type,
+                    adv_type=self.cfg.algorithm.adv_type,
+                    advantage_mode=self.cfg.algorithm.advantage_mode,
+                    rewards=batch["rewards"].cuda(),
+                    loss_mask=mask.cuda(),
+                    num_sequence=len(batch["input_ids"]),
+                    group_size=self.cfg.algorithm.group_size,
+                    idx_to_traj=batch["idx_to_traj"],
+                    kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
+                    kl_penalty_type=self.kl_penalty_type,
+                    logprob=batch["prev_logprobs"].cuda()
+                    if "prev_logprobs" in batch
+                    else None,
+                    ref_logprob=batch["ref_logprobs"].cuda()
+                    if "ref_logprobs" in batch
+                    else None,
+                    use_reinpp_baseline=self.cfg.algorithm.get(
+                        "use_reinpp_baseline", False
+                    ),
+                )
+                batch["advantages"] = advantages
+
+        return batch

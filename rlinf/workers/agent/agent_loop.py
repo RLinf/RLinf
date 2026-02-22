@@ -136,10 +136,17 @@ class AgentLoopWorker(Worker):
         self.solid_generate_input_channels = solid_generate_input_channels
 
     async def generate(
-        self, prompt_ids: list[int], sampling_params: Optional[dict] = None
+        self,
+        prompt_ids: list[int],
+        sampling_params: Optional[dict] = None,
+        rollout_name: Optional[str] = None,
     ):
         channel_key = uuid4().hex
-        await self.generate_input_channel.put(
+        if rollout_name is None:
+            input_channel = self.generate_input_channel
+        else:
+            input_channel = self.solid_generate_input_channels[rollout_name]
+        await input_channel.put(
             {
                 "channel_key": channel_key,
                 "prompt_ids": prompt_ids,
@@ -334,30 +341,6 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         self.extra_keys_traj = None
         self.is_eval = self.cfg.runner.task_type == "reasoning_eval"
 
-    async def generate(
-        self,
-        prompt_ids: list[int],
-        sampling_params: Optional[dict] = None,
-        rollout_name: Optional[str] = None,
-    ):
-        channel_key = uuid4().hex
-        if rollout_name is None:
-            input_channel = self.generate_input_channel
-        else:
-            input_channel = self.solid_generate_input_channels[rollout_name]
-        await input_channel.put(
-            {
-                "channel_key": channel_key,
-                "prompt_ids": prompt_ids,
-                "sampling_params": sampling_params,
-            },
-            async_op=True,
-        ).async_wait()
-        result = await self.generate_output_channel.get(
-            channel_key, async_op=True
-        ).async_wait()
-        return result
-
     async def run_agentloop_rollout_group(
         self,
         input_dict: dict,
@@ -385,11 +368,11 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         task_results = await asyncio.gather(*rollout_tasks)
 
         # For eval mode, allow multiple samples (group_size=k) to compute pass@k and avg@k
-        extra_fields_group = self.gen_extra_fields_group(task_results, answer)
+        extra_fields = self.gen_extra_fields(task_results, answer)
         if self.is_eval:
-            rollout_result = self.get_rollout_result(task_results, extra_fields_group, use_no_training=False)
+            rollout_result = self.get_rollout_result(task_results, *extra_fields, use_no_training=False)
         else:
-            rollout_result = self.get_rollout_result(task_results, extra_fields_group)
+            rollout_result = self.get_rollout_result(task_results, *extra_fields)
         agent_metrics = self.get_rollout_metrics(rollout_result)
 
         await output_channel.put(rollout_result, async_op=True).async_wait()
@@ -426,8 +409,30 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
             agent_metrics = self.post_process_metric(agent_metrics_list)
             return agent_metrics
 
-    def gen_extra_fields_group(self, task_results: list[MultiTurnAgentLoopOutput], answer: str) -> Optional[dict]:
-        return None
+    def gen_extra_fields(
+        self,
+        task_results: list[MultiTurnAgentLoopOutput],
+        answer: str, 
+    ) -> Optional[dict]:
+        extra_fields_turn = None
+        if self.extra_keys_turn is not None:
+            extra_fields_turn = {k: list() for k in self.extra_keys_turn}
+        extra_fields_traj = None
+        if self.extra_keys_traj is not None:
+            extra_fields_traj = {k: list() for k in self.extra_keys_traj}
+
+        for task_result in task_results:
+            for single_turn_output in task_result.single_turn_outputs:
+                single_turn_output: AgentLoopOutput
+                if self.extra_keys_turn is not None:
+                    for k in self.extra_keys_turn:
+                        v = single_turn_output.extra_fields.get(k, None)
+                        extra_fields_turn[k].append(v)
+            if self.extra_keys_traj is not None:
+                for k in self.extra_keys_traj:
+                    v = task_result.extra_fields.get(k, None)
+                    extra_fields_traj[k].append(v)
+        return extra_fields_turn, extra_fields_traj, None, None
 
     def post_process_metric(self, agent_metrics_list: list[dict]):
         if self._world_size > 1:
@@ -462,7 +467,10 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
     def get_rollout_result(
         self,
         task_results: list[MultiTurnAgentLoopOutput],
-        extra_fields_group: Optional[dict]=None,
+        extra_fields_turn: Optional[dict],
+        extra_fields_traj: Optional[dict],
+        extra_fields_group: Optional[dict],
+        extra_fields_train: dict,
         use_no_training=True,
     ) -> DynamicRolloutResult:
         """
@@ -485,13 +493,6 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         # Collect eval_metrics per trajectory
         roles = []
 
-        extra_fields_turn = None
-        if self.extra_keys_turn is not None:
-            extra_fields_turn = {k: list() for k in self.extra_keys_turn}
-        extra_fields_traj = None
-        if self.extra_keys_traj is not None:
-            extra_fields_traj = {k: list() for k in self.extra_keys_traj}
-
         for idx, task_result in enumerate(task_results):
             for single_turn_output in task_result.single_turn_outputs:
                 single_turn_output: AgentLoopOutput
@@ -513,15 +514,9 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
 
             for single_turn_output in task_result.single_turn_outputs:
                 if self.extra_keys_turn is not None:
-                    for k in self.extra_keys_turn:
-                        v = single_turn_output.extra_fields.get(k, None)
-                        extra_fields_turn[k].append(v)
-                        if k == "role" and single_turn_output.extra_fields["not_training"] != True:
-                            roles.append(v)
-            if self.extra_keys_traj is not None:
-                for k in self.extra_keys_traj:
-                    v = task_result.extra_fields.get(k, None)
-                    extra_fields_traj[k].append(v)
+                    role_v = single_turn_output.extra_fields.get("role", None)
+                    if single_turn_output.extra_fields["not_training"] != True:
+                        roles.append(role_v)
 
         return DynamicRolloutResult(
             num_sequence=len(idx_to_traj),
@@ -536,6 +531,7 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
             extra_fields_turn=extra_fields_turn,
             extra_fields_traj=extra_fields_traj,
             extra_fields_group=extra_fields_group,
+            extra_fields_train=extra_fields_train,
             # train
             roles=roles,
             role_group_sizes=[extra_fields_group["role_group_size"]] * len(idx_to_traj),

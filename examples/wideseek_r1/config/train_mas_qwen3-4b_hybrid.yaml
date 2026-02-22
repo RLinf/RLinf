@@ -7,8 +7,8 @@ cluster:
     actor,rollout,reward: all
 
 runner:
-  experiment_name: qwen3-4b-mas-unified_dataset
-  output_dir: /mnt/project_rlinf/zhuchunyang_rl/logs
+  experiment_name: qwen3-4b-mas-clean-scale-8gpus
+RLinf_merge/logs  output_dir: ./logs
   seq_length: 32000  
 
   enable_dynamic_batch_size: True

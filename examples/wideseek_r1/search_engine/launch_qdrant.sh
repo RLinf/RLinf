@@ -15,7 +15,7 @@ pages_file=/mnt/project_rlinf/xzxuan/data/Asearch/wiki_webpages.jsonl
 retriever_name=e5
 retriever_path=/mnt/project_rlinf/xzxuan/model/e5
 
-qdrant_url=http://172.26.7.112:6333
+qdrant_url=http://172.27.236.111:6333
 qdrant_collection_name=wiki_collection_m32_cef512
 
 # hnsw_ef: search accuracy parameter, higher is more accurate but slower
