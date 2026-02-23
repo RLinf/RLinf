@@ -1,6 +1,6 @@
 defaults:
-  - env/realworld_peg_insertion@env.train
-  - env/realworld_peg_insertion@env.eval
+  - env/realworld_cap_tightening@env.train
+  - env/realworld_cap_tightening@env.eval
   - model/cnn_policy@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
