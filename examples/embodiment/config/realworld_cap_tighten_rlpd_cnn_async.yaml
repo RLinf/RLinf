@@ -130,8 +130,6 @@ env:
       use_dense_reward: False
       target_ee_pose: TARGET_EE_POSE
       enable_gripper_penalty: False
-
-    init_params:
       max_num_steps: 400
 
 rollout:
