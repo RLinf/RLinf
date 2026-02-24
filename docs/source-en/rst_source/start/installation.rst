@@ -185,3 +185,21 @@ You can override the default virtual environment directory using ``--venv``. For
 
   bash requirements/install.sh embodied --model openpi --env maniskill_libero --venv openpi-venv
   source openpi-venv/bin/activate
+
+.. _install-as-library:
+
+Installation as a Library
+--------------------------------------------------
+
+.. warning::
+  The `rlinf` package does not manage env and model dependencies, but only those of RLinf core system.
+
+  So you need to additionally install the dependencies for the target experiments yourself.
+
+  It is not intended to be directly used for RL experiments, but rather as a third-party library for other systems.
+
+RLinf is now available on PyPI for installation via pip as a library. 
+
+- Use `pip install rlinf[embodied]` for embodied RL.
+- Use `pip install rlinf[agentic-sglang]` for agentic RL with SGLang.
+- Use `pip install rlinf[agentic-vllm]` for agentic RL with vLLM.
