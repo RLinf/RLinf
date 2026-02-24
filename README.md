@@ -30,7 +30,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 
 ## What's NEW!
-- [2026/02] 🔥 RLinf supports reinforcement learning fine-tuning for [Wan World Model](https://github.com/Wan-Lab/Wan). Doc: [RL on Wan World Model](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/wan.html).
+- [2026/02] 🔥 RLinf supports reinforcement learning fine-tuning for [Wan World Model](https://github.com/RLinf/diffsynth-studio). Doc: [RL on Wan World Model](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/wan.html). Paper: [WoVR: World Models as Reliable Simulators for Post-Training VLA Policies with RL](https://arxiv.org/abs/2602.13977).
 - [2026/02] 🔥 RLinf is now available on [PyPI](https://pypi.org/project/rlinf/) for installation via pip as a library. Doc: [Installation as a Library](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html#install-as-library).
 - [2026/02] 🔥 The Technical Report of our realworld online learning system [RLinf-USER: A Unified and Extensible System for Real-World Online Policy Learning in Embodied AI](https://arxiv.org/abs/2602.07837) is released. Doc: [RLinf-USER](https://rlinf.readthedocs.io/en/latest/rst_source/publications/rlinf_user.html).
 - [2026/02] 🔥 RLinf supports reinforcement learning fine-tuning for [Dexbotic](https://github.com/dexmal/dexbotic). Doc: [RL on Dexbotic Model](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexbotic.html).
@@ -49,11 +49,9 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 - [2025/11] 🔥 RLinf supports reinforcement learning fine-tuning for [Behavior 1k](https://github.com/StanfordVL/BEHAVIOR-1K). Doc: [RL on Behavior 1k](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/behavior.html).
 - [2025/11] Add lora support to π₀ and π₀.₅.
 - [2025/10] 🔥 RLinf supports reinforcement learning fine-tuning for π₀ and π₀.₅! Doc: [RL on π₀ and π₀.₅ Models](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0.html). For more technical details, refer to the [RL fine-tuning for π₀ and π₀.₅ technical report](https://arxiv.org/abs/2510.25889). The report on πRL by [Machine Heart](https://mp.weixin.qq.com/s/dFlpmqmE0qfhOQmGG25X9g) and [RoboTech](https://mp.weixin.qq.com/s/S51P-Y1UYXzumnZzon2N1g) are also released.
-- [2025/10] 🔥 RLinf now officially supports online reinforcement learning! Doc: [coding_online_rl](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/coding_online_rl.html), Blog post: [The first open-source agent online RL framework RLinf-Online](https://mp.weixin.qq.com/s/jmohmDokuWLhQHFueSHZIQ).
-- [2025/10] 🔥 The RLinf Algorithm Technical Report [RLinf-VLA: A Unified and Efficient Framework for VLA+RL Training](https://arxiv.org/abs/2510.06710) is released.
-- [2025/09] 🔥 [Example Gallery](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) is updated, users can find various off-the-shelf examples!
-- [2025/09] The paper [RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Micro Flow Transformation](https://arxiv.org/abs/2509.15965) is released.
-- [2025/09] The [report on RLinf by Machine Heart](https://mp.weixin.qq.com/s/Xtv4gDu3lhDDGadLrzt6Aw)  is released. 
+- [2025/10] 🔥 RLinf now officially supports online reinforcement learning! Doc: [coding_online_rl](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/coding_online_rl.html), paper: [The first open-source agent online RL framework RLinf-Online](https://mp.weixin.qq.com/s/jmohmDokuWLhQHFueSHZIQ).
+- [2025/10] 🔥 The RLinf algorithm technical report is officially released. Doc: [RLinf-VLA Example Gallery](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html), paper: [RLinf-VLA: A Unified and Efficient Framework for VLA+RL Training](https://arxiv.org/abs/2510.06710).
+- [2025/09] 🔥 Our paper [RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Micro Flow Transformation](https://arxiv.org/abs/2509.15965) is officially released. The [Machine Heart report on RLinf](https://mp.weixin.qq.com/s/Xtv4gDu3lhDDGadLrzt6Aw) is also published.
 - [2025/08] RLinf is open-sourced. The formal v0.1 will be released soon.
 
 ## Key Features
