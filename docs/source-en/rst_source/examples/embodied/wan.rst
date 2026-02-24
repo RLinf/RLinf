@@ -130,7 +130,7 @@ Before training, download pretrained VLA checkpoints:
    git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1
    git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-object-traj1
    git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-goal-traj1
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-10-traj1
+   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-traj1
 
 
    # Method 2: huggingface-hub
@@ -140,7 +140,7 @@ Before training, download pretrained VLA checkpoints:
    hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir Openvla-oft-SFT-libero-spatial-traj1
    hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1 --local-dir Openvla-oft-SFT-libero-object-traj1
    hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir Openvla-oft-SFT-libero-goal-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero-10-traj1 --local-dir Openvla-oft-SFT-libero-10-traj1
+   hf download Haozhan72/Openvla-oft-SFT-libero10-traj1 --local-dir Openvla-oft-SFT-libero10-traj1
 
 After download, make sure ``model_path`` and ``unnorm_key`` are correctly set in yaml.
 
