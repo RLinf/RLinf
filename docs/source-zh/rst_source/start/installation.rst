@@ -183,3 +183,21 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 
   bash requirements/install.sh embodied --model openpi --env maniskill_libero --venv openpi-venv
   source openpi-venv/bin/activate
+
+.. _install-as-library:
+
+作为库安装
+------------
+
+.. warning::
+  `rlinf` 包不管理 env 和模型依赖，只管理 RLinf 核心系统的依赖。
+
+  因此你需要额外安装目标实验所需的依赖。
+
+  它不是直接用于 RL 实验的，而是希望作为其它系统的依赖库被安装。
+
+RLinf 现在也可以作为第三方库安装。
+
+- 使用 `pip install rlinf[embodied]` 安装具身智能相关的依赖。
+- 使用 `pip install rlinf[agentic-sglang]` 安装基于SGLang的Agentic相关的依赖。
+- 使用 `pip install rlinf[agentic-vllm]` 安装基于vLLM的Agentic相关的依赖。

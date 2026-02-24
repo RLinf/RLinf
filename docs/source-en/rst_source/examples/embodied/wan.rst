@@ -130,7 +130,7 @@ Before training, download pretrained VLA checkpoints:
    git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1
    git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-object-traj1
    git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-goal-traj1
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-10-traj1
+   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-traj1
 
 
    # Method 2: huggingface-hub
@@ -140,7 +140,7 @@ Before training, download pretrained VLA checkpoints:
    hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir Openvla-oft-SFT-libero-spatial-traj1
    hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1 --local-dir Openvla-oft-SFT-libero-object-traj1
    hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir Openvla-oft-SFT-libero-goal-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero-10-traj1 --local-dir Openvla-oft-SFT-libero-10-traj1
+   hf download Haozhan72/Openvla-oft-SFT-libero10-traj1 --local-dir Openvla-oft-SFT-libero10-traj1
 
 After download, make sure ``model_path`` and ``unnorm_key`` are correctly set in yaml.
 
@@ -359,9 +359,9 @@ for both SFT and RL-trained models, we use ``do_sample=True`` and ``temperature=
 
 .. note::
 
-    Wan training and inference are built on top of
-    `Diffsynth-Studio <https://github.com/modelscope/DiffSynth-Studio/tree/afd101f3452c9ecae0c87b79adfa2e22d65ffdc3>`_.
-    We inject action signals at frame level by reusing Wan cross-attention and timestep AdaLN mechanisms.
+    Wan training and inference are built on top of the
+    `Diffsynth-Studio <https://github.com/RLinf/diffsynth-studio>`_ framework.
+    In the evaluation results below, we only use a frozen world model to serve the RL training of the VLA model, without co-evolution between the world model and the VLA. Users can manually implement co-evolution to achieve further performance gains.
 
 .. list-table:: **Evaluation results on LIBERO suites with Wan simulator**
     :header-rows: 1
