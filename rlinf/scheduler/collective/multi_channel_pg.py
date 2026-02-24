@@ -702,7 +702,7 @@ class MultiChannelProcessGroup:
                 pass
 
             if not split_from or not split_from.supports_splitting:
-                return None
+                split_from = None
 
             # If necessary, find a backend to split from by peeling process
             # group wrappers from our potentially wrapped process group.

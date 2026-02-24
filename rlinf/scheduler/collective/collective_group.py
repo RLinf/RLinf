@@ -989,10 +989,6 @@ class CollectiveGroup:
             int: -1 means no common device; 0 means have common devices, but not sure if the tensor will be on the same device (the worker has multiple devices); 1 means the two workers are on the same device.
 
         """
-        # for npu devices CUDA IPC is not applicable
-        if Worker.torch_device_type == "npu":
-            return -1
-
         peer_devices = self._group_info.workers[self._peer_rank].available_accelerators
         my_devices = self._group_info.workers[self._rank].available_accelerators
 

@@ -183,7 +183,7 @@ class AcceleratorUtil:
 
     # To support an accelerator's CCL,
     # the `_new_process_group_helper` functions of `mult_channel_pg` need to be implemented
-    CCL_SUPPORT_LIST = [AcceleratorType.NV_GPU, AcceleratorType.AMD_GPU]
+    CCL_SUPPORT_LIST = [AcceleratorType.NV_GPU, AcceleratorType.AMD_GPU, AcceleratorType.NPU]
 
     @staticmethod
     def get_accelerator_type() -> AcceleratorType:
