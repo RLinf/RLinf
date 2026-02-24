@@ -38,6 +38,8 @@ class AsyncPPOMultiStepRolloutWorker(MultiStepRolloutWorker):
             // self._world_size
             // self.num_pipeline_stages
         )
+        self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
+        self._generate_task: asyncio.Task = None
 
     def _build_versions_tensor(self, reference: torch.Tensor) -> torch.Tensor:
         return torch.full_like(reference, float(self.version), dtype=torch.float32)
@@ -53,6 +55,23 @@ class AsyncPPOMultiStepRolloutWorker(MultiStepRolloutWorker):
         output_channel: Channel,
         actor_channel: Channel,
     ) -> None:
+        assert self._generate_task is None, (
+            "generate task is not None but generate function is called."
+        )
+        self._generate_task = asyncio.create_task(
+            self._generate(input_channel, output_channel, actor_channel)
+        )
+        try:
+            await self._generate_task
+        except asyncio.CancelledError:
+            pass
+
+    async def _generate(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        actor_channel: Channel,
+    ) -> None:
         assert not self.enable_offload, (
             "Offload not supported in AsyncPPOMultiStepRolloutWorker"
         )
@@ -62,7 +81,7 @@ class AsyncPPOMultiStepRolloutWorker(MultiStepRolloutWorker):
             // self.cfg.actor.model.num_action_chunks
         )
 
-        while not self.should_stop:
+        while True:
             self.rollout_results = [
                 EmbodiedRolloutResult(
                     max_episode_length=self.cfg.env.train.max_episode_steps,
@@ -78,10 +97,6 @@ class AsyncPPOMultiStepRolloutWorker(MultiStepRolloutWorker):
             for _ in range(n_train_chunk_steps):
                 for stage_id in range(self.num_pipeline_stages):
                     env_output = await self.recv_env_output(input_channel)
-                    collect_prev_infos = self.cfg.rollout.get(
-                        "collect_prev_infos", True
-                    )
-
                     if env_output["intervene_actions"] is not None:
                         self.rollout_results[stage_id].update_last_actions(
                             env_output["intervene_actions"],
@@ -89,6 +104,7 @@ class AsyncPPOMultiStepRolloutWorker(MultiStepRolloutWorker):
                         )
 
                     dones, rewards = self.get_dones_and_rewards(env_output)
+
                     actions, result = await self._predict_under_pause_lock(
                         env_output["obs"]
                     )
@@ -100,10 +116,10 @@ class AsyncPPOMultiStepRolloutWorker(MultiStepRolloutWorker):
                     chunk_step_result = ChunkStepResult(
                         actions=result["forward_inputs"].get("action", None),
                         prev_logprobs=result["prev_logprobs"]
-                        if collect_prev_infos
+                        if self.collect_prev_infos
                         else None,
                         prev_values=result["prev_values"]
-                        if collect_prev_infos
+                        if self.collect_prev_infos
                         else None,
                         dones=dones,
                         truncations=env_output["truncations"],
@@ -111,7 +127,7 @@ class AsyncPPOMultiStepRolloutWorker(MultiStepRolloutWorker):
                         rewards=rewards,
                         forward_inputs=result["forward_inputs"],
                         versions=self._build_versions_tensor(result["prev_logprobs"])
-                        if collect_prev_infos
+                        if self.collect_prev_infos
                         else None,
                     )
                     self.rollout_results[stage_id].append_step_result(chunk_step_result)
@@ -132,14 +148,11 @@ class AsyncPPOMultiStepRolloutWorker(MultiStepRolloutWorker):
 
             for stage_id in range(self.num_pipeline_stages):
                 env_output = await self.recv_env_output(input_channel)
-                collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
-
                 if env_output["intervene_actions"] is not None:
                     self.rollout_results[stage_id].update_last_actions(
                         env_output["intervene_actions"],
                         env_output["intervene_flags"],
                     )
-
                 dones, rewards = self.get_dones_and_rewards(env_output)
                 _, result = await self._predict_under_pause_lock(env_output["obs"])
 
@@ -150,7 +163,7 @@ class AsyncPPOMultiStepRolloutWorker(MultiStepRolloutWorker):
                 # Final step only keeps bootstrap values; no policy forward_inputs/logprobs.
                 chunk_step_result = ChunkStepResult(
                     prev_values=result.get("prev_values", None)
-                    if collect_prev_infos
+                    if self.collect_prev_infos
                     else None,
                     dones=dones,
                     truncations=env_output["truncations"],
@@ -203,5 +216,6 @@ class AsyncPPOMultiStepRolloutWorker(MultiStepRolloutWorker):
     async def set_version(self, version: int) -> None:
         self.version = int(version)
 
-    async def stop(self) -> None:
-        self.should_stop = True
+    def stop(self) -> None:
+        if self._generate_task is not None:
+            self._generate_task.cancel()

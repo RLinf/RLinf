@@ -82,7 +82,7 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
 
         self.update_rollout_weights()
 
-        env_handle: Handle = self.env.start_interacting(
+        env_handle: Handle = self.env.interact(
             input_channel=self.rollout_channel,
             output_channel=self.env_channel,
             metrics_channel=self.env_metrics_channel,
@@ -159,9 +159,7 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         self.log_thread.join(timeout=1.0)
 
         self.env.stop().wait()
-        self.rollout.stop().wait()
+        self.rollout.stop()
 
         env_handle.wait()
         rollout_handle.wait()
-
-        self._save_checkpoint()
