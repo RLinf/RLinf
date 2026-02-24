@@ -81,7 +81,7 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
+
   eval:
     total_num_envs: 256
     auto_reset: True

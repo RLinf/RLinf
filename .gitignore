@@ -18,3 +18,4 @@ outputs/*
 .docs-venv
 uv.lock
 rlinf/envs/maniskill/assets
+PKG-INFO

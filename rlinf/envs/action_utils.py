@@ -167,7 +167,7 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
-    elif env_type == SupportedEnvType.OPENSORAWM:
+    elif env_type == SupportedEnvType.OPENSORAWM or env_type == SupportedEnvType.WANWM:
         # TODO: Implement prepare_actions_for_opensora_wm
         if wm_env_type == "libero":
             chunk_actions = prepare_actions_for_libero(
@@ -175,9 +175,7 @@ def prepare_actions(
                 model_type=model_type,
             )
         else:
-            raise NotImplementedError(
-                f"Env type {wm_env_type} not implemented for OpenSoraWM"
-            )
+            raise NotImplementedError(f"Env type {wm_env_type} not implemented")
     elif env_type == SupportedEnvType.MANISKILL:
         chunk_actions = prepare_actions_for_maniskill(
             raw_chunk_actions=raw_chunk_actions,
