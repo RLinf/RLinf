@@ -25,9 +25,21 @@ def prepare_actions_for_maniskill(
     action_dim,
     action_scale,
     policy,
+    model_type=None,
 ) -> torch.Tensor:
-    if "panda" in policy:
-        return raw_chunk_actions
+    # panda-droid: DreamZero DROID absolute joint position (7 joint + gripper), pass through
+    # panda-qpos: joint delta position, pass through
+    if policy and "panda" in policy:
+        # DreamZero outputs [B, chunks, 8]; ensure we extract 8D for env
+        if model_type is not None and SupportedModel(model_type) == SupportedModel.DREAMZERO:
+            chunk_actions = np.asarray(raw_chunk_actions)[..., :8].astype(np.float32)
+        else:
+            chunk_actions = raw_chunk_actions
+        if isinstance(chunk_actions, np.ndarray):
+            chunk_actions = torch.from_numpy(chunk_actions)
+            if torch.cuda.is_available():
+                chunk_actions = chunk_actions.cuda()
+        return chunk_actions
     # TODO only suitable for action_dim = 7
     reshaped_actions = raw_chunk_actions.reshape(-1, action_dim)
     batch_size = reshaped_actions.shape[0]
@@ -185,6 +197,7 @@ def prepare_actions(
             action_dim=action_dim,
             action_scale=action_scale,
             policy=policy,
+            model_type=model_type,
         )
     elif env_type == SupportedEnvType.ROBOTWIN:
         chunk_actions = raw_chunk_actions
