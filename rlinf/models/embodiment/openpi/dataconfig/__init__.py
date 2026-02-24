@@ -220,11 +220,9 @@ _CONFIGS = [
         name="pi0_aloha_robotwin",
         model=pi0_config.Pi0Config(discrete_state_input=False),
         data=LeRobotAlohaDataConfig(
-            repo_id="robotwin/place_empty_cup_random",
+            repo_id="physical-intelligence/robotwin",
             adapt_to_pi=False,
-            base_config=DataConfig(
-                prompt_from_task=True
-            ),  # we need language instruction
+            base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(
                 assets_dir="checkpoints/torch/pi0_aloha_robotwin/assets"
             ),
