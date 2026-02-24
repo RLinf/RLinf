@@ -118,6 +118,7 @@ rollout:
     image_num: 2
     
   enable_torch_compile: True
+  enable_cuda_graph: True
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"

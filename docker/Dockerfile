@@ -15,6 +15,7 @@ FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-isaaclab
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-robotwin
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-opensora
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-frankasim
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-wan
 
 # Franka depends on ros-noetic, which is not available on Ubuntu 22.04
 FROM ubuntu:20.04 AS base-image-embodied-franka
@@ -90,7 +91,7 @@ RUN chmod +x /usr/local/bin/switch_env
 ##################################################################################################
 FROM base-image AS reason-image
 
-RUN bash requirements/install.sh reason --venv reason
+RUN bash requirements/install.sh agentic --venv reason
 
 # Set default env
 RUN echo "source ${UV_PATH}/reason/bin/activate" >> ~/.bashrc
@@ -273,6 +274,17 @@ FROM embodied-common-image AS embodied-opensora-image
 
 # Install openvla-oft env
 RUN bash requirements/install.sh embodied --venv openvla-oft --model openvla-oft --env opensora
+
+# Set default env
+RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: WAN
+##################################################################################################
+FROM embodied-common-image AS embodied-wan-image
+
+# Install openvla-oft env
+RUN bash requirements/install.sh embodied --venv openvla-oft --model openvla-oft --env wan
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc

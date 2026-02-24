@@ -62,6 +62,9 @@ class BaseWorldEnv(ABC):
             self.num_envs, dtype=torch.float32, device=self.device
         )
 
+        # Whether to use KIR Trick
+        self.enable_kir = cfg.get("enable_kir", True)
+
         self.dataset = self._build_dataset(cfg)
 
         if self.record_metrics:
