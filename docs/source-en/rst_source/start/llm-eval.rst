@@ -36,28 +36,39 @@ Quick Start
 
 Model Conversion
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-During training, models are saved in Megatron format. You can use the conversion scripts located at ``RLinf/toolkits/ckpt_convertor/megatron_convertor/`` to convert them to Huggingface format.
+During training, models are saved in Megatron format. You can use the conversion scripts located at ``RLinf/rlinf/utils/ckpt_convertor/megatron_convertor/`` to convert them to Huggingface format.
 
-You have two ways to use the scripts:
+Set these paths first:
+1. ``CKPT_PATH_MG`` (Megatron checkpoint path),
+2. ``CKPT_PATH_HF`` (HuggingFace target path), and
+3. ``CKPT_PATH_ORIGINAL_HF`` (base model checkpoint path).
 
-**Method 1: Edit the script files**
-
-Manually open ``mg2hf_7b.sh`` or ``mg2hf_1.5b.sh``, and set the following variables to your desired paths.
-
-1. ``CKPT_PATH_MG`` (Megatron checkpoint path, e.g., ``results/run_name/checkpoints/global_step_xx/actor/``), 
-2. ``CKPT_PATH_HF`` (Huggingface target path, any path), and
-3. ``CKPT_PATH_ORIGINAL_HF`` (base model checkpoint used for initializing training, e.g., ``/path/to/DeepSeek-R1-Distill-Qwen-1.5B``) 
-
-**Method 2: Command-line arguments**
-
-A more flexible approach is to pass paths directly through command-line arguments.
 .. code-block:: bash
 
-   # For 1.5B models
-   bash mg2hf_1.5b.sh /path/to/megatron_checkpoint /target/path/to/huggingface_checkpoint /path/to/base_model_checkpoint
+   CKPT_PATH_MG=/path/to/megatron_checkpoint
+   CKPT_PATH_HF=/target/path/to/huggingface_checkpoint
+   CKPT_PATH_ORIGINAL_HF=/path/to/base_model_checkpoint
+   CKPT_PATH_MF="${CKPT_PATH_HF}_middle_file"
 
-   # For 7B models
-   bash mg2hf_7b.sh /path/to/megatron_checkpoint /target/path/to/huggingface_checkpoint /path/to/base_model_checkpoint
+   # 1.5B example
+   python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_mg_to_middle_file \
+       --load-path "${CKPT_PATH_MG}" \
+       --save-path "${CKPT_PATH_MF}" \
+       --model DeepSeek-R1-Distill-Qwen-1.5B \
+       --tp-size 2 --ep-size 1 --pp-size 1 \
+       --te-ln-linear-qkv true --te-ln-linear-mlp_fc1 true \
+       --te-extra-state-check-none true --use-gpu-num 0 --process-num 16
+
+   python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_middle_file_to_hf \
+       --load-path "${CKPT_PATH_MF}" \
+       --save-path "${CKPT_PATH_HF}" \
+       --model DeepSeek-R1-Distill-Qwen-1.5B \
+       --use-gpu-num 0 --process-num 16
+
+   rm -rf "${CKPT_PATH_MF}"
+   rm -f "${CKPT_PATH_HF}"/*.done
+   shopt -s extglob
+   cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index).json "${CKPT_PATH_HF}"
 
 Run Evaluation Script
 ^^^^^^^^^^^^^^^^^^^^^^

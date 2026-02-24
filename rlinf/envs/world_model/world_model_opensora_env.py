@@ -16,6 +16,7 @@
 This environment is used to evaluate the OpenSora  world model with the Video reward model.
 """
 
+import io
 import json
 import os
 from collections import deque
@@ -33,6 +34,7 @@ from opensora.utils.inference_utils import prepare_multi_resolution_info
 from opensora.utils.misc import to_torch_dtype
 
 from rlinf.data.datasets.world_model import NpyTrajectoryDatasetWrapper
+from rlinf.envs.utils import recursive_to_device
 from rlinf.envs.world_model.base_world_env import BaseWorldEnv
 
 __all__ = ["OpenSoraEnv"]
@@ -134,6 +136,7 @@ class OpenSoraEnv(BaseWorldEnv):
             self.device,
             self.inference_dtype,
         )
+        self._is_offloaded = False
 
     def _build_dataset(self, cfg):
         return NpyTrajectoryDatasetWrapper(cfg.initial_image_path)
@@ -185,6 +188,117 @@ class OpenSoraEnv(BaseWorldEnv):
             return {"q01": q01, "q99": q99}
         else:
             raise ValueError(f"Action stats path {stats_path} does not exist")
+
+    def get_state(self) -> bytes:
+        """Serialize runtime state to CPU bytes buffer for offload."""
+        env_state = {
+            "current_obs": recursive_to_device(self.current_obs, "cpu")
+            if self.current_obs is not None
+            else None,
+            "task_descriptions": self.task_descriptions,
+            "init_ee_poses": self.init_ee_poses,
+            "elapsed_steps": self.elapsed_steps,
+            "prev_step_reward": self.prev_step_reward.cpu(),
+            "_is_start": self._is_start,
+            "reset_state_ids": self.reset_state_ids.cpu(),
+            "generator_state": self._generator.get_state(),
+        }
+        if self.record_metrics:
+            env_state.update(
+                {
+                    "success_once": self.success_once.cpu(),
+                    "returns": self.returns.cpu(),
+                }
+            )
+
+        image_queue_state = []
+        for env_idx in range(self.num_envs):
+            queue_frames = []
+            for frame in self.image_queue[env_idx]:
+                queue_frames.append(recursive_to_device(frame, "cpu"))
+            image_queue_state.append(queue_frames)
+        env_state["image_queue"] = image_queue_state
+
+        buffer = io.BytesIO()
+        torch.save(env_state, buffer)
+        return buffer.getvalue()
+
+    def load_state(self, state_buffer: bytes):
+        """Restore runtime state from CPU bytes buffer."""
+        buffer = io.BytesIO(state_buffer)
+        state = torch.load(buffer, map_location="cpu", weights_only=False)
+
+        self.current_obs = (
+            recursive_to_device(state["current_obs"], self.device)
+            if state["current_obs"] is not None
+            else None
+        )
+        self.task_descriptions = state["task_descriptions"]
+        self.init_ee_poses = state["init_ee_poses"]
+        self.elapsed_steps = state["elapsed_steps"]
+        self.prev_step_reward = state["prev_step_reward"].to(self.device)
+        self._is_start = state["_is_start"]
+        self.reset_state_ids = state["reset_state_ids"].to(self.device)
+        self._generator.set_state(state["generator_state"])
+
+        image_queue_state = state["image_queue"]
+        for env_idx in range(self.num_envs):
+            self.image_queue[env_idx].clear()
+            for frame in image_queue_state[env_idx]:
+                self.image_queue[env_idx].append(
+                    recursive_to_device(frame, self.device)
+                )
+
+        if self.record_metrics and "success_once" in state:
+            self.success_once = state["success_once"].to(self.device)
+            self.returns = state["returns"].to(self.device)
+
+    def offload(self):
+        """Move heavy models and runtime tensors to CPU."""
+        if self._is_offloaded:
+            return
+        self.vae = self.vae.to("cpu")
+        self.model = self.model.to("cpu")
+        self.reward_model = self.reward_model.to("cpu")
+        self.current_obs = recursive_to_device(self.current_obs, "cpu")
+        self.prev_step_reward = self.prev_step_reward.cpu()
+        self.reset_state_ids = self.reset_state_ids.cpu()
+        if self.record_metrics:
+            self.success_once = self.success_once.cpu()
+            self.returns = self.returns.cpu()
+        for env_idx in range(self.num_envs):
+            self.image_queue[env_idx] = deque(
+                [
+                    recursive_to_device(frame, "cpu")
+                    for frame in self.image_queue[env_idx]
+                ],
+                maxlen=self.z_condition_frame_length,
+            )
+        torch.cuda.empty_cache()
+        self._is_offloaded = True
+
+    def onload(self):
+        """Move models and runtime tensors back to execution device."""
+        if not self._is_offloaded:
+            return
+        self.vae = self.vae.to(self.device, self.inference_dtype)
+        self.model = self.model.to(self.device, self.inference_dtype)
+        self.reward_model = self.reward_model.to(self.device)
+        self.current_obs = recursive_to_device(self.current_obs, self.device)
+        self.prev_step_reward = self.prev_step_reward.to(self.device)
+        self.reset_state_ids = self.reset_state_ids.to(self.device)
+        if self.record_metrics:
+            self.success_once = self.success_once.to(self.device)
+            self.returns = self.returns.to(self.device)
+        for env_idx in range(self.num_envs):
+            self.image_queue[env_idx] = deque(
+                [
+                    recursive_to_device(frame, self.device)
+                    for frame in self.image_queue[env_idx]
+                ],
+                maxlen=self.z_condition_frame_length,
+            )
+        self._is_offloaded = False
 
     def _normalize_action(self, actions):
         """Normalize actions to [-1, 1] range"""
@@ -298,6 +412,7 @@ class OpenSoraEnv(BaseWorldEnv):
         options: Optional[dict] = {},
         episode_indices: Optional[Union[np.ndarray, torch.Tensor]] = None,
     ):
+        self.onload()
         self.elapsed_steps = 0
 
         # Handle first reset with fixed reset state ids
@@ -692,6 +807,7 @@ class OpenSoraEnv(BaseWorldEnv):
     @torch.no_grad()
     def chunk_step(self, policy_output_action):
         """Execute a chunk of actions"""
+        self.onload()
         # policy_output_action: [num_envs, chunk, action_dim]
 
         with torch.amp.autocast(device_type="cuda", dtype=self.inference_dtype):

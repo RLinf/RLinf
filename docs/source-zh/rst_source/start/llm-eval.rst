@@ -37,28 +37,39 @@
 
 模型转换
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-在训练过程中，模型以 Megatron 格式被存储下来。 你可以使用位于 ``RLinf/toolkits/ckpt_convertor/megatron_convertor/`` 的转换脚本将其转换为 Huggingface 格式。
+在训练过程中，模型以 Megatron 格式被存储下来。 你可以使用位于 ``RLinf/rlinf/utils/ckpt_convertor/megatron_convertor/`` 的转换脚本将其转换为 Huggingface 格式。
 
-你有两种方式使用脚本：
+先设置以下路径：
+1. ``CKPT_PATH_MG`` （Megatron checkpoint 路径）、
+2. ``CKPT_PATH_HF`` （HuggingFace 目标路径）、
+3. ``CKPT_PATH_ORIGINAL_HF`` （初始化训练的基模 checkpoint 路径）。
 
-**方式一：编辑脚本文件**
-
-手动打开 ``mg2hf_7b.sh`` 或 ``mg2hf_1.5b.sh``，将以下变量设置为你想要的路径。
-
-1. ``CKPT_PATH_MG`` （Megatron checkpoint路径，例如 ``results/run_name/checkpoints/global_step_xx/actor/``）， 
-2. ``CKPT_PATH_HF`` （Huggingface目标路径，任意路径），以及
-3. ``CKPT_PATH_ORIGINAL_HF`` （初始化训练的基模checkpoint，例如 ``/path/to/DeepSeek-R1-Distill-Qwen-1.5B``） 
-
-**方式二：命令行参数**
-
-更灵活的方式是直接通过命令行参数传入路径。
 .. code-block:: bash
 
-   # 对于1.5B模型
-   bash mg2hf_1.5b.sh /path/to/megatron_checkpoint /target/path/to/huggingface_checkpoint /path/to/base_model_checkpoint
+   CKPT_PATH_MG=/path/to/megatron_checkpoint
+   CKPT_PATH_HF=/target/path/to/huggingface_checkpoint
+   CKPT_PATH_ORIGINAL_HF=/path/to/base_model_checkpoint
+   CKPT_PATH_MF="${CKPT_PATH_HF}_middle_file"
 
-   # 对于7B模型
-   bash mg2hf_7b.sh /path/to/megatron_checkpoint /target/path/to/huggingface_checkpoint /path/to/base_model_checkpoint
+   # 1.5B 示例
+   python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_mg_to_middle_file \
+       --load-path "${CKPT_PATH_MG}" \
+       --save-path "${CKPT_PATH_MF}" \
+       --model DeepSeek-R1-Distill-Qwen-1.5B \
+       --tp-size 2 --ep-size 1 --pp-size 1 \
+       --te-ln-linear-qkv true --te-ln-linear-mlp_fc1 true \
+       --te-extra-state-check-none true --use-gpu-num 0 --process-num 16
+
+   python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_middle_file_to_hf \
+       --load-path "${CKPT_PATH_MF}" \
+       --save-path "${CKPT_PATH_HF}" \
+       --model DeepSeek-R1-Distill-Qwen-1.5B \
+       --use-gpu-num 0 --process-num 16
+
+   rm -rf "${CKPT_PATH_MF}"
+   rm -f "${CKPT_PATH_HF}"/*.done
+   shopt -s extglob
+   cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index).json "${CKPT_PATH_HF}"
 
 运行评测脚本
 ^^^^^^^^^^^^^^^^^^^^^^

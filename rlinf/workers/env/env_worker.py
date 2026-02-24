@@ -68,8 +68,6 @@ class EnvWorker(Worker):
             )
 
     def init_worker(self):
-        self.enable_offload = self.cfg.env.get("enable_offload", False)
-
         train_env_cls = get_env_cls(self.cfg.env.train.env_type, self.cfg.env.train)
         eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
 
@@ -115,7 +113,9 @@ class EnvWorker(Worker):
                 self.last_obs_list.append(extracted_obs)
                 self.last_intervened_info_list.append((None, None))
 
-                if self.enable_offload and hasattr(self.env_list[i], "offload"):
+                if self.cfg.env.train.get("enable_offload", False) and hasattr(
+                    self.env_list[i], "offload"
+                ):
                     self.env_list[i].offload()
 
     @Worker.timer("env_interact_step")
@@ -192,7 +192,7 @@ class EnvWorker(Worker):
         """
         chunk_actions = prepare_actions(
             raw_chunk_actions=raw_actions,
-            env_type=self.cfg.env.train.env_type,
+            env_type=self.cfg.env.eval.env_type,
             model_type=self.cfg.actor.model.model_type,
             num_action_chunks=self.cfg.actor.model.num_action_chunks,
             action_dim=self.cfg.actor.model.action_dim,
@@ -386,7 +386,9 @@ class EnvWorker(Worker):
             self.finish_rollout()
 
         for env in self.env_list:
-            if self.enable_offload and hasattr(env, "offload"):
+            if self.cfg.env.train.get("enable_offload", False) and hasattr(
+                env, "offload"
+            ):
                 env.offload()
 
         for key, value in env_metrics.items():
@@ -432,7 +434,9 @@ class EnvWorker(Worker):
 
             self.finish_rollout(mode="eval")
         for stage_id in range(self.stage_num):
-            if self.enable_offload and hasattr(self.eval_env_list[stage_id], "offload"):
+            if self.cfg.env.eval.get("enable_offload", False) and hasattr(
+                self.eval_env_list[stage_id], "offload"
+            ):
                 self.eval_env_list[stage_id].offload()
 
         for key, value in eval_metrics.items():
