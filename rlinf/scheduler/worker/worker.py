@@ -36,7 +36,6 @@ from omegaconf import OmegaConf
 from ..cluster import Cluster, ClusterEnvVar
 from ..hardware import AcceleratorType, AcceleratorUtil, HardwareInfo
 from ..manager import WorkerAddress
-import rlinf.utils.device_utils as dutils
 
 if TYPE_CHECKING:
     from ..collective import CollectiveGroupOptions
@@ -314,8 +313,9 @@ class Worker(metaclass=WorkerMeta):
     logging.basicConfig()
     logger = logging.getLogger(Cluster.SYS_NAME)
     logger.setLevel(Cluster.LOGGING_LEVEL)
-    torch_platform = dutils._BACKEND
-    torch_device_type = dutils.DEVICE_NAME
+    accelerator_type = AcceleratorUtil.get_accelerator_type()
+    torch_platform = AcceleratorUtil.get_torch_platform(accelerator_type)
+    torch_device_type = AcceleratorUtil.get_device_type(accelerator_type)
 
     def __new__(cls, *args, **kwargs):
         """Create a new instance of the Worker class."""
@@ -353,12 +353,14 @@ class Worker(metaclass=WorkerMeta):
         self._local_accelerator_rank = int(os.environ.get("LOCAL_ACCELERATOR_RANK", -1))
         self._node_local_rank = int(os.environ.get("NODE_LOCAL_RANK", -1))
         self._node_local_world_size = int(os.environ.get("NODE_LOCAL_WORLD_SIZE", -1))
+        Worker.accelerator_type = self._accelerator_type
         Worker.torch_device_type = AcceleratorUtil.get_device_type(
             self._accelerator_type
         )
         Worker.torch_platform = AcceleratorUtil.get_torch_platform(
             self._accelerator_type
         )
+        self.accelerator_type = Worker.accelerator_type
         self.torch_device_type = Worker.torch_device_type
         self.torch_platform = Worker.torch_platform
 

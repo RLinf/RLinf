@@ -25,13 +25,13 @@ if TYPE_CHECKING:
     from vllm.outputs import RequestOutput as VllmRequestOutput
 
 from rlinf.data.utils import batch_pad_to_fixed_len
+from rlinf.scheduler import Worker
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
     merge_list,
     merge_tensor,
     split_list,
 )
-import rlinf.utils.device_utils as dutils
 
 
 def get_batch_size(
@@ -783,13 +783,13 @@ class RolloutResult:
         )  # [B, training_seq_length]
 
         batch = {
-            "input_ids": input_ids.to(dutils.DEVICE_NAME),
-            "attention_mask": attention_mask.to(dutils.DEVICE_NAME),
-            "response_mask": response_mask.to(dutils.DEVICE_NAME),
-            "is_end": is_end.to(dutils.DEVICE_NAME),
-            "position_ids": position_ids.to(dutils.DEVICE_NAME),
-            "prompt_lengths": prompt_lengths.to(dutils.DEVICE_NAME),
-            "response_lengths": response_lengths.to(dutils.DEVICE_NAME),
+            "input_ids": input_ids.to(Worker.torch_device_type),
+            "attention_mask": attention_mask.to(Worker.torch_device_type),
+            "response_mask": response_mask.to(Worker.torch_device_type),
+            "is_end": is_end.to(Worker.torch_device_type),
+            "position_ids": position_ids.to(Worker.torch_device_type),
+            "prompt_lengths": prompt_lengths.to(Worker.torch_device_type),
+            "response_lengths": response_lengths.to(Worker.torch_device_type),
         }
 
         if (
@@ -800,7 +800,7 @@ class RolloutResult:
 
         if self.advantages is not None:
             if isinstance(self.advantages, torch.Tensor):
-                batch["advantages"] = self.advantages.to(dutils.DEVICE_NAME)
+                batch["advantages"] = self.advantages.to(Worker.torch_device_type)
             else:
                 response_attention_mask = attention_mask[
                     :, -max_response_len:
@@ -808,20 +808,24 @@ class RolloutResult:
                 advantages = torch.tensor(self.advantages, dtype=torch.float32).reshape(
                     -1, 1
                 )  # [B, 1]
-                advantages = response_attention_mask.float().to(dutils.DEVICE_NAME) * advantages.to(dutils.DEVICE_NAME)
-                batch["advantages"] = advantages.to(dutils.DEVICE_NAME)
+                advantages = response_attention_mask.float().to(
+                    Worker.torch_device_type
+                ) * advantages.to(Worker.torch_device_type)
+                batch["advantages"] = advantages.to(Worker.torch_device_type)
 
         if self.prev_logprobs is not None:
-            batch["prev_logprobs"] = self.prev_logprobs.to(dutils.DEVICE_NAME)
+            batch["prev_logprobs"] = self.prev_logprobs.to(Worker.torch_device_type)
 
         if self.ref_logprobs is not None:
-            batch["ref_logprobs"] = self.ref_logprobs.to(dutils.DEVICE_NAME)
+            batch["ref_logprobs"] = self.ref_logprobs.to(Worker.torch_device_type)
 
         if self.recompute_prev_logprobs is not None:
-            batch["recompute_prev_logprobs"] = self.recompute_prev_logprobs.to(dutils.DEVICE_NAME)
+            batch["recompute_prev_logprobs"] = self.recompute_prev_logprobs.to(
+                Worker.torch_device_type
+            )
 
         if self.rewards is not None:
-            batch["rewards"] = self.rewards.to(dutils.DEVICE_NAME)
+            batch["rewards"] = self.rewards.to(Worker.torch_device_type)
 
         if self.rollout_logprobs is not None:
             logprobs = batch_pad_to_fixed_len(
@@ -832,7 +836,7 @@ class RolloutResult:
                 max_batch_len=max_response_len,
                 pad_token=0,
             )
-            batch["prev_logprobs"] = logprobs.to(dutils.DEVICE_NAME)
+            batch["prev_logprobs"] = logprobs.to(Worker.torch_device_type)
 
         return batch
 

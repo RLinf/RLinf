@@ -36,13 +36,13 @@ from rlinf.hybrid_engines.fsdp.strategy.checkpoint import Checkpoint
 from rlinf.hybrid_engines.fsdp.utils import (
     FSDPVersion,
 )
+from rlinf.scheduler import Worker
 from rlinf.utils.utils import clear_memory
 
 if TYPE_CHECKING:
     from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
     from rlinf.workers.inference.fsdp_inference_worker import FSDPInference
 
-import rlinf.utils.device_utils as dutils
 
 class FSDPStrategyBase(ABC):
     def __init__(
@@ -162,11 +162,13 @@ class FSDPStrategyBase(ABC):
         Save weights safely when tensors may live on NPU.
 
         Converts all NPU tensors to CPU recursively before saving.
-        """      
+        """
+
         def to_cpu(item):
             if isinstance(item, torch.Tensor) and item.is_npu:
                 return item.cpu()
             return item
+
         if isinstance(obj, dict):
             obj = {k: to_cpu(v) for k, v in obj.items()}
         elif isinstance(obj, (list, tuple)):
@@ -176,7 +178,8 @@ class FSDPStrategyBase(ABC):
         else:
             raise ValueError("value type error")
         torch.save(obj, path, _use_new_zipfile_serialization=True)
-        print(f"Save using _use_new_zipfile_serialization to {path}")    
+        print(f"Save using _use_new_zipfile_serialization to {path}")
+
     @classmethod
     def save_checkpoint(
         cls,
@@ -251,8 +254,10 @@ class FSDPStrategyBase(ABC):
             if torch.distributed.get_rank() == 0:
                 os.makedirs(sd_save_path, exist_ok=True)
                 # npu requires a specific model parameter save
-                if dutils.DEVICE_NAME == "npu":
-                    cls.save_npu_weight(model_state_dict, os.path.join(sd_save_path, "full_weights.pt"))
+                if Worker.torch_device_type == "npu":
+                    cls.save_npu_weight(
+                        model_state_dict, os.path.join(sd_save_path, "full_weights.pt")
+                    )
 
                 else:
                     torch.save(

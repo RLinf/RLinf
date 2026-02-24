@@ -26,7 +26,6 @@ from .collective_group import (
     CollectiveGroupInfo,
     CollectiveGroupOptions,
 )
-import rlinf.utils.device_utils as dutils
 
 
 class MultiChannelProcessGroup:
@@ -304,12 +303,11 @@ class MultiChannelProcessGroup:
 
         # NOTE: GLOO backend doesn't support dist.Work.get_future, use broadcast to simulate send/recv instead
         if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
-            raise RuntimeError(
-                f"Collective group {self._group_name} does not support accelerator CCL backend, possibly because (1) the workers in the group have different accelerator types:  {[worker.accelerator_type for worker in self._group_info.workers]}, (2) the workers are CPU-only, or (3) the accelerator CCL is not among the supported CCL: {AcceleratorUtil.CCL_SUPPORT_LIST}."
-            )
+            # Transfer to CPU if accel CCL is not available
+            tensor = tensor.to("cpu")
         group = (
             self._send_accel_ccl_process_groups[channel_id]
-            if device == CollectiveGroup.ACCEL
+            if device == CollectiveGroup.ACCEL and not self._no_accel_ccl
             else self._send_gloo_process_groups[channel_id]
         )
         work = self._broadcast(
@@ -341,20 +339,27 @@ class MultiChannelProcessGroup:
             )
 
         # NOTE: GLOO backend doesn't support dist.Work.get_future, use broadcast to simulate send/recv instead
+        recv_tensor = tensor
+        if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
+            # Create a new tensor on CPU if accel CCL is not available
+            recv_tensor = torch.empty_like(tensor, device="cpu")
         group = (
             self._recv_accel_ccl_process_groups[channel_id]
-            if device == CollectiveGroup.ACCEL
+            if device == CollectiveGroup.ACCEL and not self._no_accel_ccl
             else self._recv_gloo_process_groups[channel_id]
         )
         work = self._broadcast(
-            tensor,
+            recv_tensor,
             src=self._peer_rank,
             group=group,
             async_op=async_op,
         )
 
         if async_op:
-            return AsyncCollWork(work)
+            work = AsyncCollWork(work)
+            return work.then(self._copy_to_accel_tensor, device, tensor, recv_tensor)
+        else:
+            self._copy_to_accel_tensor(device, tensor, recv_tensor)
 
     def broadcast(
         self,
@@ -371,19 +376,39 @@ class MultiChannelProcessGroup:
             raise ValueError(
                 f"Invalid channel_id: {channel_id}. Must be in range [0, {self._num_channels - 1}]"
             )
+        broadcast_tensor = tensor
         if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
-            raise RuntimeError(
-                f"Collective group {self._group_name} does not support accelerator CCL backend, possibly because (1) the workers in the group have different accelerator types: {[worker.accelerator_type for worker in self._group_info.workers]}, (2) the workers are CPU-only, or (3) the accelerator CCL is not among the supported CCL: {AcceleratorUtil.CCL_SUPPORT_LIST}."
-            )
+            if self._cur_rank == src:
+                # Transfer to CPU if accel CCL is not available
+                broadcast_tensor = broadcast_tensor.to("cpu")
+            else:
+                # Create a new tensor on CPU if accel CCL is not available for non-src ranks
+                broadcast_tensor = torch.empty_like(tensor, device="cpu")
 
         group = (
             self._collective_accel_ccl_process_groups[channel_id]
-            if device == CollectiveGroup.ACCEL
+            if device == CollectiveGroup.ACCEL and not self._no_accel_ccl
             else self._collective_gloo_process_groups[channel_id]
         )
-        work = self._broadcast(tensor, src=src, group=group, async_op=async_op)
+        work = self._broadcast(
+            broadcast_tensor, src=src, group=group, async_op=async_op
+        )
         if async_op:
-            return AsyncCollWork(work)
+            work = AsyncCollWork(work)
+            return work.then(
+                self._copy_to_accel_tensor, device, tensor, broadcast_tensor
+            )
+        else:
+            self._copy_to_accel_tensor(device, tensor, broadcast_tensor)
+
+    def _copy_to_accel_tensor(
+        self, device: str, accel_tensor: torch.Tensor, cpu_tensor: torch.Tensor
+    ):
+        if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
+            # Copy the CPU tensor to the accelerator tensor
+            accel_tensor.copy_(cpu_tensor, non_blocking=True)
+        else:
+            return accel_tensor
 
     def _broadcast(
         self,
@@ -409,10 +434,6 @@ class MultiChannelProcessGroup:
             if _rank_not_in_group(group):
                 _warn_not_in_group("broadcast")
                 return
-            # for npu broadcast
-            if tensor.device.type=='npu':
-                tensor = tensor.cpu()
-                self._logger.debug('Converted tensor from NPU to CPU fro broadcast')
 
             opts = BroadcastOptions()
             opts.rootRank = src

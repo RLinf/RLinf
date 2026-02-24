@@ -28,7 +28,6 @@ from rlinf.utils.utils import (
     retrieve_model_state_dict_in_cpu,
 )
 from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
-import rlinf.utils.device_utils as dutils
 
 
 class FSDPInference(FSDPActor):
@@ -129,7 +128,7 @@ class FSDPInference(FSDPActor):
                     non_blocking=True,
                 )
 
-        dutils.synchronize()
+        self.torch_platform.synchronize()
         torch.distributed.barrier()
 
     def sync_model_from_actor(self) -> None:

@@ -24,7 +24,8 @@ from torch.profiler import (
     tensorboard_trace_handler,
 )
 from torch.profiler.profiler import ProfilerAction
-import rlinf.utils.device_utils as dutils
+
+from rlinf.scheduler import Worker
 
 
 class PyTorchProfilerFunc:
@@ -136,8 +137,8 @@ class PyTorchProfiler:
         if export_chrome:
 
             def chrome_handler(p):
-                if dutils.is_available():
-                    dutils.synchronize()
+                if Worker.torch_platform.is_available():
+                    Worker.torch_platform.synchronize()
                 trace_path = self.output_dir / self._get_chrome_trace_filename(
                     chrome_prefix
                 )

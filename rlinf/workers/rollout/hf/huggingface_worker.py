@@ -32,7 +32,6 @@ from rlinf.scheduler import Channel, Cluster, CollectiveGroupOptions, Worker
 from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.utils.utils import get_model_weights_id
-import rlinf.utils.device_utils as dutils
 
 
 class MultiStepRolloutWorker(Worker):
@@ -43,7 +42,7 @@ class MultiStepRolloutWorker(Worker):
         self.should_stop = False
 
         self.actor_group_name = cfg.actor.group_name
-        self.device = dutils.current_device()
+        self.device = self.torch_platform.current_device()
 
         self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
         self.enable_offload = self.cfg.rollout.get("enable_offload", False)
@@ -229,7 +228,7 @@ class MultiStepRolloutWorker(Worker):
 
         del param_state_dict
         gc.collect()
-        dutils.empty_cache()
+        self.torch_platform.empty_cache()
 
     async def send_rollout_trajectories(
         self, rollout_result: EmbodiedRolloutResult, channel: Channel
@@ -389,7 +388,7 @@ class MultiStepRolloutWorker(Worker):
         if self.enable_cuda_graph:
             self.hf_model.release_cuda_graph()
         self.hf_model.to("cpu")
-        dutils.empty_cache()
+        self.torch_platform.empty_cache()
 
     def reload_model(self):
         self.hf_model.to(self.device)

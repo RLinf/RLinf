@@ -35,6 +35,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
     create_device_mesh,
     get_lr_scheduler,
 )
+from rlinf.scheduler import Worker
 from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import warmup_optimizer_state
 
@@ -44,7 +45,6 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-import rlinf.utils.device_utils as dutils
 
 class FSDPModelManager:
     """
@@ -88,8 +88,8 @@ class FSDPModelManager:
         )
         self.amp_context = self._create_amp_context()
 
-        dutils.set_device(int(os.environ["LOCAL_RANK"]))
-        self.device = dutils.current_device()
+        Worker.torch_platform.set_device(int(os.environ["LOCAL_RANK"]))
+        self.device = Worker.torch_platform.current_device()
 
         self.is_weight_offloaded = False
         self.is_optimizer_offloaded = False
@@ -127,10 +127,11 @@ class FSDPModelManager:
 
         use_triton = cfg.get("use_triton", True)
 
-        assert dutils.is_available(), "Card is not available."
+        assert Worker.torch_platform.is_available(), (
+            f"Accelerator type {Worker.torch_device_type} is not available."
+        )
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
-        device = dutils.get_device_object(local_rank) 
-
+        device = torch.device(f"{Worker.torch_device_type}:{local_rank}")
 
         model_config = AutoConfig.from_pretrained(
             cfg.model.model_path,
