@@ -126,7 +126,7 @@ VLA 模型下载
    git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1
    git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-object-traj1
    git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-goal-traj1
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-10-traj1
+   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-traj1
 
    # 方法 2：使用 huggingface-hub
    # 为提升国内下载速度，可以设置：
@@ -135,7 +135,7 @@ VLA 模型下载
    hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir Openvla-oft-SFT-libero-spatial-traj1
    hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1 --local-dir Openvla-oft-SFT-libero-object-traj1
    hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir Openvla-oft-SFT-libero-goal-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero-10-traj1 --local-dir Openvla-oft-SFT-libero-10-traj1
+   hf download Haozhan72/Openvla-oft-SFT-libero10-traj1 --local-dir Openvla-oft-SFT-libero10-traj1
 
 下载完成后，请确保在配置 yaml 文件中正确指定模型路径与 unnorm_key。
 
