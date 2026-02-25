@@ -262,10 +262,10 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
 
 .. code-block:: yaml
 
-   env/train: robotwin_place_empyt_cup
-   env/eval: robotwin_place_empyt_cup
+   env/train: robotwin_place_empty_cup
+   env/eval: robotwin_place_empty_cup
    
-   # 在 env/train/robotwin_place_empyt_cup.yaml 中：
+   # 在 env/train/robotwin_place_empty_cup.yaml 中：
    env_type: robotwin
    assets_path: "/path/to/robotwin_assets"
    
@@ -283,7 +283,7 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
 
 以 **OpenVLA-OFT** 模型， **GRPO** 算法为例，对应配置文件为：
 
-- **OpenVLA-OFT + GRPO**：``examples/embodiment/config/robotwin_place_empyt_cup_grpo_openvlaoft.yaml``
+- **OpenVLA-OFT + GRPO**：``examples/embodiment/config/robotwin_place_empty_cup_grpo_openvlaoft.yaml``
 
 **4. 启动命令**
 
@@ -307,7 +307,7 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
    # 设置ROBOTWIN_PATH环境变量
    export ROBOTWIN_PATH=/path/to/RoboTwin
 
-   bash examples/embodiment/run_embodiment.sh robotwin_place_empyt_cup_grpo_openvlaoft
+   bash examples/embodiment/run_embodiment.sh robotwin_place_empty_cup_grpo_openvlaoft
 
 可视化与结果
 -------------------------
@@ -369,11 +369,77 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
      - ---
      - **+57.37%**
 
+评估脚本
+~~~~~~~~~~~~~~~~~~~
+
+本节介绍如何在 RoboTwin 评测平台上对不同 VLA 模型进行评估（Eval）。
+在 RLinf 中，模型评估与训练复用同一套配置文件（YAML），
+通常只需在对应 YAML 中将 ``runner.only_eval`` 设置为 ``True``，即可进入评估模式。
+
+1. **OpenVLA-OFT 模型评估**
+
+   请确保在运行前已激活正确的 Python 虚拟环境。  
+   若使用官方 Docker 镜像，需要通过：
+
+   .. code-block:: bash
+
+      source switch_env openvla-oft
+
+   以 GRPO 算法、``place_empty_cup`` 任务为例，对应配置文件为：
+
+   - ``examples/embodiment/config/robotwin_place_empty_cup_grpo_openvlaoft.yaml``
+
+2. **π₀ 模型评估**
+
+   请确保在运行前已激活正确的 Python 虚拟环境。  
+   若使用官方 Docker 镜像，需要通过：
+
+   .. code-block:: bash
+
+      source switch_env openpi
+
+   以 GRPO 算法、``place_empty_cup`` 任务为例，对应配置文件为：
+
+   - ``examples/embodiment/config/robotwin_place_empty_cup_openpi_eval.yaml``
+
+3. **评估模式设置**
+
+   在上述任一配置文件中，将 ``runner.only_eval`` 设置为 ``True``：
+
+   .. code-block:: yaml
+
+      runner:
+        task_type: embodied
+        logger:
+          log_path: "../results"
+          project_name: rlinf
+          experiment_name: "robotwin_grpo_openvlaoft"
+          logger_backends: ["tensorboard"]
+
+        max_epochs: 1000
+        max_steps: -1
+        only_eval: True
+
+4. **启动评估**
+
+   .. code-block:: bash
+
+      export ROBOT_PLATFORM=ALOHA
+      export ROBOTWIN_PATH=/path/to/RoboTwin
+
+      bash examples/embodiment/eval_embodiment.sh CHOSEN_CONFIG
+
+5. **注意事项**
+
+   - OpenVLA-OFT 模型目前使用 ``[piper, piper, 0.6]`` 机械臂配置  
+   - π\ :sub:`0`\ 模型目前使用 ``[aloha-agilex]`` 机械臂配置  
+   - 其余详细参数请参考下一节 **配置说明**
 
 配置说明
 -----------------------
 
-**关键配置参数**
+OpenVLA-OFT关键配置
+~~~~~~~~~~~~~~~~~~~
 
 1. **模型配置**：
 
@@ -396,10 +462,8 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
    - ``env.train.task_config.embodiment``：机器人配置
    - ``env.train.task_config.camera``：相机配置
 
-更多关于 RoboTwin 配置的详细信息，请参考 `RoboTwin 配置文档 <https://robotwin-platform.github.io/doc/usage/configurations.html>`_。
-
-π\ :sub:`0`\模型评估
------------------------
+π\ :sub:`0`\关键配置
+~~~~~~~~~~~~~~~~~~~~~~
 
 1. **模型配置**：
 
@@ -413,6 +477,8 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
    - ``env.eval.center_crop: False``：关闭对图像进行中心裁剪，OFT默认开启
    - ``env.eval.task_config.embodiment: [aloha-agilex]``：使用AgileX机器人，而非oft中使用的[piper, piper, 0.6]
    - ``env.eval.task_config.camera: collect_wrist_camera: true``：收集腕部相机图像，OFT默认不开启
+
+更多关于 RoboTwin 配置的详细信息，请参考 `RoboTwin 配置文档 <https://robotwin-platform.github.io/doc/usage/configurations.html>`_。
 
 注意事项
 -----------------------

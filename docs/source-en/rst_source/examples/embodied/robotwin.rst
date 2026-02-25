@@ -263,10 +263,10 @@ In the environment configuration file, the following key parameters need to be s
 
 .. code-block:: yaml
 
-   env/train: robotwin_place_empyt_cup
-   env/eval: robotwin_place_empyt_cup
+   env/train: robotwin_place_empty_cup
+   env/eval: robotwin_place_empty_cup
    
-   # In env/train/robotwin_place_empyt_cup.yaml:
+   # In env/train/robotwin_place_empty_cup.yaml:
    env_type: robotwin
    assets_path: "/path/to/robotwin_assets"
    
@@ -284,7 +284,7 @@ In the environment configuration file, the following key parameters need to be s
 
 Using **OpenVLA-OFT** model with **GRPO** algorithm as an example, the corresponding configuration file is:
 
-- **OpenVLA-OFT + GRPO**: ``examples/embodiment/config/robotwin_place_empyt_cup_grpo_openvlaoft.yaml``
+- **OpenVLA-OFT + GRPO**: ``examples/embodiment/config/robotwin_place_empty_cup_grpo_openvlaoft.yaml``
 
 **4. Launch Command**
 
@@ -308,7 +308,7 @@ For example, training OpenVLA-OFT model with GRPO in the RoboTwin environment:
    # Set ROBOTWIN_PATH environment variable
    export ROBOTWIN_PATH=/path/to/RoboTwin
 
-   bash examples/embodiment/run_embodiment.sh robotwin_place_empyt_cup_grpo_openvlaoft
+   bash examples/embodiment/run_embodiment.sh robotwin_place_empty_cup_grpo_openvlaoft
 
 Visualization and Results
 -------------------------
@@ -370,11 +370,81 @@ Evaluation Results
      - ---
      - **+57.37%**
 
+Evaluation Script
+~~~~~~~~~~~~~~~~~~~
+
+This section describes how to evaluate different VLA models on the RoboTwin benchmark platform.
+In RLinf, model evaluation reuses the same YAML configuration as training.
+To switch to evaluation mode, simply set ``runner.only_eval`` to ``True`` in the corresponding YAML file.
+
+1. **OpenVLA-OFT Model Evaluation**
+
+   Please make sure the correct Python virtual environment (venv) is activated before running the commands.  
+   If you are using the official Docker image, switch to the ``openvla-oft`` environment via:
+
+   .. code-block:: bash
+
+      source switch_env openvla-oft
+
+   Taking the GRPO algorithm on the ``place_empty_cup`` task as an example, the corresponding configuration file is:
+
+   - ``examples/embodiment/config/robotwin_place_empty_cup_grpo_openvlaoft.yaml``
+
+2. **π₀ Model Evaluation**
+
+   Similarly, ensure that the correct Python virtual environment is activated.  
+   If using the official Docker image, switch to the ``openpi`` environment via:
+
+   .. code-block:: bash
+
+      source switch_env openpi
+
+   Taking the GRPO algorithm on the ``place_empty_cup`` task as an example, the corresponding configuration file is:
+
+   - ``examples/embodiment/config/robotwin_place_empty_cup_openpi_eval.yaml``
+
+3. **Enabling Evaluation Mode**
+
+   In either configuration file above, set ``runner.only_eval`` to ``True``:
+
+   .. code-block:: yaml
+
+      runner:
+        task_type: embodied
+        logger:
+          log_path: "../results"
+          project_name: rlinf
+          experiment_name: "robotwin_grpo_openvlaoft"
+          logger_backends: ["tensorboard"]
+
+        max_epochs: 1000
+        max_steps: -1
+        only_eval: True
+
+   When ``only_eval`` is set to ``True``, the framework runs rollout and evaluation only, without performing parameter updates.
+
+4. **Running Evaluation**
+
+   .. code-block:: bash
+
+      export ROBOT_PLATFORM=ALOHA
+      export ROBOTWIN_PATH=/path/to/RoboTwin
+
+      bash examples/embodiment/eval_embodiment.sh CHOSEN_CONFIG
+
+   Replace ``CHOSEN_CONFIG`` with the selected configuration name (without the ``.yaml`` suffix).
+
+5. **Notes**
+
+   - The OpenVLA-OFT model is currently trained and evaluated with the ``[piper, piper, 0.6]`` robot configuration  
+   - The π₀ model is currently trained and evaluated with the ``[aloha-agilex]`` robot configuration  
+   - For additional configuration details, please refer to the next section **Configuration Details**
 
 Configuration Details
 -----------------------
 
-**Key Configuration Parameters**
+OpenVLA-OFT Key Configuration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 1. **Model Configuration**:
 
@@ -397,10 +467,8 @@ Configuration Details
    - ``env.train.task_config.embodiment``: Robot configuration
    - ``env.train.task_config.camera``: Camera configuration
 
-For more detailed information about RoboTwin configuration, please refer to the `RoboTwin Configuration Documentation <https://robotwin-platform.github.io/doc/usage/configurations.html>`_.
-
-π\ :sub:`0`\  Model Evaluation
---------------------------------
+π\ :sub:`0`\  Key Configuration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 1. **Model Configuration**:
 
@@ -414,6 +482,8 @@ For more detailed information about RoboTwin configuration, please refer to the 
    - ``env.eval.center_crop: False``：Disable center cropping of images, OFT default is enabled
    - ``env.eval.task_config.embodiment: [aloha-agilex]``：Use AgileX robot, instead of [piper, piper, 0.6] used in OFT
    - ``env.eval.task_config.camera: collect_wrist_camera: true``：Collect wrist camera images, OFT default is disabled
+
+For more detailed information about RoboTwin configuration, please refer to the `RoboTwin Configuration Documentation <https://robotwin-platform.github.io/doc/usage/configurations.html>`_.
 
 Important Notes
 -----------------------
