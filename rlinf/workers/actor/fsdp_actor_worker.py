@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import os
 import time
 from functools import partial
@@ -1268,8 +1267,12 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             else float("inf")
         )
         if metrics_data["loss_ratio"] > 1e5:
-            logging.warning(
-                f"SFT loss is {metrics_data['loss_ratio']}x larger than PPO loss"
+            self.logger.warning(
+                "SFT/PPO loss imbalance detected: "
+                f"ratio={metrics_data['loss_ratio']:.3e}, "
+                f"sft_loss={metrics_data['sft_loss']:.6f}, "
+                f"ppo_loss={metrics_data['ppo_loss']:.6f}, "
+                f"sft_loss_weight={self.sft_loss_weight:.6f}"
             )
 
     @Worker.timer("run_training")

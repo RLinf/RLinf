@@ -34,9 +34,8 @@ from mani_skill.utils.structs.types import SimConfig
 from sapien.physx import PhysxMaterial
 from transforms3d.euler import euler2quat, mat2euler
 
-from ..utils import quaternion_to_axis_angle
-from .panda_table_agent import PandaBridgeDatasetFlatTable
-from .pose_utils import (
+from rlinf.envs.maniskill.tasks.panda_table_agent import PandaBridgeDatasetFlatTable
+from rlinf.envs.maniskill.tasks.pose_utils import (
     matrix2pose_batch_torch,
     pose2matrix_batch_torch,
     pose2matrix_torch,
@@ -827,7 +826,6 @@ class PandaPutOnPlateInScene25(BaseEnv):
         )
         object_poses = pose_bank[self.select_carrot_ids, torch.arange(b)]
 
-        # success_flag = self._is_success(object_poses)
         success_flag = info["success"]
 
         rewards = self.compute_approaching_reward(object_poses)
@@ -1225,13 +1223,9 @@ class PandaPutOnPlateInScene25DigitalTwin(PandaPutOnPlateInScene25):
         raw_obs, infos = super().reset(seed, options)
 
         obs_image = raw_obs["sensor_data"]["c19_front_view"]["rgb"].to(torch.uint8)
-        proprio_state_ori = self.unwrapped.agent.controller.controllers[
-            "arm"
-        ]._target_pose.raw_pose
         gripper_state = (
             self.unwrapped.agent.robot.get_qpos().to(torch.float32)[:, -1:] * 2
         )
-        proprio_state_euler = quaternion_to_axis_angle(proprio_state_ori[:, 3:7])
 
         ee_pose_T = (
             self.unwrapped.agent.ee_pose_at_robot_base.to_transformation_matrix()
@@ -1245,8 +1239,8 @@ class PandaPutOnPlateInScene25DigitalTwin(PandaPutOnPlateInScene25):
             axis=0,
         )  # (num_envs, 3)
 
-        pos = torch.from_numpy(pos).to(proprio_state_euler.device)
-        euler = torch.from_numpy(euler).to(proprio_state_euler.device)
+        pos = torch.from_numpy(pos).to(gripper_state.device)
+        euler = torch.from_numpy(euler).to(gripper_state.device)
 
         proprioception = torch.cat([pos, euler, gripper_state], dim=1)  # (num_envs, 7)
 
@@ -1270,7 +1264,7 @@ class PandaPutOnPlateInScene25DigitalTwin(PandaPutOnPlateInScene25):
                 pose_tcp_in_world
             )  # (4,4) or (N,4,4)
 
-            # root 在 world 系下的位姿
+            # root pose in the world frame
             pose_root_in_world_mat = pose2matrix_torch(
                 torch.tensor(
                     [0.3, 0.028, -0.870, 0, 0, 0, 1],
@@ -1292,13 +1286,9 @@ class PandaPutOnPlateInScene25DigitalTwin(PandaPutOnPlateInScene25):
             )
 
         obs_image = raw_obs["sensor_data"]["c19_front_view"]["rgb"].to(torch.uint8)
-        proprio_state_ori = self.unwrapped.agent.controller.controllers[
-            "arm"
-        ]._target_pose.raw_pose
         gripper_state = (
             self.unwrapped.agent.robot.get_qpos().to(torch.float32)[:, -1:] * 2
         )
-        proprio_state_euler = quaternion_to_axis_angle(proprio_state_ori[:, 3:7])
 
         ee_pose_T = (
             self.unwrapped.agent.ee_pose_at_robot_base.to_transformation_matrix()
@@ -1312,8 +1302,8 @@ class PandaPutOnPlateInScene25DigitalTwin(PandaPutOnPlateInScene25):
             axis=0,
         )  # (num_envs, 3)
 
-        pos = torch.from_numpy(pos).to(proprio_state_euler.device)
-        euler = torch.from_numpy(euler).to(proprio_state_euler.device)
+        pos = torch.from_numpy(pos).to(gripper_state.device)
+        euler = torch.from_numpy(euler).to(gripper_state.device)
 
         proprioception = torch.cat([pos, euler, gripper_state], dim=1)  # (num_envs, 7)
 

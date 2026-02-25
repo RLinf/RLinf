@@ -11,7 +11,9 @@ use_fixed_reset_state_ids: True
 max_steps_per_rollout_epoch: 80
 max_episode_steps: 80 # max episode steps for truncation
 reward_mode: raw
-obs_mode: raw
+wrap_obs_mode: raw
+
+enable_offload: False
 
 video_cfg:
   save_video: False
