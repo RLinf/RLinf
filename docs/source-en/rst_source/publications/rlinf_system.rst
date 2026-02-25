@@ -1,18 +1,145 @@
 RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Micro Flow Transformation
 ==========================================================================================================
 
-**Paper:** `arXiv:2509.15965 <https://arxiv.org/abs/2509.15965>`__ 
+**Paper:** `arXiv:2509.15965 <https://arxiv.org/abs/2509.15965>`__
 
 Overview
 --------
 
-RLinf is a flexible and scalable open-source infrastructure for post-training foundation models via reinforcement learning. This page summarizes the **reasoning scenario**: using RL to train large language models (LLMs) for mathematical reasoning. Compared to supervised fine-tuning (SFT), RL encourages models to explore diverse reasoning paths while prioritizing correct final answers.
+.. raw:: html
+
+  <div align="center">
+    <table border="0">
+      <tr>
+        <td align="center">
+          <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/rlinf_arch.jpg" alt="mani_openvla" width="450"/>
+        </td>
+      </tr>
+    </table>
+    </div>
+
+
+RLinf is a flexible and scalable open-source infrastructure for post-training foundation models via reinforcement learning. It supports **reasoning RL** (e.g., math with GRPO), **embodied RL** (e.g., VLAs in simulators), and other scenarios. Built on the macro-to-micro flow transformation (M2Flow) paradigm, RLinf decouples logical workflow programming from execution planning and uses elastic pipelining, context switching, and profiling-guided scheduling to maximize throughput. Evaluations show **1.07×–2.43×** end-to-end training speedup over state-of-the-art systems: up to **1.7×** in reasoning RL and up to **2.43×** in embodied RL.
 
 Results
 -------
 
+We extensively evaluate RLinf across math-reasoning and embodied RL workloads, covering four different models of different sizes (i.e., Qwen2.5, Qwen3-MoE, Open-VLA, OpenVLA-OFT), two RL algorithms (GRPO and PPO), and multiple cluster scales.
+
+Math training performance
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+RLinf consistently outperforms state-of-the-art RL systems veRL and Slime by 1.07×∼1.70× on a variety of math-reasoning RL settings. The results also show that different RL settings favor different execution modes.
+
+Dense models
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+.. raw:: html
+
+   <div align="center">
+   <table border="0">
+     <tr>
+       <td align="center">
+         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_verl_all.jpg" alt="mani_openvla" width="350"/>
+         <br/><strong>Throughput (GRPO)</strong>
+       </td>
+       <td align="center">
+         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/latency_breakdown_7B.jpg" alt="mani_openvlaoft" width="350"/>
+         <br/><strong>Latency breakdown (GRPO on 7B)</strong>
+       </td>
+     </tr>
+   </table>
+   </div>
+
+
+The following figures shows the performance on PPO algorithm.
+
+.. raw:: html
+
+   <div align="center">
+   <table border="0">
+     <tr>
+       <td align="center">
+         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_verl_ppo.jpg" alt="mani_openvla" width="350"/>
+         <br/><strong>Throughput (PPO)</strong>
+       </td>
+       <td align="center">
+         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_verl_breakdown.jpg" alt="mani_openvlaoft" width="350"/>
+         <br/><strong>Latency breakdown (PPO on 7B, 32 GPUs)</strong>
+       </td>
+     </tr>
+   </table>
+   </div>
+
+
+MoE models
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For MoE models, we evaluate the Qwen3-30B-A3B on 32, 64, and 128 GPUs with a rollout batch size of 1536 and sequence length 20480. The following figures show the performance and latency breakdown on GRPO algorithm.
+
+
+.. raw:: html
+
+   <div align="center">
+   <table border="0">
+     <tr>
+       <td align="center">
+         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_slime_all.jpg" alt="mani_openvla" width="250"/>
+
+         <br/><strong>Throughput</strong>
+       </td>
+       <td align="center">
+         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_slime_breakdown.jpg" alt="mani_openvlaoft" width="350"/>
+         <br/><strong>Latency breakdown (32 GPUs)</strong>
+       </td>
+     </tr>
+   </table>
+   </div>
+
+
+Embodied training performance
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+ManiSkill and LIBERO
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+We evaluate on OpenVLA and OpenVLA-OFT on ManiSkill and LIBERO, respectively. On LIBERO, we compare RLinf with SimpleVLA-RL (commit d001d), which is built on veRL. On ManiSkill, no distributed RL baseline exists, so we compare different execution modes of RLinf. Training speed is reported in **steps\/sec**, computed as the total number of environment steps divided by the iteration time.
+
+.. raw:: html
+
+  <div align="center">
+   <table border="0">
+     <tr>
+       <td align="center">
+         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/eval_embody_all.jpg" alt="mani_openvla" width="450"/>
+
+         <br/><strong>Throughput</strong>
+       </td>
+     </tr>
+   </table>
+   </div>
+
+   <div align="center">
+   <table border="0">
+     <tr>
+       <td align="center">
+         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/latency_breakdown_libero_maniskill.jpg" alt="mani_openvla" width="500"/>
+
+         <br/><strong>Latency breakdown</strong>
+       </td>
+     </tr>
+   </table>
+   </div>
+
+
+Model evaluation performance
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The following tables report evaluation performance of models trained with RLinf (and baselines) on math benchmarks. RLinf-math models are trained with RLinf and evaluated on AIME 24, AIME 25, and GPQA-diamond.
+
 1.5B model results
-~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table:: 1.5B model results
    :header-rows: 1
@@ -112,7 +239,8 @@ Quickstart
 ----------
 
 - **Installation:** :doc:`../start/installation`
-- **Run training:** :doc:`../start/llm`
+- **Math (reasoning) training:** :doc:`../start/llm`
+- **Embodied training:** :doc:`../start/vla`
 
 Citation
 --------
