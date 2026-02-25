@@ -126,7 +126,7 @@ VLA 模型下载
    git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1
    git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-object-traj1
    git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-goal-traj1
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-10-traj1
+   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-traj1
 
    # 方法 2：使用 huggingface-hub
    # 为提升国内下载速度，可以设置：
@@ -135,7 +135,7 @@ VLA 模型下载
    hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir Openvla-oft-SFT-libero-spatial-traj1
    hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1 --local-dir Openvla-oft-SFT-libero-object-traj1
    hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir Openvla-oft-SFT-libero-goal-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero-10-traj1 --local-dir Openvla-oft-SFT-libero-10-traj1
+   hf download Haozhan72/Openvla-oft-SFT-libero10-traj1 --local-dir Openvla-oft-SFT-libero10-traj1
 
 下载完成后，请确保在配置 yaml 文件中正确指定模型路径与 unnorm_key。
 
@@ -348,8 +348,8 @@ LIBERO 部分结果
 
 .. note::
 
-    我们基于 `Diffsynth-Studio <https://github.com/modelscope/DiffSynth-Studio/tree/afd101f3452c9ecae0c87b79adfa2e22d65ffdc3>`_ 框架进行Wan的训练与推理。
-    通过复用Wan的Cross Attention机制与timestep AdaLN机制进行动作信号的注入，从而实现帧级的动作控制。
+    我们基于 `Diffsynth-Studio <https://github.com/RLinf/diffsynth-studio>`_ 框架进行Wan的训练与推理。
+    在下面的评测结果中，我们仅使用冻结的世界模型服务于 VLA 模型的强化学习训练，并未使用世界模型与 VLA 的协同进化。用户可通过手动实现协同进化，实现性能的继续增长。
 
 .. list-table:: **使用 Wan 模拟器的 LIBERO 任务组评测结果**
     :header-rows: 1
