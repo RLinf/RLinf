@@ -123,6 +123,7 @@ rollout:
     model_path: "/workspace/dataset/resnet"
 
   enable_torch_compile: True
+  enable_cuda_graph: False
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"

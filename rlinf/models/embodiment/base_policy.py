@@ -66,5 +66,28 @@ class BasePolicy(ABC):
     @abstractmethod
     def predict_action_batch(self, **kwargs): ...
 
-    def enable_torch_compile(self, mode: str = "max-autotune-no-cudagraphs"):
-        return
+    def enable_torch_compile(
+        self,
+        mode: str = "max-autotune-no-cudagraphs",
+    ):
+        raise NotImplementedError(
+            "torch compile is not supported for current policy, please set `enable_torch_compile=False` for now"
+        )
+
+    def capture_cuda_graph(self, train_batch_size: int, eval_batch_size: int):
+        raise NotImplementedError(
+            "cuda graph is not supported for current policy, please set `enable_cuda_graph=False` for now"
+        )
+
+    def release_cuda_graph(self):
+        from rlinf.utils.cuda_graph import CUDAGraphManager
+
+        if self.is_cuda_graph_enabled():
+            self.cuda_graph_manager: CUDAGraphManager
+            self.cuda_graph_manager.destroy()
+            self.cuda_graph_manager = None
+
+    def is_cuda_graph_enabled(self) -> bool:
+        return (
+            hasattr(self, "cuda_graph_manager") and self.cuda_graph_manager is not None
+        )

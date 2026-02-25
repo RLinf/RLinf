@@ -13,12 +13,13 @@
 # limitations under the License.
 from typing import Any
 
-import jax
 import torch
 from omegaconf import DictConfig
+from torch.utils import _pytree
 
 from rlinf.config import SupportedModel
 from rlinf.models.embodiment.base_policy import ForwardType
+from rlinf.utils.pytree import register_pytree_dataclasses
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
 
@@ -53,8 +54,11 @@ class FSDPVlaSftWorker(FSDPSftWorker):
     def get_train_model_output(self, batch: dict[str, Any]):
         observation, actions = next(self.data_iter)
 
-        observation = jax.tree.map(
-            lambda x: torch.as_tensor(x, device=self.device).contiguous().clone(),
+        register_pytree_dataclasses(observation)
+        observation = _pytree.tree_map(
+            lambda x: torch.as_tensor(x, device=self.device).contiguous().clone()
+            if x is not None
+            else x,
             observation,
         )
         actions = actions.to(torch.float32)

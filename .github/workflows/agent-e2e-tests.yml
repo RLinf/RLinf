@@ -18,7 +18,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh reason
+          bash requirements/install.sh agentic
 
       - name: Megatron SGLang Collocated mode
         timeout-minutes: 20
@@ -96,7 +96,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh reason
+          bash requirements/install.sh agentic
 
       - name: Megatron SGLang Collocated mode
         timeout-minutes: 20
@@ -159,7 +159,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh reason
+          bash requirements/install.sh agentic
   
       - name: Megatron SGLang Collocated mode
         timeout-minutes: 20
@@ -187,7 +187,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh reason
+          bash requirements/install.sh agentic
   
       - name: Megatron SGLang Collocated mode
         timeout-minutes: 20
@@ -215,7 +215,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh reason
+          bash requirements/install.sh agentic
 
       - name: Install dependencies
         run: |
@@ -248,7 +248,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh reason
+          bash requirements/install.sh agentic
 
       - name: FSDP SGLang Collocated mode
         timeout-minutes: 20
@@ -283,7 +283,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh reason
+          bash requirements/install.sh agentic
 
       - name: Megatron SGLang Pipeline mode
         timeout-minutes: 10
@@ -311,7 +311,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh reason
+          bash requirements/install.sh agentic
 
       - name: MoE sequential MLP Collocated mode 
         timeout-minutes: 20

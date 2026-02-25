@@ -111,6 +111,7 @@ env:
 
 rollout:
   enable_torch_compile: True
+  enable_cuda_graph: False
   group_name: "RolloutGroup"
   backend: "huggingface"
   enable_offload: False

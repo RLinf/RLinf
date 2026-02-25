@@ -99,6 +99,8 @@ class MLPPolicy(nn.Module, BasePolicy):
         else:
             self.action_scale = None
 
+        self.cuda_graph_manager = None
+
     def preprocess_env_obs(self, env_obs):
         device = next(self.parameters()).device
         return {"states": env_obs["states"].to(device)}
@@ -203,24 +205,20 @@ class MLPPolicy(nn.Module, BasePolicy):
 
         return action_mean, action_logstd
 
-    @torch.inference_mode()
-    def predict_action_batch(
+    def _generate_actions(
         self,
-        env_obs,
-        calculate_logprobs=True,
-        calculate_values=True,
-        return_obs=True,
-        mode="train",
-        **kwargs,
-    ):
-        env_obs = self.preprocess_env_obs(env_obs=env_obs)
-        action_mean, action_logstd = self._sample_actions(env_obs["states"])
+        states: torch.Tensor,
+        mode: str = "train",
+        calculate_values: bool = True,
+        use_rsample: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        action_mean, action_logstd = self._sample_actions(states)
 
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
 
         if mode == "train":
-            raw_action = probs.sample()
+            raw_action = probs.rsample() if use_rsample else probs.sample()
         elif mode == "eval":
             raw_action = action_mean.clone()
         else:
@@ -239,13 +237,30 @@ class MLPPolicy(nn.Module, BasePolicy):
             action = raw_action
 
         chunk_actions = action.reshape(-1, self.num_action_chunks, self.action_dim)
-        chunk_actions = chunk_actions.cpu().numpy()
-
         if hasattr(self, "value_head") and calculate_values:
-            chunk_values = self.value_head(env_obs["states"])
+            chunk_values = self.value_head(states)
         else:
             chunk_values = torch.zeros_like(chunk_logprobs[..., :1])
 
+        return action, chunk_actions, chunk_logprobs, chunk_values
+
+    @torch.inference_mode()
+    def predict_action_batch(
+        self,
+        env_obs,
+        calculate_logprobs=True,
+        calculate_values=True,
+        return_obs=True,
+        mode="train",
+        **kwargs,
+    ):
+        env_obs = self.preprocess_env_obs(env_obs=env_obs)
+
+        action, chunk_actions, chunk_logprobs, chunk_values = self._generate_actions(
+            env_obs["states"], mode=mode, calculate_values=calculate_values
+        )
+
+        chunk_actions = chunk_actions.cpu().numpy()
         forward_inputs = {"action": action}
         if return_obs:
             forward_inputs["states"] = env_obs["states"]
@@ -279,10 +294,110 @@ class MLPPolicy(nn.Module, BasePolicy):
     def crossq_forward(self, obs, **kwargs):
         return self.sac_forward(obs, **kwargs)
 
-    def enable_torch_compile(self, mode: str = "max-autotune-no-cudagraphs"):
+    def capture_action_generation(
+        self,
+        batch_size: int,
+        independent_std: bool,
+        final_tanh: bool,
+        mode: str,
+        calculate_values: bool,
+    ):
+        from rlinf.utils.cuda_graph import GraphCaptureSpec
+
+        device = next(self.parameters()).device
+        dtype = next(self.parameters()).dtype
+        inputs = {
+            "states": torch.zeros(
+                (batch_size, self.obs_dim), device=device, dtype=dtype
+            ),
+        }
+        external_inputs = {"states"}
+
+        def action_generation_func(
+            inputs: dict[str, torch.Tensor],
+        ) -> dict[str, torch.Tensor]:
+            action, chunk_actions, chunk_logprobs, chunk_values = (
+                self._generate_actions(
+                    inputs["states"],
+                    mode=mode,
+                    calculate_values=calculate_values,
+                    use_rsample=True,
+                )
+            )
+            outputs = {
+                "chunk_actions": chunk_actions,
+                "chunk_logprobs": chunk_logprobs,
+                "chunk_values": chunk_values,
+                "action": action,
+            }
+            return outputs
+
+        name = f"action_generation_{independent_std}_{final_tanh}_{mode}_{calculate_values}"
+        spec = GraphCaptureSpec(
+            name=name,
+            inputs=inputs,
+            external_inputs=external_inputs,
+            func=action_generation_func,
+            register_default_cuda_generator=True,
+        )
+        self.cuda_graph_manager.capture(spec)
+
+    def capture_cuda_graph(self, train_batch_size: int, eval_batch_size: int):
+        from rlinf.utils.cuda_graph import CUDAGraphManager
+
+        if self.cuda_graph_manager is None:
+            self.cuda_graph_manager = CUDAGraphManager()
+        self.capture_action_generation(
+            batch_size=train_batch_size,
+            independent_std=self.independent_std,
+            final_tanh=self.final_tanh,
+            mode="train",
+            calculate_values=True,
+        )
+        self.capture_action_generation(
+            batch_size=train_batch_size,
+            independent_std=self.independent_std,
+            final_tanh=self.final_tanh,
+            mode="train",
+            calculate_values=False,
+        )
+
+        self.capture_action_generation(
+            batch_size=eval_batch_size,
+            independent_std=self.independent_std,
+            final_tanh=self.final_tanh,
+            mode="eval",
+            calculate_values=True,
+        )
+        self.capture_action_generation(
+            batch_size=eval_batch_size,
+            independent_std=self.independent_std,
+            final_tanh=self.final_tanh,
+            mode="eval",
+            calculate_values=False,
+        )
+
+        def generate_actions_func(
+            states: torch.Tensor, mode: str, calculate_values: bool
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+            graph_name = f"action_generation_{self.independent_std}_{self.final_tanh}_{mode}_{calculate_values}"
+            inputs = {"states": states}
+            outputs = self.cuda_graph_manager.replay(graph_name, inputs=inputs)
+            return (
+                outputs["action"],
+                outputs["chunk_actions"],
+                outputs["chunk_logprobs"],
+                outputs["chunk_values"],
+            )
+
+        self._generate_actions = generate_actions_func
+
+    def enable_torch_compile(
+        self,
+        mode: str = "max-autotune-no-cudagraphs",
+    ):
         if self.torch_compile_enabled:
             return
 
         self._sample_actions = torch.compile(self._sample_actions, mode=mode)
-
         self.torch_compile_enabled = True

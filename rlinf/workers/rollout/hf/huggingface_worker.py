@@ -62,6 +62,16 @@ class MultiStepRolloutWorker(Worker):
         self._sync_weight_comm_options = CollectiveGroupOptions(
             accel_max_ctas=max_ctas, accel_min_ctas=min_ctas
         )
+        self.total_num_train_envs = cfg.env.train.total_num_envs
+        self.total_num_eval_envs = cfg.env.eval.total_num_envs
+        self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
+        self.train_batch_size = (
+            self.total_num_train_envs // self._world_size // self.num_pipeline_stages
+        )
+        self.eval_batch_size = (
+            self.total_num_eval_envs // self._world_size // self.num_pipeline_stages
+        )
+        self.enable_cuda_graph = cfg.rollout.get("enable_cuda_graph", False)
 
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
@@ -82,6 +92,11 @@ class MultiStepRolloutWorker(Worker):
                 "torch_compile_mode", "max-autotune-no-cudagraphs"
             )
             self.hf_model.enable_torch_compile(mode=mode)
+        if self.enable_cuda_graph and not self.enable_offload:
+            self.hf_model.capture_cuda_graph(
+                train_batch_size=self.train_batch_size,
+                eval_batch_size=self.eval_batch_size,
+            )
 
         self.setup_sample_params()
         if self.enable_offload:
@@ -370,12 +385,18 @@ class MultiStepRolloutWorker(Worker):
             self.offload_model()
 
     def offload_model(self):
-        self.hf_model = self.hf_model.to("cpu")
-        gc.collect()
+        if self.enable_cuda_graph:
+            self.hf_model.release_cuda_graph()
+        self.hf_model.to("cpu")
         torch.cuda.empty_cache()
 
     def reload_model(self):
-        self.hf_model = self.hf_model.to(self.device)
+        self.hf_model.to(self.device)
+        if self.enable_cuda_graph:
+            self.hf_model.capture_cuda_graph(
+                train_batch_size=self.train_batch_size,
+                eval_batch_size=self.eval_batch_size,
+            )
 
     async def recv_env_output(
         self, input_channel: Channel, mode="train"
