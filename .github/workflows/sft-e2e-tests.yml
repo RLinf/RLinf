@@ -39,7 +39,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Create sft environment
+      - name: Create vlm sft environment
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
@@ -47,7 +47,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh reason
+          bash requirements/install.sh agentic
 
       - name: SFT Robo2vlm train test
         timeout-minutes: 20
