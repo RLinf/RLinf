@@ -40,9 +40,9 @@ class AsyncPPOMultiStepRolloutWorker(MultiStepRolloutWorker):
         )
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self._generate_task: asyncio.Task = None
-
-    def _build_versions_tensor(self, reference: torch.Tensor) -> torch.Tensor:
-        return torch.full_like(reference, float(self.version), dtype=torch.float32)
+        assert not self.enable_offload, (
+            "Offload not supported in AsyncPPOMultiStepRolloutWorker"
+        )
 
     async def _predict_under_pause_lock(self, obs: dict) -> tuple[torch.Tensor, dict]:
         await self.wait_if_paused()
@@ -72,10 +72,6 @@ class AsyncPPOMultiStepRolloutWorker(MultiStepRolloutWorker):
         output_channel: Channel,
         actor_channel: Channel,
     ) -> None:
-        assert not self.enable_offload, (
-            "Offload not supported in AsyncPPOMultiStepRolloutWorker"
-        )
-
         n_train_chunk_steps = (
             self.cfg.env.train.max_steps_per_rollout_epoch
             // self.cfg.actor.model.num_action_chunks
@@ -126,7 +122,11 @@ class AsyncPPOMultiStepRolloutWorker(MultiStepRolloutWorker):
                         terminations=env_output["terminations"],
                         rewards=rewards,
                         forward_inputs=result["forward_inputs"],
-                        versions=self._build_versions_tensor(result["prev_logprobs"])
+                        versions=torch.full_like(
+                            result["prev_logprobs"],
+                            float(self.version),
+                            dtype=torch.float32,
+                        )
                         if self.collect_prev_infos
                         else None,
                     )

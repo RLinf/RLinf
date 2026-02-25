@@ -15,7 +15,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: 2-3
+    actor,env,rollout: 0-3
 
 runner:
   task_type: embodied

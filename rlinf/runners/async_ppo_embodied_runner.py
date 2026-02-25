@@ -51,6 +51,11 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         self.env_metrics_channel = Channel.create("EnvMetrics")
         self.recompute_logprobs = bool(self.cfg.rollout.get("recompute_logprobs", True))
 
+        if self.cfg.runner.val_check_interval > 0:
+            self.logger.warning(
+                "Validation check interval is set to a positive value, but validation is not implemented for AsyncPPOEmbodiedRunner, so validation will be skipped."
+            )
+
     def get_env_metrics(self) -> dict:
         results = []
         while True:

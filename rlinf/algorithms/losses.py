@@ -82,7 +82,9 @@ def compute_decoupled_ppo_actor_loss(
     assert proximal_logprobs.dtype == torch.float32
 
     loss_mask_count = loss_mask.count_nonzero() or 1
-    proximal_ratio = torch.where(loss_mask, torch.exp(logprobs - old_logprobs), 0.0)
+    proximal_ratio = torch.where(
+        loss_mask, torch.exp(logprobs - proximal_logprobs), 0.0
+    )
     clipped_proximal_ratio = torch.clamp(
         proximal_ratio, 1.0 - clip_ratio_low, 1.0 + clip_ratio_high
     )
@@ -107,7 +109,7 @@ def compute_decoupled_ppo_actor_loss(
     )
     behav_mask_count = behav_mask.count_nonzero() or 1
 
-    pg_loss = loss_agg_func(pg_loss, loss_mask, loss_mask_ratio)
+    pg_loss = loss_agg_func(pg_loss * behav_weight, behav_mask, loss_mask_ratio)
     if critic_warmup:
         pg_loss = torch.tensor(0.0, device=pg_loss.device)
 
