@@ -20,7 +20,7 @@ runner:
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   # sft runner use the len(dataset) as one epoch
-  max_epochs: 5
+  max_epochs: 1
   max_steps: -1
   # eval the model intenval
   val_check_interval: -1
