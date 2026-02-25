@@ -53,7 +53,7 @@ Dense models
    </div>
 
 
-The following figures shows the performance on PPO algorithm.
+The following figures show the performance on PPO algorithm.
 
 .. raw:: html
 
