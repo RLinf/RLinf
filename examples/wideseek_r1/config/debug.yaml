@@ -7,12 +7,12 @@ cluster:
     actor,rollout,reward: all
 
 runner:
-  experiment_name: test
-  output_dir: ./train
-  seq_length: 32000  
+  experiment_name: debug
+  output_dir: ./logs
+  seq_length: 10000  
 
   enable_dynamic_batch_size: True
-  max_tokens_per_mbs: 32000
+  max_tokens_per_mbs: 10000
 
   max_epochs: 1
   max_steps: -1  
@@ -32,8 +32,13 @@ algorithm:
   advantage_mode: trajectory
 
 agentloop:
-  use_llm_judge_api: True
+  group_name: "AgentLoopGroup"
   workflow: mas
+  # max_planner_turns: 5
+  # max_worker_turns: 5
+  # max_workers_per_planner: 3
+  # max_toolcall_per_worker: 3
+  # is_dynamic_rollout_batch: True
 
 rollout:
   model:
@@ -48,13 +53,13 @@ tools:
 data:
   type: wideseek_r1
   max_prompt_length: 4096
-  rollout_batch_size: 16
+  rollout_batch_size: 256
   prompt_key: question
   answer_key: answer
   is_markdown: True
   unique_columns: unique_columns 
-  train_data_paths: ["/mnt/project_rlinf/xzxuan/Multiagent/examples/hybrid_20k.jsonl"]
-  val_data_paths: ["/mnt/project_rlinf/xzxuan/Multiagent/examples/hybrid_20k.jsonl"]
+  train_data_paths: ["/mnt/project_rlinf/xzxuan/train_data/hybrid_20k.jsonl"]
+  val_data_paths: ["/mnt/project_rlinf/xzxuan/train_data/hybrid_20k.jsonl"]
   shuffle: False
   is_hybrid: True
   data_size: -1

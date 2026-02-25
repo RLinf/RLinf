@@ -49,17 +49,17 @@ def get_prompt_planner_en(question: str, is_markdown: bool) -> str:
 
     if add_few_shot:
         if is_markdown:
-            ststem = SYSTEM_PROMPT_PLANNER.format(MARKDOWN_FORMAT_EN)
+            system = SYSTEM_PROMPT_PLANNER.format(MARKDOWN_FORMAT_EN)
         else:
-            ststem = SYSTEM_PROMPT_PLANNER.format(BOXED_FORMAT_EN)
+            system = SYSTEM_PROMPT_PLANNER.format(BOXED_FORMAT_EN)
     else:
         if is_markdown:
-            ststem = SYSTEM_PROMPT_PLANNER_NOSHOT.format(MARKDOWN_FORMAT_EN)
+            system = SYSTEM_PROMPT_PLANNER_NOSHOT.format(MARKDOWN_FORMAT_EN)
         else:
-            ststem = SYSTEM_PROMPT_PLANNER_NOSHOT.format(BOXED_FORMAT_EN)
+            system = SYSTEM_PROMPT_PLANNER_NOSHOT.format(BOXED_FORMAT_EN)
 
     return [
-        {"role": "system", "content": ststem},
+        {"role": "system", "content": system},
         {"role": "user", "content": USER_PROMPT_PLANNER.format(question)},
     ]
 
@@ -70,17 +70,17 @@ def get_prompt_planner_zh(question: str, is_markdown: bool) -> str:
 
     if add_few_shot:
         if is_markdown:
-            ststem = SYSTEM_PROMPT_PLANNER_ZH.format(MARKDOWN_FORMAT_ZH)
+            system = SYSTEM_PROMPT_PLANNER_ZH.format(MARKDOWN_FORMAT_ZH)
         else:
-            ststem = SYSTEM_PROMPT_PLANNER_ZH.format(BOXED_FORMAT_ZH)
+            system = SYSTEM_PROMPT_PLANNER_ZH.format(BOXED_FORMAT_ZH)
     else:
         if is_markdown:
-            ststem = SYSTEM_PROMPT_PLANNER_ZH_NOSHOT.format(MARKDOWN_FORMAT_ZH)
+            system = SYSTEM_PROMPT_PLANNER_ZH_NOSHOT.format(MARKDOWN_FORMAT_ZH)
         else:
-            ststem = SYSTEM_PROMPT_PLANNER_ZH_NOSHOT.format(BOXED_FORMAT_ZH)
+            system = SYSTEM_PROMPT_PLANNER_ZH_NOSHOT.format(BOXED_FORMAT_ZH)
 
     return [
-        {"role": "system", "content": ststem},
+        {"role": "system", "content": system},
         {"role": "user", "content": USER_PROMPT_PLANNER_ZH.format(question)},
     ]
 

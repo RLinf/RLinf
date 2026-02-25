@@ -25,7 +25,7 @@ from omegaconf import DictConfig
 
 from rlinf.data.io_struct import DynamicRolloutResult
 from rlinf.agents.wideseek_r1.utils.metrics import _compute_eval_metrics, _compute_mas_turn_metrics, _compute_tool_call_metrics
-from rlinf.agents.wideseek_r1.sglang_client import SGLangClient
+from rlinf.agents.wideseek_r1.utils.sglang_client import SGLangClient
 from rlinf.agents.wideseek_r1.utils.reward import (
     compute_score_em,
     compute_score_f1,
@@ -35,7 +35,7 @@ from rlinf.agents.wideseek_r1.utils.tool_description import (
     tools_description_en,
     tools_description_zh,
 )
-from rlinf.agents.wideseek_r1.utils.utils import (
+from rlinf.agents.wideseek_r1.utils.prompt_utils import (
     get_access_summary_messages,
     get_prompt_planner,
     get_prompt_single_agent,
@@ -82,16 +82,15 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         self.reward_eval = self.cfg.reward.get("eval_metric", [])
         self.reward_eval = [m.upper() for m in self.reward_eval]
         self.is_widesearch = self.cfg.data.get("is_widesearch", False)
-
-        self.use_llm_judge_api = self.cfg.agentloop.get("use_llm_judge_api", False)
-        if self.use_llm_judge_api:
-            llm_ip = self.cfg.agentloop.get("llm_ip", "")
-            llm_port = self.cfg.agentloop.get("llm_port", "")
-            llm_type = self.cfg.agentloop.get("llm_type", "")
-            self.sgl_client = SGLangClient(llm_ip, llm_port, llm_type)
+        
+        self.use_llm_judge_api = True
+        llm_ip = self.cfg.agentloop.get("llm_ip", "")
+        llm_port = self.cfg.agentloop.get("llm_port", "")
+        llm_type = self.cfg.agentloop.get("llm_type", "")
+        self.sgl_client = SGLangClient(llm_ip, llm_port, llm_type)
 
         self.train_roles = self.cfg.agentloop.get("train_roles", None)
-        self.role_idx: ContextVar[int] = ContextVar('idx_to_sub_traj')
+        
 
     async def extract_tool_calls(
         self, response_text: str, role: str
@@ -245,16 +244,11 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         return function_calls, tool_call_info
 
     async def access_sumamry(self, info_to_extract, page_content):
-        # Create messages
-        # can't see origin question
         if page_content == "No More Information is Found for this URL.":
             return "No useful Information is Found under this URL."
 
         messages = get_access_summary_messages(info_to_extract, page_content)
-        if self.use_llm_judge_api:
-            result_text = await self.sgl_client.call_sglang_api(messages)
-        else:
-            result_text = page_content  # TODO: for quick start?
+        result_text = await self.sgl_client.call_sglang_api(messages)     
         return result_text
 
     async def worker_call(
@@ -263,6 +257,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         main_task: str,
         is_markdown: bool,
         language: str,
+        sub_traj_id: int
     ) -> tuple[list[AgentLoopOutput], str]:
         assert worker_request.name == "subtask", (
             f"Expected 'subtask' tool, got {worker_request.name}"
@@ -270,7 +265,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         assert "subtask" in worker_request.arguments, (
             f"Missing 'subtask' in arguments: {worker_request.arguments}"
         )
-
+        assert sub_traj_id > 0
         subtask = worker_request.arguments["subtask"]
 
         (
@@ -282,6 +277,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         ) = await self.run_one_query_role(
             question=subtask,
             role="worker",
+            sub_traj_id=sub_traj_id,
             main_task=main_task,
             is_markdown=is_markdown,
             language=language,
@@ -292,13 +288,11 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         self,
         question: str,
         role: str,
+        sub_traj_id: int,
         main_task: str = None,
         is_markdown: bool = False,
         language: str = "en",
     ) -> tuple[list[AgentLoopOutput], str]:
-        # for tracing sub-traj
-        role_idx = self.role_idx.get()
-        self.role_idx.set(role_idx + 1)
 
         origin_question = question
         output_buffer = []
@@ -359,6 +353,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         tool_response_failed = False
 
         succ_end = False
+        sub_traj_num = 0
 
         for turn_idx in range(max_turns):
             max_resp_len = self.max_total_len - len(prompt_ids)
@@ -399,7 +394,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                     response_text=response_text,
                     is_end=generate_result["finish_reason"] == "length",
                     response_logprobs=generate_result["logprobs"],
-                    extra_fields=dict(role=role, idx_to_sub_traj=role_idx),
+                    extra_fields=dict(role=role, idx_to_sub_traj=sub_traj_id),
                     tool_call_info=tool_call_info
                     if tool_call_info
                     else None,  # if passed, must have tool call
@@ -423,12 +418,14 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
             worker_buffer = []
             worker_turn_list = []
             if role == "planner":
-                for tool_request in tool_requests:
+                assert sub_traj_id == 0
+                for i, tool_request in enumerate(tool_requests, start=1):
                     tasks.append(
                         self.worker_call(
-                            tool_request, origin_question, is_markdown, language
+                            tool_request, origin_question, is_markdown, language, sub_traj_id + i + sub_traj_num
                         )
                     )
+                sub_traj_num += len(tasks)
                 worker_results = await asyncio.gather(*tasks)
 
                 tool_messages_text = []
@@ -582,7 +579,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         return output_buffer, answer_text, total_turn_list, task_failed, succ_end
 
     async def run_one_query(self, prompt_ids: list[int], *, answer) -> AgentLoopOutput:
-        self.role_idx.set(0)
+        sub_traj_id = 0
         origin_question = self.tokenizer.decode(prompt_ids)
         language = answer.get("language", "en")
         if self.workflow == "sa":
@@ -601,6 +598,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         ) = await self.run_one_query_role(
             question=origin_question,
             role=role,
+            sub_traj_id=sub_traj_id,
             is_markdown=is_markdown,
             language=language,
         )
@@ -735,7 +733,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         sorted_train_buffer = []
         for single_turn_output in output_buffer:
             if single_turn_output not in sorted_train_buffer and single_turn_output in train_buffer:
-                sorted_train_buffer.append(single_turn_output)
+                sorted_train_buffer.append(single_turn_output) # TODO: 为啥这样？
 
         for single_turn_output in output_buffer:
             single_turn_output.reward_score = reward_score
@@ -779,7 +777,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
 
         output = MultiTurnAgentLoopOutput(
             single_turn_outputs=output_buffer,
-            train_buffer=sorted_train_buffer,
+            train_buffer=sorted_train_buffer, # FIXME:
             trace_prints=[],  # Can add message_history tracking if needed
             extra_fields=dict(
                 final_answer=final_answer_extract,
@@ -809,7 +807,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                 if self.extra_keys_turn is not None:
                     for k in self.extra_keys_turn:
                         v = single_turn_output.extra_fields.get(k, None)
-                        extra_fields_turn[k].append(v)
+                        # extra_fields_turn[k].append(v) # FIXME: 这里要注释，不然重复了？
                         if k == "role" and single_turn_output.extra_fields["not_training"] != True:
                             roles.append(v)
         extra_fields_turn = {**extra_fields_turn, "roles": roles}
@@ -833,11 +831,15 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         )
 
         idx_to_sub_traj = []
+        # 0, 1, 1, 2, 2, 0
+        # sub_traj_map = 0, 1, 2, 
+        # idx_to_sub_traj: 0, 1, 1, 2, 2, 0
         for task_result in task_results:
             sub_traj_map = {}
             for single_turn_output in task_result.single_turn_outputs:
                 if single_turn_output.extra_fields["not_training"] == True:
                     continue
+                # 有可能不连续了？因为continue跳过了一些,好像不影响
                 role_idx = single_turn_output.extra_fields["idx_to_sub_traj"]
                 if role_idx not in sub_traj_map:
                     sub_traj_map[role_idx] = len(sub_traj_map)
@@ -851,6 +853,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         rollout_result: DynamicRolloutResult,
     ) -> dict:
         try:
+            # TODO: 这一段意义是？
             for k1, v2 in {
                 "turn_subtask_counts":      rollout_result.extra_fields_turn["subtask_count"],
                 "turn_search_counts":       rollout_result.extra_fields_turn["search_count"],
@@ -891,6 +894,8 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         tool_call_metrics = _compute_tool_call_metrics(
             rollout_batch_1, idx_to_traj, int(num_trajectories)
         )
+        # FIXME: 如何写device和dp group？不需要allreduce？
+        
         # eval_metrics_dict = _compute_eval_metrics(
         #     rollout_batch_2, device, data_parallel_group
         # )

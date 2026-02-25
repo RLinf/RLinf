@@ -18,7 +18,6 @@ algorithm:
   group_size: 4
 
 agentloop:
-  use_llm_judge_api: True
   workflow: mas 
   
 rollout:

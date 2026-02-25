@@ -32,7 +32,6 @@ algorithm:
   advantage_mode: trajectory
 
 agentloop:
-  use_llm_judge_api: True
   workflow: sa
 
 rollout:

@@ -2,13 +2,13 @@ defaults:
   - base_train
 
 cluster:
-  num_nodes: 1
+  num_nodes: 2
   component_placement:
     actor,rollout,reward: all
 
 runner:
-  experiment_name: qwen3-4b-mas-clean-scale-8gpus
-RLinf_merge/logs  output_dir: ./logs
+  experiment_name: fix_roleidx_bugs-and_dp_group
+  output_dir: ./logs
   seq_length: 32000  
 
   enable_dynamic_batch_size: True
@@ -32,7 +32,6 @@ algorithm:
   advantage_mode: trajectory
 
 agentloop:
-  use_llm_judge_api: True
   workflow: mas
 
 rollout:

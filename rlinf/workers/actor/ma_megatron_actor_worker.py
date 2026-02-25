@@ -450,6 +450,7 @@ class MAMegatronActor(MegatronActor):
                 * self.cfg.algorithm.get("group_size", 1)
                 / self.cfg.algorithm.n_minibatches
             ),
+            "data_parallel_world_size": parallel_state.get_data_parallel_world_size(),
         }
         batch["loss_scales"] = torch.ones_like(batch["advantages"]).masked_fill(~batch["response_mask"], 0)
         for loss_scale_fn in self.loss_scale_fns:

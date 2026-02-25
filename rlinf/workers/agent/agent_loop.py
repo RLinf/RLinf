@@ -450,6 +450,7 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         whole_metrics = {}
         for k in all_keys:
             values_list = [i[k] for i in agent_metrics_list]
+            # TODO: turn-level metric这样直接平均是不是不对？
             if "agent/turn/mean/" in k or "agent/traj/mean/" in k:
                 whole_metrics[k] = sum(values_list) / len(values_list)
             elif "agent/turn/max/" in k or "agent/traj/max/" in k:

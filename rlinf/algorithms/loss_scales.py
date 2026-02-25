@@ -26,7 +26,10 @@ def do_group_scale(context, batch):
     context["folding_scale"].append("group")
 
     num_sequence = len(batch["idx_to_traj"])
-    group_scale = num_sequence / context["actor_global_batch_size"]
+    dp_world_size = context.get("data_parallel_world_size", 1)
+    group_scale = (
+        num_sequence * dp_world_size / context["actor_global_batch_size"]
+    )
     batch["advantages"] *= group_scale
     return batch
 
@@ -104,7 +107,7 @@ def do_turn_in_sub_traj_scale(
                 )
     return batch
 
-
+# TODO: 下面这俩函数干嘛的
 def group_and_sub_traj_level_scale(
     context: dict,
     batch: dict[str, torch.Tensor],
