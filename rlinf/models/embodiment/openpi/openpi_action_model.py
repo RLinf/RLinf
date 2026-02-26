@@ -30,6 +30,7 @@ from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.modules.explore_noise_net import ExploreNoiseNet
 from rlinf.models.embodiment.modules.value_head import ValueHead
 from rlinf.utils.logging import get_logger
+from rlinf.utils.nested_dict_process import copy_dict_tensor
 
 
 @dataclass(frozen=True)
@@ -413,7 +414,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         env_obs,
         mode: Literal["train", "eval"] = "train",
         compute_values=True,
-        return_obs=True,
+        **kwargs,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         to_process_obs = self.obs_processor(env_obs)  # env obs -> policy input obs
         processed_obs = self.input_transform(
@@ -424,8 +425,10 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         )  # obs precision processor
         observation = _model.Observation.from_dict(processed_obs)
 
-        # ========== DSRL mode (train mode) ==========
-        if self.config.use_dsrl and mode == "train":
+        is_dsrl_train = self.config.use_dsrl and mode == "train"
+        if is_dsrl_train:
+            # DSRL mode and train mode
+
             # Step 1: SAC agent outputs noise
             # No data augmentation during rollout, train=False
 
@@ -451,66 +454,45 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
                 {"actions": outputs["actions"], "state": observation.state}
             )["actions"].numpy()
 
-            # Step 4: Build forward_inputs (preserving all info)
-            # NOTE: Use .clone() for deep copy to avoid reference issues.
-            # Without clone, all rollout steps point to the same tensor, causing data corruption.
-            forward_inputs = {
-                "chains": outputs["chains"],  # Preserve diffusion chains
-                "denoise_inds": outputs["denoise_inds"],  # Preserve denoise indices
-                "action": noise_actions,  # DSRL: store noise (used for SAC training)
-                "observation/image": env_obs["main_images"].clone()
-                if torch.is_tensor(env_obs["main_images"])
-                else env_obs["main_images"],  # Deep copy
-                "observation/state": env_obs["states"].clone()
-                if torch.is_tensor(env_obs["states"])
-                else env_obs["states"],  # Deep copy
-                "tokenized_prompt": processed_obs["tokenized_prompt"],
-                "tokenized_prompt_mask": processed_obs["tokenized_prompt_mask"],
-            }
-            if env_obs["wrist_images"] is not None:
-                forward_inputs["observation/wrist_image"] = (
-                    env_obs["wrist_images"].clone()
-                    if torch.is_tensor(env_obs["wrist_images"])
-                    else env_obs["wrist_images"]
-                )
-
-            result = {
-                "prev_logprobs": noise_logprob,  # SAC noise logprob
-                "prev_values": outputs.get("prev_values"),
-                "forward_inputs": forward_inputs,
-            }
-
-            # Return actual actions to environment, but forward_inputs stores noise
-            return real_actions, result
+            # Return actual actions to environment, but forward_inputs stores noise.
+            actions = real_actions
+            prev_logprobs = noise_logprob  # SAC noise logprob
+            prev_values = outputs.get("prev_values")
+            forward_action = noise_actions  # Used for SAC training
 
         else:
-            # Non-DSRL or eval mode: keep original logic unchanged
+            # Non-DSRL or eval mode
             outputs = self.sample_actions(
                 observation, mode=mode, compute_values=compute_values
             )
             actions = self.output_transform(
                 {"actions": outputs["actions"], "state": observation.state}
             )["actions"].numpy()
+            prev_logprobs = outputs["prev_logprobs"]
+            prev_values = outputs["prev_values"]
+            forward_action = None
 
-            forward_inputs = {
-                "chains": outputs["chains"],
-                "denoise_inds": outputs["denoise_inds"],
-                "observation/image": env_obs["main_images"],
-                "observation/state": env_obs["states"],
-                "tokenized_prompt": processed_obs["tokenized_prompt"],
-                "tokenized_prompt_mask": processed_obs["tokenized_prompt_mask"],
-            }
-            if env_obs["wrist_images"] is not None:
-                forward_inputs["observation/wrist_image"] = env_obs["wrist_images"]
-            forward_inputs.update(to_process_obs)
-            forward_inputs.pop("prompt", None)
+        forward_inputs = {
+            "chains": outputs["chains"],
+            "denoise_inds": outputs["denoise_inds"],
+            "tokenized_prompt": processed_obs["tokenized_prompt"],
+            "tokenized_prompt_mask": processed_obs["tokenized_prompt_mask"],
+        }
+        if forward_action is not None:
+            forward_inputs["action"] = forward_action
 
-            result = {
-                "prev_logprobs": outputs["prev_logprobs"],
-                "prev_values": outputs["prev_values"],
-                "forward_inputs": forward_inputs,
-            }
-            return actions, result
+        # Clone observations to avoid cross-step reference issues.
+        cloned_obs = copy_dict_tensor(
+            {k: v for k, v in to_process_obs.items() if k != "prompt"}
+        )
+        forward_inputs.update(cloned_obs)
+
+        result = {
+            "prev_logprobs": prev_logprobs,
+            "prev_values": prev_values,
+            "forward_inputs": forward_inputs,
+        }
+        return actions, result
 
     @torch.no_grad()
     def sample_actions(
