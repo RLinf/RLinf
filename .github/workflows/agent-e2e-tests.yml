@@ -248,7 +248,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh reason
+          bash requirements/install.sh agentic
 
       - name: Clone code-judge
         uses: actions/checkout@v5
