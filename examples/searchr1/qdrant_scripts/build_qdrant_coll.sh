@@ -7,8 +7,8 @@ WIKI2018_DIR=/your/wiki_dataset/path
 corpus_file=$WIKI2018_DIR/wiki_corpus.jsonl
 
 # Build step 2: set your retriever model path
-retriever_name=e5
-retriever_path=/your/retriever/model/path
+retriever_name=e5 # this is for indexing naming
+retriever_model=/path/to/Qwen2.5-3B-Instruct
 
 # Qdrant configuration
 # Build step 3: Install qdrant and set qdrant_path to qdrant dir
@@ -22,7 +22,8 @@ hnsw_config='{"m":24,"ef_construct":512}'
 qdrant_pid=$!
 sleep 5
 
-python3  ./build_qdrant_coll.py --corpus_path $corpus_file \
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 examples/searchr1/qdrant_scripts/build_qdrant_coll.py \
+                                            --corpus_path $corpus_file \
                                             --retriever_name $retriever_name \
                                             --retriever_model $retriever_path \
                                             --qdrant_collection_name $qdrant_collection_name \

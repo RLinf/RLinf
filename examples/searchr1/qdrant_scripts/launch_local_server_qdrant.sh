@@ -15,7 +15,7 @@ qdrant_url=http://localhost:6333
 qdrant_collection_name=wiki_collection_m24_cef512
 qdrant_search_param='{"hnsw_ef":256}'
 
-python3 -u ./local_retrieval_server_qdrant.py \
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 -u examples/searchr1/qdrant_scripts/local_retrieval_server_qdrant.py \
                                             --pages_path $pages_file \
                                             --topk 3 \
                                             --retriever_name $retriever_name \

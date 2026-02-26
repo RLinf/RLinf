@@ -48,8 +48,7 @@ def set_global(retrieval_method, config):
         model_path=config.retrieval_model_path,
         pooling_method=config.retrieval_pooling_method,
         max_length=config.retrieval_query_max_length,
-        # use_fp16 = config.retrieval_use_fp16,
-        use_fp16=False,
+        use_fp16=config.retrieval_use_fp16,
         device=torch.device(f"cuda:{process_idx % torch.cuda.device_count()}"),
     )
 
@@ -63,7 +62,8 @@ def load_corpus(corpus_path: str):
         data_files=corpus_path,
         split="train",
         num_proc=8,
-        cache_dir="/mnt/project_rlinf/zhuchunyang_rl/tmp",
+        # cache dir can be customized into path/to/your/cache/dir
+        cache_dir="~/.cache",
     )
     return corpus
 
@@ -152,7 +152,6 @@ class Encoder:
             truncation=True,
             return_tensors="pt",
         )
-        # inputs = {k: v.cuda() for k, v in inputs.items()}
         inputs = {k: v.to(device=self.device) for k, v in inputs.items()}
 
         if "T5" in type(self.model).__name__:
@@ -195,9 +194,18 @@ class QdrantIndexBuilder:
         self.topk = config.retrieval_topk
         self.batch_size = config.retrieval_batch_size
 
-        # Check if collection exists, if not, build it from corpus
-        # TODO: for debug
-        self.client.delete_collection(collection_name=self.collection_name)
+        if self.config.debug:
+            # Check if collection exists, if not, build it from corpus
+            print("[DEBUG] Debug mode enabled. Deleting existing collection...")
+            try:
+                self.client.delete_collection(collection_name=self.collection_name)
+                print(
+                    f"[DEBUG] Collection '{self.collection_name}' deleted successfully."
+                )
+            except Exception as e:
+                print(
+                    f"[DEBUG] Warning: Failed to delete collection '{self.collection_name}': {e}"
+                )
 
         collections = self.client.get_collections().collections
         collection_names = [col.name for col in collections]
@@ -235,7 +243,6 @@ class QdrantIndexBuilder:
 
     def _build_collection_from_corpus(self, text_field=None):
         """Build Qdrant collection from corpus."""
-        # assert False
         corpus_data = load_corpus(self.config.corpus_path)
         corpus_size = len(corpus_data)
         print(f"Corpus size: {corpus_size} documents")
@@ -279,15 +286,17 @@ class QdrantIndexBuilder:
                 raise e
 
         # Encode and insert documents in batches
+        # Multiprocessing setup for parallel document processing
         from multiprocessing import Pool
 
-        # pool = Pool(32)
+        # Create a process pool with the specified number of parallel workers
+        # The initializer function 'set_global' is called once per worker process
+        # to initialize the global encoder and client for each worker
         pool = Pool(
             self.config.build_parallel,
             initializer=set_global,
             initargs=(self.config.retrieval_method, self.config),
         )
-        # handles = []
         handles = queue.Queue()
 
         batch_texts = []
@@ -308,14 +317,20 @@ class QdrantIndexBuilder:
 
             # Process batch when it reaches batch_size
             if len(batch_texts) >= self.batch_size:
+                # Submit batch for parallel processing using async execution
+                # This returns a handle that can be used to track task completion
                 handle = pool.apply_async(
                     QdrantIndexBuilder.encode_and_upsert,
                     (self.config, batch_texts, batch_indices, batch_payload),
                 )
-                # handles.append(handle)
                 handles.put(handle)
+
+                # Control memory usage by waiting for some tasks to complete
+                # if too many tasks are queued (prevents memory overflow)
                 if handles.qsize() >= self.config.build_parallel * 10:
                     handles.get().wait()
+
+                # Reset batch variables for next batch
                 batch_texts = []
                 batch_indices = []
                 batch_payload = []
@@ -326,14 +341,18 @@ class QdrantIndexBuilder:
                 QdrantIndexBuilder.encode_and_upsert,
                 (self.config, batch_texts, batch_indices, batch_payload),
             )
-            # handles.append(handle)
             handles.put(handle)
 
+        # Wait for all remaining tasks to complete
+        # This ensures all documents are processed before closing the pool
         while not handles.empty():
             handles.get().wait()
-        pool.close()  # 关闭进程池，不再接受新的进程
-        pool.join()  # 主进程阻塞等待子进程的退出
 
+        pool.close()
+        pool.join()
+
+        # Wait for the collection to be ready (GREEN status)
+        # This ensures all data has been properly indexed and is available for querying
         print("wait collection status to be green")
         while (
             self.client.get_collection(self.collection_name).status
@@ -371,6 +390,7 @@ class Config:
         retrieval_query_max_length: int = 256,
         retrieval_use_fp16: bool = False,
         retrieval_batch_size: int = 128,
+        debug: bool = False,
     ):
         self.retrieval_method = retrieval_method
         self.retrieval_topk = retrieval_topk
@@ -387,6 +407,7 @@ class Config:
         self.retrieval_query_max_length = retrieval_query_max_length
         self.retrieval_use_fp16 = retrieval_use_fp16
         self.retrieval_batch_size = retrieval_batch_size
+        self.debug = debug
 
 
 if __name__ == "__main__":
@@ -397,7 +418,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--corpus_path",
         type=str,
-        default="/home/peterjin/mnt/data/retrieval-corpus/wiki-18.jsonl",
+        required=True,
         help="Local corpus file.",
     )
     parser.add_argument(
@@ -433,7 +454,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--build_parallel", type=int, default=8, help="Qdrant build thread"
     )
-
+    parser.add_argument(
+        "--debug",
+        type=bool,
+        default=False,
+        help="Enable debug mode to delete existing collection before building",
+    )
     args = parser.parse_args()
 
     # 1) Build a config (could also parse from arguments).
@@ -451,7 +477,7 @@ if __name__ == "__main__":
         retrieval_query_max_length=256,
         retrieval_use_fp16=True,
         retrieval_batch_size=1024,
-        # retrieval_batch_size=64,
+        debug=args.debug,
     )
 
     # 2) Instantiate a global retriever so it is loaded once and reused.

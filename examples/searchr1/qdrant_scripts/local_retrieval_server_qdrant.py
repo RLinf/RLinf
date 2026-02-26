@@ -198,7 +198,6 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
     @staticmethod
     async def wait_qdrant_load(url, connect_timeout):
         client = AsyncQdrantClient(url=url, prefer_grpc=True, timeout=60)
-        # atexit.register(client.close)
         wait_collection_time = 0
         while True:
             if wait_collection_time >= connect_timeout:
@@ -306,7 +305,7 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
             else:
                 return []
 
-        # # Extract IDs and scores
+        # Extract IDs and scores
         payloads = [result.payload for result in search_results]
         scores = [result.score for result in search_results]
         if return_score:
@@ -345,12 +344,6 @@ class PageAccess:
         with open(pages_path, "r") as f:
             for ff in tqdm(f, desc="PageAccess"):
                 pages.append(json.loads(ff))
-        # pages = datasets.load_dataset(
-        #     'json',
-        #     data_files=pages_path,
-        #     split="train",
-        #     num_proc=16,
-        # )
         time_load = time.time()
         self.pages = {page["url"]: page for page in pages}
         time_map = time.time()
@@ -553,7 +546,6 @@ if __name__ == "__main__":
     # 2) Instantiate a global retriever so it is loaded once and reused.
     retriever = loop.run_until_complete(get_retriever(config))
 
-    # TODO: test:
     async def test():
         query1 = "Tell me about Red Bull"
         result1 = await retriever.asearch(query1, 1, return_score=False)

@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -ex
+
 save_dir=$WIKI2018_WORK_DIR
 
 corpus_file=$WIKI2018_WORK_DIR/wiki_corpus.jsonl
