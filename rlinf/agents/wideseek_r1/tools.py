@@ -477,9 +477,6 @@ class AsyncSearchClient:
                     ]
             except Exception as e:
                 last_exception = e
-                print(
-                    f"[WARNING] AsyncSearchClient: Search query error {e}. Retry {cnt} times."
-                )
                 cnt += 1
                 await asyncio.sleep(10)
 
@@ -511,9 +508,6 @@ class AsyncSearchClient:
                     ]
             except Exception as e:
                 last_exception = e
-                print(
-                    f"[WARNING] AsyncSearchClient: Access request error {e}. Retry {cnt} times."
-                )
                 cnt += 1
                 await asyncio.sleep(10)
 

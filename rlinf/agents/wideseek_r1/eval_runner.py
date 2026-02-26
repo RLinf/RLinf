@@ -76,40 +76,21 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
         self.recompute_logprobs = self.cfg.algorithm.recompute_logprobs
 
     def _save_eval_results(self, all_results, aggregated_metrics, total_count):
-        """Save evaluation results to JSON files and per-response directory.
-
-        Saves three types of outputs:
-        1. metrics.json - Key aggregated metrics
-        2. allresults.json - All detailed results
-        3. responses/ directory - Per-instance response files
-
-        Args:
-            all_results: List of result dictionaries for each query
-            aggregated_metrics: Dictionary with aggregated metrics
-            total_count: Total number of queries evaluated
-        """
+        """Save evaluation results to JSON files and per-response directory."""
         import datetime
 
-        # Create output directory in the experiment folder
         output_dir = os.path.join(
             self.cfg.runner.output_dir, self.cfg.runner.experiment_name
         )
         local_mkdir_safe(output_dir)
 
-        # Create responses subdirectory
         response_dir = os.path.join(output_dir, "responses")
         local_mkdir_safe(response_dir)
 
-        # Fixed filenames
         output_file_key = os.path.join(output_dir, "metrics.json")
         output_file_all = os.path.join(output_dir, "allresults.json")
 
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        # Convert OmegaConf objects to plain Python objects
-        eval_metrics = self.cfg.reward.get("eval_metric", [])
-        if eval_metrics:
-            eval_metrics = OmegaConf.to_container(eval_metrics, resolve=True)
 
         data_paths = self.cfg.data.val_data_paths
         if data_paths:
@@ -124,22 +105,17 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
             "timestamp": timestamp,
             "config": {
                 "group_size": self.cfg.algorithm.get("group_size", 1),
-                "eval_metrics": eval_metrics,
-                "reward_type": self.cfg.reward.get("reward_type", "EM"),
                 "data_paths": data_paths,
             },
             "metrics": aggregated_metrics,
         }
 
-        # Write metrics.json
         with open(output_file_key, "w", encoding="utf-8") as f:
             json.dump(results_data_key, f, ensure_ascii=False, indent=2)
 
-        # Write allresults.json
         with open(output_file_all, "w", encoding="utf-8") as f:
             json.dump(all_results, f, ensure_ascii=False, indent=2)
 
-        # Save per-response files
         for result in all_results:
             samples = result.get("samples", [])
             answer = result.get("answer", {})
@@ -160,7 +136,6 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
                         break
                     file_trial_idx += 1
 
-                # Extract final_answer - handle DataFrame conversion
                 final_answer = sample.get("final_answer", None)
                 if isinstance(final_answer, pd.DataFrame):
                     final_answer = final_answer.to_dict(orient="records")
@@ -170,7 +145,8 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
                     "trial_idx": file_trial_idx,
                     "final_answer": final_answer,
                     "final_answer_text": sample.get("final_answer_text", None),
-                    "eval_metric": sample.get("eval_metric", {}),
+                    "llm_reward": sample.get("llm_reward", 0.0),
+                    "final_answer_format": sample.get("final_answer_format", 0),
                     "num_turns": sample.get("num_turns", 0),
                     "origin_question": sample.get("origin_question", None),
                 }
@@ -183,103 +159,48 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
         return output_file_key
 
     def _aggregate_all_results(self):
-        """Aggregate all accumulated raw results into final metrics.
-
-        This function processes all raw eval_results and computes:
-        1. Eval metrics (pass@1, pass@k, avg@k, max@k for EM, F1, LLM)
-        2. Length metrics (turn-level weighted averages)
-        3. Tool call metrics (trajectory and turn level)
-        4. Format score metrics
-        5. MAS turn metrics
-
-        Returns:
-            Tuple of (processed_results list, aggregated_metrics dict)
-        """
+        """Aggregate all accumulated raw results into final metrics."""
         is_markdown = self.cfg.data.get("is_markdown", False)
-        metric_types = ["EM", "F1", "LLM"]
-        markdown_metrics = [
-            "score",
-            "precision_by_row",
-            "recall_by_row",
-            "f1_by_row",
-            "precision_by_item",
-            "recall_by_item",
-            "f1_by_item",
-            "search_precision_by_item",
-            "search_recall_by_item",
-            "search_f1_by_item",
-        ]
 
         processed_results = []
         total_queries = len(self.accumulated_raw_results)
 
-        # Accumulators for global aggregation
-        # Length metrics (weighted by num_turns)
         total_num_turns = 0
         sum_prompt_length = 0
         sum_response_length = 0
         sum_total_length = 0
-        max_prompt_lengths = []
-        max_response_lengths = []
-        max_total_lengths = []
 
-        # Trajectory metrics
         total_num_trajectories = 0
         total_turns_all = 0
 
-        # Tool call metrics (weighted by valid turns)
         sum_turn_subtask = 0
         sum_turn_search = 0
         sum_turn_access = 0
         sum_turn_search_plus_access = 0
         total_valid_planner_turns = 0
         total_valid_worker_turns = 0
-        turn_max_subtasks = []
-        turn_max_searches = []
-        turn_max_accesses = []
-        turn_max_search_plus_access_list = []
         traj_avg_subtasks = []
         traj_avg_searches = []
         traj_avg_accesses = []
         traj_avg_search_plus_access_list = []
-        traj_max_subtasks = []
-        traj_max_searches = []
-        traj_max_accesses = []
-        traj_max_search_plus_access_list = []
 
-        # Format score metrics
-        format_score_sums = {}
+        final_answer_format_sum = 0.0
 
-        # MAS turn metrics
         mas_sum_main_agent_turns = 0
         mas_sum_subagent_turns = 0
         mas_sum_num_subagents = 0
         mas_num_valid_trajs = 0
 
-        # Eval metrics accumulators (for final computation)
         if is_markdown:
-            # {metric_type: {md_metric: {"pass1": [], "passk": [], "avgk": [], "maxk": []}}}
-            eval_accumulators = {
-                mt: {
-                    mm: {"pass1": [], "passk": [], "avgk": [], "maxk": []}
-                    for mm in markdown_metrics
-                }
-                for mt in metric_types
-            }
+            acc = {}
         else:
-            # {metric_type: {"pass1": [], "passk": [], "avgk": [], "maxk": []}}
-            eval_accumulators = {
-                mt: {"pass1": [], "passk": [], "avgk": [], "maxk": []}
-                for mt in metric_types
-            }
+            acc = {"pass1": [], "passk": [], "avgk": [], "maxk": []}
 
-        # Process each raw result
         for idx, raw_result in enumerate(self.accumulated_raw_results):
             group_size = raw_result.get("group_size", 1)
             answer = raw_result.get("answer", None)
             samples = raw_result.get("samples", [])
 
-            # --- Extract length metrics from samples ---
             prompt_lengths = []
             response_lengths = []
             total_lengths = []
@@ -297,7 +218,6 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
                 turns = sample.get("turns", [])
                 num_turns_list.append(len(turns))
 
-                # MAS turn list
                 total_turn_list = sample.get("total_turn_list", None)
                 if total_turn_list is not None and len(total_turn_list) > 0:
                     mas_main_agent_turns_list.append(total_turn_list[-1])
@@ -321,22 +241,15 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
                         elif role in ("worker", "single"):
                             num_valid_worker_turns += 1
 
-            # Accumulate length metrics
             num_turns = len(prompt_lengths)
             total_num_turns += num_turns
             sum_prompt_length += sum(prompt_lengths) if prompt_lengths else 0
             sum_response_length += sum(response_lengths) if response_lengths else 0
             sum_total_length += sum(total_lengths) if total_lengths else 0
-            if prompt_lengths:
-                max_prompt_lengths.append(max(prompt_lengths))
-                max_response_lengths.append(max(response_lengths))
-                max_total_lengths.append(max(total_lengths))
 
-            # Accumulate trajectory metrics
             total_num_trajectories += group_size
             total_turns_all += sum(num_turns_list)
 
-            # Accumulate tool call metrics
             total_valid_planner_turns += num_valid_planner_turns
             total_valid_worker_turns += num_valid_worker_turns
             sum_turn_subtask += sum(subtask_counts)
@@ -349,16 +262,6 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
             )
             sum_turn_search_plus_access += sum(search_plus_access)
 
-            if subtask_counts:
-                turn_max_subtasks.append(max(subtask_counts))
-            if search_counts:
-                turn_max_searches.append(max(search_counts))
-            if access_counts:
-                turn_max_accesses.append(max(access_counts))
-            if search_plus_access:
-                turn_max_search_plus_access_list.append(max(search_plus_access))
-
-            # Trajectory-level tool call averages
             if group_size > 0:
                 traj_avg_subtasks.append(
                     sum(subtask_counts) / group_size if subtask_counts else 0.0
@@ -372,96 +275,31 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
                 traj_avg_search_plus_access_list.append(
                     sum(search_plus_access) / group_size if search_plus_access else 0.0
                 )
-            if subtask_counts:
-                traj_max_subtasks.append(max(subtask_counts))
-            if search_counts:
-                traj_max_searches.append(max(search_counts))
-            if access_counts:
-                traj_max_accesses.append(max(access_counts))
-            if search_plus_access:
-                traj_max_search_plus_access_list.append(max(search_plus_access))
 
-            # Accumulate format_score metrics
             if samples:
-                sample_format_score = (
-                    samples[0].get("eval_metric", {}).get("format_score", {})
-                )
-                for sub_metric in sample_format_score.keys():
-                    values = [
-                        s.get("eval_metric", {})
-                        .get("format_score", {})
-                        .get(sub_metric, 0)
-                        for s in samples
-                    ]
-                    avg_val = sum(values) / len(values) if values else 0.0
-                    format_score_sums[sub_metric] = (
-                        format_score_sums.get(sub_metric, 0.0) + avg_val
+                final_answer_format_values = [
+                    float(sample.get("final_answer_format", 0) or 0) for sample in samples
+                ]
+                if final_answer_format_values:
+                    final_answer_format_sum += (
+                        sum(final_answer_format_values) / len(final_answer_format_values)
                     )
 
-            # Accumulate MAS turn metrics
             if mas_main_agent_turns_list:
                 mas_sum_main_agent_turns += sum(mas_main_agent_turns_list)
                 mas_sum_subagent_turns += sum(mas_subagent_turns_list)
                 mas_sum_num_subagents += sum(mas_num_subagents_list)
                 mas_num_valid_trajs += len(mas_main_agent_turns_list)
 
-            # --- Compute eval metrics for this query ---
             if is_markdown:
-                for metric_type in metric_types:
-                    for md_metric in markdown_metrics:
-                        values = []
-                        for sample in samples:
-                            val = (
-                                sample.get("eval_metric", {})
-                                .get(metric_type, {})
-                                .get(md_metric, 0.0)
-                            )
-                            values.append(val)
-
-                        if values:
-                            if md_metric == "score":
-                                eval_accumulators[metric_type][md_metric][
-                                    "pass1"
-                                ].append(1.0 if values[0] > 0 else 0.0)
-                                eval_accumulators[metric_type][md_metric][
-                                    "passk"
-                                ].append(1.0 if any(v > 0 for v in values) else 0.0)
-                                eval_accumulators[metric_type][md_metric][
-                                    "avgk"
-                                ].append(sum(values) / len(values))
-                            else:
-                                eval_accumulators[metric_type][md_metric][
-                                    "pass1"
-                                ].append(values[0])
-                                eval_accumulators[metric_type][md_metric][
-                                    "avgk"
-                                ].append(sum(values) / len(values))
-                                eval_accumulators[metric_type][md_metric][
-                                    "maxk"
-                                ].append(max(values))
+                pass
             else:
-                for metric_type in metric_types:
-                    values = []
-                    for sample in samples:
-                        val = sample.get("eval_metric", {}).get(metric_type, None)
-                        if val is not None:
-                            values.append(val)
+                values = [float(sample.get("llm_reward", 0) or 0) for sample in samples]
+                if values:
+                    acc["pass1"].append(1.0 if values[0] > 0 else 0.0)
+                    acc["avgk"].append(sum(values) / len(values))
+                    acc["passk"].append(1.0 if any(v > 0 for v in values) else 0.0)
 
-                    if values:
-                        eval_accumulators[metric_type]["pass1"].append(
-                            1.0 if values[0] > 0 else 0.0
-                        )
-                        eval_accumulators[metric_type]["avgk"].append(
-                            sum(values) / len(values)
-                        )
-                        if metric_type == "F1":
-                            eval_accumulators[metric_type]["maxk"].append(max(values))
-                        else:
-                            eval_accumulators[metric_type]["passk"].append(
-                                1.0 if any(v > 0 for v in values) else 0.0
-                            )
-
-            # Build processed result entry
             processed_results.append(
                 {
                     "index": idx,
@@ -471,58 +309,20 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
                 }
             )
 
-        # --- Compute final aggregated metrics ---
         aggregated_metrics = {}
-
-        # Eval metrics
         if is_markdown:
-            for metric_type in metric_types:
-                aggregated_metrics[metric_type] = {}
-                for md_metric in markdown_metrics:
-                    acc = eval_accumulators[metric_type][md_metric]
-                    if md_metric == "score":
-                        aggregated_metrics[metric_type][md_metric] = {
-                            "pass@1": sum(acc["pass1"]) / len(acc["pass1"])
-                            if acc["pass1"]
-                            else 0.0,
-                            "pass@k": sum(acc["passk"]) / len(acc["passk"])
-                            if acc["passk"]
-                            else 0.0,
-                            "avg@k": sum(acc["avgk"]) / len(acc["avgk"])
-                            if acc["avgk"]
-                            else 0.0,
-                        }
-                    else:
-                        aggregated_metrics[metric_type][md_metric] = {
-                            "pass@1": sum(acc["pass1"]) / len(acc["pass1"])
-                            if acc["pass1"]
-                            else 0.0,
-                            "avg@k": sum(acc["avgk"]) / len(acc["avgk"])
-                            if acc["avgk"]
-                            else 0.0,
-                            "max@k": sum(acc["maxk"]) / len(acc["maxk"])
-                            if acc["maxk"]
-                            else 0.0,
-                        }
+            pass
         else:
-            for metric_type in metric_types:
-                acc = eval_accumulators[metric_type]
-                aggregated_metrics[f"pass@1_{metric_type}"] = (
-                    sum(acc["pass1"]) / len(acc["pass1"]) if acc["pass1"] else 0.0
-                )
-                aggregated_metrics[f"avg@k_{metric_type}"] = (
-                    sum(acc["avgk"]) / len(acc["avgk"]) if acc["avgk"] else 0.0
-                )
-                if metric_type == "F1":
-                    aggregated_metrics[f"max@k_{metric_type}"] = (
-                        sum(acc["maxk"]) / len(acc["maxk"]) if acc["maxk"] else 0.0
-                    )
-                else:
-                    aggregated_metrics[f"pass@k_{metric_type}"] = (
-                        sum(acc["passk"]) / len(acc["passk"]) if acc["passk"] else 0.0
-                    )
+            aggregated_metrics["pass@1"] = (
+                sum(acc["pass1"]) / len(acc["pass1"]) if acc["pass1"] else 0.0
+            )
+            aggregated_metrics["avg@k"] = (
+                sum(acc["avgk"]) / len(acc["avgk"]) if acc["avgk"] else 0.0
+            )
+            aggregated_metrics["pass@k"] = (
+                sum(acc["passk"]) / len(acc["passk"]) if acc["passk"] else 0.0
+            )
 
-        # Length metrics
         if total_num_turns > 0:
             aggregated_metrics["avg_prompt_length"] = (
                 sum_prompt_length / total_num_turns
@@ -536,17 +336,6 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
             aggregated_metrics["avg_response_length"] = 0.0
             aggregated_metrics["avg_total_length"] = 0.0
 
-        aggregated_metrics["max_prompt_length"] = (
-            max(max_prompt_lengths) if max_prompt_lengths else 0
-        )
-        aggregated_metrics["max_response_length"] = (
-            max(max_response_lengths) if max_response_lengths else 0
-        )
-        aggregated_metrics["max_total_length"] = (
-            max(max_total_lengths) if max_total_lengths else 0
-        )
-
-        # Trajectory metrics
         aggregated_metrics["total_num_trajectories"] = total_num_trajectories
         aggregated_metrics["avg_turns_per_traj"] = (
             total_turns_all / total_num_trajectories
@@ -554,16 +343,12 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
             else 0.0
         )
 
-        # Tool call metrics - turn level
         if total_valid_planner_turns > 0:
             aggregated_metrics["turn_avg_subtask"] = (
                 sum_turn_subtask / total_valid_planner_turns
             )
         else:
             aggregated_metrics["turn_avg_subtask"] = 0.0
-        aggregated_metrics["turn_max_subtask"] = (
-            max(turn_max_subtasks) if turn_max_subtasks else 0
-        )
 
         if total_valid_worker_turns > 0:
             aggregated_metrics["turn_avg_search"] = (
@@ -572,27 +357,10 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
             aggregated_metrics["turn_avg_access"] = (
                 sum_turn_access / total_valid_worker_turns
             )
-            aggregated_metrics["turn_avg_search+access"] = (
-                sum_turn_search_plus_access / total_valid_worker_turns
-            )
         else:
             aggregated_metrics["turn_avg_search"] = 0.0
             aggregated_metrics["turn_avg_access"] = 0.0
-            aggregated_metrics["turn_avg_search+access"] = 0.0
 
-        aggregated_metrics["turn_max_search"] = (
-            max(turn_max_searches) if turn_max_searches else 0
-        )
-        aggregated_metrics["turn_max_access"] = (
-            max(turn_max_accesses) if turn_max_accesses else 0
-        )
-        aggregated_metrics["turn_max_search+access"] = (
-            max(turn_max_search_plus_access_list)
-            if turn_max_search_plus_access_list
-            else 0
-        )
-
-        # Tool call metrics - trajectory level
         if total_queries > 0:
             aggregated_metrics["traj_avg_subtask"] = (
                 sum(traj_avg_subtasks) / total_queries
@@ -603,45 +371,23 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
             aggregated_metrics["traj_avg_access"] = (
                 sum(traj_avg_accesses) / total_queries
             )
-            aggregated_metrics["traj_avg_search+access"] = (
-                sum(traj_avg_search_plus_access_list) / total_queries
-            )
         else:
             aggregated_metrics["traj_avg_subtask"] = 0.0
             aggregated_metrics["traj_avg_search"] = 0.0
             aggregated_metrics["traj_avg_access"] = 0.0
-            aggregated_metrics["traj_avg_search+access"] = 0.0
 
-        aggregated_metrics["traj_max_subtask"] = (
-            max(traj_max_subtasks) if traj_max_subtasks else 0
-        )
-        aggregated_metrics["traj_max_search"] = (
-            max(traj_max_searches) if traj_max_searches else 0
-        )
-        aggregated_metrics["traj_max_access"] = (
-            max(traj_max_accesses) if traj_max_accesses else 0
-        )
-        aggregated_metrics["traj_max_search+access"] = (
-            max(traj_max_search_plus_access_list)
-            if traj_max_search_plus_access_list
-            else 0
+        aggregated_metrics["final_answer_format"] = (
+            final_answer_format_sum / total_queries if total_queries > 0 else 0.0
         )
 
-        # Format score metrics
-        for sub_metric, total_sum in format_score_sums.items():
-            aggregated_metrics[f"format_score/{sub_metric}"] = (
-                total_sum / total_queries if total_queries > 0 else 0.0
-            )
-
-        # MAS turn metrics
         if mas_num_valid_trajs > 0:
-            aggregated_metrics["mas/avg_main_agent_turns_per_traj"] = (
+            aggregated_metrics["avg_main_agent_turns_per_traj"] = (
                 mas_sum_main_agent_turns / mas_num_valid_trajs
             )
-            aggregated_metrics["mas/avg_subagent_turns_per_traj"] = (
+            aggregated_metrics["avg_subagent_turns_per_traj"] = (
                 mas_sum_subagent_turns / mas_num_valid_trajs
             )
-            aggregated_metrics["mas/avg_num_subagents_per_traj"] = (
+            aggregated_metrics["avg_num_subagents_per_traj"] = (
                 mas_sum_num_subagents / mas_num_valid_trajs
             )
 
@@ -676,7 +422,6 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
 
         logging.info(f"Actual batch size for this batch: {expected_batch_size}")
 
-        group_size = self.cfg.algorithm.get("group_size", 1)
 
         if expected_batch_size is not None:
             total_batch_size_per_dp = expected_batch_size
@@ -702,46 +447,51 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
         rollout_result: DynamicRolloutResult,
         log_info=None,
     ) -> dict:
-        # debug asserts
-        if rollout_result.total_turn_list_metric is not None:
-            assert rollout_result.total_turn_list_metric == rollout_result.extra_fields_traj["total_turn_list"]
-        if rollout_result.eval_metrics is not None:
-            assert rollout_result.eval_metrics == rollout_result.extra_fields_traj["eval_metric"]
-
         group_size = rollout_result.group_size
+        extra_fields_turn = rollout_result.extra_fields_turn or {}
+        extra_fields_traj = rollout_result.extra_fields_traj or {}
 
-        eval_metrics = rollout_result.extra_fields_traj["eval_metric"] or [None] * group_size
-        total_turn_list_metric = (
-            rollout_result.extra_fields_traj["total_turn_list"] or [None] * group_size
-        )
+        eval_metrics = extra_fields_traj.get("eval_metric") or [None] * group_size
+        total_turn_list_metric = extra_fields_traj.get("total_turn_list") or [None] * group_size
+        final_answer_format_metric = extra_fields_traj.get("final_answer_format") or [0] * group_size
+        llm_reward_metric = extra_fields_traj.get("llm_reward") or [0.0] * group_size
+
+        def _safe_idx(values, idx, default=None):
+            if values is None or idx >= len(values):
+                return default
+            return values[idx]
+
+        def _to_py_scalar(value, default=0.0):
+            if value is None:
+                return default
+            if hasattr(value, "item"):
+                return value.item()
+            return value
 
         samples_data: list[dict] = []
         for traj_idx in range(group_size):
-            eval_metric = (
-                eval_metrics[traj_idx] if traj_idx < len(eval_metrics) else None
-            ) or {}
-            total_turn_list = (
-                total_turn_list_metric[traj_idx]
-                if traj_idx < len(total_turn_list_metric)
-                else None
-            )
+            eval_metric = _safe_idx(eval_metrics, traj_idx, None) or {}
+            total_turn_list = _safe_idx(total_turn_list_metric, traj_idx, None)
+            final_answer_format = _safe_idx(final_answer_format_metric, traj_idx, 0) or 0
+            llm_reward = _safe_idx(llm_reward_metric, traj_idx, 0.0) or 0.0
 
             turn_idxes = [i for i, j in enumerate(rollout_result.idx_to_traj) if j == traj_idx]
             turns = []
             for turn_idx in turn_idxes:
+                reward_value = _to_py_scalar(_safe_idx(rollout_result.rewards, turn_idx, 0.0), 0.0)
                 turn_data = {
-                    "prompt_text": rollout_result.extra_fields_turn["prompt_text"][turn_idx],
-                    "response_text": rollout_result.extra_fields_turn["response_text"][turn_idx],
-                    "prompt_ids_length": rollout_result.prompt_lengths[turn_idx],
-                    "response_ids_length": rollout_result.response_lengths[turn_idx],
-                    "is_end": rollout_result.is_end[turn_idx],
-                    "reward_score": rollout_result.rewards[turn_idx],
-                    "role": rollout_result.extra_fields_turn["role"][turn_idx],
-                    "tool_call_info": rollout_result.extra_fields_turn["tool_call_info"][turn_idx],
+                    "prompt_text": _safe_idx(extra_fields_turn.get("prompt_text"), turn_idx, None),
+                    "response_text": _safe_idx(extra_fields_turn.get("response_text"), turn_idx, None),
+                    "prompt_ids_length": int(_to_py_scalar(_safe_idx(rollout_result.prompt_lengths, turn_idx, 0), 0)),
+                    "response_ids_length": int(_to_py_scalar(_safe_idx(rollout_result.response_lengths, turn_idx, 0), 0)),
+                    "is_end": bool(_to_py_scalar(_safe_idx(rollout_result.is_end, turn_idx, False), False)),
+                    "reward_score": float(reward_value),
+                    "role": _safe_idx(extra_fields_turn.get("role"), turn_idx, None),
+                    "tool_call_info": _safe_idx(extra_fields_turn.get("tool_call_info"), turn_idx, None),
                 }
                 turns.append(turn_data)
 
-            final_answer = rollout_result.extra_fields_traj["final_answer"][traj_idx]
+            final_answer = _safe_idx(extra_fields_traj.get("final_answer"), traj_idx, None)
             if isinstance(final_answer, pd.DataFrame):
                 final_answer = final_answer.to_dict(orient="records")
             samples_data.append(
@@ -749,16 +499,18 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
                     "sample_idx": traj_idx,
                     "num_turns": len(turn_idxes),
                     "turns": turns,
-                    "origin_question": rollout_result.extra_fields_traj["origin_question"][traj_idx],
+                    "origin_question": _safe_idx(extra_fields_traj.get("origin_question"), traj_idx, None),
                     "final_answer": final_answer,
-                    "final_answer_text": rollout_result.extra_fields_traj["final_answer_text"][traj_idx],
-                    "planner_summary": rollout_result.extra_fields_traj["planner_summary"][traj_idx],
+                    "final_answer_text": _safe_idx(extra_fields_traj.get("final_answer_text"), traj_idx, None),
+                    "planner_summary": _safe_idx(extra_fields_traj.get("planner_summary"), traj_idx, None),
                     "eval_metric": eval_metric,
                     "total_turn_list": total_turn_list,
+                    "final_answer_format": float(final_answer_format),
+                    "llm_reward": float(llm_reward),
                 }
             )
 
-        answer = rollout_result.extra_fields_group["answer"]
+        answer = (rollout_result.extra_fields_group or {}).get("answer", None)
         eval_result = {"group_size": group_size, "answer": answer, "samples": samples_data}
         if isinstance(answer, dict) and "instance_id" in answer and log_info is not None:
             log_info(f"finish question id {answer['instance_id']}")

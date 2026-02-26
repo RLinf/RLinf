@@ -21,7 +21,7 @@ from typing import Optional
 from omegaconf import DictConfig
 
 from rlinf.data.io_struct import DynamicRolloutResult
-from rlinf.agents.wideseek_r1.utils.metrics import _compute_eval_metrics, _compute_mas_turn_metrics, _compute_tool_call_metrics
+from rlinf.agents.wideseek_r1.utils.metrics import _compute_rollout_metrics
 from rlinf.agents.wideseek_r1.utils.sglang_client import SGLangClient
 from rlinf.agents.wideseek_r1.utils.reward import (
     extract_final_answer, 
@@ -58,7 +58,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
     ):
         super().__init__(cfg, placement)
         self.extra_keys_turn = ["subtask_count", "search_count", "access_count", "tool_call_info", "prompt_text", "response_text", "role"]
-        self.extra_keys_traj = ["origin_question", "planner_summary", "final_answer", "final_answer_text", "num_valid_planner_turns", "num_valid_worker_turns", "eval_metric", "total_turn_list", "final_answer_format"]
+        self.extra_keys_traj = ["origin_question", "planner_summary", "final_answer", "final_answer_text", "num_valid_planner_turns", "num_valid_worker_turns", "eval_metric", "total_turn_list", "final_answer_format", "llm_reward"]
 
         self.max_prompt_len = int(self.cfg.data.max_prompt_length)
         self.max_total_len = int(self.cfg.actor.model.encoder_seq_length)
@@ -609,7 +609,6 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
             succ_end=succ_end,
             answer_format = final_answer_extract is not None and format is True, 
         )
-        # TODO: 把final_answer_format添加到metric里面
 
         for single_turn_output in output_buffer:
             single_turn_output.reward_score = reward_score
@@ -711,44 +710,20 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         self,
         rollout_result: DynamicRolloutResult,
     ) -> dict:
-        # return {}
-
         if self.is_eval:
             return {}
 
-        rollout_batch_1 = dict(
+        rollout_batch = dict(
             turn_subtask_counts=rollout_result.extra_fields_turn["subtask_count"],
             turn_search_counts=rollout_result.extra_fields_turn["search_count"],
             turn_access_counts=rollout_result.extra_fields_turn["access_count"],
             num_valid_planner_turns=sum(rollout_result.extra_fields_traj["num_valid_planner_turns"]),
             num_valid_worker_turns=sum(rollout_result.extra_fields_traj["num_valid_worker_turns"]),
-        )
-
-        rollout_batch_2 = dict(
-            eval_metrics=rollout_result.extra_fields_traj["eval_metric"],
-        )
-
-        rollout_batch_3 = dict(
             total_turn_list_metric=rollout_result.extra_fields_traj["total_turn_list"],
+            final_answer_format=rollout_result.extra_fields_traj["final_answer_format"],
         )
-
-        # idx_to_traj = rollout_batch["idx_to_traj"]
-        idx_to_traj = rollout_result.idx_to_traj
-        num_trajectories = max(idx_to_traj) + 1
-        tool_call_metrics = _compute_tool_call_metrics(
-            rollout_batch_1, idx_to_traj, int(num_trajectories)
+        return _compute_rollout_metrics(
+            rollout_batch=rollout_batch,
+            idx_to_traj=rollout_result.idx_to_traj,
+            num_trajectories=int(rollout_result.group_size),
         )
-        # FIXME: 如何写device和dp group？不需要allreduce？
-        
-        eval_metrics_dict = _compute_eval_metrics(
-            rollout_batch_2, device, data_parallel_group
-        )
-        mas_turn_metrics = _compute_mas_turn_metrics(
-            rollout_batch_3, device, data_parallel_group
-        )
-        agent_metrics = {
-            **tool_call_metrics,
-            # **eval_metrics_dict,
-            # **mas_turn_metrics,
-        }
-        return agent_metrics

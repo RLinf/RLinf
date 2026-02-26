@@ -83,7 +83,7 @@ def main(cfg) -> None:
         subworker_rollout_group = rollout_worker_cls.create_group(
             cfg,
             component_placement,
-            weight_reload="cpu",
+            weight_reload=None,
             config_rollout=cfg.rollout_fixed_worker,
         ).launch(
             cluster,

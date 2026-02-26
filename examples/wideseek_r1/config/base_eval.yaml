@@ -229,7 +229,6 @@ data:
   shuffle: True
   validation_shuffle: False
   seed: 1234
-  train_data_paths: ["/mnt/project_rlinf/xzxuan/data/nq_hotpotqa_train/train_RLinf.jsonl"]
   val_data_paths: ["/mnt/project_rlinf/xzxuan/data/nq_hotpotqa_train/validation_RLinf.jsonl"]
   data_size: -1
 

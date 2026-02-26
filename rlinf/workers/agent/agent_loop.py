@@ -438,21 +438,42 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
             else:
                 self.send(agent_metrics_list, self._group_name, 0)
                 return
-        keys_list = [i.keys() for i in agent_metrics_list]
-        all_keys = set([j for i in keys_list for j in i])
-        assert all((len(all_keys) == len(keys) for keys in keys_list))
+        if len(agent_metrics_list) == 0:
+            return {}
 
+        all_keys = set()
+        for metric_dict in agent_metrics_list:
+            all_keys.update(metric_dict.keys())
+
+        visible_keys = sorted(k for k in all_keys if not k.startswith("__stat/"))
         whole_metrics = {}
-        for k in all_keys:
-            values_list = [i[k] for i in agent_metrics_list]
-            # TODO: turn-level metric这样直接平均是不是不对？
-            # traj和turn都传list，然后在这里算mean
-            if "agent/turn/mean/" in k or "agent/traj/mean/" in k:
-                whole_metrics[k] = sum(values_list) / len(values_list)
-            elif "agent/turn/max/" in k or "agent/traj/max/" in k:
+        for k in visible_keys:
+            sum_key = f"__stat/sum/{k}"
+            cnt_key = f"__stat/count/{k}"
+            has_weighted_stat = any(
+                (sum_key in metric_dict) or (cnt_key in metric_dict)
+                for metric_dict in agent_metrics_list
+            )
+
+            if has_weighted_stat:
+                weighted_sum = sum(
+                    float(metric_dict[sum_key])
+                    for metric_dict in agent_metrics_list
+                )
+                weighted_cnt = sum(
+                    float(metric_dict[cnt_key])
+                    for metric_dict in agent_metrics_list
+                )
+                whole_metrics[k] = weighted_sum / weighted_cnt if weighted_cnt > 0 else 0.0
+                continue
+
+            values_list = [metric_dict[k] for metric_dict in agent_metrics_list if k in metric_dict]
+            if len(values_list) == 0:
+                continue
+            if "/max/" in k:
                 whole_metrics[k] = max(values_list)
             else:
-                assert False
+                whole_metrics[k] = sum(values_list) / len(values_list)
         return whole_metrics
 
     def get_rollout_metrics(

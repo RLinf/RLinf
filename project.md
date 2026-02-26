@@ -1,0 +1,11 @@
+
+我正在做一个multiagent和singleagent的对比：你需要非常仔细，非常认真的理解的完整代码rlinf/agents/wideseek_r1/wideseek_r1.py和rlinf/workers/agent/agent_loop.py
+这里分两个workflow，一个是mas：planner每个turn可以调用多个worker，worker每个turn可以调用多个search或者access tool。另一个workflow是single agent，这里agent执行是串行的，每个turn只允许调用一个tool（search或者access）
+
+在train mode下，管理rollout-train的核心主函数位于rlinf/workers/agent/agent_loop.py和rlinf/agents/wideseek_r1/wideseek_r1.py
+在eval mode下，没有train的代码，核心就是rollout，并且把rollout的结果保存下来，核心主函数在rlinf/agents/wideseek_r1/eval_runner.py
+
+
+如果是train，数据会被rlinf/workers/actor/ma_megatron_actor_worker.py接收，然后进行训练
+
+最后，我们的训练的启动脚本是examples/wideseek_r1/run_train.sh，默认配置是examples/wideseek_r1/config/train_mas_qwen3-4b_hybrid.yaml

@@ -22,8 +22,8 @@ fi
 
 val_names=(
     bamboogle
-    hotpotqa
-    nq
+    # hotpotqa
+    # nq
     # popqa
     # triviaqa
     # 2wikimultihopqa
@@ -32,27 +32,89 @@ val_names=(
 
 val_paths=(
     /mnt/project_rlinf/xzxuan/data/Asearcher-test-data/Bamboogle/test.jsonl
-    /mnt/project_rlinf/xzxuan/data/Asearcher-test-data/HotpotQA_rand1000/test.jsonl
-    /mnt/project_rlinf/xzxuan/data/Asearcher-test-data/NQ_rand1000/test.jsonl
+    # /mnt/project_rlinf/xzxuan/data/Asearcher-test-data/HotpotQA_rand1000/test.jsonl
+    # /mnt/project_rlinf/xzxuan/data/Asearcher-test-data/NQ_rand1000/test.jsonl
     # /mnt/project_rlinf/xzxuan/data/Asearcher-test-data/PopQA_rand1000/test.jsonl
     # /mnt/project_rlinf/xzxuan/data/Asearcher-test-data/TriviaQA_rand1000/test.jsonl
     # /mnt/project_rlinf/xzxuan/data/Asearcher-test-data/2WikiMultihopQA_rand1000/test.jsonl
     # /mnt/project_rlinf/xzxuan/data/Asearcher-test-data/Musique_rand1000/test.jsonl
 )
 
-
+# 2 eng
 for i in "${!val_names[@]}"; do
     val_name="${val_names[$i]}"
     val_path="${val_paths[$i]}"
 
-    python "${REPO_PATH}/examples/wideseek_r1/eval.py" \
+    python ${REPO_PATH}/examples/wideseek_r1/eval.py \
         --config-path "${CONFIG_PATH}/config/" \
-        --config-name "eval_qwen3_qa" \
+        --config-name "eval_qwen3_qa_2eng" \
+        "cluster.num_nodes=1" \
         "data.val_data_paths=[${val_path}]" \
         "runner.experiment_name=${val_name}" \
-        "runner.output_dir=/mnt/project_rlinf/xzxuan/RLinf_merge/eval/mas" \
+        "runner.output_dir=/mnt/project_rlinf/xzxuan/RLinf_no_bugs/eval/mas_2_eng_all_train" \
         "agentloop.workflow=mas" \
-        "rollout.model.model_path=/mnt/project_rlinf/xzxuan/wideseek_model/mas_hybrid_final"
+        "rollout.model.model_path=/mnt/project_rlinf/xzxuan/wideseek_model/mas_hybrid_final" \
+        "rollout_fixed_worker.model.model_path=/mnt/project_rlinf/xzxuan/wideseek_model/mas_hybrid_final"
+        
+done
+
+# wideseek_offline
+# python ${REPO_PATH}/examples/wideseek_r1/eval.py \
+#     --config-path ${CONFIG_PATH}/config/ \
+#     --config-name eval_qwen3_widesearch \
+#     "runner.experiment_name=ws_offline" \
+#     "agentloop.workflow=mas" \
+#     "tools.online=False" \
+#     "rollout.model.model_path=/mnt/project_rlinf/xzxuan/wideseek_model/mas_hybrid_final" \
+
+
+
+# one eng trained
+
+# for i in "${!val_names[@]}"; do
+#     val_name="${val_names[$i]}"
+#     val_path="${val_paths[$i]}"
+
+#     python "${REPO_PATH}/examples/wideseek_r1/eval.py" \
+#         --config-path "${CONFIG_PATH}/config/" \
+#         --config-name "eval_qwen3_qa" \
+#         "data.val_data_paths=[${val_path}]" \
+#         "runner.experiment_name=${val_name}" \
+#         "runner.output_dir=/mnt/project_rlinf/xzxuan/RLinf_no_bugs/eval/mas_train" \
+#         "agentloop.workflow=mas" \
+#         "rollout.model.model_path=/mnt/project_rlinf/xzxuan/wideseek_model/mas_hybrid_final"
+        
+# done
+
+# for i in "${!val_names[@]}"; do
+#     val_name="${val_names[$i]}"
+#     val_path="${val_paths[$i]}"
+
+#     python "${REPO_PATH}/examples/wideseek_r1/eval.py" \
+#         --config-path "${CONFIG_PATH}/config/" \
+#         --config-name "eval_qwen3_qa" \
+#         "data.val_data_paths=[${val_path}]" \
+#         "runner.experiment_name=${val_name}" \
+#         "runner.output_dir=/mnt/project_rlinf/xzxuan/RLinf_no_bugs/eval/sa_train" \
+#         "agentloop.workflow=sa" \
+#         "rollout.model.model_path=/mnt/project_rlinf/xzxuan/wideseek_model/sa_hybrid_final"
+        
+# done
+
+# one eng not trained
+
+for i in "${!val_names[@]}"; do
+    val_name="${val_names[$i]}"
+    val_path="${val_paths[$i]}"
+
+    python "${REPO_PATH}/examples/wideseek_r1/eval.py" \
+        --config-path "${CONFIG_PATH}/config/" \
+        --config-name "eval_qwen3_qa" \
+        "data.val_data_paths=[${val_path}]" \
+        "runner.experiment_name=${val_name}" \
+        "runner.output_dir=/mnt/project_rlinf/xzxuan/RLinf_no_bugs/eval/mas_no_train" \
+        "agentloop.workflow=mas" \
+        "rollout.model.model_path=/mnt/project_rlinf/xzxuan/model/Qwen3-4B"
         
 done
 
@@ -65,23 +127,9 @@ for i in "${!val_names[@]}"; do
         --config-name "eval_qwen3_qa" \
         "data.val_data_paths=[${val_path}]" \
         "runner.experiment_name=${val_name}" \
-        "runner.output_dir=/mnt/project_rlinf/xzxuan/RLinf_merge/eval/sa" \
+        "runner.output_dir=/mnt/project_rlinf/xzxuan/RLinf_no_bugs/eval/sa_no_train" \
         "agentloop.workflow=sa" \
-        "rollout.model.model_path=/mnt/project_rlinf/xzxuan/wideseek_model/sa_hybrid_final"
+        "rollout.model.model_path=/mnt/project_rlinf/xzxuan/model/Qwen3-4B"
         
 done
 
-for i in "${!val_names[@]}"; do
-    val_name="${val_names[$i]}"
-    val_path="${val_paths[$i]}"
-
-    python "${REPO_PATH}/examples/wideseek_r1/eval.py" \
-        --config-path "${CONFIG_PATH}/config/" \
-        --config-name "eval_qwen3_qa" \
-        "data.val_data_paths=[${val_path}]" \
-        "runner.experiment_name=${val_name}" \
-        "runner.output_dir=/mnt/project_rlinf/xzxuan/RLinf_merge/eval/sa" \
-        "agentloop.workflow=sa" \
-        "rollout.model.model_path=/mnt/project_rlinf/xzxuan/wideseek_model/sa_hybrid_final"
-        
-done

@@ -84,7 +84,6 @@ class MAMegatronActor(MegatronActor):
         loss_scales = self.cfg.algorithm.get("loss_scales", []) 
         self.loss_scale_fns = get_loss_scales(loss_scales)
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
-        assert self.kl_beta == 0, "Currently, KL loss is not avaliable" 
 
     def get_batch(
         self, channel: Channel
@@ -238,6 +237,7 @@ class MAMegatronActor(MegatronActor):
 
                 kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
                 if self.kl_beta > 0 and ref_logprobs is not None:
+                    assert False, "Currently, KL loss is not avaliable" 
                     kld = kl_penalty(curr_logprobs, ref_logprobs, self.kl_penalty_type)
                     kl_loss = self.loss_agg_func(kld, mask)
                     loss = loss + kl_loss * self.kl_beta

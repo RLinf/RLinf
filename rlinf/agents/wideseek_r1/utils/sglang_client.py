@@ -82,13 +82,14 @@ class SGLangClient:
                         return result_text
                     else:
                         response_text = await response.text()
-                        print(
-                            f"[ERROR] SGLangClient: Failed calling sglang: {response.status}, response: {response_text}, Retry {retry_count}/{max_retries}"
-                        )
+                        # print(
+                        #     f"[ERROR] SGLangClient: Failed calling sglang: {response.status}, response: {response_text}, Retry {retry_count}/{max_retries}"
+                        # )
             except Exception as e:
-                print(
-                    f"[ERROR] SGLangClient: Exception error in calling sglang: {e}, Retry {retry_count}/{max_retries}"
-                )
+                # print(
+                #     f"[ERROR] SGLangClient: Exception error in calling sglang: {e}, Retry {retry_count}/{max_retries}"
+                # )
+                pass
 
             retry_count += 1
             await asyncio.sleep(10)

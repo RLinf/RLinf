@@ -63,7 +63,8 @@ class WideSeekR1_Dataset(Dataset):
                     if L <= self.max_prompt_length:
                         filtered.append(item)
                     # breakpoint()
-                except Exception:
+                except Exception as e:
+                    logging.warning(f"Failed to process item with error: {e}. Item: {item}")
                     failed += 1
 
             self.data = filtered

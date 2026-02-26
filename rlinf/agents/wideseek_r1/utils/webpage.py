@@ -1,13 +1,18 @@
-# This file is derived from the project ASearcher:
-# https://github.com/inclusionAI/ASearcher
+# Copyright 2025 The RLinf Authors.
 
-# Original file:
-# https://github.com/inclusionAI/ASearcher/blob/main/ASearcher/utils/web_browser.py
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 
-# Modifications have been made to the original work.
+#     https://www.apache.org/licenses/LICENSE-2.0
 
-# This source code retains the original license of the ASearcher project.
-# Please refer to the LICENSE file in the original repository for complete licensing information.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This file contains code copied from the Asearcher project: https://github.com/inclusionAI/ASearcher
 
 import atexit
 import hashlib
