@@ -828,7 +828,7 @@ def validate_embodied_cfg(cfg):
     return cfg
 
 
-def validate_vlm_sft_cfg(cfg: DictConfig) -> DictConfig:
+def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
     assert cfg.actor.get("global_batch_size", None) is not None, (
         "the actor.global_batch_size is not set"
     )
@@ -985,6 +985,8 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     elif cfg.runner.task_type == "reasoning_eval":
         cfg = validate_reasoning_eval_cfg(cfg)
         return cfg
+    elif cfg.runner.task_type == "sft":
+        cfg = validate_sft_cfg(cfg)
 
     if cfg.algorithm.adv_type in ("grpo", "reinpp_baseline"):
         assert cfg.algorithm.group_size > 1
