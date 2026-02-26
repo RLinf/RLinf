@@ -95,7 +95,7 @@ def torch_dtype_from_precision(precision: Union[int, str]) -> torch.dtype:
         return torch.float16
     elif precision in [32, "32", "fp32", "32-true"]:
         return torch.float32
-    elif precision in [None]:
+    elif precision in [None, "null"]:
         return None
     else:
         raise ValueError(
