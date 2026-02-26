@@ -25,7 +25,7 @@ try:
 except ImportError:
     HAS_COMPUTE_SCORE = False
 
-
+ 
 def _compute_score_wrapper(
     response: str, reference: str, index: int, result_queue: Queue
 ):
