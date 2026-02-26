@@ -316,9 +316,9 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
-          tmux kill-session -t server
-          tmux kill-session -t worker
-          pkill redis-server
+          tmux kill-session -t server 2>/dev/null || true
+          tmux kill-session -t worker 2>/dev/null || true
+          pkill redis-server 2>/dev/null || true
           rm -rf code-judge/
 
   qwen-vl-grpo-test:
