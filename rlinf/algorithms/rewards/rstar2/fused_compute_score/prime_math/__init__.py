@@ -27,7 +27,7 @@ try:
     import sympy
     from pylatexenc import latex2text
     from sympy.parsing import sympy_parser
-except:
+except Exception:
     pass
 
 from . import math_normalize
