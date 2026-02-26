@@ -32,7 +32,10 @@ from util import get_global_config, get_valid_gpu_num_list, init_global_config
 from workflow import Workflow, traverse_st_cuts
 
 from rlinf.scheduler import Cluster
-from rlinf.utils.placement import ModelParallelComponentPlacement,HybridComponentPlacement
+from rlinf.utils.placement import (
+    HybridComponentPlacement,
+    ModelParallelComponentPlacement,
+)
 
 
 class AutoPlacementWorker:
@@ -42,7 +45,6 @@ class AutoPlacementWorker:
         component_placement,
         graph: Optional[dict[str, list[str]]] = None,
     ):
-        
         self.config = get_global_config()
         self.components_config = self.config.components_config
         self._name_to_node_dict: dict[str, ComponentNode] = {}
@@ -189,7 +191,7 @@ def main(cfg):
     cluster = Cluster(cfg.cluster.num_nodes)
     if cfg.runner.task_type == "reasoning":
         component_placement = ModelParallelComponentPlacement(cfg, cluster)
-    else :  # embodiment task
+    else:  # embodiment task
         component_placement = HybridComponentPlacement(cfg, cluster)
     init_global_config(cfg, component_placement, cluster)
 

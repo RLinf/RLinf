@@ -13,8 +13,7 @@
 # limitations under the License.
 
 from argparse import Namespace
-from rlinf.scheduler import Cluster
- 
+
 _GLOBAL_CONFIG = None
 
 
@@ -23,6 +22,7 @@ def init_global_config(config, component_placement, cluster):
         init_global_config_reasoning(config, component_placement, cluster)
     else:
         init_global_config_env(config, component_placement, cluster)
+
 
 def init_global_config_reasoning(config, component_placement):
     global _GLOBAL_CONFIG
@@ -81,7 +81,9 @@ def init_global_config_env(config, component_placement, cluster):
     for component in component_placement._components:
         instance_num = component_placement.get_world_size(component)
         world_size = component_placement.get_world_size(component)
-        model_parallel_size = world_size // instance_num # For env and rollout in embodiment task, we set dp_size = world_size, so model_parallel_size = 1
+        model_parallel_size = (
+            world_size // instance_num
+        )  # For env and rollout in embodiment task, we set dp_size = world_size, so model_parallel_size = 1
 
         if component == "rollout":
             component = "env_rollout"
