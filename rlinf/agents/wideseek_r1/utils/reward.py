@@ -15,181 +15,448 @@
 import re
 import string
 from io import StringIO
-
 import pandas as pd
+import traceback
+import re
+import numpy as np
+import asyncio
+import copy
+import json
 
+from omegaconf import DictConfig
+from rlinf.workers.agent.agent_loop import AgentLoopOutput
+from rlinf.agents.wideseek_r1.utils.sglang_client import SGLangClient
 
-def normalize_answer(s):
-    def remove_articles(text):
-        return re.sub(r"\b(a|an|the)\b", " ", text)
+def credit_assignment(agentloop_config: DictConfig, output_buffer: list[AgentLoopOutput], llm_reward, succ_end, answer_format):
+    final_answer_format = 0
+    search_credit = 0.0
+    length_penalty = 0.0
 
-    def white_space_fix(text):
-        return " ".join(text.split())
+    format_reward = agentloop_config.get("format_reward", 0.0)
+    call_search_reward = agentloop_config.get("call_search_reward", 0.0)        
+    length_limit = agentloop_config.get("length_limit", 5000)
+    max_length_limit = agentloop_config.get("max_length_limit", 7000)
+    length_p = agentloop_config.get("length_penalty", 0.0) 
+    
+    for turn_output in output_buffer:
+        tool_call_info = turn_output.tool_call_info
+        if tool_call_info is None:
+            continue
+        if tool_call_info.get("access", 0) > 0: 
+            search_credit = call_search_reward
+            break
 
-    def remove_punc(text):
-        exclude = set(string.punctuation)
-        return "".join(ch for ch in text if ch not in exclude)
+    max_response_len = max(len(turn_output.response_ids) for turn_output in output_buffer)
+    if max_response_len > length_limit:
+        t = (max_response_len - length_limit) / (max_length_limit - length_limit)
+        t = max(0.0, min(1.0, t)) 
+        length_penalty = t * length_p
+    
+    one_turn_failed = False
 
-    def lower(text):
-        return text.lower()
+    for turn in output_buffer:
+        if turn.extra_fields["turn_repeat_failed"]:
+            one_turn_failed = True
 
-    return white_space_fix(remove_articles(remove_punc(lower(s))))
+    train_buffer : list[AgentLoopOutput] = []
+    if answer_format:
+        flag = False    
+        for turn in output_buffer:
+            if (turn.extra_fields["context_failed"] or turn.extra_fields["max_turn_limit_failed"]) and turn.extra_fields['role'] != 'worker':
+                # main agent or sa failed but extract good format
+                flag = True
+                
+        if not flag:
+            for turn in output_buffer:
+                if not (turn.extra_fields["context_failed"] or turn.extra_fields["max_turn_limit_failed"]):
+                    train_buffer.append(turn) 
 
+            reward_score = llm_reward + format_reward + search_credit - length_penalty       
+            final_answer_format = 1
+        else:
+            for turn in output_buffer:
+                if (turn.extra_fields["context_failed"] or turn.extra_fields["max_turn_limit_failed"]) and turn.extra_fields['role'] != 'worker':
+                    train_buffer.append(turn)
+            
+            reward_score = 0.0
 
-def normalize_text(text: str) -> str:
-    """Preprocess text for NQ dataset scoring.
-
-    Processing steps:
-    1. Convert to lowercase
-    2. Remove punctuation (.,!?;:'"()[]{}...)
-    3. Remove extra spaces
-    """
-    # Replace punctuation with spaces
-    for punct in string.punctuation:
-        text = text.replace(punct, " ")
-
-    # Replace multiple spaces with single space
-    text = re.sub(r"\s+", " ", text)
-
-    # Remove leading/trailing spaces
-    text = text.strip().lower()
-    return text
-
-
-def bool_mapping(s):
-    """Map boolean string values to yes/no."""
-    if s == "True":
-        return "yes"
-    elif s == "False":
-        return "no"
     else:
-        return s
+        reward_score = 0.0
+        if succ_end:
+            train_buffer.append(output_buffer[-1])
 
+        if one_turn_failed:
+            for turn in output_buffer:
+                if turn.extra_fields["turn_repeat_failed"]:
+                    if turn not in train_buffer:
+                        train_buffer.append(turn)
+        else:
+            for turn in output_buffer:
+                if turn.extra_fields["max_turn_limit_failed"] or turn.extra_fields["context_failed"]:
+                    assert not turn.extra_fields["turn_repeat_failed"]
+                    if turn not in train_buffer: 
+                        train_buffer.append(turn)  
 
-def contains_chinese(text):
-    """Check if the given text contains Chinese characters."""
-    for char in text:
-        # Check for common Chinese characters (CJK Unified Ideographs)
-        if "\u4e00" <= char <= "\u9fff":
-            return True
-        # Check for rare characters (CJK Unified Ideographs Extension A)
-        if "\u3400" <= char <= "\u4dbf":
-            return True
-        # Check for compatibility characters
-        if "\uf900" <= char <= "\ufaff":
-            return True
-    return False
+    return output_buffer, train_buffer, final_answer_format, reward_score      
 
+async def get_final_reward_score(origin_question, extract_answer, label_answer, is_markdown, norm_column, sgl_client: SGLangClient):
+    format = True
+    if is_markdown:
+        reward_score, format = await evaluate_markdown(extract_answer, label_answer, sgl_client, norm_column)
+        return reward_score, format
+    
+    label_answer = label_answer['answer']
+    if label_answer is not None and extract_answer is not None:
+        # Use LLM as judge
+        llm_score = await verify_answer_with_llm_judge(
+            question=origin_question,
+            predicted_answer=extract_answer,
+            correct_answer=label_answer,
+            sgl_client=sgl_client
+        )
+        reward_score = llm_score
 
-def em_check(prediction, golden_answer):
-    # if isinstance(golden_answers, str):
-    #     golden_answers = [golden_answers]
-    normalized_prediction = normalize_answer(bool_mapping(prediction))
-    score = 0
-    golden_answer = normalize_answer(bool_mapping(golden_answer))
-    if golden_answer == normalized_prediction:
-        score = 1
-    return score
-
-
-def f1_score(answer_content, gt):
-    """Compute F1 score between answer and ground truth."""
-    answer_content = normalize_text(bool_mapping(answer_content))
-    gt = normalize_text(bool_mapping(gt))
-
-    # Tokenize answer and reference answer
-    if contains_chinese(gt):
-
-        def parse_chinese_str(s):
-            # parse consecutive numbers
-            numbers = []
-            for i, c in enumerate(s):
-                if c.isdigit():
-                    if i > 0 and s[i - 1].isdigit():
-                        numbers[-1] = numbers[-1] + c
-                    else:
-                        numbers.append(c)
-            for c in "0123456789，。 ,.-":
-                s = s.replace(c, "")
-            s = set(list(s) + numbers)
-            return s
-
-        pred_tokens = parse_chinese_str(answer_content)
-        gt_tokens = parse_chinese_str(gt)
     else:
-        pred_tokens = set(answer_content.split())
-        gt_tokens = set(gt.split())
+        reward_score = 0.0
 
-    if not gt_tokens:  # Avoid division by zero
-        return 0
-    if not pred_tokens:
-        return 0
+    return reward_score, format
 
-    # Calculate common tokens
-    common_tokens = pred_tokens & gt_tokens
-
-    # Calculate precision and recall
-    precision = len(common_tokens) / len(pred_tokens) if pred_tokens else 0
-    recall = len(common_tokens) / len(gt_tokens) if gt_tokens else 0
-
-    # Calculate F1 score
-    f1 = 0
-    if precision + recall > 0:  # Avoid division by zero
-        f1 = 2 * (precision * recall) / (precision + recall)
-
-    return f1
-
-
-def compute_score_em(
-    predict, ground_truth, method="strict", format_score=0.0, score=1.0
-):
-    """The scoring function for exact match (EM).
-
-    Args:
-        predict: the predicted text
-        ground_truth: the ground truth
-        method: the method to extract the solution, choices are 'strict' and 'flexible'
-        format_score: the score for the format
-        score: the score for the correct answer
-
-    Returns:
-        tuple: (extracted_answer, score)
-    """
-    if isinstance(ground_truth, list):
-        # answer = extract_solution(text=solution_str)
-        return max([compute_score_em(predict, g) for g in ground_truth])
-
-    # answer = extract_solution(text=solution_str)
-
-    if em_check(predict, ground_truth):
-        return score
+async def verify_answer_with_llm_judge(
+    question: str,
+    predicted_answer: str,
+    correct_answer: list,
+    sgl_client: SGLangClient
+) -> float:
+    from rlinf.agents.wideseek_r1.utils.prompt import LLM_JUDGE_PROMPT
+    
+    if len(correct_answer) == 1:
+    # Format the judge prompt
+        judge_prompt_text = LLM_JUDGE_PROMPT.format(
+            question=question,
+            correct_answer=correct_answer[0],
+            response=predicted_answer
+        )
     else:
-        return format_score
+        judge_prompt_text = LLM_JUDGE_PROMPT.format(
+            question=question,
+            correct_answer=correct_answer,
+            response=predicted_answer
+        )            
 
+    judge_messages = [
+        {'role': "system", "content": "You are an evaluation assistant. Please determine if the predicted answer is equivalent to the labeled answer."},
+        {"role": "user", "content": judge_prompt_text}
+    ]
+    judge_response_text = await sgl_client.call_sglang_api(judge_messages)
+    judge_response_clean = judge_response_text.strip().lower()
+    if "correct" in judge_response_clean and "incorrect" not in judge_response_clean:
+        return 1.0
+    else:
+        return 0.0
 
-def compute_score_f1(
-    predict, ground_truth, method="strict", format_score=0.0, score=1.0
-):
-    """The scoring function for F1 score.
+async def evaluate_markdown(extract_answer, label_answer, sgl_client, norm_column_ = False):
+    # Helper function to normalize column names
+    def norm_column(col: str) -> str: 
+        if not norm_column_:
+            return col.strip().lower()
+        else:
+            return col.strip().lower().replace(" ", "")
 
-    Args:
-        predict: the predicted text
-        ground_truth: the ground truth
-        method: the method to extract the solution, choices are 'strict' and 'flexible'
-        format_score: the score for the format
-        score: the score for the correct answer (max F1 score)
+    # Helper function to calculate F1 score
+    def calc_f1(precision, recall):
+        epsilon = 1e-9
+        return (
+            (2 * precision * recall / (precision + recall))
+            if (precision + recall > epsilon)
+            else 0.0
+        )
 
-    Returns:
-        tuple: (extracted_answer, f1_score)
-    """
-    if isinstance(ground_truth, list):
-        return max([compute_score_f1(predict, g) for g in ground_truth])
+    def normalize_series_to_str(s: pd.Series) -> pd.Series:
+        s0 = s.astype(str).str.strip()
+        num = pd.to_numeric(s0, errors="coerce")
+        if num.notna().any():
+            return num.map(lambda x: "" if pd.isna(x) else f"{x:g}")
+        else:
+            return s0   
+        
+    # Initialize metrics
+    score = 0.0
+    precision_by_row = 0.0
+    recall_by_row = 0.0
+    f1_by_row = 0.0
+    precision_by_item = 0.0
+    recall_by_item = 0.0
+    f1_by_item = 0.0
 
-    ret_score = f1_score(predict, ground_truth)
-    return ret_score
+    try:
+        # Parse label_answer
+        if isinstance(label_answer, dict):
+            answer_markdown = label_answer.get("answer", "")
+            unique_columns = label_answer.get("unique_columns", [])
+            required_columns = label_answer.get("required", [])
+        else:
+            # If label_answer is a string, assume it's markdown
+            answer_markdown = label_answer
+            unique_columns = []
+            required_columns = []
 
+        # Convert answer_markdown to DataFrame if it's a string
+        if isinstance(answer_markdown, str):
+            answer_df = extract_final_answer(answer_markdown, mode='markdown', strict = False)
+            if answer_df is None:
+                # print("Failed to parse label answer markdown")               
+                return 0.0, False
+        elif isinstance(answer_markdown, pd.DataFrame):
+            answer_df = answer_markdown
+        else:
+            # print(f"Invalid label answer type: {type(answer_markdown)}")
+            return 0.0, False
 
-def extract_final_answer(text: str, mode: bool = "boxed", strict=True):
+        # Validate extract_answer
+        if not isinstance(extract_answer, pd.DataFrame) or extract_answer.empty:
+            # print(f"Extracted answer is None or not a DataFrame, it's {extract_answer}")
+            return 0.0, False
+
+        response_df = copy.deepcopy(extract_answer)
+
+        # Normalize column names
+        answer_df.columns = [norm_column(col) for col in answer_df.columns]
+        response_df.columns = [norm_column(col) for col in response_df.columns]
+
+        # Normalize unique_columns and required_columns
+        unique_columns = [norm_column(col) for col in unique_columns]
+
+        if not required_columns:
+            required_columns = list(answer_df.columns)
+        else:
+            required_columns = [norm_column(col) for col in required_columns] # widesearch requir columns: " " -> ""
+
+        # Check if response has required columns
+        if not set(required_columns).issubset(set(response_df.columns)):
+            # Try primary key preprocessing to map column names
+            column_map = await primary_key_preprocess(list(response_df.columns), required_columns, sgl_client)
+            response_df.rename(columns=column_map, inplace=True)
+
+        if not set(required_columns).issubset(set(response_df.columns)):
+            # print(f"required_columns {required_columns} != response_df {list(response_df.columns)}")
+            return 0.0, False
+
+        for col in required_columns:
+            answer_df[col] = normalize_series_to_str(answer_df[col])
+            response_df[col] = normalize_series_to_str(response_df[col])
+
+        # Remove duplicates based on unique columns
+        if unique_columns:
+            response_df.drop_duplicates(subset=unique_columns, inplace=True)
+            answer_df.drop_duplicates(subset=unique_columns, inplace=True)
+
+            # Preprocess primary keys using LLM
+            for col in unique_columns:
+                primary_key_map = await primary_key_preprocess(
+                    response_df[col].tolist(),
+                    answer_df[col].tolist(),
+                    sgl_client,
+                )
+                response_df[col + "_before_map"] = response_df[col]
+                response_df[col] = response_df[col].apply(
+                    lambda x: primary_key_map.get(x, x)
+                )
+
+        # Inner join to find matching rows
+        df_inner = pd.merge(
+            answer_df,
+            response_df,
+            on=unique_columns,
+            how="inner",
+            suffixes=("_query", "_response"),
+        )
+
+        # Initialize score DataFrames for each metric type in reward_eval
+        df_inner_scores = pd.DataFrame(index=df_inner.index)
+
+        llm_tasks = []
+        llm_columns = []
+        
+        # Process each column
+        for col in required_columns:
+            if col in unique_columns:
+                df_inner_scores[f"{col}_score"] = 1.0
+            else:
+                responses = df_inner[col + "_response"].tolist()
+                targets = df_inner[col + "_query"].tolist()
+                llm_tasks.append(llm_judge_column(responses, targets, sgl_client))
+                llm_columns.append(col)
+
+        # Execute all LLM calls in parallel
+        if llm_tasks:
+            llm_results = await asyncio.gather(*llm_tasks)
+            # Assign results back to df_inner_scores["LLM"]
+            for col, scores in zip(llm_columns, llm_results):
+                df_inner_scores[f"{col}_score"] = scores
+
+        # Calculate metrics for each evaluation method
+        num_pred_rows = len(response_df)
+        num_gt_rows = len(answer_df)
+        num_pred_items = num_pred_rows * len(required_columns)
+        num_gt_items = num_gt_rows * len(required_columns)
+
+        row_scores = df_inner_scores.min(axis=1)
+        tp_by_row = row_scores.sum()
+        precision_by_row = tp_by_row / num_pred_rows if num_pred_rows > 0 else 0.0
+        recall_by_row = tp_by_row / num_gt_rows if num_gt_rows > 0 else 0.0
+        f1_by_row = calc_f1(precision_by_row, recall_by_row)
+
+        # Item-level metrics
+        tp_by_item = df_inner_scores.sum().sum()
+        precision_by_item = tp_by_item / num_pred_items if num_pred_items > 0 else 0.0
+        recall_by_item = tp_by_item / num_gt_items if num_gt_items > 0 else 0.0
+        f1_by_item = calc_f1(precision_by_item, recall_by_item)
+
+        if (
+            precision_by_item == recall_by_item == 1.0
+            and precision_by_row == recall_by_row == 1.0
+        ): 
+            score = 1.0
+
+    except Exception as e:
+        # print(f"Evaluation error: {traceback.format_exc()}")
+        return 0.0, False
+    
+    return f1_by_item, True
+
+async def llm_judge_column(responses: list, targets: list, sgl_client: SGLangClient) -> list:
+    criterion = "It is sufficient if the semantics are approximately the same as the reference answer or if they point to the same entity. There is no need for a word-for-word correspondence."
+
+    if not responses:
+        return []
+
+    # Widesearch's eval_column_prompt
+    eval_column_prompt = """You are an expert in grading answers. Your task is to score the responses to a certain question. Below, you will be provided with a set of standard answers, a set of responses to be graded, and specific grading criteria.
+
+Each answer and each response has an idx. Please score each pair of answers and responses in this set according to the following methods:
+1. The scoring range is from 0 to 1. A score of 1 indicates a completely correct answer. For deduction items, please refer to the specific grading criteria section.
+2. After reading the standard answers, responses to be graded, and grading criteria, please first analyze and judge them item by step according to the grading criteria.
+3. The score can only be an integer of 0 or 1.
+4. After the analysis and judgment, please provide the final scoring results. Each pair should have a score. Output in Markdown JSON format, as shown below:
+```json
+{{
+"idx_0": score,
+"idx_1": score,
+...
+}}
+```
+
+{criterion}
+"""
+
+    user_prompt = """Here is the response you need to judge, please make sure to analyze each item step by step before providing the final scoring results.
+
+{response}
+"""
+
+    # Build response dict
+    response_dict = {}
+    for idx, (resp, tar) in enumerate(zip(responses, targets)):
+        response_dict[f"idx_{idx}"] = {"response": str(resp), "target": str(tar)}
+
+    # Format prompt
+    system_prompt = eval_column_prompt.format(
+        criterion=criterion,
+    )
+
+    user_prompt = user_prompt.format(
+        response = response_dict
+    )
+    # Create messages
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+
+    result_text = await sgl_client.call_sglang_api(messages)
+
+    try:
+        pat = r"```json\s*(\{.*?\})\s*```"
+        matches = re.findall(pat, result_text, re.DOTALL)
+        if matches:
+            json_str = matches[-1]
+            score_dict = json.loads(json_str)
+            score_list = [
+                float(score_dict.get(f"idx_{idx}", 0))
+                for idx in range(len(responses))
+            ]
+        else:
+            # Parsing failed, default to 0
+            score_list = [0.0] * len(responses)
+    except Exception as e:
+        # If any error, default to 0
+        score_list = [0.0] * len(responses)
+
+    # Ensure correct length
+    if len(score_list) != len(responses):
+        score_list = [0.0] * len(responses)
+    return score_list
+
+async def primary_key_preprocess(response_list, reference_list, sgl_client: SGLangClient):
+    primary_key_map = {}
+
+    # The prompt template from widesearch
+    primary_key_preprocess_prompt = """Your task is to align two vocabularies. The inputs are the vocabulary to be aligned and the reference vocabulary respectively. Note that you need to perform semantic alignment (not positional alignment). If two strings are exactly the same, they must correspond to each other. These two strings are supposed to represent the same entity, with differences only in the expression forms and formats.
+
+The alignment rules are as follows:
+List the values in the vocabulary to be aligned one by one. If there is a value in the reference vocabulary that has the same meaning as this value, `transform` should be represented as the value from the reference vocabulary; otherwise, `transform` should be represented as the original value from the vocabulary to be aligned.
+
+Note that `origin` must be taken from the vocabulary to be aligned keeping the original format, and `transform` must be taken from the reference vocabulary. For example: Some words in the vocabulary to be aligned might be the words in the reference vocabulary with Markdown formatting added, keep the to be aligned format in `origin` and the reference format in `transform`.
+
+For the `origin`, first find the `transform` that is the closest in meaning and then judge whether they correspond to each other. Those entities not correspond to each other could not output.
+
+Please output the alignment results in the following format:
+```json
+{{
+"origin_str1": "transform_str1",
+"origin_str2": "transform_str2"
+}}
+```
+"""
+
+    user_prompt = """
+The vocabulary to be aligned is as follows:
+{response}
+
+The reference vocabulary is as follows:
+{reference}
+"""
+
+    # Format the prompt
+    system_prompt = primary_key_preprocess_prompt
+
+    user_prompt = user_prompt.format(
+        response=response_list, reference=reference_list
+    )
+
+    # Create messages
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+
+    result_text = await sgl_client.call_sglang_api(messages)
+
+    # Parse JSON from result
+    try:
+        pat = r"```json\s*(\{.*?\})\s*```"
+        matches = re.findall(pat, result_text, re.DOTALL)
+        if matches:
+            json_str = matches[-1]
+            transform_map = json.loads(json_str)
+            primary_key_map.update(transform_map)
+    except Exception:
+        pass
+
+    return primary_key_map
+
+######### UTILS FUNC #########
+def extract_final_answer(text: str, mode: bool = "boxed", strict = True):
     """Extract final answer from text based on mode.
 
     Args:
@@ -200,8 +467,8 @@ def extract_final_answer(text: str, mode: bool = "boxed", strict=True):
         For 'tag' and 'boxed': str (the extracted answer)
         For 'markdown': pd.DataFrame or None
     """
-    text = text.split("</think>")[-1].strip()
-    if mode == "tag":
+    text = text.split('</think>')[-1].strip()
+    if mode == 'tag':
         answer_pattern = r"<answer>(.*?)</answer>"
         match = re.finditer(answer_pattern, text, re.DOTALL)
         matches = list(match)
@@ -209,7 +476,7 @@ def extract_final_answer(text: str, mode: bool = "boxed", strict=True):
         if len(matches) < 1:
             return None
         return matches[-1].group(1).strip()
-    elif mode == "boxed":
+    elif mode == 'boxed':
         if not text:
             return None
 
@@ -238,14 +505,14 @@ def extract_final_answer(text: str, mode: bool = "boxed", strict=True):
                 content_end += 1
 
             if brace_count == 0:
-                content = text[content_start : content_end - 1]
+                content = text[content_start:content_end - 1]
                 matches.append(content)
                 i = content_end
             else:
                 i = content_start
 
         return matches[-1] if matches else None
-    elif mode == "markdown":
+    elif mode == 'markdown':
         if not text or not isinstance(text, str):
             return None
 
@@ -267,7 +534,7 @@ def extract_final_answer(text: str, mode: bool = "boxed", strict=True):
         if markdown_str:
             markdown_str = markdown_str[-1].strip()
             lines = markdown_str.split("\n")
-            # lines[0] = lines[0].replace(" ", "").lower()
+            # lines[0] = lines[0].replace(" ", "").lower()  
             lines = [line.strip() for line in lines]
 
             new_lines = []
@@ -280,27 +547,24 @@ def extract_final_answer(text: str, mode: bool = "boxed", strict=True):
                 return None
             markdown_str = "\n".join(new_lines)
             try:
-                response_df = pd.read_csv(
-                    StringIO(markdown_str), sep="|", keep_default_na=False
-                )
+                response_df = pd.read_csv(StringIO(markdown_str), sep="|", keep_default_na=False)
                 response_df = response_df.loc[
                     :, ~response_df.columns.str.startswith("Unnamed")
                 ]
 
-                for col in response_df.columns:  # FIXME: check if need？
-                    if response_df[col].dtype == "object":
+                for col in response_df.columns: # FIXME: check if need？
+                    if response_df[col].dtype == 'object':
                         response_df[col] = response_df[col].apply(
-                            lambda x: x.replace("<br>", "\n")
-                            if isinstance(x, str) and x
-                            else x
+                            lambda x: x.replace('<br>', '\n') if isinstance(x, str) and x else x
                         )
-                    response_df[col] = response_df[col].replace("", "nan")
+                    response_df[col] = response_df[col].replace('', 'nan')
 
                 return response_df
             except Exception as e:
-                print(f"Error parsing markdown table: {e}")
+                # print(f"Error parsing markdown table: {e}")
                 return None
-
+            
         return response_df
     else:
         raise ValueError(f"Unknown mode: {mode}. Must be 'tag', 'boxed', or 'markdown'")
+    

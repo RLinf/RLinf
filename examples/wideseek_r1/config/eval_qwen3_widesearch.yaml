@@ -38,13 +38,10 @@ data:
   prompt_key: query
   answer_key: answer
   is_markdown: True
+  norm_column: True
   unique_columns: unique_columns 
-  val_data_paths: ["/path/to/validation.jsonl"] # TODO:
-  is_widesearch: True
+  val_data_paths: ["/mnt/project_rlinf/xzxuan/wideseek_test_data/test.jsonl"] # TODO:
   data_size: -1
       
-reward:
-  reward_type: 'em' # or em
-  eval_metric: ['em', 'f1', 'llm']
 
 

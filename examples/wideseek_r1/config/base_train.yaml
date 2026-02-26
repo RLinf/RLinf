@@ -67,7 +67,6 @@ algorithm:
   adv_type: grpo_dynamic
   advantage_mode: trajectory  # "trajectory" for trajectory-level GRPO, "turn" for turn-level GRPO
   use_rollout_scale: True
-  sub_traj_adv_scale: True
   normalize_advantages: False
   early_stop_imp_ratio: 5.0
   use_valid_token_scale: False
@@ -102,8 +101,6 @@ agentloop:
   max_workers_per_planner: 10
   max_toolcall_per_worker: 5
   is_dynamic_rollout_batch: True
-
-  train_roles: null
 
   format_reward: 0.1
   call_search_reward: 0.05
@@ -358,10 +355,6 @@ actor:
       schedule_active: 1
       schedule_repeat: 1 # inference and training will repeat such times
       # schedule_wait: it will be set at runtime
-
-reward:
-  reward_type: 'em' # or em
-  eval_metric: []  
 
 critic:
   use_critic_model: False

@@ -1,4 +1,14 @@
-#TODO(zhuchunyang): stolen from https://github.com/microsoft/autogen/blob/gaia_multiagent_v01_march_1st/autogen/browser_utils.py. need to add copyright.
+# This file is derived from the project ASearcher:
+# https://github.com/inclusionAI/ASearcher
+
+# Original file:
+# https://github.com/inclusionAI/ASearcher/blob/main/ASearcher/utils/web_browser.py
+
+# Modifications have been made to the original work.
+
+# This source code retains the original license of the ASearcher project.
+# Please refer to the LICENSE file in the original repository for complete licensing information.
+
 import atexit
 import hashlib
 import json

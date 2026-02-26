@@ -7,7 +7,7 @@ cluster:
     actor,rollout,reward: all
 
 runner:
-  experiment_name: fix_roleidx_bugs-and_dp_group
+  experiment_name: refactor-v1-no-metrics
   output_dir: ./logs
   seq_length: 32000  
 
@@ -28,7 +28,7 @@ algorithm:
   clip_ratio_high: 0.28
   clip_ratio_c: 10
 
-  adv_turn_level_scale: False
+  loss_scales: ["group_level", "agent_level", "turn_level"]
   advantage_mode: trajectory
 
 agentloop:
@@ -90,8 +90,5 @@ actor:
     lr_decay_style: constant
     # lr_decay_iters: 10
 
-reward:
-  reward_type: 'llm' # or em
-  eval_metric: []  
 
 

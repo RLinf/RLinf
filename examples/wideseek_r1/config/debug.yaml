@@ -28,7 +28,7 @@ algorithm:
   clip_ratio_high: 0.28
   clip_ratio_c: 10
 
-  adv_turn_level_scale: False
+  loss_scales: ["group_level", "agent_level", "turn_level"]
   advantage_mode: trajectory
 
 agentloop:
@@ -53,7 +53,7 @@ tools:
 data:
   type: wideseek_r1
   max_prompt_length: 4096
-  rollout_batch_size: 256
+  rollout_batch_size: 8
   prompt_key: question
   answer_key: answer
   is_markdown: True
@@ -96,8 +96,5 @@ actor:
     lr_decay_style: constant
     # lr_decay_iters: 10
 
-reward:
-  reward_type: 'llm' # or em
-  eval_metric: []  
 
 

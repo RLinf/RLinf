@@ -1004,33 +1004,6 @@ class DynamicRolloutResult:
     extra_fields_traj: Optional[dict] = None # [group_size]
     extra_fields_group: Optional[dict] = None # [1]
 
-    # todo: remove
-    # Evaluation metrics per trajectory (size: group_size)
-    # Each item is a dict with metric_type -> metric_dict mapping
-    roles: list[str]
-    role_group_sizes: list[int]
-
-    # belows are for debug
-    # # for reject sampling
-    # # size of belows are group_size
-    # prompt_texts: Optional[list[str]] = None
-    # response_texts: Optional[list[str]] = None
-    # answers: Optional[list[str | dict]] = None
-
-    # Tool call counts per turn (size: num_sequence)
-    turn_subtask_counts: Optional[list[int]] = None
-    turn_search_counts: Optional[list[int]] = None
-    turn_access_counts: Optional[list[int]] = None
-
-    # Number of valid turns (turns with actual tool calls)
-    num_valid_planner_turns: Optional[int] = None
-    num_valid_worker_turns: Optional[int] = None
-
-    # Evaluation metrics per trajectory (size: group_size)
-    # Each item is a dict with metric_type -> metric_dict mapping
-    eval_metrics: Optional[list] = None
-    total_turn_list_metric: Optional[list] = None
-
     @staticmethod
     def _get_attention_masks_and_position_ids(
         prompt_lengths: torch.Tensor,
@@ -1164,8 +1137,6 @@ class DynamicRolloutResult:
             "prompt_lengths": prompt_lengths.cuda(),
             "response_lengths": response_lengths.cuda(),
             "prev_logprobs": prev_logprobs.cuda(),
-            "roles": self.roles,
-            "role_group_sizes": self.role_group_sizes,
             **{f"extra:{k}": torch.as_tensor(v).cuda() for k, v in self.extra_fields_train.items()},
         }
 
@@ -1224,9 +1195,6 @@ class DynamicRolloutResult:
             "advantages": torch.zeros(
                 *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
             ),
-            # "loss_scales": torch.ones(
-            #     *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
-            # ),
         }
 
     @staticmethod
@@ -1258,178 +1226,6 @@ class DynamicRolloutResult:
             else:
                 raise ValueError(f"Unsupported batch key type: {type(batches[0][key])}")
         return merged_batch
-
-    @staticmethod
-    def pack_traj_batch_old(
-        batch: dict[str, torch.Tensor],
-        adv_turn_level_scale=False,
-        sub_traj_adv_scale=True,
-        train_roles=None,
-    ) -> dict:
-        """Merge two batches into one."""
-
-        traj_to_idx = {}
-        for idx, traj in enumerate(batch["idx_to_traj"]):
-            if traj not in traj_to_idx:
-                traj_to_idx[traj] = []
-            traj_to_idx[traj].append(idx)
-
-        prompt_lengths = batch["prompt_lengths"].tolist()
-        response_lengths = batch["response_lengths"].tolist()
-        pack_map = {}
-        passed_as_suffix = []
-        for traj, idxes in traj_to_idx.items():
-            idxes = sorted(idxes, key=lambda x: prompt_lengths[x])
-            for i in range(len(idxes)):
-                left = idxes[i]
-                for j in range(i + 1, len(idxes)):
-                    right = idxes[j]
-                    if right in passed_as_suffix:
-                        continue
-                    if (
-                        prompt_lengths[left] + response_lengths[left]
-                        > prompt_lengths[right]
-                    ):
-                        continue
-                    left_prompt_ids = batch["input_ids"][left][
-                        : prompt_lengths[left] + response_lengths[left]
-                    ]
-                    right_total_ids = batch["input_ids"][right][
-                        : prompt_lengths[left] + response_lengths[left]
-                    ]
-                    if torch.equal(left_prompt_ids, right_total_ids):
-                        pack_map[left] = right
-                        passed_as_suffix.append(right)
-                        break
-
-        num_sequence = len(batch["idx_to_traj"])
-        new_idx_to_traj = []
-        split_params = {}
-        tensor_keys = [
-            "input_ids",
-            "attention_mask",
-            "response_mask",
-            "position_ids",
-            "is_end",
-            "prompt_lengths",
-            "response_lengths",
-            "prev_logprobs",
-            "rewards",
-            "advantages",
-            *(k for k in batch.keys() if k.startswith("extra:"))
-        ]
-        list_keys = [
-            "roles",
-            "role_group_sizes",
-        ]
-        solid_keys = [
-            "idx_to_traj",
-        ]
-        for k, v in batch.items():
-            if k in list_keys:
-                assert len(v) == num_sequence
-                split_params[k] = v
-            elif k in tensor_keys:
-                split_params[k] = list(torch.chunk(v.clone(), num_sequence, dim=0))
-            else:
-                assert k in solid_keys, f"bad key {k}"
-        split_params.update({"turn_num": [1] * num_sequence})
-        pack_params = {k: [] for k in batch.keys() if k in tensor_keys}
-        for i in range(num_sequence):
-            if i in pack_map:
-                prefix = i
-                suffix = pack_map[i]
-                assert (
-                    split_params["rewards"][prefix] == split_params["rewards"][suffix]
-                )
-
-                # logprobs, advantages, response_mask
-                prev_logprobs_prefix = split_params["prev_logprobs"][
-                    prefix
-                ].masked_fill(~split_params["response_mask"][prefix], 0)
-                prev_logprobs_suffix = split_params["prev_logprobs"][
-                    suffix
-                ].masked_fill(~split_params["response_mask"][suffix], 0)
-                split_params["prev_logprobs"][suffix] = (
-                    prev_logprobs_prefix + prev_logprobs_suffix
-                )
-
-                advantages_prefix = split_params["advantages"][prefix].masked_fill(
-                    ~split_params["response_mask"][prefix], 0
-                )
-                advantages_suffix = split_params["advantages"][suffix].masked_fill(
-                    ~split_params["response_mask"][suffix], 0
-                )
-                if adv_turn_level_scale:
-                    # alg2
-                    masked_count_prefix = (
-                        split_params["response_mask"][prefix].sum().item()
-                    )
-                    masked_count_suffix = (
-                        split_params["response_mask"][suffix].sum().item()
-                    )
-                    masked_count_all = masked_count_prefix + masked_count_suffix
-                    split_params["advantages"][suffix] = (
-                        advantages_prefix * (masked_count_all / masked_count_prefix)
-                    ) + (advantages_suffix * (masked_count_all / masked_count_suffix))
-                else:
-                    # alg1
-                    split_params["advantages"][suffix] = (
-                        advantages_prefix + advantages_suffix
-                    )
-
-                split_params["response_mask"][suffix] += split_params["response_mask"][
-                    prefix
-                ]
-
-                # prompt_lengths, response_lengths
-                # split_params["prompt_lengths"][suffix] = prompt_lengths[prefix]
-                # split_params["response_lengths"][suffix] += prompt_lengths[suffix] - prompt_lengths[prefix]
-                split_params["response_lengths"][suffix] += (
-                    split_params["prompt_lengths"][suffix]
-                    - split_params["prompt_lengths"][prefix]
-                )  # FIXME:
-                split_params["prompt_lengths"][suffix] = split_params["prompt_lengths"][
-                    prefix
-                ]
-                split_params["turn_num"][suffix] += split_params["turn_num"][prefix]
-                split_params["turn_num"][prefix] = 0
-
-            else:
-                if adv_turn_level_scale:
-                    split_params["advantages"][i] /= split_params["turn_num"][i]
-                if not train_roles:
-                    for k in tensor_keys:
-                        pack_params[k].append(split_params[k][i])
-                    new_idx_to_traj.append(batch["idx_to_traj"][i])
-                else:
-                    split_params["advantages"][i] /= split_params["role_group_sizes"][i]
-                    if split_params["roles"][i] in train_roles:
-                        for k in tensor_keys:
-                            pack_params[k].append(split_params[k][i])
-                        new_idx_to_traj.append(batch["idx_to_traj"][i])
-
-        packed_batch = {}
-        for k, v in pack_params.items():
-            if len(v) != 0:
-                packed_batch[k] = torch.cat(v, dim=0)
-            else:
-                packed_batch[k] = batch[k][0:0,]
-
-        if sub_traj_adv_scale:
-            # Normalize across Agent num
-            traj_to_idx = {}
-            for idx, traj in enumerate(new_idx_to_traj):
-                if traj not in traj_to_idx:
-                    traj_to_idx[traj] = []
-                traj_to_idx[traj].append(idx)
-
-            for traj, idxes in traj_to_idx.items():
-                for idx in idxes:
-                    packed_batch["advantages"][idx] /= len(idxes)
-        packed_batch["idx_to_traj"] = new_idx_to_traj
-
-        return packed_batch
 
     @staticmethod
     def pack_traj_batch(
@@ -1483,19 +1279,12 @@ class DynamicRolloutResult:
             "loss_scales",
             *(k for k in batch.keys() if k.startswith("extra:"))
         ]
-        list_turn_keys = [
-            "roles",
-            "role_group_sizes",
-        ]
         custom_keys = [
             "idx_to_traj",
         ]
         for k, v in batch.items():
             if k in tensor_keys:
                 split_params[k] = list(torch.chunk(v.clone(), num_sequence, dim=0))
-            elif k in list_turn_keys:
-                assert len(v) == num_sequence
-                split_params[k] = v
             else:
                 assert k in custom_keys, f"bad key {k}"
 
@@ -1548,8 +1337,6 @@ class DynamicRolloutResult:
 
             for k in tensor_keys:
                 pack_params[k].append(split_params[k][i])
-            for k in list_turn_keys:
-                pack_params[k].append(split_params[k][i])
             new_idx_to_traj.append(batch["idx_to_traj"][i])
 
         packed_batch = {}
@@ -1557,8 +1344,6 @@ class DynamicRolloutResult:
             try:
                 if k in tensor_keys:
                     packed_batch[k] = torch.cat(v, dim=0)
-                elif k in list_turn_keys:
-                    packed_batch[k] = v
                 else:
                     assert False, k
             except:

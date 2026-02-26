@@ -16,20 +16,17 @@ import asyncio
 import copy
 import json
 import re
-import traceback
 from typing import Optional
 
-import numpy as np
-import pandas as pd
 from omegaconf import DictConfig
 
 from rlinf.data.io_struct import DynamicRolloutResult
 from rlinf.agents.wideseek_r1.utils.metrics import _compute_eval_metrics, _compute_mas_turn_metrics, _compute_tool_call_metrics
 from rlinf.agents.wideseek_r1.utils.sglang_client import SGLangClient
 from rlinf.agents.wideseek_r1.utils.reward import (
-    compute_score_em,
-    compute_score_f1,
-    extract_final_answer,
+    extract_final_answer, 
+    get_final_reward_score,
+    credit_assignment,
 )
 from rlinf.agents.wideseek_r1.utils.tool_description import (
     tools_description_en,
@@ -51,7 +48,6 @@ from rlinf.workers.agent.agent_loop import (
     MultiTurnAgentLoopOutput,
     MultiTurnAgentLoopWorker,
 )
-from contextvars import ContextVar
 
 
 class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
@@ -62,7 +58,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
     ):
         super().__init__(cfg, placement)
         self.extra_keys_turn = ["subtask_count", "search_count", "access_count", "tool_call_info", "prompt_text", "response_text", "role"]
-        self.extra_keys_traj = ["origin_question", "planner_summary", "final_answer", "final_answer_text", "num_valid_planner_turns", "num_valid_worker_turns", "eval_metric", "total_turn_list"]
+        self.extra_keys_traj = ["origin_question", "planner_summary", "final_answer", "final_answer_text", "num_valid_planner_turns", "num_valid_worker_turns", "eval_metric", "total_turn_list", "final_answer_format"]
 
         self.max_prompt_len = int(self.cfg.data.max_prompt_length)
         self.max_total_len = int(self.cfg.actor.model.encoder_seq_length)
@@ -76,21 +72,12 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
 
         self.workflow = self.cfg.agentloop.get("workflow", "mas")
         self.is_hybrid = self.cfg.data.get("is_hybrid", False)
-        self.reward_type = self.cfg.reward.get("reward_type", None)
-        if self.reward_type:
-            self.reward_type = self.reward_type.upper()
-        self.reward_eval = self.cfg.reward.get("eval_metric", [])
-        self.reward_eval = [m.upper() for m in self.reward_eval]
-        self.is_widesearch = self.cfg.data.get("is_widesearch", False)
         
         self.use_llm_judge_api = True
         llm_ip = self.cfg.agentloop.get("llm_ip", "")
         llm_port = self.cfg.agentloop.get("llm_port", "")
         llm_type = self.cfg.agentloop.get("llm_type", "")
-        self.sgl_client = SGLangClient(llm_ip, llm_port, llm_type)
-
-        self.train_roles = self.cfg.agentloop.get("train_roles", None)
-        
+        self.sgl_client = SGLangClient(llm_ip, llm_port, llm_type)       
 
     async def extract_tool_calls(
         self, response_text: str, role: str
@@ -394,7 +381,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                     response_text=response_text,
                     is_end=generate_result["finish_reason"] == "length",
                     response_logprobs=generate_result["logprobs"],
-                    extra_fields=dict(role=role, idx_to_sub_traj=sub_traj_id),
+                    extra_fields=dict(role=role, idx_to_sub_traj=sub_traj_id, context_failed=False, max_turn_limit_failed=False, turn_repeat_failed=False),
                     tool_call_info=tool_call_info
                     if tool_call_info
                     else None,  # if passed, must have tool call
@@ -545,19 +532,19 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         if max_turn_limit_failed:
             for turn in output_buffer:
                 if turn.extra_fields["role"] == role:
-                    turn.max_turn_limit_failed = True
+                    turn.extra_fields["max_turn_limit_failed"] = True
 
         if context_failed or tool_response_failed:
             for turn in output_buffer:
                 if turn.extra_fields["role"] == role:
-                    turn.context_failed = True
+                    turn.extra_fields["context_failed"] = True
 
         if (
             context_failed
             and len(output_buffer) >= 1
             and len(output_buffer[-1].response_ids) >= 8000
         ):
-            output_buffer[-1].turn_repeat_failed = True
+            output_buffer[-1].extra_fields["turn_repeat_failed"] = True
 
         task_failed = max_turn_limit_failed or context_failed or tool_response_failed
         assert task_failed != succ_end
@@ -610,130 +597,19 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
             final_answer_extract = extract_final_answer(answer_text, mode="boxed")
 
         # credit assignment
-        reward_score = 0.0
-        orm_em_score, eval_metric, format = await self.get_final_reward_score(
-            origin_question, final_answer_extract, answer, is_markdown=is_markdown
+        norm_column = self.cfg.data.get('norm_column', False)
+        llm_reward, format = await get_final_reward_score(
+            origin_question, final_answer_extract, answer, is_markdown, norm_column, self.sgl_client
         )
 
-        if self.is_hybrid:
-            eval_metric = {}  # FIXME:
-        eval_metric.update(
-            {
-                "format_score": {
-                    "call_search_reward": 0,
-                    "final_answer_format": 0,
-                    "length_penalty": 0,
-                    "context_failed": 0,
-                    "turn_repeat_failed": 0,
-                    "max_turn_limit_failed": 0,
-                    "abs_call_search_reward": 0,
-                    "abs_final_answer_format": 0,
-                    "abs_length_penalty": 0,
-                    "abs_em_f1_score": 0,
-                }
-            }
+        output_buffer, train_buffer, final_answer_format, reward_score = credit_assignment(
+            agentloop_config=self.cfg.agentloop, 
+            output_buffer=output_buffer, 
+            llm_reward=llm_reward,
+            succ_end=succ_end,
+            answer_format = final_answer_extract is not None and format is True, 
         )
-
-        # credit assignment
-        search_credit = 0.0
-        length_penalty = 0.0
-
-        self.format_reward = self.cfg.agentloop.get("format_reward", 0.0)
-        self.call_search_reward = self.cfg.agentloop.get("call_search_reward", 0.0)
-        self.length_limit = self.cfg.agentloop.get("length_limit", 5000)
-        self.max_length_limit = self.cfg.agentloop.get("max_length_limit", 7000)
-        self.length_penalty = self.cfg.agentloop.get("length_penalty", 0.0)
-
-        for turn_output in output_buffer:
-            tool_call_info = turn_output.tool_call_info
-            if tool_call_info is None:
-                continue
-            if tool_call_info.get("access", 0) > 0:
-                search_credit = self.call_search_reward
-                eval_metric["format_score"]["call_search_reward"] = 1
-                break
-
-        max_response_len = max(
-            len(turn_output.response_ids) for turn_output in output_buffer
-        )
-        if max_response_len > self.length_limit:
-            t = (max_response_len - self.length_limit) / (
-                self.max_length_limit - self.length_limit
-            )
-            t = max(0.0, min(1.0, t))
-            length_penalty = t * (self.length_penalty)
-            # reward_score -= penalty
-            eval_metric["format_score"]["length_penalty"] = t
-
-        one_turn_failed = False
-
-        for turn in output_buffer:
-            if turn.max_turn_limit_failed == True:
-                eval_metric["format_score"]["max_turn_limit_failed"] = 1
-            if turn.turn_repeat_failed == True:
-                eval_metric["format_score"]["turn_repeat_failed"] = 1
-            if turn.context_failed == True:
-                eval_metric["format_score"]["context_failed"] = 1
-
-            if turn.turn_repeat_failed:
-                one_turn_failed = True
-
-        train_buffer = []
-        if final_answer_extract is not None and format == True:
-            flag = False
-            for turn in output_buffer:
-                if (
-                    turn.context_failed or turn.max_turn_limit_failed
-                ) and turn.extra_fields["role"] != "worker":
-                    # main agent or sa failed but extract good format
-                    flag = True
-
-            if not flag:
-                for turn in output_buffer:
-                    if not (turn.context_failed or turn.max_turn_limit_failed):
-                        train_buffer.append(turn)
-
-                reward_score = (
-                    orm_em_score + self.format_reward + search_credit - length_penalty
-                )
-
-                eval_metric["format_score"]["abs_final_answer_format"] = (
-                    self.format_reward
-                )
-                eval_metric["format_score"]["abs_em_f1_score"] = orm_em_score
-                eval_metric["format_score"]["abs_call_search_reward"] = search_credit
-                eval_metric["format_score"]["abs_length_penalty"] = -length_penalty
-                eval_metric["format_score"]["final_answer_format"] = 1
-            else:
-                for turn in output_buffer:
-                    if (
-                        turn.context_failed or turn.max_turn_limit_failed
-                    ) and turn.extra_fields["role"] != "worker":
-                        train_buffer.append(turn)
-
-                reward_score = 0.0
-
-        else:
-            reward_score = 0.0
-            if succ_end:
-                train_buffer.append(output_buffer[-1])
-
-            if one_turn_failed:
-                for turn in output_buffer:
-                    if turn.turn_repeat_failed:
-                        if turn not in train_buffer:
-                            train_buffer.append(turn)
-            else:
-                for turn in output_buffer:
-                    if turn.max_turn_limit_failed or turn.context_failed:
-                        assert not turn.turn_repeat_failed
-                        if turn not in train_buffer:
-                            train_buffer.append(turn)
-
-        sorted_train_buffer = []
-        for single_turn_output in output_buffer:
-            if single_turn_output not in sorted_train_buffer and single_turn_output in train_buffer:
-                sorted_train_buffer.append(single_turn_output) # TODO: 为啥这样？
+        # TODO: 把final_answer_format添加到metric里面
 
         for single_turn_output in output_buffer:
             single_turn_output.reward_score = reward_score
@@ -777,7 +653,6 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
 
         output = MultiTurnAgentLoopOutput(
             single_turn_outputs=output_buffer,
-            train_buffer=sorted_train_buffer, # FIXME:
             trace_prints=[],  # Can add message_history tracking if needed
             extra_fields=dict(
                 final_answer=final_answer_extract,
@@ -785,11 +660,12 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                 planner_summary=answer_text,
                 reward=reward_score,
                 origin_question=origin_question,
-                eval_metric=eval_metric,
+                llm_reward = llm_reward,
                 total_turn_list=total_turn_list if self.workflow == "mas" else None,
                 instance_id=answer["instance_id"],
                 num_valid_planner_turns=num_valid_planner_turns,
                 num_valid_worker_turns=num_valid_worker_turns,
+                final_answer_format=final_answer_format,
             ),
         )
         return output
@@ -807,39 +683,22 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                 if self.extra_keys_turn is not None:
                     for k in self.extra_keys_turn:
                         v = single_turn_output.extra_fields.get(k, None)
-                        # extra_fields_turn[k].append(v) # FIXME: 这里要注释，不然重复了？
                         if k == "role" and single_turn_output.extra_fields["not_training"] != True:
                             roles.append(v)
         extra_fields_turn = {**extra_fields_turn, "roles": roles}
 
-        role_group_size = 0
-        for task_result in task_results:
-            have_role = False
-            for single_turn_output in task_result.single_turn_outputs:
-                single_turn_output: AgentLoopOutput
-                role = single_turn_output.extra_fields["role"]
-                if self.train_roles and role in self.train_roles:
-                    have_role = True
-                    break
-            if have_role:
-                role_group_size += 1
         extra_fields_group = dict(
             answer=answer,
-            role_group_size=role_group_size,
             num_valid_planner_turns=sum(extra_fields_traj["num_valid_planner_turns"]),
             num_valid_worker_turns=sum(extra_fields_traj["num_valid_worker_turns"]),
         )
 
         idx_to_sub_traj = []
-        # 0, 1, 1, 2, 2, 0
-        # sub_traj_map = 0, 1, 2, 
-        # idx_to_sub_traj: 0, 1, 1, 2, 2, 0
         for task_result in task_results:
             sub_traj_map = {}
             for single_turn_output in task_result.single_turn_outputs:
                 if single_turn_output.extra_fields["not_training"] == True:
                     continue
-                # 有可能不连续了？因为continue跳过了一些,好像不影响
                 role_idx = single_turn_output.extra_fields["idx_to_sub_traj"]
                 if role_idx not in sub_traj_map:
                     sub_traj_map[role_idx] = len(sub_traj_map)
@@ -852,22 +711,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         self,
         rollout_result: DynamicRolloutResult,
     ) -> dict:
-        try:
-            # TODO: 这一段意义是？
-            for k1, v2 in {
-                "turn_subtask_counts":      rollout_result.extra_fields_turn["subtask_count"],
-                "turn_search_counts":       rollout_result.extra_fields_turn["search_count"],
-                "turn_access_counts":       rollout_result.extra_fields_turn["access_count"],
-                "num_valid_planner_turns":  rollout_result.extra_fields_group["num_valid_planner_turns"],
-                "num_valid_worker_turns":   rollout_result.extra_fields_group["num_valid_worker_turns"],
-                "eval_metrics":             rollout_result.extra_fields_traj["eval_metric"],
-                "total_turn_list_metric":   rollout_result.extra_fields_traj["total_turn_list"],
-            }.items():
-                v1 = getattr(rollout_result, k1, None)
-                if v1 is not None:
-                    assert v1 == v2
-        except Exception as e:
-            breakpoint()
+        # return {}
 
         if self.is_eval:
             return {}
@@ -896,601 +740,15 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         )
         # FIXME: 如何写device和dp group？不需要allreduce？
         
-        # eval_metrics_dict = _compute_eval_metrics(
-        #     rollout_batch_2, device, data_parallel_group
-        # )
-        # mas_turn_metrics = _compute_mas_turn_metrics(
-        #     rollout_batch_3, device, data_parallel_group
-        # )
+        eval_metrics_dict = _compute_eval_metrics(
+            rollout_batch_2, device, data_parallel_group
+        )
+        mas_turn_metrics = _compute_mas_turn_metrics(
+            rollout_batch_3, device, data_parallel_group
+        )
         agent_metrics = {
             **tool_call_metrics,
             # **eval_metrics_dict,
             # **mas_turn_metrics,
         }
         return agent_metrics
-
-    async def get_final_reward_score(
-        self, origin_question, extract_answer, label_answer, is_markdown=False
-    ):
-        format = True
-        metrics = list(set(self.reward_eval) | set([self.reward_type]))
-        if metrics == []:
-            return 0.0, {}, format
-        if is_markdown:
-            reward_score, eval_metric, format = await self.evaluate_markdown(
-                extract_answer, label_answer
-            )
-            return reward_score, eval_metric, format
-
-        label_answer = label_answer["answer"]
-        eval_metric = dict.fromkeys(metrics, 0)
-        if label_answer is not None and extract_answer is not None:
-            for metric in metrics:
-                if metric == "EM":
-                    em_score = compute_score_em(extract_answer, label_answer)
-                    eval_metric[metric] = em_score
-
-                if metric == "F1":
-                    f1_score = compute_score_f1(extract_answer, label_answer)
-                    eval_metric[metric] = f1_score
-
-                if metric == "LLM":
-                    # Use LLM as judge
-                    llm_score = await self.verify_answer_with_llm_judge(
-                        question=origin_question,
-                        predicted_answer=extract_answer,
-                        correct_answer=label_answer,
-                        use_llm_judge_api=self.use_llm_judge_api,
-                    )
-                    eval_metric[metric] = llm_score
-
-            reward_score = eval_metric[self.reward_type]
-
-        else:
-            reward_score = 0.0
-
-        return reward_score, eval_metric, format
-
-    async def verify_answer_with_llm_judge(
-        self,
-        question: str,
-        predicted_answer: str,
-        correct_answer: list,
-        use_llm_judge_api=False,
-    ) -> float:
-        """Use LLM as judge to verify if predicted answer is equivalent to correct answer.
-
-        Args:
-            question: Original question
-            predicted_answer: The model's predicted answer
-            correct_answer: The ground truth answer
-            output_buffer: Buffer to store the judge's generation output
-
-        Returns:
-            Score: 1.0 if correct, 0.0 if incorrect
-        """
-        from rlinf.agents.wideseek_r1.utils.prompt import LLM_JUDGE_PROMPT
-
-        if len(correct_answer) == 1:
-            # Format the judge prompt
-            judge_prompt_text = LLM_JUDGE_PROMPT.format(
-                question=question,
-                correct_answer=correct_answer[0],
-                response=predicted_answer,
-            )
-        else:
-            judge_prompt_text = LLM_JUDGE_PROMPT.format(
-                question=question,
-                correct_answer=correct_answer,
-                response=predicted_answer,
-            )
-
-        # Create messages for the judge
-        judge_messages = [
-            {
-                "role": "system",
-                "content": "You are an evaluation assistant. Please determine if the predicted answer is equivalent to the labeled answer.",
-            },
-            {"role": "user", "content": judge_prompt_text},
-        ]
-
-        # Apply chat template
-        if use_llm_judge_api:
-            judge_response_text = await self.sgl_client.call_sglang_api(judge_messages)
-            judge_prompt_ids = []
-            judge_response_ids = []
-        else:
-            # assert False, "please use call llm judge api."
-            judge_prompt_ids = self.tokenizer.apply_chat_template(
-                judge_messages, tokenize=True, add_generation_prompt=True
-            )
-
-            generate_result = await self.generate(
-                judge_prompt_ids, sampling_params={"max_new_tokens": 8192}
-            )
-
-            judge_response_ids = generate_result["output_ids"]
-            judge_response_text = self.tokenizer.decode(judge_response_ids)
-
-        # Parse the judge's response
-        # The judge should respond with "Correct" or "Incorrect"
-        judge_response_clean = judge_response_text.strip().lower()
-        # Check if the response contains "correct" (but not "incorrect")
-        if (
-            "correct" in judge_response_clean
-            and "incorrect" not in judge_response_clean
-        ):
-            return 1.0
-        else:
-            return 0.0
-
-    async def evaluate_markdown(self, extract_answer, label_answer):
-        """Evaluate markdown table answer against ground truth.
-
-        Args:
-            extract_answer: pd.DataFrame extracted from model output
-            label_answer: dict containing:
-                - answer: Either pd.DataFrame or str (markdown string)
-                - unique_columns: list of primary key columns
-                - required: list of required columns (optional, defaults to all)
-
-        Returns:
-            tuple: (reward_score, eval_metric dict)
-        """
-
-        # Helper function to normalize column names
-        def norm_column(col: str) -> str:
-            if not self.is_widesearch:
-                return col.strip().lower()
-            else:
-                return col.strip().lower().replace(" ", "")
-            # return col.strip().lower().replace(" ", "")
-
-        # Helper function to calculate F1 score
-        def calc_f1(precision, recall):
-            epsilon = 1e-9
-            return (
-                (2 * precision * recall / (precision + recall))
-                if (precision + recall > epsilon)
-                else 0.0
-            )
-
-        def normalize_series_to_str(s: pd.Series) -> pd.Series:
-            s0 = s.astype(str).str.strip()
-            num = pd.to_numeric(s0, errors="coerce")
-            if num.notna().any():
-                return num.map(lambda x: "" if pd.isna(x) else f"{x:g}")
-            else:
-                return s0
-
-        def normalize_metric_dict(d):
-            out = {}
-            for k, v in d.items():
-                if isinstance(v, np.generic):
-                    out[k] = v.item()
-                else:
-                    out[k] = v
-            return out
-
-        # Initialize metrics
-        score = 0.0
-        precision_by_row = 0.0
-        recall_by_row = 0.0
-        f1_by_row = 0.0
-        precision_by_item = 0.0
-        recall_by_item = 0.0
-        f1_by_item = 0.0
-        msg = ""
-        eval_metrics = {
-            "score": 0.0,
-            "precision_by_row": 0.0,
-            "recall_by_row": 0.0,
-            "f1_by_row": 0.0,
-            "precision_by_item": 0.0,
-            "recall_by_item": 0.0,
-            "f1_by_item": 0.0,
-            "search_precision_by_item": 0.0,
-            "search_recall_by_item": 0.0,
-            "search_f1_by_item": 0.0,
-        }
-        metrics = list(set(self.reward_eval) | set([self.reward_type]))
-        error_eval_return = dict.fromkeys(metrics, eval_metrics)
-
-        try:
-            # Parse label_answer
-            if isinstance(label_answer, dict):
-                answer_markdown = label_answer.get("answer", "")
-                unique_columns = label_answer.get("unique_columns", [])
-                required_columns = label_answer.get("required", [])
-            else:
-                # If label_answer is a string, assume it's markdown
-                answer_markdown = label_answer
-                unique_columns = []
-                required_columns = []
-
-            # Convert answer_markdown to DataFrame if it's a string
-            if isinstance(answer_markdown, str):
-                answer_df = extract_final_answer(
-                    answer_markdown, mode="markdown", strict=False
-                )
-                if answer_df is None:
-                    msg = "Failed to parse label answer markdown"
-                    self.log_warning(msg)
-                    return 0.0, error_eval_return, False
-            elif isinstance(answer_markdown, pd.DataFrame):
-                answer_df = answer_markdown
-            else:
-                msg = f"Invalid label answer type: {type(answer_markdown)}"
-                self.log_warning(msg)
-                return 0.0, error_eval_return, False
-
-            # Validate extract_answer
-            if not isinstance(extract_answer, pd.DataFrame) or extract_answer.empty:
-                msg = f"Extracted answer is None or not a DataFrame, it's {extract_answer}"
-                # self.log_warning(msg)
-                return 0.0, error_eval_return, False
-
-            response_df = copy.deepcopy(extract_answer)
-
-            # Normalize column names
-            answer_df.columns = [norm_column(col) for col in answer_df.columns]
-            response_df.columns = [norm_column(col) for col in response_df.columns]
-
-            # Normalize unique_columns and required_columns
-            unique_columns = [norm_column(col) for col in unique_columns]
-
-            if not required_columns:
-                required_columns = list(answer_df.columns)
-            else:
-                required_columns = [
-                    norm_column(col) for col in required_columns
-                ]  # widesearch requir columns: " " -> ""
-
-            # Check if response has required columns
-            if not set(required_columns).issubset(set(response_df.columns)):
-                # Try primary key preprocessing to map column names
-                column_map = await self.primary_key_preprocess(
-                    list(response_df.columns), required_columns, self.use_llm_judge_api
-                )
-                # breakpoint()
-                response_df.rename(columns=column_map, inplace=True)
-
-            if not set(required_columns).issubset(set(response_df.columns)):
-                msg = f"required_columns {required_columns} != response_df {list(response_df.columns)}"
-                # self.log_warning(msg)
-                return 0.0, error_eval_return, False
-
-            for col in required_columns:
-                answer_df[col] = normalize_series_to_str(answer_df[col])
-                response_df[col] = normalize_series_to_str(response_df[col])
-
-            # Remove duplicates based on unique columns
-            if unique_columns:
-                response_df.drop_duplicates(subset=unique_columns, inplace=True)
-                answer_df.drop_duplicates(subset=unique_columns, inplace=True)
-
-                # Preprocess primary keys using LLM
-                for col in unique_columns:
-                    primary_key_map = await self.primary_key_preprocess(
-                        response_df[col].tolist(),
-                        answer_df[col].tolist(),
-                        self.use_llm_judge_api,
-                    )
-                    response_df[col + "_before_map"] = response_df[col]
-                    response_df[col] = response_df[col].apply(
-                        lambda x: primary_key_map.get(x, x)
-                    )
-
-            # Inner join to find matching rows
-            df_inner = pd.merge(
-                answer_df,
-                response_df,
-                on=unique_columns,
-                how="inner",
-                suffixes=("_query", "_response"),
-            )
-
-            # Initialize score DataFrames for each metric type in self.reward_eval
-            df_inner_scores = {}
-
-            for metric_type in metrics:
-                df_inner_scores[metric_type] = pd.DataFrame(index=df_inner.index)
-
-            llm_tasks = []
-            llm_columns = []
-
-            # Process each column
-            for col in required_columns:
-                if col in unique_columns:
-                    # Primary keys must match exactly for all metrics
-                    for metric_type in metrics:
-                        df_inner_scores[metric_type][f"{col}_score"] = 1.0
-                else:
-                    # Compute scores for each metric type
-                    for metric_type in metrics:
-                        if metric_type == "EM":
-                            scores = [
-                                compute_score_em(
-                                    row[col + "_response"], row[col + "_query"]
-                                )
-                                for _, row in df_inner.iterrows()
-                            ]
-                            df_inner_scores["EM"][f"{col}_score"] = scores
-
-                        elif metric_type == "F1":
-                            scores = [
-                                compute_score_f1(
-                                    row[col + "_response"], row[col + "_query"]
-                                )
-                                for _, row in df_inner.iterrows()
-                            ]
-                            df_inner_scores["F1"][f"{col}_score"] = scores
-
-                        elif metric_type == "LLM":
-                            # Collect for batch LLM judge
-                            responses = df_inner[col + "_response"].tolist()
-                            targets = df_inner[col + "_query"].tolist()
-                            llm_tasks.append(
-                                self.llm_judge_column(
-                                    responses, targets, self.use_llm_judge_api
-                                )
-                            )
-                            llm_columns.append(col)
-
-            # Execute all LLM calls in parallel
-            if llm_tasks:
-                llm_results = await asyncio.gather(*llm_tasks)
-                # Assign results back to df_inner_scores["LLM"]
-                for col, scores in zip(llm_columns, llm_results):
-                    df_inner_scores["LLM"][f"{col}_score"] = scores
-
-            # Calculate metrics for each evaluation method
-            num_pred_rows = len(response_df)
-            num_gt_rows = len(answer_df)
-            num_pred_items = num_pred_rows * len(required_columns)
-            num_gt_items = num_gt_rows * len(required_columns)
-
-            eval_metric = {}
-            for metric_type in metrics:
-                df_score = df_inner_scores[metric_type]
-
-                # Row-level metrics
-                row_scores = df_score.min(axis=1)
-                tp_by_row = row_scores.sum()
-                precision_by_row = (
-                    tp_by_row / num_pred_rows if num_pred_rows > 0 else 0.0
-                )
-                recall_by_row = tp_by_row / num_gt_rows if num_gt_rows > 0 else 0.0
-                f1_by_row = calc_f1(precision_by_row, recall_by_row)
-
-                # Item-level metrics
-                tp_by_item = df_score.sum().sum()
-                precision_by_item = (
-                    tp_by_item / num_pred_items if num_pred_items > 0 else 0.0
-                )
-                recall_by_item = tp_by_item / num_gt_items if num_gt_items > 0 else 0.0
-                f1_by_item = calc_f1(precision_by_item, recall_by_item)
-
-                # Search-specific item-level metrics (non-primary-key columns only)
-                # This reflects pure search ability without trivial primary key matches
-                non_pk_columns = [
-                    col for col in required_columns if col not in unique_columns
-                ]
-                if non_pk_columns:
-                    # Select only non-primary-key column scores
-                    search_score_cols = [f"{col}_score" for col in non_pk_columns]
-                    df_search_score = df_score[search_score_cols]
-
-                    # Compute search metrics
-                    tp_search = df_search_score.sum().sum()
-                    num_pred_search = num_pred_rows * len(non_pk_columns)
-                    num_gt_search = num_gt_rows * len(non_pk_columns)
-
-                    search_precision_by_item = (
-                        tp_search / num_pred_search if num_pred_search > 0 else 0.0
-                    )
-                    search_recall_by_item = (
-                        tp_search / num_gt_search if num_gt_search > 0 else 0.0
-                    )
-                    search_f1_by_item = calc_f1(
-                        search_precision_by_item, search_recall_by_item
-                    )
-                else:
-                    # If all columns are primary keys, search metrics are 0
-                    search_precision_by_item = 0.0
-                    search_recall_by_item = 0.0
-                    search_f1_by_item = 0.0
-
-                if (
-                    precision_by_item == recall_by_item == 1.0
-                    and precision_by_row == recall_by_row == 1.0
-                ):
-                    score = 1.0
-
-                eval_metric[metric_type] = normalize_metric_dict(
-                    {
-                        "score": score,
-                        "precision_by_row": precision_by_row,
-                        "recall_by_row": recall_by_row,
-                        "f1_by_row": f1_by_row,
-                        "precision_by_item": precision_by_item,
-                        "recall_by_item": recall_by_item,
-                        "f1_by_item": f1_by_item,
-                        "search_precision_by_item": search_precision_by_item,
-                        "search_recall_by_item": search_recall_by_item,
-                        "search_f1_by_item": search_f1_by_item,
-                    }
-                )
-
-            msg = f"Evaluated with {len(metrics)} metrics: {metrics}"
-
-        except Exception:
-            msg = f"Evaluation error: {traceback.format_exc()}"
-            self.log_warning(msg)
-            return 0.0, error_eval_return, False
-
-        # Select reward score based on self.reward_type
-        reward_score = eval_metric[self.reward_type]["f1_by_item"]
-        # self.log_info(eval_metric)
-        return reward_score, eval_metric, True
-
-    async def llm_judge_column(
-        self, responses: list, targets: list, use_llm_judge_api=False
-    ) -> list:
-        criterion = "It is sufficient if the semantics are approximately the same as the reference answer or if they point to the same entity. There is no need for a word-for-word correspondence."
-
-        if not responses:
-            return []
-
-        # Widesearch's eval_column_prompt
-        eval_column_prompt = """You are an expert in grading answers. Your task is to score the responses to a certain question. Below, you will be provided with a set of standard answers, a set of responses to be graded, and specific grading criteria.
-
-Each answer and each response has an idx. Please score each pair of answers and responses in this set according to the following methods:
-1. The scoring range is from 0 to 1. A score of 1 indicates a completely correct answer. For deduction items, please refer to the specific grading criteria section.
-2. After reading the standard answers, responses to be graded, and grading criteria, please first analyze and judge them item by step according to the grading criteria.
-3. The score can only be an integer of 0 or 1.
-4. After the analysis and judgment, please provide the final scoring results. Each pair should have a score. Output in Markdown JSON format, as shown below:
-```json
-{{
-    "idx_0": score,
-    "idx_1": score,
-    ...
-}}
-```
-
-{criterion}
-"""
-
-        user_prompt = """Here is the response you need to judge, please make sure to analyze each item step by step before providing the final scoring results.
-
-{response}
-"""
-
-        # Build response dict
-        response_dict = {}
-        for idx, (resp, tar) in enumerate(zip(responses, targets)):
-            response_dict[f"idx_{idx}"] = {"response": str(resp), "target": str(tar)}
-
-        # Format prompt
-        system_prompt = eval_column_prompt.format(
-            criterion=criterion,
-        )
-
-        user_prompt = user_prompt.format(response=response_dict)
-        # Create messages
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-
-        if use_llm_judge_api:
-            result_text = await self.sgl_client.call_sglang_api(messages)
-        else:
-            # assert False, "please use call llm judge api."
-            # Apply chat template
-            prompt_ids = self.tokenizer.apply_chat_template(
-                messages, tokenize=True, add_generation_prompt=True
-            )
-
-            # Generate
-            generate_result = await self.generate(
-                prompt_ids, sampling_params={"max_new_tokens": 4096}
-            )
-
-            result_text = self.tokenizer.decode(generate_result["output_ids"])
-
-        try:
-            pat = r"```json\s*(\{.*?\})\s*```"
-            matches = re.findall(pat, result_text, re.DOTALL)
-            if matches:
-                json_str = matches[-1]
-                score_dict = json.loads(json_str)
-                score_list = [
-                    float(score_dict.get(f"idx_{idx}", 0))
-                    for idx in range(len(responses))
-                ]
-            else:
-                # Parsing failed, default to 0
-                score_list = [0.0] * len(responses)
-        except Exception:
-            # If any error, default to 0
-            score_list = [0.0] * len(responses)
-
-        # Ensure correct length
-        if len(score_list) != len(responses):
-            score_list = [0.0] * len(responses)
-        return score_list
-
-    async def primary_key_preprocess(
-        self, response_list, reference_list, use_llm_judge_api=False
-    ):
-        primary_key_map = {}
-
-        # The prompt template from widesearch
-        primary_key_preprocess_prompt = """Your task is to align two vocabularies. The inputs are the vocabulary to be aligned and the reference vocabulary respectively. Note that you need to perform semantic alignment (not positional alignment). If two strings are exactly the same, they must correspond to each other. These two strings are supposed to represent the same entity, with differences only in the expression forms and formats.
-
-The alignment rules are as follows:
-List the values in the vocabulary to be aligned one by one. If there is a value in the reference vocabulary that has the same meaning as this value, `transform` should be represented as the value from the reference vocabulary; otherwise, `transform` should be represented as the original value from the vocabulary to be aligned.
-
-Note that `origin` must be taken from the vocabulary to be aligned keeping the original format, and `transform` must be taken from the reference vocabulary. For example: Some words in the vocabulary to be aligned might be the words in the reference vocabulary with Markdown formatting added, keep the to be aligned format in `origin` and the reference format in `transform`.
-
-For the `origin`, first find the `transform` that is the closest in meaning and then judge whether they correspond to each other. Those entities not correspond to each other could not output.
-
-Please output the alignment results in the following format:
-```json
-{{
-    "origin_str1": "transform_str1",
-    "origin_str2": "transform_str2"
-}}
-```
-"""
-
-        user_prompt = """
-The vocabulary to be aligned is as follows:
-{response}
-
-The reference vocabulary is as follows:
-{reference}
-"""
-
-        # Format the prompt
-        system_prompt = primary_key_preprocess_prompt
-
-        user_prompt = user_prompt.format(
-            response=response_list, reference=reference_list
-        )
-
-        # Create messages
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-
-        if use_llm_judge_api:
-            result_text = await self.sgl_client.call_sglang_api(messages)
-        else:
-            # Apply chat template
-            # assert False, "please use call llm judge api."
-            prompt_ids = self.tokenizer.apply_chat_template(
-                messages, tokenize=True, add_generation_prompt=True
-            )
-
-            # Generate
-            generate_result = await self.generate(
-                prompt_ids, sampling_params={"max_new_tokens": 4096}
-            )
-
-            result_text = self.tokenizer.decode(generate_result["output_ids"])
-
-        # Parse JSON from result
-        try:
-            pat = r"```json\s*(\{.*?\})\s*```"
-            matches = re.findall(pat, result_text, re.DOTALL)
-            if matches:
-                json_str = matches[-1]
-                transform_map = json.loads(json_str)
-                primary_key_map.update(transform_map)
-        except Exception:
-            pass
-
-        return primary_key_map

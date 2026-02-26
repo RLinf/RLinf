@@ -128,7 +128,7 @@ def main(cfg) -> None:
     train_ds, val_ds = create_rl_dataset(cfg, tokenizer)
 
     # Tool workers group
-    if cfg.get("data", {}).get("is_widesearch") is True:
+    if cfg.get("tools", {}).get("online") is True:
         num_tool_worker_per_node = 1
     else:
         num_tool_worker_per_node = 32

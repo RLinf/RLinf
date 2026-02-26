@@ -28,7 +28,7 @@ algorithm:
   clip_ratio_high: 0.28
   clip_ratio_c: 10
 
-  adv_turn_level_scale: False
+  loss_scales: ["group_level", "agent_level", "turn_level"]
   advantage_mode: trajectory
 
 agentloop:
@@ -91,8 +91,5 @@ actor:
     lr_decay_style: constant
     # lr_decay_iters: 10
 
-reward:
-  reward_type: 'llm' # or em
-  eval_metric: []  
 
 

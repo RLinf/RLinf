@@ -42,8 +42,5 @@ data:
   validation_shuffle: True
   data_size: -1
 
-reward:
-  reward_type: 'llm' # or em
-  eval_metric: ['em', 'f1', 'llm']
 
 

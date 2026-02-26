@@ -52,7 +52,7 @@ Offline mode uses a **local Qdrant vector database** for retrieval.
 If you installed the environment via Docker image or `uv`, you only need to install:
 
 ```bash
-uv pip install qdrant-client
+uv pip install qdrant-client==1.16.2
 ```
 
 ### Step 1: Download the Vector DB and Wiki Corpus

@@ -67,10 +67,7 @@ class AgentLoopOutput:
     extra_fields: dict[str, Any] = field(default_factory=dict)
     """Tool call information for this turn."""
     tool_call_info: Optional[dict[str, int]] = None
-    """task failed"""
-    context_failed: bool = False
-    turn_repeat_failed: bool = False
-    max_turn_limit_failed: bool = False
+
 
 
 @dataclass
@@ -79,8 +76,6 @@ class MultiTurnAgentLoopOutput:
 
     """Single-turn agent loop outputs."""
     single_turn_outputs: list[AgentLoopOutput]
-    """Single-turn agent loop outputs that used for training"""
-    train_buffer: list[AgentLoopOutput]
     """Debug information to print."""
     trace_prints: list[Any] = field(default_factory=list)
     """Extra fields for dynamic addition."""
@@ -451,6 +446,7 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         for k in all_keys:
             values_list = [i[k] for i in agent_metrics_list]
             # TODO: turn-level metric这样直接平均是不是不对？
+            # traj和turn都传list，然后在这里算mean
             if "agent/turn/mean/" in k or "agent/traj/mean/" in k:
                 whole_metrics[k] = sum(values_list) / len(values_list)
             elif "agent/turn/max/" in k or "agent/traj/max/" in k:
@@ -491,8 +487,6 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         is_end = []
         rewards = []
 
-        # Collect eval_metrics per trajectory
-        roles = []
 
         for idx, task_result in enumerate(task_results):
             for single_turn_output in task_result.single_turn_outputs:
@@ -513,12 +507,6 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
                 is_end.append(single_turn_output.is_end)
                 rewards.append(single_turn_output.reward_score)
 
-            for single_turn_output in task_result.single_turn_outputs:
-                if self.extra_keys_turn is not None:
-                    role_v = single_turn_output.extra_fields.get("role", None)
-                    if single_turn_output.extra_fields["not_training"] != True:
-                        roles.append(role_v)
-
         return DynamicRolloutResult(
             num_sequence=len(idx_to_traj),
             group_size=len(task_results),
@@ -533,9 +521,6 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
             extra_fields_traj=extra_fields_traj,
             extra_fields_group=extra_fields_group,
             extra_fields_train=extra_fields_train,
-            # train
-            roles=roles,
-            role_group_sizes=[extra_fields_group["role_group_size"]] * len(idx_to_traj),
         )
 
     async def run_one_query(self, *args, **kwargs) -> MultiTurnAgentLoopOutput:

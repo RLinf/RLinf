@@ -78,23 +78,13 @@ class MAMegatronActor(MegatronActor):
 
         self.use_sub_worker = self.cfg.rollout.get(
             "use_sub_worker", False
-        )  # FIXME: check
+        )
         assert self.placement_mode == PlacementMode.COLLOCATED
-        self.train_roles = self.cfg.agentloop.get("train_roles", None)
         #####
-        # loss_scales = self.cfg.algorithm.get("loss_scales", [])
-        adv_turn_level_scale = self.cfg.algorithm.get(
-            "adv_turn_level_scale", True
-        )  # whether use alg1 or alg2
-        sub_traj_adv_scale = self.cfg.algorithm.get("sub_traj_adv_scale", False)
-        assert sub_traj_adv_scale
-        if adv_turn_level_scale == False:
-            loss_scales = ["group", "sub_traj", "turn-in-sub_traj"]
-        else:
-            loss_scales = ["group", "sub_traj"]
-        #####
+        loss_scales = self.cfg.algorithm.get("loss_scales", []) 
         self.loss_scale_fns = get_loss_scales(loss_scales)
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
+        assert self.kl_beta == 0, "Currently, KL loss is not avaliable" 
 
     def get_batch(
         self, channel: Channel
@@ -277,26 +267,6 @@ class MAMegatronActor(MegatronActor):
                     )
                     loss *= loss_scale.item()
 
-                # assert self.cfg.algorithm.get("use_rollout_scale", False)
-                # # make sure normalize across groupsize
-                # num_microbatches = (
-                #     get_num_microbatches()
-                #     * parallel_state.get_data_parallel_world_size()
-                # )
-                # if self.train_roles is None:
-                #     loss_scale = num_microbatches / (
-                #         self.cfg.data.rollout_batch_size
-                #         * self.cfg.algorithm.get("group_size", 1)
-                #         / self.cfg.algorithm.n_minibatches
-                #     )
-                # else:
-                #     # groupsize is dynamic, and will be set in pack traj fuction
-                #     loss_scale = num_microbatches / (
-                #         self.cfg.data.rollout_batch_size
-                #         / self.cfg.algorithm.n_minibatches
-                #     )
-                # loss *= loss_scale
-
                 # add to log
                 metrics_data.update(
                     {
@@ -458,8 +428,6 @@ class MAMegatronActor(MegatronActor):
         if self.pack_traj:
             batch = DynamicRolloutResult.pack_traj_batch(scale_context, batch)
         batch["advantages"] *= batch.pop("loss_scales")
-        batch.pop("role_group_sizes")
-        batch.pop("roles")
         for key in list(batch.keys()):
             if key == 'idx_to_traj' or key.startswith('extra:'):
                 batch.pop(key, None)
