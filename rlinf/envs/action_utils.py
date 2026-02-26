@@ -48,6 +48,8 @@ def prepare_actions_for_maniskill(
         raise NotImplementedError
     elif policy == "widowx_bridge":
         actions["gripper"] = 2.0 * (raw_actions["open_gripper"] > 0.5) - 1.0  # [B, 1]
+    elif policy == "panda_wristcam":
+        actions["gripper"] = 2.0 * (raw_actions["open_gripper"] > 0.5) - 1.0  # [B, 1]
 
     actions["terminate_episode"] = np.array([0.0] * batch_size).reshape(-1, 1)  # [B, 1]
 

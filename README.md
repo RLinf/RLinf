@@ -30,6 +30,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 
 ## What's NEW!
+- [2026/02] 🔥 RLinf supports sim-real co-training for π₀ and π₀.₅. Doc: [Sim-Real Co-Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/co_training.html).
 - [2026/02] 🔥 RLinf officially supports world-model-based reinforcement learning fine-tuning for VLA. Doc: [WoVR](https://rlinf.readthedocs.io/en/latest/rst_source/publications/wovr.html), paper: [WoVR: World Models as Reliable Simulators for Post-Training VLA Policies with RL](https://arxiv.org/abs/2602.13977).
 - [2026/02] 🔥 RLinf supports reinforcement learning fine-tuning for VLA based on [Wan World Model](https://github.com/RLinf/diffsynth-studio). Doc: [RL on Wan World Model](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/wan.html).
 - [2026/02] 🔥 RLinf is now available on [PyPI](https://pypi.org/project/rlinf/) for installation via pip as a library. Doc: [Installation as a Library](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html#install-as-library).

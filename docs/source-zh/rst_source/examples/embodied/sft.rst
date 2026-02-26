@@ -25,6 +25,7 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
 
 - pi0_maniskill
 - pi0_libero
+- pi0_aloha_robotwin
 - pi05_libero
 - pi05_maniskill
 - pi05_metaworld
