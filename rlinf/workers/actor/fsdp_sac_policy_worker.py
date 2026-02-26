@@ -58,7 +58,8 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         self.setup_model_and_optimizer(initialize_target=True)
         self.setup_sac_components()
         self.soft_update_target_model(tau=1.0)
-        self._init_target_shadow()
+        if self.use_dsrl:
+            self._init_target_shadow()
         if self.cfg.actor.get("enable_offload", False):
             self.offload_param_and_grad()
             self.offload_optimizer()
@@ -230,48 +231,52 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             self._target_shadow_f32[name] = param.data.float().clone()
 
     def soft_update_target_model(self, tau: Optional[float] = None):
-        """Soft update target model parameters using float32 shadow buffer."""
+        """Soft update target model parameters.
+
+        For DSRL (bfloat16 models), uses a persistent float32 shadow buffer
+        to prevent EMA precision loss. For non-DSRL SAC, uses direct EMA
+        on model parameters.
+        """
         if tau is None:
             tau = self.cfg.algorithm.tau
 
         assert self.target_model_initialized
 
         with torch.no_grad():
-            # Before shadow is initialized (tau=1.0 hard copy), fall back
-            # to direct copy which is exact regardless of dtype.
             if not hasattr(self, "_target_shadow_f32"):
-                for (n1, online_p), (n2, target_p) in zip(
+                # Non-DSRL path (or before shadow init): direct EMA update
+                for (name1, online_param), (name2, target_param) in zip(
                     self.model.named_parameters(),
                     self.target_model.named_parameters(),
                 ):
-                    assert n1 == n2
-                    if "q_head" not in n1:
+                    assert name1 == name2
+                    if "q_head" not in name1:
                         if self.target_update_type == "all":
-                            target_p.data.copy_(
-                                online_p.data * tau + target_p.data * (1.0 - tau)
-                            )
+                            target_param.data.mul_(1.0 - tau)
+                            target_param.data.add_(online_param.data * tau)
                         else:
-                            target_p.data.copy_(online_p.data)
+                            target_param.data.mul_(0.0)
+                            target_param.data.add_(online_param.data)
                     else:
-                        target_p.data.copy_(
-                            online_p.data * tau + target_p.data * (1.0 - tau)
+                        target_param.data.mul_(1.0 - tau)
+                        target_param.data.add_(online_param.data * tau)
+            else:
+                # DSRL path: float32 shadow buffer for bf16 precision
+                for (name1, online_param), (name2, target_param) in zip(
+                    self.model.named_parameters(),
+                    self.target_model.named_parameters(),
+                ):
+                    assert name1 == name2
+                    if "q_head" not in name1 and self.target_update_type != "all":
+                        shadow = self._target_shadow_f32[name1]
+                        shadow.copy_(online_param.data.float())
+                        target_param.data.copy_(shadow.to(target_param.data.dtype))
+                    else:
+                        shadow = self._target_shadow_f32[name1]
+                        shadow.mul_(1.0 - tau).add_(
+                            online_param.data.float(), alpha=tau
                         )
-                return
-
-            for (name1, online_param), (name2, target_param) in zip(
-                self.model.named_parameters(),
-                self.target_model.named_parameters(),
-            ):
-                assert name1 == name2
-                if "q_head" not in name1 and self.target_update_type != "all":
-                    # Hard copy for non-q_head when target_update_type != "all"
-                    shadow = self._target_shadow_f32[name1]
-                    shadow.copy_(online_param.data.float())
-                    target_param.data.copy_(shadow.to(target_param.data.dtype))
-                else:
-                    shadow = self._target_shadow_f32[name1]
-                    shadow.mul_(1.0 - tau).add_(online_param.data.float(), alpha=tau)
-                    target_param.data.copy_(shadow.to(target_param.data.dtype))
+                        target_param.data.copy_(shadow.to(target_param.data.dtype))
 
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
         """
