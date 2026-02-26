@@ -12,8 +12,8 @@ center_crop: True
 seed: 0
 group_size: 1
 use_fixed_reset_state_ids: False
-max_steps_per_rollout_epoch: 200
-max_episode_steps: 200 # max episode steps for truncation
+max_steps_per_rollout_epoch: 150
+max_episode_steps: 150 # max episode steps for truncation
 
 is_eval: False
 
@@ -28,8 +28,8 @@ video_cfg:
 enable_offload: False
 
 task_config:
-  task_name: place_empty_cup
-  step_lim: 200
+  task_name: place_container_plate
+  step_lim: 150
   planner_backend: mplib # # Choices: ["curobo", "mplib"], defalut is "curobo"
   # if you want to modify the config, please check the following tutorial first:
   # https://robotwin-platform.github.io/doc/usage/configurations.html
@@ -65,6 +65,6 @@ task_config:
   pcd_down_sample_num: 1024
   pcd_crop: true
   save_path: ./data
-  clear_cache_freq: 8
+  clear_cache_freq: 1
   collect_data: true
   eval_video_log: true

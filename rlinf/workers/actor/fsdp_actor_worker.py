@@ -23,6 +23,7 @@ from omegaconf import DictConfig
 from torch import nn
 from torch.distributed.tensor import DTensor
 from torch.multiprocessing.reductions import reduce_tensor
+from torch.utils import _pytree
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
@@ -42,6 +43,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
     unpack_sequences,
 )
 from rlinf.models import get_model
+from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel, Cluster, CollectiveGroupOptions, Worker
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
@@ -72,6 +74,7 @@ from rlinf.utils.placement import (
     HybridComponentPlacement,
     ModelParallelComponentPlacement,
 )
+from rlinf.utils.pytree import register_pytree_dataclasses
 from rlinf.utils.utils import (
     clear_memory,
     compute_entropy_from_logits,
@@ -994,6 +997,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             accel_max_ctas=max_ctas, accel_min_ctas=min_ctas
         )
 
+        self.enable_sft_co_train = cfg.actor.get("enable_sft_co_train", False)
+
+        if self.enable_sft_co_train:
+            self._build_sft_data_loader()
+
     def _setup_rollout_weight_dst_ranks(self) -> None:
         """
         Setup destination ranks for weight communication.
@@ -1183,6 +1191,91 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         rollout_metrics = compute_rollout_metrics(self.rollout_batch)
         return rollout_metrics
 
+    def _build_sft_data_loader(self):
+        if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:
+            # NOTE: This must be set before importing openpi.training.data_loader
+            if self.cfg.actor.get("sft_data_path", None):
+                os.environ["HF_LEROBOT_HOME"] = self.cfg.actor.sft_data_path
+
+            import openpi.training.data_loader as _data
+
+            from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+
+            if "config_name" not in self.cfg.actor:
+                raise ValueError(
+                    "config_name is required when enable_sft_co_train=True"
+                )
+            training_config_name = self.cfg.actor.config_name
+            data_loader_config = get_openpi_config(
+                training_config_name, model_path=self.cfg.actor.model.model_path
+            )
+            self.data_loader = _data.create_data_loader(
+                data_loader_config, framework="pytorch", shuffle=True
+            )
+            self.sft_iterator = iter(self.data_loader)
+            self.train_epoch = 0
+            self.sft_loss_weight = self.cfg.actor.get("sft_loss_weight", 0.1)
+        else:
+            raise KeyError(
+                f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
+            )
+
+    def _train_sft_epoch(
+        self, metrics_data: dict[str, torch.Tensor], loss: torch.Tensor
+    ):
+        """
+        Train one epoch of SFT.
+        """
+        metrics_data["ppo_loss"] = loss.clone().detach().item()
+
+        # Get next data batch
+        try:
+            observation, actions = next(self.sft_iterator)
+        except StopIteration:
+            self.train_epoch += 1
+            self.data_loader.set_epoch(self.train_epoch)
+            self.sft_iterator = iter(self.data_loader)
+            observation, actions = next(self.sft_iterator)
+
+        register_pytree_dataclasses(observation)
+        observation = _pytree.tree_map(
+            lambda x: x.to(self.device) if x is not None else x,
+            observation,
+        )
+        actions = actions.to(torch.float32)
+        actions = actions.to(self.device)
+
+        sft_losses = self.model(
+            data={"observation": observation, "actions": actions},
+            forward_type=ForwardType.SFT,
+        )
+        # Ensure losses is a tensor and handle different return types
+        if isinstance(sft_losses, list | tuple):
+            sft_losses = torch.stack(sft_losses)
+        elif not isinstance(sft_losses, torch.Tensor):
+            sft_losses = torch.tensor(
+                sft_losses, device=self.device, dtype=torch.float32
+            )
+
+        sft_loss = sft_losses.mean()
+        metrics_data["sft_loss"] = sft_loss.clone().detach().item()
+        total_loss = loss + self.sft_loss_weight * sft_loss
+        loss = total_loss
+
+        metrics_data["loss_ratio"] = (
+            np.abs(metrics_data["sft_loss"]) / np.abs(metrics_data["ppo_loss"])
+            if np.abs(metrics_data["ppo_loss"]) > 0
+            else float("inf")
+        )
+        if metrics_data["loss_ratio"] > 1e5:
+            self.logger.warning(
+                "SFT/PPO loss imbalance detected: "
+                f"ratio={metrics_data['loss_ratio']:.3e}, "
+                f"sft_loss={metrics_data['sft_loss']:.6f}, "
+                f"ppo_loss={metrics_data['ppo_loss']:.6f}, "
+                f"sft_loss_weight={self.sft_loss_weight:.6f}"
+            )
+
     @Worker.timer("run_training")
     def run_training(self) -> None:
         """
@@ -1342,6 +1435,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         entropy_loss = masked_mean(entropy, mask=loss_mask)
                         loss -= self.cfg.algorithm.entropy_bonus * entropy_loss
                     metrics_data["actor/entropy_loss"] = entropy_loss.detach().item()
+
+                    if self.enable_sft_co_train:
+                        self._train_sft_epoch(metrics_data, loss)
 
                     loss /= self.gradient_accumulation
                     with backward_ctx:
