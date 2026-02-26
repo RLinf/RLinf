@@ -4,9 +4,9 @@ DSRL：基于扩散模型的潜在空间强化学习
 本文档介绍如何在 RLinf 框架中使用 **DSRL（Diffusion Steering via Reinforcement Learning）** 对预训练的 **Pi0 扩散策略** 进行强化学习微调。
 DSRL 通过在潜在噪声空间中训练一个轻量级 SAC 智能体来引导冻结的 Pi0 策略，仅需约 500K 可训练参数即可实现 RL 微调。
 
-相关论文：`Steering Your Diffusion Policy with Latent Space Reinforcement Learning <https://arxiv.org/abs/2506.15799>`_（CoRL 2025, Wagenmaker et al.）
+相关论文： `Steering Your Diffusion Policy with Latent Space Reinforcement Learning <https://arxiv.org/abs/2506.15799>`_ （CoRL 2025, Wagenmaker et al.）
 
-参考实现：`dsrl_pi0 <https://github.com/nakamotoo/dsrl_pi0>`_
+参考实现： `dsrl_pi0 <https://github.com/nakamotoo/dsrl_pi0>`_
 
 核心思路：
 
@@ -32,14 +32,14 @@ DSRL 通过在潜在噪声空间中训练一个轻量级 SAC 智能体来引导�
 
 1. **观测编码**：轻量级 CNN（64×64 → 64维）和状态编码器（8维 → 64维）处理观测数据。
 
-2. **噪声生成**：``GaussianPolicy``（SquashedNormal 分布）为每个动作步生成 32 维噪声动作。
+2. **噪声生成**： ``GaussianPolicy`` （SquashedNormal 分布）为每个动作步生成 32 维噪声动作。
 
 3. **扩散去噪**：噪声作为初始噪声注入 Pi0 的 ``sample_actions()``，冻结的扩散去噪器将噪声转换为真实动作。
 
 4. **SAC 训练**：标准 SAC 配合自动熵调节训练噪声生成器：
 
-   - **Actor**：``GaussianPolicy``，3 层 MLP（128维隐藏层）
-   - **Critic**：``CompactMultiQHead`` — 10 个 Q 网络集成（共约 500K 参数）
+   - **Actor**： ``GaussianPolicy`` ，3 层 MLP（128维隐藏层）
+   - **Critic**： ``CompactMultiQHead`` — 10 个 Q 网络集成（共约 500K 参数）
    - **目标网络**：Float32 EMA 影子缓冲区，解决 bfloat16 精度问题
 
 依赖安装
@@ -52,7 +52,7 @@ DSRL 使用与 Pi0 相同的环境和模型依赖。请参考 :doc:`pi0` 获取�
 
 **1. 配置文件**
 
-- **DSRL 训练**：``examples/embodiment/config/libero_spatial_dsrl_openpi.yaml``
+- **DSRL 训练**： ``examples/embodiment/config/libero_spatial_dsrl_openpi.yaml``
 
 **2. 关键参数配置**
 
