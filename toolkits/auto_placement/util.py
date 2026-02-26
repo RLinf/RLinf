@@ -13,16 +13,16 @@
 # limitations under the License.
 
 from argparse import Namespace
-
+from rlinf.scheduler import Cluster
+ 
 _GLOBAL_CONFIG = None
 
 
-def init_global_config(config, component_placement):
+def init_global_config(config, component_placement, cluster):
     if config.runner.task_type == "reasoning":
-        init_global_config_reasoning(config, component_placement)
+        init_global_config_reasoning(config, component_placement, cluster)
     else:
-        init_global_config_env(config, component_placement)
-
+        init_global_config_env(config, component_placement, cluster)
 
 def init_global_config_reasoning(config, component_placement):
     global _GLOBAL_CONFIG
@@ -64,12 +64,12 @@ def init_global_config_reasoning(config, component_placement):
         )
 
 
-def init_global_config_env(config, component_placement):
+def init_global_config_env(config, component_placement, cluster):
     global _GLOBAL_CONFIG
 
     _GLOBAL_CONFIG = Namespace(
         task_type=config.runner.task_type,
-        total_gpus=component_placement._cluster_num_gpus,
+        total_gpus=cluster.num_accelerators,
         env_num=config.data.env_num,
         profile_data=config.profile_data,
         rollout_batch_size=1,  # For actor node init
@@ -79,9 +79,9 @@ def init_global_config_env(config, component_placement):
     )
 
     for component in component_placement._components:
-        instance_num = getattr(component_placement, f"{component}_dp_size")
-        world_size = getattr(component_placement, f"{component}_world_size")
-        model_parallel_size = world_size // instance_num
+        instance_num = component_placement.get_world_size(component)
+        world_size = component_placement.get_world_size(component)
+        model_parallel_size = world_size // instance_num # For env and rollout in embodiment task, we set dp_size = world_size, so model_parallel_size = 1
 
         if component == "rollout":
             component = "env_rollout"

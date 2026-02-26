@@ -32,7 +32,7 @@ from util import get_global_config, get_valid_gpu_num_list, init_global_config
 from workflow import Workflow, traverse_st_cuts
 
 from rlinf.scheduler import Cluster
-from rlinf.utils.placement import ModelParallelComponentPlacement
+from rlinf.utils.placement import ModelParallelComponentPlacement,HybridComponentPlacement
 
 
 class AutoPlacementWorker:
@@ -42,7 +42,7 @@ class AutoPlacementWorker:
         component_placement,
         graph: Optional[dict[str, list[str]]] = None,
     ):
-        init_global_config(cfg, component_placement)
+        
         self.config = get_global_config()
         self.components_config = self.config.components_config
         self._name_to_node_dict: dict[str, ComponentNode] = {}
@@ -187,7 +187,11 @@ def get_workflow_graph(cfg) -> dict[str, list[str]]:
 @hydra.main(version_base="1.1")
 def main(cfg):
     cluster = Cluster(cfg.cluster.num_nodes)
-    component_placement = ModelParallelComponentPlacement(cfg, cluster)
+    if cfg.runner.task_type == "reasoning":
+        component_placement = ModelParallelComponentPlacement(cfg, cluster)
+    else :  # embodiment task
+        component_placement = HybridComponentPlacement(cfg, cluster)
+    init_global_config(cfg, component_placement, cluster)
 
     workflow_graph: dict[str, list[str]] = get_workflow_graph(cfg)
     auto_placement_worker = AutoPlacementWorker(
