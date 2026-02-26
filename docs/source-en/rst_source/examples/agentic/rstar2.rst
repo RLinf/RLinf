@@ -84,6 +84,13 @@ We use Math-Verify to assist in reward computation, which needs to be installed 
 
    pip install math-verify
 
+We also use simple rules to ensure the correctness of reward calculation, which requires installing dependencies.
+
+.. code-block:: bash
+
+   pip install sympy
+   pip install pylatexenc
+
 
 Training on 8*H100
 ------------------

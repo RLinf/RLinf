@@ -84,6 +84,12 @@ Reward计算工具
 
    pip install math-verify
 
+我们同时使用了简单规则进行reward计算，以确保reward计算的正确性， 计算需安装依赖。
+
+.. code-block:: bash
+
+   pip install sympy
+   pip install pylatexenc
 
 在8*H100上训练
 --------------

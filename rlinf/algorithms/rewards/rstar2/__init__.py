@@ -18,7 +18,11 @@ from multiprocessing import Process, Queue
 
 from omegaconf import DictConfig
 
-from toolkits.rstar2.fused_compute_score.compute_score import compute_score
+try:
+    from toolkits.rstar2.fused_compute_score.compute_score import compute_score
+    HAS_COMPUTE_SCORE = True
+except ImportError:
+    HAS_COMPUTE_SCORE = False
 
 
 def _compute_score_wrapper(
@@ -42,6 +46,7 @@ def _compute_score_wrapper(
 
 class Rstar2Reward:
     def __init__(self, config: DictConfig):
+        assert HAS_COMPUTE_SCORE, "compute_score is not installed, please install it by running `pip install pylatexenc & pip install sympy`"
         self.scale = config.get("reward_scale", 1.0)
         self.timeout = config.get("compute_score_timeout", 6.0)
         self.default_score = config.get("default_score_on_timeout", 0.0)

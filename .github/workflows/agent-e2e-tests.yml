@@ -264,6 +264,8 @@ jobs:
           uv pip install -r code-judge/requirements.txt
           uv pip install -e code-judge
           uv pip install math_verify
+          uv pip install sympy
+          uv pip install pylatexenc
           tmux kill-session -t server 2>/dev/null || true
           tmux kill-session -t worker 2>/dev/null || true
           pkill redis-server 2>/dev/null || true
