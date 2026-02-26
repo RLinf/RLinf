@@ -33,8 +33,8 @@ The following examples include math reasoning RL and agentic AI workflows, such 
        <img src="https://github.com/RLinf/misc/raw/main/pic/waiting_icon.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[Ongoing]rStar2-agent RL Training</b><br>
-         Flexible resource allocation and scheduling across components
+         <b>rStar2-agent RL Training</b><br>
+         Enabling models to autonomously reason and reflect using Python tools through reinforcement learning, achieving frontier-level mathematical reasoning performance at extremely low computational cost.
        </p>
      </div>
 
@@ -66,4 +66,4 @@ The following examples include math reasoning RL and agentic AI workflows, such 
    coding_online_rl
    searchr1
    reasoning
-   
+   rstar2
