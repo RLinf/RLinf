@@ -9,7 +9,6 @@ This tutorial mainly focuses on two files:
 - Training config: ``examples/sft/config/custom_sft_vlm.yaml``
 
 Launch Script: ``examples/sft/run_vlm_sft.sh``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 - The script uses ``examples/sft/config/custom_sft_vlm.yaml`` by default.
 - Logs are redirected to: ``<repo>/logs/<timestamp>/``
@@ -23,7 +22,6 @@ Launch Script: ``examples/sft/run_vlm_sft.sh``
      runner.logger.log_path=<auto_generated_log_dir>
 
 Config Template: ``examples/sft/config/custom_sft_vlm.yaml``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The VLM config structure is similar to other RLinf training configs.  
 You mainly need to adapt ``data`` and ``actor.model`` for your VLM use case.
@@ -144,7 +142,7 @@ Keep other parameters unchanged for a baseline run.
    critic:
      use_critic_model: False
 
-Step 2: Start Training
+Start Training
 ----------------------
 
 Run from repository root:
@@ -162,7 +160,7 @@ Notes:
 
    bash examples/sft/run_vlm_sft.sh my_vlm_config
 
-Step 3: Check Whether Training Is Healthy
+Check Whether Training Is Healthy
 -----------------------------------------
 
 1. Check if loss decreases in terminal logs.

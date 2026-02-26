@@ -108,8 +108,8 @@ YAML example:
 
 ----
 
-Ensure FSDP Supports Your Model and ``get_model(...)`` Can Return It
---------------------------------------------------------------------
+Ensure FSDP Supports Your Model 
+---------------------------------
 
 ``FSDPSftWorker.model_provider_func()`` calls:
 
@@ -124,8 +124,8 @@ You must ensure ``FSDPModelManager.model_provider_func()`` can return your model
 
 ----
 
-Create a Worker Subclass Implementing the 3 Methods
-----------------------------------------------------
+Create a Worker
+------------------
 
 Recommended new file:
 
@@ -164,7 +164,7 @@ Inherit from ``FSDPSftWorker`` and implement the 3 methods.
 
 ----
 
-Implement ``build_dataloader``
+Implement build_dataloader
 ------------------------------
 
 ``build_dataloader`` constructs your dataloader. You must ensure it can correctly serve both train and eval.
@@ -196,7 +196,7 @@ Common mistakes:
 
 ----
 
-Implement ``get_train_model_output``
+Implement get_train_model_output
 ------------------------------------
 
 ``get_train_model_output`` returns training output. Ensure the return can be used for training.
@@ -228,7 +228,7 @@ Recommended CausalLM style:
 
 ----
 
-Implement ``get_eval_model_output``
+Implement get_eval_model_output
 -----------------------------------
 
 ``get_eval_model_output`` returns evaluation output. Ensure it can be used for metric aggregation.
