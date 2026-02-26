@@ -14,11 +14,11 @@ RLinf 环境配置参照 `RLinf Installation <https://rlinf.readthedocs.io/en/la
 Code judge运行环境
 ~~~~~~~~~~~~~~~~~~
 
-我们使用 rStar2 示例中的 code judge 工具，安装过程参考 `Rstar2 & veRL-SGLang <https://github.com/volcengine/verl/blob/c12e3cbce8dceb70e9c9b16252bfd5675ec3129c/recipe/rstar2_agent/README.md>`__
+我们使用 rStar2 示例中的 code judge 工具，安装过程参考 `rStar2 & veRL-SGLang <https://github.com/volcengine/verl/blob/c12e3cbce8dceb70e9c9b16252bfd5675ec3129c/recipe/rstar2_agent/README.md>`__
 
 .. code-block:: bash
 
-   cd toolkits/rstar2
+   cd examples/rstar2
 
    # install code judge
    sudo apt-get update -y && sudo apt-get install redis -y
@@ -52,7 +52,7 @@ rStar2-Agent 使用 Code Judge 作为工具调用服务器来执行模型生成�
    # Replace $WORKSPACE and $MASTER_ADDR with your actual paths
 
    tmux new-session -d -s server \
-   'cd $WORKSPACE/toolkits/rstar2/code-judge && \
+   'cd $WORKSPACE/examples/rstar2/code-judge && \
       MAX_EXECUTION_TIME=4 \
       REDIS_URI="redis://$MASTER_ADDR:6379" \
       RUN_WORKERS=0 \
@@ -67,7 +67,7 @@ rStar2-Agent 使用 Code Judge 作为工具调用服务器来执行模型生成�
    # Adjust MAX_WORKERS based on your CPU count per node
 
    tmux new-session -d -s worker \
-   'cd $WORKSPACE/toolkits/rstar2/code-judge && \
+   'cd $WORKSPACE/examples/rstar2/code-judge && \
       MAX_EXECUTION_TIME=4 \
       REDIS_URI="redis://$MASTER_ADDR:6379" \
       MAX_WORKERS=64 \
@@ -174,4 +174,4 @@ Reward计算工具
 References
 ----------
 
-- Rstar2 & veRL-SGLang: https://github.com/volcengine/verl/pull/3397
+- rStar2 & veRL-SGLang: https://github.com/volcengine/verl/pull/3397

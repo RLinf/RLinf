@@ -34,7 +34,7 @@ The following examples include math reasoning RL and agentic AI workflows, such 
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <b>rStar2-agent RL Training</b><br>
-         Flexible resource allocation and scheduling across components
+         Enabling models to autonomously reason and reflect using Python tools through reinforcement learning, achieving frontier-level mathematical reasoning performance at extremely low computational cost.
        </p>
      </div>
 

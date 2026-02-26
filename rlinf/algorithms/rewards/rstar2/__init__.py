@@ -19,7 +19,7 @@ from multiprocessing import Process, Queue
 from omegaconf import DictConfig
 
 try:
-    from toolkits.rstar2.fused_compute_score.compute_score import compute_score
+    from .fused_compute_score.compute_score import compute_score
 
     HAS_COMPUTE_SCORE = True
 except ImportError:

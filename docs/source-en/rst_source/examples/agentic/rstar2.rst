@@ -1,4 +1,4 @@
-Reinforcement Learning Training for Rstar2
+Reinforcement Learning Training for rStar2
 ===========================================
 
 Multi-turn RL combined with tool invocation has been proven to extend the interaction boundaries of Large Language Models (LLMs) to the real world. This document introduces how to reproduce the experiments from the paper `rStar2-Agent: Agentic Reasoning Technical Report <https://arxiv.org/abs/2508.20722>`__ under the RLinf framework, using Reinforcement Learning (RL) to train Large Language Models (LLMs) to answer questions by invoking code execution tools.
@@ -14,11 +14,11 @@ For RLinf environment configuration, please refer to `RLinf Installation <https:
 Code Judge Runtime Environment
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-We use the code judge tool from the Rstar2 example. For installation instructions, refer to `Rstar2 & veRL-SGLang <https://github.com/volcengine/verl/blob/c12e3cbce8dceb70e9c9b16252bfd5675ec3129c/recipe/rstar2_agent/README.md>`__
+We use the code judge tool from the rStar2 example. For installation instructions, refer to `rStar2 & veRL-SGLang <https://github.com/volcengine/verl/blob/c12e3cbce8dceb70e9c9b16252bfd5675ec3129c/recipe/rstar2_agent/README.md>`__
 
 .. code-block:: bash
 
-   cd toolkits/rstar2
+   cd examples/rstar2
 
    # install code judge
    sudo apt-get update -y && sudo apt-get install redis -y
@@ -29,7 +29,8 @@ We use the code judge tool from the Rstar2 example. For installation instruction
    # install rstar2_agent requirements
    pip install -r requirements.txt
 
-   cd ../..
+   cd code-judge
+
 
 Code Judge Server Setup
 ^^^^^^^^^^^^^^^^^^^^^^^
@@ -52,7 +53,7 @@ rStar2-Agent uses Code Judge as a tool invocation server to execute Python code 
    # Replace $WORKSPACE and $MASTER_ADDR with your actual paths
 
    tmux new-session -d -s server \
-   'cd $WORKSPACE/toolkits/rstar2/code-judge && \
+   'cd $WORKSPACE/examples/rstar2/code-judge && \
       MAX_EXECUTION_TIME=4 \
       REDIS_URI="redis://$MASTER_ADDR:6379" \
       RUN_WORKERS=0 \
@@ -67,7 +68,7 @@ rStar2-Agent uses Code Judge as a tool invocation server to execute Python code 
    # Adjust MAX_WORKERS based on your CPU count per node
 
    tmux new-session -d -s worker \
-   'cd $WORKSPACE/toolkits/rstar2/code-judge && \
+   'cd $WORKSPACE/examples/rstar2/code-judge && \
       MAX_EXECUTION_TIME=4 \
       REDIS_URI="redis://$MASTER_ADDR:6379" \
       MAX_WORKERS=64 \
@@ -176,4 +177,4 @@ Below shows the comparison of reward curves and response length curves between R
 References
 ----------
 
-- Rstar2 & veRL-SGLang: https://github.com/volcengine/verl/pull/3397
+- rStar2 & veRL-SGLang: https://github.com/volcengine/verl/pull/3397
