@@ -23,9 +23,12 @@ import contextlib
 import math
 import re
 
-import sympy
-from pylatexenc import latex2text
-from sympy.parsing import sympy_parser
+try:
+    import sympy
+    from pylatexenc import latex2text
+    from sympy.parsing import sympy_parser
+except:
+    pass
 
 from . import math_normalize
 from .grader import math_equal, timeout_limit

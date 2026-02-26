@@ -103,10 +103,13 @@ from functools import wraps
 from math import isclose
 from typing import Any, Callable
 
-# sympy related
-from sympy import N, simplify
-from sympy.parsing.latex import parse_latex
-from sympy.parsing.sympy_parser import parse_expr
+try:
+    # sympy related
+    from sympy import N, simplify
+    from sympy.parsing.latex import parse_latex
+    from sympy.parsing.sympy_parser import parse_expr
+except:
+    pass
 
 
 def is_digit(s):
