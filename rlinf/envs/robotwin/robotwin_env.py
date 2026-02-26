@@ -61,6 +61,7 @@ class RoboTwinEnv(gym.Env):
 
         self.task_name = cfg.task_config.task_name
 
+        self.center_crop = cfg.center_crop
         self._init_reset_state_ids()
 
         self._init_env()
@@ -149,11 +150,12 @@ class RoboTwinEnv(gym.Env):
         infos["episode"] = episode_info
         return infos
 
-    def center_and_crop(self, image):
+    def center_and_crop(self, image, center_crop=False):
         image = np.array(image)
 
         image = Image.fromarray(image).convert("RGB")
-        image = center_crop_image(image)
+        if center_crop:
+            image = center_crop_image(image)
         return np.array(image)
 
     def _extract_obs_image(self, raw_obs):
@@ -162,12 +164,22 @@ class RoboTwinEnv(gym.Env):
         batch_states = []
         batch_instructions = []
         for obs in raw_obs:
-            batch_images.append(self.center_and_crop(obs["full_image"]))
+            batch_images.append(
+                self.center_and_crop(obs["full_image"], center_crop=self.center_crop)
+            )
             wrist_images = []
             if "left_wrist_image" in obs and obs["left_wrist_image"] is not None:
-                wrist_images.append(self.center_and_crop(obs["left_wrist_image"]))
+                wrist_images.append(
+                    self.center_and_crop(
+                        obs["left_wrist_image"], center_crop=self.center_crop
+                    )
+                )
             if "right_wrist_image" in obs and obs["right_wrist_image"] is not None:
-                wrist_images.append(self.center_and_crop(obs["right_wrist_image"]))
+                wrist_images.append(
+                    self.center_and_crop(
+                        obs["right_wrist_image"], center_crop=self.center_crop
+                    )
+                )
             if len(wrist_images) > 0:
                 batch_wrist_images.append(
                     torch.stack([torch.from_numpy(img) for img in wrist_images])
@@ -188,6 +200,7 @@ class RoboTwinEnv(gym.Env):
             "states": batch_states,
             "task_descriptions": batch_instructions,
         }
+
         return extracted_obs
 
     def _calc_step_reward(self, terminations):

@@ -113,12 +113,12 @@ rollout:
   backend: huggingface
   enable_offload: false
   pipeline_stage_num: 1
-
   model:
     model_path: ""
     precision: ${actor.model.precision}
 
   enable_torch_compile: True
+  enable_cuda_graph: False
 actor:
   group_name: ActorGroup
   training_backend: fsdp

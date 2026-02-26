@@ -6,13 +6,140 @@ RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Mi
 概述
 ----
 
-RLinf 是面向基础模型后训练的灵活可扩展开源强化学习基础设施。本页介绍**推理场景**：使用 RL 训练大语言模型（LLM）进行数学推理。与监督微调（SFT）相比，RL 鼓励模型探索多样推理路径，同时优先保证最终答案正确。
+.. raw:: html
+
+  <div align="center">
+    <table border="0">
+      <tr>
+        <td align="center">
+          <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/rlinf_arch.jpg" alt="mani_openvla" width="450"/>
+        </td>
+      </tr>
+    </table>
+    </div>
+
+
+RLinf 是面向基础模型后训练的灵活可扩展开源强化学习基础设施。它支持 **推理 RL** （如使用 GRPO 的数学推理）、**具身 RL** （如在仿真器中训练 VLA）等多种场景。RLinf 基于宏到微流转换（M2Flow）范式，将逻辑工作流编程与执行规划解耦，并利用弹性流水线、上下文切换和基于性能分析的调度来最大化吞吐量。评测表明，RLinf 实现了 **1.07×–2.43×** 的端到端训练加速：推理 RL 场景最高可达 **1.7×**，具身 RL 场景最高可达 **2.43×**。
 
 结果
 ----
 
+我们在数学推理和具身 RL 工作负载上对 RLinf 进行了全面评估，涵盖四种不同规模的模型（即 Qwen2.5、Qwen3-MoE、Open-VLA、OpenVLA-OFT）、两种 RL 算法（GRPO 和 PPO）以及多种集群规模。
+
+数学训练性能
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+RLinf 在多种数学推理 RL 设置下，吞吐量始终优于最先进的 RL 系统 veRL 和 Slime，提升幅度为 1.07×∼1.70×。结果还表明，不同的 RL 设置适合不同的执行模式。
+
+稠密模型
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+.. raw:: html
+
+   <div align="center">
+   <table border="0">
+     <tr>
+       <td align="center">
+         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_verl_all.jpg" alt="mani_openvla" width="350"/>
+         <br/><strong>吞吐量（GRPO）</strong>
+       </td>
+       <td align="center">
+         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/latency_breakdown_7B.jpg" alt="mani_openvlaoft" width="350"/>
+         <br/><strong>耗时占比（GRPO，7B）</strong>
+       </td>
+     </tr>
+   </table>
+   </div>
+
+
+下图展示了 PPO 算法上的性能表现。
+
+.. raw:: html
+
+   <div align="center">
+   <table border="0">
+     <tr>
+       <td align="center">
+         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_verl_ppo.jpg" alt="mani_openvla" width="350"/>
+         <br/><strong>吞吐量（PPO）</strong>
+       </td>
+       <td align="center">
+         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_verl_breakdown.jpg" alt="mani_openvlaoft" width="350"/>
+         <br/><strong>耗时占比（PPO，7B，32 GPUs）</strong>
+       </td>
+     </tr>
+   </table>
+   </div>
+
+
+MoE 模型
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+对于 MoE 模型，我们在 32、64 和 128 GPU 上评估了 Qwen3-30B-A3B，rollout batch size 为 1536，序列长度为 20480。下图展示了 GRPO 算法上的性能和耗时占比。
+
+
+.. raw:: html
+
+   <div align="center">
+   <table border="0">
+     <tr>
+       <td align="center">
+         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_slime_all.jpg" alt="mani_openvla" width="250"/>
+
+         <br/><strong>吞吐量</strong>
+       </td>
+       <td align="center">
+         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_slime_breakdown.jpg" alt="mani_openvlaoft" width="350"/>
+         <br/><strong>耗时占比（32 GPUs）</strong>
+       </td>
+     </tr>
+   </table>
+   </div>
+
+
+具身训练性能
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+ManiSkill 和 LIBERO
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+我们分别在 ManiSkill 和 LIBERO 上评估了 OpenVLA 和 OpenVLA-OFT。在 LIBERO 上，我们将 RLinf 与 SimpleVLA-RL（commit d001d，基于 veRL 构建）进行对比。在 ManiSkill 上，由于没有分布式 RL 基线，我们比较了 RLinf 的不同执行模式。训练速度以 **steps\/sec** 报告，即环境步数总量除以迭代时间。
+
+.. raw:: html
+
+  <div align="center">
+   <table border="0">
+     <tr>
+       <td align="center">
+         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/eval_embody_all.jpg" alt="mani_openvla" width="450"/>
+
+         <br/><strong>吞吐量</strong>
+       </td>
+     </tr>
+   </table>
+   </div>
+
+   <div align="center">
+   <table border="0">
+     <tr>
+       <td align="center">
+         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/latency_breakdown_libero_maniskill.jpg" alt="mani_openvla" width="500"/>
+
+         <br/><strong>耗时占比</strong>
+       </td>
+     </tr>
+   </table>
+   </div>
+
+
+模型评估性能
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+下表报告了使用 RLinf（及基线模型）在数学基准上训练的模型评估性能。RLinf-math 模型使用 RLinf 训练，并在 AIME 24、AIME 25 和 GPQA-diamond 上进行评估。
+
 1.5B 模型结果
-~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table:: 1.5B 模型结果
    :header-rows: 1
@@ -63,7 +190,7 @@ RLinf 是面向基础模型后训练的灵活可扩展开源强化学习基础�
 \* 使用默认设置重训 600 步。
 
 7B 模型结果
-~~~~~~~~~~~
+~~~~~~~~~~~~~~~~
 
 .. list-table:: 7B 模型结果
    :header-rows: 1
@@ -112,7 +239,8 @@ RLinf 在数学推理任务上达到当前最优水平，在 1.5B 与 7B 规模�
 --------
 
 - **安装：** :doc:`../start/installation`
-- **运行示例：** :doc:`../start/llm`
+- **数学（推理）训练：** :doc:`../start/llm`
+- **具身训练：** :doc:`../start/vla`
 
 引用
 ----
