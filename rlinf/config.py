@@ -835,21 +835,6 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
     assert cfg.actor.get("micro_batch_size", None) is not None, (
         "the actor.micro_batch_size is not set"
     )
-    assert (
-        cfg.actor.global_batch_size
-        % (cfg.actor.micro_batch_size * cfg.actor.world_size)
-        == 0
-    ), (
-        "the actor.global_batch_size is not divisible by the actor.micro_batch_size * actor.world_size"
-    )
-    assert (
-        cfg.actor.global_batch_size
-        // cfg.actor.micro_batch_size
-        // cfg.actor.world_size
-        > 0
-    ), (
-        "the actor.global_batch_size // actor.micro_batch_size // actor.world_size must be greater than 0"
-    )
 
     with open_dict(cfg):
         if cfg.data.get("train_data_paths", None) is None:
