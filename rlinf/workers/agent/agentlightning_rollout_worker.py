@@ -160,12 +160,8 @@ class AgentLightningRolloutWorker(Worker):
 
     async def _change_to_triplets(self, rollout: Rollout) -> RolloutLegacy:
         spans = await self.store.query_spans(rollout.rollout_id, attempt_id="latest")
-        ##for span in spans:
-            ##self.log_info(f"[Span] {span}")
 
         triplets = self.adapter.adapt(spans)
-        ##for triplet in triplets:
-            ##self.log_info(f"[Triplet] {triplet}")
 
         final_reward: Optional[float] = None
         for triplet in reversed(triplets):
@@ -441,7 +437,7 @@ class AgentLightningRolloutWorker(Worker):
                 response_texts= response_texts_list,
                 rollout_logprobs=rollout_logprobs_list if self.cfg.rollout.return_logprobs else None,
             )
-            ##self.log_info(f"[RolloutResult] {rollout_result}")
+
             return rollout_result
 
     async def process_rollout_batch(

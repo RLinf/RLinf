@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Optional, Type
+from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
 
@@ -12,7 +12,7 @@ from agentlightning.types import Dataset
 
 from rlinf.config import validate_cfg
 from rlinf.scheduler import Cluster
-from rlinf.scheduler.placement import PackedPlacementStrategy, NodePlacementStrategy
+from rlinf.scheduler.placement import PackedPlacementStrategy
 from rlinf.runners.agentlightning_runner import AgentLightningRLinfRunner
 from rlinf.runners.agentlightning_eval_runner import AgentLightningEvalRunner
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
@@ -33,14 +33,13 @@ def run_rlinf_training(
     eval: bool = False,
     eval_checkpoint_dir: str | None = None,
 ) -> None:
-    
     cfg = config
     cfg = validate_cfg(cfg)
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = ModelParallelComponentPlacement(cfg, cluster)
-    
+
     rollout_worker_cls = get_rollout_backend_worker(cfg)
     rollout_placement_strategy = component_placement.get_strategy("rollout")
     rollout_group = rollout_worker_cls.create_group(cfg, component_placement).launch(
@@ -48,11 +47,11 @@ def run_rlinf_training(
         name=cfg.rollout.group_name,
         placement_strategy=rollout_placement_strategy,
     )
-    
+
     singleton_placement_strategy = PackedPlacementStrategy(
         start_hardware_rank=0, end_hardware_rank=0
     )
-    
+
     agentlightning_rollout_group = AgentLightningRolloutWorker.create_group(
         cfg, component_placement
     ).launch(
@@ -60,7 +59,7 @@ def run_rlinf_training(
         name="AgentLightningRolloutWorker",
         placement_strategy=singleton_placement_strategy,
     )
-    
+
     inference_group = None
     if (
         component_placement.placement_mode == PlacementMode.DISAGGREGATED
@@ -75,20 +74,20 @@ def run_rlinf_training(
             name=cfg.inference.group_name,
             placement_strategy=inference_placement_strategy,
         )
-    
+
     advantage_mode = cfg.algorithm.get("advantage_mode", "trajectory")
     if advantage_mode == "turn":
         from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+
         actor_worker_cls = MAMegatronActor
     else:
         actor_worker_cls = get_actor_worker(cfg)
-    
+
     actor_placement_strategy = component_placement.get_strategy("actor")
     actor_group = actor_worker_cls.create_group(cfg, component_placement).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement_strategy
     )
-    
-    
+
     if eval:
         runner = AgentLightningEvalRunner(
             cfg=cfg,
@@ -116,3 +115,4 @@ def run_rlinf_training(
         )
         runner.init_workers()
         runner.run()
+
