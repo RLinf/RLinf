@@ -105,6 +105,7 @@ jobs:
               - 'examples/multiturn_demo/**'
               - 'examples/reasoning/**'
               - 'examples/searchr1/**'
+              - 'examples/mas-search/**'
               - 'examples/rstar2/**'
               - 'tests/e2e_tests/agent/**'
               - 'tests/e2e_tests/coding_online_rl/**'
