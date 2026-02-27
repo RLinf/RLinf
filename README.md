@@ -30,7 +30,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 
 ## What's NEW!
-- [2026/02] 🔥 RLinf supports VLM SFT of the Qwen-VL model. Doc: [VLM SFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html).
+- [2026/02] 🔥 RLinf supports supervised fine-tuning of Vision-Language Models. Doc: [VLM SFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html).
 - [2026/02] 🔥 RLinf supports [DSRL (Diffusion Steering via Reinforcement Learning)](https://arxiv.org/abs/2506.15799) for Pi0, which steers a pre-trained diffusion policy by training a lightweight SAC agent in the latent noise space. Doc: [DSRL for Pi0](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dsrl.html).
 - [2026/02] 🔥 RLinf supports agentic reinforcement learning on [rStar2](https://github.com/volcengine/verl/pull/3397). Doc: [rStar2](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/rstar2.html).
 - [2026/02] 🔥 RLinf supports sim-real co-training for π₀ and π₀.₅. Doc: [Sim-Real Co-Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/co_training.html).
