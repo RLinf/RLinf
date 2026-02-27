@@ -33,6 +33,8 @@ def compute_ppo_actor_loss(
     max_episode_steps: Optional[int] = None,
     loss_mask_sum: Optional[torch.Tensor] = None,
     critic_warmup: Optional[bool] = False,
+    clip_log_ratio_min: Optional[float] = None,
+    clip_log_ratio_max: Optional[float] = None,
     **kwargs,
 ) -> tuple[torch.Tensor, dict]:
     """
@@ -84,9 +86,13 @@ def compute_ppo_actor_loss(
 
     loss_mask_count = loss_mask.count_nonzero() or 1
     # For numerical stability.
-    logprobs_diff = torch.clamp(logprobs - old_logprobs, -20.0, 20.0)
-    ratio = torch.where(loss_mask, torch.exp(logprobs_diff), 0)
-    approx_kl = torch.where(loss_mask, logprobs_diff.detach(), 0.0)
+    log_ratio = logprobs - old_logprobs
+    if clip_log_ratio_min is not None:
+        log_ratio = torch.clamp(log_ratio, min=clip_log_ratio_min)
+    if clip_log_ratio_max is not None:
+        log_ratio = torch.clamp(log_ratio, max=clip_log_ratio_max)
+    ratio = torch.where(loss_mask, torch.exp(log_ratio), 0)
+    approx_kl = torch.where(loss_mask, log_ratio.detach(), 0.0)
 
     clipped_ratio = torch.clamp(ratio, 1.0 - clip_ratio_low, 1.0 + clip_ratio_high)
     policy_loss1 = -advantages * ratio

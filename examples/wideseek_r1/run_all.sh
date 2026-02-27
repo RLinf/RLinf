@@ -51,55 +51,55 @@ for i in "${!val_names[@]}"; do
         "cluster.num_nodes=1" \
         "data.val_data_paths=[${val_path}]" \
         "runner.experiment_name=${val_name}" \
-        "runner.output_dir=/mnt/project_rlinf/xzxuan/RLinf_no_bugs/eval/mas_2_eng_all_train" \
+        "runner.output_dir=/mnt/project_rlinf/xzxuan/RLinf_no_bugs/logs/eval/mas_2_eng_all_train" \
         "agentloop.workflow=mas" \
         "rollout.model.model_path=/mnt/project_rlinf/xzxuan/wideseek_model/mas_hybrid_final" \
         "rollout_fixed_worker.model.model_path=/mnt/project_rlinf/xzxuan/wideseek_model/mas_hybrid_final"
         
 done
 
-# wideseek_offline
-# python ${REPO_PATH}/examples/wideseek_r1/eval.py \
-#     --config-path ${CONFIG_PATH}/config/ \
-#     --config-name eval_qwen3_widesearch \
-#     "runner.experiment_name=ws_offline" \
-#     "agentloop.workflow=mas" \
-#     "tools.online=False" \
-#     "rollout.model.model_path=/mnt/project_rlinf/xzxuan/wideseek_model/mas_hybrid_final" \
+wideseek_offline
+python ${REPO_PATH}/examples/wideseek_r1/eval.py \
+    --config-path ${CONFIG_PATH}/config/ \
+    --config-name eval_qwen3_widesearch \
+    "runner.experiment_name=ws_offline" \
+    "agentloop.workflow=mas" \
+    "tools.online=False" \
+    "rollout.model.model_path=/mnt/project_rlinf/xzxuan/wideseek_model/mas_hybrid_final" \
 
 
 
 # one eng trained
 
-# for i in "${!val_names[@]}"; do
-#     val_name="${val_names[$i]}"
-#     val_path="${val_paths[$i]}"
+for i in "${!val_names[@]}"; do
+    val_name="${val_names[$i]}"
+    val_path="${val_paths[$i]}"
 
-#     python "${REPO_PATH}/examples/wideseek_r1/eval.py" \
-#         --config-path "${CONFIG_PATH}/config/" \
-#         --config-name "eval_qwen3_qa" \
-#         "data.val_data_paths=[${val_path}]" \
-#         "runner.experiment_name=${val_name}" \
-#         "runner.output_dir=/mnt/project_rlinf/xzxuan/RLinf_no_bugs/eval/mas_train" \
-#         "agentloop.workflow=mas" \
-#         "rollout.model.model_path=/mnt/project_rlinf/xzxuan/wideseek_model/mas_hybrid_final"
+    python "${REPO_PATH}/examples/wideseek_r1/eval.py" \
+        --config-path "${CONFIG_PATH}/config/" \
+        --config-name "eval_qwen3_qa" \
+        "data.val_data_paths=[${val_path}]" \
+        "runner.experiment_name=${val_name}" \
+        "runner.output_dir=/mnt/project_rlinf/xzxuan/RLinf_no_bugs/logs/eval/mas_train" \
+        "agentloop.workflow=mas" \
+        "rollout.model.model_path=/mnt/project_rlinf/xzxuan/wideseek_model/mas_hybrid_final"
         
-# done
+done
 
-# for i in "${!val_names[@]}"; do
-#     val_name="${val_names[$i]}"
-#     val_path="${val_paths[$i]}"
+for i in "${!val_names[@]}"; do
+    val_name="${val_names[$i]}"
+    val_path="${val_paths[$i]}"
 
-#     python "${REPO_PATH}/examples/wideseek_r1/eval.py" \
-#         --config-path "${CONFIG_PATH}/config/" \
-#         --config-name "eval_qwen3_qa" \
-#         "data.val_data_paths=[${val_path}]" \
-#         "runner.experiment_name=${val_name}" \
-#         "runner.output_dir=/mnt/project_rlinf/xzxuan/RLinf_no_bugs/eval/sa_train" \
-#         "agentloop.workflow=sa" \
-#         "rollout.model.model_path=/mnt/project_rlinf/xzxuan/wideseek_model/sa_hybrid_final"
+    python "${REPO_PATH}/examples/wideseek_r1/eval.py" \
+        --config-path "${CONFIG_PATH}/config/" \
+        --config-name "eval_qwen3_qa" \
+        "data.val_data_paths=[${val_path}]" \
+        "runner.experiment_name=${val_name}" \
+        "runner.output_dir=/mnt/project_rlinf/xzxuan/RLinf_no_bugs/logs/eval/sa_train" \
+        "agentloop.workflow=sa" \
+        "rollout.model.model_path=/mnt/project_rlinf/xzxuan/wideseek_model/sa_hybrid_final"
         
-# done
+done
 
 # one eng not trained
 
@@ -112,7 +112,7 @@ for i in "${!val_names[@]}"; do
         --config-name "eval_qwen3_qa" \
         "data.val_data_paths=[${val_path}]" \
         "runner.experiment_name=${val_name}" \
-        "runner.output_dir=/mnt/project_rlinf/xzxuan/RLinf_no_bugs/eval/mas_no_train" \
+        "runner.output_dir=/mnt/project_rlinf/xzxuan/RLinf_no_bugs/logs/eval/mas_no_train" \
         "agentloop.workflow=mas" \
         "rollout.model.model_path=/mnt/project_rlinf/xzxuan/model/Qwen3-4B"
         
@@ -127,7 +127,7 @@ for i in "${!val_names[@]}"; do
         --config-name "eval_qwen3_qa" \
         "data.val_data_paths=[${val_path}]" \
         "runner.experiment_name=${val_name}" \
-        "runner.output_dir=/mnt/project_rlinf/xzxuan/RLinf_no_bugs/eval/sa_no_train" \
+        "runner.output_dir=/mnt/project_rlinf/xzxuan/RLinf_no_bugs/logs/eval/sa_no_train" \
         "agentloop.workflow=sa" \
         "rollout.model.model_path=/mnt/project_rlinf/xzxuan/model/Qwen3-4B"
         

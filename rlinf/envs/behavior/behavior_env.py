@@ -15,20 +15,12 @@
 import json
 import os
 
-import cv2
 import gymnasium as gym
-import numpy as np
 import torch
-from av.container import Container
-from av.stream import Stream
 from omegaconf import OmegaConf, open_dict
 from omnigibson.envs import VectorEnvironment
 from omnigibson.learning.utils.eval_utils import (
     TASK_INDICES_TO_NAMES,
-)
-from omnigibson.learning.utils.obs_utils import (
-    create_video_writer,
-    write_video,
 )
 from omnigibson.macros import gm
 
@@ -59,6 +51,7 @@ class BehaviorEnv(gym.Env):
         self.num_envs = num_envs
         self.ignore_terminations = cfg.ignore_terminations
         self.seed_offset = seed_offset
+        self.seed = self.cfg.seed + seed_offset
         self.total_num_processes = total_num_processes
         self.worker_info = worker_info
         self.record_metrics = record_metrics
@@ -78,14 +71,6 @@ class BehaviorEnv(gym.Env):
         self._init_env()
 
         # manually reset environment episode number
-        self._video_writer = None
-        if self.cfg.video_cfg.save_video:
-            os.makedirs(str(self.cfg.video_cfg.video_base_dir), exist_ok=True)
-            video_name = str(self.cfg.video_cfg.video_base_dir) + "/behavior_video.mp4"
-            self.video_writer = create_video_writer(
-                fpath=video_name,
-                resolution=(448, 672),
-            )
 
     def _load_tasks_cfg(self):
         with open_dict(self.cfg):
@@ -172,8 +157,6 @@ class BehaviorEnv(gym.Env):
         self, actions=None
     ) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         raw_obs, rewards, terminations, truncations, infos = self.env.step(actions)
-        if self.cfg.video_cfg.save_video:
-            self._write_video(raw_obs)
         obs = self._wrap_obs(raw_obs)
         infos = self._record_metrics(rewards, infos)
         if self.ignore_terminations:
@@ -190,17 +173,21 @@ class BehaviorEnv(gym.Env):
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
+        obs_list = []
         chunk_rewards = []
         raw_chunk_terminations = []
         raw_chunk_truncations = []
+        infos_list = []
         for i in range(chunk_size):
             actions = chunk_actions[:, i]
             extracted_obs, step_rewards, terminations, truncations, infos = self.step(
                 actions
             )
+            obs_list.append(extracted_obs)
             chunk_rewards.append(step_rewards)
             raw_chunk_terminations.append(terminations)
             raw_chunk_truncations.append(truncations)
+            infos_list.append(infos)
 
         chunk_rewards = torch.stack(chunk_rewards, dim=1)  # [num_envs, chunk_steps]
         raw_chunk_terminations = torch.stack(
@@ -216,8 +203,8 @@ class BehaviorEnv(gym.Env):
         past_dones = torch.logical_or(past_terminations, past_truncations)
 
         if past_dones.any() and self.auto_reset:
-            extracted_obs, infos = self._handle_auto_reset(
-                past_dones, extracted_obs, infos
+            obs_list[-1], infos_list[-1] = self._handle_auto_reset(
+                past_dones, obs_list[-1], infos_list[-1]
             )
 
         chunk_terminations = torch.zeros_like(raw_chunk_terminations)
@@ -226,11 +213,11 @@ class BehaviorEnv(gym.Env):
         chunk_truncations = torch.zeros_like(raw_chunk_truncations)
         chunk_truncations[:, -1] = past_truncations
         return (
-            extracted_obs,
+            obs_list,
             chunk_rewards,
             chunk_terminations,
             chunk_truncations,
-            infos,
+            infos_list,
         )
 
     @property
@@ -248,53 +235,6 @@ class BehaviorEnv(gym.Env):
     @is_start.setter
     def is_start(self, value):
         self._is_start = value
-
-    @property
-    def video_writer(self) -> tuple[Container, Stream]:
-        """
-        Returns the video writer for the current evaluation step.
-        """
-        return self._video_writer
-
-    @video_writer.setter
-    def video_writer(self, video_writer: tuple[Container, Stream]) -> None:
-        if self._video_writer is not None:
-            (container, stream) = self._video_writer
-            # Flush any remaining packets
-            for packet in stream.encode():
-                container.mux(packet)
-            # Close the container
-            container.close()
-        self._video_writer = video_writer
-
-    def flush_video(self) -> None:
-        """
-        Flush the video writer.
-        """
-        if self.cfg.video_cfg.save_video:
-            self.video_writer = None
-
-    def _write_video(self, raw_obs) -> None:
-        """
-        Write the current robot observations to video.
-        """
-        for sensor_data in raw_obs[0].values():
-            for k, v in sensor_data.items():
-                if "left_realsense_link:Camera:0" in k:
-                    left_wrist_rgb = cv2.resize(v["rgb"].numpy(), (224, 224))
-                elif "right_realsense_link:Camera:0" in k:
-                    right_wrist_rgb = cv2.resize(v["rgb"].numpy(), (224, 224))
-                elif "zed_link:Camera:0" in k:
-                    head_rgb = cv2.resize(v["rgb"].numpy(), (448, 448))
-
-        write_video(
-            np.expand_dims(
-                np.hstack([np.vstack([left_wrist_rgb, right_wrist_rgb]), head_rgb]), 0
-            ),
-            video_writer=self.video_writer,
-            batch_size=1,
-            mode="rgb",
-        )
 
     def _init_metrics(self):
         self.success_once = torch.zeros(

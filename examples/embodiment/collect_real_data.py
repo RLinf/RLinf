@@ -24,8 +24,6 @@ from rlinf.data.embodied_io_struct import (
     ChunkStepResult,
     EmbodiedRolloutResult,
 )
-
-# New imports for data structure and buffer
 from rlinf.data.replay_buffer import TrajectoryReplayBuffer
 from rlinf.envs.realworld.realworld_env import RealWorldEnv
 from rlinf.scheduler import Cluster, ComponentPlacement, Worker
@@ -53,10 +51,10 @@ class DataCollector(Worker):
 
         self.buffer = TrajectoryReplayBuffer(
             seed=self.cfg.seed if hasattr(self.cfg, "seed") else 1234,
-            storage_dir=buffer_path,
-            storage_format="pt",
-            save_trajectories=True,
             enable_cache=False,
+            auto_save=True,
+            auto_save_path=buffer_path,
+            trajectory_format="pt",
         )
 
     def _process_obs(self, obs):
@@ -129,11 +127,8 @@ class DataCollector(Worker):
             if done_tensor.ndim == 1:
                 done_tensor = done_tensor.unsqueeze(1)
 
-            # To match the Reference format:
-            # 1. actions=None to avoid top-level 'actions' and 'intervene_flags' keys.
-            # 2. Put action inside forward_inputs['action'].
             step_result = ChunkStepResult(
-                actions=None,
+                actions=action_tensor,
                 rewards=reward_tensor,
                 dones=done_tensor,
                 terminations=done_tensor,
@@ -166,6 +161,7 @@ class DataCollector(Worker):
 
                 # Save Trajectory to the 'demos' directory
                 trajectory = current_rollout.to_trajectory()
+                trajectory.intervene_flags = torch.ones_like(trajectory.intervene_flags)
                 self.buffer.add_trajectories([trajectory])
 
                 # Reset for next episode

@@ -7,7 +7,7 @@ cluster:
     actor,rollout,reward: all
 
 runner:
-  experiment_name: refactor-v2-with-metrics
+  experiment_name: refactor-v2-with-metrics-and-merge-rlinf-fixbug
   output_dir: ./logs
   seq_length: 32000  
 

@@ -76,13 +76,14 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
+  enable_offload: True
 
   # Override the default values in env/maniskill_put_on_plate_in_scene_25_main and env/maniskill_ood_template
   train:
-    total_num_envs: 16
+    total_num_envs: 8
     group_size: ${algorithm.group_size}
-    max_episode_steps: 16
+    max_episode_steps: 8
+    max_steps_per_rollout_epoch: 8
   eval:
     total_num_envs: 8
     auto_reset: True
@@ -109,8 +110,8 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
 
-  micro_batch_size: 10
-  global_batch_size: 40
+  micro_batch_size: 2
+  global_batch_size: 8
   seed: 1234
   enable_offload: True
 

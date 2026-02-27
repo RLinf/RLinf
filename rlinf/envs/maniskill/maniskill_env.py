@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 from typing import Optional, OrderedDict, Union
 
 import gymnasium as gym
@@ -22,11 +21,7 @@ from mani_skill.envs.sapien_env import BaseEnv
 from mani_skill.utils import common, gym_utils
 from mani_skill.utils.common import torch_clone_dict
 from mani_skill.utils.structs.types import Array
-from mani_skill.utils.visualization.misc import (
-    images_to_video,
-    put_info_on_image,
-    tile_images,
-)
+from mani_skill.utils.visualization.misc import put_info_on_image, tile_images
 from omegaconf import open_dict
 from omegaconf.omegaconf import OmegaConf
 
@@ -69,8 +64,6 @@ class ManiskillEnv(gym.Env):
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
 
         self.video_cfg = cfg.video_cfg
-        self.video_cnt = 0
-        self.render_images = []
 
         self.cfg = cfg
 
@@ -136,52 +129,52 @@ class ManiskillEnv(gym.Env):
             repeats=self.group_size
         ).to(self.device)
 
-    def _wrap_obs(self, raw_obs):
-        if getattr(self.cfg, "wrap_obs_mode", "vla") == "simple":
+    def _wrap_obs(self, raw_obs, infos=None):
+        wrap_obs_mode = getattr(self.cfg, "wrap_obs_mode", "default")
+        if wrap_obs_mode == "raw":
+            assert infos is not None
+            return infos["extracted_obs"]
+
+        if wrap_obs_mode == "simple":
             if self.env.unwrapped.obs_mode == "state":
-                wrapped_obs = {
-                    "states": raw_obs,
-                }
-            elif self.env.unwrapped.obs_mode == "rgb":
-                sensor_data = raw_obs.pop("sensor_data")
-                raw_obs.pop("sensor_param")
-                state = common.flatten_state_dict(
-                    raw_obs, use_torch=True, device=self.device
-                )
+                return {"states": raw_obs}
 
-                main_images = sensor_data["base_camera"]["rgb"]
-                sorted_images = OrderedDict(sorted(sensor_data.items()))
-                sorted_images.pop("base_camera")
-                extra_view_images = (
-                    torch.stack([v["rgb"] for v in sorted_images.values()], dim=1)
-                    if sorted_images
-                    else None
-                )
+            sensor_data = raw_obs["sensor_data"]
+            state_inputs = {
+                k: v
+                for k, v in raw_obs.items()
+                if k not in {"sensor_data", "sensor_param"}
+            }
+            state = common.flatten_state_dict(
+                state_inputs, use_torch=True, device=self.device
+            )
 
-                wrapped_obs = {
-                    "main_images": main_images,
-                    "extra_view_images": extra_view_images,
-                    "states": state,
-                }
-            else:
-                raise NotImplementedError
-        else:
-            wrapped_obs = self._extract_obs_image(raw_obs)
-        return wrapped_obs
+            main_images = sensor_data["base_camera"]["rgb"]
+            sorted_images = OrderedDict(sorted(sensor_data.items()))
+            sorted_images.pop("base_camera")
+            extra_view_images = (
+                torch.stack([v["rgb"] for v in sorted_images.values()], dim=1)
+                if sorted_images
+                else None
+            )
+            return {
+                "main_images": main_images,
+                "extra_view_images": extra_view_images,
+                "states": state,
+            }
 
-    def _extract_obs_image(self, raw_obs):
+        # Default
         obs_image = raw_obs["sensor_data"]["3rd_view_camera"]["rgb"].to(
             torch.uint8
         )  # [B, H, W, C]
         proprioception: torch.Tensor = self.env.unwrapped.agent.robot.get_qpos().to(
             obs_image.device, dtype=torch.float32
         )
-        extracted_obs = {
+        return {
             "main_images": obs_image,
             "states": proprioception,
             "task_descriptions": self.instruction,
         }
-        return extracted_obs
 
     def _calc_step_reward(self, reward, info):
         if getattr(self.cfg, "reward_mode", "default") == "raw":
@@ -260,7 +253,7 @@ class ManiskillEnv(gym.Env):
                 else {}
             )
         raw_obs, infos = self.env.reset(seed=seed, options=options)
-        extracted_obs = self._wrap_obs(raw_obs)
+        extracted_obs = self._wrap_obs(raw_obs, infos=infos)
         if "env_idx" in options:
             env_idx = options["env_idx"]
             self._reset_metrics(env_idx)
@@ -272,11 +265,8 @@ class ManiskillEnv(gym.Env):
         self, actions: Union[Array, dict] = None, auto_reset=True
     ) -> tuple[Array, Array, Array, Array, dict]:
         raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
-        extracted_obs = self._wrap_obs(raw_obs)
+        extracted_obs = self._wrap_obs(raw_obs, infos=infos)
         step_reward = self._calc_step_reward(_reward, infos)
-
-        if self.video_cfg.save_video:
-            self.add_new_frames(infos=infos, rewards=step_reward)
 
         infos = self._record_metrics(step_reward, infos)
         if isinstance(terminations, bool):
@@ -302,6 +292,8 @@ class ManiskillEnv(gym.Env):
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
+        obs_list = []
+        infos_list = []
         chunk_rewards = []
         raw_chunk_terminations = []
         raw_chunk_truncations = []
@@ -310,6 +302,8 @@ class ManiskillEnv(gym.Env):
             extracted_obs, step_reward, terminations, truncations, infos = self.step(
                 actions, auto_reset=False
             )
+            obs_list.append(extracted_obs)
+            infos_list.append(infos)
 
             chunk_rewards.append(step_reward)
             raw_chunk_terminations.append(terminations)
@@ -328,8 +322,8 @@ class ManiskillEnv(gym.Env):
         past_dones = torch.logical_or(past_terminations, past_truncations)
 
         if past_dones.any() and self.auto_reset:
-            extracted_obs, infos = self._handle_auto_reset(
-                past_dones, extracted_obs, infos
+            obs_list[-1], infos_list[-1] = self._handle_auto_reset(
+                past_dones, obs_list[-1], infos_list[-1]
             )
 
         chunk_terminations = torch.zeros_like(raw_chunk_terminations)
@@ -338,11 +332,11 @@ class ManiskillEnv(gym.Env):
         chunk_truncations = torch.zeros_like(raw_chunk_truncations)
         chunk_truncations[:, -1] = past_truncations
         return (
-            extracted_obs,
+            obs_list,
             chunk_rewards,
             chunk_terminations,
             chunk_truncations,
-            infos,
+            infos_list,
         )
 
     def _handle_auto_reset(self, dones, extracted_obs, infos):
@@ -410,27 +404,3 @@ class ManiskillEnv(gym.Env):
 
     def sample_action_space(self):
         return self.env.action_space.sample()
-
-    def add_new_frames(self, infos, rewards=None):
-        image = self.render(infos, rewards)
-        self.render_images.append(image)
-
-    def add_new_frames_from_obs(self, raw_obs):
-        """For debugging render"""
-        raw_imgs = common.to_numpy(raw_obs["main_images"])
-        raw_full_img = tile_images(raw_imgs, nrows=int(np.sqrt(self.num_envs)))
-        self.render_images.append(raw_full_img)
-
-    def flush_video(self, video_sub_dir: Optional[str] = None):
-        output_dir = os.path.join(self.video_cfg.video_base_dir, f"seed_{self.seed}")
-        if video_sub_dir is not None:
-            output_dir = os.path.join(output_dir, f"{video_sub_dir}")
-        images_to_video(
-            self.render_images,
-            output_dir=output_dir,
-            video_name=f"{self.video_cnt}",
-            fps=self.cfg.init_params.sim_config.control_freq,
-            verbose=False,
-        )
-        self.video_cnt += 1
-        self.render_images = []

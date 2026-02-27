@@ -8,7 +8,7 @@ cluster:
 
 runner:
   experiment_name: ws 
-  output_dir: ./eval
+  output_dir: ./logs/eval
   seq_length: 32000  
 
   max_epochs: 1

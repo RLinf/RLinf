@@ -63,7 +63,9 @@ algorithm:
   clip_ratio_c: null # 3.0
   clip_ratio_low: null # if null or not set, will use ratio_clip_eps
   clip_ratio_high: null # if null or not set, will use ratio_clip_eps
-
+  clip_log_ratio_min: -20 # if null or not set, will not clip
+  clip_log_ratio_max: 20 # if null or not set, will not clip
+  
   adv_type: grpo_dynamic
   advantage_mode: trajectory  # "trajectory" for trajectory-level GRPO, "turn" for turn-level GRPO
   use_rollout_scale: True

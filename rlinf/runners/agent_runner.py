@@ -129,7 +129,7 @@ class AgentRunner(ReasoningRunner):
                 self.cfg.actor.training_backend == "megatron"
                 and self.cfg.actor.megatron.use_hf_ckpt
             ):
-                from toolkits.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
+                from rlinf.utils.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
                     convert_hf_to_mg,
                 )
 
@@ -298,19 +298,19 @@ class AgentRunner(ReasoningRunner):
                             f"train/{k}": v
                             for k, v in actor_training_metrics[i].items()
                         }
-                        self.metric_logger.log(training_metrics, logging_steps + i)
 
-                    logging_metrics = {f"{k}_time": v for k, v in time_metrics.items()}
+                        self.metric_logger.log(log_time_metrics, logging_steps)
+                        self.metric_logger.log(rollout_metrics, logging_steps)
+                        for i in range(self.cfg.algorithm.n_minibatches):
+                            training_metrics = {
+                                f"train/{k}": v
+                                for k, v in actor_training_metrics[i].items()
+                            }
+                            self.metric_logger.log(training_metrics, logging_steps + i)
 
-                    if self.cfg.actor.get("calculate_flops", False):
-                        flops_metrics = self._compute_flops_metrics(
-                            time_metrics, actor_rollout_metrics
-                        )
-                        flops_metrics = {
-                            f"flops/{k}": v for k, v in flops_metrics.items()
+                        logging_metrics = {
+                            f"{k}_time": v for k, v in time_metrics.items()
                         }
-                        self.metric_logger.log(flops_metrics, logging_steps)
-                        logging_metrics.update(flops_metrics)
 
                     logging_metrics.update(agent_metrics)
                     logging_metrics.update(actor_rollout_metrics)

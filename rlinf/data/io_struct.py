@@ -746,6 +746,33 @@ class RolloutResult:
 
         max_response_len = training_seq_length - data_seq_length
 
+        # when do_down_sample is enabled, there might be no valid rewards
+        if self.rewards is not None and self.rewards.numel() == 0:
+            batch = {
+                "input_ids": torch.zeros(0, dtype=torch.long).cuda(),
+                "attention_mask": torch.zeros(0, dtype=torch.bool).cuda(),
+                "response_mask": torch.zeros(0, dtype=torch.bool).cuda(),
+                "is_end": torch.zeros(0, dtype=torch.bool).cuda(),
+                "position_ids": torch.zeros(0, dtype=torch.long).cuda(),
+                "prompt_lengths": torch.zeros(0, dtype=torch.long).cuda(),
+                "response_lengths": torch.zeros(0, dtype=torch.long).cuda(),
+            }
+            if self.advantages is not None:
+                batch["advantages"] = torch.zeros(0, dtype=torch.float32).cuda()
+            if self.prev_logprobs is not None:
+                batch["prev_logprobs"] = torch.zeros(0, dtype=torch.float32).cuda()
+            if self.ref_logprobs is not None:
+                batch["ref_logprobs"] = torch.zeros(0, dtype=torch.float32).cuda()
+            if self.recompute_prev_logprobs is not None:
+                batch["recompute_prev_logprobs"] = torch.zeros(
+                    0, dtype=torch.float32
+                ).cuda()
+            if self.rewards is not None:
+                batch["rewards"] = torch.zeros(0, dtype=torch.float32).cuda()
+            if self.rollout_logprobs is not None:
+                batch["prev_logprobs"] = torch.zeros(0, dtype=torch.float32).cuda()
+            return batch
+
         prompt_lengths = torch.tensor(self.prompt_lengths)
         response_lengths = torch.tensor(self.response_lengths)
         is_end = torch.tensor(self.is_end, dtype=torch.bool)
@@ -1351,7 +1378,7 @@ class DynamicRolloutResult:
         packed_batch["idx_to_traj"] = new_idx_to_traj
         num_sequence_after = len(new_idx_to_traj)
         folding_scale = context["folding_scale"]
-        if "group" in folding_scale:
+        if "group_level" in folding_scale:
             packed_batch["loss_scales"] *= num_sequence_after / num_sequence
 
         return packed_batch
