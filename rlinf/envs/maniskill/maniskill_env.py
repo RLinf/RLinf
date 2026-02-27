@@ -129,52 +129,52 @@ class ManiskillEnv(gym.Env):
             repeats=self.group_size
         ).to(self.device)
 
-    def _wrap_obs(self, raw_obs):
-        if getattr(self.cfg, "wrap_obs_mode", "vla") == "simple":
+    def _wrap_obs(self, raw_obs, infos=None):
+        wrap_obs_mode = getattr(self.cfg, "wrap_obs_mode", "default")
+        if wrap_obs_mode == "raw":
+            assert infos is not None
+            return infos["extracted_obs"]
+
+        if wrap_obs_mode == "simple":
             if self.env.unwrapped.obs_mode == "state":
-                wrapped_obs = {
-                    "states": raw_obs,
-                }
-            elif self.env.unwrapped.obs_mode == "rgb":
-                sensor_data = raw_obs.pop("sensor_data")
-                raw_obs.pop("sensor_param")
-                state = common.flatten_state_dict(
-                    raw_obs, use_torch=True, device=self.device
-                )
+                return {"states": raw_obs}
 
-                main_images = sensor_data["base_camera"]["rgb"]
-                sorted_images = OrderedDict(sorted(sensor_data.items()))
-                sorted_images.pop("base_camera")
-                extra_view_images = (
-                    torch.stack([v["rgb"] for v in sorted_images.values()], dim=1)
-                    if sorted_images
-                    else None
-                )
+            sensor_data = raw_obs["sensor_data"]
+            state_inputs = {
+                k: v
+                for k, v in raw_obs.items()
+                if k not in {"sensor_data", "sensor_param"}
+            }
+            state = common.flatten_state_dict(
+                state_inputs, use_torch=True, device=self.device
+            )
 
-                wrapped_obs = {
-                    "main_images": main_images,
-                    "extra_view_images": extra_view_images,
-                    "states": state,
-                }
-            else:
-                raise NotImplementedError
-        else:
-            wrapped_obs = self._extract_obs_image(raw_obs)
-        return wrapped_obs
+            main_images = sensor_data["base_camera"]["rgb"]
+            sorted_images = OrderedDict(sorted(sensor_data.items()))
+            sorted_images.pop("base_camera")
+            extra_view_images = (
+                torch.stack([v["rgb"] for v in sorted_images.values()], dim=1)
+                if sorted_images
+                else None
+            )
+            return {
+                "main_images": main_images,
+                "extra_view_images": extra_view_images,
+                "states": state,
+            }
 
-    def _extract_obs_image(self, raw_obs):
+        # Default
         obs_image = raw_obs["sensor_data"]["3rd_view_camera"]["rgb"].to(
             torch.uint8
         )  # [B, H, W, C]
         proprioception: torch.Tensor = self.env.unwrapped.agent.robot.get_qpos().to(
             obs_image.device, dtype=torch.float32
         )
-        extracted_obs = {
+        return {
             "main_images": obs_image,
             "states": proprioception,
             "task_descriptions": self.instruction,
         }
-        return extracted_obs
 
     def _calc_step_reward(self, reward, info):
         if getattr(self.cfg, "reward_mode", "default") == "raw":
@@ -253,7 +253,7 @@ class ManiskillEnv(gym.Env):
                 else {}
             )
         raw_obs, infos = self.env.reset(seed=seed, options=options)
-        extracted_obs = self._wrap_obs(raw_obs)
+        extracted_obs = self._wrap_obs(raw_obs, infos=infos)
         if "env_idx" in options:
             env_idx = options["env_idx"]
             self._reset_metrics(env_idx)
@@ -265,7 +265,7 @@ class ManiskillEnv(gym.Env):
         self, actions: Union[Array, dict] = None, auto_reset=True
     ) -> tuple[Array, Array, Array, Array, dict]:
         raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
-        extracted_obs = self._wrap_obs(raw_obs)
+        extracted_obs = self._wrap_obs(raw_obs, infos=infos)
         step_reward = self._calc_step_reward(_reward, infos)
 
         infos = self._record_metrics(step_reward, infos)

@@ -6,7 +6,7 @@
    :height: 16px
    :class: inline-icon
 
-本文档介绍如何在 RLinf 框架中进行 **全量监督微调（Full-parameter SFT）** 和 **LoRA 微调**。SFT 通常作为进入强化学习前的第一阶段：模型先模仿高质量示例，后续强化学习才能在良好先验上继续优化。
+本文档介绍如何在 RLinf 框架中对OpenPI模型进行 **全量监督微调（Full-parameter SFT）** 和 **LoRA 微调**。SFT 通常作为进入强化学习前的第一阶段：模型先模仿高质量示例，后续强化学习才能在良好先验上继续优化。
 
 内容包括
 --------
@@ -25,6 +25,7 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
 
 - pi0_maniskill
 - pi0_libero
+- pi0_aloha_robotwin
 - pi05_libero
 - pi05_maniskill
 - pi05_metaworld
@@ -161,5 +162,4 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
    bash examples/sft/train_embodiment_sft.sh --config libero_sft_openpi
 
 同一脚本也适用于通用文本 SFT，只需替换配置文件。
-
 

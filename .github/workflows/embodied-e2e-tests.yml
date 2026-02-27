@@ -381,6 +381,23 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi05
 
+      - name: Libero-Spatial DSRL PPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_dsrl_openpi
+
+      - name: Maniskill PPO Co-Training Pi05 test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          cp -r /workspace/dataset/RLCo-maniskill-assets/custom_assets ${REPO_PATH}/rlinf/envs/maniskill/assets
+          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_co_training_openpi_pi05
+
       - name: Clean up
         run: |
           rm -rf .venv

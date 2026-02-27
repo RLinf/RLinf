@@ -225,6 +225,30 @@
      </div>
     </div>
 
+    <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="co_training.html" style="text-decoration: underline; color: blue;">
+          <b>仿真-真机协同训练</b>
+        </a><br>
+        仿真 PPO + 真机 SFT，提升 Sim-to-Real 迁移
+       </p>
+     </div>
+
+      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/dsrl.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="dsrl.html" style="text-decoration: underline; color: blue;">
+          <b>DSRL：Pi0 噪声空间强化学习</b>
+        </a><br>
+        用轻量级 SAC 智能体在噪声空间引导冻结的 Pi0 扩散策略
+       </p>
+     </div>
+    </div>
+
 
 .. toctree::
    :hidden:
@@ -248,5 +272,8 @@
    mlp
    dexbotic
    franka
-   sft
-   
+   sft_openpi
+   sft_vlm
+   co_training
+   dsrl
+
