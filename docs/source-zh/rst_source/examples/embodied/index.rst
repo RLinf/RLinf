@@ -272,7 +272,8 @@
    mlp
    dexbotic
    franka
-   sft
+   sft_openpi
+   sft_vlm
    co_training
    dsrl
 
