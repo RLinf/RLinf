@@ -60,8 +60,8 @@ algorithm:
   clip_ratio_high: 0.3
 
   adv_type: grpo_dynamic
-  advantage_mode: turn # "trajectory" for trajectory-level GRPO, "turn" for turn-level GRPO
-  normalize_advantages: False #？
+  advantage_mode: turn 
+  normalize_advantages: False #
   early_stop_imp_ratio: null
   use_valid_token_scale: False
 
@@ -89,7 +89,7 @@ rollout:
 
   gpu_memory_utilization: 0.6
   model:
-    model_path: /mnt/public/hf_models/Qwen2.5-1.5B-Instruct
+    model_path: /path/to/model/Qwen2.5-1.5B-Instruct
     model_type: qwen2.5
     precision: ${actor.model.precision}
   enforce_eager: False
@@ -143,8 +143,8 @@ data:
   shuffle: True
   validation_shuffle: False
   seed: 42
-  train_data_paths: ["/mnt/public/yule/data/calc_x/train.parquet"]
-  val_data_paths: ["/mnt/public/yule/data/calc_x/test.parquet"]
+  train_data_paths: ["/path/to/train.parquet"]
+  val_data_paths: ["/path/to/test.parquet"]
 
 actor:
   group_name: "ActorGroup"
