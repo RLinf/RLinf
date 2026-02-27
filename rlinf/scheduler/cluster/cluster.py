@@ -186,6 +186,8 @@ class Cluster:
         if "RAY_DEDUP_LOGS" not in os.environ:
             # Default disabling deduplication of logs to ensure all logs are printed.
             ray_logging.RAY_DEDUP_LOGS = 0
+        if "RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO" not in os.environ:
+            os.environ["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] = "0"
 
         # Cluster configurations
         self._cluster_cfg = (

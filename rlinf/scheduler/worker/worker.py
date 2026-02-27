@@ -349,6 +349,7 @@ class Worker(metaclass=WorkerMeta):
         self._accelerator_type = AcceleratorType(
             os.environ.get("ACCELERATOR_TYPE", str(AcceleratorType.NO_ACCEL.value))
         )
+        self._accelerator_model = os.environ.get("ACCELERATOR_MODEL", "")
         self._local_accelerator_rank = int(os.environ.get("LOCAL_ACCELERATOR_RANK", -1))
         self._node_local_rank = int(os.environ.get("NODE_LOCAL_RANK", -1))
         self._node_local_world_size = int(os.environ.get("NODE_LOCAL_WORLD_SIZE", -1))
@@ -1254,6 +1255,7 @@ class Worker(metaclass=WorkerMeta):
             group_world_size=self._world_size,
             cluster_node_rank=self._cluster_node_rank,
             accelerator_type=self._accelerator_type,
+            accelerator_model=self._accelerator_model,
             accelerator_rank=self._local_accelerator_rank,
             node_ip=node_ip,
             node_port=node_port,

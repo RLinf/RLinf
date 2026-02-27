@@ -68,9 +68,9 @@ jobs:
               - 'rlinf/algorithms/**'
               - 'rlinf/scheduler/**'
               - 'rlinf/utils/**'
-              - 'rlinf/workers/actor/**'
-              - 'rlinf/workers/inference/**'
-              - 'rlinf/workers/reward/**'
+              - 'rlinf/workers/actor/__init__.py'
+              - 'rlinf/workers/actor/fsdp_actor_worker.py'
+              - 'rlinf/workers/reward/*.py'
               - 'rlinf/workers/rollout/**'
               - 'rlinf/hybrid_engines/**'
               - 'rlinf/data/**'
@@ -81,7 +81,10 @@ jobs:
             embodied_filter: &embodied
               - *shared
               - 'rlinf/envs/**'
+              - 'rlinf/workers/actor/async_fsdp_sac_policy_worker.py'
+              - 'rlinf/workers/actor/fsdp_sac_policy_worker.py'
               - 'rlinf/workers/env/**'
+              - 'rlinf/workers/rollout/hf/**'
               - 'rlinf/models/embodiment/**'
               - 'rlinf/models/worldmodel/**'
               - 'rlinf/runners/*embodied*.py'
@@ -95,7 +98,12 @@ jobs:
             agent_reason_filter: &agent
               - *shared
               - 'rlinf/agents/**'
+              - 'rlinf/workers/actor/megatron_actor_worker.py'
               - 'rlinf/workers/agent/**'
+              - 'rlinf/workers/inference/**'
+              - 'rlinf/workers/rollout/server/**'
+              - 'rlinf/workers/rollout/sglang/**'
+              - 'rlinf/workers/rollout/vllm/**'
               - 'rlinf/runners/agent_runner.py'
               - 'rlinf/runners/reasoning_runner.py'
               - 'rlinf/runners/coding_online_rl_runner.py'
