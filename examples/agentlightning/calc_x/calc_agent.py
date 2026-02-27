@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+# Copied and adapted from https://github.com/microsoft/agent-lightning/blob/main/examples/calc_x/calc_agent.py
 """This sample code demonstrates how to define a Calc-X agent trainable with Agent-lightning
 with latest Agent-lightning API (v0.2+)."""
 

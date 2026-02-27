@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional, Type
+from typing import Any, Optional
 
 from omegaconf import DictConfig, OmegaConf
 
 from agentlightning.algorithm.base import Algorithm
 from agentlightning.types import Dataset
-from entrypoint import run_rlinf_training
+
+from .entrypoint import run_rlinf_training
 
 logger = logging.getLogger(__name__)
 
 
-class RLinf(Algorithm):
+class RlinfAlgorithm(Algorithm):
     def __init__(
         self,
         config: dict[str, Any] | DictConfig,
@@ -33,7 +34,6 @@ class RLinf(Algorithm):
         train_dataset: Optional[Dataset[Any]] = None,
         val_dataset: Optional[Dataset[Any]] = None,
     ) -> None:
-
         store = self.get_store()
         adapter = self.get_adapter()
         run_rlinf_training(
@@ -45,3 +45,4 @@ class RLinf(Algorithm):
             eval=self.eval,
             eval_checkpoint_dir=self.eval_checkpoint_dir,
         )
+
