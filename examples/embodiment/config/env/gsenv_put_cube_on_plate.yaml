@@ -17,6 +17,8 @@ video_cfg:
   info_on_video: True
   video_base_dir: ${runner.logger.log_path}/video/train
 
+enable_offload: False
+
 init_params:
   id: "GSEnv-PutCubeOnPlate-v0"
   num_envs: null # will be set in ManiSkillEnv init

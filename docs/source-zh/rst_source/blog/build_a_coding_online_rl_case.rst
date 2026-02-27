@@ -3,7 +3,7 @@
 
 最后更新：10/20/2025。
 
-相关阅读：:doc:`代码补全在线强化学习 <../examples/coding_online_rl>`。
+相关阅读：:doc:`代码补全在线强化学习 <../examples/agentic/coding_online_rl>`。
 
 1. 背景
 ------------------------------

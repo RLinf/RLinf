@@ -83,7 +83,10 @@ def first_n_frames(**kwargs: Any) -> list[int]:
 def last_n_frames(**kwargs: Any) -> list[int]:
     """Return the indices of the last n frames."""
     n = kwargs["target_n_frames"]
-    return list(range(-n, 0))
+    episode_frame_idxs = kwargs["episode_frame_idxs"]
+    total = len(episode_frame_idxs)
+    start = max(total - n, 0)
+    return list(range(start, total))
 
 
 class NpyTrajectoryDatasetWrapper(Dataset):
@@ -109,22 +112,29 @@ class NpyTrajectoryDatasetWrapper(Dataset):
         self,
         data_dir: str,
         start_select_policy: str = "first_frame",
-        target_select_policy: str = "last_frame",
+        target_select_policy: str = "last_n_frames",
         camera_names: Optional[list[str]] = None,
         target_timestamp: float = 10**4,
         start_n_frames: int = 1,
-        target_n_frames: int = 1,
+        target_n_frames: int = 4,
         camera_heights: Optional[int] = None,
         camera_widths: Optional[int] = None,
         action_key: str = "delta_action",
         state_key: str = "init_ee_pose",
+        enable_kir: bool = False,
     ):
         self.data_dir = data_dir
         self.action_key = action_key
         self.state_key = state_key
 
         # Find all npy files in the directory
-        npy_files = sorted(glob.glob(os.path.join(data_dir, "*.npy")))
+        all_npy_files = sorted(glob.glob(os.path.join(data_dir, "*.npy")))
+
+        if not enable_kir:
+            npy_files = [f for f in all_npy_files if "_kir" not in os.path.basename(f)]
+        else:
+            npy_files = all_npy_files
+
         if not npy_files:
             raise ValueError(f"No npy files found in {data_dir}")
         self.npy_files = npy_files

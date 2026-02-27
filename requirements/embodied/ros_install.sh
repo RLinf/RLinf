@@ -87,6 +87,8 @@ sudo mkdir -p /etc/apt/keyrings
 curl -fsSL http://robotpkg.openrobots.org/packages/debian/robotpkg.asc | sudo tee /etc/apt/keyrings/robotpkg.asc
 echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/robotpkg.asc] http://robotpkg.openrobots.org/packages/debian/pub $ubuntu_codename robotpkg" | sudo tee /etc/apt/sources.list.d/robotpkg.list
 sudo apt-get update
+sudo apt-get install -y robotpkg-simde=0.8.0 
+sudo apt-get install -y robotpkg-casadi=3.6.7
 sudo apt-get install -y robotpkg-pinocchio
 
 # franka_ros dependencies

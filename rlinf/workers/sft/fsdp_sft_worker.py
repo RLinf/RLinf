@@ -14,10 +14,10 @@
 
 import os
 
-import jax
 import numpy as np
 import torch
 from omegaconf import DictConfig
+from torch.utils import _pytree
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.config import SupportedModel
@@ -28,6 +28,7 @@ from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.pytree import register_pytree_dataclasses
 from rlinf.utils.utils import clear_memory
 
 
@@ -111,10 +112,13 @@ class FSDPSftWorker(FSDPModelManager, Worker):
                 )
                 observation, actions = next(self.data_iter)
 
-                observation = jax.tree.map(
+                register_pytree_dataclasses(observation)
+                observation = _pytree.tree_map(
                     lambda x: torch.as_tensor(x, device=self.device)
                     .contiguous()
-                    .clone(),
+                    .clone()
+                    if x is not None
+                    else x,
                     observation,
                 )
                 actions = actions.to(torch.float32)

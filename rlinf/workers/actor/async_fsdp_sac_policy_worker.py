@@ -70,6 +70,16 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
 
         self.replay_buffer.add_trajectories(recv_list)
 
+        if self.demo_buffer is not None:
+            intervene_traj_list = []
+            for traj in recv_list:
+                intervene_traj = traj.extract_intervene_traj()
+                if intervene_traj is not None:
+                    intervene_traj_list.append(intervene_traj)
+
+            if len(intervene_traj_list) > 0:
+                self.demo_buffer.add_trajectories(intervene_traj_list)
+
     async def _wait_for_replay_buffer_ready(self, min_buffer_size: int):
         while True:
             self._drain_received_trajectories(

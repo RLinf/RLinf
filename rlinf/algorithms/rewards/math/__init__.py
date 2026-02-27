@@ -14,7 +14,7 @@
 
 from omegaconf import DictConfig
 
-from toolkits.math_verifier.verify import math_verify_call
+from .math_verifier.verify import math_verify_call
 
 
 class MathReward:

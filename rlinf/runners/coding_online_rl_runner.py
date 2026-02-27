@@ -100,7 +100,7 @@ class CodingOnlineRLRunner:
                 self.cfg.actor.training_backend == "megatron"
                 and self.cfg.actor.megatron.use_hf_ckpt
             ):
-                from toolkits.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
+                from rlinf.utils.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
                     convert_hf_to_mg,
                 )
 

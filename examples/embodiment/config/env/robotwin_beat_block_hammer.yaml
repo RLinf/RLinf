@@ -7,6 +7,7 @@ ignore_terminations: False
 reward_coef: 1.0
 use_custom_reward: True
 use_rel_reward: True
+center_crop: True
 
 seed: 0
 group_size: 1
@@ -23,6 +24,8 @@ video_cfg:
   save_video: True
   info_on_video: True
   video_base_dir: ${runner.logger.log_path}/video/train
+
+enable_offload: False
 
 task_config:
   task_name: beat_block_hammer

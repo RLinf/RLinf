@@ -29,9 +29,6 @@ class AsyncEnvWorker(EnvWorker):
         output_channel: Channel,
         metric_channel: Channel,
     ):
-        for env in self.env_list:
-            env.start_env()
-
         n_chunk_steps = (
             self.cfg.env.train.max_steps_per_rollout_epoch
             // self.cfg.actor.model.num_action_chunks
@@ -132,5 +129,3 @@ class AsyncEnvWorker(EnvWorker):
 
     async def stop(self):
         self.should_stop = True
-        for env in self.env_list:
-            env.stop_env()

@@ -1,0 +1,9 @@
+sapien==3.0.1;platform_system=='Linux'
+robosuite==1.4.1
+bddl
+easydict
+cloudpickle
+gym
+tensorflow_graphics
+draccus
+rich

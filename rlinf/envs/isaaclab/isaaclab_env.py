@@ -13,11 +13,9 @@
 # limitations under the License.
 
 import copy
-import os
 from typing import Optional
 
 import gymnasium as gym
-import imageio
 import torch
 from omegaconf import open_dict
 
@@ -48,7 +46,6 @@ class IsaaclabBaseEnv(gym.Env):
         self.total_num_processes = total_num_processes
         self.worker_info = worker_info
         self.video_cfg = cfg.video_cfg
-        self.video_cnt = 0
         self._init_isaaclab_env()
         self.device = self.env.device()
 
@@ -63,8 +60,6 @@ class IsaaclabBaseEnv(gym.Env):
             self.device
         )
         self.ignore_terminations = cfg.ignore_terminations
-
-        self.images = []
 
     def _make_env_function(self):
         raise NotImplementedError
@@ -98,7 +93,7 @@ class IsaaclabBaseEnv(gym.Env):
     def _record_metrics(self, step_reward, terminations, infos):
         episode_info = {}
         self.returns += step_reward
-        self.success_once = self.success_once | terminations
+        self.success_once = self.success_once | (step_reward > 0)
         # batch level
         episode_info["success_once"] = self.success_once.clone()
         episode_info["return"] = self.returns.clone()
@@ -124,8 +119,9 @@ class IsaaclabBaseEnv(gym.Env):
     def step(self, actions=None, auto_reset=True):
         obs, step_reward, terminations, truncations, infos = self.env.step(actions)
 
-        if self.video_cfg.save_video:
-            self.images.append(self.add_image(obs))
+        step_reward = step_reward.clone()
+        terminations = terminations.clone()
+        truncations = truncations.clone()
 
         obs = self._wrap_obs(obs)
 
@@ -157,6 +153,8 @@ class IsaaclabBaseEnv(gym.Env):
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
+        obs_list = []
+        infos_list = []
 
         chunk_rewards = []
 
@@ -167,6 +165,8 @@ class IsaaclabBaseEnv(gym.Env):
             extracted_obs, step_reward, terminations, truncations, infos = self.step(
                 actions, auto_reset=False
             )
+            obs_list.append(extracted_obs)
+            infos_list.append(infos)
 
             chunk_rewards.append(step_reward)
             raw_chunk_terminations.append(terminations)
@@ -185,8 +185,8 @@ class IsaaclabBaseEnv(gym.Env):
         past_dones = torch.logical_or(past_terminations, past_truncations)
 
         if past_dones.any() and self.auto_reset:
-            extracted_obs, infos = self._handle_auto_reset(
-                past_dones, extracted_obs, infos
+            obs_list[-1], infos_list[-1] = self._handle_auto_reset(
+                past_dones, obs_list[-1], infos_list[-1]
             )
 
         if self.auto_reset or self.ignore_terminations:
@@ -201,11 +201,11 @@ class IsaaclabBaseEnv(gym.Env):
             chunk_terminations = raw_chunk_terminations.clone()
             chunk_truncations = raw_chunk_truncations.clone()
         return (
-            extracted_obs,
+            obs_list,
             chunk_rewards,
             chunk_terminations,
             chunk_truncations,
-            infos,
+            infos_list,
         )
 
     def _handle_auto_reset(self, dones, _final_obs, infos):
@@ -227,22 +227,6 @@ class IsaaclabBaseEnv(gym.Env):
 
     def _wrap_obs(self, obs):
         raise NotImplementedError
-
-    def add_image(self, obs):
-        raise NotImplementedError
-
-    def flush_video(self, video_sub_dir: Optional[str] = None):
-        output_dir = os.path.join(self.video_cfg.video_base_dir, f"seed_{self.seed}")
-        if video_sub_dir is not None:
-            output_dir = os.path.join(output_dir, f"{video_sub_dir}")
-        os.makedirs(output_dir, exist_ok=True)
-        mp4_path = os.path.join(output_dir, f"{self.video_cnt}.mp4")
-        video_writer = imageio.get_writer(mp4_path, fps=30)
-        for img in self.images:
-            video_writer.append_data(img)
-        video_writer.close()
-        self.video_cnt += 1
-        self.images = []
 
     def close(self):
         self.env.close()

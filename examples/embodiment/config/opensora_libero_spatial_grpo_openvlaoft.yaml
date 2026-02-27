@@ -83,7 +83,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: True # otherwise, may OOM
 
   # Override the default values in env/libero_spatial
   train:
@@ -94,6 +93,7 @@ env:
     reward_coef: ${algorithm.reward_coef}
     reset_gripper_open: False
     opensora_wm_hf_ckpt_path: "/path/to/model/RLinf-OpenSora-LIBERO-Spatial"
+    enable_offload: True
   eval:
     total_num_envs: 500
     auto_reset: True
@@ -106,6 +106,7 @@ env:
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
+    enable_offload: True
 
 rollout:
   group_name: "RolloutGroup"

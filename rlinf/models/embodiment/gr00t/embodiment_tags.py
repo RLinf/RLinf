@@ -44,7 +44,7 @@ class EmbodimentTag(Enum):
 
     ISAACLAB_FRANKA = "isaaclab_franka"
     """
-    The Libero Franka dataset.
+    The isaaclab Franka dataset.
     """
 
 
@@ -55,5 +55,5 @@ EMBODIMENT_TAG_MAPPING = {
     EmbodimentTag.AGIBOT_GENIE1.value: 26,
     EmbodimentTag.GR1.value: 24,
     EmbodimentTag.MANISKILL_WIDOWX.value: 30,
-    EmbodimentTag.ISAACLAB_FRANKA.value: 28,
+    EmbodimentTag.ISAACLAB_FRANKA.value: 31,
 }

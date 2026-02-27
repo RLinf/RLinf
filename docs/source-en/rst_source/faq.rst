@@ -202,7 +202,7 @@ buffers; often happens if inference weights were not unloaded before an update.
 
 **Fix:**
 
-- Reduce SGLang static memory usage (e.g., lower ``static_mem_fraction``).
+- Reduce SGLang static memory usage (e.g., lower ``gpu_memory_utilization``).
 - Ensure inference weights are properly released before reloading.
 
 Gloo Timeout / "Global rank x is not part of group"

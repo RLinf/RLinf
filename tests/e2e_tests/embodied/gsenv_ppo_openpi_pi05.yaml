@@ -85,9 +85,10 @@ env:
   enable_offload: False
 
   train:
-    total_num_envs: 16
+    total_num_envs: 8
     auto_reset: True
-    max_episode_steps: 10 # for truncation
+    max_episode_steps: 5 # for truncation
+    max_steps_per_rollout_epoch: 5
   eval:
     total_num_envs: 64
     auto_reset: False
@@ -116,8 +117,8 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 8
-  global_batch_size: 64 # maximum : global batch size = micro batch size * actor num_processes.
+  micro_batch_size: 2
+  global_batch_size: 8 # maximum : global batch size = micro batch size * actor num_processes.
   seed: 42
   enable_offload: True
 
