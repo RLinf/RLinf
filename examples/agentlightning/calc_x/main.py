@@ -1,5 +1,3 @@
-import sys
-import os
 import socket
 from typing import Any, Optional, cast
 from datetime import datetime
@@ -11,11 +9,7 @@ from datasets import Dataset as HuggingFaceDataset
 from agentlightning.env_var import LightningEnvVar, resolve_bool_env_var, resolve_str_env_var
 
 from rlinf.utils.utils import output_redirector
-
-entrypoint_path = os.path.join(os.path.dirname(__file__), '..', 'entrypoint')
-if entrypoint_path not in sys.path:
-    sys.path.insert(0, entrypoint_path)
-from interface_algorithm import RLinf
+from rlinf.entrypoint.agentlightning.algorithm import RlinfAlgorithm
 from calc_agent import MathProblem, calc_agent
 
 
@@ -27,8 +21,19 @@ def _find_available_port() -> int:
 
 
 def train(cfg: Any):
-    train_file = cfg.data.train_data_paths[0]
-    val_file = cfg.data.val_data_paths[0]
+    train_data_paths = cfg.data.get("train_data_paths", None)
+    val_data_paths = cfg.data.get("val_data_paths", None)
+    assert train_data_paths, "cfg.data.train_data_paths is required and cannot be empty."
+    assert val_data_paths, "cfg.data.val_data_paths is required and cannot be empty."
+
+    train_file = train_data_paths[0]
+    val_file = val_data_paths[0]
+    assert str(train_file).endswith(".parquet"), (
+        f"Only parquet files are supported for train_data_paths, got: {train_file}"
+    )
+    assert str(val_file).endswith(".parquet"), (
+        f"Only parquet files are supported for val_data_paths, got: {val_file}"
+    )
 
     n_runners = cfg.agentlightning.n_runners
 
@@ -38,7 +43,7 @@ def train(cfg: Any):
     eval_mode = cfg.get("eval", False)
     eval_checkpoint_dir = cfg.get("eval_checkpoint_dir", None)
 
-    algorithm = RLinf(config=cfg, eval=eval_mode, eval_checkpoint_dir=eval_checkpoint_dir)
+    algorithm = RlinfAlgorithm(config=cfg, eval=eval_mode, eval_checkpoint_dir=eval_checkpoint_dir)
     store = None
     llm_proxy = None
 
