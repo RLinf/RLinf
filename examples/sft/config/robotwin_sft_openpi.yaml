@@ -29,7 +29,8 @@ runner:
   save_interval: 5000
 
 data:
-  data_path: "/path/to/robotwin-data"
+  train_data_paths: "/path/to/robotwin-data"
+
 algorithm:
   adv_type: gae
 

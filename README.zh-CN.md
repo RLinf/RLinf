@@ -29,6 +29,8 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 </div>
 
 ## 最新动态
+- [2026/02] 🔥 RLinf 支持 [DSRL（基于扩散模型的 SAC 强化学习）](https://arxiv.org/abs/2506.15799)，通过在潜在噪声空间训练轻量级 SAC 智能体来引导预训练的 Pi0 扩散策略。文档：[DSRL for Pi0](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dsrl.html)。
+- [2026/02] 🔥 RLinf支持[rStar2](https://github.com/volcengine/verl/pull/3397)的强化学习微调。 文档: [rStar2](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/rstar2.html)。
 - [2026/02] 🔥 RLinf 支持 π₀ 和 π₀.₅ 的仿真-真实协同训练。文档：[仿真-真实协同训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/co_training.html)。
 - [2026/02] 🔥 RLinf 正式支持基于世界模型对 VLA 进行强化学习微调，文档：[WoVR](https://rlinf.readthedocs.io/en/latest/rst_source/publications/wovr.html)， 论文：[WoVR: World Models as Reliable Simulators for Post-Training VLA Policies with RL](https://arxiv.org/abs/2602.13977)。
 - [2026/02] 🔥 RLinf 支持基于 [Wan World Model](https://github.com/RLinf/diffsynth-studio) 对 VLA 进行强化学习微调，文档：[RL on Wan World Model](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/wan.html)。
@@ -141,11 +143,12 @@ RLinf具有高度灵活性，可支持多种强化学习训练工作流（PPO、
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/crossq.html">CrossQ</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/rlpd.html">RLPD</a> ✅</li>
             <li><a href="https://arxiv.org/abs/2509.25756">SAC-Flow</a> ✅</li>
+            <li><a href="https://arxiv.org/abs/2506.15799">DSRL</a> ✅</li>
           </ul>
           <li><b>SFT</b></li>
           <ul>
-            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft.html">全量微调</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft.html">LoRA微调</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html">全量微调</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html">LoRA微调</a> ✅</li>
           </ul>
         </ul>
       </td>
