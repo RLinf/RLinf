@@ -33,7 +33,7 @@ def get_mock_config_reasoning():
     mock_cfg = MagicMock()
     mock_cfg.runner.task_type = "reasoning"
 
-    # 设置 get_workflow_graph 需要的属性
+    # get_workflow_graph
     mock_cfg.algorithm.recompute_logprobs = True
 
     # Batch size
@@ -66,12 +66,18 @@ def get_mock_config_reasoning():
     mock_component_placement.rollout_world_size = world_size
     mock_component_placement.inference_dp_size = world_size // 2
     mock_component_placement.inference_world_size = world_size
-    return mock_cfg, mock_component_placement
+
+    # cluster
+    mock_cluster = MagicMock()
+    mock_cluster.num_accelerators = 16 * 8
+
+    return mock_cfg, mock_component_placement, mock_cluster
+
 
 
 def get_mock_config_embodiment(env_type: str):
     mock_cfg = MagicMock()
-    mock_cfg.runner.task_type = "embodiment"
+    mock_cfg.runner.task_type = "embodied"
 
     mock_cfg.data.rollout_batch_size = 1024
     if env_type == "libero":
@@ -107,29 +113,21 @@ def get_mock_config_embodiment(env_type: str):
 
     # Model size
     mock_component_placement = MagicMock()
-    mock_component_placement._cluster_num_gpus = 4
     mock_component_placement._components = ["env", "rollout", "actor"]
-    mock_component_placement.rollout_dp_size = (
-        mock_component_placement._cluster_num_gpus
-    )
-    mock_component_placement.rollout_world_size = (
-        mock_component_placement._cluster_num_gpus
-    )
 
     mock_cfg.algorithm.group_size = 1
     mock_cfg.profile_data.actor_cost = 100
-    mock_component_placement.actor_dp_size = (
-        mock_component_placement._cluster_num_gpus // 2
-    )
-    mock_component_placement.actor_world_size = (
-        mock_component_placement._cluster_num_gpus
-    )
 
-    return mock_cfg, mock_component_placement
+    # cluster
+    mock_cluster = MagicMock()
+    mock_cluster.num_accelerators = 4
+
+    return mock_cfg, mock_component_placement, mock_cluster
 
 
-mock_cfg, mock_component_placement = get_mock_config_reasoning()
-init_global_config(mock_cfg, mock_component_placement)
+
+mock_cfg, mock_component_placement, mock_cluster = get_mock_config_reasoning()
+init_global_config(mock_cfg, mock_component_placement, mock_cluster)
 
 
 class TestNode:

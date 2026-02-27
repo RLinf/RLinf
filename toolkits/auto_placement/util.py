@@ -19,7 +19,7 @@ _GLOBAL_CONFIG = None
 
 def init_global_config(config, component_placement, cluster):
     if config.runner.task_type == "reasoning":
-        init_global_config_reasoning(config, component_placement, cluster)
+        init_global_config_reasoning(config, component_placement)
     else:
         init_global_config_env(config, component_placement, cluster)
 
