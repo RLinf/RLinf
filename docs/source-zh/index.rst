@@ -123,6 +123,15 @@ RLinf 是一个灵活且可扩展的开源基础架构，专为通过强化学�
   :includehidden:
   :titlesonly:
 
+  rst_source/publications/index
+
+--------------------------------------------
+
+.. toctree::
+  :maxdepth: 2
+  :includehidden:
+  :titlesonly:
+
   rst_source/apis/index
 
 --------------------------------------------

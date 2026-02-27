@@ -20,7 +20,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: "../results"
+    log_path: "../results/libero_spatial_ppo_gr00t"
     project_name: rlinf
     experiment_name: "test_gr00t"
     logger_backends: ["tensorboard"] # wandb, swanlab
@@ -81,12 +81,12 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
 
   # Override the default values in env/libero_spatial
   train:
-    total_num_envs: 32
-    max_episode_steps: 10
+    total_num_envs: 8
+    max_episode_steps: 5
+    max_steps_per_rollout_epoch: 5
   eval:
     total_num_envs: 1
     max_episode_steps: 10
@@ -113,8 +113,8 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 8
-  global_batch_size: 64 # maximum : global batch size = micro batch size * actor num_processes.
+  micro_batch_size: 2
+  global_batch_size: 8 # maximum : global batch size = micro batch size * actor num_processes.
   seed: 42
   enable_offload: False
 

@@ -84,7 +84,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
   
   # Override the default values in env/libero_10
   train:
@@ -136,7 +135,7 @@ actor:
     value_lr: 3.0e-3
     adam_beta1: 0.9
     adam_beta2: 0.999
-    adam_eps: 1.0e-05
+    adam_eps: 1.0e-08
     weight_decay: 0.01
     clip_grad: 1.0
 

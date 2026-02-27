@@ -1,0 +1,38 @@
+model_type: "dexbotic_pi"
+
+# Model path - should be set in specific config files
+model_path: "/path/to/model/dexbotic"
+
+precision: null
+
+# Action and chunk settings
+num_action_chunks: 50  # Dexbotic uses 50 (trajectory_length)
+action_dim: 7  # Environment action dimension (Libero uses 7)
+
+# LoRA settings
+is_lora: False
+lora_rank: 32
+
+# Training settings
+use_proprio: True
+num_steps: 10  # Number of diffusion/denoising steps
+add_value_head: True  # Add value head for PPO
+
+# RL training specific settings
+safe_get_logprob: False  # Use simplified logprob calculation (False = full Gaussian)
+chunk_critic_input: True  # Use only action chunk for critic (not full sequence)
+noise_anneal: False  # Whether to anneal noise during training
+joint_logprob: False  # Whether to include initial state in logprob (False = only transitions)
+value_after_vlm: False  # Whether value head comes after VLM (False = after action expert)
+
+# dexbotic specific parameters
+dexbotic:
+  num_images_in_input: 2  # Number of camera views
+  noise_level: 0.5  # Noise level for flow matching
+  action_chunk: ${actor.model.num_action_chunks}
+  num_steps: ${actor.model.num_steps}
+  train_expert_only: True  # Whether to only train action expert
+  action_env_dim: ${actor.model.action_dim}
+  noise_method: "flow_sde"  # Flow matching method
+  add_value_head: ${actor.model.add_value_head}
+  detach_critic_input: False

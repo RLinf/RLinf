@@ -20,7 +20,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: "../results"
+    log_path: "../results/libero_spatial_ppo_openpi05"
     project_name: rlinf
     experiment_name: "test_openpi"
     logger_backends: ["tensorboard"] # wandb, swanlab
@@ -30,7 +30,7 @@ runner:
 
   only_eval: False
   val_check_interval: -1
-  save_interval: 40
+  save_interval: -1
 
 algorithm:
   normalize_advantages: True
@@ -81,12 +81,12 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
 
   # Override the default values in env/libero_spatial
   train:
     total_num_envs: 32
     max_episode_steps: 10
+    max_steps_per_rollout_epoch: 10
   eval:
     total_num_envs: 8
     max_episode_steps: 10
@@ -116,7 +116,7 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 8
-  global_batch_size: 64 # maximun : global batch size = micro batch size * actor num_processes.
+  global_batch_size: 32 # maximun : global batch size = micro batch size * actor num_processes.
   seed: 42
   enable_offload: False
 

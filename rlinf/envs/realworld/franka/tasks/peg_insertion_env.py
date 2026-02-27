@@ -23,6 +23,9 @@ from ..franka_env import FrankaEnv, FrankaRobotConfig
 @dataclass
 class PegInsertionConfig(FrankaRobotConfig):
     target_ee_pose: np.ndarray = field(default_factory=lambda: np.zeros(6))
+    reward_threshold: np.ndarray = field(
+        default_factory=lambda: np.array([0.01, 0.01, 0.01, 0.2, 0.2, 0.2])
+    )
     random_xy_range: float = 0.05
     random_z_range_low: float = 0.0
     random_z_range_high: float = 0.1
@@ -75,7 +78,7 @@ class PegInsertionConfig(FrankaRobotConfig):
         self.reset_ee_pose = self.target_ee_pose + np.array(
             [0.0, 0.0, self.random_z_range_high, 0.0, 0.0, 0.0]
         )
-        self.reward_threshold = np.array([0.01, 0.01, 0.01, 0.2, 0.2, 0.2])
+        self.reward_threshold = np.array(self.reward_threshold)
         self.action_scale = np.array([0.02, 0.1, 1])
         self.ee_pose_limit_min = np.array(
             [

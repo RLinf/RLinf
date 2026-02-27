@@ -180,7 +180,7 @@ class ReasoningRunner:
                 self.cfg.actor.training_backend == "megatron"
                 and self.cfg.actor.megatron.use_hf_ckpt
             ):
-                from toolkits.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
+                from rlinf.utils.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
                     convert_hf_to_mg,
                 )
 
@@ -230,6 +230,34 @@ class ReasoningRunner:
             )
 
     def init_workers(self):
+        if self.cfg.runner.resume_dir == "auto":
+            checkpoints_dir = os.path.join(
+                self.cfg.runner.logger.log_path, "checkpoints"
+            )
+
+            checkpoint_steps = []
+            if not os.path.exists(checkpoints_dir):
+                logging.info("No checkpoints found, starting from scratch")
+                self.cfg.runner.resume_dir = None
+            else:
+                checkpoint_steps = [
+                    int(d.split("global_step_")[-1])
+                    for d in os.listdir(checkpoints_dir)
+                    if d.startswith("global_step_")
+                    and os.path.isdir(os.path.join(checkpoints_dir, d))
+                ]
+
+            if checkpoint_steps:
+                max_step = max(checkpoint_steps)
+                self.cfg.runner.resume_dir = os.path.join(
+                    checkpoints_dir, f"global_step_{max_step}"
+                )
+                logging.info(
+                    f"Auto resume from checkpoint: {self.cfg.runner.resume_dir}"
+                )
+            else:
+                self.cfg.runner.resume_dir = None
+                logging.info("No checkpoints found, starting from scratch")
         self.init_rollout_workers()
         self.init_actor_workers()
 

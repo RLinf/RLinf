@@ -43,6 +43,11 @@ class IsaaclabStackCubeEnv(IsaaclabBaseEnv):
         """
 
         def make_env_isaaclab():
+            import os
+
+            # Remove DISPLAY variable to force headless mode and avoid GLX errors
+            os.environ.pop("DISPLAY", None)
+
             from isaaclab.app import AppLauncher
 
             sim_app = AppLauncher(headless=True, enable_cameras=True).app
@@ -55,10 +60,10 @@ class IsaaclabStackCubeEnv(IsaaclabBaseEnv):
                 self.cfg.init_params.num_envs
             )  # default 4096 ant_env_spaces.pkl
 
-            isaac_env_cfg.scene.wrist_cam.height = 256
-            isaac_env_cfg.scene.wrist_cam.width = 256
-            isaac_env_cfg.scene.table_cam.height = 256
-            isaac_env_cfg.scene.table_cam.width = 256
+            isaac_env_cfg.scene.wrist_cam.height = self.cfg.init_params.wrist_cam.height
+            isaac_env_cfg.scene.wrist_cam.width = self.cfg.init_params.wrist_cam.width
+            isaac_env_cfg.scene.table_cam.height = self.cfg.init_params.table_cam.height
+            isaac_env_cfg.scene.table_cam.width = self.cfg.init_params.table_cam.width
 
             env = gym.make(
                 self.isaaclab_env_id, cfg=isaac_env_cfg, render_mode="rgb_array"
@@ -71,10 +76,13 @@ class IsaaclabStackCubeEnv(IsaaclabBaseEnv):
         instruction = [self.task_description] * self.num_envs
         wrist_image = obs["policy"]["wrist_cam"]
         table_image = obs["policy"]["table_cam"]
+        quat = obs["policy"]["eef_quat"][
+            :, [1, 2, 3, 0]
+        ]  # In isaaclab, quat is wxyz not like libero
         states = torch.concatenate(
             [
                 obs["policy"]["eef_pos"],
-                quat2axisangle_torch(obs["policy"]["eef_quat"]),
+                quat2axisangle_torch(quat),
                 obs["policy"]["gripper_pos"],
             ],
             dim=1,
@@ -87,7 +95,3 @@ class IsaaclabStackCubeEnv(IsaaclabBaseEnv):
             "wrist_images": wrist_image,
         }
         return env_obs
-
-    def add_image(self, obs):
-        img = obs["policy"]["table_cam"][0].cpu().numpy()
-        return img

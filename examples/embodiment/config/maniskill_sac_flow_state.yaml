@@ -37,7 +37,11 @@ algorithm:
   normalize_advantages: False  # SAC doesn't use advantages
   kl_penalty: kl
   group_size: 1
-  agg_q: min  # same as maniskill_sac_mlp.yaml
+
+  agg_q: min  # agg_q for critic
+  actor_agg_q: min # agg_q for actor, SAC uses min while RLPD uses mean
+  critic_subsample_size: 2 # number of Q-heads to subsample for critic update, used only in RLPD (num_q_heads=10)
+  enable_drq: False
 
   rollout_epoch: 1
   eval_rollout_epoch: 1 # same as maniskill_sac_mlp.yaml
@@ -54,19 +58,27 @@ algorithm:
   # SAC hyperparameters
   gamma: 0.8 # 0.96
   tau: 0.005  # Soft update coefficient for target networks
-  alpha: 0.2  # Temperature parameter (if not using auto-tuning)
-  auto_entropy_tuning: True  # Enable automatic entropy tuning
-  alpha_type: softplus 
-  initial_alpha: 0.2  # Initial temperature value
-  target_entropy: -4  # Target entropy (-action_dim)
-  alpha_lr: 3.0e-4  # Learning rate for temperature parameter
+
+  entropy_tuning:
+    alpha_type: softplus # choose from ["softplus", "exp", "fixed_alpha"], set to "softplus" or "exp" to enable automatic entropy tuning
+    initial_alpha: 0.2  # Initial temperature value
+    target_entropy: -4  # Target entropy (-action_dim)
+    optim:
+      lr: 3.0e-4  # Learning rate for temperature parameter
+      lr_scheduler: torch_constant
+      clip_grad: 10.0
 
   critic_actor_ratio: 3
   backup_entropy: True
   
   # Replay buffer settings
-  replay_buffer_capacity: 300000
-  min_buffer_size: 200  # Minimum buffer size before training starts
+  replay_buffer:
+    enable_cache: True
+    cache_size: 6000 # number of trajectories cached in memory
+    sample_window_size: 6000 # number of latest trajectories to sample from for replay buffer
+    min_buffer_size: 2  # Minimum buffer size before training starts (in number of trajectories)
+    auto_save: False
+
   num_updates_per_step: 64  # Number of gradient updates per training step
   target_update_freq: 1  # Frequency of target network updates
 
@@ -87,7 +99,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
 
   train:
     total_num_envs: 32
@@ -115,6 +126,9 @@ rollout:
   enable_offload: False
   pipeline_stage_num: 1
 
+  collect_transitions: True
+  collect_prev_infos: False
+
   model:
     model_path: ""
     precision: ${actor.model.precision}
@@ -140,7 +154,7 @@ actor:
     precision: "32"
     add_value_head: False
     add_q_head: True
-    num_q_heads: 10  # number of Q heads for critic, passed to policy module
+    num_q_heads: 2  # 2 for SAC, 10 for RLPD
     
     # Flow Matching specific parameters
     denoising_steps: 4  # Number of denoising steps for flow matching
@@ -167,12 +181,14 @@ actor:
     q_network_separate_processing: True
 
   optim:
-    lr: 3.0e-4  # Lower learning rate for SAC
-    value_lr: 3.0e-4  # Q-network learning rate
-    adam_beta1: 0.9
-    adam_beta2: 0.999
-    adam_eps: 1.0e-08
     clip_grad: 1.0 # 10.0 can also be considered
+    lr: 3e-4
+    lr_scheduler: torch_constant
+
+  critic_optim:
+    clip_grad: 1.0 # 10.0 can also be considered
+    lr: 3e-4
+    lr_scheduler: torch_constant
 
   # Override the default values in training_backend/fsdp
   fsdp_config:

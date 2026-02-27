@@ -821,25 +821,25 @@ env
 
 ``env.enable_offload``：启用环境侧的下放以降低内存占用。
 
-``env.train.total_num_envs``: Total number of parallel environments for training.
+``env.train.total_num_envs``：训练用的并行环境总数。
 
-``env.train.auto_reset``: Automatically reset environments when episodes terminate for training.
+``env.train.auto_reset``：训练时当 episode 终止时自动重置环境。
 
-``env.train.ignore_terminations``: Ignore episode terminations during training (if enabled, episode only ends when it reaches the ``max_episode_steps`` for training).
+``env.train.ignore_terminations``：训练时忽略 episode 终止（如果启用，episode 仅在达到 ``max_episode_steps`` 时结束）。
 
-``env.train.use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO.
+``env.train.use_fixed_reset_state_ids``：使用固定的 reset 状态 ID（false 则随机化）。GRPO 始终为 True，PPO 默认为 False。
 
-``env.train.max_episode_steps``: Maximum number of steps per episode for training.
+``env.train.max_episode_steps``：训练时每个 episode 的最大步数。
 
-``env.eval.total_num_envs``: Total number of parallel environments for evaluation.
+``env.eval.total_num_envs``：评估用的并行环境总数。
 
-``env.eval.auto_reset``: Automatically reset environments when episodes terminate for evaluation.
+``env.eval.auto_reset``：评估时当 episode 终止时自动重置环境。
 
-``env.eval.ignore_terminations``: Ignore episode terminations during evaluation (if enabled, episode only ends when it reaches the ``max_episode_steps`` for evaluation).
+``env.eval.ignore_terminations``：评估时忽略 episode 终止（如果启用，episode 仅在达到 ``max_episode_steps`` 时结束）。
 
-``env.eval.use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO.
+``env.eval.use_fixed_reset_state_ids``：使用固定的 reset 状态 ID（false 则随机化）。GRPO 始终为 True，PPO 默认为 False。
 
-``env.eval.max_episode_steps``: Maximum number of steps per episode for evaluation.
+``env.eval.max_episode_steps``：评估时每个 episode 的最大步数。
 
 rollout
 ~~~~~~~~~~~~~~~

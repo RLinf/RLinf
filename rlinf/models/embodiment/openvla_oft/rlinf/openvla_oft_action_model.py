@@ -30,7 +30,7 @@ from prismatic.vla.constants import (
 )
 from transformers.generation import TopKLogitsWarper
 
-from rlinf.models.embodiment.base_policy import BasePolicy
+from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.modules.value_head import ValueHead
 from rlinf.utils.utils import (
     compute_entropy_from_logits,
@@ -38,7 +38,7 @@ from rlinf.utils.utils import (
 )
 
 
-class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction):
+class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy):
     def __init__(
         self,
         config: OpenVLAOFTConfig,
@@ -47,7 +47,7 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
         add_value_head,
         max_prompt_length,
     ) -> None:
-        OpenVLAOFTForActionPrediction.__init__(self, config)
+        super().__init__(config)
 
         self.action_dim = action_dim
         self.num_action_chunks = num_action_chunks
@@ -211,7 +211,6 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
         env_obs=None,
         calculate_logprobs=True,
         calculate_values=True,
-        return_obs=True,
         **kwargs,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         do_sample = kwargs.pop("do_sample")
@@ -456,25 +455,32 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
 
         self.input_processor = input_processor
 
+    def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
+        if forward_type == ForwardType.DEFAULT:
+            return self.default_forward(**kwargs)
+        else:
+            raise NotImplementedError
+
     def default_forward(
         self,
         input_ids: torch.LongTensor = None,
         attention_mask: torch.Tensor = None,
         pixel_values: torch.FloatTensor = None,
         output_hidden_states: bool = False,
-        data: Optional[dict[str, torch.Tensor]] = None,
+        forward_inputs: Optional[dict[str, torch.Tensor]] = None,
         compute_logprobs: bool = False,
         compute_entropy: bool = False,
         compute_values: bool = False,
         use_cache: Optional[bool] = None,
+        **kwargs,
     ):
-        if data is not None:
-            data = self.preprocess_for_train(data)
-            input_ids = data["input_ids"]
-            attention_mask = data["attention_mask"]
-            pixel_values = data["pixel_values"]
+        if forward_inputs is not None:
+            forward_inputs = self.preprocess_for_train(forward_inputs)
+            input_ids = forward_inputs["input_ids"]
+            attention_mask = forward_inputs["attention_mask"]
+            pixel_values = forward_inputs["pixel_values"]
 
-            action_tokens = data["action_tokens"]
+            action_tokens = forward_inputs["action_tokens"]
 
         assert torch.all(input_ids[:, 0] == 1)
         assert torch.all(attention_mask[:, 0] == 1)
@@ -526,8 +532,10 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
                 :, -self.action_dim * self.num_action_chunks - 1 : -1
             ]  # [B, action-dim, vocab-size]
 
-            processed_logits_tensor = logits / data["temperature"]
-            top_k = min(data["top_k"], processed_logits_tensor.size(-1))  # Safety check
+            processed_logits_tensor = logits / kwargs["temperature"]
+            top_k = min(
+                kwargs["top_k"], processed_logits_tensor.size(-1)
+            )  # Safety check
             if top_k > 0:
                 logits_warper = TopKLogitsWarper(
                     top_k
