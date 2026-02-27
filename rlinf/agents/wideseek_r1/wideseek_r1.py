@@ -51,6 +51,8 @@ from rlinf.workers.agent.agent_loop import (
 
 
 class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
+    """Multi-turn WideSeek-R1 agent worker for MAS and single-agent workflows."""
+
     def __init__(
         self,
         cfg: DictConfig,
@@ -82,14 +84,15 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
     async def extract_tool_calls(
         self, response_text: str, role: str
     ) -> tuple[str, list[ToolRequest]]:
-        """Extract tool calls from response based on role using Qwen's JSON format.
+        """Parse the first `<tool_call>` block and convert it to internal requests.
 
         Args:
-            response_text: The response text to extract from
-            role: Agent role ('planner' or 'worker')
+            response_text: Decoded model response that may contain tool-call JSON.
+            role: Current role (`planner`, `worker`, or `single`).
 
         Returns:
-            list_of_tool_requests
+            A tuple of `(tool_requests, tool_call_info)` where `tool_call_info`
+            summarizes subtask/search/access counts for metrics.
         """
         function_calls = []
 
@@ -231,6 +234,15 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         return function_calls, tool_call_info
 
     async def access_sumamry(self, info_to_extract, page_content):
+        """Summarize access content to keep context compact for follow-up turns.
+
+        Args:
+            info_to_extract: Focus information requested by the worker.
+            page_content: Raw page text returned by the access tool.
+
+        Returns:
+            A short summary string for tool feedback.
+        """
         if page_content == "No More Information is Found for this URL.":
             return "No useful Information is Found under this URL."
 
@@ -246,6 +258,18 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         language: str,
         sub_traj_id: int
     ) -> tuple[list[AgentLoopOutput], str]:
+        """Execute one planner-created subtask through the worker role loop.
+
+        Args:
+            worker_request: Planner output converted to a `subtask` tool request.
+            main_task: Original user question for worker grounding.
+            is_markdown: Whether this sample expects markdown-table final answers.
+            language: Prompt language (`en` or `zh`).
+            sub_traj_id: Sub-trajectory index used for training regrouping.
+
+        Returns:
+            Worker turn outputs, worker summary text, turn statistics, and failure flag.
+        """
         assert worker_request.name == "subtask", (
             f"Expected 'subtask' tool, got {worker_request.name}"
         )
@@ -280,6 +304,19 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         is_markdown: bool = False,
         language: str = "en",
     ) -> tuple[list[AgentLoopOutput], str]:
+        """Run one query under a specific role until stop, failure, or turn budget.
+
+        Args:
+            question: Role-specific input question (main query or subtask).
+            role: One of `planner`, `worker`, or `single`.
+            sub_traj_id: Sub-trajectory id for downstream regrouping.
+            main_task: Original task text required when `role == "worker"`.
+            is_markdown: Whether markdown answer format is required.
+            language: Prompt language.
+
+        Returns:
+            Tuple of `(output_buffer, answer_text, total_turn_list, task_failed, succ_end)`.
+        """
 
         origin_question = question
         output_buffer = []
@@ -406,6 +443,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
             worker_turn_list = []
             if role == "planner":
                 assert sub_traj_id == 0
+                # Planner fans out multiple sub-agents in parallel.
                 for i, tool_request in enumerate(tool_requests, start=1):
                     tasks.append(
                         self.worker_call(
@@ -453,6 +491,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                 )
 
             else:
+                # Worker/single executes search/access tools in parallel.
                 for tool_request in tool_requests:
                     tasks.append(self.tool_call(tool_request))
                 tool_responses: list[ToolResponse] = await asyncio.gather(*tasks)
@@ -566,6 +605,15 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         return output_buffer, answer_text, total_turn_list, task_failed, succ_end
 
     async def run_one_query(self, prompt_ids: list[int], *, answer) -> AgentLoopOutput:
+        """Run one sample end-to-end and attach reward/training metadata.
+
+        Args:
+            prompt_ids: Tokenized query prompt from the dataset.
+            answer: Label payload used for format extraction and reward scoring.
+
+        Returns:
+            A multi-turn output object containing all turns and trajectory metadata.
+        """
         sub_traj_id = 0
         origin_question = self.tokenizer.decode(prompt_ids)
         language = answer.get("language", "en")
@@ -674,6 +722,16 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         task_results: list[MultiTurnAgentLoopOutput],
         answer: str, 
     ) -> Optional[dict]:
+        """Build extra fields for turn/traj/group scopes and training regrouping.
+
+        Args:
+            task_results: Grouped rollout samples for the same input question.
+            answer: Ground-truth answer payload for this group.
+
+        Returns:
+            Extra field dicts for turn-level, trajectory-level, group-level,
+            and training-only fields.
+        """
         extra_fields_turn, extra_fields_traj, *_ = super().gen_extra_fields(task_results, answer)
 
         roles = []
@@ -710,6 +768,14 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         self,
         rollout_result: DynamicRolloutResult,
     ) -> dict:
+        """Compute wideseek rollout metrics from packed dynamic rollout outputs.
+
+        Args:
+            rollout_result: Dynamic rollout structure produced by this worker.
+
+        Returns:
+            Aggregated metric dictionary for logging.
+        """
         if self.is_eval:
             return {}
 

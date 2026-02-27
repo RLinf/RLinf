@@ -54,6 +54,18 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
         tool_workers: dict[ToolWorker, ToolWorkerInfo] = {},
         solid_rollouts: dict[str, Union["SGLangWorker", "VLLMWorker"]] = {},
     ):
+        """Initialize the evaluation runner and in-memory result accumulator.
+
+        Args:
+            cfg: Global runtime/config object.
+            placement: Placement strategy for distributed workers.
+            val_dataset: Validation dataset used for rollout evaluation.
+            rollout: Main rollout worker.
+            reward: Optional reward worker.
+            agent_loop: Agent-loop worker used for multi-turn generation.
+            tool_workers: Tool workers attached to this runner.
+            solid_rollouts: Optional fixed rollout workers.
+        """
         super().__init__(
             cfg,
             placement,
@@ -76,7 +88,16 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
         self.recompute_logprobs = self.cfg.algorithm.recompute_logprobs
 
     def _save_eval_results(self, all_results, aggregated_metrics, total_count):
-        """Save evaluation results to JSON files and per-response directory."""
+        """Persist aggregated metrics and per-sample responses to disk.
+
+        Args:
+            all_results: Per-question processed evaluation payloads.
+            aggregated_metrics: Dataset-level aggregated metric dictionary.
+            total_count: Number of evaluated questions.
+
+        Returns:
+            Path to the saved `metrics.json` file.
+        """
         import datetime
 
         output_dir = os.path.join(
@@ -159,7 +180,11 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
         return output_file_key
 
     def _aggregate_all_results(self):
-        """Aggregate all accumulated raw results into final metrics."""
+        """Aggregate cached raw rollout results into final evaluation metrics.
+
+        Returns:
+            Tuple of `(processed_results, aggregated_metrics)`.
+        """
         is_markdown = self.cfg.data.get("is_markdown", False)
 
         processed_results = []
@@ -447,6 +472,15 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
         rollout_result: DynamicRolloutResult,
         log_info=None,
     ) -> dict:
+        """Convert one `DynamicRolloutResult` into serializable eval payload.
+
+        Args:
+            rollout_result: Rollout output from the agent-loop worker.
+            log_info: Optional logging callback.
+
+        Returns:
+            A dict containing group-level answer metadata and sample-level turns.
+        """
         group_size = rollout_result.group_size
         extra_fields_turn = rollout_result.extra_fields_turn or {}
         extra_fields_traj = rollout_result.extra_fields_traj or {}
@@ -457,11 +491,13 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
         llm_reward_metric = extra_fields_traj.get("llm_reward") or [0.0] * group_size
 
         def _safe_idx(values, idx, default=None):
+            """Safely index a list-like container with a default fallback."""
             if values is None or idx >= len(values):
                 return default
             return values[idx]
 
         def _to_py_scalar(value, default=0.0):
+            """Convert tensor-like scalars to Python scalars."""
             if value is None:
                 return default
             if hasattr(value, "item"):
@@ -517,7 +553,7 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
         return eval_result
 
     def pre_process(self) -> dict:
-        # raise NotImplementedError()
+        """Log evaluation context before the first validation batch."""
         logging.info("=" * 80)
         logging.info("Starting Multi-Agent System Evaluation")
         logging.info("=" * 80)
@@ -531,7 +567,8 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
         self,
         context: dict,
     ) -> dict:
-        # Aggregate all results after all batches complete
+        """Aggregate all accumulated batches and write final evaluation artifacts."""
+        # Aggregate all results after all batches complete.
         logging.info(f"Aggregating {len(self.accumulated_raw_results)} results...")
         processed_results, final_metrics = self._aggregate_all_results()
 
@@ -547,7 +584,8 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
         eval_pbar,
         time_metrics,
     ):
-        # Update progress bar with current metrics
+        """Update the evaluation progress bar with live counters and timing."""
+        # Update progress bar with current metrics.
         eval_pbar.set_postfix(
             {
                 "queries": len(self.accumulated_raw_results),

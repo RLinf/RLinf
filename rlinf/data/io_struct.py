@@ -1259,6 +1259,19 @@ class DynamicRolloutResult:
         context: dict,
         batch: dict[str, torch.Tensor],
     ) -> dict:
+        """Pack multi-turn samples from the same trajectory into fewer sequences.
+
+        This function detects prefix/suffix relationships among turns that belong
+        to the same trajectory, then folds compatible turns into a single packed
+        sequence while merging token-level fields such as advantages/logprobs.
+
+        Args:
+            context: Runtime context containing packing options (e.g. folding_scale).
+            batch: Dynamic rollout actor batch before packing.
+
+        Returns:
+            Packed batch with updated tensors and `idx_to_traj` mapping.
+        """
         # calculate pack map
         traj_to_idx = {}
         for idx, traj in enumerate(batch["idx_to_traj"]):
@@ -1276,6 +1289,7 @@ class DynamicRolloutResult:
                 for right in idxes[i + 1:]:
                     if right in passed_as_suffix:
                         continue
+                    # Skip overlapping response spans to avoid mixing turns.
                     mask_overlap = torch.logical_and(
                         batch["response_mask"][left],
                         batch["response_mask"][right],
@@ -1323,7 +1337,7 @@ class DynamicRolloutResult:
             reward_list = [split_params["rewards"][idx].item() for idx in idxes]
             assert len(set([split_params["rewards"][idx].item() for idx in idxes])) == 1
 
-            # logprobs, advantages
+            # Merge additive token-level stats over response tokens only.
             for key in ["prev_logprobs", "advantages"]:
                 value = [
                     split_params[key][idx].masked_fill(~split_params["response_mask"][idx], 0)
@@ -1331,7 +1345,7 @@ class DynamicRolloutResult:
                 ]
                 split_params[key][suffix] = torch.stack(value).sum(dim=0)
 
-            # loss_scales, for turn_num re-scale
+            # Re-scale loss_scales to preserve total per-turn contribution.
             masked_counts = [
                 split_params["response_mask"][idx].sum().item()
                 for idx in idxes
@@ -1379,6 +1393,7 @@ class DynamicRolloutResult:
         num_sequence_after = len(new_idx_to_traj)
         folding_scale = context["folding_scale"]
         if "group_level" in folding_scale:
+            # Keep group-level total loss scale stable after folding.
             packed_batch["loss_scales"] *= num_sequence_after / num_sequence
 
         return packed_batch

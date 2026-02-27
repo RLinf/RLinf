@@ -62,12 +62,14 @@ class AsyncOnlineSearchClient:
 
     @classmethod
     def _get_search_semaphore(cls):
+        """Return a shared semaphore limiting concurrent search requests."""
         if cls._search_semaphore is None:
             cls._search_semaphore = asyncio.Semaphore(20)
         return cls._search_semaphore
 
     @classmethod
     def _get_access_semaphore(cls):
+        """Return a shared semaphore limiting concurrent access requests."""
         if cls._access_semaphore is None:
             cls._access_semaphore = asyncio.Semaphore(10)
         return cls._access_semaphore
@@ -407,16 +409,19 @@ class AsyncOnlineSearchClient:
         return results
 
     def get_cache_stats(self) -> dict[str, Any]:
+        """Return cache statistics for observability."""
         if self.webpage_cache:
             return self.webpage_cache.get_stats()
         else:
             return {"cache_disabled": True}
 
     def clear_cache(self):
+        """Clear in-memory and persisted cache entries when cache is enabled."""
         if self.webpage_cache:
             self.webpage_cache.clear()
 
     def force_save_cache(self):
+        """Force a cache snapshot to disk when cache is enabled."""
         if self.webpage_cache:
             self.webpage_cache.force_save()
 
@@ -517,6 +522,8 @@ class AsyncSearchClient:
 
 
 class WideSeekR1ToolWorker(ToolWorker):
+    """Tool worker that serves `search` and `access` requests for WideSeek-R1."""
+
     def __init__(self, cfg: DictConfig):
         super().__init__()
         self.cfg = cfg
@@ -536,19 +543,23 @@ class WideSeekR1ToolWorker(ToolWorker):
             self.search_client = AsyncSearchClient(cfg=self.cfg)
 
     def init_worker(self, input_channel: Channel, output_channel: Channel):
+        """Bind input/output channels used for async tool request serving."""
         self.input_channel = input_channel
         self.output_channel = output_channel
 
     def start_server(self):
+        """Start the background coroutine that consumes tool requests."""
         loop = asyncio.get_running_loop()
         self.request_processor_task = loop.create_task(self._process_requests())
 
     def stop_server(self):
+        """Stop request processing by cancelling the background task."""
         # Cancel request processor task
         if self.request_processor_task and not self.request_processor_task.done():
             self.request_processor_task.cancel()
 
     async def _process_requests(self):
+        """Continuously consume tool requests and respond on per-session keys."""
         def process_tool_result(response, tool_type, access_token=None):
             """Process tool results following ASearcher's consume_tool_response logic.
 
@@ -652,6 +663,7 @@ class WideSeekR1ToolWorker(ToolWorker):
                 ).async_wait()
 
         while True:
+            # Each tool request is handled in an independent task to keep throughput high.
             request: ToolChannelRequest = await self.input_channel.get(
                 async_op=True
             ).async_wait()

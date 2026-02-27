@@ -326,6 +326,7 @@ class AgentLoopWorker(Worker):
 
 class MultiTurnAgentLoopWorker(AgentLoopWorker):
     """Multi-turn agent loop worker."""
+
     def __init__(
         self,
         cfg: DictConfig,
@@ -409,6 +410,15 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         task_results: list[MultiTurnAgentLoopOutput],
         answer: str, 
     ) -> Optional[dict]:
+        """Collect extra fields emitted by per-turn and per-trajectory outputs.
+
+        Args:
+            task_results: Grouped multi-turn outputs for one query.
+            answer: Ground-truth answer metadata for the group.
+
+        Returns:
+            Tuple-like structure of turn/traj/group/train extra fields.
+        """
         extra_fields_turn = None
         if self.extra_keys_turn is not None:
             extra_fields_turn = {k: list() for k in self.extra_keys_turn}
@@ -430,6 +440,14 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         return extra_fields_turn, extra_fields_traj, None, None
 
     def post_process_metric(self, agent_metrics_list: list[dict]):
+        """Merge per-query metrics, including weighted stats across workers.
+
+        Args:
+            agent_metrics_list: Metrics returned by each query rollout.
+
+        Returns:
+            Aggregated metric dictionary on rank 0, or empty dict on no data.
+        """
         if self._world_size > 1:
             if self._rank == 0:
                 for i in range(1, self._world_size):
@@ -480,6 +498,7 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         self,
         rollout_result: DynamicRolloutResult,
     ) -> dict:
+        """Hook for subclasses to compute task-specific rollout metrics."""
         return {}
 
     def get_rollout_result(
@@ -491,8 +510,18 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         extra_fields_train: dict,
         use_no_training=True,
     ) -> DynamicRolloutResult:
-        """
-        Collect group task results into a DynamicRolloutResult.
+        """Collect a group of turn-level outputs into `DynamicRolloutResult`.
+
+        Args:
+            task_results: Multi-turn outputs for one query group.
+            extra_fields_turn: Turn-level extra fields.
+            extra_fields_traj: Trajectory-level extra fields.
+            extra_fields_group: Group-level extra fields.
+            extra_fields_train: Training-only fields (e.g. regroup indices).
+            use_no_training: Whether to drop turns marked as non-training.
+
+        Returns:
+            A packed `DynamicRolloutResult` ready for downstream training/eval.
         """
         if self.print_outputs:
             for task_result in task_results:
@@ -510,7 +539,7 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         is_end = []
         rewards = []
 
-
+        # Flatten all retained turns while keeping trajectory mapping.
         for idx, task_result in enumerate(task_results):
             for single_turn_output in task_result.single_turn_outputs:
                 single_turn_output: AgentLoopOutput
@@ -547,4 +576,5 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         )
 
     async def run_one_query(self, *args, **kwargs) -> MultiTurnAgentLoopOutput:
+        """Run one query and return a multi-turn output (subclass must implement)."""
         raise NotImplementedError("Subclasses must implement this method")

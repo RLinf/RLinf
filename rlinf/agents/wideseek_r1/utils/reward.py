@@ -28,6 +28,18 @@ from rlinf.workers.agent.agent_loop import AgentLoopOutput
 from rlinf.agents.wideseek_r1.utils.sglang_client import SGLangClient
 
 def credit_assignment(agentloop_config: DictConfig, output_buffer: list[AgentLoopOutput], llm_reward, succ_end, answer_format):
+    """Assign trajectory reward and select trainable turns for policy updates.
+
+    Args:
+        agentloop_config: Agent-loop config containing reward shaping weights.
+        output_buffer: All turns generated in one trajectory.
+        llm_reward: End-of-trajectory reward from answer evaluation.
+        succ_end: Whether the agent stopped naturally without tool calls.
+        answer_format: Whether final-answer extraction/format validation succeeded.
+
+    Returns:
+        Tuple of `(output_buffer, train_buffer, final_answer_format, reward_score)`.
+    """
     final_answer_format = 0
     search_credit = 0.0
     length_penalty = 0.0
@@ -39,6 +51,7 @@ def credit_assignment(agentloop_config: DictConfig, output_buffer: list[AgentLoo
     length_p = agentloop_config.get("length_penalty", 0.0) 
     
     for turn_output in output_buffer:
+        # Reward search behavior when at least one access call exists in trajectory.
         tool_call_info = turn_output.tool_call_info
         if tool_call_info is None:
             continue
@@ -100,6 +113,19 @@ def credit_assignment(agentloop_config: DictConfig, output_buffer: list[AgentLoo
     return output_buffer, train_buffer, final_answer_format, reward_score      
 
 async def get_final_reward_score(origin_question, extract_answer, label_answer, is_markdown, norm_column, sgl_client: SGLangClient):
+    """Compute final reward score for boxed answers or markdown-table answers.
+
+    Args:
+        origin_question: Original user question text.
+        extract_answer: Parsed model answer (string or DataFrame).
+        label_answer: Ground-truth answer payload from dataset.
+        is_markdown: Whether to evaluate in markdown-table mode.
+        norm_column: Whether to normalize markdown column names aggressively.
+        sgl_client: Shared SGLang client used by LLM judges.
+
+    Returns:
+        Tuple of `(reward_score, format_ok)`.
+    """
     format = True
     if is_markdown:
         reward_score, format = await evaluate_markdown(extract_answer, label_answer, sgl_client, norm_column)
@@ -127,6 +153,17 @@ async def verify_answer_with_llm_judge(
     correct_answer: list,
     sgl_client: SGLangClient
 ) -> float:
+    """Use an LLM judge to score equivalence between prediction and reference.
+
+    Args:
+        question: Original user question.
+        predicted_answer: Model-predicted boxed answer.
+        correct_answer: Reference answer list from dataset.
+        sgl_client: SGLang client used to query the judge model.
+
+    Returns:
+        `1.0` if judged correct, otherwise `0.0`.
+    """
     from rlinf.agents.wideseek_r1.utils.prompt import LLM_JUDGE_PROMPT
     
     if len(correct_answer) == 1:
@@ -155,8 +192,20 @@ async def verify_answer_with_llm_judge(
         return 0.0
 
 async def evaluate_markdown(extract_answer, label_answer, sgl_client, norm_column_ = False):
+    """Evaluate markdown-table answers with schema checks and LLM cell matching.
+
+    Args:
+        extract_answer: Parsed prediction DataFrame.
+        label_answer: Ground-truth markdown payload or DataFrame.
+        sgl_client: SGLang client used for semantic matching.
+        norm_column_: Whether to normalize spaces in column names.
+
+    Returns:
+        Tuple of `(score, format_ok)` where `score` is item-level F1.
+    """
     # Helper function to normalize column names
     def norm_column(col: str) -> str: 
+        """Normalize column names to improve schema alignment robustness."""
         if not norm_column_:
             return col.strip().lower()
         else:
@@ -164,6 +213,7 @@ async def evaluate_markdown(extract_answer, label_answer, sgl_client, norm_colum
 
     # Helper function to calculate F1 score
     def calc_f1(precision, recall):
+        """Compute a numerically stable F1 score."""
         epsilon = 1e-9
         return (
             (2 * precision * recall / (precision + recall))
@@ -172,6 +222,7 @@ async def evaluate_markdown(extract_answer, label_answer, sgl_client, norm_colum
         )
 
     def normalize_series_to_str(s: pd.Series) -> pd.Series:
+        """Normalize a series to stripped canonical strings for matching."""
         s0 = s.astype(str).str.strip()
         num = pd.to_numeric(s0, errors="coerce")
         if num.notna().any():
@@ -262,7 +313,7 @@ async def evaluate_markdown(extract_answer, label_answer, sgl_client, norm_colum
                     lambda x: primary_key_map.get(x, x)
                 )
 
-        # Inner join to find matching rows
+        # Inner join over unique keys to align comparable rows.
         df_inner = pd.merge(
             answer_df,
             response_df,
@@ -287,7 +338,7 @@ async def evaluate_markdown(extract_answer, label_answer, sgl_client, norm_colum
                 llm_tasks.append(llm_judge_column(responses, targets, sgl_client))
                 llm_columns.append(col)
 
-        # Execute all LLM calls in parallel
+        # Execute LLM semantic checks in parallel per non-key column.
         if llm_tasks:
             llm_results = await asyncio.gather(*llm_tasks)
             # Assign results back to df_inner_scores["LLM"]
@@ -325,6 +376,16 @@ async def evaluate_markdown(extract_answer, label_answer, sgl_client, norm_colum
     return f1_by_item, True
 
 async def llm_judge_column(responses: list, targets: list, sgl_client: SGLangClient) -> list:
+    """Score non-key markdown table cells using semantic LLM comparison.
+
+    Args:
+        responses: Predicted cell values for one column.
+        targets: Ground-truth cell values for one column.
+        sgl_client: SGLang client used for judge inference.
+
+    Returns:
+        List of float scores aligned with `responses`.
+    """
     criterion = "It is sufficient if the semantics are approximately the same as the reference answer or if they point to the same entity. There is no need for a word-for-word correspondence."
 
     if not responses:
@@ -398,6 +459,16 @@ Each answer and each response has an idx. Please score each pair of answers and 
     return score_list
 
 async def primary_key_preprocess(response_list, reference_list, sgl_client: SGLangClient):
+    """Align predicted primary-key values to reference canonical forms.
+
+    Args:
+        response_list: Candidate values from prediction side.
+        reference_list: Reference values used as canonical vocabulary.
+        sgl_client: SGLang client used for semantic alignment.
+
+    Returns:
+        Mapping from predicted string to aligned reference string.
+    """
     primary_key_map = {}
 
     # The prompt template from widesearch
@@ -455,17 +526,17 @@ The reference vocabulary is as follows:
 
     return primary_key_map
 
-######### UTILS FUNC #########
 def extract_final_answer(text: str, mode: bool = "boxed", strict = True):
-    """Extract final answer from text based on mode.
+    """Extract final answer from generated text using a specific parsing mode.
 
     Args:
-        text: The text to extract answer from
-        mode: Extraction mode - 'tag', 'boxed', or 'markdown'
+        text: Raw generated text that may include reasoning/tool wrappers.
+        mode: Parsing mode (`tag`, `boxed`, or `markdown`).
+        strict: For markdown mode, require fenced markdown blocks when True.
 
     Returns:
-        For 'tag' and 'boxed': str (the extracted answer)
-        For 'markdown': pd.DataFrame or None
+        For `tag`/`boxed`: extracted string or None.
+        For `markdown`: parsed `pd.DataFrame` or None.
     """
     text = text.split('</think>')[-1].strip()
     if mode == 'tag':
@@ -519,6 +590,7 @@ def extract_final_answer(text: str, mode: bool = "boxed", strict = True):
         response_df = None
         markdown_str = re.findall(r"```markdown(.*?)```", text, re.DOTALL)
         if not markdown_str:
+            # Fallback parser for answers that forgot markdown fences.
             if strict:
                 return None
             pipe_positions = [m.start() for m in re.finditer(r"\|", text)]

@@ -44,6 +44,13 @@ class SGLangClient:
         return cls._shared_session
 
     def __init__(self, llm_ip: str, llm_port: str, llm_type: str):
+        """Store endpoint and model metadata for SGLang chat completions.
+
+        Args:
+            llm_ip: Host/IP of the SGLang server.
+            llm_port: Port of the SGLang server.
+            llm_type: Model identifier expected by the API.
+        """
         self.llm_ip = llm_ip
         self.llm_port = llm_port
         self.llm_type = llm_type
@@ -53,13 +60,10 @@ class SGLangClient:
         Call SGLang API with connection pooling.
 
         Args:
-            llm_ip: LLM server IP
-            llm_port: LLM server port
-            llm_type: LLM model type
             messages: List of message dicts with 'role' and 'content'
 
         Returns:
-            Response text from the API, or None if failed
+            Response text from the API, or None if all retries fail.
         """
         url = f"http://{self.llm_ip}:{self.llm_port}/v1/chat/completions"
         data = {
@@ -71,6 +75,7 @@ class SGLangClient:
         retry_count = 0
         session = await self.get_session()
 
+        # Retry transient failures with a fixed backoff to avoid flakiness.
         while retry_count < max_retries:
             try:
                 async with session.post(

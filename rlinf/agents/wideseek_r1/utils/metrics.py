@@ -14,6 +14,7 @@
 
 
 def _safe_max(values: list[int]) -> int:
+    """Return the max value for a list, or 0 when the list is empty."""
     return max(values) if values else 0
 
 
@@ -23,6 +24,14 @@ def _add_weighted_mean_metric(
     numerator: float,
     denominator: float,
 ) -> None:
+    """Record a weighted mean and its backing sum/count statistics.
+
+    Args:
+        metrics: Mutable metrics dictionary to update in place.
+        key: Visible metric name.
+        numerator: Sum of weighted values.
+        denominator: Sum of weights.
+    """
     metrics[key] = float(numerator) / float(denominator) if denominator > 0 else 0.0
     metrics[f"__stat/sum/{key}"] = float(numerator)
     metrics[f"__stat/count/{key}"] = float(denominator)
