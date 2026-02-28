@@ -113,7 +113,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/home/duzhengye/upload/Qwen2.5-VL-OFT-LIBERO-4in1/checkpoints/steps_30000_pytorch_model.pt"
+    model_path: /path/to/model # https://huggingface.co/StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1
     precision: ${actor.model.precision}
 
 actor:
@@ -125,12 +125,12 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/home/duzhengye/upload/Qwen2.5-VL-OFT-LIBERO-4in1/checkpoints/steps_30000_pytorch_model.pt"
+    model_path: /path/to/model # https://huggingface.co/StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1
     action_dim: 7
     num_action_chunks: 8
     # Keys in this checkpoint are: ['bridge_dataset', 'fractal20220817_data'].
     # Prefer explicit setting to avoid ambiguous auto selection.
-    unnorm_key: libero
+    unnorm_key: franka
     add_value_head: False
     starvla:
       framework_name: "QwenOFT"

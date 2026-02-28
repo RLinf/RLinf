@@ -1,5 +1,5 @@
-使用 RLinf 对 StarVLA 模型进行强化学习（LIBERO + GRPO）
-==================================================
+StarVLA 模型强化学习训练
+=========================
 
 本文档介绍如何使用 **RLinf** 框架对 **StarVLA** 模型进行强化学习微调。StarVLA 是一个开源的 Vision-Language-Action (VLA) 工具箱，支持将 VLM backbone 与 action head 以模块化方式组合，从而训练与部署多类 VLA 模型。本示例以 **LIBERO Spatial** 基准为例，使用 **QwenOFT** 模型。
 
@@ -48,8 +48,8 @@ StarVLA 直接使用环境提供的自然语言任务描述作为语言模型输
 
 在 LIBERO 的默认实现中，``states`` 的常见定义为：
 
-* 末端位置 ``(x, y, z)``（3 维）
-* 末端姿态轴角 ``(rx, ry, rz)``（3 维）
+* 末端位置 ``(x, y, z)`` （3 维）
+* 末端姿态轴角 ``(rx, ry, rz)`` （3 维）
 * 夹爪状态（原始为 2 维）
 
 因此常见 ``D_state = 3 + 3 + 2 = 8``。若 checkpoint 期望 7 维状态，wrapper 会将 2 维夹爪状态做压缩（取均值）并适配为：
@@ -89,55 +89,63 @@ Rollout 的执行策略通常采用 receding-horizon：策略每次 forward 产�
 2. 安装依赖
 ^^^^^^^^^^^^
 
-本文档假设暂不使用 Docker（自定义环境安装）：
+**选项 1：Docker 镜像**
 
-.. code-block:: bash
+使用 Docker 镜像运行实验。
+
+.. code:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
+      # 如果需要国内加速下载镜像，可以使用：
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
+
+请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
+
+.. code:: bash
+
+   source switch_env starvla
+
+**选项 2：自定义环境**
+
+.. code:: bash
+
+   # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
 
    bash requirements/install.sh embodied --model starvla --env maniskill_libero
    source .venv/bin/activate
 
-必要时请确保环境变量正确设置，例如：
-
-.. code-block:: bash
-
-   export ROBOT_PLATFORM=libero
-
-模型下载与配置
---------------
+模型下载
+---------
 
 训练开始前，请从 HuggingFace 下载所需的 StarVLA QwenOFT checkpoint 与 base VLM：
 
 * ``StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1``
 * ``Qwen/Qwen2.5-VL-3B-Instruct``
 
-方法一：使用 git clone（Git LFS）
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
 .. code-block:: bash
 
+   # 方式1：使用 git clone
    git lfs install
    git clone https://huggingface.co/StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1
    git clone https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
 
-方法二：使用 huggingface-hub
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: bash
-
+   # 方式2：使用 huggingface-hub
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install -U huggingface-hub
-   huggingface-cli download StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1 --local-dir ./Qwen2.5-VL-OFT-LIBERO-4in1
-   huggingface-cli download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
+   hf download StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1 --local-dir ./Qwen2.5-VL-OFT-LIBERO-4in1
+   hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
 
 .. note::
 
    下载完成后，请修改 ``Qwen2.5-VL-OFT-LIBERO-4in1/config.yaml`` 中的 ``framework.qwenvl.base_vlm``，
    使其指向 ``Qwen2.5-VL-3B-Instruct`` 的本地路径。
 
-若在境内下载较慢，可尝试设置 HuggingFace 镜像：
-
-.. code-block:: bash
-
-   export HF_ENDPOINT="https://hf-mirror.com"
 
 快速开始
 --------

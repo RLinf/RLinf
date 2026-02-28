@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,6 +27,8 @@ from collections.abc import Mapping
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from rlinf.utils.logging import get_logger
+
 from .starvla_action_model import StarVLAForRLActionPrediction
 from .utils.profile import resolve_vlm_interface
 
@@ -48,14 +50,29 @@ def get_model(
     Raises:
         ValueError: If no checkpoint path is provided in 'cfg'.
     """
-
-    ckpt_path = getattr(cfg, "model_path", None)
-    if ckpt_path is None:
+    logger = get_logger()
+    model_path = getattr(cfg, "model_path", None)
+    if model_path is None:
         raise ValueError(
             "starVLA requires 'actor.model.model_path'. Set it to a .pt checkpoint inside "
             "a starVLA run directory."
         )
-    ckpt_path = os.fspath(ckpt_path)
+    if model_path.endswith(".pt"):
+        assert os.path.exists(model_path), (
+            f"Checkpoint path {model_path} does not exist"
+        )
+        ckpt_path = model_path
+    else:
+        # Try to find the latest checkpoint in the checkpoints directory
+        model_path = os.path.join(os.fspath(model_path), "checkpoints")
+        assert os.path.exists(model_path), (
+            f"Checkpoint path {model_path} does not exist"
+        )
+        ckpt_files = os.listdir(model_path)
+        ckpt_files = sorted([f for f in ckpt_files if f.endswith(".pt")])
+        assert len(ckpt_files) > 0, f"No checkpoint files found in {model_path}"
+        ckpt_path = os.path.join(model_path, ckpt_files[-1])
+    logger.info(f"Loading checkpoint file: {ckpt_path}")
 
     try:
         from starVLA.model.framework.base_framework import baseframework
