@@ -113,12 +113,12 @@ jobs:
               - 'rlinf/workers/rollout/vllm/**'
               - 'rlinf/runners/agent_runner.py'
               - 'rlinf/runners/reasoning_runner.py'
-              - 'rlinf/runners/coding_online_rl_runner.py'
               - 'rlinf/runners/agent_eval_runner.py'
               - 'rlinf/runners/reasoning_eval_runner.py'
               - 'examples/agent/**'
               - 'examples/reasoning/**'
               - 'tests/e2e_tests/agent/**'
+              - 'tests/e2e_tests/agentlightning/**'
               - 'tests/e2e_tests/reasoning/**'
               - '.github/workflows/agent-e2e-tests.yml'
             sft_filter: &sft
