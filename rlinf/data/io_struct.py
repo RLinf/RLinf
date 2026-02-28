@@ -1340,9 +1340,7 @@ class DynamicRolloutResult:
         for suffix, prefixes in pack_map.items():
             idxes = [*prefixes, suffix]
             assert len(idxes) >= 2
-            # rewards of each turn should be equal. only support one reward in one traj now.
-            reward_list = [split_params["rewards"][idx].item() for idx in idxes]
-            assert len(set([split_params["rewards"][idx].item() for idx in idxes])) == 1
+            assert len({split_params["rewards"][idx].item() for idx in idxes}) == 1
 
             # Merge additive token-level stats over response tokens only.
             for key in ["prev_logprobs", "advantages"]:
@@ -1383,7 +1381,7 @@ class DynamicRolloutResult:
             split_params["prompt_lengths"][suffix] = prompt_length
             split_params["response_lengths"][suffix] = all_length - prompt_length
 
-        all_prefixes = set([j for i in pack_map.values() for j in i])
+        all_prefixes = {j for i in pack_map.values() for j in i}
         pack_params = {k: [] for k in batch.keys() if k not in custom_keys}
         for i in range(num_sequence):
             if i in all_prefixes:
@@ -1395,13 +1393,8 @@ class DynamicRolloutResult:
 
         packed_batch = {}
         for k, v in pack_params.items():
-            try:
-                if k in tensor_keys:
-                    packed_batch[k] = torch.cat(v, dim=0)
-                else:
-                    assert False, k
-            except:
-                assert False, k
+            assert k in tensor_keys, k
+            packed_batch[k] = torch.cat(v, dim=0)
         packed_batch["idx_to_traj"] = new_idx_to_traj
         num_sequence_after = len(new_idx_to_traj)
         folding_scale = context["folding_scale"]

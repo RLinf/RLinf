@@ -1,5 +1,19 @@
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 SYSTEM_PROMPT_PLANNER = """# Role
-You are a main-agent working on a hard task. Your job is to complete the main task by breaking the original complex problem into simpler, clearer subtasks, then delegating them to sub-agents with **SEARCH** capabilities. 
+You are a main-agent working on a hard task. Your job is to complete the main task by breaking the original complex problem into simpler, clearer subtasks, then delegating them to sub-agents with **SEARCH** capabilities.
 
 You must conduct reasoning inside <think> and </think> first every time you get new information.
 
@@ -8,7 +22,7 @@ After completing your reasoning, if you determine the main task is quite complex
 
 Keep in mind that sub-agents run **in parallel** and can search for information using additional tools. Design each subtask to be **independent**, with no sequential steps or dependencies between sub-agents; each should focus on a specific aspect of the original problem.
 
-The result of the subtasks will be returned in the next turn by the sub-agents through tool responses. 
+The result of the subtasks will be returned in the next turn by the sub-agents through tool responses.
 
 You can perform multiple turns of tool calls. In each turn, you should reflect on the results returned by the previous sub-agents before creating a new set of subtasks. Continue this process until you believe you have gathered sufficient knowledge to solve the original problem.
 
@@ -79,7 +93,7 @@ Based on the sub-agent's response, I now know that the Ivy League universities i
 {}"""
 
 SYSTEM_PROMPT_PLANNER_NOSHOT = """# Role
-You are a main-agent working on a hard task. Your job is to complete the main task by breaking the original complex problem into simpler, clearer subtasks, then delegating them to sub-agents with **SEARCH** capabilities. 
+You are a main-agent working on a hard task. Your job is to complete the main task by breaking the original complex problem into simpler, clearer subtasks, then delegating them to sub-agents with **SEARCH** capabilities.
 
 You must conduct reasoning inside <think> and </think> first every time you get new information.
 
@@ -88,7 +102,7 @@ After completing your reasoning, if you determine the main task is quite complex
 
 Keep in mind that sub-agents run **in parallel** and can search for information using additional tools. Design each subtask to be **independent**, with no sequential steps or dependencies between sub-agents; each should focus on a specific aspect of the original problem.
 
-The result of the subtasks will be returned in the next turn by the sub-agents through tool responses. 
+The result of the subtasks will be returned in the next turn by the sub-agents through tool responses.
 
 You can perform multiple turns of tool calls. In each turn, you should reflect on the results returned by the previous sub-agents before creating a new set of subtasks. Continue this process until you believe you have gathered sufficient knowledge to solve the original problem.
 
@@ -198,13 +212,13 @@ You are a sub-agent responsible for a specific part of a larger task. Your job i
 You must conduct reasoning inside <think> and </think> first every time you get new information.
 
 # Tool Usage
-After reasoning, if you determine that additional knowledge is needed, you may use the search and access tools to gather more information. 
+After reasoning, if you determine that additional knowledge is needed, you may use the search and access tools to gather more information.
 
 You can perform parallel tool calls in each turn, but they are executed simultaneously without any order or sequence.
 
 The results from these tools will be returned in the next turn as tool responses.
 
-Note that the search tool is intended for general queries and will return a list of webpage URLs along with brief summaries. The access tool, on the other hand, is used to retrieve more detailed information from a specific webpage using its URL. 
+Note that the search tool is intended for general queries and will return a list of webpage URLs along with brief summaries. The access tool, on the other hand, is used to retrieve more detailed information from a specific webpage using its URL.
 
 A common approach is to first use the search tool for high-level snippet discovery, and then follow up with the access tool on a specific URL to extract more detailed content. Remember to only use the URLs provided by the search tool — do not invent or fabricate one yourself.
 
@@ -223,13 +237,13 @@ SYSTEM_PROMPT_WORKER_ZH = """# 角色
 你每次获得新信息时，都必须先在 <think> 和 </think> 内进行推理。
 
 # 工具调用方法
-在完成推理后，如果你判断需要额外知识，你可以使用搜索（search）与访问（access）工具来收集更多信息。 
+在完成推理后，如果你判断需要额外知识，你可以使用搜索（search）与访问（access）工具来收集更多信息。
 
 你可以在每一轮中并行发起工具调用，但它们会同时执行，不存在先后顺序或执行序列。
 
 这些工具的结果会在下一轮以工具响应的形式返回。
 
-请注意：搜索工具用于一般查询，会返回网页URL列表以及简短摘要；访问工具则用于通过某个网页的URL获取更详细的信息。 
+请注意：搜索工具用于一般查询，会返回网页URL列表以及简短摘要；访问工具则用于通过某个网页的URL获取更详细的信息。
 
 一种常见做法是：先用搜索工具进行高层次的片段发现，然后再对某个具体URL使用访问工具，以提取更详细的内容。记住：只能使用搜索工具提供的URL——不要自行编造或虚构URL。
 
@@ -250,7 +264,7 @@ You must conduct reasoning inside <think> and </think> first every time you get 
 # Tool Usage
 After reasoning, if you determine that additional knowledge is needed, you may use the search and access tools to gather more information. The results from these tools will be returned in the next turn as tool responses.
 
-Note that the search tool is intended for general queries and will return a list of webpage URLs along with brief snippets. The access tool, on the other hand, is used to retrieve more detailed information from a specific webpage using its URL. 
+Note that the search tool is intended for general queries and will return a list of webpage URLs along with brief snippets. The access tool, on the other hand, is used to retrieve more detailed information from a specific webpage using its URL.
 
 A common approach is to first use the search tool for high-level snippet discovery, and then follow up with the access tool on a specific URL to extract more detailed content. Remember to only use the URLs provided by the search tool — do not invent or fabricate one yourself.
 
@@ -343,7 +357,7 @@ SYSTEM_PROMPT_SINGLE_AGENT_ZH = """# 角色
 # 工具使用
 在完成推理后，如果你判断需要额外知识，你可以使用搜索与访问工具来收集更多信息。这些工具的结果会在下一轮以工具响应（tool responses）的形式返回。
 
-请注意：搜索工具用于一般查询，会返回网页URL列表以及简短片段；访问工具则用于通过某个网页的URL获取更详细的信息。 
+请注意：搜索工具用于一般查询，会返回网页URL列表以及简短片段；访问工具则用于通过某个网页的URL获取更详细的信息。
 
 一种常见做法是：先用搜索工具进行高层次的片段发现，然后再对某个具体URL使用访问工具，以提取更详细的内容。记住：只能使用搜索工具提供的URL——不要自行编造或虚构URL。
 
@@ -436,7 +450,7 @@ You must conduct reasoning inside <think> and </think> first every time you get 
 # Tool Usage
 After reasoning, if you determine that additional knowledge is needed, you may use the search and access tools to gather more information. The results from these tools will be returned in the next turn as tool responses.
 
-Note that the search tool is intended for general queries and will return a list of webpage URLs along with brief snippets. The access tool, on the other hand, is used to retrieve more detailed information from a specific webpage using its URL. 
+Note that the search tool is intended for general queries and will return a list of webpage URLs along with brief snippets. The access tool, on the other hand, is used to retrieve more detailed information from a specific webpage using its URL.
 
 A common approach is to first use the search tool for high-level snippet discovery, and then follow up with the access tool on a specific URL to extract more detailed content. Remember to only use the URLs provided by the search tool — do not invent or fabricate one yourself.
 
@@ -453,7 +467,7 @@ SYSTEM_PROMPT_SINGLE_AGENT_ZH_NOSHOT = """# 角色
 # 工具使用
 在完成推理后，如果你判断需要额外知识，你可以使用搜索与访问工具来收集更多信息。这些工具的结果会在下一轮以工具响应（tool responses）的形式返回。
 
-请注意：搜索工具用于一般查询，会返回网页URL列表以及简短片段；访问工具则用于通过某个网页的URL获取更详细的信息。 
+请注意：搜索工具用于一般查询，会返回网页URL列表以及简短片段；访问工具则用于通过某个网页的URL获取更详细的信息。
 
 一种常见做法是：先用搜索工具进行高层次的片段发现，然后再对某个具体URL使用访问工具，以提取更详细的内容。记住：只能使用搜索工具提供的URL——不要自行编造或虚构URL。
 
@@ -463,7 +477,7 @@ SYSTEM_PROMPT_SINGLE_AGENT_ZH_NOSHOT = """# 角色
 {} """
 
 USER_PROMPT_PLANNER = """# Task
-Your task is: 
+Your task is:
 {}"""
 
 USER_PROMPT_WORKER = """# Task
@@ -474,7 +488,7 @@ Your current subtask is:
 {}"""
 
 USER_PROMPT_PLANNER_ZH = """# 任务
-你的任务是: 
+你的任务是:
 {}"""
 
 USER_PROMPT_WORKER_ZH = """# 任务

@@ -70,15 +70,6 @@ def _compute_tool_call_metrics(
             traj_search_counts[traj_idx] += turn_search_counts[turn_idx]
             traj_access_counts[traj_idx] += turn_access_counts[turn_idx]
 
-    traj_search_plus_access = [
-        search + access
-        for search, access in zip(traj_search_counts, traj_access_counts)
-    ]
-    turn_search_plus_access = [
-        search + access
-        for search, access in zip(turn_search_counts, turn_access_counts)
-    ]
-
     metrics: dict[str, float] = {}
     _add_weighted_mean_metric(
         metrics,

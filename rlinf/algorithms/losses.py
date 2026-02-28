@@ -110,9 +110,6 @@ def compute_ppo_actor_loss(
         dual_clip_mask = torch.zeros_like(clip_mask)
 
     policy_loss_metrics = policy_loss.clone()
-    metric_policy_loss_abs = loss_agg_func(
-        policy_loss.abs(), loss_mask, loss_mask_ratio
-    )
     policy_loss = loss_agg_func(
         policy_loss, loss_mask, loss_mask_ratio
     )  # default max_episode_steps is None
@@ -130,7 +127,6 @@ def compute_ppo_actor_loss(
     # Compile metrics for logging
     loss_mask_for_metrics = loss_mask
     ratio_for_metrics = ratio.detach()
-    ratio_abs_for_metrics = (ratio - 1).abs().detach()
     clipped_ratio_for_metrics = clipped_ratio.detach()
     dual_cliped_ratio_for_metrics = dual_cliped_ratio.detach()
 

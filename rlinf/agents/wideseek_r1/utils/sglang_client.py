@@ -87,11 +87,7 @@ class SGLangClient:
                         result = await response.json()
                         result_text = result["choices"][0]["message"]["content"]
                         return result_text
-                    else:
-                        response_text = await response.text()
-                        # print(
-                        #     f"[ERROR] SGLangClient: Failed calling sglang: {response.status}, response: {response_text}, Retry {retry_count}/{max_retries}"
-                        # )
+
             except Exception:
                 # print(
                 #     f"[ERROR] SGLangClient: Exception error in calling sglang: {e}, Retry {retry_count}/{max_retries}"

@@ -1,3 +1,17 @@
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import argparse
 import asyncio
 import json
@@ -19,7 +33,7 @@ from qdrant_client.models import (
     SearchParams,
 )
 from tqdm import tqdm
-from transformers import AutoConfig, AutoModel, AutoTokenizer
+from transformers import AutoModel, AutoTokenizer
 
 # ============================================================================
 # Model Loading and Pooling Utilities
@@ -37,7 +51,6 @@ def load_model(model_path: str, use_fp16: bool = False, device=torch.device("cud
     Returns:
         Tuple of (model, tokenizer)
     """
-    model_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
     model.eval()
     model = model.to(device=device)
@@ -195,7 +208,6 @@ class AsyncEncoderPool:
             init_queue: Queue containing encoder initialization parameters
         """
         args = init_queue.get()
-        device = args[-1]
         assert "global_encoder" not in globals()
         globals()["global_encoder"] = Encoder(*args)
 
@@ -272,7 +284,9 @@ class AsyncBaseRetriever:
         """Internal batch search method to be implemented by subclasses"""
         raise NotImplementedError
 
-    async def asearch(self, query: str, num: int = None, return_score: bool = False):
+    async def asearch(
+        self, query: str, num: int | None = None, return_score: bool = False
+    ):
         """Async search for a single query.
 
         Args:
@@ -286,7 +300,7 @@ class AsyncBaseRetriever:
         return await self._asearch(query, num, return_score)
 
     async def abatch_search(
-        self, query_list: list[str], num: int = None, return_score: bool = False
+        self, query_list: list[str], num: int | None = None, return_score: bool = False
     ):
         """Async batch search for multiple queries.
 
@@ -320,13 +334,15 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
             Connected AsyncQdrantClient instance
 
         Raises:
-            AssertionError: If timeout is exceeded
+            TimeoutError: If timeout is exceeded
         """
         client = AsyncQdrantClient(url=url, prefer_grpc=True, timeout=60)
         wait_collection_time = 0
         while True:
             if wait_collection_time >= connect_timeout:
-                assert False, f"Qdrant connection timeout after {connect_timeout}s"
+                raise TimeoutError(
+                    f"Qdrant connection timeout after {connect_timeout}s"
+                )
             print(f"Waiting {wait_collection_time}s for Qdrant to load...")
             time.sleep(5)
             wait_collection_time += 5
@@ -394,7 +410,9 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
             )
         print(f"Qdrant search params: {self.search_params}")
 
-    async def _asearch(self, query: str, num: int = None, return_score: bool = False):
+    async def _asearch(
+        self, query: str, num: int | None = None, return_score: bool = False
+    ):
         """Search for a single query.
 
         Args:
@@ -448,7 +466,7 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
             return payloads
 
     async def _abatch_search(
-        self, query_list: list[str], num: int = None, return_score: bool = False
+        self, query_list: list[str], num: int | None = None, return_score: bool = False
     ):
         if return_score:
             all_payloads, all_scores = [], []

@@ -424,10 +424,10 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         """
         extra_fields_turn = None
         if self.extra_keys_turn is not None:
-            extra_fields_turn = {k: list() for k in self.extra_keys_turn}
+            extra_fields_turn = {k: [] for k in self.extra_keys_turn}
         extra_fields_traj = None
         if self.extra_keys_traj is not None:
-            extra_fields_traj = {k: list() for k in self.extra_keys_traj}
+            extra_fields_traj = {k: [] for k in self.extra_keys_traj}
 
         for task_result in task_results:
             for single_turn_output in task_result.single_turn_outputs:
@@ -551,10 +551,7 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         for idx, task_result in enumerate(task_results):
             for single_turn_output in task_result.single_turn_outputs:
                 single_turn_output: AgentLoopOutput
-                if (
-                    use_no_training
-                    and single_turn_output.extra_fields["not_training"] == True
-                ):
+                if use_no_training and single_turn_output.extra_fields["not_training"]:
                     continue
                 idx_to_traj.append(idx)
                 prompt_lengths.append(len(single_turn_output.prompt_ids))

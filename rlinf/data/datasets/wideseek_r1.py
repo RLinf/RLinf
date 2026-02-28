@@ -144,10 +144,10 @@ class WideSeekR1_Dataset(Dataset):
                     if isinstance(evaluation, str):
                         try:
                             evaluation = json.loads(evaluation)
-                        except:
+                        except json.JSONDecodeError:
                             pass
-                    if isinstance(evaluation, dict):
-                        answer_dict["required"] = evaluation.get("required", [])
+                if isinstance(evaluation, dict):
+                    answer_dict["required"] = evaluation.get("required", [])
                 answer = answer_dict
             else:
                 answer_dict = {
@@ -177,10 +177,10 @@ class WideSeekR1_Dataset(Dataset):
                     if isinstance(evaluation, str):
                         try:
                             evaluation = json.loads(evaluation)
-                        except:
+                        except json.JSONDecodeError:
                             pass
-                    if isinstance(evaluation, dict):
-                        answer_dict["required"] = evaluation.get("required", [])
+                if isinstance(evaluation, dict):
+                    answer_dict["required"] = evaluation.get("required", [])
                 answer = answer_dict
             else:
                 answer_dict = {

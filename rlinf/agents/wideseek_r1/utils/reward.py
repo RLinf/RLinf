@@ -262,10 +262,6 @@ async def evaluate_markdown(
             return s0
 
     # Initialize metrics
-    score = 0.0
-    precision_by_row = 0.0
-    recall_by_row = 0.0
-    f1_by_row = 0.0
     precision_by_item = 0.0
     recall_by_item = 0.0
     f1_by_item = 0.0
@@ -388,23 +384,11 @@ async def evaluate_markdown(
         num_pred_items = num_pred_rows * len(required_columns)
         num_gt_items = num_gt_rows * len(required_columns)
 
-        row_scores = df_inner_scores.min(axis=1)
-        tp_by_row = row_scores.sum()
-        precision_by_row = tp_by_row / num_pred_rows if num_pred_rows > 0 else 0.0
-        recall_by_row = tp_by_row / num_gt_rows if num_gt_rows > 0 else 0.0
-        f1_by_row = calc_f1(precision_by_row, recall_by_row)
-
         # Item-level metrics
         tp_by_item = df_inner_scores.sum().sum()
         precision_by_item = tp_by_item / num_pred_items if num_pred_items > 0 else 0.0
         recall_by_item = tp_by_item / num_gt_items if num_gt_items > 0 else 0.0
         f1_by_item = calc_f1(precision_by_item, recall_by_item)
-
-        if (
-            precision_by_item == recall_by_item == 1.0
-            and precision_by_row == recall_by_row == 1.0
-        ):
-            score = 1.0
 
     except Exception:
         # print(f"Evaluation error: {traceback.format_exc()}")

@@ -431,7 +431,6 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
 
         Args:
             input_channel: The channel to receive rollout results from
-            expected_batch_size: Expected number of queries in this batch.
 
         Returns:
             Number of queries received in this batch

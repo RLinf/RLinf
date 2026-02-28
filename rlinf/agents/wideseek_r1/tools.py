@@ -29,7 +29,7 @@ from rlinf.data.tool_call.tool_io_struct import ToolChannelRequest, ToolChannelR
 from rlinf.scheduler import Channel
 from rlinf.workers.agent.tool_worker import ToolWorker
 
-SERPER_STATS = dict(num_requests=0)
+SERPER_STATS = {"num_requests": 0}
 
 
 class AsyncOnlineSearchClient:
@@ -271,12 +271,12 @@ class AsyncOnlineSearchClient:
         ) as response:
             if response.status == 200:
                 content = await response.text()
-                return dict(page=content, type="jina")
+                return {"page": content, "type": "jina"}
             elif response.status != 429:
-                return dict(
-                    page="The current URL cannot be searched. Please switch to a different URL and try again.",
-                    type="jina",
-                )
+                return {
+                    "page": "The current URL cannot be searched. Please switch to a different URL and try again.",
+                    "type": "jina",
+                }
             # elif response.status == 422:
             #     content = await response.text()
             #     return dict(page=content, type="jina")
@@ -318,15 +318,15 @@ class AsyncOnlineSearchClient:
             except Exception as e:
                 last_error = e
                 if attempt == self.max_retries - 1:
-                    return dict(
-                        page="The current URL cannot be searched. Please switch to a different URL and try again.",
-                        type="access",
-                    )
+                    return {
+                        "page": "The current URL cannot be searched. Please switch to a different URL and try again.",
+                        "type": "access",
+                    }
 
-        return dict(
-            page="The current URL cannot be searched. Please switch to a different URL and try again.",
-            type="access",
-        )
+        return {
+            "page": "The current URL cannot be searched. Please switch to a different URL and try again.",
+            "type": "access",
+        }
 
     async def access_async(self, urls: list[str]) -> list[dict]:
         """
@@ -349,7 +349,7 @@ class AsyncOnlineSearchClient:
             if self.webpage_cache and self.webpage_cache.has(url):
                 cached_content = self.webpage_cache.get(url)
                 if cached_content:
-                    results.append(dict(page=cached_content, type="access"))
+                    results.append({"page": cached_content, "type": "access"})
                 else:
                     urls_to_fetch.append(url)
                     results.append(None)
@@ -373,18 +373,18 @@ class AsyncOnlineSearchClient:
                     fetched_result = (
                         fetched_results[fetch_index]
                         if fetch_index < len(fetched_results)
-                        else dict(
-                            page="The current URL cannot be searched. Please switch to a different URL and try again.",
-                            type="access",
-                        )
+                        else {
+                            "page": "The current URL cannot be searched. Please switch to a different URL and try again.",
+                            "type": "access",
+                        }
                     )
 
                     # Handle exceptions
                     if isinstance(fetched_result, Exception):
-                        fetched_result = dict(
-                            page="The current URL cannot be searched. Please switch to a different URL and try again.",
-                            type="access",
-                        )
+                        fetched_result = {
+                            "page": "The current URL cannot be searched. Please switch to a different URL and try again.",
+                            "type": "access",
+                        }
 
                     results[i] = fetched_result
 
@@ -397,10 +397,10 @@ class AsyncOnlineSearchClient:
         # Fill in any remaining None values
         for i, result in enumerate(results):
             if result is None:
-                results[i] = dict(
-                    page="The current URL cannot be searched. Please switch to a different URL and try again.",
-                    type="access",
-                )
+                results[i] = {
+                    "page": "The current URL cannot be searched. Please switch to a different URL and try again.",
+                    "type": "access",
+                }
 
         # Add server_type to all results
         for result in results:
@@ -473,11 +473,11 @@ class AsyncSearchClient:
                     response.raise_for_status()
                     res = await response.json()
                     return [
-                        dict(
-                            documents=[r["contents"] for r in result],
-                            urls=[r["url"] for r in result],
-                            server_type="async-search-browser",
-                        )
+                        {
+                            "documents": [r["contents"] for r in result],
+                            "urls": [r["url"] for r in result],
+                            "server_type": "async-search-browser",
+                        }
                         for result in res["result"]
                     ]
             except Exception as e:
@@ -504,11 +504,11 @@ class AsyncSearchClient:
                     response.raise_for_status()
                     res = await response.json()
                     return [
-                        dict(
-                            page=result["contents"] if result is not None else "",
-                            type="access",
-                            server_type="async-search-browser",
-                        )
+                        {
+                            "page": result["contents"] if result is not None else "",
+                            "type": "access",
+                            "server_type": "async-search-browser",
+                        }
                         for result in res["result"]
                     ]
             except Exception as e:

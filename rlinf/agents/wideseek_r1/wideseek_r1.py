@@ -319,7 +319,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         question: str,
         role: str,
         sub_traj_id: int,
-        main_task: str = None,
+        main_task: str | None = None,
         is_markdown: bool = False,
         language: str = "en",
     ) -> tuple[list[AgentLoopOutput], str]:
@@ -437,13 +437,13 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                     response_text=response_text,
                     is_end=generate_result["finish_reason"] == "length",
                     response_logprobs=generate_result["logprobs"],
-                    extra_fields=dict(
-                        role=role,
-                        idx_to_sub_traj=sub_traj_id,
-                        context_failed=False,
-                        max_turn_limit_failed=False,
-                        turn_repeat_failed=False,
-                    ),
+                    extra_fields={
+                        "role": role,
+                        "idx_to_sub_traj": sub_traj_id,
+                        "context_failed": False,
+                        "max_turn_limit_failed": False,
+                        "turn_repeat_failed": False,
+                    },
                     tool_call_info=tool_call_info
                     if tool_call_info
                     else None,  # if passed, must have tool call
@@ -743,19 +743,19 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         output = MultiTurnAgentLoopOutput(
             single_turn_outputs=output_buffer,
             trace_prints=[],  # Can add message_history tracking if needed
-            extra_fields=dict(
-                final_answer=final_answer_extract,
-                final_answer_text=final_answer_text,
-                planner_summary=answer_text,
-                reward=reward_score,
-                origin_question=origin_question,
-                llm_reward=llm_reward,
-                total_turn_list=total_turn_list if self.workflow == "mas" else None,
-                instance_id=answer["instance_id"],
-                num_valid_planner_turns=num_valid_planner_turns,
-                num_valid_worker_turns=num_valid_worker_turns,
-                final_answer_format=final_answer_format,
-            ),
+            extra_fields={
+                "final_answer": final_answer_extract,
+                "final_answer_text": final_answer_text,
+                "planner_summary": answer_text,
+                "reward": reward_score,
+                "origin_question": origin_question,
+                "llm_reward": llm_reward,
+                "total_turn_list": total_turn_list if self.workflow == "mas" else None,
+                "instance_id": answer["instance_id"],
+                "num_valid_planner_turns": num_valid_planner_turns,
+                "num_valid_worker_turns": num_valid_worker_turns,
+                "final_answer_format": final_answer_format,
+            },
         )
         return output
 
@@ -786,22 +786,24 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                         v = single_turn_output.extra_fields.get(k, None)
                         if (
                             k == "role"
-                            and single_turn_output.extra_fields["not_training"] != True
+                            and not single_turn_output.extra_fields["not_training"]
                         ):
                             roles.append(v)
         extra_fields_turn = {**extra_fields_turn, "roles": roles}
 
-        extra_fields_group = dict(
-            answer=answer,
-            num_valid_planner_turns=sum(extra_fields_traj["num_valid_planner_turns"]),
-            num_valid_worker_turns=sum(extra_fields_traj["num_valid_worker_turns"]),
-        )
+        extra_fields_group = {
+            "answer": answer,
+            "num_valid_planner_turns": sum(
+                extra_fields_traj["num_valid_planner_turns"]
+            ),
+            "num_valid_worker_turns": sum(extra_fields_traj["num_valid_worker_turns"]),
+        }
 
         idx_to_sub_traj = []
         for task_result in task_results:
             sub_traj_map = {}
             for single_turn_output in task_result.single_turn_outputs:
-                if single_turn_output.extra_fields["not_training"] == True:
+                if single_turn_output.extra_fields["not_training"]:
                     continue
                 role_idx = single_turn_output.extra_fields["idx_to_sub_traj"]
                 if role_idx not in sub_traj_map:
@@ -831,19 +833,23 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         if self.is_eval:
             return {}
 
-        rollout_batch = dict(
-            turn_subtask_counts=rollout_result.extra_fields_turn["subtask_count"],
-            turn_search_counts=rollout_result.extra_fields_turn["search_count"],
-            turn_access_counts=rollout_result.extra_fields_turn["access_count"],
-            num_valid_planner_turns=sum(
+        rollout_batch = {
+            "turn_subtask_counts": rollout_result.extra_fields_turn["subtask_count"],
+            "turn_search_counts": rollout_result.extra_fields_turn["search_count"],
+            "turn_access_counts": rollout_result.extra_fields_turn["access_count"],
+            "num_valid_planner_turns": sum(
                 rollout_result.extra_fields_traj["num_valid_planner_turns"]
             ),
-            num_valid_worker_turns=sum(
+            "num_valid_worker_turns": sum(
                 rollout_result.extra_fields_traj["num_valid_worker_turns"]
             ),
-            total_turn_list_metric=rollout_result.extra_fields_traj["total_turn_list"],
-            final_answer_format=rollout_result.extra_fields_traj["final_answer_format"],
-        )
+            "total_turn_list_metric": rollout_result.extra_fields_traj[
+                "total_turn_list"
+            ],
+            "final_answer_format": rollout_result.extra_fields_traj[
+                "final_answer_format"
+            ],
+        }
         return _compute_rollout_metrics(
             rollout_batch=rollout_batch,
             idx_to_traj=rollout_result.idx_to_traj,
