@@ -221,22 +221,17 @@ actor:
 
     fsdp_size: -1               # Number of GPUs per FSDP group for hybrid sharding. -1 means use all available GPUs in a single FSDP group
 
-    mixed_precision:            # mixed precision settings for fsdp/fsdp2
+    mixed_precision:            # mixed precision settings for fsdp/fsdp2 Do not enable fsdp mixed_precision simultaneously with amp_autocast.
       param_dtype: "bf16"
       reduce_dtype: "fp32"
       buffer_dtype: "fp32"
     
-    amp_autocast:
+    amp_autocast:                       # Do not enable `amp_autocast` with FSDP `mixed_precision` enabled, using both will result in conflict.  
       enabled: False                    # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
       precision: "bf16"                 # precision for AMP, options are ["fp16" , "bf16"]
     
     amp_grad_scaler: False               # if True, GradScaler will be used for AMP training to prevent underflow.
     
-    # amp:
-    #   enabled: False                 # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
-    #   precision: "bf16"              # precision for AMP, options are ["fp16" , "bf16"]
-    #   use_grad_scaler: False         # if True, GradScaler will be used for AMP training to prevent underflow.
-
 reward:
   group_name: "RewardGroup"
   use_reward_model: false

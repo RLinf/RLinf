@@ -75,8 +75,9 @@ def set_megatron_args(cfg):
         assert False, (
             "model.precision only available in fp16 or bf16 when using megatron"
         )
-    args.fp16 = precision_dtype == torch.float16
-    args.bf16 = precision_dtype == torch.bfloat16
+    if args.fp16 is None and args.bf16 is None:
+        args.fp16 = precision_dtype == torch.float16
+        args.bf16 = precision_dtype == torch.bfloat16
 
     args.vocab_file = None
 

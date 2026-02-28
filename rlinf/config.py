@@ -314,7 +314,7 @@ def validate_fsdp_cfg(cfg: DictConfig, resume_dir: Optional[str] = None) -> Dict
         )
         if "amp_autocast" in config or "amp_grad_scaler" in config:
             assert "amp" not in config, (
-                "fsdp.amp_autocast and fsdp.amp_grad_scaler should not be enabled when fsdp.amp is used"
+                "fsdp.amp_autocast and fsdp.amp_grad_scaler should not be used when fsdp.amp is used"
             )
             config.amp = {}
             config.amp.enabled = config.amp_autocast.get("enabled", False)
