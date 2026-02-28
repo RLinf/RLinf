@@ -49,6 +49,8 @@ algorithm:
   adv_type: gae
   loss_type: actor_critic
   loss_agg_func: "token-mean"
+  
+  bootstrap_type: always # [standard, always]. Bootstrap Q-values according to terminations and truncations. "standard" only bootstraps when truncations, while "always" bootstraps when truncations or terminations.
   kl_beta: 0.0
   ratio_clip_eps: 0.2
   entropy_bonus: 0
@@ -80,7 +82,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: True
 
   # Override the default values in env/manikill_put_carrot_on_plate_in_scene
   train:
@@ -90,6 +91,7 @@ env:
     use_fixed_reset_state_ids: False
     max_episode_steps: 80 # max episode steps for truncation
     max_steps_per_rollout_epoch: 80
+    enable_offload: True
   eval:
     total_num_envs: 32
     auto_reset: True
@@ -101,6 +103,7 @@ env:
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
+    enable_offload: True
 
 rollout:
   group_name: "RolloutGroup"
@@ -135,7 +138,7 @@ actor:
     value_lr: 3.0e-3
     adam_beta1: 0.9
     adam_beta2: 0.95
-    adam_eps: 1.0e-05
+    adam_eps: 1.0e-08
     weight_decay: 0.01
     clip_grad: 1.0
     critic_warmup_steps: 0

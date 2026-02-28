@@ -20,7 +20,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: /workspace/results/
+    log_path: /workspace/results/libero_goal_grpo_openvlaoft
     project_name: rlinf
     experiment_name: "ci-test"
     logger_backends: ["tensorboard"] # wandb, swanlab
@@ -80,12 +80,12 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
 
   # Override the default values in env/libero_goal
   train:
     total_num_envs: 32
     max_episode_steps: 8
+    max_steps_per_rollout_epoch: 8
     reward_coef: ${algorithm.reward_coef}
     group_size: ${algorithm.group_size}
     reset_gripper_open: False

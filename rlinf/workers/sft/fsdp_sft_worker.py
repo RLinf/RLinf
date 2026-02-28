@@ -12,30 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
+from abc import abstractmethod
+from typing import Any
 
-import jax
 import numpy as np
 import torch
 from omegaconf import DictConfig
+from tqdm import tqdm
 
-import rlinf.algorithms  # noqa: F401
-from rlinf.config import SupportedModel
-from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
-    FSDPModelManager,
-)
+from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.models import get_model
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.distributed import all_reduce_dict
-from rlinf.utils.metric_utils import (
-    append_to_dict,
-)
-from rlinf.utils.placement import (
-    HybridComponentPlacement,
-)
-from rlinf.utils.utils import (
-    clear_memory,
-)
+from rlinf.utils.metric_utils import append_to_dict
+from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.utils import clear_memory
 
 
 class FSDPSftWorker(FSDPModelManager, Worker):
@@ -48,8 +41,44 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         self.device = torch.cuda.current_device()
 
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
-        self.data_loader, self.data_config = self.build_dataloader()
-        self.data_iter = iter(self.data_loader)
+
+        # set the global batch size, micro batch size, eval batch size and gradient accumulation
+        self.global_batch_size = self.cfg.actor.global_batch_size
+        self.micro_batch_size = self.cfg.actor.micro_batch_size
+        self.eval_batch_size = self.cfg.actor.get("eval_batch_size", 1)
+
+        assert (
+            self.global_batch_size % (self.micro_batch_size * self._world_size) == 0
+        ), "global_batch_size is not divisible by micro_batch_size * world_size"
+        self.gradient_accumulation = (
+            self.global_batch_size // self.micro_batch_size // self._world_size
+        )
+
+        # if train_data_paths is not set, the code will just eval the model
+        if self.cfg.data.get("train_data_paths") is None:
+            logging.warning("train_data_paths is not set, will just eval the model")
+            assert self.cfg.data.get("eval_data_paths") is not None, (
+                "train_data_paths is not set, eval_data_paths must be set"
+            )
+            self.data_loader = None
+            self.data_iter = None
+        else:
+            self.data_loader, self.data_config = self.build_dataloader(
+                self.cfg.data.train_data_paths, eval_dataset=False
+            )
+            self.data_iter = iter(self.data_loader)
+
+        if self.cfg.data.get("eval_data_paths") is not None:
+            self.eval_data_loader, self.eval_data_config = self.build_dataloader(
+                self.cfg.data.eval_data_paths, eval_dataset=True
+            )
+        else:
+            self.eval_data_loader = None
+
+        self.global_step = 0
+        # set the dataloader epoch and data iter offset
+        self._data_epoch = 0
+        self._data_iter_offset = 0
 
     def init_worker(self):
         self.setup_model_and_optimizer()
@@ -64,88 +93,91 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             return model
         return super().model_provider_func()
 
-    def build_dataloader(self):
-        if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:
-            import openpi.training.data_loader as openpi_data_loader
+    def set_global_step(self, global_step):
+        self.global_step = global_step
+        if hasattr(self.model, "set_global_step"):
+            self.model.set_global_step(global_step)
 
-            from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+    def run_eval(self):
+        assert self.eval_data_loader is not None, "eval_data_loader is not set"
 
-            config = get_openpi_config(
-                self.cfg.actor.model.openpi.config_name,
-                model_path=self.cfg.actor.model.model_path,
-                batch_size=self.cfg.actor.micro_batch_size * self._world_size,
+        # reset the eval_data_iter
+        eval_data_iter = iter(self.eval_data_loader)
+
+        with self.worker_timer():
+            eval_step = len(eval_data_iter)
+            eval_pbar = tqdm(
+                initial=0,
+                total=eval_step,
+                desc="Evaluate Step",
+                dynamic_ncols=True,
             )
-            data_loader = openpi_data_loader.create_data_loader(
-                config, framework="pytorch", shuffle=True
-            )
-            return data_loader, data_loader.data_config()
-        else:
-            raise KeyError(
-                f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
-            )
+            self.model.eval()
+            total = eval_step * self.eval_batch_size
+            correct = 0
+
+            # get the next batch
+            for _ in range(eval_step):
+                correct += self.get_eval_model_output(next(eval_data_iter))
+                eval_pbar.update(1)
+
+            metrics = {
+                "eval_accuracy": float(correct / max(1, total)),
+            }
+            metrics = all_reduce_dict(metrics, op=torch.distributed.ReduceOp.AVG)
+            return metrics
 
     def run_training(self):
         with self.worker_timer():
-            if self.cfg.actor.get("enable_offload", False):
-                with self.device_lock:
-                    self.load_param_and_grad(self.device)
-                    self.load_optimizer(self.device)
-
             self.model.train()
             if hasattr(self.model, "gradient_checkpointing_disable"):
                 self.model.gradient_checkpointing_disable()
 
-            assert (
-                self.cfg.actor.global_batch_size
-                % (self.cfg.actor.micro_batch_size * self._world_size)
-                == 0
-            ), "global_batch_size is not divisible by micro_batch_size * world_size"
-
-            self.gradient_accumulation = (
-                self.cfg.actor.global_batch_size
-                // self.cfg.actor.micro_batch_size
-                // self._world_size
-            )
-
             metrics = {}
+            avg_loss = 0.0
 
             for idx in range(self.gradient_accumulation):
+                # set the gradient accumulation backward_ctx
                 backward_ctx = self.before_micro_batch(
                     self.model,
                     is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
                 )
-                observation, actions = next(self.data_iter)
 
-                observation = jax.tree.map(
-                    lambda x: torch.as_tensor(x, device=self.device)
-                    .contiguous()
-                    .clone(),
-                    observation,
-                )
-                actions = actions.to(torch.float32)
-                actions = actions.to(self.device)
-
-                with self.amp_context:
-                    losses = self.model(
-                        forward_type="sft_forward",
-                        data={"observation": observation, "actions": actions},
+                try:
+                    batch = next(self.data_iter)
+                    self._data_iter_offset += 1
+                except StopIteration:
+                    self._data_epoch += 1
+                    logging.info(
+                        f"[INFO] data_iter exhausted, reset iterator self._data_epoch {self._data_epoch}"
                     )
-                    if isinstance(losses, (list, tuple)):
-                        losses = torch.stack(losses)
-                    elif not isinstance(losses, torch.Tensor):
-                        losses = torch.tensor(
-                            losses, device=self.device, dtype=torch.float32
-                        )
-                    loss = losses.mean()
+                    if hasattr(self.data_loader, "sampler") and hasattr(
+                        self.data_loader.sampler, "set_epoch"
+                    ):
+                        self.data_loader.sampler.set_epoch(self._data_epoch)
+                    self.data_iter = iter(self.data_loader)
+                    batch = next(self.data_iter)
+                    self._data_iter_offset = 1
+
+                losses = self.get_train_model_output(batch)
+
+                if isinstance(losses, (list, tuple)):
+                    losses = torch.stack(losses)
+                elif not isinstance(losses, torch.Tensor):
+                    losses = torch.tensor(
+                        losses, device=self.device, dtype=torch.float32
+                    )
+                loss = losses.mean()
 
                 loss = loss / self.gradient_accumulation
+                avg_loss += loss.item()
                 with backward_ctx:
                     self.grad_scaler.scale(loss).backward()
 
+            # in one step do the optimizer step
             grad_norm, lr_list = self.optimizer_step()
             self.optimizer.zero_grad(set_to_none=True)
 
-            # Collect stats
             lr_value = (
                 lr_list[0] if len(lr_list) > 0 else self.optimizer.param_groups[0]["lr"]
             )
@@ -155,7 +187,7 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             append_to_dict(
                 metrics,
                 {
-                    "loss": loss.item(),
+                    "loss": avg_loss,
                     "learning_rate": lr_value,
                     "grad_norm": grad_norm_value,
                 },
@@ -163,7 +195,9 @@ class FSDPSftWorker(FSDPModelManager, Worker):
 
             self.lr_scheduler.step()
 
-            clear_memory()
+            if self.global_step > 0 and self.global_step % 1000 == 0:
+                clear_memory()
+
             train_metrics = {key: np.mean(value) for key, value in metrics.items()}
             train_metrics = all_reduce_dict(
                 train_metrics, op=torch.distributed.ReduceOp.AVG
@@ -171,6 +205,14 @@ class FSDPSftWorker(FSDPModelManager, Worker):
 
             return train_metrics
 
-    def set_global_step(self, global_step):
-        if hasattr(self.model, "set_global_step"):
-            self.model.set_global_step(global_step)
+    @abstractmethod
+    def build_dataloader(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_train_model_output(self, batch: dict[str, Any]):
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_eval_model_output(self, batch: dict[str, Any]):
+        raise NotImplementedError

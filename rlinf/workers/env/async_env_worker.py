@@ -17,7 +17,7 @@ from collections import defaultdict
 
 import torch
 
-from rlinf.data.io_struct import EnvOutput
+from rlinf.data.embodied_io_struct import EnvOutput
 from rlinf.scheduler import Channel
 from rlinf.workers.env.env_worker import EnvWorker
 
@@ -27,11 +27,8 @@ class AsyncEnvWorker(EnvWorker):
         self,
         input_channel: Channel,
         output_channel: Channel,
-        env_metric_channel: Channel,
+        metric_channel: Channel,
     ):
-        for env in self.env_list:
-            env.start_env()
-
         n_chunk_steps = (
             self.cfg.env.train.max_steps_per_rollout_epoch
             // self.cfg.actor.model.num_action_chunks
@@ -53,7 +50,6 @@ class AsyncEnvWorker(EnvWorker):
                     terminations = dones.clone()
                     truncations = dones.clone()
 
-                    self.last_dones_list.append(dones)
                     env_output = EnvOutput(
                         obs=extracted_obs,
                         dones=dones,
@@ -69,13 +65,20 @@ class AsyncEnvWorker(EnvWorker):
             else:
                 self.num_done_envs = 0
                 self.num_succ_envs = 0
+                dones = (
+                    torch.zeros((self.train_num_envs_per_stage,), dtype=bool)
+                    .unsqueeze(1)
+                    .repeat(1, self.cfg.actor.model.num_action_chunks)
+                )
+                terminations = dones.clone()
+                truncations = dones.clone()
                 for i in range(self.stage_num):
                     env_output = EnvOutput(
                         obs=self.last_obs_list[i],
                         rewards=None,
-                        dones=self.last_dones_list[i],
-                        terminations=self.last_terminations_list[i],
-                        truncations=self.last_truncations_list[i],
+                        dones=dones,
+                        terminations=terminations,
+                        truncations=truncations,
                         intervene_actions=self.last_intervened_info_list[i][0],
                         intervene_flags=self.last_intervened_info_list[i][1],
                     )
@@ -108,16 +111,15 @@ class AsyncEnvWorker(EnvWorker):
 
             for key, value in env_metrics.items():
                 env_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
-            env_metric_channel.put(env_metrics)
+
+            env_metrics = {f"env/{k}": v for k, v in env_metrics.items()}
+            env_interact_time_metrics = self.pop_execution_times()
+            env_metrics.update(
+                {f"time/env/{k}": v for k, v in env_interact_time_metrics.items()}
+            )
+            metric_channel.put(env_metrics)
 
             self.last_obs_list = [env_output.obs for env_output in env_output_list]
-            self.last_dones_list = [env_output.dones for env_output in env_output_list]
-            self.last_truncations_list = [
-                env_output.truncations for env_output in env_output_list
-            ]
-            self.last_terminations_list = [
-                env_output.terminations for env_output in env_output_list
-            ]
             self.last_intervened_info_list = [
                 (env_output.intervene_actions, env_output.intervene_flags)
                 for env_output in env_output_list
@@ -127,5 +129,3 @@ class AsyncEnvWorker(EnvWorker):
 
     async def stop(self):
         self.should_stop = True
-        for env in self.env_list:
-            env.stop_env()

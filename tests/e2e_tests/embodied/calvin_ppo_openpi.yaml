@@ -20,7 +20,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: "../results"
+    log_path: "../results/calvin_ppo_openpi"
     project_name: rlinf
     experiment_name: "test_openpi"
     logger_backends: ["tensorboard"] # wandb, swanlab
@@ -31,7 +31,7 @@ runner:
   only_eval: False
   ckpt_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
   val_check_interval: -1
-  save_interval: 40
+  save_interval: -1
 
 algorithm:
   normalize_advantages: True
@@ -81,12 +81,11 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
 
   train:
     total_num_envs: 8
-    max_episode_steps: 10
-    max_steps_per_rollout_epoch: 10
+    max_episode_steps: 5
+    max_steps_per_rollout_epoch: 5
     group_size: ${algorithm.group_size}
     reward_coef: ${algorithm.reward_coef}
 
@@ -116,7 +115,7 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 2
-  global_batch_size: 16
+  global_batch_size: 8
   seed: 42
   enable_offload: False
 

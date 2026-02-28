@@ -22,7 +22,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: /workspace/results/
+    log_path: /workspace/results/behavior_ppo_openvlaoft
     project_name: rlinf
     experiment_name: "ci-test"
     logger_backends: ["tensorboard"] # wandb, swanlab
@@ -79,7 +79,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
   
   # Override the default values in env/behavior_r1pro
   train:

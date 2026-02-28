@@ -235,6 +235,9 @@ class WorkerGroup(Generic[WorkerClsType]):
             accelerator_type = self._cluster.get_node_info(
                 placement.cluster_node_rank
             ).accelerator_type
+            accelerator_model = self._cluster.get_node_info(
+                placement.cluster_node_rank
+            ).accelerator_model
             env_vars = {
                 "GROUP_NAME": self._worker_group_name,
                 "WORKER_NAME": worker_name,
@@ -253,6 +256,7 @@ class WorkerGroup(Generic[WorkerClsType]):
                 else "0",  # Inform the Worker process to catch signals
                 "VISIBLE_DEVICES": ",".join(placement.visible_accelerators),
                 "ACCELERATOR_TYPE": str(accelerator_type),
+                "ACCELERATOR_MODEL": accelerator_model,
                 "ISOLATE_ACCELERATOR": "1" if placement.isolate_accelerator else "0",
                 "LOCAL_HARDWARE_RANKS": ",".join(
                     map(str, placement.local_hardware_ranks)
@@ -500,6 +504,19 @@ class WorkerGroupFuncResult:
         execution_times = self._worker_group.pop_execution_time(self._func_name).wait()
         reduction_func = getattr(np, reduction_type)
         return reduction_func(execution_times)
+
+    def consume_durations(self, reduction_type: str = "max") -> dict[str, float]:
+        """Get execution time map across ranks, reduced by reduction_type."""
+        self.wait()
+        metrics_list = self._worker_group.pop_execution_times().wait()
+        reduction_func = getattr(np, reduction_type)
+        merged: dict[str, list[float]] = {}
+        for metrics in metrics_list:
+            if not metrics:
+                continue
+            for key, value in metrics.items():
+                merged.setdefault(key, []).append(value)
+        return {key: float(reduction_func(values)) for key, values in merged.items()}
 
     def wait(self):
         """Wait for all remote results to complete and return the results."""

@@ -7,7 +7,8 @@ export SRC_FILE="${EMBODIED_PATH}/train_embodied_agent.py"
 export MUJOCO_GL="egl"
 export PYOPENGL_PLATFORM="egl"
 
-export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
+export ROBOTWIN_PATH=${ROBOTWIN_PATH:-"/path/to/RoboTwin"}
+export PYTHONPATH=${REPO_PATH}:${ROBOTWIN_PATH}:$PYTHONPATH
 
 # Base path to the BEHAVIOR dataset, which is the BEHAVIOR-1k repo's dataset folder
 # Only required when running the behavior experiment.
@@ -21,12 +22,17 @@ export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
 export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
 export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 
-
 if [ -z "$1" ]; then
     CONFIG_NAME="maniskill_ppo_openvlaoft"
 else
     CONFIG_NAME=$1
 fi
+
+# NOTE: Set the active robot platform (required for correct action dimension and normalization), supported platforms are LIBERO, ALOHA, BRIDGE, default is LIBERO
+ROBOT_PLATFORM=${2:-${ROBOT_PLATFORM:-"LIBERO"}}
+
+export ROBOT_PLATFORM
+echo "Using ROBOT_PLATFORM=$ROBOT_PLATFORM"
 
 echo "Using Python at $(which python)"
 LOG_DIR="${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')-${CONFIG_NAME}" #/$(date +'%Y%m%d-%H:%M:%S')"

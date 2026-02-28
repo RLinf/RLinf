@@ -6,19 +6,19 @@ Introduction
 RLinf provides **out-of-the-box evaluation scripts** to evaluate the performance of embodied agents in both *in-distribution* and *out-of-distribution* tasks.
 List of currently supported evaluation environments:
 
-:doc:`Behavior <../examples/behavior>`
+:doc:`Behavior <../examples/embodied/behavior>`
 
-:doc:`Calvin <../examples/calvin>`
+:doc:`Calvin <../examples/embodied/calvin>`
 
-:doc:`Isaaclab <../examples/isaaclab>`
+:doc:`Isaaclab <../examples/embodied/isaaclab>`
 
-:doc:`Libero <../examples/libero>`
+:doc:`Libero <../examples/embodied/libero>`
 
-:doc:`ManiSkill <../examples/maniskill>`
+:doc:`ManiSkill <../examples/embodied/maniskill>`
 
-:doc:`MetaWorld <../examples/metaworld>`
+:doc:`MetaWorld <../examples/embodied/metaworld>`
 
-:doc:`RoboCasa <../examples/robocasa>`
+:doc:`RoboCasa <../examples/embodied/robocasa>`
 
 All startup scripts for evaluation are located in the ``examples/embodiment/`` directory.
 
@@ -94,7 +94,6 @@ Any YAML file can be used for evaluation with the ``eval_embodiment.sh`` script,
   export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
   export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 
-  export CUDA_LAUNCH_BLOCKING=1
   export HYDRA_FULL_ERROR=1
 
 
@@ -155,7 +154,6 @@ Then, execute the following command in the terminal to start the evaluation.
   export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
   export SRC_FILE="${EMBODIED_PATH}/eval_embodied_agent.py"
 
-  export CUDA_LAUNCH_BLOCKING=1
   export HYDRA_FULL_ERROR=1
 
   EVAL_NAME=YOUR_EVAL_NAME

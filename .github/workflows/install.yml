@@ -52,7 +52,7 @@ jobs:
       - name: Install reason
         run: |
           pip install uv
-          TEST_BUILD=1 bash requirements/install.sh reason
+          TEST_BUILD=1 bash requirements/install.sh agentic
           rm -rf .venv
 
       - name: Install openvla
@@ -85,6 +85,12 @@ jobs:
           bash requirements/install.sh embodied --model gr00t --env isaaclab
           rm -rf .venv
 
+      - name: Install dexbotic
+        run: |
+          pip install uv
+          bash requirements/install.sh embodied --model dexbotic --env maniskill_libero
+          rm -rf .venv
+
       - name: Install behavior-openvla-oft
         run: |
           pip install uv
@@ -97,94 +103,6 @@ jobs:
           pip install uv
           uv cache prune --ci
           bash requirements/install.sh docs
-          rm -rf .venv
-
-  build-mirror:
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Maximize storage space
-        run: |
-          # Remove Java (JDKs)
-          sudo rm -rf /usr/lib/jvm
-  
-          # Remove .NET SDKs
-          sudo rm -rf /usr/share/dotnet
-  
-          # Remove Swift toolchain
-          sudo rm -rf /usr/share/swift
-  
-          # Remove Haskell (GHC)
-          sudo rm -rf /usr/local/.ghcup
-  
-          # Remove Julia
-          sudo rm -rf /usr/local/julia*
-  
-          # Remove Android SDKs
-          sudo rm -rf /usr/local/lib/android
-  
-          # Remove Chromium (optional if not using for browser tests)
-          sudo rm -rf /usr/local/share/chromium
-  
-          # Remove Microsoft/Edge and Google Chrome builds
-          sudo rm -rf /opt/microsoft /opt/google
-  
-          # Remove Azure CLI
-          sudo rm -rf /opt/az
-  
-          # Remove PowerShell
-          sudo rm -rf /usr/local/share/powershell
-  
-          # Remove CodeQL and other toolcaches
-          sudo rm -rf /opt/hostedtoolcache
-  
-          docker system prune -af || true
-          docker builder prune -af || true
-          df -h
-
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Install reason
-        run: |
-          pip install uv
-          TEST_BUILD=1 bash requirements/install.sh reason --use-mirror
-          rm -rf .venv
-
-      - name: Install openvla
-        run: |
-          pip install uv
-          bash requirements/install.sh embodied --model openvla --env maniskill_libero --use-mirror
-          rm -rf .venv
-
-      - name: Install openvla-oft
-        run: |
-          pip install uv
-          bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero --use-mirror
-          rm -rf .venv
-
-      - name: Install openpi
-        run: |
-          pip install uv
-          bash requirements/install.sh embodied --model openpi --env maniskill_libero --use-mirror
-          rm -rf .venv
-          bash requirements/install.sh embodied --model openpi --env metaworld --use-mirror
-          rm -rf .venv
-          bash requirements/install.sh embodied --model openpi --env calvin --use-mirror
-          rm -rf .venv
-
-      - name: Install gr00t
-        run: |
-          pip install uv
-          bash requirements/install.sh embodied --model gr00t --env maniskill_libero --use-mirror
-          rm -rf .venv
-          bash requirements/install.sh embodied --model gr00t --env isaaclab --use-mirror
-          rm -rf .venv
-
-      - name: Install behavior-openvla-oft
-        run: |
-          pip install uv
-          uv cache prune --ci
-          bash requirements/install.sh embodied --model openvla-oft --env behavior --use-mirror
           rm -rf .venv
 
       - name: Install docs
@@ -211,19 +129,55 @@ jobs:
             LIBFRANKA_VERSION="$v" FRANKA_ROS_VERSION=0.10.0 bash requirements/install.sh embodied --venv "franka-$v" --env franka; \
           done
 
-  build-franka-mirror:
+  sys-deps-fedora:
     runs-on: ubuntu-latest
     container:
-      image: ubuntu:20.04
+      image: fedora:42
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-      - name: Install franka
+      - name: Install sys-deps
         run: |
-          export UV_LINK_MODE=symlink
-          apt update -y
-          apt install -y python3-pip git
-          ln -fs /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
-          for v in 0.10.0 0.13.3 0.14.1 0.15.0 0.18.0; do \
-            LIBFRANKA_VERSION="$v" FRANKA_ROS_VERSION=0.10.0 bash requirements/install.sh embodied --venv "franka-$v" --env franka --use-mirror; \
-          done
+          bash requirements/embodied/sys_deps.sh
+
+  sys-deps-arch:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Install sys-deps
+        run: |
+          bash requirements/embodied/sys_deps.sh
+
+  sys-deps-almalinux:
+    runs-on: ubuntu-latest
+    container:
+      image: almalinux:10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Install sys-deps
+        run: |
+          bash requirements/embodied/sys_deps.sh
+
+  sys-deps-rockylinux:
+    runs-on: ubuntu-latest
+    container:
+      image: rockylinux:9.3
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Install sys-deps
+        run: |
+          bash requirements/embodied/sys_deps.sh
+
+  sys-deps-ubuntu-latest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Install sys-deps
+        run: |
+          bash requirements/embodied/sys_deps.sh

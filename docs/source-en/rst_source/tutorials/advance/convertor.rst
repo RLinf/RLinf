@@ -34,7 +34,7 @@ Converting distcp Format to pt Format
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 If you are using the latest code to save checkpoints, the ``model_state_dict/full_weigths.pt`` file has already been saved, and you can skip this step.
-If you still want to convert the saved ``.distcp`` files to ``.pt`` format, or if you are using older code that only saved ``.distcp`` format files, you can use RLinf/toolkits/ckpt_convertor/fsdp_convertor/convert_dcp_to_pt.pt
+If you still want to convert the saved ``.distcp`` files to ``.pt`` format, or if you are using older code that only saved ``.distcp`` format files, you can use ``RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/convert_dcp_to_pt.py``
 to first convert ``.distcp`` to ``.pt`` format, then proceed with subsequent operations.
 
 .. code-block:: bash
@@ -51,7 +51,7 @@ Converting pt Format to safetensors Format
 
 1. **Modify the config file**
 
-Before running the convertor script, please modify the ``RLinf/toolkits/ckpt_convertor/fsdp_convertor/config/fsdp_model_convertor.yaml`` file.
+Before running the convertor script, please modify the ``RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/config/fsdp_model_convertor.yaml`` file.
 Please check that the following 7 parameters are correct:
 
     ``defaults``, ``convertor.save_path``, ``convertor.merge_lora_weighs``, ``convertor.ckpt_path``, 
@@ -77,14 +77,16 @@ Please check that the following 7 parameters are correct:
 
 2. **（Optional）Add model_save_helper**
 
-If your model has special saving logic, please add the corresponding save function in the ``get_model_save_helper`` in the ``RLinf/toolkits/ckpt_convertor/fsdp_convertor/utils.py`` file.
+If your model has special saving logic, please add the corresponding save function in the ``get_model_save_helper`` in the ``RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/utils.py`` file.
 
 3. **Run the script**
 
 
 .. code-block:: bash
 
-   bash convert_pt_to_hf.sh
+   python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
+       --config-path /path/to/RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/config \
+       --config-name fsdp_model_convertor
 
 4. **View saved safetensors files**
 
@@ -115,19 +117,41 @@ The Megatron checkpoint file structure is as follows:
        └── …
 
 
-**Method 1: Edit the script file**
-
-Manually open ``mg2hf_7b.sh`` or ``mg2hf_1.5b.sh``, and set the following variables to your desired paths.
-
+Run the following commands directly. Set:
 1. ``CKPT_PATH_MG`` (Megatron checkpoint path, e.g., ``results/run_name/checkpoints/global_step_xx/actor/``),
-2. ``CKPT_PATH_HF`` (HuggingFace target path, any path), and
-3. ``CKPT_PATH_ORIGINAL_HF`` (Base model checkpoint for initial training, e.g., ``/path/to/DeepSeek-R1-Distill-Qwen-1.5B``)
-
-**Method 2: Command-line arguments**
-
-A more flexible way is to pass paths directly through command-line arguments.
+2. ``CKPT_PATH_HF`` (HuggingFace target path), and
+3. ``CKPT_PATH_ORIGINAL_HF`` (base model checkpoint path, e.g., ``/path/to/DeepSeek-R1-Distill-Qwen-1.5B``).
 
 .. code-block:: bash
 
-    bash mg2hf_1.5b.sh /path/to/megatron_checkpoint /target/path/to/huggingface_checkpoint /path/to/base_model_checkpoint
+    CKPT_PATH_MG=/path/to/megatron_checkpoint
+    CKPT_PATH_HF=/target/path/to/huggingface_checkpoint
+    CKPT_PATH_ORIGINAL_HF=/path/to/base_model_checkpoint
+    CKPT_PATH_MF="${CKPT_PATH_HF}_middle_file"
+
+    # Example: 1.5B
+    python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_mg_to_middle_file \
+        --load-path "${CKPT_PATH_MG}" \
+        --save-path "${CKPT_PATH_MF}" \
+        --model DeepSeek-R1-Distill-Qwen-1.5B \
+        --tp-size 2 \
+        --ep-size 1 \
+        --pp-size 1 \
+        --te-ln-linear-qkv true \
+        --te-ln-linear-mlp_fc1 true \
+        --te-extra-state-check-none true \
+        --use-gpu-num 0 \
+        --process-num 16
+
+    python -m rlinf.utils.ckpt_convertor.megatron_convertor.convert_middle_file_to_hf \
+        --load-path "${CKPT_PATH_MF}" \
+        --save-path "${CKPT_PATH_HF}" \
+        --model DeepSeek-R1-Distill-Qwen-1.5B \
+        --use-gpu-num 0 \
+        --process-num 16
+
+    rm -rf "${CKPT_PATH_MF}"
+    rm -f "${CKPT_PATH_HF}"/*.done
+    shopt -s extglob
+    cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index).json "${CKPT_PATH_HF}"
 

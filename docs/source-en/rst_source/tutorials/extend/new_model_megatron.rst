@@ -128,13 +128,13 @@ This way, RLinf will use the converted checkpoint directly without needing to co
 
 If you need to adapt weight conversion for other models, you can submit an issue directly in the `RLinf <https://github.com/RLinf/RLinf/issues>`__ GitHub repository.
 
-You can also adapt the new model conversion code yourself by referring to the files in ``toolkits/ckpt_convertor/megatron_convertor``.
+You can also adapt the new model conversion code yourself by referring to the files in ``rlinf/utils/ckpt_convertor/megatron_convertor``.
 
-**Tool:** ``toolkits/ckpt_convertor/megatron_convertor``  
+**Tool:** ``rlinf/utils/ckpt_convertor/megatron_convertor``  
 
 RLinf's ckpt_convert tool first converts HuggingFace format checkpoints to an intermediate file format, then converts this intermediate format to Megatron-LM format checkpoints.
 
-The specific interface is located in the ``toolkits/ckpt_convertor/megatron_convertor/convert_hf_to_mg.py`` file.
+The specific interface is located in the ``rlinf/utils/ckpt_convertor/megatron_convertor/convert_hf_to_mg.py`` file.
 
 .. code-block:: python
 

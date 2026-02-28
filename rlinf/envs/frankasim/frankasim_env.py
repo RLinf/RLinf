@@ -14,14 +14,11 @@
 
 
 import copy
-import os
 from typing import Any, Optional, Union
 
 import gym
 import numpy as np
 import torch
-
-from rlinf.envs import utils as rlinf_utils
 
 __all__ = ["FrankaSimEnv"]
 
@@ -183,8 +180,6 @@ class FrankaSimEnv(gym.Env):
         )
 
         self.video_cfg = _cfg_get(cfg, "video_cfg", None)
-        self.video_cnt = 0
-        self.render_images: list[np.ndarray] = []
 
         self.wrap_obs_mode = str(
             _cfg_get(cfg, "wrap_obs_mode", _cfg_get(cfg, "obs_format", "openvla"))
@@ -207,10 +202,7 @@ class FrankaSimEnv(gym.Env):
 
         self.task_prompt = str(_cfg_get(cfg, "task_prompt", "Pick up the cube."))
 
-        if torch.cuda.is_available():
-            self._device = torch.device("cuda")
-        else:
-            self._device = torch.device("cpu")
+        self._device = torch.device("cpu")
 
         self._configure_mujoco()
 
@@ -569,14 +561,11 @@ class FrankaSimEnv(gym.Env):
         raw_reward = torch.tensor(rew_list, device=self.device, dtype=torch.float32)
         step_reward = self._calc_step_reward(raw_reward)
 
-        reward_scale = float(_cfg_get(self.cfg, "reward_scale", 1e5))
+        reward_scale = float(_cfg_get(self.cfg, "reward_scale", 1))
         step_reward = step_reward * reward_scale
 
         terminations = torch.tensor(term_list, device=self.device, dtype=torch.bool)
         truncations = torch.tensor(trunc_list, device=self.device, dtype=torch.bool)
-
-        if self.video_cfg and getattr(self.video_cfg, "save_video", False):
-            self.add_new_frames_from_obs(obs)
 
         infos = self._record_metrics(step_reward, infos)
 
@@ -592,8 +581,6 @@ class FrankaSimEnv(gym.Env):
 
         _auto_reset = bool(auto_reset) and bool(self.auto_reset)
         if dones.any() and _auto_reset:
-            if self.video_cfg and getattr(self.video_cfg, "save_video", False):
-                self.flush_video(video_sub_dir="eval")
             obs, infos = self._handle_auto_reset(dones, obs, infos)
 
         self._last_obs, self._last_info = obs, infos
@@ -690,12 +677,15 @@ class FrankaSimEnv(gym.Env):
             )
 
         chunk_size = int(chunk_actions.shape[1])
+        obs_list = []
+        infos_list = []
         chunk_rewards, raw_terms, raw_truncs = [], [], []
-        infos: dict[str, Any] = {}
 
         for i in range(chunk_size):
             actions = chunk_actions[:, i].to(self.device)
             obs, rew, term, trunc, infos = self.step(actions, auto_reset=False)
+            obs_list.append(obs)
+            infos_list.append(infos)
             chunk_rewards.append(rew)
             raw_terms.append(term)
             raw_truncs.append(trunc)
@@ -709,7 +699,9 @@ class FrankaSimEnv(gym.Env):
         past_dones = torch.logical_or(past_terminations, past_truncations)
 
         if past_dones.any() and self.auto_reset:
-            obs, infos = self._handle_auto_reset(past_dones, obs, infos)
+            obs_list[-1], infos_list[-1] = self._handle_auto_reset(
+                past_dones, obs_list[-1], infos_list[-1]
+            )
 
         chunk_terminations = torch.zeros_like(raw_terms)
         chunk_terminations[:, -1] = past_terminations
@@ -717,32 +709,14 @@ class FrankaSimEnv(gym.Env):
         chunk_truncations = torch.zeros_like(raw_truncs)
         chunk_truncations[:, -1] = past_truncations
 
-        return obs, chunk_rewards, chunk_terminations, chunk_truncations, infos
+        return (
+            obs_list,
+            chunk_rewards,
+            chunk_terminations,
+            chunk_truncations,
+            infos_list,
+        )
 
     def sample_action_space(self) -> torch.Tensor:
         a = self.action_space.sample()
         return torch.from_numpy(np.asarray(a, dtype=np.float32)).to(self.device)
-
-    # -------------------- video helpers (match ManiSkill style) --------------------
-    def add_new_frames_from_obs(self, obs: dict[str, Any]) -> None:
-        if "main_images" not in obs:
-            return
-        raw_imgs = obs["main_images"].detach().cpu().numpy()
-        full_img = rlinf_utils.tile_images(
-            list(raw_imgs), nrows=int(np.sqrt(self.num_envs))
-        )
-        self.render_images.append(full_img)
-
-    def flush_video(self, video_sub_dir: Optional[str] = None) -> None:
-        if not (self.video_cfg and getattr(self.video_cfg, "save_video", False)):
-            return
-        output_dir = os.path.join(self.video_cfg.video_base_dir, f"seed_{self.seed}")
-        if video_sub_dir:
-            output_dir = os.path.join(output_dir, video_sub_dir)
-        rlinf_utils.save_rollout_video(
-            self.render_images,
-            output_dir=output_dir,
-            video_name=f"{self.video_cnt}",
-        )
-        self.video_cnt += 1
-        self.render_images = []

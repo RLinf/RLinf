@@ -13,11 +13,11 @@
 # limitations under the License.
 
 
-from typing import Optional
+from typing import Optional, Sequence
 
 from ..cluster import Cluster, NodeGroupInfo
 from ..hardware import Accelerator
-from .placement import Placement, PlacementStrategy
+from .placement import MultiNodeGroupResolver, Placement, PlacementStrategy
 
 
 class FlexiblePlacementStrategy(PlacementStrategy):
@@ -68,7 +68,7 @@ class FlexiblePlacementStrategy(PlacementStrategy):
     def __init__(
         self,
         hardware_ranks_list: list[list[int]],
-        node_group_label: Optional[str] = None,
+        node_group_label: Optional[str | Sequence[str]] = None,
     ):
         """Initialize the FlexiblePlacementStrategy.
 
@@ -80,7 +80,7 @@ class FlexiblePlacementStrategy(PlacementStrategy):
 
         Args:
             hardware_ranks_list (List[List[int]]): A list of lists, where each inner list contains the hardware (e.g., GPU) ranks to allocate for a specific process.
-            node_group_label (Optional[str]): The label of the node group to which the accelerator ranks belong. If specified, the accelerator ranks mean local ranks within the node group. Otherwise, accelerator ranks are global ranks.
+            node_group_label (Optional[str | Sequence[str]]): The label or list of labels of the node groups to which the accelerator ranks belong. If specified, the accelerator ranks mean local ranks within the selected node groups. Otherwise, accelerator ranks are global ranks.
 
         """
         super().__init__()
@@ -88,7 +88,14 @@ class FlexiblePlacementStrategy(PlacementStrategy):
             "The hardware_ranks_list must not be empty."
         )
 
-        self._node_group_label = node_group_label
+        if node_group_label is None:
+            self._node_group_labels = None
+        elif isinstance(node_group_label, str):
+            self._node_group_labels = [node_group_label]
+        elif isinstance(node_group_label, Sequence):
+            self._node_group_labels = [str(label) for label in node_group_label]
+        else:
+            self._node_group_labels = [str(node_group_label)]
         self._hardware_ranks_list = hardware_ranks_list
         all_hardware_ranks = sorted(
             [hw_rank for hw_ranks in hardware_ranks_list for hw_rank in hw_ranks]
@@ -109,24 +116,40 @@ class FlexiblePlacementStrategy(PlacementStrategy):
 
         self._logger.info("")
         self._logger.info(
-            f"Using flexible placement with hardware ranks: {self._hardware_ranks_list}."
+            f"Using flexible placement with hardware ranks: {self._hardware_ranks_list}, "
+            f"node groups: {self._node_group_labels or [NodeGroupInfo.DEFAULT_GROUP_LABEL]}."
         )
+
+    def _resolve_node_groups(self, cluster: Cluster) -> list[NodeGroupInfo]:
+        """Resolve user-specified node groups against the cluster."""
+        if not self._node_group_labels:
+            return [cluster.get_node_group()]
+
+        node_groups: list[NodeGroupInfo] = []
+        for label in self._node_group_labels:
+            node_group = cluster.get_node_group(label)
+            assert node_group is not None, (
+                f"Node group with label {label} not found in the cluster."
+            )
+            node_groups.append(node_group)
+        return node_groups
 
     def _verify_hw_ranks_for_process(
         self,
         hw_ranks: list[int],
-        node_group: NodeGroupInfo,
+        resolver: MultiNodeGroupResolver,
     ):
         """Verify that the accelerator ranks for a process are valid."""
+        total_hw = resolver.hardware_resource_count
         for hw_rank in hw_ranks:
-            # Check that all hardware ranks are within the node range
-            assert 0 <= hw_rank < node_group.hardware_resource_count, (
-                f"{node_group.hardware_type} hardware rank {hw_rank} is out of range in {node_group.label}. Must be between 0 and {node_group.hardware_resource_count - 1}."
+            # Check that all hardware ranks are within the global range
+            assert 0 <= hw_rank < total_hw, (
+                f"Hardware rank {hw_rank} is out of range. Must be between 0 and {total_hw - 1} across selected node groups {self._node_group_labels}."
             )
 
         # Check that all hardware ranks of a process are on the same node
         node_ranks = {
-            node_group.get_node_by_hardware_rank(hw_rank).node_rank
+            resolver.get_node_by_hardware_rank(hw_rank).node_rank
             for hw_rank in hw_ranks
         }
         assert len(node_ranks) == 1, (
@@ -137,6 +160,14 @@ class FlexiblePlacementStrategy(PlacementStrategy):
         assert len(hw_ranks) == len(set(hw_ranks)), (
             f"All hardware ranks {hw_ranks} for a process must be unique."
         )
+
+        hw_types = {
+            resolver.get_hardware_type_for_rank(hw_rank) for hw_rank in hw_ranks
+        }
+        if None not in hw_types:
+            assert len(hw_types) == 1, (
+                f"All hardware ranks {hw_ranks} for a process must use the same hardware type, but got {hw_types}."
+            )
 
     def get_placement(
         self,
@@ -153,19 +184,20 @@ class FlexiblePlacementStrategy(PlacementStrategy):
             List[Placement]: A list of Placement objects representing the placements of processes on accelerators.
 
         """
-        node_group = cluster.get_node_group(self._node_group_label)
-        assert node_group is not None, (
-            f"Node group with label {self._node_group_label} not found in the cluster."
+        node_groups = self._resolve_node_groups(cluster)
+        resolver = MultiNodeGroupResolver(node_groups)
+        assert resolver.hardware_resource_count > 0, (
+            "No available hardware resources found in the selected node groups."
         )
         # Verify and sort the hardware ranks for each process
         for i, hw_ranks in enumerate(self._hardware_ranks_list):
-            self._verify_hw_ranks_for_process(hw_ranks, node_group)
+            self._verify_hw_ranks_for_process(hw_ranks, resolver)
             self._hardware_ranks_list[i] = sorted(hw_ranks)
         # Sort the list of hardware ranks for processes based on the first hardware rank in each list
         self._hardware_ranks_list.sort(key=lambda x: x[0])
 
         cluster_node_ranks = [
-            node_group.get_node_by_hardware_rank(hw_ranks[0]).node_rank
+            resolver.get_node_by_hardware_rank(hw_ranks[0]).node_rank
             for hw_ranks in self._hardware_ranks_list
         ]
         cluster_node_rank_hw_ranks: list[tuple[int, list[int]]] = list(
@@ -177,9 +209,11 @@ class FlexiblePlacementStrategy(PlacementStrategy):
             cluster_node_rank_hw_ranks
         ):
             local_hw_ranks = [
-                node_group.get_local_hardware_rank(hw_rank) for hw_rank in hw_ranks
+                resolver.get_local_hardware_rank(hw_rank) for hw_rank in hw_ranks
             ]
-            if isolate_accelerator and node_group.hardware_type == Accelerator.HW_TYPE:
+            node_group_label = resolver.get_node_group_label(hw_ranks[0])
+            hardware_type = resolver.get_hardware_type_for_rank(hw_ranks[0])
+            if isolate_accelerator and hardware_type == Accelerator.HW_TYPE:
                 local_accel_ranks = local_hw_ranks
                 visible_accelerators = [
                     str(accel_rank) for accel_rank in local_accel_ranks
@@ -207,7 +241,7 @@ class FlexiblePlacementStrategy(PlacementStrategy):
                     visible_accelerators=visible_accelerators,
                     isolate_accelerator=isolate_accelerator,
                     local_hardware_ranks=local_hw_ranks,
-                    node_group_label=node_group.label,
+                    node_group_label=node_group_label,
                 )
             )
 

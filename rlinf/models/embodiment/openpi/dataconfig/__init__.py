@@ -26,11 +26,20 @@ from openpi.training.config import (
     TrainConfig,
 )
 
+from rlinf.models.embodiment.openpi.dataconfig.behavior_dataconfig import (
+    LeRobotBehaviorDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.calvin_dataconfig import (
     LeRobotCalvinDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.franka_co_training_dataconfig import (
+    LeRobotFrankaEEDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.franka_dataconfig import (
     CustomDataConfig,
+)
+from rlinf.models.embodiment.openpi.dataconfig.gsenv_dataconfig import (
+    LeRobotGSEnvDataConfig,
 )
 from rlinf.models.embodiment.openpi.dataconfig.libero_dataconfig import (
     LeRobotLiberoDataConfig,
@@ -95,7 +104,7 @@ _CONFIGS = [
             repo_id="physical-intelligence/maniskill",
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base"),
-            extra_delta_transform=True,
+            extra_delta_transform=False,
         ),
         pytorch_weight_path="checkpoints/torch/pi0_base",
         seed=0,
@@ -122,6 +131,32 @@ _CONFIGS = [
         pytorch_weight_path="checkpoints/torch/pi05_base",
         seed=0,
         batch_size=256,
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=0.999,
+        num_workers=8,
+        num_train_steps=5_000,
+        log_interval=5,
+        save_interval=250,
+    ),
+    TrainConfig(
+        name="pi05_maniskill_sim_real_co_training",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=8, discrete_state_input=False
+        ),  # discrete_state_input=False: stateless policy, True: with state policy
+        data=LeRobotFrankaEEDataConfig(
+            repo_id="physical-intelligence/pick_and_place_real",
+            default_prompt="defalut prompt",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                assets_dir="checkpoints/torch/pi05_maniskill_sim_real_co_training/assets"
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+        seed=0,
+        batch_size=16,
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
         ema_decay=0.999,
         num_workers=8,
@@ -212,16 +247,51 @@ _CONFIGS = [
     ),
     TrainConfig(
         name="pi0_aloha_robotwin",
-        model=pi0_config.Pi0Config(),
+        model=pi0_config.Pi0Config(discrete_state_input=False),
         data=LeRobotAlohaDataConfig(
-            repo_id="robotwin/place_empty_cup_random",
-            base_config=DataConfig(
-                prompt_from_task=True
-            ),  # we need language instruction
-            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_robotwin/assets"),
+            repo_id="physical-intelligence/robotwin",
+            adapt_to_pi=False,
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                assets_dir="checkpoints/torch/pi0_aloha_robotwin/assets"
+            ),
             extra_delta_transform=True,  # True for delta action, False for abs_action
         ),
+        freeze_filter=pi0_config.Pi0Config().get_freeze_filter(),
         pytorch_weight_path="checkpoints/torch/pi0_base",
+        num_train_steps=30_000,
+    ),
+    TrainConfig(
+        name="pi0_behavior",
+        model=pi0_config.Pi0Config(),
+        data=LeRobotBehaviorDataConfig(
+            repo_id="physical-intelligence/behavior",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_behavior/assets"),
+            extra_delta_transform=True,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi0_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_base",
+        num_train_steps=30_000,
+    ),
+    TrainConfig(
+        name="pi05_gsenv",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=5, discrete_state_input=False
+        ),
+        data=LeRobotGSEnvDataConfig(
+            repo_id="RLinf/GSEnv-PutCubeOnPlate-v0",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_r2s2r/assets"),
+            extra_delta_transform=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+        num_train_steps=30_000,
     ),
     TrainConfig(
         name="pi0_custom",
