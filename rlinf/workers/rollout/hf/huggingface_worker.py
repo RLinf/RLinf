@@ -87,6 +87,7 @@ class MultiStepRolloutWorker(Worker):
             // cfg.actor.model.num_action_chunks
         )
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
+        self.version = 0
 
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
@@ -282,7 +283,7 @@ class MultiStepRolloutWorker(Worker):
 
         return dones, rewards
 
-    async def sync_model_from_actor(self):
+    async def sync_model_from_actor(self, version: int | None = None):
         """Sync model parameters from the actor worker."""
         param_state_dict = await self.recv(
             self.actor_group_name,
@@ -296,7 +297,8 @@ class MultiStepRolloutWorker(Worker):
             str(get_model_weights_id(self.hf_model)) + f"_{self.count_update}"
         )
         self.count_update += 1
-
+        if version is not None:
+            self.version = version
         del param_state_dict
         gc.collect()
         torch.cuda.empty_cache()
@@ -343,6 +345,11 @@ class MultiStepRolloutWorker(Worker):
                     if self.collect_prev_infos
                     else None,
                     forward_inputs=result["forward_inputs"],
+                    versions=torch.full_like(
+                        result["prev_logprobs"],
+                        float(self.version),
+                        dtype=torch.float32,
+                    ),
                 )
 
                 self.rollout_results[stage_id].append_step_result(chunk_step_result)

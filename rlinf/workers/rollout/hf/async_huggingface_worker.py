@@ -25,7 +25,6 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
         self._generate_task: asyncio.Task = None
-        self.version = 0
         self.staleness_threshold = cfg.algorithm.get("staleness_threshold", None)
         self.finished_episodes = 0
         self.num_envs_per_stage = (
@@ -79,7 +78,7 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                 await self.send_rollout_trajectories(
                     self.rollout_results[stage_id], replay_channel
                 )
-
+            self.finished_episodes += self.num_envs_per_stage
             rollout_metrics = self.pop_execution_times()
             rollout_metrics = {
                 f"time/rollout/{k}": v for k, v in rollout_metrics.items()
@@ -96,12 +95,6 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
             if self.finished_episodes + self.total_num_train_envs <= capacity:
                 break
             await asyncio.sleep(0.01)
-
-    async def sync_model_from_actor(self, version: int = -1) -> None:
-        # NOTE: here should be super super careful for asyncio's scheduling.
-        await super().sync_model_from_actor()
-        if version >= 0:
-            self.version = version
 
     def stop(self):
         if self._generate_task is not None and not self._generate_task.done():

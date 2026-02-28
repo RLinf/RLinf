@@ -71,10 +71,10 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
             return {}
 
         time_metrics = defaultdict(list)
+        # NOTE: currently assumes only time metrics are sent through rollout_metric_channel, and each dict has the same set of keys.
         for result in results:
-            for key, value in result.get("time", {}).items():
+            for key, value in result.items():
                 time_metrics[key].append(value)
-
         time_metrics = {k: sum(v) / len(v) for k, v in time_metrics.items()}
         return time_metrics
 
@@ -157,12 +157,12 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
             train_metrics = {f"train/{k}": v for k, v in training_metrics[0].items()}
             rollout_metrics = {f"rollout/{k}": v for k, v in rollout_metrics[0].items()}
             env_metrics = self.get_env_metrics()
-            rollout_metrics = self.get_rollout_metrics()
+            rollout_time_metrics = self.get_rollout_metrics()
             self.metric_logger.log(train_metrics, self.global_step)
             if env_metrics:
                 self.metric_logger.log(env_metrics, self.global_step)
-            if rollout_metrics:
-                self.metric_logger.log(rollout_metrics, self.global_step)
+            if rollout_time_metrics:
+                self.metric_logger.log(rollout_time_metrics, self.global_step)
             self.metric_logger.log(rollout_metrics, self.global_step)
             self.metric_logger.log(time_metrics, self.global_step)
 

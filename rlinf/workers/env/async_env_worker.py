@@ -55,7 +55,7 @@ class AsyncEnvWorker(EnvWorker):
         epoch = 0
         while True:
             env_metrics = defaultdict(list)
-            env_output_list = self.init_env_outputs()
+            env_output_list = self.bootstrap_step()
             for stage_id in range(self.stage_num):
                 env_output: EnvOutput = env_output_list[stage_id]
                 self.send_env_batch(output_channel, env_output.to_dict())

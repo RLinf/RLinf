@@ -422,7 +422,7 @@ class EnvWorker(Worker):
                 key=CommMapper.build_channel_key(self._rank, rank, extra=mode),
             )
 
-    def init_env_outputs(self) -> list[EnvOutput]:
+    def bootstrap_step(self) -> list[EnvOutput]:
         def get_zero_dones() -> torch.Tensor:
             return (
                 torch.zeros((self.train_num_envs_per_stage,), dtype=bool)
@@ -496,7 +496,7 @@ class EnvWorker(Worker):
     def interact(self, input_channel: Channel, output_channel: Channel):
         env_metrics = defaultdict(list)
         for epoch in range(self.cfg.algorithm.rollout_epoch):
-            env_outputs = self.init_env_outputs()
+            env_outputs = self.bootstrap_step()
             for stage_id in range(self.stage_num):
                 env_output: EnvOutput = env_outputs[stage_id]
                 self.send_env_batch(output_channel, env_output.to_dict())
