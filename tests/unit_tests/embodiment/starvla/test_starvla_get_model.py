@@ -62,7 +62,9 @@ class _DummyStarVLAModel(nn.Module):
         return value
 
 
-def _install_fake_starvla_module(monkeypatch, model: _DummyStarVLAModel, calls: list[str]):
+def _install_fake_starvla_module(
+    monkeypatch, model: _DummyStarVLAModel, calls: list[str]
+):
     def _from_pretrained(path: str):
         calls.append(path)
         return model
@@ -96,7 +98,9 @@ def test_get_model_requires_model_path():
         get_model(cfg)
 
 
-def test_get_model_loads_latest_checkpoint_and_builds_wrapper(tmp_path: Path, monkeypatch):
+def test_get_model_loads_latest_checkpoint_and_builds_wrapper(
+    tmp_path: Path, monkeypatch
+):
     run_dir = tmp_path / "run"
     ckpt_dir = run_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True)

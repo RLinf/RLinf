@@ -477,4 +477,3 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
                 "submodule exposes this API.",
                 stacklevel=2,
             )
-

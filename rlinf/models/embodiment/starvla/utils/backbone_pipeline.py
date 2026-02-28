@@ -52,7 +52,9 @@ def compute_values_from_hidden(
 ) -> torch.Tensor:
     """Compute value predictions from hidden states."""
     if value_head is None:
-        return torch.zeros((hidden.shape[0], 1), device=hidden.device, dtype=torch.float32)
+        return torch.zeros(
+            (hidden.shape[0], 1), device=hidden.device, dtype=torch.float32
+        )
 
     if attention_mask is not None:
         idx = attention_mask.long().sum(dim=1) - 1

@@ -28,8 +28,7 @@ from ..utils.action_heads import (
     resolve_flowmatching_prefix,
     run_flowmatching_rollout_action_stage,
 )
-from ..utils.backbone_pipeline import run_backbone_pipeline
-from ..utils.backbone_pipeline import compute_values_from_hidden
+from ..utils.backbone_pipeline import compute_values_from_hidden, run_backbone_pipeline
 
 _FLOWMATCHING_HEADS = {"pi", "gr00t", "dual"}
 

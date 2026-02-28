@@ -16,9 +16,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import os
 import warnings
+from collections.abc import Mapping
 from typing import Any, Optional
 
 import numpy as np

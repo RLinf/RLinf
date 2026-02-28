@@ -68,7 +68,9 @@ def _build_wrapper(framework_name: str) -> StarVLAForRLActionPrediction:
         ("QwenPI", "pi"),
     ],
 )
-def test_default_forward_dispatches_to_handler(monkeypatch, framework_name: str, expected_head: str):
+def test_default_forward_dispatches_to_handler(
+    monkeypatch, framework_name: str, expected_head: str
+):
     policy = _build_wrapper(framework_name)
     assert policy.action_head_type == expected_head
 

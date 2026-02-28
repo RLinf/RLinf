@@ -23,9 +23,8 @@ from torch.distributions.normal import Normal
 
 from ..utils import data_pipeline as data_pipeline_utils
 from ..utils.action_heads import run_oft_action_head
-from ..utils.backbone_pipeline import run_backbone_pipeline
+from ..utils.backbone_pipeline import compute_values_from_hidden, run_backbone_pipeline
 from ..utils.profile import RL_BATCH_TENSOR_KEYS_TO_IGNORE
-from ..utils.backbone_pipeline import compute_values_from_hidden
 
 if TYPE_CHECKING:
     from ..starvla_action_model import StarVLAForRLActionPrediction

@@ -24,7 +24,7 @@ import numpy as np
 import torch
 
 from ..utils import vlm_preprocess as vlm_input_utils
-from ..utils.backbone_pipeline import run_backbone_pipeline
+from ..utils.backbone_pipeline import compute_values_from_hidden, run_backbone_pipeline
 from ..utils.profile import (
     infer_vlm_type,
     resolve_action_chunk_len,
@@ -33,7 +33,6 @@ from ..utils.profile import (
     resolve_vlm_interface,
     resolve_vlm_pad_token_id,
 )
-from ..utils.backbone_pipeline import compute_values_from_hidden
 
 if TYPE_CHECKING:
     from ..starvla_action_model import StarVLAForRLActionPrediction
@@ -157,6 +156,7 @@ def run_rollout_fast(
         expected_coeffs = n_chunks * act_dim
 
         fast_processor = policy.starvla_model.action_model.fast_tokenizer
+
         def decode_fast_ids_to_action(fast_ids: list[int]) -> np.ndarray:
             decoded_single = fast_processor.decode([fast_ids])
             arr = np.asarray(decoded_single)
@@ -193,7 +193,9 @@ def run_rollout_fast(
         )
         normalized_actions = np.zeros((bsz, n_chunks, act_dim), dtype=np.float32)
         # 5) Decode generated FAST action tokens using native starVLA helpers only.
-        native_extract = getattr(policy.starvla_model, "_extract_action_token_ids", None)
+        native_extract = getattr(
+            policy.starvla_model, "_extract_action_token_ids", None
+        )
         native_decode = getattr(policy.starvla_model, "_decode_action_tokens", None)
         if not callable(native_extract) or not callable(native_decode):
             raise RuntimeError(
@@ -226,7 +228,9 @@ def run_rollout_fast(
             vlm_ids = [int(t) for t in batch_vlm_ids[b]][:max_action_tokens]
             fast_ids = [int(t) for t in batch_fast_ids[b]][:max_action_tokens]
             if not vlm_ids or not fast_ids:
-                raise RuntimeError(f"QwenFast native decode empty action tokens at sample {b}.")
+                raise RuntimeError(
+                    f"QwenFast native decode empty action tokens at sample {b}."
+                )
             if len(vlm_ids) != len(fast_ids):
                 raise RuntimeError(
                     f"QwenFast native decode token length mismatch at sample {b}: "
@@ -237,7 +241,9 @@ def run_rollout_fast(
             idx = action_mask[b].nonzero(as_tuple=False).flatten()
             prefix_len = len(vlm_ids)
             if idx.numel() == 0:
-                raise RuntimeError(f"QwenFast no action token span found at sample {b}.")
+                raise RuntimeError(
+                    f"QwenFast no action token span found at sample {b}."
+                )
             idx = idx[:prefix_len]
             prefix_len = int(idx.numel())
 
@@ -247,8 +253,8 @@ def run_rollout_fast(
                 dtype=torch.long,
             )
             action_token_mask[b, :prefix_len] = True
-            token_logprob_sums[b] = gen_logprobs[b, idx[:prefix_len]].sum().to(
-                dtype=torch.float32
+            token_logprob_sums[b] = (
+                gen_logprobs[b, idx[:prefix_len]].sum().to(dtype=torch.float32)
             )
             normalized_actions[b] = arr
 

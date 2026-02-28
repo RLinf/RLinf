@@ -25,8 +25,7 @@ from ..utils import action_space as action_space_utils
 from ..utils import data_pipeline as data_pipeline_utils
 from ..utils import vlm_preprocess as vlm_input_utils
 from ..utils.action_heads import run_oft_action_head
-from ..utils.backbone_pipeline import run_backbone_pipeline
-from ..utils.backbone_pipeline import compute_values_from_hidden
+from ..utils.backbone_pipeline import compute_values_from_hidden, run_backbone_pipeline
 
 if TYPE_CHECKING:
     from ..starvla_action_model import StarVLAForRLActionPrediction

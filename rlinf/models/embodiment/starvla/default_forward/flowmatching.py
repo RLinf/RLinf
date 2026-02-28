@@ -29,9 +29,8 @@ from ..utils.action_heads import (
     build_flowmatching_backbone_context,
     resolve_flowmatching_prefix,
 )
-from ..utils.backbone_pipeline import run_backbone_pipeline
+from ..utils.backbone_pipeline import compute_values_from_hidden, run_backbone_pipeline
 from ..utils.profile import RL_BATCH_TENSOR_KEYS_TO_IGNORE
-from ..utils.backbone_pipeline import compute_values_from_hidden
 
 _FLOWMATCHING_HEADS = {"pi", "gr00t", "dual"}
 
