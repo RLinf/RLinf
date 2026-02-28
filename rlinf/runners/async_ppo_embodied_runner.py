@@ -30,8 +30,8 @@ if TYPE_CHECKING:
         AsyncPPOEmbodiedFSDPActor,
     )
     from rlinf.workers.env.async_env_worker import AsyncEnvWorker
-    from rlinf.workers.rollout.hf.async_ppo_huggingface_worker import (
-        AsyncPPOMultiStepRolloutWorker,
+    from rlinf.workers.rollout.hf.async_huggingface_worker import (
+        AsyncMultiStepRolloutWorker,
     )
 
 
@@ -42,7 +42,7 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         self,
         cfg: DictConfig,
         actor: "AsyncPPOEmbodiedFSDPActor",
-        rollout: "AsyncPPOMultiStepRolloutWorker",
+        rollout: "AsyncMultiStepRolloutWorker",
         env: "AsyncEnvWorker",
         critic=None,
         reward=None,
@@ -50,12 +50,33 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
     ):
         super().__init__(cfg, actor, rollout, env, critic, reward, run_timer)
         self.env_metric_channel = Channel.create("EnvMetric")
+        self.rollout_metric_channel = Channel.create("RolloutMetric")
         self.recompute_logprobs = bool(self.cfg.rollout.get("recompute_logprobs", True))
 
         if self.cfg.runner.val_check_interval > 0:
             self.logger.warning(
                 "Validation check interval is set to a positive value, but validation is not implemented for AsyncPPOEmbodiedRunner, so validation will be skipped."
             )
+
+    def get_rollout_metrics(self) -> dict:
+        results: list[dict] = []
+        while True:
+            try:
+                result = self.rollout_metric_channel.get_nowait()
+                results.append(result)
+            except asyncio.QueueEmpty:
+                break
+
+        if not results:
+            return {}
+
+        time_metrics = defaultdict(list)
+        for result in results:
+            for key, value in result.get("time", {}).items():
+                time_metrics[key].append(value)
+
+        time_metrics = {k: sum(v) / len(v) for k, v in time_metrics.items()}
+        return time_metrics
 
     def get_env_metrics(self) -> dict:
         results: list[dict] = []
@@ -86,13 +107,8 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         return {**env_metrics, **time_metrics}
 
     def update_rollout_weights(self) -> None:
-        self.rollout.pause_generation().wait()
-
-        self.rollout.sync_model_from_actor()
-        self.actor.sync_model_to_rollout().wait()
-        self.rollout.set_version(self.global_step).wait()
-        self.actor.set_version(self.global_step).wait()
-        self.rollout.resume_generation().wait()
+        self.rollout.sync_model_from_actor(self.global_step)
+        self.actor.sync_model_to_rollout(self.global_step).wait()
 
     def run(self) -> None:
         start_step = self.global_step
@@ -108,7 +124,8 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         rollout_handle: Handle = self.rollout.generate(
             input_channel=self.env_channel,
             output_channel=self.rollout_channel,
-            actor_channel=self.actor_channel,
+            replay_channel=self.actor_channel,
+            metric_channel=self.rollout_metric_channel,
         )
 
         while self.global_step < self.max_steps:
@@ -140,10 +157,12 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
             train_metrics = {f"train/{k}": v for k, v in training_metrics[0].items()}
             rollout_metrics = {f"rollout/{k}": v for k, v in rollout_metrics[0].items()}
             env_metrics = self.get_env_metrics()
-
+            rollout_metrics = self.get_rollout_metrics()
             self.metric_logger.log(train_metrics, self.global_step)
             if env_metrics:
                 self.metric_logger.log(env_metrics, self.global_step)
+            if rollout_metrics:
+                self.metric_logger.log(rollout_metrics, self.global_step)
             self.metric_logger.log(rollout_metrics, self.global_step)
             self.metric_logger.log(time_metrics, self.global_step)
 

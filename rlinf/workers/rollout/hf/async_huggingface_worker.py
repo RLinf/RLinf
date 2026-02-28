@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
+
+from omegaconf.omegaconf import DictConfig
 
 from rlinf.data.embodied_io_struct import EmbodiedRolloutResult
 from rlinf.scheduler import Channel
@@ -19,6 +22,21 @@ from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 
 class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
+    def __init__(self, cfg: DictConfig):
+        super().__init__(cfg)
+        self._generate_task: asyncio.Task = None
+        self.version = 0
+        self.staleness_threshold = cfg.algorithm.get("staleness_threshold", None)
+        self.finished_episodes = 0
+        self.num_envs_per_stage = (
+            self.cfg.env.train.total_num_envs
+            // self._world_size
+            // self.num_pipeline_stages
+        )
+        assert not self.enable_offload, (
+            "Offload not supported in AsyncMultiStepRolloutWorker"
+        )
+
     async def generate(
         self,
         input_channel: Channel,
@@ -26,7 +44,27 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
         replay_channel: Channel,
         metric_channel: Channel,
     ):
-        while not self.should_stop:
+        assert self._generate_task is None, (
+            "generate task is not None but generate function is called."
+        )
+        self._generate_task = asyncio.create_task(
+            self._generate(
+                input_channel, output_channel, replay_channel, metric_channel
+            )
+        )
+        try:
+            await self._generate_task
+        except asyncio.CancelledError:
+            pass
+
+    async def _generate(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        replay_channel: Channel,
+        metric_channel: Channel,
+    ):
+        while True:
             # rollout_results[stage_id]
             self.rollout_results: list[EmbodiedRolloutResult] = [
                 EmbodiedRolloutResult(
@@ -35,7 +73,7 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                 )
                 for _ in range(self.num_pipeline_stages)
             ]
-
+            await self.wait_if_stale()
             await self.generate_one_epoch(input_channel, output_channel)
             for stage_id in range(self.num_pipeline_stages):
                 await self.send_rollout_trajectories(
@@ -48,5 +86,23 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
             }
             metric_channel.put(rollout_metrics, async_op=True)
 
-    async def stop(self):
-        self.should_stop = True
+    async def wait_if_stale(self) -> None:
+        if self.staleness_threshold is None:
+            return
+        while True:
+            capacity = (
+                self.staleness_threshold + self.version + 1
+            ) * self.total_num_train_envs
+            if self.finished_episodes + self.total_num_train_envs <= capacity:
+                break
+            await asyncio.sleep(0.01)
+
+    async def sync_model_from_actor(self, version: int = -1) -> None:
+        # NOTE: here should be super super careful for asyncio's scheduling.
+        await super().sync_model_from_actor()
+        if version >= 0:
+            self.version = version
+
+    def stop(self):
+        if self._generate_task is not None and not self._generate_task.done():
+            self._generate_task.cancel()

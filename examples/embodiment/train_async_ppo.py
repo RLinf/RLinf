@@ -24,8 +24,8 @@ from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.actor.async_ppo_fsdp_worker import AsyncPPOEmbodiedFSDPActor
 from rlinf.workers.env.async_env_worker import AsyncEnvWorker
-from rlinf.workers.rollout.hf.async_ppo_huggingface_worker import (
-    AsyncPPOMultiStepRolloutWorker,
+from rlinf.workers.rollout.hf.async_huggingface_worker import (
+    AsyncMultiStepRolloutWorker,
 )
 
 mp.set_start_method("spawn", force=True)
@@ -51,7 +51,7 @@ def main(cfg) -> None:
     )
 
     rollout_placement = component_placement.get_strategy("rollout")
-    rollout_group = AsyncPPOMultiStepRolloutWorker.create_group(cfg).launch(
+    rollout_group = AsyncMultiStepRolloutWorker.create_group(cfg).launch(
         cluster,
         name=cfg.rollout.group_name,
         placement_strategy=rollout_placement,
