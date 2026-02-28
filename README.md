@@ -291,6 +291,17 @@ If you use World Model + VLA + RL in RLinf, you can cite our paper:
 }
 ```
 
+If you use RL-based sim-real co-training in RLinf, you can cite our paper:
+```bibtex
+@article{shi2026rlinf,
+  title={Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for VLA Models},
+  author={Shi, Liangzhi and Chen, Shuaihang and Gao, Feng and Chen, Yinuo and Chen, Kang and Zhang, Tonghe and Zhang, Hongzhi and Zhang, Weinan and Yu, Chao and Wang, Yu},
+  journal={arXiv preprint arXiv:2602.12628},
+  year={2026},
+  url={https://arxiv.org/abs/2602.12628},
+}
+```
+
 **Acknowledgements**
 RLinf has been inspired by, and benefits from, the ideas and tooling of the broader open-source community.
 In particular, we would like to thank the teams and contributors behind VeRL, AReaL, Megatron-LM, SGLang, and PyTorch Fully Sharded Data Parallel (FSDP), and if we have inadvertently missed your project or contribution, please open an issue or a pull request so we can properly credit you.
