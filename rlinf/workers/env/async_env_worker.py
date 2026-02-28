@@ -52,7 +52,6 @@ class AsyncEnvWorker(EnvWorker):
         output_channel: Channel,
         metric_channel: Channel,
     ):
-        epoch = 0
         while True:
             env_metrics = defaultdict(list)
             env_output_list = self.bootstrap_step()
@@ -69,7 +68,7 @@ class AsyncEnvWorker(EnvWorker):
                     )
                     self.send_env_batch(output_channel, env_output.to_dict())
                     env_output_list[stage_id] = env_output
-                    self.record_env_metrics(env_metrics, env_info, epoch)
+                    self.record_env_metrics(env_metrics, env_info, 0)
 
             for key, value in env_metrics.items():
                 env_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
@@ -87,7 +86,6 @@ class AsyncEnvWorker(EnvWorker):
 
             self.store_last_obs_and_intervened_info(env_output_list)
             self.finish_rollout()
-            epoch += 1
 
     async def stop(self):
         if self._interact_task is not None and not self._interact_task.done():

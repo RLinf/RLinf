@@ -49,6 +49,7 @@ class EnvWorker(Worker):
         self.stage_num = self.cfg.rollout.pipeline_stage_num
 
         # Env configurations
+        self.enable_offload = self.cfg.env.train.get("enable_offload", False)
         self.only_eval = getattr(self.cfg.runner, "only_eval", False)
         self.enable_eval = self.cfg.runner.val_check_interval > 0 or self.only_eval
         if not self.only_eval:
@@ -168,9 +169,7 @@ class EnvWorker(Worker):
                 self.last_obs_list.append(extracted_obs)
                 self.last_intervened_info_list.append((None, None))
 
-                if self.cfg.env.train.get("enable_offload", False) and hasattr(
-                    self.env_list[i], "offload"
-                ):
+                if self.enable_offload and hasattr(self.env_list[i], "offload"):
                     self.env_list[i].offload()
 
     @Worker.timer("env_interact_step")
@@ -515,9 +514,7 @@ class EnvWorker(Worker):
             self.finish_rollout()
 
         for env in self.env_list:
-            if self.cfg.env.train.get("enable_offload", False) and hasattr(
-                env, "offload"
-            ):
+            if self.enable_offload and hasattr(env, "offload"):
                 env.offload()
 
         for key, value in env_metrics.items():

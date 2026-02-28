@@ -373,7 +373,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         )
         return mean_metric_dict
 
-    async def sync_model_to_rollout(self, version: int = -1) -> None:
-        await super().sync_model_to_rollout()
+    def sync_model_to_rollout(self, version: int = -1) -> None:
+        super().sync_model_to_rollout()
         if version >= 0:
             self.set_version(version)
