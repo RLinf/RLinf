@@ -145,7 +145,7 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run_async_ppo.sh maniskill_async_ppo_openvla
+          bash tests/e2e_tests/embodied/run_async.sh maniskill_async_ppo_openvla
 
       - name: Clean up
         run: |
@@ -192,7 +192,7 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
-          bash tests/e2e_tests/embodied/run_async_ppo.sh maniskill_async_ppo_openvlaoft
+          bash tests/e2e_tests/embodied/run_async.sh maniskill_async_ppo_openvlaoft
 
       - name: Clean up
         run: |
@@ -405,7 +405,7 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
-          bash tests/e2e_tests/embodied/run_async_ppo.sh maniskill_async_ppo_openpi
+          bash tests/e2e_tests/embodied/run_async.sh maniskill_async_ppo_openpi
 
       - name: Libero-Spatial DSRL PPO test
         timeout-minutes: 20

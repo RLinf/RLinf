@@ -196,7 +196,7 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         self.log_thread.join(timeout=1.0)
 
         self.env.stop().wait()
-        self.rollout.stop()
+        self.rollout.stop().wait()
 
         env_handle.wait()
         rollout_handle.wait()

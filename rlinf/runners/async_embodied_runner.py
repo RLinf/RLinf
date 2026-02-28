@@ -81,12 +81,25 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         env_metrics = compute_evaluate_metrics(env_metrics)
         return {**env_metrics, **time_metrics}
 
-    def get_rollout_metrics(self):
-        try:
-            result = self.rollout_metric_channel.get_nowait()
-        except asyncio.QueueEmpty:
+    def get_rollout_metrics(self) -> dict:
+        results: list[dict] = []
+        while True:
+            try:
+                result = self.rollout_metric_channel.get_nowait()
+                results.append(result)
+            except asyncio.QueueEmpty:
+                break
+
+        if not results:
             return {}
-        return result
+
+        time_metrics = defaultdict(list)
+        # NOTE: currently assumes only time metrics are sent through rollout_metric_channel, and each dict has the same set of keys.
+        for result in results:
+            for key, value in result.items():
+                time_metrics[key].append(value)
+        time_metrics = {k: sum(v) / len(v) for k, v in time_metrics.items()}
+        return time_metrics
 
     def run(self):
         start_step = self.global_step
