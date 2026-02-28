@@ -87,6 +87,7 @@ class MultiStepRolloutWorker(Worker):
             // cfg.actor.model.num_action_chunks
         )
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
+        self.collect_versions = self.cfg.algorithm.loss_type == "decoupled_actor_critic"
         self.version = 0
 
     def init_worker(self):
@@ -349,7 +350,9 @@ class MultiStepRolloutWorker(Worker):
                         result["prev_logprobs"],
                         float(self.version),
                         dtype=torch.float32,
-                    ),
+                    )
+                    if self.collect_versions
+                    else None,
                 )
 
                 self.rollout_results[stage_id].append_step_result(chunk_step_result)
