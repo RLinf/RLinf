@@ -284,7 +284,7 @@ b. 安装依赖
 
 **获取任务的目标位姿**
 
-对于 Peg-insertion 任务，可以使用脚本 `toolkits.realworld_check.test_controller` 获取目标末端位姿。
+对于 Peg-insertion 任务，可以使用脚本 `toolkits.realworld_check.test_franka_controller` 获取目标末端位姿。
 
 首先，需要将 Franka 机器人切换到可编程模式，然后手动将机械臂移动到希望的目标位姿。
 
@@ -298,7 +298,7 @@ b. 安装依赖
 
 .. code-block:: bash
 
-   python -m toolkits.realworld_check.test_controller
+   python -m toolkits.realworld_check.test_franka_controller
 
 脚本会提示你输入命令，可以输入 `getpos_euler` 来获取当前末端执行器以欧拉角形式表示的位姿。
 
@@ -426,11 +426,11 @@ RLinf 使用 ray 来管理分布式环境，这意味着：
 
 .. code-block:: bash
 
-   python -m toolkits.realworld_check.test_camera
+   python -m toolkits.realworld_check.test_franka_camera
 
 然后，通过运行一个 dummy 版本配置来测试基础集群配置。请参照``examples/embodiment/config/real_world_dummy_sac_cnn.yaml``文件添加`env.eval.override_cfg`。
 可以在配置文件中同时将 `env.train.override_cfg` 与 `env.eval.override_cfg` 部分的 `is_dummy` 字段设置为 `True`，
-以启用 dummy 模式。请注意如果启用dummy模式，需要将上面运行 ``toolkits.realworld_check.test_camera.py`` 得到的camera序列号
+以启用 dummy 模式。请注意如果启用dummy模式，需要将上面运行 ``toolkits.realworld_check.test_franka_camera.py`` 得到的camera序列号
 填补在 `env.train.override_cfg` 与 `env.eval.override_cfg` 部分的 `camera_serials` 字段。
 
 在 head 节点上运行测试脚本：

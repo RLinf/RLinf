@@ -18,7 +18,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2")
 
 #=======================Utility Functions=======================
 
@@ -546,6 +546,10 @@ install_env_only() {
                 install_franka_env
             fi
             ;;
+        xsquare_turtle2)
+            uv sync --extra xsquare_turtle2 --active $NO_INSTALL_RLINF_CMD
+            install_xsquare_turtle2_env
+            ;;
         habitat)
             install_common_embodied_deps
             install_habitat_env
@@ -676,6 +680,10 @@ install_franka_env() {
     echo "export CMAKE_PREFIX_PATH=$ROS_CATKIN_PATH/libfranka/build:\$CMAKE_PREFIX_PATH" >> "$VENV_DIR/bin/activate"
     echo "source /opt/ros/noetic/setup.bash" >> "$VENV_DIR/bin/activate"
     echo "source $ROS_CATKIN_PATH/devel/setup.bash" >> "$VENV_DIR/bin/activate"
+}
+
+install_xsquare_turtle2_env() {
+    uv pip install git+https://github.com/RLinf/xsquare_turtle_basics.git
 }
 
 install_robotwin_env() {
