@@ -5,7 +5,7 @@
 
 协同训练的核心在于：在利用 PPO 算法通过仿真环境反馈优化策略的同时，引入真机数据进行监督微调 (SFT)，以确保模型在提升任务成功率的同时不丢失真机物理世界的先验知识。
 
-详细技术细节请参考论文: `RLinf-Co: Reinforcement Learning–Based Sim–Real Co-Training for VLA Models`
+详细技术细节请参考论文: `Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for VLA Models`
 
 模型在训练后应具备以下核心能力：
 
@@ -210,7 +210,7 @@ Stage II：仿真-真机协同 RL 训练
 
 .. math::
 
-   \text{True_Batch_Size} = \frac{\text{Global_Batch_Size} \times \text{Input_Batch}}{\text{Micro_Batch_Size} \times \text{Num_GPUs}}
+   \text{True\_Batch\_Size} = \frac{\text{Global\_Batch\_Size} \times \text{Input\_Batch}}{\text{Micro\_Batch\_Size} \times \text{Num\_GPUs}}
 
 对于 ``global_batch_size`` 和 ``micro_batch_size`` 的具体数值设定请参考 :doc:`./pi0`。
 
@@ -252,4 +252,4 @@ RL 训练指标可以参考 :doc:`π0 和 π0.5 模型强化学习训练 <pi0>`�
 - **初始性能**: 模型加载 Stage I 权重后，在仿真环境中的零样本成功率约为 35%。
 - **训练后性能**: 经过 100 步 Co-Training 训练后，仿真成功率提升至 50%。
 
-更多关于真机部署效果及详细消融实验，请参考论文：``RLinf-Co: Reinforcement Learning–Based Sim–Real Co-Training for VLA Models``
+更多关于真机部署效果及详细消融实验，请参考论文：``Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for VLA Models``
