@@ -3,7 +3,7 @@ import logging
 import os
 import socket
 import uuid
-from typing import Any, Dict, List, Optional, Set, cast
+from typing import Any, Dict, List, Optional, Set, cast, Union
 from transformers import AutoTokenizer
 import torch
 import numpy as np
@@ -17,7 +17,7 @@ from agentlightning.store.base import LightningStore
 from agentlightning.types.core import EnqueueRolloutRequest, Rollout, RolloutConfig, Task, Triplet
 
 
-from rlinf.data.io_struct import RolloutResult
+from rlinf.data.io_struct import RolloutResult, DynamicRolloutResult
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from agentlightning.llm_proxy import ModelConfig
