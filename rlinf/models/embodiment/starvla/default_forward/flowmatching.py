@@ -1,4 +1,4 @@
-# Copyright 2026 The RLinf Authors.
+# Copyright 2025 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ from ..utils.action_heads import (
 )
 from ..utils.backbone_pipeline import run_backbone_pipeline
 from ..utils.profile import RL_BATCH_TENSOR_KEYS_TO_IGNORE
+from ..utils.backbone_pipeline import compute_values_from_hidden
 
 _FLOWMATCHING_HEADS = {"pi", "gr00t", "dual"}
 
@@ -269,7 +270,8 @@ def run_default_forward_flowmatching(
                 dtype=torch.float32,
             )
         else:
-            result["values"] = policy._compute_values_from_hidden(
+            result["values"] = compute_values_from_hidden(
+                value_head=policy.value_head,
                 hidden=action_head_inputs.value_hidden,
                 attention_mask=backbone_output.attention_mask,
             )

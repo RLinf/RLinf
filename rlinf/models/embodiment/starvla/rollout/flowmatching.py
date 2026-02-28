@@ -1,4 +1,4 @@
-# Copyright 2026 The RLinf Authors.
+# Copyright 2025 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ from ..utils.action_heads import (
     run_flowmatching_rollout_action_stage,
 )
 from ..utils.backbone_pipeline import run_backbone_pipeline
+from ..utils.backbone_pipeline import compute_values_from_hidden
 
 _FLOWMATCHING_HEADS = {"pi", "gr00t", "dual"}
 
@@ -124,7 +125,8 @@ def run_rollout_flowmatching(
                 (actions_t.shape[0], 1), device=actions_t.device, dtype=torch.float32
             )
         else:
-            prev_values = policy._compute_values_from_hidden(
+            prev_values = compute_values_from_hidden(
+                value_head=policy.value_head,
                 hidden=action_head_inputs.value_hidden,
                 attention_mask=backbone_output.attention_mask,
             )
