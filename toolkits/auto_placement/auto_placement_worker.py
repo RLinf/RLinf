@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from typing import Optional
 
 import hydra
@@ -45,6 +46,7 @@ class AutoPlacementWorker:
         component_placement,
         graph: Optional[dict[str, list[str]]] = None,
     ):
+        """Initialize the AutoPlacementWorker."""
         self.config = get_global_config()
         self.components_config = self.config.components_config
         self._name_to_node_dict: dict[str, ComponentNode] = {}
@@ -203,11 +205,13 @@ def main(cfg):
     schedule_result: ScheduleResult = auto_placement_worker.run()
 
     if schedule_result is None:
-        print("=" * 50)
-        print("Error: Auto scheduler could not find any valid placement strategy.")
-        print("Possible reasons:")
-        print("1. Missing profile data for certain GPU scales.")
-        print(
+        logging.error("=" * 50)
+        logging.error(
+            "Error: Auto scheduler could not find any valid placement strategy."
+        )
+        logging.error("Possible reasons:")
+        logging.error("1. Missing profile data for certain GPU scales.")
+        logging.error(
             "2. The hardware rank provided by component_placement configure is not compatible with that ray cluster detect."
         )
         return
@@ -229,9 +233,8 @@ def main(cfg):
     else:
         res = schedule_result.placement_str
 
-    print("=" * 50)
-    print("Best placement for this task is:\n")
-    print(res)
+    logging.info("=" * 50)
+    logging.info("Best placement for this task is:\n%s", res)
 
 
 if __name__ == "__main__":

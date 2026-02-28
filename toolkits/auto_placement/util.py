@@ -17,14 +17,14 @@ from argparse import Namespace
 _GLOBAL_CONFIG = None
 
 
-def init_global_config(config, component_placement, cluster):
+def init_global_config(config, component_placement, cluster) -> None:
     if config.runner.task_type == "reasoning":
         init_global_config_reasoning(config, component_placement)
     else:
         init_global_config_env(config, component_placement, cluster)
 
 
-def init_global_config_reasoning(config, component_placement):
+def init_global_config_reasoning(config, component_placement) -> None:
     global _GLOBAL_CONFIG
 
     _GLOBAL_CONFIG = Namespace(
@@ -64,7 +64,7 @@ def init_global_config_reasoning(config, component_placement):
         )
 
 
-def init_global_config_env(config, component_placement, cluster):
+def init_global_config_env(config, component_placement, cluster) -> None:
     global _GLOBAL_CONFIG
 
     _GLOBAL_CONFIG = Namespace(
@@ -79,14 +79,19 @@ def init_global_config_env(config, component_placement, cluster):
     )
 
     for component in component_placement._components:
-        instance_num = component_placement.get_world_size(component)
-        world_size = component_placement.get_world_size(component)
+        instance_num: int = component_placement.get_world_size(component)
+        world_size: int = component_placement.get_world_size(component)
         model_parallel_size = (
             world_size // instance_num
         )  # For env and rollout in embodiment task, we set dp_size = world_size, so model_parallel_size = 1
 
         if component == "rollout":
             component = "env_rollout"
+            _GLOBAL_CONFIG.components_config[component] = Namespace(
+                model_parallel_size=model_parallel_size,
+                max_world_size=world_size,
+            )
+        elif component == "env":
             _GLOBAL_CONFIG.components_config[component] = Namespace(
                 model_parallel_size=model_parallel_size,
                 max_world_size=world_size,
