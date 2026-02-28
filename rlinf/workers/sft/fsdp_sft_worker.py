@@ -28,7 +28,6 @@ from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.utils.pytree import register_pytree_dataclasses
 from rlinf.utils.utils import clear_memory
 
 

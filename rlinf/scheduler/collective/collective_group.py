@@ -339,10 +339,6 @@ class CollectiveGroup:
                 piggyback_payload=piggyback_payload,
             )
         elif object_type == CollectiveGroup.DATACLASS_WITH_TENSORS:
-            assert tensor_data is not None, (
-                "tensor_data must be set for DATACLASS_WITH_TENSORS"
-            )
-            tensor_fields, dataclass_metadata, dataclass_tensors_list = tensor_data
             return self._send_tensor_dataclass(
                 object,
                 comm_id,
@@ -1681,8 +1677,6 @@ class CollectiveGroup:
         comm_id: int,
         tensor_data: TensorData,
         async_op: bool = False,
-        dataclass_metadata: Optional[Any] = None,
-        dataclass_tensors_list: Optional[list[torch.Tensor]] = None,
         piggyback_payload: Optional[Any] = None,
     ):
         """Send a dataclass with tensor fields (tensor, list of tensors, or dict of tensors) to the destination.

@@ -527,7 +527,8 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
             for task_result in task_results:
                 if len(task_result.trace_prints) > 0:
                     self.print_agent_outputs(None, task_result.trace_prints)
-        self.log_info(f"finish question id {task_results[0].extra_fields['instance_id']}")
+        if not use_no_training:
+            self.log_info(f"finish question id {task_results[0].extra_fields['instance_id']}")
 
         idx_to_traj = []
         prompt_lengths = []

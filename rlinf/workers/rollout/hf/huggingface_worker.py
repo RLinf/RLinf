@@ -68,6 +68,7 @@ class MultiStepRolloutWorker(Worker):
         self.total_num_train_envs = cfg.env.train.total_num_envs
         self.total_num_eval_envs = cfg.env.eval.total_num_envs
         self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
+
         self.train_batch_size = (
             self.total_num_train_envs // self._world_size // self.num_pipeline_stages
         )
