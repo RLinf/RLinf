@@ -120,6 +120,7 @@ def calculate_adv_and_returns(**kwargs) -> tuple[torch.Tensor, Optional[torch.Te
 
 LOSS_SCALE_REGISTRY: dict[str, Callable] = {}
 
+
 def register_loss_scale(name: str):
     def decorator(fn):
         LOSS_SCALE_REGISTRY[name.lower()] = fn

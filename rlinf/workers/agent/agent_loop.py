@@ -69,7 +69,6 @@ class AgentLoopOutput:
     tool_call_info: Optional[dict[str, int]] = None
 
 
-
 @dataclass
 class MultiTurnAgentLoopOutput:
     """Multi agent loop output."""
@@ -366,7 +365,9 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         # For eval mode, allow multiple samples (group_size=k) to compute pass@k and avg@k
         extra_fields = self.gen_extra_fields(task_results, answer)
         if self.is_eval:
-            rollout_result = self.get_rollout_result(task_results, *extra_fields, use_no_training=False)
+            rollout_result = self.get_rollout_result(
+                task_results, *extra_fields, use_no_training=False
+            )
         else:
             rollout_result = self.get_rollout_result(task_results, *extra_fields)
         agent_metrics = self.get_rollout_metrics(rollout_result)
@@ -375,7 +376,9 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         return agent_metrics
 
     async def run_agentloop_rollout(
-        self, input_channel: Channel, output_channel: Channel,
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
     ):
         """
         Run the agent loop for multiple queries.
@@ -408,7 +411,7 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
     def gen_extra_fields(
         self,
         task_results: list[MultiTurnAgentLoopOutput],
-        answer: str, 
+        answer: str,
     ) -> Optional[dict]:
         """Collect extra fields emitted by per-turn and per-trajectory outputs.
 
@@ -475,17 +478,19 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
 
             if has_weighted_stat:
                 weighted_sum = sum(
-                    float(metric_dict[sum_key])
-                    for metric_dict in agent_metrics_list
+                    float(metric_dict[sum_key]) for metric_dict in agent_metrics_list
                 )
                 weighted_cnt = sum(
-                    float(metric_dict[cnt_key])
-                    for metric_dict in agent_metrics_list
+                    float(metric_dict[cnt_key]) for metric_dict in agent_metrics_list
                 )
-                whole_metrics[k] = weighted_sum / weighted_cnt if weighted_cnt > 0 else 0.0
+                whole_metrics[k] = (
+                    weighted_sum / weighted_cnt if weighted_cnt > 0 else 0.0
+                )
                 continue
 
-            values_list = [metric_dict[k] for metric_dict in agent_metrics_list if k in metric_dict]
+            values_list = [
+                metric_dict[k] for metric_dict in agent_metrics_list if k in metric_dict
+            ]
             if len(values_list) == 0:
                 continue
             if "/max/" in k:
@@ -528,7 +533,9 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
                 if len(task_result.trace_prints) > 0:
                     self.print_agent_outputs(None, task_result.trace_prints)
         if not use_no_training:
-            self.log_info(f"finish question id {task_results[0].extra_fields['instance_id']}")
+            self.log_info(
+                f"finish question id {task_results[0].extra_fields['instance_id']}"
+            )
 
         idx_to_traj = []
         prompt_lengths = []
@@ -544,7 +551,10 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         for idx, task_result in enumerate(task_results):
             for single_turn_output in task_result.single_turn_outputs:
                 single_turn_output: AgentLoopOutput
-                if use_no_training and single_turn_output.extra_fields["not_training"] == True:
+                if (
+                    use_no_training
+                    and single_turn_output.extra_fields["not_training"] == True
+                ):
                     continue
                 idx_to_traj.append(idx)
                 prompt_lengths.append(len(single_turn_output.prompt_ids))
@@ -553,9 +563,9 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
                     single_turn_output.prompt_ids + single_turn_output.response_ids
                 )
                 if self.return_logprobs:
-                    assert len(single_turn_output.response_logprobs) == len(single_turn_output.response_ids), (
-                        "response_logprobs should have the same length as response_ids"
-                    )
+                    assert len(single_turn_output.response_logprobs) == len(
+                        single_turn_output.response_ids
+                    ), "response_logprobs should have the same length as response_ids"
                     rollout_logprobs.append(single_turn_output.response_logprobs)
                 is_end.append(single_turn_output.is_end)
                 rewards.append(single_turn_output.reward_score)

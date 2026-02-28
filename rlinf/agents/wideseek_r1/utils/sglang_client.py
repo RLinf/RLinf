@@ -15,7 +15,9 @@
 
 import asyncio
 import threading
+
 import aiohttp
+
 
 class SGLangClient:
     """SGLang API client with connection pooling."""
@@ -90,7 +92,7 @@ class SGLangClient:
                         # print(
                         #     f"[ERROR] SGLangClient: Failed calling sglang: {response.status}, response: {response_text}, Retry {retry_count}/{max_retries}"
                         # )
-            except Exception as e:
+            except Exception:
                 # print(
                 #     f"[ERROR] SGLangClient: Exception error in calling sglang: {e}, Retry {retry_count}/{max_retries}"
                 # )

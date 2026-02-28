@@ -15,7 +15,7 @@
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Optional, Union
+from typing import TYPE_CHECKING, Callable, Optional, Union
 
 import torch
 from omegaconf import DictConfig
@@ -1024,12 +1024,12 @@ class DynamicRolloutResult:
     # loss_scales: Optional[torch.Tensor] = None
 
     # extra fields used in training for custom process
-    extra_fields_train: dict[str, list] = field(default_factory=dict) # [num_sequence]
+    extra_fields_train: dict[str, list] = field(default_factory=dict)  # [num_sequence]
 
     # extra fields used in reward / eval. not used in training
-    extra_fields_turn: Optional[dict] = None # [num_sequence]
-    extra_fields_traj: Optional[dict] = None # [group_size]
-    extra_fields_group: Optional[dict] = None # [1]
+    extra_fields_turn: Optional[dict] = None  # [num_sequence]
+    extra_fields_traj: Optional[dict] = None  # [group_size]
+    extra_fields_group: Optional[dict] = None  # [1]
 
     @staticmethod
     def _get_attention_masks_and_position_ids(
@@ -1164,7 +1164,10 @@ class DynamicRolloutResult:
             "prompt_lengths": prompt_lengths.cuda(),
             "response_lengths": response_lengths.cuda(),
             "prev_logprobs": prev_logprobs.cuda(),
-            **{f"extra:{k}": torch.as_tensor(v).cuda() for k, v in self.extra_fields_train.items()},
+            **{
+                f"extra:{k}": torch.as_tensor(v).cuda()
+                for k, v in self.extra_fields_train.items()
+            },
         }
 
         if self.advantages is not None:
@@ -1286,7 +1289,7 @@ class DynamicRolloutResult:
         for traj, idxes in traj_to_idx.items():
             idxes = sorted(idxes, key=lambda x: prompt_lengths[x])
             for i, left in enumerate(idxes):
-                for right in idxes[i + 1:]:
+                for right in idxes[i + 1 :]:
                     if right in passed_as_suffix:
                         continue
                     # Skip overlapping response spans to avoid mixing turns.
@@ -1296,8 +1299,12 @@ class DynamicRolloutResult:
                     )
                     if mask_overlap.sum().item() > 1:
                         continue
-                    left_ids = batch["input_ids"][left][:prompt_lengths[left] + response_lengths[left]]
-                    right_ids = batch["input_ids"][right][:prompt_lengths[left] + response_lengths[left]]
+                    left_ids = batch["input_ids"][left][
+                        : prompt_lengths[left] + response_lengths[left]
+                    ]
+                    right_ids = batch["input_ids"][right][
+                        : prompt_lengths[left] + response_lengths[left]
+                    ]
                     if torch.equal(left_ids, right_ids):
                         pack_map[right] = [*pack_map.pop(left, []), left]
                         passed_as_suffix.add(right)
@@ -1318,7 +1325,7 @@ class DynamicRolloutResult:
             "rewards",
             "advantages",
             "loss_scales",
-            *(k for k in batch.keys() if k.startswith("extra:"))
+            *(k for k in batch.keys() if k.startswith("extra:")),
         ]
         custom_keys = [
             "idx_to_traj",
@@ -1340,19 +1347,22 @@ class DynamicRolloutResult:
             # Merge additive token-level stats over response tokens only.
             for key in ["prev_logprobs", "advantages"]:
                 value = [
-                    split_params[key][idx].masked_fill(~split_params["response_mask"][idx], 0)
+                    split_params[key][idx].masked_fill(
+                        ~split_params["response_mask"][idx], 0
+                    )
                     for idx in idxes
                 ]
                 split_params[key][suffix] = torch.stack(value).sum(dim=0)
 
             # Re-scale loss_scales to preserve total per-turn contribution.
             masked_counts = [
-                split_params["response_mask"][idx].sum().item()
-                for idx in idxes
+                split_params["response_mask"][idx].sum().item() for idx in idxes
             ]
             masked_count_all = sum(masked_counts)
             value = [
-                split_params["loss_scales"][idx].masked_fill(~split_params["response_mask"][idx], 0)
+                split_params["loss_scales"][idx].masked_fill(
+                    ~split_params["response_mask"][idx], 0
+                )
                 * (masked_count_all / masked_counts[i])
                 for i, idx in enumerate(idxes)
             ]
@@ -1360,18 +1370,21 @@ class DynamicRolloutResult:
 
             # response_mask
             response_mask = [split_params["response_mask"][idx] for idx in idxes]
-            split_params["response_mask"][suffix] = torch.stack(response_mask).sum(dim=0).bool()
+            split_params["response_mask"][suffix] = (
+                torch.stack(response_mask).sum(dim=0).bool()
+            )
 
             # prompt_lengths, response_lengths
-            all_length = split_params["prompt_lengths"][suffix] + split_params["response_lengths"][suffix]
+            all_length = (
+                split_params["prompt_lengths"][suffix]
+                + split_params["response_lengths"][suffix]
+            )
             prompt_length = split_params["prompt_lengths"][prefixes[0]]
             split_params["prompt_lengths"][suffix] = prompt_length
             split_params["response_lengths"][suffix] = all_length - prompt_length
 
         all_prefixes = set([j for i in pack_map.values() for j in i])
-        pack_params = {
-            k: [] for k in batch.keys() if not k in custom_keys
-        }
+        pack_params = {k: [] for k in batch.keys() if k not in custom_keys}
         for i in range(num_sequence):
             if i in all_prefixes:
                 continue
@@ -1424,7 +1437,9 @@ class DynamicRolloutResult:
             prompt_lengths=[],
             response_lengths=[],
             is_end=[],
-            extra_fields_train={k: None for k in rollout_results[0].extra_fields_train.keys()}
+            extra_fields_train=dict.fromkeys(
+                rollout_results[0].extra_fields_train.keys()
+            ),
         )
 
         for res in rollout_results:
@@ -1479,7 +1494,9 @@ class DynamicRolloutResult:
                         merged_result.loss_scales, res.loss_scales
                     )
                 else:
-                    raise ValueError(f"Wrong type of loss_scales {type(res.loss_scales)}")
+                    raise ValueError(
+                        f"Wrong type of loss_scales {type(res.loss_scales)}"
+                    )
 
         return merged_result
 
@@ -1517,7 +1534,7 @@ class DynamicRolloutResult:
             split_rewards = rollout_result.rewards[start_idx:end_idx]
             split_extra_fields_train = {
                 k: v[start_idx:end_idx]
-                    for k, v in rollout_result.extra_fields_train.items()
+                for k, v in rollout_result.extra_fields_train.items()
             }
 
             split_prev_logprobs = None

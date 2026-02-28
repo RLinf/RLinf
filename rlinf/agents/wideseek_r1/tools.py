@@ -560,6 +560,7 @@ class WideSeekR1ToolWorker(ToolWorker):
 
     async def _process_requests(self):
         """Continuously consume tool requests and respond on per-session keys."""
+
         def process_tool_result(response, tool_type, access_token=None):
             """Process tool results following ASearcher's consume_tool_response logic.
 

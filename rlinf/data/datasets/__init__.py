@@ -61,7 +61,7 @@ def create_rl_dataset(
     elif config.data.type == "wideseek_r1":
         logging.info(f"Using dataset class: {WideSeekR1_Dataset.__name__}")
         train_dataset = None
-        is_eval = config.runner.task_type == 'reasoning_eval'
+        is_eval = config.runner.task_type == "reasoning_eval"
         if not is_eval:
             train_dataset = WideSeekR1_Dataset(
                 data_paths=config.data.train_data_paths,
@@ -91,7 +91,7 @@ def create_rl_dataset(
             tokenizer=tokenizer,
         )
 
-        return train_dataset, val_dataset    
+        return train_dataset, val_dataset
     elif config.data.type == "vision_language":
         # Prefer new factory-based VLM datasets; fallback to legacy if requested
         dataset_name = getattr(config.data, "dataset_name", None)

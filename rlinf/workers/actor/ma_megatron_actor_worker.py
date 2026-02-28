@@ -76,12 +76,10 @@ class MAMegatronActor(MegatronActor):
             "enable_dp_load_balance must be True when is_dynamic_rollout_batch is True"
         )
 
-        self.use_sub_worker = self.cfg.rollout.get(
-            "use_sub_worker", False
-        )
+        self.use_sub_worker = self.cfg.rollout.get("use_sub_worker", False)
         assert self.placement_mode == PlacementMode.COLLOCATED
         #####
-        loss_scales = self.cfg.algorithm.get("loss_scales", []) 
+        loss_scales = self.cfg.algorithm.get("loss_scales", [])
         self.loss_scale_fns = get_loss_scales(loss_scales)
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
 
@@ -230,7 +228,7 @@ class MAMegatronActor(MegatronActor):
                     ),
                     clip_log_ratio_max=self.cfg.algorithm.get(
                         "clip_log_ratio_max", None
-                    ),                    
+                    ),
                 )
 
                 entropy_loss = torch.zeros(1, device=loss.device)
@@ -242,7 +240,7 @@ class MAMegatronActor(MegatronActor):
 
                 kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
                 if self.kl_beta > 0 and ref_logprobs is not None:
-                    assert False, "Currently, KL loss is not avaliable" 
+                    assert False, "Currently, KL loss is not avaliable"
                     kld = kl_penalty(curr_logprobs, ref_logprobs, self.kl_penalty_type)
                     kl_loss = self.loss_agg_func(kld, mask)
                     loss = loss + kl_loss * self.kl_beta
@@ -427,14 +425,16 @@ class MAMegatronActor(MegatronActor):
             ),
             "data_parallel_world_size": parallel_state.get_data_parallel_world_size(),
         }
-        batch["loss_scales"] = torch.ones_like(batch["advantages"]).masked_fill(~batch["response_mask"], 0)
+        batch["loss_scales"] = torch.ones_like(batch["advantages"]).masked_fill(
+            ~batch["response_mask"], 0
+        )
         for loss_scale_fn in self.loss_scale_fns:
             batch = loss_scale_fn(scale_context, batch)
         if self.pack_traj:
             batch = DynamicRolloutResult.pack_traj_batch(scale_context, batch)
         batch["advantages"] *= batch.pop("loss_scales")
         for key in list(batch.keys()):
-            if key == 'idx_to_traj' or key.startswith('extra:'):
+            if key == "idx_to_traj" or key.startswith("extra:"):
                 batch.pop(key, None)
 
         # Must be called after batch is retrieved, which is when rollout has stopped
@@ -647,8 +647,8 @@ class MAMegatronActor(MegatronActor):
             batch, rollout_result = self.get_batch(input_channel)
             batches.append(batch)
             rollout_results.append(rollout_result)
-        merged_batch, num_sequence_per_group = (
-            DynamicRolloutResult.merge_batches(batches, adjust_traj_indices=False, return_num_sequence_per_group=True)
+        merged_batch, num_sequence_per_group = DynamicRolloutResult.merge_batches(
+            batches, adjust_traj_indices=False, return_num_sequence_per_group=True
         )
 
         rollout_result = DynamicRolloutResult.merge_result_list(
@@ -688,7 +688,7 @@ class MAMegatronActor(MegatronActor):
         """
         with self.worker_timer():
             if batch.get("advantages", None) is None:
-                mask = batch["response_mask"] # [num_sequence, seq_len]
+                mask = batch["response_mask"]  # [num_sequence, seq_len]
                 advantages, _ = calculate_adv_and_returns(
                     task_type=self.cfg.runner.task_type,
                     adv_type=self.cfg.algorithm.adv_type,

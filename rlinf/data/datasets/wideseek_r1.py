@@ -64,7 +64,9 @@ class WideSeekR1_Dataset(Dataset):
                         filtered.append(item)
                     # breakpoint()
                 except Exception as e:
-                    logging.warning(f"Failed to process item with error: {e}. Item: {item}")
+                    logging.warning(
+                        f"Failed to process item with error: {e}. Item: {item}"
+                    )
                     failed += 1
 
             self.data = filtered

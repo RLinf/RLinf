@@ -43,7 +43,9 @@ def main(cfg) -> None:
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = ModelParallelComponentPlacement(cfg, cluster)
-    assert component_placement.placement_mode == PlacementMode.COLLOCATED, "multi-agent only supports collocated mode"
+    assert component_placement.placement_mode == PlacementMode.COLLOCATED, (
+        "multi-agent only supports collocated mode"
+    )
 
     # Generator group
     rollout_worker_cls = get_rollout_backend_worker(cfg)

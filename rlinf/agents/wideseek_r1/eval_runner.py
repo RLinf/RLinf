@@ -22,11 +22,9 @@ import pandas as pd
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from torch.utils.data import Dataset
-from tqdm import tqdm
 
 from rlinf.data.io_struct import DynamicRolloutResult
 from rlinf.runners.agent_eval_runner import AgentEvalRunner
-from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.runner_utils import local_mkdir_safe
 from rlinf.workers.agent.agent_loop import MultiTurnAgentLoopWorker
@@ -74,7 +72,7 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
             reward,
             agent_loop,
             tool_workers,
-            solid_rollouts
+            solid_rollouts,
         )
         # Initialize storage for accumulating raw evaluation results across all batches
         # Each item is the raw eval_result dict from agent_loop
@@ -303,11 +301,12 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
 
             if samples:
                 final_answer_format_values = [
-                    float(sample.get("final_answer_format", 0) or 0) for sample in samples
+                    float(sample.get("final_answer_format", 0) or 0)
+                    for sample in samples
                 ]
                 if final_answer_format_values:
-                    final_answer_format_sum += (
-                        sum(final_answer_format_values) / len(final_answer_format_values)
+                    final_answer_format_sum += sum(final_answer_format_values) / len(
+                        final_answer_format_values
                     )
 
             if mas_main_agent_turns_list:
@@ -447,7 +446,6 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
 
         logging.info(f"Actual batch size for this batch: {expected_batch_size}")
 
-
         if expected_batch_size is not None:
             total_batch_size_per_dp = expected_batch_size
         else:
@@ -486,8 +484,12 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
         extra_fields_traj = rollout_result.extra_fields_traj or {}
 
         eval_metrics = extra_fields_traj.get("eval_metric") or [None] * group_size
-        total_turn_list_metric = extra_fields_traj.get("total_turn_list") or [None] * group_size
-        final_answer_format_metric = extra_fields_traj.get("final_answer_format") or [0] * group_size
+        total_turn_list_metric = (
+            extra_fields_traj.get("total_turn_list") or [None] * group_size
+        )
+        final_answer_format_metric = (
+            extra_fields_traj.get("final_answer_format") or [0] * group_size
+        )
         llm_reward_metric = extra_fields_traj.get("llm_reward") or [0.0] * group_size
 
         def _safe_idx(values, idx, default=None):
@@ -508,26 +510,52 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
         for traj_idx in range(group_size):
             eval_metric = _safe_idx(eval_metrics, traj_idx, None) or {}
             total_turn_list = _safe_idx(total_turn_list_metric, traj_idx, None)
-            final_answer_format = _safe_idx(final_answer_format_metric, traj_idx, 0) or 0
+            final_answer_format = (
+                _safe_idx(final_answer_format_metric, traj_idx, 0) or 0
+            )
             llm_reward = _safe_idx(llm_reward_metric, traj_idx, 0.0) or 0.0
 
-            turn_idxes = [i for i, j in enumerate(rollout_result.idx_to_traj) if j == traj_idx]
+            turn_idxes = [
+                i for i, j in enumerate(rollout_result.idx_to_traj) if j == traj_idx
+            ]
             turns = []
             for turn_idx in turn_idxes:
-                reward_value = _to_py_scalar(_safe_idx(rollout_result.rewards, turn_idx, 0.0), 0.0)
+                reward_value = _to_py_scalar(
+                    _safe_idx(rollout_result.rewards, turn_idx, 0.0), 0.0
+                )
                 turn_data = {
-                    "prompt_text": _safe_idx(extra_fields_turn.get("prompt_text"), turn_idx, None),
-                    "response_text": _safe_idx(extra_fields_turn.get("response_text"), turn_idx, None),
-                    "prompt_ids_length": int(_to_py_scalar(_safe_idx(rollout_result.prompt_lengths, turn_idx, 0), 0)),
-                    "response_ids_length": int(_to_py_scalar(_safe_idx(rollout_result.response_lengths, turn_idx, 0), 0)),
-                    "is_end": bool(_to_py_scalar(_safe_idx(rollout_result.is_end, turn_idx, False), False)),
+                    "prompt_text": _safe_idx(
+                        extra_fields_turn.get("prompt_text"), turn_idx, None
+                    ),
+                    "response_text": _safe_idx(
+                        extra_fields_turn.get("response_text"), turn_idx, None
+                    ),
+                    "prompt_ids_length": int(
+                        _to_py_scalar(
+                            _safe_idx(rollout_result.prompt_lengths, turn_idx, 0), 0
+                        )
+                    ),
+                    "response_ids_length": int(
+                        _to_py_scalar(
+                            _safe_idx(rollout_result.response_lengths, turn_idx, 0), 0
+                        )
+                    ),
+                    "is_end": bool(
+                        _to_py_scalar(
+                            _safe_idx(rollout_result.is_end, turn_idx, False), False
+                        )
+                    ),
                     "reward_score": float(reward_value),
                     "role": _safe_idx(extra_fields_turn.get("role"), turn_idx, None),
-                    "tool_call_info": _safe_idx(extra_fields_turn.get("tool_call_info"), turn_idx, None),
+                    "tool_call_info": _safe_idx(
+                        extra_fields_turn.get("tool_call_info"), turn_idx, None
+                    ),
                 }
                 turns.append(turn_data)
 
-            final_answer = _safe_idx(extra_fields_traj.get("final_answer"), traj_idx, None)
+            final_answer = _safe_idx(
+                extra_fields_traj.get("final_answer"), traj_idx, None
+            )
             if isinstance(final_answer, pd.DataFrame):
                 final_answer = final_answer.to_dict(orient="records")
             samples_data.append(
@@ -535,10 +563,16 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
                     "sample_idx": traj_idx,
                     "num_turns": len(turn_idxes),
                     "turns": turns,
-                    "origin_question": _safe_idx(extra_fields_traj.get("origin_question"), traj_idx, None),
+                    "origin_question": _safe_idx(
+                        extra_fields_traj.get("origin_question"), traj_idx, None
+                    ),
                     "final_answer": final_answer,
-                    "final_answer_text": _safe_idx(extra_fields_traj.get("final_answer_text"), traj_idx, None),
-                    "planner_summary": _safe_idx(extra_fields_traj.get("planner_summary"), traj_idx, None),
+                    "final_answer_text": _safe_idx(
+                        extra_fields_traj.get("final_answer_text"), traj_idx, None
+                    ),
+                    "planner_summary": _safe_idx(
+                        extra_fields_traj.get("planner_summary"), traj_idx, None
+                    ),
                     "eval_metric": eval_metric,
                     "total_turn_list": total_turn_list,
                     "final_answer_format": float(final_answer_format),
@@ -547,8 +581,16 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
             )
 
         answer = (rollout_result.extra_fields_group or {}).get("answer", None)
-        eval_result = {"group_size": group_size, "answer": answer, "samples": samples_data}
-        if isinstance(answer, dict) and "instance_id" in answer and log_info is not None:
+        eval_result = {
+            "group_size": group_size,
+            "answer": answer,
+            "samples": samples_data,
+        }
+        if (
+            isinstance(answer, dict)
+            and "instance_id" in answer
+            and log_info is not None
+        ):
             log_info(f"finish question id {answer['instance_id']}")
         return eval_result
 

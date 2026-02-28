@@ -20,24 +20,24 @@ from typing import Optional
 
 from omegaconf import DictConfig
 
-from rlinf.data.io_struct import DynamicRolloutResult
 from rlinf.agents.wideseek_r1.utils.metrics import _compute_rollout_metrics
-from rlinf.agents.wideseek_r1.utils.sglang_client import SGLangClient
-from rlinf.agents.wideseek_r1.utils.reward import (
-    extract_final_answer, 
-    get_final_reward_score,
-    credit_assignment,
-)
-from rlinf.agents.wideseek_r1.utils.tool_description import (
-    tools_description_en,
-    tools_description_zh,
-)
 from rlinf.agents.wideseek_r1.utils.prompt_utils import (
     get_access_summary_messages,
     get_prompt_planner,
     get_prompt_single_agent,
     get_prompt_worker,
 )
+from rlinf.agents.wideseek_r1.utils.reward import (
+    credit_assignment,
+    extract_final_answer,
+    get_final_reward_score,
+)
+from rlinf.agents.wideseek_r1.utils.sglang_client import SGLangClient
+from rlinf.agents.wideseek_r1.utils.tool_description import (
+    tools_description_en,
+    tools_description_zh,
+)
+from rlinf.data.io_struct import DynamicRolloutResult
 from rlinf.data.tool_call.tool_io_struct import (
     ToolRequest,
     ToolResponse,
@@ -59,8 +59,27 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         placement: ModelParallelComponentPlacement,
     ):
         super().__init__(cfg, placement)
-        self.extra_keys_turn = ["subtask_count", "search_count", "access_count", "tool_call_info", "prompt_text", "response_text", "role"]
-        self.extra_keys_traj = ["origin_question", "planner_summary", "final_answer", "final_answer_text", "num_valid_planner_turns", "num_valid_worker_turns", "eval_metric", "total_turn_list", "final_answer_format", "llm_reward"]
+        self.extra_keys_turn = [
+            "subtask_count",
+            "search_count",
+            "access_count",
+            "tool_call_info",
+            "prompt_text",
+            "response_text",
+            "role",
+        ]
+        self.extra_keys_traj = [
+            "origin_question",
+            "planner_summary",
+            "final_answer",
+            "final_answer_text",
+            "num_valid_planner_turns",
+            "num_valid_worker_turns",
+            "eval_metric",
+            "total_turn_list",
+            "final_answer_format",
+            "llm_reward",
+        ]
 
         self.max_prompt_len = int(self.cfg.data.max_prompt_length)
         self.max_total_len = int(self.cfg.actor.model.encoder_seq_length)
@@ -74,12 +93,12 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
 
         self.workflow = self.cfg.agentloop.get("workflow", "mas")
         self.is_hybrid = self.cfg.data.get("is_hybrid", False)
-        
+
         self.use_llm_judge_api = True
         llm_ip = self.cfg.agentloop.get("llm_ip", "")
         llm_port = self.cfg.agentloop.get("llm_port", "")
         llm_type = self.cfg.agentloop.get("llm_type", "")
-        self.sgl_client = SGLangClient(llm_ip, llm_port, llm_type)       
+        self.sgl_client = SGLangClient(llm_ip, llm_port, llm_type)
 
     async def extract_tool_calls(
         self, response_text: str, role: str
@@ -247,7 +266,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
             return "No useful Information is Found under this URL."
 
         messages = get_access_summary_messages(info_to_extract, page_content)
-        result_text = await self.sgl_client.call_sglang_api(messages)     
+        result_text = await self.sgl_client.call_sglang_api(messages)
         return result_text
 
     async def worker_call(
@@ -256,7 +275,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         main_task: str,
         is_markdown: bool,
         language: str,
-        sub_traj_id: int
+        sub_traj_id: int,
     ) -> tuple[list[AgentLoopOutput], str]:
         """Execute one planner-created subtask through the worker role loop.
 
@@ -418,7 +437,13 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                     response_text=response_text,
                     is_end=generate_result["finish_reason"] == "length",
                     response_logprobs=generate_result["logprobs"],
-                    extra_fields=dict(role=role, idx_to_sub_traj=sub_traj_id, context_failed=False, max_turn_limit_failed=False, turn_repeat_failed=False),
+                    extra_fields=dict(
+                        role=role,
+                        idx_to_sub_traj=sub_traj_id,
+                        context_failed=False,
+                        max_turn_limit_failed=False,
+                        turn_repeat_failed=False,
+                    ),
                     tool_call_info=tool_call_info
                     if tool_call_info
                     else None,  # if passed, must have tool call
@@ -447,7 +472,11 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                 for i, tool_request in enumerate(tool_requests, start=1):
                     tasks.append(
                         self.worker_call(
-                            tool_request, origin_question, is_markdown, language, sub_traj_id + i + sub_traj_num
+                            tool_request,
+                            origin_question,
+                            is_markdown,
+                            language,
+                            sub_traj_id + i + sub_traj_num,
                         )
                     )
                 sub_traj_num += len(tasks)
@@ -645,17 +674,24 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
             final_answer_extract = extract_final_answer(answer_text, mode="boxed")
 
         # credit assignment
-        norm_column = self.cfg.data.get('norm_column', False)
+        norm_column = self.cfg.data.get("norm_column", False)
         llm_reward, format = await get_final_reward_score(
-            origin_question, final_answer_extract, answer, is_markdown, norm_column, self.sgl_client
+            origin_question,
+            final_answer_extract,
+            answer,
+            is_markdown,
+            norm_column,
+            self.sgl_client,
         )
 
-        output_buffer, train_buffer, final_answer_format, reward_score = credit_assignment(
-            agentloop_config=self.cfg.agentloop, 
-            output_buffer=output_buffer, 
-            llm_reward=llm_reward,
-            succ_end=succ_end,
-            answer_format = final_answer_extract is not None and format is True, 
+        output_buffer, train_buffer, final_answer_format, reward_score = (
+            credit_assignment(
+                agentloop_config=self.cfg.agentloop,
+                output_buffer=output_buffer,
+                llm_reward=llm_reward,
+                succ_end=succ_end,
+                answer_format=final_answer_extract is not None and format is True,
+            )
         )
 
         for single_turn_output in output_buffer:
@@ -694,9 +730,15 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
             single_turn_output.extra_fields["subtask_count"] = subtask_count
             single_turn_output.extra_fields["search_count"] = search_count
             single_turn_output.extra_fields["access_count"] = access_count
-            single_turn_output.extra_fields["tool_call_info"] = single_turn_output.tool_call_info
-            single_turn_output.extra_fields["prompt_text"] = single_turn_output.prompt_text
-            single_turn_output.extra_fields["response_text"] = single_turn_output.response_text
+            single_turn_output.extra_fields["tool_call_info"] = (
+                single_turn_output.tool_call_info
+            )
+            single_turn_output.extra_fields["prompt_text"] = (
+                single_turn_output.prompt_text
+            )
+            single_turn_output.extra_fields["response_text"] = (
+                single_turn_output.response_text
+            )
 
         output = MultiTurnAgentLoopOutput(
             single_turn_outputs=output_buffer,
@@ -707,7 +749,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                 planner_summary=answer_text,
                 reward=reward_score,
                 origin_question=origin_question,
-                llm_reward = llm_reward,
+                llm_reward=llm_reward,
                 total_turn_list=total_turn_list if self.workflow == "mas" else None,
                 instance_id=answer["instance_id"],
                 num_valid_planner_turns=num_valid_planner_turns,
@@ -720,7 +762,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
     def gen_extra_fields(
         self,
         task_results: list[MultiTurnAgentLoopOutput],
-        answer: str, 
+        answer: str,
     ) -> Optional[dict]:
         """Build extra fields for turn/traj/group scopes and training regrouping.
 
@@ -732,7 +774,9 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
             Extra field dicts for turn-level, trajectory-level, group-level,
             and training-only fields.
         """
-        extra_fields_turn, extra_fields_traj, *_ = super().gen_extra_fields(task_results, answer)
+        extra_fields_turn, extra_fields_traj, *_ = super().gen_extra_fields(
+            task_results, answer
+        )
 
         roles = []
         for task_result in task_results:
@@ -740,7 +784,10 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                 if self.extra_keys_turn is not None:
                     for k in self.extra_keys_turn:
                         v = single_turn_output.extra_fields.get(k, None)
-                        if k == "role" and single_turn_output.extra_fields["not_training"] != True:
+                        if (
+                            k == "role"
+                            and single_turn_output.extra_fields["not_training"] != True
+                        ):
                             roles.append(v)
         extra_fields_turn = {**extra_fields_turn, "roles": roles}
 
@@ -762,7 +809,12 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                 idx_to_sub_traj.append(sub_traj_map[role_idx])
         extra_fields_train = {"idx_to_sub_traj": idx_to_sub_traj}
 
-        return extra_fields_turn, extra_fields_traj, extra_fields_group, extra_fields_train
+        return (
+            extra_fields_turn,
+            extra_fields_traj,
+            extra_fields_group,
+            extra_fields_train,
+        )
 
     def get_rollout_metrics(
         self,
@@ -783,8 +835,12 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
             turn_subtask_counts=rollout_result.extra_fields_turn["subtask_count"],
             turn_search_counts=rollout_result.extra_fields_turn["search_count"],
             turn_access_counts=rollout_result.extra_fields_turn["access_count"],
-            num_valid_planner_turns=sum(rollout_result.extra_fields_traj["num_valid_planner_turns"]),
-            num_valid_worker_turns=sum(rollout_result.extra_fields_traj["num_valid_worker_turns"]),
+            num_valid_planner_turns=sum(
+                rollout_result.extra_fields_traj["num_valid_planner_turns"]
+            ),
+            num_valid_worker_turns=sum(
+                rollout_result.extra_fields_traj["num_valid_worker_turns"]
+            ),
             total_turn_list_metric=rollout_result.extra_fields_traj["total_turn_list"],
             final_answer_format=rollout_result.extra_fields_traj["final_answer_format"],
         )

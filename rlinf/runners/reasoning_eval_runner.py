@@ -19,7 +19,7 @@ from typing import Optional, Union
 import pandas as pd
 import torch
 from omegaconf.dictconfig import DictConfig
-from torch.utils.data import Dataset, RandomSampler, SequentialSampler
+from torch.utils.data import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.data.io_struct import RolloutRequest
@@ -111,9 +111,7 @@ class ReasoningEvalRunner:
 
         assert len(self.val_dataloader) >= 1, "Validation dataloader is empty!"
 
-        logging.info(
-            f"Size of val dataloader: {len(self.val_dataloader)}"
-        )
+        logging.info(f"Size of val dataloader: {len(self.val_dataloader)}")
 
     def init_rollout_workers(self):
         """init rollout worker."""
