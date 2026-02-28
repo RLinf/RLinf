@@ -15,7 +15,6 @@
 import typing
 
 from rlinf.scheduler import Channel
-from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
@@ -57,18 +56,37 @@ class EmbodiedEvalRunner:
         self.env.init_worker().wait()
 
     def evaluate(self):
-        env_handle: Handle = self.env.evaluate(
-            input_channel=self.rollout_channel,
-            output_channel=self.env_channel,
+        total_episodes = self.cfg.runner.get(
+            "eval_episodes", self.cfg.env.eval.total_num_envs
         )
-        rollout_handle: Handle = self.rollout.evaluate(
-            input_channel=self.env_channel,
-            output_channel=self.rollout_channel,
-        )
-        env_results = env_handle.wait()
-        rollout_handle.wait()
-        eval_metrics_list = [results for results in env_results if results is not None]
-        eval_metrics = compute_evaluate_metrics(eval_metrics_list)
+        envs_per_eval = self.cfg.env.eval.total_num_envs
+        loops = (total_episodes + envs_per_eval - 1) // envs_per_eval
+
+        all_eval_metrics_list = []
+
+        for i in range(loops):
+            print(
+                f"\n🚀 [Cluster Runner] Starting evaluation loop {i + 1}/{loops} (Target: {total_episodes} episodes)..."
+            )
+            env_handle = self.env.evaluate(
+                input_channel=self.rollout_channel,
+                output_channel=self.env_channel,
+            )
+            rollout_handle = self.rollout.evaluate(
+                input_channel=self.env_channel,
+                output_channel=self.rollout_channel,
+            )
+            env_results = env_handle.wait()
+            rollout_handle.wait()
+
+            valid_results = [res for res in env_results if res is not None]
+            all_eval_metrics_list.extend(valid_results)
+
+            if len(all_eval_metrics_list) >= total_episodes:
+                all_eval_metrics_list = all_eval_metrics_list[:total_episodes]
+                break
+
+        eval_metrics = compute_evaluate_metrics(all_eval_metrics_list)
         return eval_metrics
 
     def run(self):

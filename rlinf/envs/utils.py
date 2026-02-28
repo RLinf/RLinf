@@ -112,7 +112,12 @@ def save_rollout_video(
     """
     os.makedirs(output_dir, exist_ok=True)
     mp4_path = os.path.join(output_dir, f"{video_name}.mp4")
-    video_writer = imageio.get_writer(mp4_path, fps=fps)
+    video_writer = imageio.get_writer(
+        mp4_path,
+        fps=fps,
+        codec=os.getenv("VIDEO_CODEC", "libopenh264"),
+        macro_block_size=None,
+    )
     for img in rollout_images:
         video_writer.append_data(img)
     video_writer.close()

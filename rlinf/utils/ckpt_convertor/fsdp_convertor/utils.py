@@ -28,6 +28,7 @@ def get_model_save_helper(model_type: str):
 
     _MODEL_SAVE_HELPER_REGISTRY = {
         SupportedModel.OPENVLA_OFT: openvla_oft_save_helper,
+        SupportedModel.LINGBOT: openvla_oft_save_helper,
     }
 
     if model_type in _MODEL_SAVE_HELPER_REGISTRY:

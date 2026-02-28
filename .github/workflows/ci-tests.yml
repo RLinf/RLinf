@@ -148,6 +148,9 @@ jobs:
               - *scheduler
               - docs/**/*.py
               - '.github/workflows/ci-tests.yml'
+              - '.pre-commit-config.yaml'
+              - 'tests/models/embodiment/**'
+              - 'requirements/other_files/**'
             all_changes_filter: &all_changes
               - *install
               - *docker

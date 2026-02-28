@@ -276,4 +276,5 @@ as well as reinforcement learning training examples on real robots.
    sft_vlm
    co_training
    dsrl
+   lingbot
 

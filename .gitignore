@@ -19,3 +19,13 @@ outputs/*
 uv.lock
 rlinf/envs/maniskill/assets
 PKG-INFO
+RoboTwin/eval_video_log/
+RoboTwin/eval_result/
+RoboTwin/data/
+# Evaluation video artifacts
+RoboTwin/eval_video_log/**/*.mp4
+# Data collection artifacts
+RoboTwin/**/*.hdf5
+# Data collection artifacts
+RoboTwin/**/*.parquet
+RoboTwin/
