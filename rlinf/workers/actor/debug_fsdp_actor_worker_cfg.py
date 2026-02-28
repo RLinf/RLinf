@@ -462,6 +462,7 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
         data_cfg = cfg.get("data", {})
         openpi_cfg = cfg.actor.model.openpi
         advantage_tag = data_cfg.get("advantage_tag", None)
+        task_name_filter = data_cfg.get("task_name_filter", None)
 
         # Parse datasets from config
         datasets_config = data_cfg.get("datasets", [])
@@ -494,6 +495,27 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
 
             # 1. Create LeRobotDataset
             dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(data_path)
+
+            # Filter episodes by task name if specified
+            if task_name_filter is not None and episodes is None:
+                import json
+
+                meta_dir = Path(data_path) / "meta"
+                episodes_file = meta_dir / "episodes.jsonl"
+                if episodes_file.exists():
+                    filtered_eps = []
+                    with open(episodes_file) as f:
+                        for line in f:
+                            ep = json.loads(line)
+                            if task_name_filter in ep.get("tasks", ""):
+                                filtered_eps.append(ep["episode_index"])
+                    if self._rank == 0:
+                        print(
+                            f"[DebugCFGFSDPActor] task_name_filter='{task_name_filter}': "
+                            f"filtered {len(filtered_eps)} episodes from {data_path}"
+                        )
+                    episodes = filtered_eps if filtered_eps else None
+
             base_dataset = lerobot_dataset.LeRobotDataset(
                 data_path,
                 episodes=episodes,

@@ -841,14 +841,13 @@ def compute_advantages_for_dataset(
         )
 
     # DataLoader configuration for multi-process data loading
-    pipeline_batch_size = cfg.advantage.get("pipeline_batch_size", 2048)
     num_dataloader_workers = cfg.advantage.get("num_dataloader_workers", 8)
     prefetch_factor = cfg.advantage.get("prefetch_factor", 2)
 
     if rank == 0:
         logger.info(
             f"  Using DataLoader: workers={num_dataloader_workers}, "
-            f"prefetch_factor={prefetch_factor}, batch_size={pipeline_batch_size}"
+            f"prefetch_factor={prefetch_factor}, batch_size={batch_size}"
         )
 
     # Results storage (periodically flushed to disk to prevent OOM)
@@ -880,7 +879,7 @@ def compute_advantages_for_dataset(
     if rank == 0:
         logger.info(
             f"  Memory management: flush to disk every {flush_interval} pipeline batches "
-            f"(~{flush_interval * pipeline_batch_size} samples)"
+            f"(~{flush_interval * batch_size} samples)"
         )
 
     def flush_results_to_disk():
@@ -915,7 +914,7 @@ def compute_advantages_for_dataset(
 
     dataloader = torch.utils.data.DataLoader(
         shard_dataset,
-        batch_size=pipeline_batch_size,
+        batch_size=batch_size,
         num_workers=num_dataloader_workers,
         prefetch_factor=prefetch_factor if num_dataloader_workers > 0 else None,
         persistent_workers=num_dataloader_workers > 0,

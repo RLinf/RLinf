@@ -38,48 +38,6 @@ from rlinf.envs.utils import (
     to_tensor,
 )
 
-libero_type = get_libero_type()
-
-if libero_type in ["pro", "plus"]:
-    sys.path[:] = [p for p in sys.path if "opt/libero" not in p]
-    LIBERO_PKG_NAME = f"libero{libero_type}"
-    LIBERO_MAIN_MODULE_PATH = f"{LIBERO_PKG_NAME}.{LIBERO_PKG_NAME}"
-    try:
-        real_libero_pkg = importlib.import_module(LIBERO_PKG_NAME)
-        real_libero_core = importlib.import_module(LIBERO_MAIN_MODULE_PATH)
-
-        try:
-            real_libero_benchmark = importlib.import_module(
-                f"{LIBERO_MAIN_MODULE_PATH}.benchmark"
-            )
-        except ImportError:
-            real_libero_benchmark = importlib.import_module(
-                f"{LIBERO_PKG_NAME}.benchmark"
-            )
-
-        try:
-            real_libero_envs = importlib.import_module(
-                f"{LIBERO_MAIN_MODULE_PATH}.envs"
-            )
-        except ImportError:
-            real_libero_envs = importlib.import_module(f"{LIBERO_PKG_NAME}.envs")
-
-        sys.modules["libero"] = real_libero_pkg
-        sys.modules["libero.libero"] = real_libero_core
-        sys.modules["libero.libero.benchmark"] = real_libero_benchmark
-        sys.modules["libero.libero.envs"] = real_libero_envs
-    except ImportError as e:
-        print(
-            f"[Main Process Routing Error] Failed to import '{LIBERO_MAIN_MODULE_PATH}'. Error: {e}"
-        )
-
-if libero_type == "pro":
-    from liberopro.liberopro.benchmark import Benchmark
-elif libero_type == "plus":
-    from liberoplus.liberoplus.benchmark import Benchmark
-else:
-    from libero.libero.benchmark import Benchmark
-
 
 class LiberoEnv(gym.Env):
     def __init__(self, cfg, num_envs, seed_offset, total_num_processes, worker_info):

@@ -219,7 +219,7 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
             if first_process:
                 sample["prompt"] = obs["prompt"][i]
                 positive_guidance_prompt = obs["positive_guidance_prompt"][i]
-                # TODO: This is written roughly, refine it later
+                # Apply guidance tokenization via hardcoded transform index
                 positive_guidance_dict = self._input_transform.transforms[5](
                     {"prompt": positive_guidance_prompt}
                 )

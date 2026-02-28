@@ -88,7 +88,7 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         self.device = torch.cuda.current_device()
 
         # Build data loader
-        self.data_loader, self.eval_data_loader, self.data_config = (
+        self.data_loader, self.eval_data_loaders, self.data_config = (
             self.build_dataloader()
         )
 
@@ -384,27 +384,35 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         data_config = {"model_type": "vla_lib_value_model"}
         train_data_loader = ValueDataLoaderImpl(data_config, torch_loader)
 
-        # ---- optional eval DataLoader ----
-        eval_data_loader = None
-        # New preferred config style:
-        # data.datasets[*] can contain a standalone eval entry with
-        # eval_dataset_path / eval_max_samples
-        # Backward compatible with legacy top-level:
-        # data.eval_dataset_path / data.eval_max_samples
-        if len(eval_entries) > 1:
-            logger.warning(
-                "[ValueSFT] Multiple datasets define eval_dataset_path; "
-                "using the first one."
-            )
-        eval_entry = eval_entries[0] if eval_entries else {}
+        # ---- optional eval DataLoader(s) ----
+        # Build one eval loader per entry that defines eval_dataset_path.
+        # Legacy fallback: if no entries have eval_dataset_path but
+        # data.eval_dataset_path is set at top level, create one eval loader.
+        eval_data_loaders: list[tuple[str, ValueDataLoaderImpl]] = []
 
-        eval_dataset_path = eval_entry.get(
-            "eval_dataset_path", data_cfg.get("eval_dataset_path", None)
-        )
-        eval_max_samples = eval_entry.get(
-            "eval_max_samples", data_cfg.get("eval_max_samples", None)
-        )
-        if eval_dataset_path:
+        # Collect effective eval sources
+        effective_eval_entries: list[dict] = []
+        if eval_entries:
+            effective_eval_entries = eval_entries
+        else:
+            # Legacy top-level fallback
+            legacy_path = data_cfg.get("eval_dataset_path", None)
+            if legacy_path:
+                effective_eval_entries = [
+                    {
+                        "eval_dataset_path": legacy_path,
+                        "eval_max_samples": data_cfg.get("eval_max_samples", None),
+                    }
+                ]
+
+        for eval_entry in effective_eval_entries:
+            eval_dataset_path = eval_entry.get("eval_dataset_path")
+            eval_max_samples = eval_entry.get(
+                "eval_max_samples", data_cfg.get("eval_max_samples", None)
+            )
+            if not eval_dataset_path:
+                continue
+
             if "return_min" in eval_entry or "return_max" in eval_entry:
                 logger.warning(
                     "[ValueSFT] eval entry return_min/return_max are ignored. "
@@ -414,6 +422,9 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             eval_ds_path = eval_dataset_path
             if data_root and not os.path.isabs(eval_ds_path):
                 eval_ds_path = os.path.join(data_root, eval_ds_path)
+
+            # Derive a short name for this eval dataset
+            ds_name = eval_entry.get("eval_name", Path(eval_ds_path).stem)
 
             eval_dataset = ValueDataset(
                 dataset_path=eval_ds_path,
@@ -462,11 +473,18 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                 **eval_loader_worker_kwargs,
             )
             eval_data_loader = ValueDataLoaderImpl(data_config, eval_torch_loader)
+            eval_data_loaders.append((ds_name, eval_data_loader))
             logger.info(
-                f"[ValueSFT] Eval dataset loaded: {eval_dataset_path} "
+                f"[ValueSFT] Eval dataset '{ds_name}' loaded: {eval_dataset_path} "
                 f"({len(eval_dataset)} samples, eval_max_samples={eval_max_samples}, "
                 "norm_range=train_global:"
                 f"[{global_return_min}, {global_return_max}])"
+            )
+
+        if eval_data_loaders:
+            logger.info(
+                f"[ValueSFT] {len(eval_data_loaders)} eval dataset(s) registered: "
+                f"{[name for name, _ in eval_data_loaders]}"
             )
             logger.info(
                 "[ValueSFT] Eval DataLoader workers: "
@@ -476,7 +494,7 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                 f"pin_memory={pin_memory}"
             )
 
-        return train_data_loader, eval_data_loader, data_config
+        return train_data_loader, eval_data_loaders, data_config
 
     # -----------------------------------------------------------------------
     # Training
@@ -600,8 +618,13 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             return train_metrics
 
     def run_evaluation(self) -> dict[str, float]:
-        """Run periodic evaluation on eval_data_loader if provided."""
-        if self.eval_data_loader is None:
+        """Run periodic evaluation on all eval datasets.
+
+        Returns metrics keyed as:
+        - ``"<dataset_name>/<metric>"`` for per-dataset metrics
+        - ``"<metric>"`` for aggregate (mean across datasets)
+        """
+        if not self.eval_data_loaders:
             return {}
 
         with self.worker_timer():
@@ -610,93 +633,118 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                     self.load_param_and_grad(self.device)
 
             self.model.eval()
-            all_metrics = []
+            all_dataset_metrics: dict[str, dict[str, float]] = {}
 
             with torch.no_grad():
-                for batch in self.eval_data_loader:
-                    obs, target_values, actions, _ = self._prepare_input(batch)
+                for ds_name, loader in self.eval_data_loaders:
+                    batch_metrics: list[dict[str, float]] = []
+                    for batch in loader:
+                        obs, target_values, actions, _ = self._prepare_input(batch)
 
-                    with self.amp_context:
-                        fwd_kwargs = {
-                            "observation": obs,
-                            "target_values": target_values,
+                        with self.amp_context:
+                            fwd_kwargs = {
+                                "observation": obs,
+                                "target_values": target_values,
+                            }
+                            if actions is not None:
+                                fwd_kwargs["actions"] = actions
+                            result = self.model(**fwd_kwargs)
+                            loss = result.loss
+
+                        metrics: dict[str, float] = {}
+                        if result.expert_loss is not None:
+                            metrics["expert_loss"] = (
+                                result.expert_loss.detach().item()
+                                if isinstance(result.expert_loss, torch.Tensor)
+                                else result.expert_loss
+                            )
+                        if result.language_loss is not None:
+                            metrics["language_loss"] = (
+                                result.language_loss.detach().item()
+                                if isinstance(result.language_loss, torch.Tensor)
+                                else result.language_loss
+                            )
+                        if result.predicted_values is not None:
+                            metrics["predicted_value_mean"] = (
+                                result.predicted_values.detach().mean().item()
+                            )
+                            metrics["predicted_value_std"] = (
+                                result.predicted_values.detach().std().item()
+                            )
+                        if result.language_token_acc is not None:
+                            metrics["language_token_acc"] = (
+                                result.language_token_acc.detach().item()
+                                if isinstance(result.language_token_acc, torch.Tensor)
+                                else result.language_token_acc
+                            )
+                        if result.cat_acc_best is not None:
+                            metrics["cat_acc_best"] = (
+                                result.cat_acc_best.detach().item()
+                                if isinstance(result.cat_acc_best, torch.Tensor)
+                                else result.cat_acc_best
+                            )
+                        if result.cat_acc_neighbor is not None:
+                            metrics["cat_acc_neighbor"] = (
+                                result.cat_acc_neighbor.detach().item()
+                                if isinstance(result.cat_acc_neighbor, torch.Tensor)
+                                else result.cat_acc_neighbor
+                            )
+                        if result.cat_mae is not None:
+                            metrics["cat_mae"] = (
+                                result.cat_mae.detach().item()
+                                if isinstance(result.cat_mae, torch.Tensor)
+                                else result.cat_mae
+                            )
+                        metrics["loss"] = loss.detach().item()
+                        if target_values is not None:
+                            metrics["target_value_mean"] = (
+                                target_values.detach().mean().item()
+                            )
+                            metrics["target_value_std"] = (
+                                target_values.detach().std().item()
+                            )
+                        batch_metrics.append(metrics)
+
+                    # Aggregate across batches for this dataset
+                    if batch_metrics:
+                        agg: dict[str, list[float]] = {}
+                        for m in batch_metrics:
+                            for k, v in m.items():
+                                agg.setdefault(k, []).append(v)
+                        all_dataset_metrics[ds_name] = {
+                            k: sum(v) / len(v) for k, v in agg.items()
                         }
-                        if actions is not None:
-                            fwd_kwargs["actions"] = actions
-                        result = self.model(**fwd_kwargs)
-                        loss = result.loss
 
-                    metrics = {}
-                    if result.expert_loss is not None:
-                        metrics["expert_loss"] = (
-                            result.expert_loss.detach().item()
-                            if isinstance(result.expert_loss, torch.Tensor)
-                            else result.expert_loss
-                        )
-                    if result.language_loss is not None:
-                        metrics["language_loss"] = (
-                            result.language_loss.detach().item()
-                            if isinstance(result.language_loss, torch.Tensor)
-                            else result.language_loss
-                        )
-                    if result.predicted_values is not None:
-                        metrics["predicted_value_mean"] = (
-                            result.predicted_values.detach().mean().item()
-                        )
-                        metrics["predicted_value_std"] = (
-                            result.predicted_values.detach().std().item()
-                        )
-                    if result.language_token_acc is not None:
-                        metrics["language_token_acc"] = (
-                            result.language_token_acc.detach().item()
-                            if isinstance(result.language_token_acc, torch.Tensor)
-                            else result.language_token_acc
-                        )
-                    if result.cat_acc_best is not None:
-                        metrics["cat_acc_best"] = (
-                            result.cat_acc_best.detach().item()
-                            if isinstance(result.cat_acc_best, torch.Tensor)
-                            else result.cat_acc_best
-                        )
-                    if result.cat_acc_neighbor is not None:
-                        metrics["cat_acc_neighbor"] = (
-                            result.cat_acc_neighbor.detach().item()
-                            if isinstance(result.cat_acc_neighbor, torch.Tensor)
-                            else result.cat_acc_neighbor
-                        )
-                    if result.cat_mae is not None:
-                        metrics["cat_mae"] = (
-                            result.cat_mae.detach().item()
-                            if isinstance(result.cat_mae, torch.Tensor)
-                            else result.cat_mae
-                        )
-                    metrics["loss"] = loss.detach().item()
-                    if target_values is not None:
-                        metrics["target_value_mean"] = (
-                            target_values.detach().mean().item()
-                        )
-                        metrics["target_value_std"] = (
-                            target_values.detach().std().item()
-                        )
-                    all_metrics.append(metrics)
-
-            if not all_metrics:
+            if not all_dataset_metrics:
                 return {}
 
-            agg = {}
-            for m in all_metrics:
-                for k, v in m.items():
-                    agg.setdefault(k, []).append(v)
-            eval_metrics = {k: sum(v) / len(v) for k, v in agg.items()}
-            eval_metrics = all_reduce_dict(
-                eval_metrics, op=torch.distributed.ReduceOp.AVG
+            # Build final metrics dict
+            final_metrics: dict[str, float] = {}
+
+            # Per-dataset metrics: "datasetA/loss", "datasetB/loss", ...
+            for ds_name, ds_metrics in all_dataset_metrics.items():
+                for k, v in ds_metrics.items():
+                    final_metrics[f"{ds_name}/{k}"] = v
+
+            # Aggregate metrics: average across all datasets
+            all_keys: set[str] = set()
+            for ds_metrics in all_dataset_metrics.values():
+                all_keys.update(ds_metrics.keys())
+            for k in sorted(all_keys):
+                vals = [m[k] for m in all_dataset_metrics.values() if k in m]
+                if vals:
+                    final_metrics[k] = sum(vals) / len(vals)
+
+            # Distributed reduce
+            final_metrics = all_reduce_dict(
+                final_metrics, op=torch.distributed.ReduceOp.AVG
             )
 
             if self.cfg.actor.get("enable_offload", False):
                 with self.device_lock:
                     self.offload_param_and_grad()
 
-            return eval_metrics
+            return final_metrics
 
     def _prepare_input(self, batch: dict):
         """Move batch to device and return (observation, target_values, actions, extra)."""

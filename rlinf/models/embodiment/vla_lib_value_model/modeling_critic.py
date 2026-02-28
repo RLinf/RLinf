@@ -244,7 +244,7 @@ class ValueCriticModel(PI05FlowMatching):
                 "SiglipVisionEmbeddings",
                 "GemmaRMSNorm",
                 "GemmaRotaryEmbedding",
-                # TODO: This is because ValueCriticModel uses a different value head class from RL, and current FSDP cannot wrap it. Fix this later.
+                # Known limitation: ValueCriticModel uses a different value head class from RL, and current FSDP cannot wrap it.
                 "ValueHead",
             ]
         return no_split_modules

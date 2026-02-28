@@ -22,6 +22,8 @@ Differences from Pi06Runner:
 - Retains periodic eval functionality (requires rollout and env workers)
 """
 
+import json
+import logging
 import os
 
 from omegaconf.dictconfig import DictConfig
@@ -36,6 +38,8 @@ from rlinf.utils.runner_utils import check_progress
 from rlinf.workers.actor.debug_fsdp_actor_worker_cfg import DebugCFGFSDPActor
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
+logger = logging.getLogger(__name__)
 
 
 class DebugPi06Runner:
@@ -72,6 +76,8 @@ class DebugPi06Runner:
 
         self.metric_logger = MetricLogger(cfg)
 
+        self.best_eval_success_rate = -1.0
+
     def init_workers(self):
         """Initialize all workers and build CFG DataLoader."""
         # Initialize actor
@@ -104,6 +110,9 @@ class DebugPi06Runner:
         if os.path.exists(actor_checkpoint_path):
             self.actor.load_checkpoint(actor_checkpoint_path).wait()
         self.global_step = int(resume_dir.split("global_step_")[-1])
+
+        # Restore best eval success rate from previous run
+        self._restore_best_metadata()
 
     def update_rollout_weights(self):
         """Sync actor weights to rollout worker for evaluation."""
@@ -148,10 +157,11 @@ class DebugPi06Runner:
         if self.rollout is not None:
             self.rollout.set_global_step(self.global_step)
 
-        # Initial eval (step 0)
+        # Initial eval (only for fresh start; on resume the periodic eval handles it)
         eval_metrics = {}
         if (
-            self.cfg.runner.val_check_interval > 0
+            start_step == 0
+            and self.cfg.runner.val_check_interval > 0
             and self.rollout is not None
             and self.env is not None
         ):
@@ -159,7 +169,8 @@ class DebugPi06Runner:
                 self.update_rollout_weights()
                 eval_metrics = self.evaluate()
                 eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
-                self.metric_logger.log(data=eval_metrics, step=0)
+                self.metric_logger.log(data=eval_metrics, step=start_step)
+                self._check_and_save_best(eval_metrics, step=start_step)
 
         # Main loop: each offline step corresponds to one _step
         for _step in range(start_step, self.max_steps):
@@ -178,6 +189,7 @@ class DebugPi06Runner:
                         eval_metrics = self.evaluate()
                         eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
                         self.metric_logger.log(data=eval_metrics, step=_step)
+                        self._check_and_save_best(eval_metrics, step=_step)
 
                 # Single training step
                 with self.timer("actor_training"):
@@ -212,6 +224,67 @@ class DebugPi06Runner:
             global_pbar.update(1)
 
         self.metric_logger.finish()
+
+    def _check_and_save_best(self, eval_metrics: dict, step: int):
+        """Save best checkpoint if current eval success rate exceeds historical best."""
+        success_rate = eval_metrics.get("eval/success_once", None)
+        if success_rate is None:
+            logger.warning(
+                "eval/success_once not found in eval_metrics (keys: %s), "
+                "skipping best model check.",
+                list(eval_metrics.keys()),
+            )
+            return
+        if success_rate > self.best_eval_success_rate:
+            self.best_eval_success_rate = success_rate
+            print(
+                f"[Step {step}] New best success rate: {success_rate:.4f}, saving best model..."
+            )
+            self._save_best_checkpoint()
+            self.metric_logger.log(
+                {"eval/best_success_rate": success_rate},
+                step=step,
+            )
+
+    def _save_best_checkpoint(self):
+        """Save checkpoint to a fixed 'best' directory, overwriting previous best."""
+        base_output_dir = os.path.join(
+            self.cfg.runner.logger.log_path,
+            self.cfg.runner.logger.experiment_name,
+            "checkpoints/best",
+        )
+        actor_save_path = os.path.join(base_output_dir, "actor")
+        os.makedirs(actor_save_path, exist_ok=True)
+        self.actor.save_checkpoint(actor_save_path, self.global_step).wait()
+
+        # Persist best metadata so it survives resume
+        metadata_path = os.path.join(base_output_dir, "best_metadata.json")
+        with open(metadata_path, "w") as f:
+            json.dump(
+                {
+                    "best_eval_success_rate": float(self.best_eval_success_rate),
+                    "global_step": int(self.global_step),
+                },
+                f,
+            )
+
+    def _restore_best_metadata(self):
+        """Restore best eval success rate from a previous run's metadata file."""
+        metadata_path = os.path.join(
+            self.cfg.runner.logger.log_path,
+            self.cfg.runner.logger.experiment_name,
+            "checkpoints/best/best_metadata.json",
+        )
+        if not os.path.exists(metadata_path):
+            return
+        with open(metadata_path, "r") as f:
+            metadata = json.load(f)
+        self.best_eval_success_rate = metadata.get("best_eval_success_rate", -1.0)
+        logger.info(
+            "Restored best eval success rate: %.4f (from step %s)",
+            self.best_eval_success_rate,
+            metadata.get("global_step", "unknown"),
+        )
 
     def _save_checkpoint(self):
         base_output_dir = os.path.join(
