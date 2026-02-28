@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -523,7 +523,6 @@ if __name__ == "__main__":
     # 2) Instantiate a global retriever so it is loaded once and reused.
     retriever = loop.run_until_complete(get_retriever(config))
 
-    # TODO: test:
     async def test():
         query1 = "introduce Red Bull"
         result1 = await retriever.asearch(query1, 1, return_score=False)

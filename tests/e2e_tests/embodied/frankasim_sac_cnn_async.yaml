@@ -29,7 +29,7 @@ runner:
   max_steps: -1
 
   only_eval: False
-  val_check_interval: 2
+  val_check_interval: -1
   save_interval: -1
   weight_sync_interval: 1
 

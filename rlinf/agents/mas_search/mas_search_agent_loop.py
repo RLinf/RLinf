@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -153,7 +153,9 @@ class MasSearchAgentLoopWorker(MultiTurnAgentLoopWorker):
                     prompt_text=self.tokenizer.decode(prompt_ids),
                     response_text=response_text,
                     response_mask=response_mask,
-                    response_logprobs=generate_result["logprobs"] if self.return_logprobs else None,
+                    response_logprobs=generate_result["logprobs"]
+                    if self.return_logprobs
+                    else None,
                 )
             )
 
