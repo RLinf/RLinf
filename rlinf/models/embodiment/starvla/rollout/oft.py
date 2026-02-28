@@ -26,6 +26,7 @@ from ..utils import data_pipeline as data_pipeline_utils
 from ..utils import vlm_preprocess as vlm_input_utils
 from ..utils.action_heads import run_oft_action_head
 from ..utils.backbone_pipeline import run_backbone_pipeline
+from ..utils.backbone_pipeline import compute_values_from_hidden
 
 if TYPE_CHECKING:
     from ..starvla_action_model import StarVLAForRLActionPrediction
@@ -87,7 +88,8 @@ def run_rollout_oft(
                 dtype=torch.float32,
             )
         else:
-            prev_values = policy._compute_values_from_hidden(
+            prev_values = compute_values_from_hidden(
+                value_head=policy.value_head,
                 hidden=last_hidden,
                 attention_mask=model_inputs.get("attention_mask"),
             )

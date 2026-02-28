@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import os
 import warnings
 from functools import partial
 from typing import Any, Optional
@@ -26,7 +25,6 @@ import torch
 import torch.nn as nn
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
-from rlinf.utils.logging import get_logger
 
 from .dispatch import get_default_forward_handler, get_rollout_handler
 from .utils import action_space as action_space_utils
@@ -37,8 +35,6 @@ from .utils.profile import (
     infer_policy_profile,
     iter_gradient_checkpointing_targets,
 )
-
-logger = get_logger()
 
 
 class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
@@ -70,7 +66,7 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
         self.starvla_model = starvla_model
         self.action_dim = int(action_dim)
         self.num_action_chunks = int(num_action_chunks)
-        self.unnorm_key = unnorm_key
+        self.unnorm_key = None if unnorm_key is None else str(unnorm_key)
         self.disable_action_unnormalization = bool(disable_action_unnormalization)
 
         # Infer policy profile to determine action-head/VLM/state-adapter types and param dtype.
@@ -102,17 +98,16 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
         self._rollout_prompt_seq_len: Optional[int] = None
 
         self._action_norm_stats: Optional[dict[str, np.ndarray]] = None
-        resolved_key = self.unnorm_key
-        if self.is_continuous_action and not self.disable_action_unnormalization:
-            self._action_norm_stats, resolved_key = (
-                action_space_utils.resolve_action_norm_stats(
-                    starvla_model=self.starvla_model,
-                    unnorm_key=self.unnorm_key,
-                    action_dim=self.action_dim,
-                )
+        if (
+            self.is_continuous_action
+            and not self.disable_action_unnormalization
+            and self.unnorm_key is not None
+        ):
+            self._action_norm_stats = action_space_utils.resolve_action_norm_stats(
+                starvla_model=self.starvla_model,
+                unnorm_key=self.unnorm_key,
+                action_dim=self.action_dim,
             )
-            if resolved_key is not None:
-                self.unnorm_key = resolved_key
         elif self.disable_action_unnormalization and self.unnorm_key is not None:
             warnings.warn(
                 "starVLA disable_action_unnormalization=True; "
@@ -120,7 +115,6 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
                 stacklevel=2,
             )
             self.unnorm_key = None
-        self._debug_action_stats_calls = 0
 
     def forward(
         self,
@@ -375,11 +369,6 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
                 self._warned_once.add(self._WARN_KEY_MISSING_ACTION_NORM_STATS)
             action_for_storage = env_chunk_actions
 
-        self._maybe_debug_actions(
-            normalized_actions=chunk_actions,
-            env_actions=env_chunk_actions,
-        )
-
         if prev_logprobs is None:
             prev_logprobs = torch.zeros(
                 (bsz, n_chunks, self.action_dim), dtype=torch.float32
@@ -489,105 +478,3 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
                 stacklevel=2,
             )
 
-    def _compute_values_from_hidden(
-        self,
-        hidden: torch.Tensor,
-        attention_mask: Optional[torch.Tensor],
-    ) -> torch.Tensor:
-        if self.value_head is None:
-            return torch.zeros(
-                (hidden.shape[0], 1), device=hidden.device, dtype=torch.float32
-            )
-
-        if attention_mask is not None:
-            idx = attention_mask.long().sum(dim=1) - 1
-            feat = hidden[torch.arange(hidden.size(0), device=hidden.device), idx]
-        else:
-            feat = hidden[:, -1]
-
-        return self.value_head(feat.float()).to(dtype=torch.float32)
-
-    def _maybe_debug_actions(
-        self,
-        *,
-        normalized_actions: np.ndarray,
-        env_actions: np.ndarray,
-    ) -> None:
-        """Optionally log action statistics for debugging.
-
-        Enable by setting 'STARVLA_DEBUG_ACTIONS=1'. Frequency and thresholds can
-        be controlled with:
-            - 'STARVLA_DEBUG_ACTIONS_EVERY' (default: 50)
-            - 'STARVLA_DEBUG_ACTIONS_ZERO_THRESH' (default: 0.005)
-        """
-        self._debug_action_stats_calls += 1
-
-        enabled = str(os.environ.get("STARVLA_DEBUG_ACTIONS", "0")).strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
-        if not enabled:
-            return
-
-        try:
-            every = int(os.environ.get("STARVLA_DEBUG_ACTIONS_EVERY", "50"))
-        except ValueError:
-            every = 50
-        if every <= 0:
-            every = 1
-        if self._debug_action_stats_calls % every != 0:
-            return
-
-        try:
-            zero_thresh = float(
-                os.environ.get("STARVLA_DEBUG_ACTIONS_ZERO_THRESH", "0.005")
-            )
-        except ValueError:
-            zero_thresh = 0.005
-
-        bsz, n_chunks, act_dim = normalized_actions.shape
-        norm_flat = normalized_actions.reshape(-1, act_dim)
-        env_flat = env_actions.reshape(-1, act_dim)
-
-        norm_mean_abs = np.mean(np.abs(norm_flat), axis=0)
-        env_mean_abs = np.mean(np.abs(env_flat), axis=0)
-        env_min = np.min(env_flat, axis=0)
-        env_max = np.max(env_flat, axis=0)
-
-        arm_dims = min(6, act_dim)
-        arm_near_zero_ratio = (
-            float((np.abs(env_flat[:, :arm_dims]) < zero_thresh).mean())
-            if arm_dims > 0
-            else 0.0
-        )
-
-        prefix = (
-            f"[starvla-action-debug] call={self._debug_action_stats_calls} "
-            f"action_head={self.action_head_type} "
-            f"vlm={self.vlm_type} "
-            f"unnorm_key={self.unnorm_key} "
-            f"disable_unnorm={self.disable_action_unnormalization} "
-            f"has_norm_stats={self._action_norm_stats is not None} "
-            f"shape=({bsz},{n_chunks},{act_dim})"
-        )
-        logger.info(prefix)
-        logger.info(
-            "[starvla-action-debug] norm_mean_abs=%s",
-            np.array2string(norm_mean_abs, precision=4, suppress_small=True),
-        )
-        logger.info(
-            "[starvla-action-debug] env_mean_abs=%s env_min=%s env_max=%s "
-            "arm_near_zero_ratio(|a|<%s)=%0.4f",
-            np.array2string(env_mean_abs, precision=4, suppress_small=True),
-            np.array2string(env_min, precision=4, suppress_small=True),
-            np.array2string(env_max, precision=4, suppress_small=True),
-            zero_thresh,
-            arm_near_zero_ratio,
-        )
-        logger.info(
-            "[starvla-action-debug] sample0_chunk0_norm=%s sample0_chunk0_env=%s",
-            np.array2string(normalized_actions[0, 0], precision=4, suppress_small=True),
-            np.array2string(env_actions[0, 0], precision=4, suppress_small=True),
-        )
