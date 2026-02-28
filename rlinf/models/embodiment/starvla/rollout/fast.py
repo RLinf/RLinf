@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -33,7 +33,6 @@ from ..utils.profile import (
     resolve_vlm_interface,
     resolve_vlm_pad_token_id,
 )
-from ..utils.backbone_pipeline import compute_values_from_hidden
 
 if TYPE_CHECKING:
     from ..starvla_action_model import StarVLAForRLActionPrediction
@@ -157,23 +156,15 @@ def run_rollout_fast(
         expected_coeffs = n_chunks * act_dim
 
         fast_processor = policy.starvla_model.action_model.fast_tokenizer
-        def decode_fast_ids_to_action(fast_ids: list[int]) -> np.ndarray:
-            decoded_single = fast_processor.decode([fast_ids])
-            arr = np.asarray(decoded_single)
-            if arr.dtype == object:
-                arr = np.asarray(arr[0], dtype=np.float32)
-            else:
-                arr = arr.astype(np.float32)
-                if arr.ndim >= 1:
-                    arr = arr[0]
+        fast_bpe_tokenizer = getattr(fast_processor, "bpe_tokenizer", None)
+        if fast_bpe_tokenizer is None:
+            fast_bpe_tokenizer = getattr(fast_processor, "tokenizer", None)
 
-            if arr.ndim == 1 and arr.size == expected_coeffs:
-                arr = arr.reshape(n_chunks, act_dim)
-            if arr.shape != (n_chunks, act_dim):
-                raise RuntimeError(
-                    f"QwenFast decode shape mismatch: expected ({n_chunks}, {act_dim}), got {arr.shape}."
-                )
-            return arr
+        def decode_len(tokenizer: Any, token_ids: list[int]) -> int:
+            try:
+                return len(tokenizer.decode(token_ids))
+            except TypeError:
+                return len(tokenizer.decode(token_ids, skip_special_tokens=False))
 
         action_tokens = torch.full(
             (bsz, max_action_tokens),
@@ -192,65 +183,117 @@ def run_rollout_fast(
             dtype=torch.float32,
         )
         normalized_actions = np.zeros((bsz, n_chunks, act_dim), dtype=np.float32)
-        # 5) Decode generated FAST action tokens using native starVLA helpers only.
-        native_extract = getattr(policy.starvla_model, "_extract_action_token_ids", None)
-        native_decode = getattr(policy.starvla_model, "_decode_action_tokens", None)
-        if not callable(native_extract) or not callable(native_decode):
-            raise RuntimeError(
-                "QwenFast native decode unavailable: starvla_model must expose "
-                "_extract_action_token_ids and _decode_action_tokens."
-            )
-        try:
-            batch_vlm_ids = native_extract(gen_token_ids)
-            batch_fast_ids = native_decode(batch_vlm_ids)
-        except Exception as exc:
-            raise RuntimeError(
-                "QwenFast native decode failed when calling starVLA helpers: "
-                f"{type(exc).__name__}: {exc}"
-            ) from exc
 
-        if not (
-            isinstance(batch_vlm_ids, list)
-            and isinstance(batch_fast_ids, list)
-            and len(batch_vlm_ids) == bsz
-            and len(batch_fast_ids) == bsz
-        ):
-            raise RuntimeError(
-                "QwenFast native decode returned invalid batch shapes: "
-                f"len(vlm_ids)={len(batch_vlm_ids) if isinstance(batch_vlm_ids, list) else 'N/A'}, "
-                f"len(fast_ids)={len(batch_fast_ids) if isinstance(batch_fast_ids, list) else 'N/A'}, "
-                f"expected={bsz}."
-            )
+        valid_indices: list[int] = []
+        valid_fast_token_ids: list[list[int]] = []
+        fail_reason_by_sample: dict[int, str] = {}
 
+        # 5) Convert generated tokens into fixed-length storage tensors and per-sample sums.
         for b in range(bsz):
-            vlm_ids = [int(t) for t in batch_vlm_ids[b]][:max_action_tokens]
-            fast_ids = [int(t) for t in batch_fast_ids[b]][:max_action_tokens]
-            if not vlm_ids or not fast_ids:
-                raise RuntimeError(f"QwenFast native decode empty action tokens at sample {b}.")
-            if len(vlm_ids) != len(fast_ids):
-                raise RuntimeError(
-                    f"QwenFast native decode token length mismatch at sample {b}: "
-                    f"{len(vlm_ids)} vs {len(fast_ids)}."
-                )
-            arr = decode_fast_ids_to_action(fast_ids)
-
             idx = action_mask[b].nonzero(as_tuple=False).flatten()
-            prefix_len = len(vlm_ids)
+            if idx.numel() > 1:
+                diffs = idx[1:] - idx[:-1]
+                break_pos = (diffs != 1).nonzero(as_tuple=False)
+                if break_pos.numel() > 0:
+                    idx = idx[: int(break_pos[0].item()) + 1]
             if idx.numel() == 0:
-                raise RuntimeError(f"QwenFast no action token span found at sample {b}.")
-            idx = idx[:prefix_len]
-            prefix_len = int(idx.numel())
+                fail_reason_by_sample.setdefault(b, "no_action_token_span")
+                continue
+
+            tok_b = gen_token_ids[b, idx]
+            lp_b = gen_logprobs[b, idx]
+            if tok_b.numel() == 0 or tok_b.numel() > max_action_tokens:
+                fail_reason_by_sample.setdefault(b, "invalid_action_token_length")
+                continue
+
+            vlm_ids_full = tok_b.tolist()
+            fast_ids_full = [t - act_min for t in vlm_ids_full]
+
+            prefix_len: Optional[int]
+            if fast_bpe_tokenizer is not None:
+                full_len = decode_len(fast_bpe_tokenizer, fast_ids_full)
+                if full_len == expected_coeffs:
+                    prefix_len = len(fast_ids_full)
+                elif full_len < expected_coeffs:
+                    prefix_len = None
+                else:
+                    prefix_len = None
+                    for k in range(1, len(fast_ids_full) + 1):
+                        n = decode_len(fast_bpe_tokenizer, fast_ids_full[:k])
+                        if n == expected_coeffs:
+                            prefix_len = k
+                            break
+                        if n > expected_coeffs:
+                            break
+            else:
+                prefix_len = len(fast_ids_full)
+            if prefix_len is None or prefix_len <= 0:
+                fail_reason_by_sample.setdefault(b, "prefix_length_mismatch")
+                continue
+
+            vlm_ids = vlm_ids_full[:prefix_len]
+            fast_ids = fast_ids_full[:prefix_len]
+            lp_sel = lp_b[:prefix_len]
 
             action_tokens[b, :prefix_len] = torch.as_tensor(
-                vlm_ids[:prefix_len],
+                vlm_ids,
                 device=gen_token_ids.device,
                 dtype=torch.long,
             )
             action_token_mask[b, :prefix_len] = True
-            token_logprob_sums[b] = gen_logprobs[b, idx[:prefix_len]].sum().to(
-                dtype=torch.float32
+            token_logprob_sums[b] = lp_sel.sum().to(dtype=torch.float32)
+
+            valid_indices.append(b)
+            valid_fast_token_ids.append(fast_ids)
+
+        decoded_valid_indices: list[int] = []
+        if valid_fast_token_ids:
+            # Decode each sample and keep only valid [T, D] FAST actions.
+            for b, fast_ids in zip(valid_indices, valid_fast_token_ids, strict=True):
+                try:
+                    decoded_single = fast_processor.decode([fast_ids])
+                    arr = np.asarray(decoded_single)
+                    if arr.dtype == object:
+                        arr = np.asarray(arr[0], dtype=np.float32)
+                    else:
+                        arr = arr.astype(np.float32)
+                        if arr.ndim >= 1:
+                            arr = arr[0]
+
+                    if arr.ndim == 1 and arr.size == expected_coeffs:
+                        arr = arr.reshape(n_chunks, act_dim)
+                    if arr.shape == (n_chunks, act_dim):
+                        normalized_actions[b] = arr
+                        decoded_valid_indices.append(b)
+                        continue
+                    fail_reason_by_sample.setdefault(b, "decode_shape_mismatch")
+                except Exception:
+                    fail_reason_by_sample.setdefault(b, "decode_exception")
+
+                action_tokens[b].fill_(pad_id)
+                action_token_mask[b].fill_(False)
+                token_logprob_sums[b] = 0.0
+
+        # 6) Strict mode: fail fast when any sample cannot be decoded to valid FAST action.
+        decoded_valid_set = set(decoded_valid_indices)
+        if len(decoded_valid_indices) < bsz:
+            failed_indices = [b for b in range(bsz) if b not in decoded_valid_set]
+            reason_counts: dict[str, int] = {}
+            for b in failed_indices:
+                reason = fail_reason_by_sample.get(b, "unknown")
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+
+            reason_text = ", ".join(
+                f"{k}={v}" for k, v in sorted(reason_counts.items())
             )
-            normalized_actions[b] = arr
+            raise RuntimeError(
+                "QwenFast strict decode failure: unable to produce valid FAST actions for "
+                f"{len(failed_indices)}/{bsz} samples (failed_indices={failed_indices}, reasons={reason_text}). "
+                "Suggested fixes: (1) ensure checkpoint and FAST tokenizer are paired; "
+                "(2) reduce sampling stochasticity (do_sample=False or lower temperature/top_p); "
+                "(3) increase RLINF_QWENFAST_MAX_NEW_TOKENS and qwenfast_max_action_tokens if truncation occurs; "
+                "(4) verify actor.model.num_action_chunks matches FAST time_horizon."
+            )
 
         # 7) Map sequence-level FAST logprob sums into RLinf [B, T, D] convention.
         denom = float(n_chunks * act_dim)
@@ -285,8 +328,7 @@ def run_rollout_fast(
         if policy.value_head is None:
             prev_values = torch.zeros((len(examples), 1), dtype=torch.float32)
         else:
-            prev_values = compute_values_from_hidden(
-                value_head=policy.value_head,
+            prev_values = policy._compute_values_from_hidden(
                 hidden=backbone_output.last_hidden,
                 attention_mask=backbone_output.attention_mask,
             )

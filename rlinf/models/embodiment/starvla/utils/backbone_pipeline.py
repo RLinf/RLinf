@@ -21,7 +21,6 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 import torch
-import torch.nn as nn
 
 from . import vlm_preprocess as vlm_input_utils
 from .profile import infer_vlm_type, resolve_vlm_interface
@@ -42,25 +41,6 @@ class BackboneOutput:
     model_inputs: dict[str, torch.Tensor] = field(default_factory=dict)
     extras: dict[str, torch.Tensor] = field(default_factory=dict)
     capabilities: frozenset[str] = field(default_factory=frozenset)
-
-
-def compute_values_from_hidden(
-    *,
-    value_head: Optional[nn.Module],
-    hidden: torch.Tensor,
-    attention_mask: Optional[torch.Tensor],
-) -> torch.Tensor:
-    """Compute value predictions from hidden states."""
-    if value_head is None:
-        return torch.zeros((hidden.shape[0], 1), device=hidden.device, dtype=torch.float32)
-
-    if attention_mask is not None:
-        idx = attention_mask.long().sum(dim=1) - 1
-        feat = hidden[torch.arange(hidden.size(0), device=hidden.device), idx]
-    else:
-        feat = hidden[:, -1]
-
-    return value_head(feat.float()).to(dtype=torch.float32)
 
 
 def run_vlm_backbone(
