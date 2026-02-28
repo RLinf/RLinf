@@ -1,16 +1,11 @@
 import logging
 import os
-import glob
-import time
 from typing import Optional, Any
 
 if "CUDA_LAUNCH_BLOCKING" not in os.environ:
     os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
-import torch
 from omegaconf.dictconfig import DictConfig
-import ray
-import ray.util
 from torch.utils.data import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 from rlinf.scheduler import Channel
@@ -73,36 +68,20 @@ class AgentLightningEvalRunner:
             collate_fn=agl_collate_fn,
         )
 
-    def init_rollout_workers(self, use_original_model: bool = False):
-        rollout_handle = self.rollout.init_worker()
-
-        if use_original_model:
-            if (
-                self.actor is not None
-                and self.cfg.actor.training_backend == "megatron"
-                and self.cfg.actor.megatron.use_hf_ckpt
-            ):
-                from rlinf.utils.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
-                    convert_hf_to_mg,
-                )
-                convert_hf_to_mg(
-                    self.cfg.actor.megatron.ckpt_convertor.hf_model_path,
-                    self.cfg.actor.megatron.ckpt_convertor,
-                )
-
+    def init_rollout_workers(self):
+        rollout_handle = self.rollout.init_worker(start_http_server=True)
         rollout_handle.wait()
+
         use_pre_process_policy = getattr(self.cfg.cluster, "use_pre_process_policy", False)
         if use_pre_process_policy:
             self.rollout.offload_engine().wait()
 
         server_addresses: list[str] = []
-        if hasattr(self.rollout, "init_worker") and hasattr(self.rollout, "get_server_address"):
-            self.rollout.init_worker(start_http_server=True).wait()
-            server_addresses_result = self.rollout.get_server_address().wait()
-            if isinstance(server_addresses_result, list):
-                server_addresses = [addr for addr in server_addresses_result if addr]
-            elif server_addresses_result:
-                server_addresses = [server_addresses_result]
+        server_addresses_result = self.rollout.get_server_address().wait()
+        if isinstance(server_addresses_result, list):
+            server_addresses = [addr for addr in server_addresses_result if addr]
+        elif server_addresses_result:
+            server_addresses = [server_addresses_result]
 
         self.agentlightning_rollout_worker.init_worker(
             store=self.store,
@@ -114,28 +93,11 @@ class AgentLightningEvalRunner:
             is_eval_mode=True,
         ).wait()
 
-    def init_actor_workers(self):
-        if self.actor is not None:
-            actor_handle = self.actor.init_worker()
-            actor_handle.wait()
-            
-            megatron_checkpoint = self.cfg.actor.model.get("megatron_checkpoint")
-            if megatron_checkpoint is not None and megatron_checkpoint != "null" and os.path.exists(megatron_checkpoint):
-                logging.info(f"Loading checkpoint from config: {megatron_checkpoint}")
-                self.actor.load_checkpoint(megatron_checkpoint).wait()
-
-    def init_workers(self, use_original_model: bool = False):
-        self.init_rollout_workers(use_original_model=use_original_model)
-        self.init_actor_workers()
+    def init_workers(self):
+        self.init_rollout_workers()
 
     def _put_batch(self, batch: dict):
         self.dataloader_channel.put(batch, async_op=True)
-
-    def _sync_weights(self):
-        if self.actor is not None:
-            self.actor.sync_model_to_rollout()
-            self.rollout.sync_model_from_actor().wait()
-            self.actor.del_reshard_state_dict().wait()
 
     def _run_eval_loop(self) -> float:
         batch = next(iter(self.val_dataloader))
@@ -151,59 +113,25 @@ class AgentLightningEvalRunner:
         return avg_reward
 
     def eval(self, checkpoint_dir: Optional[str] = None):
-        use_original_model = False
-        if checkpoint_dir is None:
-            megatron_checkpoint = self.cfg.actor.model.get("megatron_checkpoint")
-            if megatron_checkpoint is None or megatron_checkpoint == "null":
-                checkpoint_dir = self.cfg.runner.get("resume_dir")
-                if checkpoint_dir is None or checkpoint_dir.lower() == "original":
-                    use_original_model = True
-        elif checkpoint_dir.lower() == "original":
-            use_original_model = True
-        
-        if use_original_model:
-            logging.info("Using original HuggingFace model")
-            self.init_workers(use_original_model=True)
-            self._sync_weights()
-            avg_reward = self._run_eval_loop()
-            logging.info(f"Evaluation Results:")
-            logging.info(f"  Model: Original HuggingFace model ({self.cfg.actor.megatron.ckpt_convertor.hf_model_path})")
-            logging.info(f"  Batches: {len(self.val_dataloader)}")
-            logging.info(f"  Average Reward: {avg_reward:.6f}")
-            return
-        
-        if checkpoint_dir is None:
-            actor_checkpoint_path = self.cfg.actor.model.get("megatron_checkpoint")
-            if actor_checkpoint_path is None or actor_checkpoint_path == "null":
-                raise ValueError("No checkpoint path provided in config or parameter")
-        else:
-            if os.path.basename(checkpoint_dir).startswith("global_step_"):
-                ckpt_path = checkpoint_dir
-            else:
-                pattern = os.path.join(checkpoint_dir, "global_step_*")
-                checkpoint_dirs = sorted(glob.glob(pattern), key=lambda x: int(x.split("_")[-1]))
-                if not checkpoint_dirs:
-                    raise ValueError(f"No checkpoint found in {checkpoint_dir}")
-                ckpt_path = checkpoint_dirs[0]
-                logging.info(f"Found {len(checkpoint_dirs)} checkpoints, evaluating the first one: {ckpt_path}")
-            
-            actor_checkpoint_path = os.path.join(ckpt_path, "actor")
-            self.cfg.actor.model.megatron_checkpoint = actor_checkpoint_path
-        
-        if self.actor is None or not os.path.exists(actor_checkpoint_path):
-            raise ValueError(f"Actor checkpoint not found at {actor_checkpoint_path}")
-        
+        if checkpoint_dir not in (None, "", "original"):
+            logging.warning(
+                "checkpoint_dir is ignored in HF eval mode. "
+                "Current eval path always uses rollout HF model directly."
+            )
+
+        if (
+            not self.cfg.rollout.validate_weight
+            and not self.cfg.rollout.get("validate_weight_first_sync", False)
+        ):
+            logging.warning(
+                "rollout.validate_weight and rollout.validate_weight_first_sync are both false; "
+                "set validate_weight_first_sync=true for HF eval."
+            )
+            self.cfg.rollout.validate_weight_first_sync = True
+
         self.init_workers()
-        self._sync_weights()
-        
-        step = 0
-        ckpt_dir = os.path.dirname(actor_checkpoint_path)
-        if os.path.basename(ckpt_dir).startswith("global_step_"):
-            step = int(os.path.basename(ckpt_dir).split("_")[-1])
-        
         avg_reward = self._run_eval_loop()
         logging.info(f"Evaluation Results:")
-        logging.info(f"  Checkpoint: {actor_checkpoint_path}")
-        logging.info(f"  Step: {step}")
+        logging.info(f"  Model: HF rollout model ({self.cfg.rollout.model.model_path})")
         logging.info(f"  Batches: {len(self.val_dataloader)}")
         logging.info(f"  Average Reward: {avg_reward:.6f}")
