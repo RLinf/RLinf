@@ -98,7 +98,8 @@ class AgentLightningRLinfRunner(ReasoningRunner):
 
     def init_rollout_workers(self):
         rollout_handle = self.rollout.init_worker(start_http_server=True)
-
+        # NOTE: Do not overlap rollout init with HF->MG conversion; running them concurrently can hang inside convert_hf_to_mg in AgentLightning execution.
+        rollout_handle.wait()
         if self.cfg.runner.resume_dir is None:
             logging.info("[AgentLightningRLinfRunner] Training from scratch")
             if (
@@ -114,7 +115,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                     self.cfg.actor.megatron.ckpt_convertor,
                 )
 
-        rollout_handle.wait()
+        
         if self.use_pre_process_policy:
             self.rollout.offload_engine().wait()
 

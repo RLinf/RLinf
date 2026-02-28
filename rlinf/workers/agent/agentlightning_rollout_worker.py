@@ -210,9 +210,9 @@ class AgentLightningRolloutWorker(Worker):
         return 0
 
     def _compute_rollout_metrics(
-        self, 
-        rollout_results: List[RolloutResult],
-        rollouts: List[RolloutLegacy]
+        self,
+        rollout_results: List[Union[RolloutResult, DynamicRolloutResult]],
+        rollouts: List[RolloutLegacy],
     ) -> Dict[str, float]:
         if not rollout_results:
             return {
@@ -233,7 +233,11 @@ class AgentLightningRolloutWorker(Worker):
         n_rollouts_w_reward = 0
         
         for rollout_result in rollout_results:
-            n_rollouts += rollout_result.batch_size
+            if self.advantage_mode == "turn":
+                batch_size = rollout_result.group_size
+            else:
+                batch_size = rollout_result.batch_size
+            n_rollouts += batch_size
             n_triplets += rollout_result.num_sequence
             
             if rollout_result.rewards is not None:
@@ -243,10 +247,10 @@ class AgentLightningRolloutWorker(Worker):
                     rewards_list = rollout_result.rewards
                 all_rewards.extend(rewards_list)
             else:
-                all_rewards.extend([self.reward_fillna_value] * rollout_result.batch_size)
+                all_rewards.extend([self.reward_fillna_value] * batch_size)
             
             if rollout_result.response_lengths:
-                n_rollouts_w_trace += rollout_result.batch_size
+                n_rollouts_w_trace += batch_size
                 total_response_lengths.extend(rollout_result.response_lengths)
         
         for rollout_legacy in rollouts:
@@ -452,7 +456,7 @@ class AgentLightningRolloutWorker(Worker):
             
             initial_data_ids_count = len(self._data_id_to_rollout_ids)
             processed_data_ids = set()
-            rollout_results: List[RolloutResult] = []
+            rollout_results: List[Union[RolloutResult, DynamicRolloutResult]] = []
             
             while len(processed_data_ids) < initial_data_ids_count:
                 rollout_ids_to_query = [
