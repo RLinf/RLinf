@@ -15,9 +15,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor: 0-0
-    env: 0-0
-    rollout: 0-0
+    env,rollout,actor: 0
 
 runner:
   task_type: embodied
@@ -84,7 +82,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
 
   # Override the default values in env/maniskill_pick_cube
   train:
@@ -116,6 +113,7 @@ rollout:
     precision: ${actor.model.precision}
 
   enable_torch_compile: True
+  enable_cuda_graph: True
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"

@@ -29,7 +29,7 @@ jobs:
       checked_files_filter: ${{ steps.filter.outputs.checked_files_filter }}
       all_changes_filter: ${{ steps.filter.outputs.all_changes_filter }}
       checked_files_filter_files: ${{ steps.filter.outputs.checked_files_filter_files }}
-      all_changes_filter_files: ${{ steps.filter.outputs.all_changes_filter_files }}
+      all_changes_no_delete_filter_files: ${{ steps.filter.outputs.all_changes_no_delete_filter_files }}
  
     steps:
       - name: Checkout code
@@ -68,21 +68,23 @@ jobs:
               - 'rlinf/algorithms/**'
               - 'rlinf/scheduler/**'
               - 'rlinf/utils/**'
-              - 'rlinf/workers/actor/**'
-              - 'rlinf/workers/inference/**'
-              - 'rlinf/workers/reward/**'
+              - 'rlinf/workers/actor/__init__.py'
+              - 'rlinf/workers/actor/fsdp_actor_worker.py'
+              - 'rlinf/workers/reward/*.py'
               - 'rlinf/workers/rollout/**'
               - 'rlinf/hybrid_engines/**'
               - 'rlinf/data/**'
               - 'rlinf/config.py'
               - 'rlinf/__init__.py'
               - 'rlinf/*/__init__.py'
-              - 'toolkits/ckpt_convertor/**'
               - 'toolkits/auto_placement/**'
             embodied_filter: &embodied
               - *shared
               - 'rlinf/envs/**'
+              - 'rlinf/workers/actor/async_fsdp_sac_policy_worker.py'
+              - 'rlinf/workers/actor/fsdp_sac_policy_worker.py'
               - 'rlinf/workers/env/**'
+              - 'rlinf/workers/rollout/hf/**'
               - 'rlinf/models/embodiment/**'
               - 'rlinf/models/worldmodel/**'
               - 'rlinf/runners/*embodied*.py'
@@ -96,7 +98,12 @@ jobs:
             agent_reason_filter: &agent
               - *shared
               - 'rlinf/agents/**'
+              - 'rlinf/workers/actor/megatron_actor_worker.py'
               - 'rlinf/workers/agent/**'
+              - 'rlinf/workers/inference/**'
+              - 'rlinf/workers/rollout/server/**'
+              - 'rlinf/workers/rollout/sglang/**'
+              - 'rlinf/workers/rollout/vllm/**'
               - 'rlinf/runners/agent_runner.py'
               - 'rlinf/runners/reasoning_runner.py'
               - 'rlinf/runners/coding_online_rl_runner.py'
@@ -106,11 +113,11 @@ jobs:
               - 'examples/multiturn_demo/**'
               - 'examples/reasoning/**'
               - 'examples/searchr1/**'
+              - 'examples/mas-search/**'
+              - 'examples/rstar2/**'
               - 'tests/e2e_tests/agent/**'
               - 'tests/e2e_tests/coding_online_rl/**'
               - 'tests/e2e_tests/reasoning/**'
-              - 'toolkits/code_verifier/**'
-              - 'toolkits/math_verifier/**'
               - '.github/workflows/agent-e2e-tests.yml'
             sft_filter: &sft
               - *shared
@@ -141,13 +148,15 @@ jobs:
               - *scheduler
               - docs/**/*.py
               - '.github/workflows/ci-tests.yml'
-            all_changes_filter:
+            all_changes_filter: &all_changes
               - *install
               - *docker
               - '**/*.py'
               - 'tests/**'
               - '.github/workflows/*tests.yml'
               - '*.yaml'
+            all_changes_no_delete_filter:
+              - added|modified: *all_changes
 
   # =============================================== filter coverage test ============================================
 
@@ -161,7 +170,7 @@ jobs:
 
           json_input=$(cat << 'EOF'
           {
-            "all": ${{ needs.check-changes.outputs.all_changes_filter_files }},
+            "all": ${{ needs.check-changes.outputs.all_changes_no_delete_filter_files }},
             "checked": ${{ needs.check-changes.outputs.checked_files_filter_files }}
           }
           EOF

@@ -23,13 +23,7 @@ import torch.multiprocessing as mp
 from omegaconf import OmegaConf
 from PIL import Image
 
-from rlinf.envs.utils import (
-    center_crop_image,
-    list_of_dict_to_dict_of_list,
-    put_info_on_image,
-    save_rollout_video,
-    tile_images,
-)
+from rlinf.envs.utils import center_crop_image, list_of_dict_to_dict_of_list
 
 __all__ = ["RoboTwinEnv"]
 
@@ -60,8 +54,6 @@ class RoboTwinEnv(gym.Env):
         self.use_custom_reward = cfg.use_custom_reward
 
         self.video_cfg = cfg.video_cfg
-        self.video_cnt = 0
-        self.render_images = []
 
         self.cfg = cfg
         self.record_metrics = record_metrics
@@ -69,6 +61,7 @@ class RoboTwinEnv(gym.Env):
 
         self.task_name = cfg.task_config.task_name
 
+        self.center_crop = cfg.center_crop
         self._init_reset_state_ids()
 
         self._init_env()
@@ -157,11 +150,12 @@ class RoboTwinEnv(gym.Env):
         infos["episode"] = episode_info
         return infos
 
-    def center_and_crop(self, image):
+    def center_and_crop(self, image, center_crop=False):
         image = np.array(image)
 
         image = Image.fromarray(image).convert("RGB")
-        image = center_crop_image(image)
+        if center_crop:
+            image = center_crop_image(image)
         return np.array(image)
 
     def _extract_obs_image(self, raw_obs):
@@ -170,12 +164,22 @@ class RoboTwinEnv(gym.Env):
         batch_states = []
         batch_instructions = []
         for obs in raw_obs:
-            batch_images.append(self.center_and_crop(obs["full_image"]))
+            batch_images.append(
+                self.center_and_crop(obs["full_image"], center_crop=self.center_crop)
+            )
             wrist_images = []
             if "left_wrist_image" in obs and obs["left_wrist_image"] is not None:
-                wrist_images.append(self.center_and_crop(obs["left_wrist_image"]))
+                wrist_images.append(
+                    self.center_and_crop(
+                        obs["left_wrist_image"], center_crop=self.center_crop
+                    )
+                )
             if "right_wrist_image" in obs and obs["right_wrist_image"] is not None:
-                wrist_images.append(self.center_and_crop(obs["right_wrist_image"]))
+                wrist_images.append(
+                    self.center_and_crop(
+                        obs["right_wrist_image"], center_crop=self.center_crop
+                    )
+                )
             if len(wrist_images) > 0:
                 batch_wrist_images.append(
                     torch.stack([torch.from_numpy(img) for img in wrist_images])
@@ -196,6 +200,7 @@ class RoboTwinEnv(gym.Env):
             "states": batch_states,
             "task_descriptions": batch_instructions,
         }
+
         return extracted_obs
 
     def _calc_step_reward(self, terminations):
@@ -296,13 +301,6 @@ class RoboTwinEnv(gym.Env):
         if truncated.any():
             truncations = torch.logical_or(truncated, truncations)
 
-        if self.video_cfg.save_video:
-            plot_infos = {
-                "rewards": step_reward,
-                "terminations": terminations,
-                "task": self.cfg.task_config.task_name,
-            }
-            self.add_new_frames(raw_obs, plot_infos)
         infos = self._record_metrics(step_reward, infos)
 
         if self.ignore_terminations:
@@ -326,12 +324,16 @@ class RoboTwinEnv(gym.Env):
         # chunk_actions: [num_envs, chunk_step, action_dim]
         num_envs = chunk_actions.shape[0]
         chunk_step = chunk_actions.shape[1]
+        obs_list = []
+        infos_list = []
 
         raw_obs, step_reward, terminations, truncations, info_list = self.venv.step(
             chunk_actions
         )
         extracted_obs = self._extract_obs_image(raw_obs)
         infos = list_of_dict_to_dict_of_list(info_list)
+        obs_list.append(extracted_obs)
+        infos_list.append(infos)
         if isinstance(terminations, list):
             terminations = torch.as_tensor(
                 np.array(terminations).reshape(-1), device=self.device
@@ -359,12 +361,6 @@ class RoboTwinEnv(gym.Env):
         if truncated.any():
             truncations = torch.logical_or(truncated, truncations)
 
-        if self.video_cfg.save_video:
-            plot_infos = {
-                "terminations": terminations,
-                "task": self.cfg.task_config.task_name,
-            }
-            self.add_new_frames(raw_obs, plot_infos)
         infos = self._record_metrics(step_reward, infos)
 
         if self.ignore_terminations:
@@ -375,8 +371,8 @@ class RoboTwinEnv(gym.Env):
 
         past_dones = torch.logical_or(terminations, truncations)
         if past_dones.any() and self.auto_reset:
-            extracted_obs, infos = self._handle_auto_reset(
-                past_dones, extracted_obs, infos
+            obs_list[-1], infos_list[-1] = self._handle_auto_reset(
+                past_dones, obs_list[-1], infos_list[-1]
             )
 
         chunk_terminations = torch.zeros((num_envs, chunk_step))
@@ -386,11 +382,11 @@ class RoboTwinEnv(gym.Env):
         chunk_truncations[:, -1] = truncations
 
         return (
-            extracted_obs,
+            obs_list,
             chunk_rewards,
             chunk_terminations,
             chunk_truncations,
-            infos,
+            infos_list,
         )
 
     def _handle_auto_reset(self, dones, extracted_obs, infos):
@@ -415,30 +411,6 @@ class RoboTwinEnv(gym.Env):
 
     def sample_action_space(self):
         return np.random.randn(self.num_envs, self.horizon, 14)
-
-    def flush_video(self, video_sub_dir: Optional[str] = None):
-        output_dir = os.path.join(self.video_cfg.video_base_dir, f"seed_{self.seed}")
-        if video_sub_dir is not None:
-            output_dir = os.path.join(output_dir, f"{video_sub_dir}")
-        save_rollout_video(
-            self.render_images,
-            output_dir=output_dir,
-            video_name=f"{self.video_cnt}",
-        )
-        self.video_cnt += 1
-        self.render_images = []
-
-    def add_new_frames(self, raw_obs, plot_infos):
-        images = []
-        for env_id, raw_single_obs in enumerate(raw_obs):
-            info_item = {
-                k: v if np.size(v) == 1 else v[env_id] for k, v in plot_infos.items()
-            }
-            img = raw_single_obs["full_image"]
-            img = put_info_on_image(img, info_item)
-            images.append(img)
-        full_image = tile_images(images, nrows=int(np.sqrt(self.num_envs)))
-        self.render_images.append(full_image)
 
     def _init_reset_state_ids(self):
         if self.cfg.get("seeds_path", None) is not None and os.path.exists(

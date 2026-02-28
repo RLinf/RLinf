@@ -20,12 +20,12 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     implement_version = cfg.get("implement_version", "rlinf")
     if implement_version == "rlinf":
         from rlinf.models.embodiment.openvla_oft.rlinf import get_model
-    elif implement_version == "offical":
-        from rlinf.models.embodiment.openvla_oft.offical import get_model
+    elif implement_version == "official":
+        from rlinf.models.embodiment.openvla_oft.official import get_model
     else:
         raise NotImplementedError(
             f"Unsupported model implementation version: '{implement_version}'. "
-            f"Currently supported versions: ['rlinf', 'offical']. "
+            f"Currently supported versions: ['rlinf', 'official']. "
             f"Please check ...model.version or implement the corresponding model loader."
         )
 

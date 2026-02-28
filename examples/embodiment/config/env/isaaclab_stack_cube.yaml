@@ -14,13 +14,15 @@ max_episode_steps: 256 # max episode steps for truncation
 
 video_cfg:
   save_video: False
+  info_on_video: True
+  fps: 20
   video_base_dir: ${runner.logger.log_path}/video/train
 
 init_params:
-  id: "Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-v0"
+  id: "Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Rewarded-v0"
   num_envs: null
   max_episode_steps: ${env.train.max_episode_steps} # max episode steps for truncation
-  task_description: "Pick up the red cube and place it on top of the blue cube, then pick up the green cube and place it on top of the red cube."
+  task_description: "Stack the red block on the blue block, then stack the green block on the red block."
   table_cam:
     height: 256
     width: 256

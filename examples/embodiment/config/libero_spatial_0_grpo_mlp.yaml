@@ -84,7 +84,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
 
   # Override the default values in env/libero_spatial
   train:
@@ -121,6 +120,7 @@ rollout:
     precision: ${actor.model.precision}
 
   enable_torch_compile: True
+  enable_cuda_graph: False
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"

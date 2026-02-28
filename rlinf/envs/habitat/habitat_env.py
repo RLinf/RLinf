@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import copy
-import os
 from typing import Optional, Union
 
 import gym
@@ -27,11 +26,7 @@ from hydra.core.global_hydra import GlobalHydra
 
 from rlinf.envs.habitat.extensions.utils import observations_to_image
 from rlinf.envs.habitat.venv import HabitatRLEnv, ReconfigureSubprocEnv
-from rlinf.envs.utils import (
-    list_of_dict_to_dict_of_list,
-    save_rollout_video,
-    to_tensor,
-)
+from rlinf.envs.utils import list_of_dict_to_dict_of_list, to_tensor
 
 
 @registry.register_task_action
@@ -65,8 +60,6 @@ class HabitatEnv(gym.Env):
         self._init_env()
 
         self.video_cfg = cfg.video_cfg
-        self.video_cnt = 0
-        self.render_images = {}
         self.current_raw_obs = None
 
     @property
@@ -88,6 +81,8 @@ class HabitatEnv(gym.Env):
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
+        obs_list = []
+        infos_list = []
 
         chunk_rewards = []
 
@@ -121,6 +116,8 @@ class HabitatEnv(gym.Env):
             extracted_obs, step_reward, terminations, truncations, infos = self.step(
                 actions
             )
+            obs_list.append(extracted_obs)
+            infos_list.append(infos)
 
             chunk_rewards.append(step_reward)
             chunk_terminations.append(terminations)
@@ -135,11 +132,11 @@ class HabitatEnv(gym.Env):
         )  # [num_envs, chunk_steps]
 
         return (
-            extracted_obs,
+            obs_list,
             chunk_rewards,
             chunk_terminations,
             chunk_truncations,
-            infos,
+            infos_list,
         )
 
     def step(self, actions=None):
@@ -167,22 +164,8 @@ class HabitatEnv(gym.Env):
         # TODO: what if termination means failure? (e.g. robot falling down)
         step_reward = self._calc_step_reward(terminations)
 
-        if self.video_cfg.save_video:
-            episode_ids = self.env.get_current_episode_ids()
-            for i in range(len(raw_obs)):
-                frame = observations_to_image(raw_obs[i], info_lists[i])
-                frame_concat = np.concatenate(
-                    (frame["rgb"], frame["depth"], frame["top_down_map"]), axis=1
-                )
-                key = f"episode_{episode_ids[i]}"
-                if key not in self.render_images:
-                    self.render_images[key] = []
-                self.render_images[key].append(frame_concat)
-
         dones = terminations | truncations
         if dones.any() and self.auto_reset:
-            if self.video_cfg.save_video:
-                self.flush_video(dones=dones)
             obs, infos = self._handle_auto_reset(dones, obs, infos)
 
         return (
@@ -215,27 +198,6 @@ class HabitatEnv(gym.Env):
 
     def update_reset_state_ids(self):
         self.reset()
-
-    def flush_video(
-        self, video_sub_dir: Optional[str] = None, dones: Optional[np.ndarray] = None
-    ):
-        output_dir = self.video_cfg.video_base_dir
-        if video_sub_dir is not None:
-            output_dir = os.path.join(output_dir, f"{video_sub_dir}")
-
-        if dones is None:
-            dones_episode_ids = np.array(self.env.get_current_episode_ids())
-        else:
-            dones_episode_ids = np.array(self.env.get_current_episode_ids())[dones]
-        for episode_ids in dones_episode_ids:
-            video_name = f"episode_{episode_ids}"
-            save_rollout_video(
-                self.render_images[video_name],
-                output_dir=output_dir,
-                video_name=video_name,
-                fps=self.video_cfg.fps,
-            )
-            self.render_images[video_name] = []
 
     def _wrap_obs(self, obs_list):
         image_list = []
