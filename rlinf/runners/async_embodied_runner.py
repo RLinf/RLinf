@@ -14,6 +14,7 @@
 
 import asyncio
 import time
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from omegaconf.dictconfig import DictConfig
@@ -52,25 +53,32 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         self.rollout_metric_channel = Channel.create("RolloutMetric")
         self.replay_channel = Channel.create("ReplayBuffer")
 
-    def get_env_metrics(self):
-        try:
-            result = self.env_metric_channel.get_nowait()
-        except asyncio.QueueEmpty:
+    def get_env_metrics(self) -> dict:
+        results: list[dict] = []
+        while True:
+            try:
+                result = self.env_metric_channel.get_nowait()
+                results.append(result)
+            except asyncio.QueueEmpty:
+                break
+
+        if not results:
             return {}
 
-        time_metrics = {}
-        env_metrics = {}
-        for key, value in result.items():
-            if key.startswith("time/"):
-                time_metrics[key] = value
-            else:
-                env_metrics[key] = value
+        time_metrics = defaultdict(list)
+        # NOTE: assumes each env metric dict has the same set of keys.
+        env_metrics: list[dict] = []
+        for result in results:
+            if result.get("env"):
+                env_metrics.append(result["env"])
+            for key, value in result.get("time", {}).items():
+                time_metrics[key].append(value)
 
-        env_metrics = compute_evaluate_metrics(
-            [
-                env_metrics,
-            ]
-        )
+        time_metrics = {k: sum(v) / len(v) for k, v in time_metrics.items()}
+        if not env_metrics:
+            return {**time_metrics}
+
+        env_metrics = compute_evaluate_metrics(env_metrics)
         return {**env_metrics, **time_metrics}
 
     def get_rollout_metrics(self):

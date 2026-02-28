@@ -14,6 +14,7 @@
 
 import asyncio
 import time
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from omegaconf.omegaconf import DictConfig
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
     from rlinf.workers.actor.async_ppo_fsdp_worker import (
         AsyncPPOEmbodiedFSDPActor,
     )
-    from rlinf.workers.env.async_ppo_env_worker import AsyncPPOEnvWorker
+    from rlinf.workers.env.async_env_worker import AsyncEnvWorker
     from rlinf.workers.rollout.hf.async_ppo_huggingface_worker import (
         AsyncPPOMultiStepRolloutWorker,
     )
@@ -42,13 +43,13 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         cfg: DictConfig,
         actor: "AsyncPPOEmbodiedFSDPActor",
         rollout: "AsyncPPOMultiStepRolloutWorker",
-        env: "AsyncPPOEnvWorker",
+        env: "AsyncEnvWorker",
         critic=None,
         reward=None,
         run_timer=None,
     ):
         super().__init__(cfg, actor, rollout, env, critic, reward, run_timer)
-        self.env_metrics_channel = Channel.create("EnvMetrics")
+        self.env_metric_channel = Channel.create("EnvMetric")
         self.recompute_logprobs = bool(self.cfg.rollout.get("recompute_logprobs", True))
 
         if self.cfg.runner.val_check_interval > 0:
@@ -57,10 +58,10 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
             )
 
     def get_env_metrics(self) -> dict:
-        results = []
+        results: list[dict] = []
         while True:
             try:
-                result = self.env_metrics_channel.get_nowait()
+                result = self.env_metric_channel.get_nowait()
                 results.append(result)
             except asyncio.QueueEmpty:
                 break
@@ -68,9 +69,21 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         if not results:
             return {}
 
-        env_metrics = compute_evaluate_metrics(results)
-        env_metrics = {f"env/{k}": v for k, v in env_metrics.items()}
-        return env_metrics
+        time_metrics = defaultdict(list)
+        # NOTE: assumes each env metric dict has the same set of keys.
+        env_metrics: list[dict] = []
+        for result in results:
+            if result.get("env"):
+                env_metrics.append(result["env"])
+            for key, value in result.get("time", {}).items():
+                time_metrics[key].append(value)
+
+        time_metrics = {k: sum(v) / len(v) for k, v in time_metrics.items()}
+        if not env_metrics:
+            return {**time_metrics}
+
+        env_metrics = compute_evaluate_metrics(env_metrics)
+        return {**env_metrics, **time_metrics}
 
     def update_rollout_weights(self) -> None:
         self.rollout.pause_generation().wait()
@@ -90,7 +103,7 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         env_handle: Handle = self.env.interact(
             input_channel=self.rollout_channel,
             output_channel=self.env_channel,
-            metrics_channel=self.env_metrics_channel,
+            metric_channel=self.env_metric_channel,
         )
         rollout_handle: Handle = self.rollout.generate(
             input_channel=self.env_channel,

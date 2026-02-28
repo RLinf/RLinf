@@ -23,7 +23,7 @@ from rlinf.runners.async_ppo_embodied_runner import AsyncPPOEmbodiedRunner
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.actor.async_ppo_fsdp_worker import AsyncPPOEmbodiedFSDPActor
-from rlinf.workers.env.async_ppo_env_worker import AsyncPPOEnvWorker
+from rlinf.workers.env.async_env_worker import AsyncEnvWorker
 from rlinf.workers.rollout.hf.async_ppo_huggingface_worker import (
     AsyncPPOMultiStepRolloutWorker,
 )
@@ -58,7 +58,7 @@ def main(cfg) -> None:
     )
 
     env_placement = component_placement.get_strategy("env")
-    env_group = AsyncPPOEnvWorker.create_group(cfg).launch(
+    env_group = AsyncEnvWorker.create_group(cfg).launch(
         cluster,
         name=cfg.env.group_name,
         placement_strategy=env_placement,
