@@ -155,7 +155,7 @@ Model Download
    pip install huggingface-hub
    hf download RLinf/RLinf-Gr00t-SFT-Stack-cube --local-dir RLinf-Gr00t-SFT-Stack-cube
 
-To enable the model to improve its performance through reinforcement learning, we collected human demonstration data for the stack cube task in the IsaacLab environment and conducted supervised fine-tuning with **GR00T N1.5** (<https://github.com/NVIDIA/Isaac-GR00T/tree/n1.5-release>) as the base model, endowing it with a certain level of task success rate.
+To enable the model to improve its performance through reinforcement learning, we collected human demonstration data for the stack cube task in the IsaacLab environment and conducted supervised fine-tuning with **GR00T N1.5** (<https://github.com/NVIDIA/Isaac-GR00T/tree/n1.5-release>) as the base model, thereby achieving a baseline task success rate.
 
 The dataset has been open-sourced on HuggingFace: <https://huggingface.co/datasets/RLinf/IsaacLab-Stack-Cube-Data>
 
