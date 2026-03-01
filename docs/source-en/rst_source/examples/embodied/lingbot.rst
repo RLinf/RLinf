@@ -148,7 +148,7 @@ Once the model configuration is complete, use the official RLinf evaluation scri
     export ROBOTWIN_PATH=${ROBOTWIN_PATH}
     export LINGBOT_PATH="${RLINF_PATH}/.venv/lingbot-vla"
     export LINGBOT_VLA_PATH="${LINGBOT_PATH}"   # Point to the model/training root directory (adjust as needed)
-    export PYTHONPATH=${RLINF_PATH}:${LINGBOT_PATH}:$PYTHONPATH
+    export PYTHONPATH=${RLINF_PATH}:${LINGBOT_PATH}:${ROBOTWIN_PATH}:$PYTHONPATH
 
     # [Optional] For offline compute nodes, force HuggingFace to bypass network requests
     export HF_DATASETS_OFFLINE=1

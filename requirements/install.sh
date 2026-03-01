@@ -368,8 +368,8 @@ install_lingbot_vla_model() {
 
             uv pip install "numpy==1.26.4" "fsspec==2025.3.0" "opencv-python-headless==4.9.0.80" "rerun-sdk==0.21.0"
             uv pip install xformers==0.0.28.post3 --no-deps
-            uv pip install draccus einops datasets omegaconf jsonlines deepdiff diffusers psutil ipdb torchdata msgpack websockets blobfile
-
+            uv pip install draccus einops datasets omegaconf jsonlines deepdiff diffusers==0.34.2 psutil ipdb torchdata msgpack websockets blobfile
+            uv pip install diffusers==0.30.3 transformers==4.51.3 tokenizers==0.21.4 protobuf==4.25.3 tensorflow==2.15.0 tensorflow-datasets==4.9.3 "tensorboard<2.16"
             install_robotwin_env
             ;;
         *)

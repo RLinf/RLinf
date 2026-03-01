@@ -148,7 +148,7 @@ Lingbot-VLA 直接使用环境提供的自然语言任务描述作为视觉语�
     export ROBOTWIN_PATH=${ROBOTWIN_PATH}
     export LINGBOT_PATH="${RLINF_PATH}/.venv/lingbot-vla"
     export LINGBOT_VLA_PATH="${LINGBOT_PATH}"   # 指向模型训练/权重根目录（根据实际情况调整）
-    export PYTHONPATH=${RLINF_PATH}:${LINGBOT_PATH}:$PYTHONPATH
+    export PYTHONPATH=${RLINF_PATH}:${LINGBOT_PATH}:${ROBOTWIN_PATH}:$PYTHONPATH
 
     # 【可选】对于无网离线计算节点，强制阻止 HuggingFace 联网寻找文件
     export HF_DATASETS_OFFLINE=1
