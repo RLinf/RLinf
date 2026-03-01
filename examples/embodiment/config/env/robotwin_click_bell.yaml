@@ -16,7 +16,7 @@ max_episode_steps: 400
 
 is_eval: False
 
-assets_path: "/mnt/public/lwb/work/RLinf/RoboTwin"
+assets_path: "${oc.env:ROBOTWIN_PATH}"
 
 video_cfg:
   save_video: True
