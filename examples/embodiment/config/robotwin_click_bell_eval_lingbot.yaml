@@ -28,7 +28,7 @@ runner:
   max_epochs: 1
   max_steps: -1
   only_eval: True
-  eval_episodes: 100        
+  eval_episodes: 20      
   val_check_interval: -1
   save_interval: 100
   resume_dir: null
@@ -70,7 +70,7 @@ algorithm:
 env:
   group_name: "EnvGroup"
   eval:
-    total_num_envs: 20
+    total_num_envs: 4
     auto_reset: True
     ignore_terminations: True
     max_episode_steps: 300
@@ -80,7 +80,7 @@ env:
     is_eval: True
     video_cfg:
       save_video: True
-      video_base_dir: /mnt/public/lwb/work/RLinf/RoboTwin/eval_result/click_bell/policy.lingbot_wrapper/demo_clean
+      video_base_dir: /path/to//RLinf/RoboTwin/eval_result/click_bell/policy.lingbot_wrapper/demo_clean
   train:
     total_num_envs: 4
     group_size: 1
@@ -93,8 +93,8 @@ rollout:
   pipeline_stage_num: 1
   model:
     model_type: "lingbot"
-    model_path: /mnt/public/lwb/test_project/lingbot-vla/output_click_bell_aloha/checkpoints/global_step_8280/hf_ckpt
-    tokenizer_path: /mnt/public/lwb/test_project/lingbot-vla/Qwen2.5-VL-3B-Instruct
+    model_path: /path/to/lingbot-vla/output_click_bell_aloha/checkpoints/global_step_8280/hf_ckpt
+    tokenizer_path: /path/to/lingbot-vla/Qwen2.5-VL-3B-Instruct
     action_dim: 14
     num_action_chunks: 50
     precision: "bf16"
@@ -109,8 +109,8 @@ actor:
   enable_offload: True
   model:
     model_type: "lingbot"
-    model_path: /mnt/public/lwb/test_project/lingbot-vla/output_click_bell_aloha/checkpoints/global_step_8280/hf_ckpt
-    tokenizer_path: /mnt/public/lwb/test_project/lingbot-vla/Qwen2.5-VL-3B-Instruct
+    model_path: /path/to/lingbot-vla/output_click_bell_aloha/checkpoints/global_step_8280/hf_ckpt
+    tokenizer_path: /path/to/lingbot-vla/Qwen2.5-VL-3B-Instruct
     action_dim: 14
     num_action_chunks: 50
     add_value_head: True

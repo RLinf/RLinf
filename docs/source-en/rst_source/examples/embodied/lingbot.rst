@@ -56,10 +56,10 @@ First, clone the RLinf repository and use ``install.sh`` to configure the underl
     bash requirements/install.sh embodied --model lingbot-vla --env robotwin --use-mirror --no-root
     source .venv/bin/activate
 
-2. RoboTwin Environment Setup & Patch Replacement
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2. RoboTwin Environment Setup
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Since the built-in RLinf environment does not contain the complete RoboTwin source code, you need to manually pull the ``RLinf_support`` branch of RoboTwin **and overwrite it using the LingBot patch files pre-configured in RLinf.**
+Since the built-in RLinf environment does not contain the complete RoboTwin source code, you need to manually pull the ``RLinf_support`` branch of RoboTwin (this branch already includes all necessary patches compatible with LingBot-VLA).
 
 .. code-block:: bash
 
@@ -69,19 +69,6 @@ Since the built-in RLinf environment does not contain the complete RoboTwin sour
     export ROBOTWIN_PATH=$(pwd)
     export HF_ENDPOINT=https://hf-mirror.com
     bash script/_download_assets.sh
-
-    # Download and apply LingBot-VLA patch files
-    cd ${ROBOTWIN_PATH}
-    git clone https://github.com/lwbscu/lingbot-robotwin-patches.git
-    CP_SRC="${ROBOTWIN_PATH}/lingbot-robotwin-patches"
-    CP_DST="${ROBOTWIN_PATH}"
-
-    cp ${CP_SRC}/_base_task.py ${CP_DST}/envs/_base_task.py
-    cp ${CP_SRC}/planner.py ${CP_DST}/envs/robot/planner.py
-    cp ${CP_SRC}/robot.py ${CP_DST}/envs/robot/robot.py
-    cp ${CP_SRC}/images_to_video.py ${CP_DST}/envs/utils/images_to_video.py
-    cp ${CP_SRC}/vector_env.py ${CP_DST}/robotwin/envs/vector_env.py
-    cp ${CP_SRC}/eval_policy.py ${CP_DST}/script/eval_policy.py
 
 Model Download
 --------------
@@ -160,8 +147,9 @@ Once the model configuration is complete, use the official RLinf evaluation scri
     export ROBOT_PLATFORM=ALOHA
     export ROBOTWIN_PATH=${ROBOTWIN_PATH}
     export LINGBOT_PATH="${RLINF_PATH}/.venv/lingbot-vla"
+    export LINGBOT_VLA_PATH="${LINGBOT_PATH}"   # Point to the model/training root directory (adjust as needed)
     export PYTHONPATH=${RLINF_PATH}:${LINGBOT_PATH}:$PYTHONPATH
-    
+
     # [Optional] For offline compute nodes, force HuggingFace to bypass network requests
     export HF_DATASETS_OFFLINE=1
     export TRANSFORMERS_OFFLINE=1
@@ -173,13 +161,12 @@ Once the model configuration is complete, use the official RLinf evaluation scri
     # 3. Fix the hardcoded ROBOTWIN_PATH in the execution script
     sed -i 's|export ROBOTWIN_PATH="/path/to/RoboTwin"|export ROBOTWIN_PATH=${ROBOTWIN_PATH}|g' examples/embodiment/eval_embodiment.sh
 
-    # 4. Execute evaluation (e.g., 20 episodes, limited to 4 concurrent envs)
+    # 4. Execute evaluation (replace ${LINGBOT_VLA_PATH} with the actual path or keep the setting above)
     bash examples/embodiment/eval_embodiment.sh robotwin_click_bell_eval_lingbot ALOHA \
-        ++runner.eval_episodes=20 \
-        ++env.eval.total_num_envs=4 \
-        ++env.eval.seeds_path="${RLINF_PATH}/rlinf/envs/robotwin/seeds/click_bell_20_seeds.json" \
-        ++rollout.model.model_path="${LINGBOT_PATH}/lingbot-vla-4b" \
-        ++actor.model.model_path="${LINGBOT_PATH}/lingbot-vla-4b"
+        ++rollout.model.model_path="${LINGBOT_VLA_PATH}/output_mixed_5tasks_aloha/checkpoints/global_step_46400/hf_ckpt" \
+        ++actor.model.model_path="${LINGBOT_VLA_PATH}/output_mixed_5tasks_aloha/checkpoints/global_step_46400/hf_ckpt" \
+        ++rollout.model.tokenizer_path="${LINGBOT_VLA_PATH}/Qwen2.5-VL-3B-Instruct" \
+        ++actor.model.tokenizer_path="${LINGBOT_VLA_PATH}/Qwen2.5-VL-3B-Instruct"
 
 Visualization and Results
 -------------------------

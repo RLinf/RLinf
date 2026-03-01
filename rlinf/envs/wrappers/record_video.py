@@ -353,12 +353,7 @@ class RecordVideo(gym.Wrapper):
         """Save frames to disk (runs in background)."""
         video_writer = None
         try:
-            video_writer = imageio.get_writer(
-                mp4_path,
-                fps=self._fps,
-                codec=os.getenv("VIDEO_CODEC", "libopenh264"),
-                macro_block_size=None,
-            )
+            video_writer = imageio.get_writer(mp4_path, fps=self._fps)
             for img in frames:
                 video_writer.append_data(img)
         except Exception as exc:

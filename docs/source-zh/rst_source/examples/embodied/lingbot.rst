@@ -56,10 +56,10 @@ Lingbot-VLA 直接使用环境提供的自然语言任务描述作为视觉语�
     bash requirements/install.sh embodied --model lingbot-vla --env robotwin --use-mirror --no-root
     source .venv/bin/activate
 
-2. RoboTwin 环境配置与补丁替换
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2. RoboTwin 环境配置
+~~~~~~~~~~~~~~~~~~~~
 
-由于 RLinf 内置环境不包含完整的 RoboTwin 源码，需要手动拉取 RoboTwin 的 ``RLinf_support`` 分支，**并使用预置在 RLinf 内的 Lingbot 补丁文件进行覆盖。**
+由于 RLinf 内置环境不包含完整的 RoboTwin 源码，需要手动拉取 RoboTwin 的 ``RLinf_support`` 分支（该分支已包含与 Lingbot-VLA 兼容的所有必要补丁）。
 
 .. code-block:: bash
 
@@ -69,19 +69,6 @@ Lingbot-VLA 直接使用环境提供的自然语言任务描述作为视觉语�
     export ROBOTWIN_PATH=$(pwd)
     export HF_ENDPOINT=https://hf-mirror.com
     bash script/_download_assets.sh
-
-    # 下载并替换 LingBot-VLA 专属补丁文件
-    cd ${ROBOTWIN_PATH}
-    git clone https://github.com/lwbscu/lingbot-robotwin-patches.git
-    CP_SRC="${ROBOTWIN_PATH}/lingbot-robotwin-patches"
-    CP_DST="${ROBOTWIN_PATH}"
-
-    cp ${CP_SRC}/_base_task.py ${CP_DST}/envs/_base_task.py
-    cp ${CP_SRC}/planner.py ${CP_DST}/envs/robot/planner.py
-    cp ${CP_SRC}/robot.py ${CP_DST}/envs/robot/robot.py
-    cp ${CP_SRC}/images_to_video.py ${CP_DST}/envs/utils/images_to_video.py
-    cp ${CP_SRC}/vector_env.py ${CP_DST}/robotwin/envs/vector_env.py
-    cp ${CP_SRC}/eval_policy.py ${CP_DST}/script/eval_policy.py
 
 模型下载
 --------
@@ -160,8 +147,9 @@ Lingbot-VLA 直接使用环境提供的自然语言任务描述作为视觉语�
     export ROBOT_PLATFORM=ALOHA
     export ROBOTWIN_PATH=${ROBOTWIN_PATH}
     export LINGBOT_PATH="${RLINF_PATH}/.venv/lingbot-vla"
+    export LINGBOT_VLA_PATH="${LINGBOT_PATH}"   # 指向模型训练/权重根目录（根据实际情况调整）
     export PYTHONPATH=${RLINF_PATH}:${LINGBOT_PATH}:$PYTHONPATH
-    
+
     # 【可选】对于无网离线计算节点，强制阻止 HuggingFace 联网寻找文件
     export HF_DATASETS_OFFLINE=1
     export TRANSFORMERS_OFFLINE=1
@@ -173,13 +161,12 @@ Lingbot-VLA 直接使用环境提供的自然语言任务描述作为视觉语�
     # 3. 修复执行脚本中未定义 ROBOTWIN_PATH 的硬编码问题
     sed -i 's|export ROBOTWIN_PATH="/path/to/RoboTwin"|export ROBOTWIN_PATH=${ROBOTWIN_PATH}|g' examples/embodiment/eval_embodiment.sh
 
-    # 4. 执行评估指令 (以 20 次场景，4 环境并发限制为例)
+    # 4. 执行评估指令 (请将 ${LINGBOT_VLA_PATH} 替换为实际路径或保持如上设置)
     bash examples/embodiment/eval_embodiment.sh robotwin_click_bell_eval_lingbot ALOHA \
-        ++runner.eval_episodes=20 \
-        ++env.eval.total_num_envs=4 \
-        ++env.eval.seeds_path="${RLINF_PATH}/rlinf/envs/robotwin/seeds/click_bell_20_seeds.json" \
-        ++rollout.model.model_path="${LINGBOT_PATH}/lingbot-vla-4b" \
-        ++actor.model.model_path="${LINGBOT_PATH}/lingbot-vla-4b"
+        ++rollout.model.model_path="${LINGBOT_VLA_PATH}/output_mixed_5tasks_aloha/checkpoints/global_step_46400/hf_ckpt" \
+        ++actor.model.model_path="${LINGBOT_VLA_PATH}/output_mixed_5tasks_aloha/checkpoints/global_step_46400/hf_ckpt" \
+        ++rollout.model.tokenizer_path="${LINGBOT_VLA_PATH}/Qwen2.5-VL-3B-Instruct" \
+        ++actor.model.tokenizer_path="${LINGBOT_VLA_PATH}/Qwen2.5-VL-3B-Instruct"
 
 可视化与结果
 ------------
