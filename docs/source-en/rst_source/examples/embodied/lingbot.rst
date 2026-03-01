@@ -70,8 +70,10 @@ Since the built-in RLinf environment does not contain the complete RoboTwin sour
     export HF_ENDPOINT=https://hf-mirror.com
     bash script/_download_assets.sh
 
-    # Use the pre-configured lingbot-vla patch files in RLinf for hard replacement
-    CP_SRC="${RLINF_PATH}/requirements/other_files/lingbot-vla"
+    # Download and apply LingBot-VLA patch files
+    cd ${ROBOTWIN_PATH}
+    git clone https://github.com/lwbscu/lingbot-robotwin-patches.git
+    CP_SRC="${ROBOTWIN_PATH}/lingbot-robotwin-patches"
     CP_DST="${ROBOTWIN_PATH}"
 
     cp ${CP_SRC}/_base_task.py ${CP_DST}/envs/_base_task.py

@@ -70,8 +70,10 @@ Lingbot-VLA 直接使用环境提供的自然语言任务描述作为视觉语�
     export HF_ENDPOINT=https://hf-mirror.com
     bash script/_download_assets.sh
 
-    # 使用 RLinf 中预置的 lingbot-vla 补丁文件进行硬覆盖
-    CP_SRC="${RLINF_PATH}/requirements/other_files/lingbot-vla"
+    # 下载并替换 LingBot-VLA 专属补丁文件
+    cd ${ROBOTWIN_PATH}
+    git clone https://github.com/lwbscu/lingbot-robotwin-patches.git
+    CP_SRC="${ROBOTWIN_PATH}/lingbot-robotwin-patches"
     CP_DST="${ROBOTWIN_PATH}"
 
     cp ${CP_SRC}/_base_task.py ${CP_DST}/envs/_base_task.py
