@@ -67,9 +67,13 @@ class MultiChannelProcessGroup:
 
         # Check if all workers have the same accelerator type
         accel_type = group_info.workers[0].accelerator_type
+        accel_model = group_info.workers[0].accelerator_model
         self._no_accel_ccl = (
-            # Hetero workers in the same group, disable CCL
-            any(worker.accelerator_type != accel_type for worker in group_info.workers)
+            # Hetero accelerator models in the same group, disable CCL
+            # NCCL for example does not support mixed GPU models
+            any(
+                worker.accelerator_model != accel_model for worker in group_info.workers
+            )
             # CPU only, disable CCL
             or accel_type == AcceleratorType.NO_ACCEL
             # Unsupported accelerator CCL type, disable CCL
@@ -141,6 +145,8 @@ class MultiChannelProcessGroup:
 
         if not self._no_accel_ccl:
             pg_options = AcceleratorUtil.get_accel_pg_options(self._accel_type, options)
+            if pg_options is not None:
+                pg_options._timeout = timeout
             # Create accelerator CCL groups and split GLOO groups from them
             base_group = MultiChannelProcessGroup._create_process_group(
                 backend=self._accel_ccl_backend,  # Only NCCL group supports splitting
@@ -702,6 +708,7 @@ class MultiChannelProcessGroup:
                 pass
 
             if not split_from or not split_from.supports_splitting:
+                # MODIFICATION NOTE: set split_from to None to avoid failure when the pg does not support split
                 split_from = None
 
             # If necessary, find a backend to split from by peeling process

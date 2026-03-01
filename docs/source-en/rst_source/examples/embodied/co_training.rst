@@ -10,7 +10,7 @@ Co-training combines **PPO** in simulation with **SFT** on real data so the
 policy improves task success in sim while retaining real-world priors and
 avoiding sim-only overfitting that hurts sim-to-real transfer.
 
-For technical details, see the paper: *RLinf-Co: Reinforcement Learning–Based Sim–Real Co-Training for VLA Models*.
+For technical details, see the paper: *Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for VLA Models*.
 
 After training, the model is expected to support:
 
@@ -129,7 +129,7 @@ We provide a LeRobot-format dataset (50 real + 1499 sim trajectories) at `RLinf/
    # export HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset RLinf/RLCo-Example-Mix-Data --local-dir RLCo-Example-Mix-Data
 
-2. Run SFT using `OpenPi <https://github.com/Physical-Intelligence/openpi>`_ or the :doc:`SFT example <sft>`.
+2. Run SFT using `OpenPi <https://github.com/Physical-Intelligence/openpi>`_ or the :doc:`SFT example <sft_openpi>`.
 
 **Option B: Use an SFT checkpoint**
 
@@ -202,7 +202,7 @@ The config ``batch_size`` is the micro-batch size before gradient accumulation. 
 
 .. math::
 
-   \text{True_Batch_Size} = \frac{\text{Global_Batch_Size} \times \text{Input_Batch}}{\text{Micro_Batch_Size} \times \text{Num_GPUs}}
+   \text{True\_Batch\_Size} = \frac{\text{Global\_Batch\_Size} \times \text{Input\_Batch}}{\text{Micro\_Batch\_Size} \times \text{Num\_GPUs}}
 
 See :doc:`./pi0` for ``global_batch_size`` and ``micro_batch_size`` settings.
 
@@ -236,4 +236,4 @@ Besides standard RL metrics (see :doc:`π₀ and π₀.₅ visualization <pi0>`)
 - After loading Stage I: ~35% zero-shot success in sim.
 - After 100 co-training steps: ~50% success in sim.
 
-For real-robot deployment and ablations, see the paper: *RLinf-Co: Reinforcement Learning–Based Sim–Real Co-Training for VLA Models*.
+For real-robot deployment and ablations, see the paper: *Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for VLA Models*.

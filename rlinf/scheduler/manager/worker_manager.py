@@ -156,6 +156,9 @@ class WorkerInfo:
     accelerator_type: AcceleratorType
     """Type of accelerator where the worker is placed."""
 
+    accelerator_model: str
+    """Model of accelerator where the worker is placed."""
+
     accelerator_rank: int
     """Accelerator ID where the worker is placed."""
 

@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import json
-import os
+import logging
 
 import hydra
 import torch.multiprocessing as mp
@@ -23,26 +23,22 @@ from rlinf.config import validate_cfg
 from rlinf.runners.sft_runner import SFTRunner
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
+from rlinf.workers.sft.fsdp_vlm_sft_worker import FSDPVlmSftWorker
 
 mp.set_start_method("spawn", force=True)
 
 
-@hydra.main(
-    version_base="1.1", config_path="config", config_name="maniskill_ppo_openvlaoft"
-)
+@hydra.main(version_base="1.1", config_path="config", config_name="vlm_sft")
 def main(cfg) -> None:
-    os.environ["HF_LEROBOT_HOME"] = cfg.data.data_path
-
     cfg = validate_cfg(cfg)
-    print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
+    logging.info(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = HybridComponentPlacement(cfg, cluster)
 
     # Create actor worker group
     actor_placement = component_placement.get_strategy("actor")
-    actor_group = FSDPSftWorker.create_group(cfg).launch(
+    actor_group = FSDPVlmSftWorker.create_group(cfg).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
     )
 
@@ -52,7 +48,11 @@ def main(cfg) -> None:
     )
 
     runner.init_workers()
-    runner.run()
+    # if train_data_paths is None, the code will just eval the model
+    if cfg.data.get("train_data_paths", None) is None:
+        runner.run_eval()
+    else:
+        runner.run()
 
 
 if __name__ == "__main__":

@@ -58,6 +58,8 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         self.setup_model_and_optimizer(initialize_target=True)
         self.setup_sac_components()
         self.soft_update_target_model(tau=1.0)
+        if self.use_dsrl:
+            self._init_target_shadow()
         if self.cfg.actor.get("enable_offload", False):
             self.offload_param_and_grad()
             self.offload_optimizer()
@@ -88,6 +90,9 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         self.model = self._strategy.wrap_model(
             model=module, device_mesh=self._device_mesh
         )
+        # When precision is null (e.g. Pi0), detect actual dtype from wrapped model
+        if self.torch_dtype is None:
+            self.torch_dtype = next(self.model.parameters()).dtype
         if initialize_target:
             self.target_model = self._strategy.wrap_model(
                 model=target_module, device_mesh=self._device_mesh
@@ -95,7 +100,15 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             self.target_model.requires_grad_(False)
             self.target_model_initialized = True
 
-        param_filters = {"critic": ["encoders", "encoder", "q_head", "state_proj"]}
+        self.use_dsrl = self.cfg.actor.model.get("openpi", {}).get("use_dsrl", False)
+        use_dsrl = self.use_dsrl
+        if use_dsrl:
+            # DSRL: separate actor/critic encoders into different optimizer groups
+            param_filters = {
+                "critic": ["critic_image_encoder", "critic_state_encoder", "q_head"]
+            }
+        else:
+            param_filters = {"critic": ["encoders", "encoder", "q_head", "state_proj"]}
         filtered_optim_config = {"critic": self.cfg.actor.critic_optim}
         optimizers = self.build_optimizers(
             model=self.model,
@@ -143,7 +156,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         )
         if self.alpha_optimizer is not None:
             self.alpha_lr_scheduler = self.build_lr_scheduler(
-                self.optimizer, self.cfg.algorithm.entropy_tuning.optim
+                self.alpha_optimizer, self.cfg.algorithm.entropy_tuning.optim
             )
 
     def setup_sac_components(self):
@@ -204,31 +217,66 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             f"{self.target_update_type=} is not suppported!"
         )
 
+    def _init_target_shadow(self):
+        """Create persistent float32 shadow of target model parameters.
+
+        bfloat16 has only 7 mantissa bits (ULP ~0.002 at magnitude 0.3).
+        With tau=0.005, per-step EMA delta can be smaller than ULP/2, so
+        storing back to bf16 each step rounds away the update. The shadow
+        keeps the accumulated EMA state in float32 (ULP ~3.6e-8) across
+        steps, preventing precision loss.
+        """
+        self._target_shadow_f32 = {}
+        for name, param in self.target_model.named_parameters():
+            self._target_shadow_f32[name] = param.data.float().clone()
+
     def soft_update_target_model(self, tau: Optional[float] = None):
-        """Soft update target model parameters"""
+        """Soft update target model parameters.
+
+        For DSRL (bfloat16 models), uses a persistent float32 shadow buffer
+        to prevent EMA precision loss. For non-DSRL SAC, uses direct EMA
+        on model parameters.
+        """
         if tau is None:
             tau = self.cfg.algorithm.tau
 
         assert self.target_model_initialized
 
         with torch.no_grad():
-            online_params = self.model.named_parameters()
-            target_params = self.target_model.named_parameters()
-
-            for (name1, online_param), (name2, target_param) in zip(
-                online_params, target_params
-            ):
-                assert name1 == name2
-                if "q_head" not in name1:
-                    if self.target_update_type == "all":
+            if not hasattr(self, "_target_shadow_f32"):
+                # Non-DSRL path (or before shadow init): direct EMA update
+                for (name1, online_param), (name2, target_param) in zip(
+                    self.model.named_parameters(),
+                    self.target_model.named_parameters(),
+                ):
+                    assert name1 == name2
+                    if "q_head" not in name1:
+                        if self.target_update_type == "all":
+                            target_param.data.mul_(1.0 - tau)
+                            target_param.data.add_(online_param.data * tau)
+                        else:
+                            target_param.data.mul_(0.0)
+                            target_param.data.add_(online_param.data)
+                    else:
                         target_param.data.mul_(1.0 - tau)
                         target_param.data.add_(online_param.data * tau)
+            else:
+                # DSRL path: float32 shadow buffer for bf16 precision
+                for (name1, online_param), (name2, target_param) in zip(
+                    self.model.named_parameters(),
+                    self.target_model.named_parameters(),
+                ):
+                    assert name1 == name2
+                    if "q_head" not in name1 and self.target_update_type != "all":
+                        shadow = self._target_shadow_f32[name1]
+                        shadow.copy_(online_param.data.float())
+                        target_param.data.copy_(shadow.to(target_param.data.dtype))
                     else:
-                        target_param.data.mul_(0.0)
-                        target_param.data.add_(online_param.data)
-                else:
-                    target_param.data.mul_(1.0 - tau)
-                    target_param.data.add_(online_param.data * tau)
+                        shadow = self._target_shadow_f32[name1]
+                        shadow.mul_(1.0 - tau).add_(
+                            online_param.data.float(), alpha=tau
+                        )
+                        target_param.data.copy_(shadow.to(target_param.data.dtype))
 
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
         """
@@ -265,7 +313,16 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         use_crossq = self.cfg.algorithm.get("q_head_type", "default") == "crossq"
         bootstrap_type = self.cfg.algorithm.get("bootstrap_type", "standard")
         agg_q = self.cfg.algorithm.get("agg_q", "min")
-        rewards = batch["rewards"].to(self.torch_dtype)
+        use_dsrl = self.cfg.actor.model.get("openpi", {}).get("use_dsrl", False)
+        if use_dsrl:
+            num_action_chunks = self.cfg.actor.model.get("num_action_chunks", 1)
+            discount = self.cfg.algorithm.gamma**num_action_chunks
+            rewards_for_bootstrap = batch["rewards"][:, 0:1].to(self.torch_dtype)
+        else:
+            discount = self.cfg.algorithm.gamma
+            rewards_for_bootstrap = (
+                batch["rewards"].sum(dim=-1, keepdim=True).to(self.torch_dtype)
+            )
         terminations = batch["terminations"].to(self.torch_dtype)
 
         curr_obs = batch["curr_obs"]
@@ -281,16 +338,22 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 kwargs["temperature"] = (
                     self.cfg.algorithm.sampling_params.temperature_train
                 )
+            if use_dsrl:
+                kwargs["train"] = True
             next_state_actions, next_state_log_pi, shared_feature = self.model(
                 forward_type=ForwardType.SAC, obs=next_obs, **kwargs
             )
+            if next_state_log_pi.ndim == 1:
+                next_state_log_pi = next_state_log_pi.unsqueeze(-1)
             next_state_log_pi = next_state_log_pi.sum(dim=-1, keepdim=True)
             if not use_crossq:
+                dsrl_kwargs = {"train": True} if use_dsrl else {}
                 all_qf_next_target = self.target_model(
                     forward_type=ForwardType.SAC_Q,
                     obs=next_obs,
                     actions=next_state_actions,
                     shared_feature=None,
+                    **dsrl_kwargs,
                 )
                 if self.critic_subsample_size > 0:
                     sample_idx = torch.randint(
@@ -318,24 +381,25 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                     qf_next_target = qf_next_target.to(dtype=self.torch_dtype)
                 if bootstrap_type == "always":
                     target_q_values = (
-                        rewards.sum(dim=-1, keepdim=True)
-                        + self.cfg.algorithm.gamma * qf_next_target
+                        rewards_for_bootstrap + discount * qf_next_target
                     )  # [bsz, 1]
                 elif bootstrap_type == "standard":
                     target_q_values = (
-                        rewards.sum(dim=-1, keepdim=True)
+                        rewards_for_bootstrap
                         + (~(terminations.any(dim=-1, keepdim=True)))
-                        * self.cfg.algorithm.gamma
+                        * discount
                         * qf_next_target
                     )  # [bsz, 1]
                 else:
                     raise NotImplementedError(f"{bootstrap_type=} is not supported!")
 
         if not use_crossq:
+            dsrl_kwargs = {"train": True} if use_dsrl else {}
             all_data_q_values = self.model(
                 forward_type=ForwardType.SAC_Q,
                 obs=curr_obs,
                 actions=actions,
+                **dsrl_kwargs,
             )
         else:
             all_data_q_values, all_qf_next = self.model(
@@ -356,20 +420,18 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 qf_next = qf_next.to(dtype=self.torch_dtype)
 
             if bootstrap_type == "always":
-                target_q_values = (
-                    rewards.sum(dim=-1, keepdim=True)
-                    + self.cfg.algorithm.gamma * qf_next
-                )  # [bsz, 1]
+                target_q_values = rewards_for_bootstrap + discount * qf_next  # [bsz, 1]
             elif bootstrap_type == "standard":
                 target_q_values = (
-                    rewards.sum(dim=-1, keepdim=True)
-                    + (~(terminations.any(dim=-1, keepdim=True)))
-                    * self.cfg.algorithm.gamma
-                    * qf_next
+                    rewards_for_bootstrap
+                    + (~(terminations.any(dim=-1, keepdim=True))) * discount * qf_next
                 )  # [bsz, 1]
             else:
                 raise NotImplementedError(f"{bootstrap_type=} is not supported!")
 
+        # Align dtype: bool ops with Python floats promote to float32,
+        # which can mismatch with bfloat16 model outputs.
+        target_q_values = target_q_values.to(dtype=all_data_q_values.dtype)
         critic_loss = F.mse_loss(
             all_data_q_values, target_q_values.expand_as(all_data_q_values)
         )
@@ -387,17 +449,23 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         kwargs = {}
         if self.cfg.actor.model.model_type in ["openvla", "openvla_oft"]:
             kwargs["temperature"] = self.cfg.algorithm.sampling_params.temperature_train
+        if self.use_dsrl:
+            kwargs["train"] = True
         pi, log_pi, shared_feature = self.model(
             forward_type=ForwardType.SAC, obs=curr_obs, **kwargs
         )
+        if log_pi.ndim == 1:
+            log_pi = log_pi.unsqueeze(-1)
         log_pi = log_pi.sum(dim=-1, keepdim=True)  # sum over the chunk dimension
         if not use_crossq:
+            dsrl_kwargs = {"train": True} if self.use_dsrl else {}
             all_qf_pi = self.model(
                 forward_type=ForwardType.SAC_Q,
                 obs=curr_obs,
                 actions=pi,
                 shared_feature=None,
                 detach_encoder=True,
+                **dsrl_kwargs,
             )
         else:
             all_qf_pi, _ = self.model(
@@ -432,9 +500,13 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 kwargs["temperature"] = (
                     self.cfg.algorithm.sampling_params.temperature_train
                 )
+            if self.use_dsrl:
+                kwargs["train"] = True
             _, log_pi, _ = self.model(
                 forward_type=ForwardType.SAC, obs=curr_obs, **kwargs
             )
+            if log_pi.ndim == 1:
+                log_pi = log_pi.unsqueeze(-1)
             log_pi = log_pi.sum(dim=-1, keepdim=True)
 
         alpha = self.entropy_temp.compute_alpha()
@@ -442,7 +514,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         return alpha_loss
 
     @Worker.timer("update_one_epoch")
-    def update_one_epoch(self):
+    def update_one_epoch(self, train_actor: bool = True):
         global_batch_size_per_rank = (
             self.cfg.actor.global_batch_size // self._world_size
         )
@@ -503,7 +575,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             **all_critic_metrics,
         }
 
-        if self.update_step % self.critic_actor_ratio == 0:
+        if self.update_step % self.critic_actor_ratio == 0 and train_actor:
             self.optimizer.zero_grad()
             gbs_actor_loss = []
             gbs_entropy = []
@@ -621,6 +693,11 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             )
             return {}
 
+        # Delay actor training until buffer has enough samples
+        train_actor_steps = self.cfg.algorithm.get("train_actor_steps", 0)
+        train_actor_steps = max(min_buffer_size, train_actor_steps)
+        train_actor = self.replay_buffer.is_ready(train_actor_steps)
+
         assert (
             self.cfg.actor.global_batch_size
             % (self.cfg.actor.micro_batch_size * self._world_size)
@@ -637,7 +714,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
 
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
         for _ in range(update_epoch):
-            metrics_data = self.update_one_epoch()
+            metrics_data = self.update_one_epoch(train_actor=train_actor)
             append_to_dict(metrics, metrics_data)
             self.update_step += 1
 
