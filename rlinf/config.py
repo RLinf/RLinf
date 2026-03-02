@@ -52,6 +52,7 @@ class SupportedModel(Enum):
     OPENVLA = ("openvla", "embodied")
     OPENVLA_OFT = ("openvla_oft", "embodied")
     OPENPI = ("openpi", "embodied")
+    STARVLA = ("starvla", "embodied")
     MLP_POLICY = ("mlp_policy", "embodied")
     GR00T = ("gr00t", "embodied")
     DEXBOTIC_PI = ("dexbotic_pi", "embodied")

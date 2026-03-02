@@ -1,0 +1,40 @@
+model_type: "starvla"
+
+# Path to a starVLA checkpoint (.pt under a starVLA run directory)
+model_path: "/path/to/model/starvla/checkpoints/step_xxx.pt"
+
+# Precision used by RLinf actor/rollout wrappers.
+# Keep aligned with your StarVLA runtime (usually bf16 on A800/H100).
+precision: "bf16"
+
+# Action/chunk settings used by RLinf wrapper.
+# IMPORTANT: must match the checkpoint's action horizon/chunk length.
+action_dim: 7
+num_action_chunks: 8
+
+# LoRA settings (disabled by default for StarVLA wrapper path)
+is_lora: False
+lora_rank: 32
+
+# Common embodied fields used by RLinf validation / env adapters.
+use_proprio: True
+num_steps: 4
+policy_setup: "widowx_bridge"
+unnorm_key: "libero_10"
+
+# RL head behavior (wrapper-side value head).
+# For GRPO actor-only this can stay False; for PPO actor_critic set to True.
+add_value_head: False
+
+# Optional flags (kept for compatibility with other model configs).
+trust_remote_code: True
+low_cpu_mem_usage: True
+
+# Optional explicit namespace used by rlinf.models.embodiment.starvla.get_model
+starvla:
+  ckpt_path: ${actor.model.model_path}
+  # Informational fields for consistency checks in experiment configs.
+  framework_name: "QwenGR00T"
+  expected_action_dim: ${actor.model.action_dim}
+  expected_num_action_chunks: ${actor.model.num_action_chunks}
+  expected_image_size: [224, 224]
