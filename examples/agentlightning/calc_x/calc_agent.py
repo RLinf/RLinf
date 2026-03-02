@@ -5,6 +5,7 @@
 with latest Agent-lightning API (v0.2+)."""
 
 import asyncio
+import logging
 import os
 import re
 from typing import TypedDict, cast
@@ -16,6 +17,8 @@ from autogen_ext.tools.mcp import McpWorkbench, StdioServerParams
 from eval_utils import evaluate
 
 import agentlightning as agl
+
+logger = logging.getLogger(__name__)
 
 
 class MathProblem(TypedDict):
