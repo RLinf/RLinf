@@ -56,7 +56,7 @@ and build the index
 
 .. code-block:: bash
 
-   bash examples/searchr1/build_index.sh
+   bash examples/searchr1/local_server_faiss/build_index.sh
 
 Write the paths to the previously downloaded wiki files and the index into examples/searchr1/launch_local_server.sh
 
@@ -84,6 +84,36 @@ Write the paths to the previously downloaded wiki files and the index into examp
 
 Run `launch_local_server.sh` to start the Local Wiki Server.  
 Wait until server IP information is printed — indicating successful startup.
+
+(Optional) Using Qdrant as Local Wiki Server
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+We also support qdrant as the wiki server as well. If you don't want to use the qdrant, move on to the Training section.
+
+Download the local retrieval wiki corpus files provided by ASearcher using the method mentioned in the previous section.
+
+Download the `Qwen2.5-3B-Instruct <https://huggingface.co/Qwen/Qwen2.5-3B-Instruct>`__ embedding model from HuggingFace.
+
+Download `qdrant <https://github.com/qdrant/qdrant/releases>`__ binary and build a qdrant collection with follwing steps. Create a new folder and put the qdrant binary into this folder, to facilitate the subsequent storage of qdrant binary and constructed collection files.
+
+Use downloaded wiki corpus, Qwen2.5-3B-Instruct and qdrant to replace the file paths for `WIKI2018_DIR, retriever_path, and qdrant_path` in `examples/searchr1/local_server_qdrant/build_index_qdrant.sh` and `examples/searchr1/local_server_qdrant/launch_local_server_qdrant.sh`.
+
+Use the following instrcutions to build a qdrant wiki server collection:
+
+.. code-block:: bash
+
+   # build qdrant collection
+   bash ./examples/searchr1/local_server_qdrant/build_index_qdrant.sh
+
+Run launch_local_server_qdrant.sh to start the Local Qdrant Wiki Server. Wait until server IP information is printed — indicating successful startup.
+
+.. code-block:: bash
+
+   # launch qdrant server
+   bash ./examples/searchr1/local_server_qdrant/launch_local_server_qdrant.sh
+
+Qdrant uses the HNSW graph index algorithm by default. For details on optimizing the HNSW graph index, please refer to the `Qdrant documentation <https://qdrant.tech/documentation/guides/optimize/>`__.
+
 
 Training on 8×H100
 ------------------
