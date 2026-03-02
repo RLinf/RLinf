@@ -123,6 +123,19 @@ franka = [
     "imageio[ffmpeg]",
     "pynput"
 ]
+xsquare_turtle2 = [
+    "pyyaml",
+    "rospkg",
+    "empy==3.3.4",
+    "gymnasium==0.29.1",
+    "pyrealsense2",
+    "pyquaternion",
+    "opencv-python",
+    "defusedxml",
+    "pyspacemouse==1.1.5", 
+    "imageio[ffmpeg]",
+    "pynput"
+]
 
 [tool.uv]
 prerelease = "allow"
@@ -131,7 +144,8 @@ conflicts = [
       { extra = "agentic-sglang" },
       { extra = "agentic-vllm" },
       { extra = "embodied" },
-      { extra = "franka" }
+      { extra = "franka" },
+      { extra = "xsquare_turtle2" }
     ],
 ]
 override-dependencies = [

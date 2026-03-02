@@ -283,7 +283,7 @@ Prerequisites
 
 **Get the Target Pose for the Task**
 
-To acquire the target pose for the peg-insertion task, you can use the `toolkits.realworld_check.test_controller` script.
+To acquire the target pose for the peg-insertion task, you can use the `toolkits.realworld_check.test_franka_controller` script.
 
 First, you need to activate your Franka robot's programming mode, and manually move the robot to the desired target pose.
 
@@ -297,7 +297,7 @@ Next, run the script:
 
 .. code-block:: bash
 
-   python -m toolkits.realworld_check.test_controller
+   python -m toolkits.realworld_check.test_franka_controller
 
 The script will prompt you to input command, you can enter `getpos_euler` to get the current end-effector pose in Euler angles.
 
@@ -419,11 +419,11 @@ First, test the camera connection by running on the controller node:
 
 .. code-block:: bash
 
-   python -m toolkits.realworld_check.test_camera
+   python -m toolkits.realworld_check.test_franka_camera
 
 Next, test the basic cluster setup by running a dummy setup. Refer to ``examples/embodiment/config/real_world_dummy_sac_cnn.yaml`` and add `env.eval.override_cfg`.
 You can set the `is_dummy` field to `True` in both `env.train.override_cfg` and `env.eval.override_cfg` sections in the configuration file to enable the dummy setup.
-And fill the camera serial numbers obtained from ``running toolkits.realworld_check.test_camera.py`` into the field `camera_serials` under both `env.train.override_cfg` and `env.eval.override_cfg`.
+And fill the camera serial numbers obtained from ``running toolkits.realworld_check.test_franka_camera.py`` into the field `camera_serials` under both `env.train.override_cfg` and `env.eval.override_cfg`.
 
 Then, run the test script on the head node:
 
