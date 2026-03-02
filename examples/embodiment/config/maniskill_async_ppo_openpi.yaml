@@ -40,8 +40,8 @@ algorithm:
   group_size: 1
   reward_coef: 1.0
 
-  staleness_threshold: 2
-  behave_weight_threshold: 5
+  staleness_threshold: 1
+  behave_weight_threshold: 2
   rollout_epoch: 1
   eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
   reward_type: chunk_level
@@ -156,7 +156,7 @@ actor:
     adam_beta2: 0.95
     adam_eps: 1.0e-05
     clip_grad: 1.0
-    critic_warmup_steps: 0
+    critic_warmup_steps: 10
 
   # Override the default values in training_backend/fsdp
   fsdp_config:

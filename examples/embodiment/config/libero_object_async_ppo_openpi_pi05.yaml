@@ -49,7 +49,7 @@ algorithm:
   logprob_type: chunk_level
   entropy_type: token_level
 
-  update_epoch: 1
+  update_epoch: 2
   adv_type: gae
   loss_type: decoupled_actor_critic
   loss_agg_func: "token-mean" 
@@ -90,7 +90,7 @@ env:
 
   # Override the default values in env/libero_object
   train:
-    total_num_envs: 64
+    total_num_envs: 128
     max_episode_steps: 240 # max episode steps for truncation
     max_steps_per_rollout_epoch: 240
   eval:
@@ -145,7 +145,7 @@ actor:
     adam_eps: 1.0e-08
     weight_decay: 0.01
     clip_grad: 1.0
-    critic_warmup_steps: 0
+    critic_warmup_steps: 20
 
   # Override the default values in training_backend/fsdp  
   fsdp_config:

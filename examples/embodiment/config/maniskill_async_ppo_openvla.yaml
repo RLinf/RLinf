@@ -42,8 +42,8 @@ algorithm:
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
 
-  staleness_threshold: 2
-  behave_weight_threshold: null
+  staleness_threshold: 1
+  behave_weight_threshold: 2 
   rollout_epoch: 1
   eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
 
@@ -110,7 +110,7 @@ rollout:
   backend: "huggingface"
   recompute_logprobs: False
   enable_offload: False
-  pipeline_stage_num: 2
+  pipeline_stage_num: 1
 
   model:
     model_path: "/path/to/model/rl4vla/openvla-7b-rlvla-warmup/"
@@ -140,7 +140,7 @@ actor:
     adam_eps: 1.0e-08
     weight_decay: 0.01
     clip_grad: 1.0
-    critic_warmup_steps: 0
+    critic_warmup_steps: 10
 
   # Override the default values in training_backend/fsdp
   fsdp_config:
