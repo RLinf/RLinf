@@ -149,9 +149,14 @@ class SGLangWorker(Worker):
 
         load_format = "dummy"  # dummy means randomize init weight
         if self.weight_reload == "sync":
-            if self._cfg_rollout.validate_weight or getattr(
-                self._cfg_rollout, "validate_weight_first_sync", False
-            ):
+            validate_weight_first_sync = self._cfg_rollout.get(
+                "validate_weight_first_sync", False
+            )
+            if self._cfg.runner.resume_dir is not None:
+                # validate_weight_first_sync compare hf weights with megatron weights,
+                # and if resume_dir is enabled, hf weights can't equal to megatron's.
+                validate_weight_first_sync = False
+            if self._cfg_rollout.validate_weight or validate_weight_first_sync:
                 load_format = "auto"
         else:
             load_format = "auto"

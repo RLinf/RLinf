@@ -221,7 +221,7 @@ actor:
 
     fsdp_size: -1               # Number of GPUs per FSDP group for hybrid sharding. -1 means use all available GPUs in a single FSDP group
 
-    mixed_precision:            # mixed precision settings for fsdp/fsdp2
+    mixed_precision:            # mixed precision settings for fsdp/fsdp2 Do not enable fsdp mixed_precision simultaneously with amp_autocast.
       param_dtype: "bf16"
       reduce_dtype: "fp32"
       buffer_dtype: "fp32"

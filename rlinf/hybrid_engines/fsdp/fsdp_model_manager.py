@@ -256,9 +256,19 @@ class FSDPModelManager:
         self.lr_scheduler = self.build_lr_scheduler(
             optimizer=self.optimizer, optim_config=self._cfg.optim
         )
-        self.grad_scaler = self.build_grad_scaler(
-            self._cfg.fsdp_config.amp.use_grad_scaler
-        )
+        if self._cfg.fsdp_config.get("amp_grad_scaler", None) is not None:
+            kwargs = {}
+            for key in ["init_scale", "growth_interval"]:
+                value = self._cfg.fsdp_config.amp_grad_scaler.get(key, None)
+                if value is not None:
+                    kwargs[key] = value
+            self.grad_scaler = self.build_grad_scaler(
+                self._cfg.fsdp_config.get("amp_grad_scaler", False), **kwargs
+            )
+        else:
+            self.grad_scaler = self.build_grad_scaler(
+                self._cfg.fsdp_config.amp.use_grad_scaler
+            )
 
     def get_model_state_dict(self, cpu_offload: bool, full_state_dict: bool) -> dict:
         """
@@ -568,17 +578,18 @@ class FSDPModelManager:
             )
         return optimizers
 
-    def build_grad_scaler(self, enabled: bool) -> ShardedGradScaler:
+    def build_grad_scaler(self, enabled: bool, **kwargs) -> ShardedGradScaler:
         """
         Build the gradient scaler based on the configuration.
 
         Args:
             enabled (bool): Whether to enable gradient scaling.
+            kwargs: Optional parameters for ShardedGradScaler.
 
         Returns:
             ShardedGradScaler: The gradient scaler.
         """
-        return ShardedGradScaler(enabled=enabled)
+        return ShardedGradScaler(enabled=enabled, **kwargs)
 
     def before_micro_batch(
         self, model: Union[FSDP, FSDPModule], is_last_micro_batch: bool

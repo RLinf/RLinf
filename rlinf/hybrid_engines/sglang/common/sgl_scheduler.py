@@ -253,7 +253,14 @@ class Scheduler(_Scheduler):
                 if hasattr(module, "use_presharded_weights"):
                     module.use_presharded_weights = use_presharded_weights
 
-            if self.cfg.rollout.get("validate_weight_first_sync", False):
+            validate_weight_first_sync = self.cfg.rollout.get(
+                "validate_weight_first_sync", False
+            )
+            if self.cfg.runner.resume_dir is not None:
+                # validate_weight_first_sync compare hf weights with megatron weights,
+                # and if resume_dir is enabled, hf weights can't equal to megatron's.
+                validate_weight_first_sync = False
+            if validate_weight_first_sync:
                 self.weight_norm_dict = validate_weight_init(model)
 
             self._rlinf_worker.log_info(
