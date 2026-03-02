@@ -4,7 +4,7 @@
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     https://www.apache.org/licenses/LICENSE-2.0
+#      https://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,16 +13,190 @@
 # limitations under the License.
 
 import copy
+import glob
+import importlib
 import os
+import sys
 from typing import Optional, Union
 
 import gym
 import numpy as np
 import torch
-from libero.libero import get_libero_path
-from libero.libero.benchmark import Benchmark
-from libero.libero.envs import OffScreenRenderEnv
 from omegaconf.omegaconf import OmegaConf
+
+# Dynamic Module Import Logic
+libero_type = os.environ.get("LIBERO_TYPE", "standard")
+
+if libero_type == "pro":
+    LIBERO_PKG_NAME = "liberopro"
+    LIBERO_MAIN_MODULE_PATH = "liberopro.liberopro"
+elif libero_type == "plus":
+    LIBERO_PKG_NAME = "liberoplus"
+    LIBERO_MAIN_MODULE_PATH = "liberoplus.liberoplus"
+else:
+    LIBERO_PKG_NAME = "libero"
+    LIBERO_MAIN_MODULE_PATH = "libero.libero"
+
+try:
+    real_libero_pkg = importlib.import_module(LIBERO_PKG_NAME)
+    real_libero_core = importlib.import_module(LIBERO_MAIN_MODULE_PATH)
+
+    try:
+        real_libero_benchmark = importlib.import_module(f"{LIBERO_MAIN_MODULE_PATH}.benchmark")
+    except ImportError:
+        try:
+            real_libero_benchmark = importlib.import_module(f"{LIBERO_PKG_NAME}.benchmark")
+        except ImportError:
+            if libero_type == "plus":
+                 real_libero_benchmark = importlib.import_module("liberoplus.liberoplus.benchmark")
+            else:
+                raise
+
+    try:
+        real_libero_envs = importlib.import_module(f"{LIBERO_MAIN_MODULE_PATH}.envs")
+    except ImportError:
+        real_libero_envs = importlib.import_module(f"{LIBERO_PKG_NAME}.envs")
+
+    if libero_type in ["pro", "plus"]:
+        sys.modules["libero"] = real_libero_pkg
+        sys.modules["libero.libero"] = real_libero_core
+        sys.modules["libero.libero.benchmark"] = real_libero_benchmark
+        sys.modules["libero.libero.envs"] = real_libero_envs
+
+    Benchmark = real_libero_benchmark.Benchmark
+    OffScreenRenderEnv = real_libero_envs.OffScreenRenderEnv
+
+    if hasattr(real_libero_core, "get_libero_path"):
+        get_libero_path = real_libero_core.get_libero_path
+    else:
+        try:
+            real_libero_utils = importlib.import_module(f"{LIBERO_MAIN_MODULE_PATH}.utils")
+            get_libero_path = real_libero_utils.get_libero_path
+        except (ImportError, AttributeError):
+            def _fallback_get_libero_path(path_name):
+                if hasattr(real_libero_core, "__path__"):
+                    root = list(real_libero_core.__path__)[0]
+                else:
+                    root = os.path.dirname(real_libero_core.__file__)
+                return os.path.join(root, path_name)
+            get_libero_path = _fallback_get_libero_path
+
+except ImportError as e:
+    raise ImportError(f"Failed to import '{LIBERO_MAIN_MODULE_PATH}'. Check LIBERO_TYPE env var. Error: {e}")
+
+
+# Global Patch Function for Fixing torch.load and Paths
+def apply_global_patches():
+    custom_libero_path = os.environ.get("LIBERO_PATH", "")
+    if custom_libero_path and os.path.exists(custom_libero_path):
+        if custom_libero_path not in sys.path:
+            sys.path.insert(0, custom_libero_path)
+        sys.path[:] = [p for p in sys.path if "/opt/libero" not in p]
+
+    try:
+        if not getattr(torch.load, "_is_patched", False):
+            _original_torch_load = torch.load
+            def safe_torch_load(f, *args, **kwargs):
+                if "weights_only" not in kwargs:
+                    kwargs["weights_only"] = False
+                if isinstance(f, str) and not os.path.exists(f):
+                    current_t = os.environ.get("LIBERO_TYPE", "standard")
+                    if "/./" in f: f = f.replace("/./", "/")
+                    for t_name in ["pro", "plus"]:
+                        if current_t == t_name and "libero/libero" in f:
+                            new_f = f.replace("libero/libero", f"libero{t_name}/libero{t_name}")
+                            if os.path.exists(new_f): f = new_f
+                return _original_torch_load(f, *args, **kwargs)
+            safe_torch_load._is_patched = True
+            torch.load = safe_torch_load
+    except Exception as e:
+        print(f"[LiberoEnv Patch] Failed to patch torch.load: {e}")
+
+    try:
+        current_type = os.environ.get("LIBERO_TYPE", "standard")
+        if current_type == "pro": target_module_path = "liberopro.liberopro"
+        elif current_type == "plus": target_module_path = "liberoplus.liberoplus"
+        else: target_module_path = "libero.libero"
+
+        libero_main = importlib.import_module(target_module_path)
+        libero_objects = importlib.import_module(f"{target_module_path}.envs.objects")
+        loaded_path = os.path.dirname(libero_main.__file__)
+
+        if hasattr(libero_objects, "OBJECTS_DICT"):
+            bad_keys = {
+                "white_white_porcelain_mug": "white_porcelain_mug", 
+                "white_yellow_porcelain_mug": "yellow_porcelain_mug", 
+                "white_red_porcelain_mug": "red_porcelain_mug"
+            }
+            for b_key, g_key in bad_keys.items():
+                if b_key not in libero_objects.OBJECTS_DICT:
+                    if g_key in libero_objects.OBJECTS_DICT:
+                        libero_objects.OBJECTS_DICT[b_key] = libero_objects.OBJECTS_DICT[g_key]
+                    elif "porcelain_mug" in libero_objects.OBJECTS_DICT:
+                        libero_objects.OBJECTS_DICT[b_key] = libero_objects.OBJECTS_DICT["porcelain_mug"]
+
+        paths = {
+            "assets": os.path.join(loaded_path, "assets"),
+            "bddl_files": os.path.join(loaded_path, "bddl_files"),
+            "init_states": os.path.join(loaded_path, "init_files"),
+        }
+        os.environ["LIBERO_ASSET_ROOT"] = paths["assets"]
+        os.environ["LIBERO_BDDL_PATH"] = paths["bddl_files"]
+        os.environ["LIBERO_INIT_STATES_PATH"] = paths["init_states"]
+
+        def force_local_path(path_name):
+            return paths.get(path_name, os.path.join(loaded_path, path_name))
+        libero_main.get_libero_path = force_local_path
+
+        try:
+            bddl_utils = importlib.import_module(f"{target_module_path}.envs.bddl_utils")
+            
+            _orig_get_info = bddl_utils.get_problem_info
+            def safe_get_problem_info(bddl_file_path):
+                try:
+                    res = _orig_get_info(bddl_file_path)
+                    if res.get("problem_name") != "unknown": return res
+                except: pass
+                p_name = "unknown"
+                try:
+                    with open(bddl_file_path, "r") as f:
+                        content = f.read(2048)
+                        import re
+                        m = re.search(r'\(problem\s+([^\s\)]+)\)', content)
+                        if m: p_name = m.group(1).lower()
+                except: pass
+                if p_name == "unknown": p_name = "libero_tabletop_manipulation"
+                return {"domain_name": "robosuite", "problem_name": p_name, "language_instruction": "task"}
+            
+            bddl_utils.get_problem_info = safe_get_problem_info
+
+            _orig_parse = bddl_utils.robosuite_parse_problem
+            def safe_robosuite_parse_problem(bddl_file_path):
+                try:
+                    return _orig_parse(bddl_file_path)
+                except Exception as e:
+                    print(f"[Patch] Variant parse failed ({e}), falling back to original structure for: {os.path.basename(bddl_file_path)}")
+                    
+                    bddl_root = os.environ.get("LIBERO_BDDL_PATH", "")
+                    
+                    try:
+                        suite_dir = os.path.join(bddl_root, "libero_10")
+                        if not os.path.exists(suite_dir):
+                            suite_dir = os.path.join(bddl_root, os.listdir(bddl_root)[0])
+                        
+                        fallback_file = os.path.join(suite_dir, os.listdir(suite_dir)[0])
+                        return _orig_parse(fallback_file)
+                    except:
+                        raise e
+
+            bddl_utils.robosuite_parse_problem = safe_robosuite_parse_problem
+                        
+        except (ImportError, AttributeError):
+            pass  
+    except Exception as e:
+        print(f"[LiberoEnv Patch] Patching Error (pid={os.getpid()}): {e}")
+
+apply_global_patches()
 
 from rlinf.envs.libero.utils import (
     get_benchmark_overridden,
@@ -55,7 +229,10 @@ class LiberoEnv(gym.Env):
         self._generator_ordered = np.random.default_rng(seed=0)
         self.start_idx = 0
 
-        self.task_suite: Benchmark = get_benchmark_overridden(cfg.task_suite_name)()
+        self.task_descriptions = [""] * self.num_envs
+
+        apply_global_patches()
+        self.task_suite = get_benchmark_overridden(cfg.task_suite_name)()
 
         self._compute_total_num_group_envs()
         self.reset_state_ids_all = self.get_reset_state_ids_all()
@@ -80,43 +257,250 @@ class LiberoEnv(gym.Env):
     def get_env_fns(self):
         env_fn_params = self.get_env_fn_params()
         env_fns = []
-        for env_fn_param in env_fn_params:
+        
+        current_type_val = os.environ.get("LIBERO_TYPE", "standard")
 
-            def env_fn(param=env_fn_param):
+        for env_fn_param in env_fn_params:
+            def env_fn(param=env_fn_param, _type_val=current_type_val):
+                import importlib, os, sys
+                os.environ["LIBERO_TYPE"] = _type_val
+                
+                apply_global_patches()
+                
+                if _type_val in ["pro", "plus"]:
+                    try:
+                        if "libero" not in sys.modules:
+                            if _type_val == "pro": target_pkg, target_core = "liberopro", "liberopro.liberopro"
+                            else: target_pkg, target_core = "liberoplus", "liberoplus.liberoplus"
+                            real_libero_pkg = importlib.import_module(target_pkg)
+                            real_libero_core = importlib.import_module(target_core)
+                            try: real_libero_bench = importlib.import_module(f"{target_core}.benchmark")
+                            except: real_libero_bench = importlib.import_module(f"{target_pkg}.benchmark")
+                            real_libero_envs = importlib.import_module(f"{target_core}.envs")
+                            sys.modules["libero"] = real_libero_pkg
+                            sys.modules["libero.libero"] = real_libero_core
+                            sys.modules["libero.libero.benchmark"] = real_libero_bench
+                            sys.modules["libero.libero.envs"] = real_libero_envs
+                    except ImportError: pass
+                # -------------------------------------------------
+
                 seed = param.pop("seed")
-                env = OffScreenRenderEnv(**param)
+                
+                try:
+                    if _type_val == "pro": from liberopro.liberopro.envs import OffScreenRenderEnv as WorkerEnv
+                    elif _type_val == "plus": from liberoplus.liberoplus.envs import OffScreenRenderEnv as WorkerEnv
+                    else: from libero.libero.envs import OffScreenRenderEnv as WorkerEnv
+                except ImportError:
+                    import libero.libero.envs as _le
+                    WorkerEnv = _le.OffScreenRenderEnv
+
+                if _type_val == "plus":
+                    try:
+                        ParentEnv = WorkerEnv.__bases__[0]
+                        if not getattr(ParentEnv, "_is_patched_by_rlinf", False):
+                            orig_init = ParentEnv.__init__
+                            def patched_init(self, **kwargs):
+                                if "bddl_file_name" not in kwargs and "bddl_file_name" in param:
+                                    kwargs["bddl_file_name"] = param["bddl_file_name"]
+                                return orig_init(self, **kwargs)
+                            ParentEnv.__init__ = patched_init
+                            ParentEnv._is_patched_by_rlinf = True
+                    except Exception: pass
+
+                env = WorkerEnv(**param)
                 env.seed(seed)
                 return env
 
             env_fns.append(env_fn)
         return env_fns
+    
 
     def get_env_fn_params(self, env_idx=None):
         env_fn_params = []
         base_env_args = OmegaConf.to_container(self.cfg.init_params, resolve=True)
-
-        task_descriptions = []
+        
+        variant = os.environ.get("LIBERO_TYPE", self.cfg.get("libero_variant", "standard"))
+        raw_suffix = os.environ.get("LIBERO_SUFFIX", self.cfg.get("perturbation_suffix", None))
+        
+        pro_suffix = raw_suffix.replace(".bddl", "") if (variant == "pro" and raw_suffix) else None
+        
+        bddl_root = get_libero_path("bddl_files")
+        
         if env_idx is None:
             env_idx = np.arange(self.num_envs)
-        for env_id in range(self.num_envs):
-            if env_id not in env_idx:
-                task_descriptions.append(self.task_descriptions[env_id])
-                continue
-            task = self.task_suite.get_task(self.task_ids[env_id])
-            task_bddl_file = os.path.join(
-                get_libero_path("bddl_files"), task.problem_folder, task.bddl_file
-            )
-            env_fn_params.append(
-                {
-                    **base_env_args,
-                    "bddl_file_name": task_bddl_file,
-                    "seed": self.seed,
-                }
-            )
-            task_descriptions.append(task.language)
-        self.task_descriptions = task_descriptions
-        return env_fn_params
+        
+        suite_name = self.cfg.task_suite_name.lower()
+        suite_keyword = suite_name.replace("libero_", "").strip() 
+        
+        task_descriptions = []
+        
 
+        for i, env_id in enumerate(env_idx):
+            task = self.task_suite.get_task(self.task_ids[env_id])
+            folder_name = task.problem_folder 
+            file_name = task.bddl_file
+            original_path = os.path.join(bddl_root, folder_name, file_name)
+            
+            final_path = None
+            
+            # --- Pro ---
+            if variant == "pro":
+                if pro_suffix == "all":
+                    all_sub_dirs = [
+                        d for d in os.listdir(bddl_root) 
+                        if os.path.isdir(os.path.join(bddl_root, d)) and suite_keyword in d
+                    ]
+                    
+                    core_task_name = file_name.replace(".bddl", "")
+                    all_candidates = []
+                    
+                    for sub_dir in all_sub_dirs:
+                        target_dir_path = os.path.join(bddl_root, sub_dir)
+                        matches = [
+                            os.path.join(target_dir_path, f) 
+                            for f in os.listdir(target_dir_path) 
+                            if core_task_name in f and f.endswith(".bddl")
+                        ]
+                        all_candidates.extend(matches)
+                    
+                    if all_candidates:
+                        all_candidates.sort()
+                        final_path = all_candidates[(self.seed + i) % len(all_candidates)]
+                    else:
+                        final_path = original_path
+                else:
+                    final_path = original_path
+
+            # --- Plus  ---
+            elif variant == "plus":
+                plus_suffix = raw_suffix.replace(".bddl", "") if raw_suffix else None
+                if plus_suffix == "all":
+                    clean_name = file_name.replace(".bddl", "")
+                    for marker in ['_view', '_initstate', '_noise', '_sample', '_light', '_table', '_add', '_lan', '_language', '_copy', '_level', '_tb']:
+                        if marker in clean_name:
+                            clean_name = clean_name.split(marker)[0]
+                            break
+                    
+                    suite_pattern = folder_name.replace("_", "").lower()
+                    all_dirs = [d for d in os.listdir(bddl_root) if os.path.isdir(os.path.join(bddl_root, d))]
+                    search_dirs = [os.path.join(bddl_root, d) for d in all_dirs if suite_pattern in d.lower().replace("_", "")]
+                    
+                    if not search_dirs:
+                        search_dirs = [os.path.join(bddl_root, folder_name)]
+                    
+                    all_candidates = []
+                    for target_dir in search_dirs:
+                        import glob
+                        matches = [f for f in glob.glob(os.path.join(target_dir, "*.bddl")) if clean_name in os.path.basename(f)]
+                        all_candidates.extend(matches)
+                    
+                    if all_candidates:
+                        all_candidates.sort()
+                        final_path = all_candidates[(self.seed + i) % len(all_candidates)]
+
+            if final_path is None:
+                final_path = original_path
+                
+            env_fn_params.append({
+                **base_env_args,
+                "bddl_file_name": final_path,
+                "seed": self.seed,
+            })
+            task_descriptions.append(task.language)
+            
+        self.task_descriptions = task_descriptions
+        if len(env_fn_params) != len(env_idx):
+             print(f"CRITICAL WARNING: Length mismatch in get_env_fn_params! Expected {len(env_idx)}, Got {len(env_fn_params)}")
+             
+        return env_fn_params
+    
+
+    def get_env_fn_params(self, env_idx=None):
+        base_env_args = OmegaConf.to_container(self.cfg.init_params, resolve=True)
+        variant = os.environ.get("LIBERO_TYPE", self.cfg.get("libero_variant", "standard"))
+        raw_suffix = os.environ.get("LIBERO_SUFFIX", self.cfg.get("perturbation_suffix", "all"))
+        pro_suffix = raw_suffix.replace(".bddl", "") if (variant == "pro" and raw_suffix) else None
+        
+        bddl_root = get_libero_path("bddl_files")
+
+        all_descriptions = []
+        for i in range(self.num_envs):
+            try:
+                t = self.task_suite.get_task(self.task_ids[i])
+                all_descriptions.append(t.language)
+            except:
+                all_descriptions.append("unknown task")
+        self.task_descriptions = all_descriptions
+
+        active_idx = env_idx if env_idx is not None else np.arange(self.num_envs)
+        env_fn_params = []
+        
+        suite_keyword = self.cfg.task_suite_name.replace("libero_", "").strip()
+
+        for i, env_id in enumerate(active_idx):
+            task = self.task_suite.get_task(self.task_ids[env_id])
+            folder_name = task.problem_folder  # "libero_10"
+            file_name = task.bddl_file
+            original_path = os.path.join(bddl_root, folder_name, file_name)
+            final_path = None
+
+            # --- Pro  ---
+            if variant == "pro":
+                variant_tags = ["object", "swap", "lan", "task"]
+                core_task_name = file_name.replace(".bddl", "")
+                all_candidates = []
+
+                for d in os.listdir(bddl_root):
+                    if suite_keyword in d and any(tag in d.lower() for tag in variant_tags):
+                        if d != folder_name:
+                            target_dir = os.path.join(bddl_root, d)
+                            if os.path.isdir(target_dir):
+                                for f in os.listdir(target_dir):
+                                    if core_task_name in f and f.endswith(".bddl"):
+                                        all_candidates.append(os.path.join(target_dir, f))
+                
+                if all_candidates:
+                    all_candidates.sort()
+                    final_path = all_candidates[(self.seed + env_id) % len(all_candidates)]
+                    # print(f"[SUCCESS] Env {env_id} switched to PRO variant: {os.path.basename(final_path)}")
+                else:
+                    print(f"[WARNING] Env {env_id} could not find any PRO variants for {core_task_name}")
+
+            # --- Plus  ---
+            elif variant == "plus":
+                plus_suffix = raw_suffix.replace(".bddl", "") if raw_suffix else None
+                if plus_suffix == "all":
+                    clean_name = file_name.replace(".bddl", "")
+                    for marker in ['_view', '_initstate', '_noise', '_sample', '_light', '_table', '_add', '_lan', '_language', '_copy', '_level', '_tb']:
+                        if marker in clean_name:
+                            clean_name = clean_name.split(marker)[0]
+                            break
+                    suite_pattern = folder_name.replace("_", "").lower()
+                    all_dirs = [d for d in os.listdir(bddl_root) if os.path.isdir(os.path.join(bddl_root, d))]
+                    search_dirs = [os.path.join(bddl_root, d) for d in all_dirs if suite_pattern in d.lower().replace("_", "")]
+                    if not search_dirs:
+                        search_dirs = [os.path.join(bddl_root, folder_name)]
+                    all_candidates = []
+
+                    for target_dir in search_dirs:
+                        import glob
+                        matches = [f for f in glob.glob(os.path.join(target_dir, "*.bddl")) if clean_name in os.path.basename(f)]
+                        all_candidates.extend(matches)
+                    if all_candidates:
+                        all_candidates.sort()
+                        final_path = all_candidates[(self.seed + env_id) % len(all_candidates)]
+
+            if final_path is None:
+                final_path = original_path
+
+            env_fn_params.append({
+                **base_env_args, 
+                "bddl_file_name": final_path, 
+                "seed": self.seed
+            })
+
+        return env_fn_params
+    
     def _compute_total_num_group_envs(self):
         self.total_num_group_envs = 0
         self.trial_id_bins = []
@@ -177,7 +561,6 @@ class LiberoEnv(gym.Env):
     def _get_task_and_trial_ids_from_reset_state_ids(self, reset_state_ids):
         task_ids = []
         trial_ids = []
-        # get task id and trial id from reset state ids
         for reset_state_id in reset_state_ids:
             start_pivot = 0
             for task_id, end_pivot in enumerate(self.cumsum_trial_id_bins):
@@ -303,8 +686,10 @@ class LiberoEnv(gym.Env):
             self.env.reconfigure_env_fns(env_fn_params, reconfig_env_idx)
         self.env.seed(self.seed * len(env_idx))
         self.env.reset(id=env_idx)
-        init_state = self._get_reset_states(env_idx=env_idx)
-        self.env.set_init_state(init_state=init_state, id=env_idx)
+        variant = os.environ.get("LIBERO_TYPE", "standard")
+        if variant not in ["plus", "pro"]:
+            init_state = self._get_reset_states(env_idx=env_idx)
+            self.env.set_init_state(init_state=init_state, id=env_idx)
 
     def reset(
         self,
@@ -460,3 +845,28 @@ class LiberoEnv(gym.Env):
             return reward_diff
         else:
             return reward
+
+    def add_new_frames(self, raw_obs, plot_infos):
+        images = []
+        for env_id, raw_single_obs in enumerate(raw_obs):
+            info_item = {
+                k: v if np.size(v) == 1 else v[env_id] for k, v in plot_infos.items()
+            }
+            img = raw_single_obs["agentview_image"][::-1, ::-1]
+            img = put_info_on_image(img, info_item)
+            images.append(img)
+        full_image = tile_images(images, nrows=int(np.sqrt(self.num_envs)))
+        self.render_images.append(full_image)
+
+    def flush_video(self, video_sub_dir: Optional[str] = None):
+        output_dir = os.path.join(self.video_cfg.video_base_dir, f"seed_{self.seed}")
+        if video_sub_dir is not None:
+            output_dir = os.path.join(output_dir, f"{video_sub_dir}")
+        save_rollout_video(
+            self.render_images,
+            output_dir=output_dir,
+            video_name=f"{self.video_cnt}",
+        )
+        self.video_cnt += 1
+        self.render_images = []
+
