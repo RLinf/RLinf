@@ -45,6 +45,7 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     embodiment_tag = cfg.get("embodiment_tag", "oxe_droid")
     num_action_chunks = cfg.get("num_action_chunks", 24)
     action_dim = cfg.get("action_dim", 8)
+    add_value_head = cfg.get("add_value_head", False)
     device = "cuda" if __import__("torch").cuda.is_available() else "cpu"
 
     model = DreamZeroForRLActionPrediction(
@@ -53,6 +54,7 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         device=device,
         num_action_chunks=num_action_chunks,
         action_dim=action_dim,
+        add_value_head=add_value_head,
     )
 
     return model

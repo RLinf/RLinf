@@ -16,14 +16,16 @@
 
 import sys
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.distributions import Normal
 from tianshou.data import Batch
 
 from rlinf.models.embodiment.base_policy import BasePolicy
+from rlinf.models.embodiment.modules.value_head import ValueHead
 
 
 def _ensure_groot_importable():
@@ -143,14 +145,17 @@ def _convert_dreamzero_action_to_rlinf(act_dict: dict[str, np.ndarray], num_chun
 
 class DreamZeroForRLActionPrediction(nn.Module, BasePolicy):
     """
-    DreamZero policy wrapping GrootSimPolicy for RLinf embodied evaluation.
+    DreamZero policy wrapping GrootSimPolicy for RLinf embodied evaluation and PPO.
 
     Implements BasePolicy with:
     - predict_action_batch: inference for rollout/eval
-    - default_forward: stub (DreamZero is inference-only, no online RL training)
+    - default_forward: PPO forward using Gaussian logprob around model prediction + optional value head
 
     Action space: 8D (7 joint positions + 1 gripper) for DROID.
     """
+
+    # Fixed std for Gaussian logprob (policy is treated as deterministic + Gaussian for PPO)
+    LOGPROB_STD: float = 0.1
 
     def __init__(
         self,
@@ -159,18 +164,20 @@ class DreamZeroForRLActionPrediction(nn.Module, BasePolicy):
         device: str | int = "cuda",
         num_action_chunks: int = 24,
         action_dim: int = 8,
+        add_value_head: bool = False,
     ):
         nn.Module.__init__(self)
         _ensure_groot_importable()
 
         from groot.vla.data.schema import EmbodimentTag
-        from groot.vla.model.n1_5.sim_policy import GrootSimPolicy
+        from rlinf.models.embodiment.dreamzero.sim_policy import GrootSimPolicy
 
         self.model_path = model_path
         self.embodiment_tag = EmbodimentTag(embodiment_tag)
         self.device = device
         self.num_action_chunks = num_action_chunks
         self.action_dim = action_dim
+        self.add_value_head = add_value_head
 
         self._groot_policy = GrootSimPolicy(
             embodiment_tag=self.embodiment_tag,
@@ -180,11 +187,88 @@ class DreamZeroForRLActionPrediction(nn.Module, BasePolicy):
         )
         self._groot_policy.eval()
 
-    def default_forward(self, **kwargs):
-        """DreamZero is inference-only; no online RL training support."""
-        raise NotImplementedError(
-            "DreamZero policy is inference-only. Use predict_action_batch for rollout/eval."
+        if add_value_head:
+            self.value_head = ValueHead(
+                input_dim=num_action_chunks * action_dim,
+                hidden_sizes=(256, 64),
+                output_dim=1,
+            )
+        else:
+            self.value_head = None
+
+    def _run_policy_forward(self, env_obs: dict[str, Any]) -> torch.Tensor:
+        """Run GrootSimPolicy forward and return action tensor [B, num_chunks, action_dim]."""
+        droid_obs = _convert_rlinf_obs_to_dreamzero(env_obs)
+        for k, v in droid_obs.items():
+            if torch.is_tensor(v):
+                droid_obs[k] = v.detach().cpu().numpy()
+        batch = Batch(obs=droid_obs)
+        with torch.no_grad():
+            result_batch = self._groot_policy.forward(batch)
+        actions_np = _convert_dreamzero_action_to_rlinf(
+            result_batch.act, self.num_action_chunks
         )
+        dev = torch.device(
+            self.device if isinstance(self.device, str) else f"cuda:{self.device}"
+        )
+        return torch.from_numpy(actions_np).float().to(dev)
+
+    def default_forward(
+        self,
+        forward_inputs: dict[str, Any],
+        compute_logprobs: bool = True,
+        compute_entropy: bool = True,
+        compute_values: bool = True,
+        **kwargs,
+    ) -> dict[str, Any]:
+        """
+        PPO forward: logprob under Gaussian(mean=model_pred, std=fixed), optional value head.
+        """
+        action = forward_inputs["action"]
+        dev = action.device
+        if action.dim() == 2:
+            action = action.reshape(-1, self.num_action_chunks, self.action_dim)
+
+        # Rebuild env_obs from forward_inputs (stored in predict_action_batch)
+        env_obs = {}
+        for key in ("main_images", "wrist_images", "states", "task_descriptions"):
+            if key in forward_inputs:
+                env_obs[key] = forward_inputs[key]
+        if not env_obs:
+            # Fallback: no obs -> use zeros logprobs/values so training does not crash
+            batch_size = action.shape[0]
+            logprobs = torch.zeros(
+                batch_size, self.num_action_chunks, self.action_dim, device=dev
+            )
+            entropy = torch.zeros_like(logprobs)
+            values = (
+                self.value_head(action.reshape(batch_size, -1))
+                if self.value_head is not None and compute_values
+                else None
+            )
+            out = {"logprobs": logprobs}
+            if compute_entropy:
+                out["entropy"] = entropy
+            if compute_values and values is not None:
+                out["values"] = values
+            return out
+
+        action_pred = self._run_policy_forward(env_obs)
+        std = torch.full_like(action_pred, self.LOGPROB_STD, device=dev)
+        dist = Normal(action_pred, std)
+
+        output_dict = {}
+        if compute_logprobs:
+            output_dict["logprobs"] = dist.log_prob(action)
+        if compute_entropy:
+            output_dict["entropy"] = dist.entropy()
+        if compute_values and self.value_head is not None:
+            flat = action.reshape(action.shape[0], -1)
+            output_dict["values"] = self.value_head(flat)
+        elif compute_values and self.value_head is None:
+            batch_size = action.shape[0]
+            output_dict["values"] = torch.zeros(batch_size, 1, device=dev)
+        return output_dict
 
     @torch.no_grad()
     def predict_action_batch(
@@ -223,10 +307,28 @@ class DreamZeroForRLActionPrediction(nn.Module, BasePolicy):
             self.device if isinstance(self.device, str) else f"cuda:{self.device}"
         )
 
-        actions_tensor = torch.from_numpy(actions).to(dev)
+        actions_tensor = torch.from_numpy(actions).float().to(dev)
+        std = torch.full_like(actions_tensor, self.LOGPROB_STD, device=dev)
+        dist = Normal(actions_tensor, std)
+        prev_logprobs = dist.log_prob(actions_tensor)
+
+        if self.value_head is not None:
+            prev_values = self.value_head(actions_tensor.reshape(batch_size, -1))
+        else:
+            prev_values = torch.zeros(batch_size, 1, device=dev)
+
+        forward_inputs = {"action": actions_tensor}
+        for key in ("main_images", "wrist_images", "states", "task_descriptions"):
+            if key in env_obs and env_obs[key] is not None:
+                v = env_obs[key]
+                if torch.is_tensor(v):
+                    forward_inputs[key] = v.to(dev)
+                else:
+                    forward_inputs[key] = v
+
         result = {
-            "prev_logprobs": torch.zeros(batch_size, self.num_action_chunks, self.action_dim, device=dev),
-            "prev_values": torch.zeros(batch_size, 1, device=dev),
-            "forward_inputs": {"action": actions_tensor},
+            "prev_logprobs": prev_logprobs,
+            "prev_values": prev_values,
+            "forward_inputs": forward_inputs,
         }
         return actions, result

@@ -151,6 +151,22 @@ def prepare_actions_for_robocasa(
         return chunk_actions
 
 
+def prepare_actions_for_droid(
+    raw_chunk_actions,
+    action_dim: int = 8,
+) -> torch.Tensor:
+    """
+    Prepare actions for DROID environment (7 joint + 1 gripper).
+    Gripper is binarized to 0/1 (DreamZero convention).
+    """
+    chunk_actions = torch.from_numpy(np.asarray(raw_chunk_actions, dtype=np.float32))
+    if chunk_actions.shape[-1] > action_dim:
+        chunk_actions = chunk_actions[..., :action_dim]
+    # Binarize gripper: >0.5 -> 1, else 0
+    chunk_actions[..., -1] = (chunk_actions[..., -1] > 0.5).to(chunk_actions.dtype)
+    return chunk_actions
+
+
 def prepare_actions_for_mujoco(raw_chunk_actions, model_type):
     if raw_chunk_actions.shape[-1] >= 7:
         chunk_actions = np.concatenate(
@@ -224,6 +240,11 @@ def prepare_actions(
         chunk_actions = prepare_actions_for_mujoco(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
+        )
+    elif env_type == SupportedEnvType.DROID:
+        chunk_actions = prepare_actions_for_droid(
+            raw_chunk_actions=raw_chunk_actions,
+            action_dim=action_dim,
         )
     else:
         raise NotImplementedError

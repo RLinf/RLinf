@@ -41,6 +41,18 @@ algorithm:
   loss_type: actor
   rollout_epoch: 1
   eval_rollout_epoch: 1
+  length_params:
+    max_new_token: null
+    max_length: 1024
+    min_length: 1
+  # params for generation
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
 
 env:
   group_name: "EnvGroup"
@@ -86,10 +98,11 @@ actor:
 
   model:
     model_type: "dreamzero"
-    model_path: /mnt/public/liyanghao/data/model/DreamZero-DROID
+    model_path: /mnt/project_rlinf/liyanghao/data/models/DreamZero-DROID
     policy_setup: "panda-droid"
     action_dim: 8
     num_action_chunks: 24
+    is_lora: False
 
   fsdp_config:
     strategy: "fsdp"
