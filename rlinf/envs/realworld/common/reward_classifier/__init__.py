@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Visual reward classifier for real-world embodied RL.
 
-from .end_effectors.base import EndEffectorType
-from .franka_env import FrankaEnv, FrankaRobotConfig, FrankaRobotState
+Provides a binary image classifier built on a frozen pretrained ResNet-10
+backbone.  The classifier is trained on success/failure images collected
+via teleoperation and used at runtime to compute dense visual rewards.
+"""
+
+from .classifier import RewardClassifier, load_reward_classifier
 
 __all__ = [
-    "EndEffectorType",
-    "FrankaEnv",
-    "FrankaRobotConfig",
-    "FrankaRobotState",
+    "RewardClassifier",
+    "load_reward_classifier",
 ]

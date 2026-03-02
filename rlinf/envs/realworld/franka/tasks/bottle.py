@@ -119,7 +119,7 @@ class BottleEnv(FrankaEnv):
         Move to the rest position defined in base class.
         Add a small z offset before going to rest to avoid collision with object.
         """
-        self._gripper_action(1)
+        self._end_effector_action(np.array([1.0]))
         self._franka_state = self._controller.get_state().wait()[0]
         self._move_action(self._franka_state.tcp_pose)
 

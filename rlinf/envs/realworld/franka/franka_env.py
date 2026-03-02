@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import copy
+import os
 import queue
 import time
 from dataclasses import dataclass, field
@@ -32,6 +33,7 @@ from rlinf.scheduler import (
 )
 from rlinf.utils.logging import get_logger
 
+from .end_effectors.base import EndEffectorType
 from .franka_robot_state import FrankaRobotState
 from .utils import construct_adjoint_matrix, construct_homogeneous_matrix, quat_slerp
 
@@ -76,6 +78,22 @@ class FrankaRobotConfig:
     gripper_penalty: float = 0.1
     save_video_path: Optional[str] = None
     joint_reset_cycle: int = 20000  # Number of resets before resetting joints
+
+    # -- End-effector selection -------------------------------------------
+    # One of "franka_gripper", "aoyi_hand", "ruiyan_hand".
+    end_effector_type: str = "franka_gripper"
+    # Extra kwargs forwarded to the end-effector constructor.
+    end_effector_config: dict = field(default_factory=dict)
+    # Target hand pose used for dense-reward success criteria (6-D).
+    hand_target_state: np.ndarray = field(
+        default_factory=lambda: np.zeros(6)
+    )
+    # Default hand pose after ``reset()`` (6-D).
+    hand_reset_state: np.ndarray = field(
+        default_factory=lambda: np.zeros(6)
+    )
+    # Hand action scale (for continuous hand control).
+    hand_action_scale: float = 1.0
 
 
 class FrankaEnv(gym.Env):
@@ -138,6 +156,11 @@ class FrankaEnv(gym.Env):
         time.sleep(1.0)
         self._franka_state = self._controller.get_state().wait()[0]
 
+        # TODO： matthew
+        # Apply compliance params so impedance controller tracks target (e.g. SpaceMouse) correctly
+        # if self.config.compliance_param:
+        #     self._controller.reconfigure_compliance_params(self.config.compliance_param)
+
         # Init cameras
         self._open_cameras()
         # Video player for displaying camera frames
@@ -159,11 +182,17 @@ class FrankaEnv(gym.Env):
             self.config.camera_serials = self.hardware_info.config.camera_serials
 
         # Launch Franka controller
+        # When node_group_label is set, NodePlacementStrategy expects
+        # local ranks within that group (not global node ranks).
+        # The env worker's env_idx maps to the local rank inside the group.
         self._controller = FrankaController.launch_controller(
             robot_ip=self.config.robot_ip,
             env_idx=self.env_idx,
-            node_rank=self.node_rank,
+            node_rank=self.env_idx,
             worker_rank=self.env_worker_rank,
+            node_group_label=os.environ.get("NODE_GROUP_LABEL", None),
+            end_effector_type=self.config.end_effector_type,
+            end_effector_config=self.config.end_effector_config,
         )
 
     def transform_action_ee_to_base(self, action):
@@ -173,14 +202,16 @@ class FrankaEnv(gym.Env):
     def step(self, action: np.ndarray):
         """Take a step in the environment.
 
-        action (np.ndarray): The action to take, which is a 7D vector representing the desired end-effector position and orientation,
-        as well as the gripper action. The first 3 elements correspond to the delta in x, y, z position, the next 3 elements correspond to the delta in rx, ry, rz orientation (in euler angles), and the last element corresponds to the gripper action.
-        [x_delta, y_delta, z_delta, rx_delta, ry_delta, rz_delta, gripper_action]
+        For Franka gripper (7-D action)::
+
+            [x_delta, y_delta, z_delta, rx_delta, ry_delta, rz_delta, gripper_action]
+
+        For dexterous hand (12-D action)::
+
+            [x_delta, y_delta, z_delta, rx_delta, ry_delta, rz_delta,
+             h1, h2, h3, h4, h5, h6]
         """
         start_time = time.time()
-
-        # if self.use_rel_frame:
-        #     action = self.transform_action_ee_to_base(action)
 
         action = np.clip(action, self.action_space.low, self.action_space.high)
         xyz_delta = action[:3]
@@ -190,18 +221,18 @@ class FrankaEnv(gym.Env):
             self.next_position[:3] + xyz_delta * self.config.action_scale[0]
         )
 
+        is_ee_action_effective = True
         if not self.config.is_dummy:
             self.next_position[3:] = (
                 R.from_euler("xyz", action[3:6] * self.config.action_scale[1])
                 * R.from_quat(self._franka_state.tcp_pose[3:].copy())
             ).as_quat()
 
-            gripper_action = action[6] * self.config.action_scale[2]
+            # --- End-effector action ---
+            ee_action = action[6:]
+            is_ee_action_effective = self._end_effector_action(ee_action)
 
-            is_gripper_action_effective = self._gripper_action(gripper_action)
             self._move_action(self._clip_position_to_safety_box(self.next_position))
-        else:
-            is_gripper_action_effective = True
 
         self._num_steps += 1
         step_time = time.time() - start_time
@@ -212,7 +243,7 @@ class FrankaEnv(gym.Env):
         else:
             self._franka_state = self._franka_state
         observation = self._get_observation()
-        reward = self._calc_step_reward(observation, is_gripper_action_effective)
+        reward = self._calc_step_reward(observation, is_ee_action_effective)
         terminated = reward == 1
         truncated = self._num_steps >= self.config.max_num_steps
         return observation, reward, terminated, truncated, {}
@@ -253,7 +284,7 @@ class FrankaEnv(gym.Env):
                     f"Current reward={reward}",
                 )
 
-            if self.config.enable_gripper_penalty and is_gripper_action_effective:
+            if self.config.enable_gripper_penalty and not self._is_hand and is_gripper_action_effective:
                 reward -= self.config.gripper_penalty
 
             return reward
@@ -311,8 +342,31 @@ class FrankaEnv(gym.Env):
             if cnt > 2:
                 break
 
+        # Reset end-effector
+        if self._is_hand:
+            self._controller.reset_end_effector(
+                self.config.hand_reset_state
+            ).wait()
+        else:
+            self._controller.reset_end_effector().wait()
+
+    @property
+    def _ee_type(self) -> EndEffectorType:
+        """Cached end-effector type enum."""
+        return EndEffectorType(self.config.end_effector_type)
+
+    @property
+    def _is_hand(self) -> bool:
+        """Whether the active end-effector is a dexterous hand."""
+        return self._ee_type != EndEffectorType.FRANKA_GRIPPER
+
     def _init_action_obs_spaces(self):
-        """Initialize action and observation spaces, including arm safety box."""
+        """Initialize action and observation spaces, including arm safety box.
+
+        The action dimension adapts to the active end-effector:
+        - Franka gripper: 7-D (6 arm + 1 gripper)
+        - Dexterous hand:  12-D (6 arm + 6 hand DOFs)
+        """
         self._xyz_safe_space = gym.spaces.Box(
             low=self.config.ee_pose_limit_min[:3],
             high=self.config.ee_pose_limit_max[:3],
@@ -323,12 +377,26 @@ class FrankaEnv(gym.Env):
             high=self.config.ee_pose_limit_max[3:],
             dtype=np.float64,
         )
+
+        # Arm DOF (xyz + rpy) = 6; end-effector DOF depends on type
+        ee_action_dim = 6 if self._is_hand else 1
+        total_action_dim = 6 + ee_action_dim
         self.action_space = gym.spaces.Box(
-            np.ones((7,), dtype=np.float32) * -1,
-            np.ones((7,), dtype=np.float32),
+            np.ones((total_action_dim,), dtype=np.float32) * -1,
+            np.ones((total_action_dim,), dtype=np.float32),
         )
 
         obs_tcp_pose_dim = 7
+        # End-effector state key and dimension
+        if self._is_hand:
+            ee_state_key = "hand_position"
+            ee_state_dim = 6
+            ee_low, ee_high = 0.0, 1.0
+        else:
+            ee_state_key = "gripper_position"
+            ee_state_dim = 1
+            ee_low, ee_high = -1.0, 1.0
+
         self.observation_space = gym.spaces.Dict(
             {
                 "state": gym.spaces.Dict(
@@ -337,7 +405,9 @@ class FrankaEnv(gym.Env):
                             -np.inf, np.inf, shape=(obs_tcp_pose_dim,)
                         ),
                         "tcp_vel": gym.spaces.Box(-np.inf, np.inf, shape=(6,)),
-                        "gripper_position": gym.spaces.Box(-1, 1, shape=(1,)),
+                        ee_state_key: gym.spaces.Box(
+                            ee_low, ee_high, shape=(ee_state_dim,)
+                        ),
                         "tcp_force": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
                         "tcp_torque": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
                     }
@@ -448,13 +518,26 @@ class FrankaEnv(gym.Env):
     def _clear_error(self):
         self._controller.clear_errors().wait()
 
-    def _gripper_action(self, position: float, is_binary: bool = True):
-        if is_binary:
+    def _end_effector_action(self, ee_action: np.ndarray) -> bool:
+        """Dispatch an action to the active end-effector.
+
+        For the Franka gripper the action is a scalar binary signal;
+        for dexterous hands it is a 6-D continuous target.
+
+        Args:
+            ee_action: End-effector portion of the action vector (after the
+                first 6 arm DOFs).
+
+        Returns:
+            ``True`` if the action caused a meaningful state change.
+        """
+        if self._ee_type == EndEffectorType.FRANKA_GRIPPER:
+            # Binary gripper logic (backward compatible)
+            position = float(ee_action[0]) * self.config.action_scale[2]
             if (
                 position <= -self.config.binary_gripper_threshold
                 and self._franka_state.gripper_open
             ):
-                # Close gripper
                 self._controller.close_gripper().wait()
                 time.sleep(0.6)
                 return True
@@ -462,14 +545,15 @@ class FrankaEnv(gym.Env):
                 position >= self.config.binary_gripper_threshold
                 and not self._franka_state.gripper_open
             ):
-                # Open gripper
                 self._controller.open_gripper().wait()
                 time.sleep(0.6)
                 return True
-            else:  # No change
-                return False
+            return False
         else:
-            raise NotImplementedError("Non-binary gripper action not implemented.")
+            # Continuous hand control
+            scaled = np.asarray(ee_action, dtype=np.float64) * self.config.hand_action_scale
+            self._controller.command_end_effector(scaled).wait()
+            return True
 
     def _interpolate_move(self, pose: np.ndarray, timeout: float = 1.5):
         num_steps = int(timeout * self.config.step_frequency)
@@ -498,17 +582,22 @@ class FrankaEnv(gym.Env):
     def _get_observation(self) -> dict:
         if not self.config.is_dummy:
             frames = self._get_camera_frames()
-            state = {
+            state: dict = {
                 "tcp_pose": self._franka_state.tcp_pose,
                 "tcp_vel": self._franka_state.tcp_vel,
-                "gripper_position": np.array(
-                    [
-                        self._franka_state.gripper_position,
-                    ]
-                ),
                 "tcp_force": self._franka_state.tcp_force,
                 "tcp_torque": self._franka_state.tcp_torque,
             }
+            # End-effector state (key matches observation_space)
+            if self._is_hand:
+                hand_pos = self._franka_state.hand_position
+                if hand_pos is None:
+                    hand_pos = np.zeros(6)
+                state["hand_position"] = hand_pos
+            else:
+                state["gripper_position"] = np.array(
+                    [self._franka_state.gripper_position]
+                )
             observation = {
                 "state": state,
                 "frames": frames,

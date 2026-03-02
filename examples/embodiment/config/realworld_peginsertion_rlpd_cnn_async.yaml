@@ -29,10 +29,15 @@ cluster:
       node_ranks: 0 # The ranks of the nodes to be included in this group， change this if your training node is not rank 0
     - label: franka
       node_ranks: 1 # Change this if your robot node is not rank 1
+      env_configs:
+        - node_ranks: 1
+          env_vars:
+            - PYTHONPATH: "/opt/venv/franka-0.15.0/franka_catkin_ws/devel/lib/python3/dist-packages:/opt/ros/noetic/lib/python3/dist-packages:/workspace/RLinf"
+            - LD_LIBRARY_PATH: "/opt/venv/franka-0.15.0/franka_catkin_ws/devel/lib:/opt/venv/franka-0.15.0/franka_catkin_ws/libfranka/build:/opt/ros/noetic/lib:/opt/openrobots/lib"
       hardware:
         type: Franka
         configs:
-          - robot_ip: ROBOT_IP # Replace with your robot's IP address
+          - robot_ip: 172.16.0.2
             node_rank: 1
 
 runner:
@@ -48,7 +53,7 @@ runner:
 
   only_eval: False
   val_check_interval: -1
-  save_interval: -1
+  save_interval: 50
 
   resume_dir: null # Optional: path to a saved checkpoint directory, such as 'checkpoints/global_step_10'. If not None, it will be used to resume training.
   ckpt_path: null  # Optional: path to a .pt checkpoint. If not None, it will be loaded after the model is instantiated (for evaluation).
@@ -92,8 +97,9 @@ algorithm:
   demo_buffer:
     enable_cache: True
     cache_size: 200 # number of trajectories cached in memory
+    min_buffer_size: 1  # Minimum buffer size before mixing demo data into training batches
     sample_window_size: 200 # number of latest trajectories to sample from for demo buffer
-    load_path: "/path/to/demo_data"
+    load_path: "/workspace/RLinf/logs/20260228-06:25:11/demos"
     auto_save: False
 
   target_update_freq: 1  # Frequency of target network updates
@@ -116,13 +122,17 @@ algorithm:
 env:
   group_name: "EnvGroup"
 
+  eval:
+    total_num_envs: 1
+
   train:
     ignore_terminations: False
     total_num_envs: 1
     override_cfg:
       is_dummy: False
       use_dense_reward: False
-      target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
+      target_ee_pose: [0.72, -0.005, 0.0485, -3.12, -0.016, 1.495]
+      reset_ee_pose: [0.72, -0.005, 0.095, -3.12, 0.03, 1.515]
 
 rollout:
   group_name: "RolloutGroup"
@@ -135,7 +145,7 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/path/to/model"
+    model_path: "/workspace/RLinf/RLinf-ResNet10-pretrained"
     precision: ${actor.model.precision}
     num_q_heads: 10
 
@@ -151,7 +161,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/path/to/model"
+    model_path: "/workspace/RLinf/RLinf-ResNet10-pretrained"
     state_dim: 19
     action_dim: 6
     num_q_heads: 10 # number of Q heads for critic, passed to policy module

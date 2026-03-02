@@ -261,6 +261,7 @@ as well as reinforcement learning training examples on real robots.
    mlp
    dexbotic
    franka
+   franka-dexhand
    sft
    co_training
 

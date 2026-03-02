@@ -12,4 +12,4 @@ export RLINF_COMM_NET_DEVICES="eth0" # Change this if you use a different networ
 source <your_venv_path>/bin/activate # Source your virtual environment here
 
 # Additionally source your own catkin workspace setup.bash if you are not installing franka_ros and serl_franka_controllers via the docker image or installation script
-# source <your_catkin_ws>/devel/setup.bash
+# source <your_catkin_ws>/devel/setup.bash  

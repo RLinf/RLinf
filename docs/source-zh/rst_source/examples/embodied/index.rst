@@ -261,6 +261,7 @@
    mlp
    dexbotic
    franka
+   franka-dexhand
    sft
    co_training
 

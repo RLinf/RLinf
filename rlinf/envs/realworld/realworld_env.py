@@ -27,9 +27,12 @@ from filelock import FileLock
 from omegaconf import OmegaConf
 
 from rlinf.envs.realworld.common.wrappers import (
+    ClassifierRewardWrapper,
+    DexHandIntervention,
     GripperCloseEnv,
     KeyboardRewardDoneMultiStageWrapper,
     KeyboardRewardDoneWrapper,
+    MultiStageClassifierRewardWrapper,
     Quat2EulerWrapper,
     RelativeFrame,
     SpacemouseIntervention,
@@ -86,12 +89,62 @@ class RealWorldEnv(gym.Env):
         if self.cfg.get("no_gripper", True):
             env = GripperCloseEnv(env)
         if not env.config.is_dummy and self.cfg.get("use_spacemouse", True):
-            env = SpacemouseIntervention(env)
+            if env.action_space.shape == (12,) or (
+                hasattr(env, "config")
+                and getattr(env.config, "end_effector_type", "franka_gripper") != "franka_gripper"
+            ):
+                glove_cfg = self.cfg.get("glove_config", {})
+                env = DexHandIntervention(
+                    env,
+                    left_port=glove_cfg.get("left_port", "/dev/ttyACM0"),
+                    right_port=glove_cfg.get("right_port", None),
+                    glove_frequency=glove_cfg.get("frequency", 60),
+                    glove_config_file=glove_cfg.get("config_file", None),
+                )
+            else:
+                env = SpacemouseIntervention(env)
         if not env.config.is_dummy and self.cfg.get("keyboard_reward_wrapper", None):
             if self.cfg.keyboard_reward_wrapper == "multi_stage":
                 env = KeyboardRewardDoneMultiStageWrapper(env)
             elif self.cfg.keyboard_reward_wrapper == "single_stage":
                 env = KeyboardRewardDoneWrapper(env)
+
+        # Visual classifier reward
+        clf_cfg = self.cfg.get("classifier_reward_wrapper", None)
+        if clf_cfg is not None:
+            from rlinf.envs.realworld.common.reward_classifier import (
+                load_reward_classifier,
+            )
+            from rlinf.envs.realworld.common.wrappers.classifier_reward import (
+                make_classifier_reward_func,
+            )
+
+            device = clf_cfg.get("device", "cuda")
+            image_keys = list(clf_cfg.get("image_keys", ["wrist_1"]))
+
+            if clf_cfg.get("multi_stage", False):
+                ckpt_paths = list(clf_cfg.checkpoint_paths)
+                reward_funcs = []
+                for ckpt_path in ckpt_paths:
+                    model = load_reward_classifier(
+                        ckpt_path, image_keys=image_keys, device=device,
+                    )
+                    reward_funcs.append(make_classifier_reward_func(model, image_keys, device))
+                env = MultiStageClassifierRewardWrapper(
+                    env,
+                    reward_funcs=reward_funcs,
+                    threshold=clf_cfg.get("threshold", 0.75),
+                )
+            else:
+                model = load_reward_classifier(
+                    clf_cfg.checkpoint_path, image_keys=image_keys, device=device,
+                )
+                reward_func = make_classifier_reward_func(model, image_keys, device)
+                env = ClassifierRewardWrapper(
+                    env,
+                    reward_func=reward_func,
+                    threshold=clf_cfg.get("threshold", 0.75),
+                )
 
         env = RelativeFrame(env)
         env = Quat2EulerWrapper(env)
