@@ -263,7 +263,7 @@ class FSDPModelManager:
                 if value is not None:
                     kwargs[key] = value
             self.grad_scaler = self.build_grad_scaler(
-                self._cfg.fsdp_config.amp_grad_scaler.get("enabled", False), **kwargs
+                self._cfg.fsdp_config.get("amp_grad_scaler", False), **kwargs
             )
         else:
             self.grad_scaler = self.build_grad_scaler(
@@ -584,6 +584,7 @@ class FSDPModelManager:
 
         Args:
             enabled (bool): Whether to enable gradient scaling.
+            kwargs: Optional parameters for ShardedGradScaler.
 
         Returns:
             ShardedGradScaler: The gradient scaler.

@@ -72,9 +72,7 @@ def set_megatron_args(cfg):
     elif precision_dtype == torch.bfloat16:
         args.params_dtype = "${torch.dtype:bfloat16}"
     else:
-        assert False, (
-            "model.precision only available in fp16 or bf16 when using megatron"
-        )
+        assert False, "Megatron requires model.precision to be set to fp16 or bf16"
     if args.fp16 is None and args.bf16 is None:
         args.fp16 = precision_dtype == torch.float16
         args.bf16 = precision_dtype == torch.bfloat16

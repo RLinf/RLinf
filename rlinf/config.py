@@ -312,10 +312,15 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
 
 def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
     def validate_amp_cfg(config: DictConfig) -> DictConfig:
+        """Validate AMP configuration and ensure mutual exclusivity with FSDP mixed_precision."""
+
+        mixed_precision_config = config.get("mixed_precision", {})
+        param_dtype = mixed_precision_config.get("param_dtype", None)
+        reduce_dtype = mixed_precision_config.get("reduce_dtype", None)
+        buffer_dtype = mixed_precision_config.get("buffer_dtype", None)
+
         use_fsdp_mixed_precision = not (
-            mixed_precision_config.param_dtype is None
-            and mixed_precision_config.reduce_dtype is None
-            and mixed_precision_config.buffer_dtype is None
+            param_dtype is None and reduce_dtype is None and buffer_dtype is None
         )
         if "amp_autocast" in config or "amp_grad_scaler" in config:
             assert "amp" not in config, (
@@ -331,19 +336,19 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             config.amp.enabled = config.amp.get("enabled", False)
             if config.amp.enabled is False:
                 if "precision" in config.amp:
-                    print(
-                        "Warning: fsdp_config.amp.precision will be deprecated under amp disabled condition, use fsdp_config.amp_autocast.precision instead"
+                    logging.warning(
+                        "fsdp_config.amp.precision will be deprecated under amp disabled condition, use fsdp_config.amp_autocast.precision instead"
                     )
                 if "use_grad_scaler" in config.amp:
-                    print(
-                        "Warning: fsdp_config.amp.use_grad_scaler will be deprecated under amp disabled condition, use fsdp_config.amp_grad_scaler instead"
+                    logging.warning(
+                        "fsdp_config.amp.use_grad_scaler will be deprecated under amp disabled condition, use fsdp_config.amp_grad_scaler instead"
                     )
             config.amp.precision = config.amp.get("precision", "bf16")
             config.amp.use_grad_scaler = config.amp.get("use_grad_scaler", False)
 
         if config.amp.enabled and use_fsdp_mixed_precision:
             assert False, (
-                "amp autocast should not be enabled when fsdp mixed_precision is enabled"
+                "amp_autocast should not be enabled when fsdp mixed_precision is enabled"
             )
         assert config.amp.precision in ["fp16", "bf16", "fp32"], (
             "fsdp.amp.precision must be one of ['fp16', 'bf16', 'fp32']"
