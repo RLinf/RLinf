@@ -18,6 +18,8 @@ import time
 import torch
 import torch.distributed
 
+from rlinf.scheduler import Worker
+
 
 def compute_split_num(num, split_num):
     return math.lcm(num, split_num) // split_num
@@ -91,7 +93,7 @@ def compute_rollout_metrics(data_buffer: dict) -> dict:
 
     if "rewards" in data_buffer:
         rewards = data_buffer["rewards"].clone()
-        mean_rewards = torch.mean(rewards).to(torch.cuda.current_device())
+        mean_rewards = torch.mean(rewards).to(Worker.torch_platform.current_device())
         torch.distributed.all_reduce(mean_rewards, op=torch.distributed.ReduceOp.AVG)
 
         rewards_metrics = {
@@ -101,12 +103,14 @@ def compute_rollout_metrics(data_buffer: dict) -> dict:
 
     if "advantages" in data_buffer:
         advantages = data_buffer["advantages"]
-        mean_adv = torch.mean(advantages).to(torch.cuda.current_device())
+        mean_adv = torch.mean(advantages).to(Worker.torch_platform.current_device())
         torch.distributed.all_reduce(mean_adv, op=torch.distributed.ReduceOp.AVG)
         max_adv = torch.max(advantages).detach().item()
         min_adv = torch.min(advantages).detach().item()
         reduce_adv_tensor = torch.as_tensor(
-            [-min_adv, max_adv], device=torch.cuda.current_device(), dtype=torch.float32
+            [-min_adv, max_adv],
+            device=Worker.torch_platform.current_device(),
+            dtype=torch.float32,
         )
         torch.distributed.all_reduce(
             reduce_adv_tensor, op=torch.distributed.ReduceOp.MAX
@@ -122,12 +126,14 @@ def compute_rollout_metrics(data_buffer: dict) -> dict:
 
     if data_buffer.get("returns", None) is not None:
         returns = data_buffer["returns"]
-        mean_ret = torch.mean(returns).to(torch.cuda.current_device())
+        mean_ret = torch.mean(returns).to(Worker.torch_platform.current_device())
         torch.distributed.all_reduce(mean_ret, op=torch.distributed.ReduceOp.AVG)
         max_ret = torch.max(returns).detach().item()
         min_ret = torch.min(returns).detach().item()
         reduce_ret_tensor = torch.as_tensor(
-            [-min_ret, max_ret], device=torch.cuda.current_device(), dtype=torch.float32
+            [-min_ret, max_ret],
+            device=Worker.torch_platform.current_device(),
+            dtype=torch.float32,
         )
         torch.distributed.all_reduce(
             reduce_ret_tensor, op=torch.distributed.ReduceOp.MAX

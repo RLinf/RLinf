@@ -27,6 +27,7 @@ except ImportError:
 from torch.distributed import ProcessGroup, ReduceOp
 from typing_extensions import Self
 
+from rlinf.scheduler import Worker
 from rlinf.utils.timers import NamedTimer
 
 
@@ -186,7 +187,7 @@ def compute_rollout_metrics(
     data_parallel_group: Optional[ProcessGroup] = None,
     use_critic: bool = False,
 ):
-    device = torch.device(f"cuda:{torch.cuda.current_device()}")
+    device = Worker.torch_platform.current_device()
     advantages = rollout_batch["advantages"].to(device=device)
     mask = rollout_batch["response_mask"][:, -response_len:].to(device=device)
     prompt_lengths = rollout_batch["prompt_lengths"].clone().to(device=device)
@@ -241,7 +242,9 @@ def compute_rollout_metrics(
     adv_max = torch.max(valid_adv).detach().item()
     adv_min = torch.min(valid_adv).detach().item()
     reduce_tensor = torch.as_tensor(
-        [-adv_min, adv_max], device=torch.cuda.current_device(), dtype=torch.float32
+        [-adv_min, adv_max],
+        device=Worker.torch_platform.current_device(),
+        dtype=torch.float32,
     )
     torch.distributed.all_reduce(
         reduce_tensor,
@@ -311,7 +314,7 @@ class RolloutDataBalance(UserDict):
         dp_group: Optional[ProcessGroup],
         partitioning_tool: Callable,
     ) -> Self:
-        current_device = torch.cuda.current_device()
+        current_device = Worker.torch_platform.current_device()
 
         # 1. Get local sample count
         current_num_samples = 0
@@ -648,12 +651,12 @@ def rebalance_nd_tensor(tensor, group):
     NOTE: assumes all other (i.e., non-zero) dimensions are equal.
     """
     num_samples = torch.as_tensor(
-        tensor.size(0), dtype=torch.int64, device=torch.cuda.current_device()
+        tensor.size(0), dtype=torch.int64, device=Worker.torch_platform.current_device()
     )
     batch_num_per_rank = torch.zeros(
         torch.distributed.get_world_size(group),
         dtype=torch.int64,
-        device=torch.cuda.current_device(),
+        device=Worker.torch_platform.current_device(),
     )
     torch.distributed.all_gather_into_tensor(
         batch_num_per_rank, num_samples, group=group
@@ -664,7 +667,10 @@ def rebalance_nd_tensor(tensor, group):
 
     indices = batch_num_per_rank.cumsum(dim=0)
     output_tensor = torch.zeros(
-        B, *other_dims, dtype=tensor.dtype, device=torch.cuda.current_device()
+        B,
+        *other_dims,
+        dtype=tensor.dtype,
+        device=Worker.torch_platform.current_device(),
     )
 
     # tensor_split is a view we can copy into
@@ -696,7 +702,7 @@ def broadcast_tensor(
     """
 
     if torch.distributed.get_rank() == src:
-        tensor = tensor.cuda()
+        tensor = tensor.to(Worker.torch_device_type)
         if dtype:
             tensor = tensor.to(dtype)
 
@@ -761,7 +767,7 @@ def broadcast_tensor_within_dp(tensor: torch.Tensor, dtype: torch.dtype):
 def gather_tensor(tensor, dst, group, dtype=None):
     """Gather any tensor to the dst rank from every other rank in the given group.
     All the ranks that send or receive data must call this function."""
-    tensor = tensor.to(device=torch.cuda.current_device(), dtype=dtype)
+    tensor = tensor.to(device=Worker.torch_platform.current_device(), dtype=dtype)
     if torch.distributed.get_rank() == dst:
         gather_list = [
             torch.empty_like(tensor)
@@ -780,7 +786,7 @@ def all_reduce_int(
     group: ProcessGroup = None,
 ):
     obj_tensor = torch.tensor(
-        [obj], dtype=torch.long, device=torch.cuda.current_device()
+        [obj], dtype=torch.long, device=Worker.torch_platform.current_device()
     )
     torch.distributed.all_reduce(
         obj_tensor,
@@ -807,8 +813,8 @@ def normalize_tensor(tensor, mask, group=None):
     """normalizes a tensor using global mean and std"""
     dtype = torch.float64
     tensor = tensor.to(dtype)
-    tensor = tensor.to(device=torch.cuda.current_device())
-    mask = mask.to(device=torch.cuda.current_device())
+    tensor = tensor.to(Worker.torch_device_type)
+    mask = mask.to(Worker.torch_device_type)
 
     tensor_global_mean, tensor_global_var = masked_global_mean_var(
         tensor, mask, group=group
@@ -902,8 +908,8 @@ def masked_global_mean_var(values, mask, group=None):
     mask and values must have same shape, with mask being {0,1} with 1 being the values we want to keep
     """
     assert values.shape == mask.shape, (values.shape, mask.shape)
-    values = values.to(device=torch.cuda.current_device())
-    mask = mask.to(device=torch.cuda.current_device())
+    values = values.to(Worker.torch_device_type)
+    mask = mask.to(Worker.torch_device_type)
 
     values = values * mask
 
@@ -911,7 +917,7 @@ def masked_global_mean_var(values, mask, group=None):
     sum_and_count = torch.tensor(
         [values.sum(), mask.sum()],
         dtype=torch.float64,
-        device=torch.cuda.current_device(),
+        device=Worker.torch_platform.current_device(),
     )
     torch.distributed.all_reduce(sum_and_count, group=group)
     global_sum, global_count = sum_and_count
@@ -919,7 +925,7 @@ def masked_global_mean_var(values, mask, group=None):
     variance_summed = (
         (((values - global_mean) ** 2) * mask)
         .sum()
-        .to(device=torch.cuda.current_device(), dtype=torch.float64)
+        .to(device=Worker.torch_platform.current_device(), dtype=torch.float64)
     )
 
     torch.distributed.all_reduce(variance_summed, group=group)
@@ -928,12 +934,12 @@ def masked_global_mean_var(values, mask, group=None):
 
 
 def report_device_info(info_str):
-    free_gpu_memory, total_gpu_memory = torch.cuda.mem_get_info()
+    free_gpu_memory, total_gpu_memory = Worker.torch_platform.mem_get_info()
     free_gpu_memory /= 2**30
     total_gpu_memory /= 2**30
 
-    memory_allocated = torch.cuda.memory_allocated() / 2**30
-    memory_reserved = torch.cuda.memory_reserved() / 2**30
+    memory_allocated = Worker.torch_platform.memory_allocated() / 2**30
+    memory_reserved = Worker.torch_platform.memory_reserved() / 2**30
 
     print(
         f"[Rank {torch.distributed.get_rank()}] {info_str}, {free_gpu_memory=:.2f} GiB, {total_gpu_memory=:.2f} GiB, {memory_allocated=:.2f} GiB, {memory_reserved=:.2f} GiB"
@@ -984,7 +990,9 @@ def all_reduce_dict(
 ):
     keys = sorted(dictionary)
     tensor = torch.as_tensor(
-        [dictionary[k] for k in keys], dtype=dtype, device=torch.cuda.current_device()
+        [dictionary[k] for k in keys],
+        dtype=dtype,
+        device=Worker.torch_platform.current_device(),
     )
     torch.distributed.all_reduce(tensor, op=op, group=group)
     return dict(zip(keys, tensor.tolist()))

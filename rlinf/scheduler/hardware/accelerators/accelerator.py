@@ -15,6 +15,8 @@
 from enum import Enum
 from typing import TYPE_CHECKING, Optional
 
+import torch
+
 from ..hardware import Hardware, HardwareConfig, HardwareInfo, HardwareResource
 
 if TYPE_CHECKING:
@@ -133,12 +135,14 @@ class Accelerator(Hardware):
 
     @classmethod
     def enumerate(
-        cls, node_rank: int, configs: Optional[list[HardwareConfig]] = None
+        cls,
+        node_rank: Optional[int] = None,
+        configs: Optional[list[HardwareConfig]] = None,
     ) -> Optional[HardwareResource]:
         """Enumerate the hardware resources on a node.
 
         Args:
-            node_rank (int): The rank of the node being enumerated.
+            node_rank (Optional[int]): The rank of the node being enumerated.
             configs (Optional[list[HardwareConfig]]): The configurations for the hardware on a node.
 
         Returns:
@@ -179,7 +183,15 @@ class AcceleratorUtil:
 
     # To support an accelerator's CCL,
     # the `_new_process_group_helper` functions of `mult_channel_pg` need to be implemented
-    CCL_SUPPORT_LIST = [AcceleratorType.NV_GPU, AcceleratorType.AMD_GPU]
+    CCL_SUPPORT_LIST = [AcceleratorType.NV_GPU, AcceleratorType.AMD_GPU, AcceleratorType.NPU]
+
+    @staticmethod
+    def get_accelerator_type() -> AcceleratorType:
+        """Get the current accelerator type even not in Worker environment."""
+        hw_res = Accelerator.enumerate()
+        if hw_res is not None and len(hw_res.infos) > 0:
+            return Accelerator.get_accelerator_type_from_model(hw_res.infos[0].model)
+        return AcceleratorType.NO_ACCEL
 
     @staticmethod
     def get_accelerator_env_var(
@@ -252,7 +264,7 @@ class AcceleratorUtil:
         raise ValueError(f"Unsupported accelerator type: {accelerator_type}")
 
     @staticmethod
-    def get_torch_platform(accelerator_type: AcceleratorType):
+    def get_torch_platform(accelerator_type: AcceleratorType) -> torch.cuda:
         """Get the PyTorch platform module based on the accelerator type."""
         if accelerator_type == AcceleratorType.NO_ACCEL:
             return None
@@ -262,7 +274,7 @@ class AcceleratorUtil:
         raise ValueError(f"Unsupported accelerator type: {accelerator_type}")
 
     @staticmethod
-    def get_device_type(accelerator_type: AcceleratorType):
+    def get_device_type(accelerator_type: AcceleratorType) -> str | None:
         """Get the device type based on the accelerator type."""
         if accelerator_type == AcceleratorType.NO_ACCEL:
             return None
