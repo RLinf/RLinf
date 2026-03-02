@@ -565,3 +565,105 @@ class EnvWorker(Worker):
             eval_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
 
         return eval_metrics
+
+    # ==================== Data Collection for LeRobot Export ====================
+
+    def enable_data_collection(self, save_dir: str) -> None:
+        """Enable data collection for all train environments."""
+        for env in self.env_list:
+            if hasattr(env, "enable_data_collection"):
+                env.enable_data_collection(save_dir)
+
+    def disable_data_collection(self) -> None:
+        """Disable data collection for all train environments."""
+        for env in self.env_list:
+            if hasattr(env, "disable_data_collection"):
+                env.disable_data_collection()
+
+    def save_collected_data(
+        self,
+        save_dir: str,
+        robot_type: str = "panda",
+        fps: int = 10,
+        only_successful: bool = False,
+    ) -> int:
+        """
+        Save collected data from all train environments to LeRobot format.
+
+        Args:
+            save_dir: Directory to save the data
+            robot_type: Robot type for metadata
+            fps: Frame rate for metadata
+            only_successful: If True, only save successful episodes
+
+        Returns:
+            Total number of episodes saved
+        """
+        total_saved = 0
+        for stage_id, env in enumerate(self.env_list):
+            if hasattr(env, "save_collected_data"):
+                # Use the same directory format as during initialization: {save_dir}_stage{stage_id}_rank{rank}
+                # This ensures incrementally written data and final saved data are in the same directory
+                stage_save_dir = f"{save_dir}_stage{stage_id}_rank{self._rank}"
+                num_saved = env.save_collected_data(
+                    save_dir=stage_save_dir,
+                    robot_type=robot_type,
+                    fps=fps,
+                    only_successful=only_successful,
+                )
+                total_saved += num_saved
+        return total_saved
+
+    def get_collector_stats(self) -> dict:
+        """Get statistics about collected data from all train environments."""
+        total_stats = {
+            "num_completed_episodes": 0,
+            "num_successful_episodes": 0,
+            "total_frames": 0,
+            # Statistics for incremental write mode
+            "total_episodes_written": 0,
+            "episodes_pending_flush": 0,
+            "needs_finalize": False,
+        }
+        for env in self.env_list:
+            if hasattr(env, "get_collector_stats"):
+                stats = env.get_collector_stats()
+                total_stats["num_completed_episodes"] += stats.get(
+                    "num_completed_episodes", 0
+                )
+                total_stats["num_successful_episodes"] += stats.get(
+                    "num_successful_episodes", 0
+                )
+                total_stats["total_frames"] += stats.get("total_frames", 0)
+                # Statistics for incremental write mode
+                total_stats["total_episodes_written"] += stats.get(
+                    "total_episodes_written", 0
+                )
+                total_stats["episodes_pending_flush"] += stats.get(
+                    "episodes_pending_flush", 0
+                )
+                # Set to True if any env needs finalization
+                if stats.get("needs_finalize", False):
+                    total_stats["needs_finalize"] = True
+
+        if total_stats["num_completed_episodes"] > 0:
+            total_stats["success_rate"] = (
+                total_stats["num_successful_episodes"]
+                / total_stats["num_completed_episodes"]
+            )
+        else:
+            total_stats["success_rate"] = 0.0
+
+        return total_stats
+
+    def clear_collected_data(self) -> None:
+        """Clear collected data from all train environments."""
+        for env in self.env_list:
+            if hasattr(env, "clear_collected_data"):
+                env.clear_collected_data()
+
+    def finalize_data_collection(self) -> None:
+        """Finalize data collection for all train environments."""
+        for env in self.env_list:
+            if hasattr(env, "finalize_data_collection"):
+                env.finalize_data_collection()
