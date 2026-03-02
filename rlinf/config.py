@@ -742,7 +742,10 @@ def validate_embodied_cfg(cfg):
     # NOTE: Currently we only support actor_critic as PPO algorithm loss, and only support value_head as critic model.
     # This will be updated in the future to support more algorithms and critic models.
     # Check that actor_critic loss requires value_head
-    if cfg.algorithm.loss_type == "actor_critic":
+    if (
+        cfg.algorithm.loss_type == "actor_critic"
+        or cfg.algorithm.loss_type == "decoupled_actor_critic"
+    ):
         add_value_head = cfg.actor.model.get("add_value_head", False)
         assert add_value_head, (
             f"When using PPO algorithm (algorithm.loss_type='actor_critic'), "
