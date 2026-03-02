@@ -263,10 +263,10 @@ In the environment configuration file, the following key parameters need to be s
 
 .. code-block:: yaml
 
-   env/train: robotwin_place_empyt_cup
-   env/eval: robotwin_place_empyt_cup
+   env/train: robotwin_place_empty_cup
+   env/eval: robotwin_place_empty_cup
    
-   # In env/train/robotwin_place_empyt_cup.yaml:
+   # In env/train/robotwin_place_empty_cup.yaml:
    env_type: robotwin
    assets_path: "/path/to/robotwin_assets"
    
@@ -284,7 +284,7 @@ In the environment configuration file, the following key parameters need to be s
 
 Using **OpenVLA-OFT** model with **GRPO** algorithm as an example, the corresponding configuration file is:
 
-- **OpenVLA-OFT + GRPO**: ``examples/embodiment/config/robotwin_place_empyt_cup_grpo_openvlaoft.yaml``
+- **OpenVLA-OFT + GRPO**: ``examples/embodiment/config/robotwin_place_empty_cup_grpo_openvlaoft.yaml``
 
 **4. Launch Command**
 
@@ -308,7 +308,7 @@ For example, training OpenVLA-OFT model with GRPO in the RoboTwin environment:
    # Set ROBOTWIN_PATH environment variable
    export ROBOTWIN_PATH=/path/to/RoboTwin
 
-   bash examples/embodiment/run_embodiment.sh robotwin_place_empyt_cup_grpo_openvlaoft
+   bash examples/embodiment/run_embodiment.sh robotwin_place_empty_cup_grpo_openvlaoft
 
 Visualization and Results
 -------------------------
@@ -336,50 +336,115 @@ Videos from training and evaluation processes are automatically saved. Configura
 Evaluation Results
 ~~~~~~~~~~~~~~~~~~~
 
-.. list-table:: **Evaluation results of OpenVLA-OFT models on six RoboTwin tasks**
+.. list-table:: **Evaluation results of OpenVLA-OFT models on seven RoboTwin tasks**
    :header-rows: 1
 
-   * - Model
-     - beat_block_hammer
-     - pick_dual_bottles
-     - place_empty_cup
-     - move_can_pot
-     - lift_pot
-     - handover_block
-     - Average
-     - Δ Avg.
-
-   * - OpenVLA-OFT (SFT)
+   * - Task
+     - OpenVLA-OFT (SFT)
+     - OpenVLA-OFT (RLinf-GRPO)
+   * - beat_block_hammer
      - |huggingface| `10.15% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-beat_block_hammer>`_
-     - |huggingface| `20.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-pick_dual_bottles>`_
-     - |huggingface| `75.78% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_
-     - |huggingface| `9.37% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-move_can_pot>`_
-     - |huggingface| `3.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-lift_pot>`_
-     - |huggingface| `28.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-handover_block>`_
-     - 24.48%
-     - ---
-
-   * - OpenVLA-OFT (RLinf-GRPO)
      - |huggingface| `96.09% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-beat_block_hammer>`__
+   * - pick_dual_bottles
+     - |huggingface| `20.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-pick_dual_bottles>`_
      - |huggingface| `92.96% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-pick_dual_bottles>`__
+   * - place_empty_cup
+     - |huggingface| `75.78% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_
      - |huggingface| `94.53% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_empty_cup>`__
+   * - place_container_plate
+     - |huggingface| `54.69% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_container_plate>`_
+     - |huggingface| `95.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_container_plate>`__
+   * - move_can_pot
+     - |huggingface| `9.37% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-move_can_pot>`_
      - |huggingface| `83.59% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-move_can_pot>`__
+   * - lift_pot
+     - |huggingface| `3.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-lift_pot>`_
      - |huggingface| `70.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-lift_pot>`__
+   * - handover_block
+     - |huggingface| `28.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-handover_block>`_
      - |huggingface| `70.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-handover_block>`__
-     - **84.63%**
-     - **+60.15%**
+   * - Average
+     - 28.79%
+     - **86.16**
+   * - Δ Avg.
+     - ---
+     - **+57.37%**
 
-.. note::
-   
-   Each task has its own dedicated SFT and RL model. 
-   SFT models: |huggingface| `beat_block_hammer (SFT) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-beat_block_hammer>`_, |huggingface| `pick_dual_bottles (SFT) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-pick_dual_bottles>`_, |huggingface| `place_empty_cup (SFT) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_, |huggingface| `move_can_pot (SFT) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-move_can_pot>`_, |huggingface| `lift_pot (SFT) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-lift_pot>`_, |huggingface| `handover_block (SFT) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-handover_block>`_.
-   RL models: |huggingface| `beat_block_hammer (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-beat_block_hammer>`_, |huggingface| `pick_dual_bottles (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-pick_dual_bottles>`_, |huggingface| `place_empty_cup (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_empty_cup>`_, |huggingface| `move_can_pot (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-move_can_pot>`_, |huggingface| `lift_pot (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-lift_pot>`_, |huggingface| `handover_block (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-handover_block>`_.
+Evaluation Script
+~~~~~~~~~~~~~~~~~~~
 
+This section describes how to evaluate different VLA models on the RoboTwin benchmark platform.
+In RLinf, model evaluation reuses the same YAML configuration as training.
+To switch to evaluation mode, simply set ``runner.only_eval`` to ``True`` in the corresponding YAML file.
+
+1. **OpenVLA-OFT Model Evaluation**
+
+   Please make sure the correct Python virtual environment (venv) is activated before running the commands.  
+   If you are using the official Docker image, switch to the ``openvla-oft`` environment via:
+
+   .. code-block:: bash
+
+      source switch_env openvla-oft
+
+   Taking the GRPO algorithm on the ``place_empty_cup`` task as an example, the corresponding configuration file is:
+
+   - ``examples/embodiment/config/robotwin_place_empty_cup_grpo_openvlaoft.yaml``
+
+2. **π₀ Model Evaluation**
+
+   Similarly, ensure that the correct Python virtual environment is activated.  
+   If using the official Docker image, switch to the ``openpi`` environment via:
+
+   .. code-block:: bash
+
+      source switch_env openpi
+
+   Taking the GRPO algorithm on the ``place_empty_cup`` task as an example, the corresponding configuration file is:
+
+   - ``examples/embodiment/config/robotwin_place_empty_cup_openpi_eval.yaml``
+
+3. **Enabling Evaluation Mode**
+
+   In either configuration file above, set ``runner.only_eval`` to ``True``:
+
+   .. code-block:: yaml
+
+      runner:
+        task_type: embodied
+        logger:
+          log_path: "../results"
+          project_name: rlinf
+          experiment_name: "robotwin_grpo_openvlaoft"
+          logger_backends: ["tensorboard"]
+
+        max_epochs: 1000
+        max_steps: -1
+        only_eval: True
+
+   When ``only_eval`` is set to ``True``, the framework runs rollout and evaluation only, without performing parameter updates.
+
+4. **Running Evaluation**
+
+   .. code-block:: bash
+
+      export ROBOT_PLATFORM=ALOHA
+      export ROBOTWIN_PATH=/path/to/RoboTwin
+
+      bash examples/embodiment/eval_embodiment.sh CHOSEN_CONFIG
+
+   Replace ``CHOSEN_CONFIG`` with the selected configuration name (without the ``.yaml`` suffix).
+
+5. **Notes**
+
+   - The OpenVLA-OFT model is currently trained and evaluated with the ``[piper, piper, 0.6]`` robot configuration  
+   - The π₀ model is currently trained and evaluated with the ``[aloha-agilex]`` robot configuration  
+   - For additional configuration details, please refer to the next section **Configuration Details**
 
 Configuration Details
 -----------------------
 
-**Key Configuration Parameters**
+OpenVLA-OFT Key Configuration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 1. **Model Configuration**:
 
@@ -401,6 +466,22 @@ Configuration Details
    - ``env.train.task_config.task_name``: Task name (e.g., ``place_empty_cup``)
    - ``env.train.task_config.embodiment``: Robot configuration
    - ``env.train.task_config.camera``: Camera configuration
+
+π\ :sub:`0`\  Key Configuration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+1. **Model Configuration**:
+
+   - ``actor.model.num_action_chunks: 50``：Number of action chunks
+   - ``actor.model.action_dim: 14``：14-dimensional action space (including proprioception)
+   - ``actor.model.openpi.num_images_in_input: 3``：Number of input images
+   - ``actor.model.openpi.config_name: "pi0_aloha_robotwin"``：Configuration name
+
+2. **Environment Configuration**:
+
+   - ``env.eval.center_crop: False``：Disable center cropping of images, OFT default is enabled
+   - ``env.eval.task_config.embodiment: [aloha-agilex]``：Use AgileX robot, instead of [piper, piper, 0.6] used in OFT
+   - ``env.eval.task_config.camera: collect_wrist_camera: true``：Collect wrist camera images, OFT default is disabled
 
 For more detailed information about RoboTwin configuration, please refer to the `RoboTwin Configuration Documentation <https://robotwin-platform.github.io/doc/usage/configurations.html>`_.
 

@@ -262,10 +262,10 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
 
 .. code-block:: yaml
 
-   env/train: robotwin_place_empyt_cup
-   env/eval: robotwin_place_empyt_cup
+   env/train: robotwin_place_empty_cup
+   env/eval: robotwin_place_empty_cup
    
-   # 在 env/train/robotwin_place_empyt_cup.yaml 中：
+   # 在 env/train/robotwin_place_empty_cup.yaml 中：
    env_type: robotwin
    assets_path: "/path/to/robotwin_assets"
    
@@ -283,7 +283,7 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
 
 以 **OpenVLA-OFT** 模型， **GRPO** 算法为例，对应配置文件为：
 
-- **OpenVLA-OFT + GRPO**：``examples/embodiment/config/robotwin_place_empyt_cup_grpo_openvlaoft.yaml``
+- **OpenVLA-OFT + GRPO**：``examples/embodiment/config/robotwin_place_empty_cup_grpo_openvlaoft.yaml``
 
 **4. 启动命令**
 
@@ -307,7 +307,7 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
    # 设置ROBOTWIN_PATH环境变量
    export ROBOTWIN_PATH=/path/to/RoboTwin
 
-   bash examples/embodiment/run_embodiment.sh robotwin_place_empyt_cup_grpo_openvlaoft
+   bash examples/embodiment/run_embodiment.sh robotwin_place_empty_cup_grpo_openvlaoft
 
 可视化与结果
 -------------------------
@@ -335,49 +335,111 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
 评估结果
 ~~~~~~~~~~~~~~~~~~~
 
-.. list-table:: **OpenVLA-OFT 模型在六个 RoboTwin 任务上的评估结果**
+.. list-table:: **OpenVLA-OFT 模型在七个 RoboTwin 任务上的评估结果**
    :header-rows: 1
 
-   * - 模型
-     - beat_block_hammer
-     - pick_dual_bottles
-     - place_empty_cup
-     - move_can_pot
-     - lift_pot
-     - handover_block
-     - Average
-     - Δ Avg.
-
-   * - OpenVLA-OFT (SFT)
+   * - Task
+     - OpenVLA-OFT (SFT)
+     - OpenVLA-OFT (RLinf-GRPO)
+   * - beat_block_hammer
      - |huggingface| `10.15% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-beat_block_hammer>`_
-     - |huggingface| `20.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-pick_dual_bottles>`_
-     - |huggingface| `75.78% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_
-     - |huggingface| `9.37% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-move_can_pot>`_
-     - |huggingface| `3.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-lift_pot>`_
-     - |huggingface| `28.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-handover_block>`_
-     - 24.48%
-     - ---
-
-   * - OpenVLA-OFT (RLinf-GRPO)
      - |huggingface| `96.09% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-beat_block_hammer>`__
+   * - pick_dual_bottles
+     - |huggingface| `20.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-pick_dual_bottles>`_
      - |huggingface| `92.96% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-pick_dual_bottles>`__
+   * - place_empty_cup
+     - |huggingface| `75.78% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_
      - |huggingface| `94.53% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_empty_cup>`__
+   * - place_container_plate
+     - |huggingface| `54.69% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_container_plate>`_
+     - |huggingface| `95.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_container_plate>`__
+   * - move_can_pot
+     - |huggingface| `9.37% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-move_can_pot>`_
      - |huggingface| `83.59% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-move_can_pot>`__
+   * - lift_pot
+     - |huggingface| `3.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-lift_pot>`_
      - |huggingface| `70.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-lift_pot>`__
+   * - handover_block
+     - |huggingface| `28.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-handover_block>`_
      - |huggingface| `70.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-handover_block>`__
-     - **84.63%**
-     - **+60.15%**
+   * - Average
+     - 28.79%
+     - **86.16**
+   * - Δ Avg.
+     - ---
+     - **+57.37%**
 
-.. note::
-   
-   每个任务都有其对应的独立 SFT 和 RL 模型。 
-   SFT 模型：|huggingface| `beat_block_hammer (SFT) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-beat_block_hammer>`_、|huggingface| `pick_dual_bottles (SFT) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-pick_dual_bottles>`_、|huggingface| `place_empty_cup (SFT) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_、|huggingface| `move_can_pot (SFT) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-move_can_pot>`_、|huggingface| `lift_pot (SFT) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-lift_pot>`_、|huggingface| `handover_block (SFT) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-handover_block>`_。 
-   RL 模型：|huggingface| `beat_block_hammer (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-beat_block_hammer>`_、|huggingface| `pick_dual_bottles (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-pick_dual_bottles>`_、|huggingface| `place_empty_cup (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_empty_cup>`_、|huggingface| `move_can_pot (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-move_can_pot>`_、|huggingface| `lift_pot (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-lift_pot>`_、|huggingface| `handover_block (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-handover_block>`_。
+评估脚本
+~~~~~~~~~~~~~~~~~~~
+
+本节介绍如何在 RoboTwin 评测平台上对不同 VLA 模型进行评估（Eval）。
+在 RLinf 中，模型评估与训练复用同一套配置文件（YAML），
+通常只需在对应 YAML 中将 ``runner.only_eval`` 设置为 ``True``，即可进入评估模式。
+
+1. **OpenVLA-OFT 模型评估**
+
+   请确保在运行前已激活正确的 Python 虚拟环境。  
+   若使用官方 Docker 镜像，需要通过：
+
+   .. code-block:: bash
+
+      source switch_env openvla-oft
+
+   以 GRPO 算法、``place_empty_cup`` 任务为例，对应配置文件为：
+
+   - ``examples/embodiment/config/robotwin_place_empty_cup_grpo_openvlaoft.yaml``
+
+2. **π₀ 模型评估**
+
+   请确保在运行前已激活正确的 Python 虚拟环境。  
+   若使用官方 Docker 镜像，需要通过：
+
+   .. code-block:: bash
+
+      source switch_env openpi
+
+   以 GRPO 算法、``place_empty_cup`` 任务为例，对应配置文件为：
+
+   - ``examples/embodiment/config/robotwin_place_empty_cup_openpi_eval.yaml``
+
+3. **评估模式设置**
+
+   在上述任一配置文件中，将 ``runner.only_eval`` 设置为 ``True``：
+
+   .. code-block:: yaml
+
+      runner:
+        task_type: embodied
+        logger:
+          log_path: "../results"
+          project_name: rlinf
+          experiment_name: "robotwin_grpo_openvlaoft"
+          logger_backends: ["tensorboard"]
+
+        max_epochs: 1000
+        max_steps: -1
+        only_eval: True
+
+4. **启动评估**
+
+   .. code-block:: bash
+
+      export ROBOT_PLATFORM=ALOHA
+      export ROBOTWIN_PATH=/path/to/RoboTwin
+
+      bash examples/embodiment/eval_embodiment.sh CHOSEN_CONFIG
+
+5. **注意事项**
+
+   - OpenVLA-OFT 模型目前使用 ``[piper, piper, 0.6]`` 机械臂配置  
+   - π\ :sub:`0`\ 模型目前使用 ``[aloha-agilex]`` 机械臂配置  
+   - 其余详细参数请参考下一节 **配置说明**
 
 配置说明
 -----------------------
 
-**关键配置参数**
+OpenVLA-OFT关键配置
+~~~~~~~~~~~~~~~~~~~
 
 1. **模型配置**：
 
@@ -399,6 +461,22 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
    - ``env.train.task_config.task_name``：任务名称（如 ``place_empty_cup``）
    - ``env.train.task_config.embodiment``：机器人配置
    - ``env.train.task_config.camera``：相机配置
+
+π\ :sub:`0`\关键配置
+~~~~~~~~~~~~~~~~~~~~~~
+
+1. **模型配置**：
+
+   - ``actor.model.num_action_chunks: 50``：动作块数量
+   - ``actor.model.action_dim: 14``：本体感觉维度
+   - ``actor.model.openpi.num_images_in_input: 3``：输入图像数量
+   - ``actor.model.openpi.config_name: "pi0_aloha_robotwin"``：配置名称
+
+2. **环境配置**：
+
+   - ``env.eval.center_crop: False``：关闭对图像进行中心裁剪，OFT默认开启
+   - ``env.eval.task_config.embodiment: [aloha-agilex]``：使用AgileX机器人，而非oft中使用的[piper, piper, 0.6]
+   - ``env.eval.task_config.camera: collect_wrist_camera: true``：收集腕部相机图像，OFT默认不开启
 
 更多关于 RoboTwin 配置的详细信息，请参考 `RoboTwin 配置文档 <https://robotwin-platform.github.io/doc/usage/configurations.html>`_。
 
