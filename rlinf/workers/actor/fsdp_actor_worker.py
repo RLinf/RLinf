@@ -195,6 +195,13 @@ class FSDPActor(FSDPModelManager, Worker):
         self.enable_dynamic_batch_size = cfg.runner.get(
             "enable_dynamic_batch_size", False
         )
+        self.max_tokens_per_mbs = cfg.runner.get("max_tokens_per_mbs", 2048)
+        if self.enable_dynamic_batch_size:
+            self.enable_dynamic_batch_size_fix = cfg.runner.get(
+                "enable_dynamic_batch_size_fix", False
+            )
+        else:
+            self.enable_dynamic_batch_size_fix = False
         if self.is_pipeline:
             assert not self.enable_dp_load_balance, (
                 "DP load balance is not supported in pipeline mode."
@@ -202,7 +209,6 @@ class FSDPActor(FSDPModelManager, Worker):
             assert not self.enable_dynamic_batch_size, (
                 "Dynamic batch size is not supported in pipeline mode."
             )
-        self.max_tokens_per_mbs = cfg.runner.get("max_tokens_per_mbs", 2048)
 
         self.bucket_capacity = 128 * 1024 * 1024
 
@@ -714,6 +720,8 @@ class FSDPActor(FSDPModelManager, Worker):
                 split_num=global_batch_size // self.micro_batch_size,
             )
             self.gradient_accumulation = micro_batch_cnt
+            if self.enable_dynamic_batch_size_fix:
+                self.gradient_accumulation = global_batch_size // self.micro_batch_size
         else:
             global_batch_size = self.total_batch_size_per_dp // self.n_mini_batches
             micro_batch_cnt = global_batch_size // self.micro_batch_size
@@ -764,6 +772,60 @@ class FSDPActor(FSDPModelManager, Worker):
                     (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
                     min=self.cfg.algorithm.importance_sampling_clip,
                 )
+
+            if self.enable_dynamic_batch_size_fix:
+                losses = []
+
+                for i in range(loss_mask.shape[0]):
+                    loss, mbs_metrics_data = policy_loss(
+                        loss_type=self.cfg.algorithm.loss_type,
+                        loss_agg_func=self.loss_agg_func,
+                        logprobs=logprobs[i : i + 1],
+                        old_logprobs=prev_logprobs[i : i + 1],
+                        advantages=advantages[i : i + 1],
+                        clip_ratio_low=clip_ratio_low,
+                        clip_ratio_high=clip_ratio_high,
+                        clip_ratio_c=clip_ratio_c,
+                        loss_mask=loss_mask[i : i + 1],
+                        task_type=self.task_type,
+                    )
+
+                    entropy_loss = torch.tensor(0.0, device=torch.cuda.current_device())
+                    if self.calculate_entropy:
+                        entropy_loss = self.loss_agg_func(
+                            entropy[i : i + 1],
+                            mask=loss_mask[i : i + 1],
+                        )
+                        if self.calculate_entropy_loss:
+                            loss = (
+                                loss - self.cfg.algorithm.entropy_bonus * entropy_loss
+                            )
+
+                    kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
+                    if self.kl_beta > 0 and ref_logprobs is not None:
+                        kld = kl_penalty(
+                            ref_logprobs[i : i + 1],
+                            logprobs[i : i + 1],
+                            self.kl_penalty_type,
+                        )
+                        kl_loss = self.loss_agg_func(kld, loss_mask[i : i + 1])
+                        loss = loss + kl_loss * self.kl_beta
+
+                    final_loss_metric = loss.detach()
+                    mbs_metrics_data.update(
+                        {
+                            "actor/final_loss": final_loss_metric,
+                            "actor/entropy_loss": entropy_loss.detach(),
+                            "actor/kl_loss": kl_loss.detach(),
+                        }
+                    )
+                    losses.append(loss)
+                    append_to_dict(mbs_metrics_list, mbs_metrics_data)
+                loss = torch.stack(losses).sum()
+                loss = loss / self.gradient_accumulation
+                with backward_ctx:
+                    self.grad_scaler.scale(loss).backward()
+                continue
 
             loss, mbs_metrics_data = policy_loss(
                 loss_type=self.cfg.algorithm.loss_type,
