@@ -21,12 +21,14 @@ from megatron.core import parallel_state
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.training.training import unwrap_model
+from megatron.training.utils import average_losses_across_data_parallel_group
 from omegaconf import DictConfig
 from torch.multiprocessing.reductions import reduce_tensor
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import (
     calculate_adv_and_returns,
+    get_loss_scales,
     policy_loss,
 )
 from rlinf.algorithms.utils import kl_penalty
@@ -74,10 +76,12 @@ class MAMegatronActor(MegatronActor):
             "enable_dp_load_balance must be True when is_dynamic_rollout_batch is True"
         )
 
-        self.use_sub_worker = self.cfg.rollout.get(
-            "use_sub_worker", False
-        )  # FIXME: check
+        self.use_sub_worker = self.cfg.rollout.get("use_sub_worker", False)
         assert self.placement_mode == PlacementMode.COLLOCATED
+        #####
+        loss_scales = self.cfg.algorithm.get("loss_scales", [])
+        self.loss_scale_fns = get_loss_scales(loss_scales)
+        self.pack_traj = self.cfg.actor.get("pack_traj", True)
 
     def get_batch(
         self, channel: Channel
@@ -130,9 +134,6 @@ class MAMegatronActor(MegatronActor):
             label = copy.deepcopy(position_ids)
             label[:, :-1] = input_ids[:, 1:]
 
-            assert "response_mask" in batch, (
-                "response_mask must be provided in dynamic rollout batch"
-            )
             # response_mask needs to be shifted left by 1 to align with the shifted labels
             # because response_mask[i] indicates whether position i is a response token in input_ids
             # but label[i] = input_ids[i+1], so we need to shift response_mask left to align
@@ -159,10 +160,7 @@ class MAMegatronActor(MegatronActor):
 
                 return ret
 
-            logits_processor_args = {
-                "label": label,
-                "label_mask": label_mask,
-            }
+            logits_processor_args = {"label": label, "label_mask": label_mask}
 
             output = self.custom_forward(
                 model,
@@ -221,9 +219,16 @@ class MAMegatronActor(MegatronActor):
                     logprobs=curr_logprobs,
                     old_logprobs=prev_logprobs,
                     advantages=advantages,
+                    clip_ratio_c=self.clip_ratio_c,
                     clip_ratio_low=self.clip_ratio_low,
                     clip_ratio_high=self.clip_ratio_high,
                     loss_mask=mask,
+                    clip_log_ratio_min=self.cfg.algorithm.get(
+                        "clip_log_ratio_min", None
+                    ),
+                    clip_log_ratio_max=self.cfg.algorithm.get(
+                        "clip_log_ratio_max", None
+                    ),
                 )
 
                 entropy_loss = torch.zeros(1, device=loss.device)
@@ -235,22 +240,15 @@ class MAMegatronActor(MegatronActor):
 
                 kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
                 if self.kl_beta > 0 and ref_logprobs is not None:
+                    assert False, "Currently, KL loss is not avaliable"
                     kld = kl_penalty(curr_logprobs, ref_logprobs, self.kl_penalty_type)
                     kl_loss = self.loss_agg_func(kld, mask)
                     loss = loss + kl_loss * self.kl_beta
 
                 # all gather
                 _imp = copy.deepcopy(metrics_data["actor/ratio"])
-                torch.distributed.all_reduce(
-                    _imp, group=parallel_state.get_data_parallel_group()
-                )
-
-                _n_valid_tokens = mask.count_nonzero().clone()
-                torch.distributed.all_reduce(
-                    _n_valid_tokens, group=parallel_state.get_data_parallel_group()
-                )
-                if _n_valid_tokens.item() != 0:
-                    _imp /= _n_valid_tokens
+                _token_num = copy.deepcopy(metrics_data["actor/token_num"])
+                _imp /= _token_num
 
                 # Early stopping.
                 if (
@@ -272,30 +270,20 @@ class MAMegatronActor(MegatronActor):
                     )
                     loss *= loss_scale.item()
 
-                if self.cfg.algorithm.get("use_rollout_scale", False):
-                    loss_scale = (
-                        self.num_microbatches
-                        / self.cfg.data.rollout_batch_size
-                        / self.cfg.algorithm.get("group_size", 1)
-                    )
-                    loss *= loss_scale.item()
-
                 # add to log
                 metrics_data.update(
                     {
-                        "final_loss": loss.detach(),
-                        "entropy_loss": entropy_loss.detach(),
-                        "kl_loss": kl_loss.detach(),
+                        "actor/final_loss": loss.detach(),
+                        "actor/entropy_loss": entropy_loss.detach(),
+                        "actor/kl_loss": kl_loss.detach(),
                     }
                 )
 
-                token_num_local = batch["response_mask"].count_nonzero()
-                token_num_global = token_num_local.clone()
-                torch.distributed.all_reduce(
-                    token_num_global, group=parallel_state.get_data_parallel_group()
-                )
-                token_num_local = token_num_local.item()
-                token_num_global = token_num_global.item()
+                for k in sorted(metrics_data.keys()):
+                    v = metrics_data[k]
+                    if v is not None:
+                        metrics_data[k] = average_losses_across_data_parallel_group([v])
+
                 return loss, metrics_data
 
             return output, loss_func
@@ -419,46 +407,53 @@ class MAMegatronActor(MegatronActor):
                 group=parallel_state.get_data_parallel_group(),
             )
 
+        # Valid token scale
+        if self.cfg.algorithm.use_valid_token_scale:
+            self._setup_valid_token_scale(batch)
+
         # metrics
         rollout_metrics = self._compute_rollout_metrics(batch)
 
-        # idx_to_traj is not needed after computing advantages
-        batch.pop("idx_to_traj")
+        # pack traj
+        scale_context = {
+            "folding_scale": [],
+            "enable_scale_of_group": False,
+            "actor_global_batch_size": (
+                self.cfg.data.rollout_batch_size
+                * self.cfg.algorithm.get("group_size", 1)
+                / self.cfg.algorithm.n_minibatches
+            ),
+            "data_parallel_world_size": parallel_state.get_data_parallel_world_size(),
+        }
+        batch["loss_scales"] = torch.ones_like(batch["advantages"]).masked_fill(
+            ~batch["response_mask"], 0
+        )
+        for loss_scale_fn in self.loss_scale_fns:
+            batch = loss_scale_fn(scale_context, batch)
+        if self.pack_traj:
+            batch = DynamicRolloutResult.pack_traj_batch(scale_context, batch)
+        batch["advantages"] *= batch.pop("loss_scales")
+        for key in list(batch.keys()):
+            if key == "idx_to_traj" or key.startswith("extra:"):
+                batch.pop(key, None)
 
         # Must be called after batch is retrieved, which is when rollout has stopped
         # Otherwise, loading model might cause OOM
         self._load_weight_and_optimizer()
         self._training_setup()
 
-        # Valid token scale
-        if self.cfg.algorithm.use_valid_token_scale:
-            self._setup_valid_token_scale(batch)
-
         # DP batch load balance
         if self.cfg.actor.get("enable_dp_load_balance", False):
             batch_pad = DynamicRolloutResult.get_batch_pad(
-                self.cfg.actor.model.encoder_seq_length, batch.keys()
+                self.cfg.actor.model.encoder_seq_length
             )
             batch = self._dp_load_balance_dynamic(
                 batch, batch_pad, self.cfg.actor.micro_batch_size
             )
 
-        batch_size = batch["response_mask"].shape[0]
-        if self._rank % 2 == 0:
-            num_splits = [
-                batch_size // self.num_train_steps
-                + int(i < (batch_size % self.num_train_steps))
-                for i in range(self.num_train_steps)
-            ]
-        else:
-            num_splits = [
-                batch_size // self.num_train_steps
-                + int(i >= (self.num_train_steps - batch_size % self.num_train_steps))
-                for i in range(self.num_train_steps)
-            ]
         global_batches = get_iterator_k_split(
             batch,
-            num_splits=num_splits,
+            num_splits=self.num_train_steps,
             shuffle=self.cfg.algorithm.get("shuffle_rollout", True),
             shuffle_seed=self.cfg.actor.seed,
         )
@@ -697,6 +692,7 @@ class MAMegatronActor(MegatronActor):
                 advantages, _ = calculate_adv_and_returns(
                     task_type=self.cfg.runner.task_type,
                     adv_type=self.cfg.algorithm.adv_type,
+                    advantage_mode=self.cfg.algorithm.advantage_mode,
                     rewards=batch["rewards"].cuda(),
                     loss_mask=mask.cuda(),
                     num_sequence=len(batch["input_ids"]),

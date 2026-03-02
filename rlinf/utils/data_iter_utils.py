@@ -578,13 +578,13 @@ def get_iterator_dynamic(
                     > max_tokens_per_mbs
                 ):
                     valid_max_token = 0
-                    print(
-                        "[Warning] get_iterator_dynamic: "
-                        f"max len > max_tokens_per_mbs in dict batch! "
-                        f"prompt_lengths: {curr_batch['prompt_lengths'].tolist()}, "
-                        f"response_lengths: {curr_batch['response_lengths'].tolist()}, "
-                        f"max_tokens_per_mbs: {max_tokens_per_mbs}"
-                    )
+                    # print(
+                    #     "[Warning] get_iterator_dynamic: "
+                    #     f"max len > max_tokens_per_mbs in dict batch! "
+                    #     f"prompt_lengths: {curr_batch['prompt_lengths'].tolist()}, "
+                    #     f"response_lengths: {curr_batch['response_lengths'].tolist()}, "
+                    #     f"max_tokens_per_mbs: {max_tokens_per_mbs}"
+                    # )
                     break
             valid_max_token = torch.tensor([valid_max_token], device="cuda")
             dist.all_reduce(valid_max_token, op=dist.ReduceOp.MIN, group=dp_group)
@@ -655,13 +655,13 @@ def get_iterator_dynamic(
                     > max_tokens_per_mbs
                 ):
                     valid_max_token = 0
-                    print(
-                        "[Warning] get_iterator_dynamic: "
-                        f"max len > max_tokens_per_mbs in iterator batch! "
-                        f"prompt_lengths: {curr_batch['prompt_lengths'].tolist()}, "
-                        f"response_lengths: {curr_batch['response_lengths'].tolist()}, "
-                        f"max_tokens_per_mbs: {max_tokens_per_mbs}"
-                    )
+                    # print(
+                    #     "[Warning] get_iterator_dynamic: "
+                    #     f"max len > max_tokens_per_mbs in iterator batch! "
+                    #     f"prompt_lengths: {curr_batch['prompt_lengths'].tolist()}, "
+                    #     f"response_lengths: {curr_batch['response_lengths'].tolist()}, "
+                    #     f"max_tokens_per_mbs: {max_tokens_per_mbs}"
+                    # )
                     break
             valid_max_token = torch.tensor([valid_max_token], device="cuda")
             dist.all_reduce(valid_max_token, op=dist.ReduceOp.MIN, group=dp_group)

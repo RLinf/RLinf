@@ -1,0 +1,47 @@
+defaults:
+  - base_eval
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,rollout,reward: all
+
+runner:
+  experiment_name: ws 
+  output_dir: ./logs/eval
+  seq_length: 32000  
+
+  max_epochs: 1
+  max_steps: -1  
+
+algorithm:
+  group_size: 4
+
+agentloop:
+  workflow: mas 
+  
+rollout:
+  model:
+    model_type: qwen3
+    model_path: /mnt/project_rlinf/xzxuan/model/Qwen3-4B
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+
+
+tools:
+  online: True
+
+data:
+  type: wideseek_r1
+  max_prompt_length: 4096
+  val_rollout_batch_size: 200
+  prompt_key: query
+  answer_key: answer
+  is_markdown: True
+  norm_column: True
+  unique_columns: unique_columns 
+  val_data_paths: ["/mnt/project_rlinf/xzxuan/wideseek_test_data/test.jsonl"] # TODO:
+  data_size: 20
+      
+
+

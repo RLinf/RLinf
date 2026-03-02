@@ -2,10 +2,15 @@
 
 <div align="center">
 
-[**🌐 Project Page**](https://wideseek-r1.github.io/) | [**📄 Paper**](https://arxiv.org/pdf/2602.04634) | [**💻 Code**](https://github.com/RLinf/RLinf/tree/main/examples/wideseek_r1) | [**📦 Dataset**](https://huggingface.co/datasets/RLinf/WideSeek-R1-train-data) | [**🤗 Models**](https://huggingface.co/RLinf/WideSeek-R1-4b)
+[![paper](https://img.shields.io/badge/paper-A42C25?style=for-the-badge&logo=arxiv&logoColor=white)](https://arxiv.org/abs/xxx)
+&nbsp;
+[![Model](https://img.shields.io/badge/Hugging%20Face-Model-FFD21E?style=for-the-badge&logo=huggingface&logoColor=000)](https://huggingface.co/RLinf/WideSeek-R1-4b)
+&nbsp;
+[![Dataset](https://img.shields.io/badge/Hugging%20Face-Dataset-FFD21E?style=for-the-badge&logo=huggingface&logoColor=000)](https://huggingface.co/datasets/RLinf/WideSeek-R1-train-data)
+&nbsp;
+[![Website](https://img.shields.io/badge/Website-1A73E8?style=for-the-badge&logo=googledocs&logoColor=white)](https://wideseek-r1.github.io)
 
 </div>
-
 
 ## 📝 Overview
 
@@ -40,10 +45,42 @@ we propose WideSeek-R1, a lead-agent-subagent framework trained via multi-agent 
 
 ---
 
+## Installation
+
+我们目前支持两种安装方式，基于docker安装和基于uv安装。两种安装方式的详情均参考 [RLinf docs](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html)
+其中基于docker安装，请使用镜像
+
+```bash
+docker pull rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1
+```
+
+基于uv的安装，请遵循`reasoning`的环境，也就是基于
+
+```bash
+bash requirements/install.sh reason
+```
+
 
 ## QuickStart
 
-Coming Soon~
+### Evluation
+0. 下载数据集（ws的eval的，需要push到hf）
+1. 下载模型
+2. 启动eval
+3. 用self contain的ws的代码eval，提pr到rlinf org下（顺带把dataproducer提了）
+
+### Training
+0. 下载数据集
+1. 启动tool
+2. 启动qwen3 30b的llm judge
+3. 启动training
+
+
+## Data producer
+
+See more details in xxx
+
+## Acknowledgement
 
 ## 📚 Citation
 ```

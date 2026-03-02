@@ -1,0 +1,100 @@
+defaults:
+  - base_train
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,rollout,reward: all
+
+runner:
+  experiment_name: debug
+  output_dir: ./logs
+  seq_length: 10000  
+
+  enable_dynamic_batch_size: True
+  max_tokens_per_mbs: 10000
+
+  max_epochs: 1
+  max_steps: -1  
+
+  val_check_interval: 50
+  save_interval: 50
+  
+algorithm:
+  group_size: 2
+  n_minibatches: 1
+
+  clip_ratio_low: 0.2
+  clip_ratio_high: 0.28
+  clip_ratio_c: 10
+
+  loss_scales: ["group_level", "agent_level", "turn_level"]
+  advantage_mode: trajectory
+
+agentloop:
+  group_name: "AgentLoopGroup"
+  workflow: mas
+  # max_planner_turns: 5
+  # max_worker_turns: 5
+  # max_workers_per_planner: 3
+  # max_toolcall_per_worker: 3
+  # is_dynamic_rollout_batch: True
+
+rollout:
+  model:
+    model_type: qwen3
+    model_path: /mnt/project_rlinf/xzxuan/model/Qwen3-4B
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+
+tools:
+  online: False
+
+data:
+  type: wideseek_r1
+  max_prompt_length: 4096
+  rollout_batch_size: 8
+  prompt_key: question
+  answer_key: answer
+  is_markdown: True
+  unique_columns: unique_columns 
+  train_data_paths: ["/mnt/project_rlinf/xzxuan/train_data/hybrid_20k.jsonl"]
+  val_data_paths: ["/mnt/project_rlinf/xzxuan/train_data/hybrid_20k.jsonl"]
+  shuffle: False
+  is_hybrid: True
+  data_size: -1
+
+actor:
+  model:
+    megatron_checkpoint: /mnt/project_rlinf/xzxuan/RLinf/converted_ckpts/qwen3_4b_tp2_pp1
+    recompute_num_layers: 36
+
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 1
+    sequence_parallel: True
+
+  megatron:
+    use_hf_ckpt: False  
+    ckpt_convertor:
+      model: Qwen3-4B
+
+  optim:
+    lr: 1.0e-06
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-05
+    weight_decay: 0.01
+    clip_grad: 1.0
+    loss_scale: 65536
+
+  lr_sched:
+    lr_warmup_fraction: 0.0
+    lr_warmup_init: 0.0
+    lr_warmup_iters: 0
+    max_lr: 1.0e-06
+    min_lr: 0.0
+    lr_decay_style: constant
+    # lr_decay_iters: 10
+
+
+

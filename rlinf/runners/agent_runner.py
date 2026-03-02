@@ -83,6 +83,7 @@ class AgentRunner(ReasoningRunner):
             f"AgentRunner: tool_calls must be unique. all tool_calls are {all_tool_calls}"
         )
         self.agent_loop = agent_loop
+        self.batch_split_num = len(agent_loop._workers)
         self.tool_workers = tool_workers
         self.solid_rollouts = solid_rollouts
         self.generate_input_channel = Channel.create("GenerateInput")
@@ -191,7 +192,7 @@ class AgentRunner(ReasoningRunner):
                 for batch in self.train_dataloader:
                     with self.timer("step"):
                         with self.timer("prepare_data"):
-                            self._put_batch(batch)
+                            self._put_batch(batch, self.batch_split_num)
 
                         with self.timer("sync_weights"):
                             self._sync_weights()
@@ -203,7 +204,7 @@ class AgentRunner(ReasoningRunner):
                         )
 
                         if not self.is_pipeline:
-                            rollout_handle.wait()
+                            agent_metrics = rollout_handle.wait()[0]
                             offload_handles = [self.rollout.offload_engine()]
                             for solid_rollout in self.solid_rollouts.values():
                                 offload_handles.append(solid_rollout.offload_engine())
@@ -233,6 +234,8 @@ class AgentRunner(ReasoningRunner):
                             inference_channel = inference_input_channel
 
                         # Actor training, Advantages and returns
+                        if self.is_pipeline:
+                            agent_metrics = rollout_handle.wait()[0]
                         actor_handle: Handle = self.actor.run_training(
                             input_channel=inference_channel,
                         )
@@ -285,9 +288,17 @@ class AgentRunner(ReasoningRunner):
                     ) * self.cfg.algorithm.n_minibatches
                     # add prefix to the metrics
                     log_time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
-                    if actor_rollout_metrics is not None:
-                        rollout_metrics = {
-                            f"rollout/{k}": v for k, v in actor_rollout_metrics.items()
+                    rollout_metrics = {
+                        f"rollout/{k}": v for k, v in actor_rollout_metrics.items()
+                    }
+
+                    self.metric_logger.log(agent_metrics, logging_steps)
+                    self.metric_logger.log(log_time_metrics, logging_steps)
+                    self.metric_logger.log(rollout_metrics, logging_steps)
+                    for i in range(self.cfg.algorithm.n_minibatches):
+                        training_metrics = {
+                            f"train/{k}": v
+                            for k, v in actor_training_metrics[i].items()
                         }
 
                         self.metric_logger.log(log_time_metrics, logging_steps)
@@ -303,18 +314,9 @@ class AgentRunner(ReasoningRunner):
                             f"{k}_time": v for k, v in time_metrics.items()
                         }
 
-                        if self.cfg.actor.get("calculate_flops", False):
-                            flops_metrics = self._compute_flops_metrics(
-                                time_metrics, actor_rollout_metrics
-                            )
-                            flops_metrics = {
-                                f"flops/{k}": v for k, v in flops_metrics.items()
-                            }
-                            self.metric_logger.log(flops_metrics, logging_steps)
-                            logging_metrics.update(flops_metrics)
-
-                        logging_metrics.update(actor_rollout_metrics)
-                        logging_metrics.update(actor_training_metrics[-1])
+                    logging_metrics.update(agent_metrics)
+                    logging_metrics.update(actor_rollout_metrics)
+                    logging_metrics.update(actor_training_metrics[-1])
 
                     global_pbar.set_postfix(logging_metrics, refresh=False)
                     global_pbar.update(1)

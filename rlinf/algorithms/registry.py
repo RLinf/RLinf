@@ -116,3 +116,23 @@ def calculate_adv_and_returns(**kwargs) -> tuple[torch.Tensor, Optional[torch.Te
         advantages, returns = fn(**kwargs)
         res = postprocess_reasoning_advantages_outputs(advantages, returns)
     return res
+
+
+LOSS_SCALE_REGISTRY: dict[str, Callable] = {}
+
+
+def register_loss_scale(name: str):
+    def decorator(fn):
+        LOSS_SCALE_REGISTRY[name.lower()] = fn
+        return fn
+
+    return decorator
+
+
+def get_loss_scales(names: list[str]) -> list[Callable]:
+    loss_scales = []
+    for name in names:
+        if name not in LOSS_SCALE_REGISTRY:
+            raise ValueError(f"Loss scale process {name} not registered")
+        loss_scales.append(LOSS_SCALE_REGISTRY[name])
+    return loss_scales

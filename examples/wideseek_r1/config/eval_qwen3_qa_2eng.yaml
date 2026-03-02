@@ -1,0 +1,55 @@
+defaults:
+  - base_eval
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,rollout,reward: all
+
+runner:
+  experiment_name: qa 
+  output_dir: ./eval
+  seq_length: 32000  
+
+  max_epochs: 1
+  max_steps: -1  
+
+algorithm:
+  group_size: 4
+
+agentloop:
+  workflow: mas 
+  fixed_role: worker # planner or worker
+  
+rollout:
+  model:
+    model_type: qwen3
+    model_path: /mnt/project_rlinf/xzxuan/model/Qwen3-4B
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+
+  use_fixed_worker: True
+
+rollout_fixed_worker:
+  model:
+    model_type: qwen3
+    model_path: /mnt/project_rlinf/xzxuan/model/Qwen3-4B
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+
+tools:
+  online: False
+
+data:
+  type: wideseek_r1
+  max_prompt_length: 4096
+  val_rollout_batch_size: 1000
+  prompt_key: question
+  answer_key: answer
+  is_markdown: False
+  val_data_paths: ["/mnt/project_rlinf/xzxuan/data/Asearcher-test-data/Bamboogle/test.jsonl"] # TODO:
+  validation_shuffle: True
+  data_size: -1
+      
+
+
