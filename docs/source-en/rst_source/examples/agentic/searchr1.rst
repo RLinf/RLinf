@@ -56,7 +56,7 @@ and build the index
 
 .. code-block:: bash
 
-   bash examples/searchr1/build_index.sh
+   bash examples/searchr1/local_server_phaiss/build_index.sh
 
 Write the paths to the previously downloaded wiki files and the index into examples/searchr1/launch_local_server.sh
 
@@ -96,21 +96,21 @@ Download the `Qwen2.5-3B-Instruct <https://huggingface.co/Qwen/Qwen2.5-3B-Instru
 
 Download `qdrant <https://github.com/qdrant/qdrant/releases>`__ and build a qdrant collection with follwing steps.
 
-Use downloaded wiki corpus, Qwen2.5-3B-Instruct and qdrant to replace the file paths for `WIKI2018_DIR, retriever_path, and qdrant_path` in `examples/searchr1/qdrant_scripts/build_index_qdrant.sh` and `examples/searchr1/qdrant_scripts/launch_local_server_qdrant.sh`.
+Use downloaded wiki corpus, Qwen2.5-3B-Instruct and qdrant to replace the file paths for `WIKI2018_DIR, retriever_path, and qdrant_path` in `examples/searchr1/local_server_qdrant/build_index_qdrant.sh` and `examples/searchr1/local_server_qdrant/launch_local_server_qdrant.sh`.
 
 Use the following instrcutions to build a qdrant wiki server collection:
 
 .. code-block:: bash
 
    # build qdrant collection
-   bash ./examples/searchr1/qdrant_scripts/build_index_qdrant.sh
+   bash ./examples/searchr1/local_server_qdrant/build_index_qdrant.sh
 
 Run launch_local_server_qdrant.sh to start the Local Qdrant Wiki Server. Wait until server IP information is printed — indicating successful startup.
 
 .. code-block:: bash
 
    # launch qdrant server
-   bash ./examples/searchr1/qdrant_scripts/launch_local_server_qdrant.sh
+   bash ./examples/searchr1/local_server_qdrant/launch_local_server_qdrant.sh
 
 Qdrant uses the HNSW graph index algorithm by default. For details on optimizing the HNSW graph index, please refer to the `Qdrant documentation <https://qdrant.tech/documentation/guides/optimize/>`__.
 

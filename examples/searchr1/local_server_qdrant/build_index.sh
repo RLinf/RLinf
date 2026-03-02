@@ -22,7 +22,7 @@ hnsw_config='{"m":24,"ef_construct":512}'
 qdrant_pid=$!
 sleep 5
 
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 examples/searchr1/qdrant_scripts/build_qdrant_coll.py \
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 examples/searchr1/local_server_qdrant/build_index.py \
                                             --corpus_path $corpus_file \
                                             --retriever_name $retriever_name \
                                             --retriever_model $retriever_path \
