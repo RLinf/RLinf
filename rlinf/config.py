@@ -55,6 +55,7 @@ class SupportedModel(Enum):
     MLP_POLICY = ("mlp_policy", "embodied")
     GR00T = ("gr00t", "embodied")
     DEXBOTIC_PI = ("dexbotic_pi", "embodied")
+    DREAMZERO = ("dreamzero", "embodied")
     CNN_POLICY = ("cnn_policy", "embodied")
     FLOW_POLICY = ("flow_policy", "embodied")
     CMA_POLICY = ("cma", "embodied")
@@ -784,6 +785,9 @@ def validate_embodied_cfg(cfg):
             def get_robot_control_mode(robot: str):
                 if robot == "panda-qpos":
                     return "pd_joint_delta_pos"
+                elif robot == "panda-droid":
+                    # Absolute joint position control for DreamZero DROID (7 joint + gripper)
+                    return "pd_joint_pos"
                 elif robot == "panda-ee-dpos":
                     return "pd_ee_delta_pos"
                 elif robot == "panda-ee-target-dpos":  # for GSEnv

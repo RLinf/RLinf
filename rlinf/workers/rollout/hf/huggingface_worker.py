@@ -202,6 +202,7 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.OPENPI,
             SupportedModel.MLP_POLICY,
             SupportedModel.GR00T,
+            SupportedModel.DREAMZERO,
             SupportedModel.CNN_POLICY,
         ]:
             kwargs = {"mode": mode}

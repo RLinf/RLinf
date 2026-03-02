@@ -25,9 +25,21 @@ def prepare_actions_for_maniskill(
     action_dim,
     action_scale,
     policy,
+    model_type=None,
 ) -> torch.Tensor:
-    if "panda" in policy:
-        return raw_chunk_actions
+    # panda-droid: DreamZero DROID absolute joint position (7 joint + gripper), pass through
+    # panda-qpos: joint delta position, pass through
+    if policy and "panda" in policy:
+        # DreamZero outputs [B, chunks, 8]; ensure we extract 8D for env
+        if model_type is not None and SupportedModel(model_type) == SupportedModel.DREAMZERO:
+            chunk_actions = np.asarray(raw_chunk_actions)[..., :8].astype(np.float32)
+        else:
+            chunk_actions = raw_chunk_actions
+        if isinstance(chunk_actions, np.ndarray):
+            chunk_actions = torch.from_numpy(chunk_actions)
+            if torch.cuda.is_available():
+                chunk_actions = chunk_actions.cuda()
+        return chunk_actions
     # TODO only suitable for action_dim = 7
     reshaped_actions = raw_chunk_actions.reshape(-1, action_dim)
     batch_size = reshaped_actions.shape[0]
@@ -141,6 +153,22 @@ def prepare_actions_for_robocasa(
         return chunk_actions
 
 
+def prepare_actions_for_droid(
+    raw_chunk_actions,
+    action_dim: int = 8,
+) -> torch.Tensor:
+    """
+    Prepare actions for DROID environment (7 joint + 1 gripper).
+    Gripper is binarized to 0/1 (DreamZero convention).
+    """
+    chunk_actions = torch.from_numpy(np.asarray(raw_chunk_actions, dtype=np.float32))
+    if chunk_actions.shape[-1] > action_dim:
+        chunk_actions = chunk_actions[..., :action_dim]
+    # Binarize gripper: >0.5 -> 1, else 0
+    chunk_actions[..., -1] = (chunk_actions[..., -1] > 0.5).to(chunk_actions.dtype)
+    return chunk_actions
+
+
 def prepare_actions_for_mujoco(raw_chunk_actions, model_type):
     if raw_chunk_actions.shape[-1] >= 7:
         chunk_actions = np.concatenate(
@@ -185,6 +213,7 @@ def prepare_actions(
             action_dim=action_dim,
             action_scale=action_scale,
             policy=policy,
+            model_type=model_type,
         )
     elif env_type == SupportedEnvType.ROBOTWIN:
         chunk_actions = raw_chunk_actions
@@ -213,6 +242,11 @@ def prepare_actions(
         chunk_actions = prepare_actions_for_mujoco(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
+        )
+    elif env_type == SupportedEnvType.DROID:
+        chunk_actions = prepare_actions_for_droid(
+            raw_chunk_actions=raw_chunk_actions,
+            action_dim=action_dim,
         )
     else:
         raise NotImplementedError
