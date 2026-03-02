@@ -308,7 +308,9 @@ class FSDPVlmSftWorker(FSDPSftWorker):
 
             logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
             past_key_values = (
-                outputs.past_key_values if hasattr(outputs, "past_key_values") else outputs[1]
+                outputs.past_key_values
+                if hasattr(outputs, "past_key_values")
+                else outputs[1]
             )
 
             next_token = torch.argmax(logits[:, -1, :], dim=-1)
@@ -323,8 +325,12 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             generated_ids = torch.cat([generated_ids, next_token.unsqueeze(-1)], dim=-1)
 
             # unfinished -> 1, finished -> 0
-            append_mask = (~finished).to(dtype=generated_attention_mask.dtype).unsqueeze(-1)
-            generated_attention_mask = torch.cat([generated_attention_mask, append_mask], dim=-1)
+            append_mask = (
+                (~finished).to(dtype=generated_attention_mask.dtype).unsqueeze(-1)
+            )
+            generated_attention_mask = torch.cat(
+                [generated_attention_mask, append_mask], dim=-1
+            )
 
             if eos_token_id is not None:
                 finished = finished | (next_token == eos_token_id)
@@ -333,9 +339,11 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                     device=generated_ids.device,
                     dtype=torch.int32,
                 )
-                torch.distributed.all_reduce(local_all_finished, op=torch.distributed.ReduceOp.MIN)
+                torch.distributed.all_reduce(
+                    local_all_finished, op=torch.distributed.ReduceOp.MIN
+                )
 
-                if local_all_finished.item() == True:
+                if local_all_finished.item() == 1:
                     break
 
         return generated_ids
@@ -354,12 +362,14 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             if self.tokenizer.pad_token_id is not None
             else (eos_token_id if eos_token_id is not None else 0)
         )
-        
+
         generated_ids = input_ids
         generated_attention_mask = attention_mask.to(dtype=torch.long)
         batch_size = generated_ids.size(0)
-        finished = torch.zeros(batch_size, dtype=torch.bool, device=generated_ids.device)
- 
+        finished = torch.zeros(
+            batch_size, dtype=torch.bool, device=generated_ids.device
+        )
+
         for _ in range(max_new_tokens):
             with self.amp_context:
                 outputs = self.model(
@@ -379,8 +389,12 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 )
 
             generated_ids = torch.cat([generated_ids, next_token.unsqueeze(-1)], dim=-1)
-            append_mask = (~finished).to(dtype=generated_attention_mask.dtype).unsqueeze(-1)
-            generated_attention_mask = torch.cat([generated_attention_mask, append_mask], dim=-1)
+            append_mask = (
+                (~finished).to(dtype=generated_attention_mask.dtype).unsqueeze(-1)
+            )
+            generated_attention_mask = torch.cat(
+                [generated_attention_mask, append_mask], dim=-1
+            )
 
             if eos_token_id is not None:
                 finished = finished | (next_token == eos_token_id)
@@ -389,9 +403,11 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                     device=generated_ids.device,
                     dtype=torch.int32,
                 )
-                torch.distributed.all_reduce(local_all_finished, op=torch.distributed.ReduceOp.MIN)
+                torch.distributed.all_reduce(
+                    local_all_finished, op=torch.distributed.ReduceOp.MIN
+                )
 
-                if local_all_finished.item() == True:
+                if local_all_finished.item() == 1:
                     break
 
         return generated_ids
@@ -417,14 +433,14 @@ class FSDPVlmSftWorker(FSDPSftWorker):
 
         # encode the generated text
         for i in range(len(answers)):
-            new_token_ids = generate_ids[i, input_ids.shape[1]:]
+            new_token_ids = generate_ids[i, input_ids.shape[1] :]
             full_pred_text = self.tokenizer.decode(
                 new_token_ids.tolist(), skip_special_tokens=False
             )
- 
+
             pred_text = self._extract_answer(full_pred_text)
             gold_text = answers[i]
-        
+
             if self._normalize_text(pred_text) == self._normalize_text(gold_text):
                 correct += 1
 
