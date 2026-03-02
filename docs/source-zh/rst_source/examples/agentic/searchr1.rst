@@ -52,7 +52,7 @@ Wiki配置文件
 
 .. code-block:: bash
 
-   bash examples/searchr1/local_server_phaiss/build_index.sh
+   bash examples/searchr1/local_server_faiss/build_index.sh
 
 将之前下载好的wiki文件路径和index路径等写入examples/searchr1/launch_local_server.sh
 
@@ -89,7 +89,7 @@ Wiki配置文件
 
 从huggingface上下载\ `Qwen2.5-3B-Instruct <https://huggingface.co/Qwen/Qwen2.5-3B-Instruct>`__ embedding模型。
 
-下载 `qdrant <https://github.com/qdrant/qdrant/releases>`__ 并按照以下步骤构建 qdrant collection。
+下载 `qdrant <https://github.com/qdrant/qdrant/releases>`__ 并按照以下步骤构建 qdrant collection。首先，创建一个文件夹并把下载好的qdrant二进制文件放入该文件夹中，方便后续存储qdrant程序及其构建的collection文件。
 
 在 `examples/searchr1/local_server_qdrant/build_index_qdrant.sh` 和 `examples/searchr1/local_server_qdrant/launch_local_server_qdrant.sh` 中，根据之前下载的 wiki corpus, Qwen2.5-3B-Instruct 和 qdrant路径更新 `WIKI2018_DIR`、 `retriever_path` 和 `qdrant_path` 的文件路径。
 

@@ -10,7 +10,7 @@ pages_file=$WIKI2018_WORK_DIR/wiki_webpages.jsonl
 retriever_name=e5
 retriever_path=intfloat/e5-base-v2
 
-python3  ./local_retrieval_server.py --index_path $index_file \
+python3  examples/searchr1/local_server_faiss/local_retrieval_server.py --index_path $index_file \
                                             --corpus_path $corpus_file \
                                             --pages_path $pages_file \
                                             --topk 3 \

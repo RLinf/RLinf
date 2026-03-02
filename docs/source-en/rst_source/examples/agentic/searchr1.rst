@@ -56,7 +56,7 @@ and build the index
 
 .. code-block:: bash
 
-   bash examples/searchr1/local_server_phaiss/build_index.sh
+   bash examples/searchr1/local_server_faiss/build_index.sh
 
 Write the paths to the previously downloaded wiki files and the index into examples/searchr1/launch_local_server.sh
 
@@ -94,7 +94,7 @@ Download the local retrieval wiki corpus files provided by ASearcher using the m
 
 Download the `Qwen2.5-3B-Instruct <https://huggingface.co/Qwen/Qwen2.5-3B-Instruct>`__ embedding model from HuggingFace.
 
-Download `qdrant <https://github.com/qdrant/qdrant/releases>`__ and build a qdrant collection with follwing steps.
+Download `qdrant <https://github.com/qdrant/qdrant/releases>`__ binary and build a qdrant collection with follwing steps. Create a new folder and put the qdrant binary into this folder, to facilitate the subsequent storage of qdrant binary and constructed collection files.
 
 Use downloaded wiki corpus, Qwen2.5-3B-Instruct and qdrant to replace the file paths for `WIKI2018_DIR, retriever_path, and qdrant_path` in `examples/searchr1/local_server_qdrant/build_index_qdrant.sh` and `examples/searchr1/local_server_qdrant/launch_local_server_qdrant.sh`.
 
