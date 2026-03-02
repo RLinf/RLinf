@@ -95,6 +95,10 @@ def get_model(
     if framework_name:
         starvla_model.framework_name = framework_name
 
+    clip_log_ratio_min = getattr(starvla_cfg, "clip_log_ratio_min", None)
+    clip_log_ratio_max = getattr(starvla_cfg, "clip_log_ratio_max", None)
+    clip_log_ratio_level = getattr(starvla_cfg, "clip_log_ratio_level", "action_level")
+
     # Collect normalization-stat overrides from 'cfg' and merge them into
     # 'starvla_model.norm_stats'. This helps when checkpoints do not persist norm
     # stats (or persist incorrect values).
@@ -142,6 +146,9 @@ def get_model(
         add_value_head=getattr(cfg, "add_value_head", True),
         unnorm_key=getattr(cfg, "unnorm_key", None),
         disable_action_unnormalization=disable_action_unnorm,
+        clip_log_ratio_min=clip_log_ratio_min,
+        clip_log_ratio_max=clip_log_ratio_max,
+        clip_log_ratio_level=clip_log_ratio_level,
     )
 
 

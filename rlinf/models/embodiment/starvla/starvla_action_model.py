@@ -52,6 +52,7 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
 
     _WARN_KEY_DEFAULT_FORWARD_DATA_FALLBACK = "default_forward_data_fallback"
     _WARN_KEY_MISSING_ACTION_NORM_STATS = "missing_action_norm_stats"
+    _WARN_KEY_LOGPROB_CLIP_SHAPE_MISMATCH = "logprob_clip_shape_mismatch"
 
     def __init__(
         self,
@@ -61,6 +62,9 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
         add_value_head: bool = True,
         unnorm_key: Optional[str] = None,
         disable_action_unnormalization: bool = False,
+        clip_log_ratio_min: Optional[float] = None,
+        clip_log_ratio_max: Optional[float] = None,
+        clip_log_ratio_level: str = "action_level",
     ):
         super().__init__()
         self.starvla_model = starvla_model
@@ -93,6 +97,22 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
         self.actor_logstd = nn.Parameter(
             torch.full((self.action_dim,), -2.0, dtype=policy_param_dtype)
         )
+
+        self.clip_log_ratio_min = (
+            None if clip_log_ratio_min is None else float(clip_log_ratio_min)
+        )
+        self.clip_log_ratio_max = (
+            None if clip_log_ratio_max is None else float(clip_log_ratio_max)
+        )
+        resolved_level = str(clip_log_ratio_level or "action_level").strip().lower()
+        if resolved_level not in {"token_level", "action_level", "chunk_level"}:
+            warnings.warn(
+                "starVLA clip_log_ratio_level is invalid; disable log-ratio clipping. "
+                f"clip_log_ratio_level={clip_log_ratio_level!r}.",
+                stacklevel=2,
+            )
+            resolved_level = "disabled"
+        self.clip_log_ratio_level = resolved_level
 
         self._warned_once: set[str] = set()
         self._rollout_prompt_seq_len: Optional[int] = None
@@ -213,7 +233,7 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
                 f"{self.action_head_type}."
             )
 
-        return handler(
+        output = handler(
             self,
             data=data,
             compute_logprobs=compute_logprobs,
@@ -221,6 +241,19 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
             compute_values=compute_values,
             use_cache=use_cache,
         )
+        if compute_logprobs:
+            logprobs = output.get("logprobs")
+            if isinstance(logprobs, torch.Tensor):
+                output["logprobs"] = data_pipeline_utils.clip_logprobs_with_old_logprobs(
+                    logprobs=logprobs,
+                    data=data,
+                    clip_log_ratio_min=self.clip_log_ratio_min,
+                    clip_log_ratio_max=self.clip_log_ratio_max,
+                    clip_log_ratio_level=self.clip_log_ratio_level,
+                    warned_once=self._warned_once,
+                    warn_key_shape_mismatch=self._WARN_KEY_LOGPROB_CLIP_SHAPE_MISMATCH,
+                )
+        return output
 
     def predict_action_batch(
         self,
@@ -376,6 +409,7 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
         if prev_values is None:
             prev_values = torch.zeros((bsz, 1), dtype=torch.float32)
 
+        forward_inputs["prev_logprobs"] = prev_logprobs.detach()
         forward_inputs["action"] = torch.from_numpy(action_for_storage.reshape(bsz, -1))
 
         storage_inputs = dict(model_inputs)

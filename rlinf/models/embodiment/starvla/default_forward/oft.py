@@ -68,6 +68,7 @@ def run_default_forward_oft(
         backbone_output=backbone_output,
         model_inputs=model_inputs,
     )
+    mean_actions = mean_actions.clamp(-1.0, 1.0)
 
     # 4) Convert env actions into the model-normalized action space.
     action = data_pipeline_utils.prepare_actions_for_default_forward(

@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import warnings
+from collections.abc import Mapping
 from typing import Any, Callable, Optional
 
 import numpy as np
@@ -313,6 +315,79 @@ def project_rollout_actions_for_logprob(
         env_actions=env_actions_t,
         action_norm_stats=policy._action_norm_stats,
     )
+
+
+def clip_logprobs_with_old_logprobs(
+    *,
+    logprobs: torch.Tensor,
+    data: Mapping[str, torch.Tensor],
+    clip_log_ratio_min: Optional[float],
+    clip_log_ratio_max: Optional[float],
+    clip_log_ratio_level: str,
+    warned_once: Optional[set[str]] = None,
+    warn_key_shape_mismatch: str = "logprob_clip_shape_mismatch",
+) -> torch.Tensor:
+    """Clamp log-ratio by adjusting returned logprobs using stored old logprobs.
+
+    This helper is used when RLinf's actor/loss pipeline does not plumb
+    ``clip_log_ratio_min/max`` into the loss function.
+    """
+    level = str(clip_log_ratio_level or "").strip().lower()
+    if level in {"", "disabled"}:
+        return logprobs
+    if level not in {"token_level", "action_level", "chunk_level"}:
+        return logprobs
+    if clip_log_ratio_min is None and clip_log_ratio_max is None:
+        return logprobs
+
+    old_logprobs = data.get("prev_logprobs")
+    if not isinstance(old_logprobs, torch.Tensor):
+        return logprobs
+    if old_logprobs.shape != logprobs.shape:
+        if warned_once is None:
+            return logprobs
+        if warn_key_shape_mismatch in warned_once:
+            return logprobs
+        warnings.warn(
+            "starVLA log-ratio clipping skipped due to shape mismatch: "
+            f"logprobs.shape={tuple(logprobs.shape)}, "
+            f"prev_logprobs.shape={tuple(old_logprobs.shape)}.",
+            stacklevel=2,
+        )
+        warned_once.add(warn_key_shape_mismatch)
+        return logprobs
+
+    log_ratio = logprobs - old_logprobs
+
+    def _clamp(x: torch.Tensor) -> torch.Tensor:
+        if clip_log_ratio_min is not None:
+            x = torch.clamp(x, min=float(clip_log_ratio_min))
+        if clip_log_ratio_max is not None:
+            x = torch.clamp(x, max=float(clip_log_ratio_max))
+        return x
+
+    if level == "token_level":
+        return old_logprobs + _clamp(log_ratio)
+
+    if level == "action_level":
+        if log_ratio.ndim < 2:
+            return old_logprobs + _clamp(log_ratio)
+
+        denom = float(max(1, int(log_ratio.shape[-1])))
+        summed = log_ratio.sum(dim=-1, keepdim=True)
+        clamped = _clamp(summed)
+        shift = (clamped - summed) / denom
+        return logprobs + shift
+
+    # chunk_level
+    bsz = int(log_ratio.shape[0])
+    flat = log_ratio.reshape(bsz, -1)
+    denom = float(max(1, int(flat.shape[-1])))
+    summed = flat.sum(dim=-1, keepdim=True)
+    clamped = _clamp(summed)
+    shift = (clamped - summed) / denom
+    shift = shift.view(bsz, *([1] * (log_ratio.ndim - 1)))
+    return logprobs + shift
 
 
 def pack_model_inputs_for_storage(

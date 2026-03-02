@@ -62,6 +62,7 @@ def run_rollout_oft(
         backbone_output=backbone_output,
         model_inputs=model_inputs,
     )
+    mean_actions = mean_actions.clamp(-1.0, 1.0)
 
     # 3) Build Gaussian actor, sample/greedy action, and clip to env bounds.
     dist = Normal(mean_actions, torch.exp(policy.actor_logstd).view(1, 1, -1))

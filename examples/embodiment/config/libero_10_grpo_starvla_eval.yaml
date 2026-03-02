@@ -136,6 +136,11 @@ actor:
       framework_name: "QwenOFT"
       expected_action_dim: ${actor.model.action_dim}
       expected_num_action_chunks: ${actor.model.num_action_chunks}
+      # PPO-aligned log-ratio clip (eps=0.2): ln(0.8)≈-0.2231, ln(1.2)≈0.1823
+      # This keeps exp(log_ratio) bounded and avoids huge ratio outliers.
+      clip_log_ratio_min: -0.22314355
+      clip_log_ratio_max: 0.18232156
+      clip_log_ratio_level: action_level
 
   optim:
     lr: 1.0e-5

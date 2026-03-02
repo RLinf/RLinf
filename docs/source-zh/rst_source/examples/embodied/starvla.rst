@@ -175,6 +175,9 @@ StarVLA + GRPO + LIBERO（10 tasks）示例配置：
          framework_name: "QwenOFT"
          expected_action_dim: ${actor.model.action_dim}
          expected_num_action_chunks: ${actor.model.num_action_chunks}
+         clip_log_ratio_min: -0.22314355
+         clip_log_ratio_max: 0.18232156
+         clip_log_ratio_level: action_level
 
 启动命令
 ^^^^^^^^
