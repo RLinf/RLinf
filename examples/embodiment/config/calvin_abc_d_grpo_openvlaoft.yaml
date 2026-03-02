@@ -1,6 +1,6 @@
 defaults:
-  - env/metaworld_50@env.train
-  - env/metaworld_50@env.eval
+  - env/calvin_abc@env.train
+  - env/calvin_d@env.eval
   - model/openvla_oft@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
@@ -22,7 +22,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "metaworld_grpo_openvla_final"
+    experiment_name: "calvin_abc_d_grpo_openvlaoft"
     logger_backends: ["tensorboard"]
 
   max_epochs: 1000
@@ -93,16 +93,16 @@ env:
   train:
     total_num_envs: 64
     group_size: ${algorithm.group_size}
-    max_episode_steps: 100
-    max_steps_per_rollout_epoch: 100
+    max_episode_steps: 480
+    max_steps_per_rollout_epoch: 480
     reward_coef: ${algorithm.reward_coef}
 
   eval:
     total_num_envs: 16
     auto_reset: True
     ignore_terminations: True
-    max_episode_steps: 100
-    max_steps_per_rollout_epoch: 100
+    max_episode_steps: 480
+    max_steps_per_rollout_epoch: 480
     group_size: 1
     video_cfg:
       save_video: True
@@ -120,7 +120,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/Openvlaoft-Metaworld-SFT/"
+    model_path: /path/to/model/Openvlaoft-CALVIN-SFT/
     precision: ${actor.model.precision}
 
 actor:
@@ -131,15 +131,15 @@ actor:
     queue_size: 0
   training_backend: "fsdp"
   micro_batch_size: 32
-  global_batch_size: 12800
+  global_batch_size: 12288
   seed: 1234
   enable_offload: False
 
   model:
-    model_path: "/path/to/model/Openvlaoft-Metaworld-SFT/"
+    model_path: /path/to/model/Openvlaoft-CALVIN-SFT/
     model_type: "openvla_oft"
     num_action_chunks: 1
-    unnorm_key: meta_world_strict
+    unnorm_key: calvin_abc
 
   optim:
     lr: 2.0e-5
@@ -151,7 +151,7 @@ actor:
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/Openvlaoft-Metaworld-SFT/"
+    tokenizer_model: /path/to/model/Openvlaoft-CALVIN-SFT/
     use_fast: False
     trust_remote_code: True
     padding_side: "right"

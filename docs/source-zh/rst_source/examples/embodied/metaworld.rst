@@ -7,7 +7,7 @@
    :class: inline-icon
 
 本示例提供了在 `MetaWorld <https://metaworld.farama.org/>`_ 环境中使用 **RLinf** 框架
-通过强化学习微调 π\ :sub:`0`\和π\ :sub:`0.5` 算法的完整指南。它涵盖了整个过程——从环境设置和核心算法设计到训练配置、评估和可视化——以及可重现的命令和配置片段。
+通过强化学习微调 OpenVLA-OFT，π\ :sub:`0`\和π\ :sub:`0.5` 算法的完整指南。它涵盖了整个过程——从环境设置和核心算法设计到训练配置、评估和可视化——以及可重现的命令和配置片段。
 
 主要目标是开发一个能够执行机器人操作能力的模型：
 
@@ -95,7 +95,10 @@
 
    # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
 
+   # 使用π模型训练
    bash requirements/install.sh embodied --model openpi --env metaworld
+   # 使用OpenvlaOFT模型训练
+   bash requirements/install.sh embodied --model openvlaoft --env metaworld
    source .venv/bin/activate
 
 
@@ -111,6 +114,7 @@
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT
    git clone https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT
+   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-Metaworld-SFT
 
    # 方法 2: 使用 huggingface-hub
    # 为提升国内下载速度，可以设置：
@@ -118,6 +122,7 @@
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-MetaWorld-SFT --local-dir RLinf-Pi0-MetaWorld-SFT
    hf download RLinf/RLinf-Pi05-MetaWorld-SFT --local-dir RLinf-Pi05-MetaWorld-SFT
+   hf download RLinf/RLinf-OpenVLAOFT-Metaworld-SFT --local-dir RLinf-OpenVLAOFT-Metaworld-SFT
 
 下载后，请确保在配置 yaml 文件中正确指定模型路径。
 
@@ -174,6 +179,9 @@ MetaWorld MT50 多任务联合训练配置文件 （在该任务设定下，训�
 
 - π\ :sub:`0.5`\ + PPO:
   ``examples/embodiment/config/metaworld_50_ppo_openpi_pi05.yaml``
+
+- OpenVLA-OFT + GRPO:
+  ``examples/embodiment/config/metaworld_50_grpo_openvlaoft.yaml``
 
 MetaWorld ML45 联合训练配置文件 （在该任务设定下，训练在45个任务中进行，推理在OOD的5个任务中进行：
 
