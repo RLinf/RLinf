@@ -14,13 +14,13 @@
 # Adapted from https://github.com/PeterGriffinJin/Search-R1/blob/main/scripts/download.py
 import argparse
 import json
+import logging
 import queue
 import time
 import warnings
-from typing import Optional
+from typing import Any, Optional
 
 import datasets
-import numpy as np
 import torch
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -30,8 +30,8 @@ from qdrant_client.models import (
     PointStruct,
     VectorParams,
 )
+from qdrant_encoder import Encoder
 from tqdm import tqdm
-from transformers import AutoConfig, AutoModel, AutoTokenizer
 
 global_encoder = None
 global_client = None
@@ -68,7 +68,7 @@ def load_corpus(corpus_path: str):
     return corpus
 
 
-def read_jsonl(file_path):
+def read_jsonl(file_path: str) -> list[Any]:
     data = []
     with open(file_path, "r") as f:
         for line in f:
@@ -79,108 +79,6 @@ def read_jsonl(file_path):
 def load_docs(corpus, doc_idxs):
     results = [corpus[int(idx)] for idx in doc_idxs]
     return results
-
-
-def load_model(model_path: str, use_fp16: bool = False, device=torch.device("cuda")):
-    model_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
-    model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
-    model.eval()
-    model = model.to(device=device)
-    if use_fp16:
-        model = model.half()
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_path, use_fast=True, trust_remote_code=True
-    )
-    return model, tokenizer
-
-
-def pooling(
-    pooler_output, last_hidden_state, attention_mask=None, pooling_method="mean"
-):
-    if pooling_method == "mean":
-        last_hidden = last_hidden_state.masked_fill(
-            ~attention_mask[..., None].bool(), 0.0
-        )
-        return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
-    elif pooling_method == "cls":
-        return last_hidden_state[:, 0]
-    elif pooling_method == "pooler":
-        return pooler_output
-    else:
-        raise NotImplementedError("Pooling method not implemented!")
-
-
-class Encoder:
-    def __init__(
-        self, model_name, model_path, pooling_method, max_length, use_fp16, device
-    ):
-        self.model_name = model_name
-        self.model_path = model_path
-        self.pooling_method = pooling_method
-        self.max_length = max_length
-        self.use_fp16 = use_fp16
-        self.device = device
-
-        self.model, self.tokenizer = load_model(
-            model_path=model_path, use_fp16=use_fp16, device=self.device
-        )
-        self.model.eval()
-
-    @torch.no_grad()
-    def encode(self, query_list: list[str], is_query=True) -> np.ndarray:
-        # processing query for different encoders
-        if isinstance(query_list, str):
-            query_list = [query_list]
-
-        if "e5" in self.model_name.lower():
-            if is_query:
-                query_list = [f"query: {query}" for query in query_list]
-            else:
-                query_list = [f"passage: {query}" for query in query_list]
-
-        if "bge" in self.model_name.lower():
-            if is_query:
-                query_list = [
-                    f"Represent this sentence for searching relevant passages: {query}"
-                    for query in query_list
-                ]
-
-        inputs = self.tokenizer(
-            query_list,
-            max_length=self.max_length,
-            padding=True,
-            truncation=True,
-            return_tensors="pt",
-        )
-        inputs = {k: v.to(device=self.device) for k, v in inputs.items()}
-
-        if "T5" in type(self.model).__name__:
-            # T5-based retrieval model
-            decoder_input_ids = torch.zeros(
-                (inputs["input_ids"].shape[0], 1), dtype=torch.long
-            ).to(inputs["input_ids"].device)
-            output = self.model(
-                **inputs, decoder_input_ids=decoder_input_ids, return_dict=True
-            )
-            query_emb = output.last_hidden_state[:, 0, :]
-        else:
-            output = self.model(**inputs, return_dict=True)
-            query_emb = pooling(
-                output.pooler_output,
-                output.last_hidden_state,
-                inputs["attention_mask"],
-                self.pooling_method,
-            )
-            if "dpr" not in self.model_name.lower():
-                query_emb = torch.nn.functional.normalize(query_emb, dim=-1)
-
-        query_emb = query_emb.detach().cpu().numpy()
-        query_emb = query_emb.astype(np.float32, order="C")
-
-        del inputs, output
-        torch.cuda.empty_cache()
-
-        return query_emb
 
 
 class QdrantIndexBuilder:
@@ -196,27 +94,29 @@ class QdrantIndexBuilder:
 
         if self.config.debug:
             # Check if collection exists, if not, build it from corpus
-            print("[DEBUG] Debug mode enabled. Deleting existing collection...")
+            logging.info("[DEBUG] Debug mode enabled. Deleting existing collection...")
             try:
                 self.client.delete_collection(collection_name=self.collection_name)
-                print(
+                logging.info(
                     f"[DEBUG] Collection '{self.collection_name}' deleted successfully."
                 )
             except Exception as e:
-                print(
+                logging.info(
                     f"[DEBUG] Warning: Failed to delete collection '{self.collection_name}': {e}"
                 )
 
         collections = self.client.get_collections().collections
         collection_names = [col.name for col in collections]
         if self.collection_name in collection_names:
-            print(f"Collection '{self.collection_name}' already exists. deleting...")
+            logging.info(
+                f"Collection '{self.collection_name}' already exists. deleting..."
+            )
             self.client.delete_collection(collection_name=self.collection_name)
         else:
-            print(f"Collection '{self.collection_name}' not found.")
-        print("Building collection from corpus...")
+            logging.info(f"Collection '{self.collection_name}' not found.")
+        logging.info("Building collection from corpus...")
         self._build_collection_from_corpus(config.corpus_text_field)
-        print(f"Collection '{self.collection_name}' built successfully!")
+        logging.info(f"Collection '{self.collection_name}' built successfully!")
 
     @staticmethod
     def encode_and_upsert(config, batch_texts, batch_indices, batch_payload):
@@ -245,10 +145,10 @@ class QdrantIndexBuilder:
         """Build Qdrant collection from corpus."""
         corpus_data = load_corpus(self.config.corpus_path)
         corpus_size = len(corpus_data)
-        print(f"Corpus size: {corpus_size} documents")
+        logging.info(f"Corpus size: {corpus_size} documents")
 
         # Get vector dimension by encoding a sample document
-        sample_text = "helld, world!"
+        sample_text = "hello, world!"
         encoder = Encoder(
             model_name=self.config.retrieval_method,
             model_path=self.config.retrieval_model_path,
@@ -260,12 +160,12 @@ class QdrantIndexBuilder:
         sample_emb = encoder.encode(sample_text, is_query=False)
         vector_size = sample_emb.shape[1]
         encoder = None
-        print(f"Vector dimension: {vector_size}")
+        logging.info(f"Vector dimension: {vector_size}")
 
         # Create collection
         try:
             hnsw_config = json.loads(self.config.hnsw_config)
-            print(f"hnsw_config uses: {hnsw_config}")
+            logging.info(f"hnsw_config uses: {hnsw_config}")
             self.client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config=VectorParams(
@@ -279,7 +179,7 @@ class QdrantIndexBuilder:
             collections = self.client.get_collections().collections
             collection_names = [col.name for col in collections]
             if self.collection_name in collection_names:
-                print(
+                logging.info(
                     f"Collection '{self.collection_name}' already exists, skipping creation."
                 )
             else:
@@ -304,7 +204,9 @@ class QdrantIndexBuilder:
         batch_payload = []
         for idx in tqdm(range(corpus_size), desc="Building collection"):
             doc = corpus_data[idx]
-            assert self.config.retrieval_method == "e5"
+            assert self.config.retrieval_method == "e5", (
+                f"Expected retrieval_method to be 'e5', but got '{self.config.retrieval_method}'"
+            )
             text = doc["contents"]
 
             # Skip empty texts
@@ -353,23 +255,23 @@ class QdrantIndexBuilder:
 
         # Wait for the collection to be ready (GREEN status)
         # This ensures all data has been properly indexed and is available for querying
-        print("wait collection status to be green")
+        logging.info("wait collection status to be green")
         while (
             self.client.get_collection(self.collection_name).status
             != CollectionStatus.GREEN
         ):
             time.sleep(1)
-        print(
+        logging.info(
             f"collection status of '{self.collection_name}' is green now, and infos are {self.client.get_collection(self.collection_name)}"
         )
-        print(
+        logging.info(
             f"Successfully inserted {corpus_size} documents into collection '{self.collection_name}'"
         )
 
 
 class Config:
     """
-    Minimal config class (simulating your argparse)
+    Minimal config class for Qdrant index builder (simulating your argparse)
     Replace this with your real arguments or load them dynamically.
     """
 
@@ -383,8 +285,8 @@ class Config:
         qdrant_url: Optional[str] = None,
         qdrant_collection_name: str = "default_collection",
         corpus_text_field: Optional[str] = None,
-        hnsw_config: str = None,
-        build_parallel: int = None,
+        hnsw_config: str | None = None,
+        build_parallel: int | None = None,
         retrieval_model_path: str = "./model",
         retrieval_pooling_method: str = "mean",
         retrieval_query_max_length: int = 256,
@@ -461,7 +363,7 @@ if __name__ == "__main__":
         help="Enable debug mode to delete existing collection before building",
     )
     args = parser.parse_args()
-
+    logging.getLogger().setLevel(logging.INFO)
     # 1) Build a config (could also parse from arguments).
     #    In real usage, you'd parse your CLI arguments or environment variables.
     config = Config(

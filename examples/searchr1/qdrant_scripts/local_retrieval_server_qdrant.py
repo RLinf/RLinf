@@ -15,6 +15,7 @@
 import argparse
 import asyncio
 import json
+import logging
 import os
 import socket
 import time
@@ -32,117 +33,14 @@ from qdrant_client.models import (
     QuantizationSearchParams,
     SearchParams,
 )
+from qdrant_encoder import Encoder
 from tqdm import tqdm
-from transformers import AutoConfig, AutoModel, AutoTokenizer
-
-
-def load_model(model_path: str, use_fp16: bool = False, device=torch.device("cuda")):
-    model_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
-    model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
-    model.eval()
-    model = model.to(device=device)
-    if use_fp16:
-        model = model.half()
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_path, use_fast=True, trust_remote_code=True
-    )
-    return model, tokenizer
-
-
-def pooling(
-    pooler_output, last_hidden_state, attention_mask=None, pooling_method="mean"
-):
-    if pooling_method == "mean":
-        last_hidden = last_hidden_state.masked_fill(
-            ~attention_mask[..., None].bool(), 0.0
-        )
-        return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
-    elif pooling_method == "cls":
-        return last_hidden_state[:, 0]
-    elif pooling_method == "pooler":
-        return pooler_output
-    else:
-        raise NotImplementedError("Pooling method not implemented!")
-
-
-class Encoder:
-    def __init__(
-        self, model_name, model_path, pooling_method, max_length, use_fp16, device
-    ):
-        self.model_name = model_name
-        self.model_path = model_path
-        self.pooling_method = pooling_method
-        self.max_length = max_length
-        self.use_fp16 = use_fp16
-        self.device = device
-
-        self.model, self.tokenizer = load_model(
-            model_path=model_path, use_fp16=use_fp16, device=self.device
-        )
-        self.model.eval()
-
-    @torch.no_grad()
-    def encode(self, query_list: list[str], is_query=True) -> np.ndarray:
-        # processing query for different encoders
-        if isinstance(query_list, str):
-            query_list = [query_list]
-
-        if "e5" in self.model_name.lower():
-            if is_query:
-                query_list = [f"query: {query}" for query in query_list]
-            else:
-                query_list = [f"passage: {query}" for query in query_list]
-
-        if "bge" in self.model_name.lower():
-            if is_query:
-                query_list = [
-                    f"Represent this sentence for searching relevant passages: {query}"
-                    for query in query_list
-                ]
-
-        inputs = self.tokenizer(
-            query_list,
-            max_length=self.max_length,
-            padding=True,
-            truncation=True,
-            return_tensors="pt",
-        )
-        inputs = {k: v.to(device=self.device) for k, v in inputs.items()}
-
-        if "T5" in type(self.model).__name__:
-            # T5-based retrieval model
-            decoder_input_ids = torch.zeros(
-                (inputs["input_ids"].shape[0], 1), dtype=torch.long
-            ).to(inputs["input_ids"].device)
-            output = self.model(
-                **inputs, decoder_input_ids=decoder_input_ids, return_dict=True
-            )
-            query_emb = output.last_hidden_state[:, 0, :]
-        else:
-            output = self.model(**inputs, return_dict=True)
-            query_emb = pooling(
-                output.pooler_output,
-                output.last_hidden_state,
-                inputs["attention_mask"],
-                self.pooling_method,
-            )
-            if "dpr" not in self.model_name.lower():
-                query_emb = torch.nn.functional.normalize(query_emb, dim=-1)
-
-        query_emb = query_emb.detach().cpu().numpy()
-        query_emb = query_emb.astype(np.float32, order="C")
-
-        del inputs, output
-        torch.cuda.empty_cache()
-
-        return query_emb
 
 
 class AsyncEncoderPool:
     @staticmethod
     def set_global_encoder(init_queue: Queue):
         args = init_queue.get()
-        device = args[-1]
         assert "global_encoder" not in globals()
         globals()["global_encoder"] = Encoder(*args)
 
@@ -185,11 +83,13 @@ class AsyncBaseRetriever:
     async def _abatch_search(self, query_list: list[str], num: int, return_score: bool):
         raise NotImplementedError
 
-    async def asearch(self, query: str, num: int = None, return_score: bool = False):
+    async def asearch(
+        self, query: str, num: int | None = None, return_score: bool = False
+    ):
         return await self._asearch(query, num, return_score)
 
     async def abatch_search(
-        self, query_list: list[str], num: int = None, return_score: bool = False
+        self, query_list: list[str], num: int | None = None, return_score: bool = False
     ):
         return await self._abatch_search(query_list, num, return_score)
 
@@ -202,12 +102,12 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
         while True:
             if wait_collection_time >= connect_timeout:
                 assert False, f"wait longer than {connect_timeout}s, exit"
-            print(f"wait {wait_collection_time}s for qdrant load")
+            logging.info(f"wait {wait_collection_time}s for qdrant load")
             time.sleep(5)
             wait_collection_time += 5
             try:
                 await client.info()
-                print("qdrant loaded and connected")
+                logging.info("qdrant loaded and connected")
                 break
             except Exception:
                 pass
@@ -239,17 +139,17 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
                 collection_name=self.collection_name,
                 points=Batch(ids=[], vectors=[]),
             )
-            print(
+            logging.info(
                 f"Optimizers triggered for collection '{self.collection_name}' with an empty update operation."
             )
             while coll_status != CollectionStatus.GREEN:
                 time.sleep(5)
                 if wait_collection_time >= optimize_timeout:
                     assert False, f"wait longer than {optimize_timeout}s, exit"
-                print(f"wait {wait_collection_time}s for qdrant optimize")
-            print("qdrant optimized")
+                logging.info(f"wait {wait_collection_time}s for qdrant optimize")
+            logging.info("qdrant optimized")
         else:
-            print("collection status is green now")
+            logging.info("collection status is green now")
 
         # Initialize encoder first (needed for building collection)
         devices = [
@@ -275,9 +175,11 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
             self.search_params = SearchParams(
                 **json.loads(config.qdrant_search_param),
             )
-        print(f"qdrant search_params: {self.search_params}")
+        logging.info(f"qdrant search_params: {self.search_params}")
 
-    async def _asearch(self, query: str, num: int = None, return_score: bool = False):
+    async def _asearch(
+        self, query: str, num: int | None = None, return_score: bool = False
+    ):
         time_start = time.time()
         if num is None:
             num = self.topk
@@ -297,7 +199,9 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
         time_search = time.time()
         time_elapse_search = time_search - time_embed
         time_elapse_embed = time_embed - time_start
-        print(f"time elapse: search: {time_elapse_search}; embed: {time_elapse_embed}")
+        logging.info(
+            f"time elapse: search: {time_elapse_search}; embed: {time_elapse_embed}"
+        )
 
         if len(search_results) < 1:
             if return_score:
@@ -314,7 +218,7 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
             return payloads
 
     async def _abatch_search(
-        self, query_list: list[str], num: int = None, return_score: bool = False
+        self, query_list: list[str], num: int | None = None, return_score: bool = False
     ):
         if return_score:
             all_payloads, all_scores = [], []
@@ -347,8 +251,8 @@ class PageAccess:
         time_load = time.time()
         self.pages = {page["url"]: page for page in pages}
         time_map = time.time()
-        print(f"PageAccess: load json: {time_load - time_start}")
-        print(f"PageAccess: map data: {time_map - time_load}")
+        logging.info(f"PageAccess: load json: {time_load - time_start}")
+        logging.info(f"PageAccess: map data: {time_map - time_load}")
 
     def access(self, url):
         # php parsing
@@ -366,7 +270,7 @@ class PageAccess:
 
 class Config:
     """
-    Minimal config class (simulating your argparse)
+    Minimal config class for local Qdrant retrieval server.(simulating your argparse)
     Replace this with your real arguments or load them dynamically.
     """
 
@@ -453,7 +357,7 @@ async def retrieve_endpoint(request: QueryRequest):
         else:
             resp.append(single_result)
     time_elapse = time.time() - time_start
-    print(f"request: {request}, time_elapse: {time_elapse}")
+    logging.info(f"request: {request}, time_elapse: {time_elapse}")
     return {"result": resp}
 
 
@@ -509,14 +413,14 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-
+    logging.getLogger().setLevel(logging.INFO)
     host_name = socket.gethostname()
     host_ip = socket.gethostbyname(socket.gethostname())
     port = args.port
 
     host_addr = f"{host_ip}:{port}"
 
-    print(f"Server address: {host_addr}")
+    logging.info(f"Server address: {host_addr}")
 
     if args.save_address_to:
         os.makedirs(args.save_address_to, exist_ok=True)
@@ -549,14 +453,14 @@ if __name__ == "__main__":
     async def test():
         query1 = "Tell me about Red Bull"
         result1 = await retriever.asearch(query1, 1, return_score=False)
-        print(f"test1: query: {query1}, result: {result1}")
+        logging.info(f"test1: query: {query1}, result: {result1}")
         query2 = "Tell me about Ljubljana"
         result2 = await retriever.asearch(query2, 2, return_score=True)
-        print(f"test2: query: {query2}, result: {result2}")
+        logging.info(f"test2: query: {query2}, result: {result2}")
         query3 = ["Tell me about Mars", "Tell me about Mercury"]
         result3 = await retriever.abatch_search(query3, 3, return_score=True)
-        print(f"test3: query: {query3}, result: {result3}")
-        print("Retriver is ready.")
+        logging.info(f"test3: query: {query3}, result: {result3}")
+        logging.info("Retriver is ready.")
 
     loop.run_until_complete(test())
 
@@ -564,7 +468,7 @@ if __name__ == "__main__":
     if os.path.exists(args.pages_path):
         page_access = PageAccess(args.pages_path)
 
-    print("Page Access is ready.")
+    logging.info("Page Access is ready.")
 
     # 4) Launch the server.
     config = uvicorn.Config(

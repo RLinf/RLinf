@@ -8,7 +8,7 @@ corpus_file=$WIKI2018_DIR/wiki_corpus.jsonl
 
 # Build step 2: set your retriever model path
 retriever_name=e5 # this is for indexing naming
-retriever_model=/path/to/Qwen2.5-3B-Instruct
+retriever_path=/path/to/Qwen2.5-3B-Instruct
 
 # Qdrant configuration
 # Build step 3: Install qdrant and set qdrant_path to qdrant dir

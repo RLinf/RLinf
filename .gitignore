@@ -12,6 +12,7 @@ build
 docs/build
 dist
 logs/*
+storage/*
 outputs/*
 *.so
 .venv
