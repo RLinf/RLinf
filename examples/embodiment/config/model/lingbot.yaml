@@ -1,0 +1,14 @@
+model_type: "lingbot"
+model_path: "${oc.env:LINGBOT_VLA_PATH}/output_click_bell_aloha/checkpoints/global_step_8280/hf_ckpt"
+tokenizer_path: "${oc.env:LINGBOT_VLA_PATH}/Qwen2.5-VL-3B-Instruct"
+config_path: "${oc.env:LINGBOT_VLA_PATH}/lingbot-vla-4b"
+stats_path: "${oc.env:LINGBOT_VLA_PATH}/assets/norm_stats/robotwin_50.json"
+value_type: "action_level"
+action_dim: 14
+use_proprio: True
+proprio_dim: 14
+num_action_chunks: 50
+unnorm_key: "place_empty_cup_1k"
+precision: "bf16"
+is_lora: False
+max_prompt_length: 512
