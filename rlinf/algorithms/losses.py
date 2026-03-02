@@ -40,9 +40,15 @@ def compute_decoupled_ppo_actor_loss(
     **kwargs,
 ) -> tuple[torch.Tensor, dict]:
     """Compute actor loss for decoupled PPO with optional proximal policy anchor."""
-    assert logprobs.dtype == torch.float32
-    assert old_logprobs.dtype == torch.float32
-    assert advantages.dtype == torch.float32
+    assert logprobs.dtype == torch.float32, (
+        "logprobs must be float32 to keep numerical stability"
+    )
+    assert old_logprobs.dtype == torch.float32, (
+        "old_logprobs must be float32 to keep numerical stability"
+    )
+    assert advantages.dtype == torch.float32, (
+        "advantages must be float32 to keep numerical stability"
+    )
 
     if loss_mask is None:
         loss_mask = torch.ones_like(logprobs).bool()
@@ -79,7 +85,9 @@ def compute_decoupled_ppo_actor_loss(
                 old_logprobs + alpha * (logprobs - old_logprobs)
             ).detach()
 
-    assert proximal_logprobs.dtype == torch.float32
+    assert proximal_logprobs.dtype == torch.float32, (
+        "proximal_logprobs must be float32 to keep numerical stability"
+    )
 
     loss_mask_count = loss_mask.count_nonzero() or 1
     proximal_ratio = torch.where(
@@ -203,9 +211,15 @@ def compute_ppo_actor_loss(
     if loss_mask is None:
         loss_mask = torch.ones_like(logprobs).bool()
 
-    assert logprobs.dtype == torch.float32
-    assert old_logprobs.dtype == torch.float32
-    assert advantages.dtype == torch.float32
+    assert logprobs.dtype == torch.float32, (
+        "logprobs must be float32 to keep numerical stability"
+    )
+    assert old_logprobs.dtype == torch.float32, (
+        "old_logprobs must be float32 to keep numerical stability"
+    )
+    assert advantages.dtype == torch.float32, (
+        "advantages must be float32 to keep numerical stability"
+    )
 
     loss_mask_count = loss_mask.count_nonzero() or 1
     # For numerical stability.
@@ -225,7 +239,7 @@ def compute_ppo_actor_loss(
 
     policy_loss = torch.max(policy_loss1, policy_loss2)
     if clip_ratio_c is not None:
-        assert clip_ratio_c > 1.0, clip_ratio_c
+        assert clip_ratio_c > 1.0, "clip_ratio_c must be greater than 1.0"
         policy_loss3 = torch.sign(advantages) * clip_ratio_c * advantages
         dual_clip_mask = policy_loss3.detach() < policy_loss.detach()
         policy_loss = torch.min(policy_loss, policy_loss3)

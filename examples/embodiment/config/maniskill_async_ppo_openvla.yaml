@@ -16,8 +16,8 @@ cluster:
   num_nodes: 1
   component_placement:
     actor: 0-3
-    env: 0-3
-    rollout: 0-3
+    env: 0-1
+    rollout: 2-3
 
 runner:
   task_type: embodied
