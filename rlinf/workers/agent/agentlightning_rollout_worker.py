@@ -30,6 +30,8 @@ def _find_available_port() -> int:
 
 
 class AgentLightningRolloutWorker(Worker):
+    """Worker for agentlightning task rollout."""
+    
     def __init__(
         self,
         cfg: DictConfig,

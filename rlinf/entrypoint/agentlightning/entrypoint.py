@@ -33,9 +33,9 @@ def run_rlinf_training(
     eval: bool = False,
     eval_checkpoint_dir: str | None = None,
 ) -> None:
+    """Run rlinf training and evaluation for agentlightning task."""
     cfg = config
     cfg = validate_cfg(cfg)
-    print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = ModelParallelComponentPlacement(cfg, cluster)
