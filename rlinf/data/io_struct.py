@@ -873,6 +873,9 @@ class RolloutResult:
         if len(batches) == 1:
             return batches[0]
 
+        assert all(batch.keys() == batches[0].keys() for batch in batches[1:]), (
+            "All batches must have the same keys"
+        )
         for key in batches[0].keys():
             if torch.is_tensor(batches[0][key]):
                 merged_batch[key] = torch.cat([batch[key] for batch in batches], dim=0)

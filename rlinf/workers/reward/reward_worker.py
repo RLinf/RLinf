@@ -92,6 +92,8 @@ class RewardWorker(Worker):
                             rollout_result
                         )
             rollout_result = self.down_sample_batch(rollout_result)
+            # answer is not needed in training
+            rollout_result.answers = None
             output_channel.put(rollout_result, async_op=True)
 
         assert recv_batch_size == self.total_batch_size_per_dp, (
