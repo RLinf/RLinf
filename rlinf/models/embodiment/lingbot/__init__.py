@@ -16,7 +16,6 @@ from omegaconf import DictConfig
 
 
 def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
-    print("Instantiating Lingbot-VLA policy for RLinf...")
     from rlinf.models.embodiment.lingbot.lingbot_action_model import (
         LingbotForRLActionPrediction,
     )

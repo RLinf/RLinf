@@ -80,7 +80,7 @@ env:
     is_eval: True
     video_cfg:
       save_video: True
-      video_base_dir: /path/to//RLinf/RoboTwin/eval_result/click_bell/policy.lingbot_wrapper/demo_clean
+      video_base_dir: ${oc.env:ROBOTWIN_PATH}/eval_result/click_bell/policy.lingbot_wrapper/demo_clean
   train:
     total_num_envs: 4
     group_size: 1
@@ -93,8 +93,8 @@ rollout:
   pipeline_stage_num: 1
   model:
     model_type: "lingbot"
-    model_path: /path/to/lingbot-vla/output_click_bell_aloha/checkpoints/global_step_8280/hf_ckpt
-    tokenizer_path: /path/to/lingbot-vla/Qwen2.5-VL-3B-Instruct
+    model_path: ${oc.env:LINGBOT_VLA_PATH}/lingbot-vla-4b
+    tokenizer_path: ${oc.env:LINGBOT_VLA_PATH}/Qwen2.5-VL-3B-Instruct
     action_dim: 14
     num_action_chunks: 50
     precision: "bf16"
@@ -109,8 +109,8 @@ actor:
   enable_offload: True
   model:
     model_type: "lingbot"
-    model_path: /path/to/lingbot-vla/output_click_bell_aloha/checkpoints/global_step_8280/hf_ckpt
-    tokenizer_path: /path/to/lingbot-vla/Qwen2.5-VL-3B-Instruct
+    model_path: ${oc.env:LINGBOT_VLA_PATH}/lingbot-vla-4b
+    tokenizer_path: ${oc.env:LINGBOT_VLA_PATH}/Qwen2.5-VL-3B-Instruct
     action_dim: 14
     num_action_chunks: 50
     add_value_head: True

@@ -65,4 +65,3 @@ task_config:
   collect_data: true
   eval_video_log: true
   center_crop: false
-  

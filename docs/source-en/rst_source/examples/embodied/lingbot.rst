@@ -122,7 +122,7 @@ Before starting the evaluation or training, navigate to the automatically genera
     mv lingbot-vla-4b/* . 
     rmdir lingbot-vla-4b
     cd ..
-    
+
 Quick Start
 -----------
 
