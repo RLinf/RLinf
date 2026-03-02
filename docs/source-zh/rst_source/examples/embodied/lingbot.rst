@@ -37,29 +37,55 @@ Lingbot-VLA 直接使用环境提供的自然语言任务描述作为视觉语�
 
 为了实现高版本 Torch (2.8.0) 与 RLinf (Python 3.10) 的完美兼容，我们已将复杂的依赖隔离逻辑封装至安装脚本中。请按以下步骤构建混合环境。
 
-1. 克隆 RLinf 与一键安装环境
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1. 克隆 RLinf 仓库
+~~~~~~~~~~~~~~~~~~
 
-首先克隆 RLinf 仓库，并使用 ``install.sh`` 一键配置 Lingbot-VLA 专属的底层环境（脚本将自动拉取 Lingbot 源码至 ``.venv/lingbot-vla`` 目录，并处理所有高危依赖冲突）：
+首先克隆 RLinf 仓库并进入主目录：
 
 .. code-block:: bash
 
     export WORK_DIR="/path/to/your/workspace"
     mkdir -p ${WORK_DIR} && cd ${WORK_DIR}
-
-    # 克隆 RLinf 仓库
+    
     git clone https://github.com/RLinf/RLinf.git
     cd RLinf
     export RLINF_PATH=$(pwd)
 
-    # 一键安装 Lingbot-VLA 原生环境与 RoboTwin 基础依赖
+2. 安装依赖
+~~~~~~~~~~~
+
+**选项 1：Docker 镜像**
+
+使用 Docker 镜像运行基于 RoboTwin 的具身训练：
+
+.. code-block:: bash
+
+    docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:embodied-rlinf0.1-robotwin
+
+请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
+
+.. code-block:: bash
+
+    source switch_env lingbotvla
+
+**选项 2：自定义环境**
+
+在本地环境中一键安装 Lingbot-VLA 原生环境与 RoboTwin 基础依赖（脚本将自动拉取 Lingbot 源码至 `.venv/lingbot-vla` 目录，并处理所有高危依赖冲突）：
+
+.. code-block:: bash
+
     bash requirements/install.sh embodied --model lingbot-vla --env robotwin --use-mirror --no-root
     source .venv/bin/activate
 
-2. RoboTwin 环境配置
+3. RoboTwin 环境配置
 ~~~~~~~~~~~~~~~~~~~~
 
-由于 RLinf 内置环境不包含完整的 RoboTwin 源码，需要手动拉取 RoboTwin 的 ``RLinf_support`` 分支（该分支已包含与 Lingbot-VLA 兼容的所有必要补丁）。
+由于 RLinf 内置环境不包含完整的 RoboTwin 源码，需要手动拉取 RoboTwin 的 ``RLinf_support`` 分支。
 
 .. code-block:: bash
 
@@ -81,17 +107,21 @@ Lingbot-VLA 直接使用环境提供的自然语言任务描述作为视觉语�
     export LINGBOT_PATH="${RLINF_PATH}/.venv/lingbot-vla"
     cd ${LINGBOT_PATH}
 
-    # 1. 下载 Lingbot 4B 基础模型权重
-    python3 scripts/download_hf_model.py --repo_id robbyant/lingbot-vla-4b --local_dir lingbot-vla-4b
+    # 方法 1：使用 git clone
+    git lfs install
+    git clone https://huggingface.co/robbyant/lingbot-vla-4b
+    git clone https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
 
-    # 【重要路径修复】消除下载脚本产生的嵌套文件夹陷阱
+    # 方法 2：使用 huggingface-hub
+    pip install huggingface-hub
+    huggingface-cli download robbyant/lingbot-vla-4b --local-dir lingbot-vla-4b
+    huggingface-cli download Qwen/Qwen2.5-VL-3B-Instruct --local-dir Qwen2.5-VL-3B-Instruct
+    
+    # 消除下载可能产生的嵌套文件夹陷阱
     cd lingbot-vla-4b
-    mv lingbot-vla-4b/* .
+    mv lingbot-vla-4b/* . 
     rmdir lingbot-vla-4b
     cd ..
-
-    # 2. 下载 Qwen 底座权重
-    huggingface-cli download --repo-type model Qwen/Qwen2.5-VL-3B-Instruct --local-dir Qwen2.5-VL-3B-Instruct
 
 快速开始
 --------
