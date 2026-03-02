@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 class RlinfAlgorithm(Algorithm):
+    """Add rlinf tag to agentlightning algorithm."""
+
     def __init__(
         self,
         config: dict[str, Any] | DictConfig,
