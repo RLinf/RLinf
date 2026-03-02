@@ -107,5 +107,4 @@ async def calc_agent(task: MathProblem, llm: agl.LLM) -> None:
             answer = "None"
         reward = await evaluate(answer, str(task["result"]))
         agl.emit_reward(reward)  # Emit reward for tracing
-        # Disabled verbose logging
-        #print("answer: {} ground_truth: {} reward: {}".format(answer, task["result"], reward))
+        logger.debug("answer: %s ground_truth: %s reward: %s", answer, task["result"], reward)
