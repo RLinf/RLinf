@@ -155,7 +155,7 @@ Isaac Sim 下载
    pip install huggingface-hub
    hf download RLinf/RLinf-Gr00t-SFT-Stack-cube --local-dir RLinf-Gr00t-SFT-Stack-cube
 
-为了使模型能够通过强化学习提升性能，我们在IsaacLab环境中采集了stack cube任务的人类演示数据，将`GR00T N1.5 <https://github.com/NVIDIA/Isaac-GR00T/tree/n1.5-release>`_作为基础模型进行了监督微调，使其具备一定的任务成功率。
+为了使模型能够通过强化学习提升性能，我们在IsaacLab环境中采集了``stack cube``任务的人类演示数据，将`GR00T N1.5 <https://github.com/NVIDIA/Isaac-GR00T/tree/n1.5-release>`_作为基础模型进行了监督微调，使其具备一定的任务成功率。
 数据集已经开源在HuggingFace：`https://huggingface.co/datasets/RLinf/IsaacLab-Stack-Cube-Data <https://huggingface.co/datasets/RLinf/IsaacLab-Stack-Cube-Data>`_
 
 运行脚本
