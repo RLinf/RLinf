@@ -281,6 +281,7 @@ def preprocess_loss_inputs(
     prev_values: Optional[torch.Tensor] = None,
     returns: Optional[torch.Tensor] = None,
     reward_type: Optional[str] = None,
+    versions: Optional[torch.Tensor] = None,
     **kwargs,
 ) -> dict:
     if reward_type == "chunk_level":
@@ -297,10 +298,15 @@ def preprocess_loss_inputs(
             returns = returns.flatten()
 
     bsz = logprobs.shape[0]
+    proximal_logprobs = kwargs.get("proximal_logprobs", None)
     if logprob_type == "token_level":
         # logprobs, old_logprobs: [bsz, num_action_chunks, action_dim] -> [bsz, num_action_chunks, action_dim]
         logprobs = logprobs.reshape(bsz, -1, single_action_dim)
         old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim)
+        if proximal_logprobs is not None:
+            proximal_logprobs = proximal_logprobs.reshape(bsz, -1, single_action_dim)
+        if versions is not None:
+            versions = versions.reshape(bsz, -1, single_action_dim)
         advantages = advantages.unsqueeze(-1)
         if loss_mask is not None:
             loss_mask = loss_mask.unsqueeze(-1)
@@ -311,11 +317,23 @@ def preprocess_loss_inputs(
         # logprobs, old_logprobs: [bsz, num_action_chunks, action_dim] -> [bsz, num_action_chunks]
         logprobs = logprobs.reshape(bsz, -1, single_action_dim).sum(dim=-1)
         old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim).sum(dim=-1)
+        if proximal_logprobs is not None:
+            proximal_logprobs = proximal_logprobs.reshape(
+                bsz, -1, single_action_dim
+            ).sum(dim=-1)
+        if versions is not None:
+            versions = versions.reshape(bsz, -1, single_action_dim)[..., 0]
 
     elif logprob_type == "chunk_level":
         # logprobs, old_logprobs: [bsz, num_action_chunks, action_dim] -> [bsz]
         logprobs = logprobs.reshape(bsz, -1, single_action_dim).sum(dim=[1, 2])
         old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim).sum(dim=[1, 2])
+        if proximal_logprobs is not None:
+            proximal_logprobs = proximal_logprobs.reshape(
+                bsz, -1, single_action_dim
+            ).sum(dim=[1, 2])
+        if versions is not None:
+            versions = versions.reshape(bsz, -1, single_action_dim)[:, 0, 0]
 
     target_shape = logprobs.shape
     advantages = expand_to_target_dim(advantages, target_shape)
@@ -324,11 +342,14 @@ def preprocess_loss_inputs(
     values = expand_to_target_dim(values, target_shape)
     prev_values = expand_to_target_dim(prev_values, target_shape)
     returns = expand_to_target_dim(returns, target_shape)
+    versions = expand_to_target_dim(versions, target_shape)
 
     kwargs.update(
         {
             "logprobs": logprobs,
             "old_logprobs": old_logprobs,
+            "proximal_logprobs": proximal_logprobs,
+            "versions": versions,
             "advantages": advantages,
             "loss_mask": loss_mask,
             "loss_mask_sum": loss_mask_sum,

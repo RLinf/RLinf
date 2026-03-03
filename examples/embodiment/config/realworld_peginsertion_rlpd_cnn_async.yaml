@@ -92,6 +92,7 @@ algorithm:
   demo_buffer:
     enable_cache: True
     cache_size: 200 # number of trajectories cached in memory
+    min_buffer_size: 1
     sample_window_size: 200 # number of latest trajectories to sample from for demo buffer
     load_path: "/path/to/demo_data"
     auto_save: False
@@ -123,6 +124,9 @@ env:
       is_dummy: False
       use_dense_reward: False
       target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
+  
+  eval:
+    total_num_envs: 1
 
 rollout:
   group_name: "RolloutGroup"

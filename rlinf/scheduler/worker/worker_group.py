@@ -235,6 +235,9 @@ class WorkerGroup(Generic[WorkerClsType]):
             accelerator_type = self._cluster.get_node_info(
                 placement.cluster_node_rank
             ).accelerator_type
+            accelerator_model = self._cluster.get_node_info(
+                placement.cluster_node_rank
+            ).accelerator_model
             env_vars = {
                 "GROUP_NAME": self._worker_group_name,
                 "WORKER_NAME": worker_name,
@@ -253,6 +256,7 @@ class WorkerGroup(Generic[WorkerClsType]):
                 else "0",  # Inform the Worker process to catch signals
                 "VISIBLE_DEVICES": ",".join(placement.visible_accelerators),
                 "ACCELERATOR_TYPE": str(accelerator_type),
+                "ACCELERATOR_MODEL": accelerator_model,
                 "ISOLATE_ACCELERATOR": "1" if placement.isolate_accelerator else "0",
                 "LOCAL_HARDWARE_RANKS": ",".join(
                     map(str, placement.local_hardware_ranks)

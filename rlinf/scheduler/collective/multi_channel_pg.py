@@ -67,9 +67,13 @@ class MultiChannelProcessGroup:
 
         # Check if all workers have the same accelerator type
         accel_type = group_info.workers[0].accelerator_type
+        accel_model = group_info.workers[0].accelerator_model
         self._no_accel_ccl = (
-            # Hetero workers in the same group, disable CCL
-            any(worker.accelerator_type != accel_type for worker in group_info.workers)
+            # Hetero accelerator models in the same group, disable CCL
+            # NCCL for example does not support mixed GPU models
+            any(
+                worker.accelerator_model != accel_model for worker in group_info.workers
+            )
             # CPU only, disable CCL
             or accel_type == AcceleratorType.NO_ACCEL
             # Unsupported accelerator CCL type, disable CCL
@@ -141,6 +145,8 @@ class MultiChannelProcessGroup:
 
         if not self._no_accel_ccl:
             pg_options = AcceleratorUtil.get_accel_pg_options(self._accel_type, options)
+            if pg_options is not None:
+                pg_options._timeout = timeout
             # Create accelerator CCL groups and split GLOO groups from them
             base_group = MultiChannelProcessGroup._create_process_group(
                 backend=self._accel_ccl_backend,  # Only NCCL group supports splitting
@@ -303,12 +309,11 @@ class MultiChannelProcessGroup:
 
         # NOTE: GLOO backend doesn't support dist.Work.get_future, use broadcast to simulate send/recv instead
         if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
-            raise RuntimeError(
-                f"Collective group {self._group_name} does not support accelerator CCL backend, possibly because (1) the workers in the group have different accelerator types:  {[worker.accelerator_type for worker in self._group_info.workers]}, (2) the workers are CPU-only, or (3) the accelerator CCL is not among the supported CCL: {AcceleratorUtil.CCL_SUPPORT_LIST}."
-            )
+            # Transfer to CPU if accel CCL is not available
+            tensor = tensor.to("cpu")
         group = (
             self._send_accel_ccl_process_groups[channel_id]
-            if device == CollectiveGroup.ACCEL
+            if device == CollectiveGroup.ACCEL and not self._no_accel_ccl
             else self._send_gloo_process_groups[channel_id]
         )
         work = self._broadcast(
@@ -340,20 +345,27 @@ class MultiChannelProcessGroup:
             )
 
         # NOTE: GLOO backend doesn't support dist.Work.get_future, use broadcast to simulate send/recv instead
+        recv_tensor = tensor
+        if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
+            # Create a new tensor on CPU if accel CCL is not available
+            recv_tensor = torch.empty_like(tensor, device="cpu")
         group = (
             self._recv_accel_ccl_process_groups[channel_id]
-            if device == CollectiveGroup.ACCEL
+            if device == CollectiveGroup.ACCEL and not self._no_accel_ccl
             else self._recv_gloo_process_groups[channel_id]
         )
         work = self._broadcast(
-            tensor,
+            recv_tensor,
             src=self._peer_rank,
             group=group,
             async_op=async_op,
         )
 
         if async_op:
-            return AsyncCollWork(work)
+            work = AsyncCollWork(work)
+            return work.then(self._copy_to_accel_tensor, device, tensor, recv_tensor)
+        else:
+            self._copy_to_accel_tensor(device, tensor, recv_tensor)
 
     def broadcast(
         self,
@@ -370,19 +382,39 @@ class MultiChannelProcessGroup:
             raise ValueError(
                 f"Invalid channel_id: {channel_id}. Must be in range [0, {self._num_channels - 1}]"
             )
+        broadcast_tensor = tensor
         if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
-            raise RuntimeError(
-                f"Collective group {self._group_name} does not support accelerator CCL backend, possibly because (1) the workers in the group have different accelerator types: {[worker.accelerator_type for worker in self._group_info.workers]}, (2) the workers are CPU-only, or (3) the accelerator CCL is not among the supported CCL: {AcceleratorUtil.CCL_SUPPORT_LIST}."
-            )
+            if self._cur_rank == src:
+                # Transfer to CPU if accel CCL is not available
+                broadcast_tensor = broadcast_tensor.to("cpu")
+            else:
+                # Create a new tensor on CPU if accel CCL is not available for non-src ranks
+                broadcast_tensor = torch.empty_like(tensor, device="cpu")
 
         group = (
             self._collective_accel_ccl_process_groups[channel_id]
-            if device == CollectiveGroup.ACCEL
+            if device == CollectiveGroup.ACCEL and not self._no_accel_ccl
             else self._collective_gloo_process_groups[channel_id]
         )
-        work = self._broadcast(tensor, src=src, group=group, async_op=async_op)
+        work = self._broadcast(
+            broadcast_tensor, src=src, group=group, async_op=async_op
+        )
         if async_op:
-            return AsyncCollWork(work)
+            work = AsyncCollWork(work)
+            return work.then(
+                self._copy_to_accel_tensor, device, tensor, broadcast_tensor
+            )
+        else:
+            self._copy_to_accel_tensor(device, tensor, broadcast_tensor)
+
+    def _copy_to_accel_tensor(
+        self, device: str, accel_tensor: torch.Tensor, cpu_tensor: torch.Tensor
+    ):
+        if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
+            # Copy the CPU tensor to the accelerator tensor
+            accel_tensor.copy_(cpu_tensor, non_blocking=True)
+        else:
+            return accel_tensor
 
     def _broadcast(
         self,
@@ -676,7 +708,8 @@ class MultiChannelProcessGroup:
                 pass
 
             if not split_from or not split_from.supports_splitting:
-                return None
+                # MODIFICATION NOTE: set split_from to None to avoid failure when the pg does not support split
+                split_from = None
 
             # If necessary, find a backend to split from by peeling process
             # group wrappers from our potentially wrapped process group.

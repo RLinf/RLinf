@@ -287,6 +287,17 @@ RLinf 具有全面的 CI 测试，涵盖核心组件（通过单元测试）和�
 }
 ```
 
+如果您在 RLinf 中使用了基于 RL 的仿真-真机协同训练，欢迎引用我们的文章：
+```bibtex
+@article{shi2026rlinf,
+  title={Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for VLA Models},
+  author={Shi, Liangzhi and Chen, Shuaihang and Gao, Feng and Chen, Yinuo and Chen, Kang and Zhang, Tonghe and Zhang, Hongzhi and Zhang, Weinan and Yu, Chao and Wang, Yu},
+  journal={arXiv preprint arXiv:2602.12628},
+  year={2026},
+  url={https://arxiv.org/abs/2602.12628},
+}
+```
+
 **致谢**
 RLinf 的灵感来源并受益于更广泛开源社区的思想与工具。
 我们特别感谢 VeRL、AReaL、Megatron-LM、SGLang 和 PyTorch Fully Sharded Data Parallel (FSDP) 的团队与贡献者。
