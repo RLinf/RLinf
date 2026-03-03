@@ -29,28 +29,28 @@ runner:
   logger:
     log_path: null
     project_name: rlinf
-    experiment_name: "collect-data"
-    logger_backends: ["tensorboard"] # wandb, swanlab
-  num_data_episodes: 20
+    experiment_name: "collect-dexpnp-demo"
+    logger_backends: ["tensorboard"]
+  num_data_episodes: 20       # 目标成功 demo 数量
   record_task_description: False
 
 env:
   group_name: "EnvGroup"
   eval:
-    ignore_terminations: False
-    auto_reset: False
+    ignore_terminations: False  # 让分类器触发的 termination 生效
+    auto_reset: False           # 由 collector 控制 reset
     no_gripper: False
     use_spacemouse: True
     glove_config:
       left_port: "/dev/ttyACM0"
       frequency: 30
+    classifier_reward_wrapper:
+      checkpoint_path: "/workspace/RLinf/logs/20260303-04:41:36-reward-classifier-dex_pnp/reward_classifier.pt"
+      image_keys: ["wrist_1"]
+      device: cpu               # 控制节点无 GPU，用 CPU 推理
+      threshold: 0.75
     override_cfg:
       target_ee_pose: [0.8188, 0.1384, 0.1188, -3.1331, -1.1213, -0.0676]
-      camera_auto_exposure: True
-      # 手动曝光示例：先把 auto 关掉，再设置曝光/增益
-      # camera_auto_exposure: False
-      # camera_exposure: 40.0    # 范围 1~10000, 默认 166; 仍过曝可降至 20 或 10
-      # camera_gain: 16.0        # 范围 0~128, 默认 64; 仍过曝可降至 0
       end_effector_type: "ruiyan_hand"
       end_effector_config:
         port: "/dev/ttyUSB0"
@@ -63,3 +63,5 @@ env:
       hand_reset_state: [0.4, 0.0, 0.0, 0.0, 0.0, 0.0]
       hand_action_scale: 1.0
       joint_reset_qpos: [0, 0, 0, -1.9, 0, 2, 0]
+      use_dense_reward: False
+      is_dummy: False

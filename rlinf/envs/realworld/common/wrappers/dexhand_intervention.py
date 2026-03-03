@@ -18,9 +18,15 @@ This wrapper combines a :class:`SpaceMouseExpert` (for the 6-D arm) with
 a :class:`GloveExpert` (for the 6-D hand fingers) to form a 12-D expert
 action that can override the RL policy output.
 
-The SpaceMouse buttons still trigger the *intervene window* (0.5 s after
-the last non-zero input), but the gripper open/close logic is replaced by
-continuous glove angles.
+**Glove control mode (relative):**
+
+When the SpaceMouse **left button is pressed**, the current glove reading
+is captured as the *baseline*.  While the button is held, only the
+**change** relative to that baseline is applied to the hand's current
+position.  When the button is **released**, the hand freezes in place.
+
+This avoids the sudden jump that absolute-mode control would cause and
+gives the operator fine incremental control.
 """
 
 from __future__ import annotations
@@ -44,8 +50,11 @@ class DexHandIntervention(gym.ActionWrapper):
 
     * **Arm (first 6 dims):**  Uses SpaceMouse 6-D delta.  If the norm
       exceeds a small threshold the *intervene clock* is refreshed.
-    * **Hand (last 6 dims):**  Uses data-glove absolute angles [0, 1].
-      Any glove movement also refreshes the *intervene clock*.
+    * **Hand (last 6 dims):**  Relative glove control — only active
+      while the SpaceMouse left button is held.  On press, the current
+      glove reading is saved as the baseline; delta from baseline is
+      added to the hand's position at that moment.  On release the hand
+      stays where it is.
     * **SpaceMouse buttons:**  Left/right buttons are exposed in ``info``
       for downstream usage (e.g. reward labelling) and also refresh the
       clock.
@@ -91,9 +100,34 @@ class DexHandIntervention(gym.ActionWrapper):
         self.left: bool = False
         self.right: bool = False
 
+        # --- Relative glove control state ---
+        self._prev_left: bool = False  # left-button state on previous step
+        self._glove_baseline: np.ndarray | None = None  # glove reading at press
+        self._hand_base: np.ndarray = np.zeros(6, dtype=np.float64)  # hand pos at press
+        self._hand_current: np.ndarray = np.zeros(6, dtype=np.float64)  # latest hand target
+
     # ------------------------------------------------------------------
     # gym.ActionWrapper interface
     # ------------------------------------------------------------------
+
+    def reset(self, **kwargs):
+        """Reset the underlying env and sync internal hand state."""
+        obs, info = self.env.reset(**kwargs)
+
+        # Sync _hand_current with the physical reset pose so the
+        # operator starts the new episode from the actual hand position
+        # instead of the stale position from the previous episode.
+        cfg = getattr(self.env, "config", None)
+        hand_reset = getattr(cfg, "hand_reset_state", None)
+        if hand_reset is not None:
+            self._hand_current = np.array(hand_reset, dtype=np.float64)
+        else:
+            self._hand_current = np.zeros(6, dtype=np.float64)
+
+        self._glove_baseline = None
+        self._prev_left = False
+        self._hand_base = self._hand_current.copy()
+        return obs, info
 
     def action(self, action: np.ndarray) -> tuple[np.ndarray, bool]:
         """Build expert action and decide whether to override policy.
@@ -104,19 +138,35 @@ class DexHandIntervention(gym.ActionWrapper):
         """
         # --- SpaceMouse (arm) ---
         arm_expert, buttons = self._spacemouse.get_action()
-        self.left, self.right = bool(buttons[0]), bool(buttons[1])
+        # pyspacemouse: buttons[0] = physical right, buttons[1] = physical left
+        self.left, self.right = bool(buttons[1]), bool(buttons[0])
 
         if np.linalg.norm(arm_expert) > 0.001:
             self._last_intervene = time.time()
         if self.left or self.right:
             self._last_intervene = time.time()
 
-        # --- Glove (hand) ---
-        hand_expert = self._glove.get_angles()  # (6,) in [0, 1]
-        if np.linalg.norm(hand_expert) > 0.001:
-            self._last_intervene = time.time()
+        # --- Glove (hand) — relative mode ---
+        glove_raw = self._glove.get_angles()  # (6,) in [0, 1]
 
-        expert_action = np.concatenate([arm_expert, hand_expert])
+        if self.left:
+            if not self._prev_left:
+                # Left button just pressed — capture baseline
+                self._glove_baseline = glove_raw.copy()
+                self._hand_base = self._hand_current.copy()
+
+            # Compute delta from baseline and add to hand position at press
+            delta = glove_raw - self._glove_baseline
+            hand_target = np.clip(self._hand_base + delta, 0.0, 1.0)
+            self._hand_current = hand_target.copy()
+            self._last_intervene = time.time()
+        else:
+            # Left button not pressed — hand stays where it is
+            hand_target = self._hand_current.copy()
+
+        self._prev_left = self.left
+
+        expert_action = np.concatenate([arm_expert, hand_target])
 
         if time.time() - self._last_intervene < self._timeout:
             return expert_action, True

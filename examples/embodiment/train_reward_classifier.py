@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,16 +18,16 @@ Usage
 -----
 .. code-block:: bash
 
-    python -m toolkits.realworld_check.train_reward_classifier \\
-        --data_dir /path/to/classifier_data \\
-        --save_dir /path/to/classifier_ckpt \\
+    python examples/embodiment/train_reward_classifier.py \\
+        --log_dir logs/<timestamp>-reward-classifier-<env> \\
         --pretrained_ckpt RLinf-ResNet10-pretrained/resnet10_pretrained.pt \\
         --image_keys wrist_1 \\
         --num_epochs 200
 
-The ``data_dir`` must contain pickle files whose names include
-``success`` or ``failure`` (produced by
-``toolkits.realworld_check.record_classifier_data``).
+The ``log_dir`` should be the directory created by
+``collect_classifier_data.sh``.  It must contain pickle files whose names
+include ``success`` or ``failure``.  The trained checkpoint
+(``reward_classifier.pt``) is saved into the same directory.
 """
 
 from __future__ import annotations
@@ -36,7 +36,10 @@ import argparse
 import glob
 import os
 import pickle
-import random
+import sys
+
+# Allow standalone execution without PYTHONPATH
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import numpy as np
 import torch
@@ -91,7 +94,6 @@ class ClassifierDataset(Dataset):
                 for key in image_keys:
                     img = frames.get(key)
                     if img is None:
-                        # Try legacy key formats
                         for alt in [key, f"image_{key}", key.replace("wrist_", "")]:
                             if alt in frames:
                                 img = frames[alt]
@@ -111,7 +113,6 @@ class ClassifierDataset(Dataset):
             t = torch.from_numpy(img.copy())
             if t.ndim == 2:
                 t = t.unsqueeze(-1).expand(-1, -1, 3)
-            # (H, W, C) → (C, H, W)
             if t.shape[-1] in (1, 3):
                 t = t.permute(2, 0, 1)
             tensors[key] = t.float() / 255.0
@@ -134,16 +135,19 @@ def collate_fn(batch):
 
 def train(args: argparse.Namespace) -> None:
     device = torch.device(args.device)
+    log_dir = args.log_dir
 
-    print(f"Loading data from {args.data_dir} ...")
+    print(f"Loading data from {log_dir} ...")
     dataset = ClassifierDataset(
-        data_dir=args.data_dir,
+        data_dir=log_dir,
         image_keys=args.image_keys,
     )
     n_pos = sum(1 for _, l in dataset.samples if l == 1)
     n_neg = len(dataset) - n_pos
     print(f"  success: {n_pos}   failure: {n_neg}   total: {len(dataset)}")
-    assert len(dataset) > 0, "No data found. Check --data_dir and --image_keys."
+    assert len(dataset) > 0, (
+        "No data found. Check --log_dir and --image_keys."
+    )
 
     loader = DataLoader(
         dataset,
@@ -161,11 +165,11 @@ def train(args: argparse.Namespace) -> None:
         image_size=(args.image_size, args.image_size),
     ).to(device)
 
-    # Only optimise trainable parameters (backbone is frozen)
     trainable = [p for p in model.parameters() if p.requires_grad]
     optimizer = optim.Adam(trainable, lr=args.lr)
     criterion = nn.BCEWithLogitsLoss()
 
+    best_acc = 0.0
     print(f"Training for {args.num_epochs} epochs ...")
     for epoch in range(1, args.num_epochs + 1):
         model.train()
@@ -176,7 +180,6 @@ def train(args: argparse.Namespace) -> None:
         for batch_frames, labels in loader:
             labels = labels.to(device)
 
-            # Data augmentation per camera
             aug_frames = {}
             for key in args.image_keys:
                 imgs = batch_frames[key].to(device)
@@ -197,21 +200,28 @@ def train(args: argparse.Namespace) -> None:
 
         avg_loss = total_loss / max(total_samples, 1)
         accuracy = total_correct / max(total_samples, 1)
-        print(f"  Epoch {epoch:3d}/{args.num_epochs}  "
-              f"loss={avg_loss:.4f}  acc={accuracy:.4f}")
+        print(
+            f"  Epoch {epoch:3d}/{args.num_epochs}  "
+            f"loss={avg_loss:.4f}  acc={accuracy:.4f}"
+        )
 
-    # Save checkpoint
-    os.makedirs(args.save_dir, exist_ok=True)
-    ckpt_path = os.path.join(args.save_dir, "reward_classifier.pt")
-    torch.save(
-        {
-            "model_state_dict": model.state_dict(),
-            "image_keys": args.image_keys,
-            "image_size": args.image_size,
-            "epoch": args.num_epochs,
-        },
-        ckpt_path,
-    )
+        # Save best checkpoint
+        if accuracy > best_acc:
+            best_acc = accuracy
+            ckpt_path = os.path.join(log_dir, "reward_classifier.pt")
+            torch.save(
+                {
+                    "model_state_dict": model.state_dict(),
+                    "image_keys": args.image_keys,
+                    "image_size": args.image_size,
+                    "epoch": epoch,
+                    "accuracy": accuracy,
+                },
+                ckpt_path,
+            )
+
+    ckpt_path = os.path.join(log_dir, "reward_classifier.pt")
+    print(f"\nBest accuracy: {best_acc:.4f}")
     print(f"Checkpoint saved to {ckpt_path}")
 
 
@@ -220,15 +230,15 @@ def main():
         description="Train a visual reward classifier."
     )
     parser.add_argument(
-        "--data_dir", type=str, required=True,
-        help="Directory with success_*.pkl and failure_*.pkl files.",
+        "--log_dir",
+        type=str,
+        required=True,
+        help="日志目录（由 collect_classifier_data.sh 创建），"
+        "包含 success/failure pickle 文件，权重也保存在此。",
     )
     parser.add_argument(
-        "--save_dir", type=str, default="classifier_ckpt",
-        help="Directory to save the trained checkpoint.",
-    )
-    parser.add_argument(
-        "--pretrained_ckpt", type=str,
+        "--pretrained_ckpt",
+        type=str,
         default="RLinf-ResNet10-pretrained/resnet10_pretrained.pt",
         help="Path to pretrained ResNet-10 weights.",
     )
@@ -240,8 +250,11 @@ def main():
     parser.add_argument("--num_epochs", type=int, default=200)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument(
+        "--device", type=str,
+        default="cuda" if torch.cuda.is_available() else "cpu",
+    )
+    parser.add_argument("--num_workers", type=int, default=0)
     args = parser.parse_args()
     train(args)
 

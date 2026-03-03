@@ -22,15 +22,11 @@ from ..franka_env import FrankaEnv, FrankaRobotConfig
 
 
 @dataclass
-class BottleConfig(FrankaRobotConfig):
+class DexpnpConfig(FrankaRobotConfig):
     target_ee_pose: np.ndarray = field(default_factory=lambda: np.zeros(6))
     reward_threshold: np.ndarray = field(
         default_factory=lambda: np.array([0.01, 0.01, 0.01, 0.2, 0.2, 0.2])
     )
-    random_xy_range: float = 0.01
-    random_z_range_low: float = 0.001
-    random_z_range_high: float = 0.02
-    random_rz_range: float = np.pi / 6
     enable_random_reset: bool = True
     enable_gripper_penalty: bool = False
     step_frequency: float = 5.0
@@ -78,48 +74,51 @@ class BottleConfig(FrankaRobotConfig):
         }
         self.target_ee_pose = np.array(self.target_ee_pose)
         self.reset_ee_pose = self.target_ee_pose + np.array(
-            [0.0, 0.0, self.random_z_range_high, 0.0, 0.0, 0.0]
+            [0.0, 0.0, 0.01, 0.0, 0.0, 0.0]
         )
         self.reward_threshold = np.array(self.reward_threshold)
-        self.action_scale = np.array([0.01, 0.5, 1])
+        self.action_scale = np.array([0.03, 1.5, 1])
         self.ee_pose_limit_min = np.array(
             [
-                self.target_ee_pose[0] - self.random_xy_range,
-                self.target_ee_pose[1] - self.random_xy_range,
-                self.target_ee_pose[2] - self.random_z_range_low,
-                self.target_ee_pose[3] - 0.01,
-                self.target_ee_pose[4] - 0.01,
-                self.target_ee_pose[5] - self.random_rz_range,
+                self.target_ee_pose[0] - 0.02,
+                self.target_ee_pose[1] - 0.25,
+                self.target_ee_pose[2] - 0.01,
+                self.target_ee_pose[3] - 0.003,
+                self.target_ee_pose[4] - 0.003,
+                self.target_ee_pose[5] - 0.003,
             ]
         )
         self.ee_pose_limit_max = np.array(
             [
-                self.target_ee_pose[0] + self.random_xy_range,
-                self.target_ee_pose[1] + self.random_xy_range,
-                self.target_ee_pose[2] + self.random_z_range_high,
-                self.target_ee_pose[3] + 0.01,
-                self.target_ee_pose[4] + 0.01,
-                self.target_ee_pose[5] + self.random_rz_range,
+                self.target_ee_pose[0] + 0.02,
+                self.target_ee_pose[1] + 0.02,
+                self.target_ee_pose[2] + 0.04,
+                self.target_ee_pose[3] + 0.003,
+                self.target_ee_pose[4] + 0.003,
+                self.target_ee_pose[5] + 0.003,
             ]
         )
 
 
-class BottleEnv(FrankaEnv):
+class DexpnpEnv(FrankaEnv):
     def __init__(self, override_cfg, worker_info=None, hardware_info=None, env_idx=0):
         # Update config according to current env
-        config = BottleConfig(**override_cfg)
+        config = DexpnpConfig(**override_cfg)
         super().__init__(config, worker_info, hardware_info, env_idx)
 
     @property
     def task_description(self):
-        return "screw the bottle cap onto the bottle"
+        return "pick up the toy and place it onto the plate"
 
     def go_to_rest(self, joint_reset=False):
         """
         Move to the rest position defined in base class.
         Add a small z offset before going to rest to avoid collision with object.
         """
-        self._end_effector_action(np.array([1.0]))
+        if self._is_hand:
+            self._end_effector_action(self.config.hand_reset_state)
+        else:
+            self._end_effector_action(np.array([1.0]))
         self._franka_state = self._controller.get_state().wait()[0]
         self._move_action(self._franka_state.tcp_pose)
 

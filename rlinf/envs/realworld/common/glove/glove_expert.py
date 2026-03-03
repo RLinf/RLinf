@@ -134,11 +134,11 @@ class GloveExpert:
     def _create_driver(self):
         """Lazily import and instantiate :class:`PSIGloveStandalone`."""
         try:
-            from psi_glove_driver.node import PSIGloveStandalone  # type: ignore[import-untyped]
+            from .psi_glove_driver.node import PSIGloveStandalone
         except ImportError as exc:
             raise ImportError(
-                "Cannot import PSIGloveStandalone.  Please ensure "
-                "psi_glove_driver is installed or accessible."
+                "Cannot import PSIGloveStandalone from the in-tree driver "
+                "module (rlinf.envs.realworld.common.glove.psi_glove_driver)."
             ) from exc
 
         kwargs: dict = {

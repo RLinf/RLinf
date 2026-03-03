@@ -111,6 +111,8 @@ class RealWorldEnv(gym.Env):
 
         # Visual classifier reward
         clf_cfg = self.cfg.get("classifier_reward_wrapper", None)
+        import sys
+        print(f"[DEBUG _create_env] classifier_reward_wrapper cfg = {clf_cfg}", flush=True, file=sys.stderr)
         if clf_cfg is not None:
             from rlinf.envs.realworld.common.reward_classifier import (
                 load_reward_classifier,
@@ -132,8 +134,9 @@ class RealWorldEnv(gym.Env):
                     reward_funcs.append(make_classifier_reward_func(model, image_keys, device))
                 env = MultiStageClassifierRewardWrapper(
                     env,
-                    reward_funcs=reward_funcs,
-                    threshold=clf_cfg.get("threshold", 0.75),
+                    classifier_funcs=reward_funcs,
+                    stage_threshold=clf_cfg.get("threshold", 0.75),
+                    override_termination=clf_cfg.get("override_termination", True),
                 )
             else:
                 model = load_reward_classifier(
@@ -142,8 +145,9 @@ class RealWorldEnv(gym.Env):
                 reward_func = make_classifier_reward_func(model, image_keys, device)
                 env = ClassifierRewardWrapper(
                     env,
-                    reward_func=reward_func,
-                    threshold=clf_cfg.get("threshold", 0.75),
+                    classifier_func=reward_func,
+                    reward_threshold=clf_cfg.get("threshold", 0.75),
+                    override_termination=clf_cfg.get("override_termination", True),
                 )
 
         env = RelativeFrame(env)

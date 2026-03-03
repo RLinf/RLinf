@@ -112,9 +112,6 @@ class _SerialLink:
 
     def read_responses(self, num_motors: int) -> list[Optional[_FingerStatus]]:
         """Read ``num_motors`` response frames (13 bytes each)."""
-        self._serial.reset_input_buffer()
-        # Give the hardware a moment to collect responses
-        time.sleep(0.001)
         raw = self._serial.read(13 * num_motors)
         if raw is None or len(raw) != 13 * num_motors:
             return [None] * num_motors
@@ -302,8 +299,9 @@ class RuiyanHand(EndEffector):
     def command(self, action: np.ndarray) -> bool:
         """Set target finger positions (normalised ``[0, 1]``).
 
-        The background loop continuously sends the latest targets to the
-        hardware.
+        This is non-blocking: it only updates the target buffer.  The
+        background loop continuously sends the latest targets to the
+        hardware at high frequency.
 
         Args:
             action: 6-D normalised target positions.
@@ -314,7 +312,6 @@ class RuiyanHand(EndEffector):
         action = np.clip(np.asarray(action, dtype=np.float64), 0.0, 1.0)
         with self._lock:
             self._target_positions = action.copy()
-        self._send_targets(action)
         return True
 
     def reset(self, target_state: np.ndarray | None = None) -> None:
@@ -345,7 +342,7 @@ class RuiyanHand(EndEffector):
             self._thread = None
 
     def _loop_task(self) -> None:
-        """Continuously poll motor states at ~50 Hz."""
+        """Continuously poll motor states at ~200 Hz."""
         while not self._stop_event.is_set():
             start = time.time()
             try:
@@ -353,7 +350,7 @@ class RuiyanHand(EndEffector):
             except Exception as e:
                 self._logger.warning(f"RuiyanHand poll error: {e}")
             elapsed = time.time() - start
-            time.sleep(max(0.0, 1.0 / 50.0 - elapsed))
+            time.sleep(max(0.0, 1.0 / 200.0 - elapsed))
 
     def _poll_state(self) -> None:
         """Send current targets and read back motor states."""
@@ -361,9 +358,6 @@ class RuiyanHand(EndEffector):
             targets = self._target_positions.copy()
 
         self._send_targets(targets)
-
-        # Small delay for the hand to respond
-        time.sleep(0.001)
         responses = self._link.read_responses(len(self._motor_ids))
 
         positions = []
@@ -399,7 +393,11 @@ class RuiyanHand(EndEffector):
                 )
 
     def _send_targets(self, targets: np.ndarray) -> None:
-        """Write target positions to all motors."""
+        """Write target positions to all motors.
+
+        No inter-command sleep — at 460800 baud a 13-byte frame takes
+        only ~0.28 ms; the UART buffer handles back-to-back writes.
+        """
         raw_positions = (targets * self._POS_RAW_SCALE).astype(int)
         for idx, motor_id in enumerate(self._motor_ids):
             self._link.send_command(
@@ -409,4 +407,3 @@ class RuiyanHand(EndEffector):
                 velocity=self._default_velocity,
                 current=self._default_current,
             )
-            time.sleep(0.001)

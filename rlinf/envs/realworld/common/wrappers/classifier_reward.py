@@ -43,20 +43,43 @@ class ClassifierRewardWrapper(gym.Wrapper):
         env: gym.Env,
         classifier_func: Callable[[dict], float],
         reward_threshold: float = 0.5,
+        override_termination: bool = True,
     ) -> None:
         super().__init__(env)
         self._classifier_func = classifier_func
         self._reward_threshold = reward_threshold
+        self._override_termination = override_termination
+        self._step_count = 0
+        import sys
+        print(
+            f"[ClassifierReward DEBUG] >>> Wrapper CREATED! "
+            f"threshold={reward_threshold}, override_termination={override_termination}",
+            flush=True, file=sys.stderr,
+        )
 
     def step(
         self, action: ActType,
     ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
+        import sys
+        self._step_count += 1
         obs, _rew, done, truncated, info = self.env.step(action)
-        reward = float(self._classifier_func(obs))
-        is_success = reward >= self._reward_threshold
-        done = done or is_success
+        base_done = bool(done)  # target-pose proximity termination from base env
+        raw_logit = float(self._classifier_func(obs))
+        prob = _sigmoid(raw_logit)
+        is_success = prob >= self._reward_threshold
+        print(
+            f"[ClassifierReward DEBUG] step={self._step_count} "
+            f"base_env_done(target_pose)={base_done}, "
+            f"logit={raw_logit:.4f}, prob={prob:.4f}, threshold={self._reward_threshold}, "
+            f"classifier_success={is_success}, override={self._override_termination}",
+            flush=True, file=sys.stderr,
+        )
+        if self._override_termination:
+            done = is_success
+        else:
+            done = done or is_success
         info["succeed"] = is_success
-        info["classifier_reward"] = reward
+        info["classifier_reward"] = prob
         return obs, float(is_success), done, truncated, info
 
     def reset(self, **kwargs):
@@ -87,6 +110,7 @@ class MultiStageClassifierRewardWrapper(gym.Wrapper):
         classifier_funcs: list[Callable[[dict], float]],
         stage_rewards: Optional[list[float]] = None,
         stage_threshold: float = 0.75,
+        override_termination: bool = True,
     ) -> None:
         super().__init__(env)
         self._classifier_funcs = classifier_funcs
@@ -97,6 +121,7 @@ class MultiStageClassifierRewardWrapper(gym.Wrapper):
         else:
             self._stage_rewards = [(i + 1) / n for i in range(n)]
         self._stage_threshold = stage_threshold
+        self._override_termination = override_termination
         self._completed: list[bool] = [False] * n
 
     def step(self, action):
@@ -112,7 +137,10 @@ class MultiStageClassifierRewardWrapper(gym.Wrapper):
                 reward += self._stage_rewards[i]
 
         all_done = all(self._completed)
-        done = done or all_done
+        if self._override_termination:
+            done = all_done
+        else:
+            done = done or all_done
         info["succeed"] = all_done
         info["classifier_stages_completed"] = sum(self._completed)
         return obs, reward, done, truncated, info

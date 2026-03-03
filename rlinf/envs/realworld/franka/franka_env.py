@@ -43,6 +43,9 @@ class FrankaRobotConfig:
     robot_ip: Optional[str] = None
     camera_serials: Optional[list[str]] = None
     enable_camera_player: bool = True
+    camera_auto_exposure: bool = True
+    camera_exposure: Optional[float] = None
+    camera_gain: Optional[float] = None
 
     is_dummy: bool = False
     use_dense_reward: bool = False
@@ -429,7 +432,13 @@ class FrankaEnv(gym.Env):
         if self.config.camera_serials is None:
             return
         camera_infos = [
-            CameraInfo(name=f"wrist_{i + 1}", serial_number=n)
+            CameraInfo(
+                name=f"wrist_{i + 1}",
+                serial_number=n,
+                auto_exposure=self.config.camera_auto_exposure,
+                exposure=self.config.camera_exposure,
+                gain=self.config.camera_gain,
+            )
             for i, n in enumerate(self.config.camera_serials)
         ]
         for info in camera_infos:
