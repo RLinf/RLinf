@@ -53,6 +53,11 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         self.rollout_metric_channel = Channel.create("RolloutMetric")
         self.replay_channel = Channel.create("ReplayBuffer")
 
+        self._pending_rollout_weight_sync = None
+        self._weight_sync_coalesced_total = 0
+        self._weight_sync_request_total = 0
+        self.sync_weight_no_wait = self.cfg.actor.get("sync_weight_no_wait", False)
+
     def get_env_metrics(self) -> dict:
         results: list[dict] = []
         while True:
@@ -101,10 +106,43 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         time_metrics = {k: sum(v) / len(v) for k, v in time_metrics.items()}
         return time_metrics
 
+    def _cleanup_pending_rollout_weight_sync(self, no_wait):
+        if self._pending_rollout_weight_sync is None:
+            return True
+
+        rollout_handle, actor_handle = self._pending_rollout_weight_sync
+        print(
+            f"Rollout handle done: {rollout_handle.done()}, actor handle done: {actor_handle.done()}"
+        )
+        if no_wait and (not rollout_handle.done() or not actor_handle.done()):
+            return False
+
+        rollout_handle.wait()
+        actor_handle.wait()
+        self._pending_rollout_weight_sync = None
+        return True
+
+    def update_rollout_weights(self, no_wait=False):
+        if not no_wait:
+            return super().update_rollout_weights()
+
+        self._weight_sync_request_total += 1
+        if not self._cleanup_pending_rollout_weight_sync(no_wait):
+            self._weight_sync_coalesced_total += 1
+            print(
+                f"Weight sync coalesced {self._weight_sync_coalesced_total} times, "
+                f"request total {self._weight_sync_request_total} times"
+            )
+            raise NotImplementedError("Weight sync coalesced")
+            return
+        rollout_handle: Handle = self.rollout.request_actor_sync_model()
+        actor_handle: Handle = self.actor.sync_model_to_rollout()
+        self._pending_rollout_weight_sync = (rollout_handle, actor_handle)
+
     def run(self):
         start_step = self.global_step
         start_time = time.time()
-        self.update_rollout_weights()
+        self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
 
         env_handle: Handle = self.env.interact(
             input_channel=self.rollout_channel,
@@ -132,7 +170,7 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
                 if not skip_step:
                     self.global_step += 1
                     if self.global_step % self.weight_sync_interval == 0:
-                        self.update_rollout_weights()
+                        self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
 
                     training_metrics = {
                         f"train/{k}": v for k, v in actor_result[0].items()
