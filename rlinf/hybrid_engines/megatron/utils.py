@@ -23,7 +23,7 @@ except (ImportError, ModuleNotFoundError):
 
 
 def preprocess_packed_seqs(
-    input_ids: torch.Tensor, attention_mask: torch.Tensor, pre_process: bool = True
+    input_ids: torch.Tensor, attention_mask: torch.Tensor, pre_process: bool = True, padding_seqlen: int = None
 ) -> tuple[torch.Tensor, PackedSeqParams]:
     """
     Preprocess packed sequences
@@ -50,6 +50,10 @@ def preprocess_packed_seqs(
 
     shape = list(input_ids.shape[1:])
     shape[0] = seqlens_in_batch_padded.sum().item() // cp_size
+    if padding_seqlen is None:
+        shape[0] = seqlens_in_batch_padded.sum().item() // cp_size
+    else:
+        shape[0] = padding_seqlen // cp_size
     if pre_process:
         input_ids_rmpad = torch.zeros(
             shape, dtype=input_ids.dtype, device=input_ids.device

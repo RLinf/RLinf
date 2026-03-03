@@ -172,6 +172,8 @@ class MegatronActor(MegatronModelManager, Worker):
         self.is_pipeline = placement.is_pipeline
         self.placement_mode = placement._placement_mode
         self.enable_dp_load_balance = self.role_cfg.get("enable_dp_load_balance", False)
+        self.variable_seq_lengths = self.cfg.actor.model.variable_seq_lengths
+        self.encoder_seq_length = self.cfg.actor.model.encoder_seq_length
 
         # Rollout configurations
         self.rollout_group_name = self.cfg.rollout.group_name
@@ -452,6 +454,9 @@ class MegatronActor(MegatronModelManager, Worker):
             input_ids = batch["input_ids"]
             attention_mask = batch["attention_mask"]
             position_ids = batch["position_ids"]
+            padding_seqlen = None
+            if self.variable_seq_lengths is False:
+                padding_seqlen = self.encoder_seq_length
 
             response_len = self.response_len
             responses = input_ids[:, -response_len:]
@@ -491,6 +496,7 @@ class MegatronActor(MegatronModelManager, Worker):
                 logits_processor=logits_processor,
                 logits_processor_args=logits_processor_args,
                 temperature=self.cfg.algorithm.sampling_params.temperature,
+                padding_seqlen=padding_seqlen,
             )
 
             if not self.return_loss:
