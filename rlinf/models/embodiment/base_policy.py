@@ -23,6 +23,7 @@ class ForwardType(Enum):
     SAC_Q = "sac_q"
     CROSSQ = "crossq"
     CROSSQ_Q = "crossq_q"
+    IQL = "iql"
 
 
 class BasePolicy(ABC):
@@ -40,6 +41,7 @@ class BasePolicy(ABC):
         - sac_q_forward
         - crossq_forward
         - crossq_q_forward
+        - iql_forward
     """
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
@@ -58,6 +60,9 @@ class BasePolicy(ABC):
         raise NotImplementedError
 
     def crossq_q_forward(self, **kwargs):
+        raise NotImplementedError
+
+    def iql_forward(self, **kwargs):
         raise NotImplementedError
 
     @abstractmethod

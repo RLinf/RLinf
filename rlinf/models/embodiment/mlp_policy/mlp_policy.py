@@ -15,6 +15,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.distributions import Independent
 from torch.distributions.normal import Normal
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
@@ -32,8 +33,26 @@ class MLPPolicy(nn.Module, BasePolicy):
         add_value_head,
         add_q_head,
         q_head_type="default",
+        iql_config: dict | None = None,
     ):
         super().__init__()
+        self.iql_kind = None
+        if iql_config is not None:
+            self.iql_kind = iql_config.get("kind", None)
+            hidden_dims = iql_config.get("hidden_dims", None)
+            if hidden_dims is None:
+                raise ValueError("hidden_dims must be provided in iql_config.")
+            self._init_iql(
+                obs_dim=obs_dim,
+                action_dim=action_dim,
+                hidden_dims=hidden_dims,
+                dropout_rate=iql_config.get("dropout_rate", None),
+                log_std_min=float(iql_config.get("log_std_min", -5.0)),
+                log_std_max=float(iql_config.get("log_std_max", 2.0)),
+                state_dependent_std=bool(iql_config.get("state_dependent_std", False)),
+            )
+            return
+
         self.obs_dim = obs_dim
         self.action_dim = action_dim
         self.num_action_chunks = num_action_chunks
@@ -101,11 +120,79 @@ class MLPPolicy(nn.Module, BasePolicy):
 
         self.cuda_graph_manager = None
 
+    def _build_iql_mlp(
+        self,
+        input_dim: int,
+        hidden_dims: list[int] | tuple[int, ...],
+        output_dim: int,
+        dropout_rate: float | None = None,
+        activate_final: bool = False,
+    ) -> nn.Sequential:
+        act = get_act_func("relu")
+        layers: list[nn.Module] = []
+        dims = [input_dim, *hidden_dims]
+        for i in range(len(dims) - 1):
+            layers.append(nn.Linear(dims[i], dims[i + 1]))
+            layers.append(act())
+            if dropout_rate is not None:
+                layers.append(nn.Dropout(dropout_rate))
+        layers.append(nn.Linear(dims[-1], output_dim))
+        if activate_final:
+            layers.append(act())
+        return nn.Sequential(*layers)
+
+    def _init_iql(
+        self,
+        obs_dim: int,
+        action_dim: int,
+        hidden_dims: list[int] | tuple[int, ...],
+        dropout_rate: float | None,
+        log_std_min: float,
+        log_std_max: float,
+        state_dependent_std: bool,
+    ) -> None:
+        self.obs_dim = obs_dim
+        self.action_dim = action_dim
+        self.num_action_chunks = 1
+        self.torch_compile_enabled = False
+        self.cuda_graph_manager = None
+
+        if self.iql_kind == "actor":
+            self.backbone = self._build_iql_mlp(
+                input_dim=obs_dim,
+                hidden_dims=hidden_dims,
+                output_dim=hidden_dims[-1],
+                dropout_rate=dropout_rate,
+                activate_final=True,
+            )
+            self.mean_head = nn.Linear(hidden_dims[-1], action_dim)
+            self.state_dependent_std = state_dependent_std
+            if state_dependent_std:
+                self.logstd_head = nn.Linear(hidden_dims[-1], action_dim)
+            else:
+                self.logstd_param = nn.Parameter(torch.zeros(action_dim))
+            self.log_std_min = log_std_min
+            self.log_std_max = log_std_max
+        elif self.iql_kind == "critic":
+            self.net = self._build_iql_mlp(
+                input_dim=obs_dim + action_dim,
+                hidden_dims=hidden_dims,
+                output_dim=1,
+            )
+        elif self.iql_kind == "value":
+            self.net = self._build_iql_mlp(
+                input_dim=obs_dim,
+                hidden_dims=hidden_dims,
+                output_dim=1,
+            )
+        else:
+            raise ValueError(f"Unsupported iql_kind: {self.iql_kind}")
+
     def preprocess_env_obs(self, env_obs):
         device = next(self.parameters()).device
         return {"states": env_obs["states"].to(device)}
 
-    def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
+    def forward(self, *args, forward_type=ForwardType.DEFAULT, **kwargs):
         obs = kwargs.get("obs")
         if obs is not None:
             obs = self.preprocess_env_obs(obs)
@@ -123,6 +210,8 @@ class MLPPolicy(nn.Module, BasePolicy):
             return self.crossq_forward(**kwargs)
         elif forward_type == ForwardType.CROSSQ_Q:
             return self.crossq_q_forward(**kwargs)
+        elif forward_type == ForwardType.IQL:
+            return self.iql_forward(*args, **kwargs)
         elif forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
         else:
@@ -150,6 +239,51 @@ class MLPPolicy(nn.Module, BasePolicy):
         )
 
         return action, chunk_logprobs, None
+
+    def iql_forward(self, *args, **kwargs) -> torch.Tensor:
+        observations = args[0] if len(args) > 0 else kwargs.get("observations")
+        if observations is None:
+            raise ValueError("IQL forward expects observations.")
+
+        actions = kwargs.get("actions")
+        if actions is None and len(args) > 1:
+            actions = args[1]
+
+        temperature = float(kwargs.get("temperature", 1.0))
+        kind = kwargs.get("kind", None)
+        kind = self.iql_kind if kind is None else kind
+
+        if kind == "actor":
+            feat = self.backbone(observations)
+            action_mean = torch.tanh(self.mean_head(feat))
+            if self.state_dependent_std:
+                action_logstd = self.logstd_head(feat)
+            else:
+                action_logstd = self.logstd_param.unsqueeze(0).expand_as(action_mean)
+            action_logstd = torch.clamp(action_logstd, self.log_std_min, self.log_std_max)
+            action_std = torch.exp(action_logstd)
+            dist = Independent(Normal(action_mean, action_std), 1)
+
+            if actions is not None:
+                return dist.log_prob(actions)
+
+            mode = "eval" if float(temperature) == 0.0 else "train"
+            if mode == "train":
+                sampling_std = action_std * max(float(temperature), 1e-6)
+                raw_action = Normal(action_mean, sampling_std).rsample()
+            elif mode == "eval":
+                raw_action = action_mean.clone()
+            else:
+                raise NotImplementedError(f"{mode=}")
+            return torch.clamp(raw_action, -1.0, 1.0)
+        if kind == "critic":
+            if actions is None:
+                raise ValueError("IQL critic expects actions.")
+            x = torch.cat([observations, actions], dim=-1)
+            return self.net(x).squeeze(-1)
+        if kind == "value":
+            return self.net(observations).squeeze(-1)
+        raise RuntimeError(f"Unsupported iql_kind: {kind}")
 
     def default_forward(
         self,

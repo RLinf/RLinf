@@ -1,0 +1,60 @@
+defaults:
+  - model/mlp_policy@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0-0
+
+env:
+  group_name: "EnvGroup"
+
+rollout:
+  group_name: "RolloutGroup"
+  pipeline_stage_num: 1
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  enable_strategy_checkpoint: false
+
+runner:
+  max_epochs: ${max_steps}
+  save_interval: ${eval_interval}
+  resume_dir: null
+  logger:
+    log_path: "../results/d4rl_offline_mujoco"
+    experiment_name: "d4rl_offline_mujoco"
+
+save_dir: ${runner.logger.log_path}
+env_name: "halfcheetah-medium-expert-v2"
+seed: 42
+eval_episodes: 10
+log_interval: 1000
+eval_interval: 5000
+batch_size: 256
+max_steps: 1000000
+tqdm: true
+
+task:
+  mode: "offline" # ["offline", "finetune"]
+
+algorithm:
+  actor_lr: 3.0e-4
+  value_lr: 3.0e-4
+  critic_lr: 3.0e-4
+  hidden_dims: [256, 256]
+  discount: 0.99
+  tau: 0.005
+  expectile: 0.7
+  temperature: 3.0
+  dropout_rate: null
+  opt_decay_schedule: "cosine"
+
