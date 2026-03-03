@@ -80,6 +80,7 @@ jobs:
               - 'toolkits/auto_placement/**'
             embodied_filter: &embodied
               - *shared
+              - 'rlinf/workers/actor/async_ppo_fsdp_worker.py'
               - 'rlinf/envs/**'
               - 'rlinf/workers/actor/async_fsdp_sac_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_sac_policy_worker.py'

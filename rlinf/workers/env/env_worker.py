@@ -49,6 +49,7 @@ class EnvWorker(Worker):
         self.stage_num = self.cfg.rollout.pipeline_stage_num
 
         # Env configurations
+        self.enable_offload = self.cfg.env.train.get("enable_offload", False)
         self.only_eval = getattr(self.cfg.runner, "only_eval", False)
         self.enable_eval = self.cfg.runner.val_check_interval > 0 or self.only_eval
         if not self.only_eval:
@@ -59,6 +60,14 @@ class EnvWorker(Worker):
             self.eval_num_envs_per_stage = (
                 self.cfg.env.eval.total_num_envs // self._world_size // self.stage_num
             )
+        self.n_train_chunk_steps = (
+            self.cfg.env.train.max_steps_per_rollout_epoch
+            // self.cfg.actor.model.num_action_chunks
+        )
+        self.n_eval_chunk_steps = (
+            self.cfg.env.eval.max_steps_per_rollout_epoch
+            // self.cfg.actor.model.num_action_chunks
+        )
 
     def init_worker(self):
         self.dst_ranks = {
@@ -160,9 +169,7 @@ class EnvWorker(Worker):
                 self.last_obs_list.append(extracted_obs)
                 self.last_intervened_info_list.append((None, None))
 
-                if self.cfg.env.train.get("enable_offload", False) and hasattr(
-                    self.env_list[i], "offload"
-                ):
+                if self.enable_offload and hasattr(self.env_list[i], "offload"):
                     self.env_list[i].offload()
 
     @Worker.timer("env_interact_step")
@@ -414,98 +421,100 @@ class EnvWorker(Worker):
                 key=CommMapper.build_channel_key(self._rank, rank, extra=mode),
             )
 
-    @Worker.timer("interact")
-    def interact(self, input_channel: Channel, output_channel: Channel):
-        n_chunk_steps = (
-            self.cfg.env.train.max_steps_per_rollout_epoch
-            // self.cfg.actor.model.num_action_chunks
-        )
+    def bootstrap_step(self) -> list[EnvOutput]:
+        def get_zero_dones() -> torch.Tensor:
+            return (
+                torch.zeros((self.train_num_envs_per_stage,), dtype=bool)
+                .unsqueeze(1)
+                .repeat(1, self.cfg.actor.model.num_action_chunks)
+            )
 
-        env_metrics = defaultdict(list)
-        for epoch in range(self.cfg.algorithm.rollout_epoch):
-            env_output_list = []
-            if not self.cfg.env.train.auto_reset:
-                for stage_id in range(self.stage_num):
-                    self.env_list[stage_id].is_start = True
-                    extracted_obs, infos = self.env_list[stage_id].reset()
-                    dones = (
-                        torch.zeros((self.train_num_envs_per_stage,), dtype=bool)
-                        .unsqueeze(1)
-                        .repeat(1, self.cfg.actor.model.num_action_chunks)
-                    )
-                    terminations = dones.clone()
-                    truncations = dones.clone()
-
-                    env_output = EnvOutput(
-                        obs=extracted_obs,
-                        dones=dones,
-                        terminations=terminations,
-                        truncations=truncations,
-                        final_obs=infos["final_observation"]
-                        if "final_observation" in infos
-                        else None,
-                        intervene_actions=None,
-                        intervene_flags=None,
-                    )
-                    env_output_list.append(env_output)
-            else:
-                self.num_done_envs = 0
-                self.num_succ_envs = 0
-                dones = (
-                    torch.zeros((self.train_num_envs_per_stage,), dtype=bool)
-                    .unsqueeze(1)
-                    .repeat(1, self.cfg.actor.model.num_action_chunks)
-                )
+        env_outputs: list[EnvOutput] = []
+        if not self.cfg.env.train.auto_reset:
+            for stage_id in range(self.stage_num):
+                self.env_list[stage_id].is_start = True
+                extracted_obs, infos = self.env_list[stage_id].reset()
+                dones = get_zero_dones()
                 terminations = dones.clone()
                 truncations = dones.clone()
 
-                for stage_id in range(self.stage_num):
-                    env_output = EnvOutput(
-                        obs=self.last_obs_list[stage_id],
-                        rewards=None,
-                        dones=dones,
-                        terminations=terminations,
-                        truncations=truncations,
-                        intervene_actions=self.last_intervened_info_list[stage_id][0],
-                        intervene_flags=self.last_intervened_info_list[stage_id][1],
-                    )
-                    env_output_list.append(env_output)
+                env_output = EnvOutput(
+                    obs=extracted_obs,
+                    dones=dones,
+                    terminations=terminations,
+                    truncations=truncations,
+                    final_obs=infos["final_observation"]
+                    if "final_observation" in infos
+                    else None,
+                    intervene_actions=None,
+                    intervene_flags=None,
+                )
+                env_outputs.append(env_output)
+        else:
+            dones = get_zero_dones()
+            terminations = dones.clone()
+            truncations = dones.clone()
 
             for stage_id in range(self.stage_num):
-                env_output: EnvOutput = env_output_list[stage_id]
+                env_output = EnvOutput(
+                    obs=self.last_obs_list[stage_id],
+                    rewards=None,
+                    dones=dones,
+                    terminations=terminations,
+                    truncations=truncations,
+                    intervene_actions=self.last_intervened_info_list[stage_id][0],
+                    intervene_flags=self.last_intervened_info_list[stage_id][1],
+                )
+                env_outputs.append(env_output)
+
+        return env_outputs
+
+    def record_env_metrics(
+        self, env_metrics: dict[str, list], env_info: dict[str, Any], epoch: int
+    ):
+        for key, value in env_info.items():
+            if (
+                not self.cfg.env.train.auto_reset
+                and not self.cfg.env.train.ignore_terminations
+            ):
+                if key in env_metrics and len(env_metrics[key]) > epoch:
+                    env_metrics[key][epoch] = value
+                else:
+                    env_metrics[key].append(value)
+            else:
+                env_metrics[key].append(value)
+
+    def store_last_obs_and_intervened_info(self, env_output_list: list[EnvOutput]):
+        self.last_obs_list = [env_output.obs for env_output in env_output_list]
+        self.last_intervened_info_list = [
+            (env_output.intervene_actions, env_output.intervene_flags)
+            for env_output in env_output_list
+        ]
+
+    @Worker.timer("interact")
+    def interact(self, input_channel: Channel, output_channel: Channel):
+        env_metrics = defaultdict(list)
+        for epoch in range(self.cfg.algorithm.rollout_epoch):
+            env_outputs = self.bootstrap_step()
+            for stage_id in range(self.stage_num):
+                env_output: EnvOutput = env_outputs[stage_id]
                 self.send_env_batch(output_channel, env_output.to_dict())
 
-            for _ in range(n_chunk_steps):
+            for _ in range(self.n_train_chunk_steps):
                 for stage_id in range(self.stage_num):
                     raw_chunk_actions = self.recv_chunk_actions(input_channel)
                     env_output, env_info = self.env_interact_step(
                         raw_chunk_actions, stage_id
                     )
                     self.send_env_batch(output_channel, env_output.to_dict())
-                    env_output_list[stage_id] = env_output
-                    for key, value in env_info.items():
-                        if (
-                            not self.cfg.env.train.auto_reset
-                            and not self.cfg.env.train.ignore_terminations
-                        ):
-                            if key in env_metrics and len(env_metrics[key]) > epoch:
-                                env_metrics[key][epoch] = value
-                            else:
-                                env_metrics[key].append(value)
-                        else:
-                            env_metrics[key].append(value)
+                    env_outputs[stage_id] = env_output
+                    self.record_env_metrics(env_metrics, env_info, epoch)
 
-            self.last_obs_list = [env_output.obs for env_output in env_output_list]
-            self.last_intervened_info_list = [
-                (env_output.intervene_actions, env_output.intervene_flags)
-                for env_output in env_output_list
-            ]
+            self.store_last_obs_and_intervened_info(env_outputs)
             self.finish_rollout()
 
         for env in self.env_list:
-            if self.cfg.env.train.get("enable_offload", False) and hasattr(
-                env, "offload"
-            ):
+            if self.enable_offload and hasattr(env, "offload"):
                 env.offload()
 
         for key, value in env_metrics.items():
@@ -516,10 +525,6 @@ class EnvWorker(Worker):
     def evaluate(self, input_channel: Channel, output_channel: Channel):
         eval_metrics = defaultdict(list)
 
-        n_chunk_steps = (
-            self.cfg.env.eval.max_steps_per_rollout_epoch
-            // self.cfg.actor.model.num_action_chunks
-        )
         for _ in range(self.cfg.algorithm.eval_rollout_epoch):
             for stage_id in range(self.stage_num):
                 self.eval_env_list[stage_id].is_start = True
@@ -532,7 +537,7 @@ class EnvWorker(Worker):
                 )
                 self.send_env_batch(output_channel, env_output.to_dict(), mode="eval")
 
-            for eval_step in range(n_chunk_steps):
+            for eval_step in range(self.n_eval_chunk_steps):
                 for stage_id in range(self.stage_num):
                     raw_chunk_actions = self.recv_chunk_actions(
                         input_channel, mode="eval"
@@ -543,7 +548,7 @@ class EnvWorker(Worker):
 
                     for key, value in env_info.items():
                         eval_metrics[key].append(value)
-                    if eval_step == n_chunk_steps - 1:
+                    if eval_step == self.n_eval_chunk_steps - 1:
                         continue
                     self.send_env_batch(
                         output_channel, env_output.to_dict(), mode="eval"

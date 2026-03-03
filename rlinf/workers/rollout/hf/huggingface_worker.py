@@ -77,6 +77,18 @@ class MultiStepRolloutWorker(Worker):
         )
         self.enable_cuda_graph = cfg.rollout.get("enable_cuda_graph", False)
         self.enable_eval = cfg.runner.val_check_interval > 0 or cfg.runner.only_eval
+        self.actor_split_num = self.get_actor_split_num()
+        self.n_train_chunk_steps = (
+            cfg.env.train.max_steps_per_rollout_epoch
+            // cfg.actor.model.num_action_chunks
+        )
+        self.n_eval_chunk_steps = (
+            cfg.env.eval.max_steps_per_rollout_epoch
+            // cfg.actor.model.num_action_chunks
+        )
+        self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
+        self.collect_versions = self.cfg.algorithm.loss_type == "decoupled_actor_critic"
+        self.version = 0
 
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
@@ -191,7 +203,9 @@ class MultiStepRolloutWorker(Worker):
         )
 
     @Worker.timer("predict")
-    def predict(self, env_obs, mode="train"):
+    def predict(
+        self, env_obs: dict[str, Any], mode: Literal["train", "eval"] = "train"
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
         kwargs = (
             self._train_sampling_params
             if mode == "train"
@@ -270,7 +284,7 @@ class MultiStepRolloutWorker(Worker):
 
         return dones, rewards
 
-    async def sync_model_from_actor(self):
+    async def sync_model_from_actor(self, version: int | None = None):
         """Sync model parameters from the actor worker."""
         param_state_dict = await self.recv(
             self.actor_group_name,
@@ -284,7 +298,8 @@ class MultiStepRolloutWorker(Worker):
             str(get_model_weights_id(self.hf_model)) + f"_{self.count_update}"
         )
         self.count_update += 1
-
+        if version is not None:
+            self.version = version
         del param_state_dict
         gc.collect()
         torch.cuda.empty_cache()
@@ -292,20 +307,16 @@ class MultiStepRolloutWorker(Worker):
     async def send_rollout_trajectories(
         self, rollout_result: EmbodiedRolloutResult, channel: Channel
     ):
-        split_num = self.get_actor_split_num()
-        trajectories: Trajectory = rollout_result.to_splited_trajectories(split_num)
+        trajectories: Trajectory = rollout_result.to_splited_trajectories(
+            self.actor_split_num
+        )
         for trajectory in trajectories:
             channel.put(trajectory, async_op=True)
 
     @Worker.timer("generate_one_epoch")
     async def generate_one_epoch(self, input_channel: Channel, output_channel: Channel):
-        n_chunk_steps = (
-            self.cfg.env.train.max_steps_per_rollout_epoch
-            // self.cfg.actor.model.num_action_chunks
-        )
-
         last_obs = [None for i in range(self.num_pipeline_stages)]
-        for _ in range(n_chunk_steps):
+        for _ in range(self.n_train_chunk_steps):
             for stage_id in range(self.num_pipeline_stages):
                 env_output = await self.recv_env_output(input_channel)
 
@@ -329,12 +340,19 @@ class MultiStepRolloutWorker(Worker):
                     truncations=env_output["truncations"],
                     terminations=env_output["terminations"],
                     prev_logprobs=result["prev_logprobs"]
-                    if self.cfg.rollout.get("collect_prev_infos", True)
+                    if self.collect_prev_infos
                     else None,
                     prev_values=result["prev_values"]
-                    if self.cfg.rollout.get("collect_prev_infos", True)
+                    if self.collect_prev_infos
                     else None,
                     forward_inputs=result["forward_inputs"],
+                    versions=torch.full_like(
+                        result["prev_logprobs"],
+                        float(self.version),
+                        dtype=torch.float32,
+                    )
+                    if self.collect_versions
+                    else None,
                 )
 
                 self.rollout_results[stage_id].append_step_result(chunk_step_result)
@@ -375,9 +393,7 @@ class MultiStepRolloutWorker(Worker):
                 truncations=env_output["truncations"],
                 terminations=env_output["terminations"],
                 prev_logprobs=None,
-                prev_values=result["prev_values"]
-                if self.cfg.rollout.get("collect_prev_infos", True)
-                else None,
+                prev_values=result["prev_values"] if self.collect_prev_infos else None,
                 forward_inputs=None,
             )
 
@@ -424,17 +440,12 @@ class MultiStepRolloutWorker(Worker):
     async def evaluate(self, input_channel: Channel, output_channel: Channel):
         if self.enable_offload:
             self.reload_model()
-
-        n_chunk_steps = (
-            self.cfg.env.eval.max_steps_per_rollout_epoch
-            // self.cfg.actor.model.num_action_chunks
-        )
         for _ in tqdm(
             range(self.cfg.algorithm.eval_rollout_epoch),
             desc="Evaluating Rollout Epochs",
             disable=(self._rank != 0),
         ):
-            for _ in range(n_chunk_steps):
+            for _ in range(self.n_eval_chunk_steps):
                 for _ in range(self.num_pipeline_stages):
                     env_output = await self.recv_env_output(input_channel, mode="eval")
                     actions, _ = self.predict(env_output["obs"], mode="eval")

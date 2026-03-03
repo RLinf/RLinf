@@ -252,6 +252,7 @@ class ChunkStepResult:
     terminations: torch.Tensor = None  # [B, 1]
     rewards: torch.Tensor = None  # [B, 1]
     forward_inputs: dict[str, torch.Tensor] = field(default_factory=dict)
+    versions: torch.Tensor = None  # [B, 1]
 
     def __post_init__(self):
         if self.actions is not None:
@@ -270,6 +271,8 @@ class ChunkStepResult:
             self.rewards = self.rewards.cpu().contiguous()
         if self.forward_inputs:
             self.forward_inputs = put_tensor_device(self.forward_inputs, "cpu")
+        if self.versions is not None:
+            self.versions = self.versions.cpu().contiguous()
 
 
 @dataclass
@@ -290,6 +293,7 @@ class Trajectory:
     dones: torch.Tensor = None
     prev_logprobs: torch.Tensor = None
     prev_values: torch.Tensor = None
+    versions: torch.Tensor = None
     forward_inputs: dict[str, Any] = field(default_factory=dict)
 
     curr_obs: dict[str, Any] = field(default_factory=dict)
@@ -417,6 +421,7 @@ class EmbodiedRolloutResult:
     prev_values: list[torch.Tensor] = field(
         default_factory=list
     )  # trajectory_length + rollout_epoch
+    versions: list[torch.Tensor] = field(default_factory=list)  # trajectory_length
     forward_inputs: list[dict[str, Any]] = field(
         default_factory=list
     )  # trajectory_length
@@ -442,6 +447,8 @@ class EmbodiedRolloutResult:
             self.prev_logprobs.append(result.prev_logprobs)
         if result.prev_values is not None:
             self.prev_values.append(result.prev_values)
+        if result.versions is not None:
+            self.versions.append(result.versions)
         if result.forward_inputs is not None:
             self.forward_inputs.append(result.forward_inputs)
 
@@ -517,6 +524,8 @@ class EmbodiedRolloutResult:
             trajectory.prev_values = (
                 torch.stack(self.prev_values, dim=0).cpu().contiguous()
             )
+        if len(self.versions) > 0:
+            trajectory.versions = torch.stack(self.versions, dim=0).cpu().contiguous()
         if len(self.forward_inputs) > 0:
             trajectory.forward_inputs = stack_list_of_dict_tensor(self.forward_inputs)
             for key in trajectory.forward_inputs.keys():
@@ -636,8 +645,9 @@ def convert_trajectories_to_batch(
                 batch["forward_inputs"][key] = torch.cat(tensors, dim=1)
 
     # -------- tensor fields --------
-    for field_name in trajectories[0].__dataclass_fields__.keys():
-        if not isinstance(getattr(traj, field_name), torch.Tensor):
+    reference_trajectory = trajectories[0]
+    for field_name in reference_trajectory.__dataclass_fields__.keys():
+        if not isinstance(getattr(reference_trajectory, field_name), torch.Tensor):
             continue
         field_list = [
             getattr(traj, field_name)
