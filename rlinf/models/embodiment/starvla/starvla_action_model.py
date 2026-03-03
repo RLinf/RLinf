@@ -233,25 +233,39 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
                 f"{self.action_head_type}."
             )
 
-        output = handler(
-            self,
-            data=data,
-            compute_logprobs=compute_logprobs,
-            compute_entropy=compute_entropy,
-            compute_values=compute_values,
-            use_cache=use_cache,
-        )
+        # Important: rollouts compute and cache prev_logprobs with the policy in eval mode
+        # (dropout disabled). RLinf's actor worker sets the model to train() during updates,
+        # which can introduce logprob drift even when lr=0 if the backbone has dropout or
+        # other train-time randomness. Force the starVLA backbone into eval() for this
+        # forward to keep old/new logprob conventions consistent.
+        was_training = bool(getattr(self.starvla_model, "training", False))
+        if was_training:
+            self.starvla_model.eval()
+        try:
+            output = handler(
+                self,
+                data=data,
+                compute_logprobs=compute_logprobs,
+                compute_entropy=compute_entropy,
+                compute_values=compute_values,
+                use_cache=use_cache,
+            )
+        finally:
+            if was_training:
+                self.starvla_model.train()
         if compute_logprobs:
             logprobs = output.get("logprobs")
             if isinstance(logprobs, torch.Tensor):
-                output["logprobs"] = data_pipeline_utils.clip_logprobs_with_old_logprobs(
-                    logprobs=logprobs,
-                    data=data,
-                    clip_log_ratio_min=self.clip_log_ratio_min,
-                    clip_log_ratio_max=self.clip_log_ratio_max,
-                    clip_log_ratio_level=self.clip_log_ratio_level,
-                    warned_once=self._warned_once,
-                    warn_key_shape_mismatch=self._WARN_KEY_LOGPROB_CLIP_SHAPE_MISMATCH,
+                output["logprobs"] = (
+                    data_pipeline_utils.clip_logprobs_with_old_logprobs(
+                        logprobs=logprobs,
+                        data=data,
+                        clip_log_ratio_min=self.clip_log_ratio_min,
+                        clip_log_ratio_max=self.clip_log_ratio_max,
+                        clip_log_ratio_level=self.clip_log_ratio_level,
+                        warned_once=self._warned_once,
+                        warn_key_shape_mismatch=self._WARN_KEY_LOGPROB_CLIP_SHAPE_MISMATCH,
+                    )
                 )
         return output
 

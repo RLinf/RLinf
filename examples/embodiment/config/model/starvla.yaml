@@ -19,8 +19,12 @@ lora_rank: 32
 # Common embodied fields used by RLinf validation / env adapters.
 use_proprio: True
 num_steps: 4
-policy_setup: "widowx_bridge"
-unnorm_key: "libero_10"
+# NOTE: RLinf currently only uses this field for ManiSkill control mode selection.
+# It is ignored for LIBERO and most other envs.
+policy_setup: "libero"
+# starVLA checkpoints expose action normalization stats under a string key.
+# For LIBERO Franka tasks, the common key is "franka"; override if your checkpoint differs.
+unnorm_key: "franka"
 
 # RL head behavior (wrapper-side value head).
 # For GRPO actor-only this can stay False; for PPO actor_critic set to True.
@@ -34,7 +38,7 @@ low_cpu_mem_usage: True
 starvla:
   ckpt_path: ${actor.model.model_path}
   # Informational fields for consistency checks in experiment configs.
-  framework_name: "QwenGR00T"
+  framework_name: "QwenOFT"
   expected_action_dim: ${actor.model.action_dim}
   expected_num_action_chunks: ${actor.model.num_action_chunks}
   expected_image_size: [224, 224]

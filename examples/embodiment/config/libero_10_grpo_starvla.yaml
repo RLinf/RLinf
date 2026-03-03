@@ -128,7 +128,7 @@ actor:
     model_path: /path/to/model # https://huggingface.co/StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1
     action_dim: 7
     num_action_chunks: 8
-    unnorm_key: franka
+    unnorm_key: franka # starVLA action-stats key for LIBERO Franka tasks.
     add_value_head: False
     starvla:
       framework_name: "QwenOFT"

@@ -120,6 +120,12 @@ Use Docker image for the experiment.
       # For mainland China users, you can use the following for better download speed:
       # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
 
+.. note::
+
+   Docker image tags are pinned for reproducibility and may lag behind the latest
+   RLinf dependencies. If you need newer versions, rebuild the image from ``docker/``
+   or use the custom environment installation below.
+
 Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
 
 .. code:: bash
