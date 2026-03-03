@@ -85,7 +85,7 @@ rollout:
   gpu_memory_utilization: 0.55
 
   model:
-    model_path: /mnt/project_rlinf/new_fuxu/Qwen3-30B-A3B-Base-4L
+    model_path: /workspace/dataset/Qwen3-2.5B-A1B
     model_type: qwen3_moe
     precision: ${actor.model.precision}              # precision for rollout model, support [fp16, bf16, fp32]
   enforce_eager: False         # if False, vllm will capture cuda graph, which will take more time to initialize.
@@ -137,8 +137,8 @@ data:
   shuffle: True
   validation_shuffle: True
   seed: 1234
-  train_data_paths: ["/mnt/project_rlinf/new_fuxu/fuxu_old/fuxu/data/boba_106k_0319_prompt_1024.jsonl"]
-  val_data_paths: ["/mnt/project_rlinf/new_fuxu/fuxu_old/fuxu/data/boba_106k_0319_prompt_1024.jsonl"]
+  train_data_paths: ["/workspace/dataset/boba_106k_0319_prompt_1024.jsonl"]
+  val_data_paths: ["/workspace/dataset/boba_106k_0319_prompt_1024.jsonl"]
 
 actor:
   group_name: "ActorGroup"
@@ -228,7 +228,7 @@ actor:
     lr_decay_iters: 10
 
   tokenizer:
-    tokenizer_model: /mnt/project_rlinf/new_fuxu/Qwen3-30B-A3B-Base-4L
+    tokenizer_model: /workspace/dataset/Qwen3-2.5B-A1B
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'
