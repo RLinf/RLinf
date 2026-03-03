@@ -407,7 +407,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--qdrant_search_param", type=str, default={}, help="")
     parser.add_argument("--qdrant_search_quant_param", type=str, default=None, help="")
-    parser.add_argument("--port", type=int, default=5005)
+    parser.add_argument("--port", type=int, default=8000)
     parser.add_argument(
         "--save-address-to", type=str, help="path to save server address"
     )
@@ -474,7 +474,7 @@ if __name__ == "__main__":
     config = uvicorn.Config(
         app,
         host="0.0.0.0",
-        port=8000,
+        port=args.port,
         log_level="warning",
         loop=loop,
     )
