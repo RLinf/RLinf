@@ -118,6 +118,7 @@ class WanEnv(BaseWorldEnv):
                 ModelConfig(path=self.cfg.model_path, offload_device="cpu"),
                 ModelConfig(path=self.cfg.VAE_path, offload_device="cpu"),
             ],
+            tokenizer_config=ModelConfig(model_id="/data/qian.ren/robot_vla/models/Wan2.1-T2V-1.3B", origin_file_pattern="google/*")
         )
         # pipe.enable_vram_management()
         pipe.dit.to(self.device)
@@ -587,7 +588,7 @@ class WanEnv(BaseWorldEnv):
         full_image = last_frame.permute(0, 2, 3, 1)  # [b, H, W, 3]
         # Denormalize from [-1, 1] to [0, 255]
         full_image = (full_image + 1.0) / 2.0 * 255.0
-        full_image = torch.clamp(full_image, 0, 255)
+        full_image = torch.clamp(full_image.float(), 0, 255)
         # print(f'full_image:{full_image.shape}')
         # print(f'image_size:{self.image_size}')
         # Resize to 256x256 to match libero_env format
