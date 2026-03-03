@@ -14,6 +14,7 @@
 
 """Utility functions for Robocasa environments."""
 
+import logging
 import os
 from typing import Optional, Union
 
@@ -22,7 +23,183 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont
 
+# SPACES #############
 
+# STATE #####
+
+ROBOCASA_STATES = {  # for daixianjie/robocasa_lerobot dataset
+    "robot0_eef_pos": np.arange(0, 3),
+    "robot0_eef_quat": np.arange(3, 7),
+    "robot0_gripper_qpos": np.arange(7, 9),
+    "robot0_gripper_qvel": np.arange(9, 11),
+    "robot0_base_to_eef_pos": np.arange(11, 14),
+    "robot0_base_to_eef_quat": np.arange(14, 18),
+    "robot0_base_pos": np.arange(18, 21),
+    "robot0_base_quat": np.arange(21, 25),
+}
+
+STATE_SPACE_STR_MAPPING = {
+    # NOTE: see https://github.com/robocasa/robocasa/issues/11, in Robocasa paper the authors use 16d state as input.
+    "16d": [
+        "robot0_base_to_eef_pos",  # 11-14， 3
+        "robot0_base_to_eef_quat",  # 14-18， 4
+        "robot0_base_pos",  # 18-21，3
+        "robot0_base_quat",  # 21-25， 4
+        "robot0_gripper_qpos",  # 7-9， 2
+    ],  # add up to 16
+    "25d": list(ROBOCASA_STATES.keys()),  # add up to 25
+}
+
+
+def get_state_space(state_space: Union[str, list]) -> list:
+    if isinstance(state_space, str):
+        state_space_str = state_space
+        state_space = STATE_SPACE_STR_MAPPING.get(state_space)
+        if state_space is None:
+            logging.warning(
+                f"String-format state_space {state_space_str} property of RoboCasaInputs is not registered in STATE_SPACE_STR_MAPPING {list(STATE_SPACE_STR_MAPPING.keys())}"
+            )
+
+    return state_space
+
+
+def _check_state_space(state_space: list) -> bool:
+    check_ret = True
+    for state_name in state_space:
+        if state_name not in ROBOCASA_STATES.keys():
+            check_ret = False
+            break
+    return check_ret
+
+
+def get_state_ids(state_space: list) -> list:
+    all_state_ids = []
+    for robocasa_state_name in state_space:
+        state_ids = ROBOCASA_STATES[robocasa_state_name]
+        all_state_ids.extend(state_ids)
+
+    return all_state_ids
+
+
+# IMAGE #####
+
+
+OPENPI_IMAGES = ["base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb"]
+OBS_KEY_IMAGES = [
+    "observation/image",
+    "observation/wrist_image",
+    "observation/extra_view_image",
+]
+
+OBS_KEY_ROBOCASA_IMAGE_MAPPING = {
+    "main_images": "robot0_agentview_left_image",
+    "wrist_images": "robot0_eye_in_hand_image",
+    "extra_view_images": "robot0_agentview_right_image",
+}
+
+OBS_KEY_CAMERA_NAME_MAPPING = {
+    "observation/image": "robot0_agentview_left",
+    "observation/wrist_image": "robot0_eye_in_hand",
+    "observation/extra_view_image": "robot0_agentview_right",
+}
+
+DEFAULT_ROBOCASA_IMAGE_SIZE = (224, 224, 3)
+
+# TODO: This is openpi-specific, find a right place to put it
+IMAGE_SPACE_STR_MAPPING = {
+    "2views": {
+        "base_0_rgb": "observation/image",
+        "left_wrist_0_rgb": "observation/wrist_image",
+    },
+    "3views": {
+        "base_0_rgb": "observation/image",
+        "left_wrist_0_rgb": "observation/wrist_image",
+        "right_wrist_0_rgb": "observation/extra_view_image",
+    },
+}
+
+
+def get_image_space(image_space: Union[str, dict]) -> dict:
+    if isinstance(image_space, str):
+        image_space_str = image_space
+        image_space = IMAGE_SPACE_STR_MAPPING.get(image_space)
+        if image_space is None:
+            logging.warning(
+                f"String-format image_space {image_space_str} property of RoboCasaInputs is not registered in IMAGE_SPACE_STR_MAPPING {list(IMAGE_SPACE_STR_MAPPING.keys())}"
+            )
+    return image_space
+
+
+def _check_image_space(image_space: dict) -> bool:
+    check_ret = True
+    for openpi_img_name, robocasa_img_name in image_space.items():
+        if (openpi_img_name not in OPENPI_IMAGES) or (
+            robocasa_img_name not in OBS_KEY_IMAGES
+        ):
+            check_ret = False
+            break
+    return check_ret
+
+
+# ACTIONS #####
+
+
+ROBOCASA_ALL_ACTION_DIM = 12
+
+ROBOCASA_ACTIONS = {  # for daixianjie/robocasa_lerobot dataset
+    "rel_pose_6d": np.arange(0, 6),  # corresponding to "right" _action_split_indices
+    "gripper": np.arange(6, 7),
+    "base": np.arange(7, 10),
+    "torso": np.arange(10, 11),
+    "base_mode": np.arange(
+        11, 12
+    ),  # NOTE: https://github.com/robocasa/robocasa/issues/141
+}
+
+ROBOCASA_DEFAULT_ACTION = np.array(
+    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0]
+)
+
+ACTION_SPACE_STR_MAPPING = {
+    # NOTE: see https://github.com/robocasa/robocasa/issues/11, align with paper
+    "7d": [
+        "rel_pose_6d",  # 0-6， 6
+        "gripper",  # 6-7, 1
+    ],  # add up to 7
+    "12d": list(ROBOCASA_ACTIONS.keys()),  # add up to 12
+}
+
+
+def get_action_space(action_space: Union[str, list]) -> list:
+    if isinstance(action_space, str):
+        action_space_str = action_space
+        action_space = ACTION_SPACE_STR_MAPPING.get(action_space)
+        if action_space is None:
+            logging.warning(
+                f"String-format action_space {action_space_str} property of RoboCasaInputs is not registered in ACTION_SPACE_STR_MAPPING {list(ACTION_SPACE_STR_MAPPING.keys())}"
+            )
+    return action_space
+
+
+def _check_action_space(action_space: list) -> bool:
+    check_ret = True
+    for action_name in action_space:
+        if action_name not in ROBOCASA_ACTIONS.keys():
+            check_ret = False
+            break
+    return check_ret
+
+
+def get_action_ids(action_space: list) -> list:
+    all_action_ids = []
+    for robocasa_action_name in action_space:
+        action_ids = ROBOCASA_ACTIONS[robocasa_action_name]
+        all_action_ids.extend(action_ids)
+
+    return all_action_ids
+
+
+# VIDEO ###########
 def tile_images(
     images: list[Union[np.ndarray, torch.Tensor]], nrows: int = 1
 ) -> Union[np.ndarray, torch.Tensor]:
