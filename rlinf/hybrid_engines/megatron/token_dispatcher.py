@@ -256,7 +256,23 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
             "Fusco token dispatcher does not support --moe-router-padding-for-fp8"
         )
 
-        self.num_local_ranks = int(os.getenv("NODE_LOCAL_WORLD_SIZE", 8))
+        node_local_world_size_str = os.getenv("NODE_LOCAL_WORLD_SIZE")
+        if node_local_world_size_str is not None:
+            self.num_local_ranks = int(node_local_world_size_str)
+        else:
+            if torch.cuda.is_available():
+                self.num_local_ranks = torch.cuda.device_count()
+            else:
+                raise RuntimeError(
+                    "NODE_LOCAL_WORLD_SIZE is not set and CUDA is not available to infer the "
+                    "local world size. Please set NODE_LOCAL_WORLD_SIZE to the number of "
+                    "ranks per node."
+                )
+        if self.num_local_ranks <= 0:
+            raise RuntimeError(
+                f"Computed NODE_LOCAL_WORLD_SIZE={self.num_local_ranks}, but a positive "
+                "integer is required."
+            )
         self.is_2dmode = self.topk > 1 and self.ep_size > self.num_local_ranks
 
         self.global_fusco = FUSCO(
