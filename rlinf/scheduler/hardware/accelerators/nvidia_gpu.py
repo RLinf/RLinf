@@ -128,20 +128,29 @@ class NvidiaGPUManager(AcceleratorManager):
 
     @staticmethod
     def get_visible_devices():
-        """Get the visible device IDs."""
+        """Get the visible device IDs.
+
+        Returns integer device indices. On platforms like Beaker (AI2) where
+        ``CUDA_VISIBLE_DEVICES`` is set to GPU UUID strings (e.g.
+        ``GPU-abc123...``), the UUIDs are mapped to sequential local indices
+        ``[0, 1, 2, ...]`` so that downstream index arithmetic remains valid.
+        """
         visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", None)
 
         if visible_devices is None or visible_devices == "":
             return []
-        else:
-            try:
-                visible_devices = [int(v.strip()) for v in visible_devices.split(",")]
-            except ValueError:
-                raise ValueError(
-                    f"Invalid visible device IDs: {visible_devices}. "
-                    "Please ensure they are integers separated by commas."
-                )
-            return visible_devices
+
+        device_strs = [v.strip() for v in visible_devices.split(",")]
+        try:
+            return [int(d) for d in device_strs]
+        except ValueError:
+            # GPU UUIDs (e.g. "GPU-abc123..." set by Beaker) cannot be parsed
+            # as integers.  Map them to sequential local indices instead.
+            warnings.warn(
+                f"CUDA_VISIBLE_DEVICES contains non-integer values: {visible_devices!r}. "
+                "Interpreting as sequential local device indices [0, 1, ...]."
+            )
+            return list(range(len(device_strs)))
 
     @staticmethod
     def get_ccl_backend():
