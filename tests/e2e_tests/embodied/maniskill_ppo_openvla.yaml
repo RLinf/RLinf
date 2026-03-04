@@ -108,7 +108,7 @@ rollout:
   gpu_memory_utilization: 0.5
   enforce_eager: True
   enable_offload: True
-  pipeline_stage_num: 2
+  pipeline_stage_num: 1
 
   model:
     model_path: "/workspace/dataset/openvla-7b"

@@ -42,7 +42,7 @@ class EnvWorker(Worker):
 
         self.last_obs_list = []
         self.last_intervened_info_list = []
-
+        self.rollout_epoch = self.cfg.algorithm.get("rollout_epoch", 1)
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
 
         # stage_num: default to 2, use for pipeline rollout process
@@ -494,7 +494,7 @@ class EnvWorker(Worker):
     @Worker.timer("interact")
     def interact(self, input_channel: Channel, output_channel: Channel):
         env_metrics = defaultdict(list)
-        for epoch in range(self.cfg.algorithm.rollout_epoch):
+        for epoch in range(self.rollout_epoch):
             env_outputs = self.bootstrap_step()
             for stage_id in range(self.stage_num):
                 env_output: EnvOutput = env_outputs[stage_id]

@@ -54,21 +54,25 @@ class AsyncEnvWorker(EnvWorker):
     ):
         while True:
             env_metrics = defaultdict(list)
-            env_output_list = self.bootstrap_step()
-            for stage_id in range(self.stage_num):
-                env_output: EnvOutput = env_output_list[stage_id]
-                self.send_env_batch(output_channel, env_output.to_dict())
-
-            for _ in range(self.n_train_chunk_steps):
+            for epoch in range(self.rollout_epoch):
+                env_output_list = self.bootstrap_step()
                 for stage_id in range(self.stage_num):
-                    await asyncio.sleep(0)
-                    raw_chunk_actions = self.recv_chunk_actions(input_channel)
-                    env_output, env_info = self.env_interact_step(
-                        raw_chunk_actions, stage_id
-                    )
+                    env_output: EnvOutput = env_output_list[stage_id]
                     self.send_env_batch(output_channel, env_output.to_dict())
-                    env_output_list[stage_id] = env_output
-                    self.record_env_metrics(env_metrics, env_info, 0)
+
+                for _ in range(self.n_train_chunk_steps):
+                    for stage_id in range(self.stage_num):
+                        await asyncio.sleep(0)
+                        raw_chunk_actions = self.recv_chunk_actions(input_channel)
+                        env_output, env_info = self.env_interact_step(
+                            raw_chunk_actions, stage_id
+                        )
+                        self.send_env_batch(output_channel, env_output.to_dict())
+                        env_output_list[stage_id] = env_output
+                        self.record_env_metrics(env_metrics, env_info, epoch)
+
+                self.store_last_obs_and_intervened_info(env_output_list)
+                self.finish_rollout()
 
             for key, value in env_metrics.items():
                 env_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
@@ -83,9 +87,6 @@ class AsyncEnvWorker(EnvWorker):
                 "time": env_interact_time_metrics,
             }
             metric_channel.put(metrics, async_op=True)
-
-            self.store_last_obs_and_intervened_info(env_output_list)
-            self.finish_rollout()
 
     async def stop(self):
         if self._interact_task is not None and not self._interact_task.done():
