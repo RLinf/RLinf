@@ -47,8 +47,12 @@ def get_model(cfg: DictConfig, torch_dtype=None):
 
     # Check if this is a checkpoint directory (saved by FSDP)
     # Check for model_state_dict/full_weights.pt (direct checkpoint) or actor/model_state_dict/full_weights.pt (from runner)
-    full_weights_path = os.path.join(checkpoint_dir, "model_state_dict", "full_weights.pt")
-    actor_full_weights_path = os.path.join(checkpoint_dir, "actor", "model_state_dict", "full_weights.pt")
+    full_weights_path = os.path.join(
+        checkpoint_dir, "model_state_dict", "full_weights.pt"
+    )
+    actor_full_weights_path = os.path.join(
+        checkpoint_dir, "actor", "model_state_dict", "full_weights.pt"
+    )
 
     model: OpenPi0ForRLActionPrediction = OpenPi0ForRLActionPrediction(
         actor_model_config
@@ -59,11 +63,11 @@ def get_model(cfg: DictConfig, torch_dtype=None):
 
     # Load weights from checkpoint if it's a checkpoint directory, otherwise load from safetensors
     if os.path.exists(full_weights_path):
-        # Direct checkpoint directory (e.g., checkpoints/global_step_900/model_state_dict/full_weights.pt)
+        # Direct checkpoint directory
         model_state_dict = torch.load(full_weights_path, map_location="cpu")
         model.load_state_dict(model_state_dict, strict=False)
     elif os.path.exists(actor_full_weights_path):
-        # Checkpoint directory from runner (e.g., checkpoints/global_step_900/actor/model_state_dict/full_weights.pt)
+        # Checkpoint directory from runner
         model_state_dict = torch.load(actor_full_weights_path, map_location="cpu")
         model.load_state_dict(model_state_dict, strict=False)
     else:
