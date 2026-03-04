@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .franka import FrankaConfig, FrankaHWInfo
-from .yam import YAMConfig, YAMHWInfo  # Must be imported to register the YAM hardware type
+from .yam_env import YAMEnv
 
-__all__ = ["FrankaConfig", "FrankaHWInfo", "YAMConfig", "YAMHWInfo"]
+__all__ = ["YAMEnv"]
