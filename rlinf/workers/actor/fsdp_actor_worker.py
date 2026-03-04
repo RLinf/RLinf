@@ -124,6 +124,15 @@ def process_nested_dict_for_train(nested_dict, shuffle_id):
             ret_dict[key] = process_nested_dict_for_train(value, shuffle_id)
     return ret_dict
 
+def concat_nested_dict(nested_dict1, nested_dict2):
+    ret_dict = {}
+    for key, value in nested_dict1.items():
+        if isinstance(value, torch.Tensor):
+            ret_dict[key] = torch.cat([value, nested_dict2[key]], dim=0)
+        elif isinstance(value, dict):
+            ret_dict[key] = concat_nested_dict(value, nested_dict2[key])
+    return ret_dict
+
 
 class FSDPActor(FSDPModelManager, Worker):
     def __init__(
@@ -986,6 +995,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         # stage_num: default to 2, use for pipeline rollout process
         self.stage_num = cfg.rollout.pipeline_stage_num
 
+        # Buffer required size for async training
+        self.enable_accumulate_batch = self.cfg.algorithm.get("enable_accumulate_batch", False)
+        if self.enable_accumulate_batch:
+            assert self.cfg.algorithm.get("accumulated_threshold", None) is not None, "accumulated_threshold must be set when enable_accumulate_batch is True"
+            self.accumulated_threshold = self.cfg.algorithm.accumulated_threshold
+            self.accumulated_batch = None
+
         self.enable_offload = self.cfg.actor.get("enable_offload", False)
         self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "torch")
 
@@ -1064,7 +1080,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.enable_offload and not self.is_weight_offloaded:
             self.offload_param_and_grad()
 
-    async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
+    async def recv_rollout_trajectories(self, input_channel: Channel) -> bool:
         """
         Receive rollout trajectories from rollout workers.
 
@@ -1080,9 +1096,31 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             trajectory: Trajectory = await input_channel.get(async_op=True).async_wait()
             recv_list.append(trajectory)
 
-        self.rollout_batch = convert_trajectories_to_batch(recv_list)
+        rollout_batch = convert_trajectories_to_batch(recv_list)
+        rollout_batch = self._process_received_rollout_batch(rollout_batch)
 
-        self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
+        if not self.enable_accumulate_batch:
+            self.rollout_batch = rollout_batch
+            return True
+        else:
+            if self.accumulated_batch is None:
+                self.accumulated_batch = rollout_batch
+            else:
+                # remove the first step of the new batch and concatenate to the accumulated batch
+                rollout_batch["terminations"] = rollout_batch["terminations"][1:]
+                rollout_batch["truncations"] = rollout_batch["truncations"][1:]
+                rollout_batch["dones"] = rollout_batch["dones"][1:]
+                rollout_batch["prev_values"] = rollout_batch["prev_values"][1:]
+
+                self.accumulated_batch = concat_nested_dict(self.accumulated_batch, rollout_batch)
+                
+            current_batch_size = self.accumulated_batch["actions"].shape[0]
+            if current_batch_size < self.accumulated_threshold:
+                return False
+            else:
+                self.rollout_batch = self.accumulated_batch
+                self.accumulated_batch = None
+                return True
 
     def _process_received_rollout_batch(
         self, rollout_batch: dict[str, torch.Tensor]

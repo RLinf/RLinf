@@ -133,9 +133,13 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
             self.rollout.set_global_step(self.global_step)
             with self.timer("step"):
                 with self.timer("recv_rollout_trajectories"):
-                    self.actor.recv_rollout_trajectories(
-                        input_channel=self.actor_channel
-                    ).wait()
+                    while True:
+                        ready_to_train = self.actor.recv_rollout_trajectories(
+                            input_channel=self.actor_channel
+                        ).wait()[0]
+                        print(f"ready_to_train: {ready_to_train}")
+                        if ready_to_train:
+                            break
 
                 if self.recompute_logprobs:
                     with self.timer("recompute_logprobs"):

@@ -64,6 +64,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
         self.version = 0
+        self.enable_accumulate_batch = self.cfg.algorithm.get("enable_accumulate_batch", False)
 
     def set_version(self, version: int) -> None:
         self.version = int(version)
@@ -170,6 +171,9 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         generator = torch.Generator(device="cpu")
         generator.manual_seed(int(self.cfg.actor.seed) + int(self._rank))
         shuffle_id = torch.randperm(total_samples, generator=generator)
+
+        if self.enable_accumulate_batch:
+            shuffle_id = shuffle_id[: self.cfg.algorithm.accumulated_threshold]
 
         with torch.no_grad():
             self.rollout_batch = flatten_rollout_batch_for_train(

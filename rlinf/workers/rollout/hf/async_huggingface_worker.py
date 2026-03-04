@@ -32,6 +32,15 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
             // self._world_size
             // self.num_pipeline_stages
         )
+
+        enable_accumulate_batch = self.cfg.algorithm.get("enable_accumulate_batch", False)
+        if enable_accumulate_batch:
+            assert self.cfg.algorithm.get("accumulated_threshold", None) is not None, "accumulated_threshold must be set when enable_accumulate_batch is True"
+            accumulate_threshold = self.cfg.algorithm.accumulated_threshold
+            self.num_rollout_per_train = accumulate_threshold // self.n_train_chunk_steps
+        else:
+            self.num_rollout_per_train = 1
+
         assert not self.enable_offload, (
             "Offload not supported in AsyncMultiStepRolloutWorker"
         )
@@ -91,8 +100,8 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
         while True:
             capacity = (
                 self.staleness_threshold + self.version + 1
-            ) * self.total_num_train_envs
-            if self.finished_episodes + self.total_num_train_envs <= capacity:
+            ) * self.total_num_train_envs * self.num_rollout_per_train
+            if self.finished_episodes + self.total_num_train_envs * self.num_rollout_per_train <= capacity:
                 break
             await asyncio.sleep(0.01)
 
