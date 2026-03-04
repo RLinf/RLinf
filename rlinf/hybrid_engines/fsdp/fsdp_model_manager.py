@@ -261,10 +261,11 @@ class FSDPModelManager:
         self.lr_scheduler = self.build_lr_scheduler(
             optimizer=self.optimizer, optim_config=self._cfg.optim
         )
-        
-        assert self._cfg.fsdp_config.get("amp_grad_scaler") is not None, \
+
+        assert self._cfg.fsdp_config.get("amp_grad_scaler") is not None, (
             "fsdp_config.amp_grad_scaler must be initialized before this step."
-        
+        )
+
         kwargs = {}
         for key in ["init_scale", "growth_interval"]:
             value = self._cfg.fsdp_config.amp_grad_scaler.get(key, None)

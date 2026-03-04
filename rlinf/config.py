@@ -345,7 +345,7 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
                     )
             amp_precision = config.amp.get("precision", "bf16")
             use_grad_scaler = config.amp.get("use_grad_scaler", False)
-            
+
             config.amp_autocast = {
                 "enabled": amp_enabled,
                 "precision": amp_precision,
