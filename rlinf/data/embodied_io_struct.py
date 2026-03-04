@@ -341,56 +341,87 @@ class Trajectory:
                 f"Reference tensor length {ref_tensor.shape[0]} < traj_len {traj_len}"
             )
 
-    def extract_intervene_traj(self):
+    def extract_intervene_traj(self, mode="any"):
+        """
+        This function is a little bit dangerous, it will filter out the trajectories based on intervene_flags.
+        The new filtered trajectory will not keep the property of a 'trajectory', and not keep markovian.
+        This function could only be used in sac and dagger.
+        NEVER use this in PPO or RECAP. It will destroy the advantage estimation.
+        """
         if self.intervene_flags is None or (~self.intervene_flags).all():
             return None
 
-        mask = self.intervene_flags.any(dim=-1)
-        if mask.dim() > 1:
-            mask = mask.reshape(mask.shape[0], -1).any(dim=-1)
+        # intervene_flags: (chunkstep, bs, num_chunk * action_dim)
+        if (
+            mode == "any"
+        ):  # any or all on chunk dim (the action dim is expanded from 1, has no meaning)
+            mask = self.intervene_flags.any(dim=-1)
+        elif mode == "all":
+            mask = self.intervene_flags.all(dim=-1)
+        else:
+            raise NotImplementedError(
+                f"Unsupported extract_intervene_traj mode: {mode}"
+            )
+        # if mask.dim() > 1:
+        #     mask = mask.reshape(mask.shape[0], -1).any(dim=-1)
+        assert mask.dim() == 2, (
+            f"Expected 2D mask after processing (traj len, bsz), got {mask.shape=}"
+        )
         traj_len = int(mask.shape[0])
-
         # Apply mask to fields with same length as intervene_flags
-        def apply_mask(tensor):
-            return tensor[mask] if tensor is not None else None
 
-        actions = apply_mask(self.actions)
-        rewards = apply_mask(self.rewards)
-        prev_logprobs = apply_mask(self.prev_logprobs)
-        prev_values = apply_mask(self.prev_values)
-        intervene_flags = apply_mask(self.intervene_flags)
+        def apply_mask(tensor, i):
+            return tensor[:, i][mask[:, i]].unsqueeze(1) if tensor is not None else None
 
         # Apply mask to dict fields
-        def apply_mask_to_dict(d):
-            return {k: v[mask] for k, v in d.items()} if d else {}
 
-        forward_inputs = apply_mask_to_dict(self.forward_inputs)
-        curr_obs = apply_mask_to_dict(self.curr_obs)
-        next_obs = apply_mask_to_dict(self.next_obs)
+        def apply_mask_to_dict(d, i):
+            return (
+                {k: v[:, i][mask[:, i]].unsqueeze(1) for k, v in d.items()} if d else {}
+            )
 
-        # Handle terminations, truncations, dones which may have different length
-        terminations = truncations = dones = None
-        if self.terminations is not None:
-            field_mask = self._generate_field_mask(self.terminations, mask, traj_len)
-            terminations = self.terminations[field_mask]
-            truncations = self.truncations[field_mask]
-            dones = self.dones[field_mask]
+        filtered_trajectories = []
+        for i in range(mask.shape[1]):
+            actions = apply_mask(self.actions, i)
+            rewards = apply_mask(self.rewards, i)
+            prev_logprobs = apply_mask(self.prev_logprobs, i)
+            prev_values = apply_mask(self.prev_values, i)
+            intervene_flags = apply_mask(self.intervene_flags, i)
 
-        return Trajectory(
-            max_episode_length=self.max_episode_length,
-            model_weights_id=self.model_weights_id,
-            actions=actions,
-            intervene_flags=intervene_flags,
-            rewards=rewards,
-            terminations=terminations,
-            truncations=truncations,
-            dones=dones,
-            prev_logprobs=prev_logprobs,
-            prev_values=prev_values,
-            forward_inputs=forward_inputs,
-            curr_obs=curr_obs,
-            next_obs=next_obs,
-        )
+            forward_inputs = apply_mask_to_dict(self.forward_inputs, i)
+            curr_obs = apply_mask_to_dict(self.curr_obs, i)
+            next_obs = apply_mask_to_dict(self.next_obs, i)
+
+            # Handle terminations, truncations, dones which may have different length
+            terminations = truncations = dones = None
+            if self.terminations is not None:
+                # slice the terminations/truncations/dones
+                field_mask = self._generate_field_mask(
+                    self.terminations[:, i : i + 1], mask[:, i], traj_len
+                )
+                terminations = self.terminations[:, i : i + 1][field_mask]
+                truncations = self.truncations[:, i : i + 1][field_mask]
+                dones = self.dones[:, i : i + 1][field_mask]
+
+            filtered_trajectories.append(
+                Trajectory(
+                    max_episode_length=self.max_episode_length,
+                    model_weights_id=self.model_weights_id,
+                    actions=actions,
+                    intervene_flags=intervene_flags,
+                    rewards=rewards,
+                    terminations=terminations,
+                    truncations=truncations,
+                    dones=dones,
+                    prev_logprobs=prev_logprobs,
+                    prev_values=prev_values,
+                    forward_inputs=forward_inputs,
+                    curr_obs=curr_obs,
+                    next_obs=next_obs,
+                )
+            )
+
+        return filtered_trajectories
 
 
 @dataclass(kw_only=True)
@@ -452,8 +483,17 @@ class EmbodiedRolloutResult:
         if result.forward_inputs is not None:
             self.forward_inputs.append(result.forward_inputs)
 
+    def mark_last_step_as_expert(self):
+        """Mark the last stored step as expert-intervened by setting all intervene_flags to True."""
+        if self.intervene_flags:
+            self.intervene_flags[-1] = torch.ones_like(
+                self.intervene_flags[-1], dtype=torch.bool
+            )  # self.intervene_flags[-1].shape = (bsz, num_action_chunk * action_env_dim)
+
     def update_last_actions(
-        self, intervene_actions: torch.Tensor, intervene_flags: torch.Tensor
+        self,
+        intervene_actions: torch.Tensor,
+        intervene_flags: torch.Tensor,
     ):
         # action: [bsz, num-chunk-size x action-dim]
         # intervene_actions: [bsz, num-chunk-size x action-dim]
@@ -486,6 +526,18 @@ class EmbodiedRolloutResult:
 
             full_flags = flags.expand_as(last_full_action).reshape(bsz, -1)
             self.intervene_flags[-1] = full_flags
+
+            # Sync forward_inputs["action"] with the merged human action so the student
+            # imitates the human, not its own prediction. Remove "model_action" because
+            # it is the student's own model-space prediction and must not be used as a
+            # supervised imitation target.
+            if self.forward_inputs:
+                last_fi = self.forward_inputs[-1]
+                if "action" in last_fi:
+                    last_fi["action"] = (
+                        last_full_action.reshape(bsz, -1).cpu().contiguous()
+                    )
+                last_fi.pop("model_action", None)
 
     def append_transitions(self, curr_obs=None, next_obs=None):
         assert curr_obs is not None and next_obs is not None

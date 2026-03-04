@@ -102,7 +102,27 @@ class MultiStepRolloutWorker(Worker):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
             self.hf_model.load_state_dict(model_dict)
 
+        # if set expert model path for dagger, init expert model and load weights
+        if self.cfg.rollout.get("expert_model", None):
+            # init expert model
+            expert_model_config = copy.deepcopy(self.cfg.actor.model)
+            with open_dict(expert_model_config):
+                expert_model_config.precision = self.cfg.rollout.expert_model.precision
+                expert_model_config.model_path = (
+                    self.cfg.rollout.expert_model.model_path
+                )
+            self.expert_model = get_model(expert_model_config)
+
+            if self.cfg.runner.get("expert_ckpt_path", None):
+                expert_model_dict = torch.load(self.cfg.runner.expert_ckpt_path)
+                self.expert_model.load_state_dict(expert_model_dict)
+
+        else:
+            self.expert_model = None
+
         self.hf_model.eval()
+        if self.expert_model is not None:
+            self.expert_model.eval()
 
         if self.cfg.rollout.get("enable_torch_compile", False):
             mode = self.cfg.rollout.get(
@@ -168,6 +188,36 @@ class MultiStepRolloutWorker(Worker):
             "max_new_tokens": self._length_params["max_new_token"],
         }
 
+        # dagger sampling parameters
+        self._dagger_sampling_params = {
+            "init_beta": self.cfg.algorithm.dagger.get("init_beta", 0.5),
+            "beta": self.cfg.algorithm.dagger.get("init_beta", 0.5),
+            "current_rollout_epoch": 0,
+            "beta_schedule": self.cfg.algorithm.dagger.get(
+                "beta_schedule", "exponential"
+            ),
+            "beta_min": self.cfg.algorithm.dagger.get("beta_min", 0.05),
+            "beta_decay": self.cfg.algorithm.dagger.get("beta_decay", 0.99),
+            "beta_decay_steps": self.cfg.algorithm.dagger.get("beta_decay_steps", 1000),
+        }
+
+    def update_dagger_beta(self):
+        if self.expert_model is None:
+            return
+
+        self._dagger_sampling_params["current_rollout_epoch"] += 1
+        if self._dagger_sampling_params["beta_schedule"] == "exponential":
+            new_beta = max(
+                self._dagger_sampling_params["beta_min"],
+                self._dagger_sampling_params["beta"]
+                * self._dagger_sampling_params["beta_decay"],
+            )
+        else:
+            raise NotImplementedError(
+                f"Beta schedule {self._dagger_sampling_params['beta_schedule']} is not implemented"
+            )
+        self._dagger_sampling_params["beta"] = new_beta
+
     def _setup_dst_ranks(self, batch_size: int) -> list[tuple[int, int]]:
         """Compute env peer ranks for this rollout worker.
 
@@ -218,7 +268,11 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.GR00T,
             SupportedModel.CNN_POLICY,
         ]:
-            kwargs = {"mode": mode}
+            # For dagger training, always use eval mode to avoid randomness
+            if self.cfg.algorithm.loss_type == "embodied_dagger":
+                kwargs = {"mode": "eval"}
+            else:
+                kwargs = {"mode": mode}
 
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.CNN_POLICY,
@@ -227,11 +281,27 @@ class MultiStepRolloutWorker(Worker):
         ]:
             kwargs["return_obs"] = not hasattr(self.hf_model, "q_head")
 
+        # dagger: use expert based on beta probability during training, never during eval
+        if mode == "eval":
+            use_expert = False
+        elif self.expert_model is not None:
+            use_expert = torch.rand(1).item() < self._dagger_sampling_params["beta"]
+        else:
+            use_expert = False
+
         with torch.no_grad():
-            actions, result = self.hf_model.predict_action_batch(
-                env_obs=env_obs,
-                **kwargs,
-            )
+            if use_expert:
+                actions, result = self.expert_model.predict_action_batch(
+                    env_obs=env_obs,
+                    **kwargs,
+                )
+            else:
+                actions, result = self.hf_model.predict_action_batch(
+                    env_obs=env_obs,
+                    **kwargs,
+                )
+
+            result["use_expert"] = bool(use_expert)
 
         return actions, result
 
@@ -316,11 +386,15 @@ class MultiStepRolloutWorker(Worker):
     @Worker.timer("generate_one_epoch")
     async def generate_one_epoch(self, input_channel: Channel, output_channel: Channel):
         last_obs = [None for i in range(self.num_pipeline_stages)]
+        self.update_dagger_beta()
+        overwrite_intervene_flag = False
         for _ in range(self.n_train_chunk_steps):
             for stage_id in range(self.num_pipeline_stages):
                 env_output = await self.recv_env_output(input_channel)
 
-                if env_output["intervene_actions"] is not None:
+                if overwrite_intervene_flag:
+                    self.rollout_results[stage_id].mark_last_step_as_expert()
+                elif env_output["intervene_actions"] is not None:
                     self.rollout_results[stage_id].update_last_actions(
                         env_output["intervene_actions"],
                         env_output["intervene_flags"],
@@ -329,6 +403,10 @@ class MultiStepRolloutWorker(Worker):
                 dones, rewards = self.get_dones_and_rewards(env_output)
 
                 actions, result = self.predict(env_output["obs"])
+                if "use_expert" in result and result["use_expert"]:
+                    overwrite_intervene_flag = True
+                else:
+                    overwrite_intervene_flag = False
 
                 env_output["obs"].pop("task_descriptions", None)
                 if env_output["final_obs"] is not None:
@@ -374,9 +452,12 @@ class MultiStepRolloutWorker(Worker):
         for stage_id in range(self.num_pipeline_stages):
             env_output = await self.recv_env_output(input_channel)
 
-            if env_output["intervene_actions"] is not None:
+            if overwrite_intervene_flag:
+                self.rollout_results[stage_id].mark_last_step_as_expert()
+            elif env_output["intervene_actions"] is not None:
                 self.rollout_results[stage_id].update_last_actions(
-                    env_output["intervene_actions"], env_output["intervene_flags"]
+                    env_output["intervene_actions"],
+                    env_output["intervene_flags"],
                 )
 
             dones, rewards = self.get_dones_and_rewards(env_output)
@@ -436,6 +517,11 @@ class MultiStepRolloutWorker(Worker):
 
         if self.enable_offload:
             self.offload_model()
+
+        # Return dagger beta for logging (only rank 0 returns meaningful value)
+        if self._rank == 0 and self.expert_model is not None:
+            return {"dagger_beta": self._dagger_sampling_params["beta"]}
+        return None
 
     async def evaluate(self, input_channel: Channel, output_channel: Channel):
         if self.enable_offload:

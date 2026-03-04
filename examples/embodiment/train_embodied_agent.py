@@ -45,6 +45,12 @@ def main(cfg) -> None:
         from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
 
         actor_worker_cls = EmbodiedSACFSDPPolicy
+    elif cfg.algorithm.loss_type == "embodied_dagger":
+        from rlinf.workers.actor.fsdp_dagger_policy_worker import (
+            EmbodiedDAGGERFSDPPolicy,
+        )
+
+        actor_worker_cls = EmbodiedDAGGERFSDPPolicy
     else:
         from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 

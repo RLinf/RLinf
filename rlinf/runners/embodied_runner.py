@@ -33,6 +33,7 @@ if TYPE_CHECKING:
         AsyncEmbodiedSACFSDPPolicy,
     )
     from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
+    from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPolicy
     from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
     from rlinf.workers.env.async_env_worker import AsyncEnvWorker
     from rlinf.workers.env.env_worker import EnvWorker
@@ -47,7 +48,10 @@ class EmbodiedRunner:
         self,
         cfg: DictConfig,
         actor: Union[
-            "EmbodiedFSDPActor", "EmbodiedSACFSDPPolicy", "AsyncEmbodiedSACFSDPPolicy"
+            "EmbodiedFSDPActor",
+            "EmbodiedSACFSDPPolicy",
+            "EmbodiedDAGGERFSDPPolicy",
+            "AsyncEmbodiedSACFSDPPolicy",
         ],
         rollout: Union["MultiStepRolloutWorker", "AsyncMultiStepRolloutWorker"],
         env: Union["EnvWorker", "AsyncEnvWorker"],
@@ -179,7 +183,7 @@ class EmbodiedRunner:
                     self.actor.recv_rollout_trajectories(
                         input_channel=self.actor_channel
                     ).wait()
-                    rollout_handle.wait()
+                    rollout_results = rollout_handle.wait()
 
                 # compute advantages and returns.
                 with self.timer("cal_adv_and_returns"):
@@ -241,6 +245,12 @@ class EmbodiedRunner:
             rollout_metrics = {
                 f"rollout/{k}": v for k, v in actor_rollout_metrics[0].items()
             }
+
+            # Add any extra metrics returned by rollout workers (rank 0 only)
+            if rollout_results[0] is not None:
+                rollout_metrics.update(
+                    {f"rollout/{k}": v for k, v in rollout_results[0].items()}
+                )
 
             training_metrics = {
                 f"train/{k}": v for k, v in actor_training_metrics[0].items()
