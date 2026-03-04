@@ -247,6 +247,17 @@ as well as reinforcement learning training examples on real robots.
         Steer a frozen Pi0 diffusion policy with lightweight SAC in noise space
       </p>
     </div>
+
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/sac-flow-overview.png"
+          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="yam_flowgrpo.html" style="text-decoration: underline; color: blue;">
+          <b>flowGRPO on YAM (Real World)</b>
+        </a><br>
+        Flow Matching policy + GRPO on YAM bimanual robot with Beaker GPUs
+      </p>
+    </div>
   </div>
 
 
@@ -276,4 +287,5 @@ as well as reinforcement learning training examples on real robots.
    sft_vlm
    co_training
    dsrl
+   yam_flowgrpo
 
