@@ -221,11 +221,13 @@ actor:
       param_dtype: "fp16"
       reduce_dtype: "fp16"
       buffer_dtype: "fp32"
-
-    amp:
-      enabled: True                  # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
-      precision: "fp16"              # precision for AMP, options are ["fp16" , "bf16"]
-      use_grad_scaler: True          # if True, GradScaler will be used for AMP training to prevent underflow.
+  
+    amp_autocast:                       # Do not enable `amp_autocast` with FSDP `mixed_precision` enabled, using both will result in conflict.  
+      enabled: True                    # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
+      precision: "fp16"                 # precision for AMP, options are ["fp16" , "bf16"]
+    
+    amp_grad_scaler:
+      enabled: True               # if True, GradScaler will be used for AMP training to prevent underflow.
 
 reward:
   group_name: "RewardGroup"

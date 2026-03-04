@@ -233,7 +233,8 @@ actor:
       enabled: False                    # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
       precision: "bf16"                 # precision for AMP, options are ["fp16" , "bf16"]
     
-    amp_grad_scaler: False               # if True, GradScaler will be used for AMP training to prevent underflow.
+    amp_grad_scaler:
+      enabled: False               # if True, GradScaler will be used for AMP training to prevent underflow.
 
 reward:
   group_name: "RewardGroup"

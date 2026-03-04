@@ -103,11 +103,11 @@ class FSDPModelManager:
         """
         from contextlib import nullcontext
 
-        if not self._cfg.fsdp_config.amp.enabled:
+        if not self._cfg.fsdp_config.amp_autocast.enabled:
             self._logger.info("[FSDP] AMP is disabled.")
             return nullcontext()
 
-        precision = torch_dtype_from_precision(self._cfg.fsdp_config.amp.precision)
+        precision = torch_dtype_from_precision(self._cfg.fsdp_config.amp_autocast.precision)
 
         self._logger.info(f"[FSDP] AMP is enabled with precision: {precision}.")
 
@@ -263,11 +263,11 @@ class FSDPModelManager:
                 if value is not None:
                     kwargs[key] = value
             self.grad_scaler = self.build_grad_scaler(
-                self._cfg.fsdp_config.get("amp_grad_scaler", False), **kwargs
+                self._cfg.fsdp_config.amp_grad_scaler.get("enabled", False), **kwargs
             )
         else:
             self.grad_scaler = self.build_grad_scaler(
-                self._cfg.fsdp_config.amp.use_grad_scaler
+                self._cfg.fsdp_config.amp_grad_scaler
             )
 
     def get_model_state_dict(self, cpu_offload: bool, full_state_dict: bool) -> dict:

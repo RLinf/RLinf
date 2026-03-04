@@ -688,7 +688,7 @@ class FSDPActor(FSDPModelManager, Worker):
                 min(total_result_len, self.cfg.algorithm.n_minibatches),
             )
             for split_result in split_results:
-                output_channel.put(split_result, async_op=True)
+                output_channel.put(split_result)
         assert total_result_len == total_result_len_per_dp, (
             f"Expected {total_result_len_per_dp} sequences from channel, but got {total_result_len}"
         )

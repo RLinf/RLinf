@@ -25,6 +25,7 @@ import torch.nn.functional as F
 import yaml
 from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
+from typing import Optional
 
 from rlinf.envs import SupportedEnvType
 from rlinf.scheduler.cluster import Cluster
@@ -327,31 +328,42 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
                 "fsdp.amp_autocast and fsdp.amp_grad_scaler should not be used when fsdp.amp is used"
             )
             config.amp = {}
-            config.amp.enabled = config.amp_autocast.get("enabled", False)
-            config.amp.precision = config.amp_autocast.get("precision", "bf16")
-            config.amp.use_grad_scaler = config.get("amp_grad_scaler", False)
+            config.amp_autocast.enabled = config.amp_autocast.get("enabled", False)
+            config.amp_autocast.precision = config.amp_autocast.get("precision", "bf16")
+            amp_gs_cfg = config.get("amp_grad_scaler", {})
+            config.amp_grad_scaler = {
+                "enabled": amp_gs_cfg.get("enabled", False),
+                "init_scale": amp_gs_cfg.get("init_scale", None),
+                "growth_interval": amp_gs_cfg.get("growth_interval", None),
+            }
         else:
             if "amp" not in config:
                 config.amp = {}
-            config.amp.enabled = config.amp.get("enabled", False)
-            if config.amp.enabled is False:
+            config.amp_autocast.enabled = config.amp.get("enabled", False)
+            if config.amp_autocast.enabled is False:
                 if "precision" in config.amp:
                     logging.warning(
                         "fsdp_config.amp.precision will be deprecated under amp disabled condition, use fsdp_config.amp_autocast.precision instead"
                     )
                 if "use_grad_scaler" in config.amp:
                     logging.warning(
-                        "fsdp_config.amp.use_grad_scaler will be deprecated under amp disabled condition, use fsdp_config.amp_grad_scaler instead"
+                        "fsdp_config.amp_grad_scaler will be deprecated under amp disabled condition, use fsdp_config.amp_grad_scaler instead"
                     )
-            config.amp.precision = config.amp.get("precision", "bf16")
-            config.amp.use_grad_scaler = config.amp.get("use_grad_scaler", False)
+            config.amp_autocast.precision = config.amp.get("precision", "bf16")
+            use_grad_scaler = config.amp.get("use_grad_scaler", False)
 
-        if config.amp.enabled and use_fsdp_mixed_precision:
+            config.amp_grad_scaler = {
+                "enabled": use_grad_scaler,
+                "init_scale": None,
+                "growth_interval": None,
+            }
+
+        if config.amp_autocast.enabled and use_fsdp_mixed_precision:
             assert False, (
                 "amp_autocast should not be enabled when fsdp mixed_precision is enabled"
             )
-        assert config.amp.precision in ["fp16", "bf16", "fp32"], (
-            "fsdp.amp.precision must be one of ['fp16', 'bf16', 'fp32']"
+        assert config.amp_autocast.precision in ["fp16", "bf16", "fp32"], (
+            "fsdp.amp_autocast.precision must be one of ['fp16', 'bf16', 'fp32']"
         )
         return config
 
