@@ -18,14 +18,13 @@ import logging
 import os
 from dataclasses import asdict
 from enum import Enum
-from typing import TYPE_CHECKING, Callable, Union
+from typing import TYPE_CHECKING, Callable, Optional, Union
 
 import torch
 import torch.nn.functional as F
 import yaml
 from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
-from typing import Optional
 
 from rlinf.envs import SupportedEnvType
 from rlinf.scheduler.cluster import Cluster

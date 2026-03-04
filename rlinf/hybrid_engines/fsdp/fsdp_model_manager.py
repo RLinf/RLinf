@@ -107,7 +107,9 @@ class FSDPModelManager:
             self._logger.info("[FSDP] AMP is disabled.")
             return nullcontext()
 
-        precision = torch_dtype_from_precision(self._cfg.fsdp_config.amp_autocast.precision)
+        precision = torch_dtype_from_precision(
+            self._cfg.fsdp_config.amp_autocast.precision
+        )
 
         self._logger.info(f"[FSDP] AMP is enabled with precision: {precision}.")
 
