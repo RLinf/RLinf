@@ -43,13 +43,19 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
    hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora \
    --local-dir /path/to/model/oft-sft/lora_004000
 
-   # 下载 assets
-   hf download --repo-type dataset RLinf/maniskill_assets \
-   --local-dir ./rlinf/envs/maniskill/assets
+**步骤 2：下载 ManiSkill 资源文件**
+
+该步骤对在 ManiSkill3 上训练 **OpenVLA** 和 **OpenVLA-OFT** 都是必需的。
+
+.. code-block:: bash
+
+   cd <path_to_RLinf>/rlinf/envs/maniskill
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
+   hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets
 
 
-
-**步骤 2：修改配置文件**
+**步骤 3：修改配置文件**
 
 在运行脚本之前，你需要根据模型和数据集的下载路径，修改 ``./examples/embodiment/config/maniskill_ppo_openvla_quickstart.yaml`` 文件。具体而言，将以下配置更新为 `gen-robot/openvla-7b-rlvla-warmup` 检查点所在的路径。
 
@@ -65,7 +71,7 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
 - ``actor.model.lora_path``
 - ``actor.model.is_lora: True``
 
-**步骤 3：启动训练**
+**步骤 4：启动训练**
 
 完成上述配置文件修改后，运行以下命令启动训练：
 

@@ -26,7 +26,6 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
         super().__init__(cfg)
         self._generate_task: asyncio.Task = None
         self.staleness_threshold = cfg.algorithm.get("staleness_threshold", None)
-        self.finished_episodes = 0
         self.num_envs_per_stage = (
             self.cfg.env.train.total_num_envs
             // self._world_size
@@ -73,12 +72,14 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                 for _ in range(self.num_pipeline_stages)
             ]
             await self.wait_if_stale()
-            await self.generate_one_epoch(input_channel, output_channel)
+            for _ in range(self.rollout_epoch):
+                await self.generate_one_epoch(input_channel, output_channel)
             for stage_id in range(self.num_pipeline_stages):
                 await self.send_rollout_trajectories(
                     self.rollout_results[stage_id], replay_channel
                 )
-            self.finished_episodes += self.total_num_train_envs
+            if self.finished_episodes is not None:
+                self.finished_episodes += self.total_num_train_envs * self.rollout_epoch
             rollout_metrics = self.pop_execution_times()
             rollout_metrics = {
                 f"time/rollout/{k}": v for k, v in rollout_metrics.items()
@@ -88,11 +89,19 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
     async def wait_if_stale(self) -> None:
         if self.staleness_threshold is None:
             return
+        assert self.finished_episodes is not None, (
+            "finished_episodes should be initialized."
+        )
         while True:
             capacity = (
-                self.staleness_threshold + self.version + 1
-            ) * self.total_num_train_envs
-            if self.finished_episodes + self.total_num_train_envs <= capacity:
+                (self.staleness_threshold + self.version + 1)
+                * self.total_num_train_envs
+                * self.rollout_epoch
+            )
+            if (
+                self.finished_episodes + self.total_num_train_envs * self.rollout_epoch
+                <= capacity
+            ):
                 break
             await asyncio.sleep(0.01)
 
