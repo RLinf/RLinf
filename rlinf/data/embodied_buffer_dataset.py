@@ -30,7 +30,6 @@ class ReplayBufferDataset(IterableDataset):
         batch_size: int,
         min_replay_buffer_size: int,
         min_demo_buffer_size: int,
-        seed: int,
         **kwargs,
     ):
         self.replay_buffer = replay_buffer
@@ -58,12 +57,6 @@ class ReplayBufferDataset(IterableDataset):
                 else:
                     batch = self.replay_buffer.sample(self.batch_size)
                 yield batch
-
-    def __len__(self):
-        if self.demo_buffer is not None:
-            return len(self.replay_buffer) + len(self.demo_buffer)
-        else:
-            return len(self.replay_buffer)
 
     def close(self):
         del self.replay_buffer
@@ -142,12 +135,6 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
                 if self._stop_event.is_set():
                     break
                 continue
-
-    def __len__(self):
-        if self.demo_buffer is not None:
-            return len(self.replay_buffer) + len(self.demo_buffer)
-        else:
-            return len(self.replay_buffer)
 
     def close(self):
         self._stop_event.set()
