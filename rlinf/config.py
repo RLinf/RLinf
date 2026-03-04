@@ -324,9 +324,8 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
         )
         if "amp_autocast" in config or "amp_grad_scaler" in config:
             assert "amp" not in config, (
-                "fsdp.amp_autocast and fsdp.amp_grad_scaler should not be used when fsdp.amp is used"
+                "fsdp.amp should not be used when fsdp.amp_autocast or fsdp.amp_grad_scaler is used"
             )
-            config.amp = {}
             config.amp_autocast.enabled = config.amp_autocast.get("enabled", False)
             config.amp_autocast.precision = config.amp_autocast.get("precision", "bf16")
             amp_gs_cfg = config.get("amp_grad_scaler", {})
@@ -338,19 +337,19 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
         else:
             if "amp" not in config:
                 config.amp = {}
-            config.amp_autocast.enabled = config.amp.get("enabled", False)
-            if config.amp_autocast.enabled is False:
+            amp_enabled = config.amp.get("enabled", False)
+            if amp_enabled is False:
                 if "precision" in config.amp:
                     logging.warning(
-                        "fsdp_config.amp.precision will be deprecated under amp disabled condition, use fsdp_config.amp_autocast.precision instead"
+                        "fsdp_config.amp.precision will be deprecated under amp disabled condition."
                     )
-                if "use_grad_scaler" in config.amp:
-                    logging.warning(
-                        "fsdp_config.amp_grad_scaler will be deprecated under amp disabled condition, use fsdp_config.amp_grad_scaler instead"
-                    )
-            config.amp_autocast.precision = config.amp.get("precision", "bf16")
+            amp_precision = config.amp.get("precision", "bf16")
             use_grad_scaler = config.amp.get("use_grad_scaler", False)
-
+            
+            config.amp_autocast = {
+                "enabled": amp_enabled,
+                "precision": amp_precision,
+            }
             config.amp_grad_scaler = {
                 "enabled": use_grad_scaler,
                 "init_scale": None,

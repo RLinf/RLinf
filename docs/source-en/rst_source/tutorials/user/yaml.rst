@@ -546,11 +546,13 @@ actor
         param_dtype: ${actor.model.precision}
         reduce_dtype: ${actor.model.precision}
         buffer_dtype: ${actor.model.precision}
-
-      amp:
-        enabled: False
-        precision: "bf16"
-        use_grad_scaler: False
+     
+      amp_autocast:                                
+        enabled: False                    
+        precision: "bf16"                 
+      
+      amp_grad_scaler:
+        enabled: False               
 
 **Top-level**
 
@@ -740,11 +742,15 @@ actor
 
 ``actor.fsdp_config.mixed_precision.buffer_dtype``: FSDP parameter, specifying the data type used for the buffer.
 
-``actor.fsdp_config.amp.enabled``: FSDP/FSDP2 parameter, indicating whether automatic mixed-precision training is enabled.
+``actor.fsdp_config.amp_autocast.enabled``: FSDP/FSDP2 parameter, indicating whether automatic mixed-precision training is enabled.
 
-``actor.fsdp_config.amp.precision``: FSDP/FSDP2 parameter, indicating the numerical precision used by AMP.
+``actor.fsdp_config.amp_autocast.precision``: FSDP/FSDP2 parameter, indicating the numerical precision used by AMP.
 
-``actor.fsdp_config.amp.use_grad_scaler``: FSDP/FSDP2 parameter, indicating whether the gradient scaler is enabled.
+``actor.fsdp_config.amp_grad_scaler.enabled``: FSDP/FSDP2 parameter, indicating whether the gradient scaler is enabled.
+
+``actor.fsdp_config.amp_grad_scaler.init_scale``: FSDP/FSDP2 parameter, indicating the initial scale factor used by the gradient scaler to prevent numerical underflow.
+
+``actor.fsdp_config.amp_grad_scaler.growth_interval``: FSDP/FSDP2 parameter, indicating the number of consecutive steps without gradient overflows required before the scale factor is increased.
 
 reward
 ~~~~~~~~~~~~~~~
