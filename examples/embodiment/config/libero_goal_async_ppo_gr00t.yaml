@@ -15,14 +15,14 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: all
+    actor,env,rollout: 0-3
 
 runner:
   task_type: embodied
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "libero_goal_ppo_gr00t"
+    experiment_name: "libero_goal_async_ppo_gr00t"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
@@ -136,7 +136,7 @@ actor:
     adam_eps: 1.0e-08
     weight_decay: 0.01
     clip_grad: 1.0
-    critic_warmup_steps: 10
+    critic_warmup_steps: 20
   
   fsdp_config:
     strategy: "fsdp"
