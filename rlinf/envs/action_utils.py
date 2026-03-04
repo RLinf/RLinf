@@ -141,6 +141,32 @@ def prepare_actions_for_robocasa(
         return chunk_actions
 
 
+def prepare_actions_for_genesis(
+    raw_chunk_actions,
+    model_type,
+) -> torch.Tensor:
+    """Prepare actions for the Genesis environment.
+
+    For VLA models (OpenVLA / OpenVLA-OFT), transforms the gripper
+    dimension from a [0, 1] continuous value to a {-1, +1} binary signal
+    (matching the convention used by other embodied envs).
+
+    For all other models the actions are returned as-is, converted to a
+    torch tensor on CUDA.
+    """
+    if isinstance(raw_chunk_actions, np.ndarray):
+        chunk_actions = torch.from_numpy(raw_chunk_actions).float()
+    else:
+        chunk_actions = raw_chunk_actions.clone().float()
+    if SupportedModel(model_type) in [
+        SupportedModel.OPENVLA,
+        SupportedModel.OPENVLA_OFT,
+    ]:
+        chunk_actions[..., -1] = 2 * chunk_actions[..., -1] - 1
+        chunk_actions[..., -1] = torch.sign(chunk_actions[..., -1]) * -1.0
+    return chunk_actions
+
+
 def prepare_actions_for_mujoco(raw_chunk_actions, model_type):
     if raw_chunk_actions.shape[-1] >= 7:
         chunk_actions = np.concatenate(
@@ -209,6 +235,11 @@ def prepare_actions(
         )
     elif env_type == SupportedEnvType.REALWORLD:
         chunk_actions = raw_chunk_actions
+    elif env_type == SupportedEnvType.GENESIS:
+        chunk_actions = prepare_actions_for_genesis(
+            raw_chunk_actions=raw_chunk_actions,
+            model_type=model_type,
+        )
     elif env_type == SupportedEnvType.FRANKASIM:
         chunk_actions = prepare_actions_for_mujoco(
             raw_chunk_actions=raw_chunk_actions,
