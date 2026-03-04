@@ -48,7 +48,7 @@ def _compat_step(env: gym.Env, action):
     return out
 
 
-class EpisodeMonitor(gym.ActionWrapper):
+class EpisodeMonitor(gym.Wrapper):
     def __init__(self, env: gym.Env):
         super().__init__(env)
         self._reset_stats()

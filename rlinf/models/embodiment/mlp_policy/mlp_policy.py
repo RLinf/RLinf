@@ -15,7 +15,6 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.distributions import Independent
 from torch.distributions.normal import Normal
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
@@ -255,29 +254,30 @@ class MLPPolicy(nn.Module, BasePolicy):
 
         if kind == "actor":
             feat = self.backbone(observations)
-            action_mean = torch.tanh(self.mean_head(feat))
+            action_mean_raw = self.mean_head(feat)
             if self.state_dependent_std:
                 action_logstd = self.logstd_head(feat)
             else:
-                action_logstd = self.logstd_param.unsqueeze(0).expand_as(action_mean)
+                action_logstd = self.logstd_param.unsqueeze(0).expand_as(
+                    action_mean_raw
+                )
             action_logstd = torch.clamp(
                 action_logstd, self.log_std_min, self.log_std_max
             )
             action_std = torch.exp(action_logstd)
-            dist = Independent(Normal(action_mean, action_std), 1)
 
             if actions is not None:
-                return dist.log_prob(actions)
+                raw_actions = torch.atanh(actions.clamp(-1 + 1e-6, 1 - 1e-6))
+                log_prob = (
+                    Normal(action_mean_raw, action_std).log_prob(raw_actions).sum(-1)
+                )
+                log_prob -= torch.log(1 - actions.pow(2) + 1e-6).sum(-1)
+                return log_prob
 
-            mode = "eval" if float(temperature) == 0.0 else "train"
-            if mode == "train":
-                sampling_std = action_std * max(float(temperature), 1e-6)
-                raw_action = Normal(action_mean, sampling_std).rsample()
-            elif mode == "eval":
-                raw_action = action_mean.clone()
-            else:
-                raise NotImplementedError(f"{mode=}")
-            return torch.clamp(raw_action, -1.0, 1.0)
+            raw_action = Normal(
+                action_mean_raw, action_std * max(float(temperature), 1e-6)
+            ).rsample()
+            return torch.tanh(raw_action)
         if kind == "critic":
             if actions is None:
                 raise ValueError("IQL critic expects actions.")
