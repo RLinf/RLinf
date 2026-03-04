@@ -1001,7 +1001,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         )
 
         self.enable_sft_co_train = cfg.actor.get("enable_sft_co_train", False)
-
+        self.version = 0
         if self.enable_sft_co_train:
             self._build_sft_data_loader()
 
@@ -1473,9 +1473,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         return mean_metric_dict
 
-    def set_global_step(self, global_step) -> None:
+    def set_global_step(self, global_step: int) -> None:
         """
         Set the global step for the model, if needed.
         """
+        self.version = global_step
         if hasattr(self.model, "set_global_step"):
             self.model.set_global_step(global_step)
