@@ -16,7 +16,6 @@ import queue
 import threading
 import time
 
-import torch
 from torch.utils.data import IterableDataset
 
 from rlinf.data.replay_buffer import TrajectoryReplayBuffer
@@ -32,6 +31,56 @@ class ReplayBufferDataset(IterableDataset):
         min_replay_buffer_size: int,
         min_demo_buffer_size: int,
         seed: int,
+        **kwargs,
+    ):
+        self.replay_buffer = replay_buffer
+        self.demo_buffer = demo_buffer
+        self.min_replay_buffer_size = min_replay_buffer_size
+        self.min_demo_buffer_size = min_demo_buffer_size
+
+        self.batch_size = batch_size
+
+    def __iter__(self):
+        while True:
+            is_ready = True
+            if not self.replay_buffer.is_ready(self.min_replay_buffer_size):
+                is_ready = False
+            if self.demo_buffer is not None and not self.demo_buffer.is_ready(
+                self.min_demo_buffer_size
+            ):
+                is_ready = False
+
+            if is_ready:
+                if self.demo_buffer is not None:
+                    replay_batch = self.replay_buffer.sample(self.batch_size // 2)
+                    demo_batch = self.demo_buffer.sample(self.batch_size // 2)
+                    batch = concat_batch(replay_batch, demo_batch)
+                else:
+                    batch = self.replay_buffer.sample(self.batch_size)
+                yield batch
+
+    def __len__(self):
+        if self.demo_buffer is not None:
+            return len(self.replay_buffer) + len(self.demo_buffer)
+        else:
+            return len(self.replay_buffer)
+
+    def close(self):
+        del self.replay_buffer
+        del self.demo_buffer
+
+    def __del__(self):
+        self.close()
+
+
+class PreloadReplayBufferDataset(ReplayBufferDataset):
+    def __init__(
+        self,
+        replay_buffer: TrajectoryReplayBuffer,
+        demo_buffer: TrajectoryReplayBuffer,
+        batch_size: int,
+        min_replay_buffer_size: int,
+        min_demo_buffer_size: int,
         prefetch_size: int = 10,
     ):
         self._stop_event = threading.Event()
@@ -42,14 +91,10 @@ class ReplayBufferDataset(IterableDataset):
         self.min_demo_buffer_size = min_demo_buffer_size
 
         self.batch_size = batch_size
-        self.seed = seed
         self.prefetch_size = prefetch_size
 
         self.preload_queue = queue.Queue(maxsize=prefetch_size)
         self.sample_thread = None
-
-        self.random_generator = torch.Generator()
-        self.random_generator.manual_seed(self.seed)
 
     def _sample_buffer(self):
         while not self._stop_event.is_set():
@@ -77,6 +122,7 @@ class ReplayBufferDataset(IterableDataset):
             except queue.Full:
                 print("Queue is full, skipping sample")
                 time.sleep(0.5)
+                continue
             except Exception as e:
                 print(f"Error in ReplayBufferDataset: {e}")
                 break

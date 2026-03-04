@@ -24,6 +24,7 @@ from torch.utils.data import DataLoader
 
 from rlinf.config import SupportedModel
 from rlinf.data.embodied_buffer_dataset import (
+    PreloadReplayBufferDataset,
     ReplayBufferDataset,
     replay_buffer_collate_fn,
 )
@@ -213,14 +214,17 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                     world_size=self._world_size,
                 )
 
-        self.buffer_dataset = ReplayBufferDataset(
+        if self.cfg.algorithm.replay_buffer.get("enable_preload", False):
+            buffer_dataset_cls = PreloadReplayBufferDataset
+        else:
+            buffer_dataset_cls = ReplayBufferDataset
+        self.buffer_dataset = buffer_dataset_cls(
             replay_buffer=self.replay_buffer,
             demo_buffer=self.demo_buffer,
             batch_size=self.cfg.actor.micro_batch_size,
             min_replay_buffer_size=self.cfg.algorithm.replay_buffer.min_buffer_size,
             min_demo_buffer_size=min_demo_buffer_size,
-            seed=seed,
-            prefetch_size=self.cfg.actor.get("prefetch_size", 10),
+            prefetch_size=self.cfg.algorithm.replay_buffer.get("prefetch_size", 10),
         )
         self.buffer_dataloader = DataLoader(
             self.buffer_dataset,
