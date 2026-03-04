@@ -71,9 +71,9 @@ algorithm:
   
   replay_buffer:
     enable_cache: True
-    cache_size: 1000 # number of trajectories cached in memory
+    cache_size: 2000 # number of trajectories cached in memory
     min_buffer_size: 8  # Minimum buffer size before training starts (in number of trajectories). If set too large, it will take a long time to start real-world training 
-    sample_window_size: 1000 # number of latest trajectories to sample from for replay buffer
+    sample_window_size: 2000 # number of latest trajectories to sample from for replay buffer
     auto_save: False
 
 env:
@@ -139,7 +139,7 @@ actor:
     adam_eps: 1.0e-08
     weight_decay: 1e-10
     clip_grad: 5.0
-    critic_warmup_steps: 0
+    critic_warmup_steps: 20
 
   # Override the default values in training_backend/fsdp
   fsdp_config:

@@ -415,7 +415,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
         # Collect metrics
         metrics_data = {
-            "sac/actor_loss": np.mean(gbs_actor_loss),
+            "dagger/actor_loss": np.mean(gbs_actor_loss),
             "actor/lr": self.optimizer.param_groups[0]["lr"],
             "actor/grad_norm": actor_grad_norm,
         }
