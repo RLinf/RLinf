@@ -456,7 +456,10 @@ class MegatronActor(MegatronModelManager, Worker):
             position_ids = batch["position_ids"]
             padding_seqlen = None
             if self.variable_seq_lengths is False:
-                padding_seqlen = self.encoder_seq_length
+                if self.enable_dynamic_batch_size:
+                    padding_seqlen = self.max_tokens_per_mbs
+                else:
+                    padding_seqlen = self.encoder_seq_length
 
             response_len = self.response_len
             responses = input_ids[:, -response_len:]

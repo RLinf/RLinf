@@ -39,7 +39,7 @@ def gather_along_first_dim(input_, group):
     dim_size[0] = dim_size[0] * world_size
 
     output = torch.empty(
-        dim_size, dtype=input_.dtype, device=torch.cuda.current_device()
+        dim_size, dtype=input_.dtype, device=input_.device
     )
     torch.distributed.all_gather_into_tensor(output, input_.contiguous(), group=group)
 
@@ -211,7 +211,7 @@ class FuscoDispatch(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):
-        return combine_raw(grad_output, ctx.info), None, None
+        return combine_raw(grad_output, ctx.info), None
 
 
 class FuscoCombine(torch.autograd.Function):
@@ -226,7 +226,7 @@ class FuscoCombine(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):
-        return dispatch_raw(grad_output, ctx.info), None, None
+        return dispatch_raw(grad_output, ctx.info), None
 
 
 class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
@@ -282,7 +282,7 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
         if self.is_2dmode:
             intra_node_ranks = [
                 list(range(start, start + self.num_local_ranks))
-                for start in range(0, torch.distributed.get_world_size(), self.num_local_ranks)
+                for start in range(0, torch.distributed.get_world_size(self.ep_group), self.num_local_ranks)
             ]
             intra_group = None
             nccl_options = torch.distributed.ProcessGroupNCCL.Options()
