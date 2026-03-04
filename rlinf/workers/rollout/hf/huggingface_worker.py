@@ -45,7 +45,7 @@ class MultiStepRolloutWorker(Worker):
         self.should_stop = False
 
         self.actor_group_name = cfg.actor.group_name
-        self.device = torch.cuda.current_device()
+        self.device = self.torch_platform.current_device()
 
         self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
         self.enable_offload = self.cfg.rollout.get("enable_offload", False)
@@ -302,7 +302,7 @@ class MultiStepRolloutWorker(Worker):
             self.version = version
         del param_state_dict
         gc.collect()
-        torch.cuda.empty_cache()
+        self.torch_platform.empty_cache()
 
     async def send_rollout_trajectories(
         self, rollout_result: EmbodiedRolloutResult, channel: Channel
@@ -458,7 +458,7 @@ class MultiStepRolloutWorker(Worker):
         if self.enable_cuda_graph:
             self.hf_model.release_cuda_graph()
         self.hf_model.to("cpu")
-        torch.cuda.empty_cache()
+        self.torch_platform.empty_cache()
 
     def reload_model(self):
         self.hf_model.to(self.device)
