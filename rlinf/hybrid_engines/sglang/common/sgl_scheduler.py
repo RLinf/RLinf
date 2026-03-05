@@ -154,10 +154,11 @@ class Scheduler(_Scheduler):
             # recv from the Megatron backend
             # Megatron use weight bucket to sync weight, the bucket length in dict of bucket 0, bucket_length
             state_dict.pop("bucket_length")
-            assert bucket_length > 0, f"bucket_length {bucket_length} is invalid"
 
         if self.is_weight_offloaded:
             self.resume_memory_occupation(ResumeMemoryOccupationReqInput())
+
+        assert bucket_length > 0, f"bucket_length {bucket_length} is invalid"
 
         self.batch_load_hf_weight(state_dict)
         if bucket_length > 1:
@@ -178,7 +179,6 @@ class Scheduler(_Scheduler):
 
             state_dict = recv_handle.wait()
             self.batch_load_hf_weight(state_dict)
-        state_dict = None
 
         if self.weight_norm_dict is not None:
             # validate the weight norm dict between load model and first sync.
@@ -300,16 +300,17 @@ class Scheduler(_Scheduler):
         return_logprob: bool,
         skip_req=None,
     ):
+
+        # for sglang 0.5.0 and later, we use the original _handle_batch_output
+        if not self.patch_return_output_ids:
+            return super().stream_output_generation(reqs, return_logprob, skip_req)
+
         from sglang.srt.managers.scheduler_output_processor_mixin import (
             DEFAULT_FORCE_STREAM_INTERVAL,
             BaseFinishReason,
             BatchTokenIDOut,
             DisaggregationMode,
         )
-
-        # for sglang 0.5.0 and later, we use the original _handle_batch_output
-        if not self.patch_return_output_ids:
-            return super().stream_output_generation(reqs, return_logprob, skip_req)
 
         rids = []
         finished_reasons: list[BaseFinishReason] = []

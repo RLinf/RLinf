@@ -15,15 +15,17 @@
 import asyncio
 import copy
 import dataclasses
+import time
 from typing import Any, Literal, Optional
 
 from omegaconf import DictConfig
+from qwen_vl_utils import process_vision_info
 from sglang.srt.managers.io_struct import (
     ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
 )
 from sglang.srt.server_args import ServerArgs
-from transformers import AutoTokenizer
+from transformers import AutoProcessor, AutoTokenizer
 
 from rlinf.config import torch_dtype_from_precision
 from rlinf.data.io_struct import (
@@ -67,6 +69,9 @@ class SGLangWorker(Worker):
         self._placement = placement
 
         self._tokenizer = AutoTokenizer.from_pretrained(
+            self._cfg_rollout.model.model_path
+        )
+        self._processor = AutoProcessor.from_pretrained(
             self._cfg_rollout.model.model_path
         )
         self._return_logprobs = self._cfg_rollout.return_logprobs
@@ -270,8 +275,8 @@ class SGLangWorker(Worker):
                 )
             )
             self.log_info(f"SGLang worker {self._rank} initialized.")
-            if self._cfg_rollout.validate_weight:
-                await self._validate_weight_at_first()
+            # if self._cfg_rollout.validate_weight:
+            #     await self._validate_weight_at_first()
             if self._placement.is_collocated:
                 await self.offload_engine()
             if self._use_auto_scheduler:
@@ -460,6 +465,128 @@ class SGLangWorker(Worker):
                 await self.offload_engine()
                 if self._use_auto_scheduler:
                     await self._scheduler.report_offloaded()
+
+    async def vl_generate(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+    ):
+        while True:
+            messages = await input_channel.get(async_op=True).async_wait()
+            if messages is None:
+                break
+
+            image_inputs, _ = process_vision_info(
+                messages, image_patch_size=self._processor.image_processor.patch_size
+            )
+            text = self._processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            result = await self.async_generate(
+                prompt=text,
+                sampling_params=self._sampling_params,
+                image_data=image_inputs,
+                return_logprob=self._return_logprobs,
+            )
+            await output_channel.put(result, async_op=True).async_wait()
+
+    async def _vl_generate_and_send(
+        self,
+        output_channel: Channel,
+        channel_key: str,
+        messages: list[dict],
+        sampling_params: Optional[dict] = None,
+    ):
+        """Process a single VL generation request and send result to output channel.
+
+        Args:
+            output_channel: Channel to send the result to.
+            channel_key: Unique key to identify this request in the channel.
+            messages: List of messages in OpenAI chat format, may contain images.
+            sampling_params: Optional sampling parameters to override defaults.
+        """
+        t_preprocess_start = time.perf_counter()
+        image_inputs, _ = process_vision_info(
+            messages, image_patch_size=self._processor.image_processor.patch_size
+        )
+        text = self._processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True,
+            enable_thinking=False,
+        )
+        vision_preprocess_s = time.perf_counter() - t_preprocess_start
+
+        final_sampling_params = self._sampling_params
+        if sampling_params is not None and len(sampling_params) > 0:
+            final_sampling_params = copy.deepcopy(self._sampling_params)
+            for key, value in sampling_params.items():
+                final_sampling_params[key] = value
+
+        t_infer_start = time.perf_counter()
+        result, _ = await self.async_generate(
+            prompt=text,
+            sampling_params=final_sampling_params,
+            image_data=image_inputs,
+            return_logprob=self._return_logprobs,
+        )
+        engine_inference_s = time.perf_counter() - t_infer_start
+
+        if isinstance(result, dict):
+            result["engine_inference_s"] = engine_inference_s
+            result["vision_preprocess_s"] = vision_preprocess_s
+            meta = result.get("meta_info", {})
+            result["prompt_tokens"] = meta.get("prompt_tokens", -1)
+            result["completion_tokens"] = meta.get("completion_tokens", len(result.get("output_ids", [])))
+
+        t_put_start = time.perf_counter()
+        await output_channel.put(
+            result, key=channel_key, async_op=True
+        ).async_wait()
+        engine_put_s = time.perf_counter() - t_put_start
+
+        # 诊断日志：token 数量 + 耗时
+        output_ids = result.get("output_ids", []) if isinstance(result, dict) else []
+        meta = result.get("meta_info", {}) if isinstance(result, dict) else {}
+        prompt_tokens = meta.get("prompt_tokens", -1)
+        completion_tokens = meta.get("completion_tokens", len(output_ids))
+        finish_reason = meta.get("finish_reason", {})
+        self.log_info(
+            f"[VL diag] channel_key={channel_key[:8]}... "
+            f"prompt_tokens={prompt_tokens} completion_tokens={completion_tokens} "
+            f"finish_reason={finish_reason} "
+            f"vision_preprocess_s={vision_preprocess_s:.3f} "
+            f"engine_inference_s={engine_inference_s:.3f} engine_put_s={engine_put_s:.3f}"
+        )
+
+    async def vl_generate_serverless(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+    ):
+        """Serverless VL generation that supports concurrent multi-turn conversations.
+
+        This method continuously listens for requests on input_channel and spawns
+        concurrent tasks to handle each request. This is suitable for agent loops
+        where multiple conversations may be running in parallel.
+
+        Each request should be a dict containing:
+            - channel_key: str, unique key to identify the response
+            - messages: list[dict], messages in OpenAI chat format (may include images)
+            - sampling_params: Optional[dict], sampling parameters to override defaults
+
+        Send None to input_channel to terminate the loop.
+        """
+        while True:
+            request = await input_channel.get(async_op=True).async_wait()
+            if request is None:
+                break
+            asyncio.create_task(
+                self._vl_generate_and_send(
+                    output_channel=output_channel,
+                    channel_key=request["channel_key"],
+                    messages=request["messages"],
+                    sampling_params=request.get("sampling_params", None),
+                )
+            )
 
     async def generate_and_send(
         self,

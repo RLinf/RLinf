@@ -32,7 +32,7 @@ def put_tensor_device(data_dict, device):
         return None
 
     if isinstance(data_dict, torch.Tensor):
-        return data_dict.to(device=device).contiguous()
+        return data_dict.value.to(device=device).contiguous()
     for key, value in data_dict.items():
         if isinstance(value, dict):
             data_dict[key] = put_tensor_device(value, device)
@@ -84,8 +84,6 @@ def stack_list_of_dict_tensor(list_of_dict: list, dim=0):
         elif isinstance(_v0, dict):
             v_list = [d[key] for d in list_of_dict]
             ret[key] = stack_list_of_dict_tensor(v_list)
-        elif _v0 is None:
-            pass
         else:
             raise ValueError(f"{key=}, {type(_v0)} is not supported!")
     return ret

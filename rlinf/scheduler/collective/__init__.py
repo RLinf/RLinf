@@ -17,20 +17,17 @@ from .async_work import (
     AsyncChannelWork,
     AsyncCollWork,
     AsyncFuncWork,
-    AsyncRayWork,
     AsyncWork,
 )
 from .collective import Collective
-from .collective_group import CollectiveGroup, CollectiveGroupOptions
+from .collective_group import CollectiveGroup
 
 __all__ = [
     "AsyncWork",
-    "AsyncRayWork",
     "AsyncChannelCommWork",
     "AsyncChannelWork",
     "AsyncCollWork",
     "AsyncFuncWork",
     "CollectiveGroup",
     "Collective",
-    "CollectiveGroupOptions",
 ]

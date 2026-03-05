@@ -72,29 +72,31 @@ FSDP/FSDP2 Checkpoint's file structure looks like this:
 
 .. code-block:: text
 
-   experiment_name/checkpoints/
-   ├── global_step_10/
-   │   └── actor/
-   │       ├── dcp_checkpoint/
-   │       │   ├── __0_0.distcp
-   │       │   ├── __1_0.distcp
-   │       │   ├── __2_0.distcp
-   │       │   └── __3_0.distcp
-   │       └── model_state_dict/
-   │           └── full_weigths.pt
-   └── global_step_20/
-       └── …
+   -- global_step_2
+      -- actor
+         |-- __0_0.distcp
+         |-- __1_0.distcp
+         |-- __2_0.distcp
+            -- __3_0.distcp
 
 FSDP/FSDP2 saves and loads checkpoints via DCP (torch.distributed.checkpoint), resulting in a set of distributed checkpoint files (.distcp).
 Each file contains a slice of model parameters, optimizer state, and RNG state.
 
+
+Converting Checkpoint Files to PyTorch State Dict Files
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+If you need to convert FSDP/FSDP2 checkpoints to standard PyTorch State Dict files for model evaluation or other purposes, 
+you can find model state dict in safetensors format under sub directory `model` of the checkpoint directory.
+For example, for checkpoint directory `global_step_2`, the model state dict files are located in `global_step_2/model/`.
+We will recursively copy model's config(*.json) and code files(*.py, if exists) so that you can easily reload the model later.
 
 Resuming training
 -----------------
 
 1. **Choose the latest checkpoint**
 
-   If ``global_step_10/`` is the highest numbered directory it is the
+   If ``global_step_150/`` is the highest numbered directory it is the
    newest snapshot.
 
 2. **Edit the YAML**
@@ -102,7 +104,7 @@ Resuming training
    .. code-block:: yaml
 
       runner:
-        resume_dir: ${runner.output_dir}/${runner.experiment_name}/checkpoints/global_step_10
+        resume_dir: ${runner.output_dir}/${runner.experiment_name}/checkpoints/global_step_150
 
 
 3. **Relaunch exactly as before**
@@ -112,13 +114,13 @@ Resuming training
 
    * Restores model shards, optimizer, RNG and dataloader state on every
      node/rank.
-   * Continues step counting from ``global_step_10`` — your next saved
-     checkpoint will be ``global_step_20`` (because ``save_interval`` is
-     10).
+   * Continues step counting from ``global_step_150`` — your next saved
+     checkpoint will be ``global_step_200`` (because ``save_interval`` is
+     50).
 
 .. tip::
 
    To verify resumption, look for the log line.  
-   If the next training step starts at 30, then the resume is working well!
+   If the next training step starts at 150, then the resume is working well!
 
 

@@ -75,30 +75,27 @@ However, if your system is incompatible with the Docker image, you can also inst
 Installation Method 1: Docker Image
 --------------------------------------------------
 
-We provide Docker images for different experiments:
+We provide two official Docker images optimized for different backend configurations:
 
-- **Embodied:**
+- **Math reasoning with Megatron + SGLang/vLLM**:  
 
-  - ``rlinf/rlinf:agentic-rlinf0.1-maniskill_libero`` for the Libero or ManiSkill benchmarks. For other embodied experiments, please refer to the corresponding sections in :doc:`../examples/index`
+  - ``rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6-vllm0.8.5-megatron0.13.0-te2.1`` (used for enhancing LLM reasoning on MATH tasks)
 
-- **Math reasoning:** 
+- **Embodied with FSDP + Huggingface**:  
 
-  - ``rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1`` (used for enhancing LLM reasoning on MATH tasks)
-
+  - ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` (for the OpenVLA/OpenVLA-OFT/openpi model)
 
 Once you've identified the appropriate image for your setup, pull the Docker image:
 
 .. code-block:: bash
 
-   # For mainland China users, you can use the following for better download speed:
-   # docker.1ms.run/rlinf/rlinf:CHOSEN_IMAGE
    docker pull rlinf/rlinf:CHOSEN_IMAGE
 
 Then, start the container using the pulled image:
 
 .. warning::
 
-  1. Ensure the docker is started with `-e NVIDIA_DRIVER_CAPABILITIES=all` to enable GPU support, especially the `graphics` capability for rendering in embodied experiments.
+  1. Ensure the docker is started with `-e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics` to enable GPU support, especially the `graphics` capability for rendering in embodied experiments.
 
   2. Do not override the `/root` and `/opt` directories in the container (with `-v` or `--volume` of `docker run`), as they contain important asset files and environments. If your platform requires mounting `/root`, run `link_assets` in the container after starting it to restore the asset links in the `/root` directory.
 
@@ -110,15 +107,13 @@ Then, start the container using the pulled image:
       --shm-size 100g \
       --net=host \
       --name rlinf \
-      -e NVIDIA_DRIVER_CAPABILITIES=all \
+      -e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
       rlinf/rlinf:CHOSEN_IMAGE /bin/bash
 
 Inside the container, clone the RLinf repository:
 
 .. code-block:: bash
 
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -137,30 +132,46 @@ To switch to the desired venv, use the built-in script `switch_env`:
 
   Both the `link_assets` and `switch_env` scripts are built-in utilities in the Docker image provided by us. You can find them in `/usr/local/bin`.
 
+.. tip::
+
+   - For multi-node training, make sure to clone the repository in shared storage so that every node has access to it.
+   - To use ManiSkill settings, refer to the README at ``https://huggingface.co/datasets/RLinf/maniskill_assets`` for instructions on downloading the required files.
+
 Installation Method 2: UV Custom Environment
 --------------------------------------------------------------
 **If you have already used the Docker image, you can skip the following steps.**
 
-You can install the dependencies for the target experiments using the `install.sh` script under the `requirements/` folder.
+We recommend using `uv <https://docs.astral.sh/uv/>`_ to install the required Python packages.  
+You can install ``uv`` via ``pip``.
+
+.. code-block:: shell
+
+   pip install --upgrade uv
+
+After installing `uv`, you can install the dependencies for the target experiments using the `install.sh` script under the `requirements/` folder.
 The script is organized by *targets* and *models*:
 
-- ``embodied`` target (for embodied agents) with different models specified via `--model`, e.g., ``openvla``, ``openvla-oft`` or ``openpi``.
+- ``embodied`` target (for embodied agents) with models:
+
+  - ``openvla``
+  - ``openvla-oft``
+  - ``openpi``
 
   Each embodied model also requires an ``--env`` argument to specify the environment, e.g. ``maniskill_libero``, ``behavior`` or ``metaworld``.
 
 - ``reason`` target (for reasoning / Megatron stack).
-- ``docs`` target (for building the documentation).
 
 For example, to install the dependencies for the OpenVLA + ManiSkill LIBERO experiment, run:
 
+.. note:: 
+
+  This script needs to be run from the root directory of the RLinf repository. Please ensure you are not running it from within the `requirements/` directory.
+
 .. code-block:: shell
   
-  cd <path_to_RLinf_repository>
-  # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
   bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
 This will create a virtual environment under the current path named `.venv`.
-
 To activate the virtual environment, you can use the following command:
 
 .. code-block:: shell
@@ -177,29 +188,10 @@ To install the reasoning (Megatron + SGLang/vLLM) stack instead, run:
 
 .. code-block:: shell
 
-  bash requirements/install.sh agentic
+  bash requirements/install.sh reason
 
 You can override the default virtual environment directory using ``--venv``. For example:
 
 .. code-block:: shell
 
   bash requirements/install.sh embodied --model openpi --env maniskill_libero --venv openpi-venv
-  source openpi-venv/bin/activate
-
-.. _install-as-library:
-
-Installation as a Library
---------------------------------------------------
-
-.. warning::
-  The `rlinf` package does not manage env and model dependencies, but only those of RLinf core system.
-
-  So you need to additionally install the dependencies for the target experiments yourself.
-
-  It is not intended to be directly used for RL experiments, but rather as a third-party library for other systems.
-
-RLinf is now available on PyPI for installation via pip as a library. 
-
-- Use `pip install rlinf[embodied]` for embodied RL.
-- Use `pip install rlinf[agentic-sglang]` for agentic RL with SGLang.
-- Use `pip install rlinf[agentic-vllm]` for agentic RL with vLLM.

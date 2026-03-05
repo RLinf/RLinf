@@ -6,6 +6,7 @@ export SRC_FILE="${EMBODIED_PATH}/collect_real_data.py"
 
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 
+export CUDA_LAUNCH_BLOCKING=1
 export HYDRA_FULL_ERROR=1
 
 

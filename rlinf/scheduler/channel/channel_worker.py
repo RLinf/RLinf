@@ -243,7 +243,6 @@ class ChannelWorker(Worker):
         super().__init__()
         self._queue_map: dict[str, PeekQueue] = {}
         self._queue_map[DEFAULT_KEY] = PeekQueue(maxsize=maxsize)
-        self._key_to_channel_rank: dict[Any, int] = {}
 
         self._mem_cleaner_task = asyncio.create_task(self._mem_cleaner())
 
@@ -365,7 +364,7 @@ class ChannelWorker(Worker):
             nowait (bool): If True, directly raise asyncio.QueueFull if the queue is full. Defaults to False.
 
         """
-        item, (key, weight) = self.recv(src_addr.root_group_name, src_addr.rank_path)
+        key, item, weight = self.recv(src_addr.root_group_name, src_addr.rank_path)
         self.create_queue(key, self.maxsize())
         item = WeightedItem(weight=weight, item=item)
         if nowait:
@@ -424,11 +423,10 @@ class ChannelWorker(Worker):
         else:
             weighted_item: WeightedItem = await self._queue_map[key].get()
         self.send(
-            weighted_item.item,
+            (query_id, weighted_item.item),
             dst_addr.root_group_name,
             dst_addr.rank_path,
             async_op=True,
-            piggyback_payload=query_id,
         )
 
     async def get_via_ray(self, key: Any = DEFAULT_KEY, nowait: bool = False) -> Any:
@@ -478,11 +476,10 @@ class ChannelWorker(Worker):
                 break
 
         self.send(
-            batch,
+            (query_id, batch),
             dst_addr.root_group_name,
             dst_addr.rank_path,
             async_op=True,
-            piggyback_payload=query_id,
         )
 
     async def get_batch_via_ray(
@@ -523,14 +520,3 @@ class ChannelWorker(Worker):
         """
         self.create_queue(key, self.maxsize())
         return self._queue_map[key].peek_all()
-
-    async def ensure_key_replica(self, key: Any, src_node_rank: int = -1) -> int:
-        """Assign (or fetch) the replica rank that should host the given key.
-
-        If the key is new, choose the replica whose rank matches the source node rank
-        (given NodePlacementStrategy launches workers in node order). If out of range,
-        fall back to rank 0.
-        """
-        # Fallback to rank 0 if out of range
-        default_rank = src_node_rank if 0 <= src_node_rank < self._world_size else 0
-        return self._key_to_channel_rank.setdefault(key, default_rank)

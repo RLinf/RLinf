@@ -20,7 +20,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: "../results/robocasa_grpo_openpi"
+    log_path: "../results"
     project_name: rlinf
     experiment_name: "test_openpi"
     logger_backends: ["tensorboard"] # wandb, swanlab
@@ -28,7 +28,7 @@ runner:
   max_epochs: 1
   max_steps: -1
   only_eval: False
-  ckpt_path: null  # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
+  eval_policy_path: null  # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
 
   val_check_interval: -1
   save_interval: -1
@@ -83,6 +83,7 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
+  enable_offload: False
 
   train:
     total_num_envs: 8
@@ -120,7 +121,7 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 2
+  micro_batch_size: 1
   global_batch_size: 8
   seed: 42
   enable_offload: False

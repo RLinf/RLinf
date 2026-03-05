@@ -60,7 +60,6 @@ from rlinf.utils.data_iter_utils import (
 )
 from rlinf.utils.distributed import (
     RolloutDataBalance,
-    all_reduce_int,
     broadcast_tensor_within_pp,
     compute_rollout_metrics,
     masked_normalization,
@@ -169,9 +168,7 @@ class MegatronActor(MegatronModelManager, Worker):
         self.is_weight_offloaded = False
         self.is_optimizer_offloaded = False
         self.ref_policy_state_dict = None
-        self.is_pipeline = placement.is_pipeline
-        self.placement_mode = placement._placement_mode
-        self.enable_dp_load_balance = self.role_cfg.get("enable_dp_load_balance", False)
+        self.is_pipeline = self.component_placement.is_pipeline
 
         # Rollout configurations
         self.rollout_group_name = self.cfg.rollout.group_name
@@ -193,18 +190,10 @@ class MegatronActor(MegatronModelManager, Worker):
             * self.cfg.algorithm.group_size
             // parallel_state.get_data_parallel_world_size()
         )
-        self.do_down_sampling = (
-            self.cfg.algorithm.get("down_sampling", False)
-            and self.cfg.algorithm.down_sampling.do_down_sampling
-        )
-        if self.do_down_sampling:
-            self.down_sampling_config = (
-                self.cfg.algorithm.down_sampling.down_sampling_config
-            )
 
         # Config validation
         if self.is_pipeline:
-            assert not self.enable_dp_load_balance, (
+            assert not self.role_cfg.get("enable_dp_load_balance", False), (
                 "DP load balance is not supported in pipeline mode."
             )
             assert not self.cfg.runner.enable_dynamic_batch_size, (
@@ -218,7 +207,9 @@ class MegatronActor(MegatronModelManager, Worker):
         self._init_auto_scheduler(role)
 
     def _init_auto_scheduler(self, role: str):
-        self.use_auto_scheduler = self.placement_mode == PlacementMode.AUTO
+        self.use_auto_scheduler = (
+            self.component_placement._placement_mode == PlacementMode.AUTO
+        )
         self.use_pre_process_policy = (
             getattr(self.cfg.cluster, "use_pre_process_policy", False)
             and self.use_auto_scheduler
@@ -260,13 +251,14 @@ class MegatronActor(MegatronModelManager, Worker):
             if not self.is_running:
                 return
 
+        ref_policy_state_dict = None
         # only need this if we are running with inital kl penalty & full-parameter tuning
         if (
             self.cfg.algorithm.kl_beta > 0
             or self.cfg.algorithm.get("reinpp_kl_beta", 0) > 0
         ) and self.cfg.actor.get("combine_reference_model", True):
-            self.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model[0])
-            self.offload_model_buffer = {}
+            ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model[0])
+        self.ref_policy_state_dict = ref_policy_state_dict
 
         rollout_reshard_config = ReshardConfig(
             model_type=self.cfg.rollout.model.model_type,
@@ -314,16 +306,10 @@ class MegatronActor(MegatronModelManager, Worker):
             else:
                 result = None
             result = self.broadcast(
-                result,
-                groups=[
-                    (self._group_name, parallel_state._MODEL_PARALLEL_GLOBAL_RANKS)
-                ],
+                result, ranks=parallel_state._MODEL_PARALLEL_GLOBAL_RANKS
             )
             result = self.broadcast(
-                result,
-                groups=[
-                    (self._group_name, parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS)
-                ],
+                result, ranks=parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS
             )
 
         batch = result.to_actor_batch(
@@ -336,6 +322,20 @@ class MegatronActor(MegatronModelManager, Worker):
             duration = time.perf_counter() - start_time
             self._timer_metrics[tag] = self._timer_metrics.get(tag, 0.0) - duration
         return batch, result
+
+    def all_reduce_dp_min(
+        self,
+        obj: int,
+    ):
+        obj_tensor = torch.tensor(
+            [obj], dtype=torch.long, device=torch.cuda.current_device()
+        )
+        torch.distributed.all_reduce(
+            obj_tensor,
+            torch.distributed.ReduceOp.MIN,
+            group=parallel_state.get_data_parallel_group(),
+        )
+        return obj_tensor.item()
 
     def get_dynamic_batch_as_much(
         self,
@@ -374,29 +374,21 @@ class MegatronActor(MegatronModelManager, Worker):
                         unfinished_result = None
                     if time.time() >= time_until:
                         last_result_len = result_len
-                        result_len = all_reduce_int(
-                            len(rollout_results),
-                            group=parallel_state.get_data_parallel_group(),
-                        )
+                        result_len = self.all_reduce_dp_min(len(rollout_results))
                         if last_result_len < result_len:
                             time_until = time.time() + 0.1
                 else:
                     last_result_len = result_len
-                    result_len = all_reduce_int(
-                        len(rollout_results),
-                        group=parallel_state.get_data_parallel_group(),
-                    )
+                    result_len = self.all_reduce_dp_min(len(rollout_results))
 
         # broadcast to other ranks
         if not self.is_data_io_rank:
             result_len = None
         result_len = self.broadcast(
-            result_len,
-            groups=[(self._group_name, parallel_state._MODEL_PARALLEL_GLOBAL_RANKS)],
+            result_len, ranks=parallel_state._MODEL_PARALLEL_GLOBAL_RANKS
         )
         result_len = self.broadcast(
-            result_len,
-            groups=[(self._group_name, parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS)],
+            result_len, ranks=parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS
         )
         if self.is_data_io_rank:
             cliped_results = list(rollout_results[result_len:])
@@ -406,16 +398,10 @@ class MegatronActor(MegatronModelManager, Worker):
         for i in range(result_len):
             rollout_result = rollout_results[i]
             rollout_result = self.broadcast(
-                rollout_result,
-                groups=[
-                    (self._group_name, parallel_state._MODEL_PARALLEL_GLOBAL_RANKS)
-                ],
+                rollout_result, ranks=parallel_state._MODEL_PARALLEL_GLOBAL_RANKS
             )
             rollout_result = self.broadcast(
-                rollout_result,
-                groups=[
-                    (self._group_name, parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS)
-                ],
+                rollout_result, ranks=parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS
             )
             rollout_results[i] = rollout_result
 
@@ -436,7 +422,7 @@ class MegatronActor(MegatronModelManager, Worker):
         if channel.is_local:
             # Local channel, every process will put its own data locally
             # No need to broadcast
-            channel.put(result)
+            channel.put(result, async_op=True)
         else:
             if self.is_data_io_rank:
                 channel.put(result, async_op=True)
@@ -451,13 +437,14 @@ class MegatronActor(MegatronModelManager, Worker):
 
             input_ids = batch["input_ids"]
             attention_mask = batch["attention_mask"]
+            response_mask = batch["response_mask"]
             position_ids = batch["position_ids"]
 
             response_len = self.response_len
             responses = input_ids[:, -response_len:]
             label = copy.deepcopy(position_ids)
             label[:, -response_len - 1 : -1] = responses
-            label_mask = copy.deepcopy(attention_mask)
+            label_mask = copy.deepcopy(response_mask)
             label_mask[:, : -response_len - 1] = False
             label_mask[:, -1] = False
 
@@ -536,12 +523,6 @@ class MegatronActor(MegatronModelManager, Worker):
                     clip_ratio_low=self.clip_ratio_low,
                     clip_ratio_high=self.clip_ratio_high,
                     loss_mask=mask,
-                    clip_log_ratio_min=self.cfg.algorithm.get(
-                        "clip_log_ratio_min", None
-                    ),
-                    clip_log_ratio_max=self.cfg.algorithm.get(
-                        "clip_log_ratio_max", None
-                    ),
                 )
 
                 entropy_loss = torch.zeros(1, device=loss.device)
@@ -558,12 +539,15 @@ class MegatronActor(MegatronModelManager, Worker):
                     loss = loss + kl_loss * self.kl_beta
 
                 # Logging and early stopping according to KL (logp vs ref) or importance ratio (new logp vs old logp).
-                _imp: torch.Tensor = metrics_data["actor/ratio"].clone()
+                _imp = metrics_data["actor/ratio"]
                 torch.distributed.all_reduce(
-                    _imp,
-                    torch.distributed.ReduceOp.AVG,
-                    group=parallel_state.get_data_parallel_group(),
+                    _imp, group=parallel_state.get_data_parallel_group()
                 )
+                _n_valid_tokens = mask.count_nonzero().clone()
+                torch.distributed.all_reduce(
+                    _n_valid_tokens, group=parallel_state.get_data_parallel_group()
+                )
+                _imp /= _n_valid_tokens
 
                 # Early stopping.
                 if (
@@ -588,9 +572,9 @@ class MegatronActor(MegatronModelManager, Worker):
                 # add to log
                 metrics_data.update(
                     {
-                        "actor/final_loss": loss.detach(),
-                        "actor/entropy_loss": entropy_loss.detach(),
-                        "actor/kl_loss": kl_loss.detach(),
+                        "final_loss": loss.detach(),
+                        "entropy_loss": entropy_loss.detach(),
+                        "kl_loss": kl_loss.detach(),
                     }
                 )
 
@@ -605,11 +589,18 @@ class MegatronActor(MegatronModelManager, Worker):
         return forward_output_and_loss_func
 
     def _get_num_microbatches(self, batch: dict[str, torch.Tensor], forward_only: bool):
-        if forward_only:
-            batch_size = get_batch_size(batch)
-            return max(1, batch_size // self.logprob_forward_micro_batch_size)
-        else:
-            return get_num_microbatches()
+        batch_size = get_batch_size(batch)
+        forward_micro_batch_size = (
+            self.logprob_forward_micro_batch_size
+            if forward_only
+            else self.cfg.actor.micro_batch_size
+        )
+        num_microbatches = (
+            max(1, batch_size // forward_micro_batch_size)
+            if forward_only
+            else get_num_microbatches()
+        )
+        return num_microbatches
 
     def run_forward_backward(self, batch: dict[str, torch.Tensor], forward_only=True):
         """Run the forward and backward pass on the model.
@@ -765,21 +756,21 @@ class MegatronActor(MegatronModelManager, Worker):
         else:
             train_metrics = self.run_forward_backward(batch, forward_only=False)
         increment = (
-            self.total_batch_size_per_dp
+            get_num_microbatches()
+            * self.cfg.actor.micro_batch_size
             * parallel_state.get_data_parallel_world_size()
-            // self.cfg.algorithm.n_minibatches
         )
         success, grad_norm, num_zeros_in_grad, lr = self.optimizer_step(increment)
 
         # Training metrics
-        train_metrics["actor/grad_norm"] = (
+        train_metrics["grad_norm"] = (
             grad_norm if grad_norm is not None else float("nan")
         )
-        train_metrics["actor/num_zeros_in_grad"] = (
+        train_metrics["num_zeros_in_grad"] = (
             num_zeros_in_grad if num_zeros_in_grad is not None else float("nan")
         )
-        train_metrics["actor/lr"] = lr if lr is not None else float("nan")
-        train_metrics["actor/update_success"] = int(success)
+        train_metrics["lr"] = lr if lr is not None else float("nan")
+        train_metrics["update_success"] = int(success)
 
         return train_metrics
 
@@ -804,11 +795,10 @@ class MegatronActor(MegatronModelManager, Worker):
             return batch
 
     def _dp_load_balance(self, batch: dict[str, torch.Tensor]):
-        if not self.do_down_sampling:
-            batch_size = batch["input_ids"].shape[0]
-            assert batch_size == self.total_batch_size_per_dp, (
-                f"DP Load balance is only available when a single batch contains all data, e.g., in collocated mode. But got {batch_size=} and {self.total_batch_size_per_dp=}."
-            )
+        batch_size = batch["input_ids"].shape[0]
+        assert batch_size == self.total_batch_size_per_dp, (
+            f"DP Load balance is only available when a single batch contains all data, e.g., in collocated mode. But got {batch_size=} and {self.total_batch_size_per_dp=}."
+        )
         batch = RolloutDataBalance.from_rollout_batches(
             rollout_batches=batch,
             dp_world_size=parallel_state.get_data_parallel_world_size(),
@@ -860,16 +850,6 @@ class MegatronActor(MegatronModelManager, Worker):
         self._load_weight_and_optimizer()
         self._training_setup()
 
-        # DP batch load balance
-        if (
-            self.cfg.actor.get("enable_dp_load_balance", False)
-            and parallel_state.get_data_parallel_world_size() > 1
-        ):
-            batch = self._dp_load_balance(batch)
-
-        if not batch:
-            return None, None
-
         # Advantage normalization
         if self.cfg.algorithm.normalize_advantages:
             mask = batch["response_mask"][:, -self.response_len :]
@@ -882,6 +862,10 @@ class MegatronActor(MegatronModelManager, Worker):
         # Valid token scale
         if self.cfg.algorithm.use_valid_token_scale:
             self._setup_valid_token_scale(batch)
+
+        # DP batch load balance
+        if self.cfg.actor.get("enable_dp_load_balance", False):
+            batch = self._dp_load_balance(batch)
 
         if self.use_profiler:
             self.profiler.init_fwd_bwd_schedule(self.cfg.algorithm.n_minibatches)
@@ -897,17 +881,6 @@ class MegatronActor(MegatronModelManager, Worker):
         with self.worker_timer():
             training_metrics_list = []
             for global_batch in global_batches:
-                if self.do_down_sampling:
-                    global_batch_size_per_dp = global_batch["input_ids"].shape[0]
-                    dp_size = parallel_state.get_data_parallel_world_size()
-                    configure_batch_sizes(
-                        rank=torch.distributed.get_rank(),
-                        mbs=self.cfg.actor.micro_batch_size,
-                        gbs=global_batch_size_per_dp * dp_size,
-                        dp=dp_size,
-                    )
-                    num_microbatches = get_num_microbatches()
-                    assert num_microbatches == global_batch_size_per_dp
                 training_metrics = self.training_step(global_batch)
                 training_metrics_list.append(training_metrics)
 
@@ -1021,10 +994,7 @@ class MegatronActor(MegatronModelManager, Worker):
             return
         assert not self.is_weight_offloaded
         self.offload_model_weights_and_grad(offload_grad=True)
-        self.broadcast(
-            None,
-            groups=[(self._group_name, list(range(inference_world_size)))],
-        )
+        self.broadcast(None, ranks=list(range(inference_world_size)))
         self.is_weight_offloaded = True
         if self._rank == 0:
             self.schedule_channel.put(None, key=self.scheduler_response_queue)
@@ -1099,19 +1069,22 @@ class MegatronActor(MegatronModelManager, Worker):
         args = get_args()
         args.rank = torch.distributed.get_rank()
         args.world_size = torch.distributed.get_world_size()
-
-        default_model_parallel_size_with_cp = (
+        args.data_parallel_size = args.world_size // (
             args.tensor_model_parallel_size
             * args.pipeline_model_parallel_size
             * args.context_parallel_size
         )
-        args.data_parallel_size = args.world_size // default_model_parallel_size_with_cp
         args.load = None
         self.default_parallel_strategy = {
             "tensor_model_parallel_size": args.tensor_model_parallel_size,
             "pipeline_model_parallel_size": args.pipeline_model_parallel_size,
             "context_parallel_size": args.context_parallel_size,
         }
+        default_model_parallel_size_with_cp = (
+            args.tensor_model_parallel_size
+            * args.pipeline_model_parallel_size
+            * args.context_parallel_size
+        )
 
         assert args.world_size == self.component_placement._cluster_num_gpus, (
             "In Auto-Scheduler mode, actor should be initialized on all GPUs."
@@ -1332,24 +1305,20 @@ class MegatronActor(MegatronModelManager, Worker):
 
             with self.worker_timer():
                 # Prev logprobs
-                prev_logprobs = self.inference_step(batch).cpu()
+                prev_logprobs = self.inference_step(batch)
                 if rollout_result.rollout_logprobs is not None:
                     # Rollout has returned logprobs, store the recomputed logprobs in recompute_prev_logprobs
-                    rollout_result.recompute_prev_logprobs = prev_logprobs
+                    rollout_result.recompute_prev_logprobs = prev_logprobs.cpu()
                 else:
                     # Otherwise, store the logprobs in prev_logprobs (the final logprobs used for training)
-                    rollout_result.prev_logprobs = prev_logprobs
+                    rollout_result.prev_logprobs = prev_logprobs.cpu()
 
                 # Ref logprobs
                 if compute_ref_logprobs:
                     assert self.ref_policy_state_dict is not None
-                    with cpu_weight_swap(
-                        self.model[0],
-                        self.ref_policy_state_dict,
-                        self.offload_model_buffer,
-                    ):
-                        ref_logprobs = self.inference_step(batch).cpu()
-                        rollout_result.ref_logprobs = ref_logprobs
+                    with cpu_weight_swap(self.model[0], self.ref_policy_state_dict):
+                        ref_logprobs = self.inference_step(batch)
+                        rollout_result.ref_logprobs = ref_logprobs.cpu()
             if self.is_pipeline:
                 # for pipeline mode, send after inference to reduce latency.
                 # should do split to ensure actor won't get too much batches.
@@ -1381,10 +1350,6 @@ class MegatronActor(MegatronModelManager, Worker):
             batch (Dict[str, torch.Tensor]): The rollout batch.
         """
         with self.worker_timer():
-            if batch["rewards"].numel() == 0:
-                batch["advantages"] = torch.zeros(
-                    0, dtype=torch.float32, device=batch["rewards"].device
-                )
             if batch.get("advantages", None) is None:
                 mask = batch["response_mask"][:, -self.response_len :]
                 advantages, _ = calculate_adv_and_returns(
@@ -1392,9 +1357,7 @@ class MegatronActor(MegatronModelManager, Worker):
                     adv_type=self.cfg.algorithm.adv_type,
                     rewards=batch["rewards"].cuda(),
                     loss_mask=mask.cuda(),
-                    group_size=self.down_sampling_config.down_sample_to_n
-                    if self.do_down_sampling
-                    else self.cfg.algorithm.group_size,
+                    group_size=self.cfg.algorithm.group_size,
                     kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
                     kl_penalty_type=self.kl_penalty_type,
                     logprob=batch["prev_logprobs"].cuda()
@@ -1460,59 +1423,52 @@ class MegatronActor(MegatronModelManager, Worker):
         self.model_state_offload_optimizer_and_grad()
 
         # send bucket size
-        if len(self._weight_dst_rank_in_rollout) > 0:
-            if self.placement_mode == PlacementMode.COLLOCATED:
-                send_handle = None
-                for bucket_weight in model_bucket_list:
-                    reshard_state_dict = self._get_rollout_model_state_dict(
-                        bucket_weight
-                    )
-                    buffer = {
-                        k: reduce_tensor(v) for k, v in reshard_state_dict.items()
-                    }
-                    if send_handle is not None:
-                        send_handle.wait()
-                    else:
-                        # add the bucket_length message in bucket 0
-                        buffer["bucket_length"] = len(model_bucket_list)
-                    send_handle = self.send(
-                        buffer,
-                        self.rollout_group_name,
-                        self._weight_dst_rank_in_rollout,
-                        async_op=True,
-                    )
-                    del reshard_state_dict
-                send_handle.wait()
-            else:
-                send_handle_bucket = []
-                for bucket_weight in model_bucket_list:
-                    reshard_state_dict = self._get_rollout_model_state_dict(
-                        bucket_weight
-                    )
-
-                    if len(send_handle_bucket) != 0:
-                        for send_handle in send_handle_bucket:
-                            send_handle.wait()
-                        send_handle_bucket = []
-                    else:
-                        # add the bucket_length message in bucket 0
-                        reshard_state_dict["bucket_length"] = len(model_bucket_list)
-
-                    for weight_dst_rank in self._weight_dst_rank_in_rollout:
-                        send_handle = self.send(
-                            reshard_state_dict,
-                            self.rollout_group_name,
-                            weight_dst_rank,
-                            async_op=True,
-                        )
-                        send_handle_bucket.append(send_handle)
+        if self.component_placement._placement_mode == PlacementMode.COLLOCATED:
+            send_handle = None
+            for bucket_weight in model_bucket_list:
+                reshard_state_dict = self._get_rollout_model_state_dict(bucket_weight)
+                buffer = {k: reduce_tensor(v) for k, v in reshard_state_dict.items()}
+                if send_handle is not None:
+                    send_handle.wait()
+                else:
+                    # add the bucket_length message in bucket 0
+                    buffer["bucket_length"] = len(model_bucket_list)
+                send_handle = self.send(
+                    buffer,
+                    self.rollout_group_name,
+                    self._weight_dst_rank_in_rollout,
+                    async_op=True,
+                )
+                del reshard_state_dict
+            send_handle.wait()
+        else:
+            send_handle_bucket = []
+            for bucket_weight in model_bucket_list:
+                reshard_state_dict = self._get_rollout_model_state_dict(bucket_weight)
 
                 if len(send_handle_bucket) != 0:
                     for send_handle in send_handle_bucket:
                         send_handle.wait()
+                    send_handle_bucket = []
+                else:
+                    # add the bucket_length message in bucket 0
+                    reshard_state_dict["bucket_length"] = len(model_bucket_list)
+
+                for weight_dst_rank in self._weight_dst_rank_in_rollout:
+                    send_handle = self.send(
+                        reshard_state_dict,
+                        self.rollout_group_name,
+                        weight_dst_rank,
+                        async_op=True,
+                    )
+                    send_handle_bucket.append(send_handle)
+
+            if len(send_handle_bucket) != 0:
+                for send_handle in send_handle_bucket:
+                    send_handle.wait()
 
         if (
-            self.placement_mode == PlacementMode.COLLOCATED
+            self.component_placement._placement_mode == PlacementMode.COLLOCATED
             or self.use_pre_process_policy
         ):
             if self.offload_weight:
@@ -1525,7 +1481,7 @@ class MegatronActor(MegatronModelManager, Worker):
         if not self.is_running:
             return
         if (
-            self.placement_mode == PlacementMode.COLLOCATED
+            self.component_placement._placement_mode == PlacementMode.COLLOCATED
             or self.use_pre_process_policy
         ):
             if self.offload_optimizer:
@@ -1535,7 +1491,7 @@ class MegatronActor(MegatronModelManager, Worker):
                 offload_grad=self.offload_grad, offload_weight=False
             )
         else:
-            assert self.placement_mode in [
+            assert self.component_placement._placement_mode in [
                 PlacementMode.DISAGGREGATED,
                 PlacementMode.AUTO,
             ], "Unsupported placement mode for sending weights."

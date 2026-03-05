@@ -17,7 +17,6 @@ import gc
 import os
 import random
 import sys
-import uuid
 from contextlib import contextmanager
 from functools import partial, wraps
 from typing import Callable, Literal, Optional
@@ -28,14 +27,12 @@ import torch.nn.functional as F
 from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
-from rlinf.scheduler import Worker
-
 
 def clear_memory(sync=True):
     if sync:
-        Worker.torch_platform.synchronize()
+        torch.cuda.synchronize()
     gc.collect()
-    Worker.torch_platform.empty_cache()
+    torch.cuda.empty_cache()
 
 
 def apply_func_to_dict(func, dictionary):
@@ -52,60 +49,44 @@ cuda_dict = partial(apply_func_to_dict, partial(move_to_device_if_tensor, "cuda"
 cpu_dict = partial(apply_func_to_dict, partial(move_to_device_if_tensor, "cpu"))
 
 
-def retrieve_model_state_dict_in_cpu(model, offloaded_buffer=None):
+def retrieve_model_state_dict_in_cpu(model):
     """get a copy of the model states in CPU"""
-    if offloaded_buffer is None:
-        offloaded_buffer = {}
+    cpu_dict = {}
 
     for name, item in model.state_dict().items():
         if isinstance(item, torch.Tensor):
-            if name in offloaded_buffer:
-                offloaded_buffer[name].copy_(item.detach(), non_blocking=True)
-            else:
-                item = (
-                    item.detach()
-                    .to(device="cpu", non_blocking=True, copy=True)
-                    .pin_memory()
-                )
-                offloaded_buffer[name] = item
-        else:
-            offloaded_buffer[name] = item
+            item = item.detach().to(device="cpu", non_blocking=True, copy=True)
 
-    Worker.torch_platform.synchronize()
-    return offloaded_buffer
+        cpu_dict[name] = item
+
+    torch.cuda.synchronize()
+    return cpu_dict
 
 
 @torch.no_grad()
-def swap_dict(
-    resident_model, cpu_weights, offload_onto_cpu=True, offloaded_buffer=None
-):
+def swap_dict(resident_model, cpu_weights, offload_onto_cpu=True):
     """swap the state dict with a specified state dict, and offload the current state dict onto CPU
     if needed
     """
-    if offloaded_buffer is None:
-        offloaded_buffer = {}
+    offloaded_weights = {}
 
     if offload_onto_cpu:
-        offloaded_buffer = retrieve_model_state_dict_in_cpu(
-            resident_model, offloaded_buffer
-        )
+        offloaded_weights = retrieve_model_state_dict_in_cpu(resident_model)
 
     resident_model.load_state_dict(cpu_weights)
-    return offloaded_buffer
+    return offloaded_weights
 
 
 @contextmanager
-def cpu_weight_swap(resident_model, cpu_weights, offloaded_buffer=None):
+def cpu_weight_swap(resident_model, cpu_weights):
     """swap the weights into GPU, and then swap it out once return"""
-    offloaded_buffer = swap_dict(
-        resident_model, cpu_weights, offloaded_buffer=offloaded_buffer
-    )
+    cpu_dict = swap_dict(resident_model, cpu_weights)
 
     try:
         yield
 
     finally:
-        swap_dict(resident_model, offloaded_buffer, offload_onto_cpu=False)
+        swap_dict(resident_model, cpu_dict, offload_onto_cpu=False)
 
 
 def configure_batch_sizes(rank, mbs, gbs, dp=1):
@@ -265,8 +246,7 @@ def compute_logprobs_from_logits(
         logits(torch.Tensor): [B, seq-len, vocab-size]
         target(torch.Tensor): [B, seq-len]
         op_type(str): the type of logprobs computation method, options are "torch", "flash_attn", "liger_kernel"
-            default is "torch".
-            flash_attn calc in fp32, torch and liger_kernel calc in logits.dtype.
+            default is "torch"
 
     Returns:
         logprobs(torch.Tensor): [B, seq-len]
@@ -280,13 +260,10 @@ def compute_logprobs_from_logits(
         f"Unsupported op_type: {op_type} for logprobs computation. Supported types are 'torch', 'flash_attn', 'liger_kernel'."
     )
     if op_type == "liger_kernel":
-        # liger_kernel will use input dtype to compute logprobs.
         logprobs = logprobs_from_logits_liger_kernel(logits, labels)
     elif op_type == "flash_attn":
-        # flash_attn will use fp32 to compute logprobs.
         logprobs = logprobs_from_logits_flash_attn(logits, labels)
     elif op_type == "torch":
-        # torch will use input dtype to compute logprobs.
         logprobs = -F.cross_entropy(logits, labels, reduction="none")
 
     # reshape back to [B, seq-len]
@@ -461,8 +438,8 @@ def get_rng_state() -> dict:
         "numpy": np.random.get_state(),
         "random": random.getstate(),
     }
-    if Worker.torch_platform.is_available():
-        rng_state[Worker.torch_device_type] = Worker.torch_platform.get_rng_state()
+    if torch.cuda.is_available():
+        rng_state["cuda"] = torch.cuda.get_rng_state()
     return rng_state
 
 
@@ -480,30 +457,5 @@ def set_rng_state(rng_state: dict) -> None:
     torch.set_rng_state(rng_state["cpu"])
     np.random.set_state(rng_state["numpy"])
     random.setstate(rng_state["random"])
-    if Worker.torch_platform.is_available() and Worker.torch_device_type in rng_state:
-        Worker.torch_platform.set_rng_state(rng_state[Worker.torch_device_type])
-
-
-def get_model_weights_id(model, k=128):
-    first_p = None
-    last_p = None
-
-    for _, p in model.named_parameters():
-        if not p.is_floating_point():
-            continue
-        if first_p is None:
-            first_p = p
-        last_p = p
-
-    if first_p is None or last_p is None:
-        return None
-
-    def tensor_fingerprint(p):
-        flat = p.detach().view(-1)
-        sample = flat[:k] if flat.numel() >= k else flat
-        return sample.to(dtype=torch.float32).cpu().numpy().tobytes()
-
-    name_bytes = tensor_fingerprint(first_p) + tensor_fingerprint(last_p)
-    name_str = name_bytes.hex()
-
-    return uuid.uuid5(uuid.NAMESPACE_DNS, name_str)
+    if torch.cuda.is_available() and "cuda" in rng_state:
+        torch.cuda.set_rng_state(rng_state["cuda"])

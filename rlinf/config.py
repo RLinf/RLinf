@@ -18,7 +18,7 @@ import logging
 import os
 from dataclasses import asdict
 from enum import Enum
-from typing import TYPE_CHECKING, Callable, Union
+from typing import TYPE_CHECKING, Callable, Optional, Union
 
 import torch
 import torch.nn.functional as F
@@ -26,7 +26,6 @@ import yaml
 from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
 
-from rlinf.envs import SupportedEnvType
 from rlinf.scheduler.cluster import Cluster
 from rlinf.utils.placement import (
     HybridComponentPlacement,
@@ -46,6 +45,7 @@ class SupportedModel(Enum):
     QWEN2_5 = ("qwen2.5", "reasoning")
     QWEN2_5_VL = ("qwen2.5_vl", "reasoning")
     QWEN3 = ("qwen3", "reasoning")
+    QWEN3_VL = ("qwen3_vl", "reasoning")
     QWEN3_MOE = ("qwen3_moe", "reasoning")
 
     # Embodied models
@@ -54,15 +54,7 @@ class SupportedModel(Enum):
     OPENPI = ("openpi", "embodied")
     MLP_POLICY = ("mlp_policy", "embodied")
     GR00T = ("gr00t", "embodied")
-    DEXBOTIC_PI = ("dexbotic_pi", "embodied")
     CNN_POLICY = ("cnn_policy", "embodied")
-    FLOW_POLICY = ("flow_policy", "embodied")
-    CMA_POLICY = ("cma", "embodied")
-
-    # Sft models
-    QWEN2_5_VL_SFT = ("qwen2.5_vl", "sft")
-    QWEN3_VL_SFT = ("qwen3_vl", "sft")
-    QWEN3_VL_MOE_SFT = ("qwen3_vl_moe", "sft")
 
     def __new__(cls, value, category):
         obj = object.__new__(cls)
@@ -100,7 +92,7 @@ def torch_dtype_from_precision(precision: Union[int, str]) -> torch.dtype:
         return torch.float16
     elif precision in [32, "32", "fp32", "32-true"]:
         return torch.float32
-    elif precision in [None, "null"]:
+    elif precision in [None]:
         return None
     else:
         raise ValueError(
@@ -308,7 +300,7 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
     return cfg
 
 
-def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
+def validate_fsdp_cfg(cfg: DictConfig, resume_dir: Optional[str] = None) -> DictConfig:
     def validate_amp_cfg(config: DictConfig) -> DictConfig:
         if "amp" not in config:
             config.amp = {}
@@ -353,6 +345,9 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
         cfg.fsdp_config.enable_gradient_accumulation = cfg.fsdp_config.get(
             "enable_gradient_accumulation", False
         )
+
+        if resume_dir is not None:
+            cfg.fsdp_config.use_orig_params = True
 
         assert cfg.fsdp_config.backward_prefetch in [
             None,
@@ -698,10 +693,7 @@ def validate_embodied_cfg(cfg):
     # NOTE: Currently we only support actor_critic as PPO algorithm loss, and only support value_head as critic model.
     # This will be updated in the future to support more algorithms and critic models.
     # Check that actor_critic loss requires value_head
-    if (
-        cfg.algorithm.loss_type == "actor_critic"
-        or cfg.algorithm.loss_type == "decoupled_actor_critic"
-    ):
+    if cfg.algorithm.loss_type == "actor_critic":
         add_value_head = cfg.actor.model.get("add_value_head", False)
         assert add_value_head, (
             f"When using PPO algorithm (algorithm.loss_type='actor_critic'), "
@@ -776,12 +768,9 @@ def validate_embodied_cfg(cfg):
         )
 
     with open_dict(cfg):
-        weight_sync_interval = cfg.runner.get("weight_sync_interval", 1)
-        assert weight_sync_interval > 0, "weight_sync_interval must be greater than 0"
-        cfg.runner.weight_sync_interval = weight_sync_interval
         if (
-            SupportedEnvType(cfg.env.train.env_type) == SupportedEnvType.MANISKILL
-            or SupportedEnvType(cfg.env.eval.env_type) == SupportedEnvType.MANISKILL
+            cfg.env.train.env_type == "maniskill"
+            or cfg.env.eval.env_type == "maniskill"
         ):
 
             def get_robot_control_mode(robot: str):
@@ -789,14 +778,10 @@ def validate_embodied_cfg(cfg):
                     return "pd_joint_delta_pos"
                 elif robot == "panda-ee-dpos":
                     return "pd_ee_delta_pos"
-                elif robot == "panda-ee-target-dpos":  # for GSEnv
-                    return "pd_ee_target_delta_pose"
                 elif "google_robot_static" in robot:
                     return "arm_pd_ee_delta_pose_align_interpolate_by_planner_gripper_pd_joint_target_delta_pos_interpolate_by_planner"
                 elif "widowx" in robot:
                     return "arm_pd_ee_target_delta_pose_align2_gripper_pd_joint_pos"
-                elif "panda" in robot:
-                    return "pd_ee_body_target_delta_pose_real_root_frame"
                 else:
                     raise NotImplementedError(f"Robot {robot} not supported")
 
@@ -807,8 +792,7 @@ def validate_embodied_cfg(cfg):
                 cfg.actor.model.policy_setup
             )
         elif (
-            SupportedEnvType(cfg.env.train.env_type) == SupportedEnvType.BEHAVIOR
-            or SupportedEnvType(cfg.env.eval.env_type) == SupportedEnvType.BEHAVIOR
+            cfg.env.train.env_type == "behavior" or cfg.env.eval.env_type == "behavior"
         ):
             import omnigibson as og
 
@@ -823,35 +807,9 @@ def validate_embodied_cfg(cfg):
                 open(config_filename, "r"), Loader=yaml.FullLoader
             )
             omnigibson_cfg = OmegaConf.create(omnigibson_cfg)
-            with open_dict(omnigibson_cfg):
-                omnigibson_cfg.robots[0].obs_modalities = ["rgb", "depth", "proprio"]
             cfg.env.train.omnigibson_cfg = omnigibson_cfg
             cfg.env.eval.omnigibson_cfg = omnigibson_cfg
 
-    return cfg
-
-
-def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
-    assert cfg.actor.get("global_batch_size", None) is not None, (
-        "the actor.global_batch_size is not set"
-    )
-    assert cfg.actor.get("micro_batch_size", None) is not None, (
-        "the actor.micro_batch_size is not set"
-    )
-
-    with open_dict(cfg):
-        if cfg.data.get("train_data_paths", None) is None:
-            # if train_data_paths is None, the code will just eval the model
-            assert cfg.data.get("eval_data_paths", None) is not None, (
-                "the data.train_data_paths is None, so data.eval_data_paths is required"
-            )
-        elif cfg.data.get("eval_data_paths", None) is not None:
-            # set the val_check_interval to max_epochs
-            if cfg.runner.get("val_check_interval", None) is None:
-                cfg.runner.val_check_interval = cfg.runner.max_epochs
-        else:
-            # set the val_check_interval to -1 if there is no eval data
-            cfg.runner.val_check_interval = -1
     return cfg
 
 
@@ -973,10 +931,8 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     elif cfg.runner.task_type == "reasoning_eval":
         cfg = validate_reasoning_eval_cfg(cfg)
         return cfg
-    elif cfg.runner.task_type == "sft":
-        cfg = validate_sft_cfg(cfg)
 
-    if cfg.algorithm.adv_type in ("grpo", "grpo_dynamic", "reinpp_baseline"):
+    if cfg.algorithm.adv_type in ("grpo", "reinpp_baseline"):
         assert cfg.algorithm.group_size > 1
 
     assert cfg.actor.training_backend in SUPPORTED_TRAINING_BACKENDS, (
@@ -1008,7 +964,7 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         ), (
             f"actor.global_batch_size ({cfg.actor.global_batch_size}) must be divisible by (actor.micro_batch_size ({cfg.actor.micro_batch_size}) * actor_world_size ({actor_world_size}))"
         )
-        cfg.actor = validate_fsdp_cfg(cfg.actor)
+        cfg.actor = validate_fsdp_cfg(cfg.actor, cfg.runner.get("resume_dir", None))
 
     if cfg.critic.use_critic_model and cfg.critic.training_backend == "megatron":
         cfg.critic = validate_megatron_cfg(cfg.critic)

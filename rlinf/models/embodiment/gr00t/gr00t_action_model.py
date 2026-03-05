@@ -31,7 +31,7 @@ from gr00t.model.gr00t_n1 import GR00T_N1_5, GR00T_N1_5_Config
 from torch.distributions import Normal
 from transformers.feature_extraction_utils import BatchFeature
 
-from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
+from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.models.embodiment.gr00t.simulation_io import (
     ACTION_CONVERSION,
     OBS_CONVERSION,
@@ -50,23 +50,15 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
         config: FlowmatchingActionHeadConfig,
         rl_head_config: dict[str, Any],
         output_action_chunks: int,
-        valid_action_dim: int,
     ):
         super().__init__(config)
         self.action_chunk = output_action_chunks
         self.rl_config = rl_head_config
-        self.padding_value = rl_head_config.padding_value
-        self.valid_action_dim = valid_action_dim
-
-        if self.rl_config.use_vlm_value:
-            proj_width = 2048
-        else:
-            proj_width = 3584
 
         if self.rl_config.add_value_head:
             self.value_head = ValueHead(
-                input_dim=proj_width,
-                hidden_sizes=(1024, 512, 256),
+                input_dim=self.hidden_size,
+                hidden_sizes=(512, 256, 128),
                 output_dim=1,
                 activation="relu",
                 bias_last=True,
@@ -162,6 +154,21 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
         )
         model_output = model_output[:, -self.action_horizon :]
 
+        # value prediction
+        if self.rl_config.add_value_head and compute_values:
+            if self.rl_config.chunk_critic_input:
+                suffix_out_value = torch.mean(
+                    model_output[:, : self.action_chunk], dim=1, keepdim=False
+                )
+            else:
+                suffix_out_value = torch.mean(model_output, dim=1, keepdim=False)
+            # detach critic input
+            if self.rl_config.detach_critic_input:
+                suffix_out_value = suffix_out_value.detach()
+            value_t = self.value_head(suffix_out_value)[:, 0]
+        else:
+            value_t = torch.zeros((bsize), device=device, dtype=vl_embs.dtype)
+
         # ode/sde sampling
         v_t = self.action_decoder(model_output, embodiment_id)
 
@@ -214,14 +221,14 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
                 raise ValueError(f"Invalid noise method: {self.rl_config.noise_method}")
         # In eval, this equals to x_t_mean = x_t + v*dt(dt>0).
         x_t_mean = x0_pred * x0_weight + x1_pred * x1_weight
-        return x_t_mean, x_t_std
+        return x_t_mean, x_t_std, value_t
 
     def get_rl_action(
         self,
         backbone_output: BatchFeature,
         action_input: BatchFeature,
         mode: Literal["train", "eval"] = "train",
-        compute_values=True,
+        compute_values=False,
     ) -> BatchFeature:
         backbone_output = self.process_backbone_output(backbone_output)
         # Get vision and language embeddings.
@@ -240,7 +247,7 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
 
         chains = [x_t]
         log_probs = []
-
+        values = []
         if self.rl_config.joint_logprob:
             initial_log_prob = self.get_logprob_norm(
                 x_t, torch.zeros_like(x_t), torch.ones_like(x_t)
@@ -278,7 +285,7 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
         # Run denoising steps.
         for idx in range(num_steps):
             if idx == denoise_inds[0][idx]:
-                x_t_mean, x_t_std = self.sample_mean_var_val(
+                x_t_mean, x_t_std, value_t = self.sample_mean_var_val(
                     vl_embs=vl_embs,
                     idx=idx,
                     x_t=x_t,
@@ -289,7 +296,7 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
                     compute_values=compute_values,
                 )
             else:
-                x_t_mean, x_t_std = self.sample_mean_var_val(
+                x_t_mean, x_t_std, value_t = self.sample_mean_var_val(
                     vl_embs=vl_embs,
                     idx=idx,
                     x_t=x_t,
@@ -302,20 +309,16 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
 
             x_t = x_t_mean + self.sample_noise(x_t.shape, device) * x_t_std
             log_prob = self.get_logprob_norm(x_t, x_t_mean, x_t_std)
-
+            values.append(value_t)
             chains.append(x_t)
             log_probs.append(log_prob)
 
         x_0 = x_t
         chains = torch.stack(chains, dim=1)
         log_probs = torch.stack(log_probs, dim=1)[
-            :, :, : self.action_chunk, : self.valid_action_dim
+            :, :, : self.action_chunk, : self.rl_config.valid_action_dim
         ]
-        if compute_values:
-            values = self.get_value(vl_embs, state_features)
-            values = values[:, None]
-        else:
-            values = torch.zeros((batch_size, 1), device=device, dtype=vl_embs.dtype)
+        values = torch.stack(values, dim=1).mean(dim=-1, keepdim=True)
 
         return BatchFeature(
             data={"action_pred": x_0}
@@ -346,7 +349,7 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
         batch_size = vl_embs.shape[0]
 
         chains_log_probs = []
-
+        chains_values = []
         if self.rl_config.joint_logprob:
             num_steps = self.config.num_steps
             initial_log_prob = self.get_logprob_norm(
@@ -361,7 +364,7 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
             denoise_ind = denoise_inds[:, idx]
             chains_pre = chains[torch.arange(batch_size), denoise_ind]
             chains_next = chains[torch.arange(batch_size), denoise_ind + 1]
-            x_t_mean, x_t_std = self.sample_mean_var_val(
+            x_t_mean, x_t_std, value_t = self.sample_mean_var_val(
                 vl_embs=vl_embs,
                 idx=denoise_ind,
                 x_t=chains_pre,
@@ -373,15 +376,9 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
             )
             log_probs = self.get_logprob_norm(chains_next, x_t_mean, x_t_std)
             chains_log_probs.append(log_probs)
-
+            chains_values.append(value_t)
         chains_log_probs = torch.stack(chains_log_probs, dim=1)
-        if compute_values:
-            chains_values = self.get_value(vl_embs, state_features)
-            chains_values = chains_values[:, None]
-        else:
-            chains_values = torch.zeros(
-                (batch_size, 1), device=chains_log_probs.device, dtype=vl_embs.dtype
-            )  # (B, 1)
+        chains_values = torch.stack(chains_values, dim=1)
         return chains_log_probs, chains_values
 
     def sample_noise(self, shape, device):
@@ -393,29 +390,8 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
             device=device,
         )
 
-    def get_value(self, vl_embs, state_features):
-        # TODO: add value vlm mode param
-        bsize = vl_embs.shape[0]
-        mask_length = vl_embs.shape[1]
-        if self.rl_config.value_vlm_mode == "mean_token":
-            prefix_mask = [True] * mask_length
-        elif self.rl_config.value_vlm_mode == "last_token":
-            prefix_mask = [False] * (mask_length - 1) + [True] * 1
-        elif self.rl_config.value_vlm_mode == "first_token":
-            prefix_mask = [True] * 1 + [False] * (mask_length - 1)
-        vl_embs_value = vl_embs[:, prefix_mask, :]
-        vl_embs_value = vl_embs_value.mean(dim=1, keepdim=False)
-        # vl_embs_value = vl_embs_value.to(dtype=torch.float32)
-        state_features_value = state_features.reshape(bsize, -1)
-        if self.rl_config.use_vlm_value:
-            value_embs = vl_embs_value
-        else:
-            value_embs = torch.cat((vl_embs_value, state_features_value), dim=1)
-        values_vlm = self.value_head(value_embs)[:, 0]
-        return values_vlm
 
-
-class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
+class GR00T_N1_5_ForRLActionPrediction(BasePolicy, GR00T_N1_5):
     """
     GR00T_N1_5 model for reinforcement learning action prediction.
     It's a combination of the Gr00tPolicy and GR00T_N1_5 model.
@@ -448,15 +424,18 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         obs_converter_type: str = "libero",
         output_action_chunks: int = 1,
     ):
-        super().__init__(config, local_model_path)
+        GR00T_N1_5.__init__(self, config, local_model_path)
+        # The param loading is after construction in from_pretrained(), so it should be safe to to so.
+        action_head_cfg = FlowmatchingActionHeadConfig(**config.action_head_cfg)
+        self.action_head = FlowMatchingActionHeadForRLActionPrediction(
+            action_head_cfg, rl_head_config, output_action_chunks
+        )
 
-        self.padding_value = rl_head_config.padding_value
         self._modality_config = modality_config  # ModalityConfig(delta_indices=[0], modality_keys=['video.ego_view'])
         self._modality_transform = modality_transform
         self.model_path = Path(local_model_path)
         self.compute_dtype = compute_dtype
         self.output_action_chunks = output_action_chunks
-        self.model_path = Path(local_model_path)
 
         # Convert string embodiment tag to EmbodimentTag enum if needed
         if isinstance(embodiment_tag, str):
@@ -474,15 +453,9 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         self.action_convert_fn = ACTION_CONVERSION[obs_converter_type]
         self._load_metadata(self.model_path / "experiment_cfg")
 
-        # The param loading is after construction in from_pretrained(), so it should be safe to to so.
-        action_head_cfg = FlowmatchingActionHeadConfig(**config.action_head_cfg)
-        self.action_head = FlowMatchingActionHeadForRLActionPrediction(
-            action_head_cfg, rl_head_config, output_action_chunks, self.valid_action_dim
-        )
-
     def eval(self):
         self._modality_transform.eval()
-        super().eval()
+        GR00T_N1_5.eval(self)
 
     def _check_state_is_batched(self, obs: dict[str, Any]) -> bool:
         for k, v in obs.items():
@@ -490,39 +463,32 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
                 return False
         return True
 
-    def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
-        if forward_type == ForwardType.DEFAULT:
-            return self.default_forward(**kwargs)
-        else:
-            raise NotImplementedError
-
     def default_forward(
         self,
-        forward_inputs: dict[str, torch.Tensor],
+        data: dict[str, torch.Tensor],
         compute_logprobs: bool = True,
         compute_entropy: bool = False,
         compute_values: bool = True,
         use_cache: bool = False,
-        **kwargs,
     ) -> dict[str, Any]:
         normalized_input = {
-            "state": forward_inputs["state"],
-            "state_mask": forward_inputs["state_mask"],
-            "eagle_input_ids": forward_inputs["eagle_input_ids"],
-            "eagle_attention_mask": forward_inputs["eagle_attention_mask"],
-            "eagle_pixel_values": forward_inputs["eagle_pixel_values"].reshape(
-                -1, *forward_inputs["eagle_pixel_values"].shape[2:]
+            "state": data["state"],
+            "state_mask": data["state_mask"],
+            "eagle_input_ids": data["eagle_input_ids"],
+            "eagle_attention_mask": data["eagle_attention_mask"],
+            "eagle_pixel_values": data["eagle_pixel_values"].reshape(
+                -1, *data["eagle_pixel_values"].shape[2:]
             ),
-            "eagle_image_sizes": forward_inputs["eagle_image_sizes"].reshape(
-                -1, *forward_inputs["eagle_image_sizes"].shape[2:]
+            "eagle_image_sizes": data["eagle_image_sizes"].reshape(
+                -1, *data["eagle_image_sizes"].shape[2:]
             ),
-            "embodiment_id": forward_inputs["embodiment_id"],
+            "embodiment_id": data["embodiment_id"],
         }
         backbone_inputs, action_inputs = self.prepare_input(normalized_input)
         backbone_outputs = self.backbone(backbone_inputs)
 
-        chains = forward_inputs["chains"]
-        denoise_inds = forward_inputs["denoise_inds"]
+        chains = data["chains"]
+        denoise_inds = data["denoise_inds"]
         log_probs, value_t = self.action_head(
             backbone_output=backbone_outputs,
             action_input=action_inputs,
@@ -535,21 +501,21 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
             :,
             :,
             : self.action_head.action_chunk,
-            : self.valid_action_dim,
+            : self.action_head.rl_config.valid_action_dim,
         ]
         # post process
         if self.action_head.rl_config.joint_logprob:
             log_probs = log_probs.mean(dim=1)
-            prev_logprobs = kwargs["prev_logprobs"].mean(dim=1)
+            prev_logprobs = data["prev_logprobs"].mean(dim=1)
         else:
             bsize = log_probs.shape[0]
             log_probs = log_probs[:, 0]
-            prev_logprobs = kwargs["prev_logprobs"]
+            prev_logprobs = data["prev_logprobs"]
             prev_logprobs = prev_logprobs[
                 torch.arange(bsize),
                 denoise_inds[:, 0],
                 : self.action_head.action_chunk,
-                : self.valid_action_dim,
+                : self.action_head.rl_config.valid_action_dim,
             ]
         value_t = value_t.mean(dim=-1, keepdim=False)
 
@@ -593,21 +559,18 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
 
         normalized_input["eagle_input_ids"] = torch.nn.functional.pad(
             normalized_input["eagle_input_ids"],
-            pad=(0, self.padding_value - normalized_input["eagle_input_ids"].shape[-1]),
+            pad=(0, 570 - normalized_input["eagle_input_ids"].shape[-1]),
             mode="constant",
             value=0,
         )
         normalized_input["eagle_attention_mask"] = torch.nn.functional.pad(
             normalized_input["eagle_attention_mask"],
-            pad=(
-                0,
-                self.padding_value - normalized_input["eagle_attention_mask"].shape[-1],
-            ),
+            pad=(0, 570 - normalized_input["eagle_attention_mask"].shape[-1]),
             mode="constant",
             value=0,
         )
 
-        normalized_action, result = self._get_rl_action(normalized_input, mode=mode)
+        normalized_action, result = self._get_rl_action(normalized_input)
         unnormalized_action = self._get_unnormalized_action(normalized_action)
 
         if not is_batch:
@@ -644,17 +607,13 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         """
         return self._modality_transform.unapply(action)
 
-    def _get_rl_action(
-        self,
-        normalized_input: dict[str, Any],
-        mode: Literal["train", "eval"] = "train",
-    ) -> torch.Tensor:
+    def _get_rl_action(self, normalized_input: dict[str, Any]) -> torch.Tensor:
         # We expand get_action() and replace action head inference with RL inference.
         backbone_inputs, action_inputs = self.prepare_input(normalized_input)
         # Because the behavior of backbones remains the same for training and inference, we can use `forward` for backbones.
         backbone_outputs = self.backbone(backbone_inputs)
         action_head_outputs, rlinf_outputs = self.action_head.get_rl_action(
-            backbone_outputs, action_inputs, mode=mode
+            backbone_outputs, action_inputs
         )
         actions = rlinf_outputs["actions"]
         self.validate_data(action_head_outputs, backbone_outputs, is_training=False)
@@ -668,14 +627,10 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         bsize = normalized_input["state"].shape[0]
         forward_inputs["eagle_pixel_values"] = normalized_input[
             "eagle_pixel_values"
-        ].reshape(
-            bsize, self.image_nums, *normalized_input["eagle_pixel_values"].shape[1:]
-        )
+        ].reshape(bsize, 2, *normalized_input["eagle_pixel_values"].shape[1:])
         forward_inputs["eagle_image_sizes"] = normalized_input[
             "eagle_image_sizes"
-        ].reshape(
-            bsize, self.image_nums, *normalized_input["eagle_image_sizes"].shape[1:]
-        )
+        ].reshape(bsize, 2, *normalized_input["eagle_image_sizes"].shape[1:])
 
         result = {
             "prev_logprobs": rlinf_outputs["prev_logprobs"],
@@ -722,11 +677,3 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
 
         self._modality_transform.set_metadata(metadata)
         self.metadata = metadata
-
-        # calculate real intput action dim for rl learning.
-        valid_action_dim = 0
-        for v in metadata.modalities.action.values():
-            valid_action_dim += v.shape[0]
-        self.valid_action_dim = valid_action_dim
-
-        self.image_nums = len(metadata.modalities.video.keys())

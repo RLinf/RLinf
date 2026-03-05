@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
 from omegaconf import DictConfig
 
 from rlinf.config import SupportedModel, get_supported_model, torch_dtype_from_precision
-from rlinf.scheduler import Worker
 
 
 def get_model(cfg: DictConfig):
@@ -26,24 +26,20 @@ def get_model(cfg: DictConfig):
         from rlinf.models.embodiment.openvla_oft import get_model
     elif model_type == SupportedModel.OPENPI:
         from rlinf.models.embodiment.openpi import get_model
-    elif model_type == SupportedModel.DEXBOTIC_PI:
-        from rlinf.models.embodiment.dexbotic_pi import get_model
     elif model_type == SupportedModel.MLP_POLICY:
         from rlinf.models.embodiment.mlp_policy import get_model
     elif model_type == SupportedModel.GR00T:
         from rlinf.models.embodiment.gr00t import get_model
     elif model_type == SupportedModel.CNN_POLICY:
         from rlinf.models.embodiment.cnn_policy import get_model
-    elif model_type == SupportedModel.FLOW_POLICY:
-        from rlinf.models.embodiment.flow_policy import get_model
     else:
         return None
 
     torch_dtype = torch_dtype_from_precision(cfg.precision)
     model = get_model(cfg, torch_dtype)
 
-    if Worker.torch_platform.is_available():
-        model = model.to(Worker.torch_device_type)
+    if torch.cuda.is_available():
+        model = model.cuda()
 
     if cfg.is_lora:
         from peft import LoraConfig, PeftModel, get_peft_model

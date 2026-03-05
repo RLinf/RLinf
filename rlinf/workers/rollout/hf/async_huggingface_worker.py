@@ -14,97 +14,126 @@
 
 import asyncio
 
-from omegaconf.omegaconf import DictConfig
+from tqdm import tqdm
 
-from rlinf.data.embodied_io_struct import EmbodiedRolloutResult
+from rlinf.data.io_struct import AsyncEmbodiedRolloutBuffer
 from rlinf.scheduler import Channel
+from rlinf.utils.nested_dict_process import put_tensor_device
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 
 class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
-    def __init__(self, cfg: DictConfig):
-        super().__init__(cfg)
-        self._generate_task: asyncio.Task = None
-        self.staleness_threshold = cfg.algorithm.get("staleness_threshold", None)
-        self.num_envs_per_stage = (
-            self.cfg.env.train.total_num_envs
-            // self._world_size
-            // self.num_pipeline_stages
-        )
-        assert not self.enable_offload, (
-            "Offload not supported in AsyncMultiStepRolloutWorker"
-        )
-
     async def generate(
-        self,
-        input_channel: Channel,
-        output_channel: Channel,
-        replay_channel: Channel,
-        metric_channel: Channel,
+        self, input_channel: Channel, output_channel: Channel, replay_channel: Channel
     ):
-        assert self._generate_task is None, (
-            "generate task is not None but generate function is called."
-        )
-        self._generate_task = asyncio.create_task(
-            self._generate(
-                input_channel, output_channel, replay_channel, metric_channel
-            )
-        )
-        try:
-            await self._generate_task
-        except asyncio.CancelledError:
-            pass
+        self.buffer_list: list[AsyncEmbodiedRolloutBuffer] = [
+            AsyncEmbodiedRolloutBuffer() for _ in range(self.num_pipeline_stages)
+        ]
 
-    async def _generate(
-        self,
-        input_channel: Channel,
-        output_channel: Channel,
-        replay_channel: Channel,
-        metric_channel: Channel,
-    ):
-        while True:
-            # rollout_results[stage_id]
-            self.rollout_results: list[EmbodiedRolloutResult] = [
-                EmbodiedRolloutResult(
-                    max_episode_length=self.cfg.env.train.max_episode_steps,
-                    model_weights_id=self.model_weights_id,
+        self.buffer_tasks: list[asyncio.Task] = []
+        for buffer in self.buffer_list:
+            self.buffer_tasks.append(
+                asyncio.create_task(
+                    buffer.run(replay_channel, self.get_actor_split_num())
                 )
-                for _ in range(self.num_pipeline_stages)
-            ]
-            await self.wait_if_stale()
-            for _ in range(self.rollout_epoch):
-                await self.generate_one_epoch(input_channel, output_channel)
-            for stage_id in range(self.num_pipeline_stages):
-                await self.send_rollout_trajectories(
-                    self.rollout_results[stage_id], replay_channel
-                )
-            if self.finished_episodes is not None:
-                self.finished_episodes += self.total_num_train_envs * self.rollout_epoch
-            rollout_metrics = self.pop_execution_times()
-            rollout_metrics = {
-                f"time/rollout/{k}": v for k, v in rollout_metrics.items()
-            }
-            metric_channel.put(rollout_metrics, async_op=True)
-
-    async def wait_if_stale(self) -> None:
-        if self.staleness_threshold is None:
-            return
-        assert self.finished_episodes is not None, (
-            "finished_episodes should be initialized."
-        )
-        while True:
-            capacity = (
-                (self.staleness_threshold + self.version + 1)
-                * self.total_num_train_envs
-                * self.rollout_epoch
             )
-            if (
-                self.finished_episodes + self.total_num_train_envs * self.rollout_epoch
-                <= capacity
-            ):
-                break
-            await asyncio.sleep(0.01)
 
-    def stop(self):
-        if self._generate_task is not None and not self._generate_task.done():
-            self._generate_task.cancel()
+        n_chunk_steps = (
+            self.cfg.env.train.max_steps_per_rollout_epoch
+            // self.cfg.actor.model.num_action_chunks
+        )
+
+        progress_bar = tqdm(
+            total=None,
+            desc="Generating Rollout Epochs",
+            disable=(self._rank != 0),
+        )
+
+        while not self.should_stop:
+            last_extracted_obs = [None for i in range(self.num_pipeline_stages)]
+            last_results = [None for i in range(self.num_pipeline_stages)]
+
+            for _ in range(n_chunk_steps):
+                for stage_id in range(self.num_pipeline_stages):
+                    env_output = await self.recv_env_output(input_channel)
+
+                    if last_results[stage_id] is not None:
+                        last_results[stage_id]["forward_inputs"] = (
+                            self.update_intervene_actions(
+                                env_output, last_results[stage_id]["forward_inputs"]
+                            )
+                        )
+
+                    extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"])
+                    dones, rewards, real_extracted_obs = self.get_dones_and_rewards(
+                        env_output, extracted_obs
+                    )
+
+                    actions, result = self.predict(extracted_obs)
+
+                    await self.buffer_list[stage_id].add(
+                        "truncations",
+                        env_output["truncations"].bool().cpu().contiguous(),
+                    )
+                    await self.buffer_list[stage_id].add(
+                        "terminations",
+                        env_output["terminations"].bool().cpu().contiguous(),
+                    )
+                    await self.buffer_list[stage_id].add("dones", dones)
+                    if rewards is not None:
+                        await self.buffer_list[stage_id].add("rewards", rewards)
+                    if last_results[stage_id] is not None:
+                        await self.buffer_list[stage_id].add_result(
+                            last_results[stage_id]
+                        )
+
+                    if last_extracted_obs[stage_id] is not None and hasattr(
+                        self.hf_model, "q_head"
+                    ):
+                        await self.buffer_list[stage_id].add_transition(
+                            last_extracted_obs[stage_id], real_extracted_obs
+                        )
+
+                    last_extracted_obs[stage_id] = extracted_obs
+                    last_results[stage_id] = result
+
+                    self.send_chunk_actions(output_channel, actions)
+
+            for i in range(self.num_pipeline_stages):
+                env_output = await self.recv_env_output(input_channel)
+                extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"])
+                dones, rewards, real_extracted_obs = self.get_dones_and_rewards(
+                    env_output, extracted_obs
+                )
+                await self.buffer_list[i].add(
+                    "truncations", env_output["truncations"].bool().cpu().contiguous()
+                )
+                await self.buffer_list[i].add(
+                    "terminations", env_output["terminations"].bool().cpu().contiguous()
+                )
+                await self.buffer_list[i].add("dones", dones)
+                if rewards is not None:
+                    await self.buffer_list[i].add("rewards", rewards)
+                if last_results is not None:
+                    await self.buffer_list[i].add_result(
+                        put_tensor_device(last_results[i], "cpu")
+                    )
+
+                with self.worker_timer():
+                    actions, result = self.predict(extracted_obs)
+                if "prev_values" in result:
+                    await self.buffer_list[i].add(
+                        "prev_values", result["prev_values"].cpu().contiguous()
+                    )
+                if hasattr(self.hf_model, "q_head"):
+                    await self.buffer_list[i].add_transition(
+                        last_extracted_obs[i], real_extracted_obs
+                    )
+
+            progress_bar.update(1)
+
+    async def stop(self):
+        self.should_stop = True
+        for buffer in self.buffer_list:
+            await buffer.stop()
+        await asyncio.gather(*self.buffer_tasks)

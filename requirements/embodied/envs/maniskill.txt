@@ -1,0 +1,2 @@
+
+mani_skill @ git+https://github.com/haosulab/ManiSkill.git@v3.0.0b22

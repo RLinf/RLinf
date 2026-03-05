@@ -4,7 +4,6 @@ set -euo pipefail
 
 DOWNLOAD_DIR=${DOWNLOAD_DIR:-$HOME}
 SUPPORT_LIST=("maniskill" "openpi")
-GITHUB_PREFIX=${GITHUB_PREFIX:-""}
 ASSETS=()
 
 print_help() {
@@ -48,7 +47,7 @@ download_maniskill_assets() {
 		echo "[download_assets] SAPIEN PhysX assets already exist at $PHYSX_DIR, skipping download."
 	else
 		mkdir -p "$PHYSX_DIR"
-		wget -O "$PHYSX_DIR/linux-so.zip" "${GITHUB_PREFIX}https://github.com/sapien-sim/physx-precompiled/releases/download/${PHYSX_VERSION}/linux-so.zip"
+		wget -O "$PHYSX_DIR/linux-so.zip" "https://github.com/sapien-sim/physx-precompiled/releases/download/${PHYSX_VERSION}/linux-so.zip"
 		unzip "$PHYSX_DIR/linux-so.zip" -d "$PHYSX_DIR" && rm "$PHYSX_DIR/linux-so.zip"
 	fi
 }
@@ -56,13 +55,13 @@ download_maniskill_assets() {
 download_openpi_assets() {
 	local root_dir=$1
 
-	export TOKENIZER_DIR="${root_dir}/.cache/openpi/"
+	export TOKENIZER_DIR="${root_dir}/.cache/openpi/big_vision/"
 
 	if [ -f "$TOKENIZER_DIR/paligemma_tokenizer.model" ]; then
 		echo "[download_assets] OpenPI tokenizer already exists at $TOKENIZER_DIR, skipping download."
 	else
 		mkdir -p "$TOKENIZER_DIR"
-		hf download RLinf/openpi_tokenizer --local-dir "$TOKENIZER_DIR"
+		gsutil -m cp -r gs://big_vision/paligemma_tokenizer.model "$TOKENIZER_DIR"
 	fi
 }
 

@@ -1,0 +1,1 @@
+openvla @ git+https://github.com/openvla/openvla.git

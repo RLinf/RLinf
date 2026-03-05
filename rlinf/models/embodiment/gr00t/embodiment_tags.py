@@ -42,11 +42,6 @@ class EmbodimentTag(Enum):
     The maniskill widowx dataset.
     """
 
-    ISAACLAB_FRANKA = "isaaclab_franka"
-    """
-    The isaaclab Franka dataset.
-    """
-
 
 # Embodiment tag string: to projector index in the Action Expert Module
 EMBODIMENT_TAG_MAPPING = {
@@ -55,5 +50,4 @@ EMBODIMENT_TAG_MAPPING = {
     EmbodimentTag.AGIBOT_GENIE1.value: 26,
     EmbodimentTag.GR1.value: 24,
     EmbodimentTag.MANISKILL_WIDOWX.value: 30,
-    EmbodimentTag.ISAACLAB_FRANKA.value: 31,
 }

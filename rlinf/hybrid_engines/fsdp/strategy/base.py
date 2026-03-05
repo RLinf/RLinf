@@ -14,17 +14,16 @@
 
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
 from logging import Logger
 from typing import TYPE_CHECKING, ContextManager, Optional, Union
 
 import torch
+import torch.distributed.checkpoint as dcp
 import torch.nn as nn
 from omegaconf import DictConfig
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
-    set_model_state_dict,
 )
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
@@ -35,8 +34,9 @@ from rlinf.hybrid_engines.fsdp import FSDP, FSDPModule
 from rlinf.hybrid_engines.fsdp.strategy.checkpoint import Checkpoint
 from rlinf.hybrid_engines.fsdp.utils import (
     FSDPVersion,
+    copy_model_config_and_code,
+    save_state_dict_sharded_safetensors,
 )
-from rlinf.scheduler import Worker
 from rlinf.utils.utils import clear_memory
 
 if TYPE_CHECKING:
@@ -157,38 +157,13 @@ class FSDPStrategyBase(ABC):
         )
 
     @classmethod
-    def save_npu_weight(cls, obj, path: str) -> None:
-        """
-        Save weights safely when tensors may live on NPU.
-
-        Converts all NPU tensors to CPU recursively before saving.
-        """
-
-        def to_cpu(item):
-            if isinstance(item, torch.Tensor) and item.is_npu:
-                return item.cpu()
-            return item
-
-        if isinstance(obj, dict):
-            obj = {k: to_cpu(v) for k, v in obj.items()}
-        elif isinstance(obj, (list, tuple)):
-            obj = type(obj)(to_cpu(v) for v in obj)
-        elif isinstance(obj, torch.Tensor):
-            obj = obj.cpu()
-        else:
-            raise ValueError("value type error")
-        torch.save(obj, path, _use_new_zipfile_serialization=True)
-        print(f"Save using _use_new_zipfile_serialization to {path}")
-
-    @classmethod
     def save_checkpoint(
         cls,
+        model_path: str,
         model: Union[FSDP, FSDPModule],
-        optimizers: Union[Optimizer, Iterable[Optimizer]],
-        lr_schedulers: Union[LRScheduler, Iterable[LRScheduler]],
+        optimizer: Optimizer,
+        lr_scheduler: LRScheduler,
         save_path: str,
-        save_full_model_weights: bool = True,
-        checkpoint_format: str = "dcp",
     ) -> None:
         """
         Save the training state checkpoint.
@@ -196,16 +171,16 @@ class FSDPStrategyBase(ABC):
         Assumes:
         cls must have get_fsdp_version method,
         and torch.distributed has been initialized. Most importantly,
-        optimizers should have all state(by calling `fake_optimizer_step`),
+        optimizer should have all state(by calling `fake_optimizer_step`),
         this is done in `init_worker`.
 
         Args:
+            model_path (str): The original path to load model config and code, we
+                use it to copy model config and code to safetensors' save_path.
             model (Union[FSDP, FSDPModule]): The model to be saved.
-            optimizers (Union[Optimizer, Iterable[Optimizer]]): The optimizers to be saved.
-            lr_schedulers (LRScheduler): The learning rate scheduler to be saved.
+            optimizer (Optimizer): The optimizer to be saved.
+            lr_scheduler (LRScheduler): The learning rate scheduler to be saved.
             save_path (str): The path to save the checkpoint.
-            save_full_model_weights (bool): Whether to save full model weights.
-            checkpoint_format (str): "dcp" or "local_shard".
         """
         clear_memory()
         torch.distributed.barrier()
@@ -213,30 +188,12 @@ class FSDPStrategyBase(ABC):
         try:
             training_state = Checkpoint(
                 model,
-                optimizers,
-                lr_schedulers,
+                optimizer,
+                lr_scheduler,
                 opts,
                 fsdp_version=cls.get_fsdp_version(),
-                checkpoint_format=checkpoint_format,
             )
-            if checkpoint_format == "local_shard":
-                local_shard_save_path = os.path.join(
-                    save_path, "local_shard_checkpoint"
-                )
-                rank = torch.distributed.get_rank()
-                os.makedirs(local_shard_save_path, exist_ok=True)
-                torch.save(
-                    training_state.state_dict(),
-                    os.path.join(local_shard_save_path, f"checkpoint_rank_{rank}.pt"),
-                )
-            else:
-                from torch.distributed import checkpoint as dcp
-
-                dcp_save_path = os.path.join(save_path, "dcp_checkpoint")
-                dcp.save(
-                    {"fsdp_checkpoint": training_state},
-                    checkpoint_id=dcp_save_path,
-                )
+            dcp.save({"fsdp_checkpoint": training_state}, checkpoint_id=save_path)
 
         except BaseException as e:
             import traceback
@@ -247,33 +204,23 @@ class FSDPStrategyBase(ABC):
             raise e
         torch.distributed.barrier()
 
-        if save_full_model_weights:
-            opts = StateDictOptions(full_state_dict=True, cpu_offload=True)
-            sd_save_path = os.path.join(save_path, "model_state_dict")
-            model_state_dict = get_model_state_dict(model=model, options=opts)
-            if torch.distributed.get_rank() == 0:
-                os.makedirs(sd_save_path, exist_ok=True)
-                # npu requires a specific model parameter save
-                if Worker.torch_device_type == "npu":
-                    cls.save_npu_weight(
-                        model_state_dict, os.path.join(sd_save_path, "full_weights.pt")
-                    )
-
-                else:
-                    torch.save(
-                        model_state_dict, os.path.join(sd_save_path, "full_weights.pt")
-                    )
-
-            torch.distributed.barrier()
+        opts = StateDictOptions(full_state_dict=True, cpu_offload=True)
+        sd_save_path = os.path.join(save_path, "model")
+        model_state_dict = get_model_state_dict(model=model, options=opts)
+        if torch.distributed.get_rank() == 0:
+            copy_model_config_and_code(model_path=model_path, save_path=sd_save_path)
+            save_state_dict_sharded_safetensors(
+                state_dict=model_state_dict, out_dir=sd_save_path
+            )
+        torch.distributed.barrier()
 
     @classmethod
     def load_checkpoint(
         cls,
         model: Union[FSDP, FSDPModule],
-        optimizers: Union[Optimizer, Iterable[Optimizer]],
-        lr_schedulers: Union[LRScheduler, Iterable[LRScheduler]],
+        optimizer: Optimizer,
+        lr_scheduler: LRScheduler,
         load_path: str,
-        checkpoint_format: str = "dcp",
     ) -> None:
         """
         Load the training state checkpoint.
@@ -286,69 +233,21 @@ class FSDPStrategyBase(ABC):
 
         Args:
             model (Union[FSDP, FSDPModule]): The model to load the checkpoint into.
-            optimizers (Union[Optimizer, Iterable[Optimizer]]): The optimizer to load the checkpoint into.
-            lr_schedulers (Union[LRScheduler, Iterable[LRScheduler]]): The learning rate scheduler to load the checkpoint into.
+            optimizer (Optimizer): The optimizer to load the checkpoint into.
+            lr_scheduler (LRScheduler): The learning rate scheduler to load the checkpoint into.
             load_path (str): The path to load the checkpoint from.
-            checkpoint_format (str): "dcp" or "local_shard".
         """
+        torch.distributed.barrier()
         opts = StateDictOptions(full_state_dict=False, cpu_offload=True)
-        training_state = Checkpoint(
-            model=model,
-            optimizers=optimizers,
-            lr_schedulers=lr_schedulers,
-            opts=opts,
-            fsdp_version=cls.get_fsdp_version(),
-            checkpoint_format=checkpoint_format,
-        )
         try:
-            if checkpoint_format == "local_shard":
-                rank = torch.distributed.get_rank()
-                local_ckpt_file = os.path.join(
-                    load_path, "local_shard_checkpoint", f"checkpoint_rank_{rank}.pt"
-                )
-                if not os.path.isfile(local_ckpt_file):
-                    raise FileNotFoundError(
-                        f"Expected local shard checkpoint '{local_ckpt_file}' not found"
-                    )
-
-                if hasattr(cls, "logger") and cls.logger is not None:
-                    cls.logger.info(
-                        f"[Checkpoint] loading local shard checkpoint from {local_ckpt_file}"
-                    )
-
-                checkpoint = torch.load(local_ckpt_file, weights_only=False)
-
-                # version check
-                ckpt_fsdp_version = FSDPVersion(checkpoint["fsdp_version"])
-                if ckpt_fsdp_version != cls.get_fsdp_version():
-                    raise ValueError(
-                        f"FSDP version mismatch: {ckpt_fsdp_version} != {cls.get_fsdp_version()}"
-                    )
-
-                training_state.load_state_dict(checkpoint)
-            else:
-                import glob
-
-                from torch.distributed import checkpoint as dcp
-
-                dcp_dir = os.path.join(load_path, "dcp_checkpoint")
-                dcp_load_path = dcp_dir if os.path.isdir(dcp_dir) else load_path
-
-                distcp_files = glob.glob(os.path.join(dcp_load_path, "*.distcp"))
-                if len(distcp_files) == 0:
-                    raise FileNotFoundError(
-                        f"Could not find a valid DCP checkpoint under '{dcp_load_path}'. "
-                    )
-
-                if hasattr(cls, "logger") and cls.logger is not None:
-                    cls.logger.info(
-                        f"[Checkpoint] loading DCP checkpoint from {dcp_load_path}"
-                    )
-
-                dcp.load(
-                    {"fsdp_checkpoint": training_state},
-                    checkpoint_id=dcp_load_path,
-                )
+            training_state = Checkpoint(
+                model=model,
+                optimizer=optimizer,
+                lr_scheduler=lr_scheduler,
+                opts=opts,
+                fsdp_version=cls.get_fsdp_version(),
+            )
+            dcp.load({"fsdp_checkpoint": training_state}, checkpoint_id=load_path)
         except BaseException as e:
             import traceback
 
@@ -356,7 +255,6 @@ class FSDPStrategyBase(ABC):
                 cls.logger.error(f"Failed to load checkpoint from {load_path}: {e}")
             traceback.print_exc()
             raise e
-
         torch.distributed.barrier()
 
     def get_model_state_dict(
@@ -379,22 +277,6 @@ class FSDPStrategyBase(ABC):
         )
         state_dict = get_model_state_dict(model=model, options=opts)
         return state_dict
-
-    def load_model_with_state_dict(
-        self,
-        model: FSDPModule,
-        model_state_dict,
-        cpu_offload: bool,
-        full_state_dict: bool,
-    ):
-        opts = StateDictOptions(
-            cpu_offload=cpu_offload, full_state_dict=full_state_dict
-        )
-        set_model_state_dict(
-            model=model,
-            model_state_dict=model_state_dict,
-            options=opts,
-        )
 
     @abstractmethod
     def offload_optimizer(self, optimizer: Optimizer) -> None: ...

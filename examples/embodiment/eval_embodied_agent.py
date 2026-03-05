@@ -12,11 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
-
 import hydra
 import torch.multiprocessing as mp
-from omegaconf.omegaconf import OmegaConf
 
 from rlinf.config import validate_cfg
 from rlinf.runners.embodied_eval_runner import EmbodiedEvalRunner
@@ -34,7 +31,6 @@ mp.set_start_method("spawn", force=True)
 def main(cfg) -> None:
     cfg.runner.only_eval = True
     cfg = validate_cfg(cfg)
-    print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = HybridComponentPlacement(cfg, cluster)

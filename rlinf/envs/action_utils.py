@@ -16,7 +16,6 @@ import numpy as np
 import torch
 
 from rlinf.config import SupportedModel
-from rlinf.envs import SupportedEnvType
 
 
 def prepare_actions_for_maniskill(
@@ -47,8 +46,6 @@ def prepare_actions_for_maniskill(
     if policy == "google_robot":
         raise NotImplementedError
     elif policy == "widowx_bridge":
-        actions["gripper"] = 2.0 * (raw_actions["open_gripper"] > 0.5) - 1.0  # [B, 1]
-    elif policy == "panda_wristcam":
         actions["gripper"] = 2.0 * (raw_actions["open_gripper"] > 0.5) - 1.0  # [B, 1]
 
     actions["terminate_episode"] = np.array([0.0] * batch_size).reshape(-1, 1)  # [B, 1]
@@ -141,44 +138,21 @@ def prepare_actions_for_robocasa(
         return chunk_actions
 
 
-def prepare_actions_for_mujoco(raw_chunk_actions, model_type):
-    if raw_chunk_actions.shape[-1] >= 7:
-        chunk_actions = np.concatenate(
-            [raw_chunk_actions[..., :3], raw_chunk_actions[..., 6:7]], axis=-1
-        )
-    else:
-        chunk_actions = raw_chunk_actions[..., :4]
-    if SupportedModel(model_type) == SupportedModel.OPENPI:
-        chunk_actions[..., -1] = np.clip(chunk_actions[..., -1], -1.0, 1.0)
-    return chunk_actions
-
-
 def prepare_actions(
     raw_chunk_actions,
-    env_type: str,
-    model_type: str,
+    env_type,
+    model_type,
     num_action_chunks,
     action_dim,
     action_scale: float = 1.0,
     policy: str = "widowx_bridge",
-    wm_env_type=None,
 ) -> torch.Tensor | np.ndarray:
-    env_type = SupportedEnvType(env_type)
-    if env_type == SupportedEnvType.LIBERO:
+    if env_type == "libero":
         chunk_actions = prepare_actions_for_libero(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
-    elif env_type == SupportedEnvType.OPENSORAWM or env_type == SupportedEnvType.WANWM:
-        # TODO: Implement prepare_actions_for_opensora_wm
-        if wm_env_type == "libero":
-            chunk_actions = prepare_actions_for_libero(
-                raw_chunk_actions=raw_chunk_actions,
-                model_type=model_type,
-            )
-        else:
-            raise NotImplementedError(f"Env type {wm_env_type} not implemented")
-    elif env_type == SupportedEnvType.MANISKILL:
+    elif env_type == "maniskill":
         chunk_actions = prepare_actions_for_maniskill(
             raw_chunk_actions=raw_chunk_actions,
             num_action_chunks=num_action_chunks,
@@ -186,34 +160,29 @@ def prepare_actions(
             action_scale=action_scale,
             policy=policy,
         )
-    elif env_type == SupportedEnvType.ROBOTWIN:
+    elif env_type == "robotwin":
         chunk_actions = raw_chunk_actions
-    elif env_type == SupportedEnvType.METAWORLD:
+    elif env_type == "metaworld":
         chunk_actions = raw_chunk_actions
-    elif env_type == SupportedEnvType.CALVIN:
+    elif env_type == "calvin":
         chunk_actions = prepare_actions_for_calvin(
             raw_chunk_actions=raw_chunk_actions,
         )
-    elif env_type == SupportedEnvType.BEHAVIOR:
+    elif env_type == "behavior":
         chunk_actions = raw_chunk_actions
-    elif env_type == SupportedEnvType.ISAACLAB:
+    elif env_type == "isaaclab":
         chunk_actions = prepare_actions_for_isaaclab(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
-    elif env_type == SupportedEnvType.ROBOCASA:
+    elif env_type == "robocasa":
         chunk_actions = prepare_actions_for_robocasa(
             raw_chunk_actions=raw_chunk_actions,
             action_dim=action_dim,
             model_type=model_type,
         )
-    elif env_type == SupportedEnvType.REALWORLD:
+    elif env_type == "realworld":
         chunk_actions = raw_chunk_actions
-    elif env_type == SupportedEnvType.FRANKASIM:
-        chunk_actions = prepare_actions_for_mujoco(
-            raw_chunk_actions=raw_chunk_actions,
-            model_type=model_type,
-        )
     else:
         raise NotImplementedError
 

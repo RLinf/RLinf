@@ -13,8 +13,9 @@
 # limitations under the License.
 
 import asyncio
+import queue
 import threading
-from concurrent.futures import Future as ConcurrentFuture
+import time
 from typing import Any, Callable, Optional, overload
 
 import ray.actor
@@ -122,9 +123,8 @@ class AsyncFuncWork(AsyncWork):
             Any: The result of the work if applicable, otherwise None.
 
         """
-        if not self._done.done():
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._done.wait)
+        while not self._done.done():
+            await asyncio.sleep(0.001)  # Yield control to the event loop
         if self._cuda_event is not None:
             self._cuda_event.wait()
         result = self._result
@@ -141,7 +141,8 @@ class AsyncFuncWork(AsyncWork):
             Any: The result of the work if applicable, otherwise None.
 
         """
-        self._done.wait()
+        while not self._done.done():
+            time.sleep(0.001)
         if self._cuda_event is not None:
             self._cuda_event.wait()
         result = self._result
@@ -182,7 +183,9 @@ class AsyncCollWork(AsyncWork):
 
     async def async_wait(self):
         """Async wait for the work to complete."""
-        await asyncio.get_event_loop().run_in_executor(None, self.wait)
+        for work in self._works:
+            while not work.is_completed():
+                await asyncio.sleep(0.001)  # Yield control to the event loop
 
     def wait(self):
         """Wait for the work to complete."""
@@ -220,12 +223,25 @@ class AsyncCollWork(AsyncWork):
 
 
 class AsyncChannelWork(AsyncWork):
-    """Asynchronous work for channel operations."""
+    """Asynchronous work for channel operations.
 
+    This class handles the asynchronous execution of operations on a channel.
+    It runs a dedicated thread to process channel operations asynchronously.
+    All operations are enqueued and processed in the order they are created, so as to ensure the correct execution order.
+
+    For each channel's each key, a dedicated asyncio coroutine is created to process all its operations.
+    So, execution order is preserved within each channel-key combination.
+    Different channels, or same channel under different keys, are thus processed concurrently without blocking each other, and no ordering is guaranteed between them.
+    """
+
+    # Operation queues used to communicate with the operation processing thread
+    async_op_queue: queue.Queue["AsyncChannelWork"] = queue.Queue()
+    # Operation queues for each channel-key combination
+    channel_op_queue_map: dict[str, asyncio.Queue] = {}
     # Global thread lock
-    lock: threading.Lock = threading.Lock()
-    # Last future per key in execution loop
-    last_future_per_key: dict[str, Future] = {}
+    lock: threading.Lock = None
+    # Channel operation processing thread
+    execution_thread: threading.Thread = None
 
     def __init__(
         self,
@@ -253,19 +269,65 @@ class AsyncChannelWork(AsyncWork):
         self._kwargs = kwargs
         self._future = Future()
 
-        # Enqueue the operation
-        with AsyncChannelWork.lock:
-            last_fut = AsyncChannelWork.last_future_per_key.get(self._channel_key)
-            if last_fut is None:
-                self._execute()
-            else:
-                last_fut.then(lambda _: self._execute())
-            AsyncChannelWork.last_future_per_key[self._channel_key] = self._future
+        # Create lock if not exist
+        if AsyncChannelWork.lock is None:
+            AsyncChannelWork.lock = threading.Lock()
 
-    def _execute(self):
+        # Create thread if not exist
+        with AsyncChannelWork.lock:
+            if AsyncChannelWork.execution_thread is None:
+                AsyncChannelWork.execution_thread = threading.Thread(
+                    target=self._run, daemon=True
+                )
+                AsyncChannelWork.execution_thread.start()
+
+        # Enqueue the operation
+        AsyncChannelWork.async_op_queue.put(self)
+
+    @staticmethod
+    def _run():
+        """Run the channel work."""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        # Dedicated coroutine for processing a channel-key's operations
+        async def process_work(channel_op_queue: asyncio.Queue[AsyncChannelWork]):
+            while True:
+                work = await channel_op_queue.get()
+                try:
+                    result = await work._execute()
+                except Exception as e:
+                    work._future.set_exception(e)
+                else:
+                    work._future.set_result(result)
+
+        # Main loop of the processing thread
+        async def run_loop():
+            while True:
+                try:
+                    operation = AsyncChannelWork.async_op_queue.get(block=False)
+                except queue.Empty:
+                    await asyncio.sleep(0.001)  # Yield control to the event loop
+                    continue
+
+                op_queue_map = AsyncChannelWork.channel_op_queue_map
+                channel_key = operation._channel_key
+
+                # Create a new operation queue for the channel-key if it doesn't exist
+                if channel_key not in op_queue_map:
+                    channel_op_queue = asyncio.Queue()
+                    op_queue_map[channel_key] = channel_op_queue
+                    asyncio.create_task(process_work(channel_op_queue))
+
+                channel_op_queue = op_queue_map[channel_key]
+                await channel_op_queue.put(operation)
+
+        loop.run_until_complete(run_loop())
+
+    async def _execute(self):
+        """Execute the operation."""
         method = getattr(self._channel_actor, self._method)
-        future: ConcurrentFuture = method.remote(*self._args, **self._kwargs).future()
-        future.add_done_callback(lambda f: self._future.set_result(f.result()))
+        return await method.remote(*self._args, **self._kwargs)
 
     async def async_wait(self):
         """Async wait for the work to complete.
@@ -274,9 +336,8 @@ class AsyncChannelWork(AsyncWork):
             Any: The result of the work if applicable, otherwise None.
 
         """
-        if not self._future.done():
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._future.wait)
+        while not self._future.done():
+            await asyncio.sleep(0.01)
         return self._future.value()
 
     def wait(self):
@@ -332,7 +393,7 @@ class AsyncChannelCommWork(AsyncWork):
 
     def _store_channel_data(self):
         """Store channel data in the channel data store."""
-        data, query_id = self._async_comm_work.wait()
+        query_id, data = self._async_comm_work.wait()
         with AsyncChannelCommWork.store_lock:
             if query_id not in AsyncChannelCommWork.channel_data_store:
                 AsyncChannelCommWork.channel_data_store[query_id] = Future()
@@ -346,9 +407,8 @@ class AsyncChannelCommWork(AsyncWork):
             Any: The result of the work if applicable, otherwise None.
 
         """
-        if not self._data_future.done():
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._data_future.wait)
+        while not self._data_future.done():
+            await asyncio.sleep(0.01)  # Yield control to the event loop
         with AsyncChannelCommWork.store_lock:
             AsyncChannelCommWork.channel_data_store.pop(self._query_id, None)
         return self._data_future.value()
@@ -368,19 +428,3 @@ class AsyncChannelCommWork(AsyncWork):
     def done(self):
         """Query the completion state of the work."""
         return self._data_future.done()
-
-
-class AsyncRayWork(AsyncWork):
-    """Asynchronous work for ray operations."""
-
-    def __init__(self, ray_object: ray.ObjectRef):
-        """Initialize the AsyncRayWork."""
-        self._ray_object = ray_object
-
-    async def async_wait(self):
-        """Async wait for the work to complete."""
-        return await self._ray_object
-
-    def wait(self):
-        """Wait for the work to complete."""
-        return ray.get(self._ray_object)

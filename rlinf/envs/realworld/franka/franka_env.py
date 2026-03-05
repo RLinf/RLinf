@@ -76,9 +76,6 @@ class FrankaRobotConfig:
     gripper_penalty: float = 0.1
     save_video_path: Optional[str] = None
     joint_reset_cycle: int = 20000  # Number of resets before resetting joints
-    success_hold_steps: int = (
-        1  # Default to 1 to maintain backward compatibility (immediate success)
-    )
 
 
 class FrankaEnv(gym.Env):
@@ -114,8 +111,6 @@ class FrankaEnv(gym.Env):
         self._num_steps = 0
         self._joint_reset_cycle = cycle(range(self.config.joint_reset_cycle))
         next(self._joint_reset_cycle)  # Initialize the cycle
-
-        self._success_hold_counter = 0  # Initialize the success hold counter
 
         if not self.config.is_dummy:
             self._setup_hardware()
@@ -217,17 +212,8 @@ class FrankaEnv(gym.Env):
         else:
             self._franka_state = self._franka_state
         observation = self._get_observation()
-
-        # Calculate reward and update the internal hold counter
         reward = self._calc_step_reward(observation, is_gripper_action_effective)
-
-        # Logic to determine termination
-        # The episode is done only if the robot has reached the target (reward == 1.0)
-        # AND has held the position for the required number of steps.
-        terminated = (reward == 1.0) and (
-            self._success_hold_counter >= self.config.success_hold_steps
-        )
-
+        terminated = reward == 1
         truncated = self._num_steps >= self.config.max_num_steps
         return observation, reward, terminated, truncated, {}
 
@@ -253,19 +239,10 @@ class FrankaEnv(gym.Env):
             )
             position = np.hstack([self._franka_state.tcp_pose[:3], euler_angles])
             target_delta = np.abs(position - self.config.target_ee_pose)
-
-            # Check if current state meets the success threshold
-            is_in_target_zone = np.all(
-                target_delta[:3] <= self.config.reward_threshold[:3]
-            )
-
-            if is_in_target_zone:
-                # Increment hold counter if in target zone
-                self._success_hold_counter += 1
+            is_success = np.all(target_delta[:3] <= self.config.reward_threshold[:3])
+            if is_success:
                 reward = 1.0
             else:
-                # Reset counter if robot leaves the target zone
-                self._success_hold_counter = 0
                 if self.config.use_dense_reward:
                     reward = np.exp(-500 * np.sum(np.square(target_delta[:3])))
                 else:
@@ -283,13 +260,10 @@ class FrankaEnv(gym.Env):
         else:
             return 0.0
 
-    def reset(self, joint_reset=False, seed=None, options=None):
+    def reset(self, *, seed=None, options=None):
         if self.config.is_dummy:
             observation = self._get_observation()
             return observation, {}
-
-        self._success_hold_counter = 0  # Reset hold counter at the start of the episode
-
         self._controller.reconfigure_compliance_params(
             self.config.compliance_param
         ).wait()
@@ -357,6 +331,7 @@ class FrankaEnv(gym.Env):
             np.ones((7,), dtype=np.float32),
         )
 
+        # obs_tcp_pose_dim = 6 if self.use_euler_obs else 7
         obs_tcp_pose_dim = 7
         self.observation_space = gym.spaces.Dict(
             {
@@ -561,13 +536,3 @@ class FrankaEnv(gym.Env):
         state["tcp_pose"] = np.concatenate([p_r_o, quat_r_o], axis=0)
 
         return state
-
-    @property
-    def target_ee_pose(self):
-        tgt = np.concatenate(
-            [
-                self.config.target_ee_pose[:3],
-                R.from_euler("xyz", self.config.target_ee_pose[3:].copy()).as_quat(),
-            ]
-        ).copy()
-        return tgt

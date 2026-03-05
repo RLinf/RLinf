@@ -59,19 +59,6 @@ class ClusterEnvVar(str, Enum):
     COMM_NET_DEVICES = "COMM_NET_DEVICES"
     """Network devices to use for inter-node communication."""
 
-    EXT_MODULE = "EXT_MODULE"
-    """Load extension modules specified via EXT_MODULE environment variable.
-
-    This allows users to register custom environments, models, or other extensions
-    without patching.
-    The extension module should have a `register()` function that performs the necessary registrations.
-
-    Example usage:
-        export RLINF_EXT_MODULE=rlinf_ext
-        # or with full path:
-        export RLINF_EXT_MODULE=workflows.scripts.rlinf_ext
-    """
-
 
 class Cluster:
     """A singleton class that manages the cluster resources for Ray workers."""
@@ -88,7 +75,6 @@ class Cluster:
         ClusterEnvVar.TIMEOUT: "180",
         ClusterEnvVar.NODE_RANK: None,
         ClusterEnvVar.COMM_NET_DEVICES: None,
-        ClusterEnvVar.EXT_MODULE: None,
     }
 
     class NamespaceConflictError(Exception):
@@ -186,8 +172,6 @@ class Cluster:
         if "RAY_DEDUP_LOGS" not in os.environ:
             # Default disabling deduplication of logs to ensure all logs are printed.
             ray_logging.RAY_DEDUP_LOGS = 0
-        if "RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO" not in os.environ:
-            os.environ["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] = "0"
 
         # Cluster configurations
         self._cluster_cfg = (
@@ -251,37 +235,35 @@ class Cluster:
         from ..manager import (
             CollectiveManager,
             DeviceLockManager,
-            Manager,
             NodeManager,
             PortLockManager,
             WorkerManager,
         )
 
         try:
-            runtime_env = {"env_vars": Manager.get_runtime_env_vars()}
             self._worker_manager = (
                 ray.remote(WorkerManager)
-                .options(name=WorkerManager.MANAGER_NAME, runtime_env=runtime_env)
+                .options(name=WorkerManager.MANAGER_NAME)
                 .remote()
             )
             self._coll_manager = (
                 ray.remote(CollectiveManager)
-                .options(name=CollectiveManager.MANAGER_NAME, runtime_env=runtime_env)
+                .options(name=CollectiveManager.MANAGER_NAME)
                 .remote()
             )
             self._node_manager = (
                 ray.remote(NodeManager)
-                .options(name=NodeManager.MANAGER_NAME, runtime_env=runtime_env)
+                .options(name=NodeManager.MANAGER_NAME)
                 .remote(self._nodes, self._node_groups, self._cluster_cfg)
             )
             self._device_lock_manager = (
                 ray.remote(DeviceLockManager)
-                .options(name=DeviceLockManager.MANAGER_NAME, runtime_env=runtime_env)
+                .options(name=DeviceLockManager.MANAGER_NAME)
                 .remote()
             )
             self._port_lock_manager = (
                 ray.remote(PortLockManager)
-                .options(name=PortLockManager.MANAGER_NAME, runtime_env=runtime_env)
+                .options(name=PortLockManager.MANAGER_NAME)
                 .remote()
             )
         except ValueError:

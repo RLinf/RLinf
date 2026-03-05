@@ -1,8 +1,0 @@
-safetensors
-sentencepiece
-protobuf
-modelscope
-ftfy
-pandas
-deepspeed==0.18.4
-seaborn

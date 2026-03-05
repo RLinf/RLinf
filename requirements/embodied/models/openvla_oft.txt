@@ -1,0 +1,1 @@
+openvla_oft @ git+https://github.com/moojink/openvla-oft.git

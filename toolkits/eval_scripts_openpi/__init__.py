@@ -99,13 +99,11 @@ def create_trained_policy(
 
     # Determine the device to use for PyTorch models
     if is_pytorch and pytorch_device is None:
-        import torch
+        try:
+            import torch
 
-        if torch.cuda.is_available():
-            pytorch_device = "cuda"
-        elif hasattr(torch, "npu") and torch.npu.is_available():
-            pytorch_device = "npu"
-        else:
+            pytorch_device = "cuda" if torch.cuda.is_available() else "cpu"
+        except ImportError:
             pytorch_device = "cpu"
 
     return _policy.Policy(

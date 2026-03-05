@@ -14,8 +14,7 @@
 
 import asyncio
 import time
-from collections import defaultdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from omegaconf.dictconfig import DictConfig
 
@@ -26,6 +25,7 @@ from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.utils.runner_utils import check_progress
 
 if TYPE_CHECKING:
+    from rlinf.data.replay_buffer import SACReplayBuffer
     from rlinf.workers.actor.async_fsdp_sac_policy_worker import (
         AsyncEmbodiedSACFSDPPolicy,
     )
@@ -42,161 +42,88 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         actor: "AsyncEmbodiedSACFSDPPolicy",
         rollout: "AsyncMultiStepRolloutWorker",
         env: "AsyncEnvWorker",
+        demo_buffer: Optional["SACReplayBuffer"] = None,
         critic=None,
         reward=None,
         run_timer=None,
     ):
-        super().__init__(cfg, actor, rollout, env, critic, reward, run_timer)
+        super().__init__(
+            cfg, actor, rollout, env, demo_buffer, critic, reward, run_timer
+        )
 
         # Data channels
         self.env_metric_channel = Channel.create("EnvMetric")
-        self.rollout_metric_channel = Channel.create("RolloutMetric")
         self.replay_channel = Channel.create("ReplayBuffer")
 
-    def get_env_metrics(self) -> dict:
-        results: list[dict] = []
-        while True:
-            try:
-                result = self.env_metric_channel.get_nowait()
-                results.append(result)
-            except asyncio.QueueEmpty:
-                break
-
-        if not results:
-            return {}
-
-        time_metrics = defaultdict(list)
-        # NOTE: assumes each env metric dict has the same set of keys.
-        env_metrics: list[dict] = []
-        for result in results:
-            if result.get("env"):
-                env_metrics.append(result["env"])
-            for key, value in result.get("time", {}).items():
-                time_metrics[key].append(value)
-
-        time_metrics = {k: sum(v) / len(v) for k, v in time_metrics.items()}
-        if not env_metrics:
-            return {**time_metrics}
-
-        env_metrics = compute_evaluate_metrics(env_metrics)
-        return {**env_metrics, **time_metrics}
-
-    def get_rollout_metrics(self) -> dict:
-        results: list[dict] = []
-        while True:
-            try:
-                result = self.rollout_metric_channel.get_nowait()
-                results.append(result)
-            except asyncio.QueueEmpty:
-                break
-
-        if not results:
-            return {}
-
-        time_metrics = defaultdict(list)
-        # NOTE: currently assumes only time metrics are sent through rollout_metric_channel, and each dict has the same set of keys.
-        for result in results:
-            for key, value in result.items():
-                time_metrics[key].append(value)
-        time_metrics = {k: sum(v) / len(v) for k, v in time_metrics.items()}
-        return time_metrics
+    def get_env_metrics(self):
+        try:
+            result = self.env_metric_channel.get_nowait()
+        except asyncio.QueueEmpty:
+            return None
+        env_metrics = compute_evaluate_metrics(
+            [
+                result,
+            ]
+        )
+        return env_metrics
 
     def run(self):
         start_step = self.global_step
-        start_time = time.time()
         self.update_rollout_weights()
+        self.send_demo_buffer()
 
         env_handle: Handle = self.env.interact(
             input_channel=self.rollout_channel,
             output_channel=self.env_channel,
-            metric_channel=self.env_metric_channel,
+            env_metric_channel=self.env_metric_channel,
         )
         rollout_handle: Handle = self.rollout.generate(
             input_channel=self.env_channel,
             output_channel=self.rollout_channel,
             replay_channel=self.replay_channel,
-            metric_channel=self.rollout_metric_channel,
         )
-        actor_handle: Handle = self.actor.recv_rollout_trajectories(
-            input_channel=self.replay_channel
-        )
+        self.actor.start_replay_buffer(self.replay_channel)
 
-        while self.global_step < self.max_steps:
-            skip_step = False
-            with self.timer("step"):
-                actor_training_handle: Handle = self.actor.run_training()
-                actor_result = actor_training_handle.wait()
-                if not actor_result[0]:
-                    skip_step = True
+        train_step = start_step
+        while train_step < self.max_steps:
+            if (
+                self.cfg.runner.val_check_interval > 0
+                and train_step % self.cfg.runner.val_check_interval == 0
+            ):
+                self.update_rollout_weights()
+                eval_metrics = self.evaluate()
+                eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
+                self.metric_logger.log(data=eval_metrics, step=train_step)
 
-                if not skip_step:
-                    self.global_step += 1
-                    if self.global_step % self.weight_sync_interval == 0:
-                        self.update_rollout_weights()
-
-                    training_metrics = {
-                        f"train/{k}": v for k, v in actor_result[0].items()
-                    }
-
-                    run_val, save_model, _ = check_progress(
-                        self.global_step,
-                        self.max_steps,
-                        self.cfg.runner.val_check_interval,
-                        self.cfg.runner.save_interval,
-                        1.0,
-                        run_time_exceeded=False,
-                    )
-                    if save_model:
-                        self._save_checkpoint()
-                    eval_metrics = {}
-                    if run_val:
-                        with self.timer("eval"):
-                            eval_metrics = self.evaluate()
-                            eval_metrics = {
-                                f"eval/{k}": v for k, v in eval_metrics.items()
-                            }
-
-            if skip_step:
-                self.timer.consume_durations()
+            actor_result = self.actor.run_training().wait()
+            if not actor_result[0]:
                 time.sleep(1.0)
                 continue
+            train_step += 1
+            self.update_rollout_weights()
 
-            time_metrics = self.timer.consume_durations()
-            time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
-            training_metrics["train/replay_channel_qsize"] = self.replay_channel.qsize()
-            actor_training_time_metrics = {
-                f"time/actor/{k}": v
-                for k, v in actor_training_handle.consume_durations().items()
-            }
-            time_metrics.update(actor_training_time_metrics)
+            training_metrics = {f"train/{k}": v for k, v in actor_result[0].items()}
+            self.metric_logger.log(training_metrics, train_step)
+
             env_metrics = self.get_env_metrics()
-            rollout_metrics = self.get_rollout_metrics()
+            if env_metrics is not None:
+                rollout_metrics = {f"env/{k}": v for k, v in env_metrics.items()}
+                self.metric_logger.log(rollout_metrics, train_step)
 
-            self.metric_logger.log(time_metrics, self.global_step)
-            self.metric_logger.log(env_metrics, self.global_step)
-            self.metric_logger.log(rollout_metrics, self.global_step)
-            self.metric_logger.log(training_metrics, self.global_step)
-            self.metric_logger.log(eval_metrics, self.global_step)
-
-            logging_metrics = time_metrics
-            logging_metrics.update(eval_metrics)
-            logging_metrics.update(env_metrics)
-            logging_metrics.update(rollout_metrics)
-            logging_metrics.update(training_metrics)
-
-            self.print_metrics_table_async(
-                self.global_step - 1,
+            _, save_model, _ = check_progress(
+                self.global_step,
                 self.max_steps,
-                start_time,
-                logging_metrics,
-                start_step,
+                self.cfg.runner.val_check_interval,
+                self.cfg.runner.save_interval,
+                1.0,
+                run_time_exceeded=False,
             )
+            if save_model:
+                self._save_checkpoint()
 
         self.env.stop().wait()
         self.rollout.stop().wait()
-        self.actor.stop().wait()
         env_handle.wait()
         rollout_handle.wait()
-        actor_handle.wait()
 
         self._save_checkpoint()

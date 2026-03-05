@@ -1,24 +1,24 @@
-Evaluation Tutorial 1: Embodied VLA
-====================================
+How to evaluate? Embodied Agent Scenarios
+============================================
 
 Introduction
 ------------
 RLinf provides **out-of-the-box evaluation scripts** to evaluate the performance of embodied agents in both *in-distribution* and *out-of-distribution* tasks.
 List of currently supported evaluation environments:
 
-:doc:`Behavior <../examples/embodied/behavior>`
+:doc:`Behavior <../examples/behavior>`
 
-:doc:`Calvin <../examples/embodied/calvin>`
+:doc:`Calvin <../examples/calvin>`
 
-:doc:`Isaaclab <../examples/embodied/isaaclab>`
+:doc:`Isaaclab <../examples/isaaclab>`
 
-:doc:`Libero <../examples/embodied/libero>`
+:doc:`Libero <../examples/libero>`
 
-:doc:`ManiSkill <../examples/embodied/maniskill>`
+:doc:`ManiSkill <../examples/maniskill>`
 
-:doc:`MetaWorld <../examples/embodied/metaworld>`
+:doc:`MetaWorld <../examples/metaworld>`
 
-:doc:`RoboCasa <../examples/embodied/robocasa>`
+:doc:`RoboCasa <../examples/robocasa>`
 
 All startup scripts for evaluation are located in the ``examples/embodiment/`` directory.
 
@@ -40,11 +40,8 @@ Any YAML file can be used for evaluation with the ``eval_embodiment.sh`` script,
 
   1. ``rollout.model.model_path``
 
-  2. ``runner.ckpt_path`` (Optional) – ``.pt`` format file path, set this parameter if you want to evaluate a specific checkpoint.
+  2. ``actor.model.model_path``
 
-.. Note::
-  
-   If you need to convert checkpoint files from ``.distcp`` format to ``.pt`` format, please refer to the :doc:`Checkpoint Convertor <../tutorials/advance/convertor>` documentation for detailed instructions.
 
 2. **Control environment random seed**: You can adjust ``env.seed`` to change the environment's random function for result reproducibility, etc.
 
@@ -94,6 +91,7 @@ Any YAML file can be used for evaluation with the ``eval_embodiment.sh`` script,
   export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
   export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 
+  export CUDA_LAUNCH_BLOCKING=1
   export HYDRA_FULL_ERROR=1
 
 
@@ -154,6 +152,7 @@ Then, execute the following command in the terminal to start the evaluation.
   export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
   export SRC_FILE="${EMBODIED_PATH}/eval_embodied_agent.py"
 
+  export CUDA_LAUNCH_BLOCKING=1
   export HYDRA_FULL_ERROR=1
 
   EVAL_NAME=YOUR_EVAL_NAME
@@ -181,7 +180,7 @@ Then, execute the following command in the terminal to start the evaluation.
           env.eval.total_num_envs=${TOTAL_NUM_ENVS} \
           env.eval.init_params.id=${env_id} \
           env.eval.init_params.obj_set=${obj_set} \
-          runner.ckpt_path=${CKPT_PATH}"
+          runner.eval_policy_path=${CKPT_PATH}"
 
       echo ${CMD} > ${MEGA_LOG_FILE}
       ${CMD} 2>&1 | tee -a ${MEGA_LOG_FILE}
@@ -202,7 +201,7 @@ Then, execute the following command in the terminal to start the evaluation.
           env.eval.total_num_envs=${TOTAL_NUM_ENVS} \
           env.eval.init_params.id=${env_id} \
           env.eval.init_params.obj_set=${obj_set} \
-          runner.ckpt_path=${CKPT_PATH}"
+          runner.eval_policy_path=${CKPT_PATH}"
       echo ${CMD}  > ${MEGA_LOG_FILE}
       ${CMD} 2>&1 | tee -a ${MEGA_LOG_FILE}
   done

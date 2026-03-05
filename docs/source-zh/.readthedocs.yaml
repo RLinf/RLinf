@@ -3,15 +3,13 @@ version: 2
 build:
   os: ubuntu-22.04
   tools:
-    python: "3.11"
+    python: "3.10"
   jobs:
     pre_install:
-      - export UV_HTTP_TIMEOUT=120
       - python -m pip install -U uv
-      - uv pip install .[embodied]
-      - uv pip install .[agentic-sglang]
-      - uv pip install .[agentic-vllm]
-      - uv pip install -r requirements/docs/requirements.txt
+      - uv pip install -r docs/requirements.txt
+      - uv pip install -r docs/doc_class_require.txt
+      - uv pip install --no-build-isolation -r docs/no_build.txt
 
 sphinx:
   configuration: docs/source-zh/conf.py

@@ -29,7 +29,7 @@ runner:
   save_interval: 10
 
 data:
-  train_data_paths: "/workspace/dataset/data/sft-ci-data"
+  data_path: "/workspace/dataset/data/sft-ci-data"
 
 algorithm:
   adv_type: gae
@@ -50,7 +50,6 @@ actor:
     openpi:
       config_name: "pi0_maniskill"
       detach_critic_input: True
-      train_expert_only: False
 
   optim:
     lr: 5.0e-6
@@ -65,7 +64,7 @@ actor:
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
-    use_orig_params: False
+    use_orig_params: True
     gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
     mixed_precision:
       param_dtype: ${actor.model.precision}

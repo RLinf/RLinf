@@ -1,0 +1,39 @@
+env_type: worldmodel
+simulator_name: XXX
+task_suite_name: unitreerobotics/G1_Dex1_MountCameraRedGripper_Dataset
+
+seed: 0
+auto_reset: False
+ignore_terminations: True
+max_steps_per_rollout_epoch: 512
+max_episode_steps: 512 # max episode steps for truncation
+use_fixed_reset_state_ids: True
+
+group_size: 8
+num_envs: 8
+use_rel_reward: True
+reward_coef: 5.0
+
+gen_num_image_each_step: 2
+
+video_cfg:
+  save_video: True
+  info_on_video: True
+  video_base_dir: ./video/train
+
+dataset_cfg:
+  repo_id: unitreerobotics/G1_Dex1_MountCameraRedGripper_Dataset
+  root: /workspace/models/gen-robot/unitreerobotics/G1_Dex1_MountCameraRedGripper_Dataset
+  start_select_policy: "first_frame"
+  target_select_policy: "last_frame"
+  start_n_frames: 1
+  target_n_frames: 1
+  camera_heights: 256
+  camera_widths: 256
+  camera_names: ['observation.images.cam_left_high', 'observation.images.cam_right_high']
+
+backend_cfg:
+  batch_size: ${num_envs}
+  num_prompt_frames: 4
+  max_episode_steps: ${env.train.max_episode_steps} # max episode steps for truncation
+  gen_num_image_each_step: ${gen_num_image_each_step}
