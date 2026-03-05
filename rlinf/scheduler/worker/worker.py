@@ -1314,5 +1314,4 @@ class Worker(metaclass=WorkerMeta):
 
             self._collective = Collective(self)
 
-        self._manager_proxy.update_worker_info(self._worker_address, self._worker_info)
         return self._worker_info

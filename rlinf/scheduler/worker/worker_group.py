@@ -242,7 +242,7 @@ class WorkerGroup(Generic[WorkerClsType]):
 
         self._placement_strategy = placement_strategy
         self._create_workers_from_placements(placements)
-        self.update_state(reindex_ranks=True)
+        self.update_state()
         self._is_ready()
         return self
 
@@ -271,7 +271,7 @@ class WorkerGroup(Generic[WorkerClsType]):
                 remaining_workers.append(worker_info)
 
         self._workers = remaining_workers
-        self.update_state(reindex_ranks=True)
+        self.update_state()
         return self
 
     def _unregister_worker(self, rank: int):
@@ -283,40 +283,39 @@ class WorkerGroup(Generic[WorkerClsType]):
         )
         worker_manager.unregister_worker(worker_address)
 
-    def update_state(self, reindex_ranks: bool = False):
+    def update_state(self):
         """Refresh worker-group state after membership changes."""
         from ..manager import CollectiveManager, WorkerManager
 
         worker_manager = WorkerManager.get_proxy()
-        if reindex_ranks:
-            self._sort_workers()
-            world_size = len(self._workers)
-            if world_size > 0:
-                first_worker_info = worker_manager.get_worker_info(
-                    WorkerAddress(self._worker_group_name, self._workers[0].rank)
-                )
-                assert first_worker_info is not None, (
-                    f"Cannot get worker info for rank {self._workers[0].rank} in group {self._worker_group_name}."
-                )
-                master_addr = first_worker_info.node_ip
-                refs = []
-                for new_rank, worker_info in enumerate(self._workers):
-                    refs.append(
-                        worker_info.worker.update_state.remote(
-                            new_rank=new_rank,
-                            world_size=world_size,
-                            master_addr=master_addr,
-                            rebuild_collective=True,
-                        )
+        self._sort_workers()
+        world_size = len(self._workers)
+        if world_size > 0:
+            first_worker_info = worker_manager.get_worker_info(
+                WorkerAddress(self._worker_group_name, self._workers[0].rank)
+            )
+            assert first_worker_info is not None, (
+                f"Cannot get worker info for rank {self._workers[0].rank} in group {self._worker_group_name}."
+            )
+            master_addr = first_worker_info.node_ip
+            refs = []
+            for new_rank, worker_info in enumerate(self._workers):
+                refs.append(
+                    worker_info.worker.update_state.remote(
+                        new_rank=new_rank,
+                        world_size=world_size,
+                        master_addr=master_addr,
+                        rebuild_collective=True,
                     )
-                updated_infos = ray.get(refs)
-                worker_manager.set_group_workers(self._worker_group_name, updated_infos)
-                self._workers = [
-                    WorkerGroup.WorkerRank(rank=rank, worker=worker_info.worker)
-                    for rank, worker_info in enumerate(self._workers)
-                ]
-            self._world_size = world_size
-            self._group_size = world_size
+                )
+            updated_infos = ray.get(refs)
+            worker_manager.set_group_workers(self._worker_group_name, updated_infos)
+            self._workers = [
+                WorkerGroup.WorkerRank(rank=rank, worker=worker_info.worker)
+                for rank, worker_info in enumerate(self._workers)
+            ]
+        self._world_size = world_size
+        self._group_size = world_size
 
         coll_manager = CollectiveManager.get_proxy()
         related_groups = coll_manager.get_related_worker_groups(self._worker_group_name)

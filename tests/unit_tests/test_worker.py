@@ -198,11 +198,11 @@ class TestWorkerGroup:
 
         worker_group.scale_down([1])
         infos = worker_group.get_env_info().wait()
-        assert sorted(info["rank"] for info in infos) == [0, 2]
+        assert sorted(info["rank"] for info in infos) == [0, 1]
         assert all(info["world_size"] == 2 for info in infos)
 
-        subset_infos = worker_group.execute_on(0, 2).get_env_info().wait()
-        assert sorted(info["rank"] for info in subset_infos) == [0, 2]
+        subset_infos = worker_group.execute_on(0, 1).get_env_info().wait()
+        assert sorted(info["rank"] for info in subset_infos) == [0, 1]
 
 
 class TestLoadUserExtensions:

@@ -335,15 +335,8 @@ class WorkerManager(Manager):
                 return node._worker_info
         return None
 
-    def update_worker_info(
-        self, worker_address: WorkerAddress, worker_info: WorkerInfo
-    ):
-        """Update worker information by its address.
-
-        Args:
-            worker_address (WorkerAddress): The address of the worker to update.
-            worker_info (WorkerInfo): The new worker information.
-        """
+    def update_worker_info(self, worker_address: WorkerAddress, worker_info: WorkerInfo):
+        """Update worker information by its address."""
         for root in self._root_workers:
             node = WorkerNode.find_node(root, worker_address)
             if node is not None:
@@ -386,18 +379,21 @@ class WorkerManager(Manager):
         return []
 
     def set_group_workers(self, root_group_name: str, workers: list[WorkerInfo]):
-        """Replace all workers of a root group with provided worker infos."""
-        root_node = None
-        for root in self._root_workers:
-            if (
-                root._worker_address is not None
-                and root._worker_address.get_name() == root_group_name
-            ):
-                root_node = root
-                break
-        if root_node is None:
-            root_node = WorkerNode(WorkerAddress(root_group_name, []))
-            self._root_workers.append(root_node)
-        root_node._nodes = []
+        """Replace all workers of a root group with provided worker infos.
+
+        Rebuilds membership via register/unregister APIs to preserve the WorkerNode
+        tree invariants instead of mutating internal tree state directly.
+        """
+        for rank in list(self.get_group_ranks(root_group_name)):
+            self.unregister_worker(WorkerAddress(root_group_name, rank))
+
         for worker_info in sorted(workers, key=lambda info: info.rank):
-            root_node.add_child(worker_info.rank, worker_info)
+            if worker_info.address.root_group_name != root_group_name:
+                raise ValueError(
+                    f"Worker {worker_info.address.get_name()} does not belong to group {root_group_name}."
+                )
+            existing = self.get_worker_info(worker_info.address)
+            if existing is None:
+                self.register_worker(worker_info.address, worker_info)
+            else:
+                self.update_worker_info(worker_info.address, worker_info)
