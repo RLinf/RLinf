@@ -1,4 +1,4 @@
-VLM Supervised Fine-Tuning (SFT)
+VLM Supervised Fine-Tuning
 ================================
 
 This document explains how to run **full-parameter supervised fine-tuning (Full-parameter SFT)** for VLM models in RLinf.
