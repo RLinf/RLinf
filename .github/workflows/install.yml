@@ -66,6 +66,10 @@ jobs:
           pip install uv
           bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
           rm -rf .venv
+          bash requirements/install.sh embodied --model openvla-oft --env metaworld
+          rm -rf .venv
+          bash requirements/install.sh embodied --model openvla-oft --env calvin
+          rm -rf .venv
 
       - name: Install openpi
         run: |

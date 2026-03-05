@@ -357,7 +357,7 @@ jobs:
             NO_MIRROR=true
           outputs: type=cacheonly
           tags: rlinf:embodied-calvin
-  
+
   build-embodied-robocasa:
     runs-on: ubuntu-latest
     steps:
