@@ -221,7 +221,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         self.buffer_dataset = buffer_dataset_cls(
             replay_buffer=self.replay_buffer,
             demo_buffer=self.demo_buffer,
-            batch_size=self.cfg.actor.micro_batch_size,
+            batch_size=self.cfg.actor.global_batch_size // self._world_size,
             min_replay_buffer_size=self.cfg.algorithm.replay_buffer.min_buffer_size,
             min_demo_buffer_size=min_demo_buffer_size,
             prefetch_size=self.cfg.algorithm.replay_buffer.get("prefetch_size", 10),
