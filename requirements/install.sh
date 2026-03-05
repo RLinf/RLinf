@@ -17,7 +17,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan")
 
 #=======================Utility Functions=======================
@@ -485,6 +485,44 @@ EOF
     uv pip uninstall pynvml || true
 }
 
+install_starvla_model() {
+    case "$ENV_NAME" in
+        maniskill_libero)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_maniskill_libero_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for StarVLA model." >&2
+            exit 1
+            ;;
+    esac
+
+    local starvla_path
+    starvla_path=$(clone_or_reuse_repo STARVLA_PATH "$VENV_DIR/starVLA" https://github.com/starVLA/starVLA.git -b "${STARVLA_GIT_REF:-starVLA-1.2}" --depth 1)
+
+    # Prefer upstream StarVLA requirements first when available.
+    if [ -f "$starvla_path/requirements.txt" ]; then
+        uv pip install -r "$starvla_path/requirements.txt"
+    fi
+
+    # Enforce RLinf-compatible runtime pins to avoid known breakages.
+    uv pip install -r "$SCRIPT_DIR/embodied/models/starvla.txt"
+    uv pip install -e "$starvla_path" --no-deps
+
+    # Some StarVLA revisions call logger.log() on an overwatch logger that only
+    # provides warning/info/error. Keep this patch guarded and optional.
+    local framework_init="$starvla_path/starVLA/model/framework/__init__.py"
+    if [ "${STARVLA_SKIP_LOGGER_PATCH:-0}" != "1" ] && [ -f "$framework_init" ]; then
+        if grep "logger\\.log\\(" "$framework_init" >/dev/null 2>&1; then
+            sed -i 's/logger\.log(/logger.warning(/g' "$framework_init"
+        fi
+    fi
+
+    install_flash_attn
+    uv pip uninstall pynvml || true
+}
+
 install_gr00t_model() {
     create_and_sync_venv
     install_common_embodied_deps
@@ -851,6 +889,9 @@ main() {
                     ;;
                 openpi)
                     install_openpi_model
+                    ;;
+                starvla)
+                    install_starvla_model
                     ;;
                 gr00t)
                     install_gr00t_model
