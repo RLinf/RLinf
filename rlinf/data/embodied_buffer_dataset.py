@@ -19,7 +19,10 @@ import time
 from torch.utils.data import IterableDataset
 
 from rlinf.data.replay_buffer import TrajectoryReplayBuffer
+from rlinf.utils.logging import get_logger
 from rlinf.utils.nested_dict_process import concat_batch
+
+logger = get_logger()
 
 
 class ReplayBufferDataset(IterableDataset):
@@ -113,11 +116,11 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
             try:
                 self.preload_queue.put(batch, timeout=1)
             except queue.Full:
-                print("Queue is full, skipping sample")
+                logger.info("Queue is full, skipping sample")
                 time.sleep(0.5)
                 continue
             except Exception as e:
-                print(f"Error in ReplayBufferDataset: {e}")
+                logger.error(f"Error in ReplayBufferDataset: {e}")
                 break
 
     def __iter__(self):
@@ -143,7 +146,7 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
         if self.sample_thread.is_alive():
             self.sample_thread.join(timeout=thread_timeout)
             if self.sample_thread.is_alive():
-                print(
+                logger.warning(
                     f"Sample thread is still alive after {thread_timeout} seconds, force killing"
                 )
 

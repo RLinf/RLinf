@@ -111,7 +111,7 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
             return True
 
         rollout_handle, actor_handle = self._pending_rollout_weight_sync
-        print(
+        self.logger.info(
             f"Rollout handle done: {rollout_handle.done()}, actor handle done: {actor_handle.done()}"
         )
         if no_wait and (not rollout_handle.done() or not actor_handle.done()):
@@ -129,12 +129,12 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         self._weight_sync_request_total += 1
         if not self._cleanup_pending_rollout_weight_sync(no_wait):
             self._weight_sync_coalesced_total += 1
-            print(
-                f"Weight sync coalesced {self._weight_sync_coalesced_total} times, "
-                f"request total {self._weight_sync_request_total} times"
+            self.logger.info(
+                f"Weight sync coalesced {self._weight_sync_coalesced_total} times.\n"
+                f"Request total {self._weight_sync_request_total} times."
             )
-            raise NotImplementedError("Weight sync coalesced")
             return
+
         rollout_handle: Handle = self.rollout.request_actor_sync_model()
         actor_handle: Handle = self.actor.sync_model_to_rollout()
         self._pending_rollout_weight_sync = (rollout_handle, actor_handle)
