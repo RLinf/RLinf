@@ -180,6 +180,30 @@ class TestWorkerGroup:
         assert len(results2) == num_workers
         assert sorted(results2) == [200 + i for i in range(num_workers)]
 
+    def test_worker_group_scale_up_and_down(self, cluster: Cluster):
+        """Verify worker group can scale up and down dynamically."""
+        worker_group = DistributedTestWorker.create_group().launch(
+            cluster=cluster,
+            placement_strategy=NodePlacementStrategy([0]),
+            name="scale_group_1",
+        )
+        infos = worker_group.get_env_info().wait()
+        assert sorted(info["rank"] for info in infos) == [0]
+        assert all(info["world_size"] == 1 for info in infos)
+
+        worker_group.scale_up(NodePlacementStrategy([0, 0]))
+        infos = worker_group.get_env_info().wait()
+        assert sorted(info["rank"] for info in infos) == [0, 1, 2]
+        assert all(info["world_size"] == 3 for info in infos)
+
+        worker_group.scale_down([1])
+        infos = worker_group.get_env_info().wait()
+        assert sorted(info["rank"] for info in infos) == [0, 2]
+        assert all(info["world_size"] == 2 for info in infos)
+
+        subset_infos = worker_group.execute_on(0, 2).get_env_info().wait()
+        assert sorted(info["rank"] for info in subset_infos) == [0, 2]
+
 
 class TestLoadUserExtensions:
     """Tests for the Worker._load_user_extensions method."""

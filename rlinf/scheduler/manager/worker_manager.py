@@ -144,6 +144,9 @@ class WorkerInfo:
     address: "WorkerAddress"
     """WorkerAddress of the worker."""
 
+    actor_name: str
+    """Immutable Ray actor name used to retrieve the actor handle."""
+
     rank: int
     """Rank of the worker in the group."""
 
@@ -249,6 +252,21 @@ class WorkerNode:
         # Maintain sorted order of child nodes based on their rank
         bisect.insort(self._nodes, child_node, key=lambda x: x._worker_address.rank)
 
+    def remove_child(self, rank: int) -> bool:
+        """Remove a child by rank.
+
+        Args:
+            rank (int): The rank of the child worker node.
+
+        Returns:
+            bool: True if the child was removed, False otherwise.
+        """
+        for i, node in enumerate(self._nodes):
+            if node._worker_address.rank == rank:
+                self._nodes.pop(i)
+                return True
+        return False
+
     def __str__(self):
         """Produce the string representation of the worker node tree."""
         tree = ""
@@ -316,3 +334,70 @@ class WorkerManager(Manager):
             if node is not None:
                 return node._worker_info
         return None
+
+    def update_worker_info(
+        self, worker_address: WorkerAddress, worker_info: WorkerInfo
+    ):
+        """Update worker information by its address.
+
+        Args:
+            worker_address (WorkerAddress): The address of the worker to update.
+            worker_info (WorkerInfo): The new worker information.
+        """
+        for root in self._root_workers:
+            node = WorkerNode.find_node(root, worker_address)
+            if node is not None:
+                node._worker_info = worker_info
+                return
+        raise ValueError(f"Worker {worker_address.get_name()} not found.")
+
+    def unregister_worker(self, worker_address: WorkerAddress):
+        """Unregister a worker from the worker manager.
+
+        Args:
+            worker_address (WorkerAddress): The address of the worker to unregister.
+        """
+        parent_address = worker_address.get_parent_address()
+        if parent_address is None:
+            return
+        for root in self._root_workers:
+            parent_node = WorkerNode.find_node(root, parent_address)
+            if parent_node is not None:
+                parent_node.remove_child(worker_address.rank)
+                break
+        self._root_workers = [
+            root for root in self._root_workers if len(root._nodes) > 0
+        ]
+
+    def get_group_ranks(self, root_group_name: str) -> list[int]:
+        """Get all registered root ranks for a worker group.
+
+        Args:
+            root_group_name (str): The root worker group name.
+
+        Returns:
+            list[int]: Sorted active root ranks.
+        """
+        for root in self._root_workers:
+            if root._worker_address is None:
+                continue
+            if root._worker_address.get_name() == root_group_name:
+                return sorted([node._worker_address.rank for node in root._nodes])
+        return []
+
+    def set_group_workers(self, root_group_name: str, workers: list[WorkerInfo]):
+        """Replace all workers of a root group with provided worker infos."""
+        root_node = None
+        for root in self._root_workers:
+            if (
+                root._worker_address is not None
+                and root._worker_address.get_name() == root_group_name
+            ):
+                root_node = root
+                break
+        if root_node is None:
+            root_node = WorkerNode(WorkerAddress(root_group_name, []))
+            self._root_workers.append(root_node)
+        root_node._nodes = []
+        for worker_info in sorted(workers, key=lambda info: info.rank):
+            root_node.add_child(worker_info.rank, worker_info)

@@ -138,3 +138,44 @@ class CollectiveManager(Manager):
             self._name_info_map[group_name].master_port = None
         else:
             raise ValueError(f"Collective group {group_name} does not exist.")
+
+    def unregister_collective_group(self, group_name: str):
+        """Remove a collective group by name."""
+        self._name_info_map.pop(group_name, None)
+
+    def unregister_collective_groups_by_worker_group(
+        self, worker_group_name: str
+    ) -> int:
+        """Remove all collective groups containing workers from a worker group.
+
+        Args:
+            worker_group_name (str): Root worker group name.
+
+        Returns:
+            int: Number of removed collective groups.
+        """
+        removed = 0
+        group_names = list(self._name_info_map.keys())
+        for group_name in group_names:
+            group_info = self._name_info_map[group_name]
+            if any(
+                worker.address.root_group_name == worker_group_name
+                for worker in group_info.workers
+            ):
+                self._name_info_map.pop(group_name, None)
+                removed += 1
+        return removed
+
+    def get_related_worker_groups(self, worker_group_name: str) -> list[str]:
+        """Get worker groups related to collective groups containing the given worker group."""
+        related_worker_groups: set[str] = set()
+        for group_info in self._name_info_map.values():
+            contains_target = any(
+                worker.address.root_group_name == worker_group_name
+                for worker in group_info.workers
+            )
+            if contains_target:
+                related_worker_groups.update(
+                    worker.address.root_group_name for worker in group_info.workers
+                )
+        return sorted(related_worker_groups)

@@ -94,3 +94,31 @@ class Collective:
                     f"Waited {count // 1000} seconds for collective group {group_name} to be ready..."
                 )
         return group_info
+
+    def clear_local_groups(
+        self, root_group_names: Optional[list[str]] = None
+    ) -> list[str]:
+        """Clear local collective-group cache.
+
+        Args:
+            root_group_names (Optional[list[str]]): If provided, only clear cached
+                groups containing any worker from these root group names.
+
+        Returns:
+            list[str]: Cleared collective-group names.
+        """
+        if root_group_names is None:
+            cleared = list(self._name_group_map.keys())
+            self._name_group_map.clear()
+            return cleared
+
+        target_names = set(root_group_names)
+        cleared: list[str] = []
+        for group_name, group in list(self._name_group_map.items()):
+            has_target_worker = any(
+                addr.root_group_name in target_names for addr in group._worker_addresses
+            )
+            if has_target_worker:
+                self._name_group_map.pop(group_name, None)
+                cleared.append(group_name)
+        return cleared

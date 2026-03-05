@@ -1254,6 +1254,7 @@ class Worker(metaclass=WorkerMeta):
 
         self._worker_info = WorkerInfo(
             address=self._worker_address,
+            actor_name=self._worker_name,
             rank=self._rank,
             group_world_size=self._world_size,
             cluster_node_rank=self._cluster_node_rank,
@@ -1265,3 +1266,53 @@ class Worker(metaclass=WorkerMeta):
             available_accelerators=self.global_accelerator_ids,
             hardware_infos=self.hardware_infos,
         )
+
+    def update_state(
+        self,
+        new_rank: Optional[int] = None,
+        world_size: Optional[int] = None,
+        master_addr: Optional[str] = None,
+        root_group_names: Optional[list[str]] = None,
+        rebuild_collective: bool = False,
+    ) -> "WorkerInfo":
+        """Refresh worker state after membership/rank changes."""
+        if world_size is not None:
+            self._world_size = world_size
+            os.environ["WORLD_SIZE"] = str(world_size)
+            self._worker_info.group_world_size = world_size
+
+        if new_rank is not None:
+            assert world_size is not None, (
+                "world_size must be provided when refreshing rank."
+            )
+            assert master_addr is not None, (
+                "master_addr must be provided when refreshing rank."
+            )
+            new_address = WorkerAddress(self._worker_address.root_group_name, new_rank)
+            self._rank = new_rank
+            self._worker_address = new_address
+            self._worker_name = new_address.get_name()
+            self._group_name = self._worker_address.get_parent_address().get_name()
+            self._master_address = master_addr
+            os.environ["RANK"] = str(new_rank)
+            os.environ["WORKER_NAME"] = self._worker_name
+            os.environ["MASTER_ADDR"] = master_addr
+            self._worker_info.address = self._worker_address
+            self._worker_info.rank = self._rank
+            # actor_name keeps the immutable Ray actor registration name
+            self._setup_logging()
+
+        self._setup_managers()
+        if root_group_names is not None or rebuild_collective:
+            if rebuild_collective:
+                self._collective.clear_local_groups()
+            else:
+                self._collective.clear_local_groups(root_group_names=root_group_names)
+
+        if rebuild_collective:
+            from ..collective import Collective
+
+            self._collective = Collective(self)
+
+        self._manager_proxy.update_worker_info(self._worker_address, self._worker_info)
+        return self._worker_info

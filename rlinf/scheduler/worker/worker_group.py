@@ -88,6 +88,20 @@ class WorkerGroup(Generic[WorkerClsType]):
         """Get the list of workers in the group."""
         return self._workers
 
+    def _sort_workers(self):
+        self._workers.sort(key=lambda worker_rank: worker_rank.rank)
+
+    def _rank_to_worker(self) -> dict[int, ray.ObjectRef]:
+        return {worker_info.rank: worker_info.worker for worker_info in self._workers}
+
+    def _active_ranks(self) -> list[int]:
+        return sorted(worker_info.rank for worker_info in self._workers)
+
+    def _next_rank(self) -> int:
+        if not self._workers:
+            return 0
+        return max(self._active_ranks()) + 1
+
     @classmethod
     def from_group_name(
         cls, worker_cls: type[ClsType], group_name: str
@@ -103,20 +117,19 @@ class WorkerGroup(Generic[WorkerClsType]):
             "The Cluster has not been initialized. Cannot retrieve any worker groups."
         )
 
-        worker_address = WorkerAddress(root_group_name=group_name, ranks=0)
         worker_manager = WorkerManager.get_proxy()
-        worker_info = worker_manager.get_worker_info(worker_address)
-        assert worker_info is not None, f"Worker group {group_name} not found."
-        group_world_size = worker_info.group_world_size
-        assert group_world_size > 0, (
-            f"Group world size is not correctly setup for worker group {group_name}"
-        )
+        active_ranks = worker_manager.get_group_ranks(group_name)
+        assert len(active_ranks) > 0, f"Worker group {group_name} not found."
 
         workers: list[WorkerGroup.WorkerRank] = []
-        for rank in range(group_world_size):
-            actor_name = WorkerAddress(
-                root_group_name=group_name, ranks=rank
-            ).get_name()
+        for rank in active_ranks:
+            worker_info = worker_manager.get_worker_info(
+                WorkerAddress(root_group_name=group_name, ranks=rank)
+            )
+            assert worker_info is not None, (
+                f"Worker info for rank {rank} in group {group_name} not found."
+            )
+            actor_name = worker_info.actor_name
 
             count = 0
             while True:
@@ -135,9 +148,12 @@ class WorkerGroup(Generic[WorkerClsType]):
                         )
 
         worker_group = worker_cls.create_group()
+        worker_group._cluster = Cluster()
         worker_group._worker_group_name = group_name
-        worker_group._group_size = group_world_size
+        worker_group._group_size = len(active_ranks)
+        worker_group._world_size = len(active_ranks)
         worker_group._workers = workers
+        worker_group._sort_workers()
         worker_group._attach_cls_func()
         return worker_group
 
@@ -190,6 +206,7 @@ class WorkerGroup(Generic[WorkerClsType]):
         self._create_workers()
         self._attach_cls_func()
         self._is_ready()
+        self._group_size = len(self._workers)
 
         return self
 
@@ -205,6 +222,140 @@ class WorkerGroup(Generic[WorkerClsType]):
         self._execution_ranks = list(ranks)
         return self
 
+    def scale_up(
+        self: "WorkerGroup[WorkerClsType]", placement_strategy: PlacementStrategy
+    ) -> "WorkerGroup[WorkerClsType] | WorkerClsType":
+        """Scale up the worker group with a new placement strategy."""
+        assert self._cluster is not None, "Worker group has not been launched."
+        placements = placement_strategy.get_placement(self._cluster, self._isolate_gpu)
+        if len(placements) == 0:
+            return self
+
+        rank_offset = self._next_rank()
+        existing_ranks = set(self._active_ranks())
+        for placement in placements:
+            placement.rank += rank_offset
+            if placement.rank in existing_ranks:
+                raise ValueError(
+                    f"Trying to scale up with duplicate rank {placement.rank} in group {self._worker_group_name}."
+                )
+
+        self._placement_strategy = placement_strategy
+        self._create_workers_from_placements(placements)
+        self.update_state(reindex_ranks=True)
+        self._is_ready()
+        return self
+
+    def scale_down(
+        self: "WorkerGroup[WorkerClsType]", ranks: list[int]
+    ) -> "WorkerGroup[WorkerClsType] | WorkerClsType":
+        """Scale down workers by ranks."""
+        if not ranks:
+            return self
+        active_ranks = set(self._active_ranks())
+        invalid_ranks = sorted(set(ranks) - active_ranks)
+        if invalid_ranks:
+            raise ValueError(
+                f"Trying to scale down non-existing ranks {invalid_ranks} in group {self._worker_group_name}."
+            )
+
+        rank_set = set(ranks)
+        remaining_workers: list[WorkerGroup.WorkerRank] = []
+        for worker_info in self._workers:
+            if worker_info.rank in rank_set:
+                if hasattr(worker_info.worker, "_close"):
+                    ray.get(worker_info.worker._close.remote())
+                ray.kill(worker_info.worker)
+                self._unregister_worker(worker_info.rank)
+            else:
+                remaining_workers.append(worker_info)
+
+        self._workers = remaining_workers
+        self.update_state(reindex_ranks=True)
+        return self
+
+    def _unregister_worker(self, rank: int):
+        from ..manager import WorkerManager
+
+        worker_manager = WorkerManager.get_proxy()
+        worker_address = WorkerAddress(
+            root_group_name=self._worker_group_name, ranks=rank
+        )
+        worker_manager.unregister_worker(worker_address)
+
+    def update_state(self, reindex_ranks: bool = False):
+        """Refresh worker-group state after membership changes."""
+        from ..manager import CollectiveManager, WorkerManager
+
+        worker_manager = WorkerManager.get_proxy()
+        if reindex_ranks:
+            self._sort_workers()
+            world_size = len(self._workers)
+            if world_size > 0:
+                first_worker_info = worker_manager.get_worker_info(
+                    WorkerAddress(self._worker_group_name, self._workers[0].rank)
+                )
+                assert first_worker_info is not None, (
+                    f"Cannot get worker info for rank {self._workers[0].rank} in group {self._worker_group_name}."
+                )
+                master_addr = first_worker_info.node_ip
+                refs = []
+                for new_rank, worker_info in enumerate(self._workers):
+                    refs.append(
+                        worker_info.worker.update_state.remote(
+                            new_rank=new_rank,
+                            world_size=world_size,
+                            master_addr=master_addr,
+                            rebuild_collective=True,
+                        )
+                    )
+                updated_infos = ray.get(refs)
+                worker_manager.set_group_workers(self._worker_group_name, updated_infos)
+                self._workers = [
+                    WorkerGroup.WorkerRank(rank=rank, worker=worker_info.worker)
+                    for rank, worker_info in enumerate(self._workers)
+                ]
+            self._world_size = world_size
+            self._group_size = world_size
+
+        coll_manager = CollectiveManager.get_proxy()
+        related_groups = coll_manager.get_related_worker_groups(self._worker_group_name)
+        coll_manager.unregister_collective_groups_by_worker_group(
+            self._worker_group_name
+        )
+        clear_groups = set(related_groups)
+        clear_groups.add(self._worker_group_name)
+        refs = []
+        for group_name in clear_groups:
+            if group_name == self._worker_group_name:
+                refs.extend(
+                    worker_info.worker.update_state.remote(
+                        root_group_names=[self._worker_group_name]
+                    )
+                    for worker_info in self._workers
+                )
+                continue
+            ranks = worker_manager.get_group_ranks(group_name)
+            for rank in ranks:
+                worker_info = worker_manager.get_worker_info(
+                    WorkerAddress(group_name, ranks=rank)
+                )
+                if worker_info is None:
+                    continue
+                try:
+                    actor = ray.get_actor(
+                        worker_info.actor_name, namespace=Cluster.NAMESPACE
+                    )
+                except ValueError:
+                    continue
+                refs.append(
+                    actor.update_state.remote(
+                        root_group_names=[self._worker_group_name]
+                    )
+                )
+        if refs:
+            ray.get(refs)
+
     def _close(self):
         """Close the worker group and release resources. This method is called when the worker group is no longer needed."""
         for worker_info in self._workers:
@@ -212,7 +363,9 @@ class WorkerGroup(Generic[WorkerClsType]):
             if hasattr(worker_info.worker, "_close"):
                 ray.get(worker_info.worker._close.remote())
             ray.kill(worker_info.worker)
+            self._unregister_worker(worker_info.rank)
         self._workers.clear()
+        self.update_state()
         self._cluster = None
         self._placement_strategy = None
         self._execution_ranks = None
@@ -222,12 +375,15 @@ class WorkerGroup(Generic[WorkerClsType]):
         placements = self._placement_strategy.get_placement(
             self._cluster, self._isolate_gpu
         )
-        master_addr = next(
-            self._cluster.get_node_ip(p.cluster_node_rank)
-            for p in placements
-            if p.rank == 0
-        )
-        self._world_size = len(placements)
+        self._create_workers_from_placements(placements)
+        self._sort_workers()
+        self._world_size = len(self._workers)
+
+    def _create_workers_from_placements(self, placements):
+        if len(placements) == 0:
+            return
+        master_addr = self._cluster.get_node_ip(placements[0].cluster_node_rank)
+        world_size = len(self._workers) + len(placements)
         for placement in placements:
             worker_name = WorkerAddress.from_parent_name_rank(
                 self._worker_group_name, placement.rank
@@ -242,7 +398,7 @@ class WorkerGroup(Generic[WorkerClsType]):
                 "GROUP_NAME": self._worker_group_name,
                 "WORKER_NAME": worker_name,
                 "MASTER_ADDR": master_addr,
-                "WORLD_SIZE": str(self._world_size),
+                "WORLD_SIZE": str(world_size),
                 "RANK": str(placement.rank),
                 "NODE_RANK": str(placement.placement_node_rank),
                 "CLUSTER_NODE_RANK": str(placement.cluster_node_rank),
@@ -323,6 +479,9 @@ class WorkerGroup(Generic[WorkerClsType]):
         ]
         for func_name in func_list:
             if func_name in worker_group_cls_func_list:
+                if func_name == "update_state":
+                    # Use WorkerGroup.update_state as the authoritative API.
+                    continue
                 raise ValueError(
                     f"Function {func_name} already exists in the {WorkerGroup.__name__} class, please rename it in the {self._worker_cls} class."
                 )
@@ -404,32 +563,23 @@ class WorkerGroupFunc:
         This method collects the results from all workers in the group and returns a WorkerGroupFuncResult.
         """
         results = []
+        rank_worker_map = self._worker_group._rank_to_worker()
+        active_ranks = sorted(rank_worker_map.keys())
 
         if self._worker_group._execution_ranks is None:
             # If no specific ranks are set, execute on all workers in the group
-            self._worker_group._execution_ranks = list(
-                range(len(self._worker_group._workers))
-            )
-            assert (
-                len(self._worker_group._execution_ranks)
-                == self._worker_group._world_size
-            ), (
-                f"Execution ranks {self._worker_group._execution_ranks} do not match the world size {self._worker_group._world_size}."
-            )
-        assert not any(
-            rank < 0 or rank >= len(self._worker_group._workers)
+            self._worker_group._execution_ranks = active_ranks
+        invalid_ranks = [
+            rank
             for rank in self._worker_group._execution_ranks
-        ), "Invalid rank(s) specified."
+            if rank not in rank_worker_map
+        ]
+        assert not invalid_ranks, f"Invalid rank(s) specified: {invalid_ranks}"
 
         # Execute the function on the specified ranks
         for rank in self._worker_group._execution_ranks:
-            worker_p = self._worker_group._workers[rank]
-            assert worker_p.rank == rank, (
-                f"Worker rank mismatch: expected {rank}, got {worker_p.rank}."
-            )
-            results.append(
-                getattr(worker_p.worker, self._func_name).remote(*args, **kwargs)
-            )
+            worker = rank_worker_map[rank]
+            results.append(getattr(worker, self._func_name).remote(*args, **kwargs))
 
         result = WorkerGroupFuncResult(
             self._worker_group,
