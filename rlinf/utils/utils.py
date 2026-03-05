@@ -28,12 +28,14 @@ import torch.nn.functional as F
 from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
+from rlinf.scheduler import Worker
+
 
 def clear_memory(sync=True):
     if sync:
-        torch.cuda.synchronize()
+        Worker.torch_platform.synchronize()
     gc.collect()
-    torch.cuda.empty_cache()
+    Worker.torch_platform.empty_cache()
 
 
 def apply_func_to_dict(func, dictionary):
@@ -69,7 +71,7 @@ def retrieve_model_state_dict_in_cpu(model, offloaded_buffer=None):
         else:
             offloaded_buffer[name] = item
 
-    torch.cuda.synchronize()
+    Worker.torch_platform.synchronize()
     return offloaded_buffer
 
 
@@ -459,8 +461,8 @@ def get_rng_state() -> dict:
         "numpy": np.random.get_state(),
         "random": random.getstate(),
     }
-    if torch.cuda.is_available():
-        rng_state["cuda"] = torch.cuda.get_rng_state()
+    if Worker.torch_platform.is_available():
+        rng_state[Worker.torch_device_type] = Worker.torch_platform.get_rng_state()
     return rng_state
 
 
@@ -478,8 +480,8 @@ def set_rng_state(rng_state: dict) -> None:
     torch.set_rng_state(rng_state["cpu"])
     np.random.set_state(rng_state["numpy"])
     random.setstate(rng_state["random"])
-    if torch.cuda.is_available() and "cuda" in rng_state:
-        torch.cuda.set_rng_state(rng_state["cuda"])
+    if Worker.torch_platform.is_available() and Worker.torch_device_type in rng_state:
+        Worker.torch_platform.set_rng_state(rng_state[Worker.torch_device_type])
 
 
 def get_model_weights_id(model, k=128):

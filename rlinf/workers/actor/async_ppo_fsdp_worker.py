@@ -17,7 +17,6 @@ from typing import Any, Optional
 
 import numpy as np
 import torch
-from omegaconf import DictConfig
 
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.config import SupportedModel
@@ -60,14 +59,6 @@ def flatten_rollout_batch_for_train(
 
 class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
     """Embodied FSDP actor worker for async PPO / decoupled actor-critic training."""
-
-    def __init__(self, cfg: DictConfig):
-        super().__init__(cfg)
-        self.version = 0
-        self.enable_accumulate_batch = self.cfg.algorithm.get("enable_accumulate_batch", False)
-
-    def set_version(self, version: int) -> None:
-        self.version = int(version)
 
     @torch.inference_mode()
     def compute_advantages_and_returns(self) -> dict[str, torch.Tensor]:
@@ -171,9 +162,6 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         generator = torch.Generator(device="cpu")
         generator.manual_seed(int(self.cfg.actor.seed) + int(self._rank))
         shuffle_id = torch.randperm(total_samples, generator=generator)
-
-        if self.enable_accumulate_batch:
-            shuffle_id = shuffle_id[: self.cfg.algorithm.accumulated_threshold]
 
         with torch.no_grad():
             self.rollout_batch = flatten_rollout_batch_for_train(
@@ -376,8 +364,3 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
             op=torch.distributed.ReduceOp.AVG,
         )
         return mean_metric_dict
-
-    def sync_model_to_rollout(self, version: int = -1) -> None:
-        super().sync_model_to_rollout()
-        if version >= 0:
-            self.set_version(version)

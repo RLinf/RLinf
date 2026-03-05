@@ -42,7 +42,7 @@ class EnvWorker(Worker):
 
         self.last_obs_list = []
         self.last_intervened_info_list = []
-
+        self.rollout_epoch = self.cfg.algorithm.get("rollout_epoch", 1)
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
 
         # stage_num: default to 2, use for pipeline rollout process
@@ -100,33 +100,65 @@ class EnvWorker(Worker):
             groups=[(self._group_name, list(range(self._world_size)))],
         )
 
+        train_env_cls = get_env_cls(self.cfg.env.train.env_type, self.cfg.env.train)
+        eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
+
         if not self.only_eval:
-            for stage_id in range(self.stage_num):
-                env = train_env_cls(
-                    cfg=self.cfg.env.train,
-                    num_envs=self.train_num_envs_per_stage,
-                    seed_offset=self._rank * self.stage_num + stage_id,
-                    total_num_processes=self._world_size * self.stage_num,
-                    worker_info=self.worker_info,
-                )
-                if self.cfg.env.train.video_cfg.save_video:
-                    env = RecordVideo(env, self.cfg.env.train.video_cfg)
-                self.env_list.append(env)
+            self.env_list = self._setup_env_and_wrappers(
+                env_cls=train_env_cls,
+                env_cfg=self.cfg.env.train,
+                num_envs_per_stage=self.train_num_envs_per_stage,
+            )
         if self.enable_eval:
-            for stage_id in range(self.stage_num):
-                env = eval_env_cls(
-                    cfg=self.cfg.env.eval,
-                    num_envs=self.eval_num_envs_per_stage,
-                    seed_offset=self._rank * self.stage_num + stage_id,
-                    total_num_processes=self._world_size * self.stage_num,
-                    worker_info=self.worker_info,
-                )
-                if self.cfg.env.eval.video_cfg.save_video:
-                    env = RecordVideo(env, self.cfg.env.eval.video_cfg)
-                self.eval_env_list.append(env)
+            self.eval_env_list = self._setup_env_and_wrappers(
+                env_cls=eval_env_cls,
+                env_cfg=self.cfg.env.eval,
+                num_envs_per_stage=self.eval_num_envs_per_stage,
+            )
 
         if not self.only_eval:
             self._init_env()
+
+    def _setup_env_and_wrappers(self, env_cls, env_cfg, num_envs_per_stage: int):
+        env_list = []
+
+        for stage_id in range(self.stage_num):
+            env = env_cls(
+                cfg=env_cfg,
+                num_envs=num_envs_per_stage,
+                seed_offset=self._rank * self.stage_num + stage_id,
+                total_num_processes=self._world_size * self.stage_num,
+                worker_info=self.worker_info,
+            )
+            if env_cfg.video_cfg.save_video:
+                env = RecordVideo(env, env_cfg.video_cfg)
+            if env_cfg.get("data_collection", None) and getattr(
+                env_cfg.data_collection, "enabled", False
+            ):
+                from rlinf.envs.wrappers import CollectEpisode
+
+                env = CollectEpisode(
+                    env,
+                    save_dir=env_cfg.data_collection.save_dir,
+                    rank=self._rank,
+                    num_envs=num_envs_per_stage,
+                    export_format=getattr(
+                        env_cfg.data_collection, "export_format", "pickle"
+                    ),
+                    robot_type=getattr(env_cfg.data_collection, "robot_type", "panda"),
+                    fps=getattr(env_cfg.data_collection, "fps", 10),
+                    only_success=getattr(
+                        env_cfg.data_collection, "only_success", False
+                    ),
+                    stats_sample_ratio=getattr(
+                        env_cfg.data_collection, "stats_sample_ratio", 0.1
+                    ),
+                    finalize_interval=getattr(
+                        env_cfg.data_collection, "finalize_interval", 100
+                    ),
+                )
+            env_list.append(env)
+        return env_list
 
     def _setup_dst_ranks(self, batch_size: int) -> list[tuple[int, int]]:
         """Compute rollout peer ranks for this env worker.
@@ -494,7 +526,7 @@ class EnvWorker(Worker):
     @Worker.timer("interact")
     def interact(self, input_channel: Channel, output_channel: Channel):
         env_metrics = defaultdict(list)
-        for epoch in range(self.cfg.algorithm.rollout_epoch):
+        for epoch in range(self.rollout_epoch):
             env_outputs = self.bootstrap_step()
             for stage_id in range(self.stage_num):
                 env_output: EnvOutput = env_outputs[stage_id]
