@@ -172,6 +172,7 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
 
         self.preload_queue = queue.Queue(maxsize=prefetch_size)
         self.sample_thread = None
+        self._exception = None
 
     def _sample_buffer(self) -> None:
         """Background thread target that continuously samples batches.
@@ -213,7 +214,8 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
                 continue
             except Exception as e:
                 logger.error(f"Error in ReplayBufferDataset: {e}")
-                self.close()
+                self._exception = e
+                self._stop_event.set()
                 break
 
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
@@ -238,6 +240,11 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
                 yield batch
             except queue.Empty:
                 if self._stop_event.is_set():
+                    # Check if thread died with exception
+                    if hasattr(self, "_exception"):
+                        raise RuntimeError(
+                            "Sampling thread failed"
+                        ) from self._exception
                     break
                 continue
 
