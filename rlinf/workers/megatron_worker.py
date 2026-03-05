@@ -141,6 +141,8 @@ class MegatronWorker(MegatronModelManager, Worker):
             raise NotImplementedError(
                 f"algorithm.loss_agg_func={self.cfg.algorithm.loss_agg_func} is not supported!"
             )
+        self.kl_beta = self.cfg.algorithm.kl_beta
+        self.kl_penalty_type = self.cfg.algorithm.kl_penalty_type
 
         # Actor configurations
         self.enable_dynamic_batch_size = self.cfg.runner.enable_dynamic_batch_size
@@ -706,7 +708,7 @@ class MegatronWorker(MegatronModelManager, Worker):
         rollout_metrics = None
         if compute_rollout_metrics:
             rollout_metrics = self._compute_rollout_metrics(batch)
-            
+
         # Must be called after batch is retrieved, which is when rollout has stopped
         # Otherwise, loading model might cause OOM
         self._load_weight_and_optimizer()

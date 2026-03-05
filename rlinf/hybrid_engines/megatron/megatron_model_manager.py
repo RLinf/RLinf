@@ -282,7 +282,6 @@ class MegatronModelManager:
 
         if self.is_dedicated_critic_model and post_process:
             # replace lm head with value head if this is a critic model
-            assert hasattr(model, output_layer)
             model.output_layer = LinearForLastLayer(input_size=self._cfg.model.hidden_size, output_size=1, sequence_parallel=self._cfg.model.sequence_parallel)
 
         return model
