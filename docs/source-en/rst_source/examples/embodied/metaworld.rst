@@ -88,6 +88,16 @@ Use Docker image for the experiment.
       # For mainland China users, you can use the following for better download speed:
       # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-metaworld
 
+Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
+
+.. code:: bash
+
+   # To train OpenPi models
+   source switch_env openpi
+
+   # To train OpenVLA-OFT models
+   # source switch_env openvla-oft
+
 **Option 2: Custom Environment**
 
 Install dependencies directly in your environment by running the following command:
@@ -96,10 +106,11 @@ Install dependencies directly in your environment by running the following comma
 
    # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
 
-   # To train Openpi models
+   # To train OpenPi models
    bash requirements/install.sh embodied --model openpi --env metaworld
-   # To train OpenVLA-OFT
-   bash requirements/install.sh embodied --model openvla_oft --env metaworld
+
+   # To train OpenVLA-OFT models
+   # bash requirements/install.sh embodied --model openvla-oft --env metaworld
 
    source .venv/bin/activate
 

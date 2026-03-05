@@ -84,10 +84,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  channel:
-    name: "env_buffer_list"
-    queue_name: "obs_buffer"
-    queue_size: 0
   enable_offload: False
 
   train:
@@ -110,25 +106,16 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "action_buffer"
-    queue_size: 0
-  mode: "colocate"
   generation_backend: "huggingface"
   enable_offload: False
   pipeline_stage_num: 1
 
   model:
-    model_path: /path/to/model/Openvlaoft-CALVIN-SFT/
+    model_path: /path/to/model # https://huggingface.co/RLinf/RLinf-OpenVLAOFT-CALVIN-SFT
     precision: ${actor.model.precision}
 
 actor:
   group_name: "ActorGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "replay_buffer"
-    queue_size: 0
   training_backend: "fsdp"
   micro_batch_size: 32
   global_batch_size: 12288
@@ -136,7 +123,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: /path/to/model/Openvlaoft-CALVIN-SFT/
+    model_path: /path/to/model # https://huggingface.co/RLinf/RLinf-OpenVLAOFT-CALVIN-SFT
     model_type: "openvla_oft"
     num_action_chunks: 1
     unnorm_key: calvin_abc
@@ -146,15 +133,8 @@ actor:
     value_lr: 3.0e-3
     adam_beta1: 0.9
     adam_beta2: 0.999
-    adam_eps: 1.0e-05
+    adam_eps: 1.0e-08
     clip_grad: 1.0
-
-  tokenizer:
-    tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: /path/to/model/Openvlaoft-CALVIN-SFT/
-    use_fast: False
-    trust_remote_code: True
-    padding_side: "right"
 
   fsdp_config:
     strategy: "fsdp"

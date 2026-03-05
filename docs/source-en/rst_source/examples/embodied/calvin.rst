@@ -98,6 +98,16 @@ Use Docker image for the experiment.
       # For mainland China users, you can use the following for better download speed:
       # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-calvin
 
+Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
+
+.. code:: bash
+
+   # To train OpenPi models
+   source switch_env openpi
+
+   # To train OpenVLA-OFT models
+   source switch_env openvla-oft
+
 **Option 2: Custom Environment**
 
 Install dependencies directly in your environment by running the following command:
@@ -106,10 +116,11 @@ Install dependencies directly in your environment by running the following comma
 
    # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
 
-   # To train Openpi models
+   # To train OpenPi models
    bash requirements/install.sh embodied --model openpi --env calvin
-   # To train OpenvlaOft
-   bash requirements/install.sh embodied --model openvlaoft --env calvin
+
+   # To train OpenVLA-OFT models
+   # bash requirements/install.sh embodied --model openvla-oft --env calvin
 
    source .venv/bin/activate
 
@@ -125,7 +136,7 @@ Before starting training, you need to download the corresponding pretrained mode
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT
    git clone https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-CALVIN-ABCD-SFT
+   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-CALVIN-SFT
 
    # Method 2: Using huggingface-hub
    # For mainland China users, you can use the following for better download speed:
@@ -133,7 +144,7 @@ Before starting training, you need to download the corresponding pretrained mode
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT --local-dir RLinf-Pi0-CALVIN-ABC-D-SFT
    hf download RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT --local-dir RLinf-Pi05-CALVIN-ABC-D-SFT
-   hf download RLinf/RLinf-OpenVLAOFT-CALVIN-ABCD-SFT --local-dir RLinf-OpenVLAOFT-CALVIN-SFT
+   hf download RLinf/RLinf-OpenVLAOFT-CALVIN-SFT --local-dir RLinf-OpenVLAOFT-CALVIN-SFT
 
 After downloading, make sure to correctly specify the model path in the configuration yaml file.
 

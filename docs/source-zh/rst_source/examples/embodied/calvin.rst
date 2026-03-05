@@ -99,6 +99,16 @@
       # 为了提高国内下载速度，也可以使用：
       # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-calvin
 
+请使用内置的 `switch_env` 工具切换到相应的虚拟环境：
+
+.. code:: bash
+
+   # 使用OpenPi模型训练
+   source switch_env openpi
+
+   # 使用OpenVLA-OFT模型训练
+   # source switch_env openvla-oft
+
 **选项 2：自定义环境**
 
 在本地环境中直接安装依赖：
@@ -107,10 +117,11 @@
 
    # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
 
-   # 使用π模型训练
+   # 使用OpenPi模型训练
    bash requirements/install.sh embodied --model openpi --env calvin
-   # 使用OpenvlaOFT模型训练
-   bash requirements/install.sh embodied --model openvlaoft --env calvin
+
+   # 使用OpenVLA-OFT模型训练
+   # bash requirements/install.sh embodied --model openvla-oft --env calvin
 
    source .venv/bin/activate
 
@@ -126,7 +137,7 @@
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT
    git clone https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-CALVIN-ABCD-SFT
+   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-CALVIN-SFT
 
    # 方法 2: 使用 huggingface-hub
    # 为了提高国内下载速度，可以添加以下环境变量：
@@ -134,7 +145,7 @@
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT --local-dir RLinf-Pi0-CALVIN-ABC-D-SFT
    hf download RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT --local-dir RLinf-Pi05-CALVIN-ABC-D-SFT
-   hf download RLinf/RLinf-OpenVLAOFT-CALVIN-ABCD-SFT --local-dir RLinf-OpenVLAOFT-CALVIN-SFT
+   hf download RLinf/RLinf-OpenVLAOFT-CALVIN-SFT --local-dir RLinf-OpenVLAOFT-CALVIN-SFT
 
 
 下载后，请确保在配置 yaml 文件中正确指定模型路径。

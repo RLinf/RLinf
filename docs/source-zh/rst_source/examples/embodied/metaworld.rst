@@ -89,16 +89,27 @@
       # 如果需要国内加速下载镜像，可以使用：
       # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-metaworld
 
+请使用内置的 `switch_env` 工具切换到相应的虚拟环境：
+
+.. code:: bash
+
+   # 使用OpenPi模型训练
+   source switch_env openpi
+   # 使用OpenVLA-OFT模型训练
+   # source switch_env openvla-oft
+
 **选项 2：自定义环境**
 
 .. code:: bash
 
    # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
 
-   # 使用π模型训练
+   # 使用OpenPi模型训练
    bash requirements/install.sh embodied --model openpi --env metaworld
-   # 使用OpenvlaOFT模型训练
-   bash requirements/install.sh embodied --model openvlaoft --env metaworld
+
+   # 使用OpenVLA-OFT模型训练
+   # bash requirements/install.sh embodied --model openvla-oft --env metaworld
+   
    source .venv/bin/activate
 
 

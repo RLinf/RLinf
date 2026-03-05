@@ -389,6 +389,20 @@ install_openvla_oft_model() {
             install_flash_attn
             uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git  --no-build-isolation
             ;;
+        metaworld)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_flash_attn
+            install_metaworld_env
+            uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git  --no-build-isolation
+            ;;
+        calvin)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_flash_attn
+            install_calvin_env
+            uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git  --no-build-isolation
+            ;;
         robotwin)
             create_and_sync_venv
             install_common_embodied_deps
