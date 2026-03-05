@@ -265,7 +265,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
 
         with torch.no_grad():
             # use kv cache to generate the text
-            # the self.generate_with_kv_cache is more efficient than the self.generate
+            # the generate_with_kv_cache() is more efficient than the generate() in utils.py
             generate_ids = generate_with_kv_cache(
                 model=self.model,
                 eos_token_id=eos_token_id,
