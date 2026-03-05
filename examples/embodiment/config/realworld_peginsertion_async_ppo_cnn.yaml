@@ -67,7 +67,7 @@ algorithm:
   reward_type: chunk_level
   logprob_type: chunk_level
   entropy_type: chunk_level
-  update_epoch: 1
+  update_epoch: 2
   
   adv_type: gae
   loss_type: decoupled_actor_critic
@@ -105,7 +105,7 @@ algorithm:
   
   # For async control
   enable_accumulate_batch: True
-  accumulated_threshold: 500
+  accumulated_threshold: 1000
 
 # env and rollout may not need to change
 env:
@@ -116,8 +116,8 @@ env:
     total_num_envs: 1
     override_cfg:
       is_dummy: False
-      use_dense_reward: False
-      target_ee_pose: [ 0.53118626, -0.0625762,  -0.00602859,   3.13221979, -0.0261194,   0.00613792] # Replace with your target end-effector pose
+      use_dense_reward: True
+      target_ee_pose: [ 0.5351, 0.0317,  -0.0115,  -3.1073, 0.0143,  -0.0239] # Replace with your target end-effector pose
 
   eval:
     total_num_envs: 1
@@ -145,8 +145,8 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
 
-  micro_batch_size: 125  # Smaller batch_size to accelerate training in real world
-  global_batch_size: 125  # Smaller batch_size to accelerate training in real world
+  micro_batch_size: 500  # Smaller batch_size to accelerate training in real world
+  global_batch_size: 500  # Smaller batch_size to accelerate training in real world
   seed: 1234
   enable_offload: False
 
@@ -158,7 +158,7 @@ actor:
     action_dim: 6
 
   optim:
-    lr: 1e-4
+    lr: 5e-5
     value_lr: 2e-4
     adam_beta1: 0.9
     adam_beta2: 0.95
