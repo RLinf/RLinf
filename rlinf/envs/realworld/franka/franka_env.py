@@ -44,6 +44,7 @@ class FrankaRobotConfig:
 
     is_dummy: bool = False
     use_dense_reward: bool = False
+    dense_reward_scale: float = 0.02 # Scale dense reward to make training stable
     step_frequency: float = 10.0  # Max number of steps per second
 
     # Positions are stored in eular angles (xyz for position, rzryrx for orientation)
@@ -267,7 +268,7 @@ class FrankaEnv(gym.Env):
                 # Reset counter if robot leaves the target zone
                 self._success_hold_counter = 0
                 if self.config.use_dense_reward:
-                    reward = np.exp(-500 * np.sum(np.square(target_delta[:3])))
+                    reward = np.exp(-500 * np.sum(np.square(target_delta[:3]))) * self.config.dense_reward_scale
                 else:
                     reward = 0.0
                 self._logger.debug(
