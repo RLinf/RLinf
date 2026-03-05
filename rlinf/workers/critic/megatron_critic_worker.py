@@ -35,7 +35,7 @@ class MegatronCritic(MegatronWorker):
         """
         super().__init__(cfg, placement, role)
 
-        self.value_clip = self.cfg.algorithm.value_clip
+        self.value_clip = self.cfg.algorithm.value_cliprange
 
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""

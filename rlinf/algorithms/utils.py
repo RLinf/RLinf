@@ -262,9 +262,11 @@ def postprocess_reasoning_advantages_outputs(
     Post-process results for Reasoning tasks; transpose tensors back.
     """
 
-    advantages = advantages.transpose(0, 1)  # [bsz, seq_len]
+    # remember to call contiguous() to ensure correctness when being
+    # transmitted through channels
+    advantages = advantages.transpose(0, 1).contiguous()  # [bsz, seq_len]
     if returns is not None:
-        returns = returns.transpose(0, 1)  # [bsz, seq_len]
+        returns = returns.transpose(0, 1).contiguous()  # [bsz, seq_len]
 
     return advantages, returns
 

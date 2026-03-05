@@ -56,6 +56,7 @@ def main(cfg) -> None:
     )
 
     # Inference group
+    actor_inference_group = None
     if (
         component_placement.placement_mode
         in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]
