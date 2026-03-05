@@ -35,7 +35,7 @@ class ReplayBufferDataset(IterableDataset):
 
     Attributes:
         replay_buffer: Buffer storing online rollout trajectories.
-        demo_buffer: Optional buffer storing offline demonstration trajectories 
+        demo_buffer: Optional buffer storing offline demonstration trajectories
             and online human-in-the-loop trajectories.
         min_replay_buffer_size: Minimum number of samples required in replay
             buffer before sampling begins.
