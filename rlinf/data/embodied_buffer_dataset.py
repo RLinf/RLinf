@@ -15,7 +15,9 @@
 import queue
 import threading
 import time
+from typing import Any, Iterator, Optional
 
+import torch
 from torch.utils.data import IterableDataset
 
 from rlinf.data.replay_buffer import TrajectoryReplayBuffer
@@ -47,12 +49,12 @@ class ReplayBufferDataset(IterableDataset):
     def __init__(
         self,
         replay_buffer: TrajectoryReplayBuffer,
-        demo_buffer: TrajectoryReplayBuffer,
+        demo_buffer: Optional[TrajectoryReplayBuffer],
         batch_size: int,
         min_replay_buffer_size: int,
         min_demo_buffer_size: int,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """Initializes the ReplayBufferDataset.
 
         Args:
@@ -74,7 +76,7 @@ class ReplayBufferDataset(IterableDataset):
 
         self.batch_size = batch_size
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
         """Returns an infinite iterator that yields batches.
 
         Waits until both buffers (if demo_buffer is provided) reach their
@@ -103,12 +105,12 @@ class ReplayBufferDataset(IterableDataset):
                     batch = self.replay_buffer.sample(self.batch_size)
                 yield batch
 
-    def close(self):
+    def close(self) -> None:
         """Releases references to replay and demo buffers."""
         del self.replay_buffer
         del self.demo_buffer
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Destructor that ensures buffers are cleaned up."""
         self.close()
 
@@ -136,12 +138,12 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
     def __init__(
         self,
         replay_buffer: TrajectoryReplayBuffer,
-        demo_buffer: TrajectoryReplayBuffer,
+        demo_buffer: Optional[TrajectoryReplayBuffer],
         batch_size: int,
         min_replay_buffer_size: int,
         min_demo_buffer_size: int,
         prefetch_size: int = 10,
-    ):
+    ) -> None:
         """Initializes the PreloadReplayBufferDataset.
 
         Args:
@@ -170,7 +172,7 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
         self.preload_queue = queue.Queue(maxsize=prefetch_size)
         self.sample_thread = None
 
-    def _sample_buffer(self):
+    def _sample_buffer(self) -> None:
         """Background thread target that continuously samples batches.
 
         Runs in a loop until stop event is set. Waits for buffers to be ready,
@@ -208,7 +210,7 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
                 logger.error(f"Error in ReplayBufferDataset: {e}")
                 break
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
         """Returns an iterator that yields prefetched batches.
 
         Starts the background sampling thread on first call. Retrieves batches
@@ -233,7 +235,7 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
                     break
                 continue
 
-    def close(self):
+    def close(self) -> None:
         """Stops the background sampling thread and cleans up resources.
 
         Sets the stop event and waits up to 10 seconds for the sampling thread
@@ -249,13 +251,15 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
                     f"Sample thread is still alive after {thread_timeout} seconds, force killing"
                 )
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Destructor that ensures the sampling thread is stopped."""
         if not self._stop_event.is_set():
             self.close()
 
 
-def replay_buffer_collate_fn(batch):
+def replay_buffer_collate_fn(
+    batch: list[dict[str, torch.Tensor]],
+) -> dict[str, torch.Tensor]:
     """Collate function for DataLoader that returns the first batch element.
 
     Since the dataset already yields complete batches, this function simply
