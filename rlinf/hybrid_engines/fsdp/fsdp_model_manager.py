@@ -14,10 +14,12 @@
 
 import os
 import warnings
+from math import sqrt
 from typing import ContextManager, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from torch.optim import Optimizer
@@ -53,6 +55,302 @@ def _is_cuda_backend_available() -> bool:
     return torch.cuda.is_available() and hasattr(torch._C, "_cuda_setDevice")
 
 
+_ORIGINAL_SDPA = None
+_ORIGINAL_SDPA_C = None
+_LAST_SDPA_INPUTS = None
+_LAST_SDPA_TENSORS = None
+_SDPA_DEBUG_CALL_COUNT = 0
+_IN_SDPA_DEBUG_WRAPPER = False
+_SDPA_CAPTURE_TENSORS = False
+_SDPA_CAPTURE_MAX_NUMEL = 0
+_MUSA_EAGER_SDPA_FALLBACK_INSTALLED = False
+
+
+def _musa_sdpa_eager(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attn_mask: torch.Tensor | None = None,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    scale: float | None = None,
+    enable_gqa: bool = False,
+) -> torch.Tensor:
+    """
+    Eager SDPA fallback for MUSA.
+
+    This implementation avoids the backend flash/mem-efficient SDPA kernels that
+    can produce NaNs on unsupported head dimensions.
+    """
+    if enable_gqa:
+        query_heads = query.size(-3)
+        kv_heads = key.size(-3)
+        if query_heads % kv_heads != 0:
+            raise ValueError(
+                f"enable_gqa=True requires query_heads % kv_heads == 0, "
+                f"got {query_heads} and {kv_heads}."
+            )
+        repeat = query_heads // kv_heads
+        if repeat > 1:
+            key = key.repeat_interleave(repeat, dim=-3)
+            value = value.repeat_interleave(repeat, dim=-3)
+
+    compute_dtype = (
+        torch.float32 if query.dtype in (torch.float16, torch.bfloat16) else query.dtype
+    )
+    q = query.to(compute_dtype)
+    k = key.to(compute_dtype)
+    v = value.to(compute_dtype)
+
+    scale_factor = (1.0 / sqrt(q.size(-1))) if scale is None else scale
+    attn_weight = torch.matmul(q, k.transpose(-2, -1)) * scale_factor
+
+    if is_causal:
+        tgt_len, src_len = q.size(-2), k.size(-2)
+        causal_mask = torch.ones(
+            (tgt_len, src_len),
+            device=q.device,
+            dtype=torch.bool,
+        ).tril()
+        attn_weight = attn_weight.masked_fill(
+            ~causal_mask, torch.finfo(attn_weight.dtype).min
+        )
+
+    if attn_mask is not None:
+        if attn_mask.dtype == torch.bool:
+            attn_weight = attn_weight.masked_fill(
+                ~attn_mask, torch.finfo(attn_weight.dtype).min
+            )
+        else:
+            attn_weight = attn_weight + attn_mask.to(attn_weight.dtype)
+
+    attn_weight = torch.softmax(attn_weight, dim=-1, dtype=torch.float32).to(
+        attn_weight.dtype
+    )
+    if dropout_p > 0.0:
+        attn_weight = torch.dropout(attn_weight, dropout_p, train=True)
+
+    output = torch.matmul(attn_weight, v)
+    return output.to(query.dtype)
+
+
+def install_musa_eager_sdpa_fallback(logger, rank: int) -> None:
+    """Force torch SDPA to use eager math implementation on MUSA."""
+    global _ORIGINAL_SDPA
+    global _ORIGINAL_SDPA_C
+    global _MUSA_EAGER_SDPA_FALLBACK_INSTALLED
+
+    if _MUSA_EAGER_SDPA_FALLBACK_INSTALLED:
+        return
+
+    if _ORIGINAL_SDPA is None:
+        _ORIGINAL_SDPA = F.scaled_dot_product_attention
+    F.scaled_dot_product_attention = _musa_sdpa_eager
+
+    sdpa_c = getattr(getattr(torch, "_C", None), "_nn", None)
+    sdpa_c_fn = (
+        getattr(sdpa_c, "scaled_dot_product_attention", None)
+        if sdpa_c is not None
+        else None
+    )
+    if _ORIGINAL_SDPA_C is None and callable(sdpa_c_fn):
+        _ORIGINAL_SDPA_C = sdpa_c_fn
+    if callable(sdpa_c_fn):
+        try:
+            sdpa_c.scaled_dot_product_attention = _musa_sdpa_eager
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[MUSA-SDPA] Failed to replace torch._C._nn.scaled_dot_product_attention: "
+                f"{exc}"
+            )
+
+    _MUSA_EAGER_SDPA_FALLBACK_INSTALLED = True
+    logger.warning(
+        f"[MUSA-SDPA] rank={rank} forced scaled_dot_product_attention to eager math fallback."
+    )
+
+
+def _tensor_meta(tensor: torch.Tensor | None) -> dict | None:
+    if tensor is None:
+        return None
+    if not isinstance(tensor, torch.Tensor):
+        return {"type": type(tensor).__name__}
+    return {
+        "shape": tuple(tensor.shape),
+        "dtype": str(tensor.dtype),
+        "device": str(tensor.device),
+    }
+
+
+def get_last_sdpa_input_shapes() -> dict | None:
+    """Return the latest recorded SDPA inputs metadata for debug."""
+    return _LAST_SDPA_INPUTS
+
+
+def _clone_tensor_for_debug(tensor: torch.Tensor | None) -> torch.Tensor | None:
+    if tensor is None or not isinstance(tensor, torch.Tensor):
+        return None
+    return tensor.detach().to("cpu").clone()
+
+
+def get_last_sdpa_input_tensors() -> dict | None:
+    """Return latest recorded SDPA tensors (CPU) for debug dump."""
+    return _LAST_SDPA_TENSORS
+
+
+def dump_last_sdpa_inputs(
+    save_dir: str,
+    rank: int,
+    step: int,
+    logger=None,
+) -> str | None:
+    """
+    Persist latest SDPA debug snapshot to disk.
+
+    The saved pt includes:
+      - meta: shape/dtype/device information
+      - tensors: q/k/v/mask CPU tensors (if capture enabled and within size limit)
+    """
+    snapshot = {
+        "meta": get_last_sdpa_input_shapes(),
+        "tensors": get_last_sdpa_input_tensors(),
+        "rank": rank,
+        "step": step,
+    }
+    if snapshot["meta"] is None and snapshot["tensors"] is None:
+        return None
+
+    os.makedirs(save_dir, exist_ok=True)
+    filename = f"sdpa_input_rank{rank}_step{step}.pt"
+    save_path = os.path.join(save_dir, filename)
+    torch.save(snapshot, save_path)
+    if logger is not None:
+        logger.warning(f"[SDPA-DEBUG] dumped latest SDPA inputs to: {save_path}")
+    return save_path
+
+
+def install_sdpa_input_shape_debug(
+    logger,
+    rank: int,
+    max_print: int = 8,
+    capture_tensors: bool = False,
+    capture_max_numel: int = 0,
+) -> None:
+    """Install a debug wrapper to record scaled_dot_product_attention input shapes."""
+    global _ORIGINAL_SDPA
+    global _ORIGINAL_SDPA_C
+    global _LAST_SDPA_TENSORS
+    global _SDPA_DEBUG_CALL_COUNT
+    global _IN_SDPA_DEBUG_WRAPPER
+    global _SDPA_CAPTURE_TENSORS
+    global _SDPA_CAPTURE_MAX_NUMEL
+    installed_targets = []
+    _SDPA_CAPTURE_TENSORS = capture_tensors
+    _SDPA_CAPTURE_MAX_NUMEL = capture_max_numel
+
+    def _record_and_maybe_log(args, kwargs, source: str) -> None:
+        global _LAST_SDPA_INPUTS
+        global _SDPA_DEBUG_CALL_COUNT
+
+        query = args[0] if len(args) > 0 else kwargs.get("query", None)
+        key = args[1] if len(args) > 1 else kwargs.get("key", None)
+        value = args[2] if len(args) > 2 else kwargs.get("value", None)
+        attn_mask = (
+            args[3]
+            if len(args) > 3
+            else kwargs.get("attn_mask", kwargs.get("mask", None))
+        )
+        dropout_p = (
+            args[4] if len(args) > 4 else kwargs.get("dropout_p", None)
+        )
+        is_causal = (
+            args[5] if len(args) > 5 else kwargs.get("is_causal", None)
+        )
+
+        _LAST_SDPA_INPUTS = {
+            "rank": rank,
+            "source": source,
+            "query": _tensor_meta(query),
+            "key": _tensor_meta(key),
+            "value": _tensor_meta(value),
+            "attn_mask": _tensor_meta(attn_mask),
+            "dropout_p": dropout_p,
+            "is_causal": is_causal,
+        }
+        if _SDPA_CAPTURE_TENSORS:
+            tensors = {
+                "query": _clone_tensor_for_debug(query),
+                "key": _clone_tensor_for_debug(key),
+                "value": _clone_tensor_for_debug(value),
+                "attn_mask": _clone_tensor_for_debug(attn_mask),
+            }
+            if _SDPA_CAPTURE_MAX_NUMEL > 0:
+                for name, tensor in tensors.items():
+                    if tensor is not None and tensor.numel() > _SDPA_CAPTURE_MAX_NUMEL:
+                        tensors[name] = None
+                        _LAST_SDPA_INPUTS[f"{name}_capture_skipped_numel"] = int(
+                            tensor.numel()
+                        )
+            _LAST_SDPA_TENSORS = tensors
+        else:
+            _LAST_SDPA_TENSORS = None
+        _SDPA_DEBUG_CALL_COUNT += 1
+        if _SDPA_DEBUG_CALL_COUNT <= max_print:
+            logger.warning(
+                "[SDPA-DEBUG] "
+                f"rank={rank}, call={_SDPA_DEBUG_CALL_COUNT}, "
+                f"q={_LAST_SDPA_INPUTS['query']}, "
+                f"k={_LAST_SDPA_INPUTS['key']}, "
+                f"v={_LAST_SDPA_INPUTS['value']}, "
+                f"mask={_LAST_SDPA_INPUTS['attn_mask']}, "
+                f"dropout_p={dropout_p}, is_causal={is_causal}"
+            )
+
+    def _wrap_sdpa(fn, source: str):
+        def _wrapped(*args, **kwargs):
+            global _IN_SDPA_DEBUG_WRAPPER
+            if _IN_SDPA_DEBUG_WRAPPER:
+                return fn(*args, **kwargs)
+            _IN_SDPA_DEBUG_WRAPPER = True
+            try:
+                _record_and_maybe_log(args, kwargs, source=source)
+                return fn(*args, **kwargs)
+            finally:
+                _IN_SDPA_DEBUG_WRAPPER = False
+
+        return _wrapped
+
+    if _ORIGINAL_SDPA is None:
+        _ORIGINAL_SDPA = F.scaled_dot_product_attention
+        F.scaled_dot_product_attention = _wrap_sdpa(_ORIGINAL_SDPA, source="torch.nn.functional")
+        installed_targets.append("torch.nn.functional")
+
+    sdpa_c = getattr(getattr(torch, "_C", None), "_nn", None)
+    sdpa_c_fn = (
+        getattr(sdpa_c, "scaled_dot_product_attention", None) if sdpa_c is not None else None
+    )
+    if _ORIGINAL_SDPA_C is None and callable(sdpa_c_fn):
+        _ORIGINAL_SDPA_C = sdpa_c_fn
+        try:
+            sdpa_c.scaled_dot_product_attention = _wrap_sdpa(
+                _ORIGINAL_SDPA_C, source="torch._C._nn"
+            )
+            installed_targets.append("torch._C._nn")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[SDPA-DEBUG] Failed to wrap torch._C._nn.scaled_dot_product_attention: "
+                f"{exc}"
+            )
+
+    if installed_targets:
+        logger.warning(
+            "[SDPA-DEBUG] installed hooks on: "
+            f"{installed_targets}, rank={rank}, max_print={max_print}, "
+            f"capture_tensors={_SDPA_CAPTURE_TENSORS}, "
+            f"capture_max_numel={_SDPA_CAPTURE_MAX_NUMEL}"
+        )
+
+
 class FSDPModelManager:
     """
     FSDP Model Manager for RL training
@@ -68,6 +366,7 @@ class FSDPModelManager:
         """
         self._cfg = cfg
         self._logger = get_logger()
+        self._rank = rank
         self.torch_dtype = torch_dtype_from_precision(self._cfg.model.precision)
 
         self.optimizer_steps = 0
@@ -105,6 +404,29 @@ class FSDPModelManager:
             raise RuntimeError(
                 "No available accelerator backend found for FSDP. "
                 "Expected one of cuda/musa."
+            )
+
+        force_musa_eager_sdpa = bool(
+            self._cfg.model.get("force_musa_eager_sdpa", True)
+        )
+        if self.accelerator_type == "musa" and force_musa_eager_sdpa:
+            install_musa_eager_sdpa_fallback(logger=self._logger, rank=self._rank)
+
+        enable_sdpa_debug = bool(
+            self._cfg.get("debug_sdpa_input_shapes", False)
+            or self._cfg.get("debug_detect_anomaly", False)
+            or self._cfg.get("debug_nan_checks", False)
+        )
+        capture_sdpa_tensors = bool(
+            self._cfg.get("debug_sdpa_save_inputs", enable_sdpa_debug)
+        )
+        if enable_sdpa_debug:
+            install_sdpa_input_shape_debug(
+                logger=self._logger,
+                rank=self._rank,
+                max_print=int(self._cfg.get("debug_sdpa_print_max", 8)),
+                capture_tensors=capture_sdpa_tensors,
+                capture_max_numel=int(self._cfg.get("debug_sdpa_capture_max_numel", 0)),
             )
         self.amp_context = self._create_amp_context()
 

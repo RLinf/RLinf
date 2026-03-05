@@ -529,7 +529,9 @@ class WanEnv(BaseWorldEnv):
         for env_idx in range(num_envs):
             frames = []
             for img in output[env_idx]:
-                arr = np.array(img) / 255.0
+                # Keep frame tensors in fp32 to avoid silent fp64 promotion
+                # that can significantly increase GPU memory usage.
+                arr = np.asarray(img, dtype=np.float32) / 255.0
                 arr = arr * 2.0 - 1.0
                 frames.append(arr)
 
@@ -545,7 +547,9 @@ class WanEnv(BaseWorldEnv):
             all_samples.append(video[:, 5:])
 
         # Stack all environments: [num_envs, C, T, H, W]
-        x_samples = torch.stack(all_samples, dim=0).to(self.device)
+        x_samples = torch.stack(all_samples, dim=0).to(
+            self.device, dtype=self.current_obs.dtype
+        )
 
         # Reshape to match current_obs format: [num_envs, C, 1, T, H, W]
         x_samples = x_samples.unsqueeze(2)

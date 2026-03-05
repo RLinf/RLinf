@@ -45,6 +45,10 @@ if TYPE_CHECKING:
 WorkerClsType = TypeVar("WorkerClsType")
 
 
+def _is_musa_available() -> bool:
+    return hasattr(torch, "musa") and torch.musa.is_available()
+
+
 class WorkerMeta(type):
     """Metaclass to capture failures in worker classes."""
 
@@ -316,7 +320,7 @@ class Worker(metaclass=WorkerMeta):
     if torch.cuda.is_available():
         torch_platform = torch.cuda
         torch_device_type = "cuda"
-    elif torch.musa.is_available():
+    elif _is_musa_available():
         torch_platform = torch.musa
         torch_device_type = "musa"
 
