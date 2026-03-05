@@ -213,6 +213,7 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
                 continue
             except Exception as e:
                 logger.error(f"Error in ReplayBufferDataset: {e}")
+                self.close()
                 break
 
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
