@@ -34,6 +34,7 @@ runner:
   save_interval: 5
 
 data:
+  train_data_paths: ["dummy"]  # Required by validate_sft_cfg; VlaLibSFTRunner uses datasets list below
   datasets:
     - dataset_path: /mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot
       type: "sft"

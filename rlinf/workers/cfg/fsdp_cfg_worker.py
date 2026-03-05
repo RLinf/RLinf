@@ -37,6 +37,7 @@ Example config:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -47,9 +48,12 @@ from omegaconf import DictConfig
 
 from rlinf.datasets import TokenizePromptWithGuidance
 from rlinf.datasets.vla_lib.advantage_mixture_dataset import AdvantageMixtureDataset
+from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
+from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.distributed import all_reduce_dict
-from rlinf.utils.utils import clear_memory
 from rlinf.utils.metric_utils import append_to_dict
+from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.utils import clear_memory
 from rlinf.workers.cfg.utils import (
     CFGDataLoaderImpl,
     DatasetWithAdvantage,
@@ -88,10 +92,41 @@ class FSDPCfgWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
         """Initialize FSDPCfgWorker.
 
+        Overrides parent __init__ to use CFG's own build_dataloader()
+        which uses AdvantageMixtureDataset instead of train_data_paths.
+
         Args:
             cfg: Hydra configuration dictionary.
         """
-        super().__init__(cfg)
+        # Replicate parent setup but skip train_data_paths/eval_dataset logic
+        Worker.__init__(self)
+        FSDPModelManager.__init__(self, cfg.actor, self._world_size, self._rank)
+
+        self.cfg = cfg
+        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+        self.device = torch.cuda.current_device()
+
+        self._component_placement = HybridComponentPlacement(cfg, Cluster())
+
+        self.global_batch_size = self.cfg.actor.global_batch_size
+        self.micro_batch_size = self.cfg.actor.micro_batch_size
+        self.eval_batch_size = self.cfg.actor.get("eval_batch_size", 1)
+
+        assert (
+            self.global_batch_size % (self.micro_batch_size * self._world_size) == 0
+        ), "global_batch_size is not divisible by micro_batch_size * world_size"
+        self.gradient_accumulation = (
+            self.global_batch_size // self.micro_batch_size // self._world_size
+        )
+
+        # CFG uses its own build_dataloader() with AdvantageMixtureDataset
+        self.data_loader, self.data_config = self.build_dataloader()
+        self.data_iter = iter(self.data_loader)
+        self.eval_data_loader = None
+
+        self.global_step = 0
+        self._data_epoch = 0
+        self._data_iter_offset = 0
 
     # -------------------------------------------------------------------------
     # DataLoader Building
