@@ -842,6 +842,23 @@ def generate_with_kv_cache(
     max_new_tokens: int = 128,
 ) -> torch.Tensor:
     """generate with use_cache/past_key_values, without calling model.generate()."""
+    # ------------------------------------------------------------------------------
+    # NOTE:
+    # This implementation serves as a replacement for `model.generate()`.
+    #
+    # When FSDP is configured with `full_shard`, the default `generate()` method
+    # does not perform the required all-gather operations, which can lead to
+    # runtime errors during inference. To avoid this issue, we explicitly perform
+    # iterative forward passes and manually compute the next token prediction.
+    #
+    # The `generate_with_kv_cache` variant further improves generation efficiency
+    # by utilizing KV cache to reduce redundant computation across decoding steps.
+    # However, this optimization may increase memory consumption and potentially
+    # cause out-of-memory (OOM) issues in certain environments.
+    #
+    # For debugging or in memory-constrained scenarios, it is recommended to fall
+    # back to the standard `generate()` implementation.
+    # ------------------------------------------------------------------------------
 
     batch_size = input_ids.size(0)
     generated_ids = input_ids
@@ -941,6 +958,15 @@ def generate(
     max_new_tokens: int = 128,
 ) -> torch.Tensor:
     """Greedy decode without calling HF generate(), compatible with FSDP full_shard."""
+    # ------------------------------------------------------------------------------
+    # NOTE:
+    # This implementation serves as a replacement for `model.generate()`.
+    #
+    # When FSDP is configured with `full_shard`, the default `generate()` method
+    # does not perform the required all-gather operations, which can lead to
+    # runtime errors during inference. To avoid this issue, we explicitly perform
+    # iterative forward passes and manually compute the next token prediction.
+    # ------------------------------------------------------------------------------
 
     generated_ids = input_ids
     generated_attention_mask = attention_mask.to(dtype=torch.long)
