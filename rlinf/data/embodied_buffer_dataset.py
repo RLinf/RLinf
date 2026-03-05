@@ -142,7 +142,7 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
         batch_size: int,
         min_replay_buffer_size: int,
         min_demo_buffer_size: int,
-        prefetch_size: int = 10,
+        prefetch_size: int = 5,
     ) -> None:
         """Initializes the PreloadReplayBufferDataset.
 
@@ -168,6 +168,7 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
 
         self.batch_size = batch_size
         self.prefetch_size = prefetch_size
+        assert self.prefetch_size > 0, f"{self.prefetch_size=} must be greater than 0"
 
         self.preload_queue = queue.Queue(maxsize=prefetch_size)
         self.sample_thread = None
@@ -181,6 +182,10 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
         or when errors occur.
         """
         while not self._stop_event.is_set():
+            if self.preload_queue.full():
+                time.sleep(0.1)
+                continue
+
             is_ready = True
             if not self.replay_buffer.is_ready(self.min_replay_buffer_size):
                 is_ready = False
@@ -204,7 +209,7 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
                 self.preload_queue.put(batch, timeout=1)
             except queue.Full:
                 logger.info("Queue is full, skipping sample")
-                time.sleep(0.5)
+                time.sleep(0.1)
                 continue
             except Exception as e:
                 logger.error(f"Error in ReplayBufferDataset: {e}")
