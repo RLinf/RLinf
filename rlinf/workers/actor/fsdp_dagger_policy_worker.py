@@ -132,17 +132,17 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     #         self.cfg.actor.fsdp_config.amp.use_grad_scaler
     #     )
 
-    def build_lr_schedulers(self):
-        self.lr_scheduler = self.build_lr_scheduler(
-            self.optimizer, self.cfg.actor.optim
-        )
-        self.qf_lr_scheduler = self.build_lr_scheduler(
-            self.qf_optimizer, self.cfg.actor.critic_optim
-        )
-        if self.alpha_optimizer is not None:
-            self.alpha_lr_scheduler = self.build_lr_scheduler(
-                self.optimizer, self.cfg.algorithm.entropy_tuning.optim
-            )
+    # def build_lr_schedulers(self):
+    #     self.lr_scheduler = self.build_lr_scheduler(
+    #         self.optimizer, self.cfg.actor.optim
+    #     )
+    #     self.qf_lr_scheduler = self.build_lr_scheduler(
+    #         self.qf_optimizer, self.cfg.actor.critic_optim
+    #     )
+    #     if self.alpha_optimizer is not None:
+    #         self.alpha_lr_scheduler = self.build_lr_scheduler(
+    #             self.optimizer, self.cfg.algorithm.entropy_tuning.optim
+    #         )
 
     def setup_dagger_components(self):
         """Initialize DAGGER-specific components"""

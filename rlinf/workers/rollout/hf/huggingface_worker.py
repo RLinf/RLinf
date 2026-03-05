@@ -190,15 +190,15 @@ class MultiStepRolloutWorker(Worker):
 
         # dagger sampling parameters
         self._dagger_sampling_params = {
-            "init_beta": self.cfg.algorithm.dagger.get("init_beta", 0.5),
-            "beta": self.cfg.algorithm.dagger.get("init_beta", 0.5),
+            "init_beta": self.cfg.algorithm.get("dagger", {}).get("init_beta", 0.5),
+            "beta": self.cfg.algorithm.get("dagger", {}).get("init_beta", 0.5),
             "current_rollout_epoch": 0,
-            "beta_schedule": self.cfg.algorithm.dagger.get(
+            "beta_schedule": self.cfg.algorithm.get("dagger", {}).get(
                 "beta_schedule", "exponential"
             ),
-            "beta_min": self.cfg.algorithm.dagger.get("beta_min", 0.05),
-            "beta_decay": self.cfg.algorithm.dagger.get("beta_decay", 0.99),
-            "beta_decay_steps": self.cfg.algorithm.dagger.get("beta_decay_steps", 1000),
+            "beta_min": self.cfg.algorithm.get("dagger", {}).get("beta_min", 0.05),
+            "beta_decay": self.cfg.algorithm.get("dagger", {}).get("beta_decay", 0.99),
+            "beta_decay_steps": self.cfg.algorithm.get("dagger", {}).get("beta_decay_steps", 1000),
         }
 
     def update_dagger_beta(self):

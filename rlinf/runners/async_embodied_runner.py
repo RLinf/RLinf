@@ -26,11 +26,11 @@ from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.utils.runner_utils import check_progress
 
 if TYPE_CHECKING:
-    from rlinf.workers.actor.async_fsdp_sac_policy_worker import (
-        AsyncEmbodiedSACFSDPPolicy,
-    )
     from rlinf.workers.actor.async_fsdp_dagger_policy_worker import (
         AsyncEmbodiedDAGGERFSDPPolicy,
+    )
+    from rlinf.workers.actor.async_fsdp_sac_policy_worker import (
+        AsyncEmbodiedSACFSDPPolicy,
     )
     from rlinf.workers.env.async_env_worker import AsyncEnvWorker
     from rlinf.workers.rollout.hf.async_huggingface_worker import (

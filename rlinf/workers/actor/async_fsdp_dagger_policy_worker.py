@@ -15,6 +15,7 @@
 import asyncio
 import queue
 import threading
+
 import torch
 
 from rlinf.scheduler import Worker
@@ -74,7 +75,6 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
                 intervene_traj_list.extend(intervene_traj)
         if len(intervene_traj_list) > 0:
             self.replay_buffer.add_trajectories(intervene_traj_list)
-
 
     async def _wait_for_replay_buffer_ready(self, min_buffer_size: int):
         while True:
