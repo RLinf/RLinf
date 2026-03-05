@@ -238,7 +238,7 @@ class Turtle2SmoothController(Worker):
     def reset_arms(self):
         self.left_arm_target = [0, 0, 0, 0, 0, 0, 0]
         self.right_arm_target = [0, 0, 0, 0, 0, 0, 0]
-        print("Reset target to zero.")
+        self.log_info("Reset target to zero.")
         time.sleep(2.0)
 
     def check_cams(self, timeout=0.5):

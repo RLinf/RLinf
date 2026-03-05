@@ -160,7 +160,7 @@ b. Install Dependencies
 .. code:: bash
 
    # For mainland China users, you can add the `--use-mirror` flag for better speed.
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
+   bash requirements/install.sh embodied --env xsquare_turtle2
    source .venv/bin/activate
 
 

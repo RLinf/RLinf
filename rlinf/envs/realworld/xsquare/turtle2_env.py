@@ -253,7 +253,11 @@ class Turtle2Env(gym.Env):
         else:
             right_arm_reset_pose = [0, 0, 0, 0, 0, 0, 0]
 
-        self._logger.info("going to reset:", left_arm_reset_pose, right_arm_reset_pose)
+        self._logger.info(
+            "going to reset: left=%s right=%s",
+            left_arm_reset_pose,
+            right_arm_reset_pose,
+        )
 
         self._controller.move_arm(left_arm_reset_pose, right_arm_reset_pose).wait()
 
@@ -276,11 +280,12 @@ class Turtle2Env(gym.Env):
             )
             reach = left_reach and right_reach
             if time.time() - start_time > 10.0:
+                left_err = np.linalg.norm(left_pos[:6] - np.array(left_arm_reset_pose)[:6])
+                right_err = np.linalg.norm(
+                    right_pos[:6] - np.array(right_arm_reset_pose)[:6]
+                )
                 raise ValueError(
-                    "Reset arms timeout, lefterr:",
-                    np.linalg.norm(left_pos[:6] - np.array(left_arm_reset_pose)[:6]),
-                    " ; righterr:",
-                    np.linalg.norm(right_pos[:6] - np.array(right_arm_reset_pose)[:6]),
+                    f"Reset arms timeout: left_err={left_err:.6f}, right_err={right_err:.6f}"
                 )
 
             time.sleep(0.1)

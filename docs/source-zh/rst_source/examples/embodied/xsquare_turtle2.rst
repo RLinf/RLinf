@@ -154,7 +154,7 @@ b. 安装依赖
 .. code:: bash
 
    # 为提高国内依赖安装速度，可以添加 `--use-mirror` 标志
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
+   bash requirements/install.sh embodied --env xsquare_turtle2
    source .venv/bin/activate
 
 
