@@ -6,11 +6,11 @@ This document explains how to run **full-parameter supervised fine-tuning (Full-
 This tutorial mainly focuses on two files:
 
 - Launch script: ``examples/sft/run_vlm_sft.sh``
-- Training config: ``examples/sft/config/custom_sft_vlm.yaml``
+- Training config: ``examples/sft/config/qwen2_5_sft_vlm.yaml``
 
 Launch Script: ``examples/sft/run_vlm_sft.sh``
 
-- The script uses ``examples/sft/config/custom_sft_vlm.yaml`` by default.
+- The script uses ``examples/sft/config/qwen2_5_sft_vlm.yaml`` by default.
 - Logs are redirected to: ``<repo>/logs/<timestamp>/``
 - Actual command:
 
@@ -21,7 +21,7 @@ Launch Script: ``examples/sft/run_vlm_sft.sh``
      --config-name <your_config_name> \
      runner.logger.log_path=<auto_generated_log_dir>
 
-Config Template: ``examples/sft/config/custom_sft_vlm.yaml``
+Config Template: ``examples/sft/config/qwen2_5_sft_vlm.yaml``
 
 The VLM config structure is similar to other RLinf training configs.  
 You mainly need to adapt ``data`` and ``actor.model`` for your VLM use case.
@@ -35,11 +35,11 @@ Preparation Before Running
    ``https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct``.
 3. Prepare Robo2VLM dataset:
    ``https://huggingface.co/datasets/keplerccc/Robo2VLM-1``.
-4. Edit ``examples/sft/config/custom_sft_vlm.yaml`` and run
+4. Edit ``examples/sft/config/qwen2_5_sft_vlm.yaml`` and run
    ``examples/sft/run_vlm_sft.sh``.
 
 Example of Qwen2_5_VL_4B SFT
-----------------------
+----------------------------
 
 Important note: after downloading Robo2VLM, train and eval parquet files are mixed in one directory
 (e.g., ``train-00000-of-00262.parquet`` and ``test-0000X-of-00003.parquet``).
@@ -153,7 +153,7 @@ Run from repository root:
 
 Notes:
 
-- If no argument is provided, the script uses ``custom_sft_vlm`` by default.
+- If no argument is provided, the script uses ``qwen2_5_sft_vlm`` by default.
 - If your config name is different (e.g., ``my_vlm_config.yaml``), pass it as an argument:
 
 .. code:: bash

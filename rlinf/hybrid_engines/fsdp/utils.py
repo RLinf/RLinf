@@ -28,7 +28,7 @@
 
 import functools
 from enum import Enum
-from typing import Iterable, Optional, Union
+from typing import ContextManager, Iterable, Optional, Union
 
 import torch
 from accelerate import init_empty_weights
@@ -42,9 +42,11 @@ from transformers.trainer_pt_utils import get_module_class_from_name
 
 from rlinf.config import SupportedModel
 from rlinf.hybrid_engines.fsdp import (
+    FSDP,
     BackwardPrefetch,
     CPUOffloadPolicy,
     DTensor,
+    FSDPModule,
     MixedPrecisionPolicy,
     ShardingStrategy,
     fully_shard,
@@ -827,3 +829,160 @@ def unpack_fsdp_logprobs(
         logprobs, idx_starts, idx_ends, max_seq_len_unpack, pad_val=0
     )
     return logprobs
+
+
+def generate_with_kv_cache(
+    model: Union[FSDP, FSDPModule],
+    eos_token_id: int,
+    pad_token_id: int,
+    amp_context: ContextManager,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    multi_modal_inputs: dict[str, torch.Tensor],
+    max_new_tokens: int = 128,
+) -> torch.Tensor:
+    """generate with use_cache/past_key_values, without calling model.generate()."""
+
+    batch_size = input_ids.size(0)
+    generated_ids = input_ids
+    generated_attention_mask = attention_mask.to(dtype=torch.long)
+    finished = torch.zeros(batch_size, dtype=torch.bool, device=input_ids.device)
+
+    past_key_values = None
+
+    for step in range(max_new_tokens):
+        if step == 0:
+            # prefill: full prompt + multimodal
+            cache_position = torch.arange(
+                0,
+                generated_ids.size(1),
+                device=generated_ids.device,
+                dtype=torch.long,
+            )
+            model_inputs = model.prepare_inputs_for_generation(
+                input_ids=generated_ids,
+                attention_mask=generated_attention_mask,
+                use_cache=True,
+                cache_position=cache_position,
+                past_key_values=past_key_values,
+                **multi_modal_inputs,
+            )
+        else:
+            # decode: only last token + cache
+            new_generated_ids = generated_ids[:, -1:].contiguous()
+            start_pos = generated_attention_mask.size(1) - new_generated_ids.size(1)
+            cache_position = torch.arange(
+                start_pos,
+                generated_attention_mask.size(1),
+                device=generated_ids.device,
+                dtype=torch.long,
+            )
+
+            model_inputs = model.prepare_inputs_for_generation(
+                input_ids=new_generated_ids,
+                attention_mask=generated_attention_mask,
+                use_cache=True,
+                cache_position=cache_position,
+                past_key_values=past_key_values,
+            )
+
+        with amp_context:
+            outputs = model(**model_inputs)
+
+        logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
+        past_key_values = (
+            outputs.past_key_values
+            if hasattr(outputs, "past_key_values")
+            else outputs[1]
+        )
+
+        next_token = torch.argmax(logits[:, -1, :], dim=-1)
+
+        # finished sample keeps appending PAD
+        next_token = torch.where(
+            finished,
+            torch.full_like(next_token, pad_token_id),
+            next_token,
+        )
+
+        generated_ids = torch.cat([generated_ids, next_token.unsqueeze(-1)], dim=-1)
+
+        # unfinished -> 1, finished -> 0
+        append_mask = (~finished).to(dtype=generated_attention_mask.dtype).unsqueeze(-1)
+        generated_attention_mask = torch.cat(
+            [generated_attention_mask, append_mask], dim=-1
+        )
+
+        if eos_token_id is not None:
+            finished = finished | (next_token == eos_token_id)
+            local_all_finished = torch.tensor(
+                [int(torch.all(finished))],
+                device=generated_ids.device,
+                dtype=torch.int32,
+            )
+            torch.distributed.all_reduce(
+                local_all_finished, op=torch.distributed.ReduceOp.MIN
+            )
+
+            if local_all_finished.item() == 1:
+                break
+
+    return generated_ids
+
+
+def generate(
+    model: Union[FSDP, FSDPModule],
+    eos_token_id: int,
+    pad_token_id: int,
+    amp_context: ContextManager,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    multi_modal_inputs: dict[str, torch.Tensor],
+    max_new_tokens: int = 128,
+) -> torch.Tensor:
+    """Greedy decode without calling HF generate(), compatible with FSDP full_shard."""
+
+    generated_ids = input_ids
+    generated_attention_mask = attention_mask.to(dtype=torch.long)
+    batch_size = generated_ids.size(0)
+    finished = torch.zeros(batch_size, dtype=torch.bool, device=generated_ids.device)
+
+    for _ in range(max_new_tokens):
+        with amp_context:
+            outputs = model(
+                input_ids=generated_ids,
+                attention_mask=generated_attention_mask,
+                **multi_modal_inputs,
+            )
+
+        next_token = torch.argmax(outputs.logits[:, -1, :], dim=-1)
+
+        # Keep finished samples stable.
+        if eos_token_id is not None:
+            next_token = torch.where(
+                finished,
+                torch.full_like(next_token, pad_token_id),
+                next_token,
+            )
+
+        generated_ids = torch.cat([generated_ids, next_token.unsqueeze(-1)], dim=-1)
+        append_mask = (~finished).to(dtype=generated_attention_mask.dtype).unsqueeze(-1)
+        generated_attention_mask = torch.cat(
+            [generated_attention_mask, append_mask], dim=-1
+        )
+
+        if eos_token_id is not None:
+            finished = finished | (next_token == eos_token_id)
+            local_all_finished = torch.tensor(
+                [int(torch.all(finished))],
+                device=generated_ids.device,
+                dtype=torch.int32,
+            )
+            torch.distributed.all_reduce(
+                local_all_finished, op=torch.distributed.ReduceOp.MIN
+            )
+
+            if local_all_finished.item() == 1:
+                break
+
+    return generated_ids
