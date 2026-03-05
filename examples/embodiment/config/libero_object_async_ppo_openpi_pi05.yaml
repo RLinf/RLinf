@@ -15,14 +15,14 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: all
+    actor,env,rollout: 0-3
 
 runner:
   task_type: embodied
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "libero_object_ppo_openpi_pi05"
+    experiment_name: "libero_object_async_ppo_openpi_pi05"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
@@ -145,7 +145,7 @@ actor:
     adam_eps: 1.0e-08
     weight_decay: 0.01
     clip_grad: 1.0
-    critic_warmup_steps: 20
+    critic_warmup_steps: 30
 
   # Override the default values in training_backend/fsdp  
   fsdp_config:

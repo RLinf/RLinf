@@ -107,13 +107,16 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         return {**env_metrics, **time_metrics}
 
     def update_rollout_weights(self) -> None:
-        self.rollout.sync_model_from_actor(self.global_step)
-        self.actor.sync_model_to_rollout(self.global_step).wait()
+        rollout_handle = self.rollout.sync_model_from_actor()
+        self.actor.sync_model_to_rollout().wait()
+        rollout_handle.wait()
 
     def run(self) -> None:
         start_step = self.global_step
         start_time = time.time()
 
+        self.actor.set_global_step(self.global_step).wait()
+        self.rollout.set_global_step(self.global_step).wait()
         self.update_rollout_weights()
 
         env_handle: Handle = self.env.interact(
@@ -129,8 +132,6 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         )
 
         while self.global_step < self.max_steps:
-            self.actor.set_global_step(self.global_step)
-            self.rollout.set_global_step(self.global_step)
             with self.timer("step"):
                 with self.timer("recv_rollout_trajectories"):
                     self.actor.recv_rollout_trajectories(
@@ -148,6 +149,8 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
                     training_metrics = self.actor.run_training().wait()
 
                 self.global_step += 1
+                self.actor.set_global_step(self.global_step).wait()
+                self.rollout.set_global_step(self.global_step).wait()
                 with self.timer("update_rollout_weights"):
                     self.update_rollout_weights()
 
