@@ -37,7 +37,7 @@ from typing import Any, Optional, Sequence
 import numpy as np
 import torch
 import torch.nn.functional as F
-from vla_lib.datasets.vla_datasets.lerobot_datasets.transforms import (
+from rlinf.datasets.vla_lib.lerobot_datasets.transforms import (
     DataTransformFn,
     compose,
 )

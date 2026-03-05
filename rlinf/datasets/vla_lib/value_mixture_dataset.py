@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -35,10 +35,14 @@ from typing import (
 
 import numpy as np
 import yaml
-from vla_lib import get_dataset_config_dir
-from vla_lib.datasets.base_interface import UnifiedDatasetInterface
-from vla_lib.datasets.factory import register_dataset
-from vla_lib.utils.dist_utils import get_logger
+from rlinf.datasets.base_interface import UnifiedDatasetInterface
+from rlinf.datasets.factory import register_dataset
+from rlinf.utils.dist_utils import get_logger
+
+
+def get_dataset_config_dir() -> pathlib.Path:
+    """Get directory containing dataset configuration YAML files."""
+    return pathlib.Path(__file__).parent / "configs" / "dataset"
 
 from .config import load_return_range_from_norm_stats
 from .value_dataset import ValueDataset, create_value_dataset

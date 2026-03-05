@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -31,12 +31,18 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 from transformers.modeling_outputs import ModelOutput
 
-# Import base classes from vla_lib
-from vla_lib.models.vlas.openpi.configs import get_config
-from vla_lib.models.vlas.openpi.modeling_pi0 import make_att_2d_masks
-from vla_lib.models.vlas.openpi05.configuration_pi05 import PI05Config
-from vla_lib.models.vlas.openpi05.modeling_pi05 import PI05FlowMatching
-from vla_lib.models.vlas.openpi05.paligemma_with_multi_expert import (
+# Import base classes from internalized openpi/openpi05 modules
+from rlinf.models.embodiment.vla_lib_value_model.openpi.configs import get_config
+from rlinf.models.embodiment.vla_lib_value_model.openpi.modeling_pi0 import (
+    make_att_2d_masks,
+)
+from rlinf.models.embodiment.vla_lib_value_model.openpi05.configuration_pi05 import (
+    PI05Config,
+)
+from rlinf.models.embodiment.vla_lib_value_model.openpi05.modeling_pi05 import (
+    PI05FlowMatching,
+)
+from rlinf.models.embodiment.vla_lib_value_model.openpi05.paligemma_with_multi_expert import (
     PaliGemmaWithMultiExpertModel,
 )
 

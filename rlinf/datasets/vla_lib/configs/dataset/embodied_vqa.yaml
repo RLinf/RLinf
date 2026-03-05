@@ -1,0 +1,20 @@
+# Embodied VQA dataset configuration
+# @package dataset
+
+dataset_name: data/embodied_vqa_2.0/data
+dataset_type: embodied_vqa  # explicit type: robo2vlm, robo2vlm_reasoning, embodied_vqa
+dataset_split: train
+validation_split: 0.1
+max_samples: null
+streaming: false
+lazy_loading: true
+
+# VQA settings
+question_type_filter: vqa  # vqa, filling_blank, mixed
+system_prompt: null
+
+# Multi-dataset mixing
+dataset_ratios: null
+
+# Processing
+num_workers: 4

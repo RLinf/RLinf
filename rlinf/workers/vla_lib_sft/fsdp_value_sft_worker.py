@@ -128,8 +128,8 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         except (ImportError, AttributeError):
             pass
 
-        from vla_lib.models.vlas.openpi05.data_collator_pi05 import PI05DataCollator
-        from vla_lib.models.vlas.openpi05.processing_pi05 import PI05Processor
+        from rlinf.models.embodiment.vla_lib_value_model.openpi05.data_collator_pi05 import PI05DataCollator
+        from rlinf.models.embodiment.vla_lib_value_model.openpi05.processing_pi05 import PI05Processor
 
         from rlinf.datasets.vla_lib import ValueDataset
 

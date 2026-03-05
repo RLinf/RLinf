@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,14 +20,14 @@ Extends the VLA io_processing with RL-specific output handling.
 """
 
 # Re-export VLA transforms for convenience
-from vla_lib.datasets.vla_datasets.lerobot_datasets.io_processing.franka import (
+from rlinf.datasets.vla_lib.lerobot_datasets.io_processing.franka import (
     FrankaInputs,
     FrankaOutputs,
     convert_action_from_rot6d,
     convert_action_to_rot6d,
     convert_state_to_rot6d,
 )
-from vla_lib.datasets.vla_datasets.lerobot_datasets.io_processing.libero import (
+from rlinf.datasets.vla_lib.lerobot_datasets.io_processing.libero import (
     LiberoInputs,
     LiberoOutputs,
 )

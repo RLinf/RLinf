@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -36,20 +36,24 @@ import safetensors.torch
 import torch
 from safetensors import safe_open
 from transformers import AutoTokenizer
-from vla_lib.datasets.vla_datasets.lerobot_datasets.normalize import NormStats
-from vla_lib.datasets.vla_datasets.lerobot_datasets.transforms import (
+from rlinf.datasets.vla_lib.lerobot_datasets.normalize import NormStats
+from rlinf.datasets.vla_lib.lerobot_datasets.transforms import (
     DataTransformFn,
     InjectDefaultPrompt,
     Normalize,
     PadStatesAndActions,
     ResizeImages,
 )
-from vla_lib.models.vlas.openpi05.modeling_critic import (
+from rlinf.models.embodiment.vla_lib_value_model.openpi05.modeling_critic import (
     PI05CriticConfig,
     PI05ValueCritic,
 )
-from vla_lib.models.vlas.openpi05.modeling_pi05 import PI05ForConditionalGeneration
-from vla_lib.models.vlas.openpi05.processing_pi05 import PI05Processor
+from rlinf.models.embodiment.vla_lib_value_model.openpi05.modeling_pi05 import (
+    PI05ForConditionalGeneration,
+)
+from rlinf.models.embodiment.vla_lib_value_model.openpi05.processing_pi05 import (
+    PI05Processor,
+)
 
 from .value_policy import ValuePolicy
 
@@ -283,7 +287,7 @@ def create_trained_value_policy(
                 ignore_mismatched_sizes=True,
             )
             logger.info("  Loaded model using from_pretrained")
-        except (OSError, ValueError, AttributeError, RuntimeError) as e:
+        except (OSError, ValueError) as e:
             # Fallback: create model from config and load state dict
             logger.info(
                 f"  from_pretrained failed ({type(e).__name__}: {e}), loading state dict directly"
@@ -469,7 +473,7 @@ def _build_input_transforms(
     input_transforms = []
 
     if env_type == "libero":
-        from vla_lib.datasets.vla_datasets.lerobot_datasets.io_processing.libero import (
+        from rlinf.datasets.vla_lib.lerobot_datasets.io_processing.libero import (
             LiberoInputs,
         )
 
@@ -493,7 +497,7 @@ def _build_input_transforms(
         )
 
     elif env_type == "droid":
-        from vla_lib.datasets.vla_datasets.lerobot_datasets.io_processing.droid import (
+        from rlinf.datasets.vla_lib.lerobot_datasets.io_processing.droid import (
             DroidInputs,
         )
 
@@ -517,7 +521,7 @@ def _build_input_transforms(
         )
 
     elif env_type == "aloha":
-        from vla_lib.datasets.vla_datasets.lerobot_datasets.io_processing.aloha import (
+        from rlinf.datasets.vla_lib.lerobot_datasets.io_processing.aloha import (
             AlohaInputs,
         )
 
@@ -541,7 +545,7 @@ def _build_input_transforms(
         )
 
     elif env_type in ["franka", "franka_demo"]:
-        from vla_lib.datasets.vla_datasets.lerobot_datasets.io_processing.franka import (
+        from rlinf.datasets.vla_lib.lerobot_datasets.io_processing.franka import (
             FrankaInputs,
         )
 
@@ -565,7 +569,7 @@ def _build_input_transforms(
         )
 
     elif env_type == "franka_3cam":
-        from vla_lib.datasets.vla_datasets.lerobot_datasets.io_processing.franka_3cam import (
+        from rlinf.datasets.vla_lib.lerobot_datasets.io_processing.franka_3cam import (
             FrankaInputs as Franka3CamInputs,
         )
 

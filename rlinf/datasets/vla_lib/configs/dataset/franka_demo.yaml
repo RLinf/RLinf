@@ -1,0 +1,28 @@
+# Franka demo dataset configuration
+# @package dataset
+#
+# For Franka robot data collected with realRL and converted to LeRobot format.
+# Uses 6D rotation representation for state and action to avoid singularities.
+
+dataset_name: franka_demo
+
+# Robot type for auto-config factory creation
+robot_type: franka
+
+default_prompt: null
+
+# Transform settings
+# Franka data already has delta actions, no extra transform needed
+extra_delta_transform: false
+
+# Model type determines normalization:
+# - "pi05": quantile normalization
+# - "pi0": z-score normalization
+model_type: null
+
+# Subtask reasoning (CoT training with subtask annotations)
+subtask_reasoning: false
+subtask_prefix: "Subtask:"
+
+# FAST tokenization (discrete action tokens for dual-objective training)
+fast_tokenize: false

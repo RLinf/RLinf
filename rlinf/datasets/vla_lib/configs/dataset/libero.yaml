@@ -1,0 +1,28 @@
+# Libero dataset configuration
+# @package dataset
+
+dataset_type: lerobot
+dataset_name: openpi-libero
+
+# Robot type for auto-config factory creation
+robot_type: libero
+
+default_prompt: null
+
+# Transform settings - experiments may override
+# LIBERO actions are already delta in the dataset
+# extra_delta_transform: set True only for old pi0 checkpoints
+extra_delta_transform: false
+
+# Subtask reasoning (CoT training with subtask annotations)
+subtask_reasoning: false
+subtask_prefix: ""
+
+# FAST tokenization (discrete action tokens for dual-objective training)
+fast_tokenize: false
+
+# Model type determines normalization:
+# - "pi05": quantile normalization (use_quantile_norm=True)
+# - "pi0": z-score normalization (use_quantile_norm=False)
+# This is set by experiment config based on which model is used
+model_type: null

@@ -18,7 +18,7 @@ export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}"
 export AV_LOG_FORCE_NOCOLOR=1
 export LIBAV_LOG_LEVEL=quiet
 
-export PYTHONPATH=${REPO_PATH}:${VLA_LIB_PATH:+${VLA_LIB_PATH}:}${LIBERO_REPO_PATH}:$PYTHONPATH
+export PYTHONPATH=${REPO_PATH}:${LIBERO_REPO_PATH}:$PYTHONPATH
 
 # Activate the openpi environment
 source switch_env openpi 2>/dev/null || true

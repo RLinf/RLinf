@@ -1,0 +1,25 @@
+# Original subtask dataset configuration
+# @package dataset
+#
+# This dataset shares the same schema as Embodied VQA filling_blank samples:
+#   - question: description of the overall task the robot is performing
+#   - answer: current subtask being executed in the given frame
+
+dataset_name: data/libero_subtasks_1.0
+dataset_type: original_subtask  # explicit type: original_subtask
+dataset_split: train
+validation_split: 0.1
+max_samples: null
+streaming: false
+lazy_loading: true
+
+# Prompt / system message
+# If left as null, the dataset default system_prompt is used.
+system_prompt: null
+
+# Multi-dataset mixing
+dataset_ratios: null
+
+# Processing
+num_workers: 4
+

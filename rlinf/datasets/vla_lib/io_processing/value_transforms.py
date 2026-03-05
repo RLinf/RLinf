@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,12 +24,12 @@ from typing import Any, Optional
 
 import numpy as np
 import torch
-from vla_lib.datasets.vla_datasets.lerobot_datasets.normalize import (
+from rlinf.datasets.vla_lib.lerobot_datasets.normalize import (
     NormStats,
     load_stats,
 )
-from vla_lib.datasets.vla_datasets.lerobot_datasets.transforms import DataTransformFn
-from vla_lib.utils.dist_utils import get_logger
+from rlinf.datasets.vla_lib.lerobot_datasets.transforms import DataTransformFn
+from rlinf.utils.dist_utils import get_logger
 
 from .value_tokens import get_value_token
 

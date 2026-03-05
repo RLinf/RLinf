@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,8 +29,8 @@ import hashlib
 from typing import Any, Optional, Protocol, Sequence, runtime_checkable
 
 import numpy as np
-from vla_lib.datasets.base_interface import UnifiedDatasetInterface
-from vla_lib.utils.dist_utils import get_logger
+from rlinf.datasets.base_interface import UnifiedDatasetInterface
+from rlinf.utils.dist_utils import get_logger
 
 logger = get_logger(__name__)
 
