@@ -280,7 +280,9 @@ class Turtle2Env(gym.Env):
             )
             reach = left_reach and right_reach
             if time.time() - start_time > 10.0:
-                left_err = np.linalg.norm(left_pos[:6] - np.array(left_arm_reset_pose)[:6])
+                left_err = np.linalg.norm(
+                    left_pos[:6] - np.array(left_arm_reset_pose)[:6]
+                )
                 right_err = np.linalg.norm(
                     right_pos[:6] - np.array(right_arm_reset_pose)[:6]
                 )

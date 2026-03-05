@@ -95,15 +95,9 @@ XSquare Turtle2 真机强化学习
 机器人控制节点
 ~~~~~~~~~~~~~~
 
-XSquare Turtle2 平台配套有自身的 SDK 和基于 ROS 的控制栈。
-对于控制节点的依赖安装，**请使用 XSquare 官方提供的 Docker 镜像**，具体的镜像和启动说明请联系
-`Xsquare <https://x2robot.com>`_
+XSquare Turtle2平台自带SDK和基于ROS的控制器。**请在开始下安装之以前，确保您已进入Xsquare的官方Docker容器**。请联系`XSquare <https://x2robot.com>`_获取准确的Docker镜像和启动说明。
 
-.. note::
-
-  XSquare 官方 Docker 镜像已内置机器人 SDK、ROS 依赖及所有控制相关包，在控制节点上使用该镜像是推荐且受支持的安装方式。
-
-启动 XSquare Docker 容器后，在其中克隆 RLinf 仓库：
+进入 XSquare Docker 容器后，在其中克隆 RLinf 仓库：
 
 .. code:: bash
 
@@ -140,12 +134,13 @@ b. 安装依赖
 
 .. code:: bash
 
+   # 训练 / rollout 节点使用 maniskill_libero 镜像
    docker run -it --rm --gpus all \
       --shm-size 20g \
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.1-xsquare_turtle2
+      rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
       # 为了提高国内下载速度，也可以使用：
       # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-xsquare_turtle2
 
@@ -153,8 +148,9 @@ b. 安装依赖
 
 .. code:: bash
 
+   # 在训练 / rollout 节点上安装 openvla + maniskill_libero 环境
    # 为提高国内依赖安装速度，可以添加 `--use-mirror` 标志
-   bash requirements/install.sh embodied --env xsquare_turtle2
+   bash requirements/install.sh embodied --model openvla --env maniskill_libero
    source .venv/bin/activate
 
 

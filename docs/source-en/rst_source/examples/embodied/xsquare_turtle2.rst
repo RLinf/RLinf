@@ -98,18 +98,10 @@ The controller node and the training/rollout node(s) require different software 
 Robot Controller Node
 ~~~~~~~~~~~~~~~~~~~~~
 
-The XSquare Turtle2 platform ships with its own SDK and ROS-based controller stack.
-For dependency installation on the controller node, **please use the official Docker
-image provided by XSquare**. Contact `XSquare <https://x2robot.com>`_
+The XSquare Turtle2 platform ships with its own SDK and ROS-based controller stack. **Please ensure that you have entered the official Docker container of Xsquare before starting the following installation.**. Contact `XSquare <https://x2robot.com>`_
 for the exact Docker image and startup instructions.
 
-.. note::
-
-  The XSquare Docker image bundles the robot SDK, ROS dependencies, and all required
-  controller packages. Running inside this container on the controller node is the
-  recommended and supported setup.
-
-After starting the XSquare Docker container, clone the RLinf repository inside it:
+After entering the XSquare Docker container, clone the RLinf repository inside it:
 
 .. code:: bash
 
@@ -146,12 +138,13 @@ b. Install Dependencies
 
 .. code:: bash
 
+   # use maniskill_libero image for training / rollout nodes
    docker run -it --rm --gpus all \
       --shm-size 20g \
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.1-xsquare_turtle2
+      rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
       # For mainland China users, you can use the following for better download speed:
       # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-xsquare_turtle2
 
@@ -159,8 +152,9 @@ b. Install Dependencies
 
 .. code:: bash
 
+   # install openvla + maniskill_libero environment on training / rollout nodes
    # For mainland China users, you can add the `--use-mirror` flag for better speed.
-   bash requirements/install.sh embodied --env xsquare_turtle2
+   bash requirements/install.sh embodied --model openvla --env maniskill_libero
    source .venv/bin/activate
 
 
