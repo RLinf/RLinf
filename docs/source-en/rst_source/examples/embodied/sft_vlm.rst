@@ -38,8 +38,8 @@ Preparation Before Running
 4. Edit ``examples/sft/config/custom_sft_vlm.yaml`` and run
    ``examples/sft/run_vlm_sft.sh``.
 
-Example YAML
-------------
+Example of Qwen2_5_VL_4B SFT
+----------------------
 
 Important note: after downloading Robo2VLM, train and eval parquet files are mixed in one directory
 (e.g., ``train-00000-of-00262.parquet`` and ``test-0000X-of-00003.parquet``).
@@ -230,7 +230,7 @@ Update these fields first:
 - ``convertor.ckpt_path``: path to ``full_weights.pt``
 - ``convertor.save_path``: output HF model directory
 - ``model.model_path``: base model path
-- ``model.model_type``: model type (e.g., ``qwen2.5_vl``)
+- ``model.model_type``: model type (e.g., ``qwen2.5_vl`` , ``qwen3_vl`` or ``qwen3_vl_moe``)
 
 Run:
 

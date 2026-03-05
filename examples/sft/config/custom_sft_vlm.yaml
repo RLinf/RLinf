@@ -20,14 +20,14 @@ runner:
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   # sft runner use the len(dataset) as one epoch
-  max_epochs: 1
+  max_epochs: 6000
   max_steps: -1
   # eval the model intenval
-  val_check_interval: -1
+  val_check_interval: 1000
   # save the model interval
-  save_interval: -1
-  experiment_name: qwen3_vl_sft_train
-  output_dir: /workspace/results
+  save_interval: 1000
+  experiment_name: custom_sft_vlm
+  output_dir: ../results
   resume_dir: null
 
 data:
@@ -36,8 +36,8 @@ data:
   apply_chat_template: True
   use_chat_template: True
   # if train_data_paths is not None, the sft code will just eval the model
-  train_data_paths: "/workspace/dataset/Robo2vlm/data"
-  eval_data_paths: "/workspace/dataset/Robo2vlm/data"
+  train_data_paths: "/path/to/Robo2VLM-1"
+  eval_data_paths: "/path/to/Robo2VLM-1"
   prompt_key: "question"
   choice_key: "choices"
   answer_key: "correct_answer"
@@ -54,13 +54,16 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 4
+  eval_batch_size: 4
   global_batch_size: 256
   seed: 42
 
   model:
-    model_type: "qwen2.5_vl"
+    # model_type: the model type of the model you want to train
+    # now model_type supported: "qwen2.5_vl" , "qwen3_vl" , "qwen3_vl_moe"
+    model_type: "model_type"
     precision: fp32
-    model_path: "/workspace/dataset/Qwen3-VL-4B-Instruct-Robo2vlm-sft/"
+    model_path: "/path/to/model_path"
     is_lora: False
 
   optim:
@@ -74,7 +77,6 @@ actor:
     total_training_steps: ${runner.max_epochs}
     lr_warmup_steps: 200 
 
-  # Override the default values in training_backend/fsdp
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "full_shard"

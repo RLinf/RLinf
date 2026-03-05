@@ -35,7 +35,8 @@ VLM模型监督微调训练
 3. 准备好 Robo2VLM 数据集目录 ``https://huggingface.co/datasets/keplerccc/Robo2VLM-1``
 4. 修改 ``examples/sft/config/custom_sft_vlm.yaml`` 文件，运行脚本 ``examples/sft/run_vlm_sft.sh``
 
-下面是实例 yaml 文件
+下面是 Qwen2.5-Vl-4B sft 的例子
+--------------------------
 
 请注意，Robo2VLM数据集下载后由于它将 train 数据和 evaluate 数据放在一起，命名方式为 ``train-00000-of-00262.parquet`` 和 ``test-0000X-of-00003.parquet``，所以需要将它们分开，并分别放在不同的文件夹下，否则 RLinf 会直接读取整个数据集。
 
@@ -228,7 +229,7 @@ loss 曲线：
 - ``convertor.ckpt_path``：指向 ``full_weights.pt``
 - ``convertor.save_path``：输出 HF 权重目录
 - ``model.model_path``：原始基座模型路径
-- ``model.model_type``：对应模型类型（如 qwen2.5_vl）
+- ``model.model_type``：对应模型类型（如 ``qwen2.5_vl`` , ``qwen3_vl`` 或 ``qwen3_vl_moe`` ）
 
 运行命令：
 
