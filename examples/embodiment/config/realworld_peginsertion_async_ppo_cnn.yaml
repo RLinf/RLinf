@@ -62,7 +62,7 @@ algorithm:
   staleness_threshold: 2
   behave_weight_threshold: 5
 
-  rollout_epoch: 1
+  rollout_epoch: 10
   eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
   reward_type: chunk_level
   logprob_type: chunk_level
@@ -102,10 +102,6 @@ algorithm:
     max_new_token: null
     max_length: 1024
     min_length: 1
-  
-  # For async control
-  enable_accumulate_batch: True
-  accumulated_threshold: 500
 
 # env and rollout may not need to change
 env:
