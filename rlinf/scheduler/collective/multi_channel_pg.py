@@ -170,17 +170,6 @@ class MultiChannelProcessGroup:
                     if i > 0
                     else base_group
                 )
-                print(base_group,self._accel_ccl_backend,group_name + f"{self._accel_ccl_backend}_recv_{i}",pg_options)
-                self._recv_accel_ccl_process_groups[i] = (
-                    MultiChannelProcessGroup._split_process_group(
-                        base_group=base_group,
-                        backend=self._accel_ccl_backend,
-                        group_name=group_name + f"{self._accel_ccl_backend}_recv_{i}",
-                        timeout=timeout,
-                        pg_options=pg_options,
-                    )
-                )
-
                 self._send_gloo_process_groups[i] = (
                     MultiChannelProcessGroup._split_process_group(
                         base_group=base_group,
