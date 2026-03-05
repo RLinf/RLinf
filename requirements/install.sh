@@ -683,7 +683,7 @@ install_franka_env() {
 }
 
 install_xsquare_turtle2_env() {
-    uv pip install git+https://github.com/RLinf/xsquare_turtle_basics.git
+    uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/xsquare_turtle_basics.git
 }
 
 install_robotwin_env() {

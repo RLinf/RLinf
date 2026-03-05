@@ -254,9 +254,9 @@ class Turtle2Env(gym.Env):
             right_arm_reset_pose = [0, 0, 0, 0, 0, 0, 0]
 
         self._logger.info(
-            "going to reset: left=%s right=%s",
-            left_arm_reset_pose,
-            right_arm_reset_pose,
+            "Going to reset: left=%s, right=%s",
+            repr(left_arm_reset_pose),
+            repr(right_arm_reset_pose),
         )
 
         self._controller.move_arm(left_arm_reset_pose, right_arm_reset_pose).wait()
