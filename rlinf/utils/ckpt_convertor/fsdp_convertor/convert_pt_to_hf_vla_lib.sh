@@ -11,7 +11,7 @@
 set -e
 
 export FSDP_CONVERTOR_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
-export REPO_PATH=$(dirname $(dirname $(dirname "$FSDP_CONVERTOR_PATH")))
+export REPO_PATH=$(dirname $(dirname $(dirname $(dirname "$FSDP_CONVERTOR_PATH"))))
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 
 # Activate the openpi environment

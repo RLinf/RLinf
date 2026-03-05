@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -141,8 +141,13 @@ def discover_datasets_and_return_range(
             global_return_max = (
                 max(all_maxs) if global_return_max is None else global_return_max
             )
-    global_return_min = global_return_min if global_return_min is not None else -700.0
-    global_return_max = global_return_max if global_return_max is not None else 0.0
+    if global_return_min is None or global_return_max is None:
+        raise ValueError(
+            "Cannot determine global return range. "
+            "Either set global_return_min/global_return_max in mixture_config.yaml "
+            "or ensure all datasets have meta/stats.json with return min/max. "
+            f"Got global_return_min={global_return_min}, global_return_max={global_return_max}"
+        )
 
     return dataset_paths, float(global_return_min), float(global_return_max)
 
@@ -243,7 +248,11 @@ def compute_advantages_for_dataset(
 
         # Normalize reward sums
         if ret_range <= 0:
-            reward_sums = np.full(ep_len, -0.5)
+            raise ValueError(
+                f"Invalid return range: global_return_max ({global_return_max}) - "
+                f"global_return_min ({global_return_min}) = {ret_range} <= 0. "
+                f"Ensure global_return_max > global_return_min."
+            )
         else:
             reward_sums = (reward_sums_raw - global_return_min) / ret_range - 1.0
 

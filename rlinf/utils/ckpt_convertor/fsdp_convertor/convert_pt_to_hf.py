@@ -27,7 +27,7 @@ import torch
 
 from rlinf.models import get_model
 
-from .utils import (
+from rlinf.utils.ckpt_convertor.fsdp_convertor.utils import (
     copy_model_config_and_code,
     get_model_save_helper,
     save_state_dict_sharded_safetensors,

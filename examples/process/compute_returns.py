@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -74,7 +74,7 @@ def compute_returns_for_episode(
         episode_length: Total length of episode
         is_success: Whether episode was successful
         gamma: Discount factor (default 1.0 for undiscounted)
-        failure_reward: Penalty for failure (default -300.0)
+        failure_reward: Penalty for failure (must be specified in config)
 
     Returns:
         Tuple of (returns array, rewards array) for all steps
@@ -375,7 +375,13 @@ def main(cfg: DictConfig) -> None:
     data_root = cfg.data.get("data_root", None)
     default_type = cfg.data.get("dataset_type", "sft")
     default_gamma = cfg.data.get("gamma", 1.0)
-    default_failure_reward = cfg.data.get("failure_reward", -300.0)
+    default_failure_reward = cfg.data.get("failure_reward", None)
+    if default_failure_reward is None:
+        raise ValueError(
+            "data.failure_reward must be specified. "
+            "This is the reward assigned to the last step of failed episodes "
+            "(e.g., failure_reward=-300.0)."
+        )
     num_workers = cfg.data.get("num_workers", 8)
 
     # Get datasets list

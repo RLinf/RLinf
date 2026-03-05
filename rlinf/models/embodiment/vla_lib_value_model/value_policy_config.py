@@ -287,7 +287,7 @@ def create_trained_value_policy(
                 ignore_mismatched_sizes=True,
             )
             logger.info("  Loaded model using from_pretrained")
-        except (OSError, ValueError) as e:
+        except (OSError, ValueError, AttributeError) as e:
             # Fallback: create model from config and load state dict
             logger.info(
                 f"  from_pretrained failed ({type(e).__name__}: {e}), loading state dict directly"

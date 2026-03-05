@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,12 +19,15 @@ adapted from OpenPI but compatible with our PyTorch-based data pipeline.
 """
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
 import torch
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -195,7 +198,7 @@ def save_stats(norm_stats: dict[str, NormStats], directory: Path) -> None:
     with open(norm_stats_path, "w") as f:
         json.dump(serializable_stats, f, indent=2)
 
-    print(f"Saved norm stats to {norm_stats_path}")
+    logger.info(f"Saved norm stats to {norm_stats_path}")
 
 
 def load_stats(norm_stats_path: Path) -> dict[str, NormStats]:

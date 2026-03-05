@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -101,6 +101,9 @@ class Observation(Obs[ArrayT]):
         )
 
 
+_VALID_GUIDANCE_TYPES = ("positive", "negative", "no_guide")
+
+
 @dataclass(frozen=True)
 class OpenPi0Config(Pi0Config):
     # config for rl
@@ -118,6 +121,21 @@ class OpenPi0Config(Pi0Config):
     cfgrl_guidance_scale: float = 1.0
     unconditional_prob: float = 0.3
     guidance_type: str = "positive"  # "positive", "negative", "no_guide"
+
+    def __post_init__(self):
+        if self.guidance_type not in _VALID_GUIDANCE_TYPES:
+            raise ValueError(
+                f"guidance_type must be one of {_VALID_GUIDANCE_TYPES}, "
+                f"got '{self.guidance_type}'"
+            )
+        if not 0.0 <= self.unconditional_prob <= 1.0:
+            raise ValueError(
+                f"unconditional_prob must be in [0, 1], got {self.unconditional_prob}"
+            )
+        if not isinstance(self.num_steps, int) or self.num_steps <= 0:
+            raise ValueError(
+                f"num_steps must be a positive integer, got {self.num_steps}"
+            )
 
 
 class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
@@ -187,6 +205,19 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
         self._input_transform = _transforms.compose(transforms)
         self._output_transform = _transforms.compose(output_transforms)
 
+        # Store reference to tokenizer transform for guidance prompt processing
+        # instead of relying on a brittle hardcoded index
+        self._tokenize_transform = None
+        for t in self._input_transform.transforms:
+            if type(t).__name__ in ("TokenizePrompt", "TokenizePromptWithGuidance"):
+                self._tokenize_transform = t
+                break
+        if self._tokenize_transform is None:
+            raise ValueError(
+                "Cannot find TokenizePrompt or TokenizePromptWithGuidance "
+                "in input transforms"
+            )
+
     def input_transform(self, obs: dict, transpose=True):
         inputs = jax.tree.map(lambda x: x, obs)
         # process input
@@ -219,12 +250,11 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
             if first_process:
                 sample["prompt"] = obs["prompt"][i]
                 positive_guidance_prompt = obs["positive_guidance_prompt"][i]
-                # Apply guidance tokenization via hardcoded transform index
-                positive_guidance_dict = self._input_transform.transforms[5](
+                positive_guidance_dict = self._tokenize_transform(
                     {"prompt": positive_guidance_prompt}
                 )
                 negative_guidance_prompt = obs["negative_guidance_prompt"][i]
-                negative_guidance_dict = self._input_transform.transforms[5](
+                negative_guidance_dict = self._tokenize_transform(
                     {"prompt": negative_guidance_prompt}
                 )
             else:
@@ -286,6 +316,10 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
         )
         outputs["actions"] = outputs["actions"][:, : self.config.action_chunk]
         return outputs
+
+    def default_forward(self, **kwargs):
+        """Default forward — delegates to forward()."""
+        return self.forward(**kwargs)
 
     def forward(
         self,

@@ -67,9 +67,15 @@ class PI05Processor(ProcessorMixin):
 
     @staticmethod
     def _default_tokenizer_path() -> Optional[str]:
-        project_root = Path(__file__).resolve().parents[4]
-        candidate = project_root / "pretrained_models" / "paligemma-3b-mix-224"
-        return str(candidate) if candidate.exists() else None
+        # Walk up to find the project root (where pyproject.toml lives)
+        current = Path(__file__).resolve()
+        for parent in current.parents:
+            if (parent / "pyproject.toml").exists():
+                candidate = parent / "pretrained_models" / "paligemma-3b-mix-224"
+                if candidate.exists():
+                    return str(candidate)
+                break
+        return None
 
     def __init__(
         self,

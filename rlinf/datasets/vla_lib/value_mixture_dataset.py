@@ -40,9 +40,9 @@ from rlinf.datasets.factory import register_dataset
 from rlinf.utils.dist_utils import get_logger
 
 
-def get_dataset_config_dir() -> pathlib.Path:
+def get_dataset_config_dir() -> Path:
     """Get directory containing dataset configuration YAML files."""
-    return pathlib.Path(__file__).parent / "configs" / "dataset"
+    return Path(__file__).parent / "configs" / "dataset"
 
 from .config import load_return_range_from_norm_stats
 from .value_dataset import ValueDataset, create_value_dataset

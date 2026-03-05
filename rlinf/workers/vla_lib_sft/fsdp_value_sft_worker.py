@@ -155,6 +155,8 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         # ---- processor & collator ----
         processor = PI05Processor(
             max_token_len=getattr(model_cfg, "max_token_len", 200),
+            tokenizer_name_or_path=getattr(model_cfg, "tokenizer_path", None)
+            or model_cfg.model_path,
             discrete_state_input=getattr(model_cfg, "discrete_state_input", False),
             exclude_cot_from_kv_cache=getattr(
                 model_cfg, "exclude_cot_from_kv_cache", False
