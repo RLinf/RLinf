@@ -146,9 +146,9 @@ class FSDPActor(FSDPModelManager, Worker):
 
         self.cfg = cfg
 
-        self.response_len = (
-            self.cfg.actor.model.encoder_seq_length - self.cfg.data.max_prompt_length
-        )
+        self.sequence_length: int = self.cfg.actor.model.encoder_seq_length
+        self.prompt_length: int = self.cfg.data.max_prompt_length
+        self.response_len = self.sequence_length - self.prompt_length
         self.calculate_entropy = self.cfg.algorithm.calculate_entropy
         self.calculate_entropy_loss = (
             self.cfg.algorithm.entropy_bonus > 0 and self.calculate_entropy
@@ -178,23 +178,42 @@ class FSDPActor(FSDPModelManager, Worker):
             self._inference_group_name = None
             self._inference_world_size = 0
             self._inference_dst_map = None
-        self.loss_agg_func = get_loss_agg_func(self.cfg.algorithm.loss_agg_func)
+        self.loss_agg_func = get_loss_agg_func(cfg.algorithm.loss_agg_func)
         self.enable_offload = (
-            self.cfg.actor.get("enable_offload", False) and not self.is_pipeline
+            cfg.actor.get("enable_offload", False) and not self.is_pipeline
         )
-        self.micro_batch_size = self.cfg.actor.micro_batch_size
-        self.n_mini_batches = self.cfg.algorithm.n_minibatches
-        self.task_type = self.cfg.runner.task_type
-        self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "flash_attn")
-        self.enable_dp_load_balance = self.cfg.actor.get(
-            "enable_dp_load_balance", False
-        )
-        self.lr_sched_sync_with_optim = self.cfg.actor.get(
-            "lr_sched_sync_with_optim", True
-        )
+        self.micro_batch_size = cfg.actor.micro_batch_size
+        self.n_mini_batches = cfg.algorithm.n_minibatches
+        self.task_type = cfg.runner.task_type
+        self.entropy_op_type = cfg.algorithm.get("entropy_op_type", "flash_attn")
+        self.enable_dp_load_balance = cfg.actor.get("enable_dp_load_balance", False)
+        self.lr_sched_sync_with_optim = cfg.actor.get("lr_sched_sync_with_optim", True)
         self.enable_dynamic_batch_size = cfg.runner.get(
             "enable_dynamic_batch_size", False
         )
+        if self.cfg.algorithm.recompute_logprobs:
+            # validate inference mbs
+            inference_split = self.cfg.actor.get("inference_split", None)
+            if inference_split is None:
+                if not self.is_pipeline:
+                    inference_split = 1
+                else:
+                    inference_split = self.cfg.algorithm.n_minibatches
+            assert self.total_batch_size_per_dp % inference_split == 0, (
+                f"FSDPActor: total_batch_size_per_dp[{self.total_batch_size_per_dp}] should be divisible by inference_split[{inference_split}]"
+            )
+            inference_max_mbs = (
+                self.cfg.data.rollout_batch_size // self._world_size // inference_split
+            )
+            assert inference_max_mbs >= 1, f"inference mbs validate error, max mbs({inference_max_mbs}) should >= 1"
+            if self.enable_dynamic_batch_size:
+                inference_min_mbs = 1
+            else:
+                inference_min_mbs = max(1, self.cfg.algorithm.logprob_forward_micro_batch_size // self.cfg.algorithm.group_size)
+                assert inference_min_mbs <= inference_max_mbs, f"inference mbs validate error, min mbs({inference_min_mbs}) should <= max mbs({inference_max_mbs})"
+            self.inference_min_mbs, self.inference_max_mbs = inference_min_mbs, inference_max_mbs
+        # remove padding for speed up
+        self.variable_seq_lengths = cfg.actor.model.get("variable_seq_lengths", True)
         if self.is_pipeline:
             assert not self.enable_dp_load_balance, (
                 "DP load balance is not supported in pipeline mode."
@@ -377,8 +396,8 @@ class FSDPActor(FSDPModelManager, Worker):
         result: RolloutResult = channel.get()
 
         batch = result.to_actor_batch(
-            self.cfg.data.max_prompt_length,
-            self.cfg.actor.model.encoder_seq_length,
+            self.prompt_length,
+            self.sequence_length,
             self.tokenizer.eos_token_id,
         )
         return batch, result
@@ -386,15 +405,15 @@ class FSDPActor(FSDPModelManager, Worker):
     def get_dynamic_batch_as_much(
         self,
         input_channel: Channel,
-        min_result_len: int,
-        max_result_len: int,
+        inference_min_mbs: int,
+        inference_max_mbs: int,
         cliped_results=[],
         unfinished_result=None,
     ):
         assert not input_channel.is_local
         rollout_results = cliped_results
-        # get min_result_len
-        while len(rollout_results) < min_result_len:
+        # get inference_min_mbs
+        while len(rollout_results) < inference_min_mbs:
             if unfinished_result is not None:
                 rollout_result: RolloutResult = unfinished_result.wait()
                 unfinished_result = None
@@ -409,7 +428,7 @@ class FSDPActor(FSDPModelManager, Worker):
         result_len = len(rollout_results)
         time_until = time.time() + 0.1
         while last_result_len < result_len:
-            if len(rollout_results) < max_result_len:
+            if len(rollout_results) < inference_max_mbs:
                 if unfinished_result is None:
                     unfinished_result = input_channel.get(async_op=True)
                 else:
@@ -420,17 +439,19 @@ class FSDPActor(FSDPModelManager, Worker):
                 if time.time() >= time_until:
                     last_result_len = result_len
                     result_len = all_reduce_int(len(rollout_results))
+                    result_len = result_len // inference_min_mbs * inference_min_mbs
                     if last_result_len < result_len:
                         time_until = time.time() + 0.1
             else:
                 last_result_len = result_len
                 result_len = all_reduce_int(len(rollout_results))
+                result_len = result_len // inference_min_mbs * inference_min_mbs
 
         batches = []
         for rollout_result in rollout_results:
             batch = rollout_result.to_actor_batch(
-                self.cfg.data.max_prompt_length,
-                self.cfg.actor.model.encoder_seq_length,
+                self.prompt_length,
+                self.sequence_length,
                 self.tokenizer.eos_token_id,
             )
             batches.append(batch)
@@ -500,20 +521,32 @@ class FSDPActor(FSDPModelManager, Worker):
                 ).to(Worker.torch_device_type)
 
         if self.enable_dynamic_batch_size:
-            max_seq_len_pack = self.max_tokens_per_mbs
-            max_seq_len_unpack = self.cfg.actor.model.encoder_seq_length
-            max_prompt_len = self.cfg.data.max_prompt_length
-            max_response_len = max_seq_len_unpack - max_prompt_len
+            packed_seq_len = self.max_tokens_per_mbs
+            unpacked_seq_len = self.sequence_length
+            max_prompt_len = self.prompt_length
+            max_response_len = unpacked_seq_len - max_prompt_len
             idx_starts, idx_ends = prepare_pack_fsdp(m_batch, max_prompt_len)
-
+            assert sum(idx_ends) - sum(idx_starts) <= packed_seq_len
+            if self.variable_seq_lengths:
+                # no padding for speed up
+                packed_seq_len = None
             input_ids, position_ids, attention_mask = pack_fsdp_input(
                 input_ids,
                 position_ids,
                 idx_starts=idx_starts,
                 idx_ends=idx_ends,
-                max_seq_len_pack=max_seq_len_pack,
+                max_seq_len=packed_seq_len,
                 eos_token_id=self.tokenizer.eos_token_id,
             )
+        elif self.variable_seq_lengths:
+            # remove pad
+            rmpad_seq_len = (
+                self.prompt_length + m_batch["response_lengths"].max().item()
+            )
+            unpad_seq_len = self.sequence_length - rmpad_seq_len
+            input_ids = input_ids[:, :rmpad_seq_len]
+            attention_mask = attention_mask[:, :rmpad_seq_len]
+            position_ids = position_ids[:, :rmpad_seq_len]
 
         with self.amp_context:
             outputs = self.model(
@@ -532,24 +565,38 @@ class FSDPActor(FSDPModelManager, Worker):
                 input_ids,
                 idx_starts=idx_starts,
                 idx_ends=idx_ends,
-                max_seq_len_unpack=max_seq_len_unpack,
+                max_seq_len=unpacked_seq_len,
                 eos_token_id=self.tokenizer.eos_token_id,
                 compute_logprobs_fn=self.compute_logprobs,
             )
             logprobs = logprobs[:, -max_response_len:]
         else:
-            # (bsz, response_length, vocab_size)
-            logits = logits[:, -self.response_len - 1 : -1, :]
-            responses = input_ids[:, -self.response_len :]
+            # (bsz, response_length_rmpad, vocab_size)
+            logits = logits[:, self.prompt_length - 1 : -1, :]
+            responses = input_ids[:, self.prompt_length :]
             logprobs = self.compute_logprobs(logits, responses)
         if calculate_entropy:
             entropy = compute_entropy_from_logits(logits)
             if self.enable_dynamic_batch_size:
                 entropy = unpack_sequences(
-                    entropy, idx_starts, idx_ends, max_seq_len_unpack, pad_val=0
-                )[:, -self.response_len :]
+                    entropy, idx_starts, idx_ends, unpacked_seq_len, pad_val=0
+                )[:, self.prompt_length :]
+            elif self.variable_seq_lengths:
+                # recover pad
+                logprobs = torch.nn.functional.pad(
+                    logprobs, (0, unpad_seq_len), "constant", 0.0
+                )
+                entropy = torch.nn.functional.pad(
+                    entropy, (0, unpad_seq_len), "constant", 0.0
+                )
             return logprobs, entropy
-        return logprobs
+        else:
+            if not self.enable_dynamic_batch_size and self.variable_seq_lengths:
+                # recover pad
+                logprobs = torch.nn.functional.pad(
+                    logprobs, (0, unpad_seq_len), "constant", 0.0
+                )
+            return logprobs
 
     def inference_step(
         self,
@@ -623,22 +670,8 @@ class FSDPActor(FSDPModelManager, Worker):
             output_channel: The output channel to send results to.
             compute_ref_logprobs: Whether to compute reference logprobs.
         """
-        inference_split = self.cfg.actor.get("inference_split", None)
-        if inference_split is None:
-            if not self.is_pipeline:
-                inference_split = 1
-            else:
-                inference_split = self.cfg.algorithm.n_minibatches
-        assert self.total_batch_size_per_dp % inference_split == 0, (
-            f"FSDPActor: total_batch_size_per_dp[{self.total_batch_size_per_dp}] should be divisible by inference_split[{inference_split}]"
-        )
-
-        min_result_len = 1
-        max_result_len = (
-            self.cfg.data.rollout_batch_size // self._world_size // inference_split
-        )
+        inference_min_mbs, inference_max_mbs = self.inference_min_mbs, self.inference_max_mbs
         if not self.is_pipeline:
-            min_result_len = max_result_len
             coll_rollout_results = []
         total_result_len = 0
         total_result_len_per_dp = self.cfg.data.rollout_batch_size // self._world_size
@@ -647,8 +680,8 @@ class FSDPActor(FSDPModelManager, Worker):
             batch, rollout_result, result_len, cliped_results, unfinished_result = (
                 self.get_dynamic_batch_as_much(
                     input_channel,
-                    min(min_result_len, total_result_len_per_dp - total_result_len),
-                    min(max_result_len, total_result_len_per_dp - total_result_len),
+                    min(inference_min_mbs, total_result_len_per_dp - total_result_len),
+                    min(inference_max_mbs, total_result_len_per_dp - total_result_len),
                     cliped_results,
                     unfinished_result,
                 )
@@ -694,7 +727,7 @@ class FSDPActor(FSDPModelManager, Worker):
                 min(total_result_len, self.cfg.algorithm.n_minibatches),
             )
             for split_result in split_results:
-                output_channel.put(split_result, async_op=True)
+                output_channel.put(split_result)
         assert total_result_len == total_result_len_per_dp, (
             f"Expected {total_result_len_per_dp} sequences from channel, but got {total_result_len}"
         )
@@ -746,7 +779,7 @@ class FSDPActor(FSDPModelManager, Worker):
             if "ref_logprobs" in m_batch:
                 ref_logprobs = m_batch["ref_logprobs"]
 
-            loss_mask = m_batch["response_mask"][:, -self.response_len :]
+            loss_mask = m_batch["response_mask"][:, self.prompt_length :]
 
             clip_ratio = self.cfg.algorithm.ratio_clip_eps
             clip_ratio_low = self.cfg.algorithm.get("clip_ratio_low", None)
@@ -846,7 +879,7 @@ class FSDPActor(FSDPModelManager, Worker):
         if self.cfg.algorithm.normalize_advantages:
 
             def normalize_advantages(batch: dict[str, torch.Tensor]):
-                mask = batch["response_mask"][:, -self.response_len :]
+                mask = batch["response_mask"][:, self.prompt_length :]
                 batch["advantages"] = masked_normalization(batch["advantages"], mask)
                 return batch
 
@@ -864,7 +897,7 @@ class FSDPActor(FSDPModelManager, Worker):
         # Rollout metrics
         batch = train_batch_iterator.get_all_batches()
         rollout_metrics, _, _ = compute_math_rollout_metrics(
-            batch, self.cfg.data.max_prompt_length, self.response_len
+            batch, self.prompt_length, self.response_len
         )
 
         return rollout_metrics, training_metrics_list
@@ -906,7 +939,7 @@ class FSDPActor(FSDPModelManager, Worker):
             global_batch = self._dp_load_balance(global_batch)
 
         if self.cfg.algorithm.normalize_advantages:
-            mask = global_batch["response_mask"][:, -self.response_len :]
+            mask = global_batch["response_mask"][:, self.prompt_length :]
             global_batch["advantages"] = masked_normalization(
                 global_batch["advantages"], mask
             )
@@ -940,7 +973,7 @@ class FSDPActor(FSDPModelManager, Worker):
 
         # Rollout metrics
         rollout_metrics, _, _ = compute_math_rollout_metrics(
-            global_batch, self.cfg.data.max_prompt_length, self.response_len
+            global_batch, self.prompt_length, self.response_len
         )
 
         return rollout_metrics, training_metrics_list
@@ -954,7 +987,7 @@ class FSDPActor(FSDPModelManager, Worker):
         """
         with self.worker_timer():
             if batch.get("advantages", None) is None:
-                mask = batch["response_mask"][:, -self.response_len :]
+                mask = batch["response_mask"][:, self.prompt_length :]
                 advantages, _ = calculate_adv_and_returns(
                     task_type=self.task_type,
                     adv_type=self.cfg.algorithm.adv_type,
