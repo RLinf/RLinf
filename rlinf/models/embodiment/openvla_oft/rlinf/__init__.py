@@ -24,6 +24,8 @@ from transformers import (
     AutoTokenizer,
 )
 
+from rlinf.models.embodiment.openvla_oft.attn_utils import resolve_attn_implementation
+
 
 def get_model_config_and_input_processor(cfg: DictConfig):
     from prismatic.extern.hf.configuration_prismatic import (
@@ -72,7 +74,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     actor_model_config = AutoConfig.from_pretrained(
         cfg.model_path, trust_remote_code=cfg.trust_remote_code
     )
-    attn_implementation = cfg.get("attn_implementation", "flash_attention_2")
+    attn_implementation = resolve_attn_implementation(cfg)
 
     dataset_statistics_path = os.path.join(cfg.model_path, "dataset_statistics.json")
     if os.path.isfile(dataset_statistics_path):

@@ -15,6 +15,8 @@
 import torch
 from omegaconf import DictConfig
 
+from rlinf.models.embodiment.openvla_oft.attn_utils import resolve_attn_implementation
+
 
 def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     """
@@ -52,7 +54,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     AutoImageProcessor.register(OpenVLAOFTRLConfig, PrismaticImageProcessor)
     AutoProcessor.register(OpenVLAOFTRLConfig, PrismaticProcessor)
     AutoModelForVision2Seq.register(OpenVLAOFTRLConfig, OpenVLAOFTForRLActionPrediction)
-    attn_implementation = cfg.get("attn_implementation", "flash_attention_2")
+    attn_implementation = resolve_attn_implementation(cfg)
 
     # Load the config first
     model_config = AutoConfig.from_pretrained(
