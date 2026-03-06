@@ -103,9 +103,7 @@ def main(cfg) -> None:
     # GRPO Actor group
     actor_worker_cls = get_actor_worker(cfg)
     actor_placement_strategy = component_placement.get_strategy("actor")
-    actor_group = actor_worker_cls.create_group(
-        cfg, component_placement, role="actor"
-    ).launch(
+    actor_group = actor_worker_cls.create_group(cfg, component_placement).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement_strategy
     )
 
@@ -144,11 +142,12 @@ def main(cfg) -> None:
         val_dataset=val_ds,
         rollout=rollout_group,
         actor_inference=actor_inference_group,
-        critic_inference=critic_inference_group,
         actor=actor_group,
-        critic=critic_group,
         reward=reward_group,
         scheduler=scheduler,
+        # critic components are only used for PPO
+        critic_inference=critic_inference_group,
+        critic=critic_group,
     )
 
     runner.init_workers()

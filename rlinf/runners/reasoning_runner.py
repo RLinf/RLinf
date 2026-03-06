@@ -62,11 +62,14 @@ class ReasoningRunner:
         val_dataset: Optional[Dataset],
         rollout: Union["SGLangWorker", "VLLMWorker"],
         actor_inference: Optional[Union["MegatronActorInference", "FSDPInference"]],
-        critic_inference: Optional[Union["MegatronCriticInference", "FSDPInference"]],
         actor: Union["FSDPActor", "MegatronActor"],
         reward: Optional["RewardWorker"],
-        critic: Optional["MegatronCritic"] = None,
         scheduler: "SchedulerWorker" = None,
+        # critic components are only used for PPO
+        critic_inference: Optional[
+            Union["MegatronCriticInference", "FSDPInference"]
+        ] = None,
+        critic: Optional["MegatronCritic"] = None,
     ):
         self.cfg = cfg
         self.component_placement = placement
