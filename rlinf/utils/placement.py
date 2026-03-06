@@ -205,9 +205,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             [] if self._inference_gpus is None else set(self._inference_gpus)
         )
         critic_inference_gpu_set = set(
-            []
-            if self._critic_inference_gpus is None
-            else self._critic_inference_gpus
+            [] if self._critic_inference_gpus is None else self._critic_inference_gpus
         )
 
         return (
