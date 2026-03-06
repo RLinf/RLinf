@@ -83,6 +83,7 @@ class AsyncEnvWorker(EnvWorker):
                 f"time/env/{k}": v for k, v in env_interact_time_metrics.items()
             }
             metrics = {
+                "rank": self._rank,
                 "env": env_metrics,
                 "time": env_interact_time_metrics,
             }

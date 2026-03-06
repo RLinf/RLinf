@@ -98,7 +98,10 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
             rollout_metrics = {
                 f"time/rollout/{k}": v for k, v in rollout_metrics.items()
             }
-            metric_channel.put(rollout_metrics, async_op=True)
+            metric_channel.put(
+                {"rank": self._rank, "time": rollout_metrics},
+                async_op=True,
+            )
 
     async def wait_if_stale(self) -> None:
         if self.staleness_threshold is None:

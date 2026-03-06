@@ -426,6 +426,9 @@ class FSDPActor(FSDPModelManager, Worker):
                 last_result_len = result_len
                 result_len = all_reduce_int(len(rollout_results))
 
+        cliped_results = list(rollout_results[result_len:])
+        rollout_results = rollout_results[:result_len]
+
         batches = []
         for rollout_result in rollout_results:
             batch = rollout_result.to_actor_batch(
