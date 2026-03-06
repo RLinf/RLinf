@@ -268,7 +268,7 @@ class FrankaEnv(gym.Env):
                 # Reset counter if robot leaves the target zone
                 self._success_hold_counter = 0
                 if self.config.use_dense_reward:
-                    reward = np.exp(-500 * np.sum(np.square(target_delta[:3]))) * self.config.dense_reward_scale
+                    reward = np.exp(-500 * np.sum(np.square(target_delta[:3])))
                 else:
                     reward = 0.0
                 self._logger.debug(
@@ -279,6 +279,8 @@ class FrankaEnv(gym.Env):
 
             if self.config.enable_gripper_penalty and is_gripper_action_effective:
                 reward -= self.config.gripper_penalty
+
+            reward *= self.config.dense_reward_scale
 
             return reward
         else:
