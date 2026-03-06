@@ -5,17 +5,6 @@
 ```
 ├── .gitignore  [MOD]
 ├── examples/
-│   ├── cfg/
-│   │   ├── config/
-│   │   │   ├── libero_cfg_sft.yaml  [NEW]
-│   │   │   ├── libero_cfg_sft_test.yaml  [NEW]
-│   │   │   ├── model/
-│   │   │   │   ├── pi0.yaml  [NEW]
-│   │   │   │   └── pi0_5.yaml  [NEW]
-│   │   │   └── training_backend/
-│   │   │       └── fsdp.yaml  [NEW]
-│   │   ├── run_cfg_sft.sh  [NEW]
-│   │   └── train_cfg_sft.py  [NEW]
 │   ├── embodiment/
 │   │   ├── config/
 │   │   │   ├── one_iter_debug_libero10.yaml  [NEW]
@@ -36,15 +25,19 @@
 │   │   ├── recompute_advantages_from_value_reward.py  [NEW]
 │   │   ├── run_compute_advantages.sh  [NEW]
 │   │   └── run_compute_returns.sh  [NEW]
-│   └── vla_lib_sft/
+│   └── sft/
 │       ├── config/
-│       │   ├── libero_value_model.yaml  [NEW]
-│       │   ├── libero_value_model_test.yaml  [NEW]
+│       │   ├── libero_cfg_openpi.yaml  [NEW]
+│       │   ├── libero_cfg_openpi_test.yaml  [NEW]
+│       │   ├── libero_sft_value.yaml  [NEW]
+│       │   ├── libero_sft_value_test.yaml  [NEW]
 │       │   ├── model/
+│       │   │   ├── pi0_5.yaml  [NEW]
 │       │   │   └── vla_lib_value_model.yaml  [NEW]
-│       │   └── training_backend/
-│       │       └── fsdp.yaml  [NEW]
+│       │   └── ...  (existing sft configs)
+│       ├── run_cfg_sft.sh  [NEW]
 │       ├── run_vla_lib_sft.sh  [NEW]
+│       ├── train_cfg_sft.py  [NEW]
 │       └── train_vla_lib_sft.py  [NEW]
 ├── install_for_use_vla_lib.sh  [NEW]
 ├── requirements/
@@ -113,8 +106,7 @@
 │   │           ├── value_policy.py  [NEW]
 │   │           └── value_policy_config.py  [NEW]
 │   ├── runners/
-│   │   ├── debug_pi06_runner.py  [NEW]
-│   │   └── vla_lib_sft_runner.py  [NEW]
+│   │   └── debug_pi06_runner.py  [NEW]
 │   ├── utils/
 │   │   ├── ckpt_convertor/
 │   │   │   └── fsdp_convertor/

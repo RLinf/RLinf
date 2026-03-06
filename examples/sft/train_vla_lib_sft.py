@@ -16,7 +16,7 @@
 Entry point for vla_lib Value Model SFT training.
 
 Usage:
-    python train_vla_lib_sft.py --config-path config --config-name libero_value_sft
+    python train_vla_lib_sft.py --config-path config --config-name libero_sft_value
 """
 
 import json
@@ -34,7 +34,7 @@ import torch.multiprocessing as mp  # noqa: E402
 from omegaconf import OmegaConf  # noqa: E402
 
 from rlinf.config import validate_cfg  # noqa: E402
-from rlinf.runners.vla_lib_sft_runner import VlaLibSFTRunner  # noqa: E402
+from rlinf.runners.sft_runner import SFTRunner  # noqa: E402
 from rlinf.scheduler import Cluster  # noqa: E402
 from rlinf.utils.placement import HybridComponentPlacement  # noqa: E402
 from rlinf.workers.vla_lib_sft.fsdp_value_sft_worker import (  # noqa: E402
@@ -44,7 +44,7 @@ from rlinf.workers.vla_lib_sft.fsdp_value_sft_worker import (  # noqa: E402
 mp.set_start_method("spawn", force=True)
 
 
-@hydra.main(version_base="1.1", config_path="config", config_name="libero_value_sft")
+@hydra.main(version_base="1.1", config_path="config", config_name="libero_sft_value")
 def main(cfg) -> None:
     # Set HF_LEROBOT_HOME if data_root is provided
     data_root = cfg.data.get("data_root", None)
@@ -63,7 +63,7 @@ def main(cfg) -> None:
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
     )
 
-    runner = VlaLibSFTRunner(cfg=cfg, actor=actor_group)
+    runner = SFTRunner(cfg=cfg, actor=actor_group)
     runner.init_workers()
     runner.run()
 

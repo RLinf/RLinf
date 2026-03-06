@@ -2,7 +2,7 @@
 
 # Run vla_lib Value Model SFT training
 # Usage: bash run_vla_lib_sft.sh [CONFIG_NAME] [EVAL_DATASET_PATH]
-# Example: bash run_vla_lib_sft.sh libero_value_sft /path/to/eval_dataset
+# Example: bash run_vla_lib_sft.sh libero_sft_value /path/to/eval_dataset
 
 export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
@@ -24,7 +24,7 @@ export PYTHONPATH=${REPO_PATH}:${LIBERO_REPO_PATH}:$PYTHONPATH
 source switch_env openpi 2>/dev/null || echo "Warning: switch_env not found, using current environment"
 
 if [ -z "$1" ]; then
-    CONFIG_NAME="libero_value_sft"
+    CONFIG_NAME="libero_sft_value"
 else
     CONFIG_NAME=$1
 fi

@@ -23,9 +23,12 @@ lerobot
 visualize_result/
 data_to_use/
 
+# Test files (local only, not for release)
+tests/
+
 # Local dev files
 CLAUDE.md
 memory.md
 progress.md
-pi06_test_skill/
-.cursor/skills/e2e-pi06-pipeline-test/
+.cursor
+.claude

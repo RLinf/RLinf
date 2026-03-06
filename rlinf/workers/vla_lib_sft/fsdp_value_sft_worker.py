@@ -606,7 +606,7 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
 
             return train_metrics
 
-    def run_evaluation(self) -> dict[str, float]:
+    def run_eval(self) -> dict[str, float]:
         """Run periodic evaluation on all eval datasets.
 
         Returns metrics keyed as:

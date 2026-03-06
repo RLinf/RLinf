@@ -95,10 +95,10 @@ Pipeline 使用两种数据集：
 | `examples/process/run_compute_returns.sh` | Stage 1 启动器 |
 | `examples/process/config/compute_returns_test.yaml` | Stage 1 测试配置 |
 | **Stage 2** | |
-| `examples/vla_lib_sft/train_vla_lib_sft.py` | Value model 训练入口 |
-| `examples/vla_lib_sft/run_vla_lib_sft.sh` | Stage 2 启动器 |
-| `examples/vla_lib_sft/config/libero_value_model_test.yaml` | Stage 2 测试配置 |
-| `rlinf/runners/vla_lib_sft_runner.py` | `VlaLibSFTRunner` — 训练循环 |
+| `examples/sft/train_vla_lib_sft.py` | Value model 训练入口 |
+| `examples/sft/run_vla_lib_sft.sh` | Stage 2 启动器 |
+| `examples/sft/config/libero_sft_value_test.yaml` | Stage 2 测试配置 |
+| `rlinf/runners/sft_runner.py` | `SFTRunner` — 训练循环 |
 | `rlinf/workers/vla_lib_sft/fsdp_value_sft_worker.py` | `FSDPValueSftWorker` — FSDP 训练 |
 | `rlinf/models/embodiment/vla_lib_value_model/` | Value model（critic head）定义 |
 | `rlinf/datasets/vla_lib/value_mixture_dataset.py` | Value 训练数据集 |
@@ -108,9 +108,9 @@ Pipeline 使用两种数据集：
 | `examples/process/run_compute_advantages.sh` | Stage 3 启动器 |
 | `examples/process/config/compute_advantages_test.yaml` | Stage 3 测试配置 |
 | **Stage 4** | |
-| `examples/cfg/train_cfg_sft.py` | CFG SFT 训练入口 |
-| `examples/cfg/run_cfg_sft.sh` | Stage 4 启动器 |
-| `examples/cfg/config/libero_cfg_sft_test.yaml` | Stage 4 测试配置 |
+| `examples/sft/train_cfg_sft.py` | CFG SFT 训练入口 |
+| `examples/sft/run_cfg_sft.sh` | Stage 4 启动器 |
+| `examples/sft/config/libero_cfg_openpi_test.yaml` | Stage 4 测试配置 |
 | `rlinf/models/embodiment/openpi_cfg/openpi_cfg_action_model.py` | CFG 模型：训练 forward + 推理 sample_actions |
 | `rlinf/datasets/transforms/tokenize_transforms.py` | `TokenizePromptWithGuidance` — 生成正/负 guidance prompt |
 | `rlinf/workers/cfg/fsdp_cfg_worker.py` | FSDP CFG 训练 worker |
@@ -184,7 +184,7 @@ print('Stage 1 PASS')
 
 **作用**：训练 critic 模型学习 `V(s)`（状态值函数），用于下一步计算 advantage。
 
-**配置**（`examples/vla_lib_sft/config/libero_value_model_test.yaml`）：
+**配置**（`examples/sft/config/libero_sft_value_test.yaml`）：
 ```yaml
 data:
   datasets:
@@ -203,13 +203,13 @@ actor:
 
 **启动**：
 ```bash
-bash examples/vla_lib_sft/run_vla_lib_sft.sh libero_value_model_test
+bash examples/sft/run_vla_lib_sft.sh libero_sft_value_test
 ```
 
 **转换 checkpoint**（Stage 3 需要 SafeTensors 格式）：
 ```bash
 # 找到训练产出的 checkpoint
-LATEST_LOG=$(ls -td logs/vla_lib_sft/libero_value_model_test-* | head -1)
+LATEST_LOG=$(ls -td logs/vla_lib_sft/libero_sft_value_test-* | head -1)
 CKPT_DIR="${LATEST_LOG}/vla_lib_value_sft/checkpoints/global_step_5/actor/model_state_dict"
 
 # 用 symlink 避免路径中冒号导致 Hydra 解析错误
@@ -289,7 +289,7 @@ print('Stage 3 PASS')
 3. 以 `unconditional_prob` (默认 0.3) 概率随机忽略引导，使用原始 prompt
 4. 计算 flow matching loss
 
-**配置**（`examples/cfg/config/libero_cfg_sft_test.yaml`）：
+**配置**（`examples/sft/config/libero_cfg_openpi_test.yaml`）：
 ```yaml
 data:
   advantage_tag: "test"         # ← 必须与 Stage 3 的 tag 一致
@@ -311,12 +311,12 @@ actor:
 
 **启动**：
 ```bash
-bash examples/cfg/run_cfg_sft.sh libero_cfg_sft_test
+bash examples/sft/run_cfg_sft.sh libero_cfg_openpi_test
 ```
 
 **转换 checkpoint**：
 ```bash
-LATEST_LOG=$(ls -td logs/cfg_sft/libero_cfg_sft_test-* | head -1)
+LATEST_LOG=$(ls -td logs/cfg_sft/libero_cfg_openpi_test-* | head -1)
 CKPT_DIR="${LATEST_LOG}/cfg_sft_test/checkpoints/global_step_5/actor/model_state_dict"
 ln -sfn "${CKPT_DIR}" /tmp/step4_ckpt
 
@@ -395,8 +395,8 @@ source switch_env openpi
 bash examples/process/run_compute_returns.sh compute_returns_test
 
 # Stage 2: Train Value Model + Convert Checkpoint
-bash examples/vla_lib_sft/run_vla_lib_sft.sh libero_value_model_test
-CKPT=$(ls -td logs/vla_lib_sft/libero_value_model_test-* | head -1)/vla_lib_value_sft/checkpoints/global_step_5/actor/model_state_dict
+bash examples/sft/run_vla_lib_sft.sh libero_sft_value_test
+CKPT=$(ls -td logs/vla_lib_sft/libero_sft_value_test-* | head -1)/vla_lib_value_sft/checkpoints/global_step_5/actor/model_state_dict
 ln -sfn "$CKPT" /tmp/step2_ckpt
 bash rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf_vla_lib.sh \
     convertor.ckpt_path=/tmp/step2_ckpt/full_weights.pt convertor.save_path=/tmp/step2_ckpt
@@ -406,8 +406,8 @@ bash examples/process/run_compute_advantages.sh compute_advantages_test \
     --nproc 1 advantage.value_checkpoint=/tmp/step2_ckpt
 
 # Stage 4: CFG SFT Training + Convert Checkpoint
-bash examples/cfg/run_cfg_sft.sh libero_cfg_sft_test
-CKPT=$(ls -td logs/cfg_sft/libero_cfg_sft_test-* | head -1)/cfg_sft_test/checkpoints/global_step_5/actor/model_state_dict
+bash examples/sft/run_cfg_sft.sh libero_cfg_openpi_test
+CKPT=$(ls -td logs/cfg_sft/libero_cfg_openpi_test-* | head -1)/cfg_sft_test/checkpoints/global_step_5/actor/model_state_dict
 ln -sfn "$CKPT" /tmp/step4_ckpt
 bash rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf.sh fsdp_model_convertor \
     convertor.ckpt_path=/tmp/step4_ckpt/full_weights.pt convertor.save_path=/tmp/step4_ckpt \
