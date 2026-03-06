@@ -198,7 +198,9 @@ class MultiStepRolloutWorker(Worker):
             ),
             "beta_min": self.cfg.algorithm.get("dagger", {}).get("beta_min", 0.05),
             "beta_decay": self.cfg.algorithm.get("dagger", {}).get("beta_decay", 0.99),
-            "beta_decay_steps": self.cfg.algorithm.get("dagger", {}).get("beta_decay_steps", 1000),
+            "beta_decay_steps": self.cfg.algorithm.get("dagger", {}).get(
+                "beta_decay_steps", 1000
+            ),
         }
 
     def update_dagger_beta(self):
@@ -281,6 +283,10 @@ class MultiStepRolloutWorker(Worker):
         ]:
             kwargs["return_obs"] = not hasattr(self.hf_model, "q_head")
 
+        only_save_expert = self.cfg.algorithm.get("dagger", {}).get(
+            "only_save_expert", True
+        )
+
         # dagger: use expert based on beta probability during training, never during eval
         if mode == "eval":
             use_expert = False
@@ -291,15 +297,33 @@ class MultiStepRolloutWorker(Worker):
 
         with torch.no_grad():
             if use_expert:
+                # 1 inference: expert acts AND provides label (same in both modes)
                 actions, result = self.expert_model.predict_action_batch(
                     env_obs=env_obs,
                     **kwargs,
                 )
             else:
+                # Student acts in the environment
                 actions, result = self.hf_model.predict_action_batch(
                     env_obs=env_obs,
                     **kwargs,
                 )
+                if (
+                    not only_save_expert
+                    and self.expert_model is not None
+                    and mode == "train"
+                ):
+                    # Classical DAgger: 2nd inference — expert labels this student step.
+                    # Student actions are still sent to env; expert model_action replaces
+                    # the student's so the actor trains to imitate the expert.
+                    _, expert_result = self.expert_model.predict_action_batch(
+                        env_obs=env_obs,
+                        **kwargs,
+                    )
+                    result["forward_inputs"]["model_action"] = expert_result[
+                        "forward_inputs"
+                    ]["model_action"]
+                    use_expert = True  # mark step for saving with expert label
 
             result["use_expert"] = bool(use_expert)
 

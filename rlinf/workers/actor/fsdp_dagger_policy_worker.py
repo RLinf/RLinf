@@ -319,6 +319,10 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             data={"observation": observation, "actions": actions},
         )
 
+        action_chunk = self.model.config.action_chunk
+        action_dim = self.model.config.action_env_dim
+        actor_loss = actor_loss[:, :action_chunk, :action_dim]
+
         return actor_loss.mean()
 
     @Worker.timer("update_one_epoch")
@@ -518,8 +522,8 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         # Save model
         self._strategy.save_checkpoint(
             model=self.model,
-            optimizers=[self.optimizer, self.qf_optimizer],
-            lr_schedulers=[self.lr_scheduler, self.qf_lr_scheduler],
+            optimizers=[self.optimizer],
+            lr_schedulers=[self.lr_scheduler],
             save_path=save_base_path,
             checkpoint_format="local_shard"
             if self.cfg.actor.fsdp_config.use_orig_params
@@ -536,8 +540,8 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         # load model
         self._strategy.load_checkpoint(
             model=self.model,
-            optimizers=[self.optimizer, self.qf_optimizer],
-            lr_schedulers=[self.lr_scheduler, self.qf_lr_scheduler],
+            optimizers=[self.optimizer],
+            lr_schedulers=[self.lr_scheduler],
             load_path=load_base_path,
             checkpoint_format="local_shard"
             if self.cfg.actor.fsdp_config.use_orig_params

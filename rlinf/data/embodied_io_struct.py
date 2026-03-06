@@ -382,6 +382,10 @@ class Trajectory:
 
         filtered_trajectories = []
         for i in range(mask.shape[1]):
+            # Skip this env slot if no intervene step is selected after masking.
+            if not mask[:, i].any():
+                continue
+
             actions = apply_mask(self.actions, i)
             rewards = apply_mask(self.rewards, i)
             prev_logprobs = apply_mask(self.prev_logprobs, i)
@@ -421,7 +425,7 @@ class Trajectory:
                 )
             )
 
-        return filtered_trajectories
+        return filtered_trajectories if filtered_trajectories else None
 
 
 @dataclass(kw_only=True)
