@@ -173,8 +173,8 @@ actor:
     amp:
       enabled: false
       precision: bf16
-      use_grad_scaler: false         
-
+      use_grad_scaler: false
+      
 reward:
   use_reward_model: False
 

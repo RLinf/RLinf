@@ -232,7 +232,7 @@ actor:
     
     amp_grad_scaler:
       enabled: False               # if True, GradScaler will be used for AMP training to prevent underflow.
-.
+
 
 reward:
   group_name: "RewardGroup"
