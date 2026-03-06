@@ -14,7 +14,6 @@
 
 import asyncio
 import time
-from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from omegaconf.omegaconf import DictConfig
@@ -22,7 +21,6 @@ from omegaconf.omegaconf import DictConfig
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
-from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.utils.runner_utils import check_progress
 
 if TYPE_CHECKING:
@@ -58,7 +56,7 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
                 "Validation check interval is set to a positive value, but validation is not implemented for AsyncPPOEmbodiedRunner, so validation will be skipped."
             )
 
-    def get_rollout_metrics(self) -> dict:
+    def get_rollout_metrics(self) -> tuple[dict, list[dict]]:
         results: list[dict] = []
         while True:
             try:
@@ -68,17 +66,14 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
                 break
 
         if not results:
-            return {}
+            return {}, []
 
-        time_metrics = defaultdict(list)
-        # NOTE: currently assumes only time metrics are sent through rollout_metric_channel, and each dict has the same set of keys.
-        for result in results:
-            for key, value in result.items():
-                time_metrics[key].append(value)
-        time_metrics = {k: sum(v) / len(v) for k, v in time_metrics.items()}
-        return time_metrics
+        time_metrics, ranked_time_metrics_list = self._process_ranked_numeric_results(
+            results, metric_field="time"
+        )
+        return time_metrics, ranked_time_metrics_list
 
-    def get_env_metrics(self) -> dict:
+    def get_env_metrics(self) -> tuple[dict, list[dict], list[dict]]:
         results: list[dict] = []
         while True:
             try:
@@ -88,32 +83,34 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
                 break
 
         if not results:
-            return {}
+            return {}, [], []
 
-        time_metrics = defaultdict(list)
-        # NOTE: assumes each env metric dict has the same set of keys.
-        env_metrics: list[dict] = []
-        for result in results:
-            if result.get("env"):
-                env_metrics.append(result["env"])
-            for key, value in result.get("time", {}).items():
-                time_metrics[key].append(value)
-
-        time_metrics = {k: sum(v) / len(v) for k, v in time_metrics.items()}
+        time_metrics, ranked_time_metrics_list = self._process_ranked_numeric_results(
+            results, metric_field="time"
+        )
+        env_metrics, ranked_env_metrics_list = self._process_ranked_eval_results(
+            results, metric_field="env"
+        )
         if not env_metrics:
-            return {**time_metrics}
+            return {**time_metrics}, ranked_time_metrics_list, ranked_env_metrics_list
 
-        env_metrics = compute_evaluate_metrics(env_metrics)
-        return {**env_metrics, **time_metrics}
+        return (
+            {**env_metrics, **time_metrics},
+            ranked_time_metrics_list,
+            ranked_env_metrics_list,
+        )
 
     def update_rollout_weights(self) -> None:
-        self.rollout.sync_model_from_actor(self.global_step)
-        self.actor.sync_model_to_rollout(self.global_step).wait()
+        rollout_handle = self.rollout.sync_model_from_actor()
+        self.actor.sync_model_to_rollout().wait()
+        rollout_handle.wait()
 
     def run(self) -> None:
         start_step = self.global_step
         start_time = time.time()
 
+        self.actor.set_global_step(self.global_step).wait()
+        self.rollout.set_global_step(self.global_step).wait()
         self.update_rollout_weights()
 
         env_handle: Handle = self.env.interact(
@@ -129,8 +126,6 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         )
 
         while self.global_step < self.max_steps:
-            self.actor.set_global_step(self.global_step)
-            self.rollout.set_global_step(self.global_step)
             with self.timer("step"):
                 with self.timer("recv_rollout_trajectories"):
                     self.actor.recv_rollout_trajectories(
@@ -142,22 +137,46 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
                         self.actor.compute_proximal_logprobs().wait()
 
                 with self.timer("cal_adv_and_returns"):
-                    rollout_metrics = self.actor.compute_advantages_and_returns().wait()
+                    rollout_metrics_list = (
+                        self.actor.compute_advantages_and_returns().wait()
+                    )
 
                 with self.timer("actor_training"):
-                    training_metrics = self.actor.run_training().wait()
+                    actor_training_handle = self.actor.run_training()
+                    training_metrics = actor_training_handle.wait()
 
                 self.global_step += 1
+                self.actor.set_global_step(self.global_step).wait()
+                self.rollout.set_global_step(self.global_step).wait()
                 with self.timer("update_rollout_weights"):
                     self.update_rollout_weights()
 
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
+            actor_time_metrics, actor_time_metrics_per_rank = (
+                actor_training_handle.consume_durations(return_per_rank=True)
+            )
+            actor_time_metrics = {
+                f"time/actor/{k}": v for k, v in actor_time_metrics.items()
+            }
+            time_metrics.update(actor_time_metrics)
 
-            train_metrics = {f"train/{k}": v for k, v in training_metrics[0].items()}
-            rollout_metrics = {f"rollout/{k}": v for k, v in rollout_metrics[0].items()}
-            env_metrics = self.get_env_metrics()
-            rollout_time_metrics = self.get_rollout_metrics()
+            train_metrics = {
+                f"train/{k}": v
+                for k, v in self._aggregate_numeric_metrics(training_metrics).items()
+            }
+            rollout_metrics = {
+                f"rollout/{k}": v
+                for k, v in self._aggregate_numeric_metrics(
+                    rollout_metrics_list
+                ).items()
+            }
+            env_metrics, env_time_metrics_per_rank, env_metrics_per_rank = (
+                self.get_env_metrics()
+            )
+            rollout_time_metrics, rollout_time_metrics_per_rank = (
+                self.get_rollout_metrics()
+            )
             self.metric_logger.log(train_metrics, self.global_step)
             if env_metrics:
                 self.metric_logger.log(env_metrics, self.global_step)
@@ -165,6 +184,45 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
                 self.metric_logger.log(rollout_time_metrics, self.global_step)
             self.metric_logger.log(rollout_metrics, self.global_step)
             self.metric_logger.log(time_metrics, self.global_step)
+            self._log_ranked_metrics(
+                metrics_list=training_metrics,
+                step=self.global_step,
+                prefix="train",
+                worker_group_name=self.actor.worker_group_name,
+            )
+            self._log_ranked_metrics(
+                metrics_list=actor_time_metrics_per_rank,
+                step=self.global_step,
+                prefix="time/actor",
+                worker_group_name=self.actor.worker_group_name,
+            )
+            self._log_ranked_metrics(
+                metrics_list=rollout_metrics_list,
+                step=self.global_step,
+                prefix="rollout",
+                worker_group_name=self.actor.worker_group_name,
+            )
+            self._log_ranked_metrics(
+                metrics_list=env_time_metrics_per_rank,
+                step=self.global_step,
+                prefix="time/env",
+                worker_group_name=self.env.worker_group_name,
+                add_prefix=False,
+            )
+            self._log_ranked_metrics(
+                metrics_list=env_metrics_per_rank,
+                step=self.global_step,
+                prefix="env",
+                worker_group_name=self.env.worker_group_name,
+                add_prefix=False,
+            )
+            self._log_ranked_metrics(
+                metrics_list=rollout_time_metrics_per_rank,
+                step=self.global_step,
+                prefix="time/rollout",
+                worker_group_name=self.rollout.worker_group_name,
+                add_prefix=False,
+            )
 
             logging_metrics = {**time_metrics, **train_metrics, **rollout_metrics}
             if env_metrics:

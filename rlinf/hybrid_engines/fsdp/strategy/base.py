@@ -36,6 +36,7 @@ from rlinf.hybrid_engines.fsdp.strategy.checkpoint import Checkpoint
 from rlinf.hybrid_engines.fsdp.utils import (
     FSDPVersion,
 )
+from rlinf.scheduler import Worker
 from rlinf.utils.utils import clear_memory
 
 if TYPE_CHECKING:
@@ -156,6 +157,30 @@ class FSDPStrategyBase(ABC):
         )
 
     @classmethod
+    def save_npu_weight(cls, obj, path: str) -> None:
+        """
+        Save weights safely when tensors may live on NPU.
+
+        Converts all NPU tensors to CPU recursively before saving.
+        """
+
+        def to_cpu(item):
+            if isinstance(item, torch.Tensor) and item.is_npu:
+                return item.cpu()
+            return item
+
+        if isinstance(obj, dict):
+            obj = {k: to_cpu(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            obj = type(obj)(to_cpu(v) for v in obj)
+        elif isinstance(obj, torch.Tensor):
+            obj = obj.cpu()
+        else:
+            raise ValueError("value type error")
+        torch.save(obj, path, _use_new_zipfile_serialization=True)
+        print(f"Save using _use_new_zipfile_serialization to {path}")
+
+    @classmethod
     def save_checkpoint(
         cls,
         model: Union[FSDP, FSDPModule],
@@ -228,9 +253,16 @@ class FSDPStrategyBase(ABC):
             model_state_dict = get_model_state_dict(model=model, options=opts)
             if torch.distributed.get_rank() == 0:
                 os.makedirs(sd_save_path, exist_ok=True)
-                torch.save(
-                    model_state_dict, os.path.join(sd_save_path, "full_weights.pt")
-                )
+                # npu requires a specific model parameter save
+                if Worker.torch_device_type == "npu":
+                    cls.save_npu_weight(
+                        model_state_dict, os.path.join(sd_save_path, "full_weights.pt")
+                    )
+
+                else:
+                    torch.save(
+                        model_state_dict, os.path.join(sd_save_path, "full_weights.pt")
+                    )
 
             torch.distributed.barrier()
 

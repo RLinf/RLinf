@@ -7,7 +7,7 @@ RL with MetaWorld Benchmark
    :class: inline-icon
 
 This example provides a comprehensive guide to using the **RLinf** framework in the `MetaWorld <https://metaworld.farama.org/>`_ environment
-to finetune π\ :sub:`0`\ and π\ :sub:`0.5` algorithms through reinforcement learning. It covers the entire process—from environment setup and core algorithm design to training configuration, evaluation, and visualization—along with reproducible commands and configuration snippets.
+to finetune OpenVLA-OFT, π\ :sub:`0`\, and π\ :sub:`0.5` algorithms through reinforcement learning. It covers the entire process—from environment setup and core algorithm design to training configuration, evaluation, and visualization—along with reproducible commands and configuration snippets.
 
 The primary objective is to develop a model capable of performing robotic manipulation:
 
@@ -88,6 +88,16 @@ Use Docker image for the experiment.
       # For mainland China users, you can use the following for better download speed:
       # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-metaworld
 
+Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
+
+.. code:: bash
+
+   # To train OpenPi models
+   source switch_env openpi
+
+   # To train OpenVLA-OFT models
+   # source switch_env openvla-oft
+
 **Option 2: Custom Environment**
 
 Install dependencies directly in your environment by running the following command:
@@ -96,7 +106,12 @@ Install dependencies directly in your environment by running the following comma
 
    # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
 
+   # To train OpenPi models
    bash requirements/install.sh embodied --model openpi --env metaworld
+
+   # To train OpenVLA-OFT models
+   # bash requirements/install.sh embodied --model openvla-oft --env metaworld
+
    source .venv/bin/activate
 
 Model Download
@@ -111,6 +126,7 @@ Before starting training, you need to download the corresponding pretrained mode
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT
    git clone https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT
+   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-MetaWorld-SFT
 
    # Method 2: Using huggingface-hub
    # For mainland China users, you can use the following for better download speed:
@@ -118,6 +134,7 @@ Before starting training, you need to download the corresponding pretrained mode
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-MetaWorld-SFT --local-dir RLinf-Pi0-MetaWorld-SFT
    hf download RLinf/RLinf-Pi05-MetaWorld-SFT --local-dir RLinf-Pi05-MetaWorld-SFT
+   hf download RLinf/RLinf-OpenVLAOFT-MetaWorld-SFT --local-dir RLinf-OpenVLAOFT-MetaWorld-SFT
 
 Alternatively, you can also download the model from ModelScope at https://www.modelscope.cn/models/RLinf/RLinf-Pi0-MetaWorld.
 
@@ -179,6 +196,9 @@ MetaWorld MT50 multi-task joint training configuration files (In this task setti
 - π\ :sub:`0.5`\ + PPO:
   ``examples/embodiment/config/metaworld_50_ppo_openpi_pi05.yaml``
 
+- OpenVLA-OFT + GRPO:
+  ``examples/embodiment/config/metaworld_50_grpo_openvlaoft.yaml``
+  
 MetaWorld ML45 joint training configuration files (In this task setting, training is performed on 45 tasks, and inference is performed on 5 OOD tasks):
 
 - π\ :sub:`0`\ + PPO:

@@ -484,9 +484,9 @@ class CollectiveGroup:
         assert object_type == CollectiveGroup.TENSOR, (
             "The object must be a torch.Tensor when using send_tensor"
         )
-        if tensor_data.has_accel_tensor and not tensor.is_contiguous():
+        if not tensor.is_contiguous():
             raise ValueError(
-                "All CUDA tensors must be contiguous when using P2P communication. Otherwise the recv side might recv wrong tensor data. Consider using .contiguous() to make the tensors contiguous."
+                "All tensors must be contiguous when using P2P communication. Otherwise the recv side might recv wrong tensor data. Consider using .contiguous() to make the tensors contiguous."
             )
 
         self._init_process_group(options=options)
@@ -962,7 +962,7 @@ class CollectiveGroup:
             cpu_tensor_mask, cpu_tensors, accel_tensors = self._partition_tensors(
                 [object]
             )
-            self._check_tensor_contiguous(accel_tensors)
+            self._check_tensor_contiguous(accel_tensors + cpu_tensors)
             object_type = CollectiveGroup.TENSOR
             tensor_data = TensorData(
                 cpu_tensor_mask=cpu_tensor_mask,
@@ -976,7 +976,7 @@ class CollectiveGroup:
             cpu_tensor_mask, cpu_tensors, accel_tensors = self._partition_tensors(
                 list(object)
             )
-            self._check_tensor_contiguous(accel_tensors)
+            self._check_tensor_contiguous(accel_tensors + cpu_tensors)
             object_type = CollectiveGroup.TENSOR_LIST
             tensor_data = TensorData(
                 cpu_tensor_mask=cpu_tensor_mask,
@@ -991,7 +991,7 @@ class CollectiveGroup:
             cpu_tensor_mask, cpu_tensors, accel_tensors = self._partition_tensors(
                 values
             )
-            self._check_tensor_contiguous(accel_tensors)
+            self._check_tensor_contiguous(accel_tensors + cpu_tensors)
             object_type = CollectiveGroup.TENSOR_DICT
             tensor_data = TensorData(
                 cpu_tensor_mask=cpu_tensor_mask,
@@ -1009,7 +1009,7 @@ class CollectiveGroup:
                     cpu_tensors,
                     accel_tensors,
                 ) = self._partition_tensors(tensors_list)
-                self._check_tensor_contiguous(accel_tensors)
+                self._check_tensor_contiguous(accel_tensors + cpu_tensors)
                 object_type = CollectiveGroup.DATACLASS_WITH_TENSORS
                 tensor_data = TensorData(
                     cpu_tensor_mask=cpu_tensor_mask,
@@ -1026,7 +1026,7 @@ class CollectiveGroup:
         """Check if the tensors are contiguous."""
         if not all(t.is_contiguous() for t in tensors):
             raise ValueError(
-                "All CUDA/Accelerator tensors must be contiguous when using P2P communication. Otherwise the recv side might recv wrong tensor data. Consider using .contiguous() to make the tensors contiguous."
+                "All tensors must be contiguous when using P2P communication. Otherwise the recv side might recv wrong tensor data. Consider using .contiguous() to make the tensors contiguous."
             )
 
     def _check_same_device_with_peer(self):
