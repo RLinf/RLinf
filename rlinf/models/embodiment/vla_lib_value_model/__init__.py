@@ -115,7 +115,7 @@ def _load_state_dict(path: str) -> dict:
     if path.endswith(".safetensors"):
         return safetensors.torch.load_file(path, device="cpu")
     elif path.endswith((".pt", ".pth")):
-        return torch.load(path, map_location="cpu")
+        return torch.load(path, map_location="cpu", weights_only=False)
     elif os.path.isdir(path):
         weight_paths = sorted(glob.glob(os.path.join(path, "*.safetensors")))
         if not weight_paths:
@@ -125,7 +125,7 @@ def _load_state_dict(path: str) -> dict:
             if wp.endswith(".safetensors"):
                 sd.update(safetensors.torch.load_file(wp, device="cpu"))
             else:
-                sd.update(torch.load(wp, map_location="cpu"))
+                sd.update(torch.load(wp, map_location="cpu", weights_only=False))
         return sd
     return {}
 

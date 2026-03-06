@@ -612,17 +612,15 @@ class ValueCriticModel(PI05FlowMatching):
                 logits, target_values
             )
 
-        total_loss = None
-        if expert_loss is not None:
-            total_loss = expert_loss.mean()
+        expert_loss_mean = expert_loss.mean() if expert_loss is not None else None
 
         return CriticOutput(
-            loss=total_loss,
+            loss=expert_loss_mean,
             predicted_values=values,
             logits=logits,
             probs=probs,
             atoms=self.value_head.atoms,
-            expert_loss=expert_loss.mean() if expert_loss is not None else None,
+            expert_loss=expert_loss_mean,
             hidden_states=hidden_states,
             cat_acc_best=cat_metrics["acc_best"] if cat_metrics else None,
             cat_acc_neighbor=cat_metrics["acc_neighbor"] if cat_metrics else None,

@@ -178,7 +178,6 @@ class ValueMixtureDataset(UnifiedDatasetInterface):
         return int(ratios.max())
 
     def _sample_step(self, index: int) -> tuple[SizedDataset, int]:
-        # breakpoint()
         if self.mode != "train":
             seed = index
         else:

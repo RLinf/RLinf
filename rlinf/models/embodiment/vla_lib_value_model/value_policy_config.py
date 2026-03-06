@@ -70,7 +70,7 @@ def _load_state_dict_from_checkpoint(checkpoint_path: pathlib.Path) -> dict:
         if str(checkpoint_path).endswith(".safetensors"):
             return safetensors.torch.load_file(str(checkpoint_path), device="cpu")
         else:
-            return torch.load(str(checkpoint_path), map_location="cpu")
+            return torch.load(str(checkpoint_path), map_location="cpu", weights_only=False)
 
     # Directory
     safetensor_files = sorted(glob.glob(str(checkpoint_path / "*.safetensors")))
@@ -86,7 +86,7 @@ def _load_state_dict_from_checkpoint(checkpoint_path: pathlib.Path) -> dict:
     if pt_files:
         state_dict = {}
         for f in pt_files:
-            state_dict.update(torch.load(f, map_location="cpu"))
+            state_dict.update(torch.load(f, map_location="cpu", weights_only=False))
         return state_dict
 
     raise FileNotFoundError(f"No checkpoint files found in {checkpoint_path}")

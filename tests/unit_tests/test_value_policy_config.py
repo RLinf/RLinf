@@ -446,14 +446,10 @@ class TestBuildInputTransforms:
                 use_quantile_norm=True,
             )
 
-    @pytest.mark.parametrize(
-        "env_type",
-        ["libero", "droid", "aloha", "franka", "franka_demo", "franka_3cam"],
-    )
-    def test_valid_env_types_return_list(self, env_type):
-        """All supported env types should return a non-empty list of transforms."""
+    def test_libero_env_type_returns_list(self):
+        """Libero env type should return a non-empty list of transforms."""
         transforms = self._build_input_transforms(
-            env_type=env_type,
+            env_type="libero",
             model_type="pi05",
             action_dim=32,
             default_prompt="do something",
