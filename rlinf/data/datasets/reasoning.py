@@ -76,7 +76,7 @@ class ReasoningDataset(Dataset):
         self.tokenizer = tokenizer
         self.prompt_key = config.data.prompt_key
         self.answer_key = config.data.answer_key
-        self.apply_chat_template = config.data.apply_chat_template
+        self.is_apply_chat_template = config.data.apply_chat_template
         self.filter_prompt_by_length = config.data.get("filter_prompt_by_length", False)
         self.data_size = config.data.get("data_size", None)
         self.process_workers = config.data.get("process_workers", 16)
@@ -89,7 +89,7 @@ class ReasoningDataset(Dataset):
         self.data = self._load_data()
         if self.data_size is not None and self.data_size >= 0:
             self.data = self.data[: self.data_size]
-        if self.apply_chat_template or self.filter_prompt_by_length:
+        if self.is_apply_chat_template or self.filter_prompt_by_length:
             if not self.tokenizer.is_fast:
                 logging.warning(
                     "[MathDataset] self.tokenizer.is_fast is False. use fast implement to speedup."
@@ -140,7 +140,7 @@ class ReasoningDataset(Dataset):
         failed = 0
         try:
             prompts = [item[self.prompt_key] for item in batch]
-            if self.apply_chat_template:
+            if self.is_apply_chat_template:
                 prompts = self.apply_chat_template(prompts)
                 for item, prompt in zip(batch, prompts):
                     item[self.prompt_key] = prompt
