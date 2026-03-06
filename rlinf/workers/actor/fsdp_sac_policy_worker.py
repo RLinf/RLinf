@@ -149,7 +149,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         self.build_lr_schedulers()
 
         self.grad_scaler = self.build_grad_scaler(
-            self.cfg.actor.fsdp_config.amp_grad_scaler
+            self.cfg.actor.fsdp_config.grad_scaler
         )
 
     def build_lr_schedulers(self):

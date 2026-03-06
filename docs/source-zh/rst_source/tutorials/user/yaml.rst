@@ -530,7 +530,7 @@ actor
         enabled: False                    
         precision: "bf16"                 
       
-      amp_grad_scaler:
+      grad_scaler:
         enabled: False      
 
 **顶层：**
@@ -695,11 +695,11 @@ actor
 
 ``actor.fsdp_config.amp_autocast.precision``: FSDP/FSDP2参数，表示AMP使用的数值精度
 
-``actor.fsdp_config.amp_grad_scaler.enabled``: FSDP/FSDP2参数，表示是否启用梯度缩放器
+``actor.fsdp_config.grad_scaler.enabled``: FSDP/FSDP2参数，表示是否启用梯度缩放器
 
-``actor.fsdp_config.amp_grad_scaler.init_scale``: FSDP/FSDP2 参数，表示梯度缩放器的初始缩放因子，用于在训练初期放大梯度以防止数值下溢（Underflow）。
+``actor.fsdp_config.grad_scaler.init_scale``: FSDP/FSDP2 参数，表示梯度缩放器的初始缩放因子，用于在训练初期放大梯度以防止数值下溢（Underflow）。
 
-``actor.fsdp_config.amp_grad_scaler.growth_interval``: FSDP/FSDP2 参数，表示在不发生梯度溢出的情况下，缩放因子增加所需的连续迭代步数。
+``actor.fsdp_config.grad_scaler.growth_interval``: FSDP/FSDP2 参数，表示在不发生梯度溢出的情况下，缩放因子增加所需的连续迭代步数。
 
 reward
 ~~~~~~~~~~~~~~~

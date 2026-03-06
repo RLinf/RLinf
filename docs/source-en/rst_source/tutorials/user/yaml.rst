@@ -551,7 +551,7 @@ actor
         enabled: False                    
         precision: "bf16"                 
       
-      amp_grad_scaler:
+      grad_scaler:
         enabled: False               
 
 **Top-level**
@@ -746,11 +746,11 @@ actor
 
 ``actor.fsdp_config.amp_autocast.precision``: FSDP/FSDP2 parameter, indicating the numerical precision used by AMP.
 
-``actor.fsdp_config.amp_grad_scaler.enabled``: FSDP/FSDP2 parameter, indicating whether the gradient scaler is enabled.
+``actor.fsdp_config.grad_scaler.enabled``: FSDP/FSDP2 parameter, indicating whether the gradient scaler is enabled.
 
-``actor.fsdp_config.amp_grad_scaler.init_scale``: FSDP/FSDP2 parameter, indicating the initial scale factor used by the gradient scaler to prevent numerical underflow.
+``actor.fsdp_config.grad_scaler.init_scale``: FSDP/FSDP2 parameter, indicating the initial scale factor used by the gradient scaler to prevent numerical underflow.
 
-``actor.fsdp_config.amp_grad_scaler.growth_interval``: FSDP/FSDP2 parameter, indicating the number of consecutive steps without gradient overflows required before the scale factor is increased.
+``actor.fsdp_config.grad_scaler.growth_interval``: FSDP/FSDP2 parameter, indicating the number of consecutive steps without gradient overflows required before the scale factor is increased.
 
 reward
 ~~~~~~~~~~~~~~~

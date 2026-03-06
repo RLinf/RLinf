@@ -262,17 +262,17 @@ class FSDPModelManager:
             optimizer=self.optimizer, optim_config=self._cfg.optim
         )
 
-        assert self._cfg.fsdp_config.get("amp_grad_scaler") is not None, (
-            "fsdp_config.amp_grad_scaler must be initialized before this step."
+        assert self._cfg.fsdp_config.get("grad_scaler") is not None, (
+            "fsdp_config.grad_scaler must be initialized before this step."
         )
 
         kwargs = {}
         for key in ["init_scale", "growth_interval"]:
-            value = self._cfg.fsdp_config.amp_grad_scaler.get(key, None)
+            value = self._cfg.fsdp_config.grad_scaler.get(key, None)
             if value is not None:
                 kwargs[key] = value
         self.grad_scaler = self.build_grad_scaler(
-            self._cfg.fsdp_config.amp_grad_scaler.get("enabled", False), **kwargs
+            self._cfg.fsdp_config.grad_scaler.get("enabled", False), **kwargs
         )
 
     def get_model_state_dict(self, cpu_offload: bool, full_state_dict: bool) -> dict:
