@@ -314,7 +314,7 @@ class ReasoningRunner:
     def _compute_flops_metrics(self, time_metrics, act_rollout_metrics) -> dict:
         rollout_time = time_metrics.get("rollout")
         inference_time = time_metrics.get("inference", -1)
-        training_time = time_metrics.get("training")
+        training_time = time_metrics.get("actor/training")
 
         num_gpus_actor = self.component_placement.actor_world_size
         num_gpus_rollout = self.component_placement.rollout_world_size
