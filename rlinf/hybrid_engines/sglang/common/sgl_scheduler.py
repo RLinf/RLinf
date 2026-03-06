@@ -300,7 +300,6 @@ class Scheduler(_Scheduler):
         return_logprob: bool,
         skip_req=None,
     ):
-
         # for sglang 0.5.0 and later, we use the original _handle_batch_output
         if not self.patch_return_output_ids:
             return super().stream_output_generation(reqs, return_logprob, skip_req)

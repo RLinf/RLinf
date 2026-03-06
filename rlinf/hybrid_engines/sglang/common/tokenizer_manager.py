@@ -18,6 +18,7 @@ from typing import Optional
 import fastapi
 from packaging.version import parse
 from sglang.srt.managers.tokenizer_manager import TokenizerManager as _TokenizerManager
+
 try:
     from sglang.srt.managers.tokenizer_manager import _Communicator
 except ImportError:

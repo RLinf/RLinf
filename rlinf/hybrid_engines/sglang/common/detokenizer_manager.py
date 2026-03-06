@@ -13,6 +13,9 @@
 # limitations under the License.
 
 from sglang.srt.managers.detokenizer_manager import (
+    DetokenizerManager as _DetokenizerManager,
+)
+from sglang.srt.managers.detokenizer_manager import (
     PortArgs,
     ServerArgs,
     configure_logger,
@@ -23,9 +26,7 @@ from sglang.srt.managers.detokenizer_manager import (
     setproctitle,
     signal,
 )
-from sglang.srt.managers.detokenizer_manager import (
-    DetokenizerManager as _DetokenizerManager,
-)
+
 try:
     from sglang.srt.managers.io_struct import BatchTokenIDOut
 except ImportError:
