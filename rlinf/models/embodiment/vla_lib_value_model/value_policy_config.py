@@ -205,7 +205,7 @@ def create_trained_value_policy(
 
     Args:
         checkpoint_dir: Path to checkpoint directory
-        env_type: Environment type ("libero", "droid", "aloha", "franka", "franka_3cam")
+        env_type: Environment type (e.g., "libero")
         model_type: Model type ("pi0", "pi05")
         default_prompt: Default prompt to inject if none provided
         norm_stats: Normalization stats (loaded from checkpoint if not provided)
@@ -496,101 +496,6 @@ def _build_input_transforms(
             ]
         )
 
-    elif env_type == "droid":
-        from rlinf.datasets.vla_lib.lerobot_datasets.io_processing.droid import (
-            DroidInputs,
-        )
-
-        input_transforms.append(InjectDefaultPrompt(default_prompt))
-        input_transforms.append(DroidInputs())
-
-        if norm_stats is not None:
-            input_transforms.append(
-                Normalize(
-                    norm_stats,
-                    use_quantiles=use_quantile_norm,
-                    skip_dims=action_norm_skip_dims,
-                )
-            )
-
-        input_transforms.extend(
-            [
-                ResizeImages(224, 224),
-                PadStatesAndActions(model_action_dim=action_dim),
-            ]
-        )
-
-    elif env_type == "aloha":
-        from rlinf.datasets.vla_lib.lerobot_datasets.io_processing.aloha import (
-            AlohaInputs,
-        )
-
-        input_transforms.append(InjectDefaultPrompt(default_prompt))
-        input_transforms.append(AlohaInputs(adapt_to_pi=True))
-
-        if norm_stats is not None:
-            input_transforms.append(
-                Normalize(
-                    norm_stats,
-                    use_quantiles=use_quantile_norm,
-                    skip_dims=action_norm_skip_dims,
-                )
-            )
-
-        input_transforms.extend(
-            [
-                ResizeImages(224, 224),
-                PadStatesAndActions(model_action_dim=action_dim),
-            ]
-        )
-
-    elif env_type in ["franka", "franka_demo"]:
-        from rlinf.datasets.vla_lib.lerobot_datasets.io_processing.franka import (
-            FrankaInputs,
-        )
-
-        input_transforms.append(InjectDefaultPrompt(default_prompt))
-        input_transforms.append(FrankaInputs(model_type=model_type))
-
-        if norm_stats is not None:
-            input_transforms.append(
-                Normalize(
-                    norm_stats,
-                    use_quantiles=use_quantile_norm,
-                    skip_dims=action_norm_skip_dims,
-                )
-            )
-
-        input_transforms.extend(
-            [
-                ResizeImages(224, 224),
-                PadStatesAndActions(model_action_dim=action_dim),
-            ]
-        )
-
-    elif env_type == "franka_3cam":
-        from rlinf.datasets.vla_lib.lerobot_datasets.io_processing.franka_3cam import (
-            FrankaInputs as Franka3CamInputs,
-        )
-
-        input_transforms.append(InjectDefaultPrompt(default_prompt))
-        input_transforms.append(Franka3CamInputs())
-
-        if norm_stats is not None:
-            input_transforms.append(
-                Normalize(
-                    norm_stats,
-                    use_quantiles=use_quantile_norm,
-                    skip_dims=action_norm_skip_dims,
-                )
-            )
-
-        input_transforms.extend(
-            [
-                ResizeImages(224, 224),
-                PadStatesAndActions(model_action_dim=action_dim),
-            ]
-        )
     else:
         raise ValueError(f"Unknown environment type: {env_type}")
 
