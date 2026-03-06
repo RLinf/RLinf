@@ -65,7 +65,7 @@ API 密钥
 
 准备以下资源：
 
-- `WideSeek-R1-Corpus <https://huggingface.co/datasets/RLinf/WideSeek-R1-Corpus>`__
+- `Wiki-2018-Corpus <https://huggingface.co/datasets/RLinf/Wiki-2018-Corpus>`__
 - `intfloat/e5-base-v2 <https://huggingface.co/intfloat/e5-base-v2>`__
 
 语料包包含：
@@ -81,7 +81,7 @@ API 密钥
 
    .. code-block:: bash
 
-      cd /PATH/TO/WideSeek-R1-Corpus/qdrant
+      cd /PATH/TO/Wiki-2018-Corpus/qdrant
       ./qdrant
 
    该进程必须持续运行。建议在 ``tmux`` 中启动。
@@ -94,7 +94,7 @@ API 密钥
 
 3. 编辑 `examples/wideseek_r1/search_engine/launch_qdrant.sh` 并更新以下变量：
 
-   - ``pages_file``：``/PATH/TO/WideSeek-R1-Corpus/wiki_webpages.jsonl``
+   - ``pages_file``：``/PATH/TO/Wiki-2018-Corpus/wiki_webpages.jsonl``
    - ``retriever_path``：``/PATH/TO/e5-model``
    - ``qdrant_url``：例如 ``http://<host_ip>:6333``
 

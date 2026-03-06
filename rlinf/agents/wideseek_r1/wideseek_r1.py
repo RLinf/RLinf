@@ -23,9 +23,16 @@ from omegaconf import DictConfig
 from rlinf.agents.wideseek_r1.utils.metrics import _compute_rollout_metrics
 from rlinf.agents.wideseek_r1.utils.prompt_utils import (
     get_access_summary_messages,
+    get_access_summary_tool_message,
+    get_access_tool_message,
+    get_first_turn_hint,
+    get_next_turn_hint,
+    get_planner_subtask_failed_message,
+    get_planner_subtask_result_message,
     get_prompt_planner,
     get_prompt_single_agent,
     get_prompt_worker,
+    get_search_tool_message,
 )
 from rlinf.agents.wideseek_r1.utils.reward import (
     credit_assignment,
@@ -312,6 +319,114 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
         )
         return worker_outputs_buffer, answer_text, total_turn_list, task_failed
 
+    def _set_max_turns(self, role: str) -> int:
+        if role == "planner":
+            return self.cfg.agentloop.get("max_planner_turns", 10)
+        if role == "single":
+            return self.cfg.agentloop.get("max_sa_turns", 50)
+        if role == "worker":
+            return self.cfg.agentloop.get("max_worker_turns", 20)
+        raise ValueError(f"illegal role {role}")
+
+    def _build_message_history_and_tools(
+        self,
+        origin_question: str,
+        role: str,
+        is_markdown: bool,
+        language: str,
+        main_task: str | None,
+    ) -> tuple[list[dict], list[dict]]:
+        """Build role-specific prompt history and exposed tool descriptions.
+
+        Args:
+            origin_question: Query text for this role loop.
+            role: Current role (`planner`, `worker`, or `single`).
+            is_markdown: Whether markdown answer format is required.
+            language: Prompt language identifier (`en` or `zh`).
+            main_task: Parent task text required for worker prompts.
+
+        Returns:
+            A tuple of `(message_history, tools)` for chat-template rendering.
+        """
+        tools_description = (
+            tools_description_zh if language == "zh" else tools_description_en
+        )
+        if role == "planner":
+            message_history = get_prompt_planner(
+                origin_question, is_markdown=is_markdown, language=language
+            )
+            tools = [tools_description["create_sub_agents"]]
+        elif role == "worker":
+            assert main_task is not None, "Worker must have main_task provided"
+            message_history = get_prompt_worker(
+                main_task, origin_question, language=language
+            )
+            tools = [tools_description["search"], tools_description["access"]]
+        elif role == "single":
+            message_history = get_prompt_single_agent(
+                origin_question, is_markdown=is_markdown, language=language
+            )
+            tools = [
+                tools_description["search_single_agent"],
+                tools_description["access_single_agent"],
+            ]
+        else:
+            raise ValueError(f"Invalid role: {role}")
+        return message_history, tools
+
+    def _mark_role_failed_turns(
+        self,
+        *,
+        output_buffer: list[AgentLoopOutput],
+        role: str,
+        turn_idx: int,
+        max_turns: int,
+        succ_end: bool,
+        context_failed: bool,
+        tool_response_failed: bool,
+    ) -> bool:
+        """Apply failure flags to turns for one role and return task failure.
+
+        Args:
+            output_buffer: Collected per-turn outputs for this role execution.
+            role: Current role whose turns should be marked.
+            turn_idx: Last executed loop index (zero-based).
+            max_turns: Maximum allowed turns for this role.
+            succ_end: Whether the role loop ended successfully.
+            context_failed: Whether prompt/response length hit context limit.
+            tool_response_failed: Whether tool feedback exceeded available space.
+
+        Returns:
+            Boolean task failure indicator for this role execution.
+        """
+        max_turn_limit_failed = (
+            not succ_end
+            and not context_failed
+            and not tool_response_failed
+            and turn_idx + 1 >= max_turns
+        )
+
+        if max_turn_limit_failed:
+            for turn in output_buffer:
+                if turn.extra_fields["role"] == role:
+                    turn.extra_fields["max_turn_limit_failed"] = True
+
+        if context_failed or tool_response_failed:
+            for turn in output_buffer:
+                if turn.extra_fields["role"] == role:
+                    turn.extra_fields["context_failed"] = True
+
+        if (
+            context_failed
+            and len(output_buffer) >= 1
+            and len(output_buffer[-1].response_ids) >= 8000
+        ):
+            output_buffer[-1].extra_fields["turn_repeat_failed"] = True
+
+        task_failed = max_turn_limit_failed or context_failed or tool_response_failed
+        assert task_failed != succ_end
+        return task_failed
+
     async def run_one_query_role(
         self,
         question: str,
@@ -339,47 +454,16 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
         output_buffer = []
         total_turn_list = []
 
-        tools_description = (
-            tools_description_zh if language == "zh" else tools_description_en
+        message_history, tools = self._build_message_history_and_tools(
+            origin_question=origin_question,
+            role=role,
+            is_markdown=is_markdown,
+            language=language,
+            main_task=main_task,
         )
-        # Build message history with appropriate prompts
-        if role == "planner":
-            message_history = get_prompt_planner(
-                origin_question, is_markdown=is_markdown, language=language
-            )
-            # Planner uses subtask tool
-            tools = [tools_description["create_sub_agents"]]
-        elif role == "worker":
-            assert main_task is not None, "Worker must have main_task provided"
-            message_history = get_prompt_worker(
-                main_task, origin_question, language=language
-            )
-            tools = [tools_description["search"], tools_description["access"]]
-        elif role == "single":
-            message_history = get_prompt_single_agent(
-                origin_question, is_markdown=is_markdown, language=language
-            )
-            tools = [
-                tools_description["search_single_agent"],
-                tools_description["access_single_agent"],
-            ]
-        else:
-            raise ValueError(f"Invalid role: {role}")
+        max_turns = self._set_max_turns(role=role)
 
-        if role == "planner":
-            max_turns = self.cfg.agentloop.get("max_planner_turns", 10)
-        elif role == "single":
-            max_turns = self.cfg.agentloop.get("max_sa_turns", 50)
-        elif role == "worker":
-            max_turns = self.cfg.agentloop.get("max_worker_turns", 20)
-        else:
-            raise ValueError(f"illegal role {role}")
-
-        turn_hint = (
-            f"\n\nThis is your first turn to answer the question. You must finish your answer within {max_turns} turns"
-            if language == "en"
-            else f"\n\n这是你回答该问题的第一轮。你必须在 {max_turns} 轮之内完成你的回答"
-        )
+        turn_hint = get_first_turn_hint(max_turns=max_turns, language=language)
         assert message_history[-1]["role"] == "user"
         message_history[-1]["content"] = message_history[-1]["content"] + turn_hint
 
@@ -390,12 +474,12 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
 
         # Initialize tracking variables
         context_failed = False
-        max_turn_limit_failed = False
         tool_response_failed = False
 
         succ_end = False
         sub_traj_num = 0
 
+        turn_idx = -1
         for turn_idx in range(max_turns):
             max_resp_len = self.max_total_len - len(prompt_ids)
             if max_resp_len <= 0:
@@ -494,21 +578,26 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
                     subtask_text = tool_requests[idx].arguments["subtask"]
                     if not task_failed:
                         tool_messages_text.append(
-                            f"# Subtask {idx + 1}:\n{subtask_text}\n# Result:\n{worker_summary}"
-                            if language == "en"
-                            else f"# 子任务 {idx + 1}:\n{subtask_text}\n# 结果:\n{worker_summary}"
+                            get_planner_subtask_result_message(
+                                subtask_idx=idx + 1,
+                                subtask_text=subtask_text,
+                                worker_summary=worker_summary,
+                                language=language,
+                            )
                         )
                     else:
                         tool_messages_text.append(
-                            f"# Subtask {idx + 1}:\n{subtask_text}\n# Result:\nThe current subagent exceeded its context window limit while executing this subtask, which caused the failure. Please retry."
-                            if language == "en"
-                            else f"# 子任务 {idx + 1}:\n{subtask_text}\n# 结果:\n当前子智能体在执行该子任务时超出其上下文窗口限制，导致失败。请重试。"
+                            get_planner_subtask_failed_message(
+                                subtask_idx=idx + 1,
+                                subtask_text=subtask_text,
+                                language=language,
+                            )
                         )
 
-                turn_hint = (
-                    f"\n\nYour next answer will be on turn {turn_idx + 2}. You MUST finish the entire answer by turn {max_turns}."
-                    if language == "en"
-                    else f"\n\n你的下一次回答将是第 {turn_idx + 2} 轮。你必须在第 {max_turns} 轮之内完成整个回答。"
+                turn_hint = get_next_turn_hint(
+                    next_turn_idx=turn_idx + 2,
+                    max_turns=max_turns,
+                    language=language,
                 )
                 tool_messages.append(
                     {
@@ -532,9 +621,11 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
                     if tool_request.name == "search":
                         query = tool_request.arguments["query"]
                         tool_messages_text.append(
-                            f"# Search query:\n{query}\n# Result:\n{tool_response.text}"
-                            if language == "en"
-                            else f"# 搜索查询:\n{query}\n# 结果:\n{tool_response.text}"
+                            get_search_tool_message(
+                                query=query,
+                                search_result=tool_response.text,
+                                language=language,
+                            )
                         )
                     elif tool_request.name == "access":
                         url = tool_request.arguments["url"]
@@ -548,9 +639,11 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
                             )
                         else:
                             tool_messages_text.append(
-                                f"# Access URL:\n{url}\n# Result:\n{page_content}"
-                                if language == "en"
-                                else f"# 访问URL:\n{url}\n# 结果:\n{page_content}"
+                                get_access_tool_message(
+                                    url=url,
+                                    page_content=page_content,
+                                    language=language,
+                                )
                             )
                     else:
                         raise ValueError(
@@ -562,16 +655,17 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
                     summaries = await asyncio.gather(*coros)
                     for job, summary in zip(access_summary_jobs, summaries):
                         idx, url, info_to_extract, _ = job
-                        tool_messages_text[idx] = (
-                            f"# Access URL:\n{url}\n# Info to extract:\n{info_to_extract}\n# Result:\n{summary}"
-                            if language == "en"
-                            else f"# 访问URL:\n{url}\n# 需要提取的信息:\n{info_to_extract}\n# 结果:\n{summary}"
+                        tool_messages_text[idx] = get_access_summary_tool_message(
+                            url=url,
+                            info_to_extract=info_to_extract,
+                            summary=summary,
+                            language=language,
                         )
 
-                turn_hint = (
-                    f"\n\nYour next answer will be on turn {turn_idx + 2}. You MUST finish the entire answer by turn {max_turns}."
-                    if language == "en"
-                    else f"\n\n你的下一次回答将是第 {turn_idx + 2} 轮。你必须在第 {max_turns} 轮之内完成整个回答。"
+                turn_hint = get_next_turn_hint(
+                    next_turn_idx=turn_idx + 2,
+                    max_turns=max_turns,
+                    language=language,
                 )
                 tool_messages.append(
                     {
@@ -591,29 +685,15 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
             output_buffer.extend(worker_buffer)
             total_turn_list.extend(worker_turn_list)
 
-        if not succ_end and not context_failed and not tool_response_failed:
-            if turn_idx + 1 >= max_turns:
-                max_turn_limit_failed = True
-
-        if max_turn_limit_failed:
-            for turn in output_buffer:
-                if turn.extra_fields["role"] == role:
-                    turn.extra_fields["max_turn_limit_failed"] = True
-
-        if context_failed or tool_response_failed:
-            for turn in output_buffer:
-                if turn.extra_fields["role"] == role:
-                    turn.extra_fields["context_failed"] = True
-
-        if (
-            context_failed
-            and len(output_buffer) >= 1
-            and len(output_buffer[-1].response_ids) >= 8000
-        ):
-            output_buffer[-1].extra_fields["turn_repeat_failed"] = True
-
-        task_failed = max_turn_limit_failed or context_failed or tool_response_failed
-        assert task_failed != succ_end
+        task_failed = self._mark_role_failed_turns(
+            output_buffer=output_buffer,
+            role=role,
+            turn_idx=turn_idx,
+            max_turns=max_turns,
+            succ_end=succ_end,
+            context_failed=context_failed,
+            tool_response_failed=tool_response_failed,
+        )
 
         # Generate summary
         if role == "planner":

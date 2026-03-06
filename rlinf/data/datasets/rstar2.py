@@ -60,7 +60,7 @@ class Rstar2Dataset(ReasoningDataset):
         tokenizer: PreTrainedTokenizer,
     ):
         if config.rollout.get("custom_chat_template", None) is not None:
-            self.tokenizer.chat_template = config.rollout.custom_chat_template
+            self.chat_template = config.rollout.custom_chat_template
         self.apply_chat_template_kwargs = config.data.get(
             "apply_chat_template_kwargs", {}
         )
@@ -71,6 +71,9 @@ class Rstar2Dataset(ReasoningDataset):
         """
         Use tokenizer to apply chat template to the texts.
         """
+        if self.chat_template is not None:
+            self.tokenizer.chat_template = self.chat_template
+            self.chat_template = None
         prompts = self.tokenizer.apply_chat_template(
             texts,
             tools=self.tool_schemas,

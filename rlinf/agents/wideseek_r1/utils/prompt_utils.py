@@ -182,3 +182,80 @@ def get_access_summary_messages(info_to_extract, page_content):
         {"role": "user", "content": user_prompt},
     ]
     return message
+
+
+def get_first_turn_hint(max_turns: int, language: str) -> str:
+    if language == "en":
+        return (
+            "\n\nThis is your first turn to answer the question. "
+            f"You must finish your answer within {max_turns} turns"
+        )
+    return f"\n\n这是你回答该问题的第一轮。你必须在 {max_turns} 轮之内完成你的回答"
+
+
+def get_next_turn_hint(next_turn_idx: int, max_turns: int, language: str) -> str:
+    if language == "en":
+        return (
+            f"\n\nYour next answer will be on turn {next_turn_idx}. "
+            f"You MUST finish the entire answer by turn {max_turns}."
+        )
+    return (
+        f"\n\n你的下一次回答将是第 {next_turn_idx} 轮。"
+        f"你必须在第 {max_turns} 轮之内完成整个回答。"
+    )
+
+
+def get_planner_subtask_result_message(
+    subtask_idx: int,
+    subtask_text: str,
+    worker_summary: str,
+    language: str,
+) -> str:
+    if language == "en":
+        return f"# Subtask {subtask_idx}:\n{subtask_text}\n# Result:\n{worker_summary}"
+    return f"# 子任务 {subtask_idx}:\n{subtask_text}\n# 结果:\n{worker_summary}"
+
+
+def get_planner_subtask_failed_message(
+    subtask_idx: int,
+    subtask_text: str,
+    language: str,
+) -> str:
+    if language == "en":
+        return (
+            f"# Subtask {subtask_idx}:\n{subtask_text}\n# Result:\n"
+            "The current subagent exceeded its context window limit while "
+            "executing this subtask, which caused the failure. Please retry."
+        )
+    return (
+        f"# 子任务 {subtask_idx}:\n{subtask_text}\n# 结果:\n"
+        "当前子智能体在执行该子任务时超出其上下文窗口限制，导致失败。请重试。"
+    )
+
+
+def get_search_tool_message(query: str, search_result: str, language: str) -> str:
+    if language == "en":
+        return f"# Search query:\n{query}\n# Result:\n{search_result}"
+    return f"# 搜索查询:\n{query}\n# 结果:\n{search_result}"
+
+
+def get_access_tool_message(url: str, page_content: str, language: str) -> str:
+    if language == "en":
+        return f"# Access URL:\n{url}\n# Result:\n{page_content}"
+    return f"# 访问URL:\n{url}\n# 结果:\n{page_content}"
+
+
+def get_access_summary_tool_message(
+    url: str,
+    info_to_extract: str | None,
+    summary: str,
+    language: str,
+) -> str:
+    if language == "en":
+        return (
+            f"# Access URL:\n{url}\n# Info to extract:\n{info_to_extract}\n"
+            f"# Result:\n{summary}"
+        )
+    return (
+        f"# 访问URL:\n{url}\n# 需要提取的信息:\n{info_to_extract}\n# 结果:\n{summary}"
+    )
