@@ -19,14 +19,6 @@ This module provides robot-specific transforms for RL value learning.
 Extends the VLA io_processing with RL-specific output handling.
 """
 
-# Re-export VLA transforms for convenience
-from rlinf.datasets.vla_lib.lerobot_datasets.io_processing.franka import (
-    FrankaInputs,
-    FrankaOutputs,
-    convert_action_from_rot6d,
-    convert_action_to_rot6d,
-    convert_state_to_rot6d,
-)
 from rlinf.datasets.vla_lib.lerobot_datasets.io_processing.libero import (
     LiberoInputs,
     LiberoOutputs,
@@ -49,11 +41,6 @@ from .value_transforms import (
 
 __all__ = [
     # VLA transforms
-    "FrankaInputs",
-    "FrankaOutputs",
-    "convert_state_to_rot6d",
-    "convert_action_to_rot6d",
-    "convert_action_from_rot6d",
     "LiberoInputs",
     "LiberoOutputs",
     # RL value transforms

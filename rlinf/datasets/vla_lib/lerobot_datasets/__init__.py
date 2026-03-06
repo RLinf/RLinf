@@ -21,12 +21,8 @@ LeRobot format datasets for VLA training.
 
 from .config import (
     DATASET_CONFIGS,
-    AlohaDataConfig,
     DataConfig,
     DataConfigFactory,
-    DroidDataConfig,
-    Franka3CamDataConfig,
-    FrankaDataConfig,
     LiberoDataConfig,
     LiberoV2DataConfig,
     create_data_config_factory,
@@ -81,10 +77,6 @@ __all__ = [
     "DataConfigFactory",
     "LiberoDataConfig",
     "LiberoV2DataConfig",
-    "DroidDataConfig",
-    "AlohaDataConfig",
-    "FrankaDataConfig",
-    "Franka3CamDataConfig",
     "DATASET_CONFIGS",
     "get_dataset_config",
     "detect_robot_type",

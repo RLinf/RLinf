@@ -68,11 +68,6 @@ from rlinf.datasets.vla_lib import (  # noqa: E402
     add_value_tokens_to_tokenizer,
     create_return_discretizer,
     create_rl_config,
-    create_rl_dataset,
-    create_single_value_dataset_from_config,
-    create_value_dataset,
-    create_value_mixture_dataset,
-    create_value_mixture_dataset_from_config,
     get_all_value_tokens,
     # Value tokens
     get_value_token,
@@ -87,15 +82,10 @@ __all__ = [
     "load_return_range_from_norm_stats",
     # RL Dataset
     "LeRobotRLDataset",
-    "create_rl_dataset",
     # Value Dataset
     "ValueDataset",
-    "create_value_dataset",
     # Value Mixture Dataset
     "ValueMixtureDataset",
-    "create_value_mixture_dataset",
-    "create_value_mixture_dataset_from_config",
-    "create_single_value_dataset_from_config",
     # DataLoaders
     "CFGDataLoaderImpl",
     "VlaLibValueModelDataLoaderImpl",

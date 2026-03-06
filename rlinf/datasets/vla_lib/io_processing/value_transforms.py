@@ -24,6 +24,7 @@ from typing import Any, Optional
 
 import numpy as np
 import torch
+
 from rlinf.datasets.vla_lib.lerobot_datasets.normalize import (
     NormStats,
     load_stats,
