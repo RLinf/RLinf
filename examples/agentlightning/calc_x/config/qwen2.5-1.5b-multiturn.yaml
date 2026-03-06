@@ -1,0 +1,293 @@
+defaults:
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,rollout,reward: all
+
+
+runner:
+  task_type: reasoning
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: rlinf
+    experiment_name: ${runner.experiment_name}
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 2
+  max_steps: -1
+
+  val_check_interval: 32
+  save_interval: 32
+
+  seq_length: 6144
+
+  enable_dynamic_batch_size: True
+  max_tokens_per_mbs: 11008
+
+  resume_dir: null
+  experiment_name: calc-agl-qwen2.5-1.5b-instruct
+  output_dir: ../results
+
+algorithm:
+  group_size: 4
+  n_minibatches: 4
+  training_batch_size_per_gpu: 1
+  rollout_batch_size_per_gpu: null 
+  
+  logprob_forward_micro_batch_size: 4
+
+  val_rollout_batch_size_per_gpu: 1
+
+  recompute_logprobs: False
+  shuffle_rollout: False
+
+  loss_type: actor
+  loss_agg_func: "token-mean"
+  kl_beta: 0.0
+  kl_penalty_type: low_var_kl
+  ratio_clip_eps: 0.2
+  entropy_bonus: 0.0
+  calculate_entropy: False
+  clip_ratio_c: 3.0
+  clip_ratio_low: 0.2
+  clip_ratio_high: 0.3
+
+  adv_type: grpo_dynamic
+  advantage_mode: turn 
+  normalize_advantages: False #
+  early_stop_imp_ratio: null
+  use_valid_token_scale: False
+
+  sampling_params:
+    do_sample: True
+    temperature: 1.0
+    top_k: 1000000
+    top_p: 1.0
+    repetition_penalty: 1.0
+    max_new_tokens: 2048
+
+
+inference:
+  model_type: ${rollout.model.model_type}
+  group_name: "InferenceGroup"
+  load_from_actor: True
+  model:
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: False
+agentloop:
+  is_dynamic_rollout_batch: True
+rollout:
+  group_name: "RolloutGroup"
+
+  gpu_memory_utilization: 0.6
+  model:
+    model_path: /path/to/model/Qwen2.5-1.5B-Instruct
+    model_type: qwen2.5
+    precision: ${actor.model.precision}
+  enforce_eager: False
+  distributed_executor_backend: mp
+  disable_log_stats: False
+  detokenize: True
+  padding: null
+  eos: null
+
+  rollout_backend: sglang
+
+  sglang:
+    attention_backend: triton
+    decode_log_interval: 500000
+    use_torch_compile: False
+    torch_compile_max_bs: 128
+    tool_call_parser: qwen25
+
+  vllm:
+    attention_backend: FLASH_ATTN
+    enable_chunked_prefill: True
+    enable_prefix_caching: True
+    enable_flash_infer_sampler: True
+    max_num_batched_tokens: null
+    torch_profiler_dir: null
+
+  return_logprobs: ${not:${algorithm.recompute_logprobs}}
+
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+  
+  validate_weight: False
+  validate_weight_first_sync: True
+  validate_save_dir: null
+  print_outputs: False
+
+  max_running_requests: 128
+  cuda_graph_max_bs: 128
+  is_eval: False
+
+data:
+  type: math
+  max_prompt_length: 4096
+  filter_prompt_by_length: False
+  rollout_batch_size: 32
+  val_rollout_batch_size: null
+  num_workers: 8
+  prompt_key: question
+  answer_key: result
+  apply_chat_template: False
+  shuffle: True
+  validation_shuffle: False
+  seed: 42
+  train_data_paths: ["/path/to/train.parquet"]
+  val_data_paths: ["/path/to/test.parquet"]
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: megatron
+  mcore_gpt: True
+  spec_name: decoder_gpt
+
+  offload_optimizer: True
+  offload_weight: True
+  offload_grad: True
+  enable_dp_load_balance: True
+
+  calculate_flops: False
+
+  seed: 42
+
+  model:
+    megatron_checkpoint: null
+    precision: bf16
+    add_bias_linear: False
+
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+
+    activation: swiglu
+    sequence_parallel: False
+
+    recompute_method: block
+    recompute_granularity: full
+    recompute_num_layers: 28
+
+    seq_length: ${runner.seq_length}
+    encoder_seq_length: ${runner.seq_length}
+
+    normalization: rmsnorm
+
+    position_embedding_type: rope
+
+    apply_rope_fusion: True
+    bias_dropout_fusion: False
+    persist_layer_norm: False
+    bias_activation_fusion: False
+    attention_softmax_in_fp32: True
+    batch_p2p_comm: False
+    variable_seq_lengths: True
+    gradient_accumulation_fusion: False
+    moe_token_dispatcher_type: alltoall
+    use_cpu_initialization: False
+
+  optim:
+    optimizer: adam
+    bf16: True
+    fp16: False
+    lr: 1.0e-06
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-08
+    min_lr: 0.0
+    weight_decay: 0.01
+    use_distributed_optimizer: True
+    overlap_grad_reduce: False
+    overlap_param_gather: False
+    optimizer_enable_pin: False
+    overlap_param_gather_with_optimizer_step: False
+    clip_grad: 1.0
+    loss_scale: 65536
+
+  lr_sched:
+    lr_warmup_fraction: 0.0
+    lr_warmup_init: 0.0
+    lr_warmup_iters: 0
+    max_lr: 1.0e-06
+    min_lr: 0.0
+    lr_decay_style: constant
+    lr_decay_iters: 662
+    start_weight_decay: null
+    end_weight_decay: null
+
+  tokenizer:
+    tokenizer_model: ${rollout.model.model_path}
+    use_fast: False
+    trust_remote_code: True
+    padding_side: 'right'
+
+  megatron:
+    ddp_bucket_size: null
+    distributed_backend: nccl
+    distributed_timeout_minutes: 30
+    ckpt_format: torch
+    use_dist_ckpt: False
+    tp_comm_bootstrap_backend: nccl
+    tp_comm_overlap_cfg: null
+    use_hf_ckpt: True
+    use_profiler: False
+
+    ckpt_convertor:
+      model: Qwen2.5-1.5B
+      model_type: null
+      hf_model_path: ${rollout.model.model_path}
+      save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
+      use_gpu_num : 0
+      use_gpu_index: null
+      process_num: 16
+      tensor_model_parallel_size: ${actor.model.tensor_model_parallel_size}
+      pipeline_model_parallel_size: ${actor.model.pipeline_model_parallel_size}
+
+    profiler:
+      output_dir: ${runner.output_dir}/${runner.experiment_name}/profiler
+      activities: ["cpu", "cuda"]
+      record_shapes: False
+      profile_memory: False
+      with_stack: False
+      with_flops: False
+      with_modules: True
+      export_tensorboard: True
+      export_chrome_trace: False
+      chrome_filename_prefix: "chrome_trace"
+      schedule_warmup: 2
+      schedule_active: 1
+      schedule_repeat: 1
+
+reward:
+  group_name: "RewardGroup"
+  use_reward_model: False
+  reward_type: code_offline
+  reward_scale: 1.0
+  use_prompt: True
+
+  tokenizer:
+    tokenizer_model: ${actor.tokenizer.tokenizer_model}
+    use_fast: ${actor.tokenizer.use_fast}
+    trust_remote_code: ${actor.tokenizer.trust_remote_code}
+    padding_side: ${actor.tokenizer.padding_side}
+
+critic:
+  use_critic_model: False
+
+
+agentlightning:
+  n_runners: 10
+
+
+server:
+  sglang_http:
+    host: 0.0.0.0
+    port: 8020

@@ -82,6 +82,40 @@ jobs:
           uv cache prune
 
 
+  agentlightning-test:
+    runs-on: reason
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create reason environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
+          bash requirements/install.sh reason
+          
+      - name: Install dependencies
+        run: |
+          source .venv/bin/activate
+          uv pip install "agentlightning==0.3.0" "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" "mcp-server-calculator"
+
+      - name: AgentLightning calc_x multiturn 
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/agentlightning/run.sh
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+
   reason-qwen-grpo-test-rollout-logprobs:
     runs-on: reason
     steps:
