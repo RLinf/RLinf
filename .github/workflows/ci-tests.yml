@@ -101,6 +101,8 @@ jobs:
               - 'rlinf/agents/**'
               - 'rlinf/workers/actor/ma_megatron_actor_worker.py'
               - 'rlinf/workers/actor/megatron_actor_worker.py'
+              - 'rlinf/workers/critic/**'
+              - 'rlinf/workers/megatron_worker.py'
               - 'rlinf/workers/agent/**'
               - 'rlinf/workers/inference/**'
               - 'rlinf/workers/rollout/server/**'
