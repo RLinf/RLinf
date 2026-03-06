@@ -19,7 +19,6 @@ model:
   model_path: "/path/to/pi05_base_pytorch"
 
   # ----- Critic architecture (must match training config) -----
-  model_type_critic: "value"
   critic_expert_variant: "gemma_100m"
 
   # Value head config (must match training)

@@ -16,19 +16,15 @@
 Value Policy class for VLA models with batch inference support.
 
 This module provides a ValuePolicy class that predicts return values instead of actions.
-Extended from vla_lib to support batch inference for faster advantage computation.
-
 Uses expert-based categorical value prediction via PI05ValueCritic.
 """
 
 import logging
-import re
 import time
 from typing import Any, Optional, Sequence
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from rlinf.datasets.vla_lib.lerobot_datasets.transforms import (
     DataTransformFn,
     compose,
@@ -42,18 +38,9 @@ logger = logging.getLogger(__name__)
 class ValuePolicy(BasePolicy):
     """Policy that predicts return values instead of actions.
 
-    This mirrors Policy class architecture but outputs value predictions:
-    - Input transforms are applied to observations before inference
-    - Model predicts value via VLM token distribution or expert direct output
-    - Value is computed based on value_mode
-
-    Extended to support batch inference via infer_batch() method.
+    Uses PI05ValueCritic's expert model for direct categorical value prediction.
+    Supports both single and batch inference.
     """
-
-    # Expert modes that use PI05ValueCritic's predict_value() directly
-    EXPERT_MODES = ("expert_categorical",)
-    # VLM modes that use token logits prediction
-    VLM_MODES = ("continuous", "discrete")
 
     def __init__(
         self,
@@ -63,27 +50,22 @@ class ValuePolicy(BasePolicy):
         metadata: Optional[dict[str, Any]] = None,
         device: str = "cuda",
         checkpoint_dir: Optional[str] = None,
-        value_mode: str = "continuous",
         num_return_bins: int = 201,
         return_min: float = -1.0,
         return_max: float = 0.0,
-        use_ar_generation: bool = False,
         **kwargs,
     ):
         """Initialize value policy.
 
         Args:
-            model: PI05 model or PI05ValueCritic for value prediction
+            model: PI05ValueCritic for value prediction
             transforms: Input transforms
             metadata: Policy metadata
             device: Device to run inference on
             checkpoint_dir: Checkpoint directory
-            value_mode: Inference mode:
-                - "expert_categorical": Expert model, categorical output
-            num_return_bins: Number of return bins (for VLM modes)
+            num_return_bins: Number of return bins
             return_min: Minimum return value
             return_max: Maximum return value
-            use_ar_generation: If True and mode is "discrete", use AR generation
         """
         self._model = model
         self._input_transform = compose(transforms)
@@ -91,33 +73,16 @@ class ValuePolicy(BasePolicy):
         self._checkpoint_dir = checkpoint_dir
 
         self.metadata = metadata or {}
-        self.value_mode = value_mode
         self.num_return_bins = num_return_bins
         self.return_min = return_min
         self.return_max = return_max
-        self.use_ar_generation = use_ar_generation
-        self._is_expert_mode = value_mode in self.EXPERT_MODES
-
-        # Compute bin centers (used for VLM modes)
-        bin_width = (return_max - return_min) / num_return_bins
-        self.bin_centers = np.array(
-            [return_min + (b + 0.5) * bin_width for b in range(num_return_bins)],
-            dtype=np.float32,
-        )
 
         self._model = self._model.to(device)
         self._model.eval()
 
         logger.info("ValuePolicy initialized:")
-        logger.info(f"  Value mode: {value_mode}")
-        if self._is_expert_mode:
-            logger.info("  Using expert inference (PI05ValueCritic.predict_value)")
-        else:
-            logger.info("  Using VLM token inference")
-            logger.info(f"  Return bins: {num_return_bins}")
+        logger.info("  Using expert inference (PI05ValueCritic.predict_value)")
         logger.info(f"  Return range: [{return_min}, {return_max}]")
-        if use_ar_generation and not self._is_expert_mode:
-            logger.info("  Using AR generation for discrete mode")
 
     def infer(self, obs: dict, *, noise: Optional[np.ndarray] = None) -> dict:
         """Infer value from observations.
@@ -133,25 +98,20 @@ class ValuePolicy(BasePolicy):
             k: v.copy() if isinstance(v, np.ndarray) else v for k, v in obs.items()
         }
 
-        # Apply input transforms
         inputs = self._input_transform(inputs)
-
-        # Prepare observation for model (uses processor to tokenize, etc.)
         observation = self._prepare_observation(inputs)
 
-        # Model inference
         start_time = time.monotonic()
         with torch.no_grad():
-            value = self._predict_value(observation)
+            values = self._model.predict_value(observation)
+            value = float(values[0].item())
         model_time = time.monotonic() - start_time
 
-        outputs = {
-            "value": float(value),
+        return {
+            "value": value,
             "state": obs.get("state", np.array([])),
             "policy_timing": {"infer_ms": model_time * 1000},
         }
-
-        return outputs
 
     def infer_batch(self, obs_list: list[dict], *, batch_size: int = 64) -> list[dict]:
         """Batch inference for multiple observations.
@@ -168,12 +128,10 @@ class ValuePolicy(BasePolicy):
 
         all_outputs = []
 
-        # Process in batches
         for batch_start in range(0, len(obs_list), batch_size):
             batch_end = min(batch_start + batch_size, len(obs_list))
             batch_obs = obs_list[batch_start:batch_end]
 
-            # Apply input transforms to all observations
             inputs_list = []
             for obs in batch_obs:
                 inputs = {
@@ -183,14 +141,11 @@ class ValuePolicy(BasePolicy):
                 inputs = self._input_transform(inputs)
                 inputs_list.append(inputs)
 
-            # Prepare batched observation
             observation = self._prepare_observation_batch(inputs_list)
 
-            # Batch model inference
             with torch.no_grad():
-                values = self._predict_value_batch(observation)
+                values = self._model.predict_value(observation).cpu()
 
-            # Build output list
             for i, obs in enumerate(batch_obs):
                 all_outputs.append(
                     {
@@ -210,7 +165,6 @@ class ValuePolicy(BasePolicy):
         Returns:
             Batched observation dict with [B, ...] tensors
         """
-        # Process each sample and collect
         all_images = []
         all_image_masks = []
         all_tokens = []
@@ -219,7 +173,6 @@ class ValuePolicy(BasePolicy):
         all_loss_masks = []
 
         for inputs in inputs_list:
-            # Reuse existing single-sample logic, but only collect data
             single_obs = self._prepare_observation(inputs)
             all_images.append(single_obs["images"])
             all_image_masks.append(single_obs["image_masks"])
@@ -228,8 +181,6 @@ class ValuePolicy(BasePolicy):
             all_ar_masks.append(single_obs["token_ar_mask"])
             all_loss_masks.append(single_obs["token_loss_mask"])
 
-        # Stack into batched tensors
-        # Handle images (can be dict of tensors)
         if isinstance(all_images[0], dict):
             batched_images = {
                 k: torch.cat([img[k] for img in all_images], dim=0)
@@ -252,170 +203,12 @@ class ValuePolicy(BasePolicy):
             "token_loss_mask": torch.cat(all_loss_masks, dim=0),
         }
 
-    def _predict_value_batch(self, observation: dict) -> torch.Tensor:
-        """Predict values for batched observation.
-
-        Args:
-            observation: Batched observation dict with [B, ...] tensors
-
-        Returns:
-            Tensor of shape [B] with predicted values
-        """
-        batch_size = observation["tokenized_prompt"].shape[0]
-
-        if self._is_expert_mode:
-            # Expert mode: model.predict_value() already returns [B]
-            values = self._model.predict_value(observation)
-            return values.cpu()
-
-        # VLM mode: handle batch logits
-        processor = getattr(self._model, "processor", None)
-        if processor is None:
-            return torch.zeros(batch_size)
-
-        value_token_ids = processor.get_value_token_ids()
-        if value_token_ids is None:
-            return torch.zeros(batch_size)
-
-        model = self._model.model
-        logits = model.predict_next_token_logits(observation)  # [B, vocab_size]
-
-        bin_token_ids = torch.tensor(
-            [value_token_ids[i] for i in range(self.num_return_bins)],
-            dtype=torch.long,
-            device=logits.device,
-        )
-        bin_logits = logits[:, bin_token_ids]  # [B, num_bins]
-        bin_probs = F.softmax(bin_logits.float(), dim=1).cpu().numpy()
-
-        if self.value_mode == "continuous":
-            values = np.sum(bin_probs * self.bin_centers, axis=1)
-        else:  # discrete
-            values = self.bin_centers[np.argmax(bin_probs, axis=1)]
-
-        return torch.from_numpy(values.astype(np.float32))
-
-    def _predict_value(self, observation: dict) -> float:
-        """Predict value from observation.
-
-        Modes:
-        1. Expert modes: Use PI05ValueCritic.predict_value() for direct output
-        2. VLM logits-based: Use predict_next_token_logits for single-step
-        3. VLM AR generation: Use full generate() for discrete mode
-
-        Args:
-            observation: Observation dict formatted for model.forward()
-
-        Returns:
-            Predicted value as a scalar
-        """
-        # Expert mode: use model's predict_value directly
-        if self._is_expert_mode:
-            return self._predict_value_expert(observation)
-
-        # VLM mode: need processor for token IDs
-        processor = getattr(self._model, "processor", None)
-        if processor is None:
-            logger.warning("Model has no processor, cannot predict value")
-            return 0.0
-
-        value_token_ids = processor.get_value_token_ids()
-        if value_token_ids is None:
-            logger.warning("Processor has no value token IDs")
-            return 0.0
-
-        # For discrete mode with AR generation, use full generate()
-        if self.value_mode == "discrete" and self.use_ar_generation:
-            return self._predict_value_ar(observation)
-
-        # Default: use single-step logits prediction
-        return self._predict_next_token_logits(observation, value_token_ids)
-
-    def _predict_value_expert(self, observation: dict) -> float:
-        """Predict value using expert model (PI05ValueCritic).
-
-        Uses the model's predict_value() method which outputs continuous
-        values directly (no token decoding needed).
-        """
-        values = self._model.predict_value(observation)  # Returns Tensor [B]
-        return float(values[0].item())
-
-    def _predict_next_token_logits(
-        self, observation: dict, value_token_ids: dict[int, int]
-    ) -> float:
-        """Predict value using single-step logits (efficient).
-
-        Uses predict_next_token_logits for a single forward pass to get logits at the
-        last position, then computes value from the distribution.
-        """
-        model = self._model.model  # PI05FlowMatching
-        logits = model.predict_next_token_logits(observation)  # [B, vocab_size]
-        logits = logits[0]  # Take first batch element [vocab_size]
-
-        # Get logits for value tokens
-        bin_token_ids = torch.tensor(
-            [value_token_ids[i] for i in range(self.num_return_bins)],
-            dtype=torch.long,
-            device=logits.device,
-        )
-        bin_logits = logits[bin_token_ids]  # [num_bins]
-
-        # Compute probabilities
-        bin_probs = F.softmax(bin_logits.float(), dim=0).cpu().numpy()
-
-        if self.value_mode == "continuous":
-            return float(np.sum(bin_probs * self.bin_centers))
-        elif self.value_mode == "discrete":
-            return float(self.bin_centers[np.argmax(bin_probs)])
-        else:
-            raise ValueError(f"Unknown value mode: {self.value_mode}")
-
-    def _predict_value_ar(self, observation: dict) -> float:
-        """Predict value using full AR generation (verifies generation pipeline).
-
-        Uses model.generate() in VLM mode to autoregressively generate tokens,
-        then extracts the value token from the generated sequence.
-        Expected output format: "<vN><eos>" where N is the bin index.
-
-        Raises:
-            ValueError: If no value token is found in the generated sequence.
-        """
-        # Generate using VLM mode (only need 2 tokens: <vN> + <eos>)
-        output = self._model.generate(
-            observation,
-            forward_mode="vlm",
-            max_new_tokens=2,
-            temperature=0.0,
-        )
-        output_tokens = output[0]  # [B, actual_len] - exact length, no padding
-
-        # Decode generated tokens
-        tokens = output_tokens[0].cpu().tolist()
-        decoded = self._model.processor.tokenizer.decode(
-            tokens, skip_special_tokens=False
-        )
-
-        # Extract bin index N from "<vN>" pattern
-        match = re.search(r"<v(\d+)>", decoded)
-        if match:
-            bin_idx = int(match.group(1))
-            if 0 <= bin_idx < self.num_return_bins:
-                return float(self.bin_centers[bin_idx])
-            raise ValueError(
-                f"Bin index {bin_idx} out of range [0, {self.num_return_bins})"
-            )
-
-        raise ValueError(
-            f"AR generation did not produce a valid value token. "
-            f"Generated: '{decoded}', tokens: {tokens}"
-        )
-
     def _prepare_observation(self, inputs: dict) -> dict:
-        """Prepare observation dict for model.forward() in VLM inference mode.
+        """Prepare observation dict for model.forward().
 
         For value prediction inference:
         - Input: "Task: {prompt}. Value: " (no response token)
-        - Model predicts the value token at the last position
+        - Model predicts the value at the [CLS] position
 
         Output format matches PI05DataCollator:
         - images: [B, num_cameras, C, H, W]
@@ -504,13 +297,11 @@ class ValuePolicy(BasePolicy):
         )
 
         # For inference: tokenize prefix only (no response token)
-        # Input format must EXACTLY match training tokenization in PI05Processor._tokenize_single
-        #
         # Unified template: Task: {prompt}. [State: {state}. ][{prefix} ]
         cleaned_prompt = processor._clean_text(prompt)
         cleaned_prompt = processor._strip_trailing_punctuation(cleaned_prompt)
 
-        value_prefix = "Value:"  # This matches config value.value_prefix
+        value_prefix = "Value:"
 
         if processor.discrete_state_input and state is not None:
             state_str = processor._discretize_state(state)
@@ -539,7 +330,6 @@ class ValuePolicy(BasePolicy):
         pixel_values = processed_img["pixel_values"]
         image_masks = processed_img["image_masks"]
 
-        # Move images to device (can be dict or tensor)
         if isinstance(pixel_values, dict):
             images_on_device = {k: v.to(self._device) for k, v in pixel_values.items()}
         else:

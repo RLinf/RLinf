@@ -9,8 +9,6 @@ is_lora: false
 # =====================================================================
 # Critic architecture
 # =====================================================================
-# model_type_critic: Which critic model to use
-model_type_critic: "value"
 
 # critic_expert_variant: Gemma expert model size
 #   "gemma_50m" | "gemma_100m" | "gemma_150m" | "gemma_300m" | "gemma_2b"

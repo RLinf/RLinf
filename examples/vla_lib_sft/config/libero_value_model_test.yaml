@@ -79,7 +79,6 @@ actor:
     precision: bf16
     model_type: "vla_lib_value_model"
     model_path: "/mnt/project_rlinf/liuzhihao/vla_lib_fork_gaofeng/pretrained_models/pi05_base_pytorch"
-    model_type_critic: "value"
     critic_expert_variant: "gemma_100m"
     freeze_vlm: True
     num_bins: 201

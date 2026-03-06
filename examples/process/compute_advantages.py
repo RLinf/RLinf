@@ -394,9 +394,6 @@ def load_value_policy(cfg: DictConfig, device: str = "cuda"):
     # Get model_type (pi0, pi05)
     model_type = data_cfg.get("model_type", "pi05")
 
-    # Get value_mode
-    value_mode = adv_cfg.get("value_mode", "expert_categorical")
-
     # Get value head settings
     num_return_bins = model_cfg.get("num_bins", 201)
     return_min = model_cfg.get("v_min", -1.0)
@@ -405,19 +402,15 @@ def load_value_policy(cfg: DictConfig, device: str = "cuda"):
 
     logger.info(f"  env_type (robot_type): {robot_type}")
     logger.info(f"  model_type: {model_type}")
-    logger.info(f"  value_mode: {value_mode}")
     logger.info(f"  num_return_bins: {num_return_bins}")
     logger.info(f"  return_range: [{return_min}, {return_max}]")
     logger.info(f"  critic_expert_variant: {critic_expert_variant}")
 
-    # Create ValuePolicy using vla_lib's factory function
-    # This properly sets up all input transforms (LiberoInputs, Normalize, ResizeImages, etc.)
     value_policy = value_policy_config.create_trained_value_policy(
         checkpoint_dir=checkpoint_path,
         env_type=robot_type,
         model_type=model_type,
         device=device,
-        value_mode=value_mode,
         num_return_bins=num_return_bins,
         return_min=return_min,
         return_max=return_max,

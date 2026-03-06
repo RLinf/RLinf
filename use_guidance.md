@@ -199,7 +199,6 @@ actor:
   model:
     model_path: /path/to/pi05_base_pytorch
     freeze_vlm: True       # 冻结 VLM 骨干，只训练 critic head
-    expert_loss_type: categorical  # 分类损失
 ```
 
 **启动**：
@@ -246,7 +245,6 @@ is_success = (A_t >= threshold)     # threshold = top 30% 分位点
 advantage:
   value_checkpoint: /path/to/value_model   # ← Stage 2 产出的 /tmp/step2_ckpt
   positive_quantile: 0.3     # top 30% 标记为 True
-  value_mode: expert_categorical
   tag: "test"                # 产出文件名: advantages_test.parquet
 
 data:

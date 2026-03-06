@@ -55,9 +55,6 @@ advantage:
   # Allows computing advantages with different value models on the same data
   # tag: null
 
-  # Value inference mode
-  value_mode: "expert_categorical"
-
   # Model configuration (should match the trained model)
   model:
     num_bins: 201

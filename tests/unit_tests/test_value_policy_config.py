@@ -15,12 +15,11 @@
 """Tests for value_policy_config module.
 
 Covers:
-- EXPERT_VALUE_MODES constant
 - _load_state_dict_from_checkpoint  (file/dir, safetensors/pt, missing)
 - _has_tokenizer_files              (presence/absence of tokenizer files)
 - load_norm_stats                   (loading, missing files, nested keys)
 - _build_input_transforms           (valid/invalid env_type)
-- ValuePolicy bin_centers           (computed from return_min/max/num_bins)
+- ValuePolicy construction
 """
 
 import json
@@ -37,7 +36,6 @@ safetensors_torch = pytest.importorskip("safetensors.torch")
 # Use try/except to skip gracefully.
 try:
     from rlinf.models.embodiment.vla_lib_value_model.value_policy_config import (
-        EXPERT_VALUE_MODES,
         _has_tokenizer_files,
         _load_state_dict_from_checkpoint,
         load_norm_stats,
@@ -47,30 +45,6 @@ except ImportError:
         "vla_lib dependencies not available",
         allow_module_level=True,
     )
-
-# ---------------------------------------------------------------------------
-# EXPERT_VALUE_MODES constant
-# ---------------------------------------------------------------------------
-
-
-class TestExpertValueModes:
-    """Verify the EXPERT_VALUE_MODES constant is correct."""
-
-    def test_is_tuple(self):
-        assert isinstance(EXPERT_VALUE_MODES, tuple)
-
-    def test_contains_expert_categorical(self):
-        assert "expert_categorical" in EXPERT_VALUE_MODES
-
-    def test_has_exactly_one_mode(self):
-        assert len(EXPERT_VALUE_MODES) == 1
-
-    def test_continuous_not_in_expert_modes(self):
-        assert "continuous" not in EXPERT_VALUE_MODES
-
-    def test_discrete_not_in_expert_modes(self):
-        assert "discrete" not in EXPERT_VALUE_MODES
-
 
 # ---------------------------------------------------------------------------
 # _has_tokenizer_files
@@ -530,115 +504,12 @@ class TestBuildInputTransforms:
 
 
 # ---------------------------------------------------------------------------
-# ValuePolicy -- bin_centers computation
+# ValuePolicy -- construction
 # ---------------------------------------------------------------------------
 
 
-class TestValuePolicyBinCenters:
-    """Test that ValuePolicy correctly computes bin_centers from return range."""
-
-    @pytest.fixture
-    def _make_value_policy(self):
-        """Factory that creates a ValuePolicy with a mock model."""
-        from rlinf.models.embodiment.vla_lib_value_model.value_policy import (
-            ValuePolicy,
-        )
-
-        def _factory(
-            num_return_bins=201,
-            return_min=-1.0,
-            return_max=0.0,
-            value_mode="continuous",
-        ):
-            mock_model = MagicMock()
-            mock_model.to = MagicMock(return_value=mock_model)
-            mock_model.eval = MagicMock()
-
-            with patch(
-                "rlinf.models.embodiment.vla_lib_value_model.value_policy.compose",
-                return_value=lambda x: x,
-            ):
-                policy = ValuePolicy(
-                    model=mock_model,
-                    transforms=(),
-                    device="cpu",
-                    value_mode=value_mode,
-                    num_return_bins=num_return_bins,
-                    return_min=return_min,
-                    return_max=return_max,
-                )
-            return policy
-
-        return _factory
-
-    def test_bin_centers_length(self, _make_value_policy):
-        policy = _make_value_policy(num_return_bins=201)
-        assert len(policy.bin_centers) == 201
-
-    def test_bin_centers_length_custom(self, _make_value_policy):
-        policy = _make_value_policy(num_return_bins=11)
-        assert len(policy.bin_centers) == 11
-
-    def test_bin_centers_range(self, _make_value_policy):
-        policy = _make_value_policy(
-            num_return_bins=201, return_min=-1.0, return_max=0.0
-        )
-        # First center should be just above return_min
-        assert policy.bin_centers[0] > -1.0
-        # Last center should be just below return_max
-        assert policy.bin_centers[-1] < 0.0
-
-    def test_bin_centers_monotonically_increasing(self, _make_value_policy):
-        policy = _make_value_policy(num_return_bins=201)
-        diffs = np.diff(policy.bin_centers)
-        assert np.all(diffs > 0)
-
-    def test_bin_centers_equally_spaced(self, _make_value_policy):
-        policy = _make_value_policy(num_return_bins=201)
-        diffs = np.diff(policy.bin_centers)
-        # float32 arithmetic introduces small rounding differences
-        np.testing.assert_allclose(diffs, diffs[0], rtol=1e-4)
-
-    def test_bin_centers_midpoint(self, _make_value_policy):
-        """With symmetric range, the middle bin should be near the midpoint."""
-        policy = _make_value_policy(
-            num_return_bins=101, return_min=-1.0, return_max=1.0
-        )
-        middle_idx = 50
-        np.testing.assert_allclose(
-            policy.bin_centers[middle_idx], 0.0, atol=1e-5
-        )
-
-    def test_bin_centers_single_bin(self, _make_value_policy):
-        policy = _make_value_policy(
-            num_return_bins=1, return_min=-1.0, return_max=0.0
-        )
-        assert len(policy.bin_centers) == 1
-        # Single bin center should be at the midpoint of the range
-        np.testing.assert_allclose(policy.bin_centers[0], -0.5, atol=1e-5)
-
-    def test_bin_centers_dtype(self, _make_value_policy):
-        policy = _make_value_policy(num_return_bins=10)
-        assert policy.bin_centers.dtype == np.float32
-
-    def test_bin_width_matches_num_bins(self, _make_value_policy):
-        num_bins = 100
-        rmin, rmax = -2.0, 2.0
-        policy = _make_value_policy(
-            num_return_bins=num_bins, return_min=rmin, return_max=rmax
-        )
-        expected_width = (rmax - rmin) / num_bins
-        actual_width = policy.bin_centers[1] - policy.bin_centers[0]
-        np.testing.assert_allclose(actual_width, expected_width, rtol=1e-5)
-
-
-# ---------------------------------------------------------------------------
-# ValuePolicy -- mode flags
-# ---------------------------------------------------------------------------
-
-
-class TestValuePolicyModeFlags:
-    """Test that ValuePolicy correctly sets _is_expert_mode based on value_mode."""
+class TestValuePolicyConstruction:
+    """Test ValuePolicy construction and defaults."""
 
     @pytest.fixture
     def _make_policy(self):
@@ -646,7 +517,7 @@ class TestValuePolicyModeFlags:
             ValuePolicy,
         )
 
-        def _factory(value_mode):
+        def _factory(**kwargs):
             mock_model = MagicMock()
             mock_model.to = MagicMock(return_value=mock_model)
             mock_model.eval = MagicMock()
@@ -659,22 +530,23 @@ class TestValuePolicyModeFlags:
                     model=mock_model,
                     transforms=(),
                     device="cpu",
-                    value_mode=value_mode,
+                    **kwargs,
                 )
 
         return _factory
 
-    def test_expert_categorical_sets_flag_true(self, _make_policy):
-        policy = _make_policy("expert_categorical")
-        assert policy._is_expert_mode is True
-
-    def test_value_mode_stored(self, _make_policy):
-        policy = _make_policy("expert_categorical")
-        assert policy.value_mode == "expert_categorical"
-
     def test_metadata_defaults_to_empty_dict(self, _make_policy):
-        policy = _make_policy("expert_categorical")
+        policy = _make_policy()
         assert policy.metadata == {}
+
+    def test_return_range_stored(self, _make_policy):
+        policy = _make_policy(return_min=-2.0, return_max=1.0)
+        assert policy.return_min == -2.0
+        assert policy.return_max == 1.0
+
+    def test_num_return_bins_stored(self, _make_policy):
+        policy = _make_policy(num_return_bins=101)
+        assert policy.num_return_bins == 101
 
 
 # ---------------------------------------------------------------------------
@@ -705,9 +577,6 @@ class TestValuePolicyDefaults:
                 device="cpu",
             )
 
-    def test_default_value_mode(self, _policy):
-        assert _policy.value_mode == "continuous"
-
     def test_default_num_return_bins(self, _policy):
         assert _policy.num_return_bins == 201
 
@@ -716,12 +585,6 @@ class TestValuePolicyDefaults:
 
     def test_default_return_max(self, _policy):
         assert _policy.return_max == 0.0
-
-    def test_default_use_ar_generation(self, _policy):
-        assert _policy.use_ar_generation is False
-
-    def test_default_is_not_expert_mode(self, _policy):
-        assert _policy._is_expert_mode is False
 
 
 # ---------------------------------------------------------------------------

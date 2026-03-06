@@ -110,7 +110,6 @@ actor:
     model_type: "vla_lib_value_model"
     model_path: "/path/to/pi05_base_pytorch"
     # ----- Critic architecture -----
-    model_type_critic: "value"
     critic_expert_variant: "gemma_100m"
 
     freeze_vlm: False

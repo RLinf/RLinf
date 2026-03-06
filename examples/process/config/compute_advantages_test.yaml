@@ -16,7 +16,6 @@ advantage:
   prefetch_factor: 2
   discount_next_value: true
   positive_quantile: 0.3
-  value_mode: "expert_categorical"
   tag: "test"
 
   model:

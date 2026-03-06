@@ -18,9 +18,7 @@ Value policy configuration and creation utilities.
 This module provides functions to create value policies from trained value checkpoints.
 Unlike action policies, value policies predict return values instead of actions.
 
-Copied from vla_lib and modified to use local ValuePolicy with batch inference support.
-
-Supports expert-based value prediction via PI05ValueCritic (expert_* modes).
+Uses expert-based categorical value prediction via PI05ValueCritic.
 """
 
 import glob
@@ -50,9 +48,6 @@ from rlinf.models.embodiment.vla_lib_value_model.processing import PI05Processor
 from .value_policy import ValuePolicy
 
 logger = logging.getLogger(__name__)
-
-# Expert modes that require PI05ValueCritic
-EXPERT_VALUE_MODES = ("expert_categorical",)
 
 
 def _load_state_dict_from_checkpoint(checkpoint_path: pathlib.Path) -> dict:
@@ -183,15 +178,12 @@ def create_trained_value_policy(
     norm_stats: Optional[dict[str, NormStats]] = None,
     device: str = "cuda",
     metadata: Optional[dict[str, Any]] = None,
-    value_mode: str = "continuous",
-    top_p: float = 0.9,
     num_return_bins: int = 201,
     return_min: float = -1.0,
     return_max: float = 0.0,
-    use_ar_generation: bool = False,
     action_norm_skip_dims: Optional[dict[str, list[int]]] = None,
-    # Expert mode settings
     critic_expert_variant: str = "gemma_100m",
+    **kwargs,
 ) -> ValuePolicy:
     """Create a value policy from a trained checkpoint.
 
@@ -203,24 +195,18 @@ def create_trained_value_policy(
         norm_stats: Normalization stats (loaded from checkpoint if not provided)
         device: Device to run inference on
         metadata: Policy metadata
-        value_mode: Inference mode:
-            - "expert_categorical": Expert model, categorical output
-        top_p: Deprecated parameter (kept for backward compatibility)
         num_return_bins: Number of return bins
         return_min: Minimum return value
         return_max: Maximum return value
-        use_ar_generation: If True and mode is "discrete", use AR generation
         action_norm_skip_dims: Dims to skip in normalization (e.g., gripper)
-        critic_expert_variant: Gemma variant for expert modes (e.g., "gemma_100m")
+        critic_expert_variant: Gemma variant (e.g., "gemma_100m")
 
     Returns:
         Configured ValuePolicy instance with batch inference support
     """
     checkpoint_dir = pathlib.Path(checkpoint_dir)
-    is_expert_mode = value_mode in EXPERT_VALUE_MODES
 
     logger.info(f"Loading value model from {checkpoint_dir}")
-    logger.info(f"  value_mode: {value_mode} ({'expert' if is_expert_mode else 'VLM'})")
 
     # Load processor: try to load tokenizer from checkpoint, fallback to default
     logger.info("Loading processor...")
@@ -244,75 +230,68 @@ def create_trained_value_policy(
     vocab_size = len(processor.tokenizer)
     logger.info(f"Processor vocab_size: {vocab_size}")
 
-    # Load model (expert mode only)
-    if is_expert_mode:
-        # Expert mode: use PI05ValueCritic
-        critic_config = PI05CriticConfig(
-            critic_expert_variant=critic_expert_variant,
-            num_bins=num_return_bins,
-            v_min=return_min,
-            v_max=return_max,
+    # Load model
+    critic_config = PI05CriticConfig(
+        critic_expert_variant=critic_expert_variant,
+        num_bins=num_return_bins,
+        v_min=return_min,
+        v_max=return_max,
+    )
+    logger.info("Loading PI05ValueCritic (expert categorical)")
+
+    # Try from_pretrained first (for HuggingFace-style checkpoints)
+    # If it fails, fallback to creating model from config and loading state dict
+    try:
+        model = PI05ValueCritic.from_pretrained(
+            str(checkpoint_dir),
+            config=critic_config,
+            torch_dtype=torch.bfloat16,
+            device_map=None,
+            trust_remote_code=True,
+            ignore_mismatched_sizes=True,
         )
-        logger.info("Loading PI05ValueCritic (expert categorical)")
-
-        # Try from_pretrained first (for HuggingFace-style checkpoints)
-        # If it fails, fallback to creating model from config and loading state dict
-        try:
-            model = PI05ValueCritic.from_pretrained(
-                str(checkpoint_dir),
-                config=critic_config,
-                torch_dtype=torch.bfloat16,
-                device_map=None,
-                trust_remote_code=True,
-                ignore_mismatched_sizes=True,
-            )
-            logger.info("  Loaded model using from_pretrained")
-        except (OSError, ValueError, AttributeError) as e:
-            # Fallback: create model from config and load state dict
-            logger.info(
-                f"  from_pretrained failed ({type(e).__name__}: {e}), loading state dict directly"
-            )
-            model = PI05ValueCritic(critic_config)
-            state_dict = _load_state_dict_from_checkpoint(checkpoint_dir)
-
-            # Handle key prefix mismatch between rlinf's ValueCriticModel and vla_lib's PI05ValueCritic
-            # rlinf saves: "paligemma_with_expert.xxx"
-            # vla_lib expects: "model.paligemma_with_expert.xxx"
-            model_keys = set(model.state_dict().keys())
-            ckpt_keys = set(state_dict.keys())
-
-            # Check if we need to add "model." prefix
-            if len(model_keys & ckpt_keys) == 0:
-                # No direct matches, try adding "model." prefix to checkpoint keys
-                remapped_state_dict = {}
-                for k, v in state_dict.items():
-                    new_key = f"model.{k}"
-                    if new_key in model_keys:
-                        remapped_state_dict[new_key] = v
-                    else:
-                        remapped_state_dict[k] = v  # Keep original if no match
-
-                if len(set(remapped_state_dict.keys()) & model_keys) > len(
-                    ckpt_keys & model_keys
-                ):
-                    logger.info("  Remapped checkpoint keys: added 'model.' prefix")
-                    state_dict = remapped_state_dict
-
-            missing, unexpected = model.load_state_dict(state_dict, strict=False)
-            logger.info(
-                f"  Loaded state dict (missing={len(missing)}, unexpected={len(unexpected)})"
-            )
-            if missing:
-                logger.debug(f"  Missing keys: {missing[:10]}...")
-            if unexpected:
-                logger.debug(f"  Unexpected keys: {unexpected[:10]}...")
-    else:
-        raise ValueError(
-            f"VLM-based value modes ({value_mode}) are not supported. "
-            f"Use expert modes: {EXPERT_VALUE_MODES}"
+        logger.info("  Loaded model using from_pretrained")
+    except (OSError, ValueError, AttributeError) as e:
+        # Fallback: create model from config and load state dict
+        logger.info(
+            f"  from_pretrained failed ({type(e).__name__}: {e}), loading state dict directly"
         )
+        model = PI05ValueCritic(critic_config)
+        state_dict = _load_state_dict_from_checkpoint(checkpoint_dir)
 
-    logger.info(f"Model ready (expert mode: {value_mode}, outputs values directly)")
+        # Handle key prefix mismatch between rlinf's ValueCriticModel and vla_lib's PI05ValueCritic
+        # rlinf saves: "paligemma_with_expert.xxx"
+        # vla_lib expects: "model.paligemma_with_expert.xxx"
+        model_keys = set(model.state_dict().keys())
+        ckpt_keys = set(state_dict.keys())
+
+        # Check if we need to add "model." prefix
+        if len(model_keys & ckpt_keys) == 0:
+            # No direct matches, try adding "model." prefix to checkpoint keys
+            remapped_state_dict = {}
+            for k, v in state_dict.items():
+                new_key = f"model.{k}"
+                if new_key in model_keys:
+                    remapped_state_dict[new_key] = v
+                else:
+                    remapped_state_dict[k] = v  # Keep original if no match
+
+            if len(set(remapped_state_dict.keys()) & model_keys) > len(
+                ckpt_keys & model_keys
+            ):
+                logger.info("  Remapped checkpoint keys: added 'model.' prefix")
+                state_dict = remapped_state_dict
+
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        logger.info(
+            f"  Loaded state dict (missing={len(missing)}, unexpected={len(unexpected)})"
+        )
+        if missing:
+            logger.debug(f"  Missing keys: {missing[:10]}...")
+        if unexpected:
+            logger.debug(f"  Unexpected keys: {unexpected[:10]}...")
+
+    logger.info("Model ready (expert categorical)")
 
     # Attach processor to model for easy access
     object.__setattr__(model, "processor", processor)
@@ -353,11 +332,8 @@ def create_trained_value_policy(
         "model_type": model_type,
         "env_type": env_type,
         "checkpoint_dir": str(checkpoint_dir),
-        "value_mode": value_mode,
-        "top_p": top_p,
         "num_return_bins": num_return_bins,
         "return_range": [return_min, return_max],
-        "use_ar_generation": use_ar_generation,
         **(metadata or {}),
     }
 
@@ -367,11 +343,9 @@ def create_trained_value_policy(
         metadata=policy_metadata,
         device=device,
         checkpoint_dir=str(checkpoint_dir),
-        value_mode=value_mode,
         num_return_bins=num_return_bins,
         return_min=return_min,
         return_max=return_max,
-        use_ar_generation=use_ar_generation,
     )
 
 
