@@ -84,6 +84,10 @@ class Camera:
         )
         self._frame_capturing_start = False
 
+    @property
+    def name(self):
+        return self._camera_info.name
+
     def open(self):
         """Start the frame capturing thread."""
         self._frame_capturing_start = True

@@ -92,7 +92,8 @@ class RelativeFrame(gym.Wrapper):
         using the adjoint matrix
         """
         adjoint_inv = np.linalg.inv(self.adjoint_matrix)
-        obs["state"]["tcp_vel"] = adjoint_inv @ obs["state"]["tcp_vel"]
+        if "tcp_vel" in obs["state"]:
+            obs["state"]["tcp_vel"] = adjoint_inv @ obs["state"]["tcp_vel"]
 
         if self.include_relative_pose:
             T_b_o = construct_homogeneous_matrix(obs["state"]["tcp_pose"])
@@ -122,3 +123,19 @@ class RelativeFrame(gym.Wrapper):
         action = np.array(action)
         action[:6] = np.linalg.inv(self.adjoint_matrix) @ action[:6]
         return action
+
+
+class RelativeTargetFrame(RelativeFrame):
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+
+        # Update adjoint matrix
+        self.adjoint_matrix = construct_adjoint_matrix(self.env.target_ee_pose)
+        if self.include_relative_pose:
+            # Update transformation matrix from the reset pose's relative frame to base frame
+            self.T_b_r_inv = np.linalg.inv(
+                construct_homogeneous_matrix(self.env.target_ee_pose)
+            )
+
+        # Transform observation to spatial frame
+        return self.transform_observation(obs), info

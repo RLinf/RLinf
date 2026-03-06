@@ -48,6 +48,8 @@ def prepare_actions_for_maniskill(
         raise NotImplementedError
     elif policy == "widowx_bridge":
         actions["gripper"] = 2.0 * (raw_actions["open_gripper"] > 0.5) - 1.0  # [B, 1]
+    elif policy == "panda_wristcam":
+        actions["gripper"] = 2.0 * (raw_actions["open_gripper"] > 0.5) - 1.0  # [B, 1]
 
     actions["terminate_episode"] = np.array([0.0] * batch_size).reshape(-1, 1)  # [B, 1]
 
@@ -95,9 +97,31 @@ def prepare_actions_for_isaaclab(
 
 def prepare_actions_for_calvin(
     raw_chunk_actions,
+    model_type,
 ) -> np.ndarray:
     chunk_actions = raw_chunk_actions
-    chunk_actions[..., -1] = np.sign(chunk_actions[..., -1])
+    if SupportedModel(model_type) == SupportedModel.OPENPI:
+        chunk_actions[..., -1] = np.sign(chunk_actions[..., -1])
+    else:
+        chunk_actions[..., -1] = np.where(chunk_actions[..., -1] > 0, 1, -1)
+    return chunk_actions
+
+
+def prepare_actions_for_metaworld(
+    raw_chunk_actions,
+    model_type,
+) -> np.ndarray:
+    chunk_actions = raw_chunk_actions
+    if SupportedModel(model_type) in [
+        SupportedModel.OPENVLA,
+        SupportedModel.OPENVLA_OFT,
+    ]:
+        # the action dimesion of metaworld is 4-dim (x, y, z, gripper)
+        # we need to extract the first 3-dim and the last dim in a 7-dim action
+        if chunk_actions.shape[-1] == 7:
+            chunk_actions = np.concatenate(
+                [chunk_actions[..., :3], chunk_actions[..., -1:]], axis=-1
+            )
     return chunk_actions
 
 
@@ -179,7 +203,7 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
-    elif env_type == SupportedEnvType.OPENSORAWM:
+    elif env_type == SupportedEnvType.OPENSORAWM or env_type == SupportedEnvType.WANWM:
         # TODO: Implement prepare_actions_for_opensora_wm
         if wm_env_type == "libero":
             chunk_actions = prepare_actions_for_libero(
@@ -187,9 +211,7 @@ def prepare_actions(
                 model_type=model_type,
             )
         else:
-            raise NotImplementedError(
-                f"Env type {wm_env_type} not implemented for OpenSoraWM"
-            )
+            raise NotImplementedError(f"Env type {wm_env_type} not implemented")
     elif env_type == SupportedEnvType.MANISKILL:
         chunk_actions = prepare_actions_for_maniskill(
             raw_chunk_actions=raw_chunk_actions,
@@ -201,10 +223,14 @@ def prepare_actions(
     elif env_type == SupportedEnvType.ROBOTWIN:
         chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.METAWORLD:
-        chunk_actions = raw_chunk_actions
+        chunk_actions = prepare_actions_for_metaworld(
+            raw_chunk_actions=raw_chunk_actions,
+            model_type=model_type,
+        )
     elif env_type == SupportedEnvType.CALVIN:
         chunk_actions = prepare_actions_for_calvin(
             raw_chunk_actions=raw_chunk_actions,
+            model_type=model_type,
         )
     elif env_type == SupportedEnvType.BEHAVIOR:
         chunk_actions = raw_chunk_actions

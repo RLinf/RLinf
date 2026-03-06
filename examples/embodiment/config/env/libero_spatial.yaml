@@ -9,6 +9,7 @@ max_steps_per_rollout_epoch: 240
 max_episode_steps: 240 # max episode steps for truncation
 
 use_rel_reward: True
+use_step_penalty: False
 reward_coef: 1.0
 
 # RLinf LiberoEnv specific settings

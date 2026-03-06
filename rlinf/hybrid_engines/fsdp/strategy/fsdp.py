@@ -25,7 +25,7 @@ from torch.distributed.fsdp import (
 )
 from torch.optim import Optimizer
 
-from rlinf.config import SupportedModel, torch_dtype_from_precision
+from rlinf.config import torch_dtype_from_precision
 from rlinf.hybrid_engines.fsdp import FSDP
 from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
 from rlinf.hybrid_engines.fsdp.utils import (
@@ -36,6 +36,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
     get_sharding_strategy,
     init_fn,
 )
+from rlinf.scheduler import Worker
 from rlinf.utils.utils import clear_memory
 
 
@@ -68,10 +69,9 @@ class FSDPStrategy(FSDPStrategyBase):
 
         auto_wrap_policy = get_fsdp_wrap_policy(
             module=model,
-            config=None,
+            config=self.cfg.fsdp_config,
             is_lora=self.cfg.model.is_lora,
-            is_openvla_model=SupportedModel(self.cfg.model.model_type)
-            in [SupportedModel.OPENVLA, SupportedModel.OPENVLA_OFT],
+            model_type=self.cfg.model.model_type,
         )
 
         backward_prefetch = get_backward_prefetch_strategy(
@@ -235,7 +235,7 @@ class FSDPStrategy(FSDPStrategyBase):
         Returns:
             - float: The total norm of the gradients before clipping.
         """
-        device = torch.device(f"cuda:{int(os.environ['LOCAL_RANK'])}")
+        device = torch.device(f"{Worker.torch_device_type}:{os.environ['LOCAL_RANK']}")
         max_norm = float(self.cfg.optim.clip_grad)
         norm_type = float(norm_type)
         all_handles = getattr(model, "_all_handles", None)

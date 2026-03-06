@@ -241,7 +241,7 @@ class MegatronCoreWeightReshard:
         if self.config.model_config.num_moe_experts is not None:
             # in MoE model, if use the te group gemm, we need to convert the weight type from te group to seq group
             if self.config.moe_grouped_gemm == "te":
-                from toolkits.ckpt_convertor.megatron_convertor.utils.mg_moe_groupgemm import (
+                from rlinf.utils.ckpt_convertor.megatron_convertor.utils.mg_moe_groupgemm import (
                     moe_te_group_to_seq,
                 )
 

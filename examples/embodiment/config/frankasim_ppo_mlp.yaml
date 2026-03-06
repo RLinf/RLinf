@@ -83,7 +83,6 @@ algorithm:
 
 env:
   group_name: EnvGroup
-  enable_offload: false
 
   train:
     total_num_envs: 128
@@ -119,6 +118,8 @@ rollout:
     model_path: ""
     precision: ${actor.model.precision}
 
+  enable_torch_compile: True
+  enable_cuda_graph: False
 actor:
   group_name: ActorGroup
   training_backend: fsdp

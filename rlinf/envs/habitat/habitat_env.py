@@ -102,6 +102,10 @@ class HabitatEnv(gym.Env):
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
+        obs_list = []
+        infos_list = []
+
+        chunk_rewards = []
 
         # Truncate chunk if it contains "stop" and pad with "no_op"
         for env_idx, chunk_action in enumerate(chunk_actions):
@@ -134,6 +138,8 @@ class HabitatEnv(gym.Env):
             extracted_obs, step_reward, terminations, truncations, infos = self.step(
                 actions
             )
+            obs_list.append(extracted_obs)
+            infos_list.append(infos)
 
             chunk_rewards.append(step_reward)
             raw_chunk_terminations.append(terminations)
@@ -154,11 +160,11 @@ class HabitatEnv(gym.Env):
             chunk_truncations = raw_chunk_truncations.clone()
 
         return (
-            extracted_obs,
+            obs_list,
             chunk_rewards,
             chunk_terminations,
             chunk_truncations,
-            infos,
+            infos_list,
         )
 
     def step(self, actions=None):

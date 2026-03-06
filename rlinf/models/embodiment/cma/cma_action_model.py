@@ -598,6 +598,7 @@ class CMAPolicy(nn.Module, BasePolicy):
             chunk_actions.append(
                 [self.action_map[a.item()] for a in action[i].cpu().numpy()]
             )
+        chunk_actions = np.array(chunk_actions)
         if hasattr(self, "value_head"):
             chunk_values = self.value_head(features)
         else:

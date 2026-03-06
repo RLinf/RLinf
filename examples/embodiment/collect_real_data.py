@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,15 +13,18 @@
 # limitations under the License.
 
 
-import copy
 import os
-import pickle as pkl
 
 import hydra
 import numpy as np
 import torch
 from tqdm import tqdm
 
+from rlinf.data.embodied_io_struct import (
+    ChunkStepResult,
+    EmbodiedRolloutResult,
+)
+from rlinf.data.replay_buffer import TrajectoryReplayBuffer
 from rlinf.envs.realworld.realworld_env import RealWorldEnv
 from rlinf.scheduler import Cluster, ComponentPlacement, Worker
 
@@ -41,17 +44,39 @@ class DataCollector(Worker):
             worker_info=self.worker_info,
         )
 
-        self.data_list = []
+        # Initialize TrajectoryReplayBuffer
+        # Change directory name to 'demos' as requested
+        buffer_path = os.path.join(self.cfg.runner.logger.log_path, "demos")
+        self.log_info(f"Initializing ReplayBuffer at: {buffer_path}")
 
-    def _extract_obs(self, obs):
+        self.buffer = TrajectoryReplayBuffer(
+            seed=self.cfg.seed if hasattr(self.cfg, "seed") else 1234,
+            enable_cache=False,
+            auto_save=True,
+            auto_save_path=buffer_path,
+            trajectory_format="pt",
+        )
+
+    def _process_obs(self, obs):
+        """
+        Process observations to match the format expected by EmbodiedRolloutResult.
+        """
         if not self.cfg.runner.record_task_description:
             obs.pop("task_descriptions", None)
+
         ret_obs = {}
-        for key in obs:
-            if "images" in key:
-                ret_obs[key] = obs[key].clone()[0].float() / 255.0
+        for key, val in obs.items():
+            if isinstance(val, np.ndarray):
+                val = torch.from_numpy(val)
+
+            val = val.cpu()
+
+            # Map keys: 'images' -> 'main_images', others remain
+            if "images" == key:
+                ret_obs["main_images"] = val.clone()  # Keep uint8
             else:
-                ret_obs[key] = obs[key][0]
+                ret_obs[key] = val.clone()
+
         return ret_obs
 
     def run(self):
@@ -60,61 +85,98 @@ class DataCollector(Worker):
         progress_bar = tqdm(
             range(self.num_data_episodes), desc="Collecting Data Episodes:"
         )
+
+        current_rollout = EmbodiedRolloutResult(
+            max_episode_length=self.cfg.env.eval.max_episode_steps,
+            model_weights_id="demo_expert",
+        )
+
+        current_obs_processed = self._process_obs(obs)
+
         while success_cnt < self.num_data_episodes:
             action = np.zeros((1, 6))
             next_obs, reward, done, _, info = self.env.step(action)
+
             if "intervene_action" in info:
                 action = info["intervene_action"]
 
-            # Handle vector env
-            single_obs = self._extract_obs(obs)
-            single_next_obs = self._extract_obs(next_obs)
-            single_action = action[0]
-            single_reward = reward[0]
-            single_done = done[0]
+            next_obs_processed = self._process_obs(next_obs)
 
-            # Handle chunk
-            chunk_done = single_done[None, ...]
-            chunk_reward = single_reward[None, ...]
+            # --- Construct ChunkStepResult ---
+            # Prepare action tensor [1, 6]
+            if isinstance(action, torch.Tensor):
+                action_tensor = action.float().cpu()
+            else:
+                action_tensor = torch.from_numpy(action).float()
 
-            transition = copy.deepcopy(
-                {
-                    "obs": single_obs,
-                    "next_obs": single_next_obs,
-                }
+            if action_tensor.ndim == 1:
+                action_tensor = action_tensor.unsqueeze(0)
+
+            # Reward and Done [1, 1]
+            if isinstance(reward, torch.Tensor):
+                reward_tensor = reward.float().cpu()
+            else:
+                reward_tensor = torch.tensor(reward).float()
+            if reward_tensor.ndim == 1:
+                reward_tensor = reward_tensor.unsqueeze(1)
+
+            if isinstance(done, torch.Tensor):
+                done_tensor = done.bool().cpu()
+            else:
+                done_tensor = torch.tensor(done).bool()
+            if done_tensor.ndim == 1:
+                done_tensor = done_tensor.unsqueeze(1)
+
+            step_result = ChunkStepResult(
+                actions=action_tensor,
+                rewards=reward_tensor,
+                dones=done_tensor,
+                terminations=done_tensor,
+                truncations=torch.zeros_like(done_tensor),
+                forward_inputs={"action": action_tensor},
             )
-            data = copy.deepcopy(
-                {
-                    "transitions": transition,
-                    "action": single_action,
-                    "rewards": chunk_reward,
-                    "dones": chunk_done,
-                    "terminations": chunk_done,
-                    "truncations": torch.zeros_like(chunk_done),
-                }
+
+            current_rollout.append_step_result(step_result)
+            current_rollout.append_transitions(
+                curr_obs=current_obs_processed, next_obs=next_obs_processed
             )
-            self.data_list.append(data)
 
             obs = next_obs
+            current_obs_processed = next_obs_processed
 
             if done:
-                success_cnt += reward
+                r_val = (
+                    reward[0]
+                    if hasattr(reward, "__getitem__") and len(reward) > 0
+                    else reward
+                )
+                if isinstance(r_val, torch.Tensor):
+                    r_val = r_val.item()
+
+                success_cnt += int(r_val)
                 self.total_cnt += 1
                 self.log_info(
-                    f"{reward}\tGot {success_cnt} successes of {self.total_cnt} trials. {self.num_data_episodes} successes needed."
+                    f"Success: {r_val}. Total: {success_cnt}/{self.num_data_episodes}"
                 )
+
+                # Save Trajectory to the 'demos' directory
+                trajectory = current_rollout.to_trajectory()
+                trajectory.intervene_flags = torch.ones_like(trajectory.intervene_flags)
+                self.buffer.add_trajectories([trajectory])
+
+                # Reset for next episode
                 obs, _ = self.env.reset()
+                current_obs_processed = self._process_obs(obs)
+                current_rollout = EmbodiedRolloutResult(
+                    max_episode_length=self.cfg.env.eval.max_episode_steps,
+                    model_weights_id="demo_expert",
+                )
                 progress_bar.update(1)
-            else:
-                self.log_info("Done is False, continue current episode.")
 
-        save_file_path = os.path.join(self.cfg.runner.logger.log_path, "data.pkl")
-        with open(save_file_path, "wb") as f:
-            pkl.dump(self.data_list, f)
-            self.log_info(
-                f"Saved {self.num_data_episodes} demos with {len(self.data_list)} samples to {save_file_path}"
-            )
-
+        self.buffer.close()
+        self.log_info(
+            f"Finished. Demos saved in: {os.path.join(self.cfg.runner.logger.log_path, 'demos')}"
+        )
         self.env.close()
 
 

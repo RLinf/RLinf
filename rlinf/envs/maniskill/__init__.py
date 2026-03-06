@@ -24,5 +24,10 @@ def import_all_tasks():
     for _, module_name, _ in pkgutil.iter_modules([str(package_path)]):
         importlib.import_module(f"{package_name}.{module_name}")
 
+    try:
+        importlib.import_module("mani_skill_gs")
+    except (ModuleNotFoundError, ImportError):
+        pass
+
 
 import_all_tasks()

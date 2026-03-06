@@ -197,11 +197,10 @@ class ReconfigureSubprocEnv(SubprocVectorEnv):
         if self.is_async:
             self._assert_id(id)
 
-        # send(None) == reset() in worker
-        for i in id:
+        for ind, i in enumerate(id):
             if robot_obs is not None and scene_obs is not None:
                 self.workers[i].send(
-                    None, robot_obs=robot_obs[i], scene_obs=scene_obs[i]
+                    None, robot_obs=robot_obs[ind], scene_obs=scene_obs[ind]
                 )
             else:
                 self.workers[i].send(None)
@@ -246,17 +245,13 @@ class ReconfigureSubprocEnv(SubprocVectorEnv):
         # get_obs() already handles send and recv internally
         obs_list = [self.workers[i].get_obs() for i in id]
 
-        # If only one environment, return single observation
-        if len(obs_list) == 1:
-            return obs_list[0]
-        else:
-            return obs_list
+        return obs_list
 
     def get_info(
         self,
         id: Optional[Union[int, list[int], np.ndarray]] = None,
     ) -> Union[dict, list[dict]]:
-        """Get info from the environment(s)."""
+        """Get info from the environment(s). Return as list of dict, each dict has key: 'robot_info' and 'scene_info'."""
         self._assert_is_not_closed()
         id = self._wrap_id(id)
         if self.is_async:
@@ -266,25 +261,4 @@ class ReconfigureSubprocEnv(SubprocVectorEnv):
         # get_info() already handles send and recv internally
         info_list = [self.workers[i].get_info() for i in id]
 
-        # If only one environment, return single info
-        if len(info_list) == 1:
-            return info_list[0]
-        else:
-            return info_list
-
-
-if __name__ == "__main__":
-    from calvin_agent.evaluation.multistep_sequences import get_sequences
-    from calvin_agent.evaluation.utils import get_env_state_for_initial_condition
-
-    sequences = get_sequences(10)
-    seq = sequences[0]
-    robot_obs, scene_obs = get_env_state_for_initial_condition(seq[0])
-    robot_obs_list = [robot_obs] * 10
-    scene_obs_list = [scene_obs] * 10
-    env = ReconfigureSubprocEnv([make_env] * 10)
-    obs = env.reset(robot_obs=robot_obs_list, scene_obs=scene_obs_list)
-    print("reset over")
-    for _ in range(10):
-        env.step(np.zeros((10, 7)))
-    print("Done")
+        return info_list

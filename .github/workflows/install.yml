@@ -52,7 +52,7 @@ jobs:
       - name: Install reason
         run: |
           pip install uv
-          TEST_BUILD=1 bash requirements/install.sh reason
+          TEST_BUILD=1 bash requirements/install.sh agentic
           rm -rf .venv
 
       - name: Install openvla
@@ -65,6 +65,10 @@ jobs:
         run: |
           pip install uv
           bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
+          rm -rf .venv
+          bash requirements/install.sh embodied --model openvla-oft --env metaworld
+          rm -rf .venv
+          bash requirements/install.sh embodied --model openvla-oft --env calvin
           rm -rf .venv
 
       - name: Install openpi
@@ -84,6 +88,20 @@ jobs:
           rm -rf .venv
           bash requirements/install.sh embodied --model gr00t --env isaaclab
           rm -rf .venv
+
+      - name: Install dexbotic
+        run: |
+          pip install uv
+          bash requirements/install.sh embodied --model dexbotic --env maniskill_libero
+          rm -rf .venv
+      
+      - name: Install xsquare_turtle2
+        run: |
+          pip install uv
+          uv cache prune --ci
+          bash requirements/install.sh embodied --env xsquare_turtle2
+          rm -rf .venv
+
 
       - name: Install behavior-openvla-oft
         run: |

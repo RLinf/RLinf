@@ -121,6 +121,105 @@ def compute_grpo_advantages(
     return advantages, None
 
 
+@register_advantage("grpo_dynamic")
+def compute_grpo_dynamic_advantages(
+    rewards: torch.Tensor,
+    loss_mask: torch.Tensor,
+    group_size: int,
+    idx_to_traj: list[int],
+    advantage_mode: str = "turn",
+    **kwargs,
+):
+    """
+    Compute GRPO advantages for multi-turn multi-agent scenarios.
+
+    IMPORTANT: This function computes advantages PER QUESTION, not globally.
+    - idx_to_traj maps turn_idx -> global_traj_idx (e.g., [0,0,1,1,2,2,3,3,4,4,...,15,15])
+    - Trajectories 0-3 belong to question 0, 4-7 to question 1, etc.
+    - We must compute GRPO separately for each question's group_size trajectories
+
+    One advantage computation modes:
+
+    1. "turn": Turn-level GRPO
+       - Compute mean/std over all turns within each question
+       - Example: Q0 has 4 trajs with 1,2,3,4 turns = 10 turns total.
+                  Compute GRPO over these 10 turn rewards (currently all same within traj).
+       - Future-proof: works when turns have different rewards within same trajectory
+
+    Args:
+        rewards: Shape [num_sequence, 1] after preprocessing (num_sequence = total turns)
+        loss_mask: Shape [seq_len, num_sequence] after preprocessing
+        group_size: Number of trajectories per question (e.g., 4)
+        idx_to_traj: List mapping turn_idx -> global_traj_idx
+        advantage_mode: "turn"
+
+    Returns:
+        advantages: Shape [seq_len, num_sequence]
+    """
+    num_sequence = len(idx_to_traj)
+
+    # Handle rewards shape - squeeze if needed
+    if rewards.ndim == 2:
+        rewards_flat = rewards.squeeze(-1)  # [num_sequence, 1] -> [num_sequence]
+    else:
+        rewards_flat = rewards  # Already [num_sequence]
+
+    assert rewards_flat.numel() == num_sequence, (
+        f"Rewards size mismatch: {rewards_flat.numel()} != {num_sequence}"
+    )
+
+    # Determine number of questions
+    num_trajectories = max(idx_to_traj) + 1
+    num_questions = num_trajectories // group_size
+    assert num_trajectories % group_size == 0, (
+        f"num_trajectories {num_trajectories} not divisible by group_size {group_size}"
+    )
+
+    # Initialize advantage tensor
+    turn_advantages = torch.zeros(
+        num_sequence, dtype=rewards.dtype, device=rewards.device
+    )
+    if advantage_mode == "turn":
+        # For each question, compute GRPO over all its turns
+
+        # Step 1: Map each turn to its question
+        turn_to_question = torch.tensor(
+            [idx_to_traj[i] // group_size for i in range(num_sequence)],
+            dtype=torch.long,
+            device=rewards.device,
+        )
+
+        # Step 2: Compute per-question statistics over all turns
+        for question_idx in range(num_questions):
+            # Get all turns belonging to this question
+            question_mask = turn_to_question == question_idx
+            question_turn_rewards = rewards_flat[question_mask]
+
+            # Compute statistics for this question's turns
+            question_mean = question_turn_rewards.mean()
+            question_std = question_turn_rewards.std()
+
+            # Normalize turns in this question
+            normalized_question_rewards = (question_turn_rewards - question_mean) / (
+                question_std + 1e-6
+            )
+
+            # Assign back to turn_advantages
+            turn_advantages[question_mask] = normalized_question_rewards
+
+    else:
+        raise ValueError(f"Invalid advantage_mode: {advantage_mode}. Must be 'turn'")
+
+    # Broadcast advantages to match loss_mask shape [seq_len, num_sequence]
+    # turn_advantages is [num_sequence], we broadcast to [seq_len, num_sequence]
+    advantages = torch.zeros_like(
+        loss_mask, dtype=rewards.dtype
+    ) + turn_advantages.view(1, -1)
+    advantages = advantages * loss_mask
+
+    return advantages, None
+
+
 @register_advantage("reinpp")
 def compute_reinpp_advantages(
     rewards: torch.Tensor,

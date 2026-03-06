@@ -6,19 +6,19 @@
 RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* 与 *训练分布外* 的任务中评估具身智能体的表现。  
 目前支持的评估环境列表：
 
-1. :doc:`Behavior <../examples/behavior>`
+1. :doc:`Behavior <../examples/embodied/behavior>`
 
-2. :doc:`Calvin <../examples/calvin>`
+2. :doc:`Calvin <../examples/embodied/calvin>`
 
-3. :doc:`Isaaclab <../examples/isaaclab>`
+3. :doc:`Isaaclab <../examples/embodied/isaaclab>`
 
-4. :doc:`Libero <../examples/libero>`
+4. :doc:`Libero <../examples/embodied/libero>`
 
-5. :doc:`ManiSkill <../examples/maniskill>`
+5. :doc:`ManiSkill <../examples/embodied/maniskill>`
 
-6. :doc:`MetaWorld <../examples/metaworld>`
+6. :doc:`MetaWorld <../examples/embodied/metaworld>`
 
-7. :doc:`RoboCasa <../examples/robocasa>`
+7. :doc:`RoboCasa <../examples/embodied/robocasa>`
 
 所有关于eval的启动脚本均位于 ``examples/embodiment/`` 目录下；
 

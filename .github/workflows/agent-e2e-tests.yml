@@ -18,7 +18,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh reason
+          bash requirements/install.sh agentic
 
       - name: Megatron SGLang Collocated mode
         timeout-minutes: 20
@@ -96,7 +96,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh reason
+          bash requirements/install.sh agentic
 
       - name: Megatron SGLang Collocated mode
         timeout-minutes: 20
@@ -159,7 +159,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh reason
+          bash requirements/install.sh agentic
   
       - name: Megatron SGLang Collocated mode
         timeout-minutes: 20
@@ -187,7 +187,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh reason
+          bash requirements/install.sh agentic
   
       - name: Megatron SGLang Collocated mode
         timeout-minutes: 20
@@ -215,7 +215,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh reason
+          bash requirements/install.sh agentic
 
       - name: Install dependencies
         run: |
@@ -234,6 +234,93 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  rstar2-qwen-grpo-test:
+    runs-on: reason
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create reason environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
+          bash requirements/install.sh agentic
+
+      - name: Clone code-judge
+        uses: actions/checkout@v5
+        with:
+          repository: 0xWJ/code-judge
+          ref: fbc5293afa4fa0965418ed5b0d3979fe1d815a49
+          path: code-judge
+
+      - name: Install dependencies
+        run: |
+          source .venv/bin/activate
+          apt-get update -y && apt-get install redis -y
+          uv pip install -r code-judge/requirements.txt
+          uv pip install -e code-judge
+          uv pip install math_verify
+          uv pip install sympy
+          uv pip install pylatexenc
+          tmux kill-session -t server 2>/dev/null || true
+          tmux kill-session -t worker 2>/dev/null || true
+          pkill redis-server 2>/dev/null || true
+
+      - name: SGLang Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          redis-server --daemonize yes --protected-mode no --bind 0.0.0.0 --port 6380
+          tmux new-session -d -s server \
+          'source .venv/bin/activate && \
+            cd code-judge && \
+            MAX_EXECUTION_TIME=4 \
+            REDIS_URI="redis://$MASTER_ADDR:6380" \
+            RUN_WORKERS=0 \
+            uvicorn app.main:app --host 0.0.0.0 --port 8088 --workers 16 \
+            2>&1 | tee server.log' 
+          tmux new-session -d -s worker \
+          'source .venv/bin/activate && \
+            cd code-judge && \
+            MAX_EXECUTION_TIME=4 \
+            REDIS_URI="redis://$MASTER_ADDR:6380" \
+            MAX_WORKERS=64 \
+            python run_workers.py \
+            2>&1 | tee worker.log'
+          sleep 10
+          echo ""
+          echo "=== Server log (after 10s) ==="
+          if [ -f code-judge/server.log ]; then
+            cat code-judge/server.log
+          else
+            echo "⚠️  server.log not found"
+            tmux capture-pane -t server -p || echo "Could not capture server pane"
+          fi
+          echo ""
+          echo "=== Worker log (after 10s) ==="
+          if [ -f code-judge/worker.log ]; then
+            cat code-judge/worker.log
+          else
+            echo "⚠️  worker.log not found"
+            tmux capture-pane -t worker -p || echo "Could not capture worker pane"
+          fi
+          tmux ls
+          bash tests/e2e_tests/agent/run_rstar2.sh
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+          tmux kill-session -t server 2>/dev/null || true
+          tmux kill-session -t worker 2>/dev/null || true
+          pkill redis-server 2>/dev/null || true
+          rm -rf code-judge/
+
   qwen-vl-grpo-test:
     runs-on: reason
     steps:
@@ -248,7 +335,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh reason
+          bash requirements/install.sh agentic
 
       - name: FSDP SGLang Collocated mode
         timeout-minutes: 20
@@ -283,7 +370,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh reason
+          bash requirements/install.sh agentic
 
       - name: Megatron SGLang Pipeline mode
         timeout-minutes: 10
@@ -311,7 +398,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh reason
+          bash requirements/install.sh agentic
 
       - name: MoE sequential MLP Collocated mode 
         timeout-minutes: 20

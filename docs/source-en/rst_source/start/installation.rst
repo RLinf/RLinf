@@ -79,11 +79,11 @@ We provide Docker images for different experiments:
 
 - **Embodied:**
 
-  - ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` for the Libero or ManiSkill benchmarks. For other embodied experiments, please refer to the corresponding sections in :doc:`../examples/index`
+  - ``rlinf/rlinf:agentic-rlinf0.1-maniskill_libero`` for the Libero or ManiSkill benchmarks. For other embodied experiments, please refer to the corresponding sections in :doc:`../examples/index`
 
 - **Math reasoning:** 
 
-  - ``rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6-vllm0.8.5-megatron0.13.0-te2.1`` (used for enhancing LLM reasoning on MATH tasks)
+  - ``rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1`` (used for enhancing LLM reasoning on MATH tasks)
 
 
 Once you've identified the appropriate image for your setup, pull the Docker image:
@@ -177,7 +177,7 @@ To install the reasoning (Megatron + SGLang/vLLM) stack instead, run:
 
 .. code-block:: shell
 
-  bash requirements/install.sh reason
+  bash requirements/install.sh agentic
 
 You can override the default virtual environment directory using ``--venv``. For example:
 
@@ -185,3 +185,21 @@ You can override the default virtual environment directory using ``--venv``. For
 
   bash requirements/install.sh embodied --model openpi --env maniskill_libero --venv openpi-venv
   source openpi-venv/bin/activate
+
+.. _install-as-library:
+
+Installation as a Library
+--------------------------------------------------
+
+.. warning::
+  The `rlinf` package does not manage env and model dependencies, but only those of RLinf core system.
+
+  So you need to additionally install the dependencies for the target experiments yourself.
+
+  It is not intended to be directly used for RL experiments, but rather as a third-party library for other systems.
+
+RLinf is now available on PyPI for installation via pip as a library. 
+
+- Use `pip install rlinf[embodied]` for embodied RL.
+- Use `pip install rlinf[agentic-sglang]` for agentic RL with SGLang.
+- Use `pip install rlinf[agentic-vllm]` for agentic RL with vLLM.
