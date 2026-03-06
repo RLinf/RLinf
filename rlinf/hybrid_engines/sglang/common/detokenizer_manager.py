@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from sglang.srt.managers.detokenizer_manager import (
-    BatchTokenIDOut,
     PortArgs,
     ServerArgs,
     configure_logger,
@@ -30,7 +29,7 @@ from sglang.srt.managers.detokenizer_manager import (
 
 
 class DetokenizerManager(_DetokenizerManager):
-    def handle_batch_token_id_out(self, recv_obj: BatchTokenIDOut):
+    def handle_batch_token_id_out(self, recv_obj):
         result = super().handle_batch_token_id_out(recv_obj)
         # for sglang 0.4.x, this will be None, then we can't get output_ids in tokenizer_manager, and then we can't get output_ids in result.
         # for sglang 0.5.x < 0.5.5, it has a bug in this, so we patched it. refer to https://github.com/sgl-project/sglang/pull/12628

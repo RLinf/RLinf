@@ -300,16 +300,17 @@ class Scheduler(_Scheduler):
         return_logprob: bool,
         skip_req=None,
     ):
+
+        # for sglang 0.5.0 and later, we use the original _handle_batch_output
+        if not self.patch_return_output_ids:
+            return super().stream_output_generation(reqs, return_logprob, skip_req)
+
         from sglang.srt.managers.scheduler_output_processor_mixin import (
             DEFAULT_FORCE_STREAM_INTERVAL,
             BaseFinishReason,
             BatchTokenIDOut,
             DisaggregationMode,
         )
-
-        # for sglang 0.5.0 and later, we use the original _handle_batch_output
-        if not self.patch_return_output_ids:
-            return super().stream_output_generation(reqs, return_logprob, skip_req)
 
         rids = []
         finished_reasons: list[BaseFinishReason] = []

@@ -518,6 +518,10 @@ class RolloutResult:
                 merged_result.recompute_prev_logprobs = merge_tensor(
                     merged_result.recompute_prev_logprobs, res.recompute_prev_logprobs
                 )
+            if res.multi_modal_inputs is not None:
+                merged_result.multi_modal_inputs = merge_list(
+                    merged_result.multi_modal_inputs, res.multi_modal_inputs
+                )
         return merged_result
 
     @staticmethod
