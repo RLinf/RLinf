@@ -529,3 +529,7 @@ class WorkerGroupFuncResult:
         while not self._wait_done:
             await asyncio.sleep(0.1)
         return self._local_results
+
+    def done(self):
+        """Query the completion state of the function."""
+        return self._wait_done
