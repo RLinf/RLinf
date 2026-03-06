@@ -54,25 +54,7 @@ def main(cfg) -> None:
         placement_strategy=rollout_placement_strategy,
     )
 
-    # Inference group
-    actor_inference_group = None
-    if (
-        component_placement.placement_mode
-        in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]
-        and cfg.algorithm.recompute_logprobs
-    ):
-        inference_placement_strategy = component_placement.get_strategy(
-            "actor_inference"
-        )
-        inference_worker_cls = get_inference_backend_worker(cfg, "actor")
-        actor_inference_group = inference_worker_cls.create_group(
-            cfg, component_placement
-        ).launch(
-            cluster,
-            name=cfg.inference.group_name,
-            placement_strategy=inference_placement_strategy,
-        )
-
+    # Inference group for critic model
     critic_inference_group = None
     if (
         component_placement.placement_mode
@@ -88,6 +70,25 @@ def main(cfg) -> None:
         ).launch(
             cluster,
             name=cfg.critic_inference.group_name,
+            placement_strategy=inference_placement_strategy,
+        )
+
+    # Inference group for actor model
+    actor_inference_group = None
+    if (
+        component_placement.placement_mode
+        in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]
+        and cfg.algorithm.recompute_logprobs
+    ):
+        inference_placement_strategy = component_placement.get_strategy(
+            "actor_inference" if critic_inference_group else "inference"
+        )
+        inference_worker_cls = get_inference_backend_worker(cfg, "actor")
+        actor_inference_group = inference_worker_cls.create_group(
+            cfg, component_placement
+        ).launch(
+            cluster,
+            name=cfg.inference.group_name,
             placement_strategy=inference_placement_strategy,
         )
 
