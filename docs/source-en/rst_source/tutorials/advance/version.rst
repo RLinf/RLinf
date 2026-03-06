@@ -6,7 +6,7 @@ reinforcement-learning pipeline. For the current release **SGLang and vLLM** is 
 
 .. note::
 
-   RLinf is compatible with **SGLang 0.4.4 → 0.5.4**, **vLLM 0.8.5  → 0.8.5.post1**.
+   RLinf is compatible with **SGLang 0.4.4 → 0.5.4**, **vLLM 0.8.5  → 0.8.5.post1**.  
    No manual patching is required – the framework detects the installed
    version and loads the matching shim automatically.
 
