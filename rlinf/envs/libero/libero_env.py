@@ -65,6 +65,7 @@ class LiberoEnv(gym.Env):
 
         self.prev_step_reward = np.zeros(self.num_envs)
         self.use_rel_reward = cfg.use_rel_reward
+        self.use_step_penalty = getattr(cfg, "use_step_penalty", False)
 
         self._init_metrics()
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
@@ -449,11 +450,13 @@ class LiberoEnv(gym.Env):
         return obs, infos
 
     def _calc_step_reward(self, terminations):
-        reward = self.cfg.reward_coef * terminations
-        reward_diff = reward - self.prev_step_reward
-        self.prev_step_reward = reward
+        step_penalty = -1 if self.use_step_penalty else 0
+        termination_bonus = self.cfg.reward_coef * terminations
+        reward = step_penalty + termination_bonus
 
         if self.use_rel_reward:
+            reward_diff = reward - self.prev_step_reward
+            self.prev_step_reward = reward
             return reward_diff
         else:
             return reward

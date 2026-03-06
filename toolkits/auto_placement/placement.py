@@ -55,7 +55,7 @@ class ScheduleResult(ABC):
             return None
 
         # In Embodiment task, actor should run on all GPUs.
-        if config.task_type == "embodiment":
+        if config.task_type == "embodied":
             nodes = list(res.placement.keys())
             if (
                 nodes[-1].role == "actor"

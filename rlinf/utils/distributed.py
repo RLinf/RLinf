@@ -27,7 +27,157 @@ except ImportError:
 from torch.distributed import ProcessGroup, ReduceOp
 from typing_extensions import Self
 
+from rlinf.scheduler import Worker
 from rlinf.utils.timers import NamedTimer
+
+
+def compute_rollout_metrics_dynamic(
+    rollout_batch: dict[str, torch.Tensor],
+    max_prompt_len: int,
+    response_len: int,
+    data_parallel_group: Optional[ProcessGroup] = None,
+    use_critic: bool = False,
+):
+    """
+    Compute rollout metrics for dynamic multi-turn scenarios.
+
+    Key difference from compute_rollout_metrics:
+    - reward_scores is computed at the TRAJECTORY level instead of turn level
+    - Uses idx_to_traj to map turns to trajectories
+    - Aggregates turn rewards to trajectory level before averaging
+
+    Args:
+        rollout_batch: Batch containing turn-level data with idx_to_traj mapping
+        max_prompt_len: Maximum prompt length
+        response_len: Response length
+        data_parallel_group: Data parallel group for distributed training
+        use_critic: Whether using critic (unused)
+    """
+    device = torch.device(f"cuda:{torch.cuda.current_device()}")
+    advantages = rollout_batch["advantages"].to(device=device)
+    mask = rollout_batch["response_mask"].to(device=device)
+    prompt_lengths = rollout_batch["prompt_lengths"].clone().to(device=device)
+    response_lengths = rollout_batch["response_lengths"].clone().to(device=device)
+    reward_scores = rollout_batch["rewards"].clone().to(device=device)
+    is_end = rollout_batch["is_end"].clone().float().to(device=device)
+    idx_to_traj = rollout_batch["idx_to_traj"]  # List mapping turn_idx -> traj_idx
+    num_trajectories = max(idx_to_traj) + 1
+
+    dp_world_size = torch.distributed.get_world_size(data_parallel_group)
+
+    prompt_lengths_list: list[list[int]] = [None for _ in range(dp_world_size)]
+    decode_lengths_list: list[list[int]] = [None for _ in range(dp_world_size)]
+    torch.distributed.all_gather_object(
+        prompt_lengths_list,
+        prompt_lengths.tolist(),
+        group=data_parallel_group,
+    )
+    torch.distributed.all_gather_object(
+        decode_lengths_list,
+        response_lengths.tolist(),
+        group=data_parallel_group,
+    )
+
+    total_prompt_lengths = torch.tensor(sum(prompt_lengths_list, []), device=device)
+    total_decode_lengths = torch.tensor(sum(decode_lengths_list, []), device=device)
+
+    # Compute turn-level sums (for metrics that remain at turn level)
+    sum_plen = prompt_lengths.sum().detach().item()
+    sum_rlen = response_lengths.sum().detach().item()
+    sum_turn_rewards = reward_scores.sum().detach().item()
+    sum_end = is_end.sum().detach().item()
+    num_seq = prompt_lengths.numel()  # number of turns
+
+    # === BEGIN TRAJECTORY-LEVEL METRIC COMPUTATION ===
+    trajectory_rewards = torch.zeros(
+        num_trajectories, dtype=reward_scores.dtype, device=device
+    )
+    trajectory_counts = torch.zeros(num_trajectories, dtype=torch.long, device=device)
+
+    for turn_idx, traj_idx in enumerate(idx_to_traj):
+        trajectory_rewards[traj_idx] += reward_scores[turn_idx]
+        trajectory_counts[traj_idx] += 1
+
+    # Average rewards per trajectory (all turns in a trajectory have same reward, so this is just the reward value)
+    trajectory_rewards = trajectory_rewards / trajectory_counts.clamp(min=1).float()
+
+    # Sum of trajectory rewards for averaging
+    sum_traj_rewards = trajectory_rewards.sum().detach().item()
+    # num_trajs = num_trajectories
+
+    # # Total number of turns (for computing avg turns per trajectory)
+    # total_turns = num_seq  # This is the number of turns on current rank
+
+    # === END TRAJECTORY-LEVEL REWARD COMPUTATION ===
+
+    valid_adv = torch.masked_select(advantages, mask)
+    n_valid_token = mask.sum().detach().item()
+    sum_adv = valid_adv.to(torch.float64).sum().detach().item()
+
+    # Prepare metrics for distributed reduction
+    # Note: sum_traj_rewards and num_trajs are trajectory-level, others are turn-level
+    reduce_metrics = torch.as_tensor(
+        [
+            sum_plen,
+            sum_rlen,
+            sum_traj_rewards,
+            sum_turn_rewards,
+            sum_end,
+            sum_adv,
+            num_seq,
+            n_valid_token,
+            num_trajectories,
+        ],
+        device=device,
+        dtype=torch.float32,
+    )
+
+    torch.distributed.all_reduce(
+        reduce_metrics,
+        torch.distributed.ReduceOp.SUM,
+        group=data_parallel_group,
+    )
+
+    (
+        sum_plen,
+        sum_rlen,
+        sum_traj_rewards,
+        sum_turn_rewards,
+        sum_end,
+        sum_adv,
+        num_seq,
+        n_valid_token,
+        num_trajectories,
+    ) = reduce_metrics.tolist()
+
+    adv_max = torch.max(valid_adv).detach().item()
+    adv_min = torch.min(valid_adv).detach().item()
+    reduce_tensor = torch.as_tensor(
+        [-adv_min, adv_max], device=torch.cuda.current_device(), dtype=torch.float32
+    )
+    torch.distributed.all_reduce(
+        reduce_tensor,
+        torch.distributed.ReduceOp.MAX,
+        group=data_parallel_group,
+    )
+    adv_min, adv_max = reduce_tensor.tolist()
+
+    rollout_metrics = {
+        "total_num_sequence": num_seq,
+        "prompt_length": sum_plen / num_seq,
+        "response_length": sum_rlen / num_seq,
+        "total_length": (sum_plen + sum_rlen) / num_seq,
+        "reward_scores_traj": sum_traj_rewards
+        / num_trajectories,  # TRAJECTORY-LEVEL AVERAGE
+        "reward_scores_turn": sum_turn_rewards / num_seq,  # TURN-LEVEL AVERAGE
+        "avg_turns_per_traj": num_seq
+        / num_trajectories,  # AVERAGE TURNS PER TRAJECTORY
+        "fraction_of_samples_properly_ended": sum_end / num_seq,
+        "advantages_mean": sum_adv / n_valid_token,
+        "advantages_max": adv_max,
+        "advantages_min": -adv_min,
+    }
+    return rollout_metrics, total_prompt_lengths, total_decode_lengths
 
 
 def compute_rollout_metrics(
@@ -37,7 +187,7 @@ def compute_rollout_metrics(
     data_parallel_group: Optional[ProcessGroup] = None,
     use_critic: bool = False,
 ):
-    device = torch.device(f"cuda:{torch.cuda.current_device()}")
+    device = Worker.torch_platform.current_device()
     advantages = rollout_batch["advantages"].to(device=device)
     mask = rollout_batch["response_mask"][:, -response_len:].to(device=device)
     prompt_lengths = rollout_batch["prompt_lengths"].clone().to(device=device)
@@ -92,7 +242,9 @@ def compute_rollout_metrics(
     adv_max = torch.max(valid_adv).detach().item()
     adv_min = torch.min(valid_adv).detach().item()
     reduce_tensor = torch.as_tensor(
-        [-adv_min, adv_max], device=torch.cuda.current_device(), dtype=torch.float32
+        [-adv_min, adv_max],
+        device=Worker.torch_platform.current_device(),
+        dtype=torch.float32,
     )
     torch.distributed.all_reduce(
         reduce_tensor,
@@ -162,12 +314,16 @@ class RolloutDataBalance(UserDict):
         dp_group: Optional[ProcessGroup],
         partitioning_tool: Callable,
     ) -> Self:
-        current_device = torch.cuda.current_device()
+        current_device = Worker.torch_platform.current_device()
 
-        attn_mask = rollout_batches.get("attention_mask")
-        current_num_samples = attn_mask.size(0)
+        # 1. Get local sample count
+        current_num_samples = 0
+        if rollout_batches:
+            first_tensor = next(iter(rollout_batches.values()))
+            if isinstance(first_tensor, torch.Tensor) and first_tensor.numel() > 0:
+                current_num_samples = first_tensor.size(0)
 
-        # 2. Calculate local sample token counts
+        # 2. Calculate local token counts
         local_token_counts = torch.zeros(
             current_num_samples, dtype=torch.int, device=current_device
         )
@@ -180,19 +336,21 @@ class RolloutDataBalance(UserDict):
                 local_token_counts = attn_mask.sum(dim=1).int()
 
         # 3. Gather global information: sample counts from each rank
-        num_samples_tensor = torch.tensor(
-            current_num_samples, device=current_device, dtype=torch.long
-        )
-        all_num_samples_t = [
-            torch.empty_like(num_samples_tensor) for _ in range(dp_world_size)
-        ]
-        if dp_group and dp_world_size > 1:
-            torch.distributed.all_gather(
-                all_num_samples_t, num_samples_tensor, group=dp_group
+        if dp_world_size > 1 and dp_group is not None:
+            # Multi-rank case: use all_gather_object
+            all_num_samples = [None] * dp_world_size
+            torch.distributed.all_gather_object(
+                all_num_samples, current_num_samples, group=dp_group
             )
         else:
-            all_num_samples_t = [num_samples_tensor]
-        all_num_samples = [s.item() for s in all_num_samples_t]
+            # Single-rank case:
+            all_num_samples = [current_num_samples]
+
+        all_num_samples = [
+            int(num_samples) if num_samples is not None else 0
+            for num_samples in all_num_samples
+        ]
+
         global_total_samples = sum(all_num_samples)
         max_samples_rank = max(all_num_samples) if global_total_samples > 0 else 0
 
@@ -213,6 +371,12 @@ class RolloutDataBalance(UserDict):
                 torch.empty_like(padded_local_tokens) for _ in range(dp_world_size)
             ]
             if dp_group and dp_world_size > 1:
+                all_padded_tokens_t = [
+                    torch.zeros(
+                        max_samples_rank, dtype=torch.int, device=current_device
+                    )
+                    for _ in range(dp_world_size)
+                ]
                 torch.distributed.all_gather(
                     all_padded_tokens_t, padded_local_tokens, group=dp_group
                 )
@@ -285,6 +449,9 @@ class RolloutDataBalance(UserDict):
             torch.distributed.all_gather_object(
                 all_payloads_cpu, payload_cpu, group=dp_group
             )
+            remove_len = len(all_payloads_cpu) % dp_world_size
+            if remove_len > 0:
+                all_payloads_cpu = all_payloads_cpu[:-remove_len]
         else:
             all_payloads_cpu = [payload_cpu]
 
@@ -355,8 +522,99 @@ class RolloutDataBalance(UserDict):
                         final_rank_data[key] = _create_empty_tensor_for_key(
                             key, template_specs, current_device
                         )
+        else:
+            for key in final_ordered_keys:
+                final_rank_data[key] = _create_empty_tensor_for_key(
+                    key, template_specs, current_device
+                )
 
         return cls(final_rank_data, ordered_keys_hint=final_ordered_keys)
+
+    @classmethod
+    def from_rollout_batches_dynamic(
+        cls: Self,
+        rollout_batches: dict[str, torch.Tensor],
+        dp_world_size: int,
+        dp_rank: int,
+        dp_group: Optional[ProcessGroup],
+        rollout_batch_pad: dict[str, torch.Tensor],
+        split_fix_chunk: int,
+        partitioning_tool: Callable,
+    ) -> Self:
+        # 0. Check data
+        assert rollout_batches.keys() == rollout_batch_pad.keys(), (
+            f"rollout_batches and rollout_batch_pad must have the same keys, but these are [{sorted(rollout_batches.keys())}] and [{sorted(rollout_batch_pad.keys())}]"
+        )
+        assert (
+            "input_ids" in rollout_batches
+            and "prompt_lengths" in rollout_batches
+            and "response_lengths" in rollout_batches
+        )
+        batch_size = rollout_batches["input_ids"].size(0)
+        assert all(v.size(0) == batch_size for v in rollout_batches.values())
+        assert all(v.size(0) == 1 for v in rollout_batch_pad.values())
+        for k in rollout_batches.keys():
+            assert rollout_batches[k].dtype == rollout_batch_pad[k].dtype, (
+                f"batch dtype mismatch: key: {k}, dtype: {rollout_batches[k].dtype}, {rollout_batch_pad[k].dtype}"
+            )
+            assert rollout_batches[k].shape[1:] == rollout_batch_pad[k].shape[1:], (
+                f"batch shape mismatch: key: {k}, shape: {rollout_batches[k].shape}, {rollout_batch_pad[k].shape}"
+            )
+        rollout_batches = {k: v.cpu() for k, v in rollout_batches.items()}
+        rollout_batch_pad = {k: v.cpu() for k, v in rollout_batch_pad.items()}
+
+        # 1. Allgather data
+        gathered_rollout_batches = [{} for _ in range(dp_world_size)]
+        for k in sorted(rollout_batches.keys()):
+            rollout_batch_values = [None for _ in range(dp_world_size)]
+            torch.distributed.all_gather_object(
+                rollout_batch_values, rollout_batches[k], group=dp_group
+            )
+            for gathered_batch, value in zip(
+                gathered_rollout_batches, rollout_batch_values
+            ):
+                gathered_batch[k] = value
+
+        global_batch_size = batch_size = sum(
+            b["input_ids"].size(0) for b in gathered_rollout_batches
+        )
+
+        # 2. Merge data and pad data to fixed length
+        if global_batch_size % (dp_world_size * split_fix_chunk) == 0:
+            pad_size = 0
+        else:
+            pad_size = (dp_world_size * split_fix_chunk) - (
+                global_batch_size % (dp_world_size * split_fix_chunk)
+            )
+        # make sure dp_world_size * split_fix_chunk (dp size * self.num_train_steps * self.cfg.actor.micro_batch_size) can be divided by global_batch_size
+        merged_rollout_batches = {}
+        for key in rollout_batches.keys():
+            merged_rollout_batches[key] = torch.cat(
+                [rollout_batches[key] for rollout_batches in gathered_rollout_batches]
+                + [rollout_batch_pad[key]] * pad_size,
+                dim=0,
+            )
+
+        # 3. get length of each sample
+        sample_lengths = (
+            merged_rollout_batches["prompt_lengths"]
+            + merged_rollout_batches["response_lengths"]
+        ).tolist()
+
+        # 4. Calc partitions
+        partitions = partitioning_tool(
+            seqlen_list=sample_lengths,
+            k_partitions=dp_world_size,
+            equal_size=True,
+        )
+        self_partition = partitions[dp_rank]
+
+        # 5. Get indices of samples for current rank
+        selected_rollout_batches = {
+            k: v[self_partition] for k, v in merged_rollout_batches.items()
+        }
+
+        return selected_rollout_batches
 
     def gather_and_balance_globally(self):
         global_rollout_batch = type(self)()
@@ -393,12 +651,12 @@ def rebalance_nd_tensor(tensor, group):
     NOTE: assumes all other (i.e., non-zero) dimensions are equal.
     """
     num_samples = torch.as_tensor(
-        tensor.size(0), dtype=torch.int64, device=torch.cuda.current_device()
+        tensor.size(0), dtype=torch.int64, device=Worker.torch_platform.current_device()
     )
     batch_num_per_rank = torch.zeros(
         torch.distributed.get_world_size(group),
         dtype=torch.int64,
-        device=torch.cuda.current_device(),
+        device=Worker.torch_platform.current_device(),
     )
     torch.distributed.all_gather_into_tensor(
         batch_num_per_rank, num_samples, group=group
@@ -409,7 +667,10 @@ def rebalance_nd_tensor(tensor, group):
 
     indices = batch_num_per_rank.cumsum(dim=0)
     output_tensor = torch.zeros(
-        B, *other_dims, dtype=tensor.dtype, device=torch.cuda.current_device()
+        B,
+        *other_dims,
+        dtype=tensor.dtype,
+        device=Worker.torch_platform.current_device(),
     )
 
     # tensor_split is a view we can copy into
@@ -441,7 +702,7 @@ def broadcast_tensor(
     """
 
     if torch.distributed.get_rank() == src:
-        tensor = tensor.cuda()
+        tensor = tensor.to(Worker.torch_device_type)
         if dtype:
             tensor = tensor.to(dtype)
 
@@ -506,7 +767,7 @@ def broadcast_tensor_within_dp(tensor: torch.Tensor, dtype: torch.dtype):
 def gather_tensor(tensor, dst, group, dtype=None):
     """Gather any tensor to the dst rank from every other rank in the given group.
     All the ranks that send or receive data must call this function."""
-    tensor = tensor.to(device=torch.cuda.current_device(), dtype=dtype)
+    tensor = tensor.to(device=Worker.torch_platform.current_device(), dtype=dtype)
     if torch.distributed.get_rank() == dst:
         gather_list = [
             torch.empty_like(tensor)
@@ -525,7 +786,7 @@ def all_reduce_int(
     group: ProcessGroup = None,
 ):
     obj_tensor = torch.tensor(
-        [obj], dtype=torch.long, device=torch.cuda.current_device()
+        [obj], dtype=torch.long, device=Worker.torch_platform.current_device()
     )
     torch.distributed.all_reduce(
         obj_tensor,
@@ -552,8 +813,8 @@ def normalize_tensor(tensor, mask, group=None):
     """normalizes a tensor using global mean and std"""
     dtype = torch.float64
     tensor = tensor.to(dtype)
-    tensor = tensor.to(device=torch.cuda.current_device())
-    mask = mask.to(device=torch.cuda.current_device())
+    tensor = tensor.to(Worker.torch_device_type)
+    mask = mask.to(Worker.torch_device_type)
 
     tensor_global_mean, tensor_global_var = masked_global_mean_var(
         tensor, mask, group=group
@@ -647,8 +908,8 @@ def masked_global_mean_var(values, mask, group=None):
     mask and values must have same shape, with mask being {0,1} with 1 being the values we want to keep
     """
     assert values.shape == mask.shape, (values.shape, mask.shape)
-    values = values.to(device=torch.cuda.current_device())
-    mask = mask.to(device=torch.cuda.current_device())
+    values = values.to(Worker.torch_device_type)
+    mask = mask.to(Worker.torch_device_type)
 
     values = values * mask
 
@@ -656,7 +917,7 @@ def masked_global_mean_var(values, mask, group=None):
     sum_and_count = torch.tensor(
         [values.sum(), mask.sum()],
         dtype=torch.float64,
-        device=torch.cuda.current_device(),
+        device=Worker.torch_platform.current_device(),
     )
     torch.distributed.all_reduce(sum_and_count, group=group)
     global_sum, global_count = sum_and_count
@@ -664,7 +925,7 @@ def masked_global_mean_var(values, mask, group=None):
     variance_summed = (
         (((values - global_mean) ** 2) * mask)
         .sum()
-        .to(device=torch.cuda.current_device(), dtype=torch.float64)
+        .to(device=Worker.torch_platform.current_device(), dtype=torch.float64)
     )
 
     torch.distributed.all_reduce(variance_summed, group=group)
@@ -673,12 +934,12 @@ def masked_global_mean_var(values, mask, group=None):
 
 
 def report_device_info(info_str):
-    free_gpu_memory, total_gpu_memory = torch.cuda.mem_get_info()
+    free_gpu_memory, total_gpu_memory = Worker.torch_platform.mem_get_info()
     free_gpu_memory /= 2**30
     total_gpu_memory /= 2**30
 
-    memory_allocated = torch.cuda.memory_allocated() / 2**30
-    memory_reserved = torch.cuda.memory_reserved() / 2**30
+    memory_allocated = Worker.torch_platform.memory_allocated() / 2**30
+    memory_reserved = Worker.torch_platform.memory_reserved() / 2**30
 
     print(
         f"[Rank {torch.distributed.get_rank()}] {info_str}, {free_gpu_memory=:.2f} GiB, {total_gpu_memory=:.2f} GiB, {memory_allocated=:.2f} GiB, {memory_reserved=:.2f} GiB"
@@ -729,7 +990,9 @@ def all_reduce_dict(
 ):
     keys = sorted(dictionary)
     tensor = torch.as_tensor(
-        [dictionary[k] for k in keys], dtype=dtype, device=torch.cuda.current_device()
+        [dictionary[k] for k in keys],
+        dtype=dtype,
+        device=Worker.torch_platform.current_device(),
     )
     torch.distributed.all_reduce(tensor, op=op, group=group)
     return dict(zip(keys, tensor.tolist()))

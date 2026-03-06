@@ -60,3 +60,4 @@ env:
       hand_reset_state: [0.4, 0.0, 0.0, 0.0, 0.0, 0.0]
       hand_action_scale: 1.0
       joint_reset_qpos: [0, 0, 0, -1.9, 0, 2, 0]
+      success_hold_steps: 1  # define how many consecutive steps the robot must hold the position to succeed

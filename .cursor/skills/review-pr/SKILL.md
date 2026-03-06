@@ -65,6 +65,10 @@ For docs PRs, or PRs touching `docs/`, always perform a cross-language and style
 - **Logging**: Use logging (or in Workers: `self.log_info` / `log_warning` / `log_error`) instead of `print`.
 - **Config YAML**: Prefer copying existing configs from main as templates; **no calculations or dynamic values** in YAML (do in code, e.g. `config.py`); config fields must be **read-only** in code; avoid cross-field references in YAML when possible.
 - **Tests**: New features must include CI tests; large/new dependencies (docker, models, datasets) → note that maintainers may need to be involved.
+- **Dependencies/CI integration**: If the PR introduces new dependencies (for example, a new env/model requiring install script updates) or adds new YAML configs that should be exercised in CI, explicitly cross-check install script, Docker, and CI/e2e coverage using the [add-install-docker-ci-e2e skill](../add-install-docker-ci-e2e/SKILL.md). Flag missing installation wiring or missing test coverage.
+- **Duplication**: Check for avoidable code duplication across modules/config/docs; suggest extracting shared helpers or reusing existing abstractions when repetition is significant.
+- **Implementation simplicity**: If a solution is clearly clumsy or over-complicated, suggest a simpler/more maintainable alternative and explain why it is safer or easier to evolve.
+- **No hardcoded paths/hacks**: Flag hardcoded machine-specific paths and heavy hacky workarounds. Prefer config/env-driven paths and robust integration points.
 
 ### Commit messages and sign-off
 

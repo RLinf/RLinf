@@ -59,6 +59,11 @@ class SupportedModel(Enum):
     FLOW_POLICY = ("flow_policy", "embodied")
     CMA_POLICY = ("cma", "embodied")
 
+    # Sft models
+    QWEN2_5_VL_SFT = ("qwen2.5_vl", "sft")
+    QWEN3_VL_SFT = ("qwen3_vl", "sft")
+    QWEN3_VL_MOE_SFT = ("qwen3_vl_moe", "sft")
+
     def __new__(cls, value, category):
         obj = object.__new__(cls)
         obj._value_ = value
@@ -95,7 +100,7 @@ def torch_dtype_from_precision(precision: Union[int, str]) -> torch.dtype:
         return torch.float16
     elif precision in [32, "32", "fp32", "32-true"]:
         return torch.float32
-    elif precision in [None]:
+    elif precision in [None, "null"]:
         return None
     else:
         raise ValueError(
@@ -693,7 +698,10 @@ def validate_embodied_cfg(cfg):
     # NOTE: Currently we only support actor_critic as PPO algorithm loss, and only support value_head as critic model.
     # This will be updated in the future to support more algorithms and critic models.
     # Check that actor_critic loss requires value_head
-    if cfg.algorithm.loss_type == "actor_critic":
+    if (
+        cfg.algorithm.loss_type == "actor_critic"
+        or cfg.algorithm.loss_type == "decoupled_actor_critic"
+    ):
         add_value_head = cfg.actor.model.get("add_value_head", False)
         assert add_value_head, (
             f"When using PPO algorithm (algorithm.loss_type='actor_critic'), "
@@ -702,9 +710,7 @@ def validate_embodied_cfg(cfg):
         )
 
     # process num-envs
-    component_placement = HybridComponentPlacement(
-        cfg, Cluster(cluster_cfg=cfg.cluster)
-    )
+    component_placement = HybridComponentPlacement(cfg, Cluster())
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
 
@@ -823,6 +829,30 @@ def validate_embodied_cfg(cfg):
     return cfg
 
 
+def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
+    assert cfg.actor.get("global_batch_size", None) is not None, (
+        "the actor.global_batch_size is not set"
+    )
+    assert cfg.actor.get("micro_batch_size", None) is not None, (
+        "the actor.micro_batch_size is not set"
+    )
+
+    with open_dict(cfg):
+        if cfg.data.get("train_data_paths", None) is None:
+            # if train_data_paths is None, the code will just eval the model
+            assert cfg.data.get("eval_data_paths", None) is not None, (
+                "the data.train_data_paths is None, so data.eval_data_paths is required"
+            )
+        elif cfg.data.get("eval_data_paths", None) is not None:
+            # set the val_check_interval to max_epochs
+            if cfg.runner.get("val_check_interval", None) is None:
+                cfg.runner.val_check_interval = cfg.runner.max_epochs
+        else:
+            # set the val_check_interval to -1 if there is no eval data
+            cfg.runner.val_check_interval = -1
+    return cfg
+
+
 def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
     assert cfg.algorithm.recompute_logprobs or cfg.rollout.return_logprobs, (
         "One of `algorithm.recompute_logprobs` or `rollout.return_logprobs` must be True to compute `prev_logprobs`."
@@ -892,7 +922,7 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
         "Online coding task must use megatron training backend"
     )
 
-    cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
+    cluster = Cluster()
     component_placement = ModelParallelComponentPlacement(cfg, cluster)
     assert component_placement.placement_mode == PlacementMode.DISAGGREGATED, (
         "Online coding task must use disaggregated placement mode"
@@ -929,6 +959,17 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
 def validate_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.set_struct(cfg, True)
 
+    with open_dict(cfg):
+        cfg.runner.per_worker_log = cfg.runner.get("per_worker_log", False)
+        cfg.runner.per_worker_log_path = None
+        if cfg.runner.per_worker_log:
+            cfg.runner.per_worker_log_path = os.path.join(
+                cfg.runner.logger.log_path, "worker_logs"
+            )
+
+    # Init cluster
+    Cluster(cluster_cfg=cfg.cluster, distributed_log_dir=cfg.runner.per_worker_log_path)
+
     assert cfg.runner.task_type in SUPPORTED_TASK_TYPE, (
         f"task_type must be one of {SUPPORTED_TASK_TYPE}"
     )
@@ -941,8 +982,10 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     elif cfg.runner.task_type == "reasoning_eval":
         cfg = validate_reasoning_eval_cfg(cfg)
         return cfg
+    elif cfg.runner.task_type == "sft":
+        cfg = validate_sft_cfg(cfg)
 
-    if cfg.algorithm.adv_type in ("grpo", "reinpp_baseline"):
+    if cfg.algorithm.adv_type in ("grpo", "grpo_dynamic", "reinpp_baseline"):
         assert cfg.algorithm.group_size > 1
 
     assert cfg.actor.training_backend in SUPPORTED_TRAINING_BACKENDS, (
@@ -963,9 +1006,7 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
             f"padded_vocab_size ({cfg.actor.model.padded_vocab_size}) must be divisible by tensor_model_parallel_size ({cfg.actor.model.tensor_model_parallel_size})"
         )
     elif cfg.actor.training_backend == "fsdp":
-        component_placement = HybridComponentPlacement(
-            cfg, Cluster(num_nodes=cfg.cluster.num_nodes)
-        )
+        component_placement = HybridComponentPlacement(cfg, Cluster())
         actor_world_size = component_placement.get_world_size("actor")
         assert (
             cfg.actor.global_batch_size

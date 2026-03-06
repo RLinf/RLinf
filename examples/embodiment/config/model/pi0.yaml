@@ -30,3 +30,13 @@ openpi:
   noise_method: "flow_sde"
   add_value_head: ${actor.model.add_value_head}
   detach_critic_input: False
+
+  # DSRL specific configurations (disabled by default)
+  use_dsrl: False
+  dsrl_state_dim: 8
+  dsrl_action_noise_dim: 32
+  dsrl_num_q_heads: 10
+  dsrl_agg_q: "mean"
+  dsrl_image_latent_dim: 64
+  dsrl_state_latent_dim: 64
+  dsrl_hidden_dims: [128, 128, 128]

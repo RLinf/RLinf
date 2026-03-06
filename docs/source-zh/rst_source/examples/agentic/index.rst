@@ -32,8 +32,8 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
        <img src="https://github.com/RLinf/misc/raw/main/pic/waiting_icon.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[适配中]rStar2-agent强化学习</b><br>
-         支持各组件所用资源量的灵活配置与调度
+         <b>rStar2-agent强化学习</b><br>
+         通过强化学习让模型学会使用Python工具进行自主推理和反思,以极低计算成本达到数学推理领域的顶尖水平
        </p>
      </div>
 
@@ -65,3 +65,4 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
    coding_online_rl
    searchr1
    reasoning
+   rstar2
