@@ -14,7 +14,7 @@
 
 from collections import UserDict
 from contextlib import contextmanager
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Union
+from typing import Any, Callable, Optional, Sequence, Union
 
 import numpy as np
 import torch
@@ -213,16 +213,14 @@ def compute_rollout_metrics(
         group=data_parallel_group,
     )
 
-    total_prompt_lengths = torch.tensor(sum(prompt_lengths_list, []), device='cpu')
-    total_decode_lengths = torch.tensor(sum(decode_lengths_list, []), device='cpu')
+    total_prompt_lengths = torch.tensor(sum(prompt_lengths_list, []), device="cpu")
+    total_decode_lengths = torch.tensor(sum(decode_lengths_list, []), device="cpu")
 
     sum_plen = prompt_lengths.sum().detach().item()
     sum_rlen = response_lengths.sum().detach().item()
     sum_rewards = reward_scores.sum().detach().item()
     sum_end = is_end.sum().detach().item()
 
-    mean_plen = total_prompt_lengths.float().mean().detach().item()
-    var_plen = total_prompt_lengths.float().var().detach().item()
     mean_rlen = total_decode_lengths.float().mean().detach().item()
     var_rlen = total_decode_lengths.float().var().detach().item()
     min_rlen, max_rlen = total_decode_lengths.float().aminmax()
@@ -272,7 +270,9 @@ def compute_rollout_metrics(
         max_value = torch.max(values).detach().item()
         min_value = torch.min(values).detach().item()
         reduce_value_tensor = torch.as_tensor(
-            [-min_value, max_value], device=torch.cuda.current_device(), dtype=torch.float32
+            [-min_value, max_value],
+            device=torch.cuda.current_device(),
+            dtype=torch.float32,
         )
         torch.distributed.all_reduce(
             reduce_value_tensor, op=torch.distributed.ReduceOp.MAX

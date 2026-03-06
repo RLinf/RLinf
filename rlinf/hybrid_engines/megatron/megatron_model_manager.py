@@ -14,14 +14,14 @@
 
 import gc
 import itertools
+from contextlib import contextmanager, nullcontext
 from functools import partial
 from typing import TYPE_CHECKING, Iterator, Optional
 
+import megatron
 import torch
-from omegaconf import DictConfig
-from contextlib import contextmanager, nullcontext
-
 from megatron.core import tensor_parallel
+from omegaconf import DictConfig
 
 from rlinf.config import build_config, build_transformer_config
 from rlinf.data.tokenizers import hf_tokenizer
@@ -38,7 +38,6 @@ from .utils import (
     remove_left_padding,
 )
 
-import megatron
 try:
     from megatron.core import parallel_state
     from megatron.core.distributed import DistributedDataParallel as DDP
@@ -127,6 +126,7 @@ def get_specs(spec_name, transformer_config=None, use_te=False):
         raise ValueError(f"Spec name '{spec_name}' is not recognized.")
     return name_spec_dict[spec_name]
 
+
 # copied from verl
 class LinearForLastLayer(torch.nn.Linear):
     def __init__(
@@ -135,7 +135,7 @@ class LinearForLastLayer(torch.nn.Linear):
         output_size,
         *,
         sequence_parallel,
-        bias=False, # TODO changed bias to False for temporary convenience
+        bias=False,  # TODO changed bias to False for temporary convenience
     ):
         super().__init__(in_features=input_size, out_features=output_size, bias=bias)
         self.sequence_parallel = sequence_parallel
@@ -151,8 +151,11 @@ class LinearForLastLayer(torch.nn.Linear):
         logits = super().forward(input_)
         logits = logits.float()
         if self.sequence_parallel:
-            logits = tensor_parallel.gather_from_sequence_parallel_region(logits, tensor_parallel_output_grad=False)
+            logits = tensor_parallel.gather_from_sequence_parallel_region(
+                logits, tensor_parallel_output_grad=False
+            )
         return logits, None
+
 
 def patch_load_checkpoint_to_be_non_strict(enable: bool):
     @contextmanager
@@ -162,10 +165,12 @@ def patch_load_checkpoint_to_be_non_strict(enable: bool):
         megatron.training.training.load_checkpoint = load_checkpoint_patched
         yield
         megatron.training.training.load_checkpoint = load_checkpoint_orig
+
     if enable:
         return context()
     else:
         return nullcontext()
+
 
 class MegatronModelManager:
     """
@@ -282,7 +287,11 @@ class MegatronModelManager:
 
         if self.is_dedicated_critic_model and post_process:
             # replace lm head with value head if this is a critic model
-            model.output_layer = LinearForLastLayer(input_size=self._cfg.model.hidden_size, output_size=1, sequence_parallel=self._cfg.model.sequence_parallel)
+            model.output_layer = LinearForLastLayer(
+                input_size=self._cfg.model.hidden_size,
+                output_size=1,
+                sequence_parallel=self._cfg.model.sequence_parallel,
+            )
 
         return model
 
@@ -397,7 +406,6 @@ class MegatronModelManager:
 
         self.offload_model_weights_and_grad()
         self.offload_megatron_optimizer()
-
 
     def save_checkpoint(
         self,
@@ -579,7 +587,9 @@ class MegatronModelManager:
         return new_buffer
 
     def offload_model_weights_and_grad(self, offload_grad=True, offload_weight=True):
-        if (not offload_grad or self.is_grad_offloaded) and (not offload_weight or self.is_weight_offloaded):
+        if (not offload_grad or self.is_grad_offloaded) and (
+            not offload_weight or self.is_weight_offloaded
+        ):
             return
 
         for model_idx, model_chunk in enumerate(self.model):
@@ -602,7 +612,8 @@ class MegatronModelManager:
                             buffer.param_data_size == cpu_data.untyped_storage().size()
                         )
 
-                    if (offload_grad
+                    if (
+                        offload_grad
                         and not self.is_grad_offloaded
                         and buffer.grad_data.untyped_storage().size() > 0
                     ):
@@ -612,14 +623,16 @@ class MegatronModelManager:
 
             else:
                 for param_name, param in model_chunk.named_parameters():
-                    if (offload_weight
+                    if (
+                        offload_weight
                         and not self.is_weight_offloaded
                         and param.data is not None
                     ):
                         cpu_data = self._get_pinned_buffer(param.data)
                         cpu_data.copy_(param.data, non_blocking=True)
 
-                    if (offload_grad
+                    if (
+                        offload_grad
                         and not self.is_grad_offloaded
                         and param.grad is not None
                     ):
@@ -632,7 +645,9 @@ class MegatronModelManager:
         self.is_weight_offloaded = offload_weight
 
     def onload_model_weights_and_grad(self, load_grad=True):
-        if (not self.is_weight_offloaded) and (not (load_grad and self.is_grad_offloaded)):
+        if (not self.is_weight_offloaded) and (
+            not (load_grad and self.is_grad_offloaded)
+        ):
             return
 
         gc.collect()

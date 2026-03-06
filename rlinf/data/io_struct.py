@@ -250,7 +250,6 @@ class RolloutResult:
     # returns
     returns: Optional[torch.Tensor] = None
 
-
     @property
     def batch_size(self):
         return self.num_sequence // self.group_size
@@ -530,13 +529,9 @@ class RolloutResult:
                 )
 
             if res.values is not None:
-                merged_result.values = merge_tensor(
-                    merged_result.values, res.values
-                )
+                merged_result.values = merge_tensor(merged_result.values, res.values)
             if res.returns is not None:
-                merged_result.returns = merge_tensor(
-                    merged_result.returns, res.returns
-                )
+                merged_result.returns = merge_tensor(merged_result.returns, res.returns)
         return merged_result
 
     @staticmethod
@@ -655,15 +650,11 @@ class RolloutResult:
 
         values_split = None
         if rollout_result.values is not None:
-            values_split = torch.chunk(
-                rollout_result.values, num_groups, dim=0
-            )
+            values_split = torch.chunk(rollout_result.values, num_groups, dim=0)
 
         returns_split = None
         if rollout_result.returns is not None:
-            returns_split = torch.chunk(
-                rollout_result.returns, num_groups, dim=0
-            )
+            returns_split = torch.chunk(rollout_result.returns, num_groups, dim=0)
 
         # Create split RolloutResult objects
         for i in range(num_groups):
@@ -701,6 +692,8 @@ class RolloutResult:
                 ref_logprobs=ref_logprobs_split[i]
                 if ref_logprobs_split is not None
                 else None,
+                values=values_split[i] if values_split is not None else None,
+                returns=returns_split[i] if returns_split is not None else None,
             )
             split_results.append(split_result)
 

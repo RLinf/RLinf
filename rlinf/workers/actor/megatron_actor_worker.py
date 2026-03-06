@@ -24,7 +24,6 @@ from torch.multiprocessing.reductions import reduce_tensor
 
 from rlinf.algorithms.registry import policy_loss
 from rlinf.algorithms.utils import kl_penalty
-
 from rlinf.utils.distributed import (
     vocab_parallel_entropy_and_log_probs,
     vocab_parallel_log_probs_from_logits,
@@ -33,11 +32,11 @@ from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.resharding.mcore_weight_reshard import MegatronCoreWeightReshard
 from rlinf.utils.resharding.reshard_config import ReshardConfig
 from rlinf.utils.utils import retrieve_model_state_dict_in_cpu
-from rlinf.workers.rollout.utils import RankMapper
 from rlinf.workers.megatron_worker import MegatronWorker
+from rlinf.workers.rollout.utils import RankMapper
 
 try:
-    from params_resharding import nccl_group_recreate, resharding_init
+    from params_resharding import nccl_group_recreate
 
     HAVE_RESHARDING = True
 except ImportError:
@@ -46,7 +45,7 @@ except ImportError:
 
 class MegatronActor(MegatronWorker):
     def __init__(
-        self, cfg: DictConfig, placement: ModelParallelComponentPlacement, role='actor'
+        self, cfg: DictConfig, placement: ModelParallelComponentPlacement, role="actor"
     ):
         """Initialize the MegatronWorker.
 
@@ -85,7 +84,6 @@ class MegatronActor(MegatronWorker):
         self.rollout_group_name = self.cfg.rollout.group_name
 
     def init_worker(self):
-
         super().init_worker()
 
         # only need this if we are running with inital kl penalty & full-parameter tuning
