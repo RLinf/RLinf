@@ -15,7 +15,7 @@ model_path: "/path/to/model"
 image_size: [256, 256, 3]  # [H, W, C]
 
 # RL head configuration
-add_value_head: False  # Set to True for PPO training
+add_value_head: True  # Set to True for PPO training
 add_q_head: False
 q_head_type: "default"  # "default" or "crossq"
 num_q_heads: 2
@@ -33,7 +33,7 @@ instruction_encoder_config:
   vocab_size: 2504
   use_pretrained_embeddings: True
   embedding_file: "/path/to/model"
-  fine_tune_embeddings: False
+  fine_tune_embeddings: True
   embedding_size: 50
   hidden_size: 128
   rnn_type: "LSTM"
@@ -46,13 +46,13 @@ depth_encoder_config:
   output_size: 128
   backbone: "resnet50"
   ddppo_checkpoint: "/path/to/model"  # Path to DDPPO pretrained weights
-  trainable: False
+  trainable: True
 
 # RGB encoder configuration
 rgb_encoder_config:
   cnn_type: "TorchVisionResNet50"  # "TorchVisionResNet18" or "TorchVisionResNet50"
   output_size: 256
-  trainable: False
+  trainable: True
 
 # State encoder configuration
 state_encoder_config:

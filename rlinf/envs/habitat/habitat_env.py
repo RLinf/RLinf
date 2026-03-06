@@ -250,11 +250,9 @@ class HabitatEnv(gym.Env):
             and "episode" in self.record_first_done_infos
         ):
             episode = self.record_first_done_infos["episode"]
-            device = next(iter(episode.values())).device
-            mask = torch.zeros(self.num_envs, dtype=torch.bool, device=device)
-            mask[env_idx] = True
             for v in episode.values():
-                v[mask] = torch.zeros_like(v)
+                # v[env_idx] 能够同时处理 int, list 或 bool mask 索引
+                v[env_idx] = 0
         infos = {}
 
         if self.current_raw_obs is None:
