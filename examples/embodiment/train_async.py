@@ -40,6 +40,26 @@ def main(cfg) -> None:
     cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
     component_placement = HybridComponentPlacement(cfg, cluster)
 
+    # If the env uses a remote classifier, start the server on a GPU node.
+    clf_cfg = cfg.env.train.get("classifier_reward_wrapper", None)
+    server_handle = None
+    if clf_cfg is not None and clf_cfg.get("remote", False):
+        import ray
+        from rlinf.workers.reward.classifier_reward_server import (
+            ClassifierRewardServer,
+        )
+
+        server_name = clf_cfg.get("server_name", "ClassifierRewardServer")
+        server_handle = ClassifierRewardServer.options(
+            name=server_name,
+            num_gpus=0.05,
+        ).remote(
+            checkpoint_path=clf_cfg.checkpoint_path,
+            image_keys=clf_cfg.get("image_keys", None),
+            device=clf_cfg.get("device", "cuda"),
+        )
+        ray.get(server_handle.ready.remote())
+
     # Create actor worker group
     actor_placement = component_placement.get_strategy("actor")
 

@@ -50,30 +50,15 @@ class ClassifierRewardWrapper(gym.Wrapper):
         self._reward_threshold = reward_threshold
         self._override_termination = override_termination
         self._step_count = 0
-        import sys
-        print(
-            f"[ClassifierReward DEBUG] >>> Wrapper CREATED! "
-            f"threshold={reward_threshold}, override_termination={override_termination}",
-            flush=True, file=sys.stderr,
-        )
 
     def step(
         self, action: ActType,
     ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
-        import sys
         self._step_count += 1
         obs, _rew, done, truncated, info = self.env.step(action)
-        base_done = bool(done)  # target-pose proximity termination from base env
         raw_logit = float(self._classifier_func(obs))
         prob = _sigmoid(raw_logit)
         is_success = prob >= self._reward_threshold
-        print(
-            f"[ClassifierReward DEBUG] step={self._step_count} "
-            f"base_env_done(target_pose)={base_done}, "
-            f"logit={raw_logit:.4f}, prob={prob:.4f}, threshold={self._reward_threshold}, "
-            f"classifier_success={is_success}, override={self._override_termination}",
-            flush=True, file=sys.stderr,
-        )
         if self._override_termination:
             done = is_success
         else:
@@ -193,3 +178,40 @@ def make_classifier_reward_func(
         return float(logit.item())
 
     return _reward_func
+
+
+def make_remote_classifier_reward_func(
+    server_name: str = "ClassifierRewardServer",
+    obs_key: str = "frames",
+) -> Callable[[dict], float]:
+    """Create a reward function backed by a remote :class:`ClassifierRewardServer`.
+
+    The server must already be running as a named Ray actor.  Each call
+    ships the camera frames to the server and blocks until the logit is
+    returned.
+
+    Args:
+        server_name: Name of the :class:`ClassifierRewardServer` actor.
+        obs_key: Top-level key in the observation dict containing frames.
+
+    Returns:
+        A function ``obs_dict → float`` returning the classifier logit.
+    """
+    import ray
+
+    server = ray.get_actor(server_name)
+
+    def _remote_reward_func(obs: dict) -> float:
+        # Serialize as raw bytes to avoid numpy pickle version mismatch
+        # between nodes (numpy 1.x vs 2.x).
+        frames_raw: dict[str, tuple[bytes, tuple, str]] = {}
+        for key, val in sorted(obs[obs_key].items()):
+            arr = val
+            if isinstance(arr, torch.Tensor):
+                arr = arr.cpu().numpy()
+            arr = np.ascontiguousarray(arr)
+            frames_raw[key] = (arr.tobytes(), arr.shape, str(arr.dtype))
+        logit: float = ray.get(server.predict.remote(frames_raw))
+        return logit
+
+    return _remote_reward_func

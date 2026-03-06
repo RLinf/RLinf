@@ -1,6 +1,7 @@
 defaults:
   - env/realworld_dex_pnp@env.train
   - env/realworld_dex_pnp@env.eval
+  - cameras/realsense@cameras.realsense
   - model/cnn_policy@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
@@ -102,7 +103,7 @@ algorithm:
     cache_size: 200
     min_buffer_size: 1
     sample_window_size: 200
-    load_path: "/workspace/RLinf/logs/20260228-06:25:11/demos"
+    load_path: "/workspace/RLinf/logs/20260306-07:43:18/demos"
     auto_save: False
 
   target_update_freq: 1
@@ -135,11 +136,13 @@ env:
       left_port: "/dev/ttyACM0"
       frequency: 30
     classifier_reward_wrapper:
-      checkpoint_path: "/workspace/RLinf/logs/20260303-04:41:36-reward-classifier-dex_pnp/reward_classifier.pt"
-      image_keys: ["wrist_1"]
+      checkpoint_path: "/workspace/RLinf/logs/20260306-07:00:37-reward-classifier-dex_pnp/reward_classifier.pt"
+      # image_keys: ["camera_1"]  # Not setting this will default to using all camera images, sorted by name. 
       device: cuda
+      remote: true
       threshold: 0.75
     override_cfg:
+      camera_configs: ${cameras.realsense}
       target_ee_pose: [0.8188, 0.1384, 0.1188, -3.1331, -1.1213, -0.0676]
       end_effector_type: "ruiyan_hand"
       end_effector_config:
@@ -186,7 +189,7 @@ actor:
 
   model:
     model_path: "/workspace/RLinf/RLinf-ResNet10-pretrained"
-    state_dim: 25   # tcp_pose(7) + tcp_vel(6) + hand_position(6) + tcp_force(3) + tcp_torque(3)
+    state_dim: 24   # tcp_pose(6, after Quat2EulerWrapper) + tcp_vel(6) + hand_position(6) + tcp_force(3) + tcp_torque(3)
     action_dim: 12  # arm(6) + hand(6)
     num_q_heads: 10
 

@@ -1,5 +1,6 @@
 defaults:
   - env/realworld_dex_pnp@env.eval
+  - cameras/realsense@cameras.realsense
   - override hydra/job_logging: stdout
 
 hydra:
@@ -45,15 +46,8 @@ env:
       left_port: "/dev/ttyACM0"
       frequency: 30
     override_cfg:
+      camera_configs: ${cameras.realsense}
       target_ee_pose: [0.8188, 0.1384, 0.1188, -3.1331, -1.1213, -0.0676]
-      camera_auto_exposure: True
-      # 手动曝光示例：先把 auto 关掉，再设置曝光/增益
-      # camera_auto_exposure: False
-      # camera_exposure: 40.0    # 范围 1~10000, 默认 166; 仍过曝可降至 20 或 10
-      # camera_gain: 16.0        # 范围 0~128, 默认 64; 仍过曝可降至 0
-      # 按序列号设置相机裁剪区域 [top%, left%, bottom%, right%], 值域 0~1
-      camera_crop_regions:
-        "105322251046": [0.4, 0.3, 0.85, 0.7]   # 左右各裁 15%
       end_effector_type: "ruiyan_hand"
       end_effector_config:
         port: "/dev/ttyUSB0"

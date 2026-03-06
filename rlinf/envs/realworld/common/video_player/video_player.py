@@ -80,8 +80,12 @@ class VideoPlayer:
                 if img_array is None:  # None is our signal to exit
                     break
 
+                sorted_keys = sorted(
+                    [k for k in img_array.keys() if "full" not in k]
+                )
                 frame = np.concatenate(
-                    [v for k, v in img_array.items() if "full" not in k], axis=0
+                    [img_array[k] for k in sorted_keys],
+                    axis=0,
                 )
 
                 cv2.imshow("RealSense Cameras", frame)

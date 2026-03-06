@@ -111,44 +111,72 @@ class RealWorldEnv(gym.Env):
 
         # Visual classifier reward
         clf_cfg = self.cfg.get("classifier_reward_wrapper", None)
-        import sys
-        print(f"[DEBUG _create_env] classifier_reward_wrapper cfg = {clf_cfg}", flush=True, file=sys.stderr)
         if clf_cfg is not None:
-            from rlinf.envs.realworld.common.reward_classifier import (
-                load_reward_classifier,
-            )
-            from rlinf.envs.realworld.common.wrappers.classifier_reward import (
-                make_classifier_reward_func,
-            )
+            use_remote = clf_cfg.get("remote", False)
 
-            device = clf_cfg.get("device", "cuda")
-            image_keys = list(clf_cfg.get("image_keys", ["wrist_1"]))
+            if use_remote:
+                # Remote mode: classifier runs on a GPU node via Ray actor.
+                from rlinf.envs.realworld.common.wrappers.classifier_reward import (
+                    make_remote_classifier_reward_func,
+                )
 
-            if clf_cfg.get("multi_stage", False):
-                ckpt_paths = list(clf_cfg.checkpoint_paths)
-                reward_funcs = []
-                for ckpt_path in ckpt_paths:
-                    model = load_reward_classifier(
-                        ckpt_path, image_keys=image_keys, device=device,
-                    )
-                    reward_funcs.append(make_classifier_reward_func(model, image_keys, device))
-                env = MultiStageClassifierRewardWrapper(
-                    env,
-                    classifier_funcs=reward_funcs,
-                    stage_threshold=clf_cfg.get("threshold", 0.75),
-                    override_termination=clf_cfg.get("override_termination", True),
+                server_name = clf_cfg.get(
+                    "server_name", "ClassifierRewardServer",
                 )
-            else:
-                model = load_reward_classifier(
-                    clf_cfg.checkpoint_path, image_keys=image_keys, device=device,
+                reward_func = make_remote_classifier_reward_func(
+                    server_name=server_name,
                 )
-                reward_func = make_classifier_reward_func(model, image_keys, device)
                 env = ClassifierRewardWrapper(
                     env,
                     classifier_func=reward_func,
                     reward_threshold=clf_cfg.get("threshold", 0.75),
                     override_termination=clf_cfg.get("override_termination", True),
                 )
+            else:
+                from rlinf.envs.realworld.common.reward_classifier import (
+                    load_reward_classifier,
+                )
+                from rlinf.envs.realworld.common.wrappers.classifier_reward import (
+                    make_classifier_reward_func,
+                )
+
+                device = clf_cfg.get("device", "cuda")
+                image_keys_cfg = clf_cfg.get("image_keys", None)
+                if image_keys_cfg in (None, "", []):
+                    image_keys = sorted(env.observation_space["frames"].spaces.keys())
+                elif isinstance(image_keys_cfg, str) and image_keys_cfg.lower() in {
+                    "all",
+                    "*",
+                }:
+                    image_keys = sorted(env.observation_space["frames"].spaces.keys())
+                else:
+                    image_keys = list(image_keys_cfg)
+
+                if clf_cfg.get("multi_stage", False):
+                    ckpt_paths = list(clf_cfg.checkpoint_paths)
+                    reward_funcs = []
+                    for ckpt_path in ckpt_paths:
+                        model = load_reward_classifier(
+                            ckpt_path, image_keys=image_keys, device=device,
+                        )
+                        reward_funcs.append(make_classifier_reward_func(model, image_keys, device))
+                    env = MultiStageClassifierRewardWrapper(
+                        env,
+                        classifier_funcs=reward_funcs,
+                        stage_threshold=clf_cfg.get("threshold", 0.75),
+                        override_termination=clf_cfg.get("override_termination", True),
+                    )
+                else:
+                    model = load_reward_classifier(
+                        clf_cfg.checkpoint_path, image_keys=image_keys, device=device,
+                    )
+                    reward_func = make_classifier_reward_func(model, image_keys, device)
+                    env = ClassifierRewardWrapper(
+                        env,
+                        classifier_func=reward_func,
+                        reward_threshold=clf_cfg.get("threshold", 0.75),
+                        override_termination=clf_cfg.get("override_termination", True),
+                    )
 
         env = RelativeFrame(env)
         env = Quat2EulerWrapper(env)

@@ -1,6 +1,7 @@
 defaults:
   - env/realworld_bin_relocation@env.train
   - env/realworld_bin_relocation@env.eval
+  - cameras/realsense@cameras.realsense
   - model/cnn_policy@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
@@ -129,6 +130,7 @@ env:
     max_episode_steps: 150
 
     override_cfg:
+      camera_configs: ${cameras.realsense}
       target_ee_pose: TARGET_EE_POSE
       camera_serials: ["CAMERA_SERIAL1", "CAMERA_SERIAL2"]
       use_dense_reward: False

@@ -112,8 +112,9 @@ class RewardClassifier(nn.Module):
         )
 
     def _preprocess(self, x: torch.Tensor) -> torch.Tensor:
-        """Normalise uint8 ``[0, 255]`` images to ImageNet statistics.
+        """Normalise images to ImageNet statistics.
 
+        Accepts ``uint8 [0, 255]`` **or** ``float [0, 1]`` inputs.
         Expects ``(B, H, W, C)`` **or** ``(B, C, H, W)``.  Returns
         ``(B, C, H, W)`` float tensor.
         """
@@ -122,7 +123,9 @@ class RewardClassifier(nn.Module):
         # Channels-last → channels-first
         if x.shape[-1] in (1, 3):
             x = x.permute(0, 3, 1, 2)
-        x = x.float() / 255.0
+        x = x.float()
+        if x.max() > 1.0:
+            x = x / 255.0
         mean = self._IMAGENET_MEAN.to(x.device).view(1, 3, 1, 1)
         std = self._IMAGENET_STD.to(x.device).view(1, 3, 1, 1)
         x = (x - mean) / std
@@ -170,7 +173,7 @@ class RewardClassifier(nn.Module):
 
 def load_reward_classifier(
     checkpoint_path: str,
-    image_keys: list[str],
+    image_keys: Optional[list[str]] = None,
     pretrained_ckpt: Optional[str] = None,
     device: str | torch.device = "cpu",
 ) -> RewardClassifier:
@@ -179,6 +182,7 @@ def load_reward_classifier(
     Args:
         checkpoint_path: Path to ``*.pt`` saved via ``torch.save(model.state_dict(), ...)``.
         image_keys: Camera observation keys the classifier was trained with.
+            If ``None``, read from the checkpoint metadata (key ``"image_keys"``).
         pretrained_ckpt: Path to the ResNet-10 pretrained weights (only
             needed if the backbone weights are not stored in the checkpoint).
         device: Target device.
@@ -188,7 +192,17 @@ def load_reward_classifier(
     """
     ckpt = torch.load(checkpoint_path, map_location="cpu")
     # Support both raw state_dict and wrapped {"model_state_dict": ...} format
-    state_dict = ckpt.get("model_state_dict", ckpt)
+    if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
+        state_dict = ckpt["model_state_dict"]
+        if image_keys is None:
+            image_keys = ckpt.get("image_keys")
+    else:
+        state_dict = ckpt
+    if image_keys is None:
+        raise ValueError(
+            "image_keys must be provided or stored in the checkpoint "
+            "(saved via train_reward_classifier.py)."
+        )
     model = RewardClassifier(image_keys=image_keys, pretrained_ckpt=pretrained_ckpt)
     model.load_state_dict(state_dict, strict=False)
     model = model.to(device).eval()

@@ -396,19 +396,41 @@ Franka + 灵巧手真机强化学习
 通过 ``SpatialLearnedEmbeddings`` 进行空间池化，最终经过一个二分类头输出
 成功概率。
 
+**硬件拓扑**
+
+在典型的灵巧手场景中，有两个节点（可以是两台物理机，也可以是同一台机器上的两个 Docker 容器）：
+
+- **训练 / GPU 节点** （node_rank=0）— 装有 GPU，运行 actor、rollout，以及 **奖励分类器推理**
+- **控制节点** （node_rank=1）— 连接 Franka 机械臂和灵巧手，运行 env worker，**无 GPU**
+
+分类器推理通过 ``ClassifierRewardServer`` （一个 Ray actor）运行在 GPU 节点上，
+控制节点的 env worker 通过 Ray 远程调用获取分类结果。这样既利用了 GPU 的推理速度，
+又避免了在无 GPU 的控制节点上加载 CUDA 模型的问题。
+
+.. note::
+
+   如果你的控制节点有 GPU（或希望在单节点上运行），也可以在配置中设置
+   ``classifier_reward_wrapper.remote: false`` 并指定 ``device: cuda``，
+   分类器将直接在 env worker 进程内加载推理。
+
 **完整 workflow（按顺序执行）：**
 
-1. **采集分类器训练数据** — 遥操作机器人，用 SpaceMouse 右键实时标记成功/失败帧
-   （此阶段不判定成功，episode 跑满 ``max_episode_steps`` 后自动复位）
-2. **人工审核** — 在 OpenCV 窗口中逐帧审核，修正标注错误
-3. **训练分类器** — 训练 ResNet-10 二分类器
-4. **采集 demo 数据** — 遥操作机器人，由分类器自动判定成功/失败：
-   分类器判定成功 → episode 终止并保存为成功 demo；
-   episode 到达 ``max_episode_steps`` → 保存为失败 demo 并复位
-5. **训练 RL** — 在训练配置中指定 demo 路径和分类器 ckpt 路径
+1. **采集分类器训练数据** — 在控制节点上单节点运行，遥操作机器人，
+   用 SpaceMouse 右键实时标记成功/失败帧
+2. **人工审核** — 在有显示器的节点上用 OpenCV 窗口逐帧审核标注
+3. **训练分类器** — **在 GPU 节点上运行**，训练 ResNet-10 二分类器
+4. **启动 Ray 集群** — 在两个节点上分别启动 Ray，组成集群
+5. **采集 demo 数据** — 在 2 节点集群上运行，分类器在 GPU 节点推理，
+   env worker 在控制节点遥操作
+6. **训练 RL** — 在 2 节点集群上运行，指定 demo 路径和分类器 ckpt 路径
 
 步骤 1：采集分类器训练数据
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. important::
+
+   此步骤**只需要控制节点**（连接机器人的节点），不需要 GPU 节点参与。
+   在控制节点上单独启动 Ray 即可。
 
 分类器数据采集使用与普通数据采集相同的遥操作环境（SpaceMouse + 数据手套 + Franka），
 但通过 SpaceMouse 的 **物理右键** 来实时标记帧类别：
@@ -423,17 +445,22 @@ Franka + 灵巧手真机强化学习
    ``ignore_terminations=True``，使每个 episode **始终运行到** ``max_episode_steps``
    才复位，操作者通过右键手动标注哪些帧属于成功状态。
 
-**启动命令：**
+**在控制节点上操作：**
 
 .. code-block:: bash
 
-   bash examples/embodiment/collect_classifier_data.sh [config_name] [env_name]
+   # 1. 激活虚拟环境
+   source /opt/venv/franka-0.15.0/bin/activate
+   # 如有 ROS 依赖：source <your_catkin_ws>/devel/setup.bash
 
-   # 示例（使用默认配置）
+   # 2. 在控制节点上单独启动 Ray（单节点模式）
+   ray start --head --port=6379
+
+   # 3. 运行分类器数据采集脚本
    bash examples/embodiment/collect_classifier_data.sh
 
-   # 示例（指定配置和环境名）
-   bash examples/embodiment/collect_classifier_data.sh realworld_collect_data dex_pnp
+   # 4. 采集完成后停止 Ray
+   ray stop
 
 数据保存在 ``logs/<时间戳>-reward-classifier-<env_name>/`` 目录下。
 
@@ -455,22 +482,16 @@ Franka + 灵巧手真机强化学习
    ##################################################
    Ep3 [S:42/200 F:158]:  35%|████████          | 35/100
 
-**配置说明：**
-
-``collect_classifier_data.sh`` 使用与普通数据采集相同的配置文件
-``realworld_collect_data.yaml``，但会自动添加 Hydra override：
-
-.. code-block:: text
-
-   env.eval.ignore_terminations=True
-
-因此你 **不需要** 手动修改 YAML 文件中的 ``ignore_terminations`` 字段。
-采集成功帧的目标数量可在配置中设置 ``runner.successes_needed``（默认 200）。
-
 步骤 2：人工审核
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-数据采集完成后，脚本自动弹出 OpenCV 审核窗口，逐帧显示采集到的图像及其自动标注。
+数据采集完成后，脚本自动弹出 OpenCV 审核窗口。如果窗口未弹出（如在无显示器的
+控制节点上），可以将数据目录拷贝到有显示器的节点上，手动运行审核脚本：
+
+.. code-block:: bash
+
+   bash examples/embodiment/review_classifier_data.sh \
+       logs/<timestamp>-reward-classifier-dex_pnp
 
 **审核控制键：**
 
@@ -488,6 +509,14 @@ Franka + 灵巧手真机强化学习
      - 标记为 **保留** （good）
    * - ``b``
      - 标记为 **丢弃** （bad）
+   * - ``1``
+     - 只显示成功帧
+   * - ``2``
+     - 只显示失败帧
+   * - ``0``
+     - 显示全部
+   * - ``s``
+     - 保存
    * - ``q`` / ``ESC``
      - 完成审核并保存
 
@@ -506,16 +535,32 @@ Franka + 灵巧手真机强化学习
    ├── success_202_2026-03-03_04-41-36.pkl   # 训练用 pickle
    └── failure_741_2026-03-03_04-41-36.pkl
 
-步骤 3：训练分类器
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+步骤 3：训练分类器（在 GPU 节点上运行）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. important::
+
+   分类器训练应在 **GPU 节点** 上运行以利用 GPU 加速。
+   如果采集数据的控制节点和 GPU 节点是不同机器，需要先将数据目录拷贝到 GPU 节点上
+   （如果两者通过共享卷挂载了同一目录，则不需要拷贝）。
+
+**在 GPU 节点上操作：**
 
 .. code-block:: bash
 
+   # 确保已激活对应的虚拟环境(如果使用Docker，这一步可能不需要，因为环境已在容器内设置好)
+   source /opt/venv/openvla/bin/activate
+
+   # 训练分类器
    python examples/embodiment/train_reward_classifier.py \
        --log_dir logs/<timestamp>-reward-classifier-dex_pnp \
        --pretrained_ckpt RLinf-ResNet10-pretrained/resnet10_pretrained.pt \
-       --image_keys wrist_1 \
-       --num_epochs 200
+       --image_keys global wrist_1 \
+       --num_epochs 200 \
+       --device cuda
+
+脚本会自动检测 GPU 并使用 CUDA 加速训练。如果没有指定 ``--device``，
+默认行为是有 GPU 时用 ``cuda``，无 GPU 时回退到 ``cpu``。
 
 **训练参数：**
 
@@ -534,7 +579,7 @@ Franka + 灵巧手真机强化学习
      - ResNet-10 预训练权重路径
    * - ``--image_keys``
      - ``wrist_1``
-     - 相机观测 key（与 env 配置中的 ``main_image_key`` 对应）
+     - 相机观测 key（与 env 配置中相机的 ``name`` 对应）
    * - ``--image_size``
      - ``128``
      - 输入图像尺寸
@@ -549,7 +594,7 @@ Franka + 灵巧手真机强化学习
      - 学习率
    * - ``--device``
      - 自动检测
-     - ``cuda`` 或 ``cpu``（无 GPU 时自动回退到 CPU）
+     - 训练设备，建议显式设置 ``cuda``
 
 训练过程中会打印每个 epoch 的 loss 和准确率，最佳模型保存为
 ``<log_dir>/reward_classifier.pt``。
@@ -560,68 +605,144 @@ Franka + 灵巧手真机强化学习
      success: 202   failure: 741   total: 943
    Building classifier ...
    Training for 200 epochs ...
-   Epoch  10/200  loss=0.4123  acc=0.8125  ★ best
+   Epoch  10/200  loss=0.4123  acc=0.8125
    ...
    Epoch 200/200  loss=0.0512  acc=0.9688
 
    Best accuracy: 0.9844
-   Saved to: logs/...-reward-classifier-dex_pnp/reward_classifier.pt
+   Checkpoint saved to logs/...-reward-classifier-dex_pnp/reward_classifier.pt
 
-步骤 4：采集 demo 数据（使用分类器判定成功）
+步骤 4：启动 Ray 集群（2 节点）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-分类器训练完成后，使用标准的 demo 采集脚本 ``collect_data.sh`` 来采集成功/失败 demo，
-但在配置中添加 ``classifier_reward_wrapper`` 让分类器自动判定成功：
+从此步骤开始需要两个节点协作。请确保两个节点（或两个 Docker 容器）在同一网络下。
 
-- **分类器判定成功** → episode 终止，reward = 1，保存为成功 demo
-- **episode 到达** ``max_episode_steps`` → 超时截断，reward = 0，保存为失败 demo 并自动复位
+.. warning::
 
-**配置文件** ``examples/embodiment/config/realworld_collect_dexpnp_demo.yaml``：
+   这一步非常关键！在启动 Ray **之前** 必须在每个节点上正确设置环境变量，
+   因为 Ray 会在启动时快照当前环境变量，之后 Ray 创建的所有进程都会继承该快照。
+
+**在 GPU 节点（node_rank=0，head 节点）上：**
+
+.. code-block:: bash
+
+   # 激活虚拟环境
+   source /opt/venv/openvla/bin/activate
+
+   # 设置 RLinf 环境变量
+   export PYTHONPATH=/workspace/RLinf:$PYTHONPATH
+   export RLINF_NODE_RANK=0
+
+   # 启动 Ray head
+   ray start --head --port=6380 --node-ip-address=<head_ip>
+
+**在控制节点（node_rank=1，worker 节点）上：**
+
+.. code-block:: bash
+
+   # 激活虚拟环境（franka 环境）
+   source /opt/venv/franka-0.15.0/bin/activate
+
+   # 设置 RLinf 环境变量
+   export PYTHONPATH=/workspace/RLinf:$PYTHONPATH
+   export RLINF_NODE_RANK=1
+
+   # 加入 Ray 集群
+   ray start --address='<head_ip>:6380'
+
+用 ``ray status`` 确认两个节点已就绪。
+
+.. tip::
+
+   如果你使用的是同一台机器上的两个 Docker 容器且使用了 ``--network host``，
+   ``<head_ip>`` 可以直接用宿主机的局域网 IP（如 ``172.16.0.1``）。
+
+步骤 5：采集 demo 数据（2 节点，分类器在 GPU 推理）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+启动 Ray 集群后，在 **head 节点（GPU 节点）** 上运行 demo 采集脚本。
+脚本会自动：
+
+1. 在 GPU 节点上启动 ``ClassifierRewardServer``，加载分类器模型到 GPU
+2. 在控制节点上启动 ``DataCollector``（env worker），通过 Ray 远程调用分类器
+
+demo 采集流程中：
+
+- **分类器判定成功** → episode 终止，保存为成功 demo
+- **episode 到达** ``max_episode_steps`` → 超时截断，保存为失败 demo 并自动复位
+
+**配置文件** ``examples/embodiment/config/realworld_collect_dexpnp_demo.yaml``
+关键字段：
 
 .. code-block:: yaml
 
-   defaults:
-     - env/realworld_dex_pnp@env.eval
+   cluster:
+     num_nodes: 2
+     component_placement:
+       env:
+         node_group: franka     # env worker 在控制节点
+         placement: 0
+     node_groups:
+       - label: "4090"
+         node_ranks: 0          # GPU 节点
+       - label: franka
+         node_ranks: 1          # 控制节点
+         env_configs:
+           - node_ranks: 1
+             env_vars:
+               - PYTHONPATH: "..."
+               - LD_LIBRARY_PATH: "..."
+         hardware:
+           type: Franka
+           configs:
+             - robot_ip: 172.16.0.2
+               node_rank: 1
 
    env:
      eval:
        ignore_terminations: False   # 让分类器触发的 termination 生效
-       auto_reset: False
        classifier_reward_wrapper:
          checkpoint_path: "/path/to/reward_classifier.pt"
-         image_keys: ["wrist_1"]
-         device: cpu                 # 控制节点无 GPU 时用 cpu
+         device: cuda               # 分类器在 GPU 节点上用 CUDA 推理
+         remote: true               # 关键：通过 Ray 远程调用 GPU 节点
          threshold: 0.75
-       # ... 其余灵巧手和遥操作配置同上
 
-.. important::
-
-   注意 ``ignore_terminations`` 必须为 ``False``，否则分类器触发的终止信号会被忽略。
-   这与步骤 1（采集分类器训练数据）的 ``ignore_terminations: True`` **恰好相反**。
-
-**启动命令：**
+修改配置中的 ``checkpoint_path`` 为步骤 3 训练得到的分类器路径，
+以及 ``robot_ip``、``env_vars`` 等为实际值后，在 **head 节点** 运行：
 
 .. code-block:: bash
 
    bash examples/embodiment/collect_data.sh realworld_collect_dexpnp_demo
 
-采集结果保存在 ``logs/<timestamp>/demos/`` 目录下，格式与 RLPD 训练所需的
-``demo_buffer.load_path`` 兼容。
+.. important::
+
+   ``ignore_terminations`` 必须为 ``False``，否则分类器触发的终止信号会被忽略。
+   这与步骤 1（采集分类器训练数据）的 ``ignore_terminations: True`` **恰好相反**。
+
+采集结果保存在 ``logs/<timestamp>/demos/`` 目录下。
 
 **终端输出示例：**
 
 .. code-block:: text
 
-   SUCCESS. Success: 5/20  Total episodes: 8
-   FAIL (truncated). Success: 5/20  Total episodes: 9
+   [collect_real_data] ClassifierRewardServer 'ClassifierRewardServer' ready on GPU node.
+   ...
+   ✅ SUCCESS  classifier_reward=0.912
+       成功: 5/20  总 episodes: 8
+   ⏱️  TRUNCATED (max steps)
+       成功: 5/20  总 episodes: 9
 
-步骤 5：训练 RL（使用 demo 和分类器奖励）
+步骤 6：训练 RL（使用 demo 和分类器奖励）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-采集完 demo 后，在训练配置 YAML 中同时指定：
+采集完 demo 后，**确保 Ray 集群仍在运行**（或重新启动），
+然后在训练配置 YAML 中指定：
 
-1. ``classifier_reward_wrapper`` — 在线训练时分类器提供奖励
-2. ``demo_buffer.load_path`` — 步骤 4 采集的 demo 数据路径
+1. ``classifier_reward_wrapper.remote: true`` — 在线训练时分类器也在 GPU 节点推理
+2. ``demo_buffer.load_path`` — 步骤 5 采集的 demo 数据路径
+
+**训练配置**
+``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yaml`` 关键字段：
 
 .. code-block:: yaml
 
@@ -629,18 +750,28 @@ Franka + 灵巧手真机强化学习
      train:
        classifier_reward_wrapper:
          checkpoint_path: /path/to/reward_classifier.pt
-         image_keys: [wrist_1]
          device: cuda
+         remote: true              # 分类器在 GPU 节点推理
          threshold: 0.75
 
    algorithm:
      demo_buffer:
        load_path: "/path/to/logs/<timestamp>/demos"
 
-**完整的训练配置** 参考
-``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yaml``。
+   cluster:
+     num_nodes: 2
+     component_placement:
+       actor:
+         node_group: "4090"
+         placement: 0
+       env:
+         node_group: franka
+         placement: 0
+       rollout:
+         node_group: "4090"
+         placement: 0
 
-**启动训练：**
+修改 ``checkpoint_path`` 和 ``demo_buffer.load_path`` 后，在 **head 节点** 运行：
 
 .. code-block:: bash
 
@@ -650,6 +781,45 @@ Franka + 灵巧手真机强化学习
 
    使用 ``classifier_reward_wrapper`` 后，无需再设置 ``keyboard_reward_wrapper``，
    两者是互斥的奖励来源。
+
+
+完整操作速查
+-----------------------
+
+以下表格汇总了整个 workflow 中每一步的运行位置和命令：
+
+.. list-table::
+   :widths: 6 26 18 50
+   :header-rows: 1
+
+   * - 步骤
+     - 操作
+     - 运行位置
+     - 命令
+   * - 1
+     - 采集分类器训练数据
+     - 控制节点（单节点 Ray）
+     - ``ray start --head`` → ``bash examples/embodiment/collect_classifier_data.sh`` → ``ray stop``
+   * - 2
+     - 人工审核
+     - 有显示器的节点
+     - ``bash examples/embodiment/review_classifier_data.sh logs/<dir>``
+   * - 3
+     - 训练分类器
+     - GPU 节点
+     - ``python examples/embodiment/train_reward_classifier.py --log_dir ... --device cuda``
+   * - 4
+     - 启动 Ray 集群
+     - 两个节点
+     - head: ``ray start --head`` / worker: ``ray start --address=...``
+   * - 5
+     - 采集 demo（分类器 GPU 推理）
+     - head 节点（GPU）
+     - ``bash examples/embodiment/collect_data.sh realworld_collect_dexpnp_demo``
+   * - 6
+     - 训练 RL
+     - head 节点（GPU）
+     - ``bash examples/embodiment/run_realworld_async.sh realworld_dexpnp_rlpd_cnn_async``
 
 
 诊断工具

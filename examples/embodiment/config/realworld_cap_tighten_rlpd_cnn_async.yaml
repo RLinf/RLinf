@@ -1,6 +1,7 @@
 defaults:
   - env/realworld_cap_tightening@env.train
   - env/realworld_cap_tightening@env.eval
+  - cameras/realsense@cameras.realsense
   - model/cnn_policy@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
@@ -127,6 +128,7 @@ env:
     max_steps_per_rollout_epoch: 200
     max_episode_steps: 400
     override_cfg:
+      camera_configs: ${cameras.realsense}
       use_dense_reward: False
       target_ee_pose: TARGET_EE_POSE
       enable_gripper_penalty: False

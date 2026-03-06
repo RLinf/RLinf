@@ -21,16 +21,12 @@ right button** of the SpaceMouse determines the frame label:
 - **Right button pressed** → *success* frame
 - **Right button NOT pressed** → *failure* frame
 
-After the target number of success frames is reached, a CV2 review
-window is shown so the operator can manually refine labels.
+After the target number of success frames is reached, all frames
+(success + failure) are saved to ``raw_frames.pkl`` together with
+individual images and pickle files for ``train_reward_classifier.py``.
 
-Review controls
----------------
-- **n** — next frame
-- **p** — previous frame
-- **g** — mark frame as *good* (keep)
-- **b** — mark frame as *bad* (discard)
-- **q / ESC** — finish review and save
+To review and filter frames interactively, run the companion script
+``review_classifier_data.py`` on the same log directory afterwards.
 
 Usage
 -----
@@ -39,7 +35,8 @@ Usage
     bash examples/embodiment/collect_classifier_data.sh [config_name] [env_name]
 
 Data is saved to ``logs/<timestamp>-reward-classifier-<env_name>/``.
-The same directory can be passed to ``train_reward_classifier.py``.
+The same directory can be passed to ``review_classifier_data.py`` for
+visual review, or directly to ``train_reward_classifier.py``.
 """
 
 from __future__ import annotations
@@ -58,7 +55,7 @@ from rlinf.scheduler import Cluster, ComponentPlacement, Worker
 
 
 # ======================================================================
-# Phase 1 — Teleoperation data collection (runs as Ray Worker)
+# Teleoperation data collection (runs as Ray Worker)
 # ======================================================================
 
 
@@ -82,11 +79,32 @@ class ClassifierDataCollector(Worker):
             worker_info=self.worker_info,
         )
 
-    def _extract_frame(self, obs) -> np.ndarray | None:
-        """Extract camera frame from wrapped observation.
+    def _init_image_keys(self, obs):
+        """Determine camera key names from the first observation."""
+        self.main_image_key = self.env.main_image_key
 
-        ``obs["main_images"]`` is a torch tensor ``(1, H, W, 3)`` BGR
-        uint8, produced by ``RealWorldEnv._wrap_obs``.
+        extra = obs.get("extra_view_images", None)
+        n_extra = 0
+        if extra is not None:
+            if isinstance(extra, (torch.Tensor, np.ndarray)):
+                n_extra = extra.shape[1] if extra.ndim == 5 else 1
+
+        n_total = 1 + n_extra
+        all_keys = sorted(f"wrist_{i + 1}" for i in range(n_total))
+        self.extra_image_keys = sorted(
+            k for k in all_keys if k != self.main_image_key
+        )
+        self.image_keys = sorted(all_keys)
+        self.log_info(
+            f"相机: {self.image_keys} (主相机: {self.main_image_key})"
+        )
+
+    def _extract_frames(self, obs) -> dict[str, np.ndarray] | None:
+        """Extract all camera frames from wrapped observation.
+
+        Returns a dict mapping camera key (e.g. ``wrist_1``, ``wrist_2``)
+        to a ``(H, W, 3)`` BGR uint8 numpy array, or ``None`` if no
+        images are available.
         """
         main = obs.get("main_images", None)
         if main is None:
@@ -95,7 +113,20 @@ class ClassifierDataCollector(Worker):
             main = main.cpu().numpy()
         if main.ndim == 4:
             main = main[0]
-        return main.copy()
+
+        frames = {self.main_image_key: main.copy()}
+
+        extra = obs.get("extra_view_images", None)
+        if extra is not None:
+            if isinstance(extra, torch.Tensor):
+                extra = extra.cpu().numpy()
+            if extra.ndim == 5:
+                extra = extra[0]  # (N_extra, H, W, 3)
+            for i, key in enumerate(self.extra_image_keys):
+                if i < extra.shape[0]:
+                    frames[key] = extra[i].copy()
+
+        return frames
 
     @staticmethod
     def _get_right_button(info) -> bool:
@@ -131,6 +162,7 @@ class ClassifierDataCollector(Worker):
         )
 
         obs, _ = self.env.reset()
+        self._init_image_keys(obs)
 
         while len(successes) < self.successes_needed:
             episode_count += 1
@@ -157,12 +189,12 @@ class ClassifierDataCollector(Worker):
                     self.env.step(action)
                 )
 
-                frame = self._extract_frame(next_obs)
+                frames = self._extract_frames(next_obs)
                 right_pressed = self._get_right_button(info)
 
-                if frame is not None:
+                if frames is not None:
                     entry = {
-                        "image": frame,
+                        "images": frames,
                         "label": "success" if right_pressed else "failure",
                     }
                     if right_pressed:
@@ -197,7 +229,7 @@ class ClassifierDataCollector(Worker):
 
             obs, _ = self.env.reset()
 
-        # Save raw frames for review in main process
+        # Save raw frames for optional review later
         all_frames = successes + failures
         os.makedirs(self.save_dir, exist_ok=True)
         raw_path = os.path.join(self.save_dir, "raw_frames.pkl")
@@ -212,117 +244,31 @@ class ClassifierDataCollector(Worker):
 
 
 # ======================================================================
-# Phase 2 — Review UI (runs in main process, needs display)
+# Save results (images + pickle files)
 # ======================================================================
 
 
-def review_frames(frames: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Show an OpenCV window for manual frame review.
-
-    Returns:
-        ``(kept, discarded)``
-    """
-    if not frames:
-        print("没有帧需要审核。")
-        return [], []
-
-    total = len(frames)
-    decisions: list[bool | None] = [None] * total
-    idx = 0
-
-    WIN = "Review: g=keep  b=discard  n=next  p=prev  q=done"
-    try:
-        cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(WIN, 640, 520)
-    except cv2.error as e:
-        print(f"无法创建审核窗口 (X11/显示错误): {e}")
-        print("跳过审核，保留所有帧。")
-        return frames, []
-
-    def render(index: int) -> None:
-        img = frames[index]["image"].copy()  # BGR uint8
-        h, w = img.shape[:2]
-        scale = max(1, 480 // min(h, w))
-        display = cv2.resize(
-            img, (w * scale, h * scale), interpolation=cv2.INTER_NEAREST
-        )
-
-        bar_h = 40
-        canvas = np.zeros(
-            (display.shape[0] + bar_h, display.shape[1], 3), dtype=np.uint8
-        )
-        canvas[bar_h:] = display
-
-        dec = decisions[index]
-        if dec is True:
-            tag, color = "KEEP", (0, 200, 0)
-        elif dec is False:
-            tag, color = "DISCARD", (0, 0, 200)
-        else:
-            tag, color = "---", (180, 180, 180)
-
-        reviewed = sum(1 for d in decisions if d is not None)
-        label = frames[index]["label"]
-        txt = (
-            f"[{index + 1}/{total}]  "
-            f"auto: {label}  |  mark: {tag}  |  "
-            f"reviewed: {reviewed}/{total}"
-        )
-        cv2.putText(canvas, txt, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-        cv2.imshow(WIN, canvas)
-
-    render(idx)
-    while True:
-        key = cv2.waitKey(0) & 0xFF
-        if key == ord("n"):
-            idx = min(idx + 1, total - 1)
-        elif key == ord("p"):
-            idx = max(idx - 1, 0)
-        elif key == ord("g"):
-            decisions[idx] = True
-            idx = min(idx + 1, total - 1)
-        elif key == ord("b"):
-            decisions[idx] = False
-            idx = min(idx + 1, total - 1)
-        elif key in (ord("q"), 27):
-            break
-        render(idx)
-
-    cv2.destroyAllWindows()
-
-    kept = [f for f, d in zip(frames, decisions) if d is not False]
-    discarded = [f for f, d in zip(frames, decisions) if d is False]
-    n_unlabeled = sum(1 for d in decisions if d is None)
-    print(
-        f"审核结果: 保留 {len(kept)} (含 {n_unlabeled} 未标记), "
-        f"丢弃 {len(discarded)}"
-    )
-    return kept, discarded
-
-
-# ======================================================================
-# Phase 3 — Save results
-# ======================================================================
-
-
-def save_results(kept: list[dict], save_dir: str) -> None:
-    """Save reviewed frames as images + pickle files."""
+def save_results(frames: list[dict], save_dir: str) -> None:
+    """Save frames as images + pickle files for train_reward_classifier."""
     stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    success_frames = [e for e in kept if e["label"] == "success"]
-    failure_frames = [e for e in kept if e["label"] == "failure"]
+    success_frames = [e for e in frames if e["label"] == "success"]
+    failure_frames = [e for e in frames if e["label"] == "failure"]
 
-    # Individual images
+    image_keys = sorted(frames[0]["images"].keys()) if frames else []
+
+    # Individual images (per-camera subdirectories)
     for label_name, entries in [
         ("success", success_frames),
         ("failure", failure_frames),
     ]:
-        img_dir = os.path.join(save_dir, label_name)
-        os.makedirs(img_dir, exist_ok=True)
-        for i, entry in enumerate(entries):
-            cv2.imwrite(
-                os.path.join(img_dir, f"{stamp}_{i:05d}.png"),
-                entry["image"],
-            )
+        for cam_key in image_keys:
+            img_dir = os.path.join(save_dir, label_name, cam_key)
+            os.makedirs(img_dir, exist_ok=True)
+            for i, entry in enumerate(entries):
+                cv2.imwrite(
+                    os.path.join(img_dir, f"{stamp}_{i:05d}.png"),
+                    entry["images"][cam_key],
+                )
 
     # Separate pickle files (compatible with train_reward_classifier)
     for label_name, entries in [
@@ -332,7 +278,7 @@ def save_results(kept: list[dict], save_dir: str) -> None:
         if not entries:
             continue
         pkl = [
-            {"observations": {"frames": {"wrist_1": e["image"]}}}
+            {"observations": {"frames": {k: e["images"][k] for k in image_keys}}}
             for e in entries
         ]
         path = os.path.join(
@@ -341,9 +287,10 @@ def save_results(kept: list[dict], save_dir: str) -> None:
         with open(path, "wb") as f:
             pickle.dump(pkl, f)
 
-    print(f"\n保存完成:")
-    print(f"  成功: {len(success_frames)} 张 → {os.path.join(save_dir, 'success/')}")
-    print(f"  失败: {len(failure_frames)} 张 → {os.path.join(save_dir, 'failure/')}")
+    camera_str = ", ".join(image_keys)
+    print(f"\n保存完成 ({camera_str}):")
+    print(f"  成功: {len(success_frames)} 组 → {os.path.join(save_dir, 'success/')}")
+    print(f"  失败: {len(failure_frames)} 组 → {os.path.join(save_dir, 'failure/')}")
 
 
 # ======================================================================
@@ -357,7 +304,7 @@ def save_results(kept: list[dict], save_dir: str) -> None:
 def main(cfg):
     save_dir = cfg.runner.logger.log_path
 
-    # ── Phase 1: Teleoperation collection (Ray Worker) ───────────────
+    # ── Teleoperation collection (Ray Worker) ────────────────────────
     print(f"[Classifier] save_dir={save_dir}")
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
@@ -368,13 +315,7 @@ def main(cfg):
     )
     collector.run().wait()
 
-    # ── Phase 2: Review UI (main process) ────────────────────────────
-    # Avoid X11 shared-memory issues in Docker / containers with small /dev/shm.
-    os.environ.setdefault("QT_X11_NO_MITSHM", "1")
-    # Clean up any stale OpenCV state before opening the review window.
-    cv2.destroyAllWindows()
-    cv2.waitKey(1)
-
+    # ── Save images + pickle files ───────────────────────────────────
     raw_path = os.path.join(save_dir, "raw_frames.pkl")
     if not os.path.exists(raw_path):
         print(f"未找到采集数据: {raw_path}")
@@ -383,23 +324,23 @@ def main(cfg):
     with open(raw_path, "rb") as f:
         all_frames = pickle.load(f)
 
+    save_results(all_frames, save_dir)
+
     n_success = sum(1 for f in all_frames if f["label"] == "success")
     n_failure = len(all_frames) - n_success
+    image_keys = sorted(all_frames[0]["images"].keys()) if all_frames else ["wrist_1"]
+    keys_str = " ".join(image_keys)
     print(
-        f"\n进入审核阶段: 共 {len(all_frames)} 帧 "
-        f"({n_success} 成功 + {n_failure} 失败)\n"
-        "  n = 下一帧   p = 上一帧\n"
-        "  g = 保留     b = 丢弃\n"
-        "  q / ESC = 完成审核并保存\n"
+        f"\n采集完成: 共 {len(all_frames)} 帧 "
+        f"({n_success} 成功 + {n_failure} 失败, "
+        f"{len(image_keys)} 相机: {', '.join(image_keys)})"
     )
-    kept, _ = review_frames(all_frames)
-
-    # ── Phase 3: Save ────────────────────────────────────────────────
-    save_results(kept, save_dir)
     print(
-        f"\n全部完成。后续训练命令:\n"
-        f"  python examples/embodiment/train_reward_classifier.py"
-        f" --log_dir {save_dir}"
+        f"\n后续步骤:\n"
+        f"  1. 审核筛选:  python examples/embodiment/review_classifier_data.py"
+        f" --log_dir {save_dir}\n"
+        f"  2. 训练分类器: python examples/embodiment/train_reward_classifier.py"
+        f" --log_dir {save_dir} --image_keys {keys_str}"
     )
 
 

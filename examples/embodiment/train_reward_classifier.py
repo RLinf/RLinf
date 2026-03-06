@@ -21,7 +21,7 @@ Usage
     python examples/embodiment/train_reward_classifier.py \\
         --log_dir logs/<timestamp>-reward-classifier-<env> \\
         --pretrained_ckpt RLinf-ResNet10-pretrained/resnet10_pretrained.pt \\
-        --image_keys wrist_1 \\
+        --image_keys wrist_1 wrist_2 \\
         --num_epochs 200
 
 The ``log_dir`` should be the directory created by
@@ -244,7 +244,7 @@ def main():
     )
     parser.add_argument(
         "--image_keys", nargs="+", default=["wrist_1"],
-        help="Camera observation keys.",
+        help="Camera observation keys (e.g., wrist_1 wrist_2 for dual cameras).",
     )
     parser.add_argument("--image_size", type=int, default=128)
     parser.add_argument("--num_epochs", type=int, default=200)

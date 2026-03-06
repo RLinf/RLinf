@@ -271,10 +271,37 @@ def main(cfg):
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = ComponentPlacement(cfg, cluster)
     env_placement = component_placement.get_strategy("env")
+
+    # If classifier_reward_wrapper.remote is set, start the classifier
+    # server on a GPU node before launching the env worker.
+    clf_cfg = cfg.env.eval.get("classifier_reward_wrapper", None)
+    server_handle = None
+    if clf_cfg is not None and clf_cfg.get("remote", False):
+        import ray
+        from rlinf.workers.reward.classifier_reward_server import (
+            ClassifierRewardServer,
+        )
+
+        server_name = clf_cfg.get("server_name", "ClassifierRewardServer")
+        server_handle = ClassifierRewardServer.options(
+            name=server_name,
+            num_gpus=0.05,
+        ).remote(
+            checkpoint_path=clf_cfg.checkpoint_path,
+            image_keys=clf_cfg.get("image_keys", None),
+            device=clf_cfg.get("device", "cuda"),
+        )
+        ray.get(server_handle.ready.remote())
+        print(f"[collect_real_data] ClassifierRewardServer '{server_name}' ready on GPU node.")
+
     collector = DataCollector.create_group(cfg).launch(
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
     collector.run().wait()
+
+    if server_handle is not None:
+        import ray
+        ray.kill(server_handle)
 
 
 if __name__ == "__main__":

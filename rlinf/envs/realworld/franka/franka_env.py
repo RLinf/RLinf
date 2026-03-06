@@ -18,7 +18,7 @@ import queue
 import time
 from dataclasses import dataclass, field
 from itertools import cycle
-from typing import Optional
+from typing import Any, Optional
 
 import cv2
 import gymnasium as gym
@@ -50,6 +50,13 @@ class FrankaRobotConfig:
     # Each value is [top%, left%, bottom%, right%] in 0..1 range.
     # Example: {"230322271990": [0.0, 0.15, 1.0, 0.85]}
     camera_crop_regions: Optional[dict[str, list[float]]] = None
+    # Unified RealSense camera config.
+    # Expected schema:
+    # camera_configs:
+    #   defaults: {name, auto_exposure, exposure, gain, crop_region, resolution, fps, enable_depth}
+    #   overrides:
+    #     "<serial>": {name, auto_exposure, exposure, gain, crop_region, ...}
+    camera_configs: Optional[dict[str, Any]] = None
 
     is_dummy: bool = False
     use_dense_reward: bool = False
@@ -140,11 +147,10 @@ class FrankaEnv(gym.Env):
         if not self.config.is_dummy:
             self._setup_hardware()
 
+        self._camera_infos = self._build_camera_infos()
+
         # Init action and observation spaces
-        assert (
-            self.config.camera_serials is not None
-            and len(self.config.camera_serials) > 0
-        ), "At least one camera serial must be provided for FrankaEnv."
+        assert self._camera_infos, "At least one camera serial must be provided for FrankaEnv."
         self._init_action_obs_spaces()
 
         if self.config.is_dummy:
@@ -421,33 +427,77 @@ class FrankaEnv(gym.Env):
                 ),
                 "frames": gym.spaces.Dict(
                     {
-                        f"wrist_{k + 1}": gym.spaces.Box(
+                        camera_info.name: gym.spaces.Box(
                             0, 255, shape=(128, 128, 3), dtype=np.uint8
                         )
-                        for k in range(len(self.config.camera_serials))
+                        for camera_info in self._camera_infos
                     }
                 ),
             }
         )
         self._base_observation_space = copy.deepcopy(self.observation_space)
 
+    @staticmethod
+    def _serial_sort_key(serial: str) -> tuple[int, int | str]:
+        serial = str(serial)
+        if serial.isdigit():
+            return (0, int(serial))
+        return (1, serial)
+
+    def _build_camera_infos(self) -> list[CameraInfo]:
+        if self.config.camera_serials is None:
+            return []
+
+        sorted_serials = sorted(
+            [str(serial) for serial in self.config.camera_serials],
+            key=self._serial_sort_key,
+        )
+
+        camera_cfg = self.config.camera_configs or {}
+        defaults = dict(camera_cfg.get("camera_defaults", {}))
+        overrides = dict(camera_cfg.get("overrides", {}))
+
+        legacy_crop_regions = self.config.camera_crop_regions or {}
+        camera_infos: list[CameraInfo] = []
+        unnamed_index = 1
+        for serial in sorted_serials:
+            merged = dict(defaults)
+            serial_override = overrides.get(serial)
+            if serial_override:
+                merged.update(serial_override)
+
+            name = merged.get("name")
+            if not name:
+                name = f"camera_{unnamed_index}"
+                unnamed_index += 1
+
+            crop_region = merged.get("crop_region")
+            if crop_region is None and serial in legacy_crop_regions:
+                crop_region = legacy_crop_regions[serial]
+
+            camera_infos.append(
+                CameraInfo(
+                    name=name,
+                    serial_number=serial,
+                    resolution=tuple(merged.get("resolution", (640, 480))),
+                    fps=int(merged.get("fps", 15)),
+                    enable_depth=bool(merged.get("enable_depth", False)),
+                    auto_exposure=bool(
+                        merged.get("auto_exposure", self.config.camera_auto_exposure)
+                    ),
+                    exposure=merged.get("exposure", self.config.camera_exposure),
+                    gain=merged.get("gain", self.config.camera_gain),
+                    crop_region=tuple(crop_region) if crop_region is not None else None,
+                )
+            )
+
+        return camera_infos
+
     def _open_cameras(self):
         self._cameras: list[Camera] = []
-        if self.config.camera_serials is None:
+        if not self._camera_infos:
             return
-        crop_regions = self.config.camera_crop_regions or {}
-        camera_infos = [
-            CameraInfo(
-                name=f"wrist_{i + 1}",
-                serial_number=n,
-                auto_exposure=self.config.camera_auto_exposure,
-                exposure=self.config.camera_exposure,
-                gain=self.config.camera_gain,
-                crop_region=tuple(crop_regions[n]) if n in crop_regions else None,
-            )
-            for i, n in enumerate(self.config.camera_serials)
-        ]
-        for info in camera_infos:
+        for info in self._camera_infos:
             camera = Camera(info)
             if not self.config.is_dummy:
                 camera.open()
