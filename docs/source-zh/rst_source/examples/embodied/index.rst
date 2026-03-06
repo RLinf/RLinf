@@ -288,4 +288,5 @@
    sft_vlm
    co_training
    dsrl
+   lingbotvla
 

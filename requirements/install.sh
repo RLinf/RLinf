@@ -17,7 +17,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "lingbotvla")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2")
 
 #=======================Utility Functions=======================
@@ -337,7 +337,49 @@ clone_or_reuse_repo() {
 }
 
 #=======================EMBODIED INSTALLERS=======================
+install_lingbot_vla_model() {
+    case "$ENV_NAME" in
+        robotwin)
+            PYTHON_VERSION="3.10"
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip uninstall torch torchvision torchaudio || true
+            uv pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+            local lerobot_dir
+            lerobot_dir=$(clone_or_reuse_repo LEROBOT_PATH "$VENV_DIR/lerobot" ${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git)
+            pushd "$lerobot_dir" >/dev/null
+            git checkout 0cf864870cf29f4738d3ade893e6fd13fbd7cdb5
+            uv pip install -e . --no-deps
+            popd >/dev/null
 
+            uv pip install ninja
+            FLASH_ATTENTION_FORCE_BUILD=TRUE uv pip install flash-attn --no-build-isolation
+
+            local lingbotvla_dir
+            lingbotvla_dir=$(clone_or_reuse_repo LINGBOT_PATH "$VENV_DIR/lingbot-vla" ${GITHUB_PREFIX}https://github.com/robbyant/lingbot-vla.git)
+            pushd "$lingbotvla_dir" >/dev/null
+            git submodule update --init --recursive
+            uv pip install -e .
+            uv pip install -r requirements.txt
+            
+            uv pip install -e ./lingbotvla/models/vla/vision_models/lingbot-depth/ --no-deps
+            uv pip install -e ./lingbotvla/models/vla/vision_models/MoGe --no-deps
+            popd >/dev/null
+
+            uv pip install "numpy==1.26.4" "fsspec==2025.3.0" "opencv-python-headless==4.9.0.80" "rerun-sdk==0.21.0"
+            uv pip install xformers==0.0.28.post3 --no-deps
+            uv pip install draccus einops datasets omegaconf jsonlines deepdiff psutil ipdb torchdata msgpack websockets blobfile
+            uv pip install diffusers==0.30.3 transformers==4.51.3 tokenizers==0.21.4 protobuf==4.25.3 tensorflow==2.15.0 tensorflow-datasets==4.9.3 "tensorboard<2.16"
+            uv pip install -e "git+${GITHUB_PREFIX}https://github.com/NVlabs/curobo.git@ebb71702f3f70e767f40fd8e050674af0288abe8#egg=nvidia_curobo" --no-build-isolation
+            install_robotwin_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for Lingbot-VLA model." >&2
+            exit 1
+            ;;
+    esac
+    uv pip uninstall pynvml || true
+}
 install_common_embodied_deps() {
     uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
     uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
@@ -879,6 +921,9 @@ main() {
                     ;;
                 dexbotic)
                     install_dexbotic_model
+                    ;;
+                lingbotvla)                  
+                    install_lingbot_vla_model 
                     ;;
                 "")
                     install_env_only
