@@ -46,6 +46,10 @@ class FrankaRobotConfig:
     camera_auto_exposure: bool = True
     camera_exposure: Optional[float] = None
     camera_gain: Optional[float] = None
+    # Per-camera crop regions keyed by serial number.
+    # Each value is [top%, left%, bottom%, right%] in 0..1 range.
+    # Example: {"230322271990": [0.0, 0.15, 1.0, 0.85]}
+    camera_crop_regions: Optional[dict[str, list[float]]] = None
 
     is_dummy: bool = False
     use_dense_reward: bool = False
@@ -431,6 +435,7 @@ class FrankaEnv(gym.Env):
         self._cameras: list[Camera] = []
         if self.config.camera_serials is None:
             return
+        crop_regions = self.config.camera_crop_regions or {}
         camera_infos = [
             CameraInfo(
                 name=f"wrist_{i + 1}",
@@ -438,6 +443,7 @@ class FrankaEnv(gym.Env):
                 auto_exposure=self.config.camera_auto_exposure,
                 exposure=self.config.camera_exposure,
                 gain=self.config.camera_gain,
+                crop_region=tuple(crop_regions[n]) if n in crop_regions else None,
             )
             for i, n in enumerate(self.config.camera_serials)
         ]
@@ -447,22 +453,48 @@ class FrankaEnv(gym.Env):
                 camera.open()
             self._cameras.append(camera)
 
+    def close(self):
+        """Release all hardware resources including cameras and video player."""
+        if hasattr(self, "camera_player"):
+            self.camera_player.stop()
+        self._close_cameras()
+        super().close()
+
     def _close_cameras(self):
         for camera in self._cameras:
             camera.close()
         self._cameras = []
 
     def _crop_frame(
-        self, frame: np.ndarray, reshape_size: tuple[int, int]
+        self,
+        frame: np.ndarray,
+        reshape_size: tuple[int, int],
+        crop_region: tuple[float, float, float, float] | None = None,
     ) -> np.ndarray:
-        """Crop the frame to the desired resolution."""
+        """Crop the frame and resize.
+
+        Args:
+            frame: Raw camera frame ``(H, W, C)``.
+            reshape_size: Target ``(width, height)`` after resize.
+            crop_region: Optional relative crop ``(top, left, bottom, right)``
+                where each value is in ``[0, 1]``.  ``None`` falls back to the
+                default centre-square crop.
+        """
         h, w, _ = frame.shape
-        crop_size = min(h, w)
-        start_x = (w - crop_size) // 2
-        start_y = (h - crop_size) // 2
-        cropped_frame = frame[
-            start_y : start_y + crop_size, start_x : start_x + crop_size
-        ]
+        if crop_region is not None:
+            top_pct, left_pct, bottom_pct, right_pct = crop_region
+            y1 = int(h * top_pct)
+            x1 = int(w * left_pct)
+            y2 = int(h * bottom_pct)
+            x2 = int(w * right_pct)
+            cropped_frame = frame[y1:y2, x1:x2]
+        else:
+            crop_size = min(h, w)
+            start_x = (w - crop_size) // 2
+            start_y = (h - crop_size) // 2
+            cropped_frame = frame[
+                start_y : start_y + crop_size, start_x : start_x + crop_size
+            ]
         resized_frame = cv2.resize(cropped_frame, reshape_size)
         return cropped_frame, resized_frame
 
@@ -476,7 +508,10 @@ class FrankaEnv(gym.Env):
                 reshape_size = self.observation_space["frames"][
                     camera._camera_info.name
                 ].shape[:2][::-1]
-                cropped_frame, resized_frame = self._crop_frame(frame, reshape_size)
+                cropped_frame, resized_frame = self._crop_frame(
+                    frame, reshape_size,
+                    crop_region=camera._camera_info.crop_region,
+                )
                 frames[camera._camera_info.name] = resized_frame[
                     ..., ::-1
                 ]  # Convert RGB to BGR

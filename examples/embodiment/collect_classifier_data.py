@@ -231,8 +231,13 @@ def review_frames(frames: list[dict]) -> tuple[list[dict], list[dict]]:
     idx = 0
 
     WIN = "Review: g=keep  b=discard  n=next  p=prev  q=done"
-    cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(WIN, 640, 520)
+    try:
+        cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(WIN, 640, 520)
+    except cv2.error as e:
+        print(f"无法创建审核窗口 (X11/显示错误): {e}")
+        print("跳过审核，保留所有帧。")
+        return frames, []
 
     def render(index: int) -> None:
         img = frames[index]["image"].copy()  # BGR uint8
@@ -364,6 +369,12 @@ def main(cfg):
     collector.run().wait()
 
     # ── Phase 2: Review UI (main process) ────────────────────────────
+    # Avoid X11 shared-memory issues in Docker / containers with small /dev/shm.
+    os.environ.setdefault("QT_X11_NO_MITSHM", "1")
+    # Clean up any stale OpenCV state before opening the review window.
+    cv2.destroyAllWindows()
+    cv2.waitKey(1)
+
     raw_path = os.path.join(save_dir, "raw_frames.pkl")
     if not os.path.exists(raw_path):
         print(f"未找到采集数据: {raw_path}")

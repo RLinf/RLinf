@@ -28,6 +28,9 @@ if [ -n "$DISPLAY" ]; then
     export RAY_RUNTIME_ENV_DISPLAY="$DISPLAY"
 fi
 
+# Avoid X11 shared-memory errors in Docker containers with small /dev/shm.
+export QT_X11_NO_MITSHM=1
+
 echo "Using Python at $(which python)"
 LOG_DIR="${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')-reward-classifier-${ENV_NAME}"
 MEGA_LOG_FILE="${LOG_DIR}/run.log"

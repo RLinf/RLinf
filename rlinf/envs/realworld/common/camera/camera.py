@@ -30,6 +30,10 @@ class CameraInfo:
     auto_exposure: bool = True
     exposure: float | None = None
     gain: float | None = None
+    # Relative crop region as percentages [0..1]: [top, left, bottom, right].
+    # For example [0.1, 0.2, 0.9, 0.8] crops 10% from top, 20% from left,
+    # 10% from bottom, 20% from right.  None means default center-square crop.
+    crop_region: tuple[float, float, float, float] | None = None
 
 
 class Camera:

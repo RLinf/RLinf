@@ -34,6 +34,21 @@ class VideoPlayer:
         if self.is_running:
             self.queue.put(frame)
 
+    def stop(self):
+        """Stop the video player and release X11 resources."""
+        if not self.is_running:
+            return
+        self.is_running = False
+        # Drain the queue then send exit signal
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+            except queue.Empty:
+                break
+        self.queue.put(None)
+        if hasattr(self, "_run_thread"):
+            self._run_thread.join(timeout=3)
+
     def _play(self):
         display = os.environ.get("DISPLAY")
         if not display:
@@ -59,14 +74,18 @@ class VideoPlayer:
                 return
 
         self.is_running = True
-        while True:
-            img_array = self.queue.get()  # retrieve an image from the queue
-            if img_array is None:  # None is our signal to exit
-                break
+        try:
+            while True:
+                img_array = self.queue.get()  # retrieve an image from the queue
+                if img_array is None:  # None is our signal to exit
+                    break
 
-            frame = np.concatenate(
-                [v for k, v in img_array.items() if "full" not in k], axis=0
-            )
+                frame = np.concatenate(
+                    [v for k, v in img_array.items() if "full" not in k], axis=0
+                )
 
-            cv2.imshow("RealSense Cameras", frame)
-            cv2.waitKey(1)
+                cv2.imshow("RealSense Cameras", frame)
+                cv2.waitKey(1)
+        finally:
+            cv2.destroyAllWindows()
+            cv2.waitKey(1)  # Process pending GUI events after destroy
