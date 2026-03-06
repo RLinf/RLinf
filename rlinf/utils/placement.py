@@ -199,15 +199,15 @@ class ModelParallelComponentPlacement(ComponentPlacement):
 
     def _is_disaggregated(self):
         actor_gpu_set = set(self._actor_gpus)
-        critic_gpu_set = set(self._critic_gpus)
+        critic_gpu_set = set([] if self._critic_gpus is None else self._critic_gpus)
         rollout_gpu_set = set(self._rollout_gpus)
         inference_gpu_set = (
             [] if self._inference_gpus is None else set(self._inference_gpus)
         )
-        critic_inference_gpu_set = (
+        critic_inference_gpu_set = set(
             []
             if self._critic_inference_gpus is None
-            else set(self._critic_inference_gpus)
+            else self._critic_inference_gpus
         )
 
         return (
