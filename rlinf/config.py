@@ -569,6 +569,18 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
             "expert_tensor_parallel_size", None
         )
 
+        from rlinf.hybrid_engines.megatron.megatron_model_manager import HAVE_FUSCO
+
+        if HAVE_FUSCO:
+            assert (
+                cfg.model.moe_token_dispatcher_type == "alltoall"
+                and cfg.model.expert_model_parallel_size > 1
+                and cfg.model.expert_tensor_parallel_size == 1
+                and not cfg.model.variable_seq_lengths
+            ), (
+                f"FUSCO support detected. to enable FUSCO, moe_token_dispatcher_type must be 'alltoall', expert_model_parallel_size must be greater than 1, expert_tensor_parallel_size must be 1, and variable_seq_lengths must be False. get value ({cfg.model.moe_token_dispatcher_type}, {cfg.model.expert_model_parallel_size}, {cfg.model.expert_tensor_parallel_size}, {cfg.model.variable_seq_lengths})"
+            )
+
         cfg.model.moe_grouped_gemm = cfg.model.get("moe_grouped_gemm", None)
         assert cfg.model.moe_grouped_gemm in [None, "te"], (
             f"grouped_gemm type only avail in [null, te]. get value ({cfg.model.moe_grouped_gemm})"

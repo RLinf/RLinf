@@ -161,13 +161,7 @@ class MegatronModelManager:
         self.patch_megatron_moe_dispatcher()
 
     def patch_megatron_moe_dispatcher(self):
-        if (
-            HAVE_FUSCO 
-            and self._cfg.model.moe_token_dispatcher_type == "alltoall"
-            and self._cfg.model.expert_model_parallel_size > 1
-            and self._cfg.model.expert_tensor_parallel_size == 1
-            and self._cfg.model.variable_seq_lengths == False
-        ):
+        if HAVE_FUSCO:
             from rlinf.utils.patcher import Patcher
             Patcher.clear()
             Patcher.add_patch(
@@ -705,4 +699,3 @@ class MegatronModelManager:
         self.megatron_forward_backward_record = PyTorchProfilerFunc(
             "megatron_forward_backward"
         )
-
