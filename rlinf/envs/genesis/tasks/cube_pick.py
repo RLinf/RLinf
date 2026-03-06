@@ -12,13 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CubePick task for Genesis.
-
-A Franka Panda arm must pick up a cube from a table.  The cube spawns at
-a randomized (x, y) position and the episode succeeds when the cube's
-z-coordinate exceeds a configurable height threshold.
-"""
-
 from __future__ import annotations
 
 from typing import Any
@@ -31,9 +24,8 @@ from rlinf.envs.genesis.tasks import register_task
 from rlinf.envs.genesis.tasks.base import GenesisTaskBase
 from rlinf.envs.genesis.utils import camera_render_rgb, extract_robot_state
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+from genesis.utils.geom import transform_by_quat
+
 
 _FRANKA_MJCF = "xml/franka_emika_panda/panda.xml"
 _NUM_MOTOR_DOFS = 7
@@ -43,7 +35,7 @@ _HOME_QPOS = [0.0, -0.4, 0.0, -2.2, 0.0, 2.0, 0.8, 0.04, 0.04]
 _CUBE_SIZE = (0.04, 0.04, 0.04)
 _CUBE_DEFAULT_POS = (0.65, 0.0, 0.02)
 
-_DEFAULT_SUCCESS_HEIGHT = 0.10
+_DEFAULT_SUCCESS_HEIGHT = 0.20
 
 _CAMERA_POS = (3.5, 0.0, 2.5)
 _CAMERA_LOOKAT = (0.0, 0.0, 0.5)
@@ -76,28 +68,38 @@ class CubePickTask(GenesisTaskBase):
         self._cube_x_range: tuple[float, float] = (0.45, 0.80)
         self._cube_y_range: tuple[float, float] = (-0.25, 0.25)
 
-    # ------------------------------------------------------------------
-    # GenesisTaskBase interface
-    # ------------------------------------------------------------------
-
     def build_scene(self, scene, cfg) -> None:
         """Add Franka, cube, plane and camera to the scene."""
         init_params = cfg.get("init_params", {})
 
-        # Ground plane
         scene.add_entity(gs.morphs.Plane())
 
-        # Robot
+        scene.add_light(pos=(2, 2, 2),
+                        dir=(-1, -1, -1),
+                        color=(1, 1, 1,),
+                        intensity=1.0,
+                        directional=False,
+                        castshadow=True,
+                        cutoff=80.0)
+
         robot_file = init_params.get("robot_file", _FRANKA_MJCF)
         self.robot = scene.add_entity(gs.morphs.MJCF(file=robot_file))
+        self.lf_sensor = scene.add_sensor(gs.sensors.Contact(
+            entity_idx=self.robot.idx,
+            draw_debug=True,
+            link_idx_local=self.robot.get_link("left_finger").idx_local
+        ))
+        self.rf_sensor = scene.add_sensor(gs.sensors.Contact(
+            entity_idx=self.robot.idx,
+            draw_debug=True,
+            link_idx_local=self.robot.get_link("right_finger").idx_local
+        ))
 
-        # Cube
         cube_size = tuple(init_params.get("cube_size", _CUBE_SIZE))
         self.cube = scene.add_entity(
             gs.morphs.Box(size=cube_size, pos=_CUBE_DEFAULT_POS),
         )
 
-        # Camera
         cam_h = int(init_params.get("camera_height", 480))
         cam_w = int(init_params.get("camera_width", 640))
         cam_pos = tuple(init_params.get("camera_pos", _CAMERA_POS))
@@ -110,21 +112,18 @@ class CubePickTask(GenesisTaskBase):
             fov=cam_fov,
             GUI=False,
         )
-        # Store camera base pose for per-env rendering in batched mode.
         self._camera_base_pos = cam_pos
         self._camera_base_lookat = cam_lookat
 
-        # DOF indices
         self.motor_dofs = np.arange(_NUM_MOTOR_DOFS)
         self.finger_dofs = np.arange(_NUM_MOTOR_DOFS, _NUM_MOTOR_DOFS + _NUM_FINGER_DOFS)
 
-        # Task-specific parameters
         self._success_height = float(init_params.get("success_height", _DEFAULT_SUCCESS_HEIGHT))
         self._cube_x_range = tuple(init_params.get("cube_x_range", self._cube_x_range))
         self._cube_y_range = tuple(init_params.get("cube_y_range", self._cube_y_range))
 
-        # EEF link (resolved after scene.build via post_build)
         self._eef_link_name = init_params.get("eef_link_name", "hand")
+        self._eef_offset = torch.tensor([0.0, 0.0, 0.11], device=gs.device)
 
     def post_build(self) -> None:
         """Called right after ``scene.build()`` to resolve link references."""
@@ -183,10 +182,24 @@ class CubePickTask(GenesisTaskBase):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute dense shaped rewards for reaching, grasping, and lifting."""
         cube_pos = self.cube.get_pos()
+
         eef_pos = self.eef_link.get_pos()
+        eef_quat = self.eef_link.get_quat()
+        eef_pos += transform_by_quat((self._eef_offset).repeat((num_envs, 1)), eef_quat)
+
+        gripper = self.robot.get_dofs_position()[..., _NUM_MOTOR_DOFS : _NUM_MOTOR_DOFS + _NUM_FINGER_DOFS]
 
         dist = torch.norm(eef_pos - cube_pos, p=2, dim=-1)
-        reaching_reward = 1.0 - torch.tanh(10.0 * dist)
+        reaching_reward = 1.0 - torch.tanh(2.0 * dist)
+
+        lf_contact = self.lf_sensor.read().squeeze() == True
+        rf_contact = self.rf_sensor.read().squeeze() == True
+
+        grippers_active = (gripper[:, 0] > 0.01) & (gripper[:, 1] > 0.01)
+
+        is_grasped = lf_contact & rf_contact & grippers_active
+
+        grasp_reward = is_grasped.float() * 5.0
 
         initial_z = 0.02
         z_height = cube_pos[:, 2]
@@ -196,7 +209,7 @@ class CubePickTask(GenesisTaskBase):
         success = z_height > self._success_height
         success_bonus = success.float() * 20.0
 
-        reward = reaching_reward + lifting_reward + success_bonus
+        reward = reaching_reward + grasp_reward + lifting_reward + success_bonus
 
         return reward, success.bool()
 
@@ -232,9 +245,5 @@ class CubePickTask(GenesisTaskBase):
         """Set the task's random number generator seed."""
         self._rng = np.random.default_rng(seed)
 
-
-# ---------------------------------------------------------------------------
-# Registration
-# ---------------------------------------------------------------------------
 
 register_task("cube_pick", CubePickTask)

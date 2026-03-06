@@ -69,7 +69,7 @@ algorithm:
   reward_coef: 1.0
 
   sampling_params:
-    do_sample: true
+    do_sample: True
     temperature_train: 1.0
     temperature_eval: 0.6
     top_k: 0
@@ -85,7 +85,7 @@ env:
   group_name: EnvGroup
 
   train:
-    total_num_envs: 64
+    total_num_envs: 128
     group_size: ${algorithm.group_size}
     max_steps_per_rollout_epoch: 200
     max_episode_steps: 200
@@ -111,7 +111,7 @@ env:
 rollout:
   group_name: RolloutGroup
   backend: huggingface
-  enable_offload: false
+  enable_offload: False
   pipeline_stage_num: 1
 
   model:
@@ -119,15 +119,15 @@ rollout:
     precision: ${actor.model.precision}
 
   enable_torch_compile: True
-  enable_cuda_graph: False
+  enable_cuda_graph: True
 
 actor:
   group_name: ActorGroup
   training_backend: fsdp
-  micro_batch_size: 64
-  global_batch_size: 64
+  micro_batch_size: 128
+  global_batch_size: 128
   seed: 1234
-  enable_offload: false
+  enable_offload: False
 
   model:
     model_type: mlp_policy
@@ -140,8 +140,8 @@ actor:
     num_action_chunks: 1
     hidden_dim: 256
     precision: "32"
-    add_value_head: true
-    is_lora: false
+    add_value_head: True
+    is_lora: False
     lora_rank: 32
 
   optim:
@@ -156,16 +156,16 @@ actor:
   fsdp_config:
     strategy: fsdp
     sharding_strategy: no_shard
-    gradient_checkpointing: false
-    cpu_offload: false
-    offload_pin_memory: false
-    reshard_after_forward: true
-    enable_gradient_accumulation: true
-    forward_prefetch: false
-    limit_all_gathers: false
+    gradient_checkpointing: False
+    cpu_offload: False
+    offload_pin_memory: False
+    reshard_after_forward: True
+    enable_gradient_accumulation: True
+    forward_prefetch: False
+    limit_all_gathers: False
     backward_prefetch: null
-    use_orig_params: false
-    use_liger_kernel: false
+    use_orig_params: False
+    use_liger_kernel: False
     fsdp_size: -1
 
     mixed_precision:
@@ -174,12 +174,12 @@ actor:
       buffer_dtype: ${actor.model.precision}
 
     amp:
-      enabled: false
+      enabled: False
       precision: bf16
-      use_grad_scaler: false
+      use_grad_scaler: False
 
 reward:
-  use_reward_model: false
+  use_reward_model: False
 
 critic:
-  use_critic_model: false
+  use_critic_model: False

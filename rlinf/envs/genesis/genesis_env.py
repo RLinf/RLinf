@@ -12,32 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Genesis environment wrapper for RLinf.
-
-``GenesisEnv`` is a ``gymnasium.Env`` subclass that bridges the Genesis
-physics simulator with RLinf's embodied RL training loop.  It uses
-Genesis's native GPU-batched parallel simulation
-(``scene.build(n_envs=N)``) so that all parallel environments run in a
-single process on the GPU -- no subprocess overhead.
-
-Usage (via config)::
-
-    env:
-      train:
-        env_type: genesis
-        init_params:
-          task_name: cube_pick
-          robot_file: xml/franka_emika_panda/panda.xml
-          dt: 0.01
-          camera_height: 480
-          camera_width: 640
-        group_size: 1
-        max_episode_steps: 200
-        auto_reset: true
-        seed: 42
-        ...
-"""
-
 from __future__ import annotations
 
 import copy
@@ -73,10 +47,6 @@ class GenesisEnv(gym.Env):
 
     metadata: dict[str, Any] = {"render_modes": ["rgb_array"], "render_fps": 30}
 
-    # ------------------------------------------------------------------
-    # Construction
-    # ------------------------------------------------------------------
-
     def __init__(
         self,
         cfg,
@@ -93,7 +63,6 @@ class GenesisEnv(gym.Env):
         self.total_num_processes = total_num_processes
         self.worker_info = worker_info
 
-        # Standard RLinf env config fields.
         self.group_size: int = cfg.group_size
         self.num_group: int = num_envs // self.group_size
         self.auto_reset: bool = cfg.auto_reset
@@ -107,7 +76,6 @@ class GenesisEnv(gym.Env):
         self._is_start = True
         self._generator = np.random.default_rng(seed=self.seed)
 
-        # ----- Build Genesis scene via the task -----
         init_params = (
             OmegaConf.to_container(cfg.init_params, resolve=True)
             if hasattr(cfg, "init_params") and cfg.init_params is not None
@@ -121,12 +89,8 @@ class GenesisEnv(gym.Env):
 
         self._build_genesis_scene(cfg, init_params)
 
-        # All metric / counter tensors live on the same device as the
-        # simulation (gs.device) so that arithmetic with reward / success
-        # tensors returned by the task avoids cross-device errors.
         self.device = gs.device
 
-        # ----- Metrics and step counters -----
         self.prev_step_reward = torch.zeros(
             num_envs, dtype=torch.float32, device=self.device
         )
@@ -135,13 +99,8 @@ class GenesisEnv(gym.Env):
         )
         self._init_metrics()
 
-    # ------------------------------------------------------------------
-    # Genesis scene construction
-    # ------------------------------------------------------------------
-
     def _build_genesis_scene(self, cfg, init_params: dict) -> None:
         """Initialize Genesis, create a scene, and build it."""
-        # Guard: only initialize Genesis once per process.
         if not getattr(gs, "_initialized", False):
             # BatchRenderer requires the CUDA backend.
             backend = init_params.get("backend", "cuda")
@@ -157,10 +116,11 @@ class GenesisEnv(gym.Env):
             )
 
         dt = float(init_params.get("dt", 0.01))
+        substeps = int(init_params.get("substeps", 1))
         gravity = tuple(init_params.get("gravity", (0.0, 0.0, -9.81)))
 
         self.scene = gs.Scene(
-            sim_options=gs.options.SimOptions(dt=dt, gravity=gravity),
+            sim_options=gs.options.SimOptions(dt=dt, substeps=substeps, gravity=gravity),
             rigid_options=gs.options.RigidOptions(
                 box_box_detection=True,
             ),
@@ -168,20 +128,13 @@ class GenesisEnv(gym.Env):
             show_viewer=False,
         )
 
-        # Let the task populate the scene with entities.
         self.task.build_scene(self.scene, cfg)
 
-        # Build with GPU-parallel environments.
         env_spacing = tuple(init_params.get("env_spacing", (1.0, 1.0)))
         self.scene.build(n_envs=self.num_envs, env_spacing=env_spacing)
 
-        # Post-build hook (e.g. to resolve link references).
         if hasattr(self.task, "post_build"):
             self.task.post_build()
-
-    # ------------------------------------------------------------------
-    # Properties required by the RLinf env worker
-    # ------------------------------------------------------------------
 
     @property
     def elapsed_steps(self) -> torch.Tensor:
@@ -194,10 +147,6 @@ class GenesisEnv(gym.Env):
     @is_start.setter
     def is_start(self, value: bool) -> None:
         self._is_start = value
-
-    # ------------------------------------------------------------------
-    # Metrics (identical pattern to MetaWorld / FrankaSim / etc.)
-    # ------------------------------------------------------------------
 
     def _init_metrics(self) -> None:
         self.success_once = torch.zeros(
@@ -212,8 +161,6 @@ class GenesisEnv(gym.Env):
 
     def _reset_metrics(self, env_idx: Optional[torch.Tensor] = None) -> None:
         if env_idx is not None:
-            # Ensure the index tensor lives on the same device as the
-            # metric tensors so that advanced indexing works correctly.
             idx = env_idx.to(self.device)
             self.prev_step_reward[idx] = 0.0
             self.success_once[idx] = False
@@ -239,15 +186,10 @@ class GenesisEnv(gym.Env):
         episode_info["success_once"] = self.success_once.clone()
         episode_info["return"] = self.returns.clone()
         episode_info["episode_len"] = self._elapsed_steps.clone()
-        # Avoid division by zero for episode_len == 0.
         safe_len = self._elapsed_steps.clamp(min=1).float()
         episode_info["reward"] = self.returns / safe_len
         infos["episode"] = episode_info
         return infos
-
-    # ------------------------------------------------------------------
-    # Observation wrapping
-    # ------------------------------------------------------------------
 
     def _wrap_obs(self, raw_obs: dict[str, Any]) -> dict[str, Any]:
         """Convert raw task observations into the canonical RLinf dict.
@@ -259,47 +201,36 @@ class GenesisEnv(gym.Env):
         """
         obs: dict[str, Any] = {}
 
-        # Images
         images = raw_obs.get("images")
         if images is not None:
             if isinstance(images, np.ndarray):
                 images = torch.from_numpy(images.copy())
             obs["main_images"] = images
 
-        # States
         states = raw_obs.get("states")
         if states is not None:
             if isinstance(states, np.ndarray):
                 states = torch.from_numpy(states).float()
             obs["states"] = states
 
-        # Task description (broadcast to batch)
         desc = self.task.task_description
         obs["task_descriptions"] = [desc] * self.num_envs
 
         return obs
 
-    # ------------------------------------------------------------------
-    # Reward
-    # ------------------------------------------------------------------
-
     def _calc_step_reward(
-        self, success: torch.Tensor
+        self, reward_input: torch.Tensor
     ) -> torch.Tensor:
-        """Compute per-step reward from success signal.
+        """Compute per-step reward from reward signal.
 
         Supports ``use_rel_reward`` (differential reward) mode.
         """
-        reward = self.reward_coef * success.float()
+        reward = self.reward_coef * reward_input
         reward_diff = reward - self.prev_step_reward
         self.prev_step_reward = reward.clone()
         if self.use_rel_reward:
             return reward_diff
         return reward
-
-    # ------------------------------------------------------------------
-    # Reset
-    # ------------------------------------------------------------------
 
     def reset(
         self,
@@ -320,11 +251,9 @@ class GenesisEnv(gym.Env):
         Returns:
             ``(obs_dict, infos)`` tuple following the gymnasium convention.
         """
-        # Allow env_idx via options dict (compatibility with gymnasium API).
         if env_idx is None and options is not None and "env_idx" in options:
             env_idx = options["env_idx"]
 
-        # Convert to torch tensor for Genesis API.
         envs_idx_tensor: torch.Tensor | None = None
         if env_idx is not None:
             if isinstance(env_idx, np.ndarray):
@@ -334,18 +263,14 @@ class GenesisEnv(gym.Env):
             else:
                 envs_idx_tensor = torch.tensor(env_idx, dtype=torch.int64, device=gs.device)
 
-        # Delegate to task.
         self.task.reset(self.scene, self.num_envs, envs_idx=envs_idx_tensor)
 
-        # Settle physics.
         for _ in range(_RESET_SETTLE_STEPS):
             self.scene.step()
 
-        # Observations.
         raw_obs = self.task.get_obs(self.scene, self.num_envs)
         obs = self._wrap_obs(raw_obs)
 
-        # Reset metrics.
         if env_idx is not None:
             self._reset_metrics(envs_idx_tensor)
         else:
@@ -353,10 +278,6 @@ class GenesisEnv(gym.Env):
 
         infos: dict[str, Any] = {}
         return obs, infos
-
-    # ------------------------------------------------------------------
-    # Step
-    # ------------------------------------------------------------------
 
     def step(
         self,
@@ -380,7 +301,6 @@ class GenesisEnv(gym.Env):
 
         self._elapsed_steps += 1
 
-        # Apply actions to the robot.
         task = self.task
         if task.motor_dofs is not None:
             task.robot.control_dofs_position(
@@ -392,16 +312,13 @@ class GenesisEnv(gym.Env):
                 task.finger_dofs,
             )
 
-        # Advance simulation.
         self.scene.step()
 
-        # Observations.
         raw_obs = task.get_obs(self.scene, self.num_envs)
         obs = self._wrap_obs(raw_obs)
 
-        # Reward / termination / truncation.
-        _reward, success = task.compute_reward(self.scene, self.num_envs)
-        step_reward = self._calc_step_reward(success)
+        reward, success = task.compute_reward(self.scene, self.num_envs)
+        step_reward = self._calc_step_reward(reward)
         terminations = success.bool()
         truncations = self._elapsed_steps >= self.max_episode_steps
 
@@ -418,10 +335,6 @@ class GenesisEnv(gym.Env):
             obs, infos = self._handle_auto_reset(dones, obs, infos)
 
         return obs, step_reward, terminations, truncations, infos
-
-    # ------------------------------------------------------------------
-    # Chunk step (action-chunking interface for embodied policies)
-    # ------------------------------------------------------------------
 
     def chunk_step(
         self,
@@ -473,8 +386,6 @@ class GenesisEnv(gym.Env):
                 past_dones, obs_list[-1], infos_list[-1]
             )
 
-        # Collapse termination/truncation to last step only when auto-reset
-        # is enabled, matching the convention used by other RLinf envs.
         if self.auto_reset or self.ignore_terminations:
             chunk_terminations = torch.zeros_like(raw_term_t)
             chunk_terminations[:, -1] = past_terminations
@@ -493,10 +404,6 @@ class GenesisEnv(gym.Env):
             infos_list,
         )
 
-    # ------------------------------------------------------------------
-    # Auto-reset
-    # ------------------------------------------------------------------
-
     def _handle_auto_reset(
         self,
         dones: torch.Tensor,
@@ -507,7 +414,6 @@ class GenesisEnv(gym.Env):
         final_obs = copy.deepcopy(final_obs)
         final_info = copy.deepcopy(infos)
 
-        # Indices of done environments.
         env_idx = torch.arange(self.num_envs, device=self.device)[dones]
 
         obs, infos = self.reset(env_idx=env_idx)
@@ -519,10 +425,6 @@ class GenesisEnv(gym.Env):
         infos["_elapsed_steps"] = dones
         return obs, infos
 
-    # ------------------------------------------------------------------
-    # Reset-state management
-    # ------------------------------------------------------------------
-
     def update_reset_state_ids(self) -> None:
         """Advance the internal RNG so the next epoch samples fresh states.
 
@@ -532,10 +434,6 @@ class GenesisEnv(gym.Env):
         # internal RNG is automatically advanced each time ``reset`` is
         # called.  This method exists to satisfy the RLinf worker interface.
         pass
-
-    # ------------------------------------------------------------------
-    # Cleanup
-    # ------------------------------------------------------------------
 
     def close(self) -> None:
         """Destroy the Genesis scene and free GPU resources."""

@@ -30,10 +30,6 @@ if TYPE_CHECKING:
     from rlinf.envs.genesis.tasks.base import GenesisTaskBase
 
 
-# ---------------------------------------------------------------------------
-# Registry
-# ---------------------------------------------------------------------------
-
 _TASK_REGISTRY: dict[str, type[GenesisTaskBase]] = {}
 
 
@@ -59,10 +55,6 @@ def get_task_cls(name: str) -> type[GenesisTaskBase]:
         )
     return _TASK_REGISTRY[key]
 
-
-# ---------------------------------------------------------------------------
-# Auto-import built-in tasks so they self-register on first access.
-# ---------------------------------------------------------------------------
 
 def _import_builtin_tasks() -> None:
     """Import all built-in task modules so their ``register_task`` calls run."""
