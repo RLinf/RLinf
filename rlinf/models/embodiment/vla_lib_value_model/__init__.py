@@ -24,7 +24,8 @@ import safetensors
 import torch
 from omegaconf import DictConfig
 
-from .modeling_critic import CriticOutput, PI05CriticConfig, ValueCriticModel
+from .configuration import PI05CriticConfig
+from .modeling_pi05_critic import CriticOutput, ValueCriticModel
 from .value_policy import ValuePolicy
 from .value_policy_config import create_trained_value_policy
 

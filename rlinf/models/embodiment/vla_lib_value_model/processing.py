@@ -1,5 +1,14 @@
 """
-PI0.5 Processor with unified tokenization format.
+Unified image and text processors for PI0 / PI0.5 VLA models.
+
+Contains:
+- PI0ImageProcessor: HuggingFace-style image processor handling resize, padding,
+  augmentation, and multi-camera views for PI0-family models.
+- normalize_image_to_model_format: Utility to convert arbitrary image tensors
+  to BCHW [-1, 1] float format.
+- PI05Processor: Full processor for PI0.5 with unified tokenization, combining
+  image preprocessing and structured text tokenization (prompt / prefix /
+  response / state) with attention, loss, and KV-cache masks.
 
 Unified template: Task: {prompt}. [State: {state}. ][{prefix} ][{response}.][EOS]
 
@@ -27,39 +36,384 @@ Masks:
 
 import os
 import string
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
-from transformers import AutoTokenizer, PreTrainedTokenizerBase, BatchFeature
+import torch.nn.functional as F
+from PIL import Image
+from transformers import AutoTokenizer, BatchFeature, PreTrainedTokenizerBase
+from transformers.image_processing_utils import ImageProcessingMixin
 from transformers.processing_utils import ProcessorMixin
+from transformers.tokenization_utils_base import BatchEncoding
+from transformers.utils import TensorType
 
-from rlinf.utils.dist_utils import get_logger, is_main_process
 from rlinf.datasets.vla_lib.io_processing.value_tokens import (
     get_all_value_tokens,
 )
-from ..openpi.processing_pi0 import PI0ImageProcessor
+from rlinf.utils.dist_utils import get_logger, is_main_process
+from rlinf.utils.image_utils import resize_with_pad
 
 logger = get_logger(__name__)
 
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+IMAGE_KEYS = (
+    "base_0_rgb",
+    "left_wrist_0_rgb",
+    "right_wrist_0_rgb",
+)
+
+IMAGE_RESOLUTION = (224, 224)
+
+
+# ---------------------------------------------------------------------------
+# Utility functions
+# ---------------------------------------------------------------------------
+
+def normalize_image_to_model_format(
+    img: torch.Tensor,
+    device: torch.device = None,
+    dtype: torch.dtype = None,
+) -> torch.Tensor:
+    """
+    Normalize a single image to model format (verified standard from policy._prepare_observation).
+
+    Converts any image format to BCHW [-1, 1] float tensor.
+
+    Args:
+        img: Input image tensor (CHW, HWC, BCHW, or BHWC format; uint8 or float)
+        device: Target device (optional)
+        dtype: Target dtype (optional, e.g., torch.bfloat16)
+
+    Returns:
+        Tensor in BCHW format, normalized to [-1, 1], with optional dtype conversion
+    """
+    if device is not None:
+        img = img.to(device)
+
+    # Detect format: CHW/BCHW vs HWC/BHWC
+    if img.dim() == 3:
+        is_chw = img.shape[0] == 3
+    elif img.dim() == 4:
+        is_chw = img.shape[1] == 3
+    else:
+        raise ValueError(f"Expected 3D or 4D tensor, got {img.dim()}D")
+
+    # Add batch dimension if needed
+    if img.dim() == 3:
+        img = img[None, ...]
+
+    # Convert to float for normalization
+    img = img.float()
+
+    # Normalize to [-1, 1] and ensure BCHW format
+    if is_chw:
+        # Already BCHW, just normalize
+        if img.max() > 1.0:
+            img = img / 255.0 * 2.0 - 1.0
+        elif img.min() >= 0.0 and img.max() <= 1.0:
+            img = img * 2.0 - 1.0
+    else:
+        # BHWC format, convert to BCHW
+        img = img.permute(0, 3, 1, 2)
+        if img.max() > 1.0:
+            img = img / 255.0 * 2.0 - 1.0
+        elif img.min() >= 0.0 and img.max() <= 1.0:
+            img = img * 2.0 - 1.0
+
+    # Convert to target dtype if specified
+    if dtype is not None:
+        img = img.to(dtype)
+
+    return img
+
+
+# ---------------------------------------------------------------------------
+# PI0ImageProcessor
+# ---------------------------------------------------------------------------
+
+class PI0ImageProcessor(ImageProcessingMixin):
+    """
+    PI0 Image Processor that replicates OpenPI's preprocessing logic.
+
+    Implements the exact image preprocessing pipeline from OpenPI:
+    - Resize with padding to maintain aspect ratio
+    - Training augmentations: crop, rotation, color jitter
+    - Images kept in [-1, 1] range as expected by PI0 models
+    - Handles multiple camera views
+    """
+
+    model_input_names: ClassVar[List[str]] = ["pixel_values", "image_masks"]
+
+    def __init__(
+        self,
+        image_size: Tuple[int, int] = IMAGE_RESOLUTION,
+        do_resize: bool = True,
+        do_augment: bool = True,
+        image_keys: Sequence[str] = IMAGE_KEYS,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        self.image_size = image_size
+        self.do_resize = do_resize
+        self.do_augment = do_augment
+        self.image_keys = image_keys
+
+    def apply_augmentations(
+        self,
+        image: torch.Tensor,
+        is_wrist_camera: bool = False
+    ) -> torch.Tensor:
+        """
+        Apply OpenPI-style augmentations to the image.
+
+        Args:
+            image: Input image tensor in BHWC format, range [-1, 1]
+            is_wrist_camera: Whether this is a wrist camera (affects augmentation)
+
+        Returns:
+            Augmented image tensor in BHWC format, range [-1, 1]
+        """
+        # Convert from [-1, 1] to [0, 1] for PyTorch augmentations
+        image = image / 2.0 + 0.5
+
+        if not is_wrist_camera:
+            # Geometric augmentations for non-wrist cameras
+            height, width = image.shape[1:3]
+
+            # Random crop and resize (95% crop scale like OpenPI)
+            crop_height = int(height * 0.95)
+            crop_width = int(width * 0.95)
+
+            # Random crop
+            max_h = height - crop_height
+            max_w = width - crop_width
+            if max_h > 0 and max_w > 0:
+                start_h = torch.randint(0, max_h + 1, (1,), device=image.device)
+                start_w = torch.randint(0, max_w + 1, (1,), device=image.device)
+                image = image[:, start_h : start_h + crop_height, start_w : start_w + crop_width, :]
+
+            # Resize back to original size
+            image = F.interpolate(
+                image.permute(0, 3, 1, 2),  # [b, h, w, c] -> [b, c, h, w]
+                size=(height, width),
+                mode="bilinear",
+                align_corners=False,
+            ).permute(0, 2, 3, 1)  # [b, c, h, w] -> [b, h, w, c]
+
+            # Random rotation (small angles, -5 to 5 degrees like OpenPI)
+            angle = torch.rand(1, device=image.device) * 10 - 5
+            if torch.abs(angle) > 0.1:
+                # Convert to radians
+                angle_rad = angle * torch.pi / 180.0
+
+                # Create rotation matrix
+                cos_a = torch.cos(angle_rad)
+                sin_a = torch.sin(angle_rad)
+
+                # Apply rotation using grid_sample
+                grid_x = torch.linspace(-1, 1, width, device=image.device)
+                grid_y = torch.linspace(-1, 1, height, device=image.device)
+
+                # Create meshgrid
+                grid_y, grid_x = torch.meshgrid(grid_y, grid_x, indexing="ij")
+
+                # Expand to batch dimension
+                grid_x = grid_x.unsqueeze(0).expand(image.shape[0], -1, -1)
+                grid_y = grid_y.unsqueeze(0).expand(image.shape[0], -1, -1)
+
+                # Apply rotation transformation
+                grid_x_rot = grid_x * cos_a - grid_y * sin_a
+                grid_y_rot = grid_x * sin_a + grid_y * cos_a
+
+                # Stack and reshape for grid_sample
+                grid = torch.stack([grid_x_rot, grid_y_rot], dim=-1)
+
+                image = F.grid_sample(
+                    image.permute(0, 3, 1, 2),  # [b, h, w, c] -> [b, c, h, w]
+                    grid,
+                    mode="bilinear",
+                    padding_mode="zeros",
+                    align_corners=False,
+                ).permute(0, 2, 3, 1)  # [b, c, h, w] -> [b, h, w, c]
+
+        # Color augmentations for all cameras
+        # Random brightness (0.7 to 1.3 like OpenPI)
+        brightness_factor = 0.7 + torch.rand(1, device=image.device) * 0.6
+        image = image * brightness_factor
+
+        # Random contrast (0.6 to 1.4 like OpenPI)
+        contrast_factor = 0.6 + torch.rand(1, device=image.device) * 0.8
+        mean = image.mean(dim=[1, 2, 3], keepdim=True)
+        image = (image - mean) * contrast_factor + mean
+
+        # Random saturation (0.5 to 1.5 like OpenPI)
+        saturation_factor = 0.5 + torch.rand(1, device=image.device) * 1.0
+        gray = image.mean(dim=-1, keepdim=True)
+        image = gray + (image - gray) * saturation_factor
+
+        # Clamp values to [0, 1]
+        image = torch.clamp(image, 0, 1)
+
+        # Back to [-1, 1]
+        image = image * 2.0 - 1.0
+
+        return image
+
+    def process_images(
+        self,
+        images_dict: Dict[str, torch.Tensor],
+        image_masks_dict: Optional[Dict[str, torch.Tensor]] = None,
+        train: bool = False
+    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+        """
+        Process a batch of images efficiently.
+
+        Matches policy._prepare_observation behavior (the verified standard):
+        - Always outputs BCHW format
+        - Normalizes to [-1, 1] float
+
+        Args:
+            images_dict: Dict with OpenPI camera keys, each tensor [B, C, H, W] or [B, H, W, C]
+            image_masks_dict: Optional dict of image masks
+            train: Whether to apply training augmentations
+
+        Returns:
+            Tuple of (processed_images_dict, processed_masks_dict)
+            Images are returned in BCHW format, [-1, 1] float for model consumption.
+        """
+        out_images = {}
+        out_masks = {}
+
+        # Get batch size from any available image
+        batch_size = None
+        template_device = None
+        for key in images_dict:
+            if images_dict[key] is not None:
+                batch_size = images_dict[key].shape[0]
+                template_device = images_dict[key].device
+                break
+
+        for key in self.image_keys:
+            image = images_dict.get(key)
+
+            # Handle missing keys by creating placeholder zero images
+            if image is None:
+                if batch_size is not None:
+                    h, w = self.image_size
+                    placeholder = torch.zeros(batch_size, 3, h, w, device=template_device)
+                    out_images[key] = placeholder
+                    out_masks[key] = torch.zeros(batch_size, dtype=torch.bool, device=template_device)
+                continue
+
+            is_wrist = "wrist" in key
+
+            # Detect input format: BCHW vs BHWC
+            is_bchw = image.shape[1] == 3
+
+            # Convert to BHWC for internal processing (resize, augmentations work on HWC)
+            if is_bchw:
+                image = image.permute(0, 2, 3, 1)  # BCHW -> BHWC
+
+            # Resize if needed (operates on BHWC)
+            # Note: use tuple() for comparison since self.image_size may be a list after deserialization
+            if self.do_resize and tuple(image.shape[1:3]) != tuple(self.image_size):
+                image = resize_with_pad(image, self.image_size[1], self.image_size[0])
+                # Ensure 4D output (resize_with_pad may squeeze batch dim)
+                if image.dim() == 3:
+                    image = image.unsqueeze(0)
+
+            # Normalize to [-1, 1] (matching policy._prepare_observation)
+            image = image.float()
+            if image.max() > 1.0:
+                # uint8 [0, 255] -> float32 [-1, 1]
+                image = image / 255.0 * 2.0 - 1.0
+            elif image.min() >= 0.0 and image.max() <= 1.0:
+                # float [0, 1] -> float32 [-1, 1]
+                image = image * 2.0 - 1.0
+            # else: already in [-1, 1], leave as is
+
+            # Apply augmentations if enabled (operates on [-1, 1] BHWC)
+            if train and self.do_augment:
+                image = self.apply_augmentations(image, is_wrist_camera=is_wrist)
+
+            # Always output BCHW format (matching policy._prepare_observation)
+            image = image.permute(0, 3, 1, 2)  # BHWC -> BCHW
+
+            out_images[key] = image
+
+            # Handle masks
+            if image_masks_dict is not None and key in image_masks_dict:
+                out_masks[key] = image_masks_dict[key]
+            else:
+                # Default to True for all batch elements
+                batch_size = image.shape[0]
+                out_masks[key] = torch.ones(batch_size, dtype=torch.bool, device=image.device)
+
+        return out_images, out_masks
+
+    def __call__(
+        self,
+        images: Dict[str, torch.Tensor],
+        image_masks: Optional[Dict[str, torch.Tensor]] = None,
+        return_tensors: Optional[Union[str, TensorType]] = None,
+        do_augment: Optional[bool] = None,
+        train: bool = False,
+        **kwargs
+    ) -> BatchFeature:
+        """
+        Process images for PI0 model following OpenPI's preprocessing.
+
+        Args:
+            images: Dict of images with OpenPI camera keys or list/tensor of images
+            image_masks: Optional dict of image masks
+            return_tensors: Type of tensors to return
+            do_augment: Whether to apply augmentations (overrides self.do_augment)
+            train: Whether in training mode
+
+        Returns:
+            BatchFeature containing processed images and image masks
+        """
+        # Determine if we should apply augmentations
+        apply_augmentations = train and (do_augment if do_augment is not None else self.do_augment)
+
+        # Handle different input formats
+        # Dict format with OpenPI camera keys - use batch processing
+        output_images, output_masks = self.process_images(
+            images, image_masks, train=apply_augmentations
+        )
+
+        return {
+            "pixel_values": output_images,
+            "image_masks": output_masks
+        }
+
+
+# ---------------------------------------------------------------------------
+# PI05Processor
+# ---------------------------------------------------------------------------
 
 class PI05Processor(ProcessorMixin):
     """
     Processor for PI0.5 with unified tokenization.
-    
+
     Handles three modes based on input:
     - VLA: prompt + state + actions (flow matching)
     - VLM: prompt + prefix + response (language generation with CE loss)
     - VLM+VLA: prompt + prefix + response + actions (combined)
-    
+
     Key mask semantics:
     - ar_mask=0: Bidirectional attention (prefix/prompt tokens)
     - ar_mask=1: Causal attention (response/action tokens)
     - loss_mask=True: Include in cross-entropy loss (response tokens only)
     - kv_cache_mask=True: Include in KV cache for action expert (excludes EOS, etc.)
     """
-    
+
     attributes = ["image_processor", "tokenizer"]
     image_processor_class = "PI0ImageProcessor"
     tokenizer_class = "AutoTokenizer"
@@ -91,7 +445,7 @@ class PI05Processor(ProcessorMixin):
         if image_processor is None:
             # Use custom image_keys if provided, otherwise use defaults
             image_processor = PI0ImageProcessor(image_keys=image_keys) if image_keys else PI0ImageProcessor()
-            
+
         if tokenizer is None:
             tokenizer_path = (
                 tokenizer_name_or_path
@@ -105,7 +459,7 @@ class PI05Processor(ProcessorMixin):
             else:
                 tokenizer_source = tokenizer_path or "google/paligemma-3b-pt-224"
             tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, **tokenizer_kwargs)
-            
+
         self.image_processor = image_processor
         self.tokenizer: PreTrainedTokenizerBase = tokenizer
         self.max_token_len = max_token_len
@@ -120,42 +474,42 @@ class PI05Processor(ProcessorMixin):
 
     def add_value_tokens(self, num_bins: int = 201) -> int:
         """Add special tokens for value bins (<v0>, <v1>, ..., <v{num_bins-1}>).
-        
+
         These tokens ensure single-token representation for all bin IDs,
         enabling proper softmax over bins for value prediction.
-        
+
         Args:
             num_bins: Number of value bins (default: 201)
-            
+
         Returns:
             Number of tokens added
         """
         value_tokens = get_all_value_tokens(num_bins)
-        
+
         # Check if tokens already exist
         existing = self.tokenizer.convert_tokens_to_ids(value_tokens[0])
         if existing != self.tokenizer.unk_token_id:
             logger.info(f"Value tokens already exist in tokenizer (first token ID: {existing})")
             self._value_token_ids = {
-                i: self.tokenizer.convert_tokens_to_ids(token) 
+                i: self.tokenizer.convert_tokens_to_ids(token)
                 for i, token in enumerate(value_tokens)
             }
             return 0
-        
+
         num_added = self.tokenizer.add_special_tokens({"additional_special_tokens": value_tokens})
         logger.info(f"Added {num_added} value tokens to tokenizer")
-        
+
         # Cache the token IDs mapping: bin_id -> token_id
         self._value_token_ids = {
-            i: self.tokenizer.convert_tokens_to_ids(token) 
+            i: self.tokenizer.convert_tokens_to_ids(token)
             for i, token in enumerate(value_tokens)
         }
-        
+
         return num_added
 
     def get_value_token_ids(self) -> Optional[Dict[int, int]]:
         """Get mapping from bin ID to token ID.
-        
+
         Returns:
             Dict mapping bin_id (0-200) to token_id, or None if not initialized
         """
@@ -172,7 +526,7 @@ class PI05Processor(ProcessorMixin):
 
     def _strip_trailing_punctuation(self, text: str) -> str:
         """Remove trailing punctuation from text, but preserve quotes.
-        
+
         Quotes are preserved because they're structural in JSON-like responses
         such as ECOT annotations: "object": "[x, y]"
         """
@@ -184,22 +538,22 @@ class PI05Processor(ProcessorMixin):
         self, cleaned_prompt: str, state: Optional[np.ndarray], prefix: Optional[str]
     ) -> str:
         """Build prefix text using unified template.
-        
+
         Template: Task: {prompt}. [State: {state}. ][{prefix} ]
-        
+
         All modes use this template - parts are included based on inputs:
         - State: only if discrete_state_input and state provided
         - Prefix: only if prefix provided (e.g., "Subtask:", "FAST:", "Value:")
         """
         parts = [f"Task: {cleaned_prompt}."]
-        
+
         if self.discrete_state_input and state is not None:
             state_str = self._discretize_state(state)
             parts.append(f"State: {state_str}.")
-        
+
         if prefix:
             parts.append(f"{prefix}")
-        
+
         return " ".join(parts) + " " if prefix else " ".join(parts)
 
     def _append_tokens(
@@ -230,35 +584,35 @@ class PI05Processor(ProcessorMixin):
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Tokenize using unified template.
-        
+
         Template: Task: {prompt}. [State: {state}. ][{prefix} ][{response}][EOS]
-        
+
         Parts included based on inputs:
         - State: only if discrete_state_input and state provided
         - Prefix: only if prefix provided (e.g., "Subtask:", "FAST:")
         - Response: only for training (causal attention, has loss)
         - EOS: only when response provided
-        
+
         Response types:
-        - Value token: "<v100>" → single special token, in KV cache
-        - FAST only: "1 2 3 4 5" → NOT in KV cache (knowledge insulation)
-        - Subtask + FAST: "text. FAST: 1 2 3" → text per exclude_cot flag, FAST excluded
-        - Regular: "text" → in KV cache (or excluded if exclude_cot_from_kv_cache=True)
-        
+        - Value token: "<v100>" -> single special token, in KV cache
+        - FAST only: "1 2 3 4 5" -> NOT in KV cache (knowledge insulation)
+        - Subtask + FAST: "text. FAST: 1 2 3" -> text per exclude_cot flag, FAST excluded
+        - Regular: "text" -> in KV cache (or excluded if exclude_cot_from_kv_cache=True)
+
         Train-Eval Position ID Alignment:
         To ensure action tokens have consistent position IDs between training and eval,
         prefix labels that are present during training but absent during eval are
         EXCLUDED from the KV cache (kv_cache_mask=False). This applies to:
-        
+
         1. FAST mode (prefix="FAST:"): Always excluded - eval uses sample_actions()
            without FAST tokens, so action expert shouldn't depend on "FAST:" label
-        
+
         2. CoT mode (exclude_cot_from_kv_cache=True): "Subtask:" and reasoning text
            excluded - action expert only attends to core observation (images + prompt)
-        
+
         Note: FAST tokens are ALWAYS excluded from KV cache (knowledge insulation).
         CoT reasoning exclusion is controlled INDEPENDENTLY by exclude_cot_from_kv_cache.
-        
+
         This ensures the same rotary position embeddings during training and eval.
         """
         if max_length is None:
@@ -266,7 +620,7 @@ class PI05Processor(ProcessorMixin):
 
         cleaned_prompt = self._clean_text(prompt)
         cleaned_prompt = self._strip_trailing_punctuation(cleaned_prompt)
-        
+
         tokens: List[int] = []
         ar_mask: List[int] = []
         loss_mask: List[bool] = []
@@ -282,14 +636,14 @@ class PI05Processor(ProcessorMixin):
         # - CoT reasoning: controlled by exclude_cot_from_kv_cache
         is_fast_prefix = prefix and prefix.strip().upper() == "FAST:"
         should_exclude_prefix_label = (self.exclude_cot_from_kv_cache or is_fast_prefix) and prefix
-        
+
         if should_exclude_prefix_label:
             # Build core prefix WITHOUT the prefix label (e.g., without "FAST:" or "Subtask:")
             core_prefix_text = self._build_prefix_text(cleaned_prompt, state, None)
             core_tokens = self.tokenizer.encode(core_prefix_text, add_special_tokens=True)
             self._append_tokens(tokens, ar_mask, loss_mask, kv_cache_mask, core_tokens,
                                 causal=False, has_loss=False, in_kv_cache=True)
-            
+
             # Tokenize prefix label separately with in_kv_cache=False
             # This ensures action expert doesn't attend to tokens absent during eval
             prefix_label_text = f"{prefix} "
@@ -302,7 +656,7 @@ class PI05Processor(ProcessorMixin):
             prefix_tokens = self.tokenizer.encode(prefix_text, add_special_tokens=True)
             self._append_tokens(tokens, ar_mask, loss_mask, kv_cache_mask, prefix_tokens,
                                 causal=False, has_loss=False, in_kv_cache=True)
-        
+
         # Add response if provided (training mode)
         if response is not None:
             self._tokenize_response(
@@ -332,7 +686,7 @@ class PI05Processor(ProcessorMixin):
             loss_mask,
             kv_cache_mask,
         )
-        
+
         return self._pad_to_length(tokens, ar_mask, loss_mask, kv_cache_mask, max_length)
 
     def _tokenize_response(
@@ -346,13 +700,13 @@ class PI05Processor(ProcessorMixin):
         kv_cache_mask: List[bool],
     ) -> None:
         """Tokenize the response part with appropriate masks.
-        
+
         Response types (unified - all end with "."):
-        - Value token: "<v100>" → single special token
+        - Value token: "<v100>" -> single special token
         - FAST only (prefix="FAST:"): entire response is FAST tokens
         - Subtask + FAST: "{reasoning}. FAST: {tokens}"
         - Regular: "{response}."
-        
+
         KV cache exclusion rules:
         - FAST tokens: Always excluded (knowledge insulation)
         - Reasoning: Excluded only if exclude_cot_from_kv_cache=True (independent of FAST)
@@ -364,13 +718,13 @@ class PI05Processor(ProcessorMixin):
         )
         is_fast_only = prefix.strip().upper() == "FAST:"
         has_fast_in_response = "FAST:" in response
-        
+
         # Determine if reasoning should be excluded from action expert's KV cache.
         # This applies to all reasoning tokens (non-FAST, non-value).
         # Note: This is INDEPENDENT of FAST tokens. FAST tokens are always excluded,
         # but CoT reasoning exclusion is controlled by exclude_cot_from_kv_cache.
         exclude_reasoning = self.exclude_cot_from_kv_cache
-        
+
         # Value token: special single token (always in KV cache - it's the target, not reasoning)
         if is_value_token:
             token_id = self.tokenizer.convert_tokens_to_ids(response)
@@ -383,7 +737,7 @@ class PI05Processor(ProcessorMixin):
                 resp_tokens = [token_id]
             self._append_tokens(tokens, ar_mask, loss_mask, kv_cache_mask, resp_tokens,
                                 causal=True, has_loss=True, in_kv_cache=True)
-        
+
         # FAST only: entire response is FAST tokens (NOT in KV cache)
         elif is_fast_only:
             fast_tokens = self.tokenizer.encode(response, add_special_tokens=False)
@@ -394,13 +748,13 @@ class PI05Processor(ProcessorMixin):
                 tokens, ar_mask, loss_mask, kv_cache_mask, fast_tokens,
                 causal=True, has_loss=has_actions, in_kv_cache=False
             )
-        
+
         # Subtask + FAST: split into reasoning and FAST
         elif has_fast_in_response:
             fast_pos = response.find("FAST:")
             pre_fast = response[:fast_pos].strip()
             fast_part = response[fast_pos:]  # "FAST: {tokens}"
-            
+
             # Reasoning part
             # When exclude_cot_from_kv_cache=True: NOT in KV cache (action expert doesn't see it)
             # Otherwise: in KV cache (original behavior)
@@ -412,7 +766,7 @@ class PI05Processor(ProcessorMixin):
                     tokens, ar_mask, loss_mask, kv_cache_mask, pre_tokens,
                     causal=True, has_loss=True, in_kv_cache=not exclude_reasoning
                 )
-            
+
             # FAST part (NOT in KV cache - knowledge insulation)
             fast_tokens = self.tokenizer.encode(fast_part, add_special_tokens=False)
             # For FAST tokens, tie CE supervision to presence of actions: if
@@ -422,7 +776,7 @@ class PI05Processor(ProcessorMixin):
                 tokens, ar_mask, loss_mask, kv_cache_mask, fast_tokens,
                 causal=True, has_loss=has_actions, in_kv_cache=False
             )
-        
+
         # Regular response (unified: always ends with ".")
         # When exclude_cot_from_kv_cache=True: NOT in KV cache
         else:
@@ -461,16 +815,16 @@ class PI05Processor(ProcessorMixin):
             )
 
     def _pad_to_length(
-        self, 
-        tokens: List[int], 
-        ar_mask: List[int], 
+        self,
+        tokens: List[int],
+        ar_mask: List[int],
         loss_mask: List[bool],
         kv_cache_mask: List[bool],
         max_length: int
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Pad sequences to max_length and return as numpy arrays."""
         tokens_len = len(tokens)
-        
+
         if tokens_len < max_length:
             padding_len = max_length - tokens_len
             mask = [True] * tokens_len + [False] * padding_len
@@ -491,7 +845,7 @@ class PI05Processor(ProcessorMixin):
             np.asarray(tokens), np.asarray(mask), np.asarray(ar_mask),
             np.asarray(loss_mask), np.asarray(kv_cache_mask)
         )
-    
+
     def _log_tokenization_example(
         self,
         prompt: str,
@@ -506,12 +860,12 @@ class PI05Processor(ProcessorMixin):
     ) -> None:
         """Log a tokenization example for debugging."""
         decoded = self.tokenizer.decode(tokens, skip_special_tokens=False)
-        
+
         # Find positions where loss_mask is True
         loss_positions = [i for i, m in enumerate(loss_mask) if m]
         loss_tokens = [tokens[i] for i in loss_positions] if loss_positions else []
         loss_decoded = self.tokenizer.decode(loss_tokens, skip_special_tokens=False) if loss_tokens else ""
-        
+
         # Find positions where ar_mask is 1 (causal)
         causal_positions = [i for i, m in enumerate(ar_mask) if m == 1]
 
@@ -572,7 +926,7 @@ class PI05Processor(ProcessorMixin):
     ) -> Dict[str, torch.Tensor]:
         """
         Process a batch of text inputs for PI0.5.
-        
+
         Args:
             prompts: List of task descriptions
             prefixes: List of optional prefixes (paired with responses)
@@ -583,7 +937,7 @@ class PI05Processor(ProcessorMixin):
             truncation: Whether to truncate sequences
             max_length: Maximum sequence length
             return_tensors: Output format ("pt" for PyTorch)
-            
+
         Returns:
             Dict with input_ids, attention_mask, token_ar_mask, token_loss_mask
         """
@@ -601,7 +955,7 @@ class PI05Processor(ProcessorMixin):
             response = responses[i] if i < len(responses) else None
             state = states[i] if i < len(states) else None
             has_actions = actions[i] is not None if i < len(actions) else False
-            
+
             tokens, mask, ar_mask, loss_mask, kv_cache_mask = self._tokenize_single(
                 prompt=prompt,
                 prefix=prefix,
@@ -623,10 +977,10 @@ class PI05Processor(ProcessorMixin):
             "token_loss_mask": np.stack(batch_loss_masks),
             "token_kv_cache_mask": np.stack(batch_kv_cache_masks),
         }
-        
+
         if return_tensors == "pt":
             result = {k: torch.tensor(v) for k, v in result.items()}
-        
+
         return result
 
     def __call__(
@@ -644,7 +998,7 @@ class PI05Processor(ProcessorMixin):
     ) -> BatchFeature:
         """
         Process text and images for PI0.5 model.
-        
+
         Args:
             text: Input text (prompt)
             images: Image dict with camera keys
@@ -658,20 +1012,20 @@ class PI05Processor(ProcessorMixin):
         """
         if text is None and images is None:
             raise ValueError("You must provide either text or images")
-        
+
         result_data = {}
-        
+
         if text is not None:
             is_batched = isinstance(text, list)
             texts = text if is_batched else [text]
             batch_size = len(texts)
-            
+
             # Normalize inputs to lists
             states = state if isinstance(state, list) else [state] * batch_size
             prefixes = prefix if isinstance(prefix, list) else [prefix] * batch_size
             responses = response if isinstance(response, list) else [response] * batch_size
             actions_list = actions if isinstance(actions, list) else [actions] * batch_size
-            
+
             processed = self.process_text(
                 prompts=texts,
                 prefixes=prefixes,
@@ -681,21 +1035,21 @@ class PI05Processor(ProcessorMixin):
                 return_tensors=return_tensors,
             )
             result_data.update(processed)
-            
+
             if not is_batched:
                 for key in result_data:
                     if result_data[key].dim() > 0:
                         result_data[key] = result_data[key][0]
-        
+
         if images is not None:
             image_inputs = self.image_processor(
-                images, 
+                images,
                 image_masks=image_masks,
                 return_tensors=return_tensors,
                 train=train
             )
             result_data.update(image_inputs)
-        
+
         return BatchFeature(data=result_data, tensor_type=return_tensors)
 
     def decode(self, token_ids: Union[List[int], torch.Tensor], **kwargs) -> str:
@@ -704,7 +1058,7 @@ class PI05Processor(ProcessorMixin):
             token_ids = token_ids.tolist()
         token_ids = [t for t in token_ids if t != 0]
         return self.tokenizer.decode(token_ids, **kwargs)
-    
+
     def batch_decode(self, token_ids_batch: Union[List[List[int]], torch.Tensor], **kwargs) -> List[str]:
         """Decode batch of tokens to text."""
         if isinstance(token_ids_batch, torch.Tensor):
@@ -724,4 +1078,8 @@ class PI05Processor(ProcessorMixin):
         ]
 
 
-__all__ = ["PI05Processor", "PI0ImageProcessor"]
+__all__ = [
+    "PI0ImageProcessor",
+    "PI05Processor",
+    "normalize_image_to_model_format",
+]

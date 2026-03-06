@@ -1,10 +1,21 @@
 # Pi06 PR File Tree (vs upstream 909494e)
 
-61 new files, 10 modified files
+79 new files, 15 modified files
 
 ```
 ├── .gitignore  [MOD]
 ├── examples/
+│   ├── cfg/
+│   │   ├── config/
+│   │   │   ├── libero_cfg_sft.yaml  [NEW]
+│   │   │   ├── libero_cfg_sft_test.yaml  [NEW]
+│   │   │   ├── model/
+│   │   │   │   ├── pi0.yaml  [NEW]
+│   │   │   │   └── pi0_5.yaml  [NEW]
+│   │   │   └── training_backend/
+│   │   │       └── fsdp.yaml  [NEW]
+│   │   ├── run_cfg_sft.sh  [NEW]
+│   │   └── train_cfg_sft.py  [NEW]
 │   ├── embodiment/
 │   │   ├── config/
 │   │   │   ├── one_iter_debug_libero10.yaml  [NEW]
@@ -25,20 +36,22 @@
 │   │   ├── recompute_advantages_from_value_reward.py  [NEW]
 │   │   ├── run_compute_advantages.sh  [NEW]
 │   │   └── run_compute_returns.sh  [NEW]
-│   └── sft/
+│   └── vla_lib_sft/
 │       ├── config/
-│       │   ├── libero_cfg_openpi.yaml  [NEW]
-│       │   ├── libero_cfg_openpi_test.yaml  [NEW]
-│       │   ├── libero_sft_value.yaml  [NEW]
-│       │   ├── libero_sft_value_test.yaml  [NEW]
-│       │   └── model/
-│       │       ├── pi0_5.yaml  [NEW]
-│       │       └── vla_lib_value_model.yaml  [NEW]
-│       ├── run_cfg_sft.sh  [NEW]
+│       │   ├── libero_value_model.yaml  [NEW]
+│       │   ├── libero_value_model_test.yaml  [NEW]
+│       │   ├── model/
+│       │   │   └── vla_lib_value_model.yaml  [NEW]
+│       │   └── training_backend/
+│       │       └── fsdp.yaml  [NEW]
 │       ├── run_vla_lib_sft.sh  [NEW]
-│       ├── train_cfg_sft.py  [NEW]
 │       └── train_vla_lib_sft.py  [NEW]
 ├── install_for_use_vla_lib.sh  [NEW]
+├── requirements/
+│   ├── embodied/
+│   │   ├── ros_install.sh  [MOD]
+│   │   └── sys_deps.sh  [MOD]
+│   └── install.sh  [MOD]
 ├── rlinf/
 │   ├── config.py  [MOD]
 │   ├── data/
@@ -48,18 +61,34 @@
 │   │   └── rollout_data_collector.py  [NEW]
 │   ├── datasets/
 │   │   ├── __init__.py  [NEW]
-│   │   ├── config.py  [NEW]
-│   │   ├── lerobot/
+│   │   ├── base_interface.py  [NEW]
+│   │   ├── dataloaders/
 │   │   │   ├── __init__.py  [NEW]
-│   │   │   ├── config.py  [NEW]
-│   │   │   ├── lerobot_dataset.py  [NEW]
-│   │   │   ├── libero.py  [NEW]
-│   │   │   ├── normalize.py  [NEW]
-│   │   │   └── transforms.py  [NEW]
-│   │   ├── mixture_datasets.py  [NEW]
-│   │   ├── rl_dataset.py  [NEW]
-│   │   ├── value_dataset.py  [NEW]
-│   │   └── value_transforms.py  [NEW]
+│   │   │   └── dataloader_impl.py  [NEW]
+│   │   ├── factory.py  [NEW]
+│   │   ├── transforms/
+│   │   │   ├── __init__.py  [NEW]
+│   │   │   └── tokenize_transforms.py  [NEW]
+│   │   └── vla_lib/
+│   │       ├── __init__.py  [NEW]
+│   │       ├── advantage_mixture_dataset.py  [NEW]
+│   │       ├── config.py  [NEW]
+│   │       ├── io_processing/
+│   │       │   ├── __init__.py  [NEW]
+│   │       │   ├── value_tokens.py  [NEW]
+│   │       │   └── value_transforms.py  [NEW]
+│   │       ├── lerobot_datasets/
+│   │       │   ├── __init__.py  [NEW]
+│   │       │   ├── config.py  [NEW]
+│   │       │   ├── io_processing/
+│   │       │   │   ├── __init__.py  [NEW]
+│   │       │   │   └── libero.py  [NEW]
+│   │       │   ├── lerobot_dataset.py  [NEW]
+│   │       │   ├── normalize.py  [NEW]
+│   │       │   └── transforms.py  [NEW]
+│   │       ├── rl_dataset.py  [NEW]
+│   │       ├── value_dataset.py  [NEW]
+│   │       └── value_mixture_dataset.py  [NEW]
 │   ├── envs/
 │   │   └── libero/
 │   │       └── libero_env.py  [MOD]
@@ -84,12 +113,19 @@
 │   │           ├── value_policy.py  [NEW]
 │   │           └── value_policy_config.py  [NEW]
 │   ├── runners/
-│   │   └── debug_pi06_runner.py  [NEW]
+│   │   ├── debug_pi06_runner.py  [NEW]
+│   │   └── vla_lib_sft_runner.py  [NEW]
 │   ├── utils/
-│   │   └── ckpt_convertor/
-│   │       └── fsdp_convertor/
-│   │           └── config/
-│   │               └── fsdp_vla_lib_model_convertor.yaml  [NEW]
+│   │   ├── ckpt_convertor/
+│   │   │   └── fsdp_convertor/
+│   │   │       ├── config/
+│   │   │       │   ├── fsdp_model_convertor.yaml  [MOD]
+│   │   │       │   └── fsdp_vla_lib_model_convertor.yaml  [NEW]
+│   │   │       ├── convert_pt_to_hf.py  [MOD]
+│   │   │       ├── convert_pt_to_hf.sh  [NEW]
+│   │   │       └── convert_pt_to_hf_vla_lib.sh  [NEW]
+│   │   ├── dist_utils.py  [NEW]
+│   │   └── image_utils.py  [NEW]
 │   └── workers/
 │       ├── actor/
 │       │   └── debug_fsdp_actor_worker_cfg.py  [NEW]
@@ -105,6 +141,5 @@
 │       └── vla_lib_sft/
 │           ├── __init__.py  [NEW]
 │           └── fsdp_value_sft_worker.py  [NEW]
-├── tree_modified.md  [NEW]
 └── use_guidance.md  [NEW]
 ```

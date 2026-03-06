@@ -20,9 +20,7 @@ Unlike action policies, value policies predict return values instead of actions.
 
 Copied from vla_lib and modified to use local ValuePolicy with batch inference support.
 
-Supports two model types:
-1. PI05ForConditionalGeneration: VLM-based token prediction (continuous/discrete modes)
-2. PI05ValueCritic: Expert-based direct value prediction (expert_* modes)
+Supports expert-based value prediction via PI05ValueCritic (expert_* modes).
 """
 
 import glob
@@ -34,7 +32,6 @@ from typing import Any, Optional, Sequence
 import numpy as np
 import safetensors.torch
 import torch
-from safetensors import safe_open
 from transformers import AutoTokenizer
 from rlinf.datasets.vla_lib.lerobot_datasets.normalize import NormStats
 from rlinf.datasets.vla_lib.lerobot_datasets.transforms import (
@@ -44,16 +41,11 @@ from rlinf.datasets.vla_lib.lerobot_datasets.transforms import (
     PadStatesAndActions,
     ResizeImages,
 )
-from rlinf.models.embodiment.vla_lib_value_model.openpi05.modeling_critic import (
-    PI05CriticConfig,
+from rlinf.models.embodiment.vla_lib_value_model.configuration import PI05CriticConfig
+from rlinf.models.embodiment.vla_lib_value_model.modeling_pi05_critic import (
     PI05ValueCritic,
 )
-from rlinf.models.embodiment.vla_lib_value_model.openpi05.modeling_pi05 import (
-    PI05ForConditionalGeneration,
-)
-from rlinf.models.embodiment.vla_lib_value_model.openpi05.processing_pi05 import (
-    PI05Processor,
-)
+from rlinf.models.embodiment.vla_lib_value_model.processing import PI05Processor
 
 from .value_policy import ValuePolicy
 
@@ -253,13 +245,10 @@ def create_trained_value_policy(
             discrete_state_input=False,
         )
 
-    # Add value tokens for VLM modes (needed for token ID mapping)
-    if not is_expert_mode:
-        processor.add_value_tokens(num_bins=num_return_bins)
     vocab_size = len(processor.tokenizer)
     logger.info(f"Processor vocab_size: {vocab_size}")
 
-    # Load model based on value_mode
+    # Load model (expert mode only)
     if is_expert_mode:
         # Expert mode: use PI05ValueCritic
         expert_loss_type = value_mode.replace(
@@ -327,73 +316,12 @@ def create_trained_value_policy(
             if unexpected:
                 logger.debug(f"  Unexpected keys: {unexpected[:10]}...")
     else:
-        # VLM mode: use PI05ForConditionalGeneration
-        model = PI05ForConditionalGeneration.from_pretrained(
-            str(checkpoint_dir),
-            torch_dtype=torch.bfloat16,
-            device_map=None,
-            trust_remote_code=True,
-            ignore_mismatched_sizes=True,
+        raise ValueError(
+            f"VLM-based value modes ({value_mode}) are not supported. "
+            f"Use expert modes: {EXPERT_VALUE_MODES}"
         )
 
-        # Handle extended embeddings for VLM mode
-        safetensors_files = sorted(
-            glob.glob(str(checkpoint_dir / "model-*.safetensors"))
-        )
-        if safetensors_files:
-            logger.info(
-                f"Loading extended embeddings from {len(safetensors_files)} shard(s)..."
-            )
-
-            embed_tokens_weight = None
-            lm_head_weight = None
-
-            for shard_file in safetensors_files:
-                with safe_open(shard_file, framework="pt", device="cpu") as f:
-                    for key in f.keys():
-                        if "language_model.embed_tokens.weight" in key:
-                            embed_tokens_weight = f.get_tensor(key)
-                        elif "paligemma.lm_head.weight" in key:
-                            lm_head_weight = f.get_tensor(key)
-
-            if embed_tokens_weight is not None:
-                new_vocab_size = embed_tokens_weight.shape[0]
-                logger.info(f"Resizing model embeddings to {new_vocab_size}...")
-                model.resize_token_embeddings(new_vocab_size)
-
-                model.get_input_embeddings().weight.data.copy_(
-                    embed_tokens_weight.to(model.get_input_embeddings().weight.dtype)
-                )
-                logger.info(
-                    f"  Copied embed_tokens weights: {embed_tokens_weight.shape}"
-                )
-
-                if lm_head_weight is not None:
-                    output_emb = model.get_output_embeddings()
-                    if output_emb.weight.shape == lm_head_weight.shape:
-                        output_emb.weight.data.copy_(
-                            lm_head_weight.to(output_emb.weight.dtype)
-                        )
-                        logger.info(f"  Copied lm_head weights: {lm_head_weight.shape}")
-                    else:
-                        logger.warning(
-                            f"  lm_head shape mismatch: model={output_emb.weight.shape}, ckpt={lm_head_weight.shape}"
-                        )
-                        if output_emb.weight.shape[0] == embed_tokens_weight.shape[0]:
-                            output_emb.weight.data.copy_(
-                                embed_tokens_weight.to(output_emb.weight.dtype)
-                            )
-                            logger.info(
-                                "  Used embed_tokens weights for lm_head (tied)"
-                            )
-
-    # Expert modes predict values directly via ValueHead (no token vocab needed)
-    # VLM modes predict value tokens and need extended vocab_size
-    if is_expert_mode:
-        logger.info(f"Model ready (expert mode: {value_mode}, outputs values directly)")
-    else:
-        vocab_size = getattr(model.config, "vocab_size", len(processor.tokenizer))
-        logger.info(f"Model ready (VLM mode: {value_mode}, vocab_size={vocab_size})")
+    logger.info(f"Model ready (expert mode: {value_mode}, outputs values directly)")
 
     # Attach processor to model for easy access
     object.__setattr__(model, "processor", processor)
