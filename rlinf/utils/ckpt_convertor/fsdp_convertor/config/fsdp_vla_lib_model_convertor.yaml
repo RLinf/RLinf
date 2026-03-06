@@ -20,8 +20,6 @@ model:
 
   # ----- Critic architecture (must match training config) -----
   model_type_critic: "value"
-  critic_forward_mode: "expert"
-  expert_loss_type: "categorical"  # IMPORTANT: must match checkpoint
   critic_expert_variant: "gemma_100m"
 
   # Value head config (must match training)

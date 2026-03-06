@@ -37,11 +37,8 @@ def get_vla_lib_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticMod
 
     Args:
         cfg: Hydra model config. Expected keys:
-            - critic_forward_mode: "vlm" | "expert" | "dual"
-            - expert_loss_type: "mse" | "categorical" | "distributional"
             - critic_expert_variant: e.g. "gemma_100m", "gemma_300m"
             - num_bins, v_min, v_max
-            - vlm_loss_weight, expert_loss_weight
             - action_dim, action_horizon, max_token_len
             - paligemma_variant, freeze_vision_encoder, train_expert_only
             - model_path: checkpoint path (optional)
@@ -84,13 +81,9 @@ def get_vla_lib_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticMod
     # Critic-specific kwargs
     critic_kwargs = {
         "critic_expert_variant": getattr(cfg, "critic_expert_variant", "gemma_100m"),
-        "critic_forward_mode": getattr(cfg, "critic_forward_mode", "expert"),
-        "expert_loss_type": getattr(cfg, "expert_loss_type", "mse"),
         "num_bins": getattr(cfg, "num_bins", 201),
         "v_min": getattr(cfg, "v_min", -1.0),
         "v_max": getattr(cfg, "v_max", 0.0),
-        "vlm_loss_weight": getattr(cfg, "vlm_loss_weight", 1.0),
-        "expert_loss_weight": getattr(cfg, "expert_loss_weight", 1.0),
     }
 
     config = PI05CriticConfig(**critic_kwargs, **pi05_kwargs)

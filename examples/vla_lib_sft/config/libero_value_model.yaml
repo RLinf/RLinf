@@ -81,12 +81,12 @@ data:
   # ----- shared dataset params (apply to all datasets unless overridden) -----
   value_prefix: "Value: "                     # text prefix before value token
   include_state: true                         # include robot state in observation
-  # skip_vlm_response: auto-derived from critic_forward_mode (expert -> true)
+  # skip_vlm_response: true (expert mode)
   gamma: 1.0                                 # discount factor
   action_horizon: 10                          # future steps for return calculation
   num_return_bins: 201                        # bins for discretized return
   normalize_to_minus_one_zero: true           # normalize returns to (-1, 0)
-  include_next_obs: false                     # true for distributional RL
+  include_next_obs: false
   action_dim: 7                               # action dimensionality
   robot_type: "libero"                        # default robot type
   model_type: "pi05"                          # default model type for dataset
@@ -110,13 +110,7 @@ actor:
     model_type: "vla_lib_value_model"
     model_path: "/path/to/pi05_base_pytorch"
     # ----- Critic architecture -----
-    # model_type_critic: "value" (V(s)) | "q" (Q(s,a))
     model_type_critic: "value"
-    # critic_forward_mode: "vlm" | "expert" | "dual"
-    critic_forward_mode: "expert"
-    # expert_loss_type: "mse" | "categorical" | "distributional"
-    expert_loss_type: "categorical"
-    # critic_expert_variant: "gemma_50m" | "gemma_100m" | "gemma_150m" | "gemma_300m" | "gemma_2b"
     critic_expert_variant: "gemma_100m"
 
     freeze_vlm: False

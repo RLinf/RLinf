@@ -103,26 +103,23 @@ class PI05Config(PretrainedConfig):
 
 
 class PI05CriticConfig(PI05Config):
-    """Configuration for PI05 Critic models (V or Q function)."""
+    """Configuration for PI05 Critic models (V function)."""
 
     def __init__(
         self,
         critic_expert_variant: str = "gemma_100m",
-        critic_forward_mode: Literal["vlm", "expert", "dual"] = "expert",
-        expert_loss_type: Literal["mse", "categorical", "distributional"] = "mse",
         num_bins: int = 201,
         v_min: float = -1.0,
         v_max: float = 0.0,
-        vlm_loss_weight: float = 1.0,
-        expert_loss_weight: float = 1.0,
         **kwargs,
     ):
+        # Accept and ignore legacy parameters for checkpoint compatibility
+        kwargs.pop("critic_forward_mode", None)
+        kwargs.pop("expert_loss_type", None)
+        kwargs.pop("expert_loss_weight", None)
+        kwargs.pop("vlm_loss_weight", None)
         super().__init__(**kwargs)
         self.critic_expert_variant = critic_expert_variant
-        self.critic_forward_mode = critic_forward_mode
-        self.expert_loss_type = expert_loss_type
         self.num_bins = num_bins
         self.v_min = v_min
         self.v_max = v_max
-        self.vlm_loss_weight = vlm_loss_weight
-        self.expert_loss_weight = expert_loss_weight

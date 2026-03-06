@@ -2,15 +2,12 @@
 PI0.5 Critic Models for Value Prediction.
 
 Merged from:
-- openpi/modeling_pi0.py: free functions, PI0PreTrainedModel, PI0FlowMatching methods
-- openpi05/modeling_pi05.py: PI05FlowMatching methods, PI05Output
+- openpi/modeling_pi0.py: free functions, PI0PreTrainedModel
+- openpi05/modeling_pi05.py: PI05FlowMatching methods
 - modeling_critic.py (top-level): ValueCriticModel with FSDP support
 - openpi05/modeling_critic.py: PI05ValueCritic wrapper
 
-Supports three forward modes:
-1. VLM mode: Predict "Value: X" tokens with CE loss
-2. Expert mode: Gemma expert + [CLS] -> continuous/distributional value
-3. Dual mode: Both VLM + expert objectives
+Uses expert forward mode: Gemma expert + [CLS] -> categorical value prediction.
 """
 
 import glob
@@ -311,24 +308,6 @@ class PI05PreTrainedModel(PI0PreTrainedModel):
 
 
 @dataclass
-class PI05Output(ModelOutput):
-    """Output for PI0.5 model with support for multiple loss types."""
-
-    loss: Optional[torch.FloatTensor] = None
-    losses: Optional[torch.FloatTensor] = None
-    action_loss: Optional[torch.FloatTensor] = None
-    language_loss: Optional[torch.FloatTensor] = None
-    actions: Optional[torch.FloatTensor] = None
-    logits: Optional[torch.FloatTensor] = None
-    generated_tokens: Optional[torch.LongTensor] = None
-    language_token_acc: Optional[torch.FloatTensor] = None
-    language_loss_mask: Optional[torch.BoolTensor] = None
-    past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
-    hidden_states: Optional[Tuple[torch.FloatTensor, ...]] = None
-    attentions: Optional[Tuple[torch.FloatTensor]] = None
-
-
-@dataclass
 class CriticOutput(ModelOutput):
     """Output for critic models."""
 
@@ -338,10 +317,6 @@ class CriticOutput(ModelOutput):
     probs: Optional[torch.FloatTensor] = None
     atoms: Optional[torch.FloatTensor] = None
     expert_loss: Optional[torch.FloatTensor] = None
-    language_loss: Optional[torch.FloatTensor] = None
-    language_logits: Optional[torch.FloatTensor] = None
-    language_token_acc: Optional[torch.FloatTensor] = None
-    language_loss_mask: Optional[torch.BoolTensor] = None
     hidden_states: Optional[torch.FloatTensor] = None
     cat_acc_best: Optional[torch.FloatTensor] = None
     cat_acc_neighbor: Optional[torch.FloatTensor] = None
@@ -354,7 +329,7 @@ class CriticOutput(ModelOutput):
 
 
 class PI05FlowMatching(nn.Module):
-    """Base class providing observation processing, embedding, and VLM forward.
+    """Base class providing observation processing and embedding.
 
     Stripped to only the methods inherited by ValueCriticModel.
     ValueCriticModel bypasses __init__ with nn.Module.__init__(self),
@@ -448,78 +423,6 @@ class PI05FlowMatching(nn.Module):
 
         return torch.cat(embs, dim=1), torch.cat(pad_masks, dim=1), torch.cat(ar_masks, dim=1)
 
-    def _forward_vlm(self, images, img_masks, lang_tokens, lang_masks, token_ar_mask, token_loss_mask):
-        """VLM-only forward (no actions, CE loss only)."""
-        prefix_embs, prefix_pad_masks, prefix_ar_masks = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks, token_ar_mask
-        )
-
-        attn_mask = make_att_2d_masks(prefix_pad_masks, prefix_ar_masks)
-        attn_mask_4d = self._prepare_attention_masks_4d(attn_mask[:, :-1, :-1])
-        position_ids = torch.cumsum(prefix_pad_masks[:, :-1], dim=1) - 1
-
-        def forward_func(prefix_embs, attn_mask_4d, position_ids):
-            (prefix_out, _), _ = self.paligemma_with_expert.forward(
-                attention_mask=attn_mask_4d,
-                position_ids=position_ids,
-                past_key_values=None,
-                inputs_embeds=[prefix_embs, None],
-                use_cache=False,
-                adarms_cond=[None, None],
-            )
-            return prefix_out
-
-        prefix_out = self._apply_checkpoint(
-            forward_func, prefix_embs[:, :-1], attn_mask_4d, position_ids
-        )
-
-        ce_loss, language_acc, logits = self._compute_ce_loss(
-            prefix_out, prefix_pad_masks, lang_tokens, token_loss_mask, truncated_input=True
-        )
-
-        return PI05Output(
-            loss=ce_loss.mean(),
-            losses=ce_loss,
-            language_loss=ce_loss,
-            logits=logits,
-            language_token_acc=language_acc,
-            language_loss_mask=token_loss_mask[:, 1:],
-        )
-
-    def _compute_ce_loss(self, prefix_out, prefix_pad_masks, lang_tokens, token_loss_mask, truncated_input=False):
-        """Compute CE loss for language token prediction.
-
-        Args:
-            prefix_out: Model output [B, seq_len, D]
-            prefix_pad_masks: Padding masks [B, M + N] (original, NOT truncated)
-            lang_tokens: Language token ids [B, N]
-            token_loss_mask: Which tokens to compute loss on [B, N]
-            truncated_input: Whether model input was truncated (VLM mode removes last token)
-        """
-        vocab_size = self.paligemma_with_expert.paligemma.language_model.config.vocab_size
-        num_img_tokens = prefix_pad_masks.shape[1] - lang_tokens.shape[1]
-
-        if truncated_input:
-            lang_out = prefix_out[:, num_img_tokens:]
-        else:
-            lang_out = prefix_out[:, num_img_tokens:-1]
-
-        target_ids = lang_tokens[:, 1:]
-        loss_mask = token_loss_mask[:, 1:]
-        denom = torch.clamp(loss_mask.sum(dim=-1), min=1)
-
-        logits = self.paligemma_with_expert.paligemma.lm_head(lang_out)
-
-        ce_per_position = F.cross_entropy(
-            logits.view(-1, vocab_size), target_ids.reshape(-1), reduction="none"
-        ).view(target_ids.shape)
-        ce_loss = (ce_per_position * loss_mask).sum(dim=-1) / denom
-
-        pred_ids = logits.argmax(dim=-1)
-        correct = (pred_ids == target_ids).float()
-        language_acc = (correct * loss_mask).sum(dim=-1) / denom
-
-        return ce_loss, language_acc, logits
 
 
 # =============================================================================
@@ -528,36 +431,29 @@ class PI05FlowMatching(nn.Module):
 
 
 class ValueHead(nn.Module):
-    """Value prediction head with learnable CLS embedding and projection."""
+    """Value prediction head with learnable CLS embedding and categorical projection."""
 
     def __init__(
         self,
         hidden_size: int,
         num_bins: int,
-        loss_type: str,
         v_min: float,
         v_max: float,
     ):
         super().__init__()
         self.hidden_size = hidden_size
-        self.loss_type = loss_type
 
         self.cls_embedding = nn.Embedding(1, hidden_size)
         nn.init.normal_(self.cls_embedding.weight, std=0.02)
 
-        if loss_type == "mse":
-            self.value_proj = nn.Linear(hidden_size, 1)
-            self.register_buffer("atoms", None, persistent=False)
-            self.num_bins = None
-        else:
-            self.value_proj = nn.Linear(hidden_size, num_bins)
-            self.register_buffer(
-                "atoms", torch.linspace(v_min, v_max, num_bins), persistent=False
-            )
-            self.num_bins = num_bins
-            self.v_min = v_min
-            self.v_max = v_max
-            self.delta_z = (v_max - v_min) / (num_bins - 1)
+        self.value_proj = nn.Linear(hidden_size, num_bins)
+        self.register_buffer(
+            "atoms", torch.linspace(v_min, v_max, num_bins), persistent=False
+        )
+        self.num_bins = num_bins
+        self.v_min = v_min
+        self.v_max = v_max
+        self.delta_z = (v_max - v_min) / (num_bins - 1)
 
     def get_cls_embedding(self, batch_size: int) -> Tensor:
         """Get CLS embedding expanded to batch size. Returns [B, 1, hidden_size]."""
@@ -583,37 +479,23 @@ class ValueHead(nn.Module):
 class ValueCriticModel(PI05FlowMatching):
     """Value function V(s) inheriting PI05 infrastructure.
 
-    Supports:
-    - VLM mode: token prediction via inherited _forward_vlm
-    - Expert mode: Gemma expert + [CLS] -> value prediction
-    - Dual mode: both VLM + expert objectives
+    Uses expert mode: Gemma expert + [CLS] -> categorical value prediction.
     """
 
     def __init__(self, config: PI05CriticConfig):
         nn.Module.__init__(self)
         self.config = config
         self.pi05 = True
-        self.critic_forward_mode = getattr(config, "critic_forward_mode", "expert")
-        self.expert_loss_type = getattr(config, "expert_loss_type", "mse")
 
         paligemma_config = get_config(config.paligemma_variant)
         expert_config = get_config(config.critic_expert_variant)
 
         logger.info(
-            f"Creating ValueCritic: expert={config.critic_expert_variant}, "
-            f"mode={self.critic_forward_mode}, loss_type={self.expert_loss_type}"
+            f"Creating ValueCritic: expert={config.critic_expert_variant}"
         )
 
-        if self.critic_forward_mode == "vlm":
-            expert_configs = {}
-            use_adarms = [False, {}]
-            logger.info("  VLM-only mode: no value expert created")
-        else:
-            expert_configs = {"value": expert_config}
-            use_adarms = [False, {"value": False}]
-            logger.info(
-                f"  Expert mode: creating 'value' expert with {config.critic_expert_variant}"
-            )
+        expert_configs = {"value": expert_config}
+        use_adarms = [False, {"value": False}]
         self.paligemma_with_expert = PaliGemmaWithMultiExpertModel(
             vlm_config=paligemma_config,
             expert_configs=expert_configs,
@@ -626,20 +508,17 @@ class ValueCriticModel(PI05FlowMatching):
         self.gradient_checkpointing_enabled = False
         self._expert_config = expert_config
 
-        if self.critic_forward_mode != "vlm":
-            self.expert_width = expert_config.width
-            self.value_head = ValueHead(
-                hidden_size=expert_config.width,
-                num_bins=config.num_bins,
-                loss_type=self.expert_loss_type,
-                v_min=config.v_min,
-                v_max=config.v_max,
-            )
-            if self.expert_loss_type != "mse":
-                self.num_bins = config.num_bins
-                self.v_min = config.v_min
-                self.v_max = config.v_max
-                self.delta_z = (config.v_max - config.v_min) / (config.num_bins - 1)
+        self.expert_width = expert_config.width
+        self.value_head = ValueHead(
+            hidden_size=expert_config.width,
+            num_bins=config.num_bins,
+            v_min=config.v_min,
+            v_max=config.v_max,
+        )
+        self.num_bins = config.num_bins
+        self.v_min = config.v_min
+        self.v_max = config.v_max
+        self.delta_z = (config.v_max - config.v_min) / (config.num_bins - 1)
 
         for name, module in self.named_modules():
             path_parts = name.split(".")
@@ -694,33 +573,21 @@ class ValueCriticModel(PI05FlowMatching):
         return cls_emb, pad_mask, ar_mask
 
     def forward(
-        self, observation, target_values=None, target_distribution=None, **kwargs
+        self, observation, target_values=None, **kwargs
     ) -> CriticOutput:
-        """Forward pass with auto mode detection."""
+        """Forward pass through expert mode."""
         (
             images,
             img_masks,
             lang_tokens,
             lang_masks,
             token_ar_mask,
-            token_loss_mask,
+            _,
             _,
         ) = self._preprocess_observation(observation)
 
         batch_size = lang_tokens.shape[0]
         device = lang_tokens.device
-
-        if self.critic_forward_mode == "vlm":
-            result = self._forward_vlm(
-                images, img_masks, lang_tokens, lang_masks, token_ar_mask, token_loss_mask
-            )
-            return CriticOutput(
-                loss=result.loss,
-                language_loss=result.language_loss,
-                language_logits=result.logits,
-                language_token_acc=result.language_token_acc,
-                language_loss_mask=result.language_loss_mask,
-            )
 
         prefix_embs, prefix_pad_masks, prefix_ar_masks = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks, token_ar_mask
@@ -728,7 +595,7 @@ class ValueCriticModel(PI05FlowMatching):
         suffix_embs, suffix_pad_masks, suffix_ar_masks = self.embed_suffix(batch_size)
 
         stop_gradient = getattr(self.config, "stop_gradient_to_vlm", False)
-        values, hidden_states, logits, probs, prefix_out = self._forward_expert(
+        values, hidden_states, logits, probs, _ = self._forward_expert(
             prefix_embs,
             prefix_pad_masks,
             prefix_ar_masks,
@@ -740,29 +607,14 @@ class ValueCriticModel(PI05FlowMatching):
 
         expert_loss = None
         cat_metrics = None
-        if target_values is not None or target_distribution is not None:
-            expert_loss, cat_metrics = self._compute_expert_loss(
-                values, logits, target_values, target_distribution
-            )
-
-        language_loss, language_acc, language_logits = None, None, None
-        if self.critic_forward_mode == "dual" and token_loss_mask.any():
-            language_loss, language_acc, language_logits = self._compute_ce_loss(
-                prefix_out[:, :-1],
-                prefix_pad_masks,
-                lang_tokens,
-                token_loss_mask,
-                truncated_input=False,
+        if target_values is not None:
+            expert_loss, cat_metrics = self._compute_categorical_loss(
+                logits, target_values
             )
 
         total_loss = None
-        if expert_loss is not None or language_loss is not None:
-            total_loss = torch.zeros(batch_size, device=device)
-            if expert_loss is not None:
-                total_loss = total_loss + self.config.expert_loss_weight * expert_loss
-            if language_loss is not None:
-                total_loss = total_loss + self.config.vlm_loss_weight * language_loss
-            total_loss = total_loss.mean()
+        if expert_loss is not None:
+            total_loss = expert_loss.mean()
 
         return CriticOutput(
             loss=total_loss,
@@ -771,12 +623,6 @@ class ValueCriticModel(PI05FlowMatching):
             probs=probs,
             atoms=self.value_head.atoms,
             expert_loss=expert_loss.mean() if expert_loss is not None else None,
-            language_loss=language_loss,
-            language_logits=language_logits,
-            language_token_acc=language_acc,
-            language_loss_mask=token_loss_mask[:, 1:]
-            if self.critic_forward_mode == "dual"
-            else None,
             hidden_states=hidden_states,
             cat_acc_best=cat_metrics["acc_best"] if cat_metrics else None,
             cat_acc_neighbor=cat_metrics["acc_neighbor"] if cat_metrics else None,
@@ -911,31 +757,11 @@ class ValueCriticModel(PI05FlowMatching):
         return prefix_out, suffix_out
 
     def _compute_value_from_hidden(self, cls_hidden):
-        """Compute value from [CLS] hidden state."""
-        if self.expert_loss_type == "mse":
-            return self.value_head(cls_hidden).squeeze(-1), None, None
-        else:
-            logits = self.value_head(cls_hidden)
-            probs = F.softmax(logits, dim=-1)
-            values = (probs * self.value_head.atoms).sum(dim=-1)
-            return values, logits, probs
-
-    def _compute_expert_loss(self, values, logits, target_values, target_distribution=None):
-        """Compute expert value loss.
-
-        Returns:
-            Tuple of (loss, cat_metrics) where cat_metrics is a dict with
-            categorical metrics (acc_best, acc_neighbor, mae) or None for mse.
-        """
-        if self.expert_loss_type == "mse":
-            return F.mse_loss(values, target_values, reduction="none"), None
-        elif self.expert_loss_type == "categorical":
-            return self._compute_categorical_loss(logits, target_values)
-        else:
-            if target_distribution is not None:
-                loss = -(target_distribution * F.log_softmax(logits, dim=-1)).sum(dim=-1)
-                return loss, None
-            return self._compute_categorical_loss(logits, target_values)
+        """Compute value from [CLS] hidden state using categorical distribution."""
+        logits = self.value_head(cls_hidden)
+        probs = F.softmax(logits, dim=-1)
+        values = (probs * self.value_head.atoms).sum(dim=-1)
+        return values, logits, probs
 
     def _compute_categorical_loss(self, logits, target_values):
         """Compute categorical loss (Dirac delta projection onto bins).
@@ -981,9 +807,6 @@ class ValueCriticModel(PI05FlowMatching):
     @torch.no_grad()
     def predict(self, observation) -> CriticOutput:
         """Inference with KV cache."""
-        if self.critic_forward_mode == "vlm":
-            raise ValueError("predict() not supported for VLM mode")
-
         (images, img_masks, lang_tokens, lang_masks, token_ar_mask, _, _) = (
             self._preprocess_observation(observation)
         )
@@ -1111,11 +934,10 @@ class PI05ValueCritic(PI05PreTrainedModel):
         self.config.vocab_size = new_num_tokens
         return self.get_input_embeddings()
 
-    def forward(self, observation, target_values=None, target_distribution=None, **kwargs) -> CriticOutput:
+    def forward(self, observation, target_values=None, **kwargs) -> CriticOutput:
         return self.model.forward(
             observation,
             target_values=target_values,
-            target_distribution=target_distribution,
             **kwargs,
         )
 
@@ -1136,7 +958,6 @@ __all__ = [
     "create_sinusoidal_pos_embedding",
     "PI0PreTrainedModel",
     "PI05PreTrainedModel",
-    "PI05Output",
     "PI05FlowMatching",
     "ValueHead",
     "CriticOutput",

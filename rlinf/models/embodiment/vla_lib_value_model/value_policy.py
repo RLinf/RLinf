@@ -18,15 +18,7 @@ Value Policy class for VLA models with batch inference support.
 This module provides a ValuePolicy class that predicts return values instead of actions.
 Extended from vla_lib to support batch inference for faster advantage computation.
 
-Inference modes:
-1. VLM-based (token prediction):
-   - "continuous": Compute expectation over bin token probabilities (V = Σ p_i * v_i)
-   - "discrete": Use the bin with highest probability (argmax)
-
-2. Expert-based (direct value prediction):
-   - "expert_mse": Use expert model for continuous scalar output
-   - "expert_categorical": Use expert model with categorical output (expectation)
-   - "expert_distributional": Use expert model with distributional output (expectation)
+Uses expert-based categorical value prediction via PI05ValueCritic.
 """
 
 import logging
@@ -59,7 +51,7 @@ class ValuePolicy(BasePolicy):
     """
 
     # Expert modes that use PI05ValueCritic's predict_value() directly
-    EXPERT_MODES = ("expert_mse", "expert_categorical", "expert_distributional")
+    EXPERT_MODES = ("expert_categorical",)
     # VLM modes that use token logits prediction
     VLM_MODES = ("continuous", "discrete")
 
@@ -87,11 +79,7 @@ class ValuePolicy(BasePolicy):
             device: Device to run inference on
             checkpoint_dir: Checkpoint directory
             value_mode: Inference mode:
-                - "continuous": VLM token logits, expectation over bins
-                - "discrete": VLM token logits, argmax bin
-                - "expert_mse": Expert model, continuous scalar output
                 - "expert_categorical": Expert model, categorical output
-                - "expert_distributional": Expert model, distributional output
             num_return_bins: Number of return bins (for VLM modes)
             return_min: Minimum return value
             return_max: Maximum return value

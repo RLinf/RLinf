@@ -10,38 +10,18 @@ is_lora: false
 # Critic architecture
 # =====================================================================
 # model_type_critic: Which critic model to use
-#   "value"  -> ValueCriticModel  V(s)     (state -> scalar value)
-#   "q"      -> QCriticModel      Q(s,a)   (state+action -> scalar value)
 model_type_critic: "value"
-
-# critic_forward_mode: Which forward path to use
-#   "vlm"    -> VLM-only: predict "Value: X" tokens with cross-entropy loss
-#   "expert" -> Expert-only: Gemma expert + [CLS] -> value head
-#   "dual"   -> Both VLM + expert objectives (FAST-style dual learning)
-critic_forward_mode: "expert"
-
-# expert_loss_type: Loss function for expert value prediction
-#   "mse"             -> Mean squared error on continuous value
-#   "categorical"     -> Cross-entropy on discretized bin (Dirac delta target)
-#   "distributional"  -> Cross-entropy on projected Bellman distribution
-expert_loss_type: "categorical"
 
 # critic_expert_variant: Gemma expert model size
 #   "gemma_50m" | "gemma_100m" | "gemma_150m" | "gemma_300m" | "gemma_2b"
 critic_expert_variant: "gemma_100m"
 
 # =====================================================================
-# Value head (for categorical / distributional loss)
+# Value head (categorical loss)
 # =====================================================================
 num_bins: 201           # number of discretization bins
 v_min: -1.0             # minimum value for atom support
 v_max: 0.0              # maximum value for atom support
-
-# =====================================================================
-# Loss weights (only used when critic_forward_mode = "dual")
-# =====================================================================
-vlm_loss_weight: 1.0    # weight for VLM cross-entropy loss
-expert_loss_weight: 1.0  # weight for expert value loss
 
 # =====================================================================
 # PI05 base model params

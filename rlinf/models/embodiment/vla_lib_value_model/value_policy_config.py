@@ -52,7 +52,7 @@ from .value_policy import ValuePolicy
 logger = logging.getLogger(__name__)
 
 # Expert modes that require PI05ValueCritic
-EXPERT_VALUE_MODES = ("expert_mse", "expert_categorical", "expert_distributional")
+EXPERT_VALUE_MODES = ("expert_categorical",)
 
 
 def _load_state_dict_from_checkpoint(checkpoint_path: pathlib.Path) -> dict:
@@ -204,11 +204,7 @@ def create_trained_value_policy(
         device: Device to run inference on
         metadata: Policy metadata
         value_mode: Inference mode:
-            - "continuous": VLM token logits, expectation over bins
-            - "discrete": VLM token logits, argmax bin
-            - "expert_mse": Expert model, continuous scalar output
             - "expert_categorical": Expert model, categorical output
-            - "expert_distributional": Expert model, distributional output
         top_p: Deprecated parameter (kept for backward compatibility)
         num_return_bins: Number of return bins
         return_min: Minimum return value
@@ -251,18 +247,13 @@ def create_trained_value_policy(
     # Load model (expert mode only)
     if is_expert_mode:
         # Expert mode: use PI05ValueCritic
-        expert_loss_type = value_mode.replace(
-            "expert_", ""
-        )  # "mse", "categorical", "distributional"
         critic_config = PI05CriticConfig(
             critic_expert_variant=critic_expert_variant,
-            critic_forward_mode="expert",
-            expert_loss_type=expert_loss_type,
             num_bins=num_return_bins,
             v_min=return_min,
             v_max=return_max,
         )
-        logger.info(f"Loading PI05ValueCritic with expert_loss_type={expert_loss_type}")
+        logger.info("Loading PI05ValueCritic (expert categorical)")
 
         # Try from_pretrained first (for HuggingFace-style checkpoints)
         # If it fails, fallback to creating model from config and loading state dict

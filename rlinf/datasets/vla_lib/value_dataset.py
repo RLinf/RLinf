@@ -319,8 +319,7 @@ class ValueDataset(LeRobotRLDataset):
             sample["return_bin_id"] = rl_sample["return_bin_id"]
 
         # =====================================================================
-        # Distributional RL fields (for n-step TD target)
-        # These are used when expert_loss_type="distributional"
+        # Additional RL fields (next observation, rewards)
         # =====================================================================
 
         # Next observation (for computing V(s_{t+H}))

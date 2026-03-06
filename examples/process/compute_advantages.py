@@ -394,7 +394,7 @@ def load_value_policy(cfg: DictConfig, device: str = "cuda"):
     # Get model_type (pi0, pi05)
     model_type = data_cfg.get("model_type", "pi05")
 
-    # Get value_mode (expert_categorical, expert_mse, continuous, discrete)
+    # Get value_mode
     value_mode = adv_cfg.get("value_mode", "expert_categorical")
 
     # Get value head settings

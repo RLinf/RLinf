@@ -15,7 +15,7 @@
 """
 FSDP Value Model SFT Worker.
 
-Standalone worker for training vla_lib ValueCriticModel / QCriticModel
+Standalone worker for training vla_lib ValueCriticModel
 via supervised fine-tuning with FSDP.
 
 This module is self-contained and does NOT share code with fsdp_sft_worker.py.
@@ -175,8 +175,7 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         )
         # ---- shared defaults ----
         data_root = data_cfg.get("data_root", None)
-        critic_fwd_mode = getattr(model_cfg, "critic_forward_mode", "expert")
-        auto_skip_vlm = critic_fwd_mode == "expert"
+        auto_skip_vlm = True  # Expert mode always skips VLM response
 
         # Transform-related shared config (required parameters)
         robot_type = data_cfg.get("robot_type")
@@ -543,24 +542,12 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                         if isinstance(result.expert_loss, torch.Tensor)
                         else result.expert_loss
                     )
-                if result.language_loss is not None:
-                    metrics["language_loss"] = (
-                        result.language_loss.detach().item()
-                        if isinstance(result.language_loss, torch.Tensor)
-                        else result.language_loss
-                    )
                 if result.predicted_values is not None:
                     metrics["predicted_value_mean"] = (
                         result.predicted_values.detach().mean().item()
                     )
                     metrics["predicted_value_std"] = (
                         result.predicted_values.detach().std().item()
-                    )
-                if result.language_token_acc is not None:
-                    metrics["language_token_acc"] = (
-                        result.language_token_acc.detach().item()
-                        if isinstance(result.language_token_acc, torch.Tensor)
-                        else result.language_token_acc
                     )
                 # Categorical loss metrics
                 if result.cat_acc_best is not None:
@@ -660,24 +647,12 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                                 if isinstance(result.expert_loss, torch.Tensor)
                                 else result.expert_loss
                             )
-                        if result.language_loss is not None:
-                            metrics["language_loss"] = (
-                                result.language_loss.detach().item()
-                                if isinstance(result.language_loss, torch.Tensor)
-                                else result.language_loss
-                            )
                         if result.predicted_values is not None:
                             metrics["predicted_value_mean"] = (
                                 result.predicted_values.detach().mean().item()
                             )
                             metrics["predicted_value_std"] = (
                                 result.predicted_values.detach().std().item()
-                            )
-                        if result.language_token_acc is not None:
-                            metrics["language_token_acc"] = (
-                                result.language_token_acc.detach().item()
-                                if isinstance(result.language_token_acc, torch.Tensor)
-                                else result.language_token_acc
                             )
                         if result.cat_acc_best is not None:
                             metrics["cat_acc_best"] = (

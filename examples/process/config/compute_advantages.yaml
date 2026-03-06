@@ -56,7 +56,6 @@ advantage:
   # tag: null
 
   # Value inference mode
-  # Options: "expert_categorical", "expert_mse", "expert_distributional", "continuous", "discrete"
   value_mode: "expert_categorical"
 
   # Model configuration (should match the trained model)

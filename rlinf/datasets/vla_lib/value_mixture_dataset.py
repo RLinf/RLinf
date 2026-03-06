@@ -563,18 +563,12 @@ def create_value_mixture_dataset_from_config(
     if not datasets_list:
         raise ValueError("No datasets found in value_mixture.datasets")
 
-    # Distributional RL requires next observations for TD target computation
-    expert_loss_type = model_config.get("expert_loss_type", "mse")
-    include_next_obs = expert_loss_type == "distributional"
-
-    # Skip VLM response for expert-only mode (no CE loss on text tokens)
-    critic_forward_mode = model_config.get("critic_forward_mode", "vlm")
-    skip_vlm_response = critic_forward_mode == "expert"
+    # Expert mode: skip VLM response (no CE loss on text tokens)
+    skip_vlm_response = True
+    include_next_obs = False
 
     logger.info(
-        f"Value dataset config: forward_mode={critic_forward_mode}, "
-        f"loss_type={expert_loss_type}, include_next_obs={include_next_obs}, "
-        f"skip_vlm_response={skip_vlm_response}"
+        f"Value dataset config: skip_vlm_response={skip_vlm_response}"
     )
 
     return create_value_mixture_dataset(
