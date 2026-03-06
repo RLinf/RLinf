@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import copy
+
 from omegaconf import DictConfig, open_dict
 
 from rlinf.utils.placement import ComponentPlacement
@@ -20,6 +21,7 @@ from rlinf.utils.utils import retrieve_model_state_dict_in_cpu
 
 from ..actor.megatron_actor_worker import MegatronActor
 from ..critic.megatron_critic_worker import MegatronCritic
+
 
 def make_megatron_inference(base_class, trainer_role):
     class MegatronInference(base_class):
@@ -30,7 +32,9 @@ def make_megatron_inference(base_class, trainer_role):
         """
 
         def __init__(
-                self, cfg: DictConfig, placement: ComponentPlacement,
+            self,
+            cfg: DictConfig,
+            placement: ComponentPlacement,
         ):
             """Initialize the Megatron inference task.
 
@@ -39,9 +43,9 @@ def make_megatron_inference(base_class, trainer_role):
             """
 
             self.cfg = cfg
-            self.trainer_role = trainer_role if len(trainer_role) > 0 else 'actor'
+            self.trainer_role = trainer_role if len(trainer_role) > 0 else "actor"
             self.trainer_role_cfg = getattr(self.cfg, self.trainer_role)
-            self.role = '_'.join([trainer_role, "inference"])
+            self.role = "_".join([trainer_role, "inference"])
             self.role_cfg = getattr(self.cfg, self.role)
 
             self._build_inference_cfg()
@@ -87,7 +91,9 @@ def make_megatron_inference(base_class, trainer_role):
                 merged_cfg.model.pipeline_model_parallel_size = (
                     inference_cfg.model.pipeline_model_parallel_size
                 )
-                merged_cfg.model.sequence_parallel = inference_cfg.model.sequence_parallel
+                merged_cfg.model.sequence_parallel = (
+                    inference_cfg.model.sequence_parallel
+                )
 
             with open_dict(self.cfg):
                 self.role_cfg = merged_cfg
@@ -111,6 +117,7 @@ def make_megatron_inference(base_class, trainer_role):
 
     return MegatronInference
 
-MegatronActorInference = make_megatron_inference(MegatronActor, 'actor')
-MegatronCriticInference = make_megatron_inference(MegatronCritic, 'critic')
+
+MegatronActorInference = make_megatron_inference(MegatronActor, "actor")
+MegatronCriticInference = make_megatron_inference(MegatronCritic, "critic")
 MegatronInference = MegatronActorInference

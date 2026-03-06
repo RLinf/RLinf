@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import copy
 import time
 from functools import partial
 from typing import Callable, Optional
@@ -25,16 +24,12 @@ from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.training.global_vars import get_args
 from megatron.training.training import unwrap_model
-from megatron.training.utils import average_losses_across_data_parallel_group
 from omegaconf import DictConfig
-from torch.multiprocessing.reductions import reduce_tensor
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import (
     calculate_adv_and_returns,
-    policy_loss,
 )
-from rlinf.algorithms.utils import kl_penalty
 from rlinf.data.io_struct import (
     BatchResizingIterator,
     RolloutResult,
@@ -79,18 +74,17 @@ from rlinf.utils.utils import (
     cpu_dict,
     cpu_weight_swap,
     masked_mean,
-    retrieve_model_state_dict_in_cpu,
     seq_mean_token_mean,
     seq_mean_token_sum,
 )
-from rlinf.workers.rollout.utils import RankMapper
 
 try:
-    from params_resharding import nccl_group_recreate, resharding_init
+    from params_resharding import resharding_init
 
     HAVE_RESHARDING = True
 except ImportError:
     HAVE_RESHARDING = False
+
 
 # base model for MegatronActor and MegatronCritic
 class MegatronWorker(MegatronModelManager, Worker):
@@ -112,10 +106,10 @@ class MegatronWorker(MegatronModelManager, Worker):
             raise ValueError(f"Role {role} is not defined in the configuration.")
         super().__init__(role_cfg)
         self.cfg = cfg
-        self.inference_cfg = getattr(cfg, '_'.join([role, 'inference']), None)
+        self.inference_cfg = getattr(cfg, "_".join([role, "inference"]), None)
         if self.inference_cfg is None:
             # compatible with old code
-            self.inference_cfg = getattr(cfg, 'inference', None)
+            self.inference_cfg = getattr(cfg, "inference", None)
 
         self.component_placement = placement
 
@@ -324,8 +318,10 @@ class MegatronWorker(MegatronModelManager, Worker):
         )
         return obj_tensor.item()
 
-    def _get_sample_count_from_rollout_results(self, rollout_results : list[RolloutResult]):
-        return sum([r.num_sequence for r in rollout_results])
+    def _get_sample_count_from_rollout_results(
+        self, rollout_results: list[RolloutResult]
+    ):
+        return sum(r.num_sequence for r in rollout_results)
 
     def get_dynamic_batch_as_much(
         self,
@@ -339,7 +335,10 @@ class MegatronWorker(MegatronModelManager, Worker):
         rollout_results = cliped_results
         if self.is_data_io_rank:
             # get min_num_samples
-            while self._get_sample_count_from_rollout_results(rollout_results) < min_num_samples:
+            while (
+                self._get_sample_count_from_rollout_results(rollout_results)
+                < min_num_samples
+            ):
                 if unfinished_result is not None:
                     rollout_result: RolloutResult = unfinished_result.wait()
                     unfinished_result = None
@@ -354,7 +353,10 @@ class MegatronWorker(MegatronModelManager, Worker):
             result_len = len(rollout_results)
             time_until = time.time() + 0.1
             while last_result_len < result_len:
-                if self._get_sample_count_from_rollout_results(rollout_results) < max_num_samples:
+                if (
+                    self._get_sample_count_from_rollout_results(rollout_results)
+                    < max_num_samples
+                ):
                     if unfinished_result is None:
                         unfinished_result = input_channel.get(async_op=True)
                     else:
@@ -666,8 +668,13 @@ class MegatronWorker(MegatronModelManager, Worker):
                 assert isinstance(model_chunk, DDP)
                 model_chunk.start_param_sync(force_sync=True)
 
-    def run_training(self, input_channel: Channel, output_channel: Channel | None = None,
-                     do_offload: bool = True, compute_rollout_metrics: bool = True):
+    def run_training(
+        self,
+        input_channel: Channel,
+        output_channel: Channel | None = None,
+        do_offload: bool = True,
+        compute_rollout_metrics: bool = True,
+    ):
         """Run the training loop."""
         if self.is_pipeline:
             with self.worker_timer():
@@ -1096,8 +1103,9 @@ class MegatronWorker(MegatronModelManager, Worker):
         if not self.is_running:
             return
 
-        assert not self.is_weight_offloaded, \
+        assert not self.is_weight_offloaded, (
             "Weight has been offloaded, which prevents from syncing model to inference"
+        )
 
         inference_state_dict = self._get_inference_model_state_dict()
 
@@ -1117,11 +1125,11 @@ class MegatronWorker(MegatronModelManager, Worker):
         return self.run_forward_backward(batch, forward_only=True)
 
     def run_inference(
-            self,
-            input_channel: Channel,
-            output_channel: Channel,
-            compute_ref_logprobs: bool = False,
-            do_offload = True
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        compute_ref_logprobs: bool = False,
+        do_offload=True,
     ):
         """
         For actor model, compute prev/ref logprobs using the actor model's forward.
@@ -1156,8 +1164,14 @@ class MegatronWorker(MegatronModelManager, Worker):
             batch, rollout_result, result_len, cliped_results, unfinished_result = (
                 self.get_dynamic_batch_as_much(
                     input_channel,
-                    min(min_num_samples, self.total_batch_size_per_dp - total_num_samples),
-                    min(max_num_samples, self.total_batch_size_per_dp - total_num_samples),
+                    min(
+                        min_num_samples,
+                        self.total_batch_size_per_dp - total_num_samples,
+                    ),
+                    min(
+                        max_num_samples,
+                        self.total_batch_size_per_dp - total_num_samples,
+                    ),
                     cliped_results,
                     unfinished_result,
                 )
@@ -1172,7 +1186,7 @@ class MegatronWorker(MegatronModelManager, Worker):
             with self.worker_timer():
                 # prev logprobs for actor, values for critic
                 infer_out = self.inference_step(batch).cpu()
-                if self.role == 'actor':
+                if self.role == "actor":
                     prev_logprobs = infer_out
                     if rollout_result.rollout_logprobs is not None:
                         # Rollout has returned logprobs, store the recomputed logprobs in recompute_prev_logprobs
@@ -1180,7 +1194,7 @@ class MegatronWorker(MegatronModelManager, Worker):
                     else:
                         # Otherwise, store the logprobs in prev_logprobs (the final logprobs used for training)
                         rollout_result.prev_logprobs = prev_logprobs
-                elif self.role == 'critic':
+                elif self.role == "critic":
                     values = infer_out
                     rollout_result.values = values
                 else:
@@ -1231,8 +1245,12 @@ class MegatronWorker(MegatronModelManager, Worker):
         """
         with self.worker_timer():
             prev_values = batch["values"].cuda() if "values" in batch else None
-            prev_logprobs = batch["prev_logprobs"].cuda() if "prev_logprobs" in batch else None
-            ref_logprobs = batch["ref_logprobs"].cuda() if "ref_logprobs" in batch else None
+            prev_logprobs = (
+                batch["prev_logprobs"].cuda() if "prev_logprobs" in batch else None
+            )
+            ref_logprobs = (
+                batch["ref_logprobs"].cuda() if "ref_logprobs" in batch else None
+            )
 
             if batch.get("advantages", None) is None:
                 assert batch.get("returns", None) is None
@@ -1255,7 +1273,7 @@ class MegatronWorker(MegatronModelManager, Worker):
                     gae_lambda=self.cfg.algorithm.get("gae_lambda", 1),
                     # Normalization of advantages is done in run_training,
                     # so we set this argument to False here
-                    normalize_advantages=False
+                    normalize_advantages=False,
                 )
                 batch["advantages"] = advantages
                 batch["returns"] = returns

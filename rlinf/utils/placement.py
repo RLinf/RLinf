@@ -14,7 +14,6 @@
 
 import logging
 from enum import Enum, auto
-from typing import Dict, List, overload
 
 from omegaconf import DictConfig
 
@@ -69,7 +68,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         self._actor_gpus = self._get_component_hardware("actor")
         self._rollout_gpus = self._get_component_hardware("rollout")
         self._inference_gpus = self._get_component_hardware("inference")
-        if self._inference_gpus is None: # try 'inference' then 'actor_inference'
+        if self._inference_gpus is None:  # try 'inference' then 'actor_inference'
             self._inference_gpus = self._get_component_hardware("actor_inference")
         self._critic_inference_gpus = self._get_component_hardware("critic_inference")
         self._reward_gpus = self._get_component_hardware("reward")
@@ -96,8 +95,12 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             ), f"Inference GPUs {self._inference_gpus} must be continuous."
         if self._critic_inference_gpus is not None:
             assert self._critic_inference_gpus == list(
-                range(self._critic_inference_gpus[0], self._critic_inference_gpus[-1] + 1)
-            ), f"Critic inference GPUs {self._critic_inference_gpus} must be continuous."
+                range(
+                    self._critic_inference_gpus[0], self._critic_inference_gpus[-1] + 1
+                )
+            ), (
+                f"Critic inference GPUs {self._critic_inference_gpus} must be continuous."
+            )
 
         if self._critic_gpus is not None:
             assert self._critic_gpus == list(
@@ -137,7 +140,9 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 )
 
             if self._critic_inference_gpus is not None:
-                assert self.critic_inference_tp_size <= self.critic_inference_world_size, (
+                assert (
+                    self.critic_inference_tp_size <= self.critic_inference_world_size
+                ), (
                     f"Inference TP size {self.critic_inference_tp_size} must be less than or equal to Inference world size {self.critic_inference_world_size}."
                 )
 
@@ -200,7 +205,9 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             [] if self._inference_gpus is None else set(self._inference_gpus)
         )
         critic_inference_gpu_set = (
-            [] if self._critic_inference_gpus is None else set(self._critic_inference_gpus)
+            []
+            if self._critic_inference_gpus is None
+            else set(self._critic_inference_gpus)
         )
 
         return (
@@ -251,11 +258,13 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             )
             if self._inference_gpus is not None:
                 # TODO check the placement name
-                self._placements["inference" if self._critic_inference_gpus is None
-                                 else "actor_inference"] \
-                    = PackedPlacementStrategy(
-                        self._inference_gpus[0], self._inference_gpus[-1]
-                    )
+                self._placements[
+                    "inference"
+                    if self._critic_inference_gpus is None
+                    else "actor_inference"
+                ] = PackedPlacementStrategy(
+                    self._inference_gpus[0], self._inference_gpus[-1]
+                )
             if self._critic_inference_gpus is not None:
                 self._placements["critic_inference"] = PackedPlacementStrategy(
                     self._critic_inference_gpus[0], self._critic_inference_gpus[-1]
@@ -278,7 +287,9 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             )
 
             if self._critic_gpus is not None:
-                assert False, "auto placement is not supported when having critic model for now"
+                assert False, (
+                    "auto placement is not supported when having critic model for now"
+                )
 
             use_pre_process_policy = getattr(
                 self._config.cluster, "use_pre_process_policy", False
@@ -325,12 +336,14 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         return self.is_disaggregated or self.is_auto
 
     def has_dedicated_inference_for_role(self, role):
-        if role == 'actor':
+        if role == "actor":
             return self.has_dedicated_actor_inference
-        elif role == 'critic':
+        elif role == "critic":
             return self.has_dedicated_critic_inference
         else:
-            assert False, f"Unknown role {role} while calling has_dedicated_inference_for_role"
+            assert False, (
+                f"Unknown role {role} while calling has_dedicated_inference_for_role"
+            )
 
     @property
     def has_dedicated_inference(self):
@@ -409,9 +422,13 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         if (
             hasattr(self._config, "critic_inference")
             and hasattr(self._config.critic_inference, "model")
-            and hasattr(self._config.critic_inference.model, "tensor_model_parallel_size")
+            and hasattr(
+                self._config.critic_inference.model, "tensor_model_parallel_size"
+            )
         ):
-            return self._config.critic_inference.model.get("tensor_model_parallel_size", 1)
+            return self._config.critic_inference.model.get(
+                "tensor_model_parallel_size", 1
+            )
         else:
             return self.critic_tp_size
 
@@ -423,17 +440,20 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             infer_cfg = self._config.actor_inference
         else:
             return self.actor_pp_size
-        return infer_cfg.model.get("pipeline_model_parallel_size",
-                                   self.actor_pp_size)
+        return infer_cfg.model.get("pipeline_model_parallel_size", self.actor_pp_size)
 
     @property
     def critic_inference_pp_size(self) -> int:
         if (
             hasattr(self._config, "critic_inference")
             and hasattr(self._config.critic_inference, "model")
-            and hasattr(self._config.critic_inference.model, "pipeline_model_parallel_size")
+            and hasattr(
+                self._config.critic_inference.model, "pipeline_model_parallel_size"
+            )
         ):
-            return self._config.critic_inference.model.get("pipeline_model_parallel_size", 1)
+            return self._config.critic_inference.model.get(
+                "pipeline_model_parallel_size", 1
+            )
         else:
             return self.critic_pp_size
 

@@ -18,15 +18,14 @@ from megatron.training.training import unwrap_model
 from megatron.training.utils import average_losses_across_data_parallel_group
 from omegaconf import DictConfig
 
-from rlinf.workers.megatron_worker import MegatronWorker
 from rlinf.algorithms.losses import compute_ppo_critic_loss
-
 from rlinf.utils.placement import ModelParallelComponentPlacement
+from rlinf.workers.megatron_worker import MegatronWorker
 
 
 class MegatronCritic(MegatronWorker):
     def __init__(
-        self, cfg: DictConfig, placement: ModelParallelComponentPlacement, role='critic'
+        self, cfg: DictConfig, placement: ModelParallelComponentPlacement, role="critic"
     ):
         """Initialize the MegatronWorker.
 
@@ -67,7 +66,7 @@ class MegatronCritic(MegatronWorker):
 
                 def id_func(output, non_loss_data=True):
                     return output
-                
+
                 if unwrap_model(model).post_process:
                     mask = batch["response_mask"][:, -response_len:]
                     output = output[:, -response_len - 1 : -1].contiguous().squeeze(-1)
@@ -76,20 +75,21 @@ class MegatronCritic(MegatronWorker):
                 return output, id_func
 
             def loss_func(output):
-
                 returns = batch["returns"]
                 prev_values = batch["values"]
                 vpreds = output[:, -response_len - 1 : -1].contiguous().squeeze(-1)
 
                 mask = batch["response_mask"][:, -response_len:]
 
-                loss, metrics_data = compute_ppo_critic_loss(values=vpreds,
-                                                             returns=returns,
-                                                             prev_values=prev_values,
-                                                             value_clip=self.value_clip,
-                                                             huber_delta=10000,
-                                                             loss_agg_func=self.loss_agg_func,
-                                                             loss_mask=mask)
+                loss, metrics_data = compute_ppo_critic_loss(
+                    values=vpreds,
+                    returns=returns,
+                    prev_values=prev_values,
+                    value_clip=self.value_clip,
+                    huber_delta=10000,
+                    loss_agg_func=self.loss_agg_func,
+                    loss_mask=mask,
+                )
 
                 metrics_data.update(
                     {

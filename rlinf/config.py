@@ -889,7 +889,7 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
         )
         assert cfg.actor.micro_batch_size >= 1
         assert cfg.actor.global_batch_size >= 1
-        if hasattr(cfg, 'critic'):
+        if hasattr(cfg, "critic"):
             cfg.critic.micro_batch_size = cfg.algorithm.training_batch_size_per_gpu
             cfg.critic.global_batch_size = (
                 cfg.data.rollout_batch_size

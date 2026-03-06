@@ -45,7 +45,6 @@ def main(cfg) -> None:
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = ModelParallelComponentPlacement(cfg, cluster)
 
-
     # Rollout group
     rollout_worker_cls = get_rollout_backend_worker(cfg)
     rollout_placement_strategy = component_placement.get_strategy("rollout")
@@ -62,7 +61,9 @@ def main(cfg) -> None:
         in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]
         and cfg.algorithm.recompute_logprobs
     ):
-        inference_placement_strategy = component_placement.get_strategy("actor_inference")
+        inference_placement_strategy = component_placement.get_strategy(
+            "actor_inference"
+        )
         inference_worker_cls = get_inference_backend_worker(cfg, "actor")
         actor_inference_group = inference_worker_cls.create_group(
             cfg, component_placement
@@ -78,10 +79,12 @@ def main(cfg) -> None:
         in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]
         and cfg.critic.use_critic_model
     ):
-        inference_placement_strategy = component_placement.get_strategy("critic_inference")
+        inference_placement_strategy = component_placement.get_strategy(
+            "critic_inference"
+        )
         inference_worker_cls = get_inference_backend_worker(cfg, "critic")
         critic_inference_group = inference_worker_cls.create_group(
-            cfg, component_placement, train_role='critic'
+            cfg, component_placement, train_role="critic"
         ).launch(
             cluster,
             name=cfg.critic_inference.group_name,
@@ -99,7 +102,9 @@ def main(cfg) -> None:
     # GRPO Actor group
     actor_worker_cls = get_actor_worker(cfg)
     actor_placement_strategy = component_placement.get_strategy("actor")
-    actor_group = actor_worker_cls.create_group(cfg, component_placement, role='actor').launch(
+    actor_group = actor_worker_cls.create_group(
+        cfg, component_placement, role="actor"
+    ).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement_strategy
     )
 
@@ -107,8 +112,12 @@ def main(cfg) -> None:
     if cfg.critic.use_critic_model:
         critic_worker_cls = get_critic_worker(cfg)
         critic_placement_strategy = component_placement.get_strategy("critic")
-        critic_group = critic_worker_cls.create_group(cfg, component_placement, role='critic').launch(
-            cluster, name=cfg.critic.group_name, placement_strategy=critic_placement_strategy
+        critic_group = critic_worker_cls.create_group(
+            cfg, component_placement, role="critic"
+        ).launch(
+            cluster,
+            name=cfg.critic.group_name,
+            placement_strategy=critic_placement_strategy,
         )
     else:
         critic_group = None
