@@ -169,12 +169,11 @@ actor:
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
 
- 
     amp:
       enabled: false
       precision: bf16
       use_grad_scaler: false
-      
+
 reward:
   use_reward_model: False
 
