@@ -45,7 +45,7 @@ class MultiStepRolloutWorker(Worker):
         self.should_stop = False
 
         self.actor_group_name = cfg.actor.group_name
-        self.device = torch.cuda.current_device()
+        self.device = self.torch_platform.current_device()
 
         self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
         self.enable_offload = self.cfg.rollout.get("enable_offload", False)
@@ -54,7 +54,7 @@ class MultiStepRolloutWorker(Worker):
 
         actor_world_size = self.placement.get_world_size("actor")
         self.actor_weight_src_rank = self._rank % actor_world_size
-
+        self.rollout_epoch = cfg.algorithm.get("rollout_epoch", 1)
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
         self.model_weights_id = ""
         self.count_update = 0
@@ -89,6 +89,7 @@ class MultiStepRolloutWorker(Worker):
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self.collect_versions = self.cfg.algorithm.loss_type == "decoupled_actor_critic"
         self.version = 0
+        self.finished_episodes = None
 
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
@@ -284,7 +285,7 @@ class MultiStepRolloutWorker(Worker):
 
         return dones, rewards
 
-    async def sync_model_from_actor(self, version: int | None = None):
+    async def sync_model_from_actor(self):
         """Sync model parameters from the actor worker."""
         param_state_dict = await self.recv(
             self.actor_group_name,
@@ -292,17 +293,14 @@ class MultiStepRolloutWorker(Worker):
             async_op=True,
             options=self._sync_weight_comm_options,
         ).async_wait()
-
         self.hf_model.load_state_dict(param_state_dict)
         self.model_weights_id = (
             str(get_model_weights_id(self.hf_model)) + f"_{self.count_update}"
         )
         self.count_update += 1
-        if version is not None:
-            self.version = version
         del param_state_dict
         gc.collect()
-        torch.cuda.empty_cache()
+        self.torch_platform.empty_cache()
 
     async def send_rollout_trajectories(
         self, rollout_result: EmbodiedRolloutResult, channel: Channel
@@ -423,7 +421,7 @@ class MultiStepRolloutWorker(Worker):
         ]
 
         for _ in tqdm(
-            range(self.cfg.algorithm.rollout_epoch),
+            range(self.rollout_epoch),
             desc="Generating Rollout Epochs",
             disable=(self._rank != 0),
         ):
@@ -458,7 +456,7 @@ class MultiStepRolloutWorker(Worker):
         if self.enable_cuda_graph:
             self.hf_model.release_cuda_graph()
         self.hf_model.to("cpu")
-        torch.cuda.empty_cache()
+        self.torch_platform.empty_cache()
 
     def reload_model(self):
         self.hf_model.to(self.device)
@@ -568,5 +566,10 @@ class MultiStepRolloutWorker(Worker):
         return split_num
 
     def set_global_step(self, global_step: int):
+        self.version = global_step
+        if self.finished_episodes is None:
+            self.finished_episodes = (
+                self.version * self.total_num_train_envs * self.rollout_epoch
+            )
         if hasattr(self.hf_model, "set_global_step"):
             self.hf_model.set_global_step(global_step)

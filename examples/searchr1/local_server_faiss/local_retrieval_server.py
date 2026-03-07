@@ -460,7 +460,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--corpus_path",
         type=str,
-        default="/home/peterjin/mnt/data/retrieval-corpus/wiki-18.jsonl",
+        required=True,
         help="Local corpus file.",
     )
     parser.add_argument(
