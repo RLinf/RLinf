@@ -26,10 +26,6 @@ from rlinf.hybrid_engines.megatron.megatron_model_manager import HAVE_FUSCO, fus
 if HAVE_FUSCO:
     import idxtools
     from fusco import FUSCO
-else:
-    raise RuntimeError(
-        "FUSCO is not available. This module should not be loaded when FUSCO support is disabled."
-    )
 
 
 def gather_along_first_dim(input_, group):
@@ -241,6 +237,9 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
         self.num_experts = config.num_moe_experts
         self.local_expert_indices = local_expert_indices
         self.topk = config.moe_router_topk
+        assert HAVE_FUSCO is True, (
+            "FUSCO is not available. Please install Fusco to use MoEFuscoTokenDispatcher."
+        )
         assert self.ep_size > 1, "Fusco token dispatcher requires EP size > 1"
         assert self.tp_size == 1, "Fusco token dispatcher only supports TP size == 1"
         assert self.tp_ep_group.size() == self.ep_size, (
