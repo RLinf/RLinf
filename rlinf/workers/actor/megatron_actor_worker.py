@@ -551,6 +551,7 @@ class MegatronActor(MegatronModelManager, Worker):
                     clip_log_ratio_max=self.cfg.algorithm.get(
                         "clip_log_ratio_max", None
                     ),
+                    fast_path_zero_loss_mask=True,
                 )
 
                 entropy_loss = torch.zeros(1, device=loss.device)
@@ -1334,7 +1335,7 @@ class MegatronActor(MegatronModelManager, Worker):
                 )
             )
             total_result_len += result_len
-            self.log_info(
+            self.log_debug(
                 f"[dynamic inference rank-{self._rank}] inference result_len={result_len}, total_result_len={total_result_len}/{total_result_len_per_dp}"
             )
             self._load_weight_and_optimizer()

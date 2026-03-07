@@ -7,6 +7,18 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
 
    <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/wideseek_r1/scaling.png"
+            style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="wideseek_r1/index.html" style="text-decoration: underline; color: blue;">
+          <b>WideSeek-R1</b>
+         </a><br>
+         通过多智能体强化学习探索用于广泛信息检索的宽度扩展方法
+       </p>
+     </div>
+
+   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/coding_online_rl_offline_numbers.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -62,6 +74,7 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
    :hidden:
    :maxdepth: 2
 
+   wideseek_r1/index
    coding_online_rl
    searchr1
    reasoning
