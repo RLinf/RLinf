@@ -14,9 +14,13 @@
 
 import gc
 import itertools
+from contextlib import contextmanager, nullcontext
+from functools import partial
 from typing import TYPE_CHECKING, Iterator, Optional
 
+import megatron
 import torch
+from megatron.core import tensor_parallel
 from omegaconf import DictConfig
 
 from rlinf.config import build_config, build_transformer_config
@@ -123,6 +127,51 @@ def get_specs(spec_name, transformer_config=None, use_te=False):
     return name_spec_dict[spec_name]
 
 
+# copied from verl
+class LinearForLastLayer(torch.nn.Linear):
+    def __init__(
+        self,
+        input_size,
+        output_size,
+        *,
+        sequence_parallel,
+        bias=False,  # TODO changed bias to False for temporary convenience
+    ):
+        super().__init__(in_features=input_size, out_features=output_size, bias=bias)
+        self.sequence_parallel = sequence_parallel
+        if self.sequence_parallel:
+            self.weight.sequence_parallel = True
+
+    def forward(
+        self,
+        input_,
+        weight=None,
+        runtime_gather_output=None,
+    ):
+        logits = super().forward(input_)
+        logits = logits.float()
+        if self.sequence_parallel:
+            logits = tensor_parallel.gather_from_sequence_parallel_region(
+                logits, tensor_parallel_output_grad=False
+            )
+        return logits, None
+
+
+def patch_load_checkpoint_to_be_non_strict(enable: bool):
+    @contextmanager
+    def context():
+        load_checkpoint_orig = megatron.training.training.load_checkpoint
+        load_checkpoint_patched = partial(load_checkpoint_orig, strict=False)
+        megatron.training.training.load_checkpoint = load_checkpoint_patched
+        yield
+        megatron.training.training.load_checkpoint = load_checkpoint_orig
+
+    if enable:
+        return context()
+    else:
+        return nullcontext()
+
+
 class MegatronModelManager:
     """
     Megatron Model Manager for RL training
@@ -158,6 +207,12 @@ class MegatronModelManager:
         # In AUTO mode, the actor will occupy all GPUs for initialization, but not all Megatron processes will be in the running state.
         self.is_running = True
 
+        self.is_dedicated_critic_model = self._cfg.get("use_critic_model", False)
+
+        self.is_weight_offloaded = False
+        self.is_grad_offloaded = False
+        self.is_optimizer_offloaded = False
+
         # Patch Megatron MoE token dispatcher if FUSCO is available and conditions are met
         self.patch_megatron_moe_dispatcher()
 
@@ -180,11 +235,17 @@ class MegatronModelManager:
         """Setup model and optimizer."""
         set_megatron_args(self._cfg)
 
-        self.model, self.optimizer, self.lr_scheduler = setup_model_and_optimizer(
-            model_provider_func=self.model_provider_func,
-            model_type=model_type,
-            checkpointing_context=self.checkpoint_context,
-        )
+        # if it is the critic model, then we must set the strict parameter
+        # of load_checkpoint to false, because we replaced
+        # the output layer of the critic model to value head,
+        # resulting in a mismatch with the checkpoint.
+        enable_none_strict = self.is_dedicated_critic_model
+        with patch_load_checkpoint_to_be_non_strict(enable=enable_none_strict):
+            self.model, self.optimizer, self.lr_scheduler = setup_model_and_optimizer(
+                model_provider_func=self.model_provider_func,
+                model_type=model_type,
+                checkpointing_context=self.checkpoint_context,
+            )
 
     def model_provider_func(self, pre_process, post_process):
         """Model depends on pipeline paralellism."""
@@ -223,6 +284,15 @@ class MegatronModelManager:
                 pre_process=pre_process,
                 post_process=post_process,
             )
+
+        if self.is_dedicated_critic_model and post_process:
+            # replace lm head with value head if this is a critic model
+            model.output_layer = LinearForLastLayer(
+                input_size=self._cfg.model.hidden_size,
+                output_size=1,
+                sequence_parallel=self._cfg.model.sequence_parallel,
+            )
+
         return model
 
     def optimizer_step(self, increment):
@@ -324,6 +394,19 @@ class MegatronModelManager:
             checkpointing_context = {}
         return checkpointing_context
 
+    @contextmanager
+    def ensure_onloaded_and_then_offload(self):
+        # if weights and opt states are offloaded, recover them first
+        if self.is_weight_offloaded:
+            self.onload_model_weights_and_grad()
+        if self.is_optimizer_offloaded:
+            self.onload_megatron_optimizer()
+
+        yield
+
+        self.offload_model_weights_and_grad()
+        self.offload_megatron_optimizer()
+
     def save_checkpoint(
         self,
         save_path: str,
@@ -332,27 +415,30 @@ class MegatronModelManager:
     ) -> None:
         if not self.is_running:
             return
-        args = get_args()
-        args.save = save_path
-        save_checkpoint(
-            iteration=step,
-            model=self.model,
-            optimizer=self.optimizer,
-            opt_param_scheduler=self.lr_scheduler,
-            num_floating_point_operations_so_far=num_floating_point_operations_so_far,
-            checkpointing_context=self.checkpoint_context,
-            preprocess_common_state_dict_fn=preprocess_common_state_dict,
-        )
+
+        with self.ensure_onloaded_and_then_offload():
+            args = get_args()
+            args.save = save_path
+            save_checkpoint(
+                iteration=step,
+                model=self.model,
+                optimizer=self.optimizer,
+                opt_param_scheduler=self.lr_scheduler,
+                num_floating_point_operations_so_far=num_floating_point_operations_so_far,
+                checkpointing_context=self.checkpoint_context,
+                preprocess_common_state_dict_fn=preprocess_common_state_dict,
+            )
 
     def load_checkpoint(self, load_path):
-        args = get_args()
-        args.load = load_path
-        load_checkpoint(
-            self.model,
-            self.optimizer,
-            self.lr_scheduler,
-            checkpointing_context=self.checkpoint_context,
-        )
+        with self.ensure_onloaded_and_then_offload():
+            args = get_args()
+            args.load = load_path
+            load_checkpoint(
+                self.model,
+                self.optimizer,
+                self.lr_scheduler,
+                checkpointing_context=self.checkpoint_context,
+            )
 
     def load_state_dict(self, state_dict, strict=True):
         if len(self.model) == 1:
@@ -501,11 +587,17 @@ class MegatronModelManager:
         return new_buffer
 
     def offload_model_weights_and_grad(self, offload_grad=True, offload_weight=True):
+        if (not offload_grad or self.is_grad_offloaded) and (
+            not offload_weight or self.is_weight_offloaded
+        ):
+            return
+
         for model_idx, model_chunk in enumerate(self.model):
             if isinstance(model_chunk, DDP):
                 for buffer_idx, buffer in enumerate(model_chunk.buffers):
                     if (
                         offload_weight
+                        and not self.is_weight_offloaded
                         and buffer.param_data.untyped_storage().size() > 0
                     ):
                         param_size = buffer.param_data.untyped_storage().size()
@@ -520,51 +612,79 @@ class MegatronModelManager:
                             buffer.param_data_size == cpu_data.untyped_storage().size()
                         )
 
-                    if offload_grad and buffer.grad_data.untyped_storage().size() > 0:
+                    if (
+                        offload_grad
+                        and not self.is_grad_offloaded
+                        and buffer.grad_data.untyped_storage().size() > 0
+                    ):
                         grad_size = buffer.grad_data.untyped_storage().size()
                         buffer.grad_data_size = grad_size
                         buffer.grad_data.untyped_storage().resize_(0)
 
             else:
                 for param_name, param in model_chunk.named_parameters():
-                    if offload_weight and param.data is not None:
+                    if (
+                        offload_weight
+                        and not self.is_weight_offloaded
+                        and param.data is not None
+                    ):
                         cpu_data = self._get_pinned_buffer(param.data)
                         cpu_data.copy_(param.data, non_blocking=True)
 
-                    if offload_grad and param.grad is not None:
+                    if (
+                        offload_grad
+                        and not self.is_grad_offloaded
+                        and param.grad is not None
+                    ):
                         cpu_data = self._get_pinned_buffer(param.grad)
                         cpu_data.copy_(param.grad, non_blocking=True)
-        # sync and clear memory
+
         clear_memory()
 
+        self.is_grad_offloaded = offload_grad
+        self.is_weight_offloaded = offload_weight
+
     def onload_model_weights_and_grad(self, load_grad=True):
+        if (not self.is_weight_offloaded) and (
+            not (load_grad and self.is_grad_offloaded)
+        ):
+            return
+
         gc.collect()
         torch.cuda.empty_cache()
         for model_chunk in self.model:
             if isinstance(model_chunk, DDP):
                 for buffer in model_chunk.buffers:
                     # sometimes, we don't want to load grad for pure inference
-                    if load_grad and hasattr(buffer, "grad_data_size"):
-                        buffer.grad_data.untyped_storage().resize_(
-                            buffer.grad_data_size
-                        )
-                        buffer.grad_data.zero_()
+                    if load_grad and self.is_grad_offloaded:
+                        if hasattr(buffer, "grad_data_size"):
+                            buffer.grad_data.untyped_storage().resize_(
+                                buffer.grad_data_size
+                            )
+                            buffer.grad_data.zero_()
 
-                    if buffer.param_data.untyped_storage().size() == 0:
-                        buffer.param_data.untyped_storage().resize_(
-                            buffer.param_data_size
-                        )
-                        # copy data from cpu to cuda
-                        buffer.param_data.copy_(
-                            buffer.param_data.cpu_data, non_blocking=True
-                        )
+                    if self.is_weight_offloaded:
+                        if buffer.param_data.untyped_storage().size() == 0:
+                            buffer.param_data.untyped_storage().resize_(
+                                buffer.param_data_size
+                            )
+                            # copy data from cpu to cuda
+                            buffer.param_data.copy_(
+                                buffer.param_data.cpu_data, non_blocking=True
+                            )
             else:
                 device_id = torch.cuda.current_device()
                 for _, param in model_chunk.named_parameters():
-                    param.data = param.data.to(device_id, non_blocking=True)
-                    if load_grad and param.grad is not None:
-                        param.grad = param.grad.to(device_id, non_blocking=True)
+                    if self.is_weight_offloaded:
+                        param.data = param.data.to(device_id, non_blocking=True)
+                    if load_grad and self.is_grad_offloaded:
+                        if param.grad is not None:
+                            param.grad = param.grad.to(device_id, non_blocking=True)
         clear_memory()
+
+        self.is_weight_offloaded = False
+        if load_grad:
+            self.is_grad_offloaded = False
 
     def offload_megatron_copy_params(self, optimizers):
         """
@@ -645,6 +765,9 @@ class MegatronModelManager:
                 load_group_to_gpu(_opt.shard_fp32_from_float16_groups)
 
     def offload_megatron_optimizer(self):
+        if self.is_optimizer_offloaded:
+            return
+
         def _iter_opts(opt):
             if isinstance(opt, ChainedOptimizer):
                 return opt.chained_optimizers
@@ -666,7 +789,12 @@ class MegatronModelManager:
                     buffer.storage().resize_(0)
         clear_memory()
 
+        self.is_optimizer_offloaded = True
+
     def onload_megatron_optimizer(self):
+        if not self.is_optimizer_offloaded:
+            return
+
         def _iter_opts(opt):
             if isinstance(opt, ChainedOptimizer):
                 return opt.chained_optimizers
@@ -684,6 +812,7 @@ class MegatronModelManager:
                         torch.cuda.current_device(), non_blocking=True
                     )
         clear_memory()
+        self.is_optimizer_offloaded = False
 
     def init_profiler(self):
         # here we should validate profiler's schedule info
