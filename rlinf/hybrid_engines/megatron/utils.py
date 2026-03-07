@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Optional
+
 import torch
 
 try:
@@ -23,7 +25,10 @@ except (ImportError, ModuleNotFoundError):
 
 
 def preprocess_packed_seqs(
-    input_ids: torch.Tensor, attention_mask: torch.Tensor, pre_process: bool = True, padding_seqlen: int = None
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    pre_process: bool = True,
+    padding_seqlen: Optional[int] = None,
 ) -> tuple[torch.Tensor, PackedSeqParams]:
     """
     Preprocess packed sequences

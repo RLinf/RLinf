@@ -38,9 +38,7 @@ def gather_along_first_dim(input_, group):
     dim_size = list(input_.size())
     dim_size[0] = dim_size[0] * world_size
 
-    output = torch.empty(
-        dim_size, dtype=input_.dtype, device=input_.device
-    )
+    output = torch.empty(dim_size, dtype=input_.dtype, device=input_.device)
     torch.distributed.all_gather_into_tensor(output, input_.contiguous(), group=group)
 
     return output
@@ -245,7 +243,9 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
         self.topk = config.moe_router_topk
         assert self.ep_size > 1, "Fusco token dispatcher requires EP size > 1"
         assert self.tp_size == 1, "Fusco token dispatcher only supports TP size == 1"
-        assert self.tp_ep_group.size() == self.ep_size, "Fusco token dispatcher only supports EP-only"
+        assert self.tp_ep_group.size() == self.ep_size, (
+            "Fusco token dispatcher only supports EP-only"
+        )
         assert HAVE_FUSCO is True, (
             "Fusco is not available. Please install Fusco to use MoEFuscoTokenDispatcher."
         )
@@ -275,14 +275,16 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
             )
         self.is_2dmode = self.topk > 1 and self.ep_size > self.num_local_ranks
 
-        self.global_fusco = FUSCO(
-            nccl_ep_group=self.ep_group, shared_lib=fusco_lib
-        )
+        self.global_fusco = FUSCO(nccl_ep_group=self.ep_group, shared_lib=fusco_lib)
 
         if self.is_2dmode:
             intra_node_ranks = [
                 list(range(start, start + self.num_local_ranks))
-                for start in range(0, torch.distributed.get_world_size(self.ep_group), self.num_local_ranks)
+                for start in range(
+                    0,
+                    torch.distributed.get_world_size(self.ep_group),
+                    self.num_local_ranks,
+                )
             ]
             intra_group = None
             nccl_options = torch.distributed.ProcessGroupNCCL.Options()
