@@ -99,6 +99,7 @@ jobs:
             agent_reason_filter: &agent
               - *shared
               - 'rlinf/agents/**'
+              - 'rlinf/workers/actor/ma_megatron_actor_worker.py'
               - 'rlinf/workers/actor/megatron_actor_worker.py'
               - 'rlinf/workers/agent/**'
               - 'rlinf/workers/inference/**'
@@ -116,6 +117,7 @@ jobs:
               - 'examples/searchr1/**'
               - 'examples/mas-search/**'
               - 'examples/rstar2/**'
+              - 'examples/wideseek_r1/**'
               - 'tests/e2e_tests/agent/**'
               - 'tests/e2e_tests/coding_online_rl/**'
               - 'tests/e2e_tests/reasoning/**'
