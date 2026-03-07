@@ -1,0 +1,25 @@
+# Test config for compute_returns
+#
+# Usage:
+#   bash run_compute_returns.sh compute_returns_test
+
+data:
+  datasets:
+    - dataset_path: /mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot
+      type: sft
+      failure_reward: -300.0
+    - dataset_path: /mnt/project_rlinf_hs/liuzhihao/data_to_use/collected_data_40_eps
+      type: rollout
+      failure_reward: -300.0
+
+  dataset_type: "sft"
+  gamma: 1.0
+  failure_reward: -300.0
+  num_workers: 4
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

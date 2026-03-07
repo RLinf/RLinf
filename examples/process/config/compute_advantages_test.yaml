@@ -1,0 +1,56 @@
+# Test config for compute_advantages — single GPU, small batch
+#
+# Usage:
+#   bash run_compute_advantages.sh compute_advantages_test --nproc 1 \
+#       advantage.value_checkpoint=/path/to/value_model_checkpoint
+
+advantage:
+  # REQUIRED: Set via command line override
+  value_checkpoint: /path/to/value_model_checkpoint
+
+  device: "cuda"
+  batch_size: 4
+  flush_interval: 2
+  pipeline_batch_size: 128
+  num_dataloader_workers: 2
+  prefetch_factor: 2
+  discount_next_value: true
+  positive_quantile: 0.3
+  value_mode: "expert_categorical"
+  tag: "test"
+
+  model:
+    num_bins: 201
+    v_min: -1.0
+    v_max: 0.0
+    critic_expert_variant: "gemma_100m"
+
+data:
+  model_type: "pi05"
+  robot_type: "libero"
+
+  datasets:
+    - dataset_path: /mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot
+      robot_type: "libero"
+      dataset_type: "sft"
+      weight: 1.0
+    - dataset_path: /mnt/project_rlinf_hs/liuzhihao/data_to_use/collected_data_40_eps
+      robot_type: "libero"
+      dataset_type: "rollout"
+      weight: 1.0
+
+  action_horizon: 10
+  advantage_horizon: null
+  gamma: 1.0
+
+distributed:
+  enabled: false
+  backend: "nccl"
+  timeout: 3600
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

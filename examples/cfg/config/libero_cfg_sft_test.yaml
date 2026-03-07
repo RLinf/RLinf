@@ -1,0 +1,97 @@
+# Test config for CFG SFT training — 5 steps, small batch
+#
+# Usage:
+#   bash run_cfg_sft.sh libero_cfg_sft_test
+
+defaults:
+  - model/pi0_5@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "cfg_sft_test"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 30000
+  max_steps: 5
+  val_check_interval: -1
+  save_interval: 5
+
+data:
+  advantage_tag: "test"
+  balance_dataset_weights: true
+  seed: 42
+
+  datasets:
+    - path: /mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot
+      type: "sft"
+      weight: 1.0
+    - path: /mnt/project_rlinf_hs/liuzhihao/data_to_use/collected_data_40_eps
+      type: "rollout"
+      weight: 1.0
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 2
+  global_batch_size: 16
+  seed: 0
+
+  model:
+    precision: null
+    model_path: "/mnt/project_rlinf/liuzhihao/vla_lib_fork_gaofeng/pretrained_models/pi05_base_pytorch"
+    model_type: "cfg_model"
+    add_value_head: False
+    openpi:
+      config_name: "pi05_libero"
+      detach_critic_input: True
+      train_expert_only: False
+      cfgrl_guidance_scale: 1.0
+      unconditional_prob: 0.3
+      guidance_type: "positive"
+
+  optim:
+    lr: 5.0e-5
+    value_lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-10
+    clip_grad: 1.0
+    lr_scheduler: "constant"
+    total_training_steps: 5
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: False
+    gradient_checkpointing: True
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

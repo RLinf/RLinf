@@ -1,0 +1,159 @@
+defaults:
+  - model/vla_lib_value_model@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "vla_lib_value_sft"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 30000
+  max_steps: -1
+  val_check_interval: -1
+  save_interval: 5000
+
+# =====================================================================
+# Data Configuration
+# =====================================================================
+# Uses datasets list (always a list, single dataset = list of one)
+#
+# Each dataset entry MUST have:
+#   - dataset_path: path to LeRobot dataset (relative to data_root, or absolute)
+#   - return_min: minimum return in this dataset
+#   - return_max: maximum return in this dataset
+#
+# Each dataset entry CAN have (optional, fallback to shared defaults):
+#   - weight: sampling weight (only matters for mixture training)
+#   - value_prefix, include_state, skip_vlm_response, action_horizon, gamma, etc.
+#   - robot_type, model_type, default_prompt, norm_stats_dir, asset_id
+#   - max_samples, episode_percentage, shuffle_episodes, episode_seed
+# =====================================================================
+data:
+  # data_root: Optional path prefix. If set, each dataset's dataset_path
+  # is resolved as data_root/dataset_path (when dataset_path is relative).
+  # If dataset_path is absolute, data_root is ignored for that entry.
+  # data_root: "/path/to/data_root"
+
+  # ----- datasets: list of value datasets (always a list, even for one) -----
+  # Each dataset MUST have type: "sft" or "rollout"
+  #   - sft: reward=-1 for all steps except last=0, always is_success=True
+  #   - rollout: reads is_success from dataset, last reward=0 if success else -300
+  datasets:
+    - dataset_path: "/path/to/sft_dataset"
+      type: "sft"
+      weight: 20.0
+      robot_type: "libero"
+      model_type: "pi05"
+
+    - dataset_path: "/path/to/rollout_dataset"
+      type: "rollout"
+      weight: 1.0
+      robot_type: "libero"
+      model_type: "pi05"
+    - eval_dataset_path: "/path/to/eval_dataset"
+      eval_max_samples: 10000
+      robot_type: "libero"
+      model_type: "pi05"
+
+  # ----- dataloader performance -----
+  # Values below are per-rank DataLoader workers.
+  train_num_workers: 8
+  eval_num_workers: 4
+  prefetch_factor: 4
+  persistent_workers: false
+  pin_memory: false
+  # ----- shared dataset params (apply to all datasets unless overridden) -----
+  value_prefix: "Value: "                     # text prefix before value token
+  include_state: true                         # include robot state in observation
+  # skip_vlm_response: auto-derived from critic_forward_mode (expert -> true)
+  gamma: 1.0                                 # discount factor
+  action_horizon: 10                          # future steps for return calculation
+  num_return_bins: 201                        # bins for discretized return
+  normalize_to_minus_one_zero: true           # normalize returns to (-1, 0)
+  include_next_obs: false                     # true for distributional RL
+  action_dim: 7                               # action dimensionality
+  robot_type: "libero"                        # default robot type
+  model_type: "pi05"                          # default model type for dataset
+
+  # ----- mixture settings -----
+  balance_weights: true                       # multiply weights by dataset length
+  seed: 42                                    # sampling seed
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 32
+  global_batch_size: 256
+  seed: 0
+
+  model:
+    precision: bf16
+    model_type: "vla_lib_value_model"
+    model_path: "/path/to/pi05_base_pytorch"
+    # ----- Critic architecture -----
+    # model_type_critic: "value" (V(s)) | "q" (Q(s,a))
+    model_type_critic: "value"
+    # critic_forward_mode: "vlm" | "expert" | "dual"
+    critic_forward_mode: "expert"
+    # expert_loss_type: "mse" | "categorical" | "distributional"
+    expert_loss_type: "categorical"
+    # critic_expert_variant: "gemma_50m" | "gemma_100m" | "gemma_150m" | "gemma_300m" | "gemma_2b"
+    critic_expert_variant: "gemma_100m"
+
+    freeze_vlm: False
+    # Value head
+    num_bins: 201
+    v_min: -1.0
+    v_max: 0.0
+
+    # PI05 base
+    action_dim: 7
+    action_horizon: 10
+    paligemma_variant: "gemma_2b"
+
+  optim:
+    lr: 5.0e-5
+    value_lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1e-10
+    clip_grad: 1.0
+    lr_scheduler: "constant"
+    lr_warmup_steps: 10000
+    total_training_steps: 30000
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: True
+    gradient_checkpointing: True
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

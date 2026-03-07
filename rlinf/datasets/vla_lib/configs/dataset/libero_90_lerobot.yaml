@@ -1,0 +1,19 @@
+# Libero 90 dataset configuration (LeRobot v2.1 format, no-noops)
+# @package dataset
+
+dataset_type: lerobot
+dataset_name: libero_90_lerobot/libero_90_no_noops_lerobot
+
+# Robot type for auto-config factory creation
+robot_type: libero
+
+default_prompt: null
+
+# Transform settings (libero actions are already delta)
+extra_delta_transform: false
+
+# Model type determines normalization (set by experiment config)
+model_type: null
+
+# ECOT data root for subtask/bbox/pointing reasoning (optional, can be overridden per-experiment)
+subtask_data_root: data/libero_90_no_noops_ecot_data

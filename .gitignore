@@ -19,3 +19,13 @@ outputs/*
 uv.lock
 rlinf/envs/maniskill/assets
 PKG-INFO
+lerobot
+visualize_result/
+data_to_use/
+
+# Local dev files
+CLAUDE.md
+memory.md
+progress.md
+pi06_test_skill/
+.cursor/skills/e2e-pi06-pipeline-test/

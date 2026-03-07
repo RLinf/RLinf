@@ -1,0 +1,69 @@
+# Compute returns configuration for LeRobot datasets
+#
+# Usage:
+#   python compute_returns.py --config-name compute_returns
+#
+# This script:
+# 1. Adds `return`, `reward`, and `prompt` columns to parquet files
+# 2. Updates meta/stats.json with return/reward statistics
+# 3. Updates meta/info.json with new feature definitions
+
+# =============================================================================
+# Data configuration
+# =============================================================================
+data:
+  # Root directory for datasets (optional)
+  # If specified, relative paths in datasets list will be resolved against this
+  data_root: null
+
+  # List of datasets to process
+  # Each entry can have:
+  #   - dataset_path: Path to LeRobot dataset (REQUIRED)
+  #   - output_path: Output path (optional, null = modify in-place)
+  #   - type: "sft" or "rollout" (default: use global dataset_type)
+  #   - gamma: Discount factor (default: use global gamma)
+  #   - failure_reward: Failure penalty (default: use global failure_reward)
+  #
+  # Example configuration:
+  #   datasets:
+  #     - dataset_path: /path/to/sft_dataset
+  #       type: sft
+  #     - dataset_path: /path/to/rollout_dataset
+  #       type: rollout
+  #       failure_reward: -300.0
+  datasets:
+    - dataset_path: /path/to/sft_dataset
+      type: sft
+    - dataset_path: /path/to/rollout_dataset
+      type: rollout
+      failure_reward: -300.0
+
+  # --------------------------------------------------------------------------
+  # Global defaults (used when not specified per-dataset)
+  # --------------------------------------------------------------------------
+
+  # Dataset type: "sft" or "rollout"
+  # - sft: All episodes are successful (reward=-1 per step, last step=0)
+  # - rollout: Read is_success from sample data (failure gets failure_reward)
+  dataset_type: "sft"
+
+  # Discount factor
+  # Use 1.0 for undiscounted returns (common in robotics)
+  gamma: 1.0
+
+  # Failure reward for rollout datasets. Default if failure_reward is not specified in datasets
+  # Last step of failed episodes gets this reward
+  failure_reward: -300.0
+
+  # Number of parallel workers for parquet file processing
+  num_workers: 8
+
+# =============================================================================
+# Hydra configuration
+# =============================================================================
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

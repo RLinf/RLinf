@@ -1,0 +1,37 @@
+# Franka peg insertion (FMB) iteration 1 dataset configuration
+# @package dataset
+#
+# For Franka robot data collected with realRL and converted to LeRobot format.
+# Uses 6D rotation representation for state and action to avoid singularities.
+
+dataset_name: franka_peg_fmb_iter1
+
+# Robot type for auto-config factory creation
+robot_type: franka_3cam
+
+default_prompt: null
+
+# Transform settings
+# Franka data already has delta actions, no extra transform needed
+extra_delta_transform: false
+
+# Model type determines normalization:
+# - "pi05": quantile normalization
+# - "pi0": z-score normalization
+model_type: null
+
+# Subtask reasoning (CoT training with subtask annotations)
+# Requires task_idx and subtask_idx in dataset, plus subtasks.json in meta folder
+subtask_reasoning: false
+subtask_prefix: "Subtask:"
+
+# FAST tokenization (discrete action tokens for dual-objective training)
+fast_tokenize: false
+
+# Action normalization skip dimensions
+# Skip normalization for specific action dimensions (e.g., gripper).
+# For Franka with rot6d: actions is [dx, dy, dz, rot6d(6), gripper] = 10D, gripper is index 9
+action_norm_skip_dims:
+  state: [9]
+  actions: [9]
+

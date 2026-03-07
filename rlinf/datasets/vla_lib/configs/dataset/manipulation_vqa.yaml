@@ -1,0 +1,20 @@
+# ManipulationVQA-60k dataset configuration
+# @package dataset
+
+dataset_name: data/ManipulationVQA-60k
+dataset_type: robo2vlm  # uses same format as robo2vlm
+dataset_split: train
+validation_split: 0.1
+max_samples: null
+streaming: false
+lazy_loading: true
+
+# VQA settings
+question_type_filter: mixed  # vqa, filling_blank, mixed
+system_prompt: null
+
+# Multi-dataset mixing
+dataset_ratios: null
+
+# Processing
+num_workers: 4

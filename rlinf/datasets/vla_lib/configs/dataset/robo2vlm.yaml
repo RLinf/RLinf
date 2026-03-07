@@ -1,0 +1,21 @@
+# @package dataset
+# Robo2VLM dataset configuration
+
+dataset_name: Robo2VLM-1/data
+dataset_type: robo2vlm  # explicit type: robo2vlm, robo2vlm_reasoning, embodied_vqa
+dataset_split: train
+validation_split: 0.1
+max_samples: null
+streaming: false
+lazy_loading: true
+
+# VQA settings
+question_type_filter: mixed  # vqa, filling_blank, mixed
+system_prompt: null
+
+# Multi-dataset mixing
+dataset_ratios: null
+
+# Processing
+num_workers: 4
+

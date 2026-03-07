@@ -1,0 +1,99 @@
+defaults:
+  - model/pi0_5@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "cfg_sft"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 30000
+  max_steps: -1
+  val_check_interval: -1
+  save_interval: 5000
+
+data:
+  # Advantage tag: loads meta/advantages_{tag}.parquet from each dataset
+  # If null, loads meta/advantages.parquet (legacy format)
+  advantage_tag: null
+
+  # Balance sampling weights by dataset length
+  balance_dataset_weights: true
+
+  # Random seed for mixture sampling
+  seed: 42
+
+  datasets:
+    - path: "/path/to/sft_dataset"
+      type: "sft"
+      weight: 1.0             # sampling weight
+    # Add more datasets as needed:
+    - path: "/path/to/collected_data"
+      type: "rollout"
+      weight: 1.0
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 64
+  global_batch_size: 512
+  seed: 0
+
+  model:
+    precision: null
+    model_path: "/path/to/pi05_base_pytorch"
+    model_type: "cfg_model"
+    add_value_head: False
+    openpi:
+      config_name: "pi05_libero"
+      detach_critic_input: True
+      train_expert_only: False
+      cfgrl_guidance_scale: 1.0
+      unconditional_prob: 0.3
+      guidance_type: "positive"
+
+  optim:
+    lr: 5.0e-5
+    value_lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-10
+    clip_grad: 1.0
+    lr_scheduler: "constant"
+    total_training_steps: 30000
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: False
+    gradient_checkpointing: True
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

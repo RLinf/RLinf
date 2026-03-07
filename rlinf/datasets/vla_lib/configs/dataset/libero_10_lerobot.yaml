@@ -1,0 +1,16 @@
+# Libero 10 dataset configuration (LeRobot v2.1 format, no-noops)
+# @package dataset
+
+dataset_type: lerobot
+dataset_name: libero_10_lerobot/libero_10_no_noops_lerobot
+
+# Robot type for auto-config factory creation
+robot_type: libero
+
+default_prompt: null
+
+# Transform settings (libero actions are already delta)
+extra_delta_transform: false
+
+# Model type determines normalization (set by experiment config)
+model_type: null

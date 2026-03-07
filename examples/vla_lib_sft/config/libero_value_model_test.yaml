@@ -1,0 +1,119 @@
+# Test config for VLA lib value model training — 5 steps, freeze VLM
+#
+# Usage:
+#   bash run_vla_lib_sft.sh libero_value_model_test
+
+defaults:
+  - model/vla_lib_value_model@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "vla_lib_value_sft_test"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 30000
+  max_steps: 5
+  val_check_interval: -1
+  save_interval: 5
+
+data:
+  datasets:
+    - dataset_path: /mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot
+      type: "sft"
+      weight: 1.0
+      robot_type: "libero"
+      model_type: "pi05"
+    - dataset_path: /mnt/project_rlinf_hs/liuzhihao/data_to_use/collected_data_40_eps
+      type: "rollout"
+      weight: 1.0
+      robot_type: "libero"
+      model_type: "pi05"
+
+  train_num_workers: 2
+  eval_num_workers: 0
+  prefetch_factor: 2
+  persistent_workers: false
+  pin_memory: false
+  value_prefix: "Value: "
+  include_state: true
+  gamma: 1.0
+  action_horizon: 10
+  num_return_bins: 201
+  normalize_to_minus_one_zero: true
+  include_next_obs: false
+  action_dim: 7
+  robot_type: "libero"
+  model_type: "pi05"
+  balance_weights: true
+  seed: 42
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 2
+  global_batch_size: 16
+  seed: 0
+
+  model:
+    precision: bf16
+    model_type: "vla_lib_value_model"
+    model_path: "/mnt/project_rlinf/liuzhihao/vla_lib_fork_gaofeng/pretrained_models/pi05_base_pytorch"
+    model_type_critic: "value"
+    critic_forward_mode: "expert"
+    expert_loss_type: "categorical"
+    critic_expert_variant: "gemma_100m"
+    freeze_vlm: True
+    num_bins: 201
+    v_min: -1.0
+    v_max: 0.0
+    action_dim: 7
+    action_horizon: 10
+    paligemma_variant: "gemma_2b"
+
+  optim:
+    lr: 5.0e-5
+    value_lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1e-10
+    clip_grad: 1.0
+    lr_scheduler: "constant"
+    lr_warmup_steps: 0
+    total_training_steps: 5
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: False
+    gradient_checkpointing: False
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False
