@@ -1,6 +1,7 @@
 defaults:
   - env/realworld_peg_insertion@env.train
   - env/realworld_peg_insertion@env.eval
+  - cameras/realsense@cameras.realsense
   - model/flow_policy@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
@@ -132,6 +133,7 @@ env:
     ignore_terminations: False
     total_num_envs: 1
     override_cfg:
+      camera_configs: ${cameras.realsense}
       is_dummy: False
       use_dense_reward: False
       target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose

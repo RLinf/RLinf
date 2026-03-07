@@ -1,0 +1,77 @@
+defaults:
+  - env/realworld_dex_pnp@env.eval
+  - cameras/realsense@cameras.realsense
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    env:
+      node_group: franka
+      placement: 0
+  node_groups:
+    - label: "4090"
+      node_ranks: 0
+    - label: franka
+      node_ranks: 1
+      env_configs:
+        - node_ranks: 1
+          env_vars:
+            - PYTHONPATH: "/opt/venv/franka-0.15.0/franka_catkin_ws/devel/lib/python3/dist-packages:/opt/ros/noetic/lib/python3/dist-packages:/workspace/RLinf"
+            - LD_LIBRARY_PATH: "/opt/venv/franka-0.15.0/franka_catkin_ws/devel/lib:/opt/venv/franka-0.15.0/franka_catkin_ws/libfranka/build:/opt/ros/noetic/lib:/opt/openrobots/lib"
+      hardware:
+        type: Franka
+        configs:
+          - robot_ip: 172.16.0.2
+            node_rank: 1
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: null
+    project_name: rlinf
+    experiment_name: "collect-dexpnp-demo"
+    logger_backends: ["tensorboard"]
+  num_data_episodes: 20       # 目标成功 demo 数量
+  record_task_description: False
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    ignore_terminations: False  # 让分类器触发的 termination 生效
+    auto_reset: False           # 由 collector 控制 reset
+    no_gripper: False
+    use_spacemouse: True
+    glove_config:
+      left_port: "/dev/ttyACM0"
+      frequency: 30
+    classifier_reward_wrapper:
+      checkpoint_path: "/workspace/RLinf/logs/20260306-07:00:37-reward-classifier-dex_pnp/reward_classifier.pt"
+      image_keys: null
+      device: cuda              # 在 GPU 节点上推理
+      remote: true              # 通过 Ray 远程调用 GPU 节点上的 ClassifierRewardServer
+      threshold: 0.75
+    override_cfg:
+      camera_configs: ${cameras.realsense}
+      target_ee_pose: [0.8188, 0.1384, 0.1188, -3.1331, -1.1213, -0.0676]
+      end_effector_type: "ruiyan_hand"
+      end_effector_config:
+        port: "/dev/ttyUSB0"
+        baudrate: 460800
+        motor_ids: [1, 2, 3, 4, 5, 6]
+        default_velocity: 2000
+        default_current: 800
+        default_state: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      hand_target_state: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      hand_reset_state: [0.4, 0.0, 0.0, 0.0, 0.0, 0.0]
+      hand_action_scale: 1.0
+      joint_reset_qpos: [0, 0, 0, -1.9, 0, 2, 0]
+      use_dense_reward: False
+      is_dummy: False

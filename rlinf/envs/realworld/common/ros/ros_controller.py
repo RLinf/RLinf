@@ -48,7 +48,7 @@ class ROSController:
                 self._ros_core = None
                 # Check roscore state and launch roscore
                 for proc in psutil.process_iter():
-                    if proc.name() == "roscore":
+                    if proc.name() in ("roscore", "rosmaster"):
                         self._ros_core = proc
 
                 if self._ros_core is None:
