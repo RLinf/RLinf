@@ -50,6 +50,14 @@ class EnvWorker(Worker):
 
         # Env configurations
         self.enable_offload = self.cfg.env.train.get("enable_offload", False)
+        # VLM planner integration (optional stage-aware subtask updates).
+        # When subtask_interval > 0 the env worker calls the VLM planner every
+        # subtask_interval chunk steps and updates env.task_description.
+        self._subtask_interval: int = int(
+            self.cfg.env.train.get("subtask_interval", 0)
+        )
+        self._steps_since_subtask_update: int = 0
+        self._vlm_planner = None  # set via set_vlm_planner() after construction
         self.only_eval = getattr(self.cfg.runner, "only_eval", False)
         self.enable_eval = self.cfg.runner.val_check_interval > 0 or self.only_eval
         if not self.only_eval:
@@ -127,6 +135,76 @@ class EnvWorker(Worker):
 
         if not self.only_eval:
             self._init_env()
+
+    def set_vlm_planner(self, planner_handle) -> None:
+        """Inject a VLMPlannerWorker Ray handle for stage-aware subtask updates.
+
+        Call this from the runner after both workers have been created, passing
+        the Ray remote handle (e.g. ``vlm_planner_actor``).  When
+        ``subtask_interval > 0`` and this handle is set, the env worker will
+        call ``planner_handle.get_next_subtask.remote()`` every
+        ``subtask_interval`` chunk steps and update ``env.task_description``.
+
+        Args:
+            planner_handle: A VLMPlannerWorker Ray actor handle, or None to
+                disable VLM-driven subtask updates.
+        """
+        self._vlm_planner = planner_handle
+        self.log_info(
+            f"[EnvWorker] VLM planner handle set (subtask_interval="
+            f"{self._subtask_interval})."
+        )
+
+    def _maybe_update_subtask(self, stage_id: int) -> None:
+        """Optionally call the VLM planner to refresh the current subtask.
+
+        Called each chunk step from :meth:`interact`.  When
+        ``subtask_interval > 0`` and a VLM planner handle is available, polls
+        the planner and writes the new subtask description into the env so that
+        the next observation includes the updated ``task_descriptions`` text.
+
+        Args:
+            stage_id: Pipeline stage index (used to select the correct env
+                from ``self.env_list``).
+        """
+        if self._subtask_interval <= 0 or self._vlm_planner is None:
+            return
+
+        self._steps_since_subtask_update += 1
+        if self._steps_since_subtask_update < self._subtask_interval:
+            return
+
+        self._steps_since_subtask_update = 0
+        env = self.env_list[stage_id]
+
+        # Collect the most recent observation image for the planner.
+        import ray
+
+        obs = getattr(env, "last_obs", None) or {}
+        images = []
+        main_images = obs.get("main_images", None)
+        if main_images is not None:
+            import torch
+
+            if isinstance(main_images, torch.Tensor):
+                main_images = main_images.numpy()
+            # main_images shape: (B, H, W, 3) or (1, H, W, 3); take first frame.
+            if main_images.ndim == 4:
+                images.append(main_images[0])
+            else:
+                images.append(main_images)
+
+        memory_ref = self._vlm_planner.get_memory_text.remote()
+        memory = ray.get(memory_ref)
+
+        subtask_ref = self._vlm_planner.get_next_subtask.remote(images, memory)
+        new_subtask: str = ray.get(subtask_ref)
+
+        if new_subtask and hasattr(env, "task_description"):
+            env.task_description = new_subtask
+            self.log_info(
+                f"[EnvWorker] Subtask updated for stage {stage_id}: '{new_subtask}'"
+            )
 
     def _setup_dst_ranks(self, batch_size: int) -> list[tuple[int, int]]:
         """Compute rollout peer ranks for this env worker.
@@ -422,6 +500,9 @@ class EnvWorker(Worker):
             )
 
     def bootstrap_step(self) -> list[EnvOutput]:
+        # Reset subtask counter at the start of each rollout epoch.
+        self._steps_since_subtask_update = 0
+
         def get_zero_dones() -> torch.Tensor:
             return (
                 torch.zeros((self.train_num_envs_per_stage,), dtype=bool)
@@ -506,6 +587,7 @@ class EnvWorker(Worker):
                     env_output, env_info = self.env_interact_step(
                         raw_chunk_actions, stage_id
                     )
+                    self._maybe_update_subtask(stage_id)
                     self.send_env_batch(output_channel, env_output.to_dict())
                     env_outputs[stage_id] = env_output
                     self.record_env_metrics(env_metrics, env_info, epoch)

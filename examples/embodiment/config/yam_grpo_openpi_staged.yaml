@@ -1,0 +1,259 @@
+# YAM bimanual robot – stage-aware FlowGRPO with π₀.5 and VLM subtask planner.
+#
+# Algorithm: GRPO with FlowGRPO (flow_sde noise injection for tractable log-prob).
+#
+# Stage-aware design:
+#   A local Qwen3.5 model runs on the Beaker node as a VLMPlannerWorker Ray
+#   actor (claims 1 GPU via @ray.remote(num_gpus=1)).
+#   Qwen3.5 is natively multimodal (early-fusion VL training); no separate VL
+#   variant needed — the standard Qwen3.5 checkpoints accept image inputs.
+#   Every `subtask_interval` chunk steps it:
+#     1. Receives the latest camera image and rolling text memory.
+#     2. Generates the next subtask instruction (e.g. "pick up the red block").
+#     3. The env worker injects that instruction into YAMEnv.task_description so
+#        that π₀.5 receives the updated language conditioning on the next step.
+#   At subtask boundaries the VLM also evaluates completion → binary reward.
+#
+# Hardware topology (3 nodes):
+#   node 0 – Desktop GPU (Robo room)
+#             └── Rollout worker  (π₀.5 inference)
+#   node 1 – YAM robot controller (Robo room)
+#             └── Env worker  (YAMEnv → yam_realtime → CAN bus → arms)
+#   node 2 – Beaker GPU (remote server)
+#             ├── Actor worker  (π₀.5 FSDP training)
+#             └── VLMPlannerWorker  (subtask generation + reward evaluation)
+#
+# Prerequisites:
+#   pip install "transformers @ git+https://github.com/huggingface/transformers.git@main"
+#   pip install qwen-vl-utils accelerate torchvision pillow  (on Beaker node)
+#   huggingface-cli download Qwen/Qwen3.5-9B
+#   VRAM note: Beaker GPU must fit both π₀.5 FSDP actor + Qwen3.5.
+#   Use Qwen3.5-4B + dtype: bfloat16 (~9 GB) for a 40 GB A100.
+#   Set is_dummy: True for initial testing before connecting real hardware.
+#   See yam_grpo_openpi.yaml for the non-staged (static task) variant.
+
+defaults:
+  - env/yam@env.train
+  - env/yam@env.eval
+  - model/pi0_5@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 3
+  component_placement:
+    actor:
+      node_group: "beaker"
+      placement: 0           # Beaker GPU(s) — full FSDP training pass
+    rollout:
+      node_group: "desktop_gpu"
+      placement: 0           # Desktop GPU — inference only
+    env:
+      node_group: yam
+      placement: 0           # YAM robot controller node
+  node_groups:
+    - label: "desktop_gpu"
+      node_ranks: 0          # Set RLINF_NODE_RANK=0 on the desktop GPU machine
+    - label: yam
+      node_ranks: 1          # Set RLINF_NODE_RANK=1 on the robot controller
+      hardware:
+        type: YAM
+        configs:
+          - node_rank: 1
+            left_ip: 192.168.1.10   # Replace: left arm reachability check IP
+            right_ip: 192.168.1.11  # Replace: right arm reachability check IP
+            # camera_serials: null  # null = auto-detect all connected RealSense cameras
+            disable_validate: False
+    - label: "beaker"
+      node_ranks: 2          # Set RLINF_NODE_RANK=2 on the Beaker machine
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "yam_grpo_openpi_staged"
+    logger_backends: ["tensorboard"]  # options: tensorboard, wandb, swanlab
+
+  max_epochs: 2000
+  max_steps: -1
+
+  only_eval: False
+  val_check_interval: -1
+  save_interval: 50
+
+  resume_dir: null
+  ckpt_path: null
+
+  weight_sync_interval: 1
+
+algorithm:
+  normalize_advantages: True
+  kl_penalty: kl
+  group_size: 4
+  reward_coef: 1.0
+
+  rollout_epoch: 4   # Must equal group_size
+  eval_rollout_epoch: 1
+
+  reward_type: chunk_level
+  logprob_type: chunk_level
+  entropy_type: token_level
+
+  update_epoch: 2
+  adv_type: grpo
+  loss_type: actor
+  loss_agg_func: "token-mean"
+  kl_beta: 0.01
+  entropy_bonus: 0
+  clip_ratio_high: 0.2
+  clip_ratio_low: 0.2
+  clip_ratio_c: 3.0
+  value_clip: 0.2
+  huber_delta: 10.0
+
+  gamma: 0.99
+  gae_lambda: 0.95
+
+  filter_rewards: False
+  rewards_lower_bound: 0.1
+  rewards_upper_bound: 0.9
+
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+    add_BOS: False
+
+  length_params:
+    max_new_token: null
+    max_length: 1024
+    min_length: 1
+
+env:
+  group_name: "EnvGroup"
+
+  train:
+    total_num_envs: 1
+    group_size: ${algorithm.group_size}
+    max_episode_steps: 100
+    max_steps_per_rollout_epoch: 100
+    control_rate_hz: 10.0
+
+    # Initial task description — overwritten dynamically by VLM planner.
+    task_description: "bimanual manipulation"
+
+    # Subtask update interval in chunk steps.  At 10 Hz with num_action_chunks=10
+    # (1 chunk = 10 actions = 1 s), subtask_interval: 30 means the VLM is queried
+    # every ~3 seconds of wall clock.  Set to 0 to disable VLM planning.
+    subtask_interval: 30
+
+    # Set is_dummy: True for initial end-to-end testing without real hardware.
+    # is_dummy: True
+
+    # --- YAM robot config (fill in before running) ---
+    # robot_cfgs:
+    #   left:  ["/path/to/yam_realtime/robot_configs/yam/left.yaml"]
+    #   right: ["/path/to/yam_realtime/robot_configs/yam/right.yaml"]
+    #
+    # camera_cfgs:
+    #   cam_front:
+    #     _target_: yam_realtime.sensors.cameras.camera.CameraNode
+    #     camera:
+    #       _target_: yam_realtime.sensors.cameras.opencv_camera.OpencvCamera
+    #       device_path: "/dev/video0"
+    #       camera_type: "realsense_camera"
+
+  eval:
+    total_num_envs: 1
+    max_episode_steps: 100
+    max_steps_per_rollout_epoch: 100
+    control_rate_hz: 10.0
+    task_description: "bimanual manipulation"
+
+# VLM planner configuration (VLMPlannerWorker, placed on Beaker node).
+vlm_planner:
+  # Local model path or HuggingFace model ID for subtask generation and reward evaluation.
+  model_path: "Qwen/Qwen3.5-9B"
+  # Inference backend: "transformers" (default) or "sglang" (requires sglang>=0.4.6).
+  backend: "transformers"
+  # Torch dtype: "bfloat16" (default, ~18 GB), "float16", or "float32".
+  # Use Qwen3.5-4B + bfloat16 (~9 GB) if VRAM is limited on a 40 GB A100.
+  dtype: "bfloat16"
+  # Maximum tokens generated for subtask instructions.
+  max_new_tokens_subtask: 64
+  # Maximum tokens generated for reward verdicts.
+  max_new_tokens_reward: 16
+  # Maximum number of text entries kept in the rolling memory buffer.
+  max_memory_entries: 20
+  # VLM confidence threshold for counting a response as "success" (unused for
+  # binary verdicts — kept for future soft-label extensions).
+  success_threshold: 0.5
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  recompute_logprobs: False
+  unnorm_key: libero_10
+  enable_offload: False
+  pipeline_stage_num: 1
+
+  collect_transitions: True
+  collect_prev_infos: False
+
+  model:
+    model_path: "/path/to/model/RLinf-Pi05-SFT"
+    precision: ${actor.model.precision}
+
+  enable_torch_compile: False
+  enable_cuda_graph: False
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+
+  micro_batch_size: 16
+  global_batch_size: 16
+  seed: 42
+  enable_offload: False
+
+  model:
+    model_path: "/path/to/model/RLinf-Pi05-SFT"
+    num_steps: 4
+
+  optim:
+    lr: 5.0e-6
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    clip_grad: 1.0
+    weight_decay: 0.01
+    lr_scheduler: torch_constant
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    gradient_checkpointing: False  # not supported for openpi
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+  reward_type: subtask
+  success_reward: 1.0
+  failure_reward: 0.0
+
+critic:
+  use_critic_model: False

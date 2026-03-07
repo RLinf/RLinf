@@ -149,6 +149,9 @@ class YAMEnv(gym.Env):
             low=-1.0, high=1.0, shape=(_STATE_DIM,), dtype=np.float32
         )
 
+        # Mutable task description — can be updated mid-episode by a VLM planner.
+        self._task_description: str = str(cfg.get("task_description", ""))
+
         # Episode tracking
         self._is_start = True
 
@@ -369,7 +372,7 @@ class YAMEnv(gym.Env):
         obs = {
             "states": states,
             "main_images": img,
-            "task_descriptions": [self.cfg.get("task_description", "")],
+            "task_descriptions": [self._task_description],
         }
         return to_tensor(obs)
 
@@ -449,5 +452,13 @@ class YAMEnv(gym.Env):
         return np.iinfo(np.uint8).max // 2  # mirrors RealWorldEnv
 
     @property
+    def task_description(self) -> str:
+        return self._task_description
+
+    @task_description.setter
+    def task_description(self, value: str) -> None:
+        self._task_description = str(value)
+
+    @property
     def task_descriptions(self) -> list[str]:
-        return [self.cfg.get("task_description", "")]
+        return [self._task_description]
