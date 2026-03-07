@@ -59,6 +59,7 @@ class ManiskillEnv(gym.Env):
         self.auto_reset = cfg.auto_reset
         self.use_rel_reward = cfg.use_rel_reward
         self.ignore_terminations = cfg.ignore_terminations
+        self.use_full_state = bool(getattr(cfg, "use_full_state", False))
         self.num_group = num_envs // cfg.group_size
         self.group_size = cfg.group_size
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
@@ -138,16 +139,15 @@ class ManiskillEnv(gym.Env):
         if wrap_obs_mode == "simple":
             if self.env.unwrapped.obs_mode == "state":
                 return {"states": raw_obs}
-
-            sensor_data = raw_obs["sensor_data"]
-            state_inputs = {
-                k: v
-                for k, v in raw_obs.items()
-                if k not in {"sensor_data", "sensor_param"}
-            }
-            state = common.flatten_state_dict(
-                state_inputs, use_torch=True, device=self.device
-            )
+            elif self.env.unwrapped.obs_mode == "rgb":
+                sensor_data = raw_obs.pop("sensor_data")
+                raw_obs.pop("sensor_param")
+                if self.use_full_state:
+                    state = self._get_full_state_obs()
+                else:
+                    state = common.flatten_state_dict(
+                        raw_obs, use_torch=True, device=self.device
+                    )
 
             main_images = sensor_data["base_camera"]["rgb"]
             sorted_images = OrderedDict(sorted(sensor_data.items()))
@@ -175,6 +175,22 @@ class ManiskillEnv(gym.Env):
             "states": proprioception,
             "task_descriptions": self.instruction,
         }
+
+    def _get_full_state_obs(self):
+        base_env = self.env.unwrapped
+        mode_attr = "_obs_mode" if hasattr(base_env, "_obs_mode") else "obs_mode"
+        original_mode = getattr(base_env, mode_attr)
+        setattr(base_env, mode_attr, "state")
+        try:
+            state_obs = base_env.get_obs()
+        finally:
+            setattr(base_env, mode_attr, original_mode)
+
+        if isinstance(state_obs, dict):
+            return common.flatten_state_dict(
+                state_obs, use_torch=True, device=self.device
+            )
+        return state_obs
 
     def _calc_step_reward(self, reward, info):
         if getattr(self.cfg, "reward_mode", "default") == "raw":

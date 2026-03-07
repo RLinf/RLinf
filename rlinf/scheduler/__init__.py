@@ -15,7 +15,14 @@
 from .channel import Channel, ChannelWorker, WeightedItem
 from .cluster import Cluster, ClusterConfig
 from .collective import CollectiveGroupOptions
-from .hardware import AcceleratorType, AcceleratorUtil, FrankaHWInfo, HardwareInfo, YAMHWInfo
+from .hardware import (
+    AcceleratorType,
+    AcceleratorUtil,
+    FrankaHWInfo,
+    HardwareInfo,
+    Turtle2HWInfo,
+    YAMHWInfo
+)
 from .manager import WorkerInfo
 from .placement import (
     ComponentPlacement,
@@ -32,6 +39,7 @@ __all__ = [
     "HardwareInfo",
     "FrankaHWInfo",
     "YAMHWInfo",
+    "Turtle2HWInfo",
     "CollectiveGroupOptions",
     "Cluster",
     "ClusterConfig",
