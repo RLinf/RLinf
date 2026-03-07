@@ -1161,7 +1161,10 @@ class MegatronWorker(MegatronModelManager, Worker):
             if not self.is_pipeline:
                 inference_split = 1
             else:
-                inference_split = self.total_batch_size_per_dp // self.logprob_forward_micro_batch_size
+                inference_split = (
+                    self.total_batch_size_per_dp
+                    // self.logprob_forward_micro_batch_size
+                )
         assert self.total_batch_size_per_dp % inference_split == 0, (
             f"MegatronWorker: total_batch_size_per_dp[{self.total_batch_size_per_dp}] should be divisible by inference_split[{inference_split}]"
         )
