@@ -18,7 +18,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "d4rl_offline")
 
 #=======================Utility Functions=======================
 
@@ -551,6 +551,9 @@ install_env_only() {
     create_and_sync_venv
     SKIP_ROS=${SKIP_ROS:-0}
     case "$ENV_NAME" in
+        d4rl_offline)
+            install_d4rl_offline_env
+            ;;
         franka)
             uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
             if [ "$SKIP_ROS" -ne 1 ]; then
@@ -588,6 +591,22 @@ install_maniskill_libero_env() {
 
     # Maniskill assets
     bash $SCRIPT_DIR/embodied/download_assets.sh --assets maniskill
+}
+
+install_d4rl_offline_env() {
+    # Install base embodied dependencies first (gym/gymnasium/transformers stack).
+    uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
+
+    # D4RL offline stack required by rlinf/data/datasets/d4rl_offline.py
+    # - d4rl: offline dataset APIs (qlearning_dataset)
+    # - mujoco-py: MuJoCo/Adroit/Kitchen task backends used by D4RL
+    # - tqdm: evaluation/trajectory utilities
+    uv pip install \
+        "cython<3.0" \
+        "gym==0.23.1" \
+        "d4rl @ git+https://github.com/Farama-Foundation/d4rl@master" \
+        "mujoco-py==2.1.2.14" \
+        "tqdm"
 }
 
 install_behavior_env() {
