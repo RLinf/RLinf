@@ -30,6 +30,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 
 ## What's NEW!
+- [2026/03] 🔥 RLinf supports real-world RL with [XSquare](https://x2robot.com) Turtle2 dual-arm robot. Doc: [RL on XSquare Turtle2 in the RealWorld](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/xsquare_turtle2.html).
 - [2026/02] 🔥 RLinf supports supervised fine-tuning of Vision-Language Models. Doc: [VLM SFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html).
 - [2026/02] 🔥 RLinf supports [DSRL (Diffusion Steering via Reinforcement Learning)](https://arxiv.org/abs/2506.15799) for Pi0, which steers a pre-trained diffusion policy by training a lightweight SAC agent in the latent noise space. Doc: [DSRL for Pi0](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dsrl.html).
 - [2026/02] 🔥 RLinf supports agentic reinforcement learning on [rStar2](https://github.com/volcengine/verl/pull/3397). Doc: [rStar2](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/rstar2.html).
@@ -103,6 +104,7 @@ Multiple Backend Integrations
       <td>
         <ul style="margin-left: 0; padding-left: 16px;">
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/franka.html">Franka Arm</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/xsquare_turtle2.html">XSquare Turtle2</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>

@@ -15,4 +15,6 @@
 from .franka import FrankaConfig, FrankaHWInfo
 from .yam import YAMConfig, YAMHWInfo  # Must be imported to register the YAM hardware type
 
-__all__ = ["FrankaConfig", "FrankaHWInfo", "YAMConfig", "YAMHWInfo"]
+from .xsquare import Turtle2Config, Turtle2HWInfo
+
+__all__ = ["FrankaConfig", "FrankaHWInfo", "Turtle2Config", "Turtle2HWInfo", "YAMConfig", "YAMHWInfo"]

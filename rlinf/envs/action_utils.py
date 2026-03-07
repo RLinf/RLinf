@@ -97,9 +97,31 @@ def prepare_actions_for_isaaclab(
 
 def prepare_actions_for_calvin(
     raw_chunk_actions,
+    model_type,
 ) -> np.ndarray:
     chunk_actions = raw_chunk_actions
-    chunk_actions[..., -1] = np.sign(chunk_actions[..., -1])
+    if SupportedModel(model_type) == SupportedModel.OPENPI:
+        chunk_actions[..., -1] = np.sign(chunk_actions[..., -1])
+    else:
+        chunk_actions[..., -1] = np.where(chunk_actions[..., -1] > 0, 1, -1)
+    return chunk_actions
+
+
+def prepare_actions_for_metaworld(
+    raw_chunk_actions,
+    model_type,
+) -> np.ndarray:
+    chunk_actions = raw_chunk_actions
+    if SupportedModel(model_type) in [
+        SupportedModel.OPENVLA,
+        SupportedModel.OPENVLA_OFT,
+    ]:
+        # the action dimesion of metaworld is 4-dim (x, y, z, gripper)
+        # we need to extract the first 3-dim and the last dim in a 7-dim action
+        if chunk_actions.shape[-1] == 7:
+            chunk_actions = np.concatenate(
+                [chunk_actions[..., :3], chunk_actions[..., -1:]], axis=-1
+            )
     return chunk_actions
 
 
@@ -189,10 +211,14 @@ def prepare_actions(
     elif env_type == SupportedEnvType.ROBOTWIN:
         chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.METAWORLD:
-        chunk_actions = raw_chunk_actions
+        chunk_actions = prepare_actions_for_metaworld(
+            raw_chunk_actions=raw_chunk_actions,
+            model_type=model_type,
+        )
     elif env_type == SupportedEnvType.CALVIN:
         chunk_actions = prepare_actions_for_calvin(
             raw_chunk_actions=raw_chunk_actions,
+            model_type=model_type,
         )
     elif env_type == SupportedEnvType.BEHAVIOR:
         chunk_actions = raw_chunk_actions

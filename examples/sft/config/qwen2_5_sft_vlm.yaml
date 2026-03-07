@@ -75,12 +75,11 @@ actor:
     total_training_steps: ${runner.max_epochs}
     lr_warmup_steps: 200 
 
-  # Override the default values in training_backend/fsdp
   fsdp_config:
     strategy: "fsdp"
-    sharding_strategy: "no_shard"
+    sharding_strategy: "full_shard"
     use_orig_params: False
-    gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
+    gradient_checkpointing: False
     mixed_precision:
       param_dtype: bf16
       reduce_dtype: fp32
