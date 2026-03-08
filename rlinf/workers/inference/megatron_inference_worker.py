@@ -46,6 +46,11 @@ def make_megatron_inference(base_class, trainer_role):
             self.trainer_role = trainer_role if len(trainer_role) > 0 else "actor"
             self.trainer_role_cfg = getattr(self.cfg, self.trainer_role)
             self.role = "_".join([trainer_role, "inference"])
+            # If there is no 'actor_inference' in config yaml, try 'inference'
+            # For PPO, there should be 'actor_inference' and 'critic_inference' in config yaml
+            # For GRPO, there is only 'inference' in config yaml
+            if self.trainer_role == "actor" and not hasattr(self.cfg, self.role):
+                self.role = "inference"
             self.role_cfg = getattr(self.cfg, self.role)
 
             self._build_inference_cfg()
