@@ -641,8 +641,10 @@ class MegatronModelManager:
 
         clear_memory()
 
-        self.is_grad_offloaded = offload_grad
-        self.is_weight_offloaded = offload_weight
+        if offload_grad:
+            self.is_grad_offloaded = True
+        if offload_weight:
+            self.is_weight_offloaded = True
 
     def onload_model_weights_and_grad(self, load_grad=True):
         if (not self.is_weight_offloaded) and (
