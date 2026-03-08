@@ -467,6 +467,7 @@ class ReasoningRunner:
                             input_channel=self.reward_channel,
                             output_channel=self.actor_inference_channel,
                             compute_ref_logprobs=self.compute_ref_logprobs,
+                            do_offload=self.critic is not None,
                         )
                         actor_inference_channel = self.actor_inference_channel
                     else:

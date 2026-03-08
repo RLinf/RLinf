@@ -617,6 +617,7 @@ class FSDPActor(FSDPModelManager, Worker):
         input_channel: Channel,
         output_channel: Channel,
         compute_ref_logprobs: bool,
+        do_offload=False,
     ):
         """
         Compute prev/ref logprobs using the actor Model's forward.
@@ -625,7 +626,12 @@ class FSDPActor(FSDPModelManager, Worker):
             input_channel: The input channel to read from.
             output_channel: The output channel to send results to.
             compute_ref_logprobs: Whether to compute reference logprobs.
+            do_offload: Whether offload weights after inference is done
         """
+        assert not do_offload, (
+            "do_offload argument of run_inference/run_training is not supported in FSDP for now"
+        )
+
         inference_split = self.cfg.actor.get("inference_split", None)
         if inference_split is None:
             if not self.is_pipeline:
@@ -889,8 +895,14 @@ class FSDPActor(FSDPModelManager, Worker):
         )
         return batch
 
-    def run_training(self, input_channel: Channel) -> tuple[dict, list]:
+    def run_training(
+        self, input_channel: Channel, do_offload=False
+    ) -> tuple[dict, list]:
         # Get all batches for this DP
+        assert not do_offload, (
+            "do_offload argument of run_inference/run_training is not supported in FSDP for now"
+        )
+
         if self.is_pipeline:
             return self.run_training_pipeline(input_channel)
 
