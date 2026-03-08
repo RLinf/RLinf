@@ -47,7 +47,7 @@ import torch
 from omegaconf import DictConfig
 
 from rlinf.datasets import TokenizePromptWithGuidance
-from rlinf.datasets.vla_lib.advantage_mixture_dataset import AdvantageMixtureDataset
+from rlinf.datasets.mixture_datasets import AdvantageMixtureDataset
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.distributed import all_reduce_dict

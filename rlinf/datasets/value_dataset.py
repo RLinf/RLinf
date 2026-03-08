@@ -13,20 +13,26 @@
 # limitations under the License.
 
 """
-Value Dataset for return prediction.
+Value Dataset for VLM-based return prediction.
 
 This module provides a dataset that extends LeRobotRLDataset to format samples
-for training a value model to predict discretized returns.
+for training a PI0.5 model in VLM mode to predict discretized returns.
 
 Inheritance chain:
     ValueDataset -> LeRobotRLDataset -> LeRobotPyTorchDataset -> Dataset
 
-Sample output format (compatible with ValueDataCollator):
+The key difference from VLA training:
+- VLA: predicts actions via flow matching
+- Value: predicts return token via cross-entropy loss (VLM mode)
+
+Sample output format (compatible with PI05DataCollator in VLM mode):
 {
     'images': Dict[str, Tensor],      # Camera images
     'image_masks': Dict[str, Tensor], # Image validity masks
     'prompt': str,                    # Task instruction
-    'target_values': float,           # Normalized return value
+    'state': Tensor,                  # Robot state (for optional discretization)
+    'prefix': str,                    # "Value: " (configurable)
+    'response': str,                  # The return_token, e.g., "42"
     'actions': None,                  # Explicitly None to trigger VLM mode
 }
 """
@@ -53,10 +59,12 @@ class ValueDataset(LeRobotRLDataset):
     Inheritance chain:
         ValueDataset -> LeRobotRLDataset -> LeRobotPyTorchDataset -> Dataset
 
-    The sample structure matches ValueDataCollator expectations:
+    The sample structure matches PI05DataCollator expectations for VLM mode:
     - 'images': camera images
     - 'prompt': task instruction
-    - 'target_values': normalized return value
+    - 'state': robot state (used for discretization in PI0.5)
+    - 'prefix': text preceding the value token (e.g., "Value: ")
+    - 'response': the return_token to predict (e.g., "42")
     - 'actions': None (triggers VLM-only forward)
     """
 
@@ -64,6 +72,11 @@ class ValueDataset(LeRobotRLDataset):
         self,
         dataset_path: str | None = None,
         repo_id: str | None = None,
+        # Value-specific configuration
+        value_prefix: str = "Value: ",
+        return_token_key: str = "return_token",
+        include_state: bool = True,
+        skip_vlm_response: bool = False,  # Skip VLM response for expert-only mode
         # RL configuration (either provide this OR the individual params below)
         rl_config: Optional[RLDataConfig] = None,
         # Individual RL params (used only if rl_config is None)
@@ -94,14 +107,15 @@ class ValueDataset(LeRobotRLDataset):
         episode_percentage: Optional[float] = None,
         shuffle_episodes: bool = False,
         episode_seed: int = 42,
-        # Sidecar tag (e.g. returns_{tag}.parquet)
-        tag: Optional[str] = None,
     ):
         """Initialize value dataset.
 
         Args:
             dataset_path: LeRobot dataset path or repo ID
             repo_id: Alias for dataset_path
+            value_prefix: Prefix text before value prediction (e.g., "Value: ")
+            return_token_key: Key for discretized return token
+            include_state: Whether to include state in output (for discretization)
             rl_config: Complete RL config. If provided, individual RL params are ignored.
             history_length: Number of past observations
             history_keys: Keys to include in history
@@ -127,6 +141,11 @@ class ValueDataset(LeRobotRLDataset):
             shuffle_episodes: Random episode selection
             episode_seed: Seed for reproducibility
         """
+        # Store value-specific config before calling parent
+        self.value_prefix = value_prefix
+        self.include_state = include_state
+        self.skip_vlm_response = skip_vlm_response
+
         # Build rl_config from individual params if not provided
         if rl_config is None:
             rl_config = create_rl_config(
@@ -150,6 +169,13 @@ class ValueDataset(LeRobotRLDataset):
                 "Value training predicts discretized return tokens."
             )
 
+        # Use return_token_key from rl_config
+        self.return_token_key = (
+            rl_config.return_token_key
+            if return_token_key == "return_token"
+            else return_token_key
+        )
+
         # Initialize parent LeRobotRLDataset with only rl_config
         super().__init__(
             dataset_path=dataset_path,
@@ -170,23 +196,29 @@ class ValueDataset(LeRobotRLDataset):
             episode_percentage=episode_percentage,
             shuffle_episodes=shuffle_episodes,
             episode_seed=episode_seed,
-            tag=tag,
         )
 
-        logger.info("ValueDataset initialized")
+        logger.info("ValueDataset initialized:")
+        logger.info(f"  Value prefix: '{self.value_prefix}'")
+        logger.info(f"  Return token key: '{self.return_token_key}'")
+        logger.info(f"  Include state: {self.include_state}")
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         """Get a sample formatted for value prediction training.
 
         Extends parent's __getitem__ to format samples for value training.
+        Supports both VLM mode (token prediction) and expert mode (continuous value).
 
         Returns:
             Dict with:
                 - images: Dict[str, Tensor] camera images
                 - image_masks: Dict[str, Tensor] (optional)
                 - prompt: str task instruction
-                - target_values: float continuous return
+                - state: Tensor robot state (if include_state=True)
+                - prefix: str value prefix (for VLM/dual modes)
+                - response: str return token (for VLM/dual modes)
                 - actions: None (explicitly for VLM mode)
+                - target_values: float continuous return (for expert/dual modes)
         """
         # Get RL sample from parent
         rl_sample = super().__getitem__(idx)
@@ -205,10 +237,23 @@ class ValueDataset(LeRobotRLDataset):
         else:
             target_value = 0.0
 
+        # Format for value training
+        # For expert-only mode, skip VLM response entirely (set to None, not empty)
         sample = {
             "target_values": target_value,
-            "actions": None,  # Explicitly None to trigger VLM mode
         }
+
+        if self.skip_vlm_response:
+            # Expert-only mode: no VLM tokens needed at all
+            # Setting to None (not empty string) ensures no EOS/response tokens are added
+            sample["prefix"] = None
+            sample["response"] = None
+        else:
+            # VLM or dual mode: include text response for VLM loss
+            sample["prefix"] = self.value_prefix
+            sample["response"] = f"{target_value:.2f}"
+
+        sample["actions"] = None  # Explicitly None to trigger VLM mode
 
         # Copy prompt
         if "prompt" in rl_sample:
@@ -245,6 +290,20 @@ class ValueDataset(LeRobotRLDataset):
         sample["images"] = images
         if image_masks:
             sample["image_masks"] = image_masks
+
+        # Copy state if requested
+        if self.include_state:
+            if "state" in rl_sample:
+                sample["state"] = rl_sample["state"]
+            elif "state_tcp_pose" in rl_sample:
+                state_parts = [rl_sample["state_tcp_pose"]]
+                if "state_gripper_pose" in rl_sample:
+                    state_parts.append(rl_sample["state_gripper_pose"])
+                sample["state"] = (
+                    torch.cat(state_parts, dim=-1)
+                    if len(state_parts) > 1
+                    else state_parts[0]
+                )
 
         # Pass through raw return values for debugging and metrics
         if "return" in rl_sample:

@@ -31,8 +31,8 @@ import numpy as np
 import safetensors.torch
 import torch
 from transformers import AutoTokenizer
-from rlinf.datasets.vla_lib.lerobot_datasets.normalize import NormStats
-from rlinf.datasets.vla_lib.lerobot_datasets.transforms import (
+from rlinf.datasets.lerobot.normalize import NormStats
+from rlinf.datasets.lerobot.transforms import (
     DataTransformFn,
     InjectDefaultPrompt,
     Normalize,
@@ -366,7 +366,7 @@ def _build_input_transforms(
     input_transforms = []
 
     if env_type == "libero":
-        from rlinf.datasets.vla_lib.lerobot_datasets.io_processing.libero import (
+        from rlinf.datasets.lerobot.libero import (
             LiberoInputs,
         )
 

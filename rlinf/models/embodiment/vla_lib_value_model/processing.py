@@ -50,7 +50,7 @@ from transformers.processing_utils import ProcessorMixin
 from transformers.tokenization_utils_base import BatchEncoding
 from transformers.utils import TensorType
 
-from rlinf.datasets.vla_lib.io_processing.value_tokens import (
+from rlinf.datasets.value_transforms import (
     get_all_value_tokens,
 )
 from rlinf.utils.dist_utils import get_logger, is_main_process

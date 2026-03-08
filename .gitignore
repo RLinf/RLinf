@@ -19,7 +19,7 @@ outputs/*
 uv.lock
 rlinf/envs/maniskill/assets
 PKG-INFO
-lerobot
+/lerobot
 visualize_result/
 data_to_use/
 

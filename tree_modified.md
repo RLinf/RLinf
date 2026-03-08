@@ -1,6 +1,6 @@
 # Pi06 PR File Tree (vs upstream 909494e)
 
-79 new files, 15 modified files
+76 new files, 12 modified files
 
 ```
 ├── .gitignore  [MOD]
@@ -31,20 +31,14 @@
 │       │   ├── libero_cfg_openpi_test.yaml  [NEW]
 │       │   ├── libero_sft_value.yaml  [NEW]
 │       │   ├── libero_sft_value_test.yaml  [NEW]
-│       │   ├── model/
-│       │   │   ├── pi0_5.yaml  [NEW]
-│       │   │   └── vla_lib_value_model.yaml  [NEW]
-│       │   └── ...  (existing sft configs)
+│       │   └── model/
+│       │       ├── pi0_5.yaml  [NEW]
+│       │       └── vla_lib_value_model.yaml  [NEW]
 │       ├── run_cfg_sft.sh  [NEW]
 │       ├── run_vla_lib_sft.sh  [NEW]
 │       ├── train_cfg_sft.py  [NEW]
 │       └── train_vla_lib_sft.py  [NEW]
 ├── install_for_use_vla_lib.sh  [NEW]
-├── requirements/
-│   ├── embodied/
-│   │   ├── ros_install.sh  [MOD]
-│   │   └── sys_deps.sh  [MOD]
-│   └── install.sh  [MOD]
 ├── rlinf/
 │   ├── config.py  [MOD]
 │   ├── data/
@@ -133,5 +127,6 @@
 │       └── vla_lib_sft/
 │           ├── __init__.py  [NEW]
 │           └── fsdp_value_sft_worker.py  [NEW]
+├── tree_modified.md  [NEW]
 └── use_guidance.md  [NEW]
 ```

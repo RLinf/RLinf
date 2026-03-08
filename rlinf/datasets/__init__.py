@@ -15,13 +15,8 @@
 """
 RLinf Datasets Module.
 
-This module provides a unified interface for all dataset-related classes
-used in RLinf training pipelines, including:
-
-- Value datasets (ValueDataset, ValueMixtureDataset, DynamicReturnDataset)
-- SFT datasets
-- DataLoader implementations
-- Data transforms
+Provides dataset classes, dataloader wrappers, and transforms for
+value learning, CFG training, and SFT pipelines.
 """
 
 # Suppress libdav1d/PyAV verbose logging (must be FIRST before any av imports)
@@ -35,45 +30,121 @@ try:
 except ImportError:
     pass
 
+import dataclasses
+from typing import Any, Iterator
+
 # ============================================================================
-# vla_lib datasets (Value learning)
+# Config
 # ============================================================================
-# ============================================================================
-# DataLoader implementations
-# ============================================================================
-from rlinf.datasets.dataloaders import (  # noqa: E402
-    CFGDataLoaderImpl,
-    ValueDataLoaderImpl,
-    VlaLibValueModelDataLoaderImpl,
+from rlinf.datasets.config import (  # noqa: E402
+    RLDataConfig,
+    create_rl_config,
+    load_return_range_from_norm_stats,
 )
 
 # ============================================================================
-# Data transforms
+# Datasets
 # ============================================================================
-from rlinf.datasets.transforms import (  # noqa: E402
-    TokenizePromptWithGuidance,
+from rlinf.datasets.mixture_datasets import (  # noqa: E402
+    AdvantageMixtureDataset,
+    ValueMixtureDataset,
 )
-from rlinf.datasets.vla_lib import (  # noqa: E402
-    # RL Dataset
-    LeRobotRLDataset,
-    # Value transforms
+from rlinf.datasets.rl_dataset import LeRobotRLDataset  # noqa: E402
+from rlinf.datasets.value_dataset import ValueDataset  # noqa: E402
+
+# ============================================================================
+# Value transforms & tokens
+# ============================================================================
+from rlinf.datasets.value_transforms import (  # noqa: E402
     ReturnDiscretizer,
     ReturnNormalizer,
-    # Config
-    RLDataConfig,
-    # Value Dataset
-    ValueDataset,
-    # Value Mixture Dataset
-    ValueMixtureDataset,
     add_value_tokens_to_tokenizer,
     create_return_discretizer,
-    create_rl_config,
     get_all_value_tokens,
-    # Value tokens
     get_value_token,
-    load_return_range_from_norm_stats,
     parse_value_token,
 )
+
+
+# ============================================================================
+# DataLoader implementations (inlined)
+# ============================================================================
+class ValueDataLoaderImpl:
+    """Lightweight wrapper that yields batches and exposes data_config().
+
+    Used by FSDPValueSftWorker.
+    """
+
+    def __init__(self, data_config: dict, data_loader):
+        self._data_config = data_config
+        self._data_loader = data_loader
+
+    def data_config(self) -> dict:
+        return self._data_config
+
+    def __len__(self) -> int:
+        return len(self._data_loader)
+
+    def set_epoch(self, epoch: int) -> None:
+        if hasattr(self._data_loader.sampler, "set_epoch"):
+            self._data_loader.sampler.set_epoch(epoch)
+        if hasattr(self._data_loader.dataset, "set_epoch"):
+            self._data_loader.dataset.set_epoch(epoch)
+
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        yield from self._data_loader
+
+
+# ============================================================================
+# Transforms (inlined)
+# ============================================================================
+@dataclasses.dataclass(frozen=True)
+class TokenizePromptWithGuidance:
+    """Tokenize both original prompt and guidance prompts for CFG models.
+
+    Generates positive and negative guidance prompts:
+    - positive: "[POSITIVE][POSITIVE]\\nTask: {prompt}"
+    - negative: "[NEGATIVE][NEGATIVE]\\nTask: {prompt}"
+    """
+
+    tokenizer: Any  # openpi.models.tokenizer.PaligemmaTokenizer
+    discrete_state_input: bool = False
+
+    def __call__(self, data: dict) -> dict:
+        if (prompt := data.pop("prompt", None)) is None:
+            raise ValueError("Prompt is required")
+
+        if self.discrete_state_input:
+            if (state := data.get("state", None)) is None:
+                raise ValueError("State is required.")
+        else:
+            state = None
+
+        if not isinstance(prompt, str):
+            prompt = prompt.item()
+
+        tokens, token_masks = self.tokenizer.tokenize(prompt, state)
+
+        positive_prompt = f"[POSITIVE][POSITIVE]\nTask: {prompt}"
+        negative_prompt = f"[NEGATIVE][NEGATIVE]\nTask: {prompt}"
+
+        positive_tokens, positive_masks = self.tokenizer.tokenize(
+            positive_prompt, state
+        )
+        negative_tokens, negative_masks = self.tokenizer.tokenize(
+            negative_prompt, state
+        )
+
+        return {
+            **data,
+            "tokenized_prompt": tokens,
+            "tokenized_prompt_mask": token_masks,
+            "tokenized_positive_guidance_prompt": positive_tokens,
+            "tokenized_positive_guidance_prompt_mask": positive_masks,
+            "tokenized_negative_guidance_prompt": negative_tokens,
+            "tokenized_negative_guidance_prompt_mask": negative_masks,
+        }
+
 
 __all__ = [
     # Config
@@ -84,11 +155,10 @@ __all__ = [
     "LeRobotRLDataset",
     # Value Dataset
     "ValueDataset",
-    # Value Mixture Dataset
+    # Mixture Datasets
+    "AdvantageMixtureDataset",
     "ValueMixtureDataset",
     # DataLoaders
-    "CFGDataLoaderImpl",
-    "VlaLibValueModelDataLoaderImpl",
     "ValueDataLoaderImpl",
     # Transforms
     "TokenizePromptWithGuidance",

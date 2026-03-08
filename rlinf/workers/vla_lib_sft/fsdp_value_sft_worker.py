@@ -131,7 +131,7 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         from rlinf.models.embodiment.vla_lib_value_model.data_collator import PI05DataCollator
         from rlinf.models.embodiment.vla_lib_value_model.processing import PI05Processor
 
-        from rlinf.datasets.vla_lib import ValueDataset
+        from rlinf.datasets import ValueDataset
 
         data_cfg = self.cfg.get("data", {})
         model_cfg = self.cfg.actor.model

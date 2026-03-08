@@ -25,7 +25,7 @@ from typing import Any, Optional, Sequence
 
 import numpy as np
 import torch
-from rlinf.datasets.vla_lib.lerobot_datasets.transforms import (
+from rlinf.datasets.lerobot.transforms import (
     DataTransformFn,
     compose,
 )
