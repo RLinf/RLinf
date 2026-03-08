@@ -225,7 +225,7 @@ class ReasoningRunner:
                     and worker_cfg.training_backend == "megatron"
                     and worker_cfg.megatron.use_hf_ckpt
                 ):
-                    from toolkits.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
+                    from rlinf.utils.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
                         convert_hf_to_mg,
                     )
 
