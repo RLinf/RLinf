@@ -1,6 +1,6 @@
 # Pi06 PR File Tree (vs upstream 909494e)
 
-76 new files, 12 modified files
+61 new files, 10 modified files
 
 ```
 ├── .gitignore  [MOD]
@@ -48,34 +48,18 @@
 │   │   └── rollout_data_collector.py  [NEW]
 │   ├── datasets/
 │   │   ├── __init__.py  [NEW]
-│   │   ├── base_interface.py  [NEW]
-│   │   ├── dataloaders/
+│   │   ├── config.py  [NEW]
+│   │   ├── lerobot/
 │   │   │   ├── __init__.py  [NEW]
-│   │   │   └── dataloader_impl.py  [NEW]
-│   │   ├── factory.py  [NEW]
-│   │   ├── transforms/
-│   │   │   ├── __init__.py  [NEW]
-│   │   │   └── tokenize_transforms.py  [NEW]
-│   │   └── vla_lib/
-│   │       ├── __init__.py  [NEW]
-│   │       ├── advantage_mixture_dataset.py  [NEW]
-│   │       ├── config.py  [NEW]
-│   │       ├── io_processing/
-│   │       │   ├── __init__.py  [NEW]
-│   │       │   ├── value_tokens.py  [NEW]
-│   │       │   └── value_transforms.py  [NEW]
-│   │       ├── lerobot_datasets/
-│   │       │   ├── __init__.py  [NEW]
-│   │       │   ├── config.py  [NEW]
-│   │       │   ├── io_processing/
-│   │       │   │   ├── __init__.py  [NEW]
-│   │       │   │   └── libero.py  [NEW]
-│   │       │   ├── lerobot_dataset.py  [NEW]
-│   │       │   ├── normalize.py  [NEW]
-│   │       │   └── transforms.py  [NEW]
-│   │       ├── rl_dataset.py  [NEW]
-│   │       ├── value_dataset.py  [NEW]
-│   │       └── value_mixture_dataset.py  [NEW]
+│   │   │   ├── config.py  [NEW]
+│   │   │   ├── lerobot_dataset.py  [NEW]
+│   │   │   ├── libero.py  [NEW]
+│   │   │   ├── normalize.py  [NEW]
+│   │   │   └── transforms.py  [NEW]
+│   │   ├── mixture_datasets.py  [NEW]
+│   │   ├── rl_dataset.py  [NEW]
+│   │   ├── value_dataset.py  [NEW]
+│   │   └── value_transforms.py  [NEW]
 │   ├── envs/
 │   │   └── libero/
 │   │       └── libero_env.py  [MOD]
@@ -102,16 +86,10 @@
 │   ├── runners/
 │   │   └── debug_pi06_runner.py  [NEW]
 │   ├── utils/
-│   │   ├── ckpt_convertor/
-│   │   │   └── fsdp_convertor/
-│   │   │       ├── config/
-│   │   │       │   ├── fsdp_model_convertor.yaml  [MOD]
-│   │   │       │   └── fsdp_vla_lib_model_convertor.yaml  [NEW]
-│   │   │       ├── convert_pt_to_hf.py  [MOD]
-│   │   │       ├── convert_pt_to_hf.sh  [NEW]
-│   │   │       └── convert_pt_to_hf_vla_lib.sh  [NEW]
-│   │   ├── dist_utils.py  [NEW]
-│   │   └── image_utils.py  [NEW]
+│   │   └── ckpt_convertor/
+│   │       └── fsdp_convertor/
+│   │           └── config/
+│   │               └── fsdp_vla_lib_model_convertor.yaml  [NEW]
 │   └── workers/
 │       ├── actor/
 │       │   └── debug_fsdp_actor_worker_cfg.py  [NEW]

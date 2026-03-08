@@ -13,6 +13,7 @@ Forward modes:
 - Expert only: Use cached KV from VLM, process only expert suffix
 """
 
+import logging
 import os
 from typing import Dict, List, Literal, Tuple
 
@@ -22,9 +23,7 @@ from transformers import GemmaForCausalLM, PaliGemmaForConditionalGeneration
 from transformers.models.auto import CONFIG_MAPPING
 from transformers.models.gemma import modeling_gemma
 
-from rlinf.utils.dist_utils import get_logger
-
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def check_transformers_replace():

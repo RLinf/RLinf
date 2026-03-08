@@ -5,6 +5,7 @@ Handles batching and preprocessing of multimodal robot control data
 with support for RL-specific fields (returns, target values, etc.).
 """
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -12,9 +13,7 @@ import numpy as np
 import torch
 from transformers.data.data_collator import DataCollatorMixin
 
-from rlinf.utils.dist_utils import get_logger
-
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 # Module-level flag for one-time logging
 _COLLATOR_VERIFIED = False

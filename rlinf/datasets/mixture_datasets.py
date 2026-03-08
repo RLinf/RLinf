@@ -21,14 +21,13 @@ This module provides:
 """
 
 import hashlib
+import logging
 from typing import Any, Optional, Protocol, Sequence, runtime_checkable
 
 import numpy as np
 from torch.utils.data import Dataset
 
-from rlinf.utils.dist_utils import get_logger
-
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable

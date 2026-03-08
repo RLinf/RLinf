@@ -20,6 +20,7 @@ This module provides:
 - Return normalization and discretization transforms for value learning
 """
 
+import logging
 from pathlib import Path
 from typing import Any, Optional
 
@@ -31,9 +32,7 @@ from rlinf.datasets.lerobot.normalize import (
     load_stats,
 )
 from rlinf.datasets.lerobot.transforms import DataTransformFn
-from rlinf.utils.dist_utils import get_logger
-
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Value bin tokens

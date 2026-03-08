@@ -12,6 +12,7 @@ Uses expert forward mode: Gemma expert + [CLS] -> categorical value prediction.
 
 import glob
 import json
+import logging
 import math
 import os
 from dataclasses import dataclass
@@ -26,8 +27,6 @@ from torch.utils.checkpoint import checkpoint
 from transformers import PreTrainedModel
 from transformers.modeling_outputs import ModelOutput
 
-from rlinf.utils.dist_utils import get_logger
-
 from .configs import get_config
 from .configuration import PI05Config, PI05CriticConfig
 from .paligemma_with_multi_expert import (
@@ -35,7 +34,7 @@ from .paligemma_with_multi_expert import (
     _requires_uniform_dtype,
 )
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
