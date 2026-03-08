@@ -105,6 +105,10 @@ class MegatronActor(MegatronWorker):
         )
         self.rollout_weights_reshard = MegatronCoreWeightReshard(rollout_reshard_config)
         self._setup_rollout_weight_dst_ranks()
+
+        # offload weights and optimizers after initialization if offload is enabled
+        # this is necessary if actor and critic are colocated
+        self._offload_weight_and_optimizer()
         torch.distributed.barrier()
 
     def get_forward_step_func(self):

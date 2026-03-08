@@ -14,6 +14,7 @@
 
 import copy
 
+import torch
 from megatron.training.training import unwrap_model
 from megatron.training.utils import average_losses_across_data_parallel_group
 from omegaconf import DictConfig
@@ -35,6 +36,12 @@ class MegatronCritic(MegatronWorker):
         super().__init__(cfg, placement, role)
 
         self.value_clip = self.cfg.algorithm.value_cliprange
+
+    def init_worker(self):
+        # offload weights and optimizers after initialization if offload is enabled
+        # this is necessary if actor and critic are colocated
+        self._offload_weight_and_optimizer()
+        torch.distributed.barrier()
 
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""

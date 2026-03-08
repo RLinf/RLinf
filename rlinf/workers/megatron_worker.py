@@ -267,12 +267,6 @@ class MegatronWorker(MegatronModelManager, Worker):
             )
             self._setup_inference_weight_dst_ranks()
 
-        # offload weights and optimizers after initialization if offload is enabled
-        # this is necessary if actor and critic are colocated
-        self._offload_weight_and_optimizer()
-
-        torch.distributed.barrier()
-
     def get_batch(
         self, channel: Channel, tag: Optional[str] = None
     ) -> tuple[dict[str, torch.Tensor], RolloutResult]:
