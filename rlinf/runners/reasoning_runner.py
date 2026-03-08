@@ -87,6 +87,10 @@ class ReasoningRunner:
         self.actor_inference = (
             actor_inference if self.has_dedicated_actor_inference else self.actor
         )
+
+        # alias name for backward compatibility, may used in subclasses
+        self.inference = self.actor_inference
+
         self.critic_inference = (
             critic_inference if self.has_dedicated_actor_inference else self.critic
         )
