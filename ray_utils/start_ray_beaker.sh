@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# start_ray_docker.sh — Launch Ray cluster: local head + Beaker GPU workers via Gantry.
+# start_ray_beaker.sh — Launch Ray cluster: local head + Beaker GPU workers via Gantry.
 #
 # Topology (from yam_ppo_openpi_topreward.yaml):
 #   Node 0 — Local desktop (Ray head + rollout)
@@ -13,13 +13,13 @@
 #   2. Submits two Beaker jobs (actor + vlm) that join the cluster over Tailscale
 #
 # Usage:
-#   bash ray_utils/start_ray_docker.sh [OPTIONS] -- [EXTRA_GANTRY_ARGS...]
+#   bash ray_utils/start_ray_beaker.sh [OPTIONS] -- [EXTRA_GANTRY_ARGS...]
 
 set -euo pipefail
 
 usage() {
     cat <<'USAGE'
-Usage: bash ray_utils/start_ray_docker.sh [OPTIONS] -- [EXTRA_GANTRY_ARGS...]
+Usage: bash ray_utils/start_ray_beaker.sh [OPTIONS] -- [EXTRA_GANTRY_ARGS...]
 
 Start local Ray head and submit Beaker GPU worker jobs over Tailscale.
 
@@ -47,7 +47,7 @@ Options:
 Extra gantry arguments can be passed after '--'.
 
 Example:
-  bash ray_utils/start_ray_docker.sh \
+  bash ray_utils/start_ray_beaker.sh \
     --cluster ai2/ceres --budget ai2/molmo-act \
     --weka oe-training-default:/mount/weka \
     --env HF_HOME=/mount/weka/shiruic/hf_cache \
@@ -77,13 +77,13 @@ ALLOW_DIRTY=""
 ONLY_ACTOR=""
 ONLY_VLM=""
 EXTRA_GANTRY_ARGS=()
+_CLUSTERS_SET="" _WEKA_SET="" _ENVS_SET="" _SECRETS_SET=""
 
 # Fixed for this topology
 ACTOR_NODE_RANK=2
 VLM_NODE_RANK=3
 COMM_NET_DEVICES="tailscale0"
 GPUS=1
-SHARED_MEMORY="64GiB"
 
 # --- Parse CLI args ---
 while [[ $# -gt 0 ]]; do
@@ -91,15 +91,15 @@ while [[ $# -gt 0 ]]; do
         --help)           usage ;;
         --image)          BEAKER_IMAGE="$2"; shift 2 ;;
         --workspace)      WORKSPACE="$2"; shift 2 ;;
-        --cluster)        CLUSTERS+=("$2"); shift 2 ;;
+        --cluster)        if [ -z "$_CLUSTERS_SET" ]; then CLUSTERS=(); _CLUSTERS_SET=1; fi; CLUSTERS+=("$2"); shift 2 ;;
         --budget)         BUDGET="$2"; shift 2 ;;
         --priority)       PRIORITY="$2"; shift 2 ;;
         --name)           EXP_NAME="$2"; shift 2 ;;
         --venv)           VENV="$2"; shift 2 ;;
         --install)        INSTALL_CMD="$2"; shift 2 ;;
-        --weka)           WEKA_MOUNTS+=("$2"); shift 2 ;;
-        --env)            EXTRA_ENVS+=("$2"); shift 2 ;;
-        --env-secret)     ENV_SECRETS+=("$2"); shift 2 ;;
+        --weka)           if [ -z "$_WEKA_SET" ]; then WEKA_MOUNTS=(); _WEKA_SET=1; fi; WEKA_MOUNTS+=("$2"); shift 2 ;;
+        --env)            if [ -z "$_ENVS_SET" ]; then EXTRA_ENVS=(); _ENVS_SET=1; fi; EXTRA_ENVS+=("$2"); shift 2 ;;
+        --env-secret)     if [ -z "$_SECRETS_SET" ]; then ENV_SECRETS=(); _SECRETS_SET=1; fi; ENV_SECRETS+=("$2"); shift 2 ;;
         --ray-head-ip)    RAY_HEAD_IP="$2"; shift 2 ;;
         --ray-port)       RAY_PORT="$2"; shift 2 ;;
         --show-logs)      SHOW_LOGS="true"; shift ;;
@@ -119,13 +119,17 @@ if [ -n "$ONLY_ACTOR" ] && [ -n "$ONLY_VLM" ]; then
 fi
 
 if [ -z "$RAY_HEAD_IP" ]; then
-    RAY_HEAD_IP=$(ip -4 addr show tailscale0 2>/dev/null | grep -oP 'inet \K[\d.]+' || true)
+    RAY_HEAD_IP=$(tailscale ip -4 2>/dev/null || ip -4 addr show tailscale0 2>/dev/null | grep -oP 'inet \K[\d.]+' || true)
     if [ -z "$RAY_HEAD_IP" ]; then
         echo "Error: --ray-head-ip not set and could not detect tailscale0 IP on this machine"
         exit 1
     fi
     echo "Detected local Tailscale IP as Ray head: ${RAY_HEAD_IP}"
 fi
+
+echo "=== RLinf Ray Cluster ==="
+echo "Ray head: ${RAY_HEAD_IP}:${RAY_PORT}"
+echo ""
 
 # --- Helper: build entrypoint command for a given node rank ---
 build_entrypoint() {
@@ -156,7 +160,6 @@ submit_job() {
     local gantry_args=(
         "gantry" "run" "--yes" "--no-python"
         "--gpus" "${GPUS}"
-        "--shared-memory" "${SHARED_MEMORY}"
         "--host-networking"
         "--beaker-image" "$BEAKER_IMAGE"
         "--workspace" "$WORKSPACE"
@@ -203,10 +206,6 @@ submit_job() {
 }
 
 # --- Start local Ray head (node 0) ---
-echo "=== RLinf Ray Cluster ==="
-echo "Ray head: ${RAY_HEAD_IP}:${RAY_PORT}"
-echo ""
-
 RAY_HEAD_ARGS=("--head" "--port=${RAY_PORT}" "--node-ip-address=${RAY_HEAD_IP}")
 
 echo "--- Starting local Ray head node (node rank 0) ---"
