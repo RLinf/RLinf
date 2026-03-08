@@ -454,7 +454,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--index_path",
         type=str,
-        default="/home/peterjin/mnt/index/wiki-18/e5_Flat.index",
+        default="./data/index/wiki-18/e5_Flat.index",
         help="Corpus indexing file.",
     )
     parser.add_argument(
