@@ -138,7 +138,7 @@ build_entrypoint() {
 
     cmd+="export RLINF_NODE_RANK=${node_rank} && "
     cmd+="export RLINF_COMM_NET_DEVICES=${COMM_NET_DEVICES} && "
-    cmd+="NODE_IP=\$(ip -4 addr show ${COMM_NET_DEVICES} | grep -oP 'inet \\\\K[\\\\d.]+') && "
+    cmd+="NODE_IP=\$(tailscale ip -4 2>/dev/null || ip -4 addr show ${COMM_NET_DEVICES} 2>/dev/null | grep -oP 'inet \\\\K[\\\\d.]+' || hostname -I | awk '{print \\\$1}') && "
     cmd+="echo \"Local Tailscale IP: \${NODE_IP}\" && "
     cmd+="echo \"Connecting to Ray head at ${RAY_HEAD_IP}:${RAY_PORT}\" && "
     cmd+="ray start --address=${RAY_HEAD_IP}:${RAY_PORT} --node-ip-address=\${NODE_IP} --block"
