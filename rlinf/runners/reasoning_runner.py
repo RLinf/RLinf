@@ -55,7 +55,7 @@ class ReasoningRunner:
         cfg: DictConfig,
         placement: "ModelParallelComponentPlacement",
         train_dataset: Dataset,
-        val_dataset: Dataset,
+        val_dataset: Optional[Dataset],
         rollout: Union["SGLangWorker", "VLLMWorker"],
         inference: Optional[Union["FSDPInference", "MegatronInference"]],
         actor: Union["FSDPActor", "MegatronActor"],
@@ -145,29 +145,29 @@ class ReasoningRunner:
             collate_fn=collate_fn,
             sampler=sampler,
         )
+        assert len(self.train_dataloader) >= 1, "Train dataloader is empty!"
+        logging.info(f"Size of train dataloader: {len(self.train_dataloader)}")
 
         val_batch_size = (
             self.cfg.data.val_rollout_batch_size
         )  # Prefer config value if set
         if val_batch_size is None:
+            assert self.val_dataset is not None, (
+                "Validation dataset must be provided if val_rollout_batch_size is set!"
+            )
             val_batch_size = len(self.val_dataset)
 
-        self.val_dataloader = StatefulDataLoader(
-            dataset=self.val_dataset,
-            batch_size=val_batch_size,
-            num_workers=num_workers,
-            shuffle=self.cfg.data.get("validation_shuffle", True),
-            drop_last=False,
-            collate_fn=collate_fn,
-        )
-
-        assert len(self.train_dataloader) >= 1, "Train dataloader is empty!"
-        assert len(self.val_dataloader) >= 1, "Validation dataloader is empty!"
-
-        logging.info(
-            f"Size of train dataloader: {len(self.train_dataloader)}, Size of val dataloader: "
-            f"{len(self.val_dataloader)}"
-        )
+        if self.val_dataset is not None:
+            self.val_dataloader = StatefulDataLoader(
+                dataset=self.val_dataset,
+                batch_size=val_batch_size,
+                num_workers=num_workers,
+                shuffle=self.cfg.data.get("validation_shuffle", True),
+                drop_last=False,
+                collate_fn=collate_fn,
+            )
+            assert len(self.val_dataloader) >= 1, "Validation dataloader is empty!"
+            logging.info(f"Size of val dataloader: {len(self.val_dataloader)}")
 
     def init_rollout_workers(self):
         """init rollout worker."""
@@ -327,22 +327,21 @@ class ReasoningRunner:
     def epoch(self):
         return self.global_steps // self.num_steps_per_epoch
 
-    def _put_batch(self, batch: dict[str, torch.Tensor]):
+    def _put_batch(self, batch: dict[str, torch.Tensor], split_size=None):
         prompt_ids = batch["prompt"].tolist()
         lengths = batch["length"].tolist()
         answers = batch["answer"]
         image_data = batch["image_data"]
         multi_modal_inputs = batch["multi_modal_inputs"]
         prompt_ids = [ids[-pmp_len:] for ids, pmp_len in zip(prompt_ids, lengths)]
-        rollout_dp_size = self.component_placement.rollout_dp_size
+        if split_size is None:
+            split_size = self.component_placement.rollout_dp_size
 
         for input_ids, answers, image_data, multi_modal_inputs in zip(
-            split_list(prompt_ids, rollout_dp_size, enforce_divisible_batch=False),
-            split_list(answers, rollout_dp_size, enforce_divisible_batch=False),
-            split_list(image_data, rollout_dp_size, enforce_divisible_batch=False),
-            split_list(
-                multi_modal_inputs, rollout_dp_size, enforce_divisible_batch=False
-            ),
+            split_list(prompt_ids, split_size, enforce_divisible_batch=False),
+            split_list(answers, split_size, enforce_divisible_batch=False),
+            split_list(image_data, split_size, enforce_divisible_batch=False),
+            split_list(multi_modal_inputs, split_size, enforce_divisible_batch=False),
         ):
             request = RolloutRequest(
                 n=self.cfg.algorithm.group_size,

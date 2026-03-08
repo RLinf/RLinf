@@ -569,6 +569,18 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
             "expert_tensor_parallel_size", None
         )
 
+        from rlinf.hybrid_engines.megatron.megatron_model_manager import HAVE_FUSCO
+
+        if HAVE_FUSCO:
+            assert (
+                cfg.model.moe_token_dispatcher_type == "alltoall"
+                and cfg.model.expert_model_parallel_size > 1
+                and cfg.model.expert_tensor_parallel_size == 1
+                and not cfg.model.variable_seq_lengths
+            ), (
+                f"FUSCO support detected. to enable FUSCO, moe_token_dispatcher_type must be 'alltoall', expert_model_parallel_size must be greater than 1, expert_tensor_parallel_size must be 1, and variable_seq_lengths must be False. get value ({cfg.model.moe_token_dispatcher_type}, {cfg.model.expert_model_parallel_size}, {cfg.model.expert_tensor_parallel_size}, {cfg.model.variable_seq_lengths})"
+            )
+
         cfg.model.moe_grouped_gemm = cfg.model.get("moe_grouped_gemm", None)
         assert cfg.model.moe_grouped_gemm in [None, "te"], (
             f"grouped_gemm type only avail in [null, te]. get value ({cfg.model.moe_grouped_gemm})"
@@ -710,9 +722,7 @@ def validate_embodied_cfg(cfg):
         )
 
     # process num-envs
-    component_placement = HybridComponentPlacement(
-        cfg, Cluster(cluster_cfg=cfg.cluster)
-    )
+    component_placement = HybridComponentPlacement(cfg, Cluster())
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
 
@@ -924,7 +934,7 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
         "Online coding task must use megatron training backend"
     )
 
-    cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
+    cluster = Cluster()
     component_placement = ModelParallelComponentPlacement(cfg, cluster)
     assert component_placement.placement_mode == PlacementMode.DISAGGREGATED, (
         "Online coding task must use disaggregated placement mode"
@@ -960,6 +970,17 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
 
 def validate_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.set_struct(cfg, True)
+
+    with open_dict(cfg):
+        cfg.runner.per_worker_log = cfg.runner.get("per_worker_log", False)
+        cfg.runner.per_worker_log_path = None
+        if cfg.runner.per_worker_log:
+            cfg.runner.per_worker_log_path = os.path.join(
+                cfg.runner.logger.log_path, "worker_logs"
+            )
+
+    # Init cluster
+    Cluster(cluster_cfg=cfg.cluster, distributed_log_dir=cfg.runner.per_worker_log_path)
 
     assert cfg.runner.task_type in SUPPORTED_TASK_TYPE, (
         f"task_type must be one of {SUPPORTED_TASK_TYPE}"
@@ -997,9 +1018,7 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
             f"padded_vocab_size ({cfg.actor.model.padded_vocab_size}) must be divisible by tensor_model_parallel_size ({cfg.actor.model.tensor_model_parallel_size})"
         )
     elif cfg.actor.training_backend == "fsdp":
-        component_placement = HybridComponentPlacement(
-            cfg, Cluster(num_nodes=cfg.cluster.num_nodes)
-        )
+        component_placement = HybridComponentPlacement(cfg, Cluster())
         actor_world_size = component_placement.get_world_size("actor")
         assert (
             cfg.actor.global_batch_size
