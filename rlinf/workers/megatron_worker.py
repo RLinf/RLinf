@@ -1118,9 +1118,8 @@ class MegatronWorker(MegatronModelManager, Worker):
         if not self.is_running:
             return
 
-        assert not self.is_weight_offloaded, (
-            "Weight has been offloaded, which prevents from syncing model to inference"
-        )
+        # ensure weights are on GPU before sync model to inference
+        self._load_weight()
 
         inference_state_dict = self._get_inference_model_state_dict()
 
