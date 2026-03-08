@@ -35,12 +35,10 @@ dependencies = [
     "torch>=2.5.0,<=2.9.0",
     "hydra-core",
     "numpy",
-
     # Data processing
     "datasets",
     "torchdata",
     "scipy",
-
     # Utilities
     "accelerate",
     "debugpy",
@@ -59,7 +57,6 @@ dependencies = [
     "huggingface_hub",
     "icmplib",
     "pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'",
-
     # Logging
     "wandb",
     "swanlab>=0.6.11",

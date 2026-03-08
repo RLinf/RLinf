@@ -17,6 +17,7 @@ from rlinf.algorithms.rewards.math import MathReward
 from rlinf.algorithms.rewards.rstar2 import Rstar2Reward
 from rlinf.algorithms.rewards.searchr1 import SearchR1Reward
 from rlinf.algorithms.rewards.subtask import SubtaskReward
+from rlinf.algorithms.rewards.top_reward import TOPReward
 from rlinf.algorithms.rewards.vqa import VQAReward
 
 
@@ -38,3 +39,4 @@ register_reward("code_offline", CodeRewardOffline)
 register_reward("searchr1", SearchR1Reward)
 register_reward("rstar2", Rstar2Reward)
 register_reward("subtask", SubtaskReward)
+register_reward("top_reward", TOPReward)

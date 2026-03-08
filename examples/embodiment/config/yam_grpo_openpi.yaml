@@ -155,6 +155,10 @@ env:
     control_rate_hz: 10.0
     task_description: "bimanual pick and place"
 
+    # Enable TOPReward dense progress signal.
+    top_reward_enabled: True
+    top_reward_max_frames: 16
+
     # Set is_dummy: True for initial end-to-end testing without real hardware.
     # is_dummy: True
 
@@ -177,6 +181,18 @@ env:
     max_steps_per_rollout_epoch: 100
     control_rate_hz: 10.0
     task_description: "bimanual pick and place"
+
+# VLM planner for TOPReward scoring (placed on Beaker node).
+vlm_planner:
+  model_path: "Qwen/Qwen3-VL-8B"
+  backend: "transformers"
+  dtype: "bfloat16"
+  max_new_tokens_subtask: 64
+  max_new_tokens_reward: 16
+  max_memory_entries: 20
+  success_threshold: 0.5
+  top_reward_enabled: True
+  top_reward_max_frames: 16
 
 rollout:
   group_name: "RolloutGroup"

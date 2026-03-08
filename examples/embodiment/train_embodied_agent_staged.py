@@ -53,7 +53,7 @@ from rlinf.workers.vlm_planner import VLMPlannerWorker
 
 mp.set_start_method("spawn", force=True)
 
-_VLM_PLANNER_NODE_GROUP = "beaker"
+_VLM_PLANNER_NODE_GROUP = "beaker_vlm"
 
 
 def _launch_vlm_planner(cfg, cluster: Cluster):
@@ -83,11 +83,9 @@ def _launch_vlm_planner(cfg, cluster: Cluster):
 
     # Pin to the first Beaker node.
     beaker_node = node_group.nodes[0]
-    scheduling_strategy = (
-        ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
-            node_id=beaker_node.ray_id,
-            soft=False,
-        )
+    scheduling_strategy = ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
+        node_id=beaker_node.ray_id,
+        soft=False,
     )
 
     vlm_actor = VLMPlannerWorker.options(

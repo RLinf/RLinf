@@ -158,6 +158,10 @@ env:
     # every ~3 seconds of wall clock.  Set to 0 to disable VLM planning.
     subtask_interval: 30
 
+    # Enable TOPReward dense progress signal (used alongside subtask reward).
+    top_reward_enabled: True
+    top_reward_max_frames: 16
+
     # Set is_dummy: True for initial end-to-end testing without real hardware.
     # is_dummy: True
 
@@ -199,6 +203,8 @@ vlm_planner:
   # VLM confidence threshold for counting a response as "success" (unused for
   # binary verdicts — kept for future soft-label extensions).
   success_threshold: 0.5
+  top_reward_enabled: True
+  top_reward_max_frames: 16
 
 rollout:
   group_name: "RolloutGroup"

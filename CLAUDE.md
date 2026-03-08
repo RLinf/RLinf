@@ -8,6 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Installation
 ```bash
+# Python 3.10–3.11 required (see pyproject.toml requires-python)
+
 # Recommended: install with uv
 uv venv && source .venv/bin/activate
 UV_TORCH_BACKEND=auto uv sync
@@ -27,6 +29,10 @@ pre-commit run --all-files   # runs Ruff (lint + format) and commit checks
 ```bash
 # Unit tests
 pytest tests/unit_tests
+
+# Single unit test
+pytest tests/unit_tests/test_channel.py
+pytest tests/unit_tests/test_channel.py::TestChannel::test_send_recv -v
 
 # Scheduler doctests
 pytest --doctest-modules rlinf/scheduler
@@ -100,19 +106,19 @@ RLinf is a distributed RL infrastructure for embodied and agentic AI, built on *
 1. Add `MY_MODEL = ("my_model", "embodied")` to `SupportedModel` in `rlinf/config.py`.
 2. Create `rlinf/models/embodiment/my_model/`; inherit `BasePolicy`, implement `default_forward` and `predict_action_batch`.
 3. Add branches in actor/rollout workers to instantiate the model.
-4. Add install logic to `requirements/install.sh`; use `.cursor/skills/add-install-docker-ci-e2e` for Docker/CI.
+4. Add install logic to `requirements/install.sh`; add Dockerfile stage, CI job, and e2e config under `tests/e2e_tests/embodied/`.
 
 ### New Environment
 1. Add `MY_ENV = "my_env"` to `SupportedEnvType` in `rlinf/envs/__init__.py`.
 2. Add lazy-import branch in `get_env_cls()`.
 3. Create `rlinf/envs/my_env/` with a gym-style env (`reset`, `step`, `observation_space`, `action_space`).
 4. Add action-format branch in `rlinf/envs/action_utils.py` if needed.
-5. Add env-specific validation in `rlinf/config.py`; use `.cursor/skills/add-install-docker-ci-e2e`.
+5. Add env-specific validation in `rlinf/config.py`; add Dockerfile stage, CI job, and e2e config.
 
 ## Code Style
 
 - **Google Python Style Guide.** Ruff enforces lint/format at `line-length: 88`.
-- **Docstrings and type hints** required on all public APIs in `rlinf/scheduler/`; expected elsewhere.
+- **Docstrings and type hints** required on all public APIs in `rlinf/scheduler/` (Ruff docstring rules `D` are only enforced there via per-file-ignores in `pyproject.toml`); expected elsewhere.
 - **Logging:** in `Worker` use `self.log_info` / `self.log_warning` / `self.log_error`; elsewhere use `from rlinf.utils.logging import get_logger`.
 - **No `print` statements.**
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) format `<type>(<scope>): <description>`, signed-off (`git commit -s`).

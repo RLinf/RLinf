@@ -16,6 +16,7 @@ from collections import defaultdict
 from typing import Any, Literal
 
 import numpy as np
+import ray
 import torch
 from omegaconf import DictConfig
 
@@ -53,11 +54,19 @@ class EnvWorker(Worker):
         # VLM planner integration (optional stage-aware subtask updates).
         # When subtask_interval > 0 the env worker calls the VLM planner every
         # subtask_interval chunk steps and updates env.task_description.
-        self._subtask_interval: int = int(
-            self.cfg.env.train.get("subtask_interval", 0)
-        )
+        self._subtask_interval: int = int(self.cfg.env.train.get("subtask_interval", 0))
         self._steps_since_subtask_update: int = 0
         self._vlm_planner = None  # set via set_vlm_planner() after construction
+
+        # TOPReward dense reward state
+        self._top_reward_enabled: bool = bool(
+            self.cfg.env.train.get("top_reward_enabled", False)
+        )
+        self._top_reward_max_frames: int = int(
+            self.cfg.env.train.get("top_reward_max_frames", 16)
+        )
+        self._episode_frames: list[np.ndarray] = []
+        self._prev_top_score: float = 0.0
         self.only_eval = getattr(self.cfg.runner, "only_eval", False)
         self.enable_eval = self.cfg.runner.val_check_interval > 0 or self.only_eval
         if not self.only_eval:
@@ -194,6 +203,62 @@ class EnvWorker(Worker):
             self.log_info(
                 f"[EnvWorker] Subtask updated for stage {stage_id}: '{new_subtask}'"
             )
+
+    def _compute_top_reward(self, env_output: EnvOutput, stage_id: int) -> EnvOutput:
+        """Compute TOPReward dense progress reward and inject into env_output.
+
+        Extracts the current frame, queries the VLM planner for a progress
+        score, and writes ``score_t - score_{t-1}`` into the reward tensor.
+
+        Args:
+            env_output: The env output from ``env_interact_step``.
+            stage_id: Pipeline stage index.
+
+        Returns:
+            Modified env_output with dense reward injected.
+        """
+        if not self._top_reward_enabled or self._vlm_planner is None:
+            return env_output
+
+        # Extract current frame from observation.
+        main_images = env_output.obs.get("main_images", None)
+        if main_images is not None:
+            if isinstance(main_images, torch.Tensor):
+                frame = main_images[0].cpu().numpy()  # (H, W, 3)
+            else:
+                frame = np.asarray(main_images[0])
+            self._episode_frames.append(frame)
+
+        # Trim to max frames.
+        if len(self._episode_frames) > self._top_reward_max_frames:
+            self._episode_frames = self._episode_frames[-self._top_reward_max_frames :]
+
+        # Get instruction from env.
+        env = self.env_list[stage_id]
+        instruction = getattr(env, "task_description", "")
+        if hasattr(env, "env") and hasattr(env.env, "task_description"):
+            instruction = env.env.task_description
+
+        score_ref = self._vlm_planner.compute_top_reward.remote(
+            self._episode_frames, instruction
+        )
+        score_t = ray.get(score_ref)
+
+        reward = float(score_t) - self._prev_top_score
+        self._prev_top_score = float(score_t)
+
+        # Inject reward into the last chunk position.
+        if env_output.rewards is not None:
+            env_output.rewards[:, -1] = reward
+        self.log_info(f"[EnvWorker] TOPReward: score={score_t:.4f}, delta={reward:.4f}")
+
+        return env_output
+
+    def _reset_top_reward_state(self) -> None:
+        """Reset TOPReward episode state for a new episode."""
+        self._episode_frames = []
+        self._prev_top_score = 0.0
+
     def _setup_env_and_wrappers(self, env_cls, env_cfg, num_envs_per_stage: int):
         env_list = []
 
@@ -343,6 +408,14 @@ class EnvWorker(Worker):
             intervene_actions=intervene_actions,
             intervene_flags=intervene_flags,
         )
+
+        # Inject TOPReward dense reward if enabled.
+        env_output = self._compute_top_reward(env_output, stage_id)
+
+        # Reset TOPReward state on episode done.
+        if self._top_reward_enabled and chunk_dones[:, -1].any():
+            self._reset_top_reward_state()
+
         return env_output, env_info
 
     def env_evaluate_step(
@@ -531,6 +604,9 @@ class EnvWorker(Worker):
     def bootstrap_step(self) -> list[EnvOutput]:
         # Reset subtask counter at the start of each rollout epoch.
         self._steps_since_subtask_update = 0
+        # Reset TOPReward episode state for new rollout epoch.
+        if self._top_reward_enabled:
+            self._reset_top_reward_state()
 
         def get_zero_dones() -> torch.Tensor:
             return (

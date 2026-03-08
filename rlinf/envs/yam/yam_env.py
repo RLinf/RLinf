@@ -42,14 +42,12 @@ Action space
 14D float32 vector: 7 joint positions for left arm followed by 7 for right arm.
 """
 
-import time
-from collections import OrderedDict
-from typing import Any, Optional
+from typing import Optional
 
 import gymnasium as gym
 import numpy as np
 import torch
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
 from rlinf.envs.utils import to_tensor
 from rlinf.scheduler import WorkerInfo, YAMHWInfo
@@ -114,6 +112,9 @@ class YAMEnv(gym.Env):
         self._main_camera = str(cfg.get("main_camera", "top_camera"))
         self.main_image_key = self._main_camera
 
+        self.auto_reset = bool(cfg.get("auto_reset", False))
+        self.ignore_terminations = bool(cfg.get("ignore_terminations", True))
+
         self._num_steps = 0
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
 
@@ -172,7 +173,10 @@ class YAMEnv(gym.Env):
             from omegaconf import OmegaConf
             from yam_realtime.envs.robot_env import RobotEnv
             from yam_realtime.robots.utils import Rate
-            from yam_realtime.utils.launch_utils import initialize_robots, initialize_sensors
+            from yam_realtime.utils.launch_utils import (
+                initialize_robots,
+                initialize_sensors,
+            )
         except ImportError as e:
             raise ImportError(
                 "yam_realtime must be installed to run YAMEnv with real hardware. "
@@ -200,9 +204,13 @@ class YAMEnv(gym.Env):
         camera_cfgs_raw = self.cfg.get("camera_cfgs", None)
         camera_dict: dict = {}
         if camera_cfgs_raw is not None:
-            sensors_cfg = {"cameras": OmegaConf.to_container(camera_cfgs_raw, resolve=True)}
+            sensors_cfg = {
+                "cameras": OmegaConf.to_container(camera_cfgs_raw, resolve=True)
+            }
             camera_dict, _ = initialize_sensors(sensors_cfg, self._server_processes)
-            self._logger.info(f"[YAMEnv] Cameras initialized: {list(camera_dict.keys())}")
+            self._logger.info(
+                f"[YAMEnv] Cameras initialized: {list(camera_dict.keys())}"
+            )
 
         rate = Rate(self._control_rate_hz)
         self._robot_env = RobotEnv(
@@ -288,6 +296,85 @@ class YAMEnv(gym.Env):
 
         return obs, reward, terminated, truncated, infos
 
+    def chunk_step(self, chunk_actions):
+        """Execute a chunk of actions and return stacked results.
+
+        Follows the same contract as ``RealWorldEnv.chunk_step()``.
+
+        Parameters
+        ----------
+        chunk_actions : np.ndarray | torch.Tensor
+            Shape ``(num_envs, chunk_size, action_dim)``.
+
+        Returns
+        -------
+        obs_list, chunk_rewards, chunk_terminations, chunk_truncations, infos_list
+        """
+        if isinstance(chunk_actions, torch.Tensor):
+            chunk_actions = chunk_actions.detach().cpu().numpy()
+        chunk_actions = np.asarray(chunk_actions, dtype=np.float32)
+        chunk_size = chunk_actions.shape[1]
+
+        obs_list = []
+        infos_list = []
+        raw_chunk_rewards = []
+        raw_chunk_terminations = []
+        raw_chunk_truncations = []
+
+        for i in range(chunk_size):
+            actions = chunk_actions[:, i]
+            obs, step_reward, terminations, truncations, infos = self.step(
+                actions, auto_reset=False
+            )
+            obs_list.append(obs)
+            infos_list.append(infos)
+            raw_chunk_rewards.append(step_reward)
+            raw_chunk_terminations.append(terminations)
+            raw_chunk_truncations.append(truncations)
+
+        chunk_rewards = torch.stack(
+            [
+                to_tensor(r) if not isinstance(r, torch.Tensor) else r
+                for r in raw_chunk_rewards
+            ],
+            dim=1,
+        )  # [num_envs, chunk_size]
+        raw_chunk_terminations = torch.stack(
+            [
+                to_tensor(t) if not isinstance(t, torch.Tensor) else t
+                for t in raw_chunk_terminations
+            ],
+            dim=1,
+        )
+        raw_chunk_truncations = torch.stack(
+            [
+                to_tensor(t) if not isinstance(t, torch.Tensor) else t
+                for t in raw_chunk_truncations
+            ],
+            dim=1,
+        )
+
+        past_terminations = raw_chunk_terminations.any(dim=1)
+        past_truncations = raw_chunk_truncations.any(dim=1)
+
+        if self.auto_reset or self.ignore_terminations:
+            chunk_terminations = torch.zeros_like(raw_chunk_terminations)
+            chunk_terminations[:, -1] = past_terminations
+
+            chunk_truncations = torch.zeros_like(raw_chunk_truncations)
+            chunk_truncations[:, -1] = past_truncations
+        else:
+            chunk_terminations = raw_chunk_terminations.clone()
+            chunk_truncations = raw_chunk_truncations.clone()
+
+        return (
+            obs_list,
+            chunk_rewards,
+            chunk_terminations,
+            chunk_truncations,
+            infos_list,
+        )
+
     def close(self):
         if self._robot_env is not None:
             try:
@@ -366,6 +453,7 @@ class YAMEnv(gym.Env):
         img = np.asarray(img, dtype=np.uint8)
         if img.shape != (self._img_h, self._img_w, 3):
             import cv2
+
             img = cv2.resize(img, (self._img_w, self._img_h))
         img = img[np.newaxis, :]  # (1, H, W, 3)
 

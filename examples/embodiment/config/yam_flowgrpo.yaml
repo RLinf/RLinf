@@ -137,6 +137,10 @@ env:
     control_rate_hz: 10.0
     task_description: "bimanual pick and place"  # Task text for VLA conditioning
 
+    # Enable TOPReward dense progress signal.
+    top_reward_enabled: True
+    top_reward_max_frames: 16
+
     # --- YAM robot config (fill in before running) ---
     # robot_cfgs:
     #   left:  ["/path/to/yam_realtime/robot_configs/yam/left.yaml"]
@@ -156,6 +160,18 @@ env:
     max_steps_per_rollout_epoch: 100
     control_rate_hz: 10.0
     task_description: "bimanual pick and place"
+
+# VLM planner for TOPReward scoring (placed on GPU node).
+vlm_planner:
+  model_path: "Qwen/Qwen3-VL-8B"
+  backend: "transformers"
+  dtype: "bfloat16"
+  max_new_tokens_subtask: 64
+  max_new_tokens_reward: 16
+  max_memory_entries: 20
+  success_threshold: 0.5
+  top_reward_enabled: True
+  top_reward_max_frames: 16
 
 rollout:
   group_name: "RolloutGroup"

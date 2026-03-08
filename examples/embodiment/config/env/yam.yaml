@@ -34,6 +34,16 @@ task_description: ""
 # Set to True to run without real hardware (returns zero observations).
 is_dummy: False
 
+# Auto-reset and termination handling (matches RealWorldEnv contract).
+auto_reset: False
+ignore_terminations: True
+
+# TOPReward dense reward configuration.
+# When enabled, the env worker queries the VLM planner for a progress score
+# after each chunk step and injects the delta as a dense reward.
+top_reward_enabled: False
+top_reward_max_frames: 16
+
 # Robot config file paths (required when is_dummy: False).
 # Each value is a list of yam_realtime YAML config files for that arm,
 # passed to yam_realtime.utils.launch_utils.initialize_robots().

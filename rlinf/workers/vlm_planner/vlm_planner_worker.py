@@ -138,10 +138,26 @@ class VLMPlannerWorker:
             planner_cfg.get("success_threshold", 0.5)
         )
 
+        # TOPReward configuration
+        self._top_reward_enabled: bool = bool(
+            planner_cfg.get("top_reward_enabled", False)
+        )
+        self._top_reward_max_frames: int = int(
+            planner_cfg.get("top_reward_max_frames", 16)
+        )
+
         if self._backend == "sglang":
             self._load_sglang_backend()
         else:
             self._load_transformers_backend()
+
+        if self._top_reward_enabled:
+            from rlinf.algorithms.rewards.top_reward import TOPReward
+
+            self._top_reward = TOPReward(
+                planner_cfg, model=self._model, processor=self._processor
+            )
+            self._logger.info("[VLMPlannerWorker] TOPReward enabled.")
 
         # Rolling text memory: deque of text entries logged each step.
         self._memory: deque[str] = deque(maxlen=self._max_memory_entries)
@@ -303,10 +319,63 @@ class VLMPlannerWorker:
             )
             reward = 0.0
 
-        self._logger.info(
-            f"[VLMPlannerWorker] Subtask '{subtask}' → reward={reward}"
-        )
+        self._logger.info(f"[VLMPlannerWorker] Subtask '{subtask}' → reward={reward}")
         return reward
+
+    # ------------------------------------------------------------------
+    # TOPReward: dense progress reward via True-token log-probability
+    # ------------------------------------------------------------------
+
+    def compute_top_reward(
+        self,
+        frames: list[np.ndarray],
+        instruction: str,
+        reduction: str = "mean",
+        fps: float = 2.0,
+    ) -> float:
+        """Compute a TOPReward progress score for the given trajectory frames.
+
+        Delegates to :class:`rlinf.algorithms.rewards.top_reward.TOPReward`
+        for the actual scoring logic (prompt construction, label masking,
+        log-prob extraction).
+
+        Args:
+            frames: List of uint8 RGB images ``(H, W, 3)`` representing the
+                trajectory so far (most recent last).
+            instruction: Task description string.
+            reduction: How to aggregate per-token log-probs: ``"mean"`` or
+                ``"sum"``.
+            fps: Frames per second metadata for video input.
+
+        Returns:
+            Mean (or summed) log-probability of the instruction suffix + "True"
+            tokens (a float, typically negative).
+        """
+        if not self._top_reward_enabled:
+            return 0.0
+
+        if self._backend == "sglang":
+            self._logger.warning(
+                "[VLMPlannerWorker] TOPReward is not supported with the sglang "
+                "backend (requires forward pass, not generation). Returning 0.0."
+            )
+            return 0.0
+
+        # Trim frames to the configured maximum.
+        if len(frames) > self._top_reward_max_frames:
+            frames = frames[-self._top_reward_max_frames :]
+
+        try:
+            score = self._top_reward.compute_score(
+                frames, instruction, reduction=reduction, fps=fps
+            )
+        except Exception as exc:
+            self._logger.warning(
+                f"[VLMPlannerWorker] compute_top_reward failed: {exc}. Returning 0.0."
+            )
+            score = 0.0
+
+        return float(score)
 
     # ------------------------------------------------------------------
     # Inference dispatch
@@ -326,9 +395,7 @@ class VLMPlannerWorker:
             return self._generate_sglang(messages, max_new_tokens)
         return self._generate_transformers(messages, max_new_tokens)
 
-    def _generate_transformers(
-        self, messages: list[dict], max_new_tokens: int
-    ) -> str:
+    def _generate_transformers(self, messages: list[dict], max_new_tokens: int) -> str:
         """Run inference using HuggingFace Transformers.
 
         Args:
@@ -443,7 +510,10 @@ class VLMPlannerWorker:
             if img is None:
                 continue
             user_content.append(
-                {"type": "image", "image": self._to_pil_image(np.asarray(img, dtype=np.uint8))}
+                {
+                    "type": "image",
+                    "image": self._to_pil_image(np.asarray(img, dtype=np.uint8)),
+                }
             )
         user_content.append({"type": "text", "text": user_text})
 
