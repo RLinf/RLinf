@@ -4,15 +4,13 @@
 #
 # Topology:
 #   Replica 0 — Ray head + env worker (RemoteEnv → gRPC to robot)
-#   Replica 1 — Actor training (GPU)
-#   Replica 2 — VLM planner (GPU)
-#   ...additional replicas as needed
+#   Replica 1..N — Ray GPU workers (actor, rollout)
 #
 # Ray head discovery uses BEAKER_LEADER_REPLICA_HOSTNAME (set automatically
 # by Beaker for multi-replica experiments).
 #
-# The local robot machine runs RobotServer + cloudflared tunnel separately.
-# Set ROBOT_SERVER_URL in the Beaker env to the tunnel URL.
+# The local robot machine runs RobotServer with a reverse SSH tunnel
+# to the head node. Set ROBOT_SERVER_URL=localhost:50051 in the Beaker env.
 #
 # This script is the entrypoint for each Beaker replica. It detects its role
 # from BEAKER_REPLICA_RANK and either starts as head or joins as worker.

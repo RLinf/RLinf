@@ -2,12 +2,12 @@
 
 This environment presents the same interface as ``YAMEnv`` but forwards all
 calls to a gRPC server (typically running on the robot's local machine and
-exposed via a cloudflared tunnel).
+exposed to the Beaker container via a reverse SSH tunnel over Tailscale).
 
 Usage in YAML config::
 
     env_type: remote
-    remote_server_url: "https://<tunnel-id>.trycloudflare.com"
+    remote_server_url: "localhost:50051"
 """
 
 from typing import Optional
@@ -98,22 +98,9 @@ class RemoteEnv(gym.Env):
             ("grpc.max_receive_message_length", max_msg),
         ]
 
-        # Use secure channel for HTTPS URLs (e.g. cloudflared quick tunnels),
-        # insecure channel for plain host:port addresses.
-        if server_url.startswith("https://"):
-            # Strip scheme — gRPC wants "host:port", not a URL.
-            target = server_url.removeprefix("https://")
-            if ":" not in target:
-                target += ":443"
-            credentials = grpc.ssl_channel_credentials()
-            self._channel = grpc.secure_channel(
-                target, credentials, options=channel_options
-            )
-        else:
-            target = server_url.removeprefix("http://")
-            self._channel = grpc.insecure_channel(
-                target, options=channel_options
-            )
+        self._channel = grpc.insecure_channel(
+            server_url, options=channel_options
+        )
 
         self._stub = robot_env_pb2_grpc.RobotEnvServiceStub(self._channel)
 

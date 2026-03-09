@@ -5,8 +5,8 @@ Run standalone::
     python -m rlinf.envs.remote.robot_server --config-path /path/to/env_config.yaml
 
 The server exposes the robot environment over gRPC so that a ``RemoteEnv``
-client running on a Beaker GPU node can drive the real robot over a
-cloudflared tunnel.
+client running on a Beaker GPU node can drive the real robot over a reverse
+SSH tunnel (Tailscale).
 """
 
 import argparse
