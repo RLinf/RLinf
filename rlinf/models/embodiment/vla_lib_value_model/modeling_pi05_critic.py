@@ -23,7 +23,6 @@ import torch.nn.functional as F  # noqa: N812
 from safetensors import safe_open
 from safetensors.torch import load_file
 from torch import Tensor, nn
-from torch.utils.checkpoint import checkpoint
 from transformers import PreTrainedModel
 from transformers.modeling_outputs import ModelOutput
 
@@ -40,41 +39,6 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Free Functions (from openpi/modeling_pi0.py)
 # =============================================================================
-
-
-def get_safe_dtype(target_dtype, device_type):
-    """Get a safe dtype for the given device type."""
-    if device_type == "cpu":
-        if target_dtype == torch.bfloat16:
-            return torch.float32
-        if target_dtype == torch.float64:
-            return torch.float64
-    return target_dtype
-
-
-def create_sinusoidal_pos_embedding(
-    time: torch.Tensor, dimension: int, min_period: float, max_period: float, device="cpu"
-) -> Tensor:
-    """Computes sine-cosine positional embedding vectors for scalar positions."""
-    if dimension % 2 != 0:
-        raise ValueError(f"dimension ({dimension}) must be divisible by 2")
-    if time.ndim != 1:
-        raise ValueError("The time tensor is expected to be of shape `(batch_size, )`.")
-
-    dtype = get_safe_dtype(torch.float64, device.type)
-    fraction = torch.linspace(0.0, 1.0, dimension // 2, dtype=dtype, device=device)
-    period = min_period * (max_period / min_period) ** fraction
-
-    scaling_factor = 1.0 / period * 2 * math.pi
-    sin_input = scaling_factor[None, :] * time[:, None]
-    return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
-
-
-def sample_beta(alpha, beta, bsize, device):
-    alpha_t = torch.as_tensor(alpha, dtype=torch.float32, device=device)
-    beta_t = torch.as_tensor(beta, dtype=torch.float32, device=device)
-    dist = torch.distributions.Beta(alpha_t, beta_t)
-    return dist.sample((bsize,))
 
 
 def make_att_2d_masks(pad_masks, att_masks):
@@ -123,7 +87,7 @@ class PI0PreTrainedModel(PreTrainedModel):
 
     def _set_gradient_checkpointing(self, enable: bool = True, gradient_checkpointing_func=None):
         if gradient_checkpointing_func is None:
-            gradient_checkpointing_func = checkpoint
+            gradient_checkpointing_func = torch.utils.checkpoint.checkpoint
         if hasattr(self, "model"):
             if enable:
                 self.model.gradient_checkpointing_enable()
@@ -423,7 +387,6 @@ class PI05FlowMatching(nn.Module):
         return torch.cat(embs, dim=1), torch.cat(pad_masks, dim=1), torch.cat(ar_masks, dim=1)
 
 
-
 # =============================================================================
 # Value Head
 # =============================================================================
@@ -586,7 +549,6 @@ class ValueCriticModel(PI05FlowMatching):
         ) = self._preprocess_observation(observation)
 
         batch_size = lang_tokens.shape[0]
-        device = lang_tokens.device
 
         prefix_embs, prefix_pad_masks, prefix_ar_masks = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks, token_ar_mask
@@ -952,7 +914,6 @@ class PI05ValueCritic(PI05PreTrainedModel):
 
 __all__ = [
     "make_att_2d_masks",
-    "create_sinusoidal_pos_embedding",
     "PI0PreTrainedModel",
     "PI05PreTrainedModel",
     "PI05FlowMatching",
