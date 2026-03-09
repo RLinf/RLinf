@@ -1,0 +1,38 @@
+# Remote YAM environment — proxies to a RobotServer over gRPC.
+#
+# The server runs on the robot's local machine and is exposed via cloudflared.
+# Set ROBOT_SERVER_URL to the tunnel URL or direct address.
+#
+# Usage:
+#   1. On robot machine: bash scripts/start_robot_server.sh --config /path/to/yam.yaml
+#   2. Export ROBOT_SERVER_URL=<tunnel-url-or-ip:port>
+#   3. Launch training with env=remote_yam
+
+env_type: remote
+
+# gRPC server URL — override via ROBOT_SERVER_URL env var.
+remote_server_url: "${oc.env:ROBOT_SERVER_URL,localhost:50051}"
+
+# Image compression (server-side JPEG encoding, client-side decoding).
+compress_images: true
+jpeg_quality: 90
+
+# gRPC transport settings.
+grpc_max_message_size: 16777216  # 16 MB
+grpc_timeout: 30.0               # seconds per RPC
+
+# Episode settings (also configured server-side; these are for client reference).
+max_episode_steps: 100
+control_rate_hz: 10.0
+
+# Task description injected into observations (can be updated by VLM planner).
+task_description: ""
+
+# Auto-reset and termination handling.
+auto_reset: false
+ignore_terminations: true
+
+video_cfg:
+  save_video: false
+  info_on_video: true
+  video_base_dir: ${runner.logger.log_path}/video/train

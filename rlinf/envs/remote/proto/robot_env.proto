@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package robot_env;
+
+service RobotEnvService {
+  // Return observation and action space metadata.
+  rpc GetSpaces(Empty) returns (SpacesResponse);
+
+  // Reset the environment and return the initial observation.
+  rpc Reset(ResetRequest) returns (Observation);
+
+  // Execute a chunk of actions and return per-step results.
+  rpc ChunkStep(ChunkStepRequest) returns (ChunkStepResponse);
+
+  // Update the task description string.
+  rpc SetTaskDescription(TaskDescriptionRequest) returns (Empty);
+
+  // Close the environment.
+  rpc Close(Empty) returns (Empty);
+}
+
+message Empty {}
+
+message ResetRequest {
+  optional int32 seed = 1;
+}
+
+message TaskDescriptionRequest {
+  string task_description = 1;
+}
+
+// Observation from a single step.
+message Observation {
+  // Joint states as raw float32 bytes, shape info in state_shape.
+  bytes states = 1;
+  repeated int32 state_shape = 2;
+
+  // Primary camera image as JPEG-compressed bytes (or raw if uncompressed).
+  bytes main_image = 3;
+  int32 img_height = 4;
+  int32 img_width = 5;
+  bool is_compressed = 6;
+
+  // Task description string.
+  string task_description = 7;
+}
+
+// Spaces metadata.
+message SpacesResponse {
+  // State space
+  int32 state_dim = 1;
+
+  // Action space
+  int32 action_dim = 2;
+  float action_low = 3;
+  float action_high = 4;
+
+  // Image space
+  int32 img_height = 5;
+  int32 img_width = 6;
+  int32 img_channels = 7;
+
+  // Env config
+  int32 max_episode_steps = 8;
+  float control_rate_hz = 9;
+  bool auto_reset = 10;
+  bool ignore_terminations = 11;
+}
+
+// Result from a single step within a chunk.
+message StepResult {
+  Observation observation = 1;
+  float reward = 2;
+  bool terminated = 3;
+  bool truncated = 4;
+}
+
+message ChunkStepRequest {
+  // Serialized actions: float32 bytes, shape (num_envs, chunk_size, action_dim).
+  bytes actions = 1;
+  int32 num_envs = 2;
+  int32 chunk_size = 3;
+  int32 action_dim = 4;
+}
+
+message ChunkStepResponse {
+  repeated StepResult step_results = 1;
+}

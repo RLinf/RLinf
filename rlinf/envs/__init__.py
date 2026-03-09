@@ -30,6 +30,7 @@ class SupportedEnvType(Enum):
     OPENSORAWM = "opensora_wm"
     WANWM = "wan_wm"
     YAM = "yam"
+    REMOTE = "remote"
 
 
 def get_env_cls(env_type: str, env_cfg=None):
@@ -118,5 +119,9 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.yam.yam_env import YAMEnv
 
         return YAMEnv
+    elif env_type == SupportedEnvType.REMOTE:
+        from rlinf.envs.remote.remote_env import RemoteEnv
+
+        return RemoteEnv
     else:
         raise NotImplementedError(f"Environment type {env_type} not implemented")

@@ -233,7 +233,11 @@ def prepare_actions(
             action_dim=action_dim,
             model_type=model_type,
         )
-    elif env_type == SupportedEnvType.REALWORLD:
+    elif env_type in (
+        SupportedEnvType.REALWORLD,
+        SupportedEnvType.YAM,
+        SupportedEnvType.REMOTE,
+    ):
         chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.FRANKASIM:
         chunk_actions = prepare_actions_for_mujoco(

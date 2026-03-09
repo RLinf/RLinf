@@ -57,6 +57,9 @@ dependencies = [
     "huggingface_hub",
     "icmplib",
     "pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # YAM robot environment
+    "yam_realtime @ file:third_party/yam_realtime",
+    "i2rt @ file:third_party/i2rt",
     # Logging
     "wandb",
     "swanlab>=0.6.11",
@@ -106,6 +109,8 @@ embodied = [
     "imageio[ffmpeg]",
     "gymnasium",
     "gym",
+    "grpcio>=1.60.0",
+    "grpcio-tools>=1.60.0",
 ]
 franka = [
     "pyyaml",
