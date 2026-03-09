@@ -458,11 +458,11 @@ class YAMEnv(gym.Env):
         img = img[np.newaxis, :]  # (1, H, W, 3)
 
         obs = {
-            "states": states,
-            "main_images": img,
+            "states": to_tensor(states),
+            "main_images": to_tensor(img),
             "task_descriptions": [self._task_description],
         }
-        return to_tensor(obs)
+        return obs
 
     def _dummy_obs(self) -> dict:
         """Return a zeroed observation dict for dummy/simulation mode."""
