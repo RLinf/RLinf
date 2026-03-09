@@ -47,7 +47,7 @@ RLinf 目前通过 Patch 方式集成 FUSCO，支持以 Megatron-LM 为后端的
 
 可以通过以下命令进行测试：
 
-.. code-block:: bash 
+.. code-block:: bash
 
   FUSCO_SO_PATH=/path/to/libfusco.so \
   REPO_PATH=/path/to/RLinf/ \

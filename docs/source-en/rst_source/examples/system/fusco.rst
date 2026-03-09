@@ -1,5 +1,5 @@
 FUSCO High-Performance MoE Communication Library
-====================================
+==================================================
 
 FUSCO is a high-performance distributed All-to-All communication library designed specifically for MoE (Mixture of Experts) training and inference scenarios.
 By fusing data transformation and communication, FUSCO significantly improves communication efficiency for large-scale MoE models. This document introduces how to use FUSCO for acceleration within the RLinf framework.
@@ -47,7 +47,7 @@ After meeting the above conditions and installing FUSCO correctly, RLinf will au
 
 You can test with the following command:
 
-.. code-block:: bash 
+.. code-block:: bash
 
   FUSCO_SO_PATH=/path/to/libfusco.so \
   REPO_PATH=/path/to/RLinf/ \
