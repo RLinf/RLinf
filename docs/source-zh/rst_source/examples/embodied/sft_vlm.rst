@@ -190,30 +190,55 @@ VLM模型监督微调训练
 ----
 
 实验结果：
-我们提供当前已经实验好的结果，当前实验在单台 8 x H100 Nvidia GPU 的机器上测试 6000 次迭代，实验结果如下：
+我们展示当前使用 Qwen2.5-VL-3B 模型的实验结果，当前实验在单台 8 x H100 Nvidia GPU 的机器上测试 6000 次迭代，实验结果如下：
 
 6000 次迭代， 每 1000 iter 对 test_data 的评估结果：
 
 .. image:: https://github.com/RLinf/misc/raw/main/pic/sft_vlm_eval_accuracy.png
-   :alt: VLM SFT eval accuracy
+   :alt: Qwen2.5-VL-3B VLM SFT eval accuracy
    :width: 85%
    :align: center
 
 grad_norm 曲线：
 
 .. image:: https://github.com/RLinf/misc/raw/main/pic/sft_vlm_eval_grad_norm.png
-   :alt: VLM SFT grad norm
+   :alt: Qwen2.5-VL-3B VLM SFT grad norm
    :width: 85%
    :align: center
 
 loss 曲线：
 
 .. image:: https://github.com/RLinf/misc/raw/main/pic/sft_vlm_eval_loss.png
-   :alt: VLM SFT loss
+   :alt: Qwen2.5-VL-3B VLM SFT loss
    :width: 85%
    :align: center
 
-最后一次 eval 的 accuracy 为 ``0.8995802998542786`` (约 ``89.96%``)。
+最后一次 Qwen2.5-VL-3B model 使用测试数据验证的正确率为 ``0.8995802998542786`` (约 ``89.96%``)。
+
+我们展示当前使用 Qwen3-VL-4B 模型的实验结果，当前实验在单台 4 x H100 Nvidia GPU 的机器上测试 6000 次迭代，实验结果如下：
+
+6000 次迭代， 每 1000 iter 对 test_data 的评估结果：
+
+.. image:: https://github.com/RLinf/misc/blob/main/pic/qwen3_sft_vlm_eval_accuracy.png
+   :alt: Qwen3-VL-4B VLM SFT eval accuracy
+   :width: 85%
+   :align: center
+
+grad_norm 曲线：
+
+.. image:: https://github.com/RLinf/misc/blob/main/pic/qwen3_sft_vlm_eval_grad_norm.png
+   :alt: Qwen3-VL-4B VLM SFT grad norm
+   :width: 85%
+   :align: center
+
+loss 曲线：
+
+.. image:: https://github.com/RLinf/misc/blob/main/pic/qwen3_sft_vlm_eval_loss.png
+   :alt: Qwen3-VL-4B VLM SFT loss
+   :width: 85%
+   :align: center
+
+最后一次 Qwen3-VL-4B model 使用测试数据验证的正确率为 ``96.9%`` 。
 
 模型 checkpoint 说明
 ----------------------------
