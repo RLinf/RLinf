@@ -322,39 +322,24 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
         use_fsdp_mixed_precision = not (
             param_dtype is None and reduce_dtype is None and buffer_dtype is None
         )
-        if "amp_autocast" in config or "grad_scaler" in config:
-            assert "amp" not in config, (
-                "fsdp.amp should not be used when fsdp.amp_autocast or fsdp.grad_scaler is used"
-            )
-            config.amp_autocast.enabled = config.amp_autocast.get("enabled", False)
-            config.amp_autocast.precision = config.amp_autocast.get("precision", "bf16")
-            amp_gs_cfg = config.get("grad_scaler", {})
-            config.grad_scaler = {
-                "enabled": amp_gs_cfg.get("enabled", False),
-                "init_scale": amp_gs_cfg.get("init_scale", None),
-                "growth_interval": amp_gs_cfg.get("growth_interval", None),
-            }
-        else:
-            if "amp" not in config:
-                config.amp = {}
-            amp_enabled = config.amp.get("enabled", False)
-            if amp_enabled is False:
-                if "precision" in config.amp:
-                    logging.warning(
-                        "fsdp_config.amp.precision will be deprecated under amp disabled condition."
-                    )
-            amp_precision = config.amp.get("precision", "bf16")
-            use_grad_scaler = config.amp.get("use_grad_scaler", False)
 
-            config.amp_autocast = {
-                "enabled": amp_enabled,
-                "precision": amp_precision,
-            }
-            config.grad_scaler = {
-                "enabled": use_grad_scaler,
-                "init_scale": None,
-                "growth_interval": None,
-            }
+        amp_autocast = config.get("amp_autocast", {})
+        config.amp_autocast = {
+            "enabled": amp_autocast.get("enabled", False),
+            "precision": amp_autocast.get("precision", "bf16"),
+        }
+
+        grad_scaler = config.get("grad_scaler", {})
+        config.grad_scaler = {
+            "enabled": grad_scaler.get("enabled", False),
+            "init_scale": grad_scaler.get("init_scale", None),
+            "growth_interval": grad_scaler.get("growth_interval", None),
+        }
+
+        if "amp" in config:
+            logging.warning(
+                "fsdp.amp is no longer supported, use fsdp.amp_autocast and fsdp.grad_scaler instead"
+            )
 
         if config.amp_autocast.enabled and use_fsdp_mixed_precision:
             assert False, (
@@ -409,16 +394,6 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             "fsdp_config.mixed_precision is required in FSDP actor configuration."
         )
 
-        mixed_precision_config = cfg.fsdp_config.mixed_precision
-        mixed_precision_config.param_dtype = mixed_precision_config.get(
-            "param_dtype", None
-        )
-        mixed_precision_config.reduce_dtype = mixed_precision_config.get(
-            "reduce_dtype", None
-        )
-        mixed_precision_config.buffer_dtype = mixed_precision_config.get(
-            "buffer_dtype", None
-        )
         cfg.fsdp_config = validate_amp_cfg(cfg.fsdp_config)
 
     return cfg
