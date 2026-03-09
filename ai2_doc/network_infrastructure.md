@@ -206,13 +206,13 @@ Submits a Beaker training job via gantry.
 # Basic PPO (2 GPUs)
 bash scripts/submit_yam_training.sh \
     --config yam_ppo_openpi \
-    --model-path openvla/openvla-7b \
+    --model-path thomas0829/folding_towel_pi05 \
     --dry-run
 
 # TOPReward (3 GPUs)
 bash scripts/submit_yam_training.sh \
     --config yam_ppo_openpi_topreward \
-    --model-path openvla/openvla-7b \
+    --model-path thomas0829/folding_towel_pi05 \
     --dry-run
 
 # With Hydra overrides
