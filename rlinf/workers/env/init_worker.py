@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from rlinf.scheduler.hardware import ADBHWInfo
 
 # Add android_world to path
-android_world_parent = "/mnt/project_rlinf/yuanqwang/mobile-agent/android_world"
+android_world_parent = "/mnt/project_rlinf/yingcheng/mobile-agent/android_world"
 if android_world_parent not in sys.path:
     sys.path.insert(0, android_world_parent)
 

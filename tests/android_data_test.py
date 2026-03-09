@@ -7,7 +7,7 @@ from omegaconf import OmegaConf
 import os
 
 # 将 android_world 的父目录添加到路径中
-android_world_parent = "/mnt/project_rlinf/yuanqwang/mobile-agent/android_world"
+android_world_parent = "/mnt/project_rlinf/yingcheng/mobile-agent/android_world"
 if android_world_parent not in sys.path:
     sys.path.insert(0, android_world_parent)
 def test_android_world_dataset():

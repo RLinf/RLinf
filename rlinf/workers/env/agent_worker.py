@@ -8,7 +8,7 @@ import sys
 import os
 import time
 
-android_world_parent = "/mnt/project_rlinf/yuanqwang/mobile-agent/android_world"
+android_world_parent = "/mnt/project_rlinf/yingcheng/mobile-agent/android_world"
 if android_world_parent not in sys.path:
     sys.path.insert(0, android_world_parent)
 
@@ -140,11 +140,11 @@ class AndroidAgentWorker(Worker):
         model_name = os.environ.get('LOCAL_MODEL_NAME', 'Qwen3-VL-4B-Instruct')
         base_url = os.environ.get('LOCAL_API_BASE', 'http://localhost:22002/v1/chat/completions')
         api_key = os.environ.get('LOCAL_API_KEY', 'EMPTY')
-        self.llm = OpenAICompatibleWrapper(model_name=model_name, base_url=base_url, api_key=api_key)
-        # self.llm = LLMWrapper(
-        #     generate_input_channel=self.generate_input_channel, 
-        #     generate_output_channel=self.generate_output_channel
-        #     )
+      #  self.llm = OpenAICompatibleWrapper(model_name=model_name, base_url=base_url, api_key=api_key)
+        self.llm = LLMWrapper(
+            generate_input_channel=self.generate_input_channel, 
+            generate_output_channel=self.generate_output_channel
+            )
 
     def process_task(self, task_idx: int, reward_worker_group_name: str = "RewardWorkerGroup"):
         """Process a single task from the dataset.

@@ -8,7 +8,7 @@ import traceback
 from pathlib import Path
 from datetime import datetime
 
-project_root = Path("/mnt/project_rlinf/yuanqwang/mobile-agent")
+project_root = Path("/mnt/project_rlinf/yingcheng/mobile-agent")
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
@@ -83,8 +83,8 @@ def create_test_config():
                     "hardware": {
                         "type": "ADB",
                         "configs": [
-                            {"device_id": "localhost:5555", "adb_path": "adb", "node_rank": 0},
-                          #  {"device_id": "localhost:5557", "adb_path": "adb", "node_rank": 0},
+                           # {"device_id": "localhost:5555", "adb_path": "adb", "node_rank": 0},
+                            {"device_id": "localhost:5557", "adb_path": "adb", "node_rank": 0},
                         ],
                     },
                 }
@@ -175,7 +175,7 @@ def format_time(seconds):
 
 
 def main():
-    output_dir = Path("/mnt/project_rlinf/yuanqwang/mobile-agent/results")
+    output_dir = Path("/mnt/project_rlinf/yingcheng/mobile-agent/results")
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_path = output_dir / f"eval_results_{timestamp}.json"
@@ -283,7 +283,7 @@ def main():
 
     reward_handles = []
     agent_handles = []
-    task_shards = [[35]]
+    # task_shards = [[35]]
     for rank, shard in enumerate(task_shards):
         if not shard:
             continue

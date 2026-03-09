@@ -15,7 +15,7 @@ if str(rlinf_path) not in sys.path:
     sys.path.insert(0, str(rlinf_path))
 
 # 添加 android_world 路径
-android_world_parent = "/mnt/project_rlinf/yuanqwang/mobile-agent/android_world"
+android_world_parent = "/mnt/project_rlinf/yingcheng/mobile-agent/android_world"
 if android_world_parent not in sys.path:
     sys.path.insert(0, android_world_parent)
 
