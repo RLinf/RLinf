@@ -55,11 +55,11 @@ def _proto_to_obs(proto_obs: robot_env_pb2.Observation) -> dict:
     img = img[np.newaxis, :]
 
     obs = {
-        "states": states,
-        "main_images": img,
+        "states": to_tensor(states),
+        "main_images": to_tensor(img),
         "task_descriptions": [proto_obs.task_description],
     }
-    return to_tensor(obs)
+    return obs
 
 
 class RemoteEnv(gym.Env):
