@@ -1,0 +1,49 @@
+<mujoco model="yam_v0">
+  <compiler angle="radian" meshdir="assets"/>
+
+  <asset>
+    <mesh name="base_link_collision" file="base_link_collision.stl"/>
+    <mesh name="link_1_collision" file="link_1_collision.stl"/>
+    <mesh name="link_2_collision" file="link_2_collision.stl"/>
+    <mesh name="link_3_collision" file="link_3_collision.stl"/>
+    <mesh name="link_4_collision" file="link_4_collision.stl"/>
+    <mesh name="link_5_collision" file="link_5_collision.stl"/>
+    <mesh name="link_6_collision" file="link_6_collision.stl"/>
+  </asset>
+
+  <worldbody>
+    <geom pos="-7.22812e-05 2.52572e-05 0.0159932" quat="1 0 0 0" type="mesh" rgba="1 0.6 0 1" mesh="base_link_collision"/>
+    <body name="link_1" pos="0 0 0.0631" quat="1 0 0 1">
+      <inertial pos="-0.00192861 -0.00795735 0.0208176" quat="0.297851 0.642634 0.360045 0.607185" mass="0.12415" diaginertia="0.000180751 0.000145532 5.89179e-05"/>
+      <joint name="joint1" pos="0 0 0" axis="0 0 1" range="-2.61799 3.13" actuatorfrcrange="-10 10"/>
+      <geom pos="-0.00192861 -0.00795735 0.0208176" quat="0.707105 0 0 -0.707108" type="mesh" rgba="1 0.6 0 1" mesh="link_1_collision"/>
+      <body name="link_2" pos="2.5e-05 -0.02 0.0409" quat="1 1 1 1">
+        <inertial pos="0.132008 2.10599e-06 0.000293073" quat="1 1 1 1" mass="1.24434" diaginertia="0.0121902 0.0121318 0.000683304"/>
+        <joint name="joint2" pos="0 0 0" axis="0 0 1" range="0 3.65" actuatorfrcrange="-10 10"/>
+        <geom pos="0.132008 2.10599e-06 0.000293073" quat="9.38184e-07 9.38187e-07 0.707108 0.707105" type="mesh" rgba="1 0.6 0 1" mesh="link_2_collision"/>
+        <body name="link_3" pos="0.264 0 0" quat="0 1 0 0">
+          <inertial pos="-0.121816 -0.054846 -0.000111108" quat="1 1 1 1" mass="0.853698" diaginertia="0.00699732 0.00696112 0.000788244"/>
+          <joint name="joint3" pos="0 0 0" axis="0 0 1" range="0 3.13" actuatorfrcrange="-10 10"/>
+          <geom pos="-0.121816 -0.054846 -0.000111108" quat="9.38184e-07 -9.38187e-07 0.707108 -0.707105" type="mesh" rgba="1 0.6 0 1" mesh="link_3_collision"/>
+          <body name="link_4" pos="-0.245 -0.06 0" quat="1 0 0 0">
+            <inertial pos="-0.0769778 -0.0527104 0.000154878" quat="0.667 0.667 -0.236 -0.236" mass="0.463511" diaginertia="0.000791532 0.000744733 0.000282116"/>
+            <joint name="joint4" pos="0 0 0" axis="0 0 1" range="-1.65 1.65" actuatorfrcrange="-10 10"/>
+            <geom pos="-0.0569778 -0.0527104 0.000154878" quat="9.38184e-07 -9.38187e-07 0.707108 -0.707105" type="mesh" rgba="1 0.6 0 1" mesh="link_4_collision"/>
+            <body name="link_5" pos="-0.074 -0.0395 2.5e-05" quat="1 -1 1 1">
+              <inertial pos="3.64861e-05 0.00025665 0.0353526" quat="1 0 0 0" mass="0.350962" diaginertia="0.000197802 0.0001775 0.000147402"/>
+              <joint name="joint5" pos="0 0 0" axis="0 0 1" range="-1.5708 1.5708" actuatorfrcrange="-10 10"/>
+              <geom pos="3.64861e-05 0.00025665 0.0353526" quat="9.38184e-07 -0.707105 -0.707108 9.38187e-07" type="mesh" rgba="1 0.6 0 1" mesh="link_5_collision"/>
+              <body name="link_6" pos="0 0.0353 0.0395" quat="1 -1 0 0">
+                <inertial pos="-5.10177e-05 -0.00269952 0.0581778" quat="0.98383 0.174699 0.0 0.0" mass="0.55366" diaginertia="0.000956992 0.000799286 0.000469547"/>
+                <joint name="joint6" pos="0 0 0" axis="0 0 1" range="-2.0944 2.0944" actuatorfrcrange="-10 10"/>
+                <geom pos="-5.10177e-05 -0.00269952 0.0481778" quat="1 -1 -1 -1" type="mesh" rgba="1 0.6 0 1" mesh="link_6_collision"/>
+                <site name="tcp_site" pos="0 0 0" quat="1 0 0 -1" size="0.005" rgba="1 0 0 1"/>
+                <site name="grasp_site" pos="0 0 0.1347" quat="1 0 0 -1" size="0.005" rgba="0 1 0 1"/>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

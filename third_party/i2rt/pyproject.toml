@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools >= 65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "i2rt"
+version = "0.1.0"
+description = "I2RT robot control library — protocols, CAN drivers, and kinematics"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "dm-env>=1.6",
+    "python-can",
+    "mujoco",
+    "portal",
+]
+
+[project.optional-dependencies]
+# Heavy/optional deps only needed for specific features
+kinematics = ["mink", "ruckig"]
+gamepad = ["pygame", "evdev"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["i2rt*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.yaml", "*.yml", "*.json", "*.xml"]

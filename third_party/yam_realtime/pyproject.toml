@@ -1,0 +1,26 @@
+[build-system]
+requires = ["flit_core >= 3.4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "yam_realtime"
+version = "0.1.0"
+description = "Realtime control interfaces for YAM bi-manual robot arms"
+requires-python = ">=3.10"
+dependencies = [
+    "viser",
+    "tyro",
+    "omegaconf",
+    "portal",
+    "dm-env>=1.6",
+    "dm_control",
+    "dotdict",
+    "numpy",
+    "cloudpickle",
+    "opencv-python",
+    "robot_descriptions",
+    "i2rt @ file:../i2rt",
+]
+
+[tool.flit.module]
+name = "yam_realtime"
