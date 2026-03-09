@@ -123,6 +123,7 @@ Multiple Backend Integrations
           <li><b>VLM</b></li>
           <ul>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">Qwen2.5-VL</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3-VL</a> ✅</li>
           </ul>
           <li><b>World Model</b></li>
           <ul>
