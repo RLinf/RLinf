@@ -19,8 +19,11 @@ dependencies = [
     "cloudpickle",
     "opencv-python",
     "robot_descriptions",
-    "i2rt @ file:../i2rt",
+    "i2rt",
 ]
+
+[tool.uv.sources]
+i2rt = { path = "../i2rt", editable = true }
 
 [tool.flit.module]
 name = "yam_realtime"

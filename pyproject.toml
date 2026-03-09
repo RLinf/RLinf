@@ -58,8 +58,9 @@ dependencies = [
     "icmplib",
     "pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'",
     # YAM robot environment
-    "yam_realtime @ file:third_party/yam_realtime",
-    "i2rt @ file:third_party/i2rt",
+    "gymnasium",
+    "yam_realtime",
+    "i2rt",
     # Logging
     "wandb",
     "swanlab>=0.6.11",
@@ -140,6 +141,10 @@ xsquare_turtle2 = [
     "imageio[ffmpeg]",
     "pynput"
 ]
+
+[tool.uv.sources]
+yam_realtime = { path = "third_party/yam_realtime", editable = true }
+i2rt = { path = "third_party/i2rt", editable = true }
 
 [tool.uv]
 prerelease = "allow"

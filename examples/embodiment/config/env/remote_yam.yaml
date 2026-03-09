@@ -1,12 +1,14 @@
 # Remote YAM environment — proxies to a RobotServer over gRPC.
 #
-# The server runs on the robot's local machine and is exposed via cloudflared.
-# Set ROBOT_SERVER_URL to the tunnel URL or direct address.
+# The server runs on the robot's local machine.  A reverse SSH tunnel
+# (over Tailscale) exposes the gRPC port on the Beaker container as
+# localhost:50051.
 #
 # Usage:
-#   1. On robot machine: bash scripts/start_robot_server.sh --config /path/to/yam.yaml
-#   2. Export ROBOT_SERVER_URL=<tunnel-url-or-ip:port>
-#   3. Launch training with env=remote_yam
+#   1. On robot machine:
+#        bash scripts/start_robot_server.sh --config /path/to/yam.yaml \
+#            --remote-host <beaker-tailscale-ip>
+#   2. On Beaker container, launch training with env=remote_yam
 
 env_type: remote
 
