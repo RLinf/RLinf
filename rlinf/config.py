@@ -338,7 +338,7 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
 
         if "amp" in config:
             logging.warning(
-                "fsdp.amp is no longer supported, use fsdp.amp_autocast and fsdp.grad_scaler instead"
+                "fsdp_config.amp is no longer supported, use fsdp_config.amp_autocast and fsdp_config.grad_scaler instead"
             )
 
         if config.amp_autocast.enabled and use_fsdp_mixed_precision:
