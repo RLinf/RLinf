@@ -318,9 +318,13 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
         reduce_dtype = config.mixed_precision.reduce_dtype
         buffer_dtype = config.mixed_precision.buffer_dtype
 
-        use_fsdp_mixed_precision = not (
-            param_dtype is None and reduce_dtype is None and buffer_dtype is None
+        all_none = param_dtype is None and reduce_dtype is None and buffer_dtype is None
+
+        all_fp32 = (
+            param_dtype == "fp32" and reduce_dtype == "fp32" and buffer_dtype == "fp32"
         )
+
+        use_fsdp_mixed_precision = not (all_none or all_fp32)
 
         amp_autocast = config.get("amp_autocast", {})
         config.amp_autocast = {

@@ -270,7 +270,7 @@ actor:
       buffer_dtype: "fp32"
    
     amp_autocast:                       # Do not enable `amp_autocast` with FSDP `mixed_precision` enabled, using both will result in conflict.  
-      enabled: True                    # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
+      enabled: False                    # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
       precision: "fp16"                 # precision for AMP, options are ["fp16" , "bf16"]
     
     grad_scaler:
