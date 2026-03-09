@@ -1,10 +1,10 @@
 """
-PI0.5 Configuration for value model training.
+Value model configuration.
 
 Provides:
 - Config: Gemma action expert configuration (variant configs)
-- PI05Config: Base configuration for PI0.5 model architecture
-- PI05CriticConfig: Extended configuration for value critic models
+- VLMBaseConfig: Base configuration for VLM-based model architecture
+- ValueCriticConfig: Extended configuration for value critic models
 """
 
 import dataclasses
@@ -151,8 +151,8 @@ def get_config(variant: Variant) -> Config:
 # =============================================================================
 
 
-class PI05Config(PretrainedConfig):
-    """Configuration for PI0.5 model."""
+class VLMBaseConfig(PretrainedConfig):
+    """Base configuration for VLM-based value models."""
 
     model_type = "pi05"
 
@@ -240,8 +240,8 @@ class PI05Config(PretrainedConfig):
         return output
 
 
-class PI05CriticConfig(PI05Config):
-    """Configuration for PI05 Critic models (V function)."""
+class ValueCriticConfig(VLMBaseConfig):
+    """Configuration for value critic models (V function)."""
 
     def __init__(
         self,

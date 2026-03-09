@@ -24,9 +24,8 @@ import safetensors
 import torch
 from omegaconf import DictConfig
 
-from .configuration import PI05CriticConfig
-from .modeling_critic import CriticOutput, ValueCriticModel
-from .value_policy import ValuePolicy, create_trained_value_policy
+from .configuration import ValueCriticConfig
+from .modeling_critic import CriticOutput, ValueCritic, ValueCriticModel
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +45,13 @@ def get_vla_lib_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticMod
     Returns:
         ValueCriticModel instance.
     """
-    # Collect PI05Config kwargs
-    pi05_kwargs = {}
+    # Collect VLMBaseConfig kwargs
+    vlm_kwargs = {}
 
     def _set(key, default=None):
         val = getattr(cfg, key, default)
         if val is not None:
-            pi05_kwargs[key] = val
+            vlm_kwargs[key] = val
 
     _set("action_dim", 32)
     _set("action_horizon", 50)
@@ -74,11 +73,11 @@ def get_vla_lib_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticMod
     # Handle precision / dtype
     precision = getattr(cfg, "precision", "bf16")
     if precision in ("bf16", "bf16-mixed"):
-        pi05_kwargs["dtype"] = "bfloat16"
+        vlm_kwargs["dtype"] = "bfloat16"
     elif precision in ("fp16", "16", "16-mixed"):
-        pi05_kwargs["dtype"] = "float16"
+        vlm_kwargs["dtype"] = "float16"
     else:
-        pi05_kwargs["dtype"] = "float32"
+        vlm_kwargs["dtype"] = "float32"
 
     # Critic-specific kwargs
     critic_kwargs = {
@@ -88,7 +87,7 @@ def get_vla_lib_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticMod
         "v_max": getattr(cfg, "v_max", 0.0),
     }
 
-    config = PI05CriticConfig(**critic_kwargs, **pi05_kwargs)
+    config = ValueCriticConfig(**critic_kwargs, **vlm_kwargs)
 
     # Build model
     model = ValueCriticModel(config)
@@ -135,8 +134,7 @@ def _load_state_dict(path: str) -> dict:
 __all__ = [
     "get_vla_lib_value_model",
     "ValueCriticModel",
-    "PI05CriticConfig",
+    "ValueCritic",
+    "ValueCriticConfig",
     "CriticOutput",
-    "ValuePolicy",
-    "create_trained_value_policy",
 ]

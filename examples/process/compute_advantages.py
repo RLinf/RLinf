@@ -13,17 +13,17 @@
 # limitations under the License.
 
 """
-Compute advantages for CFG-RL training using a trained ValuePolicy.
+Compute advantages for CFG-RL training using a trained ValueCritic.
 
 Advantage formula: A = normalize(r_{t:t+N}) + gamma^N * V(o_{t+N}) - V(o_t)
 
 This script:
-1. Loads a trained ValuePolicy from checkpoint (with input transforms)
+1. Loads a trained ValueCritic from checkpoint (with input transforms)
 2. Loads LeRobot datasets with delta_timestamps for multi-step data
 3. Computes N-step discounted reward sum and values
 4. Creates independent output datasets with is_success = (advantage >= threshold)
 
-The ValuePolicy encapsulates all input transforms (LiberoInputs, Normalize, ResizeImages, etc.)
+The ValueCritic encapsulates all input transforms (LiberoInputs, Normalize, ResizeImages, etc.)
 so inference uses the same data preprocessing as training.
 
 Supports multi-GPU parallel processing via torchrun:
@@ -63,8 +63,8 @@ from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-# Import from rlinf for value policy with batch inference support
-from rlinf.models.embodiment.vla_lib_value_model import value_policy
+# Import ValueCritic for value inference
+from rlinf.models.embodiment.vla_lib_value_model.modeling_critic import ValueCritic
 
 logger = logging.getLogger(__name__)
 
@@ -217,7 +217,7 @@ OBSERVATION_LIKE_KEYS = {
     "observation.gripper_position",
 }
 
-# Key mappings for building raw observations for ValuePolicy
+# Key mappings for building raw observations for ValueCritic
 # Maps LeRobot dataset keys to vla_lib observation format
 KEY_MAPPINGS = {
     "franka": {
@@ -358,10 +358,10 @@ def _load_return_stats_from_dataset(
 # =============================================================================
 
 
-def load_value_policy(cfg: DictConfig, device: str = "cuda"):
-    """Load trained ValuePolicy from checkpoint.
+def load_value_model(cfg: DictConfig, device: str = "cuda"):
+    """Load trained ValueCritic from checkpoint.
 
-    The ValuePolicy encapsulates all input transforms (LiberoInputs, Normalize,
+    The ValueCritic encapsulates all input transforms (LiberoInputs, Normalize,
     ResizeImages, etc.) so inference uses the same data preprocessing as training.
 
     Args:
@@ -369,7 +369,7 @@ def load_value_policy(cfg: DictConfig, device: str = "cuda"):
         device: Target device
 
     Returns:
-        Configured ValuePolicy instance
+        Configured ValueCritic instance with inference methods
     """
     checkpoint_path = cfg.advantage.value_checkpoint
     if checkpoint_path is None:
@@ -378,23 +378,20 @@ def load_value_policy(cfg: DictConfig, device: str = "cuda"):
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    logger.info(f"Loading value policy from: {checkpoint_path}")
+    logger.info(f"Loading value model from: {checkpoint_path}")
 
     # Extract configuration
     adv_cfg = cfg.advantage
     data_cfg = cfg.data
     model_cfg = adv_cfg.get("model", {})
 
-    # Get robot_type (env_type for vla_lib)
+    # Get robot_type (env_type)
     robot_type = data_cfg.get("robot_type", "libero")
-    # If datasets are specified, use robot_type from first dataset
     if "datasets" in data_cfg and len(data_cfg.datasets) > 0:
         robot_type = data_cfg.datasets[0].get("robot_type", robot_type)
 
-    # Get model_type (pi0, pi05)
     model_type = data_cfg.get("model_type", "pi05")
 
-    # Get value head settings
     num_return_bins = model_cfg.get("num_bins", 201)
     return_min = model_cfg.get("v_min", -1.0)
     return_max = model_cfg.get("v_max", 0.0)
@@ -406,7 +403,7 @@ def load_value_policy(cfg: DictConfig, device: str = "cuda"):
     logger.info(f"  return_range: [{return_min}, {return_max}]")
     logger.info(f"  critic_expert_variant: {critic_expert_variant}")
 
-    value_pol = value_policy.create_trained_value_policy(
+    model = ValueCritic.from_checkpoint(
         checkpoint_dir=checkpoint_path,
         env_type=robot_type,
         model_type=model_type,
@@ -417,8 +414,8 @@ def load_value_policy(cfg: DictConfig, device: str = "cuda"):
         critic_expert_variant=critic_expert_variant,
     )
 
-    logger.info(f"Loaded ValuePolicy: {value_pol.metadata}")
-    return value_pol
+    logger.info("Loaded ValueCritic for inference")
+    return model
 
 
 # =============================================================================
@@ -553,9 +550,9 @@ def build_obs(
     tasks: dict,
     use_next: bool,
 ) -> dict[str, Any]:
-    """Build raw observation dict for ValuePolicy.
+    """Build raw observation dict for ValueCritic.
 
-    The ValuePolicy internally handles all input transforms (LiberoInputs,
+    The ValueCritic internally handles all input transforms (LiberoInputs,
     Normalize, ResizeImages, etc.), so we only need to build the raw observation
     in the format expected by vla_lib's input processing.
 
@@ -566,7 +563,7 @@ def build_obs(
         use_next: If True, use t+N observation; if False, use t observation
 
     Returns:
-        Raw observation dict compatible with ValuePolicy.infer()
+        Raw observation dict compatible with ValueCritic.infer()
     """
     key_map = KEY_MAPPINGS.get(robot_type, KEY_MAPPINGS["libero"])
     obs = {}
@@ -717,7 +714,7 @@ def advantage_collate_fn(
     """Custom collate function for AdvantageDataset.
 
     Keeps observations as lists of dicts (not batched tensors) since
-    value_policy.infer_batch() expects this format. Produces the same
+    value_model.infer_batch() expects this format. Produces the same
     output signature as the old collect_observations_batch() so that
     process_batch_results() works without changes.
 
@@ -746,7 +743,7 @@ def advantage_collate_fn(
 
 @torch.no_grad()
 def compute_advantages_for_dataset(
-    value_policy,
+    value_model,
     dataset: LeRobotDataset,
     tasks: dict,
     cfg: DictConfig,
@@ -759,15 +756,15 @@ def compute_advantages_for_dataset(
 ) -> pd.DataFrame:
     """Compute advantages for dataset (or shard in distributed mode).
 
-    Uses batch inference with ValuePolicy for efficient processing.
-    The ValuePolicy internally handles all input transforms
+    Uses batch inference with ValueCritic for efficient processing.
+    The ValueCritic internally handles all input transforms
     (LiberoInputs, Normalize, ResizeImages, etc.).
 
     In distributed mode, each rank processes a shard of the dataset.
     The results are local to each rank and should be gathered afterwards.
 
     Args:
-        value_policy: Trained ValuePolicy with input transforms and batch inference
+        value_model: Trained ValueCritic with input transforms and batch inference
         dataset: LeRobot dataset with delta_timestamps
         tasks: Task descriptions
         cfg: Full config
@@ -823,7 +820,7 @@ def compute_advantages_for_dataset(
         )
         logger.info(f"  gamma: {gamma}, action_horizon: {action_horizon}")
         logger.info(f"  return_range: [{ret_min}, {ret_max}]")
-        logger.info("  Using ValuePolicy with batch inference")
+        logger.info("  Using ValueCritic with batch inference")
         logger.info("  Using precomputed reward/return from dataset")
         if world_size > 1:
             logger.info(f"  Distributed mode: {world_size} GPUs")
@@ -927,7 +924,7 @@ def compute_advantages_for_dataset(
     ):
         """Run GPU inference and compute advantages for a collected batch."""
         # Batch inference for V(o_t)
-        v_curr_results = value_policy.infer_batch(
+        v_curr_results = value_model.infer_batch(
             current_obs_list, batch_size=batch_size
         )
         v_curr_values = [r["value"] for r in v_curr_results]
@@ -937,7 +934,7 @@ def compute_advantages_for_dataset(
         next_obs_only = [obs for _, obs in next_obs_with_idx]
 
         if next_obs_only:
-            v_next_results = value_policy.infer_batch(
+            v_next_results = value_model.infer_batch(
                 next_obs_only, batch_size=batch_size
             )
             v_next_map = {
@@ -1145,9 +1142,9 @@ def main(cfg: DictConfig) -> None:
 
     try:
         # Load value policy (each rank loads its own copy)
-        # ValuePolicy encapsulates all input transforms (LiberoInputs, Normalize,
+        # ValueCritic encapsulates all input transforms (LiberoInputs, Normalize,
         # ResizeImages, etc.) so inference uses same preprocessing as training
-        value_policy = load_value_policy(cfg, device)
+        value_model = load_value_model(cfg, device)
 
         # Process all datasets and collect advantages
         all_advantages = []
@@ -1218,7 +1215,7 @@ def main(cfg: DictConfig) -> None:
 
             # Compute advantages for this rank's shard
             local_df = compute_advantages_for_dataset(
-                value_policy=value_policy,
+                value_model=value_model,
                 dataset=dataset,
                 tasks=tasks,
                 cfg=cfg,

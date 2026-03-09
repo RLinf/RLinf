@@ -132,7 +132,7 @@ class SiglipGemma3WithMultiExpert(nn.Module):
         self._set_requires_grad()
 
     # =========================================================================
-    # Embedding Methods (compatible with PI05FlowMatching.embed_prefix)
+    # Embedding Methods (compatible with VLMObservationEncoder.embed_prefix)
     # =========================================================================
 
     def embed_image(self, image: torch.Tensor) -> torch.Tensor:

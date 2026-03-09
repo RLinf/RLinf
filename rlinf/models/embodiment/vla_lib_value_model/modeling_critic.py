@@ -1,11 +1,5 @@
 """
-PI0.5 Critic Models for Value Prediction.
-
-Merged from:
-- openpi/modeling_pi0.py: free functions, PI0PreTrainedModel
-- openpi05/modeling_pi05.py: PI05FlowMatching methods
-- modeling_critic.py (top-level): ValueCriticModel with FSDP support
-- openpi05/modeling_critic.py: PI05ValueCritic wrapper
+Value Critic Models for Value Prediction.
 
 Uses expert forward mode: Gemma expert + [CLS] -> categorical value prediction.
 """
@@ -26,7 +20,7 @@ from torch import Tensor, nn
 from transformers import PreTrainedModel
 from transformers.modeling_outputs import ModelOutput
 
-from .configuration import PI05Config, PI05CriticConfig, get_config
+from .configuration import ValueCriticConfig, VLMBaseConfig, get_config
 from .paligemma_with_multi_expert import (
     PaliGemmaWithMultiExpertModel,
     _requires_uniform_dtype,
@@ -59,14 +53,14 @@ def make_att_2d_masks(pad_masks, att_masks):
 
 
 # =============================================================================
-# PI0PreTrainedModel (HF integration for from_pretrained)
+# VLMPreTrainedModel (HF integration for from_pretrained)
 # =============================================================================
 
 
-class PI0PreTrainedModel(PreTrainedModel):
-    """Base pretrained model with smart loading for PI0/PI05 checkpoints."""
+class VLMPreTrainedModel(PreTrainedModel):
+    """Base pretrained model with smart loading for VLM-based checkpoints."""
 
-    config_class = PI05Config
+    config_class = VLMBaseConfig
     base_model_prefix = "model"
     main_input_name = "input_ids"
     supports_gradient_checkpointing = True
@@ -100,7 +94,7 @@ class PI0PreTrainedModel(PreTrainedModel):
     def from_pretrained(cls, pretrained_model_name_or_path, **kwargs):
         """Override from_pretrained to handle problematic safetensors files."""
         logger.info(
-            f"PI0 from_pretrained: Loading from {pretrained_model_name_or_path}"
+            f"VLM from_pretrained: Loading from {pretrained_model_name_or_path}"
         )
 
         single_file_path = os.path.join(
@@ -309,8 +303,8 @@ class PI0PreTrainedModel(PreTrainedModel):
             )
 
 
-class PI05PreTrainedModel(PI0PreTrainedModel):
-    config_class = PI05Config
+class CriticPreTrainedModel(VLMPreTrainedModel):
+    config_class = VLMBaseConfig
 
 
 # =============================================================================
@@ -335,11 +329,11 @@ class CriticOutput(ModelOutput):
 
 
 # =============================================================================
-# PI05FlowMatching (stripped base class - only methods used by ValueCriticModel)
+# VLMObservationEncoder (base class providing observation processing/embedding)
 # =============================================================================
 
 
-class PI05FlowMatching(nn.Module):
+class VLMObservationEncoder(nn.Module):
     """Base class providing observation processing and embedding.
 
     Stripped to only the methods inherited by ValueCriticModel.
@@ -509,13 +503,13 @@ class ValueHead(nn.Module):
 # =============================================================================
 
 
-class ValueCriticModel(PI05FlowMatching):
-    """Value function V(s) inheriting PI05 infrastructure.
+class ValueCriticModel(VLMObservationEncoder):
+    """Value function V(s) with VLM observation encoding.
 
     Uses expert mode: Gemma expert + [CLS] -> categorical value prediction.
     """
 
-    def __init__(self, config: PI05CriticConfig):
+    def __init__(self, config: ValueCriticConfig):
         nn.Module.__init__(self)
         self.config = config
         self.pi05 = True
@@ -943,17 +937,17 @@ class ValueCriticModel(PI05FlowMatching):
 
 
 # =============================================================================
-# PI05ValueCritic (HF wrapper for inference via from_pretrained)
+# ValueCritic (HF wrapper for training and inference via from_pretrained)
 # =============================================================================
 
 
-class PI05ValueCritic(PI05PreTrainedModel):
-    """PI0.5 Value Critic V(s) for RL fine-tuning."""
+class ValueCritic(CriticPreTrainedModel):
+    """Value Critic V(s) for RL fine-tuning."""
 
-    config_class = PI05CriticConfig
+    config_class = ValueCriticConfig
     _no_split_modules = []
 
-    def __init__(self, config: PI05CriticConfig):
+    def __init__(self, config: ValueCriticConfig):
         super().__init__(config)
         config.critic_expert_variant = getattr(
             config, "critic_expert_variant", "gemma_100m"
@@ -1051,14 +1045,409 @@ class PI05ValueCritic(PI05PreTrainedModel):
         out = self.model.predict(observation)
         return out.predicted_values, out.probs, out.atoms
 
+    # =========================================================================
+    # Inference API (from_checkpoint / infer / infer_batch)
+    # =========================================================================
+
+    @classmethod
+    def from_checkpoint(
+        cls,
+        checkpoint_dir,
+        *,
+        device="cuda",
+        env_type="libero",
+        model_type="pi05",
+        default_prompt=None,
+        norm_stats=None,
+        num_return_bins=201,
+        return_min=-1.0,
+        return_max=0.0,
+        action_norm_skip_dims=None,
+        critic_expert_variant="gemma_100m",
+        **kwargs,
+    ):
+        """Create a ValueCritic from a trained checkpoint, ready for inference.
+
+        Args:
+            checkpoint_dir: Path to checkpoint directory.
+            device: Device to run inference on.
+            env_type: Environment type (e.g., "libero").
+            model_type: Model type ("pi0", "pi05").
+            default_prompt: Default prompt to inject if none provided.
+            norm_stats: Normalization stats (loaded from checkpoint if not provided).
+            num_return_bins: Number of return bins.
+            return_min: Minimum return value.
+            return_max: Maximum return value.
+            action_norm_skip_dims: Dims to skip in normalization.
+            critic_expert_variant: Gemma variant (e.g., "gemma_100m").
+
+        Returns:
+            ValueCritic instance with transforms and processor attached.
+        """
+        import pathlib
+
+        from transformers import AutoTokenizer
+
+        from .checkpoint_utils import (
+            build_input_transforms,
+            has_tokenizer_files,
+            load_norm_stats,
+            load_state_dict_from_checkpoint,
+        )
+        from .processing import PI05Processor
+
+        checkpoint_dir = pathlib.Path(checkpoint_dir)
+        logger.info(f"Loading value model from {checkpoint_dir}")
+
+        # Load processor
+        if has_tokenizer_files(checkpoint_dir):
+            logger.info("  Found tokenizer files in checkpoint")
+            tokenizer = AutoTokenizer.from_pretrained(
+                str(checkpoint_dir), add_bos_token=True
+            )
+            processor = PI05Processor(
+                tokenizer=tokenizer, max_token_len=200, discrete_state_input=False
+            )
+        else:
+            logger.info("  No tokenizer in checkpoint, using default processor")
+            processor = PI05Processor(
+                max_token_len=200, discrete_state_input=False
+            )
+
+        # Build config and load model
+        critic_config = ValueCriticConfig(
+            critic_expert_variant=critic_expert_variant,
+            num_bins=num_return_bins,
+            v_min=return_min,
+            v_max=return_max,
+        )
+
+        try:
+            model = cls.from_pretrained(
+                str(checkpoint_dir),
+                config=critic_config,
+                torch_dtype=torch.bfloat16,
+                device_map=None,
+                trust_remote_code=True,
+                ignore_mismatched_sizes=True,
+            )
+            logger.info("  Loaded model using from_pretrained")
+        except (OSError, ValueError, AttributeError) as e:
+            logger.info(
+                f"  from_pretrained failed ({type(e).__name__}: {e}), "
+                "loading state dict directly"
+            )
+            model = cls(critic_config)
+            state_dict = load_state_dict_from_checkpoint(checkpoint_dir)
+
+            # Handle key prefix mismatch (checkpoint may lack "model." prefix)
+            model_keys = set(model.state_dict().keys())
+            ckpt_keys = set(state_dict.keys())
+
+            if len(model_keys & ckpt_keys) == 0:
+                remapped = {}
+                for k, v in state_dict.items():
+                    new_key = f"model.{k}"
+                    remapped[new_key if new_key in model_keys else k] = v
+
+                if len(set(remapped.keys()) & model_keys) > len(
+                    ckpt_keys & model_keys
+                ):
+                    logger.info("  Remapped checkpoint keys: added 'model.' prefix")
+                    state_dict = remapped
+
+            missing, unexpected = model.load_state_dict(state_dict, strict=False)
+            logger.info(
+                f"  Loaded state dict (missing={len(missing)}, "
+                f"unexpected={len(unexpected)})"
+            )
+
+        # Attach processor
+        object.__setattr__(model, "processor", processor)
+
+        model = model.to(device)
+        model.eval()
+
+        # Load norm stats
+        if norm_stats is None:
+            try:
+                norm_stats = load_norm_stats(checkpoint_dir, env_type)
+                logger.info(f"Loaded norm stats with asset_id={env_type}")
+            except FileNotFoundError:
+                logger.warning(
+                    f"Could not find norm stats in {checkpoint_dir}, "
+                    "proceeding without normalization"
+                )
+
+        # Exclude 'return' from normalization
+        if norm_stats and "return" in norm_stats:
+            norm_stats = {k: v for k, v in norm_stats.items() if k != "return"}
+
+        use_quantile_norm = model_type.lower() != "pi0"
+
+        transforms = build_input_transforms(
+            env_type=env_type,
+            model_type=model_type,
+            action_dim=getattr(model.config, "action_dim", 32),
+            default_prompt=default_prompt,
+            norm_stats=norm_stats,
+            use_quantile_norm=use_quantile_norm,
+            action_norm_skip_dims=action_norm_skip_dims,
+        )
+
+        # Attach transforms and device for inference
+        from rlinf.datasets.lerobot.transforms import compose
+
+        object.__setattr__(model, "_input_transform", compose(transforms))
+        object.__setattr__(model, "_device", device)
+
+        logger.info("ValueCritic.from_checkpoint ready for inference")
+        return model
+
+    def _prepare_observation(self, inputs: dict) -> dict:
+        """Prepare observation dict for model forward.
+
+        Tokenizes "Task: {prompt}." (matching training template).
+        """
+        import numpy as np
+
+        processor = getattr(self, "processor", None)
+        if processor is None:
+            raise RuntimeError(
+                "Model processor not attached. Use from_checkpoint() or attach manually."
+            )
+
+        device = getattr(self, "_device", "cuda")
+
+        # Get images
+        if "image" in inputs and isinstance(inputs["image"], dict):
+            images_dict = inputs["image"]
+        elif "images" in inputs and isinstance(inputs["images"], dict):
+            images_dict = inputs["images"]
+        else:
+            images_dict = {}
+            for key in inputs:
+                if "image" in key.lower() and isinstance(
+                    inputs[key], (np.ndarray, torch.Tensor)
+                ):
+                    img_key = key
+                    for prefix in [
+                        "observation/",
+                        "observation.",
+                        "images/",
+                        "images.",
+                    ]:
+                        img_key = img_key.replace(prefix, "")
+                    images_dict[img_key] = inputs[key]
+
+        # Get prompt
+        prompt = inputs.get("prompt", "perform the task")
+        if isinstance(prompt, np.ndarray):
+            prompt = str(prompt.item()) if prompt.size == 1 else "perform the task"
+        elif not isinstance(prompt, str):
+            prompt = "perform the task"
+
+        # Convert CHW to BHWC for image_processor
+        images_bhwc = {}
+        for cam_name, img in images_dict.items():
+            if isinstance(img, np.ndarray):
+                img = torch.from_numpy(img)
+            if img.dim() == 3:
+                img = img.unsqueeze(0).permute(0, 2, 3, 1)
+            elif img.dim() == 4:
+                img = img.permute(0, 2, 3, 1)
+            images_bhwc[cam_name] = img
+
+        # Image masks
+        input_masks = inputs.get("image_mask", inputs.get("image_masks", {}))
+        image_masks_batch = {}
+        for cam_name in images_bhwc:
+            if cam_name in input_masks:
+                mask = input_masks[cam_name]
+                if isinstance(mask, (bool, np.bool_)):
+                    image_masks_batch[cam_name] = torch.tensor(
+                        [mask], dtype=torch.bool
+                    )
+                elif isinstance(mask, torch.Tensor):
+                    image_masks_batch[cam_name] = (
+                        mask.unsqueeze(0) if mask.dim() == 0 else mask
+                    )
+                else:
+                    image_masks_batch[cam_name] = torch.tensor(
+                        [True], dtype=torch.bool
+                    )
+            else:
+                image_masks_batch[cam_name] = torch.tensor([True], dtype=torch.bool)
+
+        # Process images
+        processed_img = processor.image_processor(
+            images=images_bhwc,
+            image_masks=image_masks_batch if image_masks_batch else None,
+            return_tensors="pt",
+            train=False,
+        )
+
+        # Tokenize prompt
+        cleaned_prompt = processor._clean_text(prompt)
+        cleaned_prompt = processor._strip_trailing_punctuation(cleaned_prompt)
+        prefix_text = f"Task: {cleaned_prompt}."
+
+        tokens = processor.tokenizer.encode(prefix_text, add_special_tokens=True)
+        seq_len = len(tokens)
+
+        max_length = processor.max_token_len
+        if seq_len < max_length:
+            padding_len = max_length - seq_len
+            mask = [True] * seq_len + [False] * padding_len
+            tokens = tokens + [0] * padding_len
+            ar_mask = [0] * max_length
+        else:
+            tokens = tokens[:max_length]
+            mask = [True] * max_length
+            ar_mask = [0] * max_length
+
+        # Build observation dict
+        pixel_values = processed_img["pixel_values"]
+        image_masks = processed_img["image_masks"]
+
+        if isinstance(pixel_values, dict):
+            images_on_device = {k: v.to(device) for k, v in pixel_values.items()}
+        else:
+            images_on_device = pixel_values.to(device)
+
+        if isinstance(image_masks, dict):
+            masks_on_device = {k: v.to(device) for k, v in image_masks.items()}
+        else:
+            masks_on_device = image_masks.to(device)
+
+        return {
+            "images": images_on_device,
+            "image_masks": masks_on_device,
+            "tokenized_prompt": torch.tensor(
+                [tokens], dtype=torch.long, device=device
+            ),
+            "tokenized_prompt_mask": torch.tensor(
+                [mask], dtype=torch.bool, device=device
+            ),
+            "token_ar_mask": torch.tensor(
+                [ar_mask], dtype=torch.long, device=device
+            ),
+        }
+
+    def _prepare_observation_batch(self, inputs_list: list[dict]) -> dict:
+        """Prepare batched observation dict from list of inputs."""
+        all_images = []
+        all_image_masks = []
+        all_tokens = []
+        all_masks = []
+        all_ar_masks = []
+
+        for inputs in inputs_list:
+            single_obs = self._prepare_observation(inputs)
+            all_images.append(single_obs["images"])
+            all_image_masks.append(single_obs["image_masks"])
+            all_tokens.append(single_obs["tokenized_prompt"])
+            all_masks.append(single_obs["tokenized_prompt_mask"])
+            all_ar_masks.append(single_obs["token_ar_mask"])
+
+        if isinstance(all_images[0], dict):
+            batched_images = {
+                k: torch.cat([img[k] for img in all_images], dim=0)
+                for k in all_images[0]
+            }
+            batched_masks = {
+                k: torch.cat([m[k] for m in all_image_masks], dim=0)
+                for k in all_image_masks[0]
+            }
+        else:
+            batched_images = torch.cat(all_images, dim=0)
+            batched_masks = torch.cat(all_image_masks, dim=0)
+
+        return {
+            "images": batched_images,
+            "image_masks": batched_masks,
+            "tokenized_prompt": torch.cat(all_tokens, dim=0),
+            "tokenized_prompt_mask": torch.cat(all_masks, dim=0),
+            "token_ar_mask": torch.cat(all_ar_masks, dim=0),
+        }
+
+    @torch.no_grad()
+    def infer(self, obs: dict) -> dict:
+        """Infer value from a single observation.
+
+        Args:
+            obs: Raw observation dictionary.
+
+        Returns:
+            Dictionary with "value" key.
+        """
+        import numpy as np
+
+        inputs = {
+            k: v.copy() if isinstance(v, np.ndarray) else v for k, v in obs.items()
+        }
+        inputs = self._input_transform(inputs)
+        observation = self._prepare_observation(inputs)
+
+        values = self.predict_value(observation)
+        return {
+            "value": float(values[0].item()),
+            "state": obs.get("state", np.array([])),
+        }
+
+    @torch.no_grad()
+    def infer_batch(self, obs_list: list[dict], *, batch_size: int = 64) -> list[dict]:
+        """Batch inference for multiple observations.
+
+        Args:
+            obs_list: List of observation dictionaries.
+            batch_size: Maximum batch size for single forward pass.
+
+        Returns:
+            List of dictionaries with "value" key.
+        """
+        import numpy as np
+
+        if not obs_list:
+            return []
+
+        all_outputs = []
+
+        for batch_start in range(0, len(obs_list), batch_size):
+            batch_end = min(batch_start + batch_size, len(obs_list))
+            batch_obs = obs_list[batch_start:batch_end]
+
+            inputs_list = []
+            for obs in batch_obs:
+                inputs = {
+                    k: v.copy() if isinstance(v, np.ndarray) else v
+                    for k, v in obs.items()
+                }
+                inputs = self._input_transform(inputs)
+                inputs_list.append(inputs)
+
+            observation = self._prepare_observation_batch(inputs_list)
+
+            values = self.predict_value(observation).cpu()
+
+            for i, obs in enumerate(batch_obs):
+                all_outputs.append(
+                    {
+                        "value": float(values[i]),
+                        "state": obs.get("state", np.array([])),
+                    }
+                )
+
+        return all_outputs
+
 
 __all__ = [
     "make_att_2d_masks",
-    "PI0PreTrainedModel",
-    "PI05PreTrainedModel",
-    "PI05FlowMatching",
+    "VLMPreTrainedModel",
+    "CriticPreTrainedModel",
+    "VLMObservationEncoder",
     "ValueHead",
     "CriticOutput",
     "ValueCriticModel",
-    "PI05ValueCritic",
+    "ValueCritic",
 ]
