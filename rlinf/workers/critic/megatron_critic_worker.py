@@ -38,6 +38,8 @@ class MegatronCritic(MegatronWorker):
         self.value_clip = self.cfg.algorithm.value_cliprange
 
     def init_worker(self):
+        super().init_worker()
+
         # offload weights and optimizers after initialization if offload is enabled
         # this is necessary if actor and critic are colocated
         self._offload_weight_and_optimizer()
