@@ -452,3 +452,51 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
+
+  fusco-moe-qwen-grpo-test:
+    runs-on: reason
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create reason environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
+          bash requirements/install.sh agentic
+
+      - name: Clone FUSCO
+        uses: actions/checkout@v5
+        with:
+          repository: infinigence/FUSCO
+          path: FUSCO
+
+      - name: Install FUSCO
+        run: |
+          source .venv/bin/activate
+          cd FUSCO
+          uv pip install .
+          mkdir -p lib
+          apt-get update -y && apt-get install curl -y
+          curl -L -o lib/libfusco.so https://ghfast.top/https://github.com/infinigence/FUSCO/releases/download/v0.1/libfusco.so
+          cd ..
+
+      - name: MoE FUSCO ep test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          export FUSCO_SO_PATH=$(pwd)/FUSCO/lib/libfusco.so
+          source .venv/bin/activate
+          bash tests/e2e_tests/reasoning/run.sh qwen3-moe-2.5b-collocated-mg-sgl-ep-fusco-test
+          rm -rf /workspace/results/grpo-moe-CI-test-seqmlp-2.5b/converted_ckpts/
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          rm -rf FUSCO
+          uv cache prune
+      
