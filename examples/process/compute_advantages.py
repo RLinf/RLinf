@@ -64,7 +64,7 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Import from rlinf for value policy with batch inference support
-from rlinf.models.embodiment.vla_lib_value_model import value_policy_config
+from rlinf.models.embodiment.vla_lib_value_model import value_policy
 
 logger = logging.getLogger(__name__)
 
@@ -406,7 +406,7 @@ def load_value_policy(cfg: DictConfig, device: str = "cuda"):
     logger.info(f"  return_range: [{return_min}, {return_max}]")
     logger.info(f"  critic_expert_variant: {critic_expert_variant}")
 
-    value_policy = value_policy_config.create_trained_value_policy(
+    value_pol = value_policy.create_trained_value_policy(
         checkpoint_dir=checkpoint_path,
         env_type=robot_type,
         model_type=model_type,
@@ -417,8 +417,8 @@ def load_value_policy(cfg: DictConfig, device: str = "cuda"):
         critic_expert_variant=critic_expert_variant,
     )
 
-    logger.info(f"Loaded ValuePolicy: {value_policy.metadata}")
-    return value_policy
+    logger.info(f"Loaded ValuePolicy: {value_pol.metadata}")
+    return value_pol
 
 
 # =============================================================================

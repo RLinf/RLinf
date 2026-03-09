@@ -26,8 +26,7 @@ from omegaconf import DictConfig
 
 from .configuration import PI05CriticConfig
 from .modeling_pi05_critic import CriticOutput, ValueCriticModel
-from .value_policy import ValuePolicy
-from .value_policy_config import create_trained_value_policy
+from .value_policy import ValuePolicy, create_trained_value_policy
 
 logger = logging.getLogger(__name__)
 

@@ -26,8 +26,7 @@ from torch import Tensor, nn
 from transformers import PreTrainedModel
 from transformers.modeling_outputs import ModelOutput
 
-from .configs import get_config
-from .configuration import PI05Config, PI05CriticConfig
+from .configuration import PI05Config, PI05CriticConfig, get_config
 from .paligemma_with_multi_expert import (
     PaliGemmaWithMultiExpertModel,
     _requires_uniform_dtype,

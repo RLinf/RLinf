@@ -156,26 +156,13 @@ class PI05DataCollator(DataCollatorMixin):
         lang_tokens = processed_txt["input_ids"]
         lang_masks = processed_txt["attention_mask"].bool()
         ar_masks = processed_txt["token_ar_mask"]
-        loss_masks = processed_txt["token_loss_mask"].bool()
-        kv_cache_masks = processed_txt["token_kv_cache_mask"].bool()
 
         global _COLLATOR_VERIFIED
         if not _COLLATOR_VERIFIED:
             _COLLATOR_VERIFIED = True
-            logger.info("[Collator Verification] First batch prompt/prefix/response:")
+            logger.info("[Collator Verification] First batch prompts:")
             for i in range(min(len(prompts), 4)):
-                has_actions = action_mask_list[i] > 0.5
-                sample_type = "VLA" if has_actions else "VLM"
-                logger.info("  [%d] %s", i, sample_type)
-                logger.info("      prompt: %s", prompts[i] if prompts[i] else "None")
-                logger.info("      prefix: %s", prefixes[i] if prefixes[i] else "None")
-                resp = responses[i] if responses[i] else "None"
-                logger.info("      response: %s", resp)
-                logger.info(
-                    "      loss_mask sum: %d, kv_cache_mask sum: %d",
-                    loss_masks[i].sum().item(),
-                    kv_cache_masks[i].sum().item(),
-                )
+                logger.info("  [%d] prompt: %s", i, prompts[i] if prompts[i] else "None")
 
         action_mask = torch.tensor(action_mask_list, dtype=torch.float32)
 
@@ -185,8 +172,6 @@ class PI05DataCollator(DataCollatorMixin):
             "tokenized_prompt": lang_tokens,
             "tokenized_prompt_mask": lang_masks,
             "token_ar_mask": ar_masks,
-            "token_loss_mask": loss_masks,
-            "token_kv_cache_mask": kv_cache_masks,
             "action_mask": action_mask,
         }
 
