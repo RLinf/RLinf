@@ -42,6 +42,14 @@ discrete_state_input: false
 exclude_cot_from_kv_cache: false
 
 # =====================================================================
+# Backbone: "paligemma" (default) | "siglip_gemma3"
+# =====================================================================
+backbone_variant: "paligemma"
+# Required for siglip_gemma3 only
+siglip_path: null
+gemma3_path: null
+
+# =====================================================================
 # Checkpoint (set to load pretrained weights)
 # =====================================================================
 # model_path: "/path/to/checkpoint"

@@ -31,6 +31,7 @@ from .paligemma_with_multi_expert import (
     PaliGemmaWithMultiExpertModel,
     _requires_uniform_dtype,
 )
+from .siglip_gemma3_with_multi_expert import SiglipGemma3WithMultiExpert
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,9 @@ class PI0PreTrainedModel(PreTrainedModel):
         elif isinstance(module, nn.Embedding):
             module.weight.data.normal_(mean=0.0, std=0.02)
 
-    def _set_gradient_checkpointing(self, enable: bool = True, gradient_checkpointing_func=None):
+    def _set_gradient_checkpointing(
+        self, enable: bool = True, gradient_checkpointing_func=None
+    ):
         if gradient_checkpointing_func is None:
             gradient_checkpointing_func = torch.utils.checkpoint.checkpoint
         if hasattr(self, "model"):
@@ -96,11 +99,19 @@ class PI0PreTrainedModel(PreTrainedModel):
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, **kwargs):
         """Override from_pretrained to handle problematic safetensors files."""
-        logger.info(f"PI0 from_pretrained: Loading from {pretrained_model_name_or_path}")
+        logger.info(
+            f"PI0 from_pretrained: Loading from {pretrained_model_name_or_path}"
+        )
 
-        single_file_path = os.path.join(pretrained_model_name_or_path, "model.safetensors")
-        index_file_path = os.path.join(pretrained_model_name_or_path, "model.safetensors.index.json")
-        sharded_pattern = os.path.join(pretrained_model_name_or_path, "model-*.safetensors")
+        single_file_path = os.path.join(
+            pretrained_model_name_or_path, "model.safetensors"
+        )
+        index_file_path = os.path.join(
+            pretrained_model_name_or_path, "model.safetensors.index.json"
+        )
+        sharded_pattern = os.path.join(
+            pretrained_model_name_or_path, "model-*.safetensors"
+        )
         has_single_file = os.path.exists(single_file_path)
         has_index_file = os.path.exists(index_file_path)
         sharded_parts = glob.glob(sharded_pattern)
@@ -120,15 +131,25 @@ class PI0PreTrainedModel(PreTrainedModel):
                     "Failed to read single model.safetensors metadata (%s) - attempting manual loading",
                     exc,
                 )
-                return cls._load_from_safetensors(pretrained_model_name_or_path, **kwargs)
+                return cls._load_from_safetensors(
+                    pretrained_model_name_or_path, **kwargs
+                )
 
             if invalid_metadata:
-                logger.warning("Single model.safetensors has invalid metadata - attempting manual loading")
-                return cls._load_from_safetensors(pretrained_model_name_or_path, **kwargs)
+                logger.warning(
+                    "Single model.safetensors has invalid metadata - attempting manual loading"
+                )
+                return cls._load_from_safetensors(
+                    pretrained_model_name_or_path, **kwargs
+                )
         elif has_index_file or has_sharded_files:
-            logger.info("Detected HF-sharded checkpoint - will rely on HuggingFace loader")
+            logger.info(
+                "Detected HF-sharded checkpoint - will rely on HuggingFace loader"
+            )
         else:
-            logger.warning("No model.safetensors file detected; attempting standard HuggingFace loading.")
+            logger.warning(
+                "No model.safetensors file detected; attempting standard HuggingFace loading."
+            )
 
         safe_kwargs = kwargs.copy()
         original_device_map = kwargs.get("device_map")
@@ -140,25 +161,35 @@ class PI0PreTrainedModel(PreTrainedModel):
         )
 
         if is_distributed:
-            logger.info("Detected distributed training - letting Accelerate handle device placement")
-            safe_kwargs.update({
-                "device_map": None,
-                "low_cpu_mem_usage": False,
-                "torch_dtype": kwargs.get("torch_dtype", torch.float32),
-            })
-        else:
-            if original_device_map is not None:
-                logger.info(f"Single GPU/inference mode - using device_map: {original_device_map}")
-                safe_kwargs.update({
-                    "torch_dtype": kwargs.get("torch_dtype", torch.float32),
-                })
-            else:
-                logger.info("No device_map specified - using default CPU loading")
-                safe_kwargs.update({
+            logger.info(
+                "Detected distributed training - letting Accelerate handle device placement"
+            )
+            safe_kwargs.update(
+                {
                     "device_map": None,
                     "low_cpu_mem_usage": False,
                     "torch_dtype": kwargs.get("torch_dtype", torch.float32),
-                })
+                }
+            )
+        else:
+            if original_device_map is not None:
+                logger.info(
+                    f"Single GPU/inference mode - using device_map: {original_device_map}"
+                )
+                safe_kwargs.update(
+                    {
+                        "torch_dtype": kwargs.get("torch_dtype", torch.float32),
+                    }
+                )
+            else:
+                logger.info("No device_map specified - using default CPU loading")
+                safe_kwargs.update(
+                    {
+                        "device_map": None,
+                        "low_cpu_mem_usage": False,
+                        "torch_dtype": kwargs.get("torch_dtype", torch.float32),
+                    }
+                )
 
         if "config" not in safe_kwargs or safe_kwargs["config"] is None:
             config_path = os.path.join(pretrained_model_name_or_path, "config.json")
@@ -181,7 +212,9 @@ class PI0PreTrainedModel(PreTrainedModel):
         if torch_dtype == torch.bfloat16 and not _requires_uniform_dtype():
             cls._apply_mixed_precision(model)
         elif _requires_uniform_dtype():
-            logger.info("Parameter sharding detected (FSDP/Zero-3): using uniform dtype")
+            logger.info(
+                "Parameter sharding detected (FSDP/Zero-3): using uniform dtype"
+            )
 
         return model
 
@@ -222,23 +255,33 @@ class PI0PreTrainedModel(PreTrainedModel):
 
         model = cls(config)
 
-        safetensors_path = os.path.join(pretrained_model_name_or_path, "model.safetensors")
+        safetensors_path = os.path.join(
+            pretrained_model_name_or_path, "model.safetensors"
+        )
         logger.info(f"Manually loading state dict from {safetensors_path}")
 
         try:
             state_dict = load_file(safetensors_path, device="cpu")
-            logger.info(f"Successfully loaded {len(state_dict)} tensors from safetensors file")
+            logger.info(
+                f"Successfully loaded {len(state_dict)} tensors from safetensors file"
+            )
 
             sample_key = next(iter(state_dict.keys())) if state_dict else ""
             if sample_key.startswith("model."):
-                missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+                missing_keys, unexpected_keys = model.load_state_dict(
+                    state_dict, strict=False
+                )
             else:
-                missing_keys, unexpected_keys = model.model.load_state_dict(state_dict, strict=False)
+                missing_keys, unexpected_keys = model.model.load_state_dict(
+                    state_dict, strict=False
+                )
 
             if missing_keys:
                 logger.warning(f"Missing keys when loading state dict: {missing_keys}")
             if unexpected_keys:
-                logger.warning(f"Unexpected keys when loading state dict: {unexpected_keys}")
+                logger.warning(
+                    f"Unexpected keys when loading state dict: {unexpected_keys}"
+                )
 
             logger.info("Successfully loaded model from single safetensors file")
 
@@ -250,14 +293,20 @@ class PI0PreTrainedModel(PreTrainedModel):
                     model.to(dtype=torch.float32)
             else:
                 if torch_dtype == torch.bfloat16:
-                    model.model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
+                    model.model.paligemma_with_expert.to_bfloat16_for_selected_params(
+                        "bfloat16"
+                    )
                 elif torch_dtype == torch.float32:
-                    model.model.paligemma_with_expert.to_bfloat16_for_selected_params("float32")
+                    model.model.paligemma_with_expert.to_bfloat16_for_selected_params(
+                        "float32"
+                    )
 
             return model
         except Exception as e:
             logger.error(f"Failed to manually load from safetensors file: {e}")
-            raise ValueError(f"Could not load model from {pretrained_model_name_or_path}: {e}")
+            raise ValueError(
+                f"Could not load model from {pretrained_model_name_or_path}: {e}"
+            )
 
 
 class PI05PreTrainedModel(PI0PreTrainedModel):
@@ -306,13 +355,20 @@ class PI05FlowMatching(nn.Module):
             )
         return func(*args, **kwargs)
 
+    def _get_model_dtype(self) -> torch.dtype:
+        """Get the dtype of the backbone model's attention weights."""
+        if getattr(self, "backbone_variant", "paligemma") == "siglip_gemma3":
+            return self.paligemma_with_expert.gemma3.model.layers[
+                0
+            ].self_attn.q_proj.weight.dtype
+        return self.paligemma_with_expert.paligemma.language_model.layers[
+            0
+        ].self_attn.q_proj.weight.dtype
+
     def _prepare_attention_masks_4d(self, att_2d_masks):
         """Prepare 4D attention masks for transformer."""
         att_2d_masks_4d = att_2d_masks[:, None, :, :]
-        dtype = (
-            self.paligemma_with_expert.paligemma.language_model.layers[0]
-            .self_attn.q_proj.weight.dtype
-        )
+        dtype = self._get_model_dtype()
         return torch.where(
             att_2d_masks_4d,
             torch.tensor(0.0, dtype=dtype, device=att_2d_masks.device),
@@ -331,11 +387,15 @@ class PI05FlowMatching(nn.Module):
 
         token_ar_mask = observation.get("token_ar_mask")
         if token_ar_mask is None:
-            token_ar_mask = torch.zeros((batch_size, seq_len), dtype=torch.long, device=device)
+            token_ar_mask = torch.zeros(
+                (batch_size, seq_len), dtype=torch.long, device=device
+            )
 
         token_loss_mask = observation.get("token_loss_mask")
         if token_loss_mask is None:
-            token_loss_mask = torch.zeros((batch_size, seq_len), dtype=torch.bool, device=device)
+            token_loss_mask = torch.zeros(
+                (batch_size, seq_len), dtype=torch.bool, device=device
+            )
 
         token_kv_cache_mask = observation.get("token_kv_cache_mask")
         if token_kv_cache_mask is None:
@@ -358,18 +418,24 @@ class PI05FlowMatching(nn.Module):
             token_kv_cache_mask,
         )
 
-    def embed_prefix(self, images, img_masks, lang_tokens, lang_masks, token_ar_mask=None):
+    def embed_prefix(
+        self, images, img_masks, lang_tokens, lang_masks, token_ar_mask=None
+    ):
         """Embed images and language tokens (PI05 version with token_ar_mask)."""
         embs, pad_masks, ar_masks = [], [], []
         bsize = lang_tokens.shape[0]
         device = lang_tokens.device
 
         for img, img_mask in zip(images, img_masks, strict=True):
-            img_emb = self._apply_checkpoint(self.paligemma_with_expert.embed_image, img)
+            img_emb = self._apply_checkpoint(
+                self.paligemma_with_expert.embed_image, img
+            )
             num_img_embs = img_emb.shape[1]
             embs.append(img_emb)
             pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
-            ar_masks.append(torch.zeros(bsize, num_img_embs, dtype=torch.long, device=device))
+            ar_masks.append(
+                torch.zeros(bsize, num_img_embs, dtype=torch.long, device=device)
+            )
 
         def embed_lang(tokens):
             emb = self.paligemma_with_expert.embed_language_tokens(tokens)
@@ -380,10 +446,16 @@ class PI05FlowMatching(nn.Module):
         pad_masks.append(lang_masks)
 
         if token_ar_mask is None:
-            token_ar_mask = torch.zeros(bsize, lang_masks.shape[1], dtype=torch.long, device=device)
+            token_ar_mask = torch.zeros(
+                bsize, lang_masks.shape[1], dtype=torch.long, device=device
+            )
         ar_masks.append(token_ar_mask)
 
-        return torch.cat(embs, dim=1), torch.cat(pad_masks, dim=1), torch.cat(ar_masks, dim=1)
+        return (
+            torch.cat(embs, dim=1),
+            torch.cat(pad_masks, dim=1),
+            torch.cat(ar_masks, dim=1),
+        )
 
 
 # =============================================================================
@@ -447,24 +519,45 @@ class ValueCriticModel(PI05FlowMatching):
         nn.Module.__init__(self)
         self.config = config
         self.pi05 = True
+        self.backbone_variant = getattr(config, "backbone_variant", "paligemma")
 
-        paligemma_config = get_config(config.paligemma_variant)
         expert_config = get_config(config.critic_expert_variant)
 
         logger.info(
-            f"Creating ValueCritic: expert={config.critic_expert_variant}"
+            f"Creating ValueCritic: expert={config.critic_expert_variant}, "
+            f"backbone={self.backbone_variant}"
         )
 
         expert_configs = {"value": expert_config}
-        use_adarms = [False, {"value": False}]
-        self.paligemma_with_expert = PaliGemmaWithMultiExpertModel(
-            vlm_config=paligemma_config,
-            expert_configs=expert_configs,
-            use_adarms=use_adarms,
-            precision=config.dtype,
-            freeze_vision_encoder=getattr(config, "freeze_vision_encoder", False),
-            freeze_vlm=getattr(config, "freeze_vlm", False),
-        )
+
+        if self.backbone_variant == "siglip_gemma3":
+            siglip_path = getattr(config, "siglip_path", "")
+            gemma3_path = getattr(config, "gemma3_path", "")
+            if not siglip_path or not gemma3_path:
+                raise ValueError(
+                    "backbone_variant='siglip_gemma3' requires both "
+                    f"siglip_path and gemma3_path. Got siglip_path='{siglip_path}', "
+                    f"gemma3_path='{gemma3_path}'"
+                )
+            self.paligemma_with_expert = SiglipGemma3WithMultiExpert(
+                expert_configs=expert_configs,
+                siglip_path=siglip_path,
+                gemma3_path=gemma3_path,
+                precision=config.dtype,
+                freeze_vision_encoder=getattr(config, "freeze_vision_encoder", False),
+                freeze_vlm=getattr(config, "freeze_vlm", False),
+            )
+        else:
+            paligemma_config = get_config(config.paligemma_variant)
+            use_adarms = [False, {"value": False}]
+            self.paligemma_with_expert = PaliGemmaWithMultiExpertModel(
+                vlm_config=paligemma_config,
+                expert_configs=expert_configs,
+                use_adarms=use_adarms,
+                precision=config.dtype,
+                freeze_vision_encoder=getattr(config, "freeze_vision_encoder", False),
+                freeze_vlm=getattr(config, "freeze_vlm", False),
+            )
 
         self.gradient_checkpointing_enabled = False
         self._expert_config = expert_config
@@ -509,16 +602,28 @@ class ValueCriticModel(PI05FlowMatching):
 
     def gradient_checkpointing_enable(self):
         self.gradient_checkpointing_enabled = True
-        self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing = True
-        self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing = True
+        if self.backbone_variant == "siglip_gemma3":
+            self.paligemma_with_expert.gemma3.model.gradient_checkpointing = True
+            self.paligemma_with_expert.vision_tower.gradient_checkpointing = True
+        else:
+            self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing = True
+            self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing = (
+                True
+            )
         for expert in self.paligemma_with_expert.experts.values():
             expert.model.gradient_checkpointing = True
         logger.info("Enabled gradient checkpointing for ValueCritic")
 
     def gradient_checkpointing_disable(self):
         self.gradient_checkpointing_enabled = False
-        self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing = False
-        self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing = False
+        if self.backbone_variant == "siglip_gemma3":
+            self.paligemma_with_expert.gemma3.model.gradient_checkpointing = False
+            self.paligemma_with_expert.vision_tower.gradient_checkpointing = False
+        else:
+            self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing = False
+            self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing = (
+                False
+            )
         for expert in self.paligemma_with_expert.experts.values():
             expert.model.gradient_checkpointing = False
         logger.info("Disabled gradient checkpointing for ValueCritic")
@@ -533,9 +638,7 @@ class ValueCriticModel(PI05FlowMatching):
         ar_mask = torch.ones(batch_size, 1, dtype=torch.long, device=cls_emb.device)
         return cls_emb, pad_mask, ar_mask
 
-    def forward(
-        self, observation, target_values=None, **kwargs
-    ) -> CriticOutput:
+    def forward(self, observation, target_values=None, **kwargs) -> CriticOutput:
         """Forward pass through expert mode."""
         (
             images,
@@ -598,17 +701,18 @@ class ValueCriticModel(PI05FlowMatching):
         stop_gradient_to_vlm: bool = False,
     ):
         """Forward through VLM + value expert."""
-        model_dtype = (
-            self.paligemma_with_expert.paligemma.language_model.layers[0]
-            .self_attn.q_proj.weight.dtype
-        )
+        model_dtype = self._get_model_dtype()
         if model_dtype == torch.bfloat16:
             prefix_embs = prefix_embs.to(torch.bfloat16)
             suffix_embs = suffix_embs.to(torch.bfloat16)
 
         # Use two-stage forward when VLM is frozen under FSDP to avoid
         # view/inplace errors in interleaved attention.
-        if getattr(self.paligemma_with_expert, "freeze_vlm", False):
+        # 800m always uses two-stage (no interleaved support for Gemma3).
+        use_two_stage = self.backbone_variant == "siglip_gemma3" or getattr(
+            self.paligemma_with_expert, "freeze_vlm", False
+        )
+        if use_two_stage:
             prefix_out, suffix_out = self._forward_expert_two_stage(
                 prefix_embs=prefix_embs,
                 prefix_pad_masks=prefix_pad_masks,
@@ -618,7 +722,9 @@ class ValueCriticModel(PI05FlowMatching):
                 suffix_ar_masks=suffix_ar_masks,
                 stop_gradient_to_vlm=stop_gradient_to_vlm,
             )
-            cls_hidden = suffix_out[:, -1, :].to(self.value_head.value_proj.weight.dtype)
+            cls_hidden = suffix_out[:, -1, :].to(
+                self.value_head.value_proj.weight.dtype
+            )
             values, logits, probs = self._compute_value_from_hidden(cls_hidden)
             return values, cls_hidden, logits, probs, prefix_out
 
@@ -682,17 +788,27 @@ class ValueCriticModel(PI05FlowMatching):
         )
 
         if stop_gradient_to_vlm and past_kv is not None:
-            past_kv = tuple(
-                tuple(
-                    t.detach() if isinstance(t, torch.Tensor) else t for t in layer_kv
+            from transformers.cache_utils import DynamicCache
+
+            if isinstance(past_kv, DynamicCache):
+                for i in range(len(past_kv.key_cache)):
+                    past_kv.key_cache[i] = past_kv.key_cache[i].detach()
+                    past_kv.value_cache[i] = past_kv.value_cache[i].detach()
+            else:
+                past_kv = tuple(
+                    tuple(
+                        t.detach() if isinstance(t, torch.Tensor) else t
+                        for t in layer_kv
+                    )
+                    for layer_kv in past_kv
                 )
-                for layer_kv in past_kv
-            )
 
         # Phase 2: run value expert with cached prefix keys/values.
         batch_size = prefix_pad_masks.shape[0]
         prefix_len, suffix_len = prefix_pad_masks.shape[1], suffix_pad_masks.shape[1]
-        prefix_2d = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
+        prefix_2d = prefix_pad_masks[:, None, :].expand(
+            batch_size, suffix_len, prefix_len
+        )
         suffix_attn = make_att_2d_masks(suffix_pad_masks, suffix_ar_masks)
         full_attn_4d = self._prepare_attention_masks_4d(
             torch.cat([prefix_2d, suffix_attn], dim=2)
@@ -738,7 +854,9 @@ class ValueCriticModel(PI05FlowMatching):
         d_to_u = torch.where(same_bin, torch.ones_like(d_to_u), d_to_u)
 
         batch_size = target_values.shape[0]
-        target_probs = torch.zeros(batch_size, self.num_bins, device=target_values.device)
+        target_probs = torch.zeros(
+            batch_size, self.num_bins, device=target_values.device
+        )
         batch_idx = torch.arange(batch_size, device=target_values.device)
         target_probs[batch_idx, l] += d_to_u
         target_probs[batch_idx, u] += d_to_l
@@ -790,7 +908,9 @@ class ValueCriticModel(PI05FlowMatching):
 
         # Phase 2: Expert with cache
         prefix_len, suffix_len = prefix_pad_masks.shape[1], suffix_pad_masks.shape[1]
-        prefix_2d = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
+        prefix_2d = prefix_pad_masks[:, None, :].expand(
+            batch_size, suffix_len, prefix_len
+        )
         suffix_attn = make_att_2d_masks(suffix_pad_masks, suffix_ar_masks)
         full_attn_4d = self._prepare_attention_masks_4d(
             torch.cat([prefix_2d, suffix_attn], dim=2)
@@ -842,52 +962,73 @@ class PI05ValueCritic(PI05PreTrainedModel):
         self.post_init()
 
     def get_input_embeddings(self):
+        if self.model.backbone_variant == "siglip_gemma3":
+            return self.model.paligemma_with_expert.gemma3.get_input_embeddings()
         return self.model.paligemma_with_expert.paligemma.language_model.get_input_embeddings()
 
     def set_input_embeddings(self, value):
-        self.model.paligemma_with_expert.paligemma.language_model.set_input_embeddings(value)
+        if self.model.backbone_variant == "siglip_gemma3":
+            self.model.paligemma_with_expert.gemma3.set_input_embeddings(value)
+        else:
+            self.model.paligemma_with_expert.paligemma.language_model.set_input_embeddings(
+                value
+            )
 
     def get_output_embeddings(self):
+        if self.model.backbone_variant == "siglip_gemma3":
+            return self.model.paligemma_with_expert.gemma3.lm_head
         return self.model.paligemma_with_expert.paligemma.lm_head
 
     def set_output_embeddings(self, new_embeddings):
-        self.model.paligemma_with_expert.paligemma.lm_head = new_embeddings
+        if self.model.backbone_variant == "siglip_gemma3":
+            self.model.paligemma_with_expert.gemma3.lm_head = new_embeddings
+        else:
+            self.model.paligemma_with_expert.paligemma.lm_head = new_embeddings
 
-    def resize_token_embeddings(self, new_num_tokens, pad_to_multiple_of=None, mean_resizing=True):
+    def resize_token_embeddings(
+        self, new_num_tokens, pad_to_multiple_of=None, mean_resizing=True
+    ):
         if pad_to_multiple_of is not None:
             new_num_tokens = (
                 (new_num_tokens + pad_to_multiple_of - 1) // pad_to_multiple_of
             ) * pad_to_multiple_of
 
-        lm = self.model.paligemma_with_expert.paligemma.language_model
-        lm.resize_token_embeddings(new_num_tokens, pad_to_multiple_of, mean_resizing)
-
-        old_lm_head = self.model.paligemma_with_expert.paligemma.lm_head
-        old_num_tokens = old_lm_head.weight.shape[0]
-
-        if old_num_tokens != new_num_tokens:
-            new_lm_head = nn.Linear(
-                old_lm_head.in_features,
-                new_num_tokens,
-                bias=old_lm_head.bias is not None,
-                device=old_lm_head.weight.device,
-                dtype=old_lm_head.weight.dtype,
+        if self.model.backbone_variant == "siglip_gemma3":
+            self.model.paligemma_with_expert.gemma3.resize_token_embeddings(
+                new_num_tokens, pad_to_multiple_of, mean_resizing
             )
-            num_tokens_to_copy = min(old_num_tokens, new_num_tokens)
-            new_lm_head.weight.data[:num_tokens_to_copy] = old_lm_head.weight.data[
-                :num_tokens_to_copy
-            ]
-            if old_lm_head.bias is not None:
-                new_lm_head.bias.data[:num_tokens_to_copy] = old_lm_head.bias.data[
+        else:
+            lm = self.model.paligemma_with_expert.paligemma.language_model
+            lm.resize_token_embeddings(
+                new_num_tokens, pad_to_multiple_of, mean_resizing
+            )
+
+            old_lm_head = self.model.paligemma_with_expert.paligemma.lm_head
+            old_num_tokens = old_lm_head.weight.shape[0]
+
+            if old_num_tokens != new_num_tokens:
+                new_lm_head = nn.Linear(
+                    old_lm_head.in_features,
+                    new_num_tokens,
+                    bias=old_lm_head.bias is not None,
+                    device=old_lm_head.weight.device,
+                    dtype=old_lm_head.weight.dtype,
+                )
+                num_tokens_to_copy = min(old_num_tokens, new_num_tokens)
+                new_lm_head.weight.data[:num_tokens_to_copy] = old_lm_head.weight.data[
                     :num_tokens_to_copy
                 ]
-            if new_num_tokens > old_num_tokens:
-                nn.init.normal_(
-                    new_lm_head.weight.data[old_num_tokens:], mean=0.0, std=0.02
-                )
                 if old_lm_head.bias is not None:
-                    new_lm_head.bias.data[old_num_tokens:].zero_()
-            self.model.paligemma_with_expert.paligemma.lm_head = new_lm_head
+                    new_lm_head.bias.data[:num_tokens_to_copy] = old_lm_head.bias.data[
+                        :num_tokens_to_copy
+                    ]
+                if new_num_tokens > old_num_tokens:
+                    nn.init.normal_(
+                        new_lm_head.weight.data[old_num_tokens:], mean=0.0, std=0.02
+                    )
+                    if old_lm_head.bias is not None:
+                        new_lm_head.bias.data[old_num_tokens:].zero_()
+                self.model.paligemma_with_expert.paligemma.lm_head = new_lm_head
 
         self.config.vocab_size = new_num_tokens
         return self.get_input_embeddings()

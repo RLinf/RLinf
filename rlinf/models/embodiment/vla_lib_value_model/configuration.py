@@ -249,6 +249,9 @@ class PI05CriticConfig(PI05Config):
         num_bins: int = 201,
         v_min: float = -1.0,
         v_max: float = 0.0,
+        backbone_variant: str = "paligemma",
+        siglip_path: str | None = None,
+        gemma3_path: str | None = None,
         **kwargs,
     ):
         # Accept and ignore legacy parameters for checkpoint compatibility
@@ -261,3 +264,6 @@ class PI05CriticConfig(PI05Config):
         self.num_bins = num_bins
         self.v_min = v_min
         self.v_max = v_max
+        self.backbone_variant = backbone_variant
+        self.siglip_path = siglip_path or ""
+        self.gemma3_path = gemma3_path or ""

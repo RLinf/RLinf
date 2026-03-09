@@ -515,7 +515,7 @@ def create_trained_value_policy(
         Configured ValuePolicy instance with batch inference support
     """
     from .configuration import PI05CriticConfig
-    from .modeling_pi05_critic import PI05ValueCritic
+    from .modeling_critic import PI05ValueCritic
     from .processing import PI05Processor
 
     checkpoint_dir = pathlib.Path(checkpoint_dir)

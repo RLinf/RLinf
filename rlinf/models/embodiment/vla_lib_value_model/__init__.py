@@ -25,7 +25,7 @@ import torch
 from omegaconf import DictConfig
 
 from .configuration import PI05CriticConfig
-from .modeling_pi05_critic import CriticOutput, ValueCriticModel
+from .modeling_critic import CriticOutput, ValueCriticModel
 from .value_policy import ValuePolicy, create_trained_value_policy
 
 logger = logging.getLogger(__name__)
@@ -67,6 +67,9 @@ def get_vla_lib_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticMod
     _set("stop_gradient_to_vlm", False)
     _set("discrete_state_input", False)
     _set("exclude_cot_from_kv_cache", False)
+    _set("backbone_variant", "paligemma")
+    _set("siglip_path", None)
+    _set("gemma3_path", None)
 
     # Handle precision / dtype
     precision = getattr(cfg, "precision", "bf16")
