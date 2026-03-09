@@ -657,7 +657,7 @@ class FSDPActor(FSDPModelManager, Worker):
                 )
             )
             total_result_len += result_len
-            self.log_info(
+            self.log_debug(
                 f"[dynamic inference rank-{self._rank}] inference result_len={result_len}, total_result_len={total_result_len}/{total_result_len_per_dp}"
             )
             self._load_weight_and_optimizer()
@@ -697,7 +697,7 @@ class FSDPActor(FSDPModelManager, Worker):
                 min(total_result_len, self.cfg.algorithm.n_minibatches),
             )
             for split_result in split_results:
-                output_channel.put(split_result, async_op=True)
+                output_channel.put(split_result)
         assert total_result_len == total_result_len_per_dp, (
             f"Expected {total_result_len_per_dp} sequences from channel, but got {total_result_len}"
         )
@@ -771,16 +771,19 @@ class FSDPActor(FSDPModelManager, Worker):
                 )
 
             loss, mbs_metrics_data = policy_loss(
+                task_type=self.task_type,
                 loss_type=self.cfg.algorithm.loss_type,
                 loss_agg_func=self.loss_agg_func,
                 logprobs=logprobs,
                 old_logprobs=prev_logprobs,
                 advantages=advantages,
+                clip_ratio_c=clip_ratio_c,
                 clip_ratio_low=clip_ratio_low,
                 clip_ratio_high=clip_ratio_high,
-                clip_ratio_c=clip_ratio_c,
                 loss_mask=loss_mask,
-                task_type=self.task_type,
+                clip_log_ratio_min=self.cfg.algorithm.get("clip_log_ratio_min", None),
+                clip_log_ratio_max=self.cfg.algorithm.get("clip_log_ratio_max", None),
+                fast_path_zero_loss_mask=True,
             )
 
             entropy_loss = torch.tensor(
