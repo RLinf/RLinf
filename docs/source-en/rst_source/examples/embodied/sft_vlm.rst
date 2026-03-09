@@ -219,21 +219,21 @@ RLinf provide a reference experiment using the Qwen3-VL-4B model, run on a singl
 
 Evaluation accuracy on test_data every 1000 iterations:
 
-.. image:: https://github.com/RLinf/misc/blob/main/pic/qwen3_sft_vlm_eval_accuracy.png
+.. image:: https://github.com/RLinf/misc/raw/main/pic/qwen3_sft_vlm_eval_accuracy.png
    :alt: Qwen3-VL-4B VLM SFT eval accuracy
    :width: 85%
    :align: center
 
 grad_norm curve:
 
-.. image:: https://github.com/RLinf/misc/blob/main/pic/qwen3_sft_vlm_eval_grad_norm.png
+.. image:: https://github.com/RLinf/misc/raw/main/pic/qwen3_sft_vlm_eval_grad_norm.png
    :alt: Qwen3-VL-4B VLM SFT grad norm
    :width: 85%
    :align: center
 
 loss curve:
 
-.. image:: https://github.com/RLinf/misc/blob/main/pic/qwen3_sft_vlm_eval_loss.png
+.. image:: https://github.com/RLinf/misc/raw/main/pic/qwen3_sft_vlm_eval_loss.png
    :alt: Qwen3-VL-4B VLM SFT loss
    :width: 85%
    :align: center
