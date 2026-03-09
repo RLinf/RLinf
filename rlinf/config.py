@@ -314,10 +314,9 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
     def validate_amp_cfg(config: DictConfig) -> DictConfig:
         """Validate AMP configuration and ensure mutual exclusivity with FSDP mixed_precision."""
 
-        mixed_precision_config = config.get("mixed_precision", {})
-        param_dtype = mixed_precision_config.get("param_dtype", None)
-        reduce_dtype = mixed_precision_config.get("reduce_dtype", None)
-        buffer_dtype = mixed_precision_config.get("buffer_dtype", None)
+        param_dtype = config.mixed_precision.param_dtype
+        reduce_dtype = config.mixed_precision.reduce_dtype
+        buffer_dtype = config.mixed_precision.buffer_dtype
 
         use_fsdp_mixed_precision = not (
             param_dtype is None and reduce_dtype is None and buffer_dtype is None
@@ -393,7 +392,16 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
         assert hasattr(cfg.fsdp_config, "mixed_precision"), (
             "fsdp_config.mixed_precision is required in FSDP actor configuration."
         )
-
+        mixed_precision_config = cfg.fsdp_config.mixed_precision
+        mixed_precision_config.param_dtype = mixed_precision_config.get(
+            "param_dtype", None
+        )
+        mixed_precision_config.reduce_dtype = mixed_precision_config.get(
+            "reduce_dtype", None
+        )
+        mixed_precision_config.buffer_dtype = mixed_precision_config.get(
+            "buffer_dtype", None
+        )
         cfg.fsdp_config = validate_amp_cfg(cfg.fsdp_config)
 
     return cfg
