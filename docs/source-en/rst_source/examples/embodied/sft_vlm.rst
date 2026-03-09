@@ -190,7 +190,7 @@ Use the same launch command:
 Experiment Results
 ------------------
 
-We provide a reference experiment using the Qwen2.5-VL-3B model, run on a single machine with 8 × H100 GPUs for 6000 iterations.
+RLinf provide a reference experiment using the Qwen2.5-VL-3B model, run on a single machine with 8 × H100 GPUs for 6000 iterations.
 
 Evaluation accuracy on test_data every 1000 iterations:
 
@@ -215,7 +215,7 @@ loss curve:
 
 The final evaluation accuracy of the Qwen2.5-VL-3B model is ``0.8995802998542786`` (about ``89.96%``).
 
-We provide a reference experiment using the Qwen3-VL-4B model, run on a single machine with 4 × H100 GPUs for 6000 iterations.
+RLinf provide a reference experiment using the Qwen3-VL-4B model, run on a single machine with 4 × H100 GPUs for 6000 iterations.
 
 Evaluation accuracy on test_data every 1000 iterations:
 
