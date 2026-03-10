@@ -22,7 +22,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "maniskill_ppo_openpi"
+    experiment_name: "maniskill_async_ppo_openpi"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
@@ -156,7 +156,7 @@ actor:
     adam_beta2: 0.95
     adam_eps: 1.0e-05
     clip_grad: 1.0
-    critic_warmup_steps: 10
+    critic_warmup_steps: 5
 
   # Override the default values in training_backend/fsdp
   fsdp_config:

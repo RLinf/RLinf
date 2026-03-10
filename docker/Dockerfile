@@ -185,8 +185,9 @@ RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-metaworld-image
 
-# Install openpi env
-RUN bash requirements/install.sh embodied --venv openpi --model openpi --env metaworld
+# Install openvla-oft and openpi envs
+RUN bash requirements/install.sh embodied --venv openvla-oft --model openvla-oft --env metaworld && \
+    bash requirements/install.sh embodied --venv openpi --model openpi --env metaworld
 
 RUN source switch_env openpi && download_assets --dir /opt/assets --assets openpi
 RUN link_assets
@@ -200,8 +201,9 @@ RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-calvin-image
 
-# Install openpi env
-RUN bash requirements/install.sh embodied --venv openpi --model openpi --env calvin
+# Install openvla-oft and openpi envs
+RUN bash requirements/install.sh embodied --venv openvla-oft --model openvla-oft --env calvin && \
+    bash requirements/install.sh embodied --venv openpi --model openpi --env calvin
 
 RUN source switch_env openpi && download_assets --dir /opt/assets --assets openpi
 RUN link_assets

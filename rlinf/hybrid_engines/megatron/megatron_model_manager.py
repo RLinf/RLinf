@@ -84,6 +84,23 @@ HAVE_TE = HAVE_TE and HAVE_TE_MODULE
 if TYPE_CHECKING:
     pass
 
+# Check if FUSCO is available
+try:
+    import importlib.util
+    import os
+
+    from fusco import FUSCOLibrary
+
+    if importlib.util.find_spec("idxtools") is None:
+        raise ImportError
+
+    so_file = os.environ.get("FUSCO_SO_PATH", "libfusco.so")
+    fusco_lib = FUSCOLibrary(so_file)
+    HAVE_FUSCO = True
+except Exception:
+    fusco_lib = None
+    HAVE_FUSCO = False
+
 
 def get_specs(spec_name, transformer_config=None, use_te=False):
     if use_te and spec_name == "":
@@ -140,6 +157,24 @@ class MegatronModelManager:
 
         # In AUTO mode, the actor will occupy all GPUs for initialization, but not all Megatron processes will be in the running state.
         self.is_running = True
+
+        # Patch Megatron MoE token dispatcher if FUSCO is available and conditions are met
+        self.patch_megatron_moe_dispatcher()
+
+    def patch_megatron_moe_dispatcher(self):
+        if HAVE_FUSCO:
+            from rlinf.utils.patcher import Patcher
+
+            Patcher.clear()
+            Patcher.add_patch(
+                "megatron.core.transformer.moe.token_dispatcher.MoEAlltoAllTokenDispatcher",
+                "rlinf.hybrid_engines.megatron.token_dispatcher.MoEAlltoAllTokenDispatcher",
+            )
+            Patcher.apply()
+
+            self._logger.info(
+                "FUSCO library loaded successfully, Megatron MoE token dispatcher patched"
+            )
 
     def setup_model_and_optimizer(self, model_type=ModelType.encoder_or_decoder):
         """Setup model and optimizer."""
@@ -352,6 +387,7 @@ class MegatronModelManager:
         logits_processor_args: Optional[dict] = None,
         temperature: float = 1.0,
         max_batch_seqlen: int = 4096,
+        padding_seqlen: Optional[int] = None,
     ):
         """Default forward pass for GPT models with optional sequence packing."""
         pre_process = unwrap_model(model).pre_process
@@ -359,7 +395,10 @@ class MegatronModelManager:
         if pack_seqs:
             batch_size, seq_len = attention_mask.shape[:2]
             input_ids_rmpad, packed_seq_params = preprocess_packed_seqs(
-                input_ids, attention_mask, pre_process=pre_process
+                input_ids,
+                attention_mask,
+                pre_process=pre_process,
+                padding_seqlen=padding_seqlen,
             )
             input_ids_rmpad = input_ids_rmpad.contiguous()
             output_orig = model(
@@ -371,7 +410,12 @@ class MegatronModelManager:
             output_orig /= temperature
             if post_process and logits_processor is not None:
                 args = {
-                    k: preprocess_packed_seqs(v, attention_mask, pre_process=True)[0]
+                    k: preprocess_packed_seqs(
+                        v,
+                        attention_mask,
+                        pre_process=True,
+                        padding_seqlen=padding_seqlen,
+                    )[0]
                     for k, v in logits_processor_args.items()
                 }
                 output_dict = logits_processor(output_orig, **args)
