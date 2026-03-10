@@ -23,7 +23,7 @@ runner:
     log_path: "../results"
     project_name: rlinf
     experiment_name: "robocasa_closedrawer_ppo_openpi"
-    logger_backends: ["wandb", "tensorboard"] # wandb, swanlab
+    logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
   max_steps: -1
