@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import math
+import os
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -131,6 +132,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         self.sample_actions = sample_actions_func
         self.logger = get_logger()
         self.global_step = 0
+        self._debug_call_count = 0
         # assert
         assert not (self.config.double_layer and self.config.joint_logprob), (
             "double_layer and joint_logprob can not be set at the same time"
@@ -319,6 +321,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
     def sft_forward(self, data, **kwargs):
         observation = data["observation"]
         actions = data["actions"]
+        # breakpoint()
         return super().forward(observation, actions)
 
     def default_forward(
@@ -409,6 +412,98 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
                     ).contiguous()
         return processed_obs
 
+    def _save_debug_info(
+        self, tag: str, step: int, data: dict, debug_dir: str = "debug"
+    ) -> None:
+        """Save debug info to disk. All data types are saved per batch item.
+
+        - Images  → ``<tag>_call<N>_<key>_b<B>.jpg``  (shape/range annotated in red)
+        - Tensors → ``<tag>_call<N>_<key>_b<B>.txt``  (header: shape + range, then values)
+        - Strings → ``<tag>_call<N>_<key>_b<B>.txt``  (one file per batch item)
+        - Summary → ``<tag>_call<N>.txt``              (key / shape / range index only)
+
+        Args:
+            tag: Prefix for file names (e.g. ``"obs"`` or ``"forward_inputs"``).
+            step: Call counter used to uniquely name files.
+            data: Dict of {key: tensor | ndarray | list[str]}.
+            debug_dir: Directory to write files into (created if absent).
+        """
+        from PIL import Image, ImageDraw
+
+        os.makedirs(debug_dir, exist_ok=True)
+        summary_path = os.path.join(debug_dir, f"{tag}_call{step:05d}.txt")
+        with open(summary_path, "w") as f_sum:
+            f_sum.write(f"=== {tag} call={step} summary ===\n")
+            for key, val in data.items():
+                safe_key = key.replace("/", "_")
+                # --- string list (e.g. prompt): one TXT per batch item ---
+                if isinstance(val, list) and len(val) > 0 and isinstance(val[0], str):
+                    f_sum.write(f"  {safe_key}: list[str] len={len(val)}\n")
+                    for b, s in enumerate(val):
+                        per_path = os.path.join(
+                            debug_dir, f"{tag}_call{step:05d}_{safe_key}_b{b}.txt"
+                        )
+                        with open(per_path, "w") as f:
+                            f.write(s + "\n")
+                    continue
+                # --- convert to float32 numpy ---
+                if torch.is_tensor(val):
+                    arr = val.detach().cpu().float().numpy()
+                elif isinstance(val, np.ndarray):
+                    arr = val.astype(np.float32)
+                else:
+                    continue
+                # --- image key: save each batch item as JPG ---
+                if "image" in key and arr.ndim == 4:
+                    # record original format before any conversion
+                    if arr.shape[1] == 3:
+                        orig_fmt = "NCHW"
+                        arr_hwc = arr.transpose(0, 2, 3, 1)  # -> NHWC
+                    else:
+                        orig_fmt = "NHWC"
+                        arr_hwc = arr
+                    orig_shape_str = f"shape: {orig_fmt} {arr.shape}"
+                    orig_range_str = f"range: [{arr.min():.3f}, {arr.max():.3f}]"
+                    f_sum.write(f"  {safe_key}: {orig_shape_str} | {orig_range_str} → JPG\n")
+                    for b in range(arr_hwc.shape[0]):
+                        img_arr = arr_hwc[b]  # [H, W, C]
+                        lo, hi = img_arr.min(), img_arr.max()
+                        if hi > 1.0 or lo < 0.0:
+                            img_arr = (img_arr - lo) / (hi - lo + 1e-8)
+                        img_arr = (img_arr * 255).clip(0, 255).astype(np.uint8)
+                        pil_img = Image.fromarray(img_arr)
+                        draw = ImageDraw.Draw(pil_img)
+                        annotation = f"{orig_shape_str}\n{orig_range_str}"
+                        draw.text((2, 2), annotation, fill=(255, 0, 0))
+                        jpg_path = os.path.join(
+                            debug_dir, f"{tag}_call{step:05d}_{safe_key}_b{b}.jpg"
+                        )
+                        pil_img.save(jpg_path)
+                else:
+                    # --- numeric tensor: one TXT per batch item, preserving original shape ---
+                    batch_size = arr.shape[0] if arr.ndim >= 1 else 1
+                    item_shape = arr.shape[1:] if arr.ndim > 1 else ()
+                    orig_shape_str = f"shape={arr.shape}"
+                    orig_range_str = f"range=[{arr.min():.6f}, {arr.max():.6f}]"
+                    f_sum.write(f"  {safe_key}: {orig_shape_str} {orig_range_str} → TXT\n")
+                    for b in range(batch_size):
+                        per_path = os.path.join(
+                            debug_dir, f"{tag}_call{step:05d}_{safe_key}_b{b}.txt"
+                        )
+                        item = arr[b]  # shape = item_shape, original dims preserved
+                        with open(per_path, "w") as f:
+                            f.write(
+                                f"# {orig_shape_str}  item_shape={item_shape}"
+                                f"  {orig_range_str}\n"
+                            )
+                            f.write(
+                                np.array2string(
+                                    item, precision=6, suppress_small=True, max_line_width=120
+                                )
+                            )
+                            f.write("\n")
+        self.logger.info(f"[DEBUG] saved to {debug_dir}/{tag}_call{step:05d}.*")
+
     def predict_action_batch(
         self,
         env_obs,
@@ -417,6 +512,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         **kwargs,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         to_process_obs = self.obs_processor(env_obs)  # env obs -> policy input obs
+        # self._save_debug_info("obs", self._debug_call_count, to_process_obs)
         processed_obs = self.input_transform(
             to_process_obs, transpose=False
         )  # policy input obs -> model input obs
@@ -483,6 +579,16 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             # so the student avoids a redundant env→model renormalization round-trip.
             "model_action": outputs["actions"].reshape(outputs["actions"].shape[0], -1),
         }
+        # self._save_debug_info(
+        #     "forward_inputs",
+        #     self._debug_call_count,
+        #     {
+        #         "action": torch.from_numpy(actions),          # [B, chunk, env_dim] env 空间
+        #         "model_action": outputs["actions"],  # [B, action_horizon, action_dim]
+        #         "denoise_inds": forward_inputs["denoise_inds"],  # [B, num_steps]
+        #     },
+        # )
+        # self._debug_call_count += 1
         if forward_action is not None:
             forward_inputs["action"] = forward_action
 

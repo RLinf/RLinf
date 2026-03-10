@@ -110,6 +110,8 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
         )
 
         self.model.train()
+        if hasattr(self.model, "gradient_checkpointing_disable"):
+            self.model.gradient_checkpointing_disable()
         metrics = {}
 
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)

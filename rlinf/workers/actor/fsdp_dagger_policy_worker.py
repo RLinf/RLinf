@@ -197,6 +197,8 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         # self.critic_sample_generator = torch.Generator(self.device)
         # self.critic_sample_generator.manual_seed(seed)
 
+        self._train_debug_call_count = 0
+
         # self.target_update_type = self.cfg.algorithm.get("target_update_type", "all")
         # assert self.target_update_type in ["all", "q_head_only"], (
         #     f"{self.target_update_type=} is not suppported!"
@@ -265,6 +267,13 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 )
                 .clone()
             )
+            # self.model._save_debug_info(
+            #     "train_action", self._train_debug_call_count, {"model_action": actions}
+            # )
+            # self.model._save_debug_info(
+            #     "train_obs", self._train_debug_call_count, obs_dict
+            # )
+            # self._train_debug_call_count += 1
             processed_obs = self.model.input_transform(obs_dict, transpose=False)
             processed_obs = self.model.precision_processor(
                 processed_obs
@@ -313,15 +322,13 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         )
         actions = actions.to(torch.float32)
         actions = actions.to(self.device)
-
         actor_loss = self.model(
             forward_type=ForwardType.SFT,
             data={"observation": observation, "actions": actions},
         )
-
-        action_chunk = self.model.config.action_chunk
-        action_dim = self.model.config.action_env_dim
-        actor_loss = actor_loss[:, :action_chunk, :action_dim]
+        # action_chunk = self.model.config.action_chunk
+        # action_dim = self.model.config.action_env_dim
+        # actor_loss = actor_loss[:, :action_chunk, :action_dim]
 
         return actor_loss.mean()
 
@@ -380,10 +387,17 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self.optimizer.zero_grad()
         gbs_actor_loss = []
         # all_actor_metrics = {}
-        for batch in train_micro_batch_list:
-            actor_loss = self.forward_actor(batch["forward_inputs"])
+        for (mb_idx, batch) in enumerate(train_micro_batch_list):
+            backward_ctx = self.before_micro_batch(
+                self.model,
+                is_last_micro_batch=(mb_idx + 1) == self.gradient_accumulation,
+            )
+            with self.amp_context:
+                actor_loss = self.forward_actor(batch["forward_inputs"])
             actor_loss = actor_loss / self.gradient_accumulation
-            actor_loss.backward()
+            with backward_ctx:
+                self.grad_scaler.scale(actor_loss).backward()
+            # actor_loss.backward()
             gbs_actor_loss.append(actor_loss.item() * self.gradient_accumulation)
         # all_actor_metrics = {
         #     f"actor/{key}": np.mean(value)
@@ -489,6 +503,8 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         )
 
         self.model.train()
+        if hasattr(self.model, "gradient_checkpointing_disable"):
+            self.model.gradient_checkpointing_disable()
         metrics = {}
 
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
