@@ -45,7 +45,7 @@ def get_model(cfg: DictConfig, torch_dtype=None):
             actor_model_config.__dict__[key] = val
 
     actor_data_config = actor_train_config.data
-    override_data_config_kwargs = cfg.openpi_data
+    override_data_config_kwargs = getattr(cfg, "openpi_data", None)
     if override_data_config_kwargs is not None:
         for key, val in override_data_config_kwargs.items():
             actor_data_config.__dict__[key] = val

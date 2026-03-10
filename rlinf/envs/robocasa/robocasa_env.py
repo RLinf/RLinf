@@ -16,7 +16,6 @@ from typing import Optional, Union
 
 import gymnasium as gym
 import numpy as np
-import robocasa  # noqa: F401 Robocasa must be imported to register envs
 import torch
 from omegaconf import OmegaConf
 
@@ -109,7 +108,7 @@ class RobocasaEnv(gym.Env):
 
     def _init_env(self):
         """Initialize robocasa environments using subprocess isolation."""
-
+        import robocasa  # noqa: F401 Robocasa must be imported to register envs
         self.task_ids = []
 
         # Determine task IDs for each environment
