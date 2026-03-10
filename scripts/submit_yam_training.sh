@@ -44,8 +44,7 @@ EXTRA_OVERRIDES=()
 BEAKER_IMAGE="shiruic/shirui-torch2.8.0_cuda12.8"
 WORKSPACE="ai2/molmo-act"
 WEKA_MOUNT="oe-training-default:/weka/oe-training-default"
-RLINF_DIR="/weka/oe-training-default/shiruic/RLinf"
-INSTALL_CMD="cd ${RLINF_DIR} && uv sync"
+INSTALL_CMD="uv sync"
 RAY_PORT=6379
 
 usage() {
@@ -125,7 +124,7 @@ case "$CONFIG_NAME" in
 esac
 
 # --- Build the training command (runs on head node only) ---
-TRAIN_CMD="python ${RLINF_DIR}/examples/embodiment/${ENTRY_SCRIPT}"
+TRAIN_CMD="python examples/embodiment/${ENTRY_SCRIPT}"
 TRAIN_CMD+=" --config-name ${CONFIG_NAME}"
 TRAIN_CMD+=" 'env/remote_yam@env.train' 'env/remote_yam@env.eval'"
 TRAIN_CMD+=" cluster.num_nodes=${REPLICAS}"
@@ -206,7 +205,7 @@ ENTRYPOINT_CMD+=" && tailscale up --authkey=\${TAILSCALE_AUTHKEY} --hostname=bea
 ENTRYPOINT_CMD+=" && echo '=== Tailscale IP ===' && tailscale ip -4 && echo '=================='"
 ENTRYPOINT_CMD+=" && TRAIN_CMD_DECODED=\$(echo ${TRAIN_CMD_B64} | base64 -d)"
 ENTRYPOINT_CMD+=" && INSTALL_CMD_DECODED=\$(echo ${INSTALL_CMD_B64} | base64 -d)"
-ENTRYPOINT_CMD+=" && bash ${RLINF_DIR}/ray_utils/start_ray_beaker.sh"
+ENTRYPOINT_CMD+=" && bash ray_utils/start_ray_beaker.sh"
 ENTRYPOINT_CMD+=" --entrypoint"
 ENTRYPOINT_CMD+=" --ray-port ${RAY_PORT}"
 ENTRYPOINT_CMD+=" --install \"\${INSTALL_CMD_DECODED}\""
@@ -226,7 +225,7 @@ gantry_args=(
     --weka "${WEKA_MOUNT}"
     --env "HF_HOME=/weka/oe-training-default/shiruic/hf_cache"
     --env "ROBOT_SERVER_URL=localhost:50051"
-    --env "EMBODIED_PATH=${RLINF_DIR}/examples/embodiment"
+    --env "EMBODIED_PATH=examples/embodiment"
     --env-secret "HF_TOKEN=hf_token_shirui"
     --env-secret "TAILSCALE_AUTHKEY=tailscale_authkey_shirui"
 )
