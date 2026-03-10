@@ -240,6 +240,10 @@ class MegatronWorker(MegatronModelManager, Worker):
             if self.offload_optimizer:
                 self.offload_megatron_optimizer()
 
+    # will be overrided in subclasses
+    def init_worker_customize(self):
+        pass
+
     def init_worker(self):
         self.setup_model_and_optimizer()
 
@@ -250,6 +254,7 @@ class MegatronWorker(MegatronModelManager, Worker):
 
         # initialization of ref_policy_state_dict and rollout_resharding_conf
         # are moved to MegatronActor.init_worker
+        self.init_worker_customize()
 
         if self.component_placement.has_dedicated_inference_for_role(self.role):
             inference_reshard_config = ReshardConfig(
@@ -266,6 +271,11 @@ class MegatronWorker(MegatronModelManager, Worker):
                 inference_reshard_config
             )
             self._setup_inference_weight_dst_ranks()
+
+        # offload weights and optimizers after initialization if offload is enabled
+        # this is necessary if actor and critic are colocated
+        self._offload_weight_and_optimizer()
+        torch.distributed.barrier()
 
     def get_batch(
         self, channel: Channel, tag: Optional[str] = None
