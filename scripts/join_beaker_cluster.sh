@@ -105,8 +105,19 @@ trap cleanup EXIT
 # --- Set node rank and join Ray cluster ---
 export RLINF_NODE_RANK="$NODE_RANK"
 
+# Detect local Tailscale IP so Ray advertises a routable address to the Beaker head.
+LOCAL_IP=""
+if command -v tailscale &>/dev/null; then
+    LOCAL_IP=$(tailscale ip -4 2>/dev/null) || true
+fi
+if [ -z "$LOCAL_IP" ]; then
+    echo "Warning: Could not detect Tailscale IP. Ray will use the default local IP."
+    echo "         If the Beaker head can't reach this machine, set up Tailscale first."
+fi
+
 echo "=== Joining Beaker Ray Cluster ==="
 echo "Head IP:      ${HEAD_IP}"
+echo "Local IP:     ${LOCAL_IP:-<auto>}"
 echo "Ray port:     ${RAY_PORT}"
 echo "Node rank:    ${NODE_RANK}"
 echo "Config:       ${CONFIG_NAME}"
@@ -115,9 +126,14 @@ echo "Model:        ${MODEL_PATH:-<not set>}"
 echo "Task:         ${TASK_DESC}"
 echo ""
 
+RAY_JOIN_ARGS=(--address="${HEAD_IP}:${RAY_PORT}")
+if [ -n "$LOCAL_IP" ]; then
+    RAY_JOIN_ARGS+=(--node-ip-address="${LOCAL_IP}")
+fi
+
 echo "Connecting to Ray head at ${HEAD_IP}:${RAY_PORT}..."
 for i in $(seq 1 30); do
-    if ray start --address="${HEAD_IP}:${RAY_PORT}" 2>/dev/null; then
+    if ray start "${RAY_JOIN_ARGS[@]}" 2>/dev/null; then
         echo "Successfully joined Ray cluster"
         break
     fi

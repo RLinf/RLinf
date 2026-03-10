@@ -54,6 +54,7 @@ Entrypoint mode (called inside Beaker container):
   --entrypoint            Run as Beaker replica entrypoint
   --train-cmd CMD         Training command (head only)
   --ray-port PORT         Ray port (default: 6379)
+  --node-ip IP            IP address for Ray to advertise (e.g. Tailscale IP)
   --install CMD           Install command to run before starting Ray
   --venv NAME             Venv to activate
 
@@ -78,6 +79,7 @@ EXTRA_ENVS=("HF_HOME=/mount/weka/shiruic/hf_cache")
 ENV_SECRETS=("HF_TOKEN=hf_token_shirui")
 TRAIN_CMD=""
 RAY_PORT=6379
+NODE_IP=""
 SHOW_LOGS=""
 DRY_RUN=""
 ALLOW_DIRTY=""
@@ -105,6 +107,7 @@ while [[ $# -gt 0 ]]; do
         --env-secret)     if [ -z "$_SECRETS_SET" ]; then ENV_SECRETS=(); _SECRETS_SET=1; fi; ENV_SECRETS+=("$2"); shift 2 ;;
         --train-cmd)      TRAIN_CMD="$2"; shift 2 ;;
         --ray-port)       RAY_PORT="$2"; shift 2 ;;
+        --node-ip)        NODE_IP="$2"; shift 2 ;;
         --show-logs)      SHOW_LOGS="true"; shift ;;
         --allow-dirty)    ALLOW_DIRTY="true"; shift ;;
         --dry-run)        DRY_RUN="true"; shift ;;
@@ -145,8 +148,12 @@ if [ "$ENTRYPOINT_MODE" = "true" ]; then
 
     if [ "$REPLICA_RANK" = "0" ]; then
         # --- Head node ---
-        echo "Starting Ray head on port ${RAY_PORT}"
-        ray start --head --port="${RAY_PORT}"
+        RAY_HEAD_ARGS=(--head --port="${RAY_PORT}")
+        if [ -n "$NODE_IP" ]; then
+            RAY_HEAD_ARGS+=(--node-ip-address="${NODE_IP}")
+        fi
+        echo "Starting Ray head on port ${RAY_PORT}${NODE_IP:+ (node-ip: ${NODE_IP})}"
+        ray start "${RAY_HEAD_ARGS[@]}"
 
         if [ -n "$TRAIN_CMD" ]; then
             echo "Running training command: ${TRAIN_CMD}"

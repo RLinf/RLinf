@@ -116,10 +116,12 @@ ENTRYPOINT_CMD+=" && (nohup tailscaled --tun=userspace-networking --state=mem: >
 ENTRYPOINT_CMD+=" && sleep 2"
 ENTRYPOINT_CMD+=" && tailscale up --authkey=\${TAILSCALE_AUTHKEY} --hostname=beaker-\${BEAKER_REPLICA_RANK:-0}"
 ENTRYPOINT_CMD+=" && echo '=== Tailscale IP ===' && tailscale ip -4 && echo '=================='"
+ENTRYPOINT_CMD+=" && TAILSCALE_NODE_IP=\$(tailscale ip -4)"
 ENTRYPOINT_CMD+=" && INSTALL_CMD_DECODED=\$(echo ${INSTALL_CMD_B64} | base64 -d)"
 ENTRYPOINT_CMD+=" && bash ray_utils/start_ray_beaker.sh"
 ENTRYPOINT_CMD+=" --entrypoint"
 ENTRYPOINT_CMD+=" --ray-port ${RAY_PORT}"
+ENTRYPOINT_CMD+=" --node-ip \"\${TAILSCALE_NODE_IP}\""
 ENTRYPOINT_CMD+=" --install \"\${INSTALL_CMD_DECODED}\""
 
 # --- Build gantry command ---

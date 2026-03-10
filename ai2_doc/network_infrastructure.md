@@ -451,7 +451,7 @@ Watch the Beaker logs for:
 
 ```
 === Tailscale IP ===
-100.a.b.c
+100.79.159.67
 ==================
 ```
 
@@ -459,9 +459,9 @@ Watch the Beaker logs for:
 
 ```bash
 bash scripts/join_beaker_cluster.sh \
-    --head-ip 100.a.b.c \
+    --head-ip 100.79.159.67 \
     --config yam_ppo_openpi \
-    --model-path /path/to/pi0_checkpoint \
+    --model-path thomas0829/folding_towel_pi05 \
     --task "pick and place"
 ```
 
