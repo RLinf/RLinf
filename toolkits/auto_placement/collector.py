@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 from omegaconf import OmegaConf
+
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
+
 
 class EmbodiedCostCollector(EmbodiedRunner):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.profile_step: int = OmegaConf.select(self.cfg,"runner.max_steps")
+        self.profile_step: int = OmegaConf.select(self.cfg, "runner.max_steps")
         self.env_cost_list = []
         self.rollout_cost_list = []
         self.actor_cost_list = []
@@ -28,8 +29,7 @@ class EmbodiedCostCollector(EmbodiedRunner):
         self.rollout_cost = 0.0
         self.actor_cost = 0.0
 
-
-    def collect(self):    
+    def collect(self):
         for step in range(self.profile_step):
             self.actor.set_global_step(step)
             self.rollout.set_global_step(step)
@@ -69,8 +69,6 @@ class EmbodiedCostCollector(EmbodiedRunner):
             self.rollout_cost_list.append(rollout_durations["generate_one_epoch"])
             self.actor_cost_list.append(actor_durations["run_training"])
 
-        logging.info(f"cost list: env {self.env_cost_list}, rollout {self.rollout_cost_list}, actor {self.actor_cost_list}")
         self.env_cost = sum(self.env_cost_list) / len(self.env_cost_list)
         self.rollout_cost = sum(self.rollout_cost_list) / len(self.rollout_cost_list)
         self.actor_cost = sum(self.actor_cost_list) / len(self.actor_cost_list)
-
