@@ -34,7 +34,7 @@ API 密钥
 配置
 ~~~~
 
-在 YAML 配置中设置：
+在 ``examples/wideseek_r1/config`` 下的 YAML 配置中设置：
 
 .. code-block:: yaml
 
