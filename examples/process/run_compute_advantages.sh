@@ -128,7 +128,7 @@ echo ""
 echo "Command: $CMD"
 echo ""
 
-# Run (suppress noisy libdav1d/ffmpeg info messages)
+# Run (tqdm writes to stdout so stderr filter won't break progress bar)
 eval $CMD 2> >(grep -v "libdav1d" >&2)
 
 echo ""

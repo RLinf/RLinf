@@ -1233,6 +1233,118 @@ class ValueCritic(CriticPreTrainedModel):
         logger.info("ValueCritic.from_checkpoint ready for inference")
         return model
 
+    @staticmethod
+    def _prepare_observation_cpu(inputs: dict, processor) -> dict:
+        """CPU-only observation preparation (safe to run in DataLoader workers).
+
+        Runs image_processor and tokenizer on CPU tensors, returns CPU tensors.
+        No .to(device) calls, so this can be passed to multiprocessing workers
+        via functools.partial.
+
+        Args:
+            inputs: Transformed observation dict (output of _input_transform).
+            processor: PI05Processor instance.
+
+        Returns:
+            Dict with CPU tensors: pixel_values, image_masks, tokens, mask, ar_mask.
+        """
+        import numpy as np
+
+        # Get images
+        if "image" in inputs and isinstance(inputs["image"], dict):
+            images_dict = inputs["image"]
+        elif "images" in inputs and isinstance(inputs["images"], dict):
+            images_dict = inputs["images"]
+        else:
+            images_dict = {}
+            for key in inputs:
+                if "image" in key.lower() and isinstance(
+                    inputs[key], (np.ndarray, torch.Tensor)
+                ):
+                    img_key = key
+                    for prefix in [
+                        "observation/",
+                        "observation.",
+                        "images/",
+                        "images.",
+                    ]:
+                        img_key = img_key.replace(prefix, "")
+                    images_dict[img_key] = inputs[key]
+
+        # Get prompt
+        prompt = inputs.get("prompt", "perform the task")
+        if isinstance(prompt, np.ndarray):
+            prompt = str(prompt.item()) if prompt.size == 1 else "perform the task"
+        elif not isinstance(prompt, str):
+            prompt = "perform the task"
+
+        # Convert CHW to BHWC for image_processor
+        images_bhwc = {}
+        for cam_name, img in images_dict.items():
+            if isinstance(img, np.ndarray):
+                img = torch.from_numpy(img)
+            if img.dim() == 3:
+                img = img.unsqueeze(0).permute(0, 2, 3, 1)
+            elif img.dim() == 4:
+                img = img.permute(0, 2, 3, 1)
+            images_bhwc[cam_name] = img
+
+        # Image masks
+        input_masks = inputs.get("image_mask", inputs.get("image_masks", {}))
+        image_masks_batch = {}
+        for cam_name in images_bhwc:
+            if cam_name in input_masks:
+                mask = input_masks[cam_name]
+                if isinstance(mask, (bool, np.bool_)):
+                    image_masks_batch[cam_name] = torch.tensor(
+                        [mask], dtype=torch.bool
+                    )
+                elif isinstance(mask, torch.Tensor):
+                    image_masks_batch[cam_name] = (
+                        mask.unsqueeze(0) if mask.dim() == 0 else mask
+                    )
+                else:
+                    image_masks_batch[cam_name] = torch.tensor(
+                        [True], dtype=torch.bool
+                    )
+            else:
+                image_masks_batch[cam_name] = torch.tensor([True], dtype=torch.bool)
+
+        # Process images (CPU)
+        processed_img = processor.image_processor(
+            images=images_bhwc,
+            image_masks=image_masks_batch if image_masks_batch else None,
+            return_tensors="pt",
+            train=False,
+        )
+
+        # Tokenize prompt (CPU)
+        cleaned_prompt = processor._clean_text(prompt)
+        cleaned_prompt = processor._strip_trailing_punctuation(cleaned_prompt)
+        prefix_text = f"Task: {cleaned_prompt}."
+
+        tokens = processor.tokenizer.encode(prefix_text, add_special_tokens=True)
+        seq_len = len(tokens)
+        max_length = processor.max_token_len
+        if seq_len < max_length:
+            padding_len = max_length - seq_len
+            tok_mask = [True] * seq_len + [False] * padding_len
+            tokens = tokens + [0] * padding_len
+            ar_mask = [0] * max_length
+        else:
+            tokens = tokens[:max_length]
+            tok_mask = [True] * max_length
+            ar_mask = [0] * max_length
+
+        # Return CPU tensors only (no .to(device))
+        return {
+            "images": processed_img["pixel_values"],
+            "image_masks": processed_img["image_masks"],
+            "tokenized_prompt": torch.tensor([tokens], dtype=torch.long),
+            "tokenized_prompt_mask": torch.tensor([tok_mask], dtype=torch.bool),
+            "token_ar_mask": torch.tensor([ar_mask], dtype=torch.long),
+        }
+
     def _prepare_observation(self, inputs: dict) -> dict:
         """Prepare observation dict for model forward.
 
@@ -1425,12 +1537,22 @@ class ValueCritic(CriticPreTrainedModel):
         }
 
     @torch.no_grad()
-    def infer_batch(self, obs_list: list[dict], *, batch_size: int = 64) -> list[dict]:
+    def infer_batch(
+        self,
+        obs_list: list[dict],
+        *,
+        batch_size: int = 64,
+        pretransformed: bool = False,
+        already_cpu_prepared: bool = False,
+    ) -> list[dict]:
         """Batch inference for multiple observations.
 
         Args:
             obs_list: List of observation dictionaries.
             batch_size: Maximum batch size for single forward pass.
+            pretransformed: If True, skip _input_transform (already applied).
+            already_cpu_prepared: If True, obs are output of _prepare_observation_cpu.
+                Skip all preprocessing, just stack tensors and move to device.
 
         Returns:
             List of dictionaries with "value" key.
@@ -1440,32 +1562,68 @@ class ValueCritic(CriticPreTrainedModel):
         if not obs_list:
             return []
 
+        device = getattr(self, "_device", "cuda")
         all_outputs = []
 
         for batch_start in range(0, len(obs_list), batch_size):
             batch_end = min(batch_start + batch_size, len(obs_list))
             batch_obs = obs_list[batch_start:batch_end]
 
-            inputs_list = []
-            for obs in batch_obs:
-                inputs = {
-                    k: v.copy() if isinstance(v, np.ndarray) else v
-                    for k, v in obs.items()
-                }
-                inputs = self._input_transform(inputs)
-                inputs_list.append(inputs)
+            if already_cpu_prepared:
+                # Workers already ran _input_transform + _prepare_observation_cpu.
+                # Just stack CPU tensors and move to device.
+                first = batch_obs[0]
+                if isinstance(first.get("images"), dict):
+                    batched_images = {
+                        k: torch.cat(
+                            [obs["images"][k] for obs in batch_obs], dim=0
+                        ).to(device)
+                        for k in first["images"]
+                    }
+                    batched_masks = {
+                        k: torch.cat(
+                            [obs["image_masks"][k] for obs in batch_obs], dim=0
+                        ).to(device)
+                        for k in first["image_masks"]
+                    }
+                else:
+                    batched_images = torch.cat(
+                        [obs["images"] for obs in batch_obs], dim=0
+                    ).to(device)
+                    batched_masks = torch.cat(
+                        [obs["image_masks"] for obs in batch_obs], dim=0
+                    ).to(device)
 
-            observation = self._prepare_observation_batch(inputs_list)
+                observation = {
+                    "images": batched_images,
+                    "image_masks": batched_masks,
+                    "tokenized_prompt": torch.cat(
+                        [obs["tokenized_prompt"] for obs in batch_obs], dim=0
+                    ).to(device),
+                    "tokenized_prompt_mask": torch.cat(
+                        [obs["tokenized_prompt_mask"] for obs in batch_obs], dim=0
+                    ).to(device),
+                    "token_ar_mask": torch.cat(
+                        [obs["token_ar_mask"] for obs in batch_obs], dim=0
+                    ).to(device),
+                }
+            else:
+                inputs_list = []
+                for obs in batch_obs:
+                    inputs = {
+                        k: v.copy() if isinstance(v, np.ndarray) else v
+                        for k, v in obs.items()
+                    }
+                    if not pretransformed:
+                        inputs = self._input_transform(inputs)
+                    inputs_list.append(inputs)
+
+                observation = self._prepare_observation_batch(inputs_list)
 
             values = self.predict_value(observation).cpu()
 
-            for i, obs in enumerate(batch_obs):
-                all_outputs.append(
-                    {
-                        "value": float(values[i]),
-                        "state": obs.get("state", np.array([])),
-                    }
-                )
+            for i in range(len(batch_obs)):
+                all_outputs.append({"value": float(values[i])})
 
         return all_outputs
 
