@@ -80,7 +80,9 @@ def has_tokenizer_files(checkpoint_dir: pathlib.Path) -> bool:
     return any((checkpoint_dir / f).exists() for f in tokenizer_files)
 
 
-def load_norm_stats(checkpoint_dir: pathlib.Path, asset_id: str = "libero") -> dict:
+def load_norm_stats(
+    checkpoint_dir: pathlib.Path, asset_id: str = "libero"
+) -> dict:
     """Load normalization statistics from checkpoint assets.
 
     Args:
@@ -176,31 +178,23 @@ def build_input_transforms(
         input_transforms.append(InjectDefaultPrompt(default_prompt))
         input_transforms.append(LiberoInputs(mask_padding=True, model_type=model_type))
 
-    elif env_type == "franka":
-        from rlinf.datasets.lerobot.franka import FrankaEEInputs
+        if norm_stats is not None:
+            input_transforms.append(
+                Normalize(
+                    norm_stats,
+                    use_quantiles=use_quantile_norm,
+                    skip_dims=action_norm_skip_dims,
+                )
+            )
 
-        input_transforms.append(InjectDefaultPrompt(default_prompt))
-        input_transforms.append(
-            FrankaEEInputs(mask_padding=True, model_type=model_type)
+        input_transforms.extend(
+            [
+                ResizeImages(224, 224),
+                PadStatesAndActions(model_action_dim=action_dim),
+            ]
         )
 
     else:
         raise ValueError(f"Unknown environment type: {env_type}")
-
-    if norm_stats is not None:
-        input_transforms.append(
-            Normalize(
-                norm_stats,
-                use_quantiles=use_quantile_norm,
-                skip_dims=action_norm_skip_dims,
-            )
-        )
-
-    input_transforms.extend(
-        [
-            ResizeImages(224, 224),
-            PadStatesAndActions(model_action_dim=action_dim),
-        ]
-    )
 
     return input_transforms

@@ -30,9 +30,9 @@ def get_model(cfg: DictConfig):
         from rlinf.models.embodiment.dexbotic_pi import get_model
     elif model_type == SupportedModel.CFG_MODEL:
         from rlinf.models.embodiment.openpi_cfg import get_model
-    elif model_type == SupportedModel.VLA_LIB_VALUE_MODEL:
-        from rlinf.models.embodiment.vla_lib_value_model import (
-            get_vla_lib_value_model as get_model,
+    elif model_type == SupportedModel.VALUE_MODEL:
+        from rlinf.models.embodiment.value_model import (
+            get_value_model as get_model,
         )
     elif model_type == SupportedModel.MLP_POLICY:
         from rlinf.models.embodiment.mlp_policy import get_model

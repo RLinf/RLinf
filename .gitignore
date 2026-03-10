@@ -26,6 +26,9 @@ data_to_use/
 # Test files (local only, not for release)
 tests/
 
+# Test configs (local only)
+examples/**/config/*_test.yaml
+
 # Local dev files
 CLAUDE.md
 memory.md

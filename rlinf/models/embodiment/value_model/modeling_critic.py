@@ -1,17 +1,3 @@
-# Copyright 2026 The RLinf Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """
 Value Critic Models for Value Prediction.
 
@@ -24,7 +10,7 @@ import logging
 import math
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -384,7 +370,7 @@ class VLMObservationEncoder(nn.Module):
         )
 
     def _preprocess_observation(self, observation):
-        """Extract observation components with unified masks (no state)."""
+        """Extract observation components with unified masks (PI05 version, no state)."""
         images = observation["images"]
         image_masks = observation.get("image_masks", {})
         tokenized_prompt = observation["tokenized_prompt"]
@@ -429,7 +415,7 @@ class VLMObservationEncoder(nn.Module):
     def embed_prefix(
         self, images, img_masks, lang_tokens, lang_masks, token_ar_mask=None
     ):
-        """Embed images and language tokens (with token_ar_mask)."""
+        """Embed images and language tokens (PI05 version with token_ar_mask)."""
         embs, pad_masks, ar_masks = [], [], []
         bsize = lang_tokens.shape[0]
         device = lang_tokens.device
@@ -480,7 +466,6 @@ class ValueHead(nn.Module):
         num_bins: int,
         v_min: float,
         v_max: float,
-        dropout: float = 0.0,
     ):
         super().__init__()
         self.hidden_size = hidden_size
@@ -488,7 +473,6 @@ class ValueHead(nn.Module):
         self.cls_embedding = nn.Embedding(1, hidden_size)
         nn.init.normal_(self.cls_embedding.weight, std=0.02)
 
-        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
         self.value_proj = nn.Linear(hidden_size, num_bins)
         self.register_buffer(
             "atoms", torch.linspace(v_min, v_max, num_bins), persistent=False
@@ -511,7 +495,6 @@ class ValueHead(nn.Module):
     def forward(self, hidden_states: Tensor) -> Tensor:
         """Project hidden states to value logits."""
         hidden_states = hidden_states.to(self.value_proj.weight.dtype)
-        hidden_states = self.dropout(hidden_states)
         return self.value_proj(hidden_states)
 
 
@@ -579,7 +562,6 @@ class ValueCriticModel(VLMObservationEncoder):
             num_bins=config.num_bins,
             v_min=config.v_min,
             v_max=config.v_max,
-            dropout=getattr(config, "value_dropout", 0.0),
         )
         self.num_bins = config.num_bins
         self.v_min = config.v_min
@@ -593,24 +575,20 @@ class ValueCriticModel(VLMObservationEncoder):
     @property
     def _no_split_modules(self) -> list[str]:
         if self.paligemma_with_expert.freeze_vlm:
-            no_split_modules = [
+            return [
                 "GemmaDecoderLayer",
                 "SiglipVisionEmbeddings",
                 "GemmaRMSNorm",
                 "GemmaRotaryEmbedding",
                 "ValueHead",
             ]
-        else:
-            no_split_modules = [
-                "GemmaMLP",
-                "SiglipVisionEmbeddings",
-                "GemmaRMSNorm",
-                "GemmaRotaryEmbedding",
-                "ValueHead",
-            ]
-        if self.backbone_variant == "siglip_gemma3":
-            no_split_modules.extend(["Gemma3RMSNorm", "Gemma3DecoderLayer"])
-        return no_split_modules
+        return [
+            "GemmaMLP",
+            "SiglipVisionEmbeddings",
+            "GemmaRMSNorm",
+            "GemmaRotaryEmbedding",
+            "ValueHead",
+        ]
 
     @property
     def _no_split_names(self) -> list[str]:
@@ -674,7 +652,7 @@ class ValueCriticModel(VLMObservationEncoder):
         suffix_embs, suffix_pad_masks, suffix_ar_masks = self.embed_suffix(batch_size)
 
         stop_gradient = getattr(self.config, "stop_gradient_to_vlm", False)
-        values, hidden_states, logits, probs, backward_anchor = self._forward_expert(
+        values, hidden_states, logits, probs, _ = self._forward_expert(
             prefix_embs,
             prefix_pad_masks,
             prefix_ar_masks,
@@ -690,8 +668,6 @@ class ValueCriticModel(VLMObservationEncoder):
             expert_loss, cat_metrics = self._compute_categorical_loss(
                 logits, target_values
             )
-            if backward_anchor is not None:
-                expert_loss = expert_loss + backward_anchor
 
         expert_loss_mean = expert_loss.mean() if expert_loss is not None else None
 
@@ -744,10 +720,7 @@ class ValueCriticModel(VLMObservationEncoder):
                 self.value_head.value_proj.weight.dtype
             )
             values, logits, probs = self._compute_value_from_hidden(cls_hidden)
-            backward_anchor = self._build_vlm_backward_anchor(
-                prefix_out=prefix_out, stop_gradient_to_vlm=stop_gradient_to_vlm
-            )
-            return values, cls_hidden, logits, probs, backward_anchor
+            return values, cls_hidden, logits, probs, prefix_out
 
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         ar_masks = torch.cat([prefix_ar_masks, suffix_ar_masks], dim=1)
@@ -781,26 +754,7 @@ class ValueCriticModel(VLMObservationEncoder):
 
         cls_hidden = suffix_out[:, -1, :].to(self.value_head.value_proj.weight.dtype)
         values, logits, probs = self._compute_value_from_hidden(cls_hidden)
-        backward_anchor = self._build_vlm_backward_anchor(
-            prefix_out=prefix_out, stop_gradient_to_vlm=stop_gradient_to_vlm
-        )
-        return values, cls_hidden, logits, probs, backward_anchor
-
-    def _build_vlm_backward_anchor(
-        self, prefix_out: Optional[Tensor], stop_gradient_to_vlm: bool
-    ) -> Optional[Tensor]:
-        """Build a zero-weight anchor so FSDP tracks two-stage Gemma3 backward."""
-        if (
-            not self.training
-            or self.backbone_variant != "siglip_gemma3"
-            or stop_gradient_to_vlm
-            or prefix_out is None
-            or not prefix_out.requires_grad
-        ):
-            return None
-        # Gradients flow via DynamicCache in two-stage Gemma3 forward. Anchoring
-        # an explicit output tensor keeps FSDP's forward/backward state aligned.
-        return prefix_out.sum() * 0.0
+        return values, cls_hidden, logits, probs, prefix_out
 
     def _forward_expert_two_stage(
         self,
@@ -1086,7 +1040,7 @@ class ValueCritic(CriticPreTrainedModel):
         return self.model.predict(observation).predicted_values
 
     @torch.no_grad()
-    def predict_distribution(self, observation) -> tuple[Tensor, Tensor, Tensor]:
+    def predict_distribution(self, observation) -> Tuple[Tensor, Tensor, Tensor]:
         """Predict value distribution. Returns (values, probs, atoms)."""
         out = self.model.predict(observation)
         return out.predicted_values, out.probs, out.atoms
@@ -1110,10 +1064,6 @@ class ValueCritic(CriticPreTrainedModel):
         return_max=0.0,
         action_norm_skip_dims=None,
         critic_expert_variant="gemma_100m",
-        tokenizer_path=None,
-        backbone_variant="paligemma",
-        siglip_path=None,
-        gemma3_path=None,
         **kwargs,
     ):
         """Create a ValueCritic from a trained checkpoint, ready for inference.
@@ -1130,11 +1080,6 @@ class ValueCritic(CriticPreTrainedModel):
             return_max: Maximum return value.
             action_norm_skip_dims: Dims to skip in normalization.
             critic_expert_variant: Gemma variant (e.g., "gemma_100m").
-            tokenizer_path: Explicit path to tokenizer. If not set, loads
-                from checkpoint_dir. Raises if neither has tokenizer files.
-            backbone_variant: Backbone type ("paligemma" or "siglip_gemma3").
-            siglip_path: Path to SigLIP pretrained weights (siglip_gemma3 only).
-            gemma3_path: Path to Gemma3 pretrained weights (siglip_gemma3 only).
 
         Returns:
             ValueCritic instance with transforms and processor attached.
@@ -1149,28 +1094,25 @@ class ValueCritic(CriticPreTrainedModel):
             load_norm_stats,
             load_state_dict_from_checkpoint,
         )
-        from .processing import ValueProcessor
+        from .processing import PI05Processor
 
         checkpoint_dir = pathlib.Path(checkpoint_dir)
         logger.info(f"Loading value model from {checkpoint_dir}")
 
-        # Load processor: tokenizer_path > checkpoint tokenizer > error
-        if tokenizer_path:
-            logger.info("  Using explicit tokenizer_path: %s", tokenizer_path)
-            tokenizer = AutoTokenizer.from_pretrained(
-                tokenizer_path, add_bos_token=True, local_files_only=True
-            )
-        elif has_tokenizer_files(checkpoint_dir):
+        # Load processor
+        if has_tokenizer_files(checkpoint_dir):
             logger.info("  Found tokenizer files in checkpoint")
             tokenizer = AutoTokenizer.from_pretrained(
-                str(checkpoint_dir), add_bos_token=True, local_files_only=True
+                str(checkpoint_dir), add_bos_token=True
+            )
+            processor = PI05Processor(
+                tokenizer=tokenizer, max_token_len=200, discrete_state_input=False
             )
         else:
-            raise ValueError(
-                f"No tokenizer found. Set tokenizer_path or ensure checkpoint "
-                f"contains tokenizer files. checkpoint_dir={checkpoint_dir}"
+            logger.info("  No tokenizer in checkpoint, using default processor")
+            processor = PI05Processor(
+                max_token_len=200, discrete_state_input=False
             )
-        processor = ValueProcessor(tokenizer=tokenizer, max_token_len=200)
 
         # Build config and load model
         critic_config = ValueCriticConfig(
@@ -1178,9 +1120,6 @@ class ValueCritic(CriticPreTrainedModel):
             num_bins=num_return_bins,
             v_min=return_min,
             v_max=return_max,
-            backbone_variant=backbone_variant,
-            siglip_path=siglip_path,
-            gemma3_path=gemma3_path,
         )
 
         try:
@@ -1211,7 +1150,9 @@ class ValueCritic(CriticPreTrainedModel):
                     new_key = f"model.{k}"
                     remapped[new_key if new_key in model_keys else k] = v
 
-                if len(set(remapped.keys()) & model_keys) > len(ckpt_keys & model_keys):
+                if len(set(remapped.keys()) & model_keys) > len(
+                    ckpt_keys & model_keys
+                ):
                     logger.info("  Remapped checkpoint keys: added 'model.' prefix")
                     state_dict = remapped
 
@@ -1263,122 +1204,6 @@ class ValueCritic(CriticPreTrainedModel):
         logger.info("ValueCritic.from_checkpoint ready for inference")
         return model
 
-    @staticmethod
-    def _prepare_observation_cpu(inputs: dict, processor) -> dict:
-        """CPU-only observation preparation (safe to run in DataLoader workers).
-
-        Runs image_processor and tokenizer on CPU tensors, returns CPU tensors.
-        No .to(device) calls, so this can be passed to multiprocessing workers
-        via functools.partial.
-
-        Args:
-            inputs: Transformed observation dict (output of _input_transform).
-            processor: ValueProcessor instance.
-
-        Returns:
-            Dict with CPU tensors: pixel_values, image_masks, tokens, mask, ar_mask.
-        """
-        import numpy as np
-
-        # Get images
-        if "image" in inputs and isinstance(inputs["image"], dict):
-            images_dict = inputs["image"]
-        elif "images" in inputs and isinstance(inputs["images"], dict):
-            images_dict = inputs["images"]
-        else:
-            images_dict = {}
-            for key in inputs:
-                if "image" in key.lower() and isinstance(
-                    inputs[key], (np.ndarray, torch.Tensor)
-                ):
-                    img_key = key
-                    for prefix in [
-                        "observation/",
-                        "observation.",
-                        "images/",
-                        "images.",
-                    ]:
-                        img_key = img_key.replace(prefix, "")
-                    images_dict[img_key] = inputs[key]
-
-        # Get prompt
-        prompt = inputs.get("prompt", "perform the task")
-        if isinstance(prompt, np.ndarray):
-            prompt = str(prompt.item()) if prompt.size == 1 else "perform the task"
-        elif not isinstance(prompt, str):
-            prompt = "perform the task"
-
-        # Convert to BHWC for image_processor (handles both CHW and HWC input)
-        images_bhwc = {}
-        for cam_name, img in images_dict.items():
-            if isinstance(img, np.ndarray):
-                img = torch.from_numpy(img)
-            if img.dim() == 3:
-                if img.shape[0] == 3:
-                    # CHW (3, H, W) -> BHWC (1, H, W, 3)
-                    img = img.unsqueeze(0).permute(0, 2, 3, 1)
-                else:
-                    # HWC (H, W, 3) -> BHWC (1, H, W, 3)
-                    img = img.unsqueeze(0)
-            elif img.dim() == 4:
-                if img.shape[1] == 3:
-                    # BCHW -> BHWC
-                    img = img.permute(0, 2, 3, 1)
-                # else: already BHWC
-            images_bhwc[cam_name] = img
-
-        # Image masks
-        input_masks = inputs.get("image_mask", inputs.get("image_masks", {}))
-        image_masks_batch = {}
-        for cam_name in images_bhwc:
-            if cam_name in input_masks:
-                mask = input_masks[cam_name]
-                if isinstance(mask, (bool, np.bool_)):
-                    image_masks_batch[cam_name] = torch.tensor([mask], dtype=torch.bool)
-                elif isinstance(mask, torch.Tensor):
-                    image_masks_batch[cam_name] = (
-                        mask.unsqueeze(0) if mask.dim() == 0 else mask
-                    )
-                else:
-                    image_masks_batch[cam_name] = torch.tensor([True], dtype=torch.bool)
-            else:
-                image_masks_batch[cam_name] = torch.tensor([True], dtype=torch.bool)
-
-        # Process images (CPU)
-        processed_img = processor.image_processor(
-            images=images_bhwc,
-            image_masks=image_masks_batch if image_masks_batch else None,
-            return_tensors="pt",
-            train=False,
-        )
-
-        # Tokenize prompt (CPU)
-        cleaned_prompt = processor._clean_text(prompt)
-        cleaned_prompt = processor._strip_trailing_punctuation(cleaned_prompt)
-        prefix_text = f"Task: {cleaned_prompt}."
-
-        tokens = processor.tokenizer.encode(prefix_text, add_special_tokens=True)
-        seq_len = len(tokens)
-        max_length = processor.max_token_len
-        if seq_len < max_length:
-            padding_len = max_length - seq_len
-            tok_mask = [True] * seq_len + [False] * padding_len
-            tokens = tokens + [0] * padding_len
-            ar_mask = [0] * max_length
-        else:
-            tokens = tokens[:max_length]
-            tok_mask = [True] * max_length
-            ar_mask = [0] * max_length
-
-        # Return CPU tensors only (no .to(device))
-        return {
-            "images": processed_img["pixel_values"],
-            "image_masks": processed_img["image_masks"],
-            "tokenized_prompt": torch.tensor([tokens], dtype=torch.long),
-            "tokenized_prompt_mask": torch.tensor([tok_mask], dtype=torch.bool),
-            "token_ar_mask": torch.tensor([ar_mask], dtype=torch.long),
-        }
-
     def _prepare_observation(self, inputs: dict) -> dict:
         """Prepare observation dict for model forward.
 
@@ -1422,23 +1247,15 @@ class ValueCritic(CriticPreTrainedModel):
         elif not isinstance(prompt, str):
             prompt = "perform the task"
 
-        # Convert to BHWC for image_processor (handles both CHW and HWC input)
+        # Convert CHW to BHWC for image_processor
         images_bhwc = {}
         for cam_name, img in images_dict.items():
             if isinstance(img, np.ndarray):
                 img = torch.from_numpy(img)
             if img.dim() == 3:
-                if img.shape[0] == 3:
-                    # CHW (3, H, W) -> BHWC (1, H, W, 3)
-                    img = img.unsqueeze(0).permute(0, 2, 3, 1)
-                else:
-                    # HWC (H, W, 3) -> BHWC (1, H, W, 3)
-                    img = img.unsqueeze(0)
+                img = img.unsqueeze(0).permute(0, 2, 3, 1)
             elif img.dim() == 4:
-                if img.shape[1] == 3:
-                    # BCHW -> BHWC
-                    img = img.permute(0, 2, 3, 1)
-                # else: already BHWC
+                img = img.permute(0, 2, 3, 1)
             images_bhwc[cam_name] = img
 
         # Image masks
@@ -1448,13 +1265,17 @@ class ValueCritic(CriticPreTrainedModel):
             if cam_name in input_masks:
                 mask = input_masks[cam_name]
                 if isinstance(mask, (bool, np.bool_)):
-                    image_masks_batch[cam_name] = torch.tensor([mask], dtype=torch.bool)
+                    image_masks_batch[cam_name] = torch.tensor(
+                        [mask], dtype=torch.bool
+                    )
                 elif isinstance(mask, torch.Tensor):
                     image_masks_batch[cam_name] = (
                         mask.unsqueeze(0) if mask.dim() == 0 else mask
                     )
                 else:
-                    image_masks_batch[cam_name] = torch.tensor([True], dtype=torch.bool)
+                    image_masks_batch[cam_name] = torch.tensor(
+                        [True], dtype=torch.bool
+                    )
             else:
                 image_masks_batch[cam_name] = torch.tensor([True], dtype=torch.bool)
 
@@ -1502,11 +1323,15 @@ class ValueCritic(CriticPreTrainedModel):
         return {
             "images": images_on_device,
             "image_masks": masks_on_device,
-            "tokenized_prompt": torch.tensor([tokens], dtype=torch.long, device=device),
+            "tokenized_prompt": torch.tensor(
+                [tokens], dtype=torch.long, device=device
+            ),
             "tokenized_prompt_mask": torch.tensor(
                 [mask], dtype=torch.bool, device=device
             ),
-            "token_ar_mask": torch.tensor([ar_mask], dtype=torch.long, device=device),
+            "token_ar_mask": torch.tensor(
+                [ar_mask], dtype=torch.long, device=device
+            ),
         }
 
     def _prepare_observation_batch(self, inputs_list: list[dict]) -> dict:
@@ -1571,22 +1396,12 @@ class ValueCritic(CriticPreTrainedModel):
         }
 
     @torch.no_grad()
-    def infer_batch(
-        self,
-        obs_list: list[dict],
-        *,
-        batch_size: int = 64,
-        pretransformed: bool = False,
-        already_cpu_prepared: bool = False,
-    ) -> list[dict]:
+    def infer_batch(self, obs_list: list[dict], *, batch_size: int = 64) -> list[dict]:
         """Batch inference for multiple observations.
 
         Args:
             obs_list: List of observation dictionaries.
             batch_size: Maximum batch size for single forward pass.
-            pretransformed: If True, skip _input_transform (already applied).
-            already_cpu_prepared: If True, obs are output of _prepare_observation_cpu.
-                Skip all preprocessing, just stack tensors and move to device.
 
         Returns:
             List of dictionaries with "value" key.
@@ -1596,68 +1411,32 @@ class ValueCritic(CriticPreTrainedModel):
         if not obs_list:
             return []
 
-        device = getattr(self, "_device", "cuda")
         all_outputs = []
 
         for batch_start in range(0, len(obs_list), batch_size):
             batch_end = min(batch_start + batch_size, len(obs_list))
             batch_obs = obs_list[batch_start:batch_end]
 
-            if already_cpu_prepared:
-                # Workers already ran _input_transform + _prepare_observation_cpu.
-                # Just stack CPU tensors and move to device.
-                first = batch_obs[0]
-                if isinstance(first.get("images"), dict):
-                    batched_images = {
-                        k: torch.cat([obs["images"][k] for obs in batch_obs], dim=0).to(
-                            device
-                        )
-                        for k in first["images"]
-                    }
-                    batched_masks = {
-                        k: torch.cat(
-                            [obs["image_masks"][k] for obs in batch_obs], dim=0
-                        ).to(device)
-                        for k in first["image_masks"]
-                    }
-                else:
-                    batched_images = torch.cat(
-                        [obs["images"] for obs in batch_obs], dim=0
-                    ).to(device)
-                    batched_masks = torch.cat(
-                        [obs["image_masks"] for obs in batch_obs], dim=0
-                    ).to(device)
-
-                observation = {
-                    "images": batched_images,
-                    "image_masks": batched_masks,
-                    "tokenized_prompt": torch.cat(
-                        [obs["tokenized_prompt"] for obs in batch_obs], dim=0
-                    ).to(device),
-                    "tokenized_prompt_mask": torch.cat(
-                        [obs["tokenized_prompt_mask"] for obs in batch_obs], dim=0
-                    ).to(device),
-                    "token_ar_mask": torch.cat(
-                        [obs["token_ar_mask"] for obs in batch_obs], dim=0
-                    ).to(device),
+            inputs_list = []
+            for obs in batch_obs:
+                inputs = {
+                    k: v.copy() if isinstance(v, np.ndarray) else v
+                    for k, v in obs.items()
                 }
-            else:
-                inputs_list = []
-                for obs in batch_obs:
-                    inputs = {
-                        k: v.copy() if isinstance(v, np.ndarray) else v
-                        for k, v in obs.items()
-                    }
-                    if not pretransformed:
-                        inputs = self._input_transform(inputs)
-                    inputs_list.append(inputs)
+                inputs = self._input_transform(inputs)
+                inputs_list.append(inputs)
 
-                observation = self._prepare_observation_batch(inputs_list)
+            observation = self._prepare_observation_batch(inputs_list)
 
             values = self.predict_value(observation).cpu()
 
-            for i in range(len(batch_obs)):
-                all_outputs.append({"value": float(values[i])})
+            for i, obs in enumerate(batch_obs):
+                all_outputs.append(
+                    {
+                        "value": float(values[i]),
+                        "state": obs.get("state", np.array([])),
+                    }
+                )
 
         return all_outputs
 

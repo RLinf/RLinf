@@ -59,7 +59,7 @@ class SupportedModel(Enum):
     FLOW_POLICY = ("flow_policy", "embodied")
     CMA_POLICY = ("cma", "embodied")
     CFG_MODEL = ("cfg_model", "embodied")
-    VLA_LIB_VALUE_MODEL = ("vla_lib_value_model", "embodied")
+    VALUE_MODEL = ("value_model", "embodied")
 
     # Sft models
     QWEN2_5_VL_SFT = ("qwen2.5_vl", "sft")

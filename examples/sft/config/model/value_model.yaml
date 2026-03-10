@@ -20,7 +20,6 @@ critic_expert_variant: "gemma_100m"
 num_bins: 201           # number of discretization bins
 v_min: -1.0             # minimum value for atom support
 v_max: 0.0              # maximum value for atom support
-value_dropout: 0.0      # dropout before value projection (e.g. 0.1)
 
 # =====================================================================
 # PI05 base model params
@@ -39,21 +38,18 @@ train_expert_only: false
 forward_mode: "vla"
 max_language_len: 50
 stop_gradient_to_vlm: false
+discrete_state_input: false
+exclude_cot_from_kv_cache: false
 
 # =====================================================================
 # Backbone: "paligemma" (default) | "siglip_gemma3"
 # =====================================================================
 backbone_variant: "paligemma"
 # Required for siglip_gemma3 only
-siglip_path: /path/to/siglip2-so400m-patch14-224
-gemma3_path: /path/to/gemma-3-270m
+siglip_path: null
+gemma3_path: null
 
 # =====================================================================
-# Checkpoint
+# Checkpoint (set to load pretrained weights)
 # =====================================================================
-# For paligemma: required. Points to PI05 checkpoint containing all weights.
-# For siglip_gemma3: optional. Points to a previously trained ValueCriticModel
-#   checkpoint to resume training. Backbone weights are loaded via
-#   from_pretrained() from siglip_path/gemma3_path; leave unset to train
-#   from scratch.
 # model_path: "/path/to/checkpoint"

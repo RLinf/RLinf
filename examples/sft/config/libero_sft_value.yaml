@@ -1,5 +1,5 @@
 defaults:
-  - model/vla_lib_value_model@actor.model
+  - model/value_model@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
@@ -20,7 +20,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "vla_lib_value_sft"
+    experiment_name: "value_sft"
     logger_backends: ["tensorboard"]
 
   max_epochs: 30000
@@ -107,7 +107,7 @@ actor:
 
   model:
     precision: bf16
-    model_type: "vla_lib_value_model"
+    model_type: "value_model"
     model_path: "/path/to/pi05_base_pytorch"
     # ----- Critic architecture -----
     critic_expert_variant: "gemma_100m"

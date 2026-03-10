@@ -27,8 +27,6 @@ import logging
 import os
 from pathlib import Path
 
-import numpy as np
-
 os.environ["LIBAV_LOG_LEVEL"] = "quiet"
 os.environ["OPENCV_LOG_LEVEL"] = "OFF"
 logging.getLogger("libav").setLevel(logging.ERROR)
@@ -77,7 +75,7 @@ def _load_return_stats_from_dataset(
 class FSDPValueSftWorker(FSDPModelManager, Worker):
     """FSDP worker for value model SFT training.
 
-    Reads ``data.train_data_paths`` list from config (single dataset = list of one).
+    Reads ``data.datasets`` list from config (single dataset = list of one).
     Uses global return_min/return_max for normalization across all datasets.
     """
 
@@ -110,73 +108,12 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         """Load the value model."""
         return get_model(self.cfg.actor.model)
 
-    @staticmethod
-    def _compute_spearman(values_a: np.ndarray, values_b: np.ndarray) -> float:
-        """Compute Spearman correlation with simple rank-based Pearson."""
-        if len(values_a) < 2 or len(values_b) < 2:
-            return 0.0
-
-        rank_a = np.empty_like(values_a, dtype=np.float64)
-        rank_b = np.empty_like(values_b, dtype=np.float64)
-        order_a = np.argsort(values_a, kind="mergesort")
-        order_b = np.argsort(values_b, kind="mergesort")
-        rank_a[order_a] = np.arange(len(values_a), dtype=np.float64)
-        rank_b[order_b] = np.arange(len(values_b), dtype=np.float64)
-
-        rank_a -= rank_a.mean()
-        rank_b -= rank_b.mean()
-        denom = np.linalg.norm(rank_a) * np.linalg.norm(rank_b)
-        if denom == 0.0:
-            return 0.0
-        return float(np.dot(rank_a, rank_b) / denom)
-
-    @classmethod
-    def _compute_value_spearman(
-        cls,
-        predicted_values: torch.Tensor,
-        target_values: torch.Tensor,
-    ) -> dict[str, float]:
-        """Compute Spearman rank correlation for predicted values."""
-        preds = predicted_values.detach().float().view(-1).cpu().numpy()
-        targets = target_values.detach().float().view(-1).cpu().numpy()
-        return {"value_spearman": cls._compute_spearman(preds, targets)}
-
-    @classmethod
-    def _compute_value_spearman_from_arrays(
-        cls,
-        predicted_values: np.ndarray,
-        target_values: np.ndarray,
-    ) -> dict[str, float]:
-        """Compute Spearman rank correlation for full eval arrays."""
-        if len(predicted_values) == 0 or len(target_values) == 0:
-            return {}
-        return {
-            "value_spearman": cls._compute_spearman(
-                predicted_values,
-                target_values,
-            )
-        }
-
-    def _gather_eval_array(self, values: np.ndarray | None) -> np.ndarray | None:
-        """Gather eval arrays across ranks for dataset-level diagnostics."""
-        if values is None:
-            return None
-        if not torch.distributed.is_initialized():
-            return values
-
-        gathered: list[np.ndarray | None] = [None for _ in range(self._world_size)]
-        torch.distributed.all_gather_object(gathered, values)
-        valid_arrays = [arr for arr in gathered if arr is not None and len(arr) > 0]
-        if not valid_arrays:
-            return None
-        return np.concatenate(valid_arrays, axis=0)
-
     # -----------------------------------------------------------------------
     # DataLoader
     # -----------------------------------------------------------------------
 
     def build_dataloader(self):
-        """Build dataloader from ``data.train_data_paths`` list.
+        """Build dataloader from ``data.datasets`` list.
 
         Uses ValueDataset which includes:
         - DataConfig transforms (repack, normalize, model-specific like LiberoInputs)
@@ -191,9 +128,10 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         except (ImportError, AttributeError):
             pass
 
+        from rlinf.models.embodiment.value_model.data_collator import PI05DataCollator
+        from rlinf.models.embodiment.value_model.processing import PI05Processor
+
         from rlinf.datasets import ValueDataset
-        from rlinf.models.embodiment.value_model.data_collator import ValueDataCollator
-        from rlinf.models.embodiment.value_model.processing import ValueProcessor
 
         data_cfg = self.cfg.get("data", {})
         model_cfg = self.cfg.actor.model
@@ -215,43 +153,29 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             return kwargs
 
         # ---- processor & collator ----
-        # Tokenizer resolution: explicit tokenizer_path > backbone path > error
-        from rlinf.models.embodiment.value_model.checkpoint_utils import (
-            has_tokenizer_files,
-        )
-
-        backbone_variant = getattr(model_cfg, "backbone_variant", "paligemma")
-        tokenizer_path = getattr(model_cfg, "tokenizer_path", None)
-        if tokenizer_path is None:
-            # Infer from backbone variant
-            if backbone_variant == "siglip_gemma3":
-                tokenizer_path = getattr(model_cfg, "gemma3_path", None)
-            else:
-                tokenizer_path = getattr(model_cfg, "model_path", None)
-        if tokenizer_path is None or not has_tokenizer_files(Path(tokenizer_path)):
-            raise ValueError(
-                f"No tokenizer found for backbone_variant='{backbone_variant}'. "
-                f"Set model.tokenizer_path explicitly or ensure the backbone path "
-                f"contains tokenizer files. Tried: {tokenizer_path}"
-            )
-        processor = ValueProcessor(
+        processor = PI05Processor(
             max_token_len=getattr(model_cfg, "max_token_len", 200),
-            tokenizer_name_or_path=tokenizer_path,
-            do_augment=bool(data_cfg.get("do_augment", True)),
+            tokenizer_name_or_path=getattr(model_cfg, "tokenizer_path", None)
+            or model_cfg.model_path,
+            discrete_state_input=getattr(model_cfg, "discrete_state_input", False),
+            exclude_cot_from_kv_cache=getattr(
+                model_cfg, "exclude_cot_from_kv_cache", False
+            ),
         )
-        train_collator = ValueDataCollator(
+        train_collator = PI05DataCollator(
             processor=processor,
             max_length=getattr(model_cfg, "max_token_len", 200),
             train=True,
         )
         # Use deterministic preprocessing for eval (no image augmentation).
-        eval_collator = ValueDataCollator(
+        eval_collator = PI05DataCollator(
             processor=processor,
             max_length=getattr(model_cfg, "max_token_len", 200),
             train=False,
         )
         # ---- shared defaults ----
         data_root = data_cfg.get("data_root", None)
+        auto_skip_vlm = True  # Expert mode always skips VLM response
 
         # Transform-related shared config (required parameters)
         robot_type = data_cfg.get("robot_type")
@@ -263,6 +187,9 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         norm_stats_dir = data_cfg.get("norm_stats_dir", None)
 
         shared = {
+            "value_prefix": data_cfg.get("value_prefix", "Value: "),
+            "include_state": data_cfg.get("include_state", True),
+            "skip_vlm_response": data_cfg.get("skip_vlm_response", auto_skip_vlm),
             "action_horizon": data_cfg.get(
                 "action_horizon", getattr(model_cfg, "action_horizon", 10)
             ),
@@ -280,18 +207,23 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         }
 
         # ---- build datasets ----
-        datasets_list = data_cfg.get("train_data_paths", [])
+        datasets_list = data_cfg.get("datasets", [])
         if not datasets_list:
             raise ValueError(
-                "data.train_data_paths must be a non-empty list. "
+                "data.datasets must be a non-empty list. "
                 "Each entry needs: dataset_path."
             )
         train_entries = [
             dict(entry) for entry in datasets_list if entry.get("dataset_path", None)
         ]
+        eval_entries = [
+            dict(entry)
+            for entry in datasets_list
+            if entry.get("eval_dataset_path", None)
+        ]
         if not train_entries:
             raise ValueError(
-                "data.train_data_paths must contain at least one training entry with 'dataset_path'."
+                "data.datasets must contain at least one training entry with 'dataset_path'."
             )
 
         # ---- Compute global return_min/return_max ----
@@ -354,6 +286,9 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             "return_min": global_return_min,
             "return_max": global_return_max,
             "normalize_to_minus_one_zero": shared["normalize_to_minus_one_zero"],
+            "skip_vlm_response": shared["skip_vlm_response"],
+            "value_prefix": shared["value_prefix"],
+            "include_state": shared["include_state"],
             "action_dim": shared["action_dim"],
         }
 
@@ -386,6 +321,11 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                 "normalize_to_minus_one_zero": entry.get(
                     "normalize_to_minus_one_zero", shared["normalize_to_minus_one_zero"]
                 ),
+                "skip_vlm_response": entry.get(
+                    "skip_vlm_response", shared["skip_vlm_response"]
+                ),
+                "value_prefix": entry.get("value_prefix", shared["value_prefix"]),
+                "include_state": entry.get("include_state", shared["include_state"]),
                 "action_dim": entry.get("action_dim", shared["action_dim"]),
                 "split": "train",
                 "default_prompt": entry.get("default_prompt", None),
@@ -393,7 +333,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                 "episode_percentage": entry.get("episode_percentage", None),
                 "shuffle_episodes": entry.get("shuffle_episodes", False),
                 "episode_seed": entry.get("episode_seed", 42),
-                "tag": data_cfg.get("tag", None),
             }
 
             ds = ValueDataset(**entry_kwargs)
@@ -447,17 +386,31 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         train_data_loader = ValueDataLoaderImpl(data_config, torch_loader)
 
         # ---- optional eval DataLoader(s) ----
-        # Read from data.eval_data_paths (top-level list, same format as
-        # train_data_paths but each entry uses 'dataset_path' for the eval
-        # dataset).  This is the only supported way to configure eval datasets.
+        # Build one eval loader per entry that defines eval_dataset_path.
+        # Legacy fallback: if no entries have eval_dataset_path but
+        # data.eval_dataset_path is set at top level, create one eval loader.
         eval_data_loaders: list[tuple[str, ValueDataLoaderImpl]] = []
 
-        eval_data_paths = data_cfg.get("eval_data_paths", []) or []
+        # Collect effective eval sources
+        effective_eval_entries: list[dict] = []
+        if eval_entries:
+            effective_eval_entries = eval_entries
+        else:
+            # Legacy top-level fallback
+            legacy_path = data_cfg.get("eval_dataset_path", None)
+            if legacy_path:
+                effective_eval_entries = [
+                    {
+                        "eval_dataset_path": legacy_path,
+                        "eval_max_samples": data_cfg.get("eval_max_samples", None),
+                    }
+                ]
 
-        for eval_entry in eval_data_paths:
-            eval_entry = dict(eval_entry)
-            eval_dataset_path = eval_entry.get("dataset_path")
-            eval_max_samples = eval_entry.get("max_samples", None)
+        for eval_entry in effective_eval_entries:
+            eval_dataset_path = eval_entry.get("eval_dataset_path")
+            eval_max_samples = eval_entry.get(
+                "eval_max_samples", data_cfg.get("eval_max_samples", None)
+            )
             if not eval_dataset_path:
                 continue
 
@@ -472,7 +425,7 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                 eval_ds_path = os.path.join(data_root, eval_ds_path)
 
             # Derive a short name for this eval dataset
-            ds_name = eval_entry.get("name", Path(eval_ds_path).stem)
+            ds_name = eval_entry.get("eval_name", Path(eval_ds_path).stem)
 
             eval_dataset = ValueDataset(
                 dataset_path=eval_ds_path,
@@ -491,11 +444,15 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                 normalize_to_minus_one_zero=eval_entry.get(
                     "normalize_to_minus_one_zero", shared["normalize_to_minus_one_zero"]
                 ),
+                skip_vlm_response=eval_entry.get(
+                    "skip_vlm_response", shared["skip_vlm_response"]
+                ),
+                value_prefix=eval_entry.get("value_prefix", shared["value_prefix"]),
+                include_state=eval_entry.get("include_state", shared["include_state"]),
                 split="val",
                 action_dim=eval_entry.get("action_dim", shared["action_dim"]),
                 default_prompt=eval_entry.get("default_prompt", None),
                 max_samples=eval_max_samples,
-                tag=data_cfg.get("tag", None),
             )
             eval_sampler = None
             if torch.distributed.is_initialized():
@@ -519,8 +476,8 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             eval_data_loader = ValueDataLoaderImpl(data_config, eval_torch_loader)
             eval_data_loaders.append((ds_name, eval_data_loader))
             logger.info(
-                f"[ValueSFT] Eval dataset '{ds_name}' loaded: {eval_ds_path} "
-                f"({len(eval_dataset)} samples, max_samples={eval_max_samples}, "
+                f"[ValueSFT] Eval dataset '{ds_name}' loaded: {eval_dataset_path} "
+                f"({len(eval_dataset)} samples, eval_max_samples={eval_max_samples}, "
                 "norm_range=train_global:"
                 f"[{global_return_min}, {global_return_max}])"
             )
@@ -611,13 +568,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                         if isinstance(result.cat_mae, torch.Tensor)
                         else result.cat_mae
                     )
-                if result.predicted_values is not None and target_values is not None:
-                    metrics.update(
-                        self._compute_value_spearman(
-                            result.predicted_values,
-                            target_values,
-                        )
-                    )
 
                 scaled_loss = loss / grad_accum
                 with backward_ctx:
@@ -677,8 +627,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             with torch.no_grad():
                 for ds_name, loader in self.eval_data_loaders:
                     batch_metrics: list[dict[str, float]] = []
-                    pred_batches: list[np.ndarray] = []
-                    target_batches: list[np.ndarray] = []
                     for batch in loader:
                         obs, target_values, actions, _ = self._prepare_input(batch)
 
@@ -724,26 +672,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                                 if isinstance(result.cat_mae, torch.Tensor)
                                 else result.cat_mae
                             )
-                        if (
-                            result.predicted_values is not None
-                            and target_values is not None
-                        ):
-                            metrics.update(
-                                self._compute_value_spearman(
-                                    result.predicted_values,
-                                    target_values,
-                                )
-                            )
-                            pred_batches.append(
-                                result.predicted_values.detach()
-                                .float()
-                                .view(-1)
-                                .cpu()
-                                .numpy()
-                            )
-                            target_batches.append(
-                                target_values.detach().float().view(-1).cpu().numpy()
-                            )
                         metrics["loss"] = loss.detach().item()
                         if target_values is not None:
                             metrics["target_value_mean"] = (
@@ -763,23 +691,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                         all_dataset_metrics[ds_name] = {
                             k: sum(v) / len(v) for k, v in agg.items()
                         }
-                        if pred_batches and target_batches:
-                            gathered_pred = self._gather_eval_array(
-                                np.concatenate(pred_batches, axis=0)
-                            )
-                            gathered_target = self._gather_eval_array(
-                                np.concatenate(target_batches, axis=0)
-                            )
-                            if (
-                                gathered_pred is not None
-                                and gathered_target is not None
-                            ):
-                                all_dataset_metrics[ds_name].update(
-                                    self._compute_value_spearman_from_arrays(
-                                        gathered_pred,
-                                        gathered_target,
-                                    )
-                                )
 
             if not all_dataset_metrics:
                 return {}

@@ -1,22 +1,22 @@
 uv pip install scikit-learn
 uv pip install lerobot==0.3.3
 apt-get update && apt-get install -y ffmpeg liblapack3 libopenblas-base  
-# Add vla_lib to PYTHONPATH in bashrc
-VLA_LIB_PATH="${VLA_LIB_PATH:-/path/to/vla_lib}"
+# Add value_model to PYTHONPATH in bashrc
+VALUE_MODEL_PATH="${VALUE_MODEL_PATH:-/path/to/value_model}"
 BASHRC="$HOME/.bashrc"
-EXPORT_LINE="export PYTHONPATH=$VLA_LIB_PATH:\$PYTHONPATH"
+EXPORT_LINE="export PYTHONPATH=$VALUE_MODEL_PATH:\$PYTHONPATH"
 
-if ! grep -q "$VLA_LIB_PATH" "$BASHRC" 2>/dev/null; then
+if ! grep -q "$VALUE_MODEL_PATH" "$BASHRC" 2>/dev/null; then
     echo "" >> "$BASHRC"
-    echo "# vla_lib path for RLinf" >> "$BASHRC"
+    echo "# value_model path for RLinf" >> "$BASHRC"
     echo "$EXPORT_LINE" >> "$BASHRC"
-    echo "Added vla_lib to PYTHONPATH in $BASHRC"
+    echo "Added value_model to PYTHONPATH in $BASHRC"
 else
-    echo "vla_lib already in PYTHONPATH in $BASHRC"
+    echo "value_model already in PYTHONPATH in $BASHRC"
 fi
 
 # Also export for current session
-export PYTHONPATH=$VLA_LIB_PATH:$PYTHONPATH
+export PYTHONPATH=$VALUE_MODEL_PATH:$PYTHONPATH
 echo "PYTHONPATH updated for current session"
 
 # Create compatibility shim for lerobot 0.3.x

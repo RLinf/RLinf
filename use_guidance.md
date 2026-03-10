@@ -95,14 +95,14 @@ Pipeline 使用两种数据集：
 | `examples/process/run_compute_returns.sh` | Stage 1 启动器 |
 | `examples/process/config/compute_returns_test.yaml` | Stage 1 测试配置 |
 | **Stage 2** | |
-| `examples/sft/train_vla_lib_sft.py` | Value model 训练入口 |
-| `examples/sft/run_vla_lib_sft.sh` | Stage 2 启动器 |
+| `examples/sft/train_value_sft.py` | Value model 训练入口 |
+| `examples/sft/run_value_sft.sh` | Stage 2 启动器 |
 | `examples/sft/config/libero_sft_value_test.yaml` | Stage 2 测试配置 |
 | `rlinf/runners/sft_runner.py` | `SFTRunner` — 训练循环 |
-| `rlinf/workers/vla_lib_sft/fsdp_value_sft_worker.py` | `FSDPValueSftWorker` — FSDP 训练 |
-| `rlinf/models/embodiment/vla_lib_value_model/` | Value model（critic head）定义 |
-| `rlinf/datasets/vla_lib/value_mixture_dataset.py` | Value 训练数据集 |
-| `rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf_vla_lib.sh` | Value checkpoint 转换脚本 |
+| `rlinf/workers/value_sft/fsdp_value_sft_worker.py` | `FSDPValueSftWorker` — FSDP 训练 |
+| `rlinf/models/embodiment/value_model/` | Value model（critic head）定义 |
+| `rlinf/datasets/mixture_datasets.py` | Value 训练数据集 |
+| `rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf_value_model.sh` | Value checkpoint 转换脚本 |
 | **Stage 3** | |
 | `examples/process/compute_advantages.py` | 计算 advantage 的主脚本（支持 torchrun） |
 | `examples/process/run_compute_advantages.sh` | Stage 3 启动器 |
@@ -203,20 +203,20 @@ actor:
 
 **启动**：
 ```bash
-bash examples/sft/run_vla_lib_sft.sh libero_sft_value_test
+bash examples/sft/run_value_sft.sh libero_sft_value_test
 ```
 
 **转换 checkpoint**（Stage 3 需要 SafeTensors 格式）：
 ```bash
 # 找到训练产出的 checkpoint
-LATEST_LOG=$(ls -td logs/vla_lib_sft/libero_sft_value_test-* | head -1)
-CKPT_DIR="${LATEST_LOG}/vla_lib_value_sft/checkpoints/global_step_5/actor/model_state_dict"
+LATEST_LOG=$(ls -td logs/value_sft/libero_sft_value_test-* | head -1)
+CKPT_DIR="${LATEST_LOG}/value_sft/checkpoints/global_step_5/actor/model_state_dict"
 
 # 用 symlink 避免路径中冒号导致 Hydra 解析错误
 ln -sfn "${CKPT_DIR}" /tmp/step2_ckpt
 
 # FSDP .pt → HuggingFace SafeTensors
-bash rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf_vla_lib.sh \
+bash rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf_value_model.sh \
     convertor.ckpt_path=/tmp/step2_ckpt/full_weights.pt \
     convertor.save_path=/tmp/step2_ckpt
 ```
@@ -395,10 +395,10 @@ source switch_env openpi
 bash examples/process/run_compute_returns.sh compute_returns_test
 
 # Stage 2: Train Value Model + Convert Checkpoint
-bash examples/sft/run_vla_lib_sft.sh libero_sft_value_test
-CKPT=$(ls -td logs/vla_lib_sft/libero_sft_value_test-* | head -1)/vla_lib_value_sft/checkpoints/global_step_5/actor/model_state_dict
+bash examples/sft/run_value_sft.sh libero_sft_value_test
+CKPT=$(ls -td logs/value_sft/libero_sft_value_test-* | head -1)/value_sft/checkpoints/global_step_5/actor/model_state_dict
 ln -sfn "$CKPT" /tmp/step2_ckpt
-bash rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf_vla_lib.sh \
+bash rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf_value_model.sh \
     convertor.ckpt_path=/tmp/step2_ckpt/full_weights.pt convertor.save_path=/tmp/step2_ckpt
 
 # Stage 3: Compute Advantages

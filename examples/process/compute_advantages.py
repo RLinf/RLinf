@@ -64,7 +64,7 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Import ValueCritic for value inference
-from rlinf.models.embodiment.vla_lib_value_model.modeling_critic import ValueCritic
+from rlinf.models.embodiment.value_model.modeling_critic import ValueCritic
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +218,7 @@ OBSERVATION_LIKE_KEYS = {
 }
 
 # Key mappings for building raw observations for ValueCritic
-# Maps LeRobot dataset keys to vla_lib observation format
+# Maps LeRobot dataset keys to value model observation format
 KEY_MAPPINGS = {
     "franka": {
         "observation.images.front_cam": "observation/images/front_cam",
@@ -554,7 +554,7 @@ def build_obs(
 
     The ValueCritic internally handles all input transforms (LiberoInputs,
     Normalize, ResizeImages, etc.), so we only need to build the raw observation
-    in the format expected by vla_lib's input processing.
+    in the format expected by the value model's input processing.
 
     Args:
         sample: Sample from LeRobot dataset
