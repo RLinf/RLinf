@@ -51,10 +51,11 @@ def make_megatron_inference(base_class, trainer_role):
             # For GRPO, there is only 'inference' in config yaml
             if self.trainer_role == "actor" and not hasattr(self.cfg, self.role):
                 self.role = "inference"
-            self.role_cfg = getattr(self.cfg, self.role)
 
             self._build_inference_cfg()
-            super().__init__(self.cfg, placement, role=trainer_role)
+            super().__init__(self.cfg, placement, role=self.role)
+
+            self.role_cfg = getattr(self.cfg, self.role)
             self._iteration = 0
 
             # Actor information
@@ -83,7 +84,7 @@ def make_megatron_inference(base_class, trainer_role):
 
         def _build_inference_cfg(self):
             """Build the configuration for inference based on the actor config."""
-            inference_cfg = self.role_cfg
+            inference_cfg = getattr(self.cfg, self.role)
             train_cfg = self.trainer_role_cfg
             merged_cfg = copy.deepcopy(train_cfg)
             with open_dict(merged_cfg):
@@ -101,7 +102,7 @@ def make_megatron_inference(base_class, trainer_role):
                 )
 
             with open_dict(self.cfg):
-                self.role_cfg = merged_cfg
+                setattr(self.cfg, self.role, merged_cfg)
 
         def sync_model_from_actor(self):
             if self.is_weight_offloaded:
