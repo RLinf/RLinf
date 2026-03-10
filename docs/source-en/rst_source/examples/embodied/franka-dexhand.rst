@@ -115,7 +115,8 @@ Dependency Installation
 -------------------------
 
 The dexterous hand setup builds on the standard installation from
-:doc:`franka`, with additional serial communication dependencies.
+:doc:`franka`, with an additional driver package for the dexterous hands
+and data glove.
 
 Controller Node
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -125,16 +126,18 @@ following in the virtual environment on the controller node:
 
 .. code-block:: bash
 
-   # Serial communication (dexterous hand + data glove)
-   pip install pyserial pymodbus pyyaml
+   # Dexterous hand + data glove drivers (includes all serial deps)
+   pip install "rlinf_dexhand[all]"
 
-   # Data glove driver
-   pip install psi_glove_driver
+``rlinf_dexhand`` bundles drivers for the Ruiyan hand, Aoyi hand, and
+PSI data glove, along with the required serial libraries (pyserial,
+pymodbus, pyyaml, etc.). For finer-grained control over optional
+dependencies:
 
-.. note::
-
-   If ``psi_glove_driver`` is not available via pip, please contact
-   the glove manufacturer for the driver package and install manually.
+- ``pip install rlinf_dexhand`` — base only (pyserial + numpy)
+- ``pip install "rlinf_dexhand[glove]"`` — adds data glove deps (pyyaml)
+- ``pip install "rlinf_dexhand[aoyi]"`` — adds Aoyi hand deps (pymodbus)
+- ``pip install "rlinf_dexhand[all]"`` — all dependencies
 
 Training / Rollout Node
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -189,7 +192,7 @@ Set environment variables and run the diagnostic script:
    export FRANKA_ROBOT_IP=<your_robot_ip>
    export FRANKA_END_EFFECTOR_TYPE=ruiyan_hand  # or aoyi_hand
    export FRANKA_HAND_PORT=/dev/ttyUSB0
-   python -m toolkits.realworld_check.test_controller
+   python -m toolkits.realworld_check.test_franka_controller
 
 In the interactive prompt:
 
@@ -203,7 +206,7 @@ In the interactive prompt:
 .. code-block:: bash
 
    # Test the camera
-   python -m toolkits.realworld_check.test_camera
+   python -m toolkits.realworld_check.test_franka_camera
 
 Data Collection
 ~~~~~~~~~~~~~~~~~
@@ -910,7 +913,7 @@ the arm and dexterous hand states in real time.
 
    export FRANKA_ROBOT_IP=<your_robot_ip>
    export FRANKA_END_EFFECTOR_TYPE=ruiyan_hand
-   python -m toolkits.realworld_check.test_controller
+   python -m toolkits.realworld_check.test_franka_controller
 
 .. list-table:: Available Commands
    :widths: 20 60

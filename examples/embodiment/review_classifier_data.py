@@ -179,10 +179,10 @@ def save_frames(frames: list[dict], save_dir: str) -> None:
         pickle.dump(frames, f)
 
     camera_str = ", ".join(image_keys)
-    print(f"\n保存完成 ({camera_str}):")
-    print(f"  成功: {len(success_frames)} 组 → {os.path.join(save_dir, 'success/')}")
-    print(f"  失败: {len(failure_frames)} 组 → {os.path.join(save_dir, 'failure/')}")
-    print(f"  raw_frames.pkl 已同步更新")
+    print(f"\nSaved ({camera_str}):")
+    print(f"  success: {len(success_frames)} groups -> {os.path.join(save_dir, 'success/')}")
+    print(f"  failure: {len(failure_frames)} groups -> {os.path.join(save_dir, 'failure/')}")
+    print(f"  raw_frames.pkl synced")
 
 
 # ======================================================================
@@ -336,8 +336,8 @@ class ReviewUI:
             n_cams = len(self.all_frames[0]["images"]) if self.all_frames else 1
             cv2.resizeWindow(win, max(720, 400 * n_cams), 560)
         except cv2.error as e:
-            print(f"无法创建窗口 (X11/显示错误): {e}")
-            print("请确认有可用的 X11 显示 (export DISPLAY=...)。")
+            print(f"Cannot create window (X11/display error): {e}")
+            print("Please ensure an X11 display is available (export DISPLAY=...).")
             return
 
         cv2.imshow(win, self.render())
@@ -415,9 +415,9 @@ class ReviewUI:
             ]
             save_frames(kept, self.save_dir)
             self.dirty = False
-            print("已保存。")
+            print("Saved.")
         else:
-            print("取消保存。")
+            print("Save cancelled.")
 
 
 # ======================================================================
@@ -445,8 +445,8 @@ def main() -> None:
     raw_path = os.path.join(log_dir, "raw_frames.pkl")
 
     if not os.path.exists(raw_path):
-        print(f"错误: 未找到 {raw_path}")
-        print("请确认 --log_dir 指向 collect_classifier_data 生成的目录。")
+        print(f"Error: {raw_path} not found")
+        print("Please verify --log_dir points to the directory created by collect_classifier_data.")
         sys.exit(1)
 
     with open(raw_path, "rb") as f:
@@ -461,18 +461,18 @@ def main() -> None:
     n_failure = len(all_frames) - n_success
     image_keys = sorted(all_frames[0]["images"].keys()) if all_frames else []
     print(
-        f"加载 {len(all_frames)} 帧 "
-        f"({n_success} 成功 + {n_failure} 失败, "
-        f"{len(image_keys)} 相机: {', '.join(image_keys)}) "
+        f"Loaded {len(all_frames)} frames "
+        f"({n_success} success + {n_failure} failure, "
+        f"{len(image_keys)} cameras: {', '.join(image_keys)}) "
         f"from {raw_path}"
     )
     print()
-    print("操作说明:")
-    print("  n / →     下一帧          p / ←     上一帧")
-    print("  g         标记为保留      b         标记为丢弃")
-    print("  1         仅显示成功帧    2         仅显示失败帧    0    显示全部")
-    print("  s         保存并覆盖 (有弹窗确认)")
-    print("  q / ESC   退出 (有未保存更改会提示)")
+    print("Controls:")
+    print("  n / ->     next frame          p / <-     previous frame")
+    print("  g         mark as keep         b         mark as discard")
+    print("  1         success only         2         failure only         0    show all")
+    print("  s         save & overwrite (confirmation dialog)")
+    print("  q / ESC   quit (prompts to save if changes exist)")
     print()
 
     ui = ReviewUI(all_frames, log_dir)

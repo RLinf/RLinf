@@ -174,7 +174,6 @@ class FrankaEnv(gym.Env):
         time.sleep(1.0)
         self._franka_state = self._controller.get_state().wait()[0]
 
-        # TODO： matthew
         # Apply compliance params so impedance controller tracks target (e.g. SpaceMouse) correctly
         # if self.config.compliance_param:
         #     self._controller.reconfigure_compliance_params(self.config.compliance_param)

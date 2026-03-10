@@ -12,12 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PSI data-glove expert that reads finger angles in a background thread.
-
-This module re-exports :class:`GloveExpert` from the standalone
-``rlinf_dexhand`` package (``pip install rlinf_dexhand[glove]``).
-"""
-
-from rlinf_dexhand.glove import GloveExpert
+from .glove_expert import GloveExpert
 
 __all__ = ["GloveExpert"]

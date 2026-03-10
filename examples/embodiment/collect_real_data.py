@@ -104,10 +104,10 @@ class DataCollector(Worker):
 
         self.log_info(
             f"\n{'=' * 60}\n"
-            f"  数据采集开始\n"
-            f"  目标成功 demo 数: {self.num_data_episodes}\n"
-            f"  每 episode 最大步数: {max_steps}\n"
-            f"  成功判据: {'视觉分类器 (classifier)' if use_classifier else 'target pose (环境内置)'}\n"
+            f"  Data collection started\n"
+            f"  Target successful demos: {self.num_data_episodes}\n"
+            f"  Max steps per episode: {max_steps}\n"
+            f"  Success criterion: {'visual classifier' if use_classifier else 'target pose (built-in)'}\n"
             f"{'=' * 60}"
         )
 
@@ -124,8 +124,8 @@ class DataCollector(Worker):
         self.log_info(
             f"\n{'#' * 50}\n"
             f"  Episode {episode_cnt}  "
-            f"成功: {success_cnt}/{self.num_data_episodes}\n"
-            f"  >>> 开始遥操作 <<<\n"
+            f"success: {success_cnt}/{self.num_data_episodes}\n"
+            f"  >>> Start teleoperation <<<\n"
             f"{'#' * 50}"
         )
 
@@ -226,10 +226,10 @@ class DataCollector(Worker):
                     clf_info_str = f"  classifier_reward={clf_reward_val:.3f}"
 
                 self.log_info(
-                    f"Episode {episode_cnt} 结束 [{step_in_ep}/{max_steps} 步]  "
+                    f"Episode {episode_cnt} ended [{step_in_ep}/{max_steps} steps]  "
                     f"{status}{clf_info_str}\n"
-                    f"    成功: {success_cnt}/{self.num_data_episodes}  "
-                    f"总 episodes: {self.total_cnt}"
+                    f"    success: {success_cnt}/{self.num_data_episodes}  "
+                    f"total episodes: {self.total_cnt}"
                 )
 
                 # Save Trajectory to the 'demos' directory
@@ -252,8 +252,8 @@ class DataCollector(Worker):
                     self.log_info(
                         f"\n{'#' * 50}\n"
                         f"  Episode {episode_cnt}  "
-                        f"成功: {success_cnt}/{self.num_data_episodes}\n"
-                        f"  >>> 开始遥操作 <<<\n"
+                        f"success: {success_cnt}/{self.num_data_episodes}\n"
+                        f"  >>> Start teleoperation <<<\n"
                         f"{'#' * 50}"
                     )
 

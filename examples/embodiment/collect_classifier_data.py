@@ -96,7 +96,7 @@ class ClassifierDataCollector(Worker):
         )
         self.image_keys = sorted(all_keys)
         self.log_info(
-            f"相机: {self.image_keys} (主相机: {self.main_image_key})"
+            f"Cameras: {self.image_keys} (main: {self.main_image_key})"
         )
 
     def _extract_frames(self, obs) -> dict[str, np.ndarray] | None:
@@ -157,8 +157,8 @@ class ClassifierDataCollector(Worker):
         episode_count = 0
 
         self.log_info(
-            f"目标: 收集 {self.successes_needed} 帧成功样本  "
-            f"每 episode {max_steps} 步后自动复位"
+            f"Target: collect {self.successes_needed} success frames  "
+            f"auto-reset every {max_steps} steps"
         )
 
         obs, _ = self.env.reset()
@@ -169,9 +169,9 @@ class ClassifierDataCollector(Worker):
             self.log_info(
                 f"\n{'#' * 50}\n"
                 f"  Episode {episode_count}  "
-                f"成功: {len(successes)}/{self.successes_needed}  "
-                f"失败: {len(failures)}\n"
-                f"  >>> 开始遥操作 — 右键标记成功帧 <<<\n"
+                f"success: {len(successes)}/{self.successes_needed}  "
+                f"failure: {len(failures)}\n"
+                f"  >>> Start teleoperation -- right button marks success <<<\n"
                 f"{'#' * 50}"
             )
 
@@ -219,8 +219,8 @@ class ClassifierDataCollector(Worker):
 
             pbar.close()
             self.log_info(
-                f"Episode {episode_count} 完成  "
-                f"成功: {len(successes)}  失败: {len(failures)}"
+                f"Episode {episode_count} done  "
+                f"success: {len(successes)}  failure: {len(failures)}"
             )
 
             # Check if we have enough before resetting
@@ -237,8 +237,8 @@ class ClassifierDataCollector(Worker):
             pickle.dump(all_frames, f)
 
         self.log_info(
-            f"采集完成: {len(successes)} 成功, {len(failures)} 失败  "
-            f"保存至: {raw_path}"
+            f"Collection done: {len(successes)} success, {len(failures)} failure  "
+            f"saved to: {raw_path}"
         )
         self.env.close()
 
@@ -288,9 +288,9 @@ def save_results(frames: list[dict], save_dir: str) -> None:
             pickle.dump(pkl, f)
 
     camera_str = ", ".join(image_keys)
-    print(f"\n保存完成 ({camera_str}):")
-    print(f"  成功: {len(success_frames)} 组 → {os.path.join(save_dir, 'success/')}")
-    print(f"  失败: {len(failure_frames)} 组 → {os.path.join(save_dir, 'failure/')}")
+    print(f"\nSaved ({camera_str}):")
+    print(f"  success: {len(success_frames)} groups -> {os.path.join(save_dir, 'success/')}")
+    print(f"  failure: {len(failure_frames)} groups -> {os.path.join(save_dir, 'failure/')}")
 
 
 # ======================================================================
@@ -318,7 +318,7 @@ def main(cfg):
     # ── Save images + pickle files ───────────────────────────────────
     raw_path = os.path.join(save_dir, "raw_frames.pkl")
     if not os.path.exists(raw_path):
-        print(f"未找到采集数据: {raw_path}")
+        print(f"Raw data not found: {raw_path}")
         return
 
     with open(raw_path, "rb") as f:
@@ -331,15 +331,15 @@ def main(cfg):
     image_keys = sorted(all_frames[0]["images"].keys()) if all_frames else ["wrist_1"]
     keys_str = " ".join(image_keys)
     print(
-        f"\n采集完成: 共 {len(all_frames)} 帧 "
-        f"({n_success} 成功 + {n_failure} 失败, "
-        f"{len(image_keys)} 相机: {', '.join(image_keys)})"
+        f"\nCollection done: {len(all_frames)} frames total "
+        f"({n_success} success + {n_failure} failure, "
+        f"{len(image_keys)} cameras: {', '.join(image_keys)})"
     )
     print(
-        f"\n后续步骤:\n"
-        f"  1. 审核筛选:  python examples/embodiment/review_classifier_data.py"
+        f"\nNext steps:\n"
+        f"  1. Review & filter:  python examples/embodiment/review_classifier_data.py"
         f" --log_dir {save_dir}\n"
-        f"  2. 训练分类器: python examples/embodiment/train_reward_classifier.py"
+        f"  2. Train classifier: python examples/embodiment/train_reward_classifier.py"
         f" --log_dir {save_dir} --image_keys {keys_str}"
     )
 

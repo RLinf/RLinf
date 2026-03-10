@@ -99,7 +99,7 @@ Franka + 灵巧手真机强化学习
 -------------------------
 
 灵巧手场景的依赖安装基于 :doc:`franka` 中的标准安装流程，
-需要额外安装灵巧手和数据手套的串口通信依赖。
+需要额外安装灵巧手和数据手套的驱动包。
 
 控制节点
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -108,16 +108,17 @@ Franka + 灵巧手真机强化学习
 
 .. code-block:: bash
 
-   # 串口通信依赖（灵巧手 + 数据手套）
-   pip install pyserial pymodbus pyyaml
+   # 灵巧手 + 数据手套驱动（包含串口通信等全部依赖）
+   pip install "rlinf_dexhand[all]"
 
-   # 数据手套驱动
-   pip install psi_glove_driver
+``rlinf_dexhand`` 包含睿研灵巧手、傲意灵巧手和 PSI 数据手套的驱动，
+以及所需的串口通信库（pyserial、pymodbus、pyyaml 等）。
+如果只需要部分组件，可以使用更细粒度的可选依赖：
 
-.. note::
-
-   如果 ``psi_glove_driver`` 无法通过 pip 安装，
-   请联系数据手套供应商获取驱动包并手动安装。
+- ``pip install rlinf_dexhand`` — 基础（仅 pyserial + numpy）
+- ``pip install "rlinf_dexhand[glove]"`` — 加装数据手套依赖（pyyaml）
+- ``pip install "rlinf_dexhand[aoyi]"`` — 加装傲意灵巧手依赖（pymodbus）
+- ``pip install "rlinf_dexhand[all]"`` — 全部依赖
 
 训练 / Rollout 节点
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -168,7 +169,7 @@ Franka + 灵巧手真机强化学习
    export FRANKA_ROBOT_IP=<your_robot_ip>
    export FRANKA_END_EFFECTOR_TYPE=ruiyan_hand  # 或 aoyi_hand
    export FRANKA_HAND_PORT=/dev/ttyUSB0
-   python -m toolkits.realworld_check.test_controller
+   python -m toolkits.realworld_check.test_franka_controller
 
 在交互界面中：
 
@@ -182,7 +183,7 @@ Franka + 灵巧手真机强化学习
 .. code-block:: bash
 
    # 测试相机
-   python -m toolkits.realworld_check.test_camera
+   python -m toolkits.realworld_check.test_franka_camera
 
 数据采集
 ~~~~~~~~~~~~~~~~~
@@ -831,7 +832,7 @@ demo 采集流程中：
 
    export FRANKA_ROBOT_IP=<your_robot_ip>
    export FRANKA_END_EFFECTOR_TYPE=ruiyan_hand
-   python -m toolkits.realworld_check.test_controller
+   python -m toolkits.realworld_check.test_franka_controller
 
 .. list-table:: 可用命令
    :widths: 20 60

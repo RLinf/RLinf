@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PSI data-glove expert that reads finger angles in a background thread.
+"""Dexterous hand and data-glove drivers for RLinf.
 
-This module re-exports :class:`GloveExpert` from the standalone
-``rlinf_dexhand`` package (``pip install rlinf_dexhand[glove]``).
+Sub-packages::
+
+    from rlinf_dexhand.ruiyan import RuiyanHandDriver
+    from rlinf_dexhand.aoyi import AoyiHandDriver
+    from rlinf_dexhand.glove import GloveExpert
 """
-
-from rlinf_dexhand.glove import GloveExpert
-
-__all__ = ["GloveExpert"]

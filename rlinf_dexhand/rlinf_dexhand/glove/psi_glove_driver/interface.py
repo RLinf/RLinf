@@ -91,8 +91,8 @@ class SerialInterface(CommunicationInterface):
         except ImportError:
             self.connected = False
             logger.error(
-                "Serial library not installed, please install pyserial: \
-                    pip install pyserial"
+                "Serial library not installed, please install pyserial: "
+                "pip install pyserial"
             )
             return False
         except Exception as e:

@@ -233,8 +233,8 @@ def main():
         "--log_dir",
         type=str,
         required=True,
-        help="日志目录（由 collect_classifier_data.sh 创建），"
-        "包含 success/failure pickle 文件，权重也保存在此。",
+        help="Log directory (created by collect_classifier_data.sh), "
+        "containing success/failure pickle files; weights are also saved here.",
     )
     parser.add_argument(
         "--pretrained_ckpt",

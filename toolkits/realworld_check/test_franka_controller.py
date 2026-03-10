@@ -30,7 +30,7 @@ Example
 
    export FRANKA_ROBOT_IP=172.16.0.2
    export FRANKA_END_EFFECTOR_TYPE=ruiyan_hand
-   python -m toolkits.realworld_check.test_controller
+   python -m toolkits.realworld_check.test_franka_controller
 """
 
 import json
@@ -38,6 +38,7 @@ import os
 import time
 
 import numpy as np
+import ray
 from scipy.spatial.transform import Rotation as R
 
 from rlinf.envs.realworld.franka.franka_controller import FrankaController
@@ -51,28 +52,28 @@ _BOLD = "\033[1m"
 _RESET = "\033[0m"
 
 # ── Finger name translations (for pretty printing) ──────────────────
-_FINGER_ZH = {
-    "thumb_rotation": "拇指旋转",
-    "thumb_bend": "拇指弯曲",
-    "index": "食指",
-    "middle": "中指",
-    "ring": "无名指",
-    "pinky": "小指",
+_FINGER_EN = {
+    "thumb_rotation": "thumb rotation",
+    "thumb_bend": "thumb bend",
+    "index": "index",
+    "middle": "middle",
+    "ring": "ring",
+    "pinky": "pinky",
 }
 
 _HELP_TEXT = f"""\
-{_BOLD}可用命令：{_RESET}
-  {_GREEN}getpos{_RESET}          获取机械臂 TCP 位姿（四元数表示）
-  {_GREEN}getpos_euler{_RESET}    获取机械臂 TCP 位姿（欧拉角表示）
-  {_GREEN}getjoints{_RESET}       获取机械臂关节角度（7 维）
-  {_GREEN}getvel{_RESET}          获取机械臂 TCP 速度（6 维）
-  {_GREEN}getforce{_RESET}        获取机械臂 TCP 力/力矩
-  {_CYAN}gethand{_RESET}         获取灵巧手各手指位置（归一化 [0,1]）
-  {_CYAN}gethand_detail{_RESET}  获取灵巧手详细状态（位置/速度/电流/状态）
-  {_CYAN}handinfo{_RESET}        显示灵巧手配置信息（类型/串口/波特率/DOF）
-  {_GREEN}state{_RESET}           显示完整机器人状态
-  {_GREEN}help{_RESET}            显示本帮助信息
-  {_GREEN}q{_RESET}               退出
+{_BOLD}Available commands:{_RESET}
+  {_GREEN}getpos{_RESET}          Get TCP pose (quaternion)
+  {_GREEN}getpos_euler{_RESET}    Get TCP pose (Euler angles)
+  {_GREEN}getjoints{_RESET}       Get joint positions (7-DOF)
+  {_GREEN}getvel{_RESET}          Get TCP velocity (6-DOF)
+  {_GREEN}getforce{_RESET}        Get TCP force/torque
+  {_CYAN}gethand{_RESET}         Get finger positions (normalised [0,1])
+  {_CYAN}gethand_detail{_RESET}  Get detailed hand state (pos/vel/current/status)
+  {_CYAN}handinfo{_RESET}        Show hand config (type/port/baudrate/DOF)
+  {_GREEN}state{_RESET}           Show full robot state
+  {_GREEN}help{_RESET}            Show this help
+  {_GREEN}q{_RESET}               Quit
 """
 
 
@@ -99,22 +100,22 @@ def _handle_gethand(controller) -> None:
     hand_type = controller.get_hand_type().wait()[0]
     if hand_type == "franka_gripper":
         state = controller.get_state().wait()[0]
-        print(f"  夹爪位置: {state.gripper_position}  (开合: {'开' if state.gripper_open else '合'})")
+        print(f"  Gripper pos: {state.gripper_position}  ({'open' if state.gripper_open else 'closed'})")
         return
     hand_state = controller.get_hand_state().wait()[0]
     finger_names = controller.get_hand_finger_names().wait()[0]
     rows = []
     for i, (name, pos) in enumerate(zip(finger_names, hand_state)):
-        zh = _FINGER_ZH.get(name, name)
-        rows.append([str(i + 1), name, zh, f"{pos:.4f}"])
-    _print_table(["#", "DOF", "名称", "位置 [0,1]"], rows)
+        en = _FINGER_EN.get(name, name)
+        rows.append([str(i + 1), name, en, f"{pos:.4f}"])
+    _print_table(["#", "DOF", "Name", "Position [0,1]"], rows)
 
 
 def _handle_gethand_detail(controller) -> None:
     """Print detailed per-motor diagnostics."""
     hand_type = controller.get_hand_type().wait()[0]
     if hand_type == "franka_gripper":
-        print("  当前末端为 Franka 夹爪，无详细电机信息。")
+        print("  Current end-effector is Franka gripper; no detailed motor info.")
         return
     detail = controller.get_hand_detailed_state().wait()[0]
     finger_names = detail.get("finger_names", [])
@@ -127,7 +128,7 @@ def _handle_gethand_detail(controller) -> None:
 
     rows = []
     for i in range(len(finger_names)):
-        zh = _FINGER_ZH.get(finger_names[i], finger_names[i])
+        zh = _FINGER_EN.get(finger_names[i], finger_names[i])
         status_str = f"{_GREEN}OK{_RESET}" if statuses[i] == 0 else f"{_RED}ERR({statuses[i]}){_RESET}"
         rows.append([
             str(motor_ids[i] if i < len(motor_ids) else "?"),
@@ -140,7 +141,7 @@ def _handle_gethand_detail(controller) -> None:
             status_str,
         ])
     _print_table(
-        ["电机ID", "DOF", "名称", "位置", "目标位置", "速度", "电流", "状态"],
+        ["Motor ID", "DOF", "Name", "Position", "Target", "Velocity", "Current", "Status"],
         rows,
     )
 
@@ -150,26 +151,26 @@ def _handle_handinfo(controller) -> None:
     hand_type = controller.get_hand_type().wait()[0]
     detail = controller.get_hand_detailed_state().wait()[0]
     info_rows = [
-        ["末端类型", hand_type],
-        ["DOF 数量", str(len(detail.get("finger_names", detail.get("positions", []))))],
+        ["End-effector type", hand_type],
+        ["DOF count", str(len(detail.get("finger_names", detail.get("positions", []))))],
     ]
     if "port" in detail:
-        info_rows.append(["串口设备", detail["port"]])
+        info_rows.append(["Serial port", detail["port"]])
     if "baudrate" in detail:
-        info_rows.append(["波特率", str(detail["baudrate"])])
+        info_rows.append(["Baudrate", str(detail["baudrate"])])
     if "motor_ids" in detail:
-        info_rows.append(["电机 ID 列表", str(detail["motor_ids"])])
+        info_rows.append(["Motor IDs", str(detail["motor_ids"])])
     if "finger_names" in detail:
         for i, name in enumerate(detail["finger_names"]):
-            zh = _FINGER_ZH.get(name, name)
-            info_rows.append([f"  DOF {i+1}", f"{name} ({zh})"])
-    _print_table(["属性", "值"], info_rows)
+            en = _FINGER_EN.get(name, name)
+            info_rows.append([f"  DOF {i+1}", f"{name} ({en})"])
+    _print_table(["Property", "Value"], info_rows)
 
 
 def main():
     robot_ip = os.environ.get("FRANKA_ROBOT_IP", None)
     assert robot_ip is not None, (
-        "请设置环境变量 FRANKA_ROBOT_IP，例如：export FRANKA_ROBOT_IP=172.16.0.2"
+        "Please set FRANKA_ROBOT_IP, e.g.: export FRANKA_ROBOT_IP=172.16.0.2"
     )
 
     end_effector_type = os.environ.get("FRANKA_END_EFFECTOR_TYPE", "franka_gripper")
@@ -183,12 +184,15 @@ def main():
         if end_effector_type == "ruiyan_hand":
             end_effector_config["baudrate"] = hand_baudrate
 
-    print(f"{_BOLD}启动 FrankaController ...{_RESET}")
-    print(f"  机器人 IP:    {robot_ip}")
-    print(f"  末端执行器:   {end_effector_type}")
+    print(f"{_BOLD}Starting FrankaController ...{_RESET}")
+    print(f"  Robot IP:        {robot_ip}")
+    print(f"  End-effector:    {end_effector_type}")
     if end_effector_type != "franka_gripper":
-        print(f"  手部串口:     {hand_port}")
-        print(f"  波特率:       {hand_baudrate}")
+        print(f"  Hand port:       {hand_port}")
+        print(f"  Baudrate:        {hand_baudrate}")
+
+    if not ray.is_initialized():
+        ray.init(ignore_reinit_error=True)
 
     controller = FrankaController.launch_controller(
         robot_ip=robot_ip,
@@ -202,10 +206,10 @@ def main():
         time.sleep(0.5)
         if time.time() - start_time > 30:
             print(
-                f"{_YELLOW}已等待 {time.time() - start_time:.0f} 秒，Franka 仍未就绪 ...{_RESET}"
+                f"{_YELLOW}Waited {time.time() - start_time:.0f}s, Franka still not ready ...{_RESET}"
             )
 
-    print(f"{_GREEN}Franka 已就绪！输入 help 查看可用命令。{_RESET}\n")
+    print(f"{_GREEN}Franka ready! Type help for available commands.{_RESET}\n")
 
     while True:
         try:
@@ -225,15 +229,15 @@ def main():
                 print(f"  TCP (euler): {_fmt_arr(np.concatenate([tcp_pose[:3], euler]))}")
             elif cmd_str == "getjoints":
                 state = controller.get_state().wait()[0]
-                print(f"  关节位置: {_fmt_arr(state.arm_joint_position)}")
-                print(f"  关节速度: {_fmt_arr(state.arm_joint_velocity)}")
+                print(f"  Joint pos:  {_fmt_arr(state.arm_joint_position)}")
+                print(f"  Joint vel:  {_fmt_arr(state.arm_joint_velocity)}")
             elif cmd_str == "getvel":
                 state = controller.get_state().wait()[0]
-                print(f"  TCP 速度: {_fmt_arr(state.tcp_vel)}")
+                print(f"  TCP vel:    {_fmt_arr(state.tcp_vel)}")
             elif cmd_str == "getforce":
                 state = controller.get_state().wait()[0]
-                print(f"  TCP 力:   {_fmt_arr(state.tcp_force)}")
-                print(f"  TCP 力矩: {_fmt_arr(state.tcp_torque)}")
+                print(f"  TCP force:  {_fmt_arr(state.tcp_force)}")
+                print(f"  TCP torque: {_fmt_arr(state.tcp_torque)}")
             elif cmd_str == "gethand":
                 _handle_gethand(controller)
             elif cmd_str == "gethand_detail":
@@ -247,25 +251,25 @@ def main():
                 euler = r.as_euler("xyz")
                 print(f"  TCP (quat):  {_fmt_arr(tcp_pose)}")
                 print(f"  TCP (euler): {_fmt_arr(np.concatenate([tcp_pose[:3], euler]))}")
-                print(f"  TCP 速度:    {_fmt_arr(state.tcp_vel)}")
-                print(f"  TCP 力:      {_fmt_arr(state.tcp_force)}")
-                print(f"  TCP 力矩:    {_fmt_arr(state.tcp_torque)}")
-                print(f"  关节位置:    {_fmt_arr(state.arm_joint_position)}")
-                print(f"  关节速度:    {_fmt_arr(state.arm_joint_velocity)}")
+                print(f"  TCP vel:       {_fmt_arr(state.tcp_vel)}")
+                print(f"  TCP force:     {_fmt_arr(state.tcp_force)}")
+                print(f"  TCP torque:    {_fmt_arr(state.tcp_torque)}")
+                print(f"  Joint pos:     {_fmt_arr(state.arm_joint_position)}")
+                print(f"  Joint vel:     {_fmt_arr(state.arm_joint_velocity)}")
                 hand_type = controller.get_hand_type().wait()[0]
                 if hand_type == "franka_gripper":
-                    print(f"  夹爪位置:    {state.gripper_position}  (开合: {'开' if state.gripper_open else '合'})")
+                    print(f"  Gripper pos:   {state.gripper_position}  ({'open' if state.gripper_open else 'closed'})")
                 else:
-                    print(f"  灵巧手类型:  {hand_type}")
+                    print(f"  Hand type:     {hand_type}")
                     _handle_gethand(controller)
             else:
-                print(f"{_YELLOW}未知命令: {cmd_str}  (输入 help 查看可用命令){_RESET}")
+                print(f"{_YELLOW}Unknown command: {cmd_str}  (type help for available commands){_RESET}")
         except KeyboardInterrupt:
             print()
             break
         time.sleep(0.2)
 
-    print("退出。")
+    print("Exiting.")
 
 
 if __name__ == "__main__":

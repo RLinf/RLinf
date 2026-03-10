@@ -39,14 +39,14 @@ runner:
     project_name: rlinf
     experiment_name: "collect-dexpnp-demo"
     logger_backends: ["tensorboard"]
-  num_data_episodes: 20       # 目标成功 demo 数量
+  num_data_episodes: 20       # target number of successful demos
   record_task_description: False
 
 env:
   group_name: "EnvGroup"
   eval:
-    ignore_terminations: False  # 让分类器触发的 termination 生效
-    auto_reset: False           # 由 collector 控制 reset
+    ignore_terminations: False  # let classifier-triggered termination take effect
+    auto_reset: False           # controlled by collector
     no_gripper: False
     use_spacemouse: True
     glove_config:
@@ -55,8 +55,8 @@ env:
     classifier_reward_wrapper:
       checkpoint_path: "/workspace/RLinf/logs/20260306-07:00:37-reward-classifier-dex_pnp/reward_classifier.pt"
       image_keys: null
-      device: cuda              # 在 GPU 节点上推理
-      remote: true              # 通过 Ray 远程调用 GPU 节点上的 ClassifierRewardServer
+      device: cuda              # inference on GPU node
+      remote: true              # use Ray remote ClassifierRewardServer on GPU node
       threshold: 0.75
     override_cfg:
       camera_configs: ${cameras.realsense}

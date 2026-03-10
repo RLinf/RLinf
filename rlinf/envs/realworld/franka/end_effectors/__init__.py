@@ -49,7 +49,7 @@ def create_end_effector(
     elif end_effector_type == EndEffectorType.RUIYAN_HAND:
         from .ruiyan_hand import RuiyanHand
 
-        return RuiyanHand(**kwargs)
+        return RuiyanHand(**kwargs)  # noqa: F811
     else:
         raise ValueError(
             f"Unknown end-effector type: {end_effector_type}. "
