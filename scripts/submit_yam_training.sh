@@ -35,7 +35,7 @@ REPLICAS=1
 GPUS=0  # 0 = auto-detect based on config
 CLUSTER="ai2/ceres-cirrascale"
 BUDGET=""
-PRIORITY="normal"
+PRIORITY="urgent"
 DRY_RUN=""
 SHOW_LOGS=""
 ALLOW_DIRTY=""
@@ -197,7 +197,9 @@ done
 TRAIN_CMD_B64=$(echo "$TRAIN_CMD" | base64 -w0)
 INSTALL_CMD_B64=$(echo "$INSTALL_CMD" | base64 -w0)
 
-ENTRYPOINT_CMD="curl -fsSL https://tailscale.com/install.sh -o /tmp/tailscale-install.sh && sh /tmp/tailscale-install.sh"
+ENTRYPOINT_CMD="curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg -o /usr/share/keyrings/tailscale-archive-keyring.gpg"
+ENTRYPOINT_CMD+=" && echo 'deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu jammy main' > /etc/apt/sources.list.d/tailscale.list"
+ENTRYPOINT_CMD+=" && apt-get update -y && apt-get install -y tailscale"
 ENTRYPOINT_CMD+=" && tailscaled --tun=userspace-networking --state=mem: &"
 ENTRYPOINT_CMD+=" sleep 2"
 ENTRYPOINT_CMD+=" && tailscale up --authkey=\${TAILSCALE_AUTHKEY} --hostname=beaker-\${BEAKER_REPLICA_RANK:-0}"
