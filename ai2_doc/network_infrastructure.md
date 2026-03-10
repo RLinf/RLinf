@@ -124,7 +124,11 @@ tailscale up --authkey=${TAILSCALE_AUTHKEY} --hostname=beaker-${BEAKER_REPLICA_R
 ```
 
 - `--tun=userspace-networking` — required for unprivileged containers (no
-  `/dev/net/tun`)
+  `/dev/net/tun`). In this mode, the Tailscale IP is NOT assigned to any
+  network interface — `tailscaled` handles traffic entirely in userspace.
+  To make the Tailscale IP locally routable (needed by Ray, which connects to
+  its own GCS at the advertised IP), the desktop-driven entrypoint adds the
+  IP to the loopback interface: `ip addr add <tailscale-ip>/32 dev lo`.
 - `--state=mem:` — ephemeral state, no persistent disk needed
 - `--authkey` — pulled from the Beaker secret `tailscale_authkey_shirui`
 - `--hostname=beaker-<rank>` — makes replicas distinguishable in the Tailscale
