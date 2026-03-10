@@ -127,17 +127,17 @@ following in the virtual environment on the controller node:
 .. code-block:: bash
 
    # Dexterous hand + data glove drivers (includes all serial deps)
-   pip install "rlinf_dexhand[all]"
+   pip install "RLinf-dexterous-hands[all]"
 
-``rlinf_dexhand`` bundles drivers for the Ruiyan hand, Aoyi hand, and
+``RLinf-dexterous-hands`` bundles drivers for the Ruiyan hand, Aoyi hand, and
 PSI data glove, along with the required serial libraries (pyserial,
 pymodbus, pyyaml, etc.). For finer-grained control over optional
 dependencies:
 
-- ``pip install rlinf_dexhand`` — base only (pyserial + numpy)
-- ``pip install "rlinf_dexhand[glove]"`` — adds data glove deps (pyyaml)
-- ``pip install "rlinf_dexhand[aoyi]"`` — adds Aoyi hand deps (pymodbus)
-- ``pip install "rlinf_dexhand[all]"`` — all dependencies
+- ``pip install RLinf-dexterous-hands`` — base only (pyserial + numpy)
+- ``pip install "RLinf-dexterous-hands[glove]"`` — adds data glove deps (pyyaml)
+- ``pip install "RLinf-dexterous-hands[aoyi]"`` — adds Aoyi hand deps (pymodbus)
+- ``pip install "RLinf-dexterous-hands[all]"`` — all dependencies
 
 Training / Rollout Node
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

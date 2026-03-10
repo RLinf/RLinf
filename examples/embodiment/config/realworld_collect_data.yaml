@@ -22,7 +22,7 @@ cluster:
       hardware:
         type: Franka
         configs:
-          - robot_ip: 172.16.0.2
+          - robot_ip: ROBOT_IP # Replace with your robot's IP address
             node_rank: 0
 
 runner:
@@ -47,7 +47,7 @@ env:
       frequency: 30
     override_cfg:
       camera_configs: ${cameras.realsense}
-      target_ee_pose: [0.8188, 0.1384, 0.1188, -3.1331, -1.1213, -0.0676]
+      target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
       end_effector_type: "ruiyan_hand"
       end_effector_config:
         port: "/dev/ttyUSB0"

@@ -30,15 +30,10 @@ cluster:
       node_ranks: 0
     - label: franka
       node_ranks: 1
-      env_configs:
-        - node_ranks: 1
-          env_vars:
-            - PYTHONPATH: "/opt/venv/franka-0.15.0/franka_catkin_ws/devel/lib/python3/dist-packages:/opt/ros/noetic/lib/python3/dist-packages:/workspace/RLinf"
-            - LD_LIBRARY_PATH: "/opt/venv/franka-0.15.0/franka_catkin_ws/devel/lib:/opt/venv/franka-0.15.0/franka_catkin_ws/libfranka/build:/opt/ros/noetic/lib:/opt/openrobots/lib"
       hardware:
         type: Franka
         configs:
-          - robot_ip: 172.16.0.2
+          - robot_ip: ROBOT_IP # Replace with your robot's IP address
             node_rank: 1
 
 runner:
@@ -103,7 +98,7 @@ algorithm:
     cache_size: 200
     min_buffer_size: 1
     sample_window_size: 200
-    load_path: "/workspace/RLinf/logs/20260306-07:43:18/demos"
+    load_path: "/path/to/demo_data"
     auto_save: False
 
   target_update_freq: 1
@@ -136,14 +131,14 @@ env:
       left_port: "/dev/ttyACM0"
       frequency: 30
     classifier_reward_wrapper:
-      checkpoint_path: "/workspace/RLinf/logs/20260306-07:00:37-reward-classifier-dex_pnp/reward_classifier.pt"
+      checkpoint_path: "/path/to/reward_classifier.pt"
       # image_keys: ["camera_1"]  # Not setting this will default to using all camera images, sorted by name. 
       device: cuda
       remote: true
       threshold: 0.75
     override_cfg:
       camera_configs: ${cameras.realsense}
-      target_ee_pose: [0.8188, 0.1384, 0.1188, -3.1331, -1.1213, -0.0676]
+      target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
       end_effector_type: "ruiyan_hand"
       end_effector_config:
         port: "/dev/ttyUSB0"
@@ -170,7 +165,7 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/workspace/RLinf/RLinf-ResNet10-pretrained"
+    model_path: "/path/to/model"
     precision: ${actor.model.precision}
     action_dim: 12
     num_q_heads: 10
@@ -188,7 +183,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/workspace/RLinf/RLinf-ResNet10-pretrained"
+    model_path: "/path/to/model"
     state_dim: 24   # tcp_pose(6, after Quat2EulerWrapper) + tcp_vel(6) + hand_position(6) + tcp_force(3) + tcp_torque(3)
     action_dim: 12  # arm(6) + hand(6)
     num_q_heads: 10

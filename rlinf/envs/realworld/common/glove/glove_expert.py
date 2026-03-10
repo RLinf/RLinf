@@ -15,7 +15,7 @@
 """PSI data-glove expert that reads finger angles in a background thread.
 
 This module re-exports :class:`GloveExpert` from the standalone
-``rlinf_dexhand`` package (``pip install rlinf_dexhand[glove]``).
+``rlinf_dexhand`` package (``pip install RLinf-dexterous-hands[glove]``).
 """
 
 from rlinf_dexhand.glove import GloveExpert

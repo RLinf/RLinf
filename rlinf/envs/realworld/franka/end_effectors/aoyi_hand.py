@@ -15,7 +15,7 @@
 """Aoyi dexterous five-finger hand end-effector.
 
 This is a thin wrapper that delegates to the ``rlinf_dexhand``
-package (``pip install rlinf_dexhand[aoyi]``) and adapts it to the
+package (``pip install RLinf-dexterous-hands[aoyi]``) and adapts it to the
 :class:`EndEffector` interface used by the Franka env.
 """
 
@@ -33,7 +33,7 @@ class AoyiHand(EndEffector):
 
     Install the driver package first::
 
-        pip install "rlinf_dexhand[aoyi]"
+        pip install "RLinf-dexterous-hands[aoyi]"
 
     Args:
         port: Serial device path, e.g. ``"/dev/ttyUSB0"``.

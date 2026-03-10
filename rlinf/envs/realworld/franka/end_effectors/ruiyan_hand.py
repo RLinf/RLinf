@@ -15,7 +15,7 @@
 """Ruiyan dexterous five-finger hand end-effector.
 
 This is a thin wrapper that delegates to the ``rlinf_dexhand``
-package (``pip install rlinf_dexhand``) and adapts it to the
+package (``pip install RLinf-dexterous-hands``) and adapts it to the
 :class:`EndEffector` interface used by the Franka env.
 """
 
@@ -33,7 +33,7 @@ class RuiyanHand(EndEffector):
 
     Install the driver package first::
 
-        pip install rlinf_dexhand
+        pip install RLinf-dexterous-hands
 
     Args:
         port: Serial device path, e.g. ``"/dev/ttyUSB0"``.

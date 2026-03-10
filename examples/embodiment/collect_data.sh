@@ -10,8 +10,7 @@ export HYDRA_FULL_ERROR=1
 
 
 if [ -z "$1" ]; then
-    CONFIG_NAME="realworld_collect_dexpnp_demo"
-    # CONFIG_NAME="realworld_collect_data"
+    CONFIG_NAME="realworld_collect_data"
 else
     CONFIG_NAME=$1
 fi
