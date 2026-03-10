@@ -68,8 +68,12 @@ Here,
 3. Configuration
 -----------------
 
-Currently, PPO is supported only for embodied tasks in our framework.  
-The algorithm configuration is defined as follows:
+Our framework supports the use of PPO in both LLM inference tasks and embodied tasks.
+
+3.1. Embodied Tasks
+~~~~~~~~~~~~~~~~~~~
+
+The following first provides an example configuration for an embodied task:
 
 .. code-block:: yaml
 
@@ -97,6 +101,58 @@ The algorithm configuration is defined as follows:
       gae_lambda: 0.95          # Lambda parameter for GAE
 
       huber_delta: 10.0         # Delta parameter for Huber loss in value training
+
+3.2. LLM Reasoning Tasks
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The configuration for LLM inference tasks is similar to that for embodied tasks.
+
+.. code-block:: yaml
+
+    algorithm:
+       # Group size should be 1
+       group_size: 1
+
+       # Advantage function
+       adv_type: gae
+       gamma: 1
+       gae_lambda: 1
+       normalize_advantages: True
+
+       # The type of actor loss. This is different from embodied tasks,
+       # because the actor and critic are not in the same model and cannot perform backward together.
+       loss_type: actor
+       loss_agg_func: "token-mean"
+
+       # For actor loss
+       clip_ratio_c: 3.0
+       clip_ratio_low: 0.2
+       clip_ratio_high: 0.2
+
+       # For critic loss
+       value_clip: 0.2           # Stabilizes value function updates
+
+Furthermore, in LLM reasoning tasks, we use an independent critic model rather than having the actor and critic share a backbone. This means that in addition to the actor component similar to GRPO, the configuration needs to add a critic component and set up its corresponding placement:
+
+.. code-block:: yaml
+
+    cluster:
+      num_nodes: 1
+      component_placement:
+        # Note the addition of a critic component compared to GRPO
+        actor,critic,rollout,reward: all
+                
+    actor:
+      group_name: "ActorGroup"
+      training_backend: megatron
+      ...
+    
+    critic:
+      use_critic_model: true # This parameter indicates that the critic is a complete model, not just a value head.
+      group_name: "CriticGroup"
+      training_backend: megatron
+      # The rest of the critic configuration is very similar to the actor configuration in the GRPO settings for reasoning.
+      ...
 
 
 4. Notes
