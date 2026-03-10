@@ -25,7 +25,7 @@ runner:
     experiment_name: "robocasa_closedrawer_ppo_openpi"
     logger_backends: ["wandb", "tensorboard"] # wandb, swanlab
 
-  max_epochs: 1000
+  max_epochs: 1
   max_steps: -1
 
   only_eval: False
@@ -41,13 +41,13 @@ algorithm:
   group_size: 1
   reward_coef: 1.0
 
-  rollout_epoch: 8
+  rollout_epoch: 1
   eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
   reward_type: chunk_level
   logprob_type: chunk_level
   entropy_type: token_level
 
-  update_epoch: 4
+  update_epoch: 1
   adv_type: gae
   loss_type: actor_critic
   loss_agg_func: "token-mean" 
