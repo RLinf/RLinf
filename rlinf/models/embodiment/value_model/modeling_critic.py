@@ -575,20 +575,25 @@ class ValueCriticModel(VLMObservationEncoder):
     @property
     def _no_split_modules(self) -> list[str]:
         if self.paligemma_with_expert.freeze_vlm:
-            return [
+            no_split_modules = [
                 "GemmaDecoderLayer",
                 "SiglipVisionEmbeddings",
                 "GemmaRMSNorm",
                 "GemmaRotaryEmbedding",
                 "ValueHead",
             ]
-        return [
-            "GemmaMLP",
-            "SiglipVisionEmbeddings",
-            "GemmaRMSNorm",
-            "GemmaRotaryEmbedding",
-            "ValueHead",
-        ]
+        else:
+            no_split_modules = [
+                "GemmaMLP",
+                "SiglipVisionEmbeddings",
+                "GemmaRMSNorm",
+                "GemmaRotaryEmbedding",
+                "ValueHead",
+            ]
+        if self.backbone_variant == "siglip_gemma3":
+            no_split_modules.extend(["Gemma3RMSNorm","Gemma3DecoderLayer"])
+        return no_split_modules
+            
 
     @property
     def _no_split_names(self) -> list[str]:
@@ -652,7 +657,7 @@ class ValueCriticModel(VLMObservationEncoder):
         suffix_embs, suffix_pad_masks, suffix_ar_masks = self.embed_suffix(batch_size)
 
         stop_gradient = getattr(self.config, "stop_gradient_to_vlm", False)
-        values, hidden_states, logits, probs, _ = self._forward_expert(
+        values, hidden_states, logits, probs, backward_anchor = self._forward_expert(
             prefix_embs,
             prefix_pad_masks,
             prefix_ar_masks,
@@ -668,6 +673,8 @@ class ValueCriticModel(VLMObservationEncoder):
             expert_loss, cat_metrics = self._compute_categorical_loss(
                 logits, target_values
             )
+            if backward_anchor is not None:
+                expert_loss = expert_loss + backward_anchor
 
         expert_loss_mean = expert_loss.mean() if expert_loss is not None else None
 
@@ -720,7 +727,10 @@ class ValueCriticModel(VLMObservationEncoder):
                 self.value_head.value_proj.weight.dtype
             )
             values, logits, probs = self._compute_value_from_hidden(cls_hidden)
-            return values, cls_hidden, logits, probs, prefix_out
+            backward_anchor = self._build_vlm_backward_anchor(
+                prefix_out=prefix_out, stop_gradient_to_vlm=stop_gradient_to_vlm
+            )
+            return values, cls_hidden, logits, probs, backward_anchor
 
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         ar_masks = torch.cat([prefix_ar_masks, suffix_ar_masks], dim=1)
@@ -754,7 +764,26 @@ class ValueCriticModel(VLMObservationEncoder):
 
         cls_hidden = suffix_out[:, -1, :].to(self.value_head.value_proj.weight.dtype)
         values, logits, probs = self._compute_value_from_hidden(cls_hidden)
-        return values, cls_hidden, logits, probs, prefix_out
+        backward_anchor = self._build_vlm_backward_anchor(
+            prefix_out=prefix_out, stop_gradient_to_vlm=stop_gradient_to_vlm
+        )
+        return values, cls_hidden, logits, probs, backward_anchor
+
+    def _build_vlm_backward_anchor(
+        self, prefix_out: Optional[Tensor], stop_gradient_to_vlm: bool
+    ) -> Optional[Tensor]:
+        """Build a zero-weight anchor so FSDP tracks two-stage Gemma3 backward."""
+        if (
+            not self.training
+            or self.backbone_variant != "siglip_gemma3"
+            or stop_gradient_to_vlm
+            or prefix_out is None
+            or not prefix_out.requires_grad
+        ):
+            return None
+        # Gradients flow via DynamicCache in two-stage Gemma3 forward. Anchoring
+        # an explicit output tensor keeps FSDP's forward/backward state aligned.
+        return prefix_out.sum() * 0.0
 
     def _forward_expert_two_stage(
         self,
