@@ -96,15 +96,9 @@ class RobocasaEnv(gym.Env):
 
         We simply assign each parallel environment a unique, fixed seed.
         """
-        generator_ordered = np.random.default_rng(seed=self.cfg.seed)
-        base_seeds = generator_ordered.permutation(self.total_num_group_envs)
-
-        total_required_seeds = self.total_num_processes * self.num_envs
-        all_seeds_resized = np.resize(base_seeds, total_required_seeds)
-
-        start_idx = self.seed_offset * self.num_envs
-        end_idx = start_idx + self.num_envs
-        self.env_seeds = all_seeds_resized[start_idx:end_idx]
+        local_env_ids = np.arange(self.num_envs, dtype=np.int64)
+        global_env_ids = self.seed_offset * self.num_envs + local_env_ids
+        self.env_seeds = (self.cfg.seed + global_env_ids).astype(np.int64)
 
     def update_reset_state_ids(self):
         """Update reset state IDs for the next rollout.
@@ -129,10 +123,6 @@ class RobocasaEnv(gym.Env):
 
         # Use subprocess vector environment to avoid OpenGL context sharing
         self.env = RobocasaSubprocEnv(env_fns)
-
-    @property
-    def total_num_group_envs(self):
-        return np.iinfo(np.uint8).max // 2
 
     def get_env_fns(self):
         """Create environment factory functions for each parallel environment."""
