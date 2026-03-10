@@ -547,6 +547,17 @@ when both sides are on the same Tailscale account.
 Check the Beaker logs for the `tailscale up` line and confirm `--accept-routes`
 is present. `submit_yam_beaker_cluster.sh` includes it by default.
 
+### `ray start` fails on macOS with "OSX is not supported"
+
+Ray requires an env var to allow macOS nodes to join a cluster:
+
+```bash
+export RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1
+ray start --address=100.a.b.c:6379 ...
+```
+
+`join_beaker_cluster.sh` sets this automatically.
+
 ### Desktop can't join Ray cluster (desktop-driven)
 
 - Verify basic connectivity first: `ping 100.a.b.c` and `nc -zv 100.a.b.c 6379`

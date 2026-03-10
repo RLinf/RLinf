@@ -105,6 +105,9 @@ trap cleanup EXIT
 # --- Set node rank and join Ray cluster ---
 export RLINF_NODE_RANK="$NODE_RANK"
 
+# Ray requires this env var to allow non-Linux nodes to join a cluster.
+export RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1
+
 # Detect local Tailscale IP so Ray advertises a routable address to the Beaker head.
 LOCAL_IP=""
 if command -v tailscale &>/dev/null; then
