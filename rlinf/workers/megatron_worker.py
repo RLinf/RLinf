@@ -1143,7 +1143,9 @@ class MegatronWorker(MegatronModelManager, Worker):
         return self.run_forward_backward(batch, forward_only=True)
 
     def process_inference_output(self, rollout_result, infer_out):
-        raise NotImplementedError(f'process_inference_output is not implemented for {self.role}')
+        raise NotImplementedError(
+            f"process_inference_output is not implemented for {self.role}"
+        )
 
     def run_inference(
         self,

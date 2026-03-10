@@ -14,7 +14,6 @@
 
 import copy
 
-import torch
 from megatron.training.training import unwrap_model
 from megatron.training.utils import average_losses_across_data_parallel_group
 from omegaconf import DictConfig

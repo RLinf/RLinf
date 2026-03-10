@@ -84,7 +84,6 @@ class MegatronActor(MegatronWorker):
         self.rollout_group_name = self.cfg.rollout.group_name
 
     def init_worker_customize(self):
-
         # only need this if we are running with inital kl penalty & full-parameter tuning
         if (
             self.cfg.algorithm.kl_beta > 0
