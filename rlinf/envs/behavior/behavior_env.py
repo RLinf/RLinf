@@ -102,7 +102,6 @@ class BehaviorEnv(gym.Env):
             self.cfg.omnigibson_cfg["task"]["activity_name"] = TASK_INDICES_TO_NAMES[
                 self.cfg.task_idx
             ]
-            self.cfg.omnigibson_cfg["env"]["device"] = self.device
             # here let rlinf handle auto_reset
             self.cfg.omnigibson_cfg["env"]["automatic_reset"] = False
         # Read task description
@@ -184,7 +183,7 @@ class BehaviorEnv(gym.Env):
         raw_obs, infos = self.env.reset(id=env_idx)
         obs = self._wrap_obs(raw_obs)
         self._reset_metrics(env_idx)
-        return obs, infos
+        return obs, {}
 
     def step(
         self, actions: np.ndarray | torch.Tensor | None = None
@@ -284,10 +283,9 @@ class BehaviorEnv(gym.Env):
         else:
             mask = torch.ones(self.num_envs, dtype=bool, device=self.device)
         self.prev_step_reward[mask] = 0.0
-        if self.record_metrics:
-            self.success_once[mask] = False
-            self.fail_once[mask] = False
-            self.returns[mask] = 0
+        self.success_once[mask] = False
+        self.fail_once[mask] = False
+        self.returns[mask] = 0
 
     def _record_metrics(self, rewards: torch.Tensor, infos: list[dict]) -> dict:
         info_lists = []
