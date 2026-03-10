@@ -468,7 +468,7 @@ Watch the Beaker logs for:
 
 ```bash
 bash scripts/join_beaker_cluster.sh \
-    --head-ip 100.79.159.67 \
+    --head-ip 100.123.236.11 \
     --config yam_ppo_openpi \
     --model-path thomas0829/folding_towel_pi05 \
     --task "pick and place"

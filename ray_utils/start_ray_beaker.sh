@@ -148,7 +148,7 @@ if [ "$ENTRYPOINT_MODE" = "true" ]; then
 
     if [ "$REPLICA_RANK" = "0" ]; then
         # --- Head node ---
-        RAY_HEAD_ARGS=(--head --port="${RAY_PORT}")
+        RAY_HEAD_ARGS=(--head --port="${RAY_PORT}" --dashboard-host=0.0.0.0)
         if [ -n "$NODE_IP" ]; then
             RAY_HEAD_ARGS+=(--node-ip-address="${NODE_IP}")
         fi

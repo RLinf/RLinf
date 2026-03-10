@@ -108,19 +108,8 @@ export RLINF_NODE_RANK="$NODE_RANK"
 # Ray requires this env var to allow non-Linux nodes to join a cluster.
 export RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1
 
-# Detect local Tailscale IP so Ray advertises a routable address to the Beaker head.
-LOCAL_IP=""
-if command -v tailscale &>/dev/null; then
-    LOCAL_IP=$(tailscale ip -4 2>/dev/null) || true
-fi
-if [ -z "$LOCAL_IP" ]; then
-    echo "Warning: Could not detect Tailscale IP. Ray will use the default local IP."
-    echo "         If the Beaker head can't reach this machine, set up Tailscale first."
-fi
-
 echo "=== Joining Beaker Ray Cluster ==="
 echo "Head IP:      ${HEAD_IP}"
-echo "Local IP:     ${LOCAL_IP:-<auto>}"
 echo "Ray port:     ${RAY_PORT}"
 echo "Node rank:    ${NODE_RANK}"
 echo "Config:       ${CONFIG_NAME}"
@@ -130,9 +119,6 @@ echo "Task:         ${TASK_DESC}"
 echo ""
 
 RAY_JOIN_ARGS=(--address="${HEAD_IP}:${RAY_PORT}")
-if [ -n "$LOCAL_IP" ]; then
-    RAY_JOIN_ARGS+=(--node-ip-address="${LOCAL_IP}")
-fi
 
 # --- TCP pre-check ---
 echo "Checking TCP connectivity to ${HEAD_IP}:${RAY_PORT}..."
@@ -171,6 +157,20 @@ for i in $(seq 1 30); do
     sleep 10
 done
 
+# --- Activate .venv if present ---
+if [ -f ".venv/bin/activate" ]; then
+    echo "Activating .venv in $(pwd)"
+    source .venv/bin/activate
+fi
+
+echo "Python: $(which python) ($(python --version 2>&1))"
+
+# Install deps if not already present.
+if ! python -c "import hydra" 2>/dev/null; then
+    echo "Dependencies not found — running: uv sync --extra embodied"
+    uv sync --extra embodied
+fi
+
 # --- Build and run the training command ---
 TRAIN_CMD="python examples/embodiment/${ENTRY_SCRIPT}"
 TRAIN_CMD+=" --config-name ${CONFIG_NAME}"
@@ -186,6 +186,8 @@ TRAIN_CMD+=" 'env.eval.task_description=${TASK_DESC}'"
 for override in "${EXTRA_OVERRIDES[@]+"${EXTRA_OVERRIDES[@]}"}"; do
     TRAIN_CMD+=" ${override}"
 done
+
+export EMBODIED_PATH="examples/embodiment"
 
 echo ""
 echo "Running training command:"
