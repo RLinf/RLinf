@@ -199,7 +199,7 @@ INSTALL_CMD_B64=$(echo "$INSTALL_CMD" | base64 -w0)
 
 ENTRYPOINT_CMD="curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg -o /usr/share/keyrings/tailscale-archive-keyring.gpg"
 ENTRYPOINT_CMD+=" && echo 'deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu jammy main' > /etc/apt/sources.list.d/tailscale.list"
-ENTRYPOINT_CMD+=" && apt-get update -y && apt-get install -y tailscale"
+ENTRYPOINT_CMD+=" && (apt-get update || true) && apt-get install -y tailscale"
 ENTRYPOINT_CMD+=" && tailscaled --tun=userspace-networking --state=mem: &"
 ENTRYPOINT_CMD+=" sleep 2"
 ENTRYPOINT_CMD+=" && tailscale up --authkey=\${TAILSCALE_AUTHKEY} --hostname=beaker-\${BEAKER_REPLICA_RANK:-0}"
