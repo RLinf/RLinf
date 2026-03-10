@@ -131,17 +131,40 @@ if [ -n "$LOCAL_IP" ]; then
     RAY_JOIN_ARGS+=(--node-ip-address="${LOCAL_IP}")
 fi
 
+# --- TCP pre-check ---
+echo "Checking TCP connectivity to ${HEAD_IP}:${RAY_PORT}..."
+if python3 -c "
+import socket, sys
+try:
+    s = socket.create_connection(('${HEAD_IP}', ${RAY_PORT}), timeout=5)
+    s.close()
+    print('TCP connection OK')
+except Exception as e:
+    print(f'TCP connection FAILED: {e}')
+    sys.exit(1)
+" 2>&1; then
+    echo "Port ${RAY_PORT} reachable — proceeding."
+else
+    echo ""
+    echo "Error: Cannot reach ${HEAD_IP}:${RAY_PORT} via TCP."
+    echo "  - Verify the Beaker container Tailscale IP and that it's in your Tailscale network"
+    echo "  - Check Beaker logs confirm Ray head started (look for 'Ray runtime started')"
+    echo "  - Run: tailscale status  (to verify the container appears as a peer)"
+    exit 1
+fi
+
 echo "Connecting to Ray head at ${HEAD_IP}:${RAY_PORT}..."
 for i in $(seq 1 30); do
-    if ray start "${RAY_JOIN_ARGS[@]}" 2>/dev/null; then
+    echo "  ray start attempt ${i}/30..."
+    if ray start "${RAY_JOIN_ARGS[@]}"; then
         echo "Successfully joined Ray cluster"
         break
     fi
     if [ "$i" = "30" ]; then
-        echo "Error: Could not connect to Ray head after 30 attempts"
+        echo "Error: Could not join Ray cluster after 30 attempts"
         exit 1
     fi
-    echo "  Ray head not ready, retrying... (attempt ${i}/30)"
+    echo "  Retrying in 10s..."
     sleep 10
 done
 
