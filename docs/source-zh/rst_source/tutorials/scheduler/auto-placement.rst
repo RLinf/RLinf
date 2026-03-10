@@ -12,8 +12,8 @@ RL 训练前的自动放置
 
 自动放置工具由 `toolkits/auto_placement` 下的三个主要组件构成：
 
-- **scheduler_task.py**：主调度器，执行时间与空间的分时复用以寻找最优放置方案  
-- **resource_allocator.py**：负责不同组件的资源分配  
+- **auto_placement_worker.py**：主调度器，执行时间与空间的分时复用以寻找最优放置方案  
+- **placement.py**：负责不同组件的资源分配  
 - **workflow.py**：管理工作流图和成本计算  
 
 使用方法
@@ -34,11 +34,42 @@ RL 训练前的自动放置
      inference_cost: 30.8  # Inference 组件耗时（每次迭代秒数）
      rollout_cost: 59.9    # Rollout 组件耗时（每次迭代秒数）
 
+对于具身任务，你需要提供目标并行环境数量，并收集不同并行环境数量配置下的 Profile 数据。
+
+.. code-block:: yaml
+
+   
+   data:
+      env_num: 16             # 目标并行环境数量
+   profile_data:
+      actor_cost: 70.3        # 目标并行环境数量下 Training 组件的耗时（每次迭代秒数）
+      env_profile_data:       # 不同并行环境数量配置下的 env cost 键值对：每个实例（GPU）上的并行环境数量和对应的耗时（每次迭代秒数）
+         4: 25.8              
+         8: 30.3
+         16: 36.5
+      rollout_profile_data:   # 不同并行环境数量配置下的 rollout cost 键值对：每个实例（GPU）上的并行环境数量和对应的耗时（每次迭代秒数）
+         4: 26.0
+         8: 30.7
+         16: 37.2
+
 **如何收集 Profile 数据：**
 
 1. 使用原始集群在共享式模式下运行训练若干次迭代  
 2. 使用分析工具测量每个组件每次迭代的耗时  
 3. 记录每个组件的平均迭代耗时  
+
+对于具身任务，可以使用提供的 shell 脚本运行自动收集 Profile 工具：
+
+.. code-block:: bash
+
+   cd toolkits/auto_placement
+   ./auto_profile.sh [your_config_name]
+
+其中 ``your_config_name`` 是你的配置文件名称。
+
+脚本会按上述格式输出每个组件的耗时，并将它们追加到一个复制了原有配置的 YAML 文件 ``your_config_name_profiled.yaml`` 中。
+
+   
 
 步骤 2：运行自动放置
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -48,9 +79,9 @@ RL 训练前的自动放置
 .. code-block:: bash
 
    cd examples/reasoning
-   ./run_placement_autotune.sh [config_name]
+   ./run_placement_autotune.sh [your_config_name]
 
-其中 ``config_name`` 是你的配置文件名称。
+其中 ``your_config_name`` 是你的配置文件名称。
 
 脚本的输出类似如下：
 

@@ -32,11 +32,40 @@ Add the profile data to your YAML configuration file under the ``profile_data`` 
      inference_cost: 30.8  # Inference component cost (seconds per iteration)
      rollout_cost: 59.9    # Rollout component cost (seconds per iteration)
 
+For embodiment tasks, you need to provide the target number of parallel environments and collect profile data for different parallel environment configurations.
+
+.. code-block:: yaml
+
+   
+   data:
+      env_num: 16             # Target number of parallel environments
+   profile_data:
+      actor_cost: 70.3        # Training component cost under target parallel environment configuration (seconds per iteration)
+      env_profile_data:       # Key-value pairs of env cost under different parallel environment configurations: number of parallel environments per instance (GPU) and corresponding cost (seconds per iteration)
+         4: 25.8              
+         8: 30.3
+         16: 36.5
+      rollout_profile_data:   # Key-value pairs of rollout cost under different parallel environment configurations: number of parallel environments per instance (GPU) and corresponding cost (seconds per iteration)
+         4: 26.0
+         8: 30.7
+         16: 37.2
+
 **How to collect profile data:**
 
 1. Run your training with origin cluster in collocated mode for several iterations
 2. Use profiling tools to measure the time each component takes per iteration
 3. Record the average time per iteration for each component
+
+For embodiment tasks, use  the provided shell script to collect profile data with auto profiling tool:
+
+.. code-block:: bash
+
+   cd toolkits/auto_placement
+   ./auto_profile.sh [your_config_name]
+
+Where ``your_config_name`` is the name of your configuration file.
+
+The script will output the cost of each component in the above format and append them to a new YAML file ``your_config_name_profiled.yaml`` that copies your original configuration.
 
 Step 2: Run Auto Placement
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -46,9 +75,9 @@ Use the provided shell script to run the auto placement tool:
 .. code-block:: bash
 
    cd examples/reasoning
-   ./run_placement_autotune.sh [config_name]
+   ./run_placement_autotune.sh [your_config_name]
 
-Where ``config_name`` is the name of your configuration file.
+Where ``your_config_name`` is the name of your configuration file.
 
 The output of this script is like:
 
