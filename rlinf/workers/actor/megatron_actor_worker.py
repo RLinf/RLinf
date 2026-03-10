@@ -105,6 +105,15 @@ class MegatronActor(MegatronWorker):
         self.rollout_weights_reshard = MegatronCoreWeightReshard(rollout_reshard_config)
         self._setup_rollout_weight_dst_ranks()
 
+    def process_inference_output(self, rollout_result, infer_out):
+        prev_logprobs = infer_out
+        if rollout_result.rollout_logprobs is not None:
+            # Rollout has returned logprobs, store the recomputed logprobs in recompute_prev_logprobs
+            rollout_result.recompute_prev_logprobs = prev_logprobs
+        else:
+            # Otherwise, store the logprobs in prev_logprobs (the final logprobs used for training)
+            rollout_result.prev_logprobs = prev_logprobs
+
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""
 

@@ -37,6 +37,10 @@ class MegatronCritic(MegatronWorker):
 
         self.value_clip = self.cfg.algorithm.value_cliprange
 
+    def process_inference_output(self, rollout_result, infer_out):
+        values = infer_out
+        rollout_result.values = values
+
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""
 

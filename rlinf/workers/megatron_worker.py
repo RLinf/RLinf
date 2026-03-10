@@ -1142,6 +1142,9 @@ class MegatronWorker(MegatronModelManager, Worker):
         set_eval(self)
         return self.run_forward_backward(batch, forward_only=True)
 
+    def process_inference_output(self, rollout_result, infer_out):
+        raise NotImplementedError(f'process_inference_output is not implemented for {self.role}')
+
     def run_inference(
         self,
         input_channel: Channel,
@@ -1207,19 +1210,11 @@ class MegatronWorker(MegatronModelManager, Worker):
             with self.worker_timer():
                 # prev logprobs for actor, values for critic
                 infer_out = self.inference_step(batch).cpu()
-                if self.role == "actor":
-                    prev_logprobs = infer_out
-                    if rollout_result.rollout_logprobs is not None:
-                        # Rollout has returned logprobs, store the recomputed logprobs in recompute_prev_logprobs
-                        rollout_result.recompute_prev_logprobs = prev_logprobs
-                    else:
-                        # Otherwise, store the logprobs in prev_logprobs (the final logprobs used for training)
-                        rollout_result.prev_logprobs = prev_logprobs
-                elif self.role == "critic":
-                    values = infer_out
-                    rollout_result.values = values
-                else:
-                    raise ValueError(f"Unknown role '{self.role}' for MegatronWorker")
+
+                # For actor, infer_out is logprobs.
+                # For critic, infer_out is values
+                # The specific logic is implemented in subclasses.
+                self.process_inference_output(rollout_result, infer_out)
 
                 # Ref logprobs
                 if compute_ref_logprobs:
@@ -1254,7 +1249,6 @@ class MegatronWorker(MegatronModelManager, Worker):
         )
         self.scheduler_offload_sync()
         if do_offload:
-            # this is training, so we offload both weights and optimizer states
             self._offload_weight_and_optimizer()
 
     # Advantages and returns
