@@ -3,7 +3,14 @@
 This document describes the network architecture for running embodied RL training
 on AI2 Beaker GPU clusters while the physical robot remains on a local desktop.
 
-## Overview
+There are two supported topologies:
+
+| Topology | Training runs on | Env worker | Communication | Scripts |
+|---|---|---|---|---|
+| **Beaker-driven** | Beaker container | `RemoteEnv` (gRPC) | Reverse SSH tunnel | `submit_yam_training.sh` + `start_robot_server.sh` |
+| **Desktop-driven** | Local desktop | `YAMEnv` (direct) | Ray cluster join | `submit_yam_beaker_cluster.sh` + `join_beaker_cluster.sh` |
+
+## Topology A: Beaker-Driven (RemoteEnv)
 
 ```
                          Tailscale VPN (mesh)
@@ -29,23 +36,51 @@ initiate outbound connections to arbitrary hosts. The desktop *can* reach the
 container via Tailscale. The solution is a **reverse SSH tunnel** initiated by the
 desktop, which exposes the local gRPC port inside the container.
 
+## Topology B: Desktop-Driven (Direct YAMEnv)
+
+```
+                         Tailscale VPN (mesh)
+    ┌──────────────────────────────────────────────────────────┐
+    │                                                          │
+    │  Robot Desktop (rank 1)           Beaker Container (rank 0)
+    │  (Tailscale IP: 100.x.y.z)       (Tailscale IP: 100.a.b.c)
+    │                                                          │
+    │  ┌──────────────┐    Ray cluster  ┌──────────────────┐   │
+    │  │ Training     │───────join─────►│ Ray Head (:6379) │   │
+    │  │ script       │    (desktop →   │                  │   │
+    │  │              │     container)  │ Actor   (GPU 0)  │   │
+    │  │ Env worker   │                 │ Rollout (GPU 1)  │   │
+    │  │  └ YAMEnv    │                 │ VLM     (GPU 2)  │   │
+    │  │  └ Robot HW  │                 │  (TOPReward only)│   │
+    │  │  └ Cameras   │                 └──────────────────┘   │
+    │  └──────────────┘                                        │
+    └──────────────────────────────────────────────────────────┘
+```
+
+**How it works:** The Beaker container starts Ray head with GPUs and idles. The
+desktop joins the Ray cluster as a worker node and runs the training script
+locally. The env worker runs directly on the desktop with `YAMEnv` — no gRPC,
+no SSH tunnel, no `RemoteEnv`. Actor and rollout workers are placed on the Beaker
+GPUs via the config's native placement rules.
+
+**Advantages over Beaker-driven:**
+- No reverse SSH tunnel setup (eliminates a timing dependency)
+- No gRPC serialization overhead for observations/actions
+- The training script runs locally, making debugging easier
+- Uses the native `env/yam` config (not `env/remote_yam`)
+
 ## Components
 
-### 1. Robot Desktop (local machine)
+### Beaker-Driven (Topology A)
 
-Runs two processes:
+**Robot Desktop** runs two processes (managed by `scripts/start_robot_server.sh`):
 
 | Process | Purpose |
 |---|---|
 | **RobotServer** | gRPC server wrapping `YAMEnv` — drives the physical robot, streams observations |
 | **Reverse SSH tunnel** | `ssh -R 50051:localhost:50051 shiruic@<container-tailscale-ip>` — makes the gRPC server reachable at `localhost:50051` inside the container |
 
-Both are managed by `scripts/start_robot_server.sh`.
-
-### 2. Beaker Container (GPU cluster)
-
-Runs the Ray-based training pipeline. Components are placed on GPUs by the
-scheduler:
+**Beaker Container** runs the Ray-based training pipeline:
 
 | Component | GPU | Role |
 |---|---|---|
@@ -54,7 +89,26 @@ scheduler:
 | **VLM Planner** | GPU 2 | Dense reward via Qwen3-VL-8B (TOPReward configs only) |
 | **RemoteEnv** | CPU | gRPC client connecting to `localhost:50051` (via the SSH tunnel) |
 
-The container runs Tailscale in **userspace networking** mode (no TUN device
+### Desktop-Driven (Topology B)
+
+**Robot Desktop** runs the training script, the env worker, and a Ray worker:
+
+| Component | Location | Role |
+|---|---|---|
+| **Training script** | Desktop | Hydra entry point, drives the training loop |
+| **Env worker** | Desktop | `YAMEnv` — direct robot access, no gRPC |
+| **Ray worker** | Desktop | Joins Beaker Ray cluster as rank 1 (or configurable) |
+
+**Beaker Container** provides Ray head + GPUs:
+
+| Component | GPU | Role |
+|---|---|---|
+| **Ray head** | — | Cluster coordinator, idles until desktop joins |
+| **Actor** | GPU 0 | Policy training (FSDP) |
+| **Rollout** | GPU 1 | Action inference |
+| **VLM Planner** | GPU 2 | Dense reward via Qwen3-VL-8B (TOPReward configs only) |
+
+Both topologies use Tailscale in **userspace networking** mode (no TUN device
 needed in unprivileged containers).
 
 ## Network Stack
@@ -275,6 +329,81 @@ bash scripts/start_robot_server.sh \
 | `--remote-user` | `shiruic` | SSH user on the container |
 | `--dummy` | off | Zero observations, no real hardware |
 
+### `scripts/submit_yam_beaker_cluster.sh`
+
+Submits a Beaker job that starts Ray head with GPUs and **idles** (desktop-driven
+topology). No training command is sent — training runs from the desktop via
+`join_beaker_cluster.sh`.
+
+```bash
+# Basic PPO (2 GPUs, idle)
+bash scripts/submit_yam_beaker_cluster.sh \
+    --config yam_ppo_openpi \
+    --dry-run
+
+# TOPReward (3 GPUs, idle)
+bash scripts/submit_yam_beaker_cluster.sh \
+    --config yam_ppo_openpi_topreward \
+    --dry-run
+```
+
+**What the script does:**
+
+1. Auto-detects GPU count from config name (2 for basic, 3 for TOPReward)
+2. Builds entrypoint that installs Tailscale, starts Ray head, and blocks
+3. Submits via `gantry run` — no `--train-cmd` is passed to `start_ray_beaker.sh`
+
+| Option | Default | Description |
+|---|---|---|
+| `--config` | `yam_ppo_openpi` | Hydra config name (for GPU auto-detection) |
+| `--gpus` | auto | GPUs (2 for basic, 3 for TOPReward) |
+| `--cluster` | `ai2/ceres-cirrascale` | Beaker cluster |
+| `--budget` | (none) | Beaker budget account |
+| `--priority` | `urgent` | Job priority |
+| `--dry-run` | off | Print command without executing |
+
+### `scripts/join_beaker_cluster.sh`
+
+Runs on the local desktop to join a Beaker Ray cluster and run training
+(desktop-driven topology).
+
+```bash
+# Basic PPO (desktop = rank 1)
+bash scripts/join_beaker_cluster.sh \
+    --head-ip 100.64.1.2 \
+    --config yam_ppo_openpi \
+    --model-path /path/to/pi0_checkpoint \
+    --task "pick and place"
+
+# TOPReward (desktop = rank 0 for rollout + rank 1 for env)
+bash scripts/join_beaker_cluster.sh \
+    --head-ip 100.64.1.2 \
+    --config yam_ppo_openpi_topreward \
+    --node-rank 0 \
+    --model-path /path/to/pi05_checkpoint
+
+# With Hydra overrides
+bash scripts/join_beaker_cluster.sh \
+    --head-ip 100.64.1.2 \
+    -- algorithm.update_epoch=2
+```
+
+**What the script does:**
+
+1. Sets `RLINF_NODE_RANK` to the specified node rank
+2. Joins the Ray cluster at `<head-ip>:6379` (retries up to 30 times)
+3. Builds and runs the training command using the native config
+4. On exit (Ctrl-C or training completion), stops the local Ray worker
+
+| Option | Default | Description |
+|---|---|---|
+| `--head-ip` | (required) | Beaker container Tailscale IP |
+| `--config` | `yam_ppo_openpi` | Hydra config name |
+| `--model-path` | (none) | Model checkpoint path |
+| `--task` | `"pick and place"` | Task description |
+| `--node-rank` | `1` | Desktop node rank |
+| `--ray-port` | `6379` | Ray port |
+
 ### `ray_utils/start_ray_beaker.sh`
 
 Beaker replica entrypoint for Ray cluster setup. Each replica runs this script;
@@ -307,16 +436,16 @@ Generate auth key. Use a **reusable** key if running multiple jobs.
 
 ## End-to-End Workflow
 
-### Step 1: Submit the Beaker job
+### Desktop-Driven (Recommended)
+
+#### Step 1: Submit the Beaker GPU cluster
 
 ```bash
-bash scripts/submit_yam_training.sh \
+bash scripts/submit_yam_beaker_cluster.sh \
     --config yam_ppo_openpi \
-    --model-path openvla/openvla-7b \
-    --allow-dirty
 ```
 
-### Step 2: Get the container's Tailscale IP
+#### Step 2: Get the container's Tailscale IP
 
 Watch the Beaker logs for:
 
@@ -326,7 +455,49 @@ Watch the Beaker logs for:
 ==================
 ```
 
-### Step 3: Start the robot server with reverse SSH tunnel
+#### Step 3: Join and run training from the desktop
+
+```bash
+bash scripts/join_beaker_cluster.sh \
+    --head-ip 100.a.b.c \
+    --config yam_ppo_openpi \
+    --model-path /path/to/pi0_checkpoint \
+    --task "pick and place"
+```
+
+The desktop joins the Ray cluster, the env worker runs locally with `YAMEnv`,
+and actor/rollout are placed on the Beaker GPUs. No SSH tunnel or gRPC needed.
+
+```
+Desktop (rank 1)                   Beaker (rank 0)
+  Training script ──── Ray ──────► Actor  (GPU 0)
+  Env worker (YAMEnv)              Rollout (GPU 1)
+   └ Robot HW
+   └ Cameras
+```
+
+### Beaker-Driven (Legacy)
+
+#### Step 1: Submit the Beaker job
+
+```bash
+bash scripts/submit_yam_training.sh \
+    --config yam_ppo_openpi \
+    --model-path openvla/openvla-7b \
+    --allow-dirty
+```
+
+#### Step 2: Get the container's Tailscale IP
+
+Watch the Beaker logs for:
+
+```
+=== Tailscale IP ===
+100.a.b.c
+==================
+```
+
+#### Step 3: Start the robot server with reverse SSH tunnel
 
 ```bash
 bash scripts/start_robot_server.sh \
@@ -335,7 +506,7 @@ bash scripts/start_robot_server.sh \
     --dummy   # remove for real hardware
 ```
 
-### Step 4: Training runs
+#### Step 4: Training runs
 
 The `RemoteEnv` inside the container connects to `localhost:50051` (routed
 through the SSH tunnel to the desktop's `RobotServer`). The training loop
@@ -357,14 +528,23 @@ Actor (GPU 0) ─── generates actions ───► RemoteEnv ─── gRPC 
 The install script requires `curl` and root access. Most Beaker images include
 these. If not, bake Tailscale into a custom Beaker image.
 
-### SSH tunnel won't connect
+### Desktop can't join Ray cluster (desktop-driven)
+
+- Verify the container's Tailscale IP is reachable: `ping 100.a.b.c`
+- Check that Ray head is running in the container (look for "Starting Ray head"
+  in Beaker logs)
+- Ensure port 6379 is accessible (requires `--host-networking` in the submit script)
+- The join script retries up to 30 times with 10s intervals — if it still fails,
+  verify that `tailscale status` shows both nodes connected
+
+### SSH tunnel won't connect (Beaker-driven only)
 
 - Verify the container's Tailscale IP is reachable: `ping 100.a.b.c`
 - Ensure `sshd` is running in the container (most Beaker images include it)
 - Check that the SSH user (`shiruic`) exists in the container
 - The container must have `--host-networking` enabled (set in the submit script)
 
-### gRPC timeout errors
+### gRPC timeout errors (Beaker-driven only)
 
 - Increase `grpc_timeout` in `remote_yam.yaml` (default: 30s)
 - For long action chunks, timeout scales as `grpc_timeout * chunk_size`
