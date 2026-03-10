@@ -137,8 +137,10 @@ if [ "$ENTRYPOINT_MODE" = "true" ]; then
 
     # Activate venv if present (uv sync creates .venv)
     if [ -f ".venv/bin/activate" ]; then
-        echo "Activating .venv"
+        echo "Activating .venv in $(pwd)"
         source .venv/bin/activate
+    else
+        echo "Warning: .venv/bin/activate not found in $(pwd)"
     fi
 
     if [ "$REPLICA_RANK" = "0" ]; then
