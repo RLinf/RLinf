@@ -91,6 +91,7 @@ jobs:
               - 'rlinf/runners/*embodied*.py'
               - 'examples/embodiment/**'
               - 'tests/e2e_tests/embodied/**'
+              - 'tests/e2e_tests/training_backend/**'
               - 'toolkits/eval_scripts_openpi/**'
               - 'toolkits/eval_scripts_dexbotic/**'
               - 'toolkits/realworld_check/**'
