@@ -36,7 +36,7 @@ Export the required API keys before running training or evaluation:
 Configuration
 ~~~~~~~~~~~~~
 
-In your YAML config, set:
+In the YAML config under ``examples/wideseek_r1/config``, set:
 
 .. code-block:: yaml
 

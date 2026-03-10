@@ -39,6 +39,12 @@ If you prefer a local environment, install the agentic stack:
 .. code-block:: bash
 
    bash requirements/install.sh agentic
+   
+Our startup scripts and configuration files are located in ``examples/wideseek_r1``.
+
+- ``examples/wideseek_r1/config`` contains the YAML configuration files for training and evaluation.
+- ``examples/wideseek_r1/search_engine`` provides the search engine implementation used by offline tools.
+- ``examples/wideseek_r1/run_train.sh`` and ``examples/wideseek_r1/run_eval.sh`` are the main entry points for training and evaluation, respectively.
 
 Tool Backends
 -------------
