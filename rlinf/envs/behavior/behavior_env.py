@@ -12,19 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import json
 import os
+from functools import partial
+from typing import Any
 
 import gymnasium as gym
+import numpy as np
 import torch
 from omegaconf import OmegaConf, open_dict
-from omnigibson.envs import VectorEnvironment
+from omnigibson.envs import Environment
 from omnigibson.learning.utils.eval_utils import (
     TASK_INDICES_TO_NAMES,
 )
 from omnigibson.macros import gm
 
 from rlinf.envs.utils import list_of_dict_to_dict_of_list, to_tensor
+from rlinf.envs.venv.venv import SubprocVectorEnv
 from rlinf.utils.logging import get_logger
 
 # Make sure object states are enabled
@@ -34,6 +39,30 @@ gm.USE_GPU_DYNAMICS = False
 gm.ENABLE_TRANSITION_RULES = True
 
 __all__ = ["BehaviorEnv"]
+
+
+class _BehaviorSingleEnv(gym.Env):
+    def __init__(self, configs: dict):
+        self.env = Environment(configs=configs)
+
+    def reset(self) -> tuple[dict, dict]:
+        obs, info = self.env.reset()
+        return obs, info
+
+    def step(
+        self, action: dict | torch.Tensor | np.ndarray
+    ) -> tuple[dict, float, bool, bool, dict]:
+        if isinstance(action, np.ndarray):
+            action = torch.from_numpy(action)
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        return obs, reward, terminated, truncated, info
+
+    def close(self):
+        self.env.close()
+
+    @staticmethod
+    def create_env(configs: dict) -> "_BehaviorSingleEnv":
+        return _BehaviorSingleEnv(copy.deepcopy(configs))
 
 
 class BehaviorEnv(gym.Env):
@@ -55,29 +84,27 @@ class BehaviorEnv(gym.Env):
         self.total_num_processes = total_num_processes
         self.worker_info = worker_info
         self.record_metrics = record_metrics
-        self._is_start = True
+        self.is_start = True
+        self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
 
         self.logger = get_logger()
 
         self.auto_reset = cfg.auto_reset
-        if self.record_metrics:
-            self._init_metrics()
-
-        # record total number and success number of trials and trial time
-        self.n_trials = 0
-        self.n_success_trials = 0
-        self.total_time = 0
-
+        if not self.record_metrics:
+            self.logger.warning(
+                "Metrics will still be recorded even if record_metrics is set to False."
+            )
+        self._init_metrics()
         self._init_env()
-
-        # manually reset environment episode number
 
     def _load_tasks_cfg(self):
         with open_dict(self.cfg):
             self.cfg.omnigibson_cfg["task"]["activity_name"] = TASK_INDICES_TO_NAMES[
                 self.cfg.task_idx
             ]
-
+            self.cfg.omnigibson_cfg["env"]["device"] = self.device
+            # here let rlinf handle auto_reset
+            self.cfg.omnigibson_cfg["env"]["automatic_reset"] = False
         # Read task description
         task_description_path = os.path.join(
             os.path.dirname(__file__), "behavior_task.jsonl"
@@ -95,13 +122,15 @@ class BehaviorEnv(gym.Env):
 
     def _init_env(self):
         self._load_tasks_cfg()
-        self.env = VectorEnvironment(
-            self.num_envs,
-            OmegaConf.to_container(self.cfg.omnigibson_cfg, resolve=True),
-        )
+        env_cfg = OmegaConf.to_container(self.cfg.omnigibson_cfg, resolve=True)
+        env_fns = [
+            partial(_BehaviorSingleEnv.create_env, configs=env_cfg)
+            for _ in range(self.num_envs)
+        ]
+        self.env = SubprocVectorEnv(env_fns=env_fns)
 
-    def _extract_obs_image(self, raw_obs):
-        state = None
+    def _extract_obs_image(self, raw_obs: dict[str, Any]) -> dict[str, Any]:
+        state, left_image, right_image, zed_image = None, None, None, None
         for sensor_data in raw_obs.values():
             assert isinstance(sensor_data, dict)
             for k, v in sensor_data.items():
@@ -113,9 +142,13 @@ class BehaviorEnv(gym.Env):
                     zed_image = v["rgb"].to(torch.uint8)[..., :3]
                 elif "proprio" in k:
                     state = v
+
         assert state is not None, (
             "state is not found in the observation which is required for the behavior training."
         )
+        assert left_image is not None, "left_image is not found in the observation."
+        assert right_image is not None, "right_image is not found in the observation."
+        assert zed_image is not None, "zed_image is not found in the observation."
 
         return {
             "main_images": zed_image,  # [H, W, C]
@@ -125,7 +158,7 @@ class BehaviorEnv(gym.Env):
             "state": state,
         }
 
-    def _wrap_obs(self, obs_list):
+    def _wrap_obs(self, obs_list: list[dict[str, Any]]) -> dict[str, list]:
         extracted_obs_list = []
         for obs in obs_list:
             extracted_obs = self._extract_obs_image(obs)
@@ -138,23 +171,23 @@ class BehaviorEnv(gym.Env):
             "wrist_images": torch.stack(
                 [obs["wrist_images"] for obs in extracted_obs_list], axis=0
             ),  # [N_ENV, N_IMG, H, W, C]
-            "task_descriptions": [self.task_description for i in range(self.num_envs)],
+            "task_descriptions": [
+                self.task_description for _ in range(len(extracted_obs_list))
+            ],
             "states": torch.stack(
                 [obs["state"] for obs in extracted_obs_list], axis=0
             ),  # [N_ENV, 32]
         }
         return obs
 
-    def reset(self):
-        raw_obs, infos = self.env.reset()
+    def reset(self, env_idx: list[int] | None = None) -> tuple[dict, dict]:
+        raw_obs, infos = self.env.reset(id=env_idx)
         obs = self._wrap_obs(raw_obs)
-        rewards = torch.zeros(self.num_envs, dtype=bool)
-        infos = self._record_metrics(rewards, infos)
-        self._reset_metrics()
+        self._reset_metrics(env_idx)
         return obs, infos
 
     def step(
-        self, actions=None
+        self, actions: np.ndarray | torch.Tensor | None = None
     ) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         raw_obs, rewards, terminations, truncations, infos = self.env.step(actions)
         obs = self._wrap_obs(raw_obs)
@@ -170,7 +203,9 @@ class BehaviorEnv(gym.Env):
             infos,
         )
 
-    def chunk_step(self, chunk_actions):
+    def chunk_step(
+        self, chunk_actions: np.ndarray | torch.Tensor
+    ) -> tuple[list[dict], torch.Tensor, torch.Tensor, torch.Tensor, list[dict]]:
         # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
         obs_list = []
@@ -228,14 +263,6 @@ class BehaviorEnv(gym.Env):
     def elapsed_steps(self):
         return torch.tensor(self.cfg.max_episode_steps)
 
-    @property
-    def is_start(self):
-        return self._is_start
-
-    @is_start.setter
-    def is_start(self, value):
-        self._is_start = value
-
     def _init_metrics(self):
         self.success_once = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.bool
@@ -250,7 +277,7 @@ class BehaviorEnv(gym.Env):
             self.num_envs, device=self.device, dtype=torch.float32
         )
 
-    def _reset_metrics(self, env_idx=None):
+    def _reset_metrics(self, env_idx: list[int] | None = None):
         if env_idx is not None:
             mask = torch.zeros(self.num_envs, dtype=bool, device=self.device)
             mask[env_idx] = True
@@ -262,12 +289,12 @@ class BehaviorEnv(gym.Env):
             self.fail_once[mask] = False
             self.returns[mask] = 0
 
-    def _record_metrics(self, rewards, infos):
+    def _record_metrics(self, rewards: torch.Tensor, infos: list[dict]) -> dict:
         info_lists = []
         for env_idx, (reward, info) in enumerate(zip(rewards, infos)):
             episode_info = {
                 "success": info.get("done", {}).get("success", False),
-                "episode_length": info.get("episode_length", 0),
+                "episode_length": info["episode_length"],
             }
             self.returns[env_idx] += reward
             if "success" in info:
@@ -279,9 +306,10 @@ class BehaviorEnv(gym.Env):
                 self.fail_once[env_idx] = self.fail_once[env_idx] | info["fail"]
                 episode_info["fail_once"] = self.fail_once[env_idx].clone()
             episode_info["return"] = self.returns[env_idx].clone()
-            episode_info["episode_len"] = self.elapsed_steps.clone()
-            episode_info["reward"] = (
-                episode_info["return"] / episode_info["episode_len"]
+            episode_info["average_reward"] = (
+                episode_info["return"] / episode_info["episode_length"]
+                if episode_info["episode_length"] > 0
+                else 0.0
             )
             if self.ignore_terminations:
                 episode_info["success_at_end"] = info["success"]
@@ -291,15 +319,38 @@ class BehaviorEnv(gym.Env):
         infos = {"episode": to_tensor(list_of_dict_to_dict_of_list(info_lists))}
         return infos
 
-    def _handle_auto_reset(self, dones, extracted_obs, infos):
+    def _handle_auto_reset(
+        self, dones: torch.Tensor, extracted_obs: dict[str, Any], infos: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        def merge_reset_obs(
+            obs: dict[str, Any], reset_obs: dict[str, Any], env_idx: list[int]
+        ) -> dict[str, Any]:
+            merged_obs = {}
+            for k, v in obs.items():
+                if isinstance(v, torch.Tensor):
+                    merged_obs[k] = v.clone()
+                    merged_obs[k][env_idx] = reset_obs[k]
+                elif isinstance(v, list):
+                    merged_obs[k] = v.copy()
+                    for i, idx in enumerate(env_idx):
+                        merged_obs[k][idx] = reset_obs[k][i]
+                else:
+                    raise NotImplementedError(
+                        f"Unsupported obs type {type(v)} for key {k} in auto reset,should only contain list and torch.Tensor."
+                    )
+            return merged_obs
+
+        env_idx = torch.nonzero(dones, as_tuple=False).squeeze(-1).cpu().tolist()
+        assert len(env_idx) > 0, (
+            "There should be at least one done env to trigger auto reset."
+        )
+
         final_obs = extracted_obs.copy()
-        env_idx = torch.arange(0, self.num_envs, device=self.device)[dones]
-        options = {"env_idx": env_idx}
         final_info = infos.copy()
-        if self.use_fixed_reset_state_ids:
-            options.update(episode_id=self.reset_state_ids[env_idx])
-        extracted_obs, infos = self.reset()
-        # gymnasium calls it final observation but it really is just o_{t+1} or the true next observation
+        reset_extracted_obs, _ = self.reset(env_idx=env_idx)
+
+        extracted_obs = merge_reset_obs(extracted_obs, reset_extracted_obs, env_idx)
+
         infos["final_observation"] = final_obs
         infos["final_info"] = final_info
         infos["_final_info"] = dones
