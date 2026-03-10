@@ -120,7 +120,7 @@ Every Beaker replica installs and starts Tailscale on boot:
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
 tailscaled --tun=userspace-networking --state=mem: &
-tailscale up --authkey=${TAILSCALE_AUTHKEY} --hostname=beaker-${BEAKER_REPLICA_RANK}
+tailscale up --authkey=${TAILSCALE_AUTHKEY} --hostname=beaker-${BEAKER_REPLICA_RANK} --accept-routes
 ```
 
 - `--tun=userspace-networking` — required for unprivileged containers (no
@@ -129,6 +129,11 @@ tailscale up --authkey=${TAILSCALE_AUTHKEY} --hostname=beaker-${BEAKER_REPLICA_R
   To make the Tailscale IP locally routable (needed by Ray, which connects to
   its own GCS at the advertised IP), the desktop-driven entrypoint adds the
   IP to the loopback interface: `ip addr add <tailscale-ip>/32 dev lo`.
+- `--accept-routes` — **required** for the container to be reachable from the
+  desktop. The AI2 Tailscale network has subnet routes advertised (e.g. by a
+  subnet router covering the Beaker cluster). Without this flag the container
+  does not install those routes and the desktop cannot reach it, even when both
+  are logged into the same Tailscale account.
 - `--state=mem:` — ephemeral state, no persistent disk needed
 - `--authkey` — pulled from the Beaker secret `tailscale_authkey_shirui`
 - `--hostname=beaker-<rank>` — makes replicas distinguishable in the Tailscale
@@ -532,14 +537,24 @@ Actor (GPU 0) ─── generates actions ───► RemoteEnv ─── gRPC 
 The install script requires `curl` and root access. Most Beaker images include
 these. If not, bake Tailscale into a custom Beaker image.
 
+### Desktop can't reach the Beaker container at all (ping fails)
+
+The most common cause: `--accept-routes` was not passed to `tailscale up` in the
+container. The AI2 Tailscale network advertises subnet routes, and without
+`--accept-routes` the container doesn't install them, making it unreachable even
+when both sides are on the same Tailscale account.
+
+Check the Beaker logs for the `tailscale up` line and confirm `--accept-routes`
+is present. `submit_yam_beaker_cluster.sh` includes it by default.
+
 ### Desktop can't join Ray cluster (desktop-driven)
 
-- Verify the container's Tailscale IP is reachable: `ping 100.a.b.c`
-- Check that Ray head is running in the container (look for "Starting Ray head"
+- Verify basic connectivity first: `ping 100.a.b.c` and `nc -zv 100.a.b.c 6379`
+- Check that Ray head is running in the container (look for "Ray runtime started"
   in Beaker logs)
 - Ensure port 6379 is accessible (requires `--host-networking` in the submit script)
-- The join script retries up to 30 times with 10s intervals — if it still fails,
-  verify that `tailscale status` shows both nodes connected
+- The join script retries up to 30 times with 10s intervals and prints the actual
+  `ray start` error — check that output for specifics
 
 ### SSH tunnel won't connect (Beaker-driven only)
 
