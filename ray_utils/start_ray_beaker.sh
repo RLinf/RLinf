@@ -135,6 +135,12 @@ if [ "$ENTRYPOINT_MODE" = "true" ]; then
         eval "$INSTALL_CMD"
     fi
 
+    # Activate venv if present (uv sync creates .venv)
+    if [ -f ".venv/bin/activate" ]; then
+        echo "Activating .venv"
+        source .venv/bin/activate
+    fi
+
     if [ "$REPLICA_RANK" = "0" ]; then
         # --- Head node ---
         echo "Starting Ray head on port ${RAY_PORT}"
