@@ -201,7 +201,7 @@ ENTRYPOINT_CMD="curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmo
 ENTRYPOINT_CMD+=" && echo 'deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu jammy main' > /etc/apt/sources.list.d/tailscale.list"
 ENTRYPOINT_CMD+=" && (apt-get update || true) && apt-get install -y tailscale"
 ENTRYPOINT_CMD+=" && nohup tailscaled --tun=userspace-networking --state=mem: > /dev/null 2>&1 &"
-ENTRYPOINT_CMD+=" ; sleep 2"
+ENTRYPOINT_CMD+=" sleep 2"
 ENTRYPOINT_CMD+=" && tailscale up --authkey=\${TAILSCALE_AUTHKEY} --hostname=beaker-\${BEAKER_REPLICA_RANK:-0}"
 ENTRYPOINT_CMD+=" && echo '=== Tailscale IP ===' && tailscale ip -4 && echo '=================='"
 ENTRYPOINT_CMD+=" && TRAIN_CMD_DECODED=\$(echo ${TRAIN_CMD_B64} | base64 -d)"
