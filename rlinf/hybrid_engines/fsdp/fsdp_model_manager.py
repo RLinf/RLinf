@@ -14,8 +14,9 @@
 
 import os
 import warnings
+from contextlib import contextmanager
 from math import sqrt
-from typing import ContextManager, Union
+from typing import ContextManager, Generator, Union
 
 import torch
 import torch.nn as nn
@@ -629,6 +630,34 @@ class FSDPModelManager:
         )
         return state_dict
 
+    @contextmanager
+    def _checkpoint_io_context(self) -> Generator[None, None, None]:
+        """
+        Temporarily onload checkpoint-related state to the active accelerator.
+
+        DCP save/load calls may query the current model state dict before the actual
+        serialization/deserialization happens. If the actor uses RLinf's manual
+        offload path, FSDP flat parameters can be on CPU at that moment, which
+        violates FSDP's device assumptions. This context ensures checkpoint IO
+        always runs with parameters/optimizer on the expected device, then
+        restores the previous offload state.
+        """
+        should_restore_weight_offload = self.is_weight_offloaded
+        should_restore_optimizer_offload = self.is_optimizer_offloaded
+
+        if should_restore_weight_offload:
+            self.load_param_and_grad(self.device)
+        if should_restore_optimizer_offload:
+            self.load_optimizer(self.device)
+
+        try:
+            yield
+        finally:
+            if should_restore_weight_offload:
+                self.offload_param_and_grad()
+            if should_restore_optimizer_offload:
+                self.offload_optimizer()
+
     def load_checkpoint(self, load_path: str) -> None:
         """
         Load checkpoint from local path.
@@ -636,9 +665,10 @@ class FSDPModelManager:
         Args:
             load_path: the directory to load checkpoint.
         """
-        self._strategy.load_checkpoint(
-            self.model, self.optimizer, self.lr_scheduler, load_path
-        )
+        with self._checkpoint_io_context():
+            self._strategy.load_checkpoint(
+                self.model, self.optimizer, self.lr_scheduler, load_path
+            )
 
     def save_checkpoint(self, save_path: str, step: int = 0) -> None:
         """
@@ -648,19 +678,13 @@ class FSDPModelManager:
         Args:
             save_path: the directory to save checkpoint.
         """
-        if self.is_weight_offloaded:
-            self.load_param_and_grad(self.device)
-            self.is_weight_offloaded = False
-        if self.is_optimizer_offloaded:
-            self.load_optimizer(self.device)
-            self.is_optimizer_offloaded = False
-
-        self._strategy.save_checkpoint(
-            self.model,
-            self.optimizer,
-            self.lr_scheduler,
-            save_path,
-        )
+        with self._checkpoint_io_context():
+            self._strategy.save_checkpoint(
+                self.model,
+                self.optimizer,
+                self.lr_scheduler,
+                save_path,
+            )
 
     def offload_param_and_grad(self, offload_grad: bool = False) -> None:
         """
