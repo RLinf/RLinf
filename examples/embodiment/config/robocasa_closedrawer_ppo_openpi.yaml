@@ -96,10 +96,6 @@ env:
       save_video: True
       info_on_video: True
       video_base_dir: ${runner.logger.log_path}/video/train
-    action_space: ${env.train.action_space}
-    state_space: ${env.train.state_space}
-    image_space:  ${env.train.image_space}
-    
 
   eval:
     total_num_envs: 10
@@ -114,9 +110,6 @@ env:
       save_video: True
       info_on_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
-    action_space: ${env.train.action_space}
-    state_space: ${env.train.state_space}
-    image_space:  ${env.train.image_space}
 
 rollout:
   group_name: "RolloutGroup"
