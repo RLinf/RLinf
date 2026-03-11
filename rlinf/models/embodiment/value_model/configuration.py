@@ -246,15 +246,10 @@ class ValueCriticConfig(VLMBaseConfig):
         backbone_variant: str = "paligemma",
         siglip_path: str | None = None,
         gemma3_path: str | None = None,
+        value_dropout: float = 0.0,
         **kwargs,
     ):
         # Accept and ignore legacy parameters for checkpoint compatibility
-        kwargs.pop("critic_forward_mode", None)
-        kwargs.pop("expert_loss_type", None)
-        kwargs.pop("expert_loss_weight", None)
-        kwargs.pop("vlm_loss_weight", None)
-        kwargs.pop("discrete_state_input", None)
-        kwargs.pop("exclude_cot_from_kv_cache", None)
         super().__init__(**kwargs)
         self.critic_expert_variant = critic_expert_variant
         self.num_bins = num_bins
@@ -263,3 +258,4 @@ class ValueCriticConfig(VLMBaseConfig):
         self.backbone_variant = backbone_variant
         self.siglip_path = siglip_path or ""
         self.gemma3_path = gemma3_path or ""
+        self.value_dropout = value_dropout

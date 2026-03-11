@@ -20,6 +20,7 @@ critic_expert_variant: "gemma_100m"
 num_bins: 201           # number of discretization bins
 v_min: -1.0             # minimum value for atom support
 v_max: 0.0              # maximum value for atom support
+value_dropout: 0.0      # dropout before value projection (e.g. 0.1)
 
 # =====================================================================
 # PI05 base model params

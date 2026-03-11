@@ -466,6 +466,7 @@ class ValueHead(nn.Module):
         num_bins: int,
         v_min: float,
         v_max: float,
+        dropout: float = 0.0,
     ):
         super().__init__()
         self.hidden_size = hidden_size
@@ -473,6 +474,7 @@ class ValueHead(nn.Module):
         self.cls_embedding = nn.Embedding(1, hidden_size)
         nn.init.normal_(self.cls_embedding.weight, std=0.02)
 
+        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
         self.value_proj = nn.Linear(hidden_size, num_bins)
         self.register_buffer(
             "atoms", torch.linspace(v_min, v_max, num_bins), persistent=False
@@ -495,6 +497,7 @@ class ValueHead(nn.Module):
     def forward(self, hidden_states: Tensor) -> Tensor:
         """Project hidden states to value logits."""
         hidden_states = hidden_states.to(self.value_proj.weight.dtype)
+        hidden_states = self.dropout(hidden_states)
         return self.value_proj(hidden_states)
 
 
@@ -562,6 +565,7 @@ class ValueCriticModel(VLMObservationEncoder):
             num_bins=config.num_bins,
             v_min=config.v_min,
             v_max=config.v_max,
+            dropout=getattr(config, "value_dropout", 0.0),
         )
         self.num_bins = config.num_bins
         self.v_min = config.v_min

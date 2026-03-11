@@ -83,6 +83,7 @@ def get_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticModel:
         "num_bins": getattr(cfg, "num_bins", 201),
         "v_min": getattr(cfg, "v_min", -1.0),
         "v_max": getattr(cfg, "v_max", 0.0),
+        "value_dropout": getattr(cfg, "value_dropout", 0.0),
     }
 
     config = ValueCriticConfig(**critic_kwargs, **vlm_kwargs)
