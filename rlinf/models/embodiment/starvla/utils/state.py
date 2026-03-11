@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import warnings
+import weakref
 from typing import Any, Optional
 
 import numpy as np
@@ -27,8 +28,22 @@ import torch.nn as nn
 STATE_ADAPTER_TYPES = {"none", "adapter", "pi", "gr00t", "dual"}
 
 
-def warn_state_adapt_once(warned_keys: set[str], key: str, message: str) -> None:
-    """Emit state-adaptation warning once for each warning key."""
+_WARNED_STATE_ADAPT_KEYS: "weakref.WeakKeyDictionary[nn.Module, set[str]]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _warned_keys_for_model(starvla_model: nn.Module) -> set[str]:
+    warned = _WARNED_STATE_ADAPT_KEYS.get(starvla_model)
+    if warned is None:
+        warned = set()
+        _WARNED_STATE_ADAPT_KEYS[starvla_model] = warned
+    return warned
+
+
+def warn_state_adapt_once(starvla_model: nn.Module, key: str, message: str) -> None:
+    """Emit state-adaptation warning once per model instance and warning key."""
+    warned_keys = _warned_keys_for_model(starvla_model)
     if os.environ.get("STARVLA_STATE_ADAPT_WARNINGS", "1") in {
         "",
         "0",
@@ -112,7 +127,8 @@ def adapt_state_for_expected_dim(
     state: torch.Tensor,
     expected_dim: int,
     context: str,
-    warned_keys: set[str],
+    *,
+    starvla_model: nn.Module,
 ) -> torch.Tensor:
     """Adapt state dimension via special-rule/trim/pad to expected dim."""
     current_dim = int(state.shape[-1])
@@ -133,7 +149,7 @@ def adapt_state_for_expected_dim(
             [state[..., :6], state[..., 6:8].mean(dim=-1, keepdim=True)], dim=-1
         )
         warn_state_adapt_once(
-            warned_keys,
+            starvla_model,
             key=f"{context}:8to7",
             message=(
                 f"[{context}] Adapted state dim 8 -> 7 by averaging the 2-dim gripper state. "
@@ -145,7 +161,7 @@ def adapt_state_for_expected_dim(
     if current_dim > expected_dim:
         adapted = state[..., :expected_dim]
         warn_state_adapt_once(
-            warned_keys,
+            starvla_model,
             key=f"{context}:{current_dim}to{expected_dim}:truncate",
             message=(
                 f"[{context}] Truncated state dim {current_dim} -> {expected_dim}. "
@@ -161,7 +177,7 @@ def adapt_state_for_expected_dim(
     )
     adapted = torch.cat([state, pad], dim=-1)
     warn_state_adapt_once(
-        warned_keys,
+        starvla_model,
         key=f"{context}:{current_dim}to{expected_dim}:pad",
         message=(
             f"[{context}] Padded state dim {current_dim} -> {expected_dim} with zeros. "
@@ -176,7 +192,6 @@ def prepare_state_tensor(
     *,
     starvla_model: nn.Module,
     default_state_adapter_name: str,
-    warned_keys: set[str],
     state_adapter_name: Optional[str] = None,
     head: Optional[nn.Module] = None,
     expected_dim: Optional[int] = None,
@@ -220,5 +235,5 @@ def prepare_state_tensor(
         state,
         expected_dim=dim,
         context=context,
-        warned_keys=warned_keys,
+        starvla_model=starvla_model,
     )

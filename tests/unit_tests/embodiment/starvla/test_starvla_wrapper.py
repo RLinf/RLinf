@@ -46,7 +46,15 @@ class _DummyStarVLAModel(nn.Module):
         self.framework_name = framework_name
         self.qwen_vl_interface = _DummyVLMInterface(hidden_size=16)
         self.proj = nn.Linear(4, 4)
-        self.norm_stats = {}
+        self.norm_stats = {
+            "franka": {
+                "action": {
+                    "q99": [1.0] * 7,
+                    "q01": [-1.0] * 7,
+                    "mask": [True] * 7,
+                }
+            }
+        }
 
 
 def _build_wrapper(framework_name: str) -> StarVLAForRLActionPrediction:
@@ -55,8 +63,7 @@ def _build_wrapper(framework_name: str) -> StarVLAForRLActionPrediction:
         action_dim=7,
         num_action_chunks=2,
         add_value_head=True,
-        unnorm_key=None,
-        disable_action_unnormalization=True,
+        unnorm_key="franka",
     )
 
 
@@ -104,7 +111,7 @@ def test_default_forward_dispatches_to_handler(
     )
 
     out = policy.default_forward(
-        data={"mock_tensor": torch.ones((2, 3))},
+        forward_inputs={"mock_tensor": torch.ones((2, 3))},
         compute_logprobs=True,
         compute_entropy=False,
         compute_values=True,
@@ -141,16 +148,6 @@ def test_predict_action_batch_with_mock_rollout_handler(monkeypatch):
         "build_examples_from_env_obs",
         lambda **kwargs: [{"id": 0}, {"id": 1}],
     )
-    monkeypatch.setattr(
-        starvla_model_mod.data_pipeline_utils,
-        "build_sampling_param_tensors",
-        lambda **kwargs: {
-            "do_sample": torch.zeros((2,), dtype=torch.int64),
-            "temperature": torch.ones((2,), dtype=torch.float32),
-            "top_k": torch.zeros((2,), dtype=torch.int64),
-            "top_p": torch.ones((2,), dtype=torch.float32),
-        },
-    )
 
     def _rollout_handler(*args, **kwargs):  # noqa: ANN002, ANN003
         return {
@@ -159,6 +156,9 @@ def test_predict_action_batch_with_mock_rollout_handler(monkeypatch):
             },
             "prev_logprobs": torch.ones((2, 2, 7), dtype=torch.float32),
             "prev_values": torch.ones((2, 1), dtype=torch.float32),
+            "extra_forward_inputs": {
+                "action_model": torch.ones((2, 2, 7), dtype=torch.float32),
+            },
         }
 
     monkeypatch.setattr(
@@ -178,61 +178,4 @@ def test_predict_action_batch_with_mock_rollout_handler(monkeypatch):
     assert result["prev_logprobs"].shape == (2, 2, 7)
     assert result["prev_values"].shape == (2, 1)
     assert result["forward_inputs"]["action"].shape == (2, 14)
-    assert result["forward_inputs"]["prev_logprobs"].shape == (2, 2, 7)
-
-
-def test_default_forward_clips_logprobs_action_level(monkeypatch):
-    policy = StarVLAForRLActionPrediction(
-        starvla_model=_DummyStarVLAModel(framework_name="QwenOFT"),
-        action_dim=7,
-        num_action_chunks=2,
-        add_value_head=True,
-        unnorm_key=None,
-        disable_action_unnormalization=True,
-        clip_log_ratio_min=-20.0,
-        clip_log_ratio_max=20.0,
-        clip_log_ratio_level="action_level",
-    )
-
-    bsz, num_chunks, action_dim = 2, 2, 7
-    old = torch.zeros((bsz, num_chunks, action_dim), dtype=torch.float32)
-
-    def _handler(  # noqa: ANN001
-        wrapped_policy: StarVLAForRLActionPrediction,
-        *,
-        data: dict[str, torch.Tensor],
-        compute_logprobs: bool,
-        compute_entropy: bool,
-        compute_values: bool,
-        use_cache: bool,
-    ):
-        del wrapped_policy, compute_entropy, compute_values, use_cache
-        assert compute_logprobs is True
-        return {
-            "logprobs": data["prev_logprobs"] + 1000.0,
-            "entropy": None,
-            "values": torch.zeros((bsz, 1), dtype=torch.float32),
-        }
-
-    monkeypatch.setattr(
-        starvla_model_mod,
-        "get_default_forward_handler",
-        lambda head: _handler if head == policy.action_head_type else None,
-    )
-
-    out = policy.default_forward(
-        data={"prev_logprobs": old},
-        compute_logprobs=True,
-        compute_entropy=False,
-        compute_values=False,
-        use_cache=False,
-    )
-
-    logprobs = out["logprobs"]
-    assert isinstance(logprobs, torch.Tensor)
-    assert torch.isfinite(logprobs).all()
-
-    log_ratio_action = (logprobs - old).sum(dim=-1)
-    assert torch.isfinite(log_ratio_action).all()
-    assert log_ratio_action.max() <= 20.0 + 1e-4
-    assert log_ratio_action.min() >= -20.0 - 1e-4
+    assert result["forward_inputs"]["action_model"].shape == (2, 2, 7)

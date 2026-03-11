@@ -40,7 +40,7 @@ def run_default_forward_adapter(
     use_cache: bool,
 ) -> dict[str, torch.Tensor | None]:
     """Compute training-time PPO terms for the Adapter action head."""
-    data_pipeline_utils.ensure_default_forward_replay_batch(data)
+    data_pipeline_utils.forward_input_check(data)
 
     # 1) Resolve optional state tensor from rollout cache.
     state = data.get("state")
@@ -72,9 +72,9 @@ def run_default_forward_adapter(
         adapter_context=adapter_context,
     )
 
-    action = data_pipeline_utils.prepare_actions_for_default_forward(
+    action = data_pipeline_utils.fetch_action_for_logprob_for_default_forward(
         policy,
-        env_actions=data["action"],
+        data=data,
         reference=mean_actions,
     )
 

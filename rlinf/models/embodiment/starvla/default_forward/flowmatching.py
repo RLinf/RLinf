@@ -13,6 +13,8 @@
 # limitations under the License.
 
 """Training-time forward pass for starVLA flow-matching action heads."""
+# TODO(agent): Flowmatching path is included in the current commit but still
+# needs full end-to-end training validation before treating it as fully stable.
 
 from __future__ import annotations
 
@@ -58,42 +60,40 @@ def run_default_forward_flowmatching(
     state_adapter_name = str(policy.state_adapter_type).lower() or action_head_name
     state_context = f"default_forward_{action_head_name}"
 
-    # 2) Validate required rollout caches and prompt tensors.
-    if "action" not in data:
-        raise KeyError(
-            "Missing 'action' in training batch. Rollout must store forward_inputs['action']."
-        )
+    # 2) Validate prompt tensors required for backbone replay.
     if "input_ids" not in data or "attention_mask" not in data:
         raise KeyError(
             "Missing prompt inputs ('input_ids'/'attention_mask') in training batch. "
             "Rollout must cache VLM prompt tensors in forward_inputs."
         )
 
-    prefix = resolve_flowmatching_prefix(action_head_name)
-    required_keys = {f"{prefix}_chain_actions", f"{prefix}_t_bucket_indices"}
+    flow_prefix = resolve_flowmatching_prefix(action_head_name)
+    required_keys = {
+        f"{flow_prefix}_chain_actions",
+        f"{flow_prefix}_t_bucket_indices",
+        f"{flow_prefix}_denoise_inds",
+        f"{flow_prefix}_sample_actions",
+    }
     missing = [key for key in required_keys if key not in data]
     if missing:
         raise KeyError(
-            f"Missing {action_head_name} rollout cache keys in training batch: "
-            f"{missing}. Rollout must store these fields in forward_inputs."
+            f"Missing {action_head_name} rollout cache keys in training batch: {missing}. "
+            "Rollout must store these fields in forward_inputs."
         )
 
     # 3) Rebuild VLM inputs and run backbone once for this training forward.
-    flow_skip_keys = {
-        "action",
-        "action_tokens",
-        f"{prefix}_chain_actions",
-        f"{prefix}_t_bucket_indices",
-        f"{prefix}_num_steps",
-        f"{prefix}_sample_actions",
-        f"{prefix}_step_std",
-    }
-    model_inputs = data_pipeline_utils.collect_tensor_inputs(
+    model_inputs = data_pipeline_utils.collect_default_forward_model_inputs(
         data,
-        skip_keys=flow_skip_keys,
+        skip_keys={
+            "action",
+            "action_tokens",
+            f"{flow_prefix}_chain_actions",
+            f"{flow_prefix}_t_bucket_indices",
+            f"{flow_prefix}_denoise_inds",
+            f"{flow_prefix}_sample_actions",
+        },
         ignored_keys=RL_BATCH_TENSOR_KEYS_TO_IGNORE,
     )
-    model_inputs = data_pipeline_utils.restore_pixel_values_for_forward(model_inputs)
 
     backbone_output = run_backbone_pipeline(
         policy,
@@ -107,14 +107,23 @@ def run_default_forward_flowmatching(
     )
     rollout_hidden = action_head_inputs.rollout_hidden
 
-    # 4) Load cached flow-matching trajectory tensors from rollout.
-    chain_actions_key = f"{prefix}_chain_actions"
-    t_bucket_key = f"{prefix}_t_bucket_indices"
+    # 4) Load cached flow-matching tensors from rollout.
+    sample_actions_key = f"{flow_prefix}_sample_actions"
+    denoise_inds_key = f"{flow_prefix}_denoise_inds"
+    head = policy.starvla_model.action_model
+    num_steps = max(1, int(getattr(head, "num_inference_timesteps", 16)))
+
+    chain_actions_key = f"{flow_prefix}_chain_actions"
+    t_bucket_key = f"{flow_prefix}_t_bucket_indices"
     chain_actions = data[chain_actions_key].to(
         device=rollout_hidden.device, dtype=rollout_hidden.dtype
     )
     t_bucket_indices = data[t_bucket_key].to(
         device=rollout_hidden.device, dtype=torch.long
+    )
+    denoise_inds = data[denoise_inds_key].to(
+        device=rollout_hidden.device,
+        dtype=torch.long,
     )
 
     if chain_actions.ndim != 4:
@@ -126,37 +135,35 @@ def run_default_forward_flowmatching(
             f"Expected '{t_bucket_key}' [B,S], got {t_bucket_indices.shape}"
         )
 
-    num_steps_key = f"{prefix}_num_steps"
-    sample_actions_key = f"{prefix}_sample_actions"
-    step_std_key = f"{prefix}_step_std"
-    num_steps = data_pipeline_utils.get_scalar(
-        data.get(num_steps_key),
-        default=t_bucket_indices.shape[1],
-        cast=int,
-    )
     if num_steps != t_bucket_indices.shape[1]:
         raise ValueError(
-            f"{num_steps_key} mismatch: got {num_steps}, but {t_bucket_key} has {t_bucket_indices.shape[1]} steps"
+            f"num_steps mismatch: head has S={num_steps}, but {t_bucket_key} has {t_bucket_indices.shape[1]} steps"
         )
     if chain_actions.shape[1] != num_steps + 1:
         raise ValueError(
             f"{chain_actions_key} mismatch: expected S+1={num_steps + 1}, got {chain_actions.shape[1]}"
         )
+    if denoise_inds.ndim != 2:
+        raise ValueError(
+            f"Expected '{denoise_inds_key}' [B,S], got {denoise_inds.shape}"
+        )
+    if denoise_inds.shape != t_bucket_indices.shape:
+        raise ValueError(
+            f"{denoise_inds_key} mismatch: expected {tuple(t_bucket_indices.shape)}, "
+            f"got {tuple(denoise_inds.shape)}"
+        )
 
     # 5) Decide whether this step uses stochastic transition distributions.
     rollout_sample_actions = bool(
         data_pipeline_utils.get_scalar(
-            data.get(sample_actions_key),
+            data[sample_actions_key],
             default=1,
             cast=int,
         )
     )
-    if action_head_name == "pi":
-        do_sample = rollout_sample_actions and compute_logprobs
-    else:
-        do_sample = rollout_sample_actions and (compute_logprobs or compute_entropy)
+    do_sample = rollout_sample_actions and (compute_logprobs or compute_entropy)
 
-    # 6) Prepare state/action tensors for head-specific velocity prediction.
+    # 6) Prepare state tensors for head-specific velocity prediction.
     head = policy.starvla_model.action_model
     state = data.get("state")
     if state is None:
@@ -165,7 +172,6 @@ def run_default_forward_flowmatching(
         state,
         starvla_model=policy.starvla_model,
         default_state_adapter_name=policy.state_adapter_type,
-        warned_keys=policy._warned_once,
         state_adapter_name=state_adapter_name,
         head=head,
         device=rollout_hidden.device,
@@ -173,27 +179,12 @@ def run_default_forward_flowmatching(
         context=state_context,
     )
 
-    action = data["action"]
-    if action.ndim == 2:
-        bsz = action.shape[0]
-        action = action.view(bsz, policy.num_action_chunks, policy.action_dim)
-    elif action.ndim != 3:
-        raise ValueError(f"Expected 'action' [B, T*D] or [B,T,D], got {action.shape}")
-    action = action.to(device=rollout_hidden.device, dtype=rollout_hidden.dtype)
-
     # 7) Resolve per-step standard deviation for sampled transitions.
     dt = 1.0 / float(max(1, num_steps))
-    resolved_step_std = data.get(step_std_key)
-    if resolved_step_std is not None:
-        if not isinstance(resolved_step_std, torch.Tensor):
-            raise TypeError(
-                f"Expected '{step_std_key}' to be torch.Tensor, got {type(resolved_step_std)}."
-            )
-        resolved_step_std = resolved_step_std.to(
-            device=rollout_hidden.device,
-            dtype=rollout_hidden.dtype,
-        )
-    elif do_sample:
+    resolved_step_std = None
+    if do_sample:
+        expected_action_dim = int(chain_actions.shape[-1])
+
         resolved_step_std = (
             torch.exp(policy.actor_logstd)
             .to(
@@ -202,52 +193,69 @@ def run_default_forward_flowmatching(
             )
             .view(1, 1, -1)
         )
-        if resolved_step_std.shape[-1] != chain_actions.shape[-1]:
-            resolved_step_std = torch.full(
-                (1, 1, chain_actions.shape[-1]),
-                0.1,
-                device=rollout_hidden.device,
-                dtype=rollout_hidden.dtype,
+        if resolved_step_std.shape[-1] != expected_action_dim:
+            raise RuntimeError(
+                "Mismatch between resolved_step_std shape "
+                f"{tuple(resolved_step_std.shape)} and expected action_dim "
+                f"{expected_action_dim} for sampled flowmatching default_forward."
             )
         resolved_step_std = resolved_step_std * float(sqrt(dt))
-    else:
-        resolved_step_std = None
 
-    # 8) Replay rollout chain and accumulate step-wise logprob / entropy.
+    # 8) Compute requested PPO terms.
     step_logprobs: list[torch.Tensor] = []
     step_entropy: list[torch.Tensor] = []
     for step in range(num_steps):
-        actions_pre = chain_actions[:, step]
-        actions_next = chain_actions[:, step + 1]
+        actions_pre_step = chain_actions[:, step]
+        actions_next_step = chain_actions[:, step + 1]
         t_bucket_step = t_bucket_indices[:, step]
 
         pred_velocity = _predict_velocity(
             policy,
             head=head,
             action_head_inputs=action_head_inputs,
-            actions_t=actions_pre,
+            actions_t=actions_pre_step,
             state_t=state,
             t_bucket_index=t_bucket_step,
         )
 
-        mean_next = actions_pre + dt * pred_velocity
+        mean_next = actions_pre_step + dt * pred_velocity
         if do_sample:
-            if resolved_step_std is None:
-                raise RuntimeError(
-                    "Internal error: missing step_std for flowmatching sampled transition."
-                )
-            dist_step = Normal(mean_next, resolved_step_std.expand_as(mean_next))
-            if compute_logprobs:
-                step_logprobs.append(dist_step.log_prob(actions_next))
-            if compute_entropy:
-                step_entropy.append(dist_step.entropy())
+            active_step_mask = denoise_inds[:, step].eq(step)
+            if bool(active_step_mask.any()):
+                if resolved_step_std is None:
+                    raise RuntimeError(
+                        "Internal error: missing step_std for flowmatching sampled transition."
+                    )
+                dist_step = Normal(mean_next, resolved_step_std.expand_as(mean_next))
+                active_step_mask_3d = active_step_mask.view(-1, 1, 1)
+                if compute_logprobs:
+                    logprob_step = dist_step.log_prob(actions_next_step)
+                    logprob_step = torch.where(
+                        active_step_mask_3d,
+                        logprob_step,
+                        torch.zeros_like(logprob_step),
+                    )
+                    step_logprobs.append(logprob_step)
+                if compute_entropy:
+                    entropy_step = dist_step.entropy()
+                    entropy_step = torch.where(
+                        active_step_mask_3d,
+                        entropy_step,
+                        torch.zeros_like(entropy_step),
+                    )
+                    step_entropy.append(entropy_step)
+            else:
+                if compute_logprobs:
+                    step_logprobs.append(torch.zeros_like(actions_next_step))
+                if compute_entropy:
+                    step_entropy.append(torch.zeros_like(actions_next_step))
         else:
             if compute_logprobs:
-                step_logprobs.append(torch.zeros_like(actions_next))
+                step_logprobs.append(torch.zeros_like(actions_next_step))
             if compute_entropy:
-                step_entropy.append(torch.zeros_like(actions_next))
+                step_entropy.append(torch.zeros_like(actions_next_step))
 
-    # 9) Build RL outputs (policy terms + optional value head).
+    # 9) Fill requested RL terms.
     result: dict[str, torch.Tensor | None] = {
         "logprobs": None,
         "entropy": None,
@@ -264,8 +272,8 @@ def run_default_forward_flowmatching(
     if compute_values:
         if policy.value_head is None:
             result["values"] = torch.zeros(
-                (action.shape[0], 1),
-                device=action.device,
+                (chain_actions.shape[0], 1),
+                device=rollout_hidden.device,
                 dtype=torch.float32,
             )
         else:

@@ -13,6 +13,8 @@
 # limitations under the License.
 
 """Rollout-time action sampling for starVLA flow-matching action heads."""
+# TODO(agent): Flowmatching rollout is included in the current commit but still
+# needs full end-to-end training validation before treating it as fully stable.
 
 from __future__ import annotations
 
@@ -20,11 +22,13 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 
+from ..utils import action_space as action_space_utils
 from ..utils import data_pipeline as data_pipeline_utils
 from ..utils import state as state_utils
 from ..utils import vlm_preprocess as vlm_input_utils
 from ..utils.action_heads import (
     build_flowmatching_backbone_context,
+    build_flowmatching_rollout_denoise_indices,
     resolve_flowmatching_prefix,
     run_flowmatching_rollout_action_stage,
 )
@@ -54,7 +58,7 @@ def run_rollout_flowmatching(
             "run_rollout_flowmatching only supports flowmatching heads "
             f"{sorted(_FLOWMATCHING_HEADS)}, got action_head_type={action_head_name!r}."
         )
-    state_adapter_name = str(policy.state_adapter_type).lower() or action_head_name
+    state_adapter_name = str(policy.state_adapter_type).lower()
     state_context = f"rollout_{action_head_name}"
     raw_state = env_obs.get("states")
 
@@ -89,7 +93,6 @@ def run_rollout_flowmatching(
         raw_state,
         starvla_model=policy.starvla_model,
         default_state_adapter_name=policy.state_adapter_type,
-        warned_keys=policy._warned_once,
         state_adapter_name=state_adapter_name,
         head=head,
         device=rollout_hidden.device,
@@ -102,6 +105,12 @@ def run_rollout_flowmatching(
     action_dim = int(getattr(head, "action_dim", policy.action_dim))
     num_steps = max(1, int(getattr(head, "num_inference_timesteps", 16)))
     sample_actions = bool(sampling_kwargs.get("do_sample")) and mode == "train"
+    denoise_inds = build_flowmatching_rollout_denoise_indices(
+        batch_size=int(rollout_hidden.shape[0]),
+        num_steps=num_steps,
+        sample_actions=sample_actions,
+        device=rollout_hidden.device,
+    )
 
     rollout_result = run_flowmatching_rollout_action_stage(
         policy,
@@ -113,15 +122,20 @@ def run_rollout_flowmatching(
         num_steps=num_steps,
         sample_actions=sample_actions,
         calculate_logprobs=calculate_logprobs,
+        denoise_inds=denoise_inds,
     )
-    actions_t = rollout_result["actions_t"]
+    # Flowmatching chain runs in continuous action space; clip/discretize once
+    # here for env execution / storage.
+    actions_exec = action_space_utils.clip_actions_for_env(rollout_result["actions_t"])
 
     # 6) Compute optional value baseline from cached value_hidden.
     prev_values: Optional[torch.Tensor] = None
     if calculate_values:
         if policy.value_head is None:
             prev_values = torch.zeros(
-                (actions_t.shape[0], 1), device=actions_t.device, dtype=torch.float32
+                (actions_exec.shape[0], 1),
+                device=actions_exec.device,
+                dtype=torch.float32,
             )
         else:
             prev_values = compute_values_from_hidden(
@@ -132,8 +146,20 @@ def run_rollout_flowmatching(
 
     # 7) Pack rollout caches that default_forward(flowmatching) will replay in training.
     flow_prefix = resolve_flowmatching_prefix(action_head_name)
-    chain_actions = rollout_result["chain_actions"]
-    t_bucket_indices = rollout_result["t_bucket_indices"]
+    chain_actions = rollout_result.get("chain_actions")
+    t_bucket_indices = rollout_result.get("t_bucket_indices")
+    cached_denoise_inds = rollout_result.get("denoise_inds")
+    if not isinstance(chain_actions, torch.Tensor) or not isinstance(
+        t_bucket_indices, torch.Tensor
+    ):
+        raise KeyError(
+            "Missing flowmatching rollout caches. Expected rollout_result['chain_actions'] "
+            "and rollout_result['t_bucket_indices']."
+        )
+    if not isinstance(cached_denoise_inds, torch.Tensor):
+        raise KeyError(
+            "Missing flowmatching rollout cache rollout_result['denoise_inds']."
+        )
     if chain_actions.ndim != 4:
         raise ValueError(
             f"Expected chain_actions [B,S+1,T,D], got {tuple(chain_actions.shape)}"
@@ -142,31 +168,28 @@ def run_rollout_flowmatching(
         raise ValueError(
             f"Expected t_bucket_indices [B,S], got {tuple(t_bucket_indices.shape)}"
         )
-
+    if cached_denoise_inds.ndim != 2:
+        raise ValueError(
+            f"Expected denoise_inds [B,S], got {tuple(cached_denoise_inds.shape)}"
+        )
     flow_cache: dict[str, torch.Tensor] = {
         f"{flow_prefix}_chain_actions": chain_actions,
         f"{flow_prefix}_t_bucket_indices": t_bucket_indices,
-        f"{flow_prefix}_num_steps": torch.tensor(
-            int(rollout_result["num_steps"]),
-            device=chain_actions.device,
-            dtype=torch.int64,
-        ),
+        f"{flow_prefix}_denoise_inds": cached_denoise_inds,
         f"{flow_prefix}_sample_actions": torch.tensor(
-            int(rollout_result["sample_actions"]),
+            int(sample_actions),
             device=chain_actions.device,
             dtype=torch.int64,
         ),
     }
-    step_std = rollout_result["step_std"]
-    if step_std is not None:
-        flow_cache[f"{flow_prefix}_step_std"] = step_std
 
     # 8) Return env actions + training replay payload.
-    output = {
-        "normalized_actions": data_pipeline_utils.tensor_to_numpy_compatible(actions_t)
-    }
     return {
-        "output": output,
+        "output": {
+            "normalized_actions": data_pipeline_utils.tensor_to_numpy_compatible(
+                actions_exec
+            )
+        },
         "model_inputs": backbone_output.model_inputs,
         "prev_logprobs": rollout_result["prev_logprobs"],
         "prev_values": prev_values,

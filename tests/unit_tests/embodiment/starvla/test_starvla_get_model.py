@@ -108,6 +108,15 @@ def test_get_model_loads_latest_checkpoint_and_builds_wrapper(
     (ckpt_dir / "step_0002.pt").write_bytes(b"b")
 
     dummy = _DummyStarVLAModel(framework_name="QwenFast")
+    dummy.norm_stats = {
+        "franka": {
+            "action": {
+                "q99": [1.0] * 7,
+                "q01": [-1.0] * 7,
+                "mask": [True] * 7,
+            }
+        }
+    }
     load_calls: list[str] = []
     _install_fake_starvla_module(monkeypatch, dummy, load_calls)
 
@@ -118,16 +127,6 @@ def test_get_model_loads_latest_checkpoint_and_builds_wrapper(
             "num_action_chunks": 2,
             "add_value_head": True,
             "unnorm_key": "franka",
-            "disable_action_unnormalization": False,
-            "norm_stats": {
-                "franka": {
-                    "action": {
-                        "q99": [1.0] * 7,
-                        "q01": [-1.0] * 7,
-                        "mask": [True] * 7,
-                    }
-                }
-            },
         }
     )
 
@@ -140,13 +139,19 @@ def test_get_model_loads_latest_checkpoint_and_builds_wrapper(
     assert model._action_norm_stats is not None
 
 
-def test_get_model_replace_norm_stats_from_file(tmp_path: Path, monkeypatch):
+def test_get_model_ignores_norm_stats_overrides(tmp_path: Path, monkeypatch):
     ckpt_path = tmp_path / "checkpoint.pt"
     ckpt_path.write_bytes(b"x")
 
     dummy = _DummyStarVLAModel(framework_name="QwenAdapter")
     dummy.norm_stats = {
-        "old": {"action": {"q99": [9.0] * 7, "q01": [-9.0] * 7, "mask": [True] * 7}}
+        "franka": {
+            "action": {
+                "q99": [9.0] * 7,
+                "q01": [-9.0] * 7,
+                "mask": [True] * 7,
+            }
+        }
     }
     load_calls: list[str] = []
     _install_fake_starvla_module(monkeypatch, dummy, load_calls)
@@ -174,7 +179,9 @@ def test_get_model_replace_norm_stats_from_file(tmp_path: Path, monkeypatch):
         }
     )
 
-    _ = get_model(cfg, torch_dtype=None)
+    model = get_model(cfg, torch_dtype=None)
 
     assert load_calls and load_calls[0].endswith("checkpoint.pt")
-    assert dummy.norm_stats == stats_payload
+    assert dummy.norm_stats["franka"]["action"]["q99"] == [9.0] * 7
+    assert dummy.norm_stats["franka"]["action"]["q01"] == [-9.0] * 7
+    assert model._action_norm_stats is not None

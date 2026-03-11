@@ -21,12 +21,10 @@ This module exposes 'get_model', which loads a starVLA checkpoint and returns a
 
 from __future__ import annotations
 
-import json
 import os
-from collections.abc import Mapping
 
 import torch
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
 from rlinf.utils.logging import get_logger
 
@@ -96,49 +94,9 @@ def get_model(
     if framework_name:
         starvla_model.framework_name = framework_name
 
-    clip_log_ratio_min = getattr(starvla_cfg, "clip_log_ratio_min", None)
-    clip_log_ratio_max = getattr(starvla_cfg, "clip_log_ratio_max", None)
-    clip_log_ratio_level = getattr(starvla_cfg, "clip_log_ratio_level", "action_level")
-
-    # Collect normalization-stat overrides from 'cfg' and merge them into
-    # 'starvla_model.norm_stats'. This helps when checkpoints do not persist norm
-    # stats (or persist incorrect values).
-    extra_stats: dict[str, object] = {}
-
-    inline_norm_stats = getattr(cfg, "norm_stats", None)
-    if inline_norm_stats is not None and OmegaConf.is_config(inline_norm_stats):
-        inline_norm_stats = OmegaConf.to_container(inline_norm_stats, resolve=True)
-    if isinstance(inline_norm_stats, Mapping):
-        extra_stats.update({str(k): v for k, v in inline_norm_stats.items()})
-
-    norm_stats_path = getattr(cfg, "norm_stats_path", None)
-    if isinstance(norm_stats_path, (str, os.PathLike)):
-        norm_stats_path = os.fspath(norm_stats_path)
-        if os.path.isfile(norm_stats_path):
-            with open(norm_stats_path, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-            if isinstance(loaded, Mapping):
-                extra_stats.update({str(k): v for k, v in loaded.items()})
-
-    if extra_stats:
-        replace_norm_stats = bool(getattr(cfg, "replace_norm_stats", False))
-        if replace_norm_stats:
-            starvla_model.norm_stats = dict(extra_stats)
-        else:
-            norm_stats = getattr(starvla_model, "norm_stats", {})
-            if norm_stats is not None and OmegaConf.is_config(norm_stats):
-                norm_stats = OmegaConf.to_container(norm_stats, resolve=True)
-            if not isinstance(norm_stats, Mapping):
-                norm_stats = {}
-            norm_stats = {str(k): v for k, v in norm_stats.items()}
-            norm_stats.update(extra_stats)
-            starvla_model.norm_stats = norm_stats
-
     # Cast to requested dtype.
     if torch_dtype is not None:
         starvla_model = starvla_model.to(dtype=torch_dtype)
-
-    disable_action_unnorm = bool(getattr(cfg, "disable_action_unnormalization", False))
 
     return StarVLAForRLActionPrediction(
         starvla_model=starvla_model,
@@ -146,10 +104,6 @@ def get_model(
         num_action_chunks=cfg.num_action_chunks,
         add_value_head=getattr(cfg, "add_value_head", True),
         unnorm_key=getattr(cfg, "unnorm_key", None),
-        disable_action_unnormalization=disable_action_unnorm,
-        clip_log_ratio_min=clip_log_ratio_min,
-        clip_log_ratio_max=clip_log_ratio_max,
-        clip_log_ratio_level=clip_log_ratio_level,
     )
 
 

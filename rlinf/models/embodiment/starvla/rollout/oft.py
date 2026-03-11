@@ -62,23 +62,19 @@ def run_rollout_oft(
         backbone_output=backbone_output,
         model_inputs=model_inputs,
     )
-    mean_actions = mean_actions.clamp(-1.0, 1.0)
 
-    # 3) Build Gaussian actor, sample/greedy action, and clip to env bounds.
+    # 3) Build Gaussian actor and sample/greedy action in model space.
     dist = Normal(mean_actions, torch.exp(policy.actor_logstd).view(1, 1, -1))
     sample_actions = bool(sampling_kwargs.get("do_sample")) and mode == "train"
-    actions_t = dist.sample() if sample_actions else mean_actions
-    actions_exec = action_space_utils.clip_actions_for_env(actions_t)
+    actions_for_logprob = dist.sample() if sample_actions else mean_actions
 
-    # 4) Optionally compute rollout-time logprob/value baselines for training replay.
+    # 4) Build env execution action from model-space action.
+    actions_exec = action_space_utils.clip_actions_for_env(actions_for_logprob)
+
+    # 5) Optionally compute rollout-time logprob/value baselines for training replay.
     prev_logprobs: Optional[torch.Tensor] = None
     prev_values: Optional[torch.Tensor] = None
     if calculate_logprobs:
-        # Keep old/new logprobs in the same action space used by training forward.
-        actions_for_logprob = data_pipeline_utils.project_rollout_actions_for_logprob(
-            policy,
-            rollout_actions=actions_exec,
-        )
         prev_logprobs = dist.log_prob(actions_for_logprob).to(dtype=torch.float32)
     if calculate_values:
         if policy.value_head is None:
@@ -94,7 +90,7 @@ def run_rollout_oft(
                 attention_mask=model_inputs.get("attention_mask"),
             )
 
-    # 5) Return env actions and cached tensors used by default_forward training.
+    # 6) Return env actions and cached tensors used by default_forward training.
     return {
         "output": {
             "normalized_actions": data_pipeline_utils.tensor_to_numpy_compatible(
@@ -104,6 +100,8 @@ def run_rollout_oft(
         "model_inputs": model_inputs,
         "prev_logprobs": prev_logprobs,
         "prev_values": prev_values,
-        "extra_forward_inputs": {},
+        "extra_forward_inputs": {
+            "action_for_logprob": actions_for_logprob.to(dtype=torch.float32)
+        },
         "state": None,
     }

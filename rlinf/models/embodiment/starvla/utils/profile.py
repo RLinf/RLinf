@@ -24,7 +24,6 @@ import torch.nn as nn
 
 ACTION_HEAD_TYPES = {"fast", "oft", "adapter", "pi", "gr00t", "dual"}
 STATE_ADAPTER_TYPES = {"none", "adapter", "pi", "gr00t", "dual"}
-CONTINUOUS_ACTION_HEAD_TYPES = set(ACTION_HEAD_TYPES)
 _VLM_TYPE_BY_TOKEN: dict[str, str] = {
     "qwen": "qwen",
     "florence": "florence",
@@ -48,7 +47,6 @@ class PolicyProfile:
     vlm_type: str
     action_head_type: str
     state_adapter_type: str
-    is_continuous_action: bool
 
 
 RL_BATCH_TENSOR_KEYS_TO_IGNORE: set[str] = {
@@ -79,17 +77,32 @@ RL_BATCH_TENSOR_KEYS_TO_IGNORE: set[str] = {
     "state",
     "states",
     "pi_chain_actions",
+    "pi_chain_actions_preclip",
     "pi_t_bucket_indices",
+    "pi_actions_pre",
+    "pi_actions_next_preclip",
+    "pi_t_bucket_index",
+    "pi_denoise_inds",
     "pi_num_steps",
     "pi_sample_actions",
     "pi_step_std",
     "gr00t_chain_actions",
+    "gr00t_chain_actions_preclip",
     "gr00t_t_bucket_indices",
+    "gr00t_actions_pre",
+    "gr00t_actions_next_preclip",
+    "gr00t_t_bucket_index",
+    "gr00t_denoise_inds",
     "gr00t_num_steps",
     "gr00t_sample_actions",
     "gr00t_step_std",
     "dual_chain_actions",
+    "dual_chain_actions_preclip",
     "dual_t_bucket_indices",
+    "dual_actions_pre",
+    "dual_actions_next_preclip",
+    "dual_t_bucket_index",
+    "dual_denoise_inds",
     "dual_num_steps",
     "dual_sample_actions",
     "dual_step_std",
@@ -230,10 +243,11 @@ def resolve_vlm_pad_token_id(starvla_model: nn.Module, default: int = 0) -> int:
     """Resolve pad token id from VLM config with safe fallback."""
     iface = resolve_vlm_interface(starvla_model)
     model_cfg = getattr(getattr(iface, "model", None), "config", None)
-    if model_cfg is None:
-        return int(default)
+    pad_id = (
+        default if model_cfg is None else getattr(model_cfg, "pad_token_id", default)
+    )
     try:
-        return int(getattr(model_cfg, "pad_token_id", default) or default)
+        return int(pad_id or default)
     except (TypeError, ValueError):
         return int(default)
 
@@ -273,25 +287,17 @@ def infer_action_head_type(starvla_model: nn.Module) -> str:
     )
 
 
-def infer_state_adapter_type(action_head_type: str) -> str:
-    """Map action-head type to required state-adapter mode."""
-    if action_head_type not in ACTION_HEAD_TYPES:
-        raise ValueError(
-            f"Unknown action_head_type={action_head_type!r}. Expected one of {sorted(ACTION_HEAD_TYPES)}."
-        )
-    if action_head_type in {"adapter", "pi", "gr00t", "dual"}:
-        return action_head_type
-    return "none"
-
-
 def infer_policy_profile(starvla_model: nn.Module) -> PolicyProfile:
     """Build full policy profile used by dispatch and runtime checks."""
     action_head_type = infer_action_head_type(starvla_model)
+    if action_head_type in {"adapter", "pi", "gr00t", "dual"}:
+        state_adapter_type = action_head_type
+    else:
+        state_adapter_type = "none"
     return PolicyProfile(
         vlm_type=infer_vlm_type(starvla_model),
         action_head_type=action_head_type,
-        state_adapter_type=infer_state_adapter_type(action_head_type),
-        is_continuous_action=(action_head_type in CONTINUOUS_ACTION_HEAD_TYPES),
+        state_adapter_type=state_adapter_type,
     )
 
 
@@ -335,9 +341,7 @@ def resolve_action_chunk_len(
     )
 
     def cfg_int(key: str) -> Optional[int]:
-        if action_cfg is None:
-            return None
-        value = getattr(action_cfg, key, None)
+        value = getattr(action_cfg, key, None) if action_cfg is not None else None
         if value is None:
             return None
         try:

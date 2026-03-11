@@ -13,11 +13,12 @@
 # limitations under the License.
 
 """Rollout-time action sampling for starVLA Qwen FAST action heads."""
+# TODO(agent): FAST rollout is included in the current commit but still needs
+# full end-to-end training validation before treating it as fully stable.
 
 from __future__ import annotations
 
 import os
-from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
@@ -87,20 +88,19 @@ def run_rollout_fast(
             "do_sample": do_sample,
         }
         if do_sample:
-            gen_kwargs["temperature"] = temperature
-            gen_kwargs["top_k"] = top_k
-            gen_kwargs["top_p"] = top_p
+            gen_kwargs.update(
+                {
+                    "temperature": temperature,
+                    "top_k": top_k,
+                    "top_p": top_p,
+                }
+            )
         if max_new_tokens is not None:
             gen_kwargs["max_new_tokens"] = int(max_new_tokens)
         elif max_length is not None:
             gen_kwargs["max_length"] = int(max_length)
 
-        autocast_ctx = (
-            torch.autocast("cuda", dtype=torch.bfloat16)
-            if torch.cuda.is_available()
-            else nullcontext()
-        )
-        with autocast_ctx:
+        with torch.autocast("cuda", dtype=torch.bfloat16):
             gen_out = vlm_interface.model.generate(
                 **prompt_inputs,
                 **gen_kwargs,
@@ -108,27 +108,31 @@ def run_rollout_fast(
 
         sequences = getattr(gen_out, "sequences", gen_out)
         scores = getattr(gen_out, "scores", None)
-        if scores is None:
+        if sequences is None:
             raise RuntimeError(
-                "QwenFast generate did not return 'scores'. Ensure "
+                "QwenFast generate did not return 'sequences'. Ensure "
                 "'return_dict_in_generate=True' and 'output_scores=True'."
+            )
+        if scores is None or len(scores) == 0:
+            raise RuntimeError(
+                "QwenFast generate did not return non-empty 'scores'. Ensure "
+                "'return_dict_in_generate=True' and 'output_scores=True', and the "
+                "generated sequence length is > 0."
             )
 
         gen_len = len(scores)
-        if gen_len == 0:
-            raise RuntimeError("QwenFast generate returned empty scores.")
-
         gen_token_ids = sequences[:, -gen_len:]
-
-        step_logprobs: list[torch.Tensor] = []
-        for t in range(gen_len):
-            step_scores = scores[t].float()
-            step_logp = torch.log_softmax(step_scores, dim=-1).gather(
-                dim=-1,
-                index=gen_token_ids[:, t].unsqueeze(-1),
-            )
-            step_logprobs.append(step_logp.squeeze(-1))
-        gen_logprobs = torch.stack(step_logprobs, dim=1)
+        bsz = int(gen_token_ids.size(0))
+        gen_logprobs = torch.empty(
+            (bsz, gen_len),
+            device=gen_token_ids.device,
+            dtype=torch.float32,
+        )
+        for t, step_scores in enumerate(scores):
+            logp = torch.log_softmax(step_scores.float(), dim=-1)
+            gen_logprobs[:, t] = logp.gather(
+                dim=-1, index=gen_token_ids[:, t].unsqueeze(-1)
+            ).squeeze(-1)
 
         # 3) Find FAST-action token span and verify rollout horizon contract.
         act_min, act_max = resolve_fast_action_token_range(policy.starvla_model)
@@ -150,30 +154,11 @@ def run_rollout_fast(
         max_action_tokens = resolve_fast_max_action_tokens(policy)
         pad_id = resolve_vlm_pad_token_id(policy.starvla_model, default=0)
 
-        bsz = int(gen_token_ids.size(0))
         n_chunks = int(policy.num_action_chunks)
         act_dim = int(policy.action_dim)
         expected_coeffs = n_chunks * act_dim
 
         fast_processor = policy.starvla_model.action_model.fast_tokenizer
-
-        def decode_fast_ids_to_action(fast_ids: list[int]) -> np.ndarray:
-            decoded_single = fast_processor.decode([fast_ids])
-            arr = np.asarray(decoded_single)
-            if arr.dtype == object:
-                arr = np.asarray(arr[0], dtype=np.float32)
-            else:
-                arr = arr.astype(np.float32)
-                if arr.ndim >= 1:
-                    arr = arr[0]
-
-            if arr.ndim == 1 and arr.size == expected_coeffs:
-                arr = arr.reshape(n_chunks, act_dim)
-            if arr.shape != (n_chunks, act_dim):
-                raise RuntimeError(
-                    f"QwenFast decode shape mismatch: expected ({n_chunks}, {act_dim}), got {arr.shape}."
-                )
-            return arr
 
         action_tokens = torch.full(
             (bsz, max_action_tokens),
@@ -192,6 +177,7 @@ def run_rollout_fast(
             dtype=torch.float32,
         )
         normalized_actions = np.zeros((bsz, n_chunks, act_dim), dtype=np.float32)
+
         # 5) Decode generated FAST action tokens using native starVLA helpers only.
         native_extract = getattr(
             policy.starvla_model, "_extract_action_token_ids", None
@@ -225,8 +211,8 @@ def run_rollout_fast(
             )
 
         for b in range(bsz):
-            vlm_ids = [int(t) for t in batch_vlm_ids[b]][:max_action_tokens]
-            fast_ids = [int(t) for t in batch_fast_ids[b]][:max_action_tokens]
+            vlm_ids = [int(t) for t in batch_vlm_ids[b]]
+            fast_ids = [int(t) for t in batch_fast_ids[b]]
             if not vlm_ids or not fast_ids:
                 raise RuntimeError(
                     f"QwenFast native decode empty action tokens at sample {b}."
@@ -236,16 +222,59 @@ def run_rollout_fast(
                     f"QwenFast native decode token length mismatch at sample {b}: "
                     f"{len(vlm_ids)} vs {len(fast_ids)}."
                 )
-            arr = decode_fast_ids_to_action(fast_ids)
+            if len(vlm_ids) > max_action_tokens:
+                raise RuntimeError(
+                    f"QwenFast action token length exceeds max_action_tokens at sample {b}: "
+                    f"len={len(vlm_ids)} > max_action_tokens={max_action_tokens}. "
+                    "Increase RLINF_QWENFAST_MAX_ACTION_TOKENS."
+                )
+            arr = np.asarray(fast_processor.decode([fast_ids]))
+            if arr.dtype == object:
+                arr = np.asarray(arr[0], dtype=np.float32)
+            else:
+                arr = arr.astype(np.float32)
+                if arr.ndim >= 1:
+                    arr = arr[0]
+            if arr.ndim == 1 and arr.size == expected_coeffs:
+                arr = arr.reshape(n_chunks, act_dim)
+            if arr.shape != (n_chunks, act_dim):
+                raise RuntimeError(
+                    f"QwenFast decode shape mismatch: expected ({n_chunks}, {act_dim}), got {arr.shape}."
+                )
 
             idx = action_mask[b].nonzero(as_tuple=False).flatten()
-            prefix_len = len(vlm_ids)
             if idx.numel() == 0:
                 raise RuntimeError(
                     f"QwenFast no action token span found at sample {b}."
                 )
-            idx = idx[:prefix_len]
-            prefix_len = int(idx.numel())
+            if int(idx.numel()) != len(vlm_ids):
+                raise RuntimeError(
+                    "QwenFast action-token span mismatch at sample "
+                    f"{b}: action_mask count={int(idx.numel())} but native_extract returned {len(vlm_ids)} tokens."
+                )
+            expected_idx = torch.arange(
+                gen_len - len(vlm_ids),
+                gen_len,
+                device=gen_token_ids.device,
+                dtype=idx.dtype,
+            )
+            if not torch.equal(idx, expected_idx):
+                raise RuntimeError(
+                    "QwenFast action tokens must form a contiguous suffix of the generated sequence "
+                    f"for stable PPO replay, but sample {b} has indices={idx.tolist()} "
+                    f"(expected suffix indices={expected_idx.tolist()})."
+                )
+            expected_tokens = torch.as_tensor(
+                vlm_ids,
+                device=gen_token_ids.device,
+                dtype=torch.long,
+            )
+            if not torch.equal(gen_token_ids[b, idx], expected_tokens):
+                raise RuntimeError(
+                    f"QwenFast action token IDs mismatch at sample {b}: native_extract tokens do not match "
+                    "generated token IDs at masked positions."
+                )
+            prefix_len = len(vlm_ids)
 
             action_tokens[b, :prefix_len] = torch.as_tensor(
                 vlm_ids[:prefix_len],
@@ -253,9 +282,7 @@ def run_rollout_fast(
                 dtype=torch.long,
             )
             action_token_mask[b, :prefix_len] = True
-            token_logprob_sums[b] = (
-                gen_logprobs[b, idx[:prefix_len]].sum().to(dtype=torch.float32)
-            )
+            token_logprob_sums[b] = gen_logprobs[b, idx].sum()
             normalized_actions[b] = arr
 
         # 7) Map sequence-level FAST logprob sums into RLinf [B, T, D] convention.

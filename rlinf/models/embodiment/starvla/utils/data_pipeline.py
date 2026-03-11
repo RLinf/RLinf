@@ -16,15 +16,12 @@
 
 from __future__ import annotations
 
-import warnings
-from collections.abc import Mapping
 from typing import Any, Callable, Optional
 
 import numpy as np
 import torch
 from PIL import Image
 
-from . import action_space as action_space_utils
 from .profile import resolve_vlm_interface
 
 
@@ -48,24 +45,14 @@ def build_examples_from_env_obs(
     task_desc = env_obs.get("task_descriptions")
     states = env_obs.get("states")
 
-    def to_numpy(x):
-        if torch.is_tensor(x):
-            return tensor_to_numpy_compatible(x)
-        return np.asarray(x)
+    def to_numpy(x: Any) -> np.ndarray:
+        return tensor_to_numpy_compatible(x) if torch.is_tensor(x) else np.asarray(x)
 
-    def to_pil(img_arr):
-        if img_arr.dtype != np.uint8:
-            img_arr = np.clip(img_arr, 0, 255).astype(np.uint8)
-        return Image.fromarray(img_arr)
-
-    def append_views(views: list[Image.Image], arr: Optional[np.ndarray]):
-        if arr is None:
-            return
-        if arr.ndim == 4:
-            for v in range(arr.shape[0]):
-                views.append(to_pil(arr[v]))
-        elif arr.ndim == 3:
-            views.append(to_pil(arr))
+    def to_pil(img_arr: np.ndarray) -> Image.Image:
+        arr = img_arr
+        if arr.dtype != np.uint8:
+            arr = np.clip(arr, 0, 255).astype(np.uint8)
+        return Image.fromarray(arr)
 
     main_images_np = to_numpy(main_images)
     extra_view_images_np = (
@@ -75,11 +62,15 @@ def build_examples_from_env_obs(
 
     examples: list[dict[str, Any]] = []
     for i in range(main_images_np.shape[0]):
-        views = [to_pil(main_images_np[i])]
-        append_views(
-            views, None if extra_view_images_np is None else extra_view_images_np[i]
-        )
-        append_views(views, None if wrist_images_np is None else wrist_images_np[i])
+        views: list[Image.Image] = [to_pil(main_images_np[i])]
+        for stack in (extra_view_images_np, wrist_images_np):
+            if stack is None:
+                continue
+            arr = stack[i]
+            if arr.ndim == 4:
+                views.extend(to_pil(arr[v]) for v in range(arr.shape[0]))
+            elif arr.ndim == 3:
+                views.append(to_pil(arr))
 
         sample: dict[str, Any] = {
             "image": views,
@@ -87,9 +78,8 @@ def build_examples_from_env_obs(
         }
 
         if states is not None:
-            state_i = states[i]
             state_i = prepare_state_tensor(
-                state_i,
+                states[i],
                 state_adapter_name=state_adapter_name,
                 context="build_examples_from_env_obs",
             )
@@ -110,29 +100,6 @@ def get_scalar(value: Any, default: Any, cast):
     return cast(value)
 
 
-def build_sampling_param_tensors(
-    do_sample: bool,
-    temperature: float,
-    top_k: int,
-    top_p: float,
-    batch_size: int,
-) -> dict[str, torch.Tensor]:
-    """Build batch-aligned sampling metadata tensors for replay storage."""
-    bsz = int(batch_size)
-    if bsz <= 0:
-        raise ValueError(f"batch_size must be > 0, got {batch_size}")
-
-    def _scalar(value: Any, dtype: torch.dtype) -> torch.Tensor:
-        return torch.tensor(value, dtype=dtype).view(1).repeat(bsz)
-
-    return {
-        "do_sample": _scalar(int(do_sample), torch.int64),
-        "temperature": _scalar(float(temperature), torch.float32),
-        "top_k": _scalar(int(top_k), torch.int64),
-        "top_p": _scalar(float(top_p), torch.float32),
-    }
-
-
 def apply_sampling_filters(logits: torch.Tensor, data: dict[str, Any]) -> torch.Tensor:
     """Apply temperature/top-k/top-p filtering to logits."""
     filtered = logits
@@ -146,9 +113,7 @@ def apply_sampling_filters(logits: torch.Tensor, data: dict[str, Any]) -> torch.
     if top_k > 0:
         k = min(top_k, filtered.size(-1))
         kth = torch.topk(filtered, k=k, dim=-1).values[..., -1]
-        neg_inf = torch.tensor(
-            float("-inf"), device=filtered.device, dtype=filtered.dtype
-        )
+        neg_inf = filtered.new_full((), float("-inf"))
         filtered = torch.where(filtered < kth.unsqueeze(-1), neg_inf, filtered)
 
     top_p = get_scalar(data.get("top_p"), default=1.0, cast=float)
@@ -174,16 +139,14 @@ def collect_tensor_inputs(
 ) -> dict[str, torch.Tensor]:
     """Collect model-input tensors while skipping rollout-only keys."""
     skip_all = set(skip_keys) | ignored_keys
-    inputs: dict[str, torch.Tensor] = {}
-    for key, value in data.items():
-        if key in skip_all:
-            continue
-        if isinstance(value, torch.Tensor):
-            inputs[key] = value
-    return inputs
+    return {
+        key: value
+        for key, value in data.items()
+        if key not in skip_all and isinstance(value, torch.Tensor)
+    }
 
 
-def ensure_default_forward_replay_batch(data: dict[str, torch.Tensor]) -> None:
+def forward_input_check(data: dict[str, torch.Tensor]) -> None:
     """Validate replay batch has mandatory action/prompt tensors."""
     if "action" not in data:
         raise KeyError(
@@ -264,130 +227,35 @@ def collect_default_forward_model_inputs(
     return restore_pixel_values_for_forward(model_inputs)
 
 
-def prepare_actions_for_default_forward(
+def fetch_action_for_logprob_for_default_forward(
     policy,
     *,
-    env_actions: torch.Tensor,
+    data: dict[str, Any],
     reference: torch.Tensor,
 ) -> torch.Tensor:
-    """Convert env actions to model action space and target shape."""
-    action = env_actions
-    if action.ndim == 2:
-        bsz = action.shape[0]
-        action = action.view(bsz, policy.num_action_chunks, policy.action_dim)
-    elif action.ndim != 3:
-        raise ValueError(f"Expected 'action' [B, T*D] or [B,T,D], got {action.shape}")
+    """Resolve action tensor for default_forward.
 
-    action = action.to(device=reference.device, dtype=reference.dtype)
-    return action_space_utils.normalize_actions_for_model(
-        env_actions=action,
-        action_norm_stats=policy._action_norm_stats,
-    )
-
-
-def project_rollout_actions_for_logprob(
-    policy,
-    *,
-    rollout_actions: torch.Tensor,
-) -> torch.Tensor:
-    """Project rollout actions to the same model space used in training.
-
-    This follows the exact transform chain used by rollout storage + training:
-        rollout action -> env action (storage) -> model action (training forward).
-    Use this when computing rollout-time ``prev_logprobs`` to ensure old/new
-    logprobs are compared in the same action space.
+    Preferred path: use rollout-cached ``action_for_logprob`` directly so training
+    avoids extra env<->model remapping. No fallback is provided if the key is missing
     """
-    action_norm_stats = (
-        None if policy.disable_action_unnormalization else policy._action_norm_stats
-    )
-
-    env_actions_np, _ = action_space_utils.unnormalize_actions_for_env(
-        normalized_actions=tensor_to_numpy_compatible(rollout_actions),
-        action_norm_stats=action_norm_stats,
-        # Avoid duplicate warnings here; the main rollout action path will emit it.
-        warned_missing_action_norm_stats=True,
-    )
-    env_actions_t = torch.from_numpy(env_actions_np).to(
-        device=rollout_actions.device,
-        dtype=rollout_actions.dtype,
-    )
-    return action_space_utils.normalize_actions_for_model(
-        env_actions=env_actions_t,
-        action_norm_stats=policy._action_norm_stats,
-    )
-
-
-def clip_logprobs_with_old_logprobs(
-    *,
-    logprobs: torch.Tensor,
-    data: Mapping[str, torch.Tensor],
-    clip_log_ratio_min: Optional[float],
-    clip_log_ratio_max: Optional[float],
-    clip_log_ratio_level: str,
-    warned_once: Optional[set[str]] = None,
-    warn_key_shape_mismatch: str = "logprob_clip_shape_mismatch",
-) -> torch.Tensor:
-    """Clamp log-ratio by adjusting returned logprobs using stored old logprobs.
-
-    This helper is used when RLinf's actor/loss pipeline does not plumb
-    ``clip_log_ratio_min/max`` into the loss function.
-    """
-    level = str(clip_log_ratio_level or "").strip().lower()
-    if level in {"", "disabled"}:
-        return logprobs
-    if level not in {"token_level", "action_level", "chunk_level"}:
-        return logprobs
-    if clip_log_ratio_min is None and clip_log_ratio_max is None:
-        return logprobs
-
-    old_logprobs = data.get("prev_logprobs")
-    if not isinstance(old_logprobs, torch.Tensor):
-        return logprobs
-    if old_logprobs.shape != logprobs.shape:
-        if warned_once is None:
-            return logprobs
-        if warn_key_shape_mismatch in warned_once:
-            return logprobs
-        warnings.warn(
-            "starVLA log-ratio clipping skipped due to shape mismatch: "
-            f"logprobs.shape={tuple(logprobs.shape)}, "
-            f"prev_logprobs.shape={tuple(old_logprobs.shape)}.",
-            stacklevel=2,
+    action_for_logprob = data.get("action_for_logprob")
+    if isinstance(action_for_logprob, torch.Tensor):
+        if action_for_logprob.ndim == 2:
+            bsz = action_for_logprob.shape[0]
+            action_for_logprob = action_for_logprob.view(
+                bsz, policy.num_action_chunks, policy.action_dim
+            )
+        elif action_for_logprob.ndim != 3:
+            raise ValueError(
+                "Expected 'action_for_logprob' [B, T*D] or [B,T,D], "
+                f"got {action_for_logprob.shape}"
+            )
+        return action_for_logprob.to(device=reference.device, dtype=reference.dtype)
+    else:
+        raise KeyError(
+            "Missing 'action_for_logprob' in training batch. Rollout must store forward_inputs['action_for_logprob'] for efficient training. "
+            "There is no legacy fallback for missing 'action_for_logprob' cache to ensure training logprobs are always computed in the same action space. "
         )
-        warned_once.add(warn_key_shape_mismatch)
-        return logprobs
-
-    log_ratio = logprobs - old_logprobs
-
-    def _clamp(x: torch.Tensor) -> torch.Tensor:
-        if clip_log_ratio_min is not None:
-            x = torch.clamp(x, min=float(clip_log_ratio_min))
-        if clip_log_ratio_max is not None:
-            x = torch.clamp(x, max=float(clip_log_ratio_max))
-        return x
-
-    if level == "token_level":
-        return old_logprobs + _clamp(log_ratio)
-
-    if level == "action_level":
-        if log_ratio.ndim < 2:
-            return old_logprobs + _clamp(log_ratio)
-
-        denom = float(max(1, int(log_ratio.shape[-1])))
-        summed = log_ratio.sum(dim=-1, keepdim=True)
-        clamped = _clamp(summed)
-        shift = (clamped - summed) / denom
-        return logprobs + shift
-
-    # chunk_level
-    bsz = int(log_ratio.shape[0])
-    flat = log_ratio.reshape(bsz, -1)
-    denom = float(max(1, int(flat.shape[-1])))
-    summed = flat.sum(dim=-1, keepdim=True)
-    clamped = _clamp(summed)
-    shift = (clamped - summed) / denom
-    shift = shift.view(bsz, *([1] * (log_ratio.ndim - 1)))
-    return logprobs + shift
 
 
 def pack_model_inputs_for_storage(
@@ -423,11 +291,6 @@ def pack_model_inputs_for_storage(
     return packed
 
 
-_PROMPT_LEN_CFG_KEYS: tuple[str, ...] = (
-    "rollout_prompt_seq_len",
-    "rollout_prompt_length",
-    "prompt_seq_len",
-)
 _PAD_2D_KEYS: tuple[str, ...] = (
     "input_ids",
     "attention_mask",
@@ -460,7 +323,11 @@ def normalize_model_inputs_for_storage(
             "action_model",
             None,
         )
-        for key in _PROMPT_LEN_CFG_KEYS:
+        for key in (
+            "rollout_prompt_seq_len",
+            "rollout_prompt_length",
+            "prompt_seq_len",
+        ):
             value = getattr(action_cfg, key, None) if action_cfg is not None else None
             try:
                 value = int(value)

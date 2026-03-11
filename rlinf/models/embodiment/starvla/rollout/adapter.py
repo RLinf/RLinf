@@ -51,7 +51,6 @@ def run_rollout_adapter(
         env_obs.get("states"),
         starvla_model=policy.starvla_model,
         default_state_adapter_name=policy.state_adapter_type,
-        warned_keys=policy._warned_once,
         state_adapter_name="adapter",
         context="predict_action_batch_state",
     )
@@ -87,18 +86,15 @@ def run_rollout_adapter(
     # 5) Build Gaussian actor, sample/greedy action, and clip to env action bounds.
     dist = Normal(mean_actions, torch.exp(policy.actor_logstd).view(1, 1, -1))
     sample_actions = bool(sampling_kwargs.get("do_sample")) and mode == "train"
-    actions_t = dist.sample() if sample_actions else mean_actions
-    actions_exec = action_space_utils.clip_actions_for_env(actions_t)
+    actions_for_logprob = dist.sample() if sample_actions else mean_actions
 
-    # 6) Optionally compute rollout-time logprob/value baselines for training replay.
+    # 6) Build env execution action from model-space action.
+    actions_exec = action_space_utils.clip_actions_for_env(actions_for_logprob)
+
+    # 7) Optionally compute rollout-time logprob/value baselines for training replay.
     prev_logprobs: Optional[torch.Tensor] = None
     prev_values: Optional[torch.Tensor] = None
     if calculate_logprobs:
-        # Keep old/new logprobs in the same action space used by training forward.
-        actions_for_logprob = data_pipeline_utils.project_rollout_actions_for_logprob(
-            policy,
-            rollout_actions=actions_exec,
-        )
         prev_logprobs = dist.log_prob(actions_for_logprob).to(dtype=torch.float32)
     if calculate_values:
         if policy.value_head is None:
@@ -112,7 +108,7 @@ def run_rollout_adapter(
                 dtype=torch.float32
             )
 
-    # 7) Return env actions and cached tensors used by default_forward training.
+    # 8) Return env actions and cached tensors used by default_forward training.
     return {
         "output": {
             "normalized_actions": data_pipeline_utils.tensor_to_numpy_compatible(
@@ -122,6 +118,8 @@ def run_rollout_adapter(
         "model_inputs": model_inputs,
         "prev_logprobs": prev_logprobs,
         "prev_values": prev_values,
-        "extra_forward_inputs": {},
+        "extra_forward_inputs": {
+            "action_for_logprob": actions_for_logprob.to(dtype=torch.float32)
+        },
         "state": state,
     }

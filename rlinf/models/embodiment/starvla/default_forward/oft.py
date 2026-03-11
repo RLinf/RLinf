@@ -41,7 +41,7 @@ def run_default_forward_oft(
 ) -> dict[str, torch.Tensor | None]:
     """Compute training-time PPO terms for the OFT action head."""
     # 1) Validate rollout replay tensors required by OFT training path.
-    data_pipeline_utils.ensure_default_forward_replay_batch(data)
+    data_pipeline_utils.forward_input_check(data)
 
     # 2) Rebuild model inputs from cached tensors and restore packed vision fields.
     model_inputs = data_pipeline_utils.collect_default_forward_model_inputs(
@@ -68,13 +68,14 @@ def run_default_forward_oft(
         backbone_output=backbone_output,
         model_inputs=model_inputs,
     )
-    mean_actions = mean_actions.clamp(-1.0, 1.0)
 
     # 4) Convert env actions into the model-normalized action space.
-    action = data_pipeline_utils.prepare_actions_for_default_forward(
-        policy,
-        env_actions=data["action"],
-        reference=mean_actions,
+    action_for_logprob = (
+        data_pipeline_utils.fetch_action_for_logprob_for_default_forward(
+            policy,
+            data=data,
+            reference=mean_actions,
+        )
     )
 
     # 5) Build Gaussian actor and fill requested RL terms.
@@ -86,7 +87,7 @@ def run_default_forward_oft(
     }
 
     if compute_logprobs:
-        result["logprobs"] = dist.log_prob(action).to(dtype=torch.float32)
+        result["logprobs"] = dist.log_prob(action_for_logprob).to(dtype=torch.float32)
     if compute_entropy:
         result["entropy"] = dist.entropy().to(dtype=torch.float32)
     if compute_values:

@@ -24,7 +24,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
 
-from . import action_space as action_space_utils
 from . import state as state_utils
 from .backbone_pipeline import BackboneOutput
 
@@ -215,15 +214,15 @@ def run_adapter_action_head(
     multi_layer_hidden_states = []
     image_token_id = getattr(model, "_rlinf_image_token_id", None)
     if image_token_id is None:
+        vlm_interface = getattr(model, "qwen_vl_interface", None)
+        model_cfg = getattr(getattr(vlm_interface, "model", None), "config", None)
         token_id = model_inputs.get("image_token_id")
         if isinstance(token_id, torch.Tensor) and token_id.numel() > 0:
             token_id = int(token_id.reshape(-1)[0].item())
-        vlm_interface = getattr(model, "qwen_vl_interface", None)
-        model_cfg = getattr(getattr(vlm_interface, "model", None), "config", None)
-        if token_id is None:
+        else:
             token_id = getattr(model_cfg, "image_token_id", None)
-        if token_id is None:
-            token_id = getattr(model_cfg, "vision_token_id", None)
+            if token_id is None:
+                token_id = getattr(model_cfg, "vision_token_id", None)
         if token_id is None:
             raise RuntimeError(
                 "Cannot resolve image_token_id for adapter action head. "
@@ -246,9 +245,7 @@ def run_adapter_action_head(
             f"but none were found for batch indices {bad_idx} with image_token_id={image_token_id}."
         )
     seq_len = int(input_ids.shape[1])
-    seq_indices = torch.arange(
-        seq_len, device=input_ids.device, dtype=torch.long
-    ).unsqueeze(0)
+    seq_indices = torch.arange(seq_len, device=device, dtype=torch.long).unsqueeze(0)
     first_index_per_sample = (
         torch.where(
             image_mask,
@@ -270,32 +267,25 @@ def run_adapter_action_head(
     vision_patch_lengths = last_index_per_sample - first_index_per_sample + 1
     max_patch_len = int(vision_patch_lengths.max().item())
 
-    for layer_hidden in hidden_states:
-        batch_indices = (
-            torch.arange(batch_size, device=device)
-            .unsqueeze(1)
-            .expand(-1, max_patch_len)
-        )
-        seq_indices = (
-            torch.arange(max_patch_len, device=device)
-            .unsqueeze(0)
-            .expand(batch_size, -1)
-        )
-        seq_indices = seq_indices + first_index_per_sample.unsqueeze(1)
-        seq_indices = torch.clamp(seq_indices, max=last_index_per_sample.unsqueeze(1))
-        batch_vision_states = layer_hidden[batch_indices, seq_indices, :]
+    batch_indices = (
+        torch.arange(batch_size, device=device).unsqueeze(1).expand(-1, max_patch_len)
+    )
+    patch_offsets = (
+        torch.arange(max_patch_len, device=device).unsqueeze(0).expand(batch_size, -1)
+    )
+    seq_indices = patch_offsets + first_index_per_sample.unsqueeze(1)
+    seq_indices = torch.minimum(seq_indices, last_index_per_sample.unsqueeze(1))
+    padding_mask = patch_offsets >= vision_patch_lengths.unsqueeze(1)
+    batch_indices_action = (
+        torch.arange(batch_size, device=device)
+        .unsqueeze(1)
+        .expand(-1, action_query_num)
+    )
 
-        padding_mask = torch.arange(max_patch_len, device=device).unsqueeze(
-            0
-        ) >= vision_patch_lengths.unsqueeze(1)
+    for layer_hidden in hidden_states:
+        batch_vision_states = layer_hidden[batch_indices, seq_indices, :]
         batch_vision_states = batch_vision_states.masked_fill(
             padding_mask.unsqueeze(-1), 0.0
-        )
-
-        batch_indices_action = (
-            torch.arange(batch_size, device=device)
-            .unsqueeze(1)
-            .expand(-1, action_query_num)
         )
         action_query_states = layer_hidden[
             batch_indices_action, action_positions_tensor, :
@@ -317,7 +307,6 @@ def run_adapter_action_head(
         state,
         starvla_model=policy.starvla_model,
         default_state_adapter_name=policy.state_adapter_type,
-        warned_keys=policy._warned_once,
         state_adapter_name="adapter",
         device=multi_layer_hidden_states.device,
         dtype=multi_layer_hidden_states.dtype,
@@ -363,18 +352,49 @@ def resolve_flowmatching_prefix(action_head_name: str) -> str:
     return prefix
 
 
+def build_flowmatching_rollout_denoise_indices(
+    *,
+    batch_size: int,
+    num_steps: int,
+    sample_actions: bool,
+    device: torch.device,
+) -> torch.Tensor:
+    """Build per-sample denoise-step indices to replay rollout stochasticity.
+
+    This wrapper enforces non-joint rollout sampling:
+    - ``sample_actions=False``: all steps deterministic (indices=-1)
+    - ``sample_actions=True``: only one sampled step is stochastic
+    """
+    if not sample_actions:
+        return torch.full(
+            (batch_size, num_steps),
+            fill_value=-1,
+            device=device,
+            dtype=torch.long,
+        )
+
+    upper_bound = max(1, num_steps)
+    chosen_step = int(
+        torch.randint(low=0, high=upper_bound, size=(1,), device=device).item()
+    )
+    denoise_inds = torch.full(
+        (num_steps,),
+        fill_value=chosen_step,
+        device=device,
+        dtype=torch.long,
+    )
+    return denoise_inds.unsqueeze(0).expand(batch_size, -1).clone()
+
+
 def _encode_timestep_safe(dit_model: nn.Module, timestep: torch.Tensor) -> torch.Tensor:
     """Encode timestep using dtype-safe path for DiT timestep encoder."""
     timestep_encoder = dit_model.timestep_encoder
     timestep_embedder = timestep_encoder.timestep_embedder
 
-    linear_1 = getattr(timestep_embedder, "linear_1", None)
-    weight = getattr(linear_1, "weight", None)
-    if weight is not None:
-        dtype = weight.dtype
-    else:
-        proj_weight = getattr(getattr(dit_model, "proj_out_1", None), "weight", None)
-        dtype = proj_weight.dtype if proj_weight is not None else torch.float32
+    weight = getattr(getattr(timestep_embedder, "linear_1", None), "weight", None)
+    if weight is None:
+        weight = getattr(getattr(dit_model, "proj_out_1", None), "weight", None)
+    dtype = weight.dtype if isinstance(weight, torch.Tensor) else torch.float32
 
     timestep_proj = timestep_encoder.time_proj(timestep).to(dtype=dtype)
     return timestep_embedder(timestep_proj)
@@ -392,91 +412,66 @@ def _predict_velocity(
     """Predict flow velocity for PI/GR00T-style action heads."""
     velocity_mode = action_head_inputs.velocity_mode
     if velocity_mode == "pi":
-        if action_head_inputs.vl_embs_list is None:
+        vl_ctx = action_head_inputs.vl_embs_list
+        if vl_ctx is None:
             raise RuntimeError("Missing vl_embs_list for PI velocity prediction.")
-        state_features = None
-        if state_t is not None and getattr(head, "state_encoder", None) is not None:
-            state_t = state_utils.prepare_state_tensor(
-                state_t,
-                starvla_model=policy.starvla_model,
-                default_state_adapter_name=policy.state_adapter_type,
-                warned_keys=policy._warned_once,
-                head=head,
-                device=actions_t.device,
-                dtype=actions_t.dtype,
-                context="predict_pi_velocity",
-            )
-            state_features = head.state_encoder(state_t)
-
-        action_features = head.action_encoder(actions_t, t_bucket_index)
-        if getattr(head.config, "add_pos_embed", False):
-            pos_ids = torch.arange(
-                action_features.shape[1], dtype=torch.long, device=actions_t.device
-            )
-            pos_embs = head.position_embedding(pos_ids).unsqueeze(0)
-            action_features = action_features + pos_embs
-
-        future_tokens = head.future_tokens.weight.unsqueeze(0).expand(
-            actions_t.shape[0], -1, -1
-        )
-        sa_embs = (
-            torch.cat((state_features, future_tokens, action_features), dim=1)
-            if state_features is not None
-            else torch.cat((future_tokens, action_features), dim=1)
+        state_ctx = "predict_pi_velocity"
+    elif velocity_mode == "gr00t":
+        vl_ctx = action_head_inputs.vl_embs
+        if vl_ctx is None:
+            raise RuntimeError("Missing vl_embs for GR00T-style velocity prediction.")
+        state_ctx = "predict_gr00t_velocity"
+    else:
+        raise RuntimeError(
+            f"Unsupported velocity_mode={velocity_mode!r} in flowmatching backbone context."
         )
 
-        temb = _encode_timestep_safe(head.model, t_bucket_index.long())
-        model_output = sa_embs
+    state_features = None
+    if state_t is not None and getattr(head, "state_encoder", None) is not None:
+        state_t = state_utils.prepare_state_tensor(
+            state_t,
+            starvla_model=policy.starvla_model,
+            default_state_adapter_name=policy.state_adapter_type,
+            head=head,
+            device=actions_t.device,
+            dtype=actions_t.dtype,
+            context=state_ctx,
+        )
+        state_features = head.state_encoder(state_t)
+
+    action_features = head.action_encoder(actions_t, t_bucket_index)
+    if getattr(head.config, "add_pos_embed", False):
+        pos_ids = torch.arange(
+            action_features.shape[1], dtype=torch.long, device=actions_t.device
+        )
+        action_features = action_features + head.position_embedding(pos_ids).unsqueeze(
+            0
+        )
+
+    future_tokens = head.future_tokens.weight.unsqueeze(0).expand(
+        actions_t.shape[0], -1, -1
+    )
+    sa_embs = (
+        torch.cat((state_features, future_tokens, action_features), dim=1)
+        if state_features is not None
+        else torch.cat((future_tokens, action_features), dim=1)
+    )
+
+    temb = _encode_timestep_safe(head.model, t_bucket_index.long())
+    model_output = sa_embs
+    if velocity_mode == "pi":
         for layer_idx, layer in enumerate(head.model.transformer_blocks):
             model_output = layer(
                 hidden_states=model_output,
-                encoder_hidden_states=action_head_inputs.vl_embs_list[layer_idx],
+                encoder_hidden_states=vl_ctx[layer_idx],
                 temb=temb,
             )
-        pred = head.action_decoder(model_output)
-        action_horizon = int(getattr(head, "action_horizon", actions_t.shape[1]))
-        return pred[:, -action_horizon:]
-
-    if velocity_mode == "gr00t":
-        if action_head_inputs.vl_embs is None:
-            raise RuntimeError("Missing vl_embs for GR00T-style velocity prediction.")
-        state_features = None
-        if state_t is not None and getattr(head, "state_encoder", None) is not None:
-            state_t = state_utils.prepare_state_tensor(
-                state_t,
-                starvla_model=policy.starvla_model,
-                default_state_adapter_name=policy.state_adapter_type,
-                warned_keys=policy._warned_once,
-                head=head,
-                device=actions_t.device,
-                dtype=actions_t.dtype,
-                context="predict_gr00t_velocity",
-            )
-            state_features = head.state_encoder(state_t)
-
-        action_features = head.action_encoder(actions_t, t_bucket_index)
-        if getattr(head.config, "add_pos_embed", False):
-            pos_ids = torch.arange(
-                action_features.shape[1], dtype=torch.long, device=actions_t.device
-            )
-            pos_embs = head.position_embedding(pos_ids).unsqueeze(0)
-            action_features = action_features + pos_embs
-
-        future_tokens = head.future_tokens.weight.unsqueeze(0).expand(
-            actions_t.shape[0], -1, -1
+    else:
+        interleave = bool(
+            getattr(head.model.config, "interleave_self_attention", False)
         )
-        sa_embs = (
-            torch.cat((state_features, future_tokens, action_features), dim=1)
-            if state_features is not None
-            else torch.cat((future_tokens, action_features), dim=1)
-        )
-
-        temb = _encode_timestep_safe(head.model, t_bucket_index.long())
-        model_output = sa_embs
         for idx, layer in enumerate(head.model.transformer_blocks):
-            if idx % 2 == 1 and bool(
-                getattr(head.model.config, "interleave_self_attention", False)
-            ):
+            if idx % 2 == 1 and interleave:
                 model_output = layer(
                     hidden_states=model_output,
                     encoder_hidden_states=None,
@@ -486,7 +481,7 @@ def _predict_velocity(
             else:
                 model_output = layer(
                     hidden_states=model_output,
-                    encoder_hidden_states=action_head_inputs.vl_embs,
+                    encoder_hidden_states=vl_ctx,
                     encoder_attention_mask=None,
                     temb=temb,
                 )
@@ -496,13 +491,10 @@ def _predict_velocity(
             head.model.norm_out(model_output) * (1 + scale[:, None]) + shift[:, None]
         )
         model_output = head.model.proj_out_2(model_output)
-        pred = head.action_decoder(model_output)
-        action_horizon = int(getattr(head, "action_horizon", actions_t.shape[1]))
-        return pred[:, -action_horizon:]
 
-    raise RuntimeError(
-        f"Unsupported velocity_mode={velocity_mode!r} in flowmatching backbone context."
-    )
+    pred = head.action_decoder(model_output)
+    action_horizon = int(getattr(head, "action_horizon", actions_t.shape[1]))
+    return pred[:, -action_horizon:]
 
 
 def run_flowmatching_rollout_action_stage(
@@ -516,6 +508,7 @@ def run_flowmatching_rollout_action_stage(
     num_steps: int,
     sample_actions: bool,
     calculate_logprobs: bool,
+    denoise_inds: torch.Tensor,
 ) -> dict[str, Any]:
     """Roll out flowmatching transitions and collect trajectory caches."""
     rollout_hidden = action_head_inputs.rollout_hidden
@@ -527,7 +520,6 @@ def run_flowmatching_rollout_action_stage(
         dtype=rollout_hidden.dtype,
         device=rollout_hidden.device,
     )
-    actions_t = action_space_utils.clip_actions_for_env(actions_t)
 
     step_std: Optional[torch.Tensor] = None
     if sample_actions:
@@ -540,13 +532,15 @@ def run_flowmatching_rollout_action_stage(
             .view(1, 1, -1)
         )
         if step_std.shape[-1] != action_dim:
-            step_std = torch.full(
-                (1, 1, action_dim),
-                0.1,
-                device=actions_t.device,
-                dtype=actions_t.dtype,
+            raise RuntimeError(
+                f"Mismatch between resolved step_std shape {step_std.shape} and expected action_dim {action_dim} for sampled flowmatching rollout."
             )
         step_std = step_std * float(dt**0.5)
+
+    if denoise_inds.shape != (bsz, num_steps):
+        raise ValueError(
+            f"Expected denoise_inds [B,S]=[{bsz},{num_steps}], got {tuple(denoise_inds.shape)}"
+        )
 
     chain_actions: list[torch.Tensor] = [actions_t]
     t_bucket_indices: list[torch.Tensor] = []
@@ -576,14 +570,32 @@ def run_flowmatching_rollout_action_stage(
                 raise RuntimeError(
                     "Internal error: missing step_std for sampled transition."
                 )
-            dist_step = Normal(mean_next, step_std.expand_as(mean_next))
-            next_actions = action_space_utils.clip_actions_for_env(dist_step.rsample())
-            if calculate_logprobs:
-                step_logprobs.append(dist_step.log_prob(next_actions))
+            active_step_mask = denoise_inds[:, step].eq(step)
+            if bool(active_step_mask.any()):
+                dist_step = Normal(mean_next, step_std.expand_as(mean_next))
+                sampled_actions = dist_step.rsample()
+                active_step_mask_3d = active_step_mask.view(-1, 1, 1)
+                next_actions_preclip = torch.where(
+                    active_step_mask_3d,
+                    sampled_actions,
+                    mean_next,
+                )
+                if calculate_logprobs:
+                    logprob_step = dist_step.log_prob(next_actions_preclip)
+                    logprob_step = torch.where(
+                        active_step_mask_3d,
+                        logprob_step,
+                        torch.zeros_like(logprob_step),
+                    )
+                    step_logprobs.append(logprob_step)
+            else:
+                next_actions_preclip = mean_next
         else:
-            next_actions = action_space_utils.clip_actions_for_env(mean_next)
+            next_actions_preclip = mean_next
 
-        actions_t = next_actions
+        # Keep the flowmatching chain in continuous action space. We only apply
+        # env-specific clipping/discretization at the final rollout output.
+        actions_t = next_actions_preclip
         chain_actions.append(actions_t)
 
     prev_logprobs: Optional[torch.Tensor] = None
@@ -599,8 +611,6 @@ def run_flowmatching_rollout_action_stage(
         "actions_t": actions_t,
         "chain_actions": torch.stack(chain_actions, dim=1),
         "t_bucket_indices": torch.stack(t_bucket_indices, dim=1),
-        "num_steps": int(num_steps),
-        "sample_actions": bool(sample_actions),
-        "step_std": step_std,
+        "denoise_inds": denoise_inds,
         "prev_logprobs": prev_logprobs,
     }

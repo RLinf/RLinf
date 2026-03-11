@@ -31,6 +31,12 @@ _AUXILIARY_MODEL_INPUT_KEYS = {"dino_features"}
 _VLM_FORWARD_MODE_CACHE: dict[type, int] = {}
 
 
+def _get_vlm_output(vlm_outputs: Any, key: str) -> Any:
+    if isinstance(vlm_outputs, dict):
+        return vlm_outputs.get(key)
+    return getattr(vlm_outputs, key, None)
+
+
 @dataclass(frozen=True)
 class BackboneOutput:
     """Standardized backbone outputs consumed by different action heads."""
@@ -113,15 +119,14 @@ def run_vlm_backbone(
     if input_embedding_hook is not None:
         hf_model = getattr(vlm_interface, "model", None)
         embedding_layer = None
-        if hf_model is not None:
-            get_embed = getattr(hf_model, "get_input_embeddings", None)
+        for candidate in (hf_model, getattr(hf_model, "model", None)):
+            if candidate is None:
+                continue
+            get_embed = getattr(candidate, "get_input_embeddings", None)
             if callable(get_embed):
                 embedding_layer = get_embed()
-            if embedding_layer is None:
-                inner_model = getattr(hf_model, "model", None)
-                get_embed_inner = getattr(inner_model, "get_input_embeddings", None)
-                if callable(get_embed_inner):
-                    embedding_layer = get_embed_inner()
+                if embedding_layer is not None:
+                    break
         if embedding_layer is None:
             raise RuntimeError(
                 "Cannot install input embedding hook: no embedding layer found on VLM model."
@@ -134,12 +139,9 @@ def run_vlm_backbone(
             last_type_error: Optional[TypeError] = None
             iface_type = type(vlm_interface)
             cached_mode = _VLM_FORWARD_MODE_CACHE.get(iface_type)
-            candidate_modes: list[int] = []
-            if cached_mode is not None:
-                candidate_modes.append(int(cached_mode))
-            for mode in (0, 1, 2):
-                if mode not in candidate_modes:
-                    candidate_modes.append(mode)
+            candidate_modes = (
+                [int(cached_mode)] if cached_mode is not None else []
+            ) + [m for m in (0, 1, 2) if m != cached_mode]
 
             for mode in candidate_modes:
                 kwargs = dict(vlm_inputs)
@@ -169,9 +171,7 @@ def run_vlm_backbone(
         if hook_handle is not None:
             hook_handle.remove()
 
-    hidden_states = getattr(vlm_outputs, "hidden_states", None)
-    if hidden_states is None and isinstance(vlm_outputs, dict):
-        hidden_states = vlm_outputs.get("hidden_states")
+    hidden_states = _get_vlm_output(vlm_outputs, "hidden_states")
 
     if hidden_states is not None:
         if isinstance(hidden_states, torch.Tensor):
@@ -185,9 +185,7 @@ def run_vlm_backbone(
                     "VLM hidden_states exists but contains no tensor layers."
                 )
     else:
-        last_hidden = getattr(vlm_outputs, "last_hidden_state", None)
-        if last_hidden is None and isinstance(vlm_outputs, dict):
-            last_hidden = vlm_outputs.get("last_hidden_state")
+        last_hidden = _get_vlm_output(vlm_outputs, "last_hidden_state")
         if isinstance(last_hidden, torch.Tensor):
             hidden_layers = (last_hidden,)
         elif isinstance(vlm_outputs, torch.Tensor):
@@ -197,9 +195,7 @@ def run_vlm_backbone(
                 "VLM output does not provide 'hidden_states' or 'last_hidden_state'."
             )
 
-    logits = getattr(vlm_outputs, "logits", None)
-    if logits is None and isinstance(vlm_outputs, dict):
-        logits = vlm_outputs.get("logits")
+    logits = _get_vlm_output(vlm_outputs, "logits")
     if isinstance(logits, torch.Tensor):
         stripped_inputs["logits"] = logits
 

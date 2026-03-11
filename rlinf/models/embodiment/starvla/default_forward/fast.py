@@ -13,6 +13,8 @@
 # limitations under the License.
 
 """Training-time forward pass for starVLA Qwen FAST action heads."""
+# TODO(agent): FAST path is included in the current commit but still needs full
+# end-to-end training validation before treating it as fully stable.
 
 from __future__ import annotations
 
@@ -24,7 +26,6 @@ from ..utils import data_pipeline as data_pipeline_utils
 from ..utils.backbone_pipeline import run_backbone_pipeline
 from ..utils.profile import (
     RL_BATCH_TENSOR_KEYS_TO_IGNORE,
-    resolve_fast_action_token_range,
     resolve_fast_max_action_tokens,
 )
 
@@ -42,27 +43,10 @@ def run_default_forward_fast(
     use_cache: bool,
 ) -> dict[str, torch.Tensor | None]:
     """Compute training-time PPO terms for the FAST token action head."""
-    # 1) Fast path: skip all computations if no RL terms are requested.
-    if not compute_logprobs and not compute_entropy and not compute_values:
-        return {
-            "logprobs": None,
-            "entropy": None,
-            "values": None,
-        }
+    # 1) Validate required rollout caches.
+    data_pipeline_utils.forward_input_check(data)
 
-    # 2) Validate required rollout caches.
-    if "action_tokens" not in data:
-        raise KeyError(
-            "Missing 'action_tokens' in training batch. "
-            "Rollout must store forward_inputs['action_tokens']."
-        )
-    if "input_ids" not in data or "attention_mask" not in data:
-        raise KeyError(
-            "Missing prompt inputs ('input_ids'/'attention_mask') in training batch. "
-            "Rollout must store VLM prompt tensors in forward_inputs."
-        )
-
-    # 3) Load prompt/action token tensors.
+    # 2) Load prompt/action token tensors.
     prompt_input_ids = data["input_ids"].to(dtype=torch.long)
     prompt_attention_mask = data["attention_mask"]
     action_tokens = data["action_tokens"].to(dtype=torch.long)
@@ -70,55 +54,37 @@ def run_default_forward_fast(
     # 4) Resolve FAST max token length used in token-level mode.
     qwenfast_max_action_tokens = resolve_fast_max_action_tokens(policy)
 
-    # 5) Build concatenated prompt+action sequence for two supported action layouts:
-    #    - chunk layout: [B, T, D]
-    #    - token layout: [B, Lmax]
-    token_level_mode = False
-    action_token_seq: torch.Tensor
-    token_mask_bool: torch.Tensor
-    action_tokens_flat: torch.Tensor | None = None
-    if action_tokens.ndim == 3:
-        bsz, t, d = action_tokens.shape
-        if d != policy.action_dim:
-            raise ValueError(
-                f"action_dim mismatch: got {d} from action_tokens, expected {policy.action_dim}"
-            )
-        action_tokens_flat = action_tokens.reshape(bsz, -1)
-        action_token_seq = action_tokens_flat
-        token_mask_bool = torch.ones(
-            action_token_seq.shape,
-            device=prompt_attention_mask.device,
-            dtype=torch.bool,
+    # 5) Build concatenated prompt+action token sequence.
+    # FAST rollout caches padded action token sequences as [B, Lmax] + action_token_mask.
+    if action_tokens.ndim != 2:
+        raise ValueError(
+            f"FAST expected action_tokens [B, Lmax], got {tuple(action_tokens.shape)}"
         )
-    elif action_tokens.ndim == 2:
-        token_level_mode = True
-        bsz, num_action_tokens = action_tokens.shape
-        if num_action_tokens != qwenfast_max_action_tokens:
-            raise ValueError(
-                "FAST expected padded action_tokens length "
-                f"Lmax={qwenfast_max_action_tokens} but got {num_action_tokens}. "
-                "Ensure rollout and training use the same RLINF_QWENFAST_MAX_ACTION_TOKENS."
-            )
-        token_mask = data.get("action_token_mask")
-        if isinstance(token_mask, torch.Tensor):
-            token_mask_bool = token_mask.to(dtype=torch.bool)
-        else:
-            act_min, act_max = resolve_fast_action_token_range(policy.starvla_model)
-            token_mask_bool = (action_tokens >= act_min) & (action_tokens <= act_max)
-        action_token_seq = action_tokens
-    else:
-        raise ValueError(f"Unsupported action_tokens shape: {action_tokens.shape}")
+    bsz, num_action_tokens = action_tokens.shape
+    if num_action_tokens != qwenfast_max_action_tokens:
+        raise ValueError(
+            "FAST expected padded action_tokens length "
+            f"Lmax={qwenfast_max_action_tokens} but got {num_action_tokens}. "
+            "Ensure rollout and training use the same RLINF_QWENFAST_MAX_ACTION_TOKENS."
+        )
 
-    num_action_tokens = int(action_token_seq.shape[1])
-    input_ids = torch.cat([prompt_input_ids, action_token_seq], dim=-1)
+    token_mask = data.get("action_token_mask")
+    if not isinstance(token_mask, torch.Tensor):
+        raise KeyError(
+            "Missing 'action_token_mask' in training batch. "
+            "FAST rollout must store forward_inputs['action_token_mask']."
+        )
+    token_mask_bool = token_mask.to(dtype=torch.bool)
     action_mask = token_mask_bool.to(
         device=prompt_attention_mask.device,
         dtype=prompt_attention_mask.dtype,
     )
+
+    input_ids = torch.cat([prompt_input_ids, action_tokens], dim=-1)
     attention_mask = torch.cat([prompt_attention_mask, action_mask], dim=-1)
 
     # 6) Rebuild model inputs and run backbone once.
-    model_inputs = data_pipeline_utils.collect_tensor_inputs(
+    model_inputs = data_pipeline_utils.collect_default_forward_model_inputs(
         data,
         skip_keys={
             "action_tokens",
@@ -133,7 +99,6 @@ def run_default_forward_fast(
     )
     model_inputs["input_ids"] = input_ids
     model_inputs["attention_mask"] = attention_mask
-    model_inputs = data_pipeline_utils.restore_pixel_values_for_forward(model_inputs)
 
     backbone_output = run_backbone_pipeline(
         policy,
@@ -147,9 +112,17 @@ def run_default_forward_fast(
         )
 
     action_logits = action_logits[:, -(num_action_tokens + 1) : -1, :].float()
-    action_logits = data_pipeline_utils.apply_sampling_filters(
-        logits=action_logits, data=data
+    do_sample = bool(
+        data_pipeline_utils.get_scalar(
+            data.get("do_sample"),
+            default=0,
+            cast=int,
+        )
     )
+    if do_sample:
+        action_logits = data_pipeline_utils.apply_sampling_filters(
+            logits=action_logits, data=data
+        )
 
     # 7) Prepare result container and (if needed) token log-probabilities.
     result: dict[str, torch.Tensor | None] = {
@@ -171,29 +144,17 @@ def run_default_forward_fast(
             raise RuntimeError(
                 "Internal error: expected token log-probs tensor when compute_logprobs is enabled."
             )
-        if not token_level_mode:
-            if action_tokens_flat is None:
-                raise RuntimeError(
-                    "Internal error: expected flattened action tokens in chunk layout."
-                )
-            logprobs = logp_all.gather(
-                dim=-1, index=action_tokens_flat.unsqueeze(-1)
-            ).squeeze(-1)
-            result["logprobs"] = logprobs.view(bsz, t, d).to(dtype=torch.float32)
-        else:
-            logprobs = logp_all.gather(
-                dim=-1, index=action_tokens.unsqueeze(-1)
-            ).squeeze(-1)
-            logprobs = torch.where(
-                token_mask_bool, logprobs, torch.zeros_like(logprobs)
-            )
-            total_logprob = logprobs.sum(dim=-1).to(dtype=torch.float32)
-            result["logprobs"] = (
-                (total_logprob / token_level_denom)
-                .view(bsz, 1, 1)
-                .expand(bsz, n_chunks, act_dim)
-                .contiguous()
-            )
+        logprobs = logp_all.gather(dim=-1, index=action_tokens.unsqueeze(-1)).squeeze(
+            -1
+        )
+        logprobs = torch.where(token_mask_bool, logprobs, torch.zeros_like(logprobs))
+        total_logprob = logprobs.sum(dim=-1).to(dtype=torch.float32)
+        result["logprobs"] = (
+            (total_logprob / token_level_denom)
+            .view(bsz, 1, 1)
+            .expand(bsz, n_chunks, act_dim)
+            .contiguous()
+        )
     if compute_entropy:
         if logp_all is None:
             raise RuntimeError(
@@ -201,17 +162,14 @@ def run_default_forward_fast(
             )
         probs = torch.exp(logp_all)
         entropy = -(probs * logp_all).sum(dim=-1)
-        if not token_level_mode:
-            result["entropy"] = entropy.view(bsz, t, d).to(dtype=torch.float32)
-        else:
-            entropy = torch.where(token_mask_bool, entropy, torch.zeros_like(entropy))
-            total_entropy = entropy.sum(dim=-1).to(dtype=torch.float32)
-            result["entropy"] = (
-                (total_entropy / token_level_denom)
-                .view(bsz, 1, 1)
-                .expand(bsz, n_chunks, act_dim)
-                .contiguous()
-            )
+        entropy = torch.where(token_mask_bool, entropy, torch.zeros_like(entropy))
+        total_entropy = entropy.sum(dim=-1).to(dtype=torch.float32)
+        result["entropy"] = (
+            (total_entropy / token_level_denom)
+            .view(bsz, 1, 1)
+            .expand(bsz, n_chunks, act_dim)
+            .contiguous()
+        )
     if compute_values:
         if policy.value_head is None:
             result["values"] = torch.zeros(

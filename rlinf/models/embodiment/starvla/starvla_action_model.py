@@ -50,10 +50,6 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
     (or runtime overrides).
     """
 
-    _WARN_KEY_DEFAULT_FORWARD_DATA_FALLBACK = "default_forward_data_fallback"
-    _WARN_KEY_MISSING_ACTION_NORM_STATS = "missing_action_norm_stats"
-    _WARN_KEY_LOGPROB_CLIP_SHAPE_MISMATCH = "logprob_clip_shape_mismatch"
-
     def __init__(
         self,
         starvla_model: nn.Module,
@@ -61,80 +57,50 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
         num_action_chunks: int,
         add_value_head: bool = True,
         unnorm_key: Optional[str] = None,
-        disable_action_unnormalization: bool = False,
-        clip_log_ratio_min: Optional[float] = None,
-        clip_log_ratio_max: Optional[float] = None,
-        clip_log_ratio_level: str = "action_level",
     ):
         super().__init__()
+
+        # 1) Core wiring / shape contracts.
         self.starvla_model = starvla_model
         self.action_dim = int(action_dim)
         self.num_action_chunks = int(num_action_chunks)
-        self.unnorm_key = None if unnorm_key is None else str(unnorm_key)
-        self.disable_action_unnormalization = bool(disable_action_unnormalization)
+        if unnorm_key is None:
+            raise ValueError(
+                "starVLA requires cfg.unnorm_key to unnormalize actions for env rollout. "
+                "Set 'actor.model.unnorm_key' (e.g. 'franka' for LIBERO)."
+            )
+        self.unnorm_key = str(unnorm_key)
 
-        # Infer policy profile to determine action-head/VLM/state-adapter types and param dtype.
+        # 2) Action unnormalization stats (strict: required when unnorm_key is set).
+        self._action_norm_stats = action_space_utils.resolve_action_norm_stats(
+            starvla_model=self.starvla_model,
+            unnorm_key=self.unnorm_key,
+            action_dim=self.action_dim,
+        )
+
+        # 3) Dispatch profile (action head + state adapter).
         policy_profile = infer_policy_profile(starvla_model)
-        self.vlm_type = policy_profile.vlm_type
         self.action_head_type = policy_profile.action_head_type
         self.state_adapter_type = policy_profile.state_adapter_type
-        self.is_continuous_action = bool(policy_profile.is_continuous_action)
-        policy_param_dtype = None
-        for p in starvla_model.parameters():
-            if p.is_floating_point():
-                policy_param_dtype = p.dtype
-                break
-        if policy_param_dtype is None:
-            policy_param_dtype = torch.float32
 
-        # Add value head in the wrapper for RL value estimation from hidden states.
+        # 4) Resolve policy parameter dtype (used for added heads/params).
+        policy_param_dtype = next(
+            (p.dtype for p in starvla_model.parameters() if p.is_floating_point()),
+            torch.float32,
+        )
+
+        # 5) RL heads/params (optional value head + Gaussian log-std).
         self.value_head: Optional[nn.Module] = None
         if add_value_head:
             hidden_size = infer_hidden_size(starvla_model)
             self.value_head = nn.Linear(hidden_size, 1).to(dtype=policy_param_dtype)
 
-        # Diagonal Gaussian policy log-std for continuous actions.
         self.actor_logstd = nn.Parameter(
             torch.full((self.action_dim,), -2.0, dtype=policy_param_dtype)
         )
 
-        self.clip_log_ratio_min = (
-            None if clip_log_ratio_min is None else float(clip_log_ratio_min)
-        )
-        self.clip_log_ratio_max = (
-            None if clip_log_ratio_max is None else float(clip_log_ratio_max)
-        )
-        resolved_level = str(clip_log_ratio_level or "action_level").strip().lower()
-        if resolved_level not in {"token_level", "action_level", "chunk_level"}:
-            warnings.warn(
-                "starVLA clip_log_ratio_level is invalid; disable log-ratio clipping. "
-                f"clip_log_ratio_level={clip_log_ratio_level!r}.",
-                stacklevel=2,
-            )
-            resolved_level = "disabled"
-        self.clip_log_ratio_level = resolved_level
-
-        self._warned_once: set[str] = set()
+        # 6) Rollout/training caches.
         self._rollout_prompt_seq_len: Optional[int] = None
-
-        self._action_norm_stats: Optional[dict[str, np.ndarray]] = None
-        if (
-            self.is_continuous_action
-            and not self.disable_action_unnormalization
-            and self.unnorm_key is not None
-        ):
-            self._action_norm_stats = action_space_utils.resolve_action_norm_stats(
-                starvla_model=self.starvla_model,
-                unnorm_key=self.unnorm_key,
-                action_dim=self.action_dim,
-            )
-        elif self.disable_action_unnormalization and self.unnorm_key is not None:
-            warnings.warn(
-                "starVLA disable_action_unnormalization=True; "
-                f"ignore cfg.unnorm_key={self.unnorm_key!r}.",
-                stacklevel=2,
-            )
-            self.unnorm_key = None
 
     def forward(
         self,
@@ -159,13 +125,11 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
 
     def default_forward(
         self,
-        data: Optional[dict[str, torch.Tensor]] = None,
         forward_inputs: Optional[dict[str, torch.Tensor]] = None,
         compute_logprobs: bool = False,
         compute_entropy: bool = False,
         compute_values: bool = False,
         use_cache: bool = False,
-        **kwargs,
     ) -> dict[str, torch.Tensor | None]:
         """Run training-time forward for PPO terms (logprob/entropy/value).
 
@@ -173,14 +137,12 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
         inferred 'action_head_type' of the wrapped starVLA checkpoint.
 
         Args:
-            data: Training batch dict. Usually comes from rollout caches stored
-                in 'forward_inputs' produced by 'predict_action_batch'.
-            forward_inputs: Backward-compatible alias for cached rollout tensors.
+            forward_inputs: Cached rollout tensors produced by
+                'predict_action_batch'.
             compute_logprobs: Whether to compute action log-probabilities.
             compute_entropy: Whether to compute policy entropy.
             compute_values: Whether to compute value baseline.
             use_cache: Whether to enable backbone kv-cache when supported.
-            **kwargs: Extra tensor fields (legacy path).
 
         Returns:
             Dict with optional RL terms: 'logprobs', 'entropy', and 'values'.
@@ -189,42 +151,15 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
             ValueError: If no usable batch tensors are provided.
             NotImplementedError: If the action head type is not supported.
         """
-        # Use provided data if available, otherwise use forward_inputs and kwargs to construct data.
-        if data is None:
-            used_forward_inputs = isinstance(forward_inputs, dict)
-            data = {}
-            if used_forward_inputs:
-                data.update(
-                    {
-                        k: v
-                        for k, v in forward_inputs.items()
-                        if isinstance(v, torch.Tensor)
-                    }
-                )
-            data.update(
-                {k: v for k, v in kwargs.items() if isinstance(v, torch.Tensor)}
+        if not isinstance(forward_inputs, dict) or not forward_inputs:
+            raise ValueError(
+                "starVLA.default_forward requires 'forward_inputs' (dict[str, Tensor]) in RLinf training."
             )
-
-            if not data:
-                raise ValueError(
-                    "starVLA.default_forward requires 'data' (or 'forward_inputs') in RLinf training."
-                )
-            # temporary fallback warning for cases where using older RLinf training code
-            if self._WARN_KEY_DEFAULT_FORWARD_DATA_FALLBACK not in self._warned_once:
-                if used_forward_inputs:
-                    warnings.warn(
-                        "starVLA.default_forward used 'forward_inputs' as training 'data'. "
-                        "Prefer calling model(data=...) in training path.",
-                        stacklevel=2,
-                    )
-                else:
-                    warnings.warn(
-                        "starVLA.default_forward inferred 'data' from tensor kwargs because "
-                        "'data' was not provided explicitly. "
-                        "Prefer calling model(data=...) in training path.",
-                        stacklevel=2,
-                    )
-                self._warned_once.add(self._WARN_KEY_DEFAULT_FORWARD_DATA_FALLBACK)
+        data = {k: v for k, v in forward_inputs.items() if isinstance(v, torch.Tensor)}
+        if not data:
+            raise ValueError(
+                "starVLA.default_forward requires tensor values inside 'forward_inputs'."
+            )
         # Automatically dispatch to the correct default forward handler based on action head type.
         handler = get_default_forward_handler(self.action_head_type)
         if handler is None:
@@ -232,42 +167,14 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
                 "default_forward not implemented for starVLA action head "
                 f"{self.action_head_type}."
             )
-
-        # Important: rollouts compute and cache prev_logprobs with the policy in eval mode
-        # (dropout disabled). RLinf's actor worker sets the model to train() during updates,
-        # which can introduce logprob drift even when lr=0 if the backbone has dropout or
-        # other train-time randomness. Force the starVLA backbone into eval() for this
-        # forward to keep old/new logprob conventions consistent.
-        was_training = bool(getattr(self.starvla_model, "training", False))
-        if was_training:
-            self.starvla_model.eval()
-        try:
-            output = handler(
-                self,
-                data=data,
-                compute_logprobs=compute_logprobs,
-                compute_entropy=compute_entropy,
-                compute_values=compute_values,
-                use_cache=use_cache,
-            )
-        finally:
-            if was_training:
-                self.starvla_model.train()
-        if compute_logprobs:
-            logprobs = output.get("logprobs")
-            if isinstance(logprobs, torch.Tensor):
-                output["logprobs"] = (
-                    data_pipeline_utils.clip_logprobs_with_old_logprobs(
-                        logprobs=logprobs,
-                        data=data,
-                        clip_log_ratio_min=self.clip_log_ratio_min,
-                        clip_log_ratio_max=self.clip_log_ratio_max,
-                        clip_log_ratio_level=self.clip_log_ratio_level,
-                        warned_once=self._warned_once,
-                        warn_key_shape_mismatch=self._WARN_KEY_LOGPROB_CLIP_SHAPE_MISMATCH,
-                    )
-                )
-        return output
+        return handler(
+            self,
+            data=data,
+            compute_logprobs=compute_logprobs,
+            compute_entropy=compute_entropy,
+            compute_values=compute_values,
+            use_cache=use_cache,
+        )
 
     def predict_action_batch(
         self,
@@ -306,9 +213,9 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
                 state_utils.prepare_state_tensor,
                 starvla_model=self.starvla_model,
                 default_state_adapter_name=self.state_adapter_type,
-                warned_keys=self._warned_once,
             ),
         )
+        # Build sampling kwargs and initialize forward_inputs with batch-aligned sampling tensors.
         sampling_kwargs = {
             "do_sample": kwargs.pop("do_sample", False),
             "temperature": kwargs.pop("temperature", 1.0),
@@ -319,21 +226,30 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
         }
         if mode in {"train", "training"}:
             sampling_kwargs["do_sample"] = True
-
-        forward_inputs = data_pipeline_utils.build_sampling_param_tensors(
-            do_sample=sampling_kwargs["do_sample"],
-            temperature=sampling_kwargs["temperature"],
-            top_k=sampling_kwargs["top_k"],
-            top_p=sampling_kwargs["top_p"],
-            batch_size=len(examples),
-        )
-
+        bsz = int(len(examples))
+        if bsz <= 0:
+            raise ValueError(f"Empty rollout batch: len(examples)={bsz}.")
+        forward_inputs = {
+            "do_sample": torch.full(
+                (bsz,), int(sampling_kwargs["do_sample"]), dtype=torch.int64
+            ),
+            "temperature": torch.full(
+                (bsz,), float(sampling_kwargs["temperature"]), dtype=torch.float32
+            ),
+            "top_k": torch.full(
+                (bsz,), int(sampling_kwargs["top_k"]), dtype=torch.int64
+            ),
+            "top_p": torch.full(
+                (bsz,), float(sampling_kwargs["top_p"]), dtype=torch.float32
+            ),
+        }
+        # initialize rollout caches
         prev_logprobs: Optional[torch.Tensor] = None
         prev_values: Optional[torch.Tensor] = None
         output: dict[str, Any]
         model_inputs: dict[str, Any] = {}
         extra_forward_inputs: dict[str, Any] = {}
-        state_for_storage: Optional[torch.Tensor] = None
+        state: Optional[torch.Tensor] = None
         # Automatically dispatch to the correct rollout handler based on action head type.
         rollout_handler = get_rollout_handler(self.action_head_type)
         if rollout_handler is not None:
@@ -353,15 +269,22 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
             prev_logprobs = payload.get("prev_logprobs")
             prev_values = payload.get("prev_values")
             extra_forward_inputs = payload.get("extra_forward_inputs", {})
-            state_for_storage = payload.get("state")
+            state = payload.get("state")
         else:
-            if hasattr(self.starvla_model, "predict_action"):
-                output = self.starvla_model.predict_action(examples=examples)
-            else:
-                raise NotImplementedError(
-                    "Unsupported starVLA model for rollout fallback: "
-                    f"action_head={self.action_head_type}, vlm={self.vlm_type}."
-                )
+            raise NotImplementedError(
+                "Unsupported starVLA model for rollout fallback: "
+                f"action_head={self.action_head_type}."
+            )
+
+        if calculate_logprobs and prev_logprobs is None:
+            raise RuntimeError(
+                "Rollout handler did not return 'prev_logprobs' but calculate_logprobs=True was requested."
+            )
+
+        if calculate_values and prev_values is None:
+            raise RuntimeError(
+                "Rollout handler did not return 'prev_values' but calculate_values=True was requested."
+            )
 
         if model_inputs:
             model_inputs, target_len = (
@@ -374,15 +297,19 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
             self._rollout_prompt_seq_len = target_len
             model_inputs = data_pipeline_utils.pack_model_inputs_for_storage(
                 model_inputs=model_inputs,
-                batch_size=len(examples),
+                batch_size=bsz,
             )
-
+        # prepare actions: ensure shape [B, T, D] and unnormalize if needed
         normalized_actions = np.asarray(output["normalized_actions"])
         if normalized_actions.ndim == 2:
             normalized_actions = normalized_actions[:, None, :]
-        chunk_actions = normalized_actions.astype(np.float32)
 
-        bsz, n_chunks, act_dim = normalized_actions.shape
+        act_bsz, n_chunks, act_dim = normalized_actions.shape
+        if act_bsz != bsz:
+            raise RuntimeError(
+                "Rollout output batch size mismatch: "
+                f"len(examples)={bsz}, actions_bsz={act_bsz}."
+            )
         if act_dim != self.action_dim:
             raise ValueError(
                 f"Action dim mismatch: model returns {act_dim}, expected {self.action_dim}"
@@ -391,69 +318,40 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
             raise ValueError(
                 f"num_action_chunks mismatch: model returns {n_chunks}, expected {self.num_action_chunks}"
             )
+        env_chunk_actions = action_space_utils.unnormalize_actions_for_env(
+            normalized_actions=normalized_actions.astype(np.float32),
+            action_norm_stats=self._action_norm_stats,
+        )
 
-        env_chunk_actions = chunk_actions
-        action_for_storage = chunk_actions
-        if self.is_continuous_action:
-            missing_norm_stats_warned = (
-                self._WARN_KEY_MISSING_ACTION_NORM_STATS in self._warned_once
-            )
-            warned_missing = (
-                True
-                if self.disable_action_unnormalization
-                else missing_norm_stats_warned
-            )
-            env_chunk_actions, warned_missing = (
-                action_space_utils.unnormalize_actions_for_env(
-                    normalized_actions=chunk_actions,
-                    action_norm_stats=None
-                    if self.disable_action_unnormalization
-                    else self._action_norm_stats,
-                    warned_missing_action_norm_stats=warned_missing,
-                )
-            )
-            if not self.disable_action_unnormalization and warned_missing:
-                self._warned_once.add(self._WARN_KEY_MISSING_ACTION_NORM_STATS)
-            action_for_storage = env_chunk_actions
-
-        if prev_logprobs is None:
-            prev_logprobs = torch.zeros(
-                (bsz, n_chunks, self.action_dim), dtype=torch.float32
-            )
-        if prev_values is None:
-            prev_values = torch.zeros((bsz, 1), dtype=torch.float32)
-
-        forward_inputs["prev_logprobs"] = prev_logprobs.detach()
-        forward_inputs["action"] = torch.from_numpy(action_for_storage.reshape(bsz, -1))
+        forward_inputs["action"] = torch.from_numpy(env_chunk_actions.reshape(bsz, -1))
 
         storage_inputs = dict(model_inputs)
         storage_inputs.update(extra_forward_inputs)
         forward_inputs.update(
             {k: v for k, v in storage_inputs.items() if isinstance(v, torch.Tensor)}
         )
-        if state_for_storage is not None:
-            forward_inputs["state"] = state_for_storage.detach().cpu()
-        for key, value in list(forward_inputs.items()):
-            if not isinstance(value, torch.Tensor):
+        if state is not None:
+            forward_inputs["state"] = state.detach().cpu()
+
+        for key, tensor in list(forward_inputs.items()):
+            if not isinstance(tensor, torch.Tensor):
                 continue
-            tensor = value
             if tensor.ndim == 0:
-                tensor = tensor.view(1).repeat(bsz)
-            elif tensor.shape[0] == bsz:
-                pass
-            elif tensor.shape[0] == 1:
-                tensor = tensor.expand(bsz, *tensor.shape[1:]).clone()
-            else:
+                forward_inputs[key] = tensor.view(1).repeat(bsz)
+                continue
+            if tensor.shape[0] == 1:
+                forward_inputs[key] = tensor.expand(bsz, *tensor.shape[1:]).clone()
+                continue
+            if tensor.shape[0] != bsz:
                 raise RuntimeError(
                     f"forward_inputs['{key}'] has leading dim {tensor.shape[0]}, "
                     f"but rollout batch size is {bsz}. "
                     "Expected scalar/[1,...]/[B,...] tensor for trajectory splitting."
                 )
-            forward_inputs[key] = tensor
 
         result = {
-            "prev_logprobs": prev_logprobs,
-            "prev_values": prev_values,
+            "prev_logprobs": prev_logprobs if calculate_logprobs else None,
+            "prev_values": prev_values if calculate_values else None,
             "forward_inputs": forward_inputs,
         }
         return env_chunk_actions, result
