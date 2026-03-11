@@ -103,8 +103,8 @@ class TokenizePromptWithGuidance:
     """Tokenize both original prompt and guidance prompts for CFG models.
 
     Generates positive and negative guidance prompts:
-    - positive: "[POSITIVE][POSITIVE]\\nTask: {prompt}"
-    - negative: "[NEGATIVE][NEGATIVE]\\nTask: {prompt}"
+    - positive: "{prompt}\\nAdvantage: positive"
+    - negative: "{prompt}\\nAdvantage: negative"
     """
 
     tokenizer: Any  # openpi.models.tokenizer.PaligemmaTokenizer
@@ -125,8 +125,8 @@ class TokenizePromptWithGuidance:
 
         tokens, token_masks = self.tokenizer.tokenize(prompt, state)
 
-        positive_prompt = f"[POSITIVE][POSITIVE]\nTask: {prompt}"
-        negative_prompt = f"[NEGATIVE][NEGATIVE]\nTask: {prompt}"
+        positive_prompt = f"{prompt}\nAdvantage: positive"
+        negative_prompt = f"{prompt}\nAdvantage: negative"
 
         positive_tokens, positive_masks = self.tokenizer.tokenize(
             positive_prompt, state

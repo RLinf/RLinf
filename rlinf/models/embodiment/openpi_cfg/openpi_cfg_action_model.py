@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import random
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, TypeVar
@@ -161,7 +160,7 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
                 "GemmaRMSNorm",
                 "GemmaRotaryEmbedding",
             ]
-        if self.config.noise_method == "flow_noise":
+        if getattr(self.config, "noise_method", None) == "flow_noise":
             no_split_modules.append("ExploreNoiseNet")
         return no_split_modules
 
@@ -241,12 +240,10 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
             if transpose:
                 sample = jax.tree.map(
                     lambda x: x.transpose(1, 2, 0)
-                    if len(x.shape) == 3 and transpose
+                    if len(x.shape) == 3
                     else x,
                     sample,
                 )
-            else:
-                sample = jax.tree.map(lambda x: x if len(x.shape) == 3 else x, sample)
             if first_process:
                 sample["prompt"] = obs["prompt"][i]
                 positive_guidance_prompt = obs["positive_guidance_prompt"][i]
@@ -283,7 +280,6 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
             lambda *torch_arr: torch.from_numpy(np.asarray(torch_arr).copy()),
             *transformed_samples,
         )
-        # inputs = jax.tree.map(lambda *x: torch.stack(x, axis=0), inputs)
         if not first_process:
             inputs["tokenized_prompt"] = obs["tokenized_prompt"]
             inputs["tokenized_prompt_mask"] = obs["tokenized_prompt_mask"]
@@ -360,52 +356,36 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
         ) = self._preprocess_observation(observation, train=True)
 
         # ========== 3. Select guidance tokens ==========
-        positive_guidance_count = 0
-        negative_guidance_count = 0
-        if is_sft_mode:
-            # CFG mode: select positive or negative guidance based on advantage
-            if "advantage" not in data:
-                raise ValueError(
-                    "Missing 'advantage' field in data. "
-                    "Please run compute_advantages.py first to generate "
-                    "meta/advantages.parquet for your dataset."
-                )
-
+        if "advantage" in data:
             advantage = data["advantage"].to(device)
-            advantage_expanded = advantage.unsqueeze(-1)  # [batch_size, 1]
-            guidance_lang_tokens = torch.where(
-                advantage_expanded,
-                positive_guidance_lang_tokens,
-                negative_guidance_lang_tokens,
-            )
-            guidance_lang_masks = torch.where(
-                advantage_expanded,
-                positive_guidance_lang_masks,
-                negative_guidance_lang_masks,
-            )
-            positive_guidance_count = advantage.sum().item()
-            negative_guidance_count = advantage.numel() - positive_guidance_count
-
+        elif "advantages" in data:
+            advantage = data["advantages"].to(device)
         else:
-            # CFGRL mode: select positive or negative guidance based on advantages
-            advantages = data["advantages"].to(device)
-            advantages_expanded = advantages.unsqueeze(-1)  # [batch_size, 1]
-            guidance_lang_tokens = torch.where(
-                advantages_expanded,
-                positive_guidance_lang_tokens,
-                negative_guidance_lang_tokens,
+            raise ValueError(
+                "Missing 'advantage' field in data. "
+                "Please run compute_advantages.py first to generate "
+                "meta/advantages.parquet for your dataset."
             )
-            guidance_lang_masks = torch.where(
-                advantages_expanded,
-                positive_guidance_lang_masks,
-                negative_guidance_lang_masks,
-            )
-            # Count positive/negative guidance usage
-            positive_guidance_count = advantages.sum().item()
-            negative_guidance_count = advantages.numel() - positive_guidance_count
+        advantage_expanded = advantage.unsqueeze(-1)  # [batch_size, 1]
+        guidance_lang_tokens = torch.where(
+            advantage_expanded,
+            positive_guidance_lang_tokens,
+            negative_guidance_lang_tokens,
+        )
+        guidance_lang_masks = torch.where(
+            advantage_expanded,
+            positive_guidance_lang_masks,
+            negative_guidance_lang_masks,
+        )
+        positive_guidance_count = advantage.sum().item()
+        negative_guidance_count = advantage.numel() - positive_guidance_count
 
-        # ========== 4. Decide whether to use guidance based on unconditional_prob ==========
-        use_guidance = random.random() > self.config.unconditional_prob
+        # ========== 4. Sample-level unconditional dropout ==========
+        batch_size = guidance_lang_tokens.shape[0]
+        guidance_mask = torch.rand(batch_size, device=device) > self.config.unconditional_prob
+        guidance_mask_expanded = guidance_mask.unsqueeze(-1)  # [batch_size, 1]
+        final_lang_tokens = torch.where(guidance_mask_expanded, guidance_lang_tokens, lang_tokens)
+        final_lang_masks = torch.where(guidance_mask_expanded, guidance_lang_masks, lang_masks)
 
         # ========== 5. Align device ==========
         images = [img.to(device) for img in images]
@@ -425,14 +405,9 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
-        if use_guidance:
-            prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-                images, img_masks, guidance_lang_tokens, guidance_lang_masks
-            )
-        else:
-            prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-                images, img_masks, lang_tokens, lang_masks
-            )
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, final_lang_tokens, final_lang_masks
+        )
 
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = (
             self.embed_suffix(state, x_t, time)
@@ -486,20 +461,14 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
             return self.action_out_proj(suffix_out)
 
         v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
-        flow_loss = F.mse_loss(u_t, v_t, reduction="none")
-        # flow_loss = flow_loss[:, : self.config.action_chunk, : self.config.action_env_dim].mean()
-        flow_loss = flow_loss.mean()
-        flow_loss_value = flow_loss.detach().item()
-        if use_guidance:
-            conditional_count = 1
-            unconditional_count = 0
-            conditional_loss = flow_loss_value
-            unconditional_loss = 0.0
-        else:
-            conditional_count = 0
-            unconditional_count = 1
-            conditional_loss = 0.0
-            unconditional_loss = flow_loss_value
+        per_element_loss = F.mse_loss(u_t, v_t, reduction="none")
+        flow_loss = per_element_loss.mean()
+        conditional_count = guidance_mask.sum().item()
+        unconditional_count = batch_size - conditional_count
+        # Per-sample loss for accurate conditional/unconditional metrics
+        per_sample_loss = per_element_loss.detach().mean(dim=(-1, -2))
+        conditional_loss = (per_sample_loss * guidance_mask.float()).sum().item()
+        unconditional_loss = (per_sample_loss * (~guidance_mask).float()).sum().item()
 
         return flow_loss, {
             "conditional_count": conditional_count,
@@ -517,11 +486,11 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
             "prompt": env_obs["task_descriptions"],
         }
         positive_guidance_prompt = [
-            f"[POSITIVE][POSITIVE]\nTask: {desc}"
+            f"{desc}\nAdvantage: positive"
             for desc in env_obs["task_descriptions"]
         ]
         negative_guidance_prompt = [
-            f"[NEGATIVE][NEGATIVE]\nTask: {desc}"
+            f"{desc}\nAdvantage: negative"
             for desc in env_obs["task_descriptions"]
         ]
         processed_obs["positive_guidance_prompt"] = positive_guidance_prompt
@@ -576,7 +545,6 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
         processed_obs = self.precision_processor(
             processed_obs
         )  # obs precision processor
-        # observation = _model.Observation.from_dict(processed_obs)
         observation = Observation.from_dict(processed_obs)
         outputs = self.sample_actions(
             observation,
@@ -622,7 +590,6 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
         v = (1 - w) * v_uncond + w * v_cond (when guidance_type != "no_guide")
         v = v_uncond (when guidance_type == "no_guide")
         """
-        # breakpoint()
         guidance_type = self.config.guidance_type
         bsize = observation.state.shape[0]
         device = observation.state.device
