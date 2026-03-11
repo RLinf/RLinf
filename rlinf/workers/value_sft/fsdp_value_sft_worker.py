@@ -189,7 +189,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         )
         # ---- shared defaults ----
         data_root = data_cfg.get("data_root", None)
-        auto_skip_vlm = True  # Expert mode always skips VLM response
 
         # Transform-related shared config (required parameters)
         robot_type = data_cfg.get("robot_type")
@@ -201,9 +200,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         norm_stats_dir = data_cfg.get("norm_stats_dir", None)
 
         shared = {
-            "value_prefix": data_cfg.get("value_prefix", "Value: "),
-            "include_state": data_cfg.get("include_state", True),
-            "skip_vlm_response": data_cfg.get("skip_vlm_response", auto_skip_vlm),
             "action_horizon": data_cfg.get(
                 "action_horizon", getattr(model_cfg, "action_horizon", 10)
             ),
@@ -300,9 +296,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             "return_min": global_return_min,
             "return_max": global_return_max,
             "normalize_to_minus_one_zero": shared["normalize_to_minus_one_zero"],
-            "skip_vlm_response": shared["skip_vlm_response"],
-            "value_prefix": shared["value_prefix"],
-            "include_state": shared["include_state"],
             "action_dim": shared["action_dim"],
         }
 
@@ -335,11 +328,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                 "normalize_to_minus_one_zero": entry.get(
                     "normalize_to_minus_one_zero", shared["normalize_to_minus_one_zero"]
                 ),
-                "skip_vlm_response": entry.get(
-                    "skip_vlm_response", shared["skip_vlm_response"]
-                ),
-                "value_prefix": entry.get("value_prefix", shared["value_prefix"]),
-                "include_state": entry.get("include_state", shared["include_state"]),
                 "action_dim": entry.get("action_dim", shared["action_dim"]),
                 "split": "train",
                 "default_prompt": entry.get("default_prompt", None),
@@ -458,11 +446,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                 normalize_to_minus_one_zero=eval_entry.get(
                     "normalize_to_minus_one_zero", shared["normalize_to_minus_one_zero"]
                 ),
-                skip_vlm_response=eval_entry.get(
-                    "skip_vlm_response", shared["skip_vlm_response"]
-                ),
-                value_prefix=eval_entry.get("value_prefix", shared["value_prefix"]),
-                include_state=eval_entry.get("include_state", shared["include_state"]),
                 split="val",
                 action_dim=eval_entry.get("action_dim", shared["action_dim"]),
                 default_prompt=eval_entry.get("default_prompt", None),

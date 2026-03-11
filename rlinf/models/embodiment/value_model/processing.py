@@ -19,7 +19,7 @@ import os
 import string
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
+from typing import ClassVar, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -444,18 +444,11 @@ class ValueImageProcessor(ImageProcessingMixin):
 
 class ValueProcessor(ProcessorMixin):
     """
-    Value model processor with unified tokenization.
+    Value model processor combining image preprocessing and text tokenization.
 
-    Handles three modes based on input:
-    - VLA: prompt + state + actions (flow matching)
-    - VLM: prompt + prefix + response (language generation with CE loss)
-    - VLM+VLA: prompt + prefix + response + actions (combined)
-
-    Key mask semantics:
-    - ar_mask=0: Bidirectional attention (prefix/prompt tokens)
-    - ar_mask=1: Causal attention (response/action tokens)
-    - loss_mask=True: Include in cross-entropy loss (response tokens only)
-    - kv_cache_mask=True: Include in KV cache for action expert (excludes EOS, etc.)
+    Text template: ``Task: {prompt}.``
+    All tokens are bidirectional (ar_mask=0). The value model's expert head
+    predicts the value via a [CLS] token appended at the model level.
     """
 
     attributes = ["image_processor", "tokenizer"]
@@ -582,19 +575,10 @@ class ValueProcessor(ProcessorMixin):
     def process_text(
         self,
         prompts: List[str],
-        prefixes: List[Optional[str]] = None,
-        responses: List[Optional[str]] = None,
-        states: List[Optional[np.ndarray]] = None,
-        actions: List[Optional[Any]] = None,
-        padding: bool = True,
-        truncation: bool = True,
         max_length: Optional[int] = None,
         return_tensors: Optional[str] = "pt",
     ) -> Dict[str, torch.Tensor]:
         """Process a batch of prompts for the value model.
-
-        Only ``prompts`` is used. The other list parameters (prefixes, responses,
-        states, actions) are accepted for call-site compatibility but ignored.
 
         Returns:
             Dict with ``input_ids``, ``attention_mask``, ``token_ar_mask``.
@@ -633,10 +617,6 @@ class ValueProcessor(ProcessorMixin):
         image_masks: Optional[Dict[str, torch.Tensor]] = None,
         return_tensors: Optional[str] = 'pt',
         train: bool = False,
-        state: Optional[Union[np.ndarray, List[np.ndarray]]] = None,
-        prefix: Optional[Union[str, List[str]]] = None,
-        response: Optional[Union[str, List[str]]] = None,
-        actions: Optional[Union[torch.Tensor, List[torch.Tensor]]] = None,
         **kwargs
     ) -> BatchFeature:
         """
@@ -648,10 +628,6 @@ class ValueProcessor(ProcessorMixin):
             image_masks: Optional image masks
             return_tensors: Output tensor format
             train: Whether in training mode
-            state: Robot state (unused, kept for call-site compat)
-            prefix: Optional prefix for VLM mode
-            response: Optional response for VLM mode
-            actions: Optional actions for VLA mode
         """
         if text is None and images is None:
             raise ValueError("You must provide either text or images")
@@ -661,20 +637,9 @@ class ValueProcessor(ProcessorMixin):
         if text is not None:
             is_batched = isinstance(text, list)
             texts = text if is_batched else [text]
-            batch_size = len(texts)
-
-            # Normalize inputs to lists
-            states = state if isinstance(state, list) else [state] * batch_size
-            prefixes = prefix if isinstance(prefix, list) else [prefix] * batch_size
-            responses = response if isinstance(response, list) else [response] * batch_size
-            actions_list = actions if isinstance(actions, list) else [actions] * batch_size
 
             processed = self.process_text(
                 prompts=texts,
-                prefixes=prefixes,
-                responses=responses,
-                states=states,
-                actions=actions_list,
                 return_tensors=return_tensors,
             )
             result_data.update(processed)
@@ -716,8 +681,6 @@ class ValueProcessor(ProcessorMixin):
             "input_ids",
             "attention_mask",
             "token_ar_mask",
-            "token_loss_mask",
-            "token_kv_cache_mask",
         ]
 
 

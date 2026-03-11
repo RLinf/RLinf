@@ -88,9 +88,6 @@ class ValueDataCollator(DataCollatorMixin):
         images_batch = []
         image_masks_batch = []
         prompts = []
-        prefixes = []
-        responses = []
-        states = []
         actions_list = []
         action_mask_list = []
 
@@ -110,13 +107,6 @@ class ValueDataCollator(DataCollatorMixin):
             images_batch.append(ex[image_key])
             image_masks_batch.append(ex.get(mask_key, {}))
             prompts.append(ex["prompt"])
-            prefixes.append(ex.get("prefix"))
-            responses.append(ex.get("response"))
-
-            state = ex.get("state")
-            if state is not None and isinstance(state, torch.Tensor):
-                state = state.cpu().numpy()
-            states.append(state)
 
             actions = ex.get("actions")
             actions_list.append(actions)
@@ -143,12 +133,6 @@ class ValueDataCollator(DataCollatorMixin):
 
         processed_txt = self.processor.process_text(
             prompts=prompts,
-            prefixes=prefixes,
-            responses=responses,
-            states=states,
-            actions=actions_list,
-            padding=True,
-            truncation=True,
             max_length=self.max_length,
             return_tensors="pt",
         )
