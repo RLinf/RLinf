@@ -14,6 +14,7 @@
 
 import logging
 from enum import Enum, auto
+from typing import Optional
 
 from omegaconf import DictConfig
 
@@ -597,3 +598,121 @@ class ModelParallelEvalComponentPlacement(ComponentPlacement):
         if component_name not in self._component_rank_map:
             return None
         return super().get_hardware_ranks(component_name)
+
+
+class MultiAgentModelParallelComponentPlacement(ModelParallelComponentPlacement):
+    """Component placement for model-parallel components.
+
+    The components must be actor, rollout, and optionally inference, whose GPUs must be continuous.
+
+    This placement supports both collocated and disaggregated modes.
+
+    In the collocated mode, all components share the same set of GPUs. In particular, the rollout group is specially placed in a strided manner to enable fast cudaIPC-based weight sync.
+    In the disaggregated mode, each component has its own dedicated set of GPUs.
+
+    In the collocated mode, only actor and rollout exist. While in the disaggregated mode, actor, rollout, and inference should all exist.
+    """
+
+    def __init__(self, config: DictConfig, cluster: Cluster):
+        """Initialize ModelParallelComponentPlacement
+
+        Args:
+            config (DictConfig): The configuration dictionary for the component placement.
+        """
+        super().__init__(config, cluster)
+        self._validate_resource_coverage()
+        # self._placement_mode = PlacementMode.COLLOCATED
+
+    def _validate_resource_coverage(self):
+        """
+        Validates that components are correctly placed across available GPUs.
+        Ensures shared components cover all GPUs and exclusive components do not overlap.
+        """
+        import torch
+        import torch.distributed as dist
+
+        if dist.is_initialized():
+            total_world_size = dist.get_world_size()
+        else:
+            total_world_size = torch.cuda.device_count()
+
+        total_gpus = set(range(total_world_size))
+
+        exclusive_gpu_usage = set()
+        shared_names = {"actor", "rollout", "reward", "inference"}
+        print(self._component_rank_map)
+        for comp_name, node_map in self._component_rank_map.items():
+            component_gpus = set()
+            for nodes in node_map.keys():
+                component_gpus.update(nodes)
+
+            if comp_name in shared_names:
+                if component_gpus != total_gpus:
+                    logging.warning(
+                        f"Shared component '{comp_name}' does not cover all GPUs. "
+                        f"Current: {component_gpus}, Missing: {total_gpus - component_gpus}"
+                    )
+                continue
+
+            overlap = exclusive_gpu_usage.intersection(component_gpus)
+            if overlap:
+                logging.error(f"Collision detected for component: {comp_name}")
+                logging.error(f"Global GPUs for {comp_name}: {component_gpus}")
+                logging.error(f"Already occupied GPUs: {exclusive_gpu_usage}")
+                raise ValueError(
+                    f"Resource Conflict: Component '{comp_name}' global GPU {overlap} "
+                    f"is already occupied by another exclusive component."
+                )
+
+            exclusive_gpu_usage.update(component_gpus)
+
+        missing = total_gpus - exclusive_gpu_usage
+        if missing:
+            logging.warning(
+                f"Note: Exclusive components (planners/subworkers) did not utilize "
+                f"all GPUs. Idle GPUs: {missing}"
+            )
+        else:
+            logging.info(
+                "Validation Passed: Exclusive components have perfectly "
+                "covered all GPU resources with no overlaps."
+            )
+
+    def get_strategy(
+        self, component_name: str, placement_strategy: Optional[type] = None
+    ):
+        # handling logic for default placement strategies
+        if placement_strategy is None:
+            component_placement_strategy = super().get_strategy(component_name)
+            logging.info(f"{component_name}: {component_placement_strategy}")
+            return component_placement_strategy
+
+        if component_name in ("rollout", "actor", "reward", "inference"):
+            logging.warning(
+                f"Specifying a PlacementStrategy for '{component_name}' in get_strategy() is not allowed.",
+                f"Using default PackedPlacementStrategy for '{component_name}' instead.",
+            )
+            component_placement_strategy = super().get_strategy(component_name)
+            logging.info(f"{component_name}: {component_placement_strategy}")
+            return component_placement_strategy
+
+        # handling logic for customized placement strategies
+        strategy_class = (
+            placement_strategy
+            if placement_strategy is not None
+            else PackedPlacementStrategy
+        )
+        assert strategy_class in [PackedPlacementStrategy], (
+            f"Unsupported strategy class: {strategy_class}. Currently only PackedPlacementStrategy is supported."
+        )
+
+        component_placement_strategy = strategy_class(
+            self._get_component_hardware(component_name)[0],
+            self._get_component_hardware(component_name)[-1],
+            num_hardware_per_process=self._placements[
+                "rollout"
+            ]._num_hardware_per_process,
+            stride=self._placements["rollout"]._stride,
+        )
+        logging.info(f"{component_name}: {component_placement_strategy}")
+        return component_placement_strategy

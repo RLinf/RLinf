@@ -138,6 +138,7 @@ async def get_final_reward_score(
     is_markdown,
     norm_column,
     sgl_client: SGLangClient,
+    agent_loop_worker=None,
 ):
     """Compute final reward score for boxed answers or markdown-table answers.
 
@@ -155,25 +156,95 @@ async def get_final_reward_score(
     format = True
     if is_markdown:
         reward_score, format = await evaluate_markdown(
-            extract_answer, label_answer, sgl_client, norm_column
+            extract_answer, label_answer, sgl_client, norm_column, agent_loop_worker
         )
         return reward_score, format
 
     label_answer = label_answer["answer"]
     if label_answer is not None and extract_answer is not None:
         # Use LLM as judge
-        llm_score = await verify_answer_with_llm_judge(
-            question=origin_question,
-            predicted_answer=extract_answer,
-            correct_answer=label_answer,
-            sgl_client=sgl_client,
-        )
+        if agent_loop_worker is None:
+            # Use external server LLM judge
+            llm_score = await verify_answer_with_llm_judge(
+                question=origin_question,
+                predicted_answer=extract_answer,
+                correct_answer=label_answer,
+                sgl_client=sgl_client,
+            )
+        else:
+            # Use local RLinf LLM judge
+            llm_score = await verify_answer_with_local_llm_judge(
+                question=origin_question,
+                predicted_answer=extract_answer,
+                correct_answer=label_answer,
+                agent_loop_worker=agent_loop_worker,
+            )
+
         reward_score = llm_score
 
     else:
         reward_score = 0.0
 
     return reward_score, format
+
+
+async def verify_answer_with_local_llm_judge(
+    question: str, predicted_answer: str, correct_answer: list, agent_loop_worker=None
+) -> float:
+    """Use an LLM judge to score equivalence between prediction and reference.
+
+    Args:
+        question: Original user question.
+        predicted_answer: Model-predicted boxed answer.
+        correct_answer: Reference answer list from dataset.
+        agent_loop_worker: Agent loop worker used to query the judge model.
+
+    Returns:
+        `1.0` if judged correct, otherwise `0.0`.
+    """
+    from rlinf.agents.wideseek_r1.utils.prompt import LLM_JUDGE_PROMPT
+
+    if len(correct_answer) == 1:
+        # Format the judge prompt
+        judge_prompt_text = LLM_JUDGE_PROMPT.format(
+            question=question,
+            correct_answer=correct_answer[0],
+            response=predicted_answer,
+        )
+    else:
+        judge_prompt_text = LLM_JUDGE_PROMPT.format(
+            question=question, correct_answer=correct_answer, response=predicted_answer
+        )
+
+    judge_messages = [
+        {
+            "role": "system",
+            "content": "You are an evaluation assistant. Please determine if the predicted answer is equivalent to the labeled answer.",
+        },
+        {"role": "user", "content": judge_prompt_text},
+    ]
+    # convert judge_messages to prompt_ids
+    prompt_ids = agent_loop_worker.tokenizer.apply_chat_template(
+        judge_messages, tokenize=True, add_generation_prompt=True
+    )
+    prompt_ids = prompt_ids[: agent_loop_worker.max_total_len]
+
+    # invocate generate method
+    generate_result = await agent_loop_worker.generate(
+        prompt_ids,
+        rollout_name="rollout_judge",
+        sampling_params={"max_new_tokens": 100},
+    )
+
+    # decode generate_result["output_ids"] to judge_response_text
+    judge_response_text = agent_loop_worker.tokenizer.decode(
+        generate_result["output_ids"]
+    )
+    judge_response_clean = judge_response_text.strip().lower()
+    if "correct" in judge_response_clean and "incorrect" not in judge_response_clean:
+        return 1.0
+    else:
+        return 0.0
 
 
 async def verify_answer_with_llm_judge(
@@ -220,7 +291,7 @@ async def verify_answer_with_llm_judge(
 
 
 async def evaluate_markdown(
-    extract_answer, label_answer, sgl_client, norm_column_=False
+    extract_answer, label_answer, sgl_client, norm_column_=False, agent_loop_worker=None
 ):
     """Evaluate markdown-table answers with schema checks and LLM cell matching.
 
@@ -317,7 +388,10 @@ async def evaluate_markdown(
         if not set(required_columns).issubset(set(response_df.columns)):
             # Try primary key preprocessing to map column names
             column_map = await primary_key_preprocess(
-                list(response_df.columns), required_columns, sgl_client
+                list(response_df.columns),
+                required_columns,
+                sgl_client,
+                agent_loop_worker,
             )
             response_df.rename(columns=column_map, inplace=True)
 
@@ -340,6 +414,7 @@ async def evaluate_markdown(
                     response_df[col].tolist(),
                     answer_df[col].tolist(),
                     sgl_client,
+                    agent_loop_worker,
                 )
                 response_df[col + "_before_map"] = response_df[col]
                 response_df[col] = response_df[col].apply(
@@ -368,7 +443,9 @@ async def evaluate_markdown(
             else:
                 responses = df_inner[col + "_response"].tolist()
                 targets = df_inner[col + "_query"].tolist()
-                llm_tasks.append(llm_judge_column(responses, targets, sgl_client))
+                llm_tasks.append(
+                    llm_judge_column(responses, targets, sgl_client, agent_loop_worker)
+                )
                 llm_columns.append(col)
 
         # Execute LLM semantic checks in parallel per non-key column.
@@ -398,7 +475,7 @@ async def evaluate_markdown(
 
 
 async def llm_judge_column(
-    responses: list, targets: list, sgl_client: SGLangClient
+    responses: list, targets: list, sgl_client: SGLangClient, agent_loop_worker=None
 ) -> list:
     """Score non-key markdown table cells using semantic LLM comparison.
 
@@ -455,8 +532,24 @@ Each answer and each response has an idx. Please score each pair of answers and 
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
+    if agent_loop_worker is None:
+        result_text = await sgl_client.call_sglang_api(messages)
+    else:
+        # convert judge_messages to prompt_ids
+        prompt_ids = agent_loop_worker.tokenizer.apply_chat_template(
+            messages, tokenize=True, add_generation_prompt=True
+        )
+        prompt_ids = prompt_ids[: agent_loop_worker.max_total_len]
 
-    result_text = await sgl_client.call_sglang_api(messages)
+        # invocate generate method
+        generate_result = await agent_loop_worker.generate(
+            prompt_ids,
+            rollout_name="rollout_judge",
+            sampling_params={"max_new_tokens": 100},
+        )
+
+        # decode generate_result["output_ids"] to judge_response_text
+        result_text = agent_loop_worker.tokenizer.decode(generate_result["output_ids"])
 
     try:
         pat = r"```json\s*(\{.*?\})\s*```"
@@ -481,7 +574,7 @@ Each answer and each response has an idx. Please score each pair of answers and 
 
 
 async def primary_key_preprocess(
-    response_list, reference_list, sgl_client: SGLangClient
+    response_list, reference_list, sgl_client: SGLangClient, agent_loop_worker=None
 ):
     """Align predicted primary-key values to reference canonical forms.
 
@@ -533,7 +626,24 @@ The reference vocabulary is as follows:
         {"role": "user", "content": user_prompt},
     ]
 
-    result_text = await sgl_client.call_sglang_api(messages)
+    if agent_loop_worker is None:
+        result_text = await sgl_client.call_sglang_api(messages)
+    else:
+        # convert judge_messages to prompt_ids
+        prompt_ids = agent_loop_worker.tokenizer.apply_chat_template(
+            messages, tokenize=True, add_generation_prompt=True
+        )
+        prompt_ids = prompt_ids[: agent_loop_worker.max_total_len]
+
+        # invocate generate method
+        generate_result = await agent_loop_worker.generate(
+            prompt_ids,
+            rollout_name="rollout_judge",
+            sampling_params={"max_new_tokens": 100},
+        )
+
+        # decode generate_result["output_ids"] to judge_response_text
+        result_text = agent_loop_worker.tokenizer.decode(generate_result["output_ids"])
 
     # Parse JSON from result
     try:

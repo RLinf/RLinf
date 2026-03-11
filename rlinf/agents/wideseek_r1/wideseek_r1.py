@@ -103,6 +103,7 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
         llm_port = self.cfg.agentloop.get("llm_port", "")
         llm_type = self.cfg.agentloop.get("llm_type", "")
         self.sgl_client = SGLangClient(llm_ip, llm_port, llm_type)
+        self.use_local_judge = self.cfg.agentloop.get("use_local_judge", False)
         assert self.return_logprobs if not self.is_eval else True
 
     async def extract_tool_calls(
@@ -271,7 +272,24 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
             return "No useful Information is Found under this URL."
 
         messages = get_access_summary_messages(info_to_extract, page_content)
-        result_text = await self.sgl_client.call_sglang_api(messages)
+        if not self.use_local_judge:
+            result_text = await self.sgl_client.call_sglang_api(messages)
+        else:
+            # convert judge_messages to prompt_ids
+            prompt_ids = self.tokenizer.apply_chat_template(
+                messages, tokenize=True, add_generation_prompt=True
+            )
+            prompt_ids = prompt_ids[: self.max_total_len]
+            # invocate generate method
+            generate_result = await self.generate(
+                prompt_ids,
+                rollout_name="rollout_judge",
+                sampling_params={"max_new_tokens": 100},
+            )
+
+            # decode generate_result to result_text
+            result_text = self.tokenizer.decode(generate_result["output_ids"])
+
         return result_text
 
     async def worker_call(
@@ -752,14 +770,26 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
 
         # credit assignment
         norm_column = self.cfg.data.get("norm_column", False)
-        llm_reward, format = await get_final_reward_score(
-            origin_question,
-            final_answer_extract,
-            answer,
-            is_markdown,
-            norm_column,
-            self.sgl_client,
-        )
+        if not self.use_local_judge:
+            llm_reward, format = await get_final_reward_score(
+                origin_question,
+                final_answer_extract,
+                answer,
+                is_markdown,
+                norm_column,
+                self.sgl_client,
+                None,
+            )
+        else:
+            llm_reward, format = await get_final_reward_score(
+                origin_question,
+                final_answer_extract,
+                answer,
+                is_markdown,
+                norm_column,
+                self.sgl_client,
+                self,
+            )
 
         output_buffer, train_buffer, final_answer_format, reward_score = (
             credit_assignment(

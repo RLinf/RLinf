@@ -126,6 +126,7 @@ agentloop:
   llm_ip: xx.xx.xx.xx
   llm_port: xx
   llm_type: Qwen3-30b-a3b
+  use_local_judge: False
 
 
 # Tools configuration for AgentLoop

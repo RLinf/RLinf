@@ -24,8 +24,11 @@ from rlinf.config import validate_cfg
 from rlinf.data.datasets import create_rl_dataset
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.runners.agent_runner import AgentRunner
-from rlinf.scheduler import Cluster, NodePlacementStrategy
-from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
+from rlinf.scheduler import Cluster, NodePlacementStrategy, PackedPlacementStrategy
+from rlinf.utils.placement import (
+    MultiAgentModelParallelComponentPlacement,
+    PlacementMode,
+)
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
 from rlinf.workers.agent.tool_worker import ToolWorkerInfo
@@ -42,7 +45,8 @@ def main(cfg) -> None:
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
-    component_placement = ModelParallelComponentPlacement(cfg, cluster)
+    # component_placement = ModelParallelComponentPlacement(cfg, cluster)
+    component_placement = MultiAgentModelParallelComponentPlacement(cfg, cluster)
     assert component_placement.placement_mode == PlacementMode.COLLOCATED, (
         "multi-agent only supports collocated mode"
     )
@@ -59,6 +63,40 @@ def main(cfg) -> None:
         name=cfg.rollout.group_name,
         placement_strategy=rollout_placement_strategy,
     )
+
+    solid_rollouts = {}
+
+    if cfg.agentloop.get("use_local_judge", False):
+        subworker_specs = [
+            # componet name in cfg, dict_key in solid_rollouts, rollout cfg in cfg, launch_name
+            ("rollout_judge", "rollout_judge", cfg.rollout_judge, "rollout_judge"),
+        ]
+        for comp_name, dict_key, rollout, launch_name in subworker_specs:
+            strategy = component_placement.get_strategy(
+                comp_name, PackedPlacementStrategy
+            )
+
+            rollout_accel_num = strategy._end_hw_rank - strategy._start_hw_rank + 1
+
+            # validation
+            if rollout.get("tensor_parallel_size", None) is not None:
+                assert rollout_accel_num % rollout.tensor_parallel_size == 0
+            if rollout.get("pipeline_parallel_size", None) is not None:
+                assert rollout_accel_num % rollout.pipeline_parallel_size == 0
+            if rollout.get("dp_size", None) is not None:
+                assert rollout_accel_num % component_placement.rollout_dp_size == 0
+                # assert rollout_accel_num % rollout.dp_size == 0
+
+            solid_rollouts[dict_key] = rollout_worker_cls.create_group(
+                cfg,
+                component_placement,
+                weight_reload="cpu",
+                config_rollout=rollout,
+            ).launch(
+                cluster,
+                name=launch_name,
+                placement_strategy=strategy,
+            )
 
     # AgentLoop group.
     agentloop_placement_strategy = NodePlacementStrategy(
@@ -118,7 +156,7 @@ def main(cfg) -> None:
         actor=actor_group,
         agent_loop=agentloop_group,
         tool_workers=tool_workers,
-        solid_rollouts={},
+        solid_rollouts=solid_rollouts,
         inference=None,
         reward=None,
     )
