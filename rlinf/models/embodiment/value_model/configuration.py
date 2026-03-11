@@ -175,8 +175,6 @@ class VLMBaseConfig(PretrainedConfig):
         action_loss_weight: float = 1.0,
         eos_token_id: int = 1,
         stop_gradient_to_vlm: bool = False,
-        discrete_state_input: bool = False,
-        exclude_cot_from_kv_cache: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -204,8 +202,6 @@ class VLMBaseConfig(PretrainedConfig):
         self.action_loss_weight = action_loss_weight
         self.eos_token_id = eos_token_id
         self.stop_gradient_to_vlm = stop_gradient_to_vlm
-        self.discrete_state_input = discrete_state_input
-        self.exclude_cot_from_kv_cache = exclude_cot_from_kv_cache
 
     @classmethod
     def from_dict(cls, config_dict, **kwargs):
@@ -233,8 +229,6 @@ class VLMBaseConfig(PretrainedConfig):
                 "action_loss_weight": self.action_loss_weight,
                 "eos_token_id": self.eos_token_id,
                 "stop_gradient_to_vlm": self.stop_gradient_to_vlm,
-                "discrete_state_input": self.discrete_state_input,
-                "exclude_cot_from_kv_cache": self.exclude_cot_from_kv_cache,
             }
         )
         return output
@@ -259,6 +253,8 @@ class ValueCriticConfig(VLMBaseConfig):
         kwargs.pop("expert_loss_type", None)
         kwargs.pop("expert_loss_weight", None)
         kwargs.pop("vlm_loss_weight", None)
+        kwargs.pop("discrete_state_input", None)
+        kwargs.pop("exclude_cot_from_kv_cache", None)
         super().__init__(**kwargs)
         self.critic_expert_variant = critic_expert_variant
         self.num_bins = num_bins

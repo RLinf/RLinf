@@ -64,8 +64,6 @@ def get_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticModel:
     _set("forward_mode", "vla")
     _set("max_language_len", 50)
     _set("stop_gradient_to_vlm", False)
-    _set("discrete_state_input", False)
-    _set("exclude_cot_from_kv_cache", False)
     _set("backbone_variant", "paligemma")
     _set("siglip_path", None)
     _set("gemma3_path", None)

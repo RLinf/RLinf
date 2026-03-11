@@ -38,8 +38,6 @@ train_expert_only: false
 forward_mode: "vla"
 max_language_len: 50
 stop_gradient_to_vlm: false
-discrete_state_input: false
-exclude_cot_from_kv_cache: false
 
 # =====================================================================
 # Backbone: "paligemma" (default) | "siglip_gemma3"

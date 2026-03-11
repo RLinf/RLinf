@@ -175,10 +175,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         processor = ValueProcessor(
             max_token_len=getattr(model_cfg, "max_token_len", 200),
             tokenizer_name_or_path=tokenizer_path,
-            discrete_state_input=getattr(model_cfg, "discrete_state_input", False),
-            exclude_cot_from_kv_cache=getattr(
-                model_cfg, "exclude_cot_from_kv_cache", False
-            ),
         )
         train_collator = ValueDataCollator(
             processor=processor,

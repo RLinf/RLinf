@@ -1147,9 +1147,7 @@ class ValueCritic(CriticPreTrainedModel):
                 f"No tokenizer found. Set tokenizer_path or ensure checkpoint "
                 f"contains tokenizer files. checkpoint_dir={checkpoint_dir}"
             )
-        processor = ValueProcessor(
-            tokenizer=tokenizer, max_token_len=200, discrete_state_input=False
-        )
+        processor = ValueProcessor(tokenizer=tokenizer, max_token_len=200)
 
         # Build config and load model
         critic_config = ValueCriticConfig(

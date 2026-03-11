@@ -482,9 +482,6 @@ class ValueProcessor(ProcessorMixin):
         max_token_len: int = 200,
         tokenizer_name_or_path: Optional[str] = None,
         image_keys: Optional[tuple] = None,
-        # Legacy parameters — accepted for config compat but unused.
-        discrete_state_input: bool = False,
-        exclude_cot_from_kv_cache: bool = False,
         **kwargs
     ):
         if image_processor is None:
@@ -530,11 +527,6 @@ class ValueProcessor(ProcessorMixin):
         self,
         prompt: str,
         max_length: Optional[int] = None,
-        # Legacy parameters — accepted for call-site compat but unused.
-        prefix: Optional[str] = None,
-        response: Optional[str] = None,
-        state: Optional[np.ndarray] = None,
-        has_actions: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Tokenize a prompt into the value model's input format.
 
@@ -656,7 +648,7 @@ class ValueProcessor(ProcessorMixin):
             image_masks: Optional image masks
             return_tensors: Output tensor format
             train: Whether in training mode
-            state: Robot state (will be discretized if discrete_state_input=True)
+            state: Robot state (unused, kept for call-site compat)
             prefix: Optional prefix for VLM mode
             response: Optional response for VLM mode
             actions: Optional actions for VLA mode
