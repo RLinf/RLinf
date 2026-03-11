@@ -15,14 +15,14 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: all
+    actor,env,rollout: 0-3
 
 runner:
   task_type: embodied
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "libero_spatial_ppo_openpi"
+    experiment_name: "libero_spatial_async_ppo_openpi"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
@@ -42,7 +42,7 @@ algorithm:
   reward_coef: 1.0
   staleness_threshold: 2
   behave_weight_threshold: 5
-  rollout_epoch: 8
+  rollout_epoch: 1
   eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
 
   reward_type: chunk_level
@@ -142,7 +142,7 @@ actor:
     adam_eps: 1.0e-08
     weight_decay: 0.01
     clip_grad: 1.0
-    critic_warmup_steps: 20
+    critic_warmup_steps: 30
 
   # Override the default values in training_backend/fsdp
   fsdp_config:

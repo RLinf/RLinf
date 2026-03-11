@@ -47,7 +47,7 @@ class RealWorldEnv(gym.Env):
 
         self.cfg = cfg
         self.override_cfg = OmegaConf.to_container(
-            cfg.get("override_cfg", {}), resolve=True
+            cfg.get("override_cfg", OmegaConf.create({})), resolve=True
         )
 
         self.video_cfg = cfg.video_cfg

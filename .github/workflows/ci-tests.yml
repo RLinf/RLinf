@@ -91,6 +91,7 @@ jobs:
               - 'rlinf/runners/*embodied*.py'
               - 'examples/embodiment/**'
               - 'tests/e2e_tests/embodied/**'
+              - 'tests/e2e_tests/training_backend/**'
               - 'toolkits/eval_scripts_openpi/**'
               - 'toolkits/eval_scripts_dexbotic/**'
               - 'toolkits/realworld_check/**'
@@ -99,7 +100,10 @@ jobs:
             agent_reason_filter: &agent
               - *shared
               - 'rlinf/agents/**'
+              - 'rlinf/workers/actor/ma_megatron_actor_worker.py'
               - 'rlinf/workers/actor/megatron_actor_worker.py'
+              - 'rlinf/workers/critic/**'
+              - 'rlinf/workers/megatron_worker.py'
               - 'rlinf/workers/agent/**'
               - 'rlinf/workers/inference/**'
               - 'rlinf/workers/rollout/server/**'
@@ -116,6 +120,7 @@ jobs:
               - 'examples/searchr1/**'
               - 'examples/mas-search/**'
               - 'examples/rstar2/**'
+              - 'examples/wideseek_r1/**'
               - 'tests/e2e_tests/agent/**'
               - 'tests/e2e_tests/coding_online_rl/**'
               - 'tests/e2e_tests/reasoning/**'

@@ -18,7 +18,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2")
 
 #=======================Utility Functions=======================
 
@@ -389,6 +389,20 @@ install_openvla_oft_model() {
             install_flash_attn
             uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git  --no-build-isolation
             ;;
+        metaworld)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_flash_attn
+            install_metaworld_env
+            uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git  --no-build-isolation
+            ;;
+        calvin)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_flash_attn
+            install_calvin_env
+            uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git  --no-build-isolation
+            ;;
         robotwin)
             create_and_sync_venv
             install_common_embodied_deps
@@ -584,6 +598,10 @@ install_env_only() {
                 install_franka_env
             fi
             ;;
+        xsquare_turtle2)
+            uv sync --extra xsquare_turtle2 --active $NO_INSTALL_RLINF_CMD
+            install_xsquare_turtle2_env
+            ;;
         habitat)
             install_common_embodied_deps
             install_habitat_env
@@ -716,6 +734,10 @@ install_franka_env() {
     echo "source $ROS_CATKIN_PATH/devel/setup.bash" >> "$VENV_DIR/bin/activate"
 }
 
+install_xsquare_turtle2_env() {
+    uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/xsquare_turtle_basics.git
+}
+
 install_robotwin_env() {
     # Set TORCH_CUDA_ARCH_LIST based on the CUDA version
     local nvcc_exe
@@ -738,8 +760,8 @@ install_robotwin_env() {
 
     uv pip install mplib==0.2.1 gymnasium==0.29.1 av open3d zarr openai
 
-    uv pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git  --no-build-isolation
-    uv pip install warp-lang
+    uv pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git@v0.7.9  --no-build-isolation
+    uv pip install warp-lang==1.11.1
     uv pip install git+${GITHUB_PREFIX}https://github.com/NVlabs/curobo.git  --no-build-isolation
 
     # patch sapien and mplib for robotwin

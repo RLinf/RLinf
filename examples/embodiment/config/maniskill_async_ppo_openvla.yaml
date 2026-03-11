@@ -15,16 +15,14 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor: 0-3
-    env: 0-1
-    rollout: 2-3
+    env,rollout,actor: 0-3
 
 runner:
   task_type: embodied
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "maniskill_ppo_openvla"
+    experiment_name: "maniskill_async_ppo_openvla"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
@@ -140,7 +138,7 @@ actor:
     adam_eps: 1.0e-08
     weight_decay: 0.01
     clip_grad: 1.0
-    critic_warmup_steps: 10
+    critic_warmup_steps: 40
 
   # Override the default values in training_backend/fsdp
   fsdp_config:
