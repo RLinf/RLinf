@@ -317,6 +317,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             raise NotImplementedError
 
     def sft_forward(self, data, **kwargs):
+        if hasattr(self, "gradient_checkpointing_disable"):
+            self.gradient_checkpointing_disable()
         observation = data["observation"]
         actions = data["actions"]
         return super().forward(observation, actions)
