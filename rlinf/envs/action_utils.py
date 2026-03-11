@@ -129,38 +129,43 @@ def prepare_actions_for_robocasa(
     raw_chunk_actions,
     action_dim,
     model_type,
+    env_cfg=None,
 ) -> np.ndarray:
     """
-    Prepare actions for robocasa environment.
+    Prepare actions for RoboCasa-style mobile-manipulation environments.
 
-    For Pi0 models:
-        - Pi0 outputs 32D, but only [5:12] contains valid data (see norm_stats.json)
-        - Extract the valid 7D: [3D arm_pos, 3D arm_ori, 1D gripper]
-        - Convert to 12D PandaOmron format: [3D arm_pos, 3D arm_ori, 1D gripper, 4D base, 1D base_mode]
-
-    For other models: Directly extract action_dim dimensions
+    The default mapping preserves the existing RLinf behaviour, while env-specific
+    overrides can be supplied via ``env.action_space``.
     """
+    action_space_cfg = {}
+    if env_cfg is not None:
+        action_space_cfg = getattr(env_cfg, "action_space", {})
+        if hasattr(action_space_cfg, "items"):
+            action_space_cfg = dict(action_space_cfg.items())
+
+    env_action_dim = action_space_cfg.get("env_action_dim", action_dim)
+    openpi_valid_action_slice = action_space_cfg.get(
+        "openpi_valid_action_slice", [5, 12]
+    )
+    disable_base_control = action_space_cfg.get("disable_base_control", True)
+    base_mode_index = action_space_cfg.get("base_mode_index", env_action_dim - 1)
+
     if SupportedModel(model_type) == SupportedModel.OPENPI:
-        # Pi0: Extract valid 7D from [5:12] and convert to 12D for PandaOmron
-        # Note: raw_chunk_actions is already sliced to [:12] by RobocasaOutputs
-        actions_7d = raw_chunk_actions[
-            ..., 5:12
-        ]  # Extract valid 7 dimensions from [5:12]
-        output_shape = actions_7d.shape[:-1] + (12,)  # Shape: (..., 12)
-        actions_12d = np.zeros(output_shape, dtype=np.float32)
+        start_idx, end_idx = openpi_valid_action_slice
+        actions_7d = raw_chunk_actions[..., start_idx:end_idx]
+        output_shape = actions_7d.shape[:-1] + (env_action_dim,)
+        actions_env = np.zeros(output_shape, dtype=np.float32)
 
-        # PandaOmron action mapping:
-        # Pi0's 7D [arm_pos(3), arm_ori(3), gripper(1)] → PandaOmron's 12D
-        actions_12d[..., 0:7] = actions_7d  # Map first 7 dimensions directly
-        actions_12d[..., -1] = 0  # Always control Panda instead of base
+        copy_dim = min(actions_7d.shape[-1], env_action_dim)
+        actions_env[..., :copy_dim] = actions_7d[..., :copy_dim]
+        if disable_base_control and 0 <= base_mode_index < env_action_dim:
+            actions_env[..., base_mode_index] = 0
+        return actions_env
 
-        return actions_12d
-    else:
-        # Other models: directly extract first action_dim dimensions
-        chunk_actions = raw_chunk_actions[..., :action_dim]
-        chunk_actions[..., -1] = 0  # Always control Panda instead of base
-
-        return chunk_actions
+    chunk_actions = raw_chunk_actions[..., :env_action_dim]
+    if disable_base_control and 0 <= base_mode_index < env_action_dim:
+        chunk_actions[..., base_mode_index] = 0
+    return chunk_actions
 
 
 def prepare_actions_for_mujoco(raw_chunk_actions, model_type):
@@ -184,6 +189,7 @@ def prepare_actions(
     action_scale: float = 1.0,
     policy: str = "widowx_bridge",
     wm_env_type=None,
+    env_cfg=None,
 ) -> torch.Tensor | np.ndarray:
     env_type = SupportedEnvType(env_type)
     if env_type == SupportedEnvType.LIBERO:
@@ -227,11 +233,12 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
-    elif env_type == SupportedEnvType.ROBOCASA:
+    elif env_type in (SupportedEnvType.ROBOCASA, SupportedEnvType.ROBOCASA365):
         chunk_actions = prepare_actions_for_robocasa(
             raw_chunk_actions=raw_chunk_actions,
             action_dim=action_dim,
             model_type=model_type,
+            env_cfg=env_cfg,
         )
     elif env_type == SupportedEnvType.REALWORLD:
         chunk_actions = raw_chunk_actions

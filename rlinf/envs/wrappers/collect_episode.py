@@ -355,6 +355,7 @@ class CollectEpisode(gym.Wrapper):
             obs_steps = obs_steps[: len(actions)]
 
         task_desc = self._extract_task_description(buf, env_idx)
+        task_metadata = self._extract_task_metadata(buf, env_idx)
         images: list[np.ndarray] = []
         wrist_images: list[np.ndarray] = []
         states: list[np.ndarray] = []
@@ -395,6 +396,7 @@ class CollectEpisode(gym.Wrapper):
             "actions": np_actions[:end],
             "dones": dones_out,
             "task": task_desc,
+            "task_metadata": task_metadata,
             "is_success": is_success,
         }
 
@@ -425,6 +427,7 @@ class CollectEpisode(gym.Wrapper):
                 states=np.stack(ep_data["states"]),
                 actions=np.stack(ep_data["actions"]),
                 task=ep_data["task"],
+                task_metadata=ep_data.get("task_metadata"),
                 is_success=ep_data["is_success"],
                 dones=np.array(ep_data["dones"], dtype=bool),
             )
@@ -531,6 +534,19 @@ class CollectEpisode(gym.Wrapper):
                 return str(desc[env_idx] if len(desc) == self.num_envs else desc[0])
             return str(desc)
         return "unknown task"
+
+    def _extract_task_metadata(self, buf: dict, env_idx: int) -> Optional[dict[str, Any]]:
+        for obs in reversed(buf["observations"]):
+            if not isinstance(obs, dict) or "task_metadata" not in obs:
+                continue
+            metadata = obs["task_metadata"]
+            if isinstance(metadata, (list, tuple)):
+                selected = metadata[env_idx] if len(metadata) == self.num_envs else metadata[0]
+            else:
+                selected = metadata
+            if isinstance(selected, dict):
+                return self._copy(selected)
+        return None
 
     def _extract_obs_image_state(self, obs):
         """Return ``(image, wrist_image, state)`` numpy arrays from an obs dict."""
