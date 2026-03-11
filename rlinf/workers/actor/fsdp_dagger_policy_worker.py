@@ -326,9 +326,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             forward_type=ForwardType.SFT,
             data={"observation": observation, "actions": actions},
         )
-        # action_chunk = self.model.config.action_chunk
-        # action_dim = self.model.config.action_env_dim
-        # actor_loss = actor_loss[:, :action_chunk, :action_dim]
+        action_chunk = self.model.config.action_chunk
+        action_dim = self.model.config.action_env_dim
+        actor_loss = actor_loss[:, :action_chunk, :action_dim]
 
         return actor_loss.mean()
 
