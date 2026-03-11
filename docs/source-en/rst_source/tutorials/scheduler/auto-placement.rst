@@ -11,8 +11,8 @@ Overview
 
 The auto placement tool consists of three main components in `toolkits/auto_placement`:
 
-- **scheduler_task.py**: Main scheduler that performs time and space division multiplexing to find optimal placements
-- **resource_allocator.py**: Handles resource allocation for different components
+- **auto_placement_worker.py**: Main scheduler that performs time and space division multiplexing to find optimal placements
+- **placement.py**: Handles resource allocation for different components
 - **workflow.py**: Manages workflow graphs and cost calculations
 
 Usage
