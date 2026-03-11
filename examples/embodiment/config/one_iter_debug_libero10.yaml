@@ -98,6 +98,7 @@ rollout:
 
 # Data configuration - LeRobot datasets with advantage
 data:
+  num_workers: 8
   positive_quantile: 0.3 # not used as advantage is computed in advantage computation step
   balance_dataset_weights: true
   global_threshold: true

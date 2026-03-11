@@ -406,7 +406,9 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
         else:
             local_batch_size = batch_size
 
-        num_workers = config.num_workers
+        # Use data config overrides if available, otherwise fall back to OpenPI defaults.
+        data_cfg = self.cfg.get("data", {})
+        num_workers = int(data_cfg.get("num_workers", config.num_workers))
         return torch.utils.data.DataLoader(
             dataset,
             batch_size=local_batch_size,
@@ -507,7 +509,6 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
         # LR scheduler step
         self.lr_scheduler.step()
         self.optimizer.zero_grad(set_to_none=True)
-        clear_memory()
 
         # Handle CFG-specific metrics
         special_keys = [
