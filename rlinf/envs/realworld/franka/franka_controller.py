@@ -44,7 +44,6 @@ class FrankaController(Worker):
         node_rank: int = 0,
         worker_rank: int = 0,
         ros_pkg: str = "serl_franka_controllers",
-        node_group_label: str = None,
         end_effector_type: str = "franka_gripper",
         end_effector_config: Optional[dict] = None,
     ):
@@ -56,7 +55,6 @@ class FrankaController(Worker):
             node_rank: The rank of the node to launch the controller on.
             worker_rank: The rank of the env worker.
             ros_pkg: The ROS package name for the Franka controllers.
-            node_group_label: The label of the node group for env_configs.
             end_effector_type: One of ``"franka_gripper"``,
                 ``"aoyi_hand"``, or ``"ruiyan_hand"``.
             end_effector_config: Extra keyword arguments forwarded to the
@@ -66,7 +64,7 @@ class FrankaController(Worker):
             FrankaController: The launched FrankaController instance.
         """
         cluster = Cluster()
-        placement = NodePlacementStrategy(node_ranks=[node_rank], node_group_label=node_group_label)
+        placement = NodePlacementStrategy(node_ranks=[node_rank])
         return FrankaController.create_group(
             robot_ip, ros_pkg, end_effector_type, end_effector_config or {},
         ).launch(

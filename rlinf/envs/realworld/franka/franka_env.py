@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import copy
-import os
 import queue
 import time
 from dataclasses import dataclass, field
@@ -199,15 +198,11 @@ class FrankaEnv(gym.Env):
             self.config.camera_serials = self.hardware_info.config.camera_serials
 
         # Launch Franka controller
-        # When node_group_label is set, NodePlacementStrategy expects
-        # local ranks within that group (not global node ranks).
-        # The env worker's env_idx maps to the local rank inside the group.
         self._controller = FrankaController.launch_controller(
             robot_ip=self.config.robot_ip,
             env_idx=self.env_idx,
-            node_rank=self.env_idx,
+            node_rank=self.node_rank,
             worker_rank=self.env_worker_rank,
-            node_group_label=os.environ.get("NODE_GROUP_LABEL", None),
             end_effector_type=self.config.end_effector_type,
             end_effector_config=self.config.end_effector_config,
         )
