@@ -109,7 +109,7 @@ Franka + 灵巧手真机强化学习
 .. code-block:: bash
 
    # 灵巧手 + 数据手套驱动（包含串口通信等全部依赖）
-   pip install "RLinf-dexterous-hands[all]"
+   pip install "RLinf-dexterous-hands[all]" -i https://pypi.org/simple
 
 ``RLinf-dexterous-hands`` 包含睿研灵巧手、傲意灵巧手和 PSI 数据手套的驱动，
 以及所需的串口通信库（pyserial、pymodbus、pyyaml 等）。
