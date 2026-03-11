@@ -659,16 +659,33 @@ class ComponentPlacement:
         )
         return self._component_world_size[component_name]
 
-    def get_strategy(self, component_name: str):
+    def has_component(self, component_name: str) -> bool:
+        """Check if a component exists in the placement configuration.
+
+        Args:
+            component_name (str): The name of the component to check.
+
+        Returns:
+            bool: True if the component exists, False otherwise.
+        """
+        return component_name in self._placements
+
+    def get_strategy(self, component_name: str, required: bool = True):
         """Get the placement strategy for a component based on the configuration.
 
         Args:
             component_name (str): The name of the component to retrieve the placement strategy for.
+            required (bool): If True, raise an error if the component doesn't exist.
+                           If False, return None if the component doesn't exist.
 
         Returns:
-            PackedPlacementStrategy: The placement strategy for the specified component.
+            PackedPlacementStrategy | None: The placement strategy for the specified component,
+                                            or None if required=False and the component doesn't exist.
         """
-        assert component_name in self._placements, (
-            f"Component {component_name} does not exist in {type(self)} with placement mode {self._placement_mode}"
-        )
+        if component_name not in self._placements:
+            if required:
+                raise AssertionError(
+                    f"Component {component_name} does not exist in {type(self)} with placement mode {self._placement_mode}"
+                )
+            return None
         return self._placements[component_name]

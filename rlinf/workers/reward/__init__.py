@@ -11,3 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from rlinf.workers.reward.classifier_reward_server import ClassifierRewardServer
+from rlinf.workers.reward.classifier_reward_worker import (
+    ClassifierRewardServerWorker,
+    launch_classifier_reward_server,
+)
+
+__all__ = [
+    "ClassifierRewardServer",
+    "ClassifierRewardServerWorker",
+    "launch_classifier_reward_server",
+]

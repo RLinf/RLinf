@@ -453,10 +453,9 @@ while avoiding CUDA model loading on the GPU-less controller node.
 
 .. note::
 
-   If your controller node has a GPU (or you are running a single-node
-   setup), you can set ``classifier_reward_wrapper.remote: false`` and
-   ``device: cuda`` in the config. The classifier will then be loaded
-   directly inside the env worker process.
+   If the controller node has a GPU (or you are running a single-node
+   setup), you can skip the ``reward_server`` component configuration.
+   The classifier will then be loaded directly inside the env worker process.
 
 **Complete workflow (execute in order):**
 
@@ -756,6 +755,9 @@ key fields:
        env:
          node_group: franka     # env worker on the controller node
          placement: 0
+       reward_server:
+         node_group: "4090"     # GPU node for classifier inference
+         placement: 0
      node_groups:
        - label: "4090"
          node_ranks: 0          # GPU node
@@ -772,13 +774,16 @@ key fields:
              - robot_ip: 172.16.0.2
                node_rank: 1
 
+   reward_server:
+     checkpoint_path: "/path/to/reward_classifier.pt"
+     image_keys: null
+     device: cuda
+     server_name: "ClassifierRewardServer"
+
    env:
      eval:
        ignore_terminations: False   # let classifier-triggered termination take effect
        classifier_reward_wrapper:
-         checkpoint_path: "/path/to/reward_classifier.pt"
-         device: cuda               # classifier infers on GPU
-         remote: true               # key: remote call to GPU node via Ray
          threshold: 0.75
 
 Update ``checkpoint_path`` to the classifier path from Step 3, and
@@ -814,8 +819,7 @@ Step 6: Train RL (with Demos and Classifier Reward)
 After collecting demos, **make sure the Ray cluster is still running**
 (or restart it), then specify in the training config YAML:
 
-1. ``classifier_reward_wrapper.remote: true`` — the classifier also
-   infers on the GPU node during online training
+1. ``reward_server`` in ``component_placement`` + ``reward_server:`` config section
 2. ``demo_buffer.load_path`` — path to the demos collected in Step 5
 
 **Training configuration**
@@ -823,18 +827,6 @@ After collecting demos, **make sure the Ray cluster is still running**
 key fields:
 
 .. code-block:: yaml
-
-   env:
-     train:
-       classifier_reward_wrapper:
-         checkpoint_path: /path/to/reward_classifier.pt
-         device: cuda
-         remote: true              # classifier infers on GPU node
-         threshold: 0.75
-
-   algorithm:
-     demo_buffer:
-       load_path: "/path/to/logs/<timestamp>/demos"
 
    cluster:
      num_nodes: 2
@@ -848,6 +840,24 @@ key fields:
        rollout:
          node_group: "4090"
          placement: 0
+       reward_server:
+         node_group: "4090"
+         placement: 0
+
+   reward_server:
+     checkpoint_path: /path/to/reward_classifier.pt
+     image_keys: null
+     device: cuda
+     server_name: "ClassifierRewardServer"
+
+   env:
+     train:
+       classifier_reward_wrapper:
+         threshold: 0.75
+
+   algorithm:
+     demo_buffer:
+       load_path: "/path/to/logs/<timestamp>/demos"
 
 After updating ``checkpoint_path`` and ``demo_buffer.load_path``, run on
 the **head node**:

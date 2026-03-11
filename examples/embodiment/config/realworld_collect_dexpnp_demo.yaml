@@ -16,6 +16,9 @@ cluster:
     env:
       node_group: franka
       placement: 0
+    reward_server:
+      node_group: "4090"
+      placement: 0
   node_groups:
     - label: "4090"
       node_ranks: 0
@@ -26,6 +29,12 @@ cluster:
         configs:
           - robot_ip: ROBOT_IP # Replace with your robot's IP address
             node_rank: 1
+
+reward_server:
+  checkpoint_path: "/path/to/reward_classifier.pt"
+  image_keys: null
+  device: cuda
+  server_name: "ClassifierRewardServer"
 
 runner:
   task_type: embodied
@@ -48,10 +57,6 @@ env:
       left_port: "/dev/ttyACM0"
       frequency: 30
     classifier_reward_wrapper:
-      checkpoint_path: "/path/to/reward_classifier.pt"
-      image_keys: null
-      device: cuda              # inference on GPU node
-      remote: true              # use Ray remote ClassifierRewardServer on GPU node
       threshold: 0.75
     override_cfg:
       camera_configs: ${cameras.realsense}

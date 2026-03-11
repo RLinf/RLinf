@@ -264,6 +264,30 @@ class DataCollector(Worker):
         self.env.close()
 
 
+def _launch_classifier_reward_server(cfg, cluster, component_placement):
+    """Launch ClassifierRewardServer if configured in component_placement.
+
+    Returns:
+        WorkerGroup or None if not configured.
+    """
+    from rlinf.workers.reward import launch_classifier_reward_server
+
+    reward_server_strategy = component_placement.get_strategy("reward_server", required=False)
+    if reward_server_strategy is not None:
+        reward_server_cfg = cfg.get("reward_server", None)
+        if reward_server_cfg is None:
+            raise ValueError(
+                "component_placement has 'reward_server' but config missing 'reward_server' section"
+            )
+        return launch_classifier_reward_server(
+            cfg=cfg,
+            cluster=cluster,
+            placement_strategy=reward_server_strategy,
+        )
+
+    return None
+
+
 @hydra.main(
     version_base="1.1", config_path="config", config_name="realworld_collect_data"
 )
@@ -272,27 +296,8 @@ def main(cfg):
     component_placement = ComponentPlacement(cfg, cluster)
     env_placement = component_placement.get_strategy("env")
 
-    # If classifier_reward_wrapper.remote is set, start the classifier
-    # server on a GPU node before launching the env worker.
-    clf_cfg = cfg.env.eval.get("classifier_reward_wrapper", None)
-    server_handle = None
-    if clf_cfg is not None and clf_cfg.get("remote", False):
-        import ray
-        from rlinf.workers.reward.classifier_reward_server import (
-            ClassifierRewardServer,
-        )
-
-        server_name = clf_cfg.get("server_name", "ClassifierRewardServer")
-        server_handle = ClassifierRewardServer.options(
-            name=server_name,
-            num_gpus=0.05,
-        ).remote(
-            checkpoint_path=clf_cfg.checkpoint_path,
-            image_keys=clf_cfg.get("image_keys", None),
-            device=clf_cfg.get("device", "cuda"),
-        )
-        ray.get(server_handle.ready.remote())
-        print(f"[collect_real_data] ClassifierRewardServer '{server_name}' ready on GPU node.")
+    # Launch ClassifierRewardServer if configured
+    server_handle = _launch_classifier_reward_server(cfg, cluster, component_placement)
 
     collector = DataCollector.create_group(cfg).launch(
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
@@ -300,8 +305,7 @@ def main(cfg):
     collector.run().wait()
 
     if server_handle is not None:
-        import ray
-        ray.kill(server_handle)
+        server_handle.shutdown()
 
 
 if __name__ == "__main__":

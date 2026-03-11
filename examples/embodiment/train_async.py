@@ -29,6 +29,28 @@ from rlinf.workers.rollout.hf.async_huggingface_worker import (
 mp.set_start_method("spawn", force=True)
 
 
+def _launch_classifier_reward_server(cfg, cluster, component_placement):
+    """Launch ClassifierRewardServer if configured in component_placement.
+
+    Returns:
+        Worker group handle or None if not configured.
+    """
+    reward_server_placement = component_placement.get_strategy(
+        "reward_server", required=False
+    )
+    if reward_server_placement is not None:
+        from rlinf.workers.reward.classifier_reward_worker import (
+            launch_classifier_reward_server,
+        )
+
+        print("[train_async] Launching ClassifierRewardServer")
+        return launch_classifier_reward_server(
+            cfg, cluster, reward_server_placement
+        )
+
+    return None
+
+
 @hydra.main(
     version_base="1.1", config_path="config", config_name="maniskill_sac_mlp_async"
 )
@@ -41,25 +63,8 @@ def main(cfg) -> None:
     )
     component_placement = HybridComponentPlacement(cfg, cluster)
 
-    # If the env uses a remote classifier, start the server on a GPU node.
-    clf_cfg = cfg.env.train.get("classifier_reward_wrapper", None)
-    server_handle = None
-    if clf_cfg is not None and clf_cfg.get("remote", False):
-        import ray
-        from rlinf.workers.reward.classifier_reward_server import (
-            ClassifierRewardServer,
-        )
-
-        server_name = clf_cfg.get("server_name", "ClassifierRewardServer")
-        server_handle = ClassifierRewardServer.options(
-            name=server_name,
-            num_gpus=0.05,
-        ).remote(
-            checkpoint_path=clf_cfg.checkpoint_path,
-            image_keys=clf_cfg.get("image_keys", None),
-            device=clf_cfg.get("device", "cuda"),
-        )
-        ray.get(server_handle.ready.remote())
+    # Launch ClassifierRewardServer if configured
+    _launch_classifier_reward_server(cfg, cluster, component_placement)
 
     # Create actor worker group
     actor_placement = component_placement.get_strategy("actor")

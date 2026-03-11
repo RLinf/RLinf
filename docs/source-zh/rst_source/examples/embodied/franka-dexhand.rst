@@ -410,9 +410,8 @@ Franka + 灵巧手真机强化学习
 
 .. note::
 
-   如果你的控制节点有 GPU（或希望在单节点上运行），也可以在配置中设置
-   ``classifier_reward_wrapper.remote: false`` 并指定 ``device: cuda``，
-   分类器将直接在 env worker 进程内加载推理。
+   如果控制节点有 GPU（或在单节点上运行），可以不配置 ``reward_server`` 组件，
+   分类器将直接在 env worker 进程内加载。
 
 **完整 workflow（按顺序执行）：**
 
@@ -683,6 +682,9 @@ demo 采集流程中：
        env:
          node_group: franka     # env worker 在控制节点
          placement: 0
+       reward_server:
+         node_group: "4090"     # GPU 节点用于分类器推理
+         placement: 0
      node_groups:
        - label: "4090"
          node_ranks: 0          # GPU 节点
@@ -699,15 +701,20 @@ demo 采集流程中：
              - robot_ip: 172.16.0.2
                node_rank: 1
 
+   reward_server:
+     checkpoint_path: "/path/to/reward_classifier.pt"
+     image_keys: null           # 或 ["wrist_1"]，null 使用所有摄像头
+     device: cuda
+     server_name: "ClassifierRewardServer"
+
    env:
      eval:
        ignore_terminations: False   # 让分类器触发的 termination 生效
        classifier_reward_wrapper:
          checkpoint_path: "/path/to/reward_classifier.pt"
-         device: cuda               # 分类器在 GPU 节点上用 CUDA 推理
-         remote: true               # 关键：通过 Ray 远程调用 GPU 节点
+         device: cuda
+         remote: false              # 使用显式 reward_server 时设为 false
          threshold: 0.75
-
 修改配置中的 ``checkpoint_path`` 为步骤 3 训练得到的分类器路径，
 以及 ``robot_ip``、``env_vars`` 等为实际值后，在 **head 节点** 运行：
 
@@ -739,25 +746,13 @@ demo 采集流程中：
 采集完 demo 后，**确保 Ray 集群仍在运行**（或重新启动），
 然后在训练配置 YAML 中指定：
 
-1. ``classifier_reward_wrapper.remote: true`` — 在线训练时分类器也在 GPU 节点推理
+1. ``component_placement`` 中的 ``reward_server`` + ``reward_server:`` 配置段
 2. ``demo_buffer.load_path`` — 步骤 5 采集的 demo 数据路径
 
 **训练配置**
 ``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yaml`` 关键字段：
 
 .. code-block:: yaml
-
-   env:
-     train:
-       classifier_reward_wrapper:
-         checkpoint_path: /path/to/reward_classifier.pt
-         device: cuda
-         remote: true              # 分类器在 GPU 节点推理
-         threshold: 0.75
-
-   algorithm:
-     demo_buffer:
-       load_path: "/path/to/logs/<timestamp>/demos"
 
    cluster:
      num_nodes: 2
@@ -771,6 +766,24 @@ demo 采集流程中：
        rollout:
          node_group: "4090"
          placement: 0
+       reward_server:
+         node_group: "4090"
+         placement: 0
+
+   reward_server:
+     checkpoint_path: /path/to/reward_classifier.pt
+     image_keys: null
+     device: cuda
+     server_name: "ClassifierRewardServer"
+
+   env:
+     train:
+       classifier_reward_wrapper:
+         threshold: 0.75
+
+   algorithm:
+     demo_buffer:
+       load_path: "/path/to/logs/<timestamp>/demos"
 
 修改 ``checkpoint_path`` 和 ``demo_buffer.load_path`` 后，在 **head 节点** 运行：
 
