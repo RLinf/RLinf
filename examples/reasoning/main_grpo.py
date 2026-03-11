@@ -27,6 +27,7 @@ from rlinf.scheduler.dynamic_scheduler.scheduler_worker import SchedulerWorker
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.actor import get_actor_worker
+from rlinf.workers.critic import get_critic_worker
 from rlinf.workers.inference.utils import get_inference_backend_worker
 from rlinf.workers.reward.reward_worker import RewardWorker
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
@@ -53,16 +54,37 @@ def main(cfg) -> None:
         placement_strategy=rollout_placement_strategy,
     )
 
-    # Inference group
-    inference_worker_cls = get_inference_backend_worker(cfg)
-    inference_group = None
+    # Inference group for critic model
+    critic_inference_group = None
+    if (
+        component_placement.placement_mode
+        in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]
+        and cfg.critic.use_critic_model
+    ):
+        inference_placement_strategy = component_placement.get_strategy(
+            "critic_inference"
+        )
+        inference_worker_cls = get_inference_backend_worker(cfg, "critic")
+        critic_inference_group = inference_worker_cls.create_group(
+            cfg, component_placement, train_role="critic"
+        ).launch(
+            cluster,
+            name=cfg.critic_inference.group_name,
+            placement_strategy=inference_placement_strategy,
+        )
+
+    # Inference group for actor model
+    actor_inference_group = None
     if (
         component_placement.placement_mode
         in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]
         and cfg.algorithm.recompute_logprobs
     ):
-        inference_placement_strategy = component_placement.get_strategy("inference")
-        inference_group = inference_worker_cls.create_group(
+        inference_placement_strategy = component_placement.get_strategy(
+            "actor_inference" if critic_inference_group else "inference"
+        )
+        inference_worker_cls = get_inference_backend_worker(cfg, "actor")
+        actor_inference_group = inference_worker_cls.create_group(
             cfg, component_placement
         ).launch(
             cluster,
@@ -85,6 +107,20 @@ def main(cfg) -> None:
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement_strategy
     )
 
+    # PPO Critic group
+    if cfg.critic.use_critic_model:
+        critic_worker_cls = get_critic_worker(cfg)
+        critic_placement_strategy = component_placement.get_strategy("critic")
+        critic_group = critic_worker_cls.create_group(
+            cfg, component_placement, role="critic"
+        ).launch(
+            cluster,
+            name=cfg.critic.group_name,
+            placement_strategy=critic_placement_strategy,
+        )
+    else:
+        critic_group = None
+
     # Dynamic Scheduler group
     if component_placement._placement_mode == PlacementMode.AUTO:
         scheduler_placement_strategy = NodePlacementStrategy(node_ranks=[0])
@@ -105,10 +141,13 @@ def main(cfg) -> None:
         train_dataset=train_ds,
         val_dataset=val_ds,
         rollout=rollout_group,
-        inference=inference_group,
+        actor_inference=actor_inference_group,
         actor=actor_group,
         reward=reward_group,
         scheduler=scheduler,
+        # critic components are only used for PPO
+        critic_inference=critic_inference_group,
+        critic=critic_group,
     )
 
     runner.init_workers()
