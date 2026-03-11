@@ -370,7 +370,7 @@ class VLMObservationEncoder(nn.Module):
         )
 
     def _preprocess_observation(self, observation):
-        """Extract observation components with unified masks (PI05 version, no state)."""
+        """Extract observation components with unified masks (no state)."""
         images = observation["images"]
         image_masks = observation.get("image_masks", {})
         tokenized_prompt = observation["tokenized_prompt"]
@@ -415,7 +415,7 @@ class VLMObservationEncoder(nn.Module):
     def embed_prefix(
         self, images, img_masks, lang_tokens, lang_masks, token_ar_mask=None
     ):
-        """Embed images and language tokens (PI05 version with token_ar_mask)."""
+        """Embed images and language tokens (with token_ar_mask)."""
         embs, pad_masks, ar_masks = [], [], []
         bsize = lang_tokens.shape[0]
         device = lang_tokens.device
@@ -1093,6 +1093,7 @@ class ValueCritic(CriticPreTrainedModel):
         return_max=0.0,
         action_norm_skip_dims=None,
         critic_expert_variant="gemma_100m",
+        tokenizer_path=None,
         **kwargs,
     ):
         """Create a ValueCritic from a trained checkpoint, ready for inference.
@@ -1109,6 +1110,8 @@ class ValueCritic(CriticPreTrainedModel):
             return_max: Maximum return value.
             action_norm_skip_dims: Dims to skip in normalization.
             critic_expert_variant: Gemma variant (e.g., "gemma_100m").
+            tokenizer_path: Explicit path to tokenizer. If not set, loads
+                from checkpoint_dir. Raises if neither has tokenizer files.
 
         Returns:
             ValueCritic instance with transforms and processor attached.
@@ -1123,25 +1126,30 @@ class ValueCritic(CriticPreTrainedModel):
             load_norm_stats,
             load_state_dict_from_checkpoint,
         )
-        from .processing import PI05Processor
+        from .processing import ValueProcessor
 
         checkpoint_dir = pathlib.Path(checkpoint_dir)
         logger.info(f"Loading value model from {checkpoint_dir}")
 
-        # Load processor
-        if has_tokenizer_files(checkpoint_dir):
+        # Load processor: tokenizer_path > checkpoint tokenizer > error
+        if tokenizer_path:
+            logger.info("  Using explicit tokenizer_path: %s", tokenizer_path)
+            tokenizer = AutoTokenizer.from_pretrained(
+                tokenizer_path, add_bos_token=True, local_files_only=True
+            )
+        elif has_tokenizer_files(checkpoint_dir):
             logger.info("  Found tokenizer files in checkpoint")
             tokenizer = AutoTokenizer.from_pretrained(
-                str(checkpoint_dir), add_bos_token=True
-            )
-            processor = PI05Processor(
-                tokenizer=tokenizer, max_token_len=200, discrete_state_input=False
+                str(checkpoint_dir), add_bos_token=True, local_files_only=True
             )
         else:
-            logger.info("  No tokenizer in checkpoint, using default processor")
-            processor = PI05Processor(
-                max_token_len=200, discrete_state_input=False
+            raise ValueError(
+                f"No tokenizer found. Set tokenizer_path or ensure checkpoint "
+                f"contains tokenizer files. checkpoint_dir={checkpoint_dir}"
             )
+        processor = ValueProcessor(
+            tokenizer=tokenizer, max_token_len=200, discrete_state_input=False
+        )
 
         # Build config and load model
         critic_config = ValueCriticConfig(
@@ -1243,7 +1251,7 @@ class ValueCritic(CriticPreTrainedModel):
 
         Args:
             inputs: Transformed observation dict (output of _input_transform).
-            processor: PI05Processor instance.
+            processor: ValueProcessor instance.
 
         Returns:
             Dict with CPU tensors: pixel_values, image_masks, tokens, mask, ar_mask.

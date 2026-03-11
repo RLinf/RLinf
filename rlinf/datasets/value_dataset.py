@@ -25,7 +25,7 @@ The key difference from VLA training:
 - VLA: predicts actions via flow matching
 - Value: predicts return token via cross-entropy loss (VLM mode)
 
-Sample output format (compatible with PI05DataCollator in VLM mode):
+Sample output format (compatible with ValueDataCollator in VLM mode):
 {
     'images': Dict[str, Tensor],      # Camera images
     'image_masks': Dict[str, Tensor], # Image validity masks
@@ -59,7 +59,7 @@ class ValueDataset(LeRobotRLDataset):
     Inheritance chain:
         ValueDataset -> LeRobotRLDataset -> LeRobotPyTorchDataset -> Dataset
 
-    The sample structure matches PI05DataCollator expectations for VLM mode:
+    The sample structure matches ValueDataCollator expectations for VLM mode:
     - 'images': camera images
     - 'prompt': task instruction
     - 'state': robot state (used for discretization in PI0.5)

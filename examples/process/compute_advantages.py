@@ -373,12 +373,15 @@ def load_value_model(cfg: DictConfig, device: str = "cuda"):
     return_min = model_cfg.get("v_min", -1.0)
     return_max = model_cfg.get("v_max", 0.0)
     critic_expert_variant = model_cfg.get("critic_expert_variant", "gemma_100m")
+    tokenizer_path = model_cfg.get("tokenizer_path", None)
 
     logger.info(f"  env_type (robot_type): {robot_type}")
     logger.info(f"  model_type: {model_type}")
     logger.info(f"  num_return_bins: {num_return_bins}")
     logger.info(f"  return_range: [{return_min}, {return_max}]")
     logger.info(f"  critic_expert_variant: {critic_expert_variant}")
+    if tokenizer_path:
+        logger.info(f"  tokenizer_path: {tokenizer_path}")
 
     model = ValueCritic.from_checkpoint(
         checkpoint_dir=checkpoint_path,
@@ -389,6 +392,7 @@ def load_value_model(cfg: DictConfig, device: str = "cuda"):
         return_min=return_min,
         return_max=return_max,
         critic_expert_variant=critic_expert_variant,
+        tokenizer_path=tokenizer_path,
     )
 
     logger.info("Loaded ValueCritic for inference")

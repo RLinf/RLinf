@@ -95,18 +95,42 @@ def get_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticModel:
 
     # Load checkpoint if provided
     model_path = getattr(cfg, "model_path", None)
-    if model_path is None or not os.path.exists(model_path):
-        raise FileNotFoundError(f"Model path does not exist: {model_path}")
+    backbone_variant = getattr(cfg, "backbone_variant", "paligemma")
 
-    state_dict = _load_state_dict(model_path)
-    if state_dict:
-        missing, unexpected = model.load_state_dict(state_dict, strict=False)
-        logger.info(
-            "Loaded checkpoint from %s (missing=%d, unexpected=%d)",
-            model_path,
-            len(missing),
-            len(unexpected),
-        )
+    if backbone_variant == "paligemma":
+        # PaliGemma: all weights come from a single checkpoint (e.g. PI05)
+        if model_path is None or not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model path does not exist: {model_path}")
+        state_dict = _load_state_dict(model_path)
+        if state_dict:
+            missing, unexpected = model.load_state_dict(state_dict, strict=False)
+            logger.info(
+                "Loaded checkpoint from %s (missing=%d, unexpected=%d)",
+                model_path,
+                len(missing),
+                len(unexpected),
+            )
+    else:
+        # SigLIP-Gemma3: backbone weights already loaded via from_pretrained().
+        # model_path is only used for resuming from a fine-tuned checkpoint.
+        if model_path and os.path.exists(model_path):
+            state_dict = _load_state_dict(model_path)
+            if state_dict:
+                missing, unexpected = model.load_state_dict(
+                    state_dict, strict=False
+                )
+                logger.info(
+                    "Loaded fine-tuned checkpoint from %s (missing=%d, unexpected=%d)",
+                    model_path,
+                    len(missing),
+                    len(unexpected),
+                )
+        else:
+            logger.info(
+                "No model_path provided for %s backbone; "
+                "using from_pretrained() weights.",
+                backbone_variant,
+            )
 
     return model
 

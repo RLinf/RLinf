@@ -50,6 +50,11 @@ siglip_path: null
 gemma3_path: null
 
 # =====================================================================
-# Checkpoint (set to load pretrained weights)
+# Checkpoint
 # =====================================================================
+# For paligemma: required. Points to PI05 checkpoint containing all weights.
+# For siglip_gemma3: optional. Points to a previously trained ValueCriticModel
+#   checkpoint to resume training. Backbone weights are loaded via
+#   from_pretrained() from siglip_path/gemma3_path; leave unset to train
+#   from scratch.
 # model_path: "/path/to/checkpoint"

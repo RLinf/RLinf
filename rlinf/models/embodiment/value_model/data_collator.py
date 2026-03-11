@@ -1,5 +1,5 @@
 """
-PI0.5 Data Collator for value model training.
+Data Collator for value model training.
 
 Handles batching and preprocessing of multimodal robot control data
 with support for RL-specific fields (returns, target values, etc.).
@@ -75,16 +75,16 @@ def stack_tensors(list_of_dicts: List[Dict[str, Any]]) -> Dict[str, torch.Tensor
 
 
 @dataclass
-class PI05DataCollator(DataCollatorMixin):
-    """Data collator for PI0.5 value model training."""
+class ValueDataCollator(DataCollatorMixin):
+    """Data collator for value model training."""
 
-    processor: Any  # PI05Processor
+    processor: Any  # ValueProcessor
     max_length: int = 200
     return_tensors: str = "pt"
     train: bool = True
 
     def torch_call(self, examples: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
-        """Collate examples for PI0.5 training."""
+        """Collate examples for value model training."""
         images_batch = []
         image_masks_batch = []
         prompts = []
@@ -248,4 +248,4 @@ class PI05DataCollator(DataCollatorMixin):
         return batch
 
 
-__all__ = ["PI05DataCollator", "stack_tensors"]
+__all__ = ["ValueDataCollator", "stack_tensors"]

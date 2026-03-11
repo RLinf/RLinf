@@ -128,8 +128,8 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         except (ImportError, AttributeError):
             pass
 
-        from rlinf.models.embodiment.value_model.data_collator import PI05DataCollator
-        from rlinf.models.embodiment.value_model.processing import PI05Processor
+        from rlinf.models.embodiment.value_model.data_collator import ValueDataCollator
+        from rlinf.models.embodiment.value_model.processing import ValueProcessor
 
         from rlinf.datasets import ValueDataset
 
@@ -153,22 +153,40 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             return kwargs
 
         # ---- processor & collator ----
-        processor = PI05Processor(
+        # Tokenizer resolution: explicit tokenizer_path > backbone path > error
+        from rlinf.models.embodiment.value_model.checkpoint_utils import (
+            has_tokenizer_files,
+        )
+
+        backbone_variant = getattr(model_cfg, "backbone_variant", "paligemma")
+        tokenizer_path = getattr(model_cfg, "tokenizer_path", None)
+        if tokenizer_path is None:
+            # Infer from backbone variant
+            if backbone_variant == "siglip_gemma3":
+                tokenizer_path = getattr(model_cfg, "gemma3_path", None)
+            else:
+                tokenizer_path = getattr(model_cfg, "model_path", None)
+        if tokenizer_path is None or not has_tokenizer_files(Path(tokenizer_path)):
+            raise ValueError(
+                f"No tokenizer found for backbone_variant='{backbone_variant}'. "
+                f"Set model.tokenizer_path explicitly or ensure the backbone path "
+                f"contains tokenizer files. Tried: {tokenizer_path}"
+            )
+        processor = ValueProcessor(
             max_token_len=getattr(model_cfg, "max_token_len", 200),
-            tokenizer_name_or_path=getattr(model_cfg, "tokenizer_path", None)
-            or model_cfg.model_path,
+            tokenizer_name_or_path=tokenizer_path,
             discrete_state_input=getattr(model_cfg, "discrete_state_input", False),
             exclude_cot_from_kv_cache=getattr(
                 model_cfg, "exclude_cot_from_kv_cache", False
             ),
         )
-        train_collator = PI05DataCollator(
+        train_collator = ValueDataCollator(
             processor=processor,
             max_length=getattr(model_cfg, "max_token_len", 200),
             train=True,
         )
         # Use deterministic preprocessing for eval (no image augmentation).
-        eval_collator = PI05DataCollator(
+        eval_collator = ValueDataCollator(
             processor=processor,
             max_length=getattr(model_cfg, "max_token_len", 200),
             train=False,

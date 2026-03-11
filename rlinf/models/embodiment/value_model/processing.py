@@ -1,12 +1,12 @@
 """
-Image and text processors for PI0 / PI0.5 value model.
+Image and text processors for value model.
 
 Contains:
-- PI0ImageProcessor: HuggingFace-style image processor handling resize, padding,
-  augmentation, and multi-camera views for PI0-family models.
+- ValueImageProcessor: HuggingFace-style image processor handling resize, padding,
+  augmentation, and multi-camera views.
 - normalize_image_to_model_format: Utility to convert arbitrary image tensors
   to BCHW [-1, 1] float format.
-- PI05Processor: Processor combining image preprocessing and text tokenization.
+- ValueProcessor: Processor combining image preprocessing and text tokenization.
 
 Text template: ``Task: {prompt}.``
 
@@ -178,17 +178,17 @@ def normalize_image_to_model_format(
 
 
 # ---------------------------------------------------------------------------
-# PI0ImageProcessor
+# ValueImageProcessor
 # ---------------------------------------------------------------------------
 
-class PI0ImageProcessor(ImageProcessingMixin):
+class ValueImageProcessor(ImageProcessingMixin):
     """
-    PI0 Image Processor that replicates OpenPI's preprocessing logic.
+    Value model image processor that replicates OpenPI's preprocessing logic.
 
     Implements the exact image preprocessing pipeline from OpenPI:
     - Resize with padding to maintain aspect ratio
     - Training augmentations: crop, rotation, color jitter
-    - Images kept in [-1, 1] range as expected by PI0 models
+    - Images kept in [-1, 1] range
     - Handles multiple camera views
     """
 
@@ -411,7 +411,7 @@ class PI0ImageProcessor(ImageProcessingMixin):
         **kwargs
     ) -> BatchFeature:
         """
-        Process images for PI0 model following OpenPI's preprocessing.
+        Process images for value model following OpenPI's preprocessing.
 
         Args:
             images: Dict of images with OpenPI camera keys or list/tensor of images
@@ -439,12 +439,12 @@ class PI0ImageProcessor(ImageProcessingMixin):
 
 
 # ---------------------------------------------------------------------------
-# PI05Processor
+# ValueProcessor
 # ---------------------------------------------------------------------------
 
-class PI05Processor(ProcessorMixin):
+class ValueProcessor(ProcessorMixin):
     """
-    Processor for PI0.5 with unified tokenization.
+    Value model processor with unified tokenization.
 
     Handles three modes based on input:
     - VLA: prompt + state + actions (flow matching)
@@ -459,7 +459,7 @@ class PI05Processor(ProcessorMixin):
     """
 
     attributes = ["image_processor", "tokenizer"]
-    image_processor_class = "PI0ImageProcessor"
+    image_processor_class = "ValueImageProcessor"
     tokenizer_class = "AutoTokenizer"
     _tokenize_log_count = 0
 
@@ -477,7 +477,7 @@ class PI05Processor(ProcessorMixin):
 
     def __init__(
         self,
-        image_processor: Optional[PI0ImageProcessor] = None,
+        image_processor: Optional[ValueImageProcessor] = None,
         tokenizer: Optional[PreTrainedTokenizerBase] = None,
         max_token_len: int = 200,
         tokenizer_name_or_path: Optional[str] = None,
@@ -489,21 +489,24 @@ class PI05Processor(ProcessorMixin):
     ):
         if image_processor is None:
             # Use custom image_keys if provided, otherwise use defaults
-            image_processor = PI0ImageProcessor(image_keys=image_keys) if image_keys else PI0ImageProcessor()
+            image_processor = ValueImageProcessor(image_keys=image_keys) if image_keys else ValueImageProcessor()
 
         if tokenizer is None:
             tokenizer_path = (
                 tokenizer_name_or_path
                 or os.environ.get("VLA_TOKENIZER_PATH")
-                or PI05Processor._default_tokenizer_path()  # TODO: zhihao: tokenizer_path最后也得改，不能默认用这个path，得赋值一个
+                or ValueProcessor._default_tokenizer_path()
             )
-            tokenizer_kwargs = {"add_bos_token": True}
-            if tokenizer_path and os.path.exists(tokenizer_path):
-                tokenizer_kwargs["local_files_only"] = True
-                tokenizer_source = tokenizer_path
-            else:
-                tokenizer_source = tokenizer_path or "google/paligemma-3b-pt-224"
-            tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, **tokenizer_kwargs)
+            if not tokenizer_path or not os.path.exists(tokenizer_path):
+                raise ValueError(
+                    f"No tokenizer found. Provide tokenizer_name_or_path, "
+                    f"set VLA_TOKENIZER_PATH env var, or place tokenizer files "
+                    f"in the project pretrained_models directory. "
+                    f"Tried: {tokenizer_path!r}"
+                )
+            tokenizer = AutoTokenizer.from_pretrained(
+                tokenizer_path, add_bos_token=True, local_files_only=True
+            )
 
         self.image_processor = image_processor
         self.tokenizer: PreTrainedTokenizerBase = tokenizer
@@ -573,9 +576,9 @@ class PI05Processor(ProcessorMixin):
         if (
             is_worker_0
             and int(os.environ.get("RANK", 0)) == 0
-            and PI05Processor._tokenize_log_count < 2
+            and ValueProcessor._tokenize_log_count < 2
         ):
-            PI05Processor._tokenize_log_count += 1
+            ValueProcessor._tokenize_log_count += 1
             decoded = self.tokenizer.decode(tokens, skip_special_tokens=False)
             logger.info(
                 "[Tokenization Example #%d] prompt=%r → %r  (len=%d)",
@@ -645,7 +648,7 @@ class PI05Processor(ProcessorMixin):
         **kwargs
     ) -> BatchFeature:
         """
-        Process text and images for PI0.5 model.
+        Process text and images for value model.
 
         Args:
             text: Input text (prompt)
@@ -727,7 +730,7 @@ class PI05Processor(ProcessorMixin):
 
 
 __all__ = [
-    "PI0ImageProcessor",
-    "PI05Processor",
+    "ValueImageProcessor",
+    "ValueProcessor",
     "normalize_image_to_model_format",
 ]
