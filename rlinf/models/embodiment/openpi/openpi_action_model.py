@@ -425,16 +425,11 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         )  # obs precision processor
         observation = _model.Observation.from_dict(processed_obs)
 
-        is_dsrl_train = self.config.use_dsrl and mode == "train"
-        if is_dsrl_train:
-            # DSRL mode and train mode
+        is_dsrl_active = self.config.use_dsrl
+        if is_dsrl_active:
+            # DSRL mode (both train and eval)
 
             # Step 1: SAC agent outputs noise
-            # No data augmentation during rollout, train=False
-
-            # Convert env_obs to the format expected by sac_forward
-            # env_obs has: main_images, wrist_images, states
-            # sac_forward expects: images (list), states
             dsrl_obs = {"images": [env_obs["main_images"]], "states": env_obs["states"]}
 
             noise_actions, noise_logprob, _ = self.sac_forward(
@@ -922,16 +917,25 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
                     params.requires_grad = False
 
                 # Freeze projection layers (used in rollout/eval but not optimized).
-                # These are from PI0Pytorch parent class: action_in_proj, action_out_proj, state_proj, action_time_mlp
+                # Pi0 has: action_in_proj, action_out_proj, state_proj, action_time_mlp_in/out
+                # Pi0.5 has: action_in_proj, action_out_proj, time_mlp_in/out (no state_proj)
                 self.logger.info(
                     "[FREEZE_VLM] DSRL mode: freezing projection layers (used in rollout/eval but not optimized)"
                 )
-                projection_names = [
-                    "action_in_proj",
-                    "action_out_proj",
-                    "state_proj",
-                    "action_time_mlp",
-                ]
+                if self.pi05:
+                    projection_names = [
+                        "action_in_proj",
+                        "action_out_proj",
+                        "time_mlp_in",
+                        "time_mlp_out",
+                    ]
+                else:
+                    projection_names = [
+                        "action_in_proj",
+                        "action_out_proj",
+                        "state_proj",
+                        "action_time_mlp",
+                    ]
                 frozen_count = 0
                 for name, param in self.named_parameters():
                     if any(proj_name in name for proj_name in projection_names):
