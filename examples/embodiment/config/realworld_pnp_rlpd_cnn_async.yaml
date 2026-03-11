@@ -93,6 +93,7 @@ algorithm:
   demo_buffer:
     enable_cache: True
     cache_size: 200 # number of trajectories cached in memory
+    min_buffer_size: 1
     sample_window_size: 200 # number of latest trajectories to sample from for demo buffer
     load_path: "/path/to/demo_data"
     auto_save: False
@@ -135,6 +136,9 @@ env:
       is_dummy: false
       max_num_steps: 150
       enable_gripper_penalty: False
+  
+  eval:
+    total_num_envs: 1
 
 rollout:
   group_name: "RolloutGroup"

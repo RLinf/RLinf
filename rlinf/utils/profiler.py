@@ -25,6 +25,8 @@ from torch.profiler import (
 )
 from torch.profiler.profiler import ProfilerAction
 
+from rlinf.scheduler import Worker
+
 
 class PyTorchProfilerFunc:
     """
@@ -135,8 +137,8 @@ class PyTorchProfiler:
         if export_chrome:
 
             def chrome_handler(p):
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
+                if Worker.torch_platform.is_available():
+                    Worker.torch_platform.synchronize()
                 trace_path = self.output_dir / self._get_chrome_trace_filename(
                     chrome_prefix
                 )

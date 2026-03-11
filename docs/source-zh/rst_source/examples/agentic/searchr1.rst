@@ -52,7 +52,7 @@ Wiki配置文件
 
 .. code-block:: bash
 
-   bash examples/searchr1/build_index.sh
+   bash examples/searchr1/local_server_faiss/build_index.sh
 
 将之前下载好的wiki文件路径和index路径等写入examples/searchr1/launch_local_server.sh
 
@@ -79,6 +79,35 @@ Wiki配置文件
                                                --faiss_gpu --port 8000
 
 运行launch_local_server.sh启动Local Wiki Server，等待直至输出server ip等信息，代表server启动完成
+
+(Optional) 使用Qdrant作为Wiki Server
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+我们也支持使用 qdrant 作为 wiki 服务器。如果你不打算使用 qdrant，可以直接跳到 训练 部分。
+
+使用上一部分中提到的方式准备Asearcher提供的本地wiki corpus检索文件。
+
+从huggingface上下载\ `Qwen2.5-3B-Instruct <https://huggingface.co/Qwen/Qwen2.5-3B-Instruct>`__ embedding模型。
+
+下载 `qdrant <https://github.com/qdrant/qdrant/releases>`__ 并按照以下步骤构建 qdrant collection。首先，创建一个文件夹并把下载好的qdrant二进制文件放入该文件夹中，方便后续存储qdrant程序及其构建的collection文件。
+
+在 `examples/searchr1/local_server_qdrant/build_index_qdrant.sh` 和 `examples/searchr1/local_server_qdrant/launch_local_server_qdrant.sh` 中，根据之前下载的 wiki corpus, Qwen2.5-3B-Instruct 和 qdrant路径更新 `WIKI2018_DIR`、 `retriever_path` 和 `qdrant_path` 的文件路径。
+
+使用以下指令构建 qdrant wiki 服务器的collection：
+
+.. code-block:: bash
+
+   # 构建 qdrant collection
+   bash ./examples/searchr1/local_server_qdrant/build_index_qdrant.sh
+
+运行launch_local_server_qdrant.sh启动Local Qdrant Wiki Server，等待直至输出server ip等信息，代表server启动完成
+
+.. code-block:: bash
+   
+   # 启动 qdrant server
+   bash ./examples/searchr1/local_server_qdrant/launch_local_server_qdrant.sh
+
+Qdrant 默认使用 HNSW 图索引算法。关于 HNSW 图索引的优化,请参考 `Qdrant 文档 <https://qdrant.tech/documentation/guides/optimize/>`__。
 
 在8*H100上训练
 --------------

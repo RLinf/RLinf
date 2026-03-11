@@ -28,6 +28,8 @@ import torch.nn.functional as F
 from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
+from rlinf.scheduler import Worker
+
 
 def _is_musa_available() -> bool:
     return hasattr(torch, "musa") and torch.musa.is_available()
@@ -37,17 +39,34 @@ def _is_cuda_backend_available() -> bool:
     return torch.cuda.is_available() and hasattr(torch._C, "_cuda_setDevice")
 
 
-def clear_memory(sync=True):
-    if sync:
-        if _is_musa_available():
-            torch.musa.synchronize()
-        elif _is_cuda_backend_available():
-            torch.cuda.synchronize()
-    gc.collect()
+def _get_torch_platform():
+    if Worker.torch_platform is not None:
+        return Worker.torch_platform
     if _is_musa_available():
-        torch.musa.empty_cache()
-    elif _is_cuda_backend_available():
-        torch.cuda.empty_cache()
+        return torch.musa
+    if _is_cuda_backend_available():
+        return torch.cuda
+    return None
+
+
+def _get_torch_device_type() -> str | None:
+    if Worker.torch_device_type is not None:
+        return Worker.torch_device_type
+    if _is_musa_available():
+        return "musa"
+    if _is_cuda_backend_available():
+        return "cuda"
+    return None
+
+
+def clear_memory(sync=True):
+    torch_platform = _get_torch_platform()
+    if sync:
+        if torch_platform is not None and torch_platform.is_available():
+            torch_platform.synchronize()
+    gc.collect()
+    if torch_platform is not None and torch_platform.is_available():
+        torch_platform.empty_cache()
 
 
 def apply_func_to_dict(func, dictionary):
@@ -82,10 +101,9 @@ def retrieve_model_state_dict_in_cpu(model, offloaded_buffer=None):
                 offloaded_buffer[name] = item
         else:
             offloaded_buffer[name] = item
-    if _is_musa_available():
-        torch.musa.synchronize()
-    elif _is_cuda_backend_available():
-        torch.cuda.synchronize()
+    torch_platform = _get_torch_platform()
+    if torch_platform is not None and torch_platform.is_available():
+        torch_platform.synchronize()
     return offloaded_buffer
 
 
@@ -475,10 +493,15 @@ def get_rng_state() -> dict:
         "numpy": np.random.get_state(),
         "random": random.getstate(),
     }
-    if _is_musa_available() and hasattr(torch.musa, "get_rng_state"):
-        rng_state["musa"] = torch.musa.get_rng_state()
-    if _is_cuda_backend_available():
-        rng_state["cuda"] = torch.cuda.get_rng_state()
+    torch_platform = _get_torch_platform()
+    torch_device_type = _get_torch_device_type()
+    if (
+        torch_platform is not None
+        and torch_device_type is not None
+        and torch_platform.is_available()
+        and hasattr(torch_platform, "get_rng_state")
+    ):
+        rng_state[torch_device_type] = torch_platform.get_rng_state()
     return rng_state
 
 
@@ -496,10 +519,14 @@ def set_rng_state(rng_state: dict) -> None:
     torch.set_rng_state(rng_state["cpu"])
     np.random.set_state(rng_state["numpy"])
     random.setstate(rng_state["random"])
-    if _is_musa_available() and "musa" in rng_state and hasattr(torch.musa, "set_rng_state"):
-        torch.musa.set_rng_state(rng_state["musa"])
-    if _is_cuda_backend_available() and "cuda" in rng_state:
-        torch.cuda.set_rng_state(rng_state["cuda"])
+    torch_platform = _get_torch_platform()
+    torch_device_type = _get_torch_device_type()
+    if (
+        torch_platform is not None
+        and torch_device_type in rng_state
+        and hasattr(torch_platform, "set_rng_state")
+    ):
+        torch_platform.set_rng_state(rng_state[torch_device_type])
 
 
 def get_model_weights_id(model, k=128):

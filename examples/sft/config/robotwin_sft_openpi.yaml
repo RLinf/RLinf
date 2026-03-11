@@ -29,7 +29,8 @@ runner:
   save_interval: 5000
 
 data:
-  data_path: "/path/to/robotwin-data"
+  train_data_paths: "/path/to/robotwin-data"
+
 algorithm:
   adv_type: gae
 
@@ -71,7 +72,7 @@ actor:
   # Override the default values in training_backend/fsdp
   fsdp_config:
     strategy: "fsdp"
-    sharding_strategy: "no_shard"
+    sharding_strategy: "full_shard"
     use_orig_params: False
     gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
     mixed_precision:

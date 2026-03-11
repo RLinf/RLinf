@@ -36,6 +36,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
     get_sharding_strategy,
     init_fn,
 )
+from rlinf.scheduler import Worker
 from rlinf.utils.utils import clear_memory
 
 
@@ -242,12 +243,7 @@ class FSDPStrategy(FSDPStrategyBase):
         Returns:
             - float: The total norm of the gradients before clipping.
         """
-        if _is_musa_available():
-            device = torch.device(f"musa:{int(os.environ['LOCAL_RANK'])}")
-        elif _is_cuda_backend_available():
-            device = torch.device(f"cuda:{int(os.environ['LOCAL_RANK'])}")
-        else:
-            raise RuntimeError("No available accelerator backend found for FSDP.")
+        device = torch.device(f"{Worker.torch_device_type}:{os.environ['LOCAL_RANK']}")
         max_norm = float(self.cfg.optim.clip_grad)
         norm_type = float(norm_type)
         debug_nan_checks = self.cfg.get("debug_nan_checks", False)

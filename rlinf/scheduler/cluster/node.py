@@ -79,6 +79,14 @@ class NodeInfo:
                 )
         return AcceleratorType.NO_ACCEL.value
 
+    @property
+    def accelerator_model(self) -> str:
+        """Get the model of accelerators on the node."""
+        for resource in self.hardware_resources:
+            if resource.type == Accelerator.HW_TYPE and resource.count > 0:
+                return resource.infos[0].model
+        return ""
+
     def get_hw_resource_count(self, hw_type: Optional[str]) -> int:
         """Get the count of a specific hardware resource type."""
         if hw_type is None:
