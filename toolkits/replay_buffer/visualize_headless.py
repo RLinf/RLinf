@@ -8,11 +8,10 @@ Usage:
 """
 
 import argparse
-from pathlib import Path
 
 import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
+
+matplotlib.use("Agg")
 
 from visualize import MultiTrajectoryVisualizer
 
@@ -41,24 +40,26 @@ def main():
         default="replay_buffer_viz.png",
         help="Output image path (default: replay_buffer_viz.png)",
     )
-    
+
     args = parser.parse_args()
-    
+
     viz = MultiTrajectoryVisualizer(
         args.replay_dir,
         camera_key=args.camera,
         save_image=True,
-        output_image_path=args.output
+        output_image_path=args.output,
     )
-    
-    print("\n" + "="*60)
+
+    print("\n" + "=" * 60)
     print("HEADLESS MODE - Command-line Navigation")
-    print("="*60)
+    print("=" * 60)
     print(f"Image saved to: {args.output}")
     print("Open this file in VSCode to view the current frame.")
     print("\nCommands:")
     print("  n / next       : Next step (auto-switches to next trajectory at end)")
-    print("  p / prev       : Previous step (auto-switches to prev trajectory at start)")
+    print(
+        "  p / prev       : Previous step (auto-switches to prev trajectory at start)"
+    )
     print("  nt / nexttraj  : Next trajectory")
     print("  pt / prevtraj  : Previous trajectory")
     print("  nb / nextbatch : Next batch index")
@@ -68,47 +69,49 @@ def main():
     print("  end            : Last step of current trajectory")
     print("  info           : Show current position")
     print("  q / quit       : Exit")
-    print("="*60 + "\n")
-    
+    print("=" * 60 + "\n")
+
     while True:
         try:
             cmd = input("Command: ").strip().lower()
-            
-            if cmd in ['q', 'quit', 'exit']:
+
+            if cmd in ["q", "quit", "exit"]:
                 print("Exiting...")
                 break
-            elif cmd in ['n', 'next']:
+            elif cmd in ["n", "next"]:
                 viz._next_step()
                 viz.update_display()
-            elif cmd in ['p', 'prev']:
+            elif cmd in ["p", "prev"]:
                 viz._prev_step()
                 viz.update_display()
-            elif cmd in ['nt', 'nexttraj']:
+            elif cmd in ["nt", "nexttraj"]:
                 viz._next_trajectory()
                 viz.update_display()
-            elif cmd in ['pt', 'prevtraj']:
+            elif cmd in ["pt", "prevtraj"]:
                 viz._prev_trajectory()
                 viz.update_display()
-            elif cmd in ['nb', 'nextbatch']:
+            elif cmd in ["nb", "nextbatch"]:
                 viz._next_batch()
                 viz.update_display()
-            elif cmd in ['pb', 'prevbatch']:
+            elif cmd in ["pb", "prevbatch"]:
                 viz._prev_batch()
                 viz.update_display()
-            elif cmd == 'home':
+            elif cmd == "home":
                 viz.step_idx = 0
                 viz.update_display()
-            elif cmd == 'end':
+            elif cmd == "end":
                 viz.step_idx = viz._get_max_step_idx()
                 viz.update_display()
-            elif cmd == 'info':
+            elif cmd == "info":
                 T, B = viz.current_traj_shape[:2]
-                print(f"\nCurrent position:")
-                print(f"  Trajectory ID: {viz.current_traj_id} (#{viz.traj_idx}/{viz.buffer.size-1})")
-                print(f"  Step: {viz.step_idx}/{T-1}")
-                print(f"  Batch: {viz.batch_idx}/{B-1}")
+                print("\nCurrent position:")
+                print(
+                    f"  Trajectory ID: {viz.current_traj_id} (#{viz.traj_idx}/{viz.buffer.size - 1})"
+                )
+                print(f"  Step: {viz.step_idx}/{T - 1}")
+                print(f"  Batch: {viz.batch_idx}/{B - 1}")
                 print(f"  Shape: {viz.current_traj_shape}\n")
-            elif cmd.startswith('j '):
+            elif cmd.startswith("j "):
                 try:
                     traj_id = int(cmd.split()[1])
                     viz.jump_to_trajectory(str(traj_id))
@@ -116,7 +119,7 @@ def main():
                     print("Usage: j <trajectory_id>")
             else:
                 print(f"Unknown command: {cmd}. Type 'q' to quit.")
-        
+
         except KeyboardInterrupt:
             print("\nExiting...")
             break
@@ -124,5 +127,5 @@ def main():
             print(f"Error: {e}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
