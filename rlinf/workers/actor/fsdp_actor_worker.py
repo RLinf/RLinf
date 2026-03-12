@@ -1395,7 +1395,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     compute_values = (
                         True if self.cfg.algorithm.adv_type == "gae" else False
                     )
-                    
+
                     with self.amp_context:
                         output_dict = self.model(
                             forward_inputs=forward_inputs,
