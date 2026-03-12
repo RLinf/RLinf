@@ -15,16 +15,14 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor: 0-3
-    env: 0-3
-    rollout: 0-3
+    env,rollout,actor: 0-3
 
 runner:
   task_type: embodied
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "maniskill_ppo_openvlaoft"
+    experiment_name: "maniskill_async_ppo_openvlaoft"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
@@ -42,6 +40,9 @@ algorithm:
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
   rollout_epoch: 1
+  update_epoch: 1
+  staleness_threshold: 1
+  behave_weight_threshold: 2
   eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
   reward_type: action_level
   logprob_type: token_level
@@ -143,7 +144,7 @@ actor:
     adam_eps: 1.0e-05
     weight_decay: 0.01
     clip_grad: 10.0
-    critic_warmup_steps: 10
+    critic_warmup_steps: 20
 
   # Override the default values in training_backend/fsdp
   fsdp_config:

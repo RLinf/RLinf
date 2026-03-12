@@ -147,21 +147,19 @@ class FSDPActor(FSDPModelManager, Worker):
         self.cfg = cfg
 
         self.response_len = (
-            self.cfg.actor.model.encoder_seq_length - self.cfg.data.max_prompt_length
+            cfg.actor.model.encoder_seq_length - cfg.data.max_prompt_length
         )
-        self.calculate_entropy = self.cfg.algorithm.calculate_entropy
+        self.calculate_entropy = cfg.algorithm.calculate_entropy
         self.calculate_entropy_loss = (
-            self.cfg.algorithm.entropy_bonus > 0 and self.calculate_entropy
+            cfg.algorithm.entropy_bonus > 0 and self.calculate_entropy
         )
-        self.kl_beta = self.cfg.algorithm.kl_beta
-        self.kl_penalty_type = self.cfg.algorithm.kl_penalty_type
+        self.kl_beta = cfg.algorithm.kl_beta
+        self.kl_penalty_type = cfg.algorithm.kl_penalty_type
         self.reinpp_kl_beta = cfg.algorithm.get("reinpp_kl_beta", 0.0)
         self.combine_reference_model = cfg.actor.get("combine_reference_model", True)
 
         self.total_batch_size_per_dp = (
-            self.cfg.data.rollout_batch_size
-            * self.cfg.algorithm.group_size
-            // self._world_size
+            cfg.data.rollout_batch_size * cfg.algorithm.group_size // self._world_size
         )
 
         self._rollout_group_name = cfg.rollout.group_name
@@ -178,20 +176,16 @@ class FSDPActor(FSDPModelManager, Worker):
             self._inference_group_name = None
             self._inference_world_size = 0
             self._inference_dst_map = None
-        self.loss_agg_func = get_loss_agg_func(self.cfg.algorithm.loss_agg_func)
-        self.enable_offload = (
-            self.cfg.actor.get("enable_offload", False) and not self.is_pipeline
+        self.loss_agg_func = get_loss_agg_func(cfg.algorithm.loss_agg_func)
+        self.enable_offload = not self.is_pipeline and cfg.actor.get(
+            "enable_offload", False
         )
-        self.micro_batch_size = self.cfg.actor.micro_batch_size
-        self.n_mini_batches = self.cfg.algorithm.n_minibatches
-        self.task_type = self.cfg.runner.task_type
-        self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "flash_attn")
-        self.enable_dp_load_balance = self.cfg.actor.get(
-            "enable_dp_load_balance", False
-        )
-        self.lr_sched_sync_with_optim = self.cfg.actor.get(
-            "lr_sched_sync_with_optim", True
-        )
+        self.micro_batch_size = cfg.actor.micro_batch_size
+        self.n_mini_batches = cfg.algorithm.n_minibatches
+        self.task_type = cfg.runner.task_type
+        self.entropy_op_type = cfg.algorithm.get("entropy_op_type", "flash_attn")
+        self.enable_dp_load_balance = cfg.actor.get("enable_dp_load_balance", False)
+        self.lr_sched_sync_with_optim = cfg.actor.get("lr_sched_sync_with_optim", True)
         self.enable_dynamic_batch_size = cfg.runner.get(
             "enable_dynamic_batch_size", False
         )
@@ -426,6 +420,9 @@ class FSDPActor(FSDPModelManager, Worker):
                 last_result_len = result_len
                 result_len = all_reduce_int(len(rollout_results))
 
+        cliped_results = list(rollout_results[result_len:])
+        rollout_results = rollout_results[:result_len]
+
         batches = []
         for rollout_result in rollout_results:
             batch = rollout_result.to_actor_batch(
@@ -614,6 +611,7 @@ class FSDPActor(FSDPModelManager, Worker):
         input_channel: Channel,
         output_channel: Channel,
         compute_ref_logprobs: bool,
+        do_offload=False,
     ):
         """
         Compute prev/ref logprobs using the actor Model's forward.
@@ -622,7 +620,12 @@ class FSDPActor(FSDPModelManager, Worker):
             input_channel: The input channel to read from.
             output_channel: The output channel to send results to.
             compute_ref_logprobs: Whether to compute reference logprobs.
+            do_offload: Whether offload weights after inference is done
         """
+        assert not do_offload, (
+            "do_offload argument of run_inference/run_training is not supported in FSDP for now"
+        )
+
         inference_split = self.cfg.actor.get("inference_split", None)
         if inference_split is None:
             if not self.is_pipeline:
@@ -654,7 +657,7 @@ class FSDPActor(FSDPModelManager, Worker):
                 )
             )
             total_result_len += result_len
-            self.log_info(
+            self.log_debug(
                 f"[dynamic inference rank-{self._rank}] inference result_len={result_len}, total_result_len={total_result_len}/{total_result_len_per_dp}"
             )
             self._load_weight_and_optimizer()
@@ -694,7 +697,7 @@ class FSDPActor(FSDPModelManager, Worker):
                 min(total_result_len, self.cfg.algorithm.n_minibatches),
             )
             for split_result in split_results:
-                output_channel.put(split_result, async_op=True)
+                output_channel.put(split_result)
         assert total_result_len == total_result_len_per_dp, (
             f"Expected {total_result_len_per_dp} sequences from channel, but got {total_result_len}"
         )
@@ -768,16 +771,19 @@ class FSDPActor(FSDPModelManager, Worker):
                 )
 
             loss, mbs_metrics_data = policy_loss(
+                task_type=self.task_type,
                 loss_type=self.cfg.algorithm.loss_type,
                 loss_agg_func=self.loss_agg_func,
                 logprobs=logprobs,
                 old_logprobs=prev_logprobs,
                 advantages=advantages,
+                clip_ratio_c=clip_ratio_c,
                 clip_ratio_low=clip_ratio_low,
                 clip_ratio_high=clip_ratio_high,
-                clip_ratio_c=clip_ratio_c,
                 loss_mask=loss_mask,
-                task_type=self.task_type,
+                clip_log_ratio_min=self.cfg.algorithm.get("clip_log_ratio_min", None),
+                clip_log_ratio_max=self.cfg.algorithm.get("clip_log_ratio_max", None),
+                fast_path_zero_loss_mask=True,
             )
 
             entropy_loss = torch.tensor(
@@ -883,8 +889,14 @@ class FSDPActor(FSDPModelManager, Worker):
         )
         return batch
 
-    def run_training(self, input_channel: Channel) -> tuple[dict, list]:
+    def run_training(
+        self, input_channel: Channel, do_offload=False
+    ) -> tuple[dict, list]:
         # Get all batches for this DP
+        assert not do_offload, (
+            "do_offload argument of run_inference/run_training is not supported in FSDP for now"
+        )
+
         if self.is_pipeline:
             return self.run_training_pipeline(input_channel)
 
@@ -1001,7 +1013,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         )
 
         self.enable_sft_co_train = cfg.actor.get("enable_sft_co_train", False)
-
+        self.version = 0
         if self.enable_sft_co_train:
             self._build_sft_data_loader()
 
@@ -1473,9 +1485,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         return mean_metric_dict
 
-    def set_global_step(self, global_step) -> None:
+    def set_global_step(self, global_step: int) -> None:
         """
         Set the global step for the model, if needed.
         """
+        self.version = global_step
         if hasattr(self.model, "set_global_step"):
             self.model.set_global_step(global_step)

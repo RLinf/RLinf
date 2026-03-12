@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rlinf"
-version = "0.2.0.dev2"
+version = "0.2.0"
 authors = [{ name = "RLinf Contributors" }]
 description = "Reinforcement Learning Infrastructure for Embodied and Agentic AI"
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -61,7 +61,7 @@ dependencies = [
     "pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
     # Logging
-    "wandb",
+    "wandb<0.25.1",
     "swanlab>=0.6.11",
     "tensorboard",
 ]
@@ -123,6 +123,21 @@ franka = [
     "imageio[ffmpeg]",
     "pynput"
 ]
+xsquare_turtle2 = [
+    "pyyaml",
+    "rospkg",
+    "toppra",
+    "numpy==1.26.4",
+    "empy==3.3.4",
+    "gymnasium==0.29.1",
+    "pyrealsense2",
+    "pyquaternion",
+    "opencv-python",
+    "defusedxml",
+    "pyspacemouse==1.1.5", 
+    "imageio[ffmpeg]",
+    "pynput"
+]
 
 [tool.uv]
 prerelease = "allow"
@@ -131,7 +146,8 @@ conflicts = [
       { extra = "agentic-sglang" },
       { extra = "agentic-vllm" },
       { extra = "embodied" },
-      { extra = "franka" }
+      { extra = "franka" },
+      { extra = "xsquare_turtle2" }
     ],
 ]
 override-dependencies = [
