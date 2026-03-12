@@ -25,7 +25,7 @@ Uses: A = normalize(reward_sum) + gamma^N * v_next - v_curr
 Usage:
   python recompute_advantages_from_value_reward.py \
     --dataset_root /path/to/transformed_advantage_dataset \
-    --advantage_horizon 20 \
+    --advantage_lookahead_step 20 \
     --positive_quantile 0.3 \
     --num_workers 4
 """
@@ -154,7 +154,7 @@ def discover_datasets_and_return_range(
 
 def compute_advantages_for_dataset(
     dataset_path: Path,
-    advantage_horizon: int,
+    advantage_lookahead_step: int,
     gamma: float,
     global_return_min: float,
     global_return_max: float,
@@ -205,9 +205,9 @@ def compute_advantages_for_dataset(
 
     ret_range = global_return_max - global_return_min
     gamma_powers = np.array(
-        [gamma**i for i in range(advantage_horizon)], dtype=np.float32
+        [gamma**i for i in range(advantage_lookahead_step)], dtype=np.float32
     )
-    gamma_k = gamma**advantage_horizon
+    gamma_k = gamma**advantage_lookahead_step
 
     results: list[pd.DataFrame] = []
     for ep_idx, ep_group in tqdm(
@@ -228,20 +228,20 @@ def compute_advantages_for_dataset(
         if ep_len == 0:
             continue
 
-        # v_next: value at position i + advantage_horizon, else 0
+        # v_next: value at position i + advantage_lookahead_step, else 0
         v_next_arr = np.zeros(ep_len, dtype=np.float64)
-        cut = ep_len - advantage_horizon
+        cut = ep_len - advantage_lookahead_step
         if cut > 0:
-            v_next_arr[:cut] = values[advantage_horizon:]
+            v_next_arr[:cut] = values[advantage_lookahead_step:]
 
         # Discounted reward sums via sliding window (vectorized)
         padded = np.concatenate(
-            [rewards, np.zeros(advantage_horizon - 1, dtype=np.float32)]
+            [rewards, np.zeros(advantage_lookahead_step - 1, dtype=np.float32)]
         )
         padded = np.ascontiguousarray(padded)
         windowed = np.lib.stride_tricks.as_strided(
             padded,
-            shape=(ep_len, advantage_horizon),
+            shape=(ep_len, advantage_lookahead_step),
             strides=(padded.strides[0], padded.strides[0]),
         )
         reward_sums_raw = (windowed @ gamma_powers).astype(np.float64)
@@ -482,7 +482,7 @@ def main() -> None:
         help="Root path containing multiple LeRobot datasets (e.g. transformed_advantage_dataset_*)",
     )
     parser.add_argument(
-        "--advantage_horizon",
+        "--advantage_lookahead_step",
         type=int,
         default=10,
         help="N steps for reward sum and v_next (value_current at t+N). Default 10.",
@@ -535,7 +535,7 @@ def main() -> None:
         f"Found {len(dataset_paths)} datasets: {[p.name for p in dataset_paths]}"
     )
     logger.info(f"Global return range: [{global_return_min}, {global_return_max}]")
-    logger.info(f"Advantage horizon: {args.advantage_horizon}, gamma: {args.gamma}")
+    logger.info(f"Advantage lookahead step: {args.advantage_lookahead_step}, gamma: {args.gamma}")
     logger.info(f"Positive quantile: {args.positive_quantile}")
 
     all_advantages: list[np.ndarray] = []
@@ -550,7 +550,7 @@ def main() -> None:
     for ds_path in tqdm(dataset_paths, desc="Processing datasets"):
         df = compute_advantages_for_dataset(
             ds_path,
-            args.advantage_horizon,
+            args.advantage_lookahead_step,
             args.gamma,
             global_return_min,
             global_return_max,

@@ -11,10 +11,10 @@ is_lora: false
 # =====================================================================
 backbone_variant: "siglip_gemma3"
 
-# Required: paths to SigLIP and Gemma3 pretrained weights
-siglip_path: null       # e.g. "/path/to/siglip2-so400m-patch14-224"
-gemma3_path: null       # e.g. "/path/to/gemma-3-270m"
-tokenizer_path: null    # e.g. "/path/to/gemma-3-270m"
+# Paths to SigLIP and Gemma3 pretrained weights
+siglip_path: /path/to/siglip2-so400m-patch14-224
+gemma3_path: /path/to/gemma-3-270m
+tokenizer_path: /path/to/gemma-3-270m
 
 # =====================================================================
 # Critic architecture

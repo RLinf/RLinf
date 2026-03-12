@@ -1,18 +1,13 @@
 # Advantage computation configuration for CFG-RL training (SigLIP-Gemma3 backbone)
 #
-# Usage (single GPU):
-#   python compute_advantages.py --config-name compute_advantages_siglip_gemma3 \
-#       advantage.value_checkpoint=/path/to/checkpoint \
-#       advantage.model.siglip_path=/path/to/siglip \
-#       advantage.model.gemma3_path=/path/to/gemma3 \
-#       advantage.model.tokenizer_path=/path/to/tokenizer
+# Usage (single GPU via bash):
+#   cd examples/process && bash -c 'python compute_advantages.py --config-name compute_advantages_siglip_gemma3 \
+#       advantage.value_checkpoint=/path/to/checkpoint'
 #
 # Usage (multi-GPU via torchrun):
-#   torchrun --nproc_per_node=4 compute_advantages.py --config-name compute_advantages_siglip_gemma3 \
-#       advantage.value_checkpoint=/path/to/checkpoint \
-#       advantage.model.siglip_path=/path/to/siglip \
-#       advantage.model.gemma3_path=/path/to/gemma3 \
-#       advantage.model.tokenizer_path=/path/to/tokenizer
+#   cd examples/process && bash -c 'torchrun --nproc_per_node=4 compute_advantages.py \
+#       --config-name compute_advantages_siglip_gemma3 \
+#       advantage.value_checkpoint=/path/to/checkpoint'
 #
 # This script:
 # 1. Computes advantages: A = normalize(r_{t:t+N}) + gamma^N * V(o_{t+N}) - V(o_t)
@@ -29,7 +24,7 @@ defaults:
 advantage:
   # Path to trained value model checkpoint (REQUIRED)
   # Can be a directory containing .safetensors files or a single .pt file
-  value_checkpoint: /mnt/project_rlinf/liuzhihao/RLinf_pi06_release_worktree_2/logs/vla_lib_sft/libero_value_sft3shot_w1_collect8192_freeze_vlm_schedule_fail30_task0_gemma50_iter2-20260308-11:08:42/vla_lib_value_sft/checkpoints/global_step_20000/actor/model_state_dict
+  value_checkpoint: /path/to/value_checkpoint
 
   # Device for inference
   device: "cuda"
@@ -64,22 +59,11 @@ advantage:
   # Advantage tag: when set, saves to meta/advantages_{tag}.parquet
   # Allows computing advantages with different value models on the same data
   # Usage: advantage.tag=model_a
-  tag: freeze_vlm_schedule_collect8192_fail30_N10_20000ckpt_task0_gemma50m_q20_2iter_newcode
-  # Value inference mode (matches vla_lib.policies.value_policy_config)
-  # Options:
-  #   - "expert_categorical": Expert model, categorical output (recommended for PI05ValueCritic)
-  #   - "expert_mse": Expert model, continuous scalar output
-  #   - "expert_distributional": Expert model, distributional output
-  #   - "continuous": VLM token logits, expectation over bins
-  #   - "discrete": VLM token logits, argmax bin
-  value_mode: "expert_categorical"
+  tag: default
 
   # Model configuration (loaded from defaults, override here if needed)
   model:
     critic_expert_variant: "gemma_1m"
-    siglip_path: null   # REQUIRED: set via CLI or override
-    gemma3_path: null    # REQUIRED: set via CLI or override
-    tokenizer_path: null # REQUIRED: set via CLI or override
 
 # =============================================================================
 # Data configuration
@@ -101,28 +85,21 @@ data:
   #   - return_min/max: range for return normalization
   #   - weight: sampling weight (used in mixture_config.yaml for later training)
   train_data_paths:
-    - dataset_path: "/mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot_collect_8192_task0_fail30/libero_10_3shot"
+    - dataset_path: "/path/to/sft_dataset"
       robot_type: "libero"
       dataset_type: "sft"  # SFT data, all episodes are successful
-      weight: 1.0 # not used in compute advantage
+      weight: 1.0
 
-    # Uncomment to add more datasets:
-    - dataset_path: "/mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot_collect_8192_task0_fail30/collected_data_3shot_8192_task0_merged"
-      robot_type: "libero"
-      dataset_type: "rollout"  # Rollout data, is_success varies
-      weight: 1.0 # not used in compute advantage
-
-    - dataset_path: "/mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot_collect_8192_task0_fail30_2iter/collected_data_3shot_8192_task0_iter_2_merged"
-      robot_type: "libero"
-      dataset_type: "rollout"  # Rollout data, is_success varies
-      weight: 1.0 # not used in compute advantage
+    # Uncomment to add rollout datasets:
+    # - dataset_path: "/path/to/rollout_dataset"
+    #   robot_type: "libero"
+    #   dataset_type: "rollout"  # Rollout data, is_success varies
+    #   weight: 1.0
 
 
-  # Action horizon (N in gamma^N * V(o_{t+N})); used when advantage_horizon is not set
-  action_horizon: 10
-  # Advantage horizon: N for reward_sum and V(o_{t+N}). Set to match your data collection (e.g. 20).
-  # If null, action_horizon is used.
-  advantage_horizon: 10
+  # Number of steps to look ahead for advantage computation
+  # N in: A = normalize(r_{t:t+N}) + gamma^N * V(o_{t+N}) - V(o_t)
+  advantage_lookahead_step: 10
 
   # Discount factor
   # Use 1.0 for undiscounted returns (common in robotics)

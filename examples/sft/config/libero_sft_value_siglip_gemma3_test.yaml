@@ -79,10 +79,9 @@ actor:
 
   model:
     precision: bf16
-    # Backbone paths (override model default nulls)
-    siglip_path: "/mnt/project_rlinf/liuzhihao/pi06_model/siglip2-so400m-patch14-224"
-    gemma3_path: "/mnt/project_rlinf/liuzhihao/pi06_model/gemma-3-270m"
-    tokenizer_path: "/mnt/project_rlinf/liuzhihao/pi06_model/gemma-3-270m"
+    siglip_path: "/path/to/siglip2-so400m-patch14-224"
+    gemma3_path: "/path/to/gemma-3-270m"
+    tokenizer_path: "/path/to/gemma-3-270m"
     freeze_vlm: false
     # Action params
     action_dim: 7

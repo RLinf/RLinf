@@ -45,8 +45,8 @@ stop_gradient_to_vlm: false
 # =====================================================================
 backbone_variant: "paligemma"
 # Required for siglip_gemma3 only
-siglip_path: null
-gemma3_path: null
+siglip_path: /path/to/siglip2-so400m-patch14-224
+gemma3_path: /path/to/gemma-3-270m
 
 # =====================================================================
 # Checkpoint

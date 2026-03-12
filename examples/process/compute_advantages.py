@@ -648,8 +648,7 @@ def compute_advantages_for_dataset(
         DataFrame with advantages and related values (local shard in distributed mode)
     """
     gamma = cfg.data.gamma
-    # Use advantage_horizon if set (must match dataset's reward/next_obs layout); else action_horizon
-    action_horizon = cfg.data.get("advantage_horizon", None) or cfg.data.action_horizon
+    action_horizon = cfg.data.advantage_lookahead_step
     robot_type = dataset_cfg.get("robot_type", "libero")
     discount_next_value = cfg.advantage.get("discount_next_value", True)
     batch_size = cfg.advantage.get("batch_size", 64)
@@ -683,7 +682,7 @@ def compute_advantages_for_dataset(
     shard_start, shard_end = get_shard_indices(total_samples, rank, world_size)
     shard_size = shard_end - shard_start
 
-    # Include an extension window so idx + action_horizon can be looked up.
+    # Include an extension window so idx + lookahead can be looked up.
     extended_end = (
         shard_start
         if shard_size == 0
@@ -700,7 +699,7 @@ def compute_advantages_for_dataset(
         logger.info(
             f"Computing advantages for {total_samples} samples (total in dataset: {len(dataset)})..."
         )
-        logger.info(f"  gamma: {gamma}, action_horizon: {action_horizon}")
+        logger.info(f"  gamma: {gamma}, advantage_lookahead_step: {action_horizon}")
         logger.info(f"  return_range: [{ret_min}, {ret_max}]")
         logger.info("  Using ValueCritic with batch inference")
         logger.info("  Using precomputed reward/return from dataset")

@@ -4,6 +4,6 @@ critic_expert_variant: "gemma_1m"
 num_bins: 201
 v_min: -1.0
 v_max: 0.0
-tokenizer_path: null
-siglip_path: null
-gemma3_path: null
+tokenizer_path: /path/to/gemma-3-270m
+siglip_path: /path/to/siglip2-so400m-patch14-224
+gemma3_path: /path/to/gemma-3-270m

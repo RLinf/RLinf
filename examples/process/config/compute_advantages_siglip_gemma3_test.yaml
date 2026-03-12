@@ -20,13 +20,8 @@ advantage:
   positive_quantile: 0.3
   tag: "test"
 
-  value_mode: "expert_categorical"
-
   model:
     critic_expert_variant: "gemma_1m"
-    siglip_path: null   # REQUIRED: set via CLI or override
-    gemma3_path: null    # REQUIRED: set via CLI or override
-    tokenizer_path: null # REQUIRED: set via CLI or override
 
 data:
   model_type: "pi05"
@@ -43,8 +38,7 @@ data:
       dataset_type: "rollout"
       weight: 1.0
 
-  action_horizon: 10
-  advantage_horizon: 10
+  advantage_lookahead_step: 10
   gamma: 1.0
 
 distributed:
