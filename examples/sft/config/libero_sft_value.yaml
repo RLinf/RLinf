@@ -66,8 +66,10 @@ data:
       weight: 1.0
       robot_type: "libero"
       model_type: "pi05"
-    - eval_dataset_path: "/path/to/eval_dataset"
-      eval_max_samples: 10000
+
+  eval_data_paths:
+    - dataset_path: "/path/to/eval_dataset"
+      max_samples: 10000
       robot_type: "libero"
       model_type: "pi05"
 
