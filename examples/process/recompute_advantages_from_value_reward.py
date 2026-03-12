@@ -179,10 +179,12 @@ def compute_advantages_for_dataset(
     # Check available columns efficiently (schema only)
     sample_schema = pq.read_schema(str(parquet_files[0]))
     sample_cols = set(sample_schema.names)
-    columns_needed = ["episode_index", "frame_index", "value_current", "reward"]
-    has_return = "return" in sample_cols
-    if has_return:
-        columns_needed.append("return")
+
+    # Only request columns that actually exist in episode parquets
+    columns_needed = ["episode_index", "frame_index"]
+    for col in ["value_current", "reward", "return"]:
+        if col in sample_cols:
+            columns_needed.append(col)
 
     # Read all parquet files directly (much faster than dataset[i] which decodes video)
     if num_workers > 1 and len(parquet_files) > 1:
@@ -200,8 +202,31 @@ def compute_advantages_for_dataset(
     full_df = full_df.sort_values(["episode_index", "frame_index"]).reset_index(
         drop=True
     )
-    full_df["value_current"] = full_df["value_current"].fillna(0.0)
+
+    # Load reward/return from sidecar if not in episode parquets
+    sidecar_path = dataset_path / "meta" / "returns.parquet"
+    if ("reward" not in full_df.columns or "return" not in full_df.columns) and sidecar_path.exists():
+        sidecar_df = pd.read_parquet(sidecar_path, columns=["episode_index", "frame_index", "reward", "return"])
+        sidecar_df = sidecar_df.sort_values(["episode_index", "frame_index"]).reset_index(drop=True)
+        # Merge on (episode_index, frame_index) — only add missing columns
+        merge_cols = [c for c in ["reward", "return"] if c not in full_df.columns and c in sidecar_df.columns]
+        if merge_cols:
+            full_df = full_df.merge(
+                sidecar_df[["episode_index", "frame_index"] + merge_cols],
+                on=["episode_index", "frame_index"],
+                how="left",
+            )
+            logger.info(f"Loaded {merge_cols} from sidecar: {sidecar_path}")
+
+    if "value_current" in full_df.columns:
+        full_df["value_current"] = full_df["value_current"].fillna(0.0)
+    else:
+        raise ValueError(
+            f"Dataset {dataset_path} missing 'value_current' column in episode parquets. "
+            "Run compute_advantages.py first to generate value predictions."
+        )
     full_df["reward"] = full_df["reward"].fillna(0.0)
+    has_return = "return" in full_df.columns
 
     ret_range = global_return_max - global_return_min
     gamma_powers = np.array(

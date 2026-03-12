@@ -15,10 +15,11 @@
 """
 Compute returns for LeRobot datasets.
 
-This preprocessing script adds `return`, `reward`, and `prompt` columns to
-LeRobot datasets. After running this script, the dataset can be used with
-DynamicReturnDataset which reads the precomputed returns and normalizes them
-using global min/max across all datasets at training time.
+This preprocessing script computes `return`, `reward`, and `prompt` for every
+frame in a LeRobot dataset and writes them as a **sidecar** parquet file at
+``meta/returns.parquet``.  The original per-episode parquet files are **not**
+modified, so the script only needs to read tiny metadata columns (episode_index,
+frame_index, is_success, task_index) — no image data is touched.
 
 Key features:
 - SFT datasets: reward=-1 per step, last step=0, all episodes successful
@@ -39,20 +40,25 @@ Usage:
 
 import json
 import logging
+import math
 import shutil
 import sys
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import hydra
 import numpy as np
-from datasets import Dataset
+import pyarrow as pa
+import pyarrow.parquet as pq
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 logger = logging.getLogger(__name__)
+
+# Columns needed for computation (tiny — no images)
+_READ_COLUMNS = ["episode_index", "frame_index", "is_success", "task_index", "task"]
 
 
 def compute_returns_for_episode(
@@ -121,30 +127,44 @@ def _process_single_parquet(
     gamma: float,
     failure_reward: float,
     tasks: dict[int, str],
-) -> tuple[str, np.ndarray, np.ndarray]:
-    """Process a single parquet file: compute returns/rewards/prompts and save.
+) -> pa.Table | None:
+    """Process a single parquet file: read only metadata columns, compute returns.
 
-    Designed to run in a worker process.
+    Only reads episode_index, frame_index, is_success, task_index — no images.
 
     Returns:
-        (file_path, returns_array, rewards_array)
+        Arrow table with (episode_index, frame_index, return, reward, prompt)
+        columns, or None if the file is empty.
     """
-    ds = Dataset.from_parquet(pq_file)
-    n = len(ds)
-    if n == 0:
-        return pq_file, np.array([], dtype=np.float32), np.array([], dtype=np.float32)
+    # Error on empty / corrupted files — do not skip silently
+    file_size = Path(pq_file).stat().st_size
+    if file_size == 0:
+        raise RuntimeError(
+            f"Corrupted 0-byte parquet file: {pq_file}. "
+            "Please fix or remove this file before running compute_returns."
+        )
 
-    # ---- columnar access (fast) instead of per-sample random access ----
-    ep_indices = np.array(ds["episode_index"], dtype=np.int64)
+    # Determine which columns exist in this file
+    pf = pq.ParquetFile(pq_file)
+    available = set(pf.schema_arrow.names)
+    cols_to_read = [c for c in _READ_COLUMNS if c in available]
+
+    table = pq.read_table(pq_file, columns=cols_to_read)
+    n = table.num_rows
+    if n == 0:
+        return None
+
+    col_names = table.column_names
+
+    # ---- columnar access (zero-copy from Arrow) ----
+    ep_indices = table.column("episode_index").to_numpy().astype(np.int64, copy=False)
+    frame_indices = table.column("frame_index").to_numpy().astype(np.int64, copy=False)
     episodes = get_episode_boundaries(ep_indices)
 
     # Batch-load is_success column once (if exists)
-    has_is_success = "is_success" in ds.column_names
     is_success_col = None
-    if has_is_success:
-        is_success_col = ds["is_success"]
-        if hasattr(is_success_col, "to_pylist"):
-            is_success_col = is_success_col.to_pylist()
+    if "is_success" in col_names:
+        is_success_col = table.column("is_success").to_pylist()
 
     # ---- compute returns & rewards per episode ----
     returns_arr = np.empty(n, dtype=np.float32)
@@ -170,28 +190,25 @@ def _process_single_parquet(
         rewards_arr[ep_start:ep_end] = ep_rewards
 
     # ---- build prompts via columnar access ----
-    if "task" in ds.column_names:
-        prompts_list = [str(t) for t in ds["task"]]
-    elif "task_index" in ds.column_names:
-        task_indices = ds["task_index"]
-        if hasattr(task_indices, "to_pylist"):
-            task_indices = task_indices.to_pylist()
+    if "task" in col_names:
+        prompts_list = [str(t) for t in table.column("task").to_pylist()]
+    elif "task_index" in col_names:
+        task_indices = table.column("task_index").to_pylist()
         prompts_list = [tasks.get(int(idx), "perform the task") for idx in task_indices]
     else:
         prompts_list = ["perform the task"] * n
 
-    # ---- write back to parquet ----
-    for col_name, col_data in [
-        ("return", returns_arr.tolist()),
-        ("reward", rewards_arr.tolist()),
-        ("prompt", prompts_list),
-    ]:
-        if col_name in ds.column_names:
-            ds = ds.remove_columns(col_name)
-        ds = ds.add_column(col_name, col_data)
-
-    ds.to_parquet(pq_file)
-    return pq_file, returns_arr, rewards_arr
+    # ---- build result table (tiny — no images) ----
+    result = pa.table(
+        {
+            "episode_index": pa.array(ep_indices),
+            "frame_index": pa.array(frame_indices),
+            "return": pa.array(returns_arr),
+            "reward": pa.array(rewards_arr),
+            "prompt": pa.array(prompts_list, type=pa.string()),
+        }
+    )
+    return result
 
 
 def process_dataset(
@@ -202,7 +219,10 @@ def process_dataset(
     failure_reward: float,
     num_workers: int = 8,
 ) -> dict:
-    """Process a LeRobot dataset and add return/reward/prompt columns.
+    """Process a LeRobot dataset and compute return/reward/prompt.
+
+    Writes results as a sidecar ``meta/returns.parquet`` without modifying the
+    original per-episode parquet files (no image I/O).
 
     Args:
         dataset_path: Path to input dataset
@@ -251,23 +271,22 @@ def process_dataset(
                 tasks[task_idx] = task_desc
 
     # ---- parallel processing of parquet files ----
-    all_returns: list[np.ndarray] = []
-    all_rewards: list[np.ndarray] = []
+    # ThreadPoolExecutor: PyArrow releases the GIL during I/O, so threads
+    # achieve true parallelism for I/O-bound work without fork/pickle overhead.
+    result_tables: list[pa.Table] = []
 
     effective_workers = min(num_workers, len(parquet_files))
     if effective_workers <= 1:
-        # Single-worker fast path (no process overhead)
         for pq_file in tqdm(parquet_files, desc="Processing parquet files"):
-            _, ret, rew = _process_single_parquet(
+            tbl = _process_single_parquet(
                 pq_file, dataset_type, gamma, failure_reward, tasks
             )
-            if len(ret) > 0:
-                all_returns.append(ret)
-                all_rewards.append(rew)
+            if tbl is not None:
+                result_tables.append(tbl)
     else:
-        logger.info(f"Using {effective_workers} parallel workers")
+        logger.info(f"Using {effective_workers} parallel threads")
         futures = {}
-        with ProcessPoolExecutor(max_workers=effective_workers) as pool:
+        with ThreadPoolExecutor(max_workers=effective_workers) as pool:
             for pq_file in parquet_files:
                 fut = pool.submit(
                     _process_single_parquet,
@@ -281,26 +300,53 @@ def process_dataset(
 
             with tqdm(total=len(futures), desc="Processing parquet files") as pbar:
                 for fut in as_completed(futures):
-                    _, ret, rew = fut.result()
-                    if len(ret) > 0:
-                        all_returns.append(ret)
-                        all_rewards.append(rew)
+                    try:
+                        tbl = fut.result()
+                    except Exception as e:
+                        failed_file = futures[fut]
+                        raise RuntimeError(
+                            f"Failed to process {failed_file}"
+                        ) from e
+                    if tbl is not None:
+                        result_tables.append(tbl)
                     pbar.update(1)
 
-    # Compute statistics
-    returns_arr = np.concatenate(all_returns) if all_returns else np.array([])
-    rewards_arr = np.concatenate(all_rewards) if all_rewards else np.array([])
+    if not result_tables:
+        raise ValueError(
+            f"No data found in dataset: {output_path}. "
+            "All parquet files are empty or missing."
+        )
+
+    # ---- concatenate and write sidecar ----
+    combined = pa.concat_tables(result_tables)
+    sidecar_path = output_path / "meta" / "returns.parquet"
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(combined, str(sidecar_path))
+    logger.info(
+        f"Wrote sidecar: {sidecar_path} "
+        f"({combined.num_rows} rows, {sidecar_path.stat().st_size / 1024 / 1024:.1f} MB)"
+    )
+
+    # ---- compute statistics ----
+    returns_arr = combined.column("return").to_numpy()
+    rewards_arr = combined.column("reward").to_numpy()
+
+    count = len(returns_arr)
+    ret_mean = float(returns_arr.mean())
+    ret_var = float(returns_arr.astype(np.float64).var())
+    rew_mean = float(rewards_arr.mean())
+    rew_var = float(rewards_arr.astype(np.float64).var())
 
     stats = {
         "return": {
-            "mean": float(returns_arr.mean()),
-            "std": float(returns_arr.std()),
+            "mean": ret_mean,
+            "std": math.sqrt(max(ret_var, 0.0)),
             "min": float(returns_arr.min()),
             "max": float(returns_arr.max()),
         },
         "reward": {
-            "mean": float(rewards_arr.mean()),
-            "std": float(rewards_arr.std()),
+            "mean": rew_mean,
+            "std": math.sqrt(max(rew_var, 0.0)),
             "min": float(rewards_arr.min()),
             "max": float(rewards_arr.max()),
         },
@@ -315,6 +361,7 @@ def process_dataset(
         f"  Reward: mean={stats['reward']['mean']:.4f}, std={stats['reward']['std']:.4f}, "
         f"min={stats['reward']['min']:.4f}, max={stats['reward']['max']:.4f}"
     )
+    logger.info(f"  Total rows: {count}")
 
     # Update meta/stats.json
     stats_path = output_path / "meta" / "stats.json"

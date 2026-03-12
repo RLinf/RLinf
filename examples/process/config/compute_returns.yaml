@@ -4,7 +4,7 @@
 #   python compute_returns.py --config-name compute_returns
 #
 # This script:
-# 1. Adds `return`, `reward`, and `prompt` columns to parquet files
+# 1. Writes `return`, `reward`, and `prompt` to meta/returns.parquet sidecar
 # 2. Updates meta/stats.json with return/reward statistics
 # 3. Updates meta/info.json with new feature definitions
 
@@ -32,11 +32,14 @@ data:
   #       type: rollout
   #       failure_reward: -300.0
   train_data_paths:
-    - dataset_path: /path/to/sft_dataset
+    - dataset_path: /mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot_collect_8192_task0_fail300/libero_10_3shot
       type: sft
-    - dataset_path: /path/to/rollout_dataset
+    - dataset_path: /mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot_collect_8192_task0_fail300/collected_data_3shot_8192_task0_merged
       type: rollout
-      failure_reward: -300.0
+    - dataset_path: /mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot_collect_8192_task0_fail300_2iter/collected_data_3shot_8192_task0_iter_2_merged
+      type: rollout
+    - dataset_path: /mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot_collect_8192_task0_fail300/collected_data_3shot_512_task0_merged_for_eval
+      type: rollout
 
   # --------------------------------------------------------------------------
   # Global defaults (used when not specified per-dataset)
@@ -56,7 +59,7 @@ data:
   failure_reward: -300.0
 
   # Number of parallel workers for parquet file processing
-  num_workers: 8
+  num_workers: 128
 
 # =============================================================================
 # Hydra configuration

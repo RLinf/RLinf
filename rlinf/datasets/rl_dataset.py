@@ -27,6 +27,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Optional
 
+import numpy as np
 import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 
@@ -201,6 +202,24 @@ class LeRobotRLDataset(LeRobotPyTorchDataset):
 
         # Generate delta_timestamps for temporal data
         delta_timestamps = self.rl_config.get_delta_timestamps(self.dataset_meta.fps)
+
+        # Load sidecar returns.parquet if it exists (written by compute_returns.py).
+        # When loaded, remove return/reward from delta_timestamps so that LeRobot
+        # does not try to read these (possibly absent) columns from episode parquets.
+        self._returns_sidecar = None  # {ep_idx: {"return": np.array, "reward": np.array}}
+        if self.is_local:
+            sidecar_path = Path(self.repo_id).resolve() / "meta" / "returns.parquet"
+            if sidecar_path.exists():
+                self._returns_sidecar = self._load_returns_sidecar(sidecar_path)
+                # Remove return and reward from delta_timestamps so LeRobot skips them
+                delta_timestamps.pop(self.rl_config.return_key, None)
+                for rk in self.rl_config.reward_keys:
+                    delta_timestamps.pop(rk, None)
+                logger.info(
+                    f"Loaded returns sidecar ({len(self._returns_sidecar)} episodes) "
+                    f"— return/reward will be injected from sidecar"
+                )
+
         logger.info(f"RL Delta timestamps: {delta_timestamps}")
 
         # Create base LeRobot dataset with temporal structure
@@ -396,6 +415,37 @@ class LeRobotRLDataset(LeRobotPyTorchDataset):
             )
             return None
 
+    @staticmethod
+    def _load_returns_sidecar(
+        sidecar_path: Path,
+    ) -> dict[int, dict[str, np.ndarray]]:
+        """Load ``meta/returns.parquet`` into per-episode numpy arrays.
+
+        Returns:
+            ``{episode_index: {"return": np.array, "reward": np.array}}``
+            where arrays are indexed by frame_index within the episode.
+        """
+        import pyarrow.parquet as pq
+
+        table = pq.read_table(str(sidecar_path))
+        ep_col = table.column("episode_index").to_numpy()
+        frame_col = table.column("frame_index").to_numpy()
+        ret_col = table.column("return").to_numpy()
+        rew_col = table.column("reward").to_numpy()
+
+        sidecar: dict[int, dict[str, np.ndarray]] = {}
+        # Group by episode (data is sorted by file, episodes are contiguous)
+        unique_eps = np.unique(ep_col)
+        for ep in unique_eps:
+            mask = ep_col == ep
+            frames = frame_col[mask]
+            order = np.argsort(frames)
+            sidecar[int(ep)] = {
+                "return": ret_col[mask][order].astype(np.float32),
+                "reward": rew_col[mask][order].astype(np.float32),
+            }
+        return sidecar
+
     def _log_dataset_info(self):
         """Log dataset information."""
         num_episodes = (
@@ -548,6 +598,34 @@ class LeRobotRLDataset(LeRobotPyTorchDataset):
             else:
                 # Non-tensor or scalar values pass through directly
                 rl_sample[key] = value
+
+        # Inject return and reward from sidecar (written by compute_returns.py)
+        if self._returns_sidecar is not None:
+            ep_idx = int(rl_sample.get("episode_index", -1))
+            frame_idx = int(rl_sample.get("frame_index", -1))
+            if ep_idx in self._returns_sidecar:
+                ep_data = self._returns_sidecar[ep_idx]
+
+                # Return at current timestep (scalar)
+                rl_sample[self.rl_config.return_key] = torch.tensor(
+                    ep_data["return"][frame_idx], dtype=torch.float32
+                )
+
+                # Reward chunk: H future timesteps with padding at episode boundary
+                ep_rewards = ep_data["reward"]
+                ep_len = len(ep_rewards)
+                for rk in self.rl_config.reward_keys:
+                    reward_chunk = torch.zeros(H, dtype=torch.float32)
+                    reward_is_pad = torch.ones(H, dtype=torch.bool)
+                    end_idx = min(frame_idx + H, ep_len)
+                    valid_len = end_idx - frame_idx
+                    if valid_len > 0:
+                        reward_chunk[:valid_len] = torch.from_numpy(
+                            ep_rewards[frame_idx:end_idx].copy()
+                        )
+                        reward_is_pad[:valid_len] = False
+                    rl_sample[rk] = reward_chunk
+                    rl_sample[f"{rk}_is_pad"] = reward_is_pad
 
         return rl_sample
 
