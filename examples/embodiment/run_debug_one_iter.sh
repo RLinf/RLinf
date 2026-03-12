@@ -21,7 +21,9 @@ if [ -z "$1" ]; then
     CONFIG_NAME="libero_10_pi06_reset_base_new_load_buffer_guide10_capacity2048"
 else
     CONFIG_NAME=$1
+    shift
 fi
+EXTRA_ARGS="$@"
 
 echo "========================================"
 echo "Debug Pi06 Training"
@@ -34,7 +36,7 @@ LOG_DIR="${REPO_PATH}/logs/debug_${CONFIG_NAME}-$(date +'%Y%m%d-%H:%M:%S')"
 MEGA_LOG_FILE="${LOG_DIR}/run_debug_pi06.log"
 mkdir -p "${LOG_DIR}"
 
-CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ --config-name ${CONFIG_NAME} runner.logger.log_path=${LOG_DIR}"
+CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ --config-name ${CONFIG_NAME} runner.logger.log_path=${LOG_DIR} ${EXTRA_ARGS}"
 echo ${CMD} > ${MEGA_LOG_FILE}
 # Run once; filter libdav1d lines from console and log
 ${CMD} 2>&1 | grep --line-buffered -v "libdav1d" | tee -a ${MEGA_LOG_FILE}

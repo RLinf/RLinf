@@ -159,6 +159,7 @@ def compute_advantages_for_dataset(
     global_return_min: float,
     global_return_max: float,
     num_workers: int = 1,
+    returns_tag: str | None = None,
 ) -> pd.DataFrame:
     """
     Compute advantage_continuous, reward_sum, value_next for one dataset.
@@ -204,7 +205,8 @@ def compute_advantages_for_dataset(
     )
 
     # Load reward/return from sidecar if not in episode parquets
-    sidecar_path = dataset_path / "meta" / "returns.parquet"
+    sidecar_filename = f"returns_{returns_tag}.parquet" if returns_tag else "returns.parquet"
+    sidecar_path = dataset_path / "meta" / sidecar_filename
     if ("reward" not in full_df.columns or "return" not in full_df.columns) and sidecar_path.exists():
         sidecar_df = pd.read_parquet(sidecar_path, columns=["episode_index", "frame_index", "reward", "return"])
         sidecar_df = sidecar_df.sort_values(["episode_index", "frame_index"]).reset_index(drop=True)
@@ -537,10 +539,10 @@ def main() -> None:
         help="Number of parallel threads for parquet file read/write within each dataset. Default 1.",
     )
     parser.add_argument(
-        "--advantage_tag",
+        "--tag",
         type=str,
         default=None,
-        help="Tag for this advantage computation. Saves to meta/advantages_{tag}.parquet. Default: None (saves as advantages.parquet).",
+        help="Tag for this computation. Reads from meta/returns_{tag}.parquet and saves to meta/advantages_{tag}.parquet. Default: None (untagged filenames).",
     )
     parser.add_argument(
         "--skip_embed",
@@ -580,6 +582,7 @@ def main() -> None:
             global_return_min,
             global_return_max,
             num_workers=num_workers,
+            returns_tag=args.tag,
         )
         dataset_results.append((ds_path, df))
         all_advantages.append(df["advantage"].values)
@@ -646,8 +649,8 @@ def main() -> None:
         save_df.rename(columns={"advantage": "advantage_continuous"}, inplace=True)
         save_df["advantage"] = save_df["advantage_continuous"] >= unified_threshold
         adv_filename = (
-            f"advantages_{args.advantage_tag}.parquet"
-            if args.advantage_tag
+            f"advantages_{args.tag}.parquet"
+            if args.tag
             else "advantages.parquet"
         )
         save_df.to_parquet(meta_dir / adv_filename, index=False)

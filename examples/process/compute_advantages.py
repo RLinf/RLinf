@@ -332,8 +332,11 @@ def _load_return_stats_from_dataset(
 
 def _load_returns_sidecar(
     dataset_path: Path,
+    returns_tag: str | None = None,
 ) -> dict[int, dict[str, np.ndarray]] | None:
-    """Load ``meta/returns.parquet`` sidecar written by compute_returns.py.
+    """Load ``meta/returns_{tag}.parquet`` sidecar written by compute_returns.py.
+
+    Falls back to ``meta/returns.parquet`` when *returns_tag* is None.
 
     Returns:
         ``{episode_index: {"return": np.array, "reward": np.array}}``
@@ -341,7 +344,8 @@ def _load_returns_sidecar(
     """
     import pyarrow.parquet as pq
 
-    sidecar_path = dataset_path / "meta" / "returns.parquet"
+    sidecar_filename = f"returns_{returns_tag}.parquet" if returns_tag else "returns.parquet"
+    sidecar_path = dataset_path / "meta" / sidecar_filename
     if not sidecar_path.exists():
         return None
 
@@ -454,6 +458,7 @@ def load_value_model(cfg: DictConfig, device: str = "cuda"):
 
 def load_lerobot_dataset(
     dataset_path: Path,
+    returns_tag: str | None = None,
 ) -> tuple[LeRobotDataset, dict, LeRobotDatasetMetadata, dict | None]:
     """Load a LeRobot dataset WITHOUT delta_timestamps for fast single-row access.
 
@@ -462,10 +467,11 @@ def load_lerobot_dataset(
     The AdvantageDataset handles multi-timestep access via separate dataset[idx]
     and dataset[idx+N] calls instead.
 
-    Also loads ``meta/returns.parquet`` sidecar if present.
+    Also loads ``meta/returns_{tag}.parquet`` sidecar if present.
 
     Args:
         dataset_path: Path to dataset
+        returns_tag: Optional tag for the returns sidecar filename
 
     Returns:
         Tuple of (dataset, tasks_dict, metadata, returns_sidecar)
@@ -476,24 +482,25 @@ def load_lerobot_dataset(
     logger.info(f"Dataset features: {list(meta.features.keys())}")
 
     # Load sidecar written by compute_returns.py (if present)
-    returns_sidecar = _load_returns_sidecar(dataset_path)
+    returns_sidecar = _load_returns_sidecar(dataset_path, returns_tag=returns_tag)
 
     # Validate required columns: accept either features in parquets OR sidecar
     has_reward = "reward" in meta.features
     has_return = "return" in meta.features
     has_sidecar = returns_sidecar is not None
 
+    sidecar_name = f"returns_{returns_tag}.parquet" if returns_tag else "returns.parquet"
     if not has_reward and not has_sidecar:
         raise ValueError(
             f"Dataset {dataset_path} missing 'reward' column and no "
-            "meta/returns.parquet sidecar found. "
+            f"meta/{sidecar_name} sidecar found. "
             "Run compute_returns.py to preprocess the dataset first."
         )
 
     if not has_return and not has_sidecar:
         raise ValueError(
             f"Dataset {dataset_path} missing 'return' column and no "
-            "meta/returns.parquet sidecar found. "
+            f"meta/{sidecar_name} sidecar found. "
             "Run compute_returns.py to preprocess the dataset first."
         )
 
@@ -1115,7 +1122,7 @@ def save_advantages_to_dataset(
     dataset_type: str | None = None,
     rank: int = 0,
     world_size: int = 1,
-    advantage_tag: str | None = None,
+    tag: str | None = None,
 ):
     """Save advantages parquet directly into the source dataset's meta/ directory.
 
@@ -1132,7 +1139,7 @@ def save_advantages_to_dataset(
         dataset_type: Dataset type ("sft" forces all-True advantage labels)
         rank: Current process rank
         world_size: Total number of processes
-        advantage_tag: Optional tag for advantages parquet filename
+        tag: Optional tag for advantages parquet filename
     """
     if rank == 0:
         meta_dir = dataset_path / "meta"
@@ -1147,8 +1154,8 @@ def save_advantages_to_dataset(
             save_df["advantage"] = save_df["advantage_continuous"] >= threshold
 
         adv_filename = (
-            f"advantages_{advantage_tag}.parquet"
-            if advantage_tag
+            f"advantages_{tag}.parquet"
+            if tag
             else "advantages.parquet"
         )
         save_df.to_parquet(meta_dir / adv_filename, index=False)
@@ -1284,6 +1291,8 @@ def main(cfg: DictConfig) -> None:
             file=sys.stdout,
         )
 
+        tag = cfg.advantage.get("tag", None)
+
         for ds_cfg in cfg.data.train_data_paths:
             ds_path = Path(ds_cfg.dataset_path)
             if rank == 0:
@@ -1292,7 +1301,9 @@ def main(cfg: DictConfig) -> None:
                 logger.info(f"{'=' * 60}")
 
             # Load dataset (each rank loads full dataset but processes shard)
-            dataset, tasks, meta, returns_sidecar = load_lerobot_dataset(ds_path)
+            dataset, tasks, meta, returns_sidecar = load_lerobot_dataset(
+                ds_path, returns_tag=tag
+            )
 
             # Compute advantages for this rank's shard
             local_df = compute_advantages_for_dataset(
@@ -1377,14 +1388,12 @@ def main(cfg: DictConfig) -> None:
                 )
 
         # Save advantages parquet and mixture_config.yaml to each source dataset
-        advantage_tag = cfg.advantage.get("tag", None)
-
         if rank == 0:
             logger.info(f"\n{'=' * 60}")
             logger.info("Saving Advantages")
             logger.info(f"{'=' * 60}")
-            if advantage_tag:
-                logger.info(f"  Advantage tag: {advantage_tag}")
+            if tag:
+                logger.info(f"  Tag: {tag}")
 
         # Build mixture_config content (shared across all datasets)
         tag_stats = {
@@ -1404,7 +1413,7 @@ def main(cfg: DictConfig) -> None:
                 dataset_type=dataset_type,
                 rank=rank,
                 world_size=world_size,
-                advantage_tag=advantage_tag,
+                tag=tag,
             )
 
             # Save mixture_config.yaml to each dataset root (only rank 0)
@@ -1431,10 +1440,10 @@ def main(cfg: DictConfig) -> None:
                     for p, r in dataset_results.items()
                 ]
 
-                if advantage_tag:
+                if tag:
                     if "tags" not in mixture_config:
                         mixture_config["tags"] = {}
-                    mixture_config["tags"][advantage_tag] = tag_stats
+                    mixture_config["tags"][tag] = tag_stats
                 else:
                     mixture_config["unified_threshold"] = unified_threshold
                     mixture_config["positive_quantile"] = positive_quantile

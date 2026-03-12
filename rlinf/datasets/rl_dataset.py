@@ -122,6 +122,8 @@ class LeRobotRLDataset(LeRobotPyTorchDataset):
         episode_percentage: Optional[float] = None,
         shuffle_episodes: bool = False,
         episode_seed: int = 42,
+        # Sidecar tag (e.g. returns_{tag}.parquet)
+        tag: Optional[str] = None,
     ):
         """Initialize RL dataset.
 
@@ -151,6 +153,9 @@ class LeRobotRLDataset(LeRobotPyTorchDataset):
 
         self.max_samples = max_samples
         self.split = split
+
+        # Sidecar tag
+        self.tag = tag
 
         # Episode filtering
         self.episode_percentage = episode_percentage
@@ -208,7 +213,8 @@ class LeRobotRLDataset(LeRobotPyTorchDataset):
         # does not try to read these (possibly absent) columns from episode parquets.
         self._returns_sidecar = None  # {ep_idx: {"return": np.array, "reward": np.array}}
         if self.is_local:
-            sidecar_path = Path(self.repo_id).resolve() / "meta" / "returns.parquet"
+            sidecar_filename = f"returns_{self.tag}.parquet" if self.tag else "returns.parquet"
+            sidecar_path = Path(self.repo_id).resolve() / "meta" / sidecar_filename
             if sidecar_path.exists():
                 self._returns_sidecar = self._load_returns_sidecar(sidecar_path)
                 # Remove return and reward from delta_timestamps so LeRobot skips them
@@ -419,7 +425,7 @@ class LeRobotRLDataset(LeRobotPyTorchDataset):
     def _load_returns_sidecar(
         sidecar_path: Path,
     ) -> dict[int, dict[str, np.ndarray]]:
-        """Load ``meta/returns.parquet`` into per-episode numpy arrays.
+        """Load returns sidecar parquet into per-episode numpy arrays.
 
         Returns:
             ``{episode_index: {"return": np.array, "reward": np.array}}``

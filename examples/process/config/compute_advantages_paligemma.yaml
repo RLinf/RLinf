@@ -30,9 +30,8 @@ advantage:
   device: "cuda"
 
   # Batch size for value model inference (higher = faster but more VRAM)
-  # Recommended: 64 for 24GB GPU, 32 for 16GB GPU, 128 for 40GB+ GPU
   batch_size: 256
-  flush_interval: 4096
+  flush_interval: 256
   # Pipeline batch size for streaming processing
   # Samples are collected and inferred in batches of this size
   # Larger = more memory, potentially faster. Smaller = less memory.
@@ -56,9 +55,9 @@ advantage:
   # 0.3 means top 30% are positive (threshold at 70th percentile)
   positive_quantile: 0.2
 
-  # Advantage tag: when set, saves to meta/advantages_{tag}.parquet
-  # Allows computing advantages with different value models on the same data
-  # Usage: advantage.tag=model_a
+  # Tag: reads from meta/returns_{tag}.parquet, saves to meta/advantages_{tag}.parquet
+  # Must match the tag used in compute_returns.py
+  # Usage: advantage.tag=my_experiment
   tag: default
 
   # Model configuration (loaded from defaults, override here if needed)
