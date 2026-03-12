@@ -83,14 +83,14 @@ def get_state_ids(state_space: list) -> list:
 
 # IMAGE #####
 
-
-OPENPI_IMAGES = ["base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb"]
+# Env-level observation keys used for images.
 OBS_KEY_IMAGES = [
     "observation/image",
     "observation/wrist_image",
     "observation/extra_view_image",
 ]
 
+# Mapping from env-level observation keys to robocasa camera names.
 OBS_KEY_ROBOCASA_IMAGE_MAPPING = {
     "main_images": "robot0_agentview_left_image",
     "wrist_images": "robot0_eye_in_hand_image",
@@ -105,21 +105,22 @@ OBS_KEY_CAMERA_NAME_MAPPING = {
 
 DEFAULT_ROBOCASA_IMAGE_SIZE = (224, 224, 3)
 
-# TODO: This is openpi-specific, find a right place to put it
+# Env-level image space mapping: preset name -> list of observation keys.
 IMAGE_SPACE_STR_MAPPING = {
-    "2views": {
-        "base_0_rgb": "observation/image",
-        "left_wrist_0_rgb": "observation/wrist_image",
-    },
-    "3views": {
-        "base_0_rgb": "observation/image",
-        "left_wrist_0_rgb": "observation/wrist_image",
-        "right_wrist_0_rgb": "observation/extra_view_image",
-    },
+    "2views": [
+        "observation/image",
+        "observation/wrist_image",
+    ],
+    "3views": [
+        "observation/image",
+        "observation/wrist_image",
+        "observation/extra_view_image",
+    ],
 }
 
 
-def get_image_space(image_space: Union[str, dict]) -> dict:
+def get_image_space(image_space: Union[str, list]) -> list:
+    """Resolve image_space into a list of observation keys."""
     if isinstance(image_space, str):
         image_space_str = image_space
         image_space = IMAGE_SPACE_STR_MAPPING.get(image_space)
@@ -130,15 +131,14 @@ def get_image_space(image_space: Union[str, dict]) -> dict:
     return image_space
 
 
-def _check_image_space(image_space: dict) -> bool:
-    check_ret = True
-    for openpi_img_name, robocasa_img_name in image_space.items():
-        if (openpi_img_name not in OPENPI_IMAGES) or (
-            robocasa_img_name not in OBS_KEY_IMAGES
-        ):
-            check_ret = False
-            break
-    return check_ret
+def _check_image_space(image_space: list) -> bool:
+    """Validate that all obs_keys in image_space are known image observation keys."""
+    if not isinstance(image_space, list):
+        return False
+    for obs_key in image_space:
+        if obs_key not in OBS_KEY_IMAGES:
+            return False
+    return True
 
 
 # ACTIONS #####

@@ -80,7 +80,7 @@ class RobocasaEnv(gym.Env):
 
         camera_names = [
             OBS_KEY_CAMERA_NAME_MAPPING[obs_key]
-            for obs_key in image_space.values()
+            for obs_key in image_space
             if obs_key in OBS_KEY_CAMERA_NAME_MAPPING
         ]
 
@@ -109,6 +109,7 @@ class RobocasaEnv(gym.Env):
     def _init_env(self):
         """Initialize robocasa environments using subprocess isolation."""
         import robocasa  # noqa: F401 Robocasa must be imported to register envs
+
         self.task_ids = []
 
         # Determine task IDs for each environment

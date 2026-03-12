@@ -20,19 +20,6 @@ from openpi import transforms
 from openpi.models import model as _model
 from typing_extensions import Dict, List, Union
 
-from rlinf.envs.robocasa.utils import (
-    DEFAULT_ROBOCASA_IMAGE_SIZE,
-    OPENPI_IMAGES,
-    _check_action_space,
-    _check_image_space,
-    _check_state_space,
-    get_action_ids,
-    get_action_space,
-    get_image_space,
-    get_state_ids,
-    get_state_space,
-)
-
 
 def make_robocasa_example() -> dict:
     """Creates a random input example for the Robocasa policy."""
@@ -61,6 +48,12 @@ def _parse_image(image) -> np.ndarray:
 
 
 def extract_state_dict(data: Dict, state_space: Union[str, List[str]]) -> Dict:
+    from rlinf.envs.robocasa.utils import (
+        _check_state_space,
+        get_state_ids,
+        get_state_space,
+    )
+
     state_space = get_state_space(state_space)
     state_check_ret = _check_state_space(state_space)
     if not state_check_ret:
@@ -77,13 +70,34 @@ def extract_state_dict(data: Dict, state_space: Union[str, List[str]]) -> Dict:
     return state_dict
 
 
+OPENPI_IMAGES = ["base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb"]
+
+# Mapping from env observation keys to OpenPi image names.
+OBS_KEY_TO_OPENPI_IMAGE = {
+    "observation/image": "base_0_rgb",
+    "observation/wrist_image": "left_wrist_0_rgb",
+    "observation/extra_view_image": "right_wrist_0_rgb",
+}
+
+
 def extract_image_dict(data: Dict, image_space: Union[str, Dict]) -> Dict:
+    from rlinf.envs.robocasa.utils import (
+        DEFAULT_ROBOCASA_IMAGE_SIZE,
+        _check_image_space,
+        get_image_space,
+    )
+
+    # First resolve image_space using env-level semantics: list of obs_keys.
     image_space = get_image_space(image_space)
     img_check_ret = _check_image_space(image_space)
     if not img_check_ret:
-        img_kv_pairs = ", ".join([f"{k}={v}" for k, v in image_space.items()])
+        image_space_content = (
+            ", ".join(image_space)
+            if isinstance(image_space, list)
+            else str(image_space)
+        )
         logging.warning(
-            f"Dict-format image_space got invalid content: {img_kv_pairs}, Use default '2views' image_space instead."
+            f"List-format image_space got invalid content: {image_space_content}. Use default '2views' image_space instead."
         )
         image_space = get_image_space("2views")
 
@@ -94,15 +108,29 @@ def extract_image_dict(data: Dict, image_space: Union[str, Dict]) -> Dict:
         },
         "image_mask": dict.fromkeys(OPENPI_IMAGES, np.False_),
     }
-    for openpi_img_name, robocasa_img_name in image_space.items():
-        parsed_img = _parse_image(data[robocasa_img_name])
-        image_dict["image"].update({openpi_img_name: parsed_img})
-        image_dict["image_mask"].update({openpi_img_name: np.True_})
+
+    # Map env observation keys in the chosen image_space to OpenPi image names.
+    for obs_key in image_space:
+        openpi_img_name = OBS_KEY_TO_OPENPI_IMAGE.get(obs_key)
+        if obs_key is None or openpi_img_name is None:
+            logging.warning(
+                f"Observation key {obs_key} in image_space is not mapped to a valid OpenPi image name. Skipping."
+            )
+            continue
+        parsed_img = _parse_image(data[obs_key])
+        image_dict["image"][openpi_img_name] = parsed_img
+        image_dict["image_mask"][openpi_img_name] = np.True_
 
     return image_dict
 
 
 def extract_action_ids(action_space: Union[str, List[str]]) -> Dict:
+    from rlinf.envs.robocasa.utils import (
+        _check_action_space,
+        get_action_ids,
+        get_action_space,
+    )
+
     action_space = get_action_space(action_space)
     action_check_ret = _check_action_space(action_space)
     if not action_check_ret:
@@ -190,9 +218,10 @@ class RobocasaOutputs(transforms.DataTransformFn):
     def __call__(self, data: dict) -> dict:
         # Only return the first N actions -- since we padded actions above to fit the model action
         # dimension, we need to now parse out the correct number of actions in the return dict.
-        # For Robocasa, we only return the first 7 actions (since the rest is padding).
-        # For your own dataset, replace `7` with the action dimension of your dataset.
+        # For Robocasa, we only return the first N actions defined by the action_space.
+        # The mapping from logical action names to indices is handled by extract_action_ids.
 
-        action_dim = len(get_action_ids(get_action_space(self.action_space)))
+        action_ids = extract_action_ids(self.action_space)
+        action_dim = len(action_ids)
 
         return {"actions": np.asarray(data["actions"][:, :action_dim])}
