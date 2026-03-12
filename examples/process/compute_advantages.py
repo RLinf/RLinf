@@ -330,6 +330,43 @@ def _load_return_stats_from_dataset(
         return None, None
 
 
+def _load_returns_sidecar(
+    dataset_path: Path,
+) -> dict[int, dict[str, np.ndarray]] | None:
+    """Load ``meta/returns.parquet`` sidecar written by compute_returns.py.
+
+    Returns:
+        ``{episode_index: {"return": np.array, "reward": np.array}}``
+        or None if sidecar does not exist.
+    """
+    import pyarrow.parquet as pq
+
+    sidecar_path = dataset_path / "meta" / "returns.parquet"
+    if not sidecar_path.exists():
+        return None
+
+    table = pq.read_table(str(sidecar_path))
+    ep_col = table.column("episode_index").to_numpy()
+    frame_col = table.column("frame_index").to_numpy()
+    ret_col = table.column("return").to_numpy()
+    rew_col = table.column("reward").to_numpy()
+
+    sidecar: dict[int, dict[str, np.ndarray]] = {}
+    for ep in np.unique(ep_col):
+        mask = ep_col == ep
+        frames = frame_col[mask]
+        order = np.argsort(frames)
+        sidecar[int(ep)] = {
+            "return": ret_col[mask][order].astype(np.float32),
+            "reward": rew_col[mask][order].astype(np.float32),
+        }
+
+    logger.info(
+        f"Loaded returns sidecar: {sidecar_path} ({len(sidecar)} episodes)"
+    )
+    return sidecar
+
+
 # =============================================================================
 # Model Loading
 # =============================================================================
@@ -417,7 +454,7 @@ def load_value_model(cfg: DictConfig, device: str = "cuda"):
 
 def load_lerobot_dataset(
     dataset_path: Path,
-) -> tuple[LeRobotDataset, dict, LeRobotDatasetMetadata]:
+) -> tuple[LeRobotDataset, dict, LeRobotDatasetMetadata, dict | None]:
     """Load a LeRobot dataset WITHOUT delta_timestamps for fast single-row access.
 
     Loading without delta_timestamps is ~50x faster (6ms vs 580ms per sample)
@@ -425,30 +462,38 @@ def load_lerobot_dataset(
     The AdvantageDataset handles multi-timestep access via separate dataset[idx]
     and dataset[idx+N] calls instead.
 
+    Also loads ``meta/returns.parquet`` sidecar if present.
+
     Args:
         dataset_path: Path to dataset
 
     Returns:
-        Tuple of (dataset, tasks_dict, metadata)
+        Tuple of (dataset, tasks_dict, metadata, returns_sidecar)
     """
     meta = LeRobotDatasetMetadata(str(dataset_path))
 
     # Log dataset features for debugging
     logger.info(f"Dataset features: {list(meta.features.keys())}")
 
-    # Validate required columns
+    # Load sidecar written by compute_returns.py (if present)
+    returns_sidecar = _load_returns_sidecar(dataset_path)
+
+    # Validate required columns: accept either features in parquets OR sidecar
     has_reward = "reward" in meta.features
     has_return = "return" in meta.features
+    has_sidecar = returns_sidecar is not None
 
-    if not has_reward:
+    if not has_reward and not has_sidecar:
         raise ValueError(
-            f"Dataset {dataset_path} missing 'reward' column. "
+            f"Dataset {dataset_path} missing 'reward' column and no "
+            "meta/returns.parquet sidecar found. "
             "Run compute_returns.py to preprocess the dataset first."
         )
 
-    if not has_return:
+    if not has_return and not has_sidecar:
         raise ValueError(
-            f"Dataset {dataset_path} missing 'return' column. "
+            f"Dataset {dataset_path} missing 'return' column and no "
+            "meta/returns.parquet sidecar found. "
             "Run compute_returns.py to preprocess the dataset first."
         )
 
@@ -476,7 +521,7 @@ def load_lerobot_dataset(
         f"Loaded dataset: {len(dataset)} samples, {meta.total_episodes} episodes"
     )
 
-    return dataset, tasks, meta
+    return dataset, tasks, meta, returns_sidecar
 
 
 # =============================================================================
@@ -543,12 +588,14 @@ class AdvantageDataset(torch.utils.data.Dataset):
         tasks: dict,
         input_transform=None,
         prepare_observation_cpu=None,
+        returns_sidecar: dict[int, dict[str, np.ndarray]] | None = None,
     ):
         self.dataset = lerobot_dataset
         self.robot_type = robot_type
         self.tasks = tasks
         self.input_transform = input_transform
         self.prepare_observation_cpu = prepare_observation_cpu
+        self.returns_sidecar = returns_sidecar
 
     def __len__(self):
         return len(self.dataset)
@@ -569,17 +616,26 @@ class AdvantageDataset(torch.utils.data.Dataset):
         if self.prepare_observation_cpu is not None:
             obs = self.prepare_observation_cpu(obs)
 
+        # Look up return/reward from sidecar or fall back to sample columns
+        if self.returns_sidecar is not None and ep_idx in self.returns_sidecar:
+            ep_data = self.returns_sidecar[ep_idx]
+            true_return = float(ep_data["return"][frame_idx])
+            reward = float(ep_data["reward"][frame_idx])
+        else:
+            true_return = float(to_scalar(sample["return"]))
+            reward = (
+                float(to_scalar(sample["reward"]))
+                if "reward" in sample
+                else float("nan")
+            )
+
         return {
             "obs": obs,
             "global_idx": idx,
             "episode_index": ep_idx,
             "frame_index": frame_idx,
-            "true_return": float(to_scalar(sample["return"])),
-            "reward": (
-                float(to_scalar(sample["reward"]))
-                if "reward" in sample
-                else float("nan")
-            ),
+            "true_return": true_return,
+            "reward": reward,
         }
 
 
@@ -622,6 +678,7 @@ def compute_advantages_for_dataset(
     global_return_min: float = -700.0,
     global_return_max: float = 0.0,
     global_pbar: tqdm | None = None,
+    returns_sidecar: dict[int, dict[str, np.ndarray]] | None = None,
 ) -> pd.DataFrame:
     """Compute advantages for dataset (or shard in distributed mode).
 
@@ -797,6 +854,7 @@ def compute_advantages_for_dataset(
         tasks,
         input_transform=value_model._input_transform if cpu_prep_in_workers else None,
         prepare_observation_cpu=worker_cpu_prep if cpu_prep_in_workers else None,
+        returns_sidecar=returns_sidecar,
     )
     extended_indices = list(range(shard_start, extended_end))
     extended_dataset = torch.utils.data.Subset(advantage_dataset, extended_indices)
@@ -1234,7 +1292,7 @@ def main(cfg: DictConfig) -> None:
                 logger.info(f"{'=' * 60}")
 
             # Load dataset (each rank loads full dataset but processes shard)
-            dataset, tasks, meta = load_lerobot_dataset(ds_path)
+            dataset, tasks, meta, returns_sidecar = load_lerobot_dataset(ds_path)
 
             # Compute advantages for this rank's shard
             local_df = compute_advantages_for_dataset(
@@ -1249,6 +1307,7 @@ def main(cfg: DictConfig) -> None:
                 global_return_min=global_return_min,
                 global_return_max=global_return_max,
                 global_pbar=global_pbar,
+                returns_sidecar=returns_sidecar,
             )
 
             # Synchronize and gather advantages from all ranks

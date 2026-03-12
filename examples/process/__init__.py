@@ -16,6 +16,6 @@
 Data processing scripts for RLinf datasets.
 
 This module contains preprocessing scripts:
-- compute_returns.py: Add return/reward columns to LeRobot datasets
+- compute_returns.py: Compute return/reward and write to meta/returns.parquet sidecar
 - compute_advantages.py: Compute advantages for CFG-RL training
 """
