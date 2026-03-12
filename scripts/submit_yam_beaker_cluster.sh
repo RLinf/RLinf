@@ -108,7 +108,7 @@ esac
 # 1. Install and start Tailscale (userspace networking for containers).
 # 2. Print Tailscale IP so user can join the cluster from the desktop.
 # 3. Start Ray head and idle (no --train-cmd → start_ray_beaker.sh blocks).
-INSTALL_CMD_B64=$(echo "$INSTALL_CMD" | base64 -w0)
+INSTALL_CMD_B64=$(echo "$INSTALL_CMD" | base64 | tr -d '\n')
 
 ENTRYPOINT_CMD="curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg -o /usr/share/keyrings/tailscale-archive-keyring.gpg"
 ENTRYPOINT_CMD+=" && echo 'deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu jammy main' > /etc/apt/sources.list.d/tailscale.list"
