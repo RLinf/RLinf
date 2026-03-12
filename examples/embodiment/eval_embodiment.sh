@@ -8,20 +8,33 @@ export MUJOCO_GL="osmesa"
 export PYOPENGL_PLATFORM="osmesa"
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 
-# Base path to the BEHAVIOR dataset, which is the BEHAVIOR-1k repo's dataset folder
-# Only required when running the behavior experiment.
+export LIBERO_PRO_PATH=${LIBERO_PRO_PATH:-"/path/to/LIBERO-PRO"}
+export LIBERO_PLUS_PATH=${LIBERO_PLUS_PATH:-"/path/to/LIBERO-PLUS"}
+
 export OMNIGIBSON_DATA_PATH=$OMNIGIBSON_DATA_PATH
 export OMNIGIBSON_DATASET_PATH=${OMNIGIBSON_DATASET_PATH:-$OMNIGIBSON_DATA_PATH/behavior-1k-assets/}
 export OMNIGIBSON_KEY_PATH=${OMNIGIBSON_KEY_PATH:-$OMNIGIBSON_DATA_PATH/omnigibson.key}
 export OMNIGIBSON_ASSET_PATH=${OMNIGIBSON_ASSET_PATH:-$OMNIGIBSON_DATA_PATH/omnigibson-robot-assets/}
 export OMNIGIBSON_HEADLESS=${OMNIGIBSON_HEADLESS:-1}
-# Base path to Isaac Sim, only required when running the behavior experiment.
 export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
 export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
 export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 
 export ROBOTWIN_PATH="/path/to/RoboTwin"
 export PYTHONPATH=${REPO_PATH}:${ROBOTWIN_PATH}:$PYTHONPATH
+
+L_TYPE=${3:-"base"}
+export LIBERO_TYPE=$L_TYPE
+
+if [ "$LIBERO_TYPE" == "pro" ]; then
+    export PYTHONPATH="${LIBERO_PRO_PATH}:${PYTHONPATH}"
+    export LIBERO_PERTURBATION="all"
+    echo "Evaluation Mode: LIBERO-PRO"
+elif [ "$LIBERO_TYPE" == "plus" ]; then
+    export PYTHONPATH="${LIBERO_PLUS_PATH}:${PYTHONPATH}"
+    export LIBERO_SUFFIX="all"
+    echo "Evaluation Mode: LIBERO-PLUS"
+fi
 
 export HYDRA_FULL_ERROR=1
 

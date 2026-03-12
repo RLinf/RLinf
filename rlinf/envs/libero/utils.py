@@ -15,10 +15,38 @@
 """Utils for evaluating policies in LIBERO simulation environments."""
 
 import math
+import os
 from typing import Union
 
-import libero.libero.benchmark as benchmark
 import numpy as np
+
+libero_type = os.environ.get("LIBERO_TYPE", "standard")
+
+if libero_type == "pro":
+    try:
+        import liberopro.liberopro.benchmark as benchmark
+    except ImportError:
+        print("[Utils] Warning: LIBERO_TYPE=pro but 'liberopro' not found. Falling back to 'libero'.")
+        import libero.libero.benchmark as benchmark
+
+elif libero_type == "plus":
+    try:
+        import liberoplus.liberoplus.benchmark as benchmark
+    except ImportError:
+        print("[Utils] Warning: LIBERO_TYPE=plus but 'liberoplus' not found. Falling back to 'libero'.")
+        import libero.libero.benchmark as benchmark
+
+else:
+    try:
+        import libero.libero.benchmark as benchmark
+    except ImportError:
+        try:
+            import liberopro.liberopro.benchmark as benchmark
+        except ImportError:
+            try:
+                import liberoplus.liberoplus.benchmark as benchmark
+            except ImportError:
+                raise ImportError("No valid LIBERO package (libero, liberopro, or liberoplus) found.")
 
 
 def get_libero_image(obs: dict[str, np.ndarray]) -> np.ndarray:
