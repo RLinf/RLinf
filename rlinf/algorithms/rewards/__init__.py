@@ -17,7 +17,7 @@ from rlinf.algorithms.rewards.math import MathReward
 from rlinf.algorithms.rewards.rstar2 import Rstar2Reward
 from rlinf.algorithms.rewards.searchr1 import SearchR1Reward
 from rlinf.algorithms.rewards.vqa import VQAReward
-
+from rlinf.algorithms.rewards.android import AndroidReward
 
 def register_reward(name: str, reward_class: type):
     assert name not in reward_registry, f"Reward {name} already registered"
@@ -36,3 +36,4 @@ register_reward("vqa", VQAReward)
 register_reward("code_offline", CodeRewardOffline)
 register_reward("searchr1", SearchR1Reward)
 register_reward("rstar2", Rstar2Reward)
+register_reward("android", AndroidReward)
