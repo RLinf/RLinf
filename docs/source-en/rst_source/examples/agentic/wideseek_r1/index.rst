@@ -16,7 +16,7 @@ For the full method and results, see the
 :doc:`WideSeek-R1 publication <../../../publications/wideseek_r1>`, the
 `project page <https://wideseek-r1.github.io>`__, the
 `paper on arXiv <https://arxiv.org/abs/2602.04634>`__, and the
-`example code in RLinf <https://github.com/RLinf/RLinf/tree/main/examples/wideseek_r1>`__.
+`example code in RLinf <https://github.com/RLinf/RLinf/tree/main/examples/agent/wideseek_r1>`__.
 
 .. contents::
    :depth: 2
@@ -40,11 +40,11 @@ If you prefer a local environment, install the agentic stack:
 
    bash requirements/install.sh agentic
    
-Our startup scripts and configuration files are located in ``examples/wideseek_r1``.
+Our startup scripts and configuration files are located in ``examples/agent/wideseek_r1``.
 
-- ``examples/wideseek_r1/config`` contains the YAML configuration files for training and evaluation.
-- ``examples/wideseek_r1/search_engine`` provides the search engine implementation used by offline tools.
-- ``examples/wideseek_r1/run_train.sh`` and ``examples/wideseek_r1/run_eval.sh`` are the main entry points for training and evaluation, respectively.
+- ``examples/agent/wideseek_r1/config`` contains the YAML configuration files for training and evaluation.
+- ``examples/agent/wideseek_r1/search_engine`` provides the search engine implementation used by offline tools.
+- ``examples/agent/wideseek_r1/run_train.sh`` and ``examples/agent/wideseek_r1/run_eval.sh`` are the main entry points for training and evaluation, respectively.
 
 Tool Backends
 -------------
