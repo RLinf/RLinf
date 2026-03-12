@@ -505,7 +505,6 @@ class SGLangWorker(Worker):
             messages: List of messages in OpenAI chat format, may contain images.
             sampling_params: Optional sampling parameters to override defaults.
         """
-        t_preprocess_start = time.perf_counter()
         image_inputs, _ = process_vision_info(
             messages, image_patch_size=self._processor.image_processor.patch_size
         )
@@ -513,7 +512,6 @@ class SGLangWorker(Worker):
             messages, tokenize=False, add_generation_prompt=True,
             enable_thinking=False,
         )
-        vision_preprocess_s = time.perf_counter() - t_preprocess_start
 
         final_sampling_params = self._sampling_params
         if sampling_params is not None and len(sampling_params) > 0:
@@ -521,41 +519,17 @@ class SGLangWorker(Worker):
             for key, value in sampling_params.items():
                 final_sampling_params[key] = value
 
-        t_infer_start = time.perf_counter()
         result, _ = await self.async_generate(
             prompt=text,
             sampling_params=final_sampling_params,
             image_data=image_inputs,
             return_logprob=self._return_logprobs,
         )
-        engine_inference_s = time.perf_counter() - t_infer_start
 
-        if isinstance(result, dict):
-            result["engine_inference_s"] = engine_inference_s
-            result["vision_preprocess_s"] = vision_preprocess_s
-            meta = result.get("meta_info", {})
-            result["prompt_tokens"] = meta.get("prompt_tokens", -1)
-            result["completion_tokens"] = meta.get("completion_tokens", len(result.get("output_ids", [])))
-
-        t_put_start = time.perf_counter()
         await output_channel.put(
             result, key=channel_key, async_op=True
         ).async_wait()
-        engine_put_s = time.perf_counter() - t_put_start
 
-        # 诊断日志：token 数量 + 耗时
-        output_ids = result.get("output_ids", []) if isinstance(result, dict) else []
-        meta = result.get("meta_info", {}) if isinstance(result, dict) else {}
-        prompt_tokens = meta.get("prompt_tokens", -1)
-        completion_tokens = meta.get("completion_tokens", len(output_ids))
-        finish_reason = meta.get("finish_reason", {})
-        self.log_info(
-            f"[VL diag] channel_key={channel_key[:8]}... "
-            f"prompt_tokens={prompt_tokens} completion_tokens={completion_tokens} "
-            f"finish_reason={finish_reason} "
-            f"vision_preprocess_s={vision_preprocess_s:.3f} "
-            f"engine_inference_s={engine_inference_s:.3f} engine_put_s={engine_put_s:.3f}"
-        )
 
     async def vl_generate_serverless(
         self,

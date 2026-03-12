@@ -317,6 +317,7 @@ SUPPORTED_LLM_ROLLOUT_BACKENDS = ["vllm", "sglang"]
 
 def get_rollout_backend_worker(cfg: DictConfig) -> Worker:
     rollout_backend = cfg.rollout.get("rollout_backend", None)
+    print("rollout_backend:", rollout_backend, flush=True)
     if rollout_backend is None:
         raise ValueError(
             f"rollout_backend must be specified in the config. Support {', '.join(SUPPORTED_LLM_ROLLOUT_BACKENDS)}."

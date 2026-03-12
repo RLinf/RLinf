@@ -1,11 +1,12 @@
 """Android rewards with android world."""
 import sys
+import logging
 from typing import Any
 
 from omegaconf import DictConfig
 from qwen3_vl_agent import StepResult
 
-android_world_parent = "/mnt/project_rlinf/yuanqwang/mobile-agent/android_world"
+android_world_parent = "/path/to/your/android_world"
 if android_world_parent not in sys.path:
     sys.path.insert(0, android_world_parent)
 
@@ -58,5 +59,38 @@ class AndroidReward:
             if not task.initialized:
                 task.initialized = True
 
-            score = task.is_successful(env)
-            return float(score) * self.scale
+            try:
+                score = task.is_successful(env)
+                return float(score) * self.scale
+            except Exception:
+                # Reward evaluation should not crash the whole rollout.
+                # Common failures include clipboard read/write constraints (e.g., Clipper not foreground / permissions).
+                logging.getLogger(__name__).exception(
+                    "AndroidReward.get_reward failed during task.is_successful; returning 0. "
+                    "task_name=%s params=%s class_name=%s",
+                    answer.get("task_name"),
+                    answer.get("params"),
+                    answer.get("class_name"),
+                )
+                return 0.0
+    def get_reward_new(self, env,  result,  task):
+        if not result.done:
+            return 0.0
+        else:
+            print(f"task_initialized: {task.initialized}")
+            if not task.initialized:
+                task.initialized = True
+            try:
+                score = task.is_successful(env)
+                return float(score) * self.scale
+            except Exception:
+                # Reward evaluation should not crash the whole rollout.
+                # Common failures include clipboard read/write constraints (e.g., Clipper not foreground / permissions).
+                logging.getLogger(__name__).exception(
+                    "AndroidReward.get_reward_new failed during task.is_successful; returning 0. "
+                    "task_name=%s params=%s class_name=%s",
+                    task.task_name,
+                    task.params,
+                    task.class_name,
+                )
+                return 0.0

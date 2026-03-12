@@ -3,7 +3,7 @@ import base64
 import sys
 import time
 from pathlib import Path
-project_root = Path("/mnt/project_rlinf/yingcheng/mobile-agent")
+project_root = Path("/path/to/your/project_root")
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 

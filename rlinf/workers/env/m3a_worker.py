@@ -1,12 +1,11 @@
 from omegaconf import DictConfig
 from typing import TYPE_CHECKING, Optional, Any
-from rlinf.envs.adb.adb_env import ADBEnv
 from rlinf.scheduler import Channel, Worker
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.data.datasets.android import AndroidWorldDataset
 from rlinf.workers.env.llm_wrapper import LLMWrapper
 import sys
-android_world_parent = "/mnt/project_rlinf/yingcheng/mobile-agent/android_world"
+android_world_parent = "/path/to/your/android_world"
 if android_world_parent not in sys.path:
     sys.path.insert(0, android_world_parent)
 
@@ -42,13 +41,14 @@ class AndroidAgentWorker(Worker):
             hw_info: "ADBHWInfo"
             device_id = hw_info.config.device_id
             adb_path = hw_info.config.adb_path
-            grpc_port = self.cfg.reward.get("grpc_port", 8554) + self._rank
+            grpc_port = self.cfg.reward.get("grpc_port", 8556) + idx
+            print("grpc_port:\n ", grpc_port)
             if ":" in device_id:
                 console_port = int(device_id.split(":")[1]) - 1
             else:
                 console_port = int(device_id.split("-")[1]) - 1
-            with self.worker_timer(f"env_setup_device_{idx}"):
-                self.log_info(f"Loading and setting up env for device {device_id} on rank {self._rank}...")
+
+            self.log_info(f"Loading and setting up env for device {device_id} on rank {self._rank}...")
             #1.load and setup env
             env = env_launcher.load_and_setup_env(
                 console_port=console_port,
@@ -85,9 +85,9 @@ class AndroidAgentWorker(Worker):
         """Get the number of devices"""
         return self._num_envs
     
-    def make_device_key(self, worker_rank: int, device_idx: int) -> str:
-        """Make a device key for the device"""
-        return f"{worker_rank}_{device_idx}"
+    def get_dataset_size(self) -> int:
+        """Get the number of tasks in the dataset"""
+        return len(self.dataset)
 
     def _get_next_env(self):
         """Get the next env for the task, return (env, env_info)"""
@@ -96,8 +96,8 @@ class AndroidAgentWorker(Worker):
         
         env_idx = self._next_env_idx
         env = self.envs[env_idx]
-        hw_info: "ADBHWInfo" = self.hardware_infos[env_idx]
-        grpc_port = self.cfg.reward.get("grpc_port", 8554) + self._rank
+        hw_info: "ADBHWInfo" = self.hardware_infos[self._rank]
+        grpc_port = self.cfg.reward.get("grpc_port", 8556) + env_idx
         if ":" in hw_info.config.device_id:
             console_port = int(hw_info.config.device_id.split(":")[1]) - 1
         else:
@@ -117,7 +117,7 @@ class AndroidAgentWorker(Worker):
         task = task_item.answer["task"] # get a task instance from the dataset
         env, env_info = self._get_next_env()
         device_id = env_info["device_id"]
-
+        self.log_info(f"Processing task {task_item.answer['task_name']}, task goal: {task.goal} on device {device_id} on rank {self._rank}")
         #1.initialize task
         try:
             task.initialize_task(env)
@@ -128,16 +128,19 @@ class AndroidAgentWorker(Worker):
 
         #2.run task
         agent_result = self._run_agent(env, task)
-        env_info["agent_result"] = agent_result
-        env_info["task"] = task
-
+        env_task_info = {
+            "env_info": env_info,
+            "agent_result": agent_result,
+            "task": task,
+        }
         #3.send env info to reward worker
         self.send(
-            object=env_info,
+            object=env_task_info,
             dst_group_name=reward_worker_group_name,
             dst_rank=self._rank,
         )
-        self.log_info(f"Sent env info[{task}] to {reward_worker_group_name}[{self._rank}]")
+        self.log_info(f"Sent env task info[{task}] to {reward_worker_group_name}[{self._rank}]")
+        
         #4.get reward from reward worker
         reward = self.recv(
             src_group_name=reward_worker_group_name,
@@ -164,6 +167,8 @@ class AndroidAgentWorker(Worker):
         for step_n in range(max_steps):
             result = agent.step(goal)
             actions_output.append(result.data)
+            print(f"=======================step{step_n}========================")
+            print(f"action: {result.data['action_output_json']} \n  reasoning: {result.data['action_reason']} \n summary: {result.data['summary']} \n\n")
             if result.done:
                 return EpisodeResult(done=result.done, step_data=_transpose_lod_to_dol(actions_output))
         self.log_info(f"Task {task} reached max steps {max_steps} without completing.")

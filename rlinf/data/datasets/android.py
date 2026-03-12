@@ -109,7 +109,7 @@ class AndroidWorldDataset(Dataset):
             each item is a dict with keys: prompt, task_class, task_name, params
         """
         # Add android_world parent directory to sys.path if not already present
-        android_world_parent = "/mnt/project_rlinf/yingcheng/mobile-agent/android_world"
+        android_world_parent = "/path/to/your/android_world"
         if android_world_parent not in sys.path:
             sys.path.insert(0, android_world_parent)
         try:

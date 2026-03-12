@@ -4,7 +4,7 @@ from rlinf.algorithms.rewards.android import AndroidReward
 from rlinf.scheduler import Worker
 
 # Add android_world to path
-android_world_parent = "/mnt/project_rlinf/yingcheng/mobile-agent/android_world"
+android_world_parent = "/path/to/your/android_world"
 if android_world_parent not in sys.path:
     sys.path.insert(0, android_world_parent)
 
@@ -21,6 +21,7 @@ class AndroidRewardWorker(Worker):
 
     def _receive_env_info(self, agent_worker_group_name: str = "AndroidAgentWorkerGroup"):
         """Receive env info and task from AgentWorker, reconnect the env for this task."""
+        
         self.log_info(f"Waiting to receive env info and task from {agent_worker_group_name}[{self._rank}]...")
         env_info_and_task = self.recv(src_group_name=agent_worker_group_name, src_rank=self._rank)
         env_info = env_info_and_task["env_info"]
@@ -35,11 +36,11 @@ class AndroidRewardWorker(Worker):
         self.log_info(f"Reconnected env for device {env_info['device_id']}")
         return env, env_info_and_task["task"], env_info_and_task["agent_result"]
     
-    def compute_reward(self,  agent_worker_group_name: str = "AndroidAgentWorkerGroup"):
+    def compute_reward(self, agent_worker_group_name: str = "AndroidAgentWorkerGroup"):
         """Compute reward for the task"""
         env, task, agent_result = self._receive_env_info(agent_worker_group_name)
 
-        reward = self.android_reward.get_reward(env, agent_result, task)
+        reward = self.android_reward.get_reward_new(env, agent_result, task)
 
         self.send(
             reward,
