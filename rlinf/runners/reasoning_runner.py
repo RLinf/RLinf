@@ -191,7 +191,7 @@ class ReasoningRunner:
         val_batch_size = (
             self.cfg.data.val_rollout_batch_size
         )  # Prefer config value if set
-        if val_batch_size is None:
+        if val_batch_size is not None:
             assert self.val_dataset is not None, (
                 "Validation dataset must be provided if val_rollout_batch_size is set!"
             )

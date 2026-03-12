@@ -410,9 +410,10 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
 
         return processed_results, aggregated_metrics
 
-    def log_eval(
+    def update(
         self,
         context: dict,
+        eval_pbar,
         batch_idx,
         batch,
         input_channel,
@@ -428,32 +429,18 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
         Returns:
             Number of queries received in this batch
         """
-        # Calculate actual batch size from the batch data
-        if "prompt" in batch:
-            expected_batch_size = batch["prompt"].shape[0]
-        elif "answer" in batch:
-            expected_batch_size = len(batch["answer"])
-        else:
-            expected_batch_size = self.cfg.data.val_rollout_batch_size
-
-        logging.info(f"Actual batch size for this batch: {expected_batch_size}")
-
-        if expected_batch_size is not None:
-            total_batch_size_per_dp = expected_batch_size
-        else:
-            total_batch_size_per_dp = self.cfg.data.rollout_batch_size
-
         recv_batch_size = 0
-        while recv_batch_size < total_batch_size_per_dp:
+        group_size = self.cfg.algorithm.get("group_size", 1)
+        while recv_batch_size < self.total_batch_size:
             # Receive raw evaluation dictionary from agent_loop
-            rollout_result = input_channel.get()
+            rollout_result: DynamicRolloutResult = input_channel.get()
+            assert len(set(rollout_result.idx_to_traj)) == group_size, (
+                f"group_size: {group_size}, idx_to_traj: {rollout_result.idx_to_traj}"
+            )
+            eval_pbar.update(group_size)
+            recv_batch_size += group_size
             eval_result: dict = self.extract_eval_result(rollout_result)
             self.accumulated_raw_results.append(eval_result)
-            recv_batch_size += 1
-
-        assert recv_batch_size == total_batch_size_per_dp, (
-            f"Expected {total_batch_size_per_dp} queries from channel, but got {recv_batch_size}"
-        )
 
         return recv_batch_size
 
@@ -606,7 +593,7 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
         logging.info(f"Saving {total_queries} results to JSON files...")
         self._save_eval_results(processed_results, final_metrics, total_queries)
 
-    def update_pbar(
+    def update_batch(
         self,
         context: dict,
         eval_pbar,
@@ -620,4 +607,3 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
                 "rollout_time": f"{time_metrics.get('rollout', 0):.2f}s",
             }
         )
-        eval_pbar.update(1)
