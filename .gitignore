@@ -19,3 +19,5 @@ outputs/*
 uv.lock
 rlinf/envs/maniskill/assets
 PKG-INFO
+
+aaa_*

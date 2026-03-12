@@ -110,6 +110,8 @@ class FrankaRobotConfig:
     )
     # Hand action scale (for continuous hand control).
     hand_action_scale: float = 1.0
+    # Max per-step change for hand joints (set to inf to disable).
+    hand_max_delta_per_step: float = float('inf')
 
 
 class FrankaEnv(gym.Env):
@@ -147,6 +149,7 @@ class FrankaEnv(gym.Env):
         next(self._joint_reset_cycle)  # Initialize the cycle
 
         self._success_hold_counter = 0  # Initialize the success hold counter
+        self._last_hand_command: np.ndarray | None = None
 
         if not self.config.is_dummy:
             self._setup_hardware()
@@ -383,6 +386,10 @@ class FrankaEnv(gym.Env):
             self._controller.reset_end_effector(
                 self.config.hand_reset_state
             ).wait()
+            self._last_hand_command = (
+                np.array(self.config.hand_reset_state, dtype=np.float64)
+                * self.config.hand_action_scale
+            )
         else:
             self._controller.reset_end_effector().wait()
 
@@ -669,6 +676,11 @@ class FrankaEnv(gym.Env):
         else:
             # Continuous hand control
             scaled = np.asarray(ee_action, dtype=np.float64) * self.config.hand_action_scale
+            if self._last_hand_command is not None:
+                delta = scaled - self._last_hand_command
+                max_d = self.config.hand_max_delta_per_step
+                scaled = self._last_hand_command + np.clip(delta, -max_d, max_d)
+            self._last_hand_command = scaled.copy()
             self._controller.command_end_effector(scaled).wait()
             return True
 

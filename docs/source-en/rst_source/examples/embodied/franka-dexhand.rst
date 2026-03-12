@@ -478,8 +478,7 @@ Step 1: Collect Classifier Training Data
 .. important::
 
    This step **only requires the controller node** (the node connected to
-   the robot). No GPU node is needed. Start Ray in single-node mode on the
-   controller node.
+   the robot). No GPU node is needed. 
 
 Classifier data collection uses the same teleoperation environment
 (SpaceMouse + data glove + Franka) as regular data collection, but
@@ -505,14 +504,8 @@ uses the SpaceMouse **right button** to label frame classes in real time:
    source /opt/venv/franka-0.15.0/bin/activate
    # If using ROS: source <your_catkin_ws>/devel/setup.bash
 
-   # 2. Start Ray in single-node mode on the controller node
-   ray start --head --port=6379
-
-   # 3. Run the classifier data collection script
+   # 2. Run the classifier data collection script 
    bash examples/embodiment/collect_classifier_data.sh
-
-   # 4. Stop Ray after collection is complete
-   ray stop
 
 Data is saved to ``logs/<timestamp>-reward-classifier-<env_name>/``.
 
@@ -889,8 +882,8 @@ workflow:
      - Command
    * - 1
      - Collect classifier training data
-     - Controller node (single-node Ray)
-     - ``ray start --head`` → ``bash examples/embodiment/collect_classifier_data.sh`` → ``ray stop``
+     - Controller node
+     - ``bash examples/embodiment/collect_classifier_data.sh``
    * - 2
      - Human review
      - Node with display

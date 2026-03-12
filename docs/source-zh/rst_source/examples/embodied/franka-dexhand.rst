@@ -430,7 +430,7 @@ Franka + 灵巧手真机强化学习
 .. important::
 
    此步骤**只需要控制节点**（连接机器人的节点），不需要 GPU 节点参与。
-   在控制节点上单独启动 Ray 即可。
+   脚本会自动启动一个本地单节点 Ray 实例，无需手动执行 ``ray start``。
 
 分类器数据采集使用与普通数据采集相同的遥操作环境（SpaceMouse + 数据手套 + Franka），
 但通过 SpaceMouse 的 **物理右键** 来实时标记帧类别：
@@ -453,14 +453,8 @@ Franka + 灵巧手真机强化学习
    source /opt/venv/franka-0.15.0/bin/activate
    # 如有 ROS 依赖：source <your_catkin_ws>/devel/setup.bash
 
-   # 2. 在控制节点上单独启动 Ray（单节点模式）
-   ray start --head --port=6379
-
-   # 3. 运行分类器数据采集脚本
+   # 2. 运行分类器数据采集脚本
    bash examples/embodiment/collect_classifier_data.sh
-
-   # 4. 采集完成后停止 Ray
-   ray stop
 
 数据保存在 ``logs/<时间戳>-reward-classifier-<env_name>/`` 目录下。
 
@@ -812,8 +806,8 @@ demo 采集流程中：
      - 命令
    * - 1
      - 采集分类器训练数据
-     - 控制节点（单节点 Ray）
-     - ``ray start --head`` → ``bash examples/embodiment/collect_classifier_data.sh`` → ``ray stop``
+     - 控制节点
+     - ``bash examples/embodiment/collect_classifier_data.sh``
    * - 2
      - 人工审核
      - 有显示器的节点

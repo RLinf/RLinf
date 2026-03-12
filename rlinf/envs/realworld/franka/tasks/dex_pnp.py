@@ -38,18 +38,18 @@ class DexpnpConfig(FrankaRobotConfig):
             "rotational_stiffness": 150,
             "rotational_damping": 7,
             "translational_Ki": 0,
-            "translational_clip_x": 0.001,
-            "translational_clip_y": 0.001,
-            "translational_clip_z": 0.001,
-            "translational_clip_neg_x": 0.001,
-            "translational_clip_neg_y": 0.001,
-            "translational_clip_neg_z": 0.001,
+            "translational_clip_x": 0.015,
+            "translational_clip_y": 0.015,
+            "translational_clip_z": 0.015,
+            "translational_clip_neg_x": 0.015,
+            "translational_clip_neg_y": 0.015,
+            "translational_clip_neg_z": 0.015,
             "rotational_clip_x": 0.02,
             "rotational_clip_y": 0.02,
-            "rotational_clip_z": 0.5,
+            "rotational_clip_z": 0.02,
             "rotational_clip_neg_x": 0.02,
             "rotational_clip_neg_y": 0.02,
-            "rotational_clip_neg_z": 0.5,
+            "rotational_clip_neg_z": 0.02,
             "rotational_Ki": 0,
         }
         self.precision_param = {
@@ -74,29 +74,15 @@ class DexpnpConfig(FrankaRobotConfig):
         }
         self.target_ee_pose = np.array(self.target_ee_pose)
         self.reset_ee_pose = self.target_ee_pose + np.array(
-            [0.0, 0.0, 0.01, 0.0, 0.0, 0.0]
+            [0.0, 0.0, 0.05, 0.0, 0.0, 0.0]
         )
         self.reward_threshold = np.array(self.reward_threshold)
         self.action_scale = np.array([0.03, 1.5, 1])
-        self.ee_pose_limit_min = np.array(
-            [
-                self.target_ee_pose[0] - 0.02,
-                self.target_ee_pose[1] - 0.25,
-                self.target_ee_pose[2] - 0.01,
-                self.target_ee_pose[3] - 0.003,
-                self.target_ee_pose[4] - 0.003,
-                self.target_ee_pose[5] - 0.003,
-            ]
-        )
-        self.ee_pose_limit_max = np.array(
-            [
-                self.target_ee_pose[0] + 0.02,
-                self.target_ee_pose[1] + 0.02,
-                self.target_ee_pose[2] + 0.04,
-                self.target_ee_pose[3] + 0.003,
-                self.target_ee_pose[4] + 0.003,
-                self.target_ee_pose[5] + 0.003,
-            ]
+        self.ee_pose_limit_min = self.target_ee_pose - np.array(
+            [0.02, 0.02, 0.02, 0.003, 0.003, 0.003]
+        ) 
+        self.ee_pose_limit_max = self.target_ee_pose + np.array(
+            [0.02, 0.02, 0.1, 0.003, 0.003, 0.003]
         )
 
 
