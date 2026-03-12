@@ -330,6 +330,7 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                 "episode_percentage": entry.get("episode_percentage", None),
                 "shuffle_episodes": entry.get("shuffle_episodes", False),
                 "episode_seed": entry.get("episode_seed", 42),
+                "tag": data_cfg.get("tag", None),
             }
 
             ds = ValueDataset(**entry_kwargs)
@@ -431,6 +432,7 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                 action_dim=eval_entry.get("action_dim", shared["action_dim"]),
                 default_prompt=eval_entry.get("default_prompt", None),
                 max_samples=eval_max_samples,
+                tag=data_cfg.get("tag", None),
             )
             eval_sampler = None
             if torch.distributed.is_initialized():

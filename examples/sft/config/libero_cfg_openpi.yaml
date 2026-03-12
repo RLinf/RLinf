@@ -30,9 +30,9 @@ runner:
 
 data:
   num_workers: 8
-  # Advantage tag: loads meta/advantages_{tag}.parquet from each dataset
+  # Tag: loads meta/advantages_{tag}.parquet from each dataset
   # If null, loads meta/advantages.parquet (legacy format)
-  advantage_tag: null
+  tag: null
 
   # Balance sampling weights by dataset length
   balance_dataset_weights: true

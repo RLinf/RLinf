@@ -201,7 +201,7 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
         # Parse config
         data_cfg = cfg.get("data", {})
         openpi_cfg = cfg.actor.model.openpi
-        advantage_tag = data_cfg.get("advantage_tag", None)
+        advantage_tag = data_cfg.get("tag", None)
         task_name_filter = data_cfg.get("task_name_filter", None)
 
         # Parse datasets from config

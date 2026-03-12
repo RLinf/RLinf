@@ -17,7 +17,8 @@ Compute returns for LeRobot datasets.
 
 This preprocessing script computes `return`, `reward`, and `prompt` for every
 frame in a LeRobot dataset and writes them as a **sidecar** parquet file at
-``meta/returns.parquet``.  The original per-episode parquet files are **not**
+``meta/returns_{tag}.parquet`` (or ``meta/returns.parquet`` when no tag is set).
+The original per-episode parquet files are **not**
 modified, so the script only needs to read tiny metadata columns (episode_index,
 frame_index, is_success, task_index) — no image data is touched.
 
@@ -218,10 +219,12 @@ def process_dataset(
     gamma: float,
     failure_reward: float,
     num_workers: int = 8,
+    tag: str | None = None,
 ) -> dict:
     """Process a LeRobot dataset and compute return/reward/prompt.
 
-    Writes results as a sidecar ``meta/returns.parquet`` without modifying the
+    Writes results as a sidecar ``meta/returns_{tag}.parquet`` (or
+    ``meta/returns.parquet`` when *tag* is None) without modifying the
     original per-episode parquet files (no image I/O).
 
     Args:
@@ -231,6 +234,7 @@ def process_dataset(
         gamma: Discount factor
         failure_reward: Penalty for failed episodes
         num_workers: Number of parallel workers for parquet processing
+        tag: Optional tag for the sidecar filename
 
     Returns:
         Statistics dict with return/reward stats
@@ -319,7 +323,8 @@ def process_dataset(
 
     # ---- concatenate and write sidecar ----
     combined = pa.concat_tables(result_tables)
-    sidecar_path = output_path / "meta" / "returns.parquet"
+    sidecar_filename = f"returns_{tag}.parquet" if tag else "returns.parquet"
+    sidecar_path = output_path / "meta" / sidecar_filename
     sidecar_path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(combined, str(sidecar_path))
     logger.info(
@@ -430,6 +435,7 @@ def main(cfg: DictConfig) -> None:
             "(e.g., failure_reward=-300.0)."
         )
     num_workers = cfg.data.get("num_workers", 8)
+    tag = cfg.data.get("tag", None)
 
     # Get datasets list
     datasets_list = cfg.data.get("train_data_paths", None)
@@ -513,6 +519,7 @@ def main(cfg: DictConfig) -> None:
             gamma=ds_config["gamma"],
             failure_reward=ds_config["failure_reward"],
             num_workers=num_workers,
+            tag=tag,
         )
         all_stats.append(
             {

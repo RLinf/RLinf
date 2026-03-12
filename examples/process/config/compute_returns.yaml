@@ -4,7 +4,7 @@
 #   python compute_returns.py --config-name compute_returns
 #
 # This script:
-# 1. Writes `return`, `reward`, and `prompt` to meta/returns.parquet sidecar
+# 1. Writes `return`, `reward`, and `prompt` to meta/returns_{tag}.parquet sidecar
 # 2. Updates meta/stats.json with return/reward statistics
 # 3. Updates meta/info.json with new feature definitions
 
@@ -57,6 +57,11 @@ data:
   # Failure reward for rollout datasets. Default if failure_reward is not specified in train_data_paths
   # Last step of failed episodes gets this reward
   failure_reward: -300.0
+
+  # Returns tag: when set, saves to meta/returns_{tag}.parquet
+  # Allows computing returns with different configs on the same data
+  # Usage: data.tag=my_experiment
+  tag: null
 
   # Number of parallel workers for parquet file processing
   num_workers: 128

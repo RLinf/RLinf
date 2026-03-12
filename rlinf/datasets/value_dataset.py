@@ -94,6 +94,8 @@ class ValueDataset(LeRobotRLDataset):
         episode_percentage: Optional[float] = None,
         shuffle_episodes: bool = False,
         episode_seed: int = 42,
+        # Sidecar tag (e.g. returns_{tag}.parquet)
+        tag: Optional[str] = None,
     ):
         """Initialize value dataset.
 
@@ -168,6 +170,7 @@ class ValueDataset(LeRobotRLDataset):
             episode_percentage=episode_percentage,
             shuffle_episodes=shuffle_episodes,
             episode_seed=episode_seed,
+            tag=tag,
         )
 
         logger.info("ValueDataset initialized")

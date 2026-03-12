@@ -13,23 +13,27 @@
 # limitations under the License.
 # openpi cfg model (CFG-RL) configs
 
-import glob
 import os
 
-import openpi.shared.download as download
-import openpi.transforms as transforms
-import safetensors
+import torch
 from omegaconf import DictConfig
-from openpi.training import checkpoints as _checkpoints
 
-from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
-from rlinf.models.embodiment.openpi_cfg.openpi_cfg_action_model import (
-    OpenPi0Config,
-    OpenPi0ForCFGActionPrediction,
-)
 
 
 def get_model(cfg: DictConfig, torch_dtype=None):
+    import glob
+
+    import openpi.shared.download as download
+    import openpi.transforms as transforms
+    import safetensors
+    from openpi.training import checkpoints as _checkpoints
+
+    from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+    from rlinf.models.embodiment.openpi_cfg.openpi_cfg_action_model import (
+        OpenPi0Config,
+        OpenPi0ForCFGActionPrediction,
+    )
+
     # config
     config_name = getattr(cfg.openpi, "config_name", None)
     actor_train_config = get_openpi_config(config_name)
@@ -39,11 +43,17 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     if override_config_kwargs is not None:
         for key, val in override_config_kwargs.items():
             actor_model_config.__dict__[key] = val
-
+    # load model
     checkpoint_dir = download.maybe_download(str(cfg.model_path))
-    weight_paths = sorted(glob.glob(os.path.join(checkpoint_dir, "*.safetensors")))
-    if not weight_paths:
-        weight_paths = [os.path.join(checkpoint_dir, "model.safetensors")]
+
+    # Check if this is a checkpoint directory (saved by FSDP)
+    # Check for model_state_dict/full_weights.pt (direct checkpoint) or actor/model_state_dict/full_weights.pt (from runner)
+    full_weights_path = os.path.join(
+        checkpoint_dir, "model_state_dict", "full_weights.pt"
+    )
+    actor_full_weights_path = os.path.join(
+        checkpoint_dir, "actor", "model_state_dict", "full_weights.pt"
+    )
 
     model: OpenPi0ForCFGActionPrediction = OpenPi0ForCFGActionPrediction(
         actor_model_config
@@ -52,14 +62,24 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     if actor_model_config.train_expert_only:
         model.freeze_vlm()
 
-    # load weights from safetensors
-    all_state_dict = {}
-    for weight_path in weight_paths:
-        state_dict = safetensors.torch.load_file(weight_path, device="cpu")
-        all_state_dict.update(state_dict)
-    model.load_state_dict(all_state_dict, strict=False)
-    model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
+    # Load weights from checkpoint if it's a checkpoint directory, otherwise load from safetensors
+    if os.path.exists(full_weights_path):
+        # Direct checkpoint directory
+        model_state_dict = torch.load(full_weights_path, map_location="cpu")
+        model.load_state_dict(model_state_dict, strict=False)
+    elif os.path.exists(actor_full_weights_path):
+        # Checkpoint directory from runner
+        model_state_dict = torch.load(actor_full_weights_path, map_location="cpu")
+        model.load_state_dict(model_state_dict, strict=False)
+    else:
+        # Original model directory with safetensors files
+        weight_paths = sorted(glob.glob(os.path.join(checkpoint_dir, "*.safetensors")))
+        if not weight_paths:
+            weight_paths = [os.path.join(checkpoint_dir, "model.safetensors")]
+        for weight_path in weight_paths:
+            safetensors.torch.load_model(model, weight_path, strict=False)
 
+    model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
     # load data stats
     data_config = actor_train_config.data.create(
         actor_train_config.assets_dirs, actor_model_config

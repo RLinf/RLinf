@@ -192,7 +192,7 @@ class FSDPCfgWorker(FSDPSftWorker):
         # Parse config
         data_cfg = self.cfg.get("data", {})
         openpi_cfg = self.cfg.actor.model.openpi
-        advantage_tag = data_cfg.get("advantage_tag", None)
+        advantage_tag = data_cfg.get("tag", None)
 
         # Parse datasets from config
         datasets_config = data_cfg.get("train_data_paths", [])

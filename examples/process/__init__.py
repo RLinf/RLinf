@@ -16,6 +16,6 @@
 Data processing scripts for RLinf datasets.
 
 This module contains preprocessing scripts:
-- compute_returns.py: Compute return/reward and write to meta/returns.parquet sidecar
+- compute_returns.py: Compute return/reward and write to meta/returns_{tag}.parquet sidecar
 - compute_advantages.py: Compute advantages for CFG-RL training
 """
