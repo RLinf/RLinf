@@ -31,7 +31,7 @@ runner:
 # =====================================================================
 # Data Configuration
 # =====================================================================
-# Uses datasets list (always a list, single dataset = list of one)
+# Uses train_data_paths list (always a list, single dataset = list of one)
 #
 # Each dataset entry MUST have:
 #   - dataset_path: path to LeRobot dataset (relative to data_root, or absolute)
@@ -50,11 +50,11 @@ data:
   # If dataset_path is absolute, data_root is ignored for that entry.
   # data_root: "/path/to/data_root"
 
-  # ----- datasets: list of value datasets (always a list, even for one) -----
+  # ----- train_data_paths: list of value datasets (always a list, even for one) -----
   # Each dataset MUST have type: "sft" or "rollout"
   #   - sft: reward=-1 for all steps except last=0, always is_success=True
   #   - rollout: reads is_success from dataset, last reward=0 if success else -300
-  datasets:
+  train_data_paths:
     - dataset_path: "/path/to/sft_dataset"
       type: "sft"
       weight: 20.0

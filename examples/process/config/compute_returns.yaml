@@ -13,7 +13,7 @@
 # =============================================================================
 data:
   # Root directory for datasets (optional)
-  # If specified, relative paths in datasets list will be resolved against this
+  # If specified, relative paths in train_data_paths list will be resolved against this
   data_root: null
 
   # List of datasets to process
@@ -25,13 +25,13 @@ data:
   #   - failure_reward: Failure penalty (default: use global failure_reward)
   #
   # Example configuration:
-  #   datasets:
+  #   train_data_paths:
   #     - dataset_path: /path/to/sft_dataset
   #       type: sft
   #     - dataset_path: /path/to/rollout_dataset
   #       type: rollout
   #       failure_reward: -300.0
-  datasets:
+  train_data_paths:
     - dataset_path: /path/to/sft_dataset
       type: sft
     - dataset_path: /path/to/rollout_dataset
@@ -51,7 +51,7 @@ data:
   # Use 1.0 for undiscounted returns (common in robotics)
   gamma: 1.0
 
-  # Failure reward for rollout datasets. Default if failure_reward is not specified in datasets
+  # Failure reward for rollout datasets. Default if failure_reward is not specified in train_data_paths
   # Last step of failed episodes gets this reward
   failure_reward: -300.0
 

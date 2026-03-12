@@ -10,7 +10,7 @@
 #
 # This script:
 # 1. Computes advantages: A = normalize(r_{t:t+N}) + gamma^N * V(o_{t+N}) - V(o_t)
-# 2. Saves advantage labels (advantage, is_success, value_current, value_next) to each dataset
+# 2. Creates independent output datasets with is_success = (advantage >= threshold)
 # 3. Supports multiple datasets with unified threshold across all data
 # 4. Supports multi-GPU parallel processing for faster computation
 
@@ -20,7 +20,7 @@
 advantage:
   # Path to trained value model checkpoint (REQUIRED)
   # Can be a directory containing .safetensors files or a single .pt file
-  value_checkpoint: /path/to/value_model_checkpoint
+  value_checkpoint: /mnt/project_rlinf/liuzhihao/RLinf_pi06_release_worktree_2/logs/vla_lib_sft/libero_value_sft3shot_w1_collect8192_freeze_vlm_schedule_fail30_task0_gemma50_iter2-20260308-11:08:42/vla_lib_value_sft/checkpoints/global_step_20000/actor/model_state_dict
 
   # Device for inference
   device: "cuda"
@@ -28,79 +28,114 @@ advantage:
   # Batch size for value model inference (higher = faster but more VRAM)
   # Recommended: 64 for 24GB GPU, 32 for 16GB GPU, 128 for 40GB+ GPU
   batch_size: 256
-
-  # Flush interval: write computed advantages to disk every N batches
-  # Lower values reduce memory usage but increase disk I/O
-  flush_interval: 5
-
+  flush_interval: 4096
   # Pipeline batch size for streaming processing
   # Samples are collected and inferred in batches of this size
   # Larger = more memory, potentially faster. Smaller = less memory.
-  pipeline_batch_size: 4096
 
   # Number of DataLoader workers (per GPU) for parallel data loading
-  num_dataloader_workers: 16
+  # Each worker is a persistent subprocess that loads and decodes data in parallel,
+  # bypassing the Python GIL for true parallelism on image decoding
+
+  num_dataloader_workers: 12
 
   # Number of batches each DataLoader worker prefetches ahead of time
-  prefetch_factor: 2
+  # Total prefetch queue depth = num_dataloader_workers * prefetch_factor
+  # Higher values keep GPU fed but use more RAM
+  prefetch_factor: 4
 
   # Whether to apply gamma^N discount to V(o_{t+N})
+  # Set to true for proper TD-style advantage
   discount_next_value: true
 
   # Positive advantage quantile: top X% of samples will have positive advantage
   # 0.3 means top 30% are positive (threshold at 70th percentile)
-  positive_quantile: 0.3
+  positive_quantile: 0.2
 
   # Advantage tag: when set, saves to meta/advantages_{tag}.parquet
   # Allows computing advantages with different value models on the same data
-  # tag: null
+  # Usage: advantage.tag=model_a
+  tag: freeze_vlm_schedule_collect8192_fail30_N10_20000ckpt_task0_gemma50m_q20_2iter_newcode
+  # Value inference mode (matches vla_lib.policies.value_policy_config)
+  # Options:
+  #   - "expert_categorical": Expert model, categorical output (recommended for PI05ValueCritic)
+  #   - "expert_mse": Expert model, continuous scalar output
+  #   - "expert_distributional": Expert model, distributional output
+  #   - "continuous": VLM token logits, expectation over bins
+  #   - "discrete": VLM token logits, argmax bin
+  value_mode: "expert_categorical"
 
   # Model configuration (should match the trained model)
   model:
+    # Value head settings
     num_bins: 201
     v_min: -1.0
     v_max: 0.0
-    critic_expert_variant: "gemma_100m"
+
+    # Critic expert variant (for expert_* modes)
+    critic_expert_variant: "gemma_50m"
 
 # =============================================================================
 # Data configuration
 # =============================================================================
 data:
-  # Model type for ValueCritic (pi0, pi05)
+  # Model type for vla_lib ValuePolicy (pi0, pi05)
   model_type: "pi05"
 
-  # Robot type for input transforms
+  # Robot type / environment type for input transforms
+  # Used globally unless overridden per-dataset
   # Options: "libero", "franka", "franka_3cam", "droid", "aloha"
   robot_type: "libero"
 
   # Datasets to process
-  datasets:
-    - dataset_path: "/path/to/sft_dataset"
+  # Each entry specifies:
+  #   - dataset_path: absolute path to LeRobot dataset
+  #   - robot_type: robot type for key mapping ("libero", "franka", etc.)
+  #   - dataset_type: "sft" (all success) or "rollout" (read is_success from sample)
+  #   - return_min/max: range for return normalization
+  #   - weight: sampling weight (used in mixture_config.yaml for later training)
+  train_data_paths:
+    - dataset_path: "/mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot_collect_8192_task0_fail30/libero_10_3shot"
       robot_type: "libero"
-      dataset_type: "sft"
-      weight: 1.0
+      dataset_type: "sft"  # SFT data, all episodes are successful
+      weight: 1.0 # not used in compute advantage
 
-    - dataset_path: "/path/to/rollout_dataset"
+    # Uncomment to add more datasets:
+    - dataset_path: "/mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot_collect_8192_task0_fail30/collected_data_3shot_8192_task0_merged"
       robot_type: "libero"
-      dataset_type: "rollout"
-      weight: 1.0
+      dataset_type: "rollout"  # Rollout data, is_success varies
+      weight: 1.0 # not used in compute advantage
 
-  # Action horizon (N in gamma^N * V(o_{t+N}))
-  action_horizon: 50
+    - dataset_path: "/mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot_collect_8192_task0_fail30_2iter/collected_data_3shot_8192_task0_iter_2_merged"
+      robot_type: "libero"
+      dataset_type: "rollout"  # Rollout data, is_success varies
+      weight: 1.0 # not used in compute advantage
 
-  # Advantage horizon: N for reward_sum and V(o_{t+N}).
+
+  # Action horizon (N in gamma^N * V(o_{t+N})); used when advantage_horizon is not set
+  action_horizon: 10
+  # Advantage horizon: N for reward_sum and V(o_{t+N}). Set to match your data collection (e.g. 20).
   # If null, action_horizon is used.
-  advantage_horizon: null
+  advantage_horizon: 10
 
-  # Discount factor (1.0 = undiscounted, common in robotics)
+  # Discount factor
+  # Use 1.0 for undiscounted returns (common in robotics)
   gamma: 1.0
 
 # =============================================================================
 # Distributed configuration (for multi-GPU parallel processing)
 # =============================================================================
 distributed:
+  # Enable distributed mode (automatically detected from torchrun environment)
+  # Set to false to force single-GPU mode even when launched with torchrun
   enabled: true
+
+  # Communication backend for torch.distributed
+  # Options: "nccl" (recommended for GPU), "gloo" (CPU fallback)
   backend: "nccl"
+
+  # Timeout in seconds for distributed operations
+  # Increase if you see timeout errors during large data gathering
   timeout: 3600
 
 # =============================================================================

@@ -385,7 +385,7 @@ def main(cfg: DictConfig) -> None:
     num_workers = cfg.data.get("num_workers", 8)
 
     # Get datasets list
-    datasets_list = cfg.data.get("datasets", None)
+    datasets_list = cfg.data.get("train_data_paths", None)
 
     # Build list of datasets to process
     datasets_to_process = []
@@ -422,7 +422,7 @@ def main(cfg: DictConfig) -> None:
         dataset_path = cfg.data.get("dataset_path", None)
         if dataset_path is None:
             raise ValueError(
-                "No datasets specified. Either set data.datasets list or data.dataset_path"
+                "No datasets specified. Either set data.train_data_paths list or data.dataset_path"
             )
 
         if data_root and not Path(dataset_path).is_absolute():

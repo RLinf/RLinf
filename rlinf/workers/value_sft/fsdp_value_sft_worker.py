@@ -75,7 +75,7 @@ def _load_return_stats_from_dataset(
 class FSDPValueSftWorker(FSDPModelManager, Worker):
     """FSDP worker for value model SFT training.
 
-    Reads ``data.datasets`` list from config (single dataset = list of one).
+    Reads ``data.train_data_paths`` list from config (single dataset = list of one).
     Uses global return_min/return_max for normalization across all datasets.
     """
 
@@ -113,7 +113,7 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
     # -----------------------------------------------------------------------
 
     def build_dataloader(self):
-        """Build dataloader from ``data.datasets`` list.
+        """Build dataloader from ``data.train_data_paths`` list.
 
         Uses ValueDataset which includes:
         - DataConfig transforms (repack, normalize, model-specific like LiberoInputs)
@@ -217,10 +217,10 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         }
 
         # ---- build datasets ----
-        datasets_list = data_cfg.get("datasets", [])
+        datasets_list = data_cfg.get("train_data_paths", [])
         if not datasets_list:
             raise ValueError(
-                "data.datasets must be a non-empty list. "
+                "data.train_data_paths must be a non-empty list. "
                 "Each entry needs: dataset_path."
             )
         train_entries = [
@@ -233,7 +233,7 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         ]
         if not train_entries:
             raise ValueError(
-                "data.datasets must contain at least one training entry with 'dataset_path'."
+                "data.train_data_paths must contain at least one training entry with 'dataset_path'."
             )
 
         # ---- Compute global return_min/return_max ----

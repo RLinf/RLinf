@@ -26,7 +26,7 @@ Example config:
     data:
       balance_dataset_weights: true
       seed: 42
-      datasets:
+      train_data_paths:
         - path: "/path/to/collected_data_with_advantages"
           episodes: null
           weight: 1.0
@@ -86,7 +86,7 @@ class FSDPCfgWorker(FSDPSftWorker):
     Config options:
         data.balance_dataset_weights: Balance by dataset length
         data.seed: Random seed for sampling
-        data.datasets: List of dataset configs with path, episodes, weight
+        data.train_data_paths: List of dataset configs with path, episodes, weight
     """
 
     def __init__(self, cfg: DictConfig):
@@ -195,10 +195,10 @@ class FSDPCfgWorker(FSDPSftWorker):
         advantage_tag = data_cfg.get("advantage_tag", None)
 
         # Parse datasets from config
-        datasets_config = data_cfg.get("datasets", [])
+        datasets_config = data_cfg.get("train_data_paths", [])
         if not datasets_config:
             raise ValueError(
-                "At least one dataset must be provided in data.datasets. "
+                "At least one dataset must be provided in data.train_data_paths. "
                 "Each dataset should have 'path' and optionally 'episodes' and 'weight' fields."
             )
 

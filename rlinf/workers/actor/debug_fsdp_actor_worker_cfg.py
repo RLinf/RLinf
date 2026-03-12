@@ -26,7 +26,7 @@ Example config:
     data:
       balance_dataset_weights: true
       seed: 42
-      datasets:
+      train_data_paths:
         - path: "/path/to/collected_data_with_advantages"
           episodes: null
           weight: 1.0
@@ -190,7 +190,7 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
         """Build CFG dataloader using AdvantageMixtureDataset.
 
         Args:
-            cfg: Configuration with data.datasets section.
+            cfg: Configuration with data.train_data_paths section.
         """
         import lerobot.datasets.lerobot_dataset as lerobot_dataset
         import openpi.training.data_loader as openpi_data_loader
@@ -205,10 +205,10 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
         task_name_filter = data_cfg.get("task_name_filter", None)
 
         # Parse datasets from config
-        datasets_config = data_cfg.get("datasets", [])
+        datasets_config = data_cfg.get("train_data_paths", [])
         if not datasets_config:
             raise ValueError(
-                "At least one dataset must be provided in data.datasets. "
+                "At least one dataset must be provided in data.train_data_paths. "
                 "Each dataset should have 'path' and optionally 'episodes' and 'weight' fields."
             )
 

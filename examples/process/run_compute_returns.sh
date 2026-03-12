@@ -67,7 +67,7 @@ echo "  - Adds 'return', 'reward', 'prompt' columns to parquet files"
 echo "  - Updates meta/stats.json with statistics"
 echo "  - Updates meta/info.json with feature definitions"
 echo ""
-echo "Note: Configure datasets in YAML file (data.datasets list)"
+echo "Note: Configure datasets in YAML file (data.train_data_paths list)"
 echo ""
 
 # Build command

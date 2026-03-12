@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 class DebugPi06Runner:
     """
     Debug version of pi06 training pipeline (trains from LeRobot datasets):
-    1) Loads LeRobot datasets from the data.datasets configuration
+    1) Loads LeRobot datasets from the data.train_data_paths configuration
     2) Uses offline_training_step as the main loop, logging detailed metrics per step
     3) Periodically evaluates model performance in the environment
     """

@@ -40,7 +40,7 @@ data:
   # Random seed for mixture sampling
   seed: 42
 
-  datasets:
+  train_data_paths:
     - path: "/path/to/sft_dataset"
       type: "sft"
       weight: 1.0             # sampling weight

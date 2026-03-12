@@ -364,8 +364,8 @@ def load_value_model(cfg: DictConfig, device: str = "cuda"):
 
     # Get robot_type (env_type)
     robot_type = data_cfg.get("robot_type", "libero")
-    if "datasets" in data_cfg and len(data_cfg.datasets) > 0:
-        robot_type = data_cfg.datasets[0].get("robot_type", robot_type)
+    if "train_data_paths" in data_cfg and len(data_cfg.train_data_paths) > 0:
+        robot_type = data_cfg.train_data_paths[0].get("robot_type", robot_type)
 
     model_type = data_cfg.get("model_type", "pi05")
 
@@ -1150,7 +1150,7 @@ def main(cfg: DictConfig) -> None:
             # Compute from all datasets' stats.json
             all_mins = []
             all_maxs = []
-            for ds_cfg in cfg.data.datasets:
+            for ds_cfg in cfg.data.train_data_paths:
                 ds_path = Path(ds_cfg.dataset_path)
                 ds_min, ds_max = _load_return_stats_from_dataset(ds_path)
                 if ds_min is not None:
@@ -1193,7 +1193,7 @@ def main(cfg: DictConfig) -> None:
         # Pre-compute grand total samples across all datasets (for this rank)
         max_samples = cfg.advantage.get("max_samples", None)
         grand_total = 0
-        for ds_cfg in cfg.data.datasets:
+        for ds_cfg in cfg.data.train_data_paths:
             ds_meta = LeRobotDatasetMetadata(str(ds_cfg.dataset_path))
             n = ds_meta.total_frames
             if max_samples is not None:
@@ -1204,7 +1204,7 @@ def main(cfg: DictConfig) -> None:
         if rank == 0:
             logger.info(
                 f"Grand total: {grand_total} samples across "
-                f"{len(cfg.data.datasets)} datasets (this rank's shard)"
+                f"{len(cfg.data.train_data_paths)} datasets (this rank's shard)"
             )
 
         global_pbar = tqdm(
@@ -1216,7 +1216,7 @@ def main(cfg: DictConfig) -> None:
             file=sys.stdout,
         )
 
-        for ds_cfg in cfg.data.datasets:
+        for ds_cfg in cfg.data.train_data_paths:
             ds_path = Path(ds_cfg.dataset_path)
             if rank == 0:
                 logger.info(f"\n{'=' * 60}")

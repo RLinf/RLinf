@@ -104,7 +104,7 @@ data:
   global_threshold: true
   seed: 42
   advantage_tag: null
-  datasets:
+  train_data_paths:
     - path: "/path/to/sft_dataset"
       weight: 1.0
     - path: "/path/to/rollout_dataset"
