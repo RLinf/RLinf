@@ -45,8 +45,6 @@ class MetricLogger:
         self.per_worker_log_root = cfg.runner.get(
             "per_worker_log_path", os.path.join(self.log_path, "worker_logs")
         )
-        if cfg.runner.only_eval:
-            self.experiment_name = "eval_" + self.experiment_name
 
         logger_backends = logger_cfg.get("logger_backends", ["tensorboard"])
         if isinstance(logger_backends, str):
