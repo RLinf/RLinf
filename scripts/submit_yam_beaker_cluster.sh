@@ -35,7 +35,7 @@ ALLOW_DIRTY=""
 BEAKER_IMAGE="shiruic/shirui-torch2.8.0_cuda12.8"
 WORKSPACE="ai2/molmo-act"
 WEKA_MOUNT="oe-training-default:/weka/oe-training-default"
-INSTALL_CMD="uv sync --extra embodied"
+INSTALL_CMD="bash requirements/install.sh embodied --model openpi --env remote"
 RAY_PORT=6379
 
 usage() {

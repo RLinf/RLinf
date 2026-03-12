@@ -18,6 +18,7 @@ remote_server_url: "${oc.env:ROBOT_SERVER_URL,localhost:50051}"
 # gRPC transport settings (read by RemoteEnv).
 grpc_max_message_size: 16777216  # 16 MB
 grpc_timeout: 30.0               # seconds per RPC; scaled by chunk_size for ChunkStep
+grpc_connect_timeout: 300.0      # seconds to wait for server on startup (0 = no retry)
 
 # Task description injected into observations (can be updated by VLM planner).
 task_description: ""

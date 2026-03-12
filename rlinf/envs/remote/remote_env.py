@@ -10,6 +10,7 @@ Usage in YAML config::
     remote_server_url: "localhost:50051"
 """
 
+import time
 from typing import Optional
 
 import gymnasium as gym
@@ -104,10 +105,30 @@ class RemoteEnv(gym.Env):
 
         self._stub = robot_env_pb2_grpc.RobotEnvServiceStub(self._channel)
 
-        # Fetch space metadata from server
-        spaces = self._stub.GetSpaces(
-            robot_env_pb2.Empty(), timeout=self._timeout
-        )
+        # Fetch space metadata from server, retrying until grpc_connect_timeout is reached.
+        # This lets the user start the robot server after seeing the Tailscale IP in the logs.
+        _connect_timeout = float(cfg.get("grpc_connect_timeout", 300.0))
+        _retry_interval = 5.0
+        _deadline = time.monotonic() + _connect_timeout
+        while True:
+            try:
+                spaces = self._stub.GetSpaces(
+                    robot_env_pb2.Empty(), timeout=self._timeout
+                )
+                break
+            except grpc.RpcError as e:
+                if e.code() != grpc.StatusCode.UNAVAILABLE:
+                    raise
+                remaining = _deadline - time.monotonic()
+                if remaining <= 0:
+                    raise
+                wait = min(_retry_interval, remaining)
+                self._logger.info(
+                    f"[RemoteEnv] Server not ready at {server_url}, "
+                    f"retrying in {wait:.0f}s "
+                    f"({remaining:.0f}s remaining of {_connect_timeout:.0f}s connect timeout) ..."
+                )
+                time.sleep(wait)
 
         self._state_dim = spaces.state_dim
         self._action_dim = spaces.action_dim

@@ -33,9 +33,16 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         OpenPi0ForRLActionPrediction,
     )
 
+    # Resolve model_path
+    model_path = str(cfg.model_path)
+    if not os.path.exists(model_path):
+        from huggingface_hub import snapshot_download
+
+        model_path = snapshot_download(repo_id=model_path)
+
     # config
     config_name = getattr(cfg.openpi, "config_name", None)
-    actor_train_config = get_openpi_config(config_name, model_path=cfg.model_path)
+    actor_train_config = get_openpi_config(config_name, model_path=model_path)
     actor_model_config = actor_train_config.model
     actor_model_config = OpenPi0Config(**actor_model_config.__dict__)
     override_config_kwargs = cfg.openpi
@@ -43,7 +50,7 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         for key, val in override_config_kwargs.items():
             actor_model_config.__dict__[key] = val
     # load model
-    checkpoint_dir = download.maybe_download(str(cfg.model_path))
+    checkpoint_dir = download.maybe_download(model_path)
 
     # Check if this is a checkpoint directory (saved by FSDP)
     # Check for model_state_dict/full_weights.pt (direct checkpoint) or actor/model_state_dict/full_weights.pt (from runner)
