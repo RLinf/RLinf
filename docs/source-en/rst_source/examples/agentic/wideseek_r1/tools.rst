@@ -36,7 +36,7 @@ Export the required API keys before running training or evaluation:
 Configuration
 ~~~~~~~~~~~~~
 
-In the YAML config under ``examples/wideseek_r1/config``, set:
+In the YAML config under ``examples/agent/wideseek_r1/config``, set:
 
 .. code-block:: yaml
 
@@ -98,7 +98,7 @@ Launch the Retrieval Service
       hostname -I
 
 3. Edit
-   `examples/wideseek_r1/search_engine/launch_qdrant.sh`
+   `examples/agent/wideseek_r1/search_engine/launch_qdrant.sh`
    and update these variables:
 
    - ``pages_file``: ``/PATH/TO/Wiki-2018-Corpus/wiki_webpages.jsonl``
@@ -109,7 +109,7 @@ Launch the Retrieval Service
 
    .. code-block:: bash
 
-      bash examples/wideseek_r1/search_engine/launch_qdrant.sh
+      bash examples/agent/wideseek_r1/search_engine/launch_qdrant.sh
 
 We recommend running this retrieval service on the same machine as training or
 evaluation to avoid unnecessary network latency. If you run it elsewhere,
