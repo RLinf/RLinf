@@ -1,144 +1,167 @@
-# Copyright 2025 The RLinf Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import json
-import time
+from pathlib import Path
+from datetime import datetime
 
 import hydra
-import torch.multiprocessing as mp
-from omegaconf.omegaconf import OmegaConf
+from omegaconf import OmegaConf
 
-from rlinf.config import validate_cfg
-from rlinf.data.datasets import create_rl_dataset
-from rlinf.data.tokenizers import hf_tokenizer
-from rlinf.runners.reasoning_runner import ReasoningRunner
-from rlinf.scheduler import (
-    Channel,
-    Cluster,
-    NodePlacementStrategy,
-    PackedPlacementStrategy,
-)
-from rlinf.scheduler.dynamic_scheduler.scheduler_worker import SchedulerWorker
-from rlinf.utils.placement import (
-    ComponentPlacement,
-    HybridComponentPlacement,
-    ModelParallelComponentPlacement,
-)
+from rlinf.scheduler import Cluster, Channel
+from rlinf.utils.placement import ComponentPlacement, ModelParallelComponentPlacement
 from rlinf.utils.utils import output_redirector
-from rlinf.workers.actor import get_actor_worker
-from rlinf.agents.mobile.mobile_agent_loop import MobileAgentLoopWorker
-from rlinf.workers.env.phone_worker import PhoneWorker
-from rlinf.workers.inference.utils import get_inference_backend_worker
-from rlinf.workers.reward.reward_worker import RewardWorker
+from rlinf.workers.env.m3a_worker import AndroidAgentWorker
+from rlinf.workers.env.android_reward_worker import AndroidRewardWorker
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
 
-from rlinf.data.io_struct import RolloutRequest
-
-"""Script to start GRPO training"""
-mp.set_start_method("spawn", force=True)
+CONFIG_DIR = Path(__file__).resolve().parent
 
 
-@hydra.main(version_base="1.1")
+def load_resume_state(
+    output_path: Path,
+    dataset_size: int,
+) -> tuple[list, set[int], list[int]]:
+    """从已有结果文件恢复断点状态。"""
+    existing_results = []
+    finished_indices = set()
+    if output_path.exists():
+        try:
+            with open(output_path, "r", encoding="utf-8") as f:
+                prev_data = json.load(f)
+            existing_results = prev_data.get("tasks", []) or []
+            for item in existing_results:
+                idx = item.get("task_idx")
+                if isinstance(idx, int):
+                    finished_indices.add(idx)
+            print(
+                f"检测到已有结果文件 {output_path}，"
+                f"已完成 {len(finished_indices)} 个任务，将跳过这些任务。"
+            )
+        except Exception as e:
+            print(f"读取已有结果文件失败，将从头开始：{e}")
+            existing_results = []
+            finished_indices = set()
+    task_indices_to_run = [
+        i for i in range(dataset_size) if i not in finished_indices
+    ]
+    return existing_results, finished_indices, task_indices_to_run
+
+
+def save_checkpoint(output_path: Path, all_results: list, summary: dict) -> None:
+    """将当前结果与 summary 写入 output_path。"""
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {"summary": summary, "tasks": all_results},
+            f,
+            indent=2,
+            ensure_ascii=False,
+            default=str,
+        )
+
+
+@hydra.main(version_base="1.1", config_path=str(CONFIG_DIR / "config"), config_name="qwen3vl-4b-eval")
 @output_redirector
 def main(cfg) -> None:
-    print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
+    print(OmegaConf.to_yaml(cfg))
+
+    # 由 __file__ 推导仓库根，与 eval.sh 中 PROJECT_ROOT 一致（eval.sh 已设 PYTHONPATH，此处仅用于写结果目录）
+    project_root = (Path(__file__).resolve().parent / ".." / ".." / ".." / "..").resolve()
+    print(f"project_root: {project_root}")
+    output_dir = project_root / "results"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = output_dir / "eval_results2.json"  # 固定路径，便于断点续跑
+
     cluster = Cluster(cluster_cfg=cfg.cluster)
-
     component_placement = ComponentPlacement(cfg, cluster)
-    phone_placement_strategy = component_placement.get_strategy("phone")
-    phone_wg = PhoneWorker.create_group(cfg).launch(
-        cluster, placement_strategy=phone_placement_strategy, name=cfg.phone.group_name
+
+    reward_group = AndroidRewardWorker.create_group(cfg).launch(
+        cluster=cluster,
+        placement_strategy=component_placement.get_strategy("reward_worker"),
+        name="RewardWorkerGroup",
     )
-    phone_wg.init_worker().wait()
+    reward_group.init_worker().wait()
 
-    component_placement = ModelParallelComponentPlacement(cfg, cluster)
-
+    mpc_placement = ModelParallelComponentPlacement(cfg, cluster)
     rollout_worker_cls = get_rollout_backend_worker(cfg)
-    rollout_placement_strategy = component_placement.get_strategy("rollout")
-    rollout_group = rollout_worker_cls.create_group(cfg, component_placement).launch(
-        cluster,
-        name=cfg.rollout.group_name,
-        placement_strategy=rollout_placement_strategy,
+    rollout_group = rollout_worker_cls.create_group(
+        cfg, mpc_placement, weight_reload=None
+    ).launch(
+        cluster=cluster,
+        name=cfg.rollout.get("group_name", "RolloutGroup"),
+        placement_strategy=mpc_placement.get_strategy("rollout"),
     )
-
     rollout_group.init_worker().wait()
 
-    channel_a2p = Channel.create("a2p")
-    channel_p2a = Channel.create("p2a")
+    agent_group = AndroidAgentWorker.create_group(cfg).launch(
+        cluster=cluster,
+        placement_strategy=component_placement.get_strategy("agent_worker"),
+        name="AndroidAgentWorkerGroup",
+    )
     channel_a2l = Channel.create("a2l")
     channel_l2a = Channel.create("l2a")
+    agent_group.init_with_channels(channel_a2l, channel_l2a).wait()
+    agent_group.init_worker().wait()
 
-    channel_agent_input = Channel.create("agent_input")
-    channel_agent_output = Channel.create("agent_output")
-
-    mobile_agent_loop_worker = MobileAgentLoopWorker.create_group(
-        cfg, component_placement
-    ).launch(cluster, placement_strategy=NodePlacementStrategy(node_ranks=[0]))
-
-    num_devices = phone_wg.get_num_devices().wait()
-
-    print(f"{num_devices=}")
-
-    mobile_agent_loop_worker.init_mobile_worker(
-        channel_a2l, channel_l2a, channel_a2p, channel_p2a, num_devices
-    )
-
-    input_ids = [
-        # "Return to desktop first, then open camera and take a photo",
-        # "Return to desktop first, then open Photos App and select the last photo",
-        "Set a alarm clock with the time 21:00 today.",
-        # "Return to desktop first, Delete all alarm clock earlier than 23:00."
-    ]
-
-    n = 1
-    rollout_request = RolloutRequest(
-        n=n,
-        input_ids=input_ids,
-        answers=[None] * len(input_ids),
-        image_data=[None] * len(input_ids),
-        multi_modal_inputs=[None] * len(input_ids),
-    )
-
-    channel_agent_input.put(rollout_request)
-
-
-    agent_handle = mobile_agent_loop_worker.run_agentloop_rollout(channel_agent_input, channel_agent_output)
-    phone_handle = phone_wg.interact_multi_device(channel_a2p, channel_p2a)
     llm_handle = rollout_group.vl_generate_serverless(channel_a2l, channel_l2a)
 
+    dataset_size_result = agent_group.execute_on(0).get_dataset_size()
+    dataset_size = dataset_size_result.wait()
+    if isinstance(dataset_size, list):
+        dataset_size = dataset_size[0]
+    print(f"====================== Dataset 共 {dataset_size} 个任务 ======================\n")
 
-    agent_handle.wait()
+    existing_results, finished_indices, task_indices_to_run = load_resume_state(
+        output_path, dataset_size
+    )
+    all_results = list(existing_results)
 
+    if not task_indices_to_run:
+        print("所有任务已完成，无需再跑。")
+        return
 
-    for i in range(len(input_ids)):
-        print("=" * 60)
-        output = channel_agent_output.get()
-        for k in range(n):
-            print(f"Input {i} Rollout {k}: {output[k].prompt_text}")
-            for j in range(len(output[k].trace_prints)):
-                print(f"\tTrace print {j}: {output[k].trace_prints[j]}")
-            print("=" * 60)
-            print()
+    for task_idx in task_indices_to_run:
+        # 每个 task 先起 reward 的 recv，再跑 agent 的 send/recv，否则 agent send 无人收会卡死
+        reward_handle = reward_group.execute_on(0).compute_reward(
+            agent_worker_group_name="AndroidAgentWorkerGroup",
+        )
+        reward = agent_group.execute_on(0).process_task(
+            task_idx=task_idx,
+            reward_worker_group_name="RewardWorkerGroup",
+        ).wait()
+        reward_handle.wait()
+        all_results.append({
+            "task_idx": task_idx,
+            "reward": reward,
+        })
+        total_run = len(all_results)
+        print(f"reward: {[r['reward'] for r in all_results]}")
+        successful = sum(1 for r in all_results if r.get("reward", 0)[0] > 0)
+        acc = successful / total_run if total_run else 0.0
+        save_checkpoint(
+            output_path,
+            all_results,
+            {
+                "timestamp": timestamp,
+                "total_tasks": total_run,
+                "successful_tasks": successful,
+                "accuracy": round(acc, 4),
+            },
+        )
 
-
-    # agent_handle = mobile_agent_loop_worker.run_one_test_query(channel_a2p, channel_p2a, channel_a2l, channel_l2a)
-    # phone_handle = phone_wg.interact(channel_a2p, channel_p2a)
-    # llm_handle = rollout_group.vl_generate(channel_a2l, channel_l2a)
-
-    # agent_handle.wait()
-    # phone_handle.wait()
-    # llm_handle.wait()
+    total = len(all_results)
+    successful = sum(1 for r in all_results if r.get("reward", 0) > 0)
+    accuracy = successful / total if total else 0.0
+    save_checkpoint(
+        output_path,
+        all_results,
+        {
+            "timestamp": timestamp,
+            "total_tasks": total,
+            "successful_tasks": successful,
+            "accuracy": round(accuracy, 4),
+        },
+    )
+    print(f"结果已保存到 {output_path}")
+    print(f"总任务: {total}, 成功: {successful}, 正确率: {accuracy:.2%}")
 
 
 if __name__ == "__main__":
