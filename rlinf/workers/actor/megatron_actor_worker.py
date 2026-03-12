@@ -316,7 +316,8 @@ class MegatronActor(MegatronWorker):
             return
 
         # ensure weights are on GPU before reshard
-        self._load_weight()
+        with self.device_lock:
+            self.onload_model_weights_and_grad(load_grad=False)
 
         model_bucket_list = self.divide_model_to_bucket()
         if not hasattr(self, "sync_model_bucket_length"):
