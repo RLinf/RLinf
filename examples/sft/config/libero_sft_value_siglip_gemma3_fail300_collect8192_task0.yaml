@@ -1,10 +1,11 @@
 # SigLIP-Gemma3 value model training config
+# Experiment: fail300_collect8192_task0
 #
-# Architecture: SigLIP2-so400m (1152-dim) + Gemma3-270M (640-dim) + Gemma expert
-# Forward mode: two-stage only (no interleaved)
+# Data: libero_10_3shot (sft) + 2 rollout datasets (8192 collect, task0, fail300)
+# Eval: collected_data_3shot_512_task0_merged_for_eval
 #
 # Usage:
-#   bash run_value_sft.sh libero_sft_value_siglip_gemma3
+#   bash examples/sft/run_value_sft.sh libero_sft_value_siglip_gemma3_fail300_collect8192_task0
 
 defaults:
   - model/value_siglip_gemma3@actor.model
@@ -52,6 +53,13 @@ data:
       weight: 1.0
       robot_type: "libero"
       model_type: "pi05"
+
+    - dataset_path: "/mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot_collect_8192_task0_fail300_2iter/collected_data_3shot_8192_task0_iter_2_merged"
+      type: "rollout"
+      weight: 1.0
+      robot_type: "libero"
+      model_type: "pi05"
+
 
   eval_data_paths:
     - dataset_path: "/mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot_collect_8192_task0_fail300/collected_data_3shot_512_task0_merged_for_eval"

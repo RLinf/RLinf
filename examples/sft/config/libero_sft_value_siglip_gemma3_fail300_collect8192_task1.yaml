@@ -1,10 +1,7 @@
-# SigLIP-Gemma3 value model training config
-#
-# Architecture: SigLIP2-so400m (1152-dim) + Gemma3-270M (640-dim) + Gemma expert
-# Forward mode: two-stage only (no interleaved)
+# SigLIP-Gemma3 value model training config — task1 collect8192 fail300
 #
 # Usage:
-#   bash run_value_sft.sh libero_sft_value_siglip_gemma3
+#   bash run_value_sft.sh libero_sft_value_siglip_gemma3_fail300_collect8192_task1
 
 defaults:
   - model/value_siglip_gemma3@actor.model
@@ -41,20 +38,21 @@ runner:
 # =====================================================================
 data:
   train_data_paths:
-    - dataset_path: "/mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot_collect_8192_task0_fail300/libero_10_3shot"
+    - dataset_path: "/mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot_collect_8192_task1_fail300/libero_10_3shot"
       type: "sft"
       weight: 1.0
       robot_type: "libero"
       model_type: "pi05"
 
-    - dataset_path: "/mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot_collect_8192_task0_fail300/collected_data_3shot_8192_task0_merged"
+    - dataset_path: "/mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot_collect_8192_task1_fail300/collected_data_3shot_8192_task1_merged"
       type: "rollout"
       weight: 1.0
       robot_type: "libero"
       model_type: "pi05"
 
+
   eval_data_paths:
-    - dataset_path: "/mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot_collect_8192_task0_fail300/collected_data_3shot_512_task0_merged_for_eval"
+    - dataset_path: "/mnt/project_rlinf_hs/liuzhihao/data_to_use/libero_10_3shot_collect_8192_task1_fail300/collected_data_3shot_8192_task1_for_eval_merged"
       max_samples: 20000
       robot_type: "libero"
       model_type: "pi05"

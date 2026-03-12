@@ -39,11 +39,11 @@ echo "Using Python at $(which python)"
 LOG_DIR="${REPO_PATH}/logs/value_sft/${CONFIG_NAME}-$(date +'%Y%m%d-%H:%M:%S')"
 MEGA_LOG_FILE="${LOG_DIR}/run_value_sft.log"
 mkdir -p "${LOG_DIR}"
-HYDRA_OVERRIDES="runner.logger.log_path=${LOG_DIR}"
+HYDRA_ARGS=("runner.logger.log_path=${LOG_DIR}")
 if [ -n "${EVAL_DATASET_PATH}" ]; then
-    HYDRA_OVERRIDES="${HYDRA_OVERRIDES} data.eval_dataset_path=${EVAL_DATASET_PATH}"
+    HYDRA_ARGS+=("data.eval_data_paths=[{dataset_path: ${EVAL_DATASET_PATH}}]")
 fi
-CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ --config-name ${CONFIG_NAME} ${HYDRA_OVERRIDES}"
-echo ${CMD} > ${MEGA_LOG_FILE}
+CMD_BASE="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ --config-name ${CONFIG_NAME}"
+echo "${CMD_BASE} ${HYDRA_ARGS[*]}" > ${MEGA_LOG_FILE}
 # Filter out libdav1d verbose logging
-${CMD} 2>&1 | grep -v "libdav1d" | tee -a ${MEGA_LOG_FILE}
+${CMD_BASE} "${HYDRA_ARGS[@]}" 2>&1 | grep -v "libdav1d" | tee -a ${MEGA_LOG_FILE}

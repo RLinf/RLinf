@@ -226,11 +226,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         train_entries = [
             dict(entry) for entry in datasets_list if entry.get("dataset_path", None)
         ]
-        eval_entries = [
-            dict(entry)
-            for entry in datasets_list
-            if entry.get("eval_dataset_path", None)
-        ]
         if not train_entries:
             raise ValueError(
                 "data.train_data_paths must contain at least one training entry with 'dataset_path'."
@@ -388,31 +383,17 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         train_data_loader = ValueDataLoaderImpl(data_config, torch_loader)
 
         # ---- optional eval DataLoader(s) ----
-        # Build one eval loader per entry that defines eval_dataset_path.
-        # Legacy fallback: if no entries have eval_dataset_path but
-        # data.eval_dataset_path is set at top level, create one eval loader.
+        # Read from data.eval_data_paths (top-level list, same format as
+        # train_data_paths but each entry uses 'dataset_path' for the eval
+        # dataset).  This is the only supported way to configure eval datasets.
         eval_data_loaders: list[tuple[str, ValueDataLoaderImpl]] = []
 
-        # Collect effective eval sources
-        effective_eval_entries: list[dict] = []
-        if eval_entries:
-            effective_eval_entries = eval_entries
-        else:
-            # Legacy top-level fallback
-            legacy_path = data_cfg.get("eval_dataset_path", None)
-            if legacy_path:
-                effective_eval_entries = [
-                    {
-                        "eval_dataset_path": legacy_path,
-                        "eval_max_samples": data_cfg.get("eval_max_samples", None),
-                    }
-                ]
+        eval_data_paths = data_cfg.get("eval_data_paths", []) or []
 
-        for eval_entry in effective_eval_entries:
-            eval_dataset_path = eval_entry.get("eval_dataset_path")
-            eval_max_samples = eval_entry.get(
-                "eval_max_samples", data_cfg.get("eval_max_samples", None)
-            )
+        for eval_entry in eval_data_paths:
+            eval_entry = dict(eval_entry)
+            eval_dataset_path = eval_entry.get("dataset_path")
+            eval_max_samples = eval_entry.get("max_samples", None)
             if not eval_dataset_path:
                 continue
 
@@ -427,7 +408,7 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                 eval_ds_path = os.path.join(data_root, eval_ds_path)
 
             # Derive a short name for this eval dataset
-            ds_name = eval_entry.get("eval_name", Path(eval_ds_path).stem)
+            ds_name = eval_entry.get("name", Path(eval_ds_path).stem)
 
             eval_dataset = ValueDataset(
                 dataset_path=eval_ds_path,
@@ -473,8 +454,8 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             eval_data_loader = ValueDataLoaderImpl(data_config, eval_torch_loader)
             eval_data_loaders.append((ds_name, eval_data_loader))
             logger.info(
-                f"[ValueSFT] Eval dataset '{ds_name}' loaded: {eval_dataset_path} "
-                f"({len(eval_dataset)} samples, eval_max_samples={eval_max_samples}, "
+                f"[ValueSFT] Eval dataset '{ds_name}' loaded: {eval_ds_path} "
+                f"({len(eval_dataset)} samples, max_samples={eval_max_samples}, "
                 "norm_range=train_global:"
                 f"[{global_return_min}, {global_return_max}])"
             )
