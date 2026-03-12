@@ -58,7 +58,7 @@ class AMDGPUManager(AcceleratorManager):
         env_vars = {}
         visible_accelerators_str = ",".join(visible_accelerators)
 
-        env_vars["ROCR_VISIBLE_DEVICES"] = visible_accelerators_str
+        env_vars["HIP_VISIBLE_DEVICES"] = visible_accelerators_str
         env_vars["RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES"] = "1"
         # https://github.com/ray-project/ray/blob/161849364a784442cc659fb9780f1a6adee85fce/python/ray/_private/accelerators/amd_gpu.py#L99
 

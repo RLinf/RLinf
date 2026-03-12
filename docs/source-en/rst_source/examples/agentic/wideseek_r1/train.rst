@@ -26,7 +26,7 @@ The main experiments use
 `Qwen3-4B <https://huggingface.co/Qwen/Qwen3-4B>`__.
 
 After downloading the model, update
-`examples/wideseek_r1/config/train_qwen3_hybrid.yaml`
+`examples/agent/wideseek_r1/config/train_qwen3_hybrid.yaml`
 with the local model path:
 
 .. code-block:: yaml
@@ -48,7 +48,7 @@ Hugging Face:
 The main experiments use ``hybrid_20k.jsonl`` from that dataset.
 
 After downloading the data, update
-`examples/wideseek_r1/config/train_qwen3_hybrid.yaml`
+`examples/agent/wideseek_r1/config/train_qwen3_hybrid.yaml`
 with the dataset path:
 
 .. code-block:: yaml
@@ -83,7 +83,7 @@ Then run:
 
 .. code-block:: bash
 
-   bash examples/wideseek_r1/run_train.sh train_qwen3_hybrid
+   bash examples/agent/wideseek_r1/run_train.sh train_qwen3_hybrid
 
 Outputs
 -------

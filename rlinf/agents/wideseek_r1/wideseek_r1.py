@@ -14,8 +14,6 @@
 
 import asyncio
 import copy
-import json
-import re
 from typing import Optional
 
 from omegaconf import DictConfig
@@ -90,6 +88,7 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
         self.max_total_len = int(self.cfg.runner.seq_length)
 
         self.use_access_summary = self.cfg.tools.get("use_access_summary", False)
+        self.use_llm_judge = self.cfg.agentloop.get("use_llm_judge", True)
 
         self.use_fixed_rollout = cfg.rollout.get("use_fixed_worker", False)
         self.fixed_role = self.cfg.agentloop.get("fixed_role", None)
@@ -99,17 +98,48 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
         self.workflow = self.cfg.agentloop.get("workflow", "mas")
         self.is_hybrid = self.cfg.data.get("is_hybrid", False)
 
-        llm_ip = self.cfg.agentloop.get("llm_ip", "")
-        llm_port = self.cfg.agentloop.get("llm_port", "")
-        llm_type = self.cfg.agentloop.get("llm_type", "")
-        self.sgl_client = SGLangClient(llm_ip, llm_port, llm_type)
-        self.use_local_judge = self.cfg.agentloop.get("use_local_judge", False)
+        if self.use_llm_judge:
+            llm_ip = self.cfg.agentloop.get("llm_ip", "")
+            llm_port = self.cfg.agentloop.get("llm_port", "")
+            llm_type = self.cfg.agentloop.get("llm_type", "")
+            self.sgl_client = SGLangClient(llm_ip, llm_port, llm_type)
+            self.use_local_judge = self.cfg.agentloop.get("use_local_judge", False)           
+        else:
+            self.sgl_client = None
         assert self.return_logprobs if not self.is_eval else True
+
+        assert self.toolcall_parser is not None, (
+            "toolcall_parser must be set in wideseek_r1"
+        )
+
+    @staticmethod
+    def _build_tool_call_info(
+        role: str, tool_requests: list[ToolRequest]
+    ) -> Optional[dict]:
+        if not tool_requests:
+            return None
+
+        subtask_count = 0
+        search_count = 0
+        access_count = 0
+        for request in tool_requests:
+            if request.name == "subtask":
+                subtask_count += 1
+            elif request.name == "search":
+                search_count += 1
+            elif request.name == "access":
+                access_count += 1
+        return {
+            "subtask": subtask_count,
+            "search": search_count,
+            "access": access_count,
+            "role": role,
+        }
 
     async def extract_tool_calls(
         self, response_text: str, role: str
-    ) -> tuple[str, list[ToolRequest]]:
-        """Parse the first `<tool_call>` block and convert it to internal requests.
+    ) -> tuple[list[ToolRequest], Optional[dict]]:
+        """Parse tool calls via the registered parser and build turn metrics.
 
         Args:
             response_text: Decoded model response that may contain tool-call JSON.
@@ -119,144 +149,19 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
             A tuple of `(tool_requests, tool_call_info)` where `tool_call_info`
             summarizes subtask/search/access counts for metrics.
         """
-        function_calls = []
-
-        # Extract all <tool_call> tags
-        tool_call_regex = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
         max_workers_per_planner = self.cfg.agentloop.get("max_workers_per_planner", 10)
         max_toolcall_per_worker = self.cfg.agentloop.get("max_toolcall_per_worker", 5)
-
-        tool_call_match = tool_call_regex.findall(response_text)
-
-        subtask_count = 0
-        search_count = 0
-        access_count = 0
-
-        if tool_call_match:
-            tool_call_str = tool_call_match[0]
-            try:
-                # Parse JSON from tool call
-                tool_call_json = json.loads(tool_call_str.strip())
-                tool_name = tool_call_json.get("name")
-                tool_arguments = tool_call_json.get("arguments", {})
-
-                if role == "planner":
-                    # Planner: handle create_sub_agents tool
-                    if tool_name == "create_sub_agents":
-                        # Extract sub_agents array
-                        sub_agents = tool_arguments.get("sub_agents", [])
-                        for sub_agent in sub_agents[:max_workers_per_planner]:
-                            # Skip if not a dict or missing prompt
-                            if not isinstance(sub_agent, dict):
-                                continue
-                            prompt = sub_agent.get("prompt", "")
-                            if not prompt:
-                                continue
-                            function_calls.append(
-                                ToolRequest(
-                                    name="subtask", arguments={"subtask": prompt}
-                                )
-                            )
-                            subtask_count += 1
-                elif role == "worker":
-                    # Worker: handle search and access tools
-                    if tool_name == "search":
-                        # Extract searches array
-                        searches = tool_arguments.get("queries", [])
-                        for search_item in searches[:max_toolcall_per_worker]:
-                            # Skip if not a dict or missing query
-                            if not isinstance(search_item, dict):
-                                continue
-                            query = search_item.get("query", "")
-                            if not query:
-                                continue
-                            topk = search_item.get("count", None)
-                            if topk:
-                                function_calls.append(
-                                    ToolRequest(
-                                        name="search",
-                                        arguments={"query": query, "topk": topk},
-                                    )
-                                )
-                            else:
-                                function_calls.append(
-                                    ToolRequest(
-                                        name="search", arguments={"query": query}
-                                    )
-                                )
-                            search_count += 1
-
-                    elif tool_name == "access":
-                        # Extract accesses array
-                        accesses = tool_arguments.get("urls", [])
-                        for access_item in accesses[:max_toolcall_per_worker]:
-                            # Skip if not a dict or missing url
-                            if not isinstance(access_item, dict):
-                                continue
-                            url = access_item.get("url", "")
-                            info_to_extract = access_item.get("info_to_extract", None)
-                            if not url:
-                                continue
-                            function_calls.append(
-                                ToolRequest(
-                                    name="access",
-                                    arguments={
-                                        "url": url,
-                                        "access_token": 25000,
-                                        "info_to_extract": info_to_extract,
-                                    },
-                                )
-                            )
-                            access_count += 1
-                elif role == "single":
-                    if tool_name == "search":
-                        query = tool_arguments.get("query", "")
-                        if query:
-                            topk = tool_arguments.get("count", None)
-                            if topk:
-                                function_calls.append(
-                                    ToolRequest(
-                                        name="search",
-                                        arguments={"query": query, "topk": topk},
-                                    )
-                                )
-                            else:
-                                function_calls.append(
-                                    ToolRequest(
-                                        name="search", arguments={"query": query}
-                                    )
-                                )
-                            search_count = 1
-
-                    elif tool_name == "access":
-                        url = tool_arguments.get("url", "")
-                        if url:
-                            info_to_extract = tool_arguments.get(
-                                "info_to_extract", None
-                            )
-                            function_calls.append(
-                                ToolRequest(
-                                    name="access",
-                                    arguments={
-                                        "url": url,
-                                        "access_token": 25000,
-                                        "info_to_extract": info_to_extract,
-                                    },
-                                )
-                            )
-                            access_count = 1
-            except Exception:
-                pass
-
-        tool_call_info = {
-            "subtask": subtask_count,
-            "search": search_count,
-            "access": access_count,
-            "role": role,
-        }
-        if function_calls == []:
-            tool_call_info = None
-        return function_calls, tool_call_info
+        assert self.toolcall_parser is not None
+        _, tool_requests = await self.toolcall_parser(
+            response_text,
+            role=role,
+            max_workers_per_planner=max_workers_per_planner,
+            max_toolcall_per_worker=max_toolcall_per_worker,
+        )
+        tool_call_info = self._build_tool_call_info(
+            role=role, tool_requests=tool_requests
+        )
+        return tool_requests, tool_call_info
 
     async def access_sumamry(self, info_to_extract, page_content):
         """Summarize access content to keep context compact for follow-up turns.
@@ -268,6 +173,9 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
         Returns:
             A short summary string for tool feedback.
         """
+        if not self.use_llm_judge:
+            return page_content
+
         if page_content == "No More Information is Found for this URL.":
             return "No useful Information is Found under this URL."
 

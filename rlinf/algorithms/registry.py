@@ -136,3 +136,21 @@ def get_loss_scales(names: list[str]) -> list[Callable]:
             raise ValueError(f"Loss scale process {name} not registered")
         loss_scales.append(LOSS_SCALE_REGISTRY[name])
     return loss_scales
+
+
+TOOLCALL_PARSER_REGISTRY: dict[str, Callable] = {}
+
+
+def register_toolcall_parser(name: str):
+    def decorator(cls):
+        TOOLCALL_PARSER_REGISTRY[name.lower()] = cls
+        return cls
+
+    return decorator
+
+
+def get_toolcall_parser(name: str) -> Callable:
+    if name not in TOOLCALL_PARSER_REGISTRY:
+        raise ValueError(f"Toolcall parser {name} not registered")
+    cls = TOOLCALL_PARSER_REGISTRY[name]
+    return cls()

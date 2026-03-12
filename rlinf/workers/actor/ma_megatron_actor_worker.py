@@ -500,6 +500,10 @@ class MAMegatronActor(MegatronActor):
         if not self.is_running:
             return
 
+        # ensure weights are on GPU before reshard
+        with self.device_lock:
+            self.onload_model_weights_and_grad(load_grad=False)
+
         model_bucket_list = self.divide_model_to_bucket()
         if not hasattr(self, "sync_model_bucket_length"):
             self.sync_model_bucket_length = len(model_bucket_list)

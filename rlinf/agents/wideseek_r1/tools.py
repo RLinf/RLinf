@@ -528,6 +528,7 @@ class WideSeekR1ToolWorker(ToolWorker):
         super().__init__()
         self.cfg = cfg
         self.topk = self.cfg.tools.search.topk
+        self.dummy_mode = self.cfg.tools.search.get("dummy_mode", False)
         self.request_processor_task = None
 
         # Determine whether to use online or local search
@@ -614,15 +615,21 @@ class WideSeekR1ToolWorker(ToolWorker):
                         "topk": topk,
                         "return_scores": False,
                     }
-                    response = await self.search_client.query_async(req_meta)
-                    full_text = process_tool_result(response, "search")
+                    full_text = "No search results are found."
+                    if not self.dummy_mode:
+                        response = await self.search_client.query_async(req_meta)
+                        full_text = process_tool_result(response, "search")
 
                 elif tool_name == "access":
                     # Handle webpage access
-                    url = tool_args.get("url", "")
-                    access_token = tool_args.get("access_token", "5000")
-                    response = await self.search_client.access_async([url])
-                    full_text = process_tool_result(response, "access", access_token)
+                    full_text = "No More Information is Found for this URL."
+                    if not self.dummy_mode:
+                        url = tool_args.get("url", "")
+                        access_token = tool_args.get("access_token", "5000")
+                        response = await self.search_client.access_async([url])
+                        full_text = process_tool_result(
+                            response, "access", access_token
+                        )
 
                 else:
                     raise ValueError(f"Unknown tool name: {tool_name}")

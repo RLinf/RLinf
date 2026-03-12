@@ -193,8 +193,8 @@ class ReasoningDataset(Dataset):
         """
         prompts = self.tokenizer.apply_chat_template(
             texts,
-            tokenize=False,
             add_generation_prompt=True,
+            tokenize=False,
         )
         return prompts
 

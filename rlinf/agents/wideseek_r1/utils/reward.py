@@ -137,7 +137,7 @@ async def get_final_reward_score(
     label_answer,
     is_markdown,
     norm_column,
-    sgl_client: SGLangClient,
+    sgl_client: SGLangClient | None,
     agent_loop_worker=None,
 ):
     """Compute final reward score for boxed answers or markdown-table answers.
@@ -153,6 +153,9 @@ async def get_final_reward_score(
     Returns:
         Tuple of `(reward_score, format_ok)`.
     """
+    if sgl_client is None:
+        return 0.0, False
+
     format = True
     if is_markdown:
         reward_score, format = await evaluate_markdown(

@@ -55,7 +55,7 @@ WideSearch 基准
 
 与原始未处理的基准相比，这个版本已被转换为 RLinf 所需的格式，并包含若干数据修复。
 
-请按如下方式更新 `examples/wideseek_r1/config/eval_qwen3_widesearch.yaml`：
+请按如下方式更新 `examples/agent/wideseek_r1/config/eval_qwen3_widesearch.yaml`：
 
 .. code-block:: yaml
 
@@ -83,7 +83,7 @@ WideSearch 基准
 
 该数据集同时包含单跳任务（如 Natural Questions）和多跳任务（如 HotpotQA）。
 
-请按如下方式更新 `examples/wideseek_r1/config/eval_qwen3_qa.yaml`：
+请按如下方式更新 `examples/agent/wideseek_r1/config/eval_qwen3_qa.yaml`：
 
 .. code-block:: yaml
 
@@ -108,8 +108,8 @@ WideSearch 基准
 
 .. code-block:: bash
 
-   bash examples/wideseek_r1/run_eval.sh eval_qwen3_widesearch
-   bash examples/wideseek_r1/run_eval.sh eval_qwen3_qa
+   bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_widesearch
+   bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_qa
 
 输出文件
 --------
@@ -144,7 +144,7 @@ WideSearch 基准
 
 WideSeek-R1 还支持在多智能体设定下使用两个独立模型实例进行评测，从而让 planner 和 worker 角色使用不同模型。
 
-请使用 `examples/wideseek_r1/config/eval_qwen3_qa_2eng.yaml`。相关字段如下：
+请使用 `examples/agent/wideseek_r1/config/eval_qwen3_qa_2eng.yaml`。相关字段如下：
 
 .. code-block:: yaml
 
