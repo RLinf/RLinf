@@ -115,6 +115,7 @@ rollout:
   group_name: "RolloutGroup"
   generation_backend: "huggingface"
   recompute_logprobs: False
+  unnorm_key: robocasa
   enable_offload: False
   pipeline_stage_num: 1
 
@@ -146,9 +147,7 @@ actor:
 
     openpi_data:
         action_space: ${env.train.action_space}
-
         state_space: ${env.train.state_space}
-
         image_space:  ${env.train.image_space}
 
     policy_setup: ${env.train.action_space}
@@ -166,6 +165,10 @@ actor:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
     gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
 
 reward:
   use_reward_model: False
