@@ -1098,6 +1098,9 @@ class ValueCritic(CriticPreTrainedModel):
         action_norm_skip_dims=None,
         critic_expert_variant="gemma_100m",
         tokenizer_path=None,
+        backbone_variant="paligemma",
+        siglip_path=None,
+        gemma3_path=None,
         **kwargs,
     ):
         """Create a ValueCritic from a trained checkpoint, ready for inference.
@@ -1116,6 +1119,9 @@ class ValueCritic(CriticPreTrainedModel):
             critic_expert_variant: Gemma variant (e.g., "gemma_100m").
             tokenizer_path: Explicit path to tokenizer. If not set, loads
                 from checkpoint_dir. Raises if neither has tokenizer files.
+            backbone_variant: Backbone type ("paligemma" or "siglip_gemma3").
+            siglip_path: Path to SigLIP pretrained weights (siglip_gemma3 only).
+            gemma3_path: Path to Gemma3 pretrained weights (siglip_gemma3 only).
 
         Returns:
             ValueCritic instance with transforms and processor attached.
@@ -1159,6 +1165,9 @@ class ValueCritic(CriticPreTrainedModel):
             num_bins=num_return_bins,
             v_min=return_min,
             v_max=return_max,
+            backbone_variant=backbone_variant,
+            siglip_path=siglip_path,
+            gemma3_path=gemma3_path,
         )
 
         try:

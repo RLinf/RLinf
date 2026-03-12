@@ -374,14 +374,22 @@ def load_value_model(cfg: DictConfig, device: str = "cuda"):
     return_max = model_cfg.get("v_max", 0.0)
     critic_expert_variant = model_cfg.get("critic_expert_variant", "gemma_100m")
     tokenizer_path = model_cfg.get("tokenizer_path", None)
+    backbone_variant = model_cfg.get("backbone_variant", "paligemma")
+    siglip_path = model_cfg.get("siglip_path", None)
+    gemma3_path = model_cfg.get("gemma3_path", None)
 
     logger.info(f"  env_type (robot_type): {robot_type}")
     logger.info(f"  model_type: {model_type}")
+    logger.info(f"  backbone_variant: {backbone_variant}")
     logger.info(f"  num_return_bins: {num_return_bins}")
     logger.info(f"  return_range: [{return_min}, {return_max}]")
     logger.info(f"  critic_expert_variant: {critic_expert_variant}")
     if tokenizer_path:
         logger.info(f"  tokenizer_path: {tokenizer_path}")
+    if siglip_path:
+        logger.info(f"  siglip_path: {siglip_path}")
+    if gemma3_path:
+        logger.info(f"  gemma3_path: {gemma3_path}")
 
     model = ValueCritic.from_checkpoint(
         checkpoint_dir=checkpoint_path,
@@ -393,6 +401,9 @@ def load_value_model(cfg: DictConfig, device: str = "cuda"):
         return_max=return_max,
         critic_expert_variant=critic_expert_variant,
         tokenizer_path=tokenizer_path,
+        backbone_variant=backbone_variant,
+        siglip_path=siglip_path,
+        gemma3_path=gemma3_path,
     )
 
     logger.info("Loaded ValueCritic for inference")
@@ -1103,7 +1114,7 @@ def save_advantages_to_dataset(
 @hydra.main(
     version_base=None,
     config_path="config",
-    config_name="compute_advantages",
+    config_name="compute_advantages_paligemma",
 )
 def main(cfg: DictConfig) -> None:
     """Main entry point for advantage computation.

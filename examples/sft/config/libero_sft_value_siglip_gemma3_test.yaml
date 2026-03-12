@@ -7,7 +7,7 @@
 #   bash run_value_sft.sh libero_sft_value_siglip_gemma3_test
 
 defaults:
-  - model/value_model@actor.model
+  - model/value_siglip_gemma3@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
@@ -79,23 +79,11 @@ actor:
 
   model:
     precision: bf16
-    model_type: "value_model"
-    # SigLIP-Gemma3 backbone (instead of default PaliGemma)
-    # Backbone weights are loaded via from_pretrained() from siglip_path/gemma3_path.
-    # model_path is optional: set it to a previously trained ValueCriticModel checkpoint
-    # directory to resume training. Leave unset to train from scratch.
-    backbone_variant: "siglip_gemma3"
+    # Backbone paths (override model default nulls)
     siglip_path: "/mnt/project_rlinf/liuzhihao/pi06_model/siglip2-so400m-patch14-224"
     gemma3_path: "/mnt/project_rlinf/liuzhihao/pi06_model/gemma-3-270m"
     tokenizer_path: "/mnt/project_rlinf/liuzhihao/pi06_model/gemma-3-270m"
-    # Critic expert
-    critic_expert_variant: "gemma_1m"
     freeze_vlm: false
-    # Value head
-    num_bins: 201
-    v_min: -1.0
-    v_max: 0.0
-    value_dropout: 0.0
     # Action params
     action_dim: 7
     action_horizon: 10
