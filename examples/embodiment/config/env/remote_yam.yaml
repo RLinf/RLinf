@@ -26,6 +26,7 @@ task_description: ""
 # via GetSpaces but the config value here takes precedence).
 auto_reset: false
 ignore_terminations: true
+group_size: 1
 
 # NOTE: compress_images / jpeg_quality are server-side settings.
 # Set them in the yam.yaml config passed to start_robot_server.sh, not here.
