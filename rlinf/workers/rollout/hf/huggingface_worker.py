@@ -320,9 +320,12 @@ class MultiStepRolloutWorker(Worker):
                         env_obs=env_obs,
                         **kwargs,
                     )
-                    result["forward_inputs"]["model_action"] = expert_result[
-                        "forward_inputs"
-                    ]["model_action"]
+                    expert_forward_inputs = expert_result["forward_inputs"]
+                    expert_target = expert_forward_inputs.get(
+                        "model_action", expert_forward_inputs.get("action")
+                    )
+                    if expert_target is not None:
+                        result["forward_inputs"]["model_action"] = expert_target
                     use_expert = True  # mark step for saving with expert label
 
             result["use_expert"] = bool(use_expert)

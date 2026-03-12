@@ -15,12 +15,11 @@
 
 import os
 
-import jax
 import numpy as np
-import openpi.models.model as _model
 import torch
 from omegaconf import DictConfig
 
+from rlinf.config import SupportedModel, get_supported_model
 from rlinf.data.embodied_io_struct import Trajectory
 from rlinf.data.replay_buffer import TrajectoryReplayBuffer
 from rlinf.models.embodiment.base_policy import ForwardType
@@ -197,8 +196,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         # self.critic_sample_generator = torch.Generator(self.device)
         # self.critic_sample_generator.manual_seed(seed)
 
-        self._train_debug_call_count = 0
-
         # self.target_update_type = self.cfg.algorithm.get("target_update_type", "all")
         # assert self.target_update_type in ["all", "q_head_only"], (
         #     f"{self.target_update_type=} is not suppported!"
@@ -230,22 +227,20 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         if len(intervene_traj_list) > 0:
             self.replay_buffer.add_trajectories(intervene_traj_list)
 
-    @Worker.timer("forward_actor")
-    def forward_actor(self, batch):
-        # use_crossq = self.cfg.algorithm.get("q_head_type", "default") == "crossq"
-        # if "actor_agg_q" in self.cfg.algorithm:
-        #     agg_q = self.cfg.algorithm["actor_agg_q"]
-        # else:
-        #     agg_q = self.cfg.algorithm.get("agg_q", "min")
+    def _prepare_mlp_sft_batch(self, batch):
+        target_actions = (
+            batch["model_action"] if "model_action" in batch else batch["action"]
+        )
+        return {"states": batch["states"], "action": target_actions}
 
-        # kwargs = {}
-        # if self.cfg.actor.model.model_type in ["openvla", "openvla_oft"]:
-        #     kwargs["temperature"] = self.cfg.algorithm.sampling_params.temperature_train
+    def _prepare_openpi_sft_batch(self, batch):
+        import jax
+        import openpi.models.model as _model
+
         obs_dict = {}
         obs_prefix_keys = [k for k in batch.keys() if k.startswith("observation/")]
         for key in obs_prefix_keys:
             obs_dict[key] = batch[key]
-        # Also extract tokenized prompt fields if present
         if "tokenized_prompt" in batch:
             obs_dict["tokenized_prompt"] = batch["tokenized_prompt"]
         if "tokenized_prompt_mask" in batch:
@@ -254,12 +249,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         bsz = batch["action"].shape[0]
 
         if "model_action" in batch:
-            # Expert-model path: model_action is already in model/normalized space
-            # [B, action_horizon * action_dim].  Use it directly as the imitation target
-            # without re-applying input_transform on the action (which would double-normalize).
-            # We still run input_transform on the obs to get correctly normalized observations;
-            # a zero placeholder is used for the "actions" slot so the transform pipeline
-            # does not see env-space data.
             actions = (
                 batch["model_action"]
                 .reshape(
@@ -267,21 +256,10 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 )
                 .clone()
             )
-            # self.model._save_debug_info(
-            #     "train_action", self._train_debug_call_count, {"model_action": actions}
-            # )
-            # self.model._save_debug_info(
-            #     "train_obs", self._train_debug_call_count, obs_dict
-            # )
-            # self._train_debug_call_count += 1
             processed_obs = self.model.input_transform(obs_dict, transpose=False)
-            processed_obs = self.model.precision_processor(
-                processed_obs
-            )  # obs precision processor
+            processed_obs = self.model.precision_processor(processed_obs)
             observation = _model.Observation.from_dict(processed_obs)
         else:
-            # Human-intervene path: action is in env space [B, action_chunk * action_env_dim].
-            # Reshape, pad to model dims, then apply input_transform to normalize into model space.
             obs_dict["actions"] = batch["action"].reshape(
                 bsz, self.model.config.action_chunk, -1
             )
@@ -307,11 +285,11 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 )
             obs_dict["prompt"] = ["empty" for _ in range(bsz)]
             processed_obs = self.model.input_transform(obs_dict, transpose=False)
-            processed_obs["tokenized_prompt"] = batch["tokenized_prompt"]
-            processed_obs["tokenized_prompt_mask"] = batch["tokenized_prompt_mask"]
-            processed_obs = self.model.precision_processor(
-                processed_obs
-            )  # obs precision processor
+            if "tokenized_prompt" in batch:
+                processed_obs["tokenized_prompt"] = batch["tokenized_prompt"]
+            if "tokenized_prompt_mask" in batch:
+                processed_obs["tokenized_prompt_mask"] = batch["tokenized_prompt_mask"]
+            processed_obs = self.model.precision_processor(processed_obs)
             observation = _model.Observation.from_dict(processed_obs)
             actions = processed_obs["actions"].clone()
             processed_obs.pop("actions")
@@ -322,15 +300,35 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         )
         actions = actions.to(torch.float32)
         actions = actions.to(self.device)
-        actor_loss = self.model(
-            forward_type=ForwardType.SFT,
-            data={"observation": observation, "actions": actions},
-        )
-        action_chunk = self.model.config.action_chunk
-        action_dim = self.model.config.action_env_dim
-        actor_loss = actor_loss[:, :action_chunk, :action_dim]
+        return {"observation": observation, "actions": actions}
 
-        return actor_loss.mean()
+    def _prepare_sft_batch(self, batch):
+        model_type = get_supported_model(self.cfg.actor.model.model_type)
+        if model_type == SupportedModel.MLP_POLICY:
+            return self._prepare_mlp_sft_batch(batch)
+        if model_type == SupportedModel.OPENPI:
+            return self._prepare_openpi_sft_batch(batch)
+        raise NotImplementedError(
+            f"Model type {self.cfg.actor.model.model_type} is not supported for DAgger."
+        )
+
+    def _reduce_sft_loss(self, loss):
+        if not isinstance(loss, torch.Tensor):
+            loss = torch.as_tensor(loss, device=self.device)
+
+        model_type = get_supported_model(self.cfg.actor.model.model_type)
+        if model_type == SupportedModel.OPENPI:
+            action_chunk = self.model.config.action_chunk
+            action_dim = self.model.config.action_env_dim
+            loss = loss[:, :action_chunk, :action_dim]
+
+        return loss.mean()
+
+    @Worker.timer("forward_actor")
+    def forward_actor(self, batch):
+        data = self._prepare_sft_batch(batch)
+        actor_loss = self.model(forward_type=ForwardType.SFT, data=data)
+        return self._reduce_sft_loss(actor_loss)
 
     @Worker.timer("update_one_epoch")
     def update_one_epoch(self):
