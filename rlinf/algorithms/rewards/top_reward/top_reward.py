@@ -78,8 +78,9 @@ class TOPReward:
             fps: Frames per second metadata for video input.
 
         Returns:
-            Mean (or summed) log-probability of the instruction suffix + "True"
-            tokens (a float, typically negative).
+            Log-probability of the final "True" token given the video frames
+            and instruction (a float, typically negative).  All preceding
+            tokens are masked; only the last token of the sequence is scored.
         """
         import torch
         import torch.nn.functional as F
@@ -155,8 +156,8 @@ class TOPReward:
         masked_log_probs = token_log_probs[mask]
 
         if reduction == "sum":
-            return masked_log_probs.sum().item()
-        return masked_log_probs.mean().item()
+            return masked_log_probs.sum().item() * self.reward_scale
+        return masked_log_probs.mean().item() * self.reward_scale
 
     def get_reward(self, completions, answers, **kwargs) -> list[float]:
         """Not used — rewards come from env worker via VLM forward pass.

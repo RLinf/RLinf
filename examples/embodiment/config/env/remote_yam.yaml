@@ -15,24 +15,25 @@ env_type: remote
 # gRPC server URL — override via ROBOT_SERVER_URL env var.
 remote_server_url: "${oc.env:ROBOT_SERVER_URL,localhost:50051}"
 
-# Image compression (server-side JPEG encoding, client-side decoding).
-compress_images: true
-jpeg_quality: 90
-
-# gRPC transport settings.
+# gRPC transport settings (read by RemoteEnv).
 grpc_max_message_size: 16777216  # 16 MB
-grpc_timeout: 30.0               # seconds per RPC
-
-# Episode settings (also configured server-side; these are for client reference).
-max_episode_steps: 100
-control_rate_hz: 10.0
+grpc_timeout: 30.0               # seconds per RPC; scaled by chunk_size for ChunkStep
 
 # Task description injected into observations (can be updated by VLM planner).
 task_description: ""
 
-# Auto-reset and termination handling.
+# Auto-reset and termination handling (read by RemoteEnv; also sent to client
+# via GetSpaces but the config value here takes precedence).
 auto_reset: false
 ignore_terminations: true
+
+# NOTE: compress_images / jpeg_quality are server-side settings.
+# Set them in the yam.yaml config passed to start_robot_server.sh, not here.
+# RemoteEnv handles both compressed and uncompressed images transparently.
+
+# NOTE: max_episode_steps / control_rate_hz are NOT read from this file.
+# RemoteEnv fetches them from the server at init via GetSpaces().
+# Set max_episode_steps here only if the runner needs it before env init.
 
 video_cfg:
   save_video: false

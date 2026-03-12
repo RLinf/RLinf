@@ -2,13 +2,27 @@
 
 export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
-export SRC_FILE="${EMBODIED_PATH}/train_embodied_agent.py"
 
 if [ -z "$1" ]; then
-    CONFIG_NAME="realworld_sac_cnn"
+    CONFIG_NAME="realworld_dummy_franka_sac_cnn"
 else
     CONFIG_NAME=$1
 fi
+
+# Auto-select entry script: configs with a VLM planner (TOPReward or subtask
+# planning) need train_embodied_agent_staged.py so VLMPlannerWorker is wired.
+#   *staged*        — configs with VLM subtask planning
+#   *topreward*     — TOPReward configs (VLM dense reward)
+#   yam_ppo_openpi  — YAM PPO baseline (TOPReward, no subtask planning)
+case "$CONFIG_NAME" in
+    *staged*|*topreward*|yam_ppo_openpi)
+        SRC_FILE="${EMBODIED_PATH}/train_embodied_agent_staged.py"
+        ;;
+    *)
+        SRC_FILE="${EMBODIED_PATH}/train_embodied_agent.py"
+        ;;
+esac
+export SRC_FILE
 
 echo "Using Python at $(which python)"
 LOG_DIR="${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')-${CONFIG_NAME}" #/$(date +'%Y%m%d-%H:%M:%S')"

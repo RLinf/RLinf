@@ -2,9 +2,12 @@
 #
 # start_ray_beaker.sh — All-Beaker Ray cluster using multi-replica discovery.
 #
-# Topology:
-#   Replica 0 — Ray head + env worker (RemoteEnv → gRPC to robot)
-#   Replica 1..N — Ray GPU workers (actor, rollout)
+# Topology (component placement is YAML-driven, not fixed by this script):
+#   Replica 0 — Ray head; runs training command; all components for single-node runs
+#   Replica 1..N — Ray worker nodes; actor/rollout scale out per YAML config
+#
+# Single-replica (default): all workers (actor, rollout, env, VLM) run on Replica 0.
+# Multi-replica: actor+rollout distributed across all replicas; env+VLM stay on Replica 0.
 #
 # Ray head discovery uses BEAKER_LEADER_REPLICA_HOSTNAME (set automatically
 # by Beaker for multi-replica experiments).

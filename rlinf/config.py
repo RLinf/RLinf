@@ -709,6 +709,60 @@ def validate_embodied_cfg(cfg):
             f"Current value: {add_value_head}"
         )
 
+    # Warn if GAE is used without collect_prev_infos: preprocess_embodied_advantages_inputs
+    # will receive values=None and crash when trying to reshape it.
+    if cfg.algorithm.adv_type == "gae":
+        collect_prev_infos = cfg.rollout.get("collect_prev_infos", True)
+        if not collect_prev_infos:
+            logging.warning(
+                "algorithm.adv_type='gae' requires rollout.collect_prev_infos=True "
+                "so that prev_values (used for GAE bootstrapping) are collected. "
+                "Set rollout.collect_prev_infos: true in the config."
+            )
+
+    # Warn if subtask_interval > n_train_chunk_steps: the subtask planner would
+    # never fire because bootstrap_step() resets the counter every rollout epoch.
+    subtask_interval = cfg.env.train.get("subtask_interval", 0)
+    max_steps = cfg.env.train.get("max_steps_per_rollout_epoch", None)
+    num_chunks = cfg.actor.model.get("num_action_chunks", None)
+    if subtask_interval > 0 and max_steps is not None and num_chunks is not None:
+        n_train_chunk_steps = max_steps // num_chunks
+        if subtask_interval > n_train_chunk_steps:
+            logging.warning(
+                f"subtask_interval ({subtask_interval}) > n_train_chunk_steps "
+                f"({n_train_chunk_steps}). The subtask planner will never fire "
+                f"because bootstrap_step() resets the counter each rollout epoch. "
+                f"Set subtask_interval <= {n_train_chunk_steps}."
+            )
+
+    # Warn if global_batch_size does not divide rollout_size.
+    # rollout_size = n_train_chunk_steps * total_num_envs * rollout_epoch, and
+    # run_training asserts rollout_size % (global_batch_size // world_size) == 0.
+    # This check assumes world_size=1 at config-validate time; multi-GPU users should
+    # ensure global_batch_size // world_size divides rollout_size.
+    _max_steps = cfg.env.train.get("max_steps_per_rollout_epoch", None)
+    _num_chunks = cfg.actor.model.get("num_action_chunks", None)
+    _total_envs = cfg.env.train.get("total_num_envs", None)
+    _rollout_epoch = cfg.algorithm.get("rollout_epoch", 1)
+    _global_bs = cfg.actor.get("global_batch_size", None)
+    if (
+        _max_steps is not None
+        and _num_chunks is not None
+        and _total_envs is not None
+        and _global_bs is not None
+    ):
+        _rollout_size = (_max_steps // _num_chunks) * _total_envs * _rollout_epoch
+        if _rollout_size % _global_bs != 0:
+            logging.warning(
+                f"actor.global_batch_size ({_global_bs}) does not divide "
+                f"rollout_size ({_rollout_size} = "
+                f"n_train_chunk_steps={_max_steps // _num_chunks} * "
+                f"total_num_envs={_total_envs} * rollout_epoch={_rollout_epoch}). "
+                f"EmbodiedFSDPActor.run_training will assert-fail at the first "
+                f"training step. Set actor.global_batch_size to a divisor of "
+                f"{_rollout_size}, e.g. global_batch_size: {_rollout_size}."
+            )
+
     # process num-envs
     component_placement = HybridComponentPlacement(cfg, Cluster())
     stage_num = cfg.rollout.pipeline_stage_num

@@ -150,6 +150,23 @@ class RemoteEnv(gym.Env):
         self._is_start = True
         self._num_steps = 0
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
+        # Latest observation dict; read by EnvWorker._maybe_update_subtask()
+        # to supply the VLM subtask planner with a current camera frame.
+        self.last_obs: Optional[dict] = None
+
+        # Sync the initial task description to the server so that the
+        # server-side YAMEnv starts with the same instruction as the training
+        # config.  Without subtask planning (subtask_interval=0) this is the
+        # only SetTaskDescription call ever made; with subtask planning the VLM
+        # will overwrite it periodically.  Only send if non-empty to avoid
+        # clearing a valid server-side default.
+        if self._task_description:
+            self._stub.SetTaskDescription(
+                robot_env_pb2.TaskDescriptionRequest(
+                    task_description=self._task_description
+                ),
+                timeout=self._timeout,
+            )
 
         # Metrics
         self._init_metrics()
@@ -174,6 +191,13 @@ class RemoteEnv(gym.Env):
             req.seed = seed
         proto_obs = self._stub.Reset(req, timeout=self._timeout)
         obs = _proto_to_obs(proto_obs)
+        # Always inject the locally-tracked task_description. The server proto
+        # may omit this field if the underlying env does not include
+        # task_descriptions in its obs dict.  self._task_description is
+        # authoritative: it is set from the training config at init and updated
+        # by the task_description setter (which also calls SetTaskDescription).
+        obs["task_descriptions"] = [self._task_description]
+        self.last_obs = obs
         return obs, {}
 
     def step(self, actions=None, auto_reset=True):
@@ -239,6 +263,10 @@ class RemoteEnv(gym.Env):
 
         for sr in resp.step_results:
             obs = _proto_to_obs(sr.observation)
+            # Always use the locally-tracked task_description so the policy
+            # always sees the correct instruction (from config or latest VLM
+            # subtask update) regardless of whether the server includes it.
+            obs["task_descriptions"] = [self._task_description]
             obs_list.append(obs)
 
             self._elapsed_steps += 1
@@ -286,6 +314,10 @@ class RemoteEnv(gym.Env):
         else:
             chunk_terminations = raw_chunk_terminations.clone()
             chunk_truncations = raw_chunk_truncations.clone()
+
+        # Track latest obs for VLM subtask planner image context.
+        if obs_list:
+            self.last_obs = obs_list[-1]
 
         return (
             obs_list,
@@ -382,3 +414,6 @@ class RemoteEnv(gym.Env):
     @property
     def task_descriptions(self) -> list[str]:
         return [self._task_description]
+
+    def update_reset_state_ids(self) -> None:
+        """No-op. Episode-state tracking is managed by the remote server."""

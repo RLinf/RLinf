@@ -2,7 +2,6 @@
 
 export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
-export SRC_FILE="${EMBODIED_PATH}/train_embodied_agent.py"
 
 export MUJOCO_GL="egl"
 export PYOPENGL_PLATFORM="egl"
@@ -27,6 +26,23 @@ if [ -z "$1" ]; then
 else
     CONFIG_NAME=$1
 fi
+
+# Auto-select entry script: configs with a VLM planner need
+# train_embodied_agent_staged.py so that VLMPlannerWorker is launched and wired.
+#
+# Patterns:
+#   *staged*        — configs with VLM subtask planning
+#   *topreward*     — TOPReward configs (VLM dense reward)
+#   yam_ppo_openpi  — YAM PPO baseline (TOPReward, no subtask planning)
+case "$CONFIG_NAME" in
+    *staged*|*topreward*|yam_ppo_openpi)
+        SRC_FILE="${EMBODIED_PATH}/train_embodied_agent_staged.py"
+        ;;
+    *)
+        SRC_FILE="${EMBODIED_PATH}/train_embodied_agent.py"
+        ;;
+esac
+export SRC_FILE
 
 # NOTE: Set the active robot platform (required for correct action dimension and normalization), supported platforms are LIBERO, ALOHA, BRIDGE, default is LIBERO
 ROBOT_PLATFORM=${2:-${ROBOT_PLATFORM:-"LIBERO"}}

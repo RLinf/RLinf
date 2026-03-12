@@ -137,17 +137,23 @@ class EnvWorker(Worker):
             self._init_env()
 
     def set_vlm_planner(self, planner_handle) -> None:
-        """Inject a VLMPlannerWorker Ray handle for stage-aware subtask updates.
+        """Inject a VLMPlannerWorker Ray handle for VLM-driven features.
 
         Call this from the runner after both workers have been created, passing
-        the Ray remote handle (e.g. ``vlm_planner_actor``).  When
-        ``subtask_interval > 0`` and this handle is set, the env worker will
-        call ``planner_handle.get_next_subtask.remote()`` every
-        ``subtask_interval`` chunk steps and update ``env.task_description``.
+        the Ray remote handle (e.g. ``vlm_planner_actor``).  The handle is used
+        for two purposes:
+
+        1. **TOPReward scoring** (when ``top_reward_enabled=True``): each chunk
+           step calls ``planner_handle.compute_top_reward.remote()`` to get a
+           dense progress reward from log P("True" | frames, instruction).
+        2. **Subtask planning** (when ``subtask_interval > 0``): every
+           ``subtask_interval`` chunk steps calls
+           ``planner_handle.get_next_subtask.remote()`` and updates
+           ``env.task_description`` (and ``SetTaskDescription`` on the server).
 
         Args:
             planner_handle: A VLMPlannerWorker Ray actor handle, or None to
-                disable VLM-driven subtask updates.
+                disable VLM-driven features.
         """
         self._vlm_planner = planner_handle
         self.log_info(
@@ -198,8 +204,20 @@ class EnvWorker(Worker):
         subtask_ref = self._vlm_planner.get_next_subtask.remote(images, memory)
         new_subtask: str = ray.get(subtask_ref)
 
-        if new_subtask and hasattr(env, "task_description"):
-            env.task_description = new_subtask
+        # Use the unwrapped env so that setting task_description reaches the
+        # property setter on the actual env class (e.g. RemoteEnv), which also
+        # calls SetTaskDescription gRPC.  On a gym.Wrapper, plain attribute
+        # assignment would shadow the inner env's property without calling the
+        # setter or the gRPC RPC.
+        inner_env = getattr(env, "unwrapped", env)
+        if new_subtask and hasattr(inner_env, "task_description"):
+            inner_env.task_description = new_subtask
+            # Reset TOPReward baseline so the first delta under the new
+            # subtask is not contaminated by the previous subtask's score.
+            # Without this reset, r_{t+1} = score_new(t+1) - score_old(t),
+            # comparing log-probs from two different instructions.
+            if self._top_reward_enabled:
+                self._reset_top_reward_state()
             self.log_info(
                 f"[EnvWorker] Subtask updated for stage {stage_id}: '{new_subtask}'"
             )
@@ -233,11 +251,11 @@ class EnvWorker(Worker):
         if len(self._episode_frames) > self._top_reward_max_frames:
             self._episode_frames = self._episode_frames[-self._top_reward_max_frames :]
 
-        # Get instruction from env.
+        # Get instruction from the unwrapped env so wrapper attribute shadowing
+        # can never return a stale value.
         env = self.env_list[stage_id]
-        instruction = getattr(env, "task_description", "")
-        if hasattr(env, "env") and hasattr(env.env, "task_description"):
-            instruction = env.env.task_description
+        inner_env = getattr(env, "unwrapped", env)
+        instruction = getattr(inner_env, "task_description", "")
 
         score_ref = self._vlm_planner.compute_top_reward.remote(
             self._episode_frames, instruction
@@ -506,7 +524,8 @@ class EnvWorker(Worker):
                     self.env_list[i], RecordVideo
                 ):
                     self.env_list[i].flush_video()
-                self.env_list[i].update_reset_state_ids()
+                if hasattr(self.env_list[i], "update_reset_state_ids"):
+                    self.env_list[i].update_reset_state_ids()
         elif mode == "eval":
             for i in range(self.stage_num):
                 if self.cfg.env.eval.video_cfg.save_video and isinstance(
@@ -514,7 +533,8 @@ class EnvWorker(Worker):
                 ):
                     self.eval_env_list[i].flush_video()
                 if not self.cfg.env.eval.auto_reset:
-                    self.eval_env_list[i].update_reset_state_ids()
+                    if hasattr(self.eval_env_list[i], "update_reset_state_ids"):
+                        self.eval_env_list[i].update_reset_state_ids()
 
     def split_env_batch(
         self,

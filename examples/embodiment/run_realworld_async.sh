@@ -5,7 +5,7 @@ export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
 export SRC_FILE="${EMBODIED_PATH}/train_async.py"
 
 if [ -z "$1" ]; then
-    CONFIG_NAME="realworld_sac_cnn"
+    CONFIG_NAME="realworld_charger_sac_cnn_async"
 else
     CONFIG_NAME=$1
 fi

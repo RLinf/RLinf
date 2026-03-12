@@ -550,3 +550,6 @@ class YAMEnv(gym.Env):
     @property
     def task_descriptions(self) -> list[str]:
         return [self._task_description]
+
+    def update_reset_state_ids(self) -> None:
+        """No-op. YAMEnv is a single-episode env; no episode-state IDs to update."""

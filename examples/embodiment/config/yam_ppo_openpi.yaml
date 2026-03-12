@@ -1,18 +1,37 @@
-# YAM bimanual robot – PPO training with π₀ (OpenPI) policy.
+# YAM bimanual robot – PPO training with π₀.5 (OpenPI) policy, RemoteEnv, and TOPReward.
 #
-# Requires a 2-node setup:
-#   node 0 – GPU node (actor + rollout)
-#   node 1 – Robot controller node (env worker + YAM hardware)
+# Algorithm: PPO with GAE advantage and value head.
+# Reward:    TOPReward dense progress signal (Qwen3-VL-8B).
+#            No custom reward code required.
 #
-# Before launching:
-#   1. Replace left_ip / right_ip with the actual arm IP addresses.
-#   2. Set rollout.model.model_path and actor.model.model_path to your π₀ checkpoint.
-#   3. Adjust cluster.num_nodes and node_groups.node_ranks for your deployment.
+# Difference from yam_ppo_openpi_topreward.yaml:
+#   subtask_interval: 0  — VLM predicts no subtasks; TOPReward scoring only.
+#   Set subtask_interval > 0 to enable VLM subtask planning (see topreward config).
+#
+# Hardware topology (single Beaker node, 3 GPUs):
+#   GPU 0 – actor (π₀.5 FSDP training with value head)
+#   GPU 1 – rollout (π₀.5 inference)
+#   GPU 2 – VLMPlannerWorker (Qwen3-VL-8B for TOPReward)
+#   CPU   – EnvWorker (RemoteEnv gRPC client → desktop RobotServer)
+#
+# Desktop:
+#   RobotServer wrapping YAMEnv, exposed via reverse SSH tunnel on :50051.
+#   Start with: bash scripts/start_robot_server.sh --config .../yam.yaml \
+#                   --remote-host <beaker-tailscale-ip>
+#
+# Submit with:
+#   bash scripts/submit_yam_training.sh --config yam_ppo_openpi \
+#       --model-path /path/to/pi05_checkpoint
+#
+# Prerequisites:
+#   pip install "transformers @ git+https://github.com/huggingface/transformers.git@main"
+#   pip install qwen-vl-utils accelerate torchvision pillow  (on Beaker)
+#   huggingface-cli download Qwen/Qwen3-VL-8B
 
 defaults:
-  - env/yam@env.train
-  - env/yam@env.eval
-  - model/pi0@actor.model
+  - env/remote_yam@env.train
+  - env/remote_yam@env.eval
+  - model/pi0_5@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
@@ -24,30 +43,22 @@ hydra:
     - file://${oc.env:EMBODIED_PATH}/config/
 
 cluster:
-  num_nodes: 2
+  num_nodes: 1
   component_placement:
     actor:
       node_group: "gpu"
-      placement: 0-0
-    env:
-      node_group: yam
       placement: 0
     rollout:
       node_group: "gpu"
-      placement: 0-0
+      placement: 1   # π₀.5 requires a dedicated GPU; cannot share GPU 0 with actor
+    env:
+      node_group: "gpu"
+      placement: 0   # RemoteEnv runs CPU-only; placement on same node
   node_groups:
     - label: "gpu"
       node_ranks: 0
-    - label: yam
-      node_ranks: 1
-      hardware:
-        type: YAM
-        configs:
-          - node_rank: 1
-            left_ip: 192.168.1.10   # Replace with left arm IP
-            right_ip: 192.168.1.11  # Replace with right arm IP
-            # camera_serials: null  # null = auto-detect all connected RealSense cameras
-            disable_validate: False
+    - label: "beaker_vlm"
+      node_ranks: 0  # VLMPlannerWorker — heuristic assigns GPU 2 (max distinct placement + 1)
 
 runner:
   task_type: embodied
@@ -55,17 +66,19 @@ runner:
     log_path: "../results"
     project_name: rlinf
     experiment_name: "yam_ppo_openpi"
-    logger_backends: ["tensorboard"]  # or wandb, swanlab
+    logger_backends: ["tensorboard"]
 
-  max_epochs: 1000
+  max_epochs: 2000
   max_steps: -1
 
   only_eval: False
   val_check_interval: -1
-  save_interval: 40
+  save_interval: 50
 
   resume_dir: null
   ckpt_path: null
+
+  weight_sync_interval: 1
 
 algorithm:
   normalize_advantages: True
@@ -73,19 +86,21 @@ algorithm:
   group_size: 1
   reward_coef: 1.0
 
-  rollout_epoch: 4
+  rollout_epoch: 1
   eval_rollout_epoch: 1
 
   reward_type: chunk_level
   logprob_type: chunk_level
-  entropy_type: token_level
+  entropy_type: chunk_level
 
-  update_epoch: 4
+  update_epoch: 5
   adv_type: gae
   loss_type: actor_critic
   loss_agg_func: "token-mean"
-  kl_beta: 0.0
-  entropy_bonus: 0
+
+  bootstrap_type: always
+  kl_beta: 0.0    # NOTE: not used by EmbodiedFSDPActor (KL penalty only applies to reasoning tasks)
+  entropy_bonus: 0.005
   clip_ratio_high: 0.2
   clip_ratio_low: 0.2
   clip_ratio_c: 3.0
@@ -96,8 +111,8 @@ algorithm:
   gae_lambda: 0.95
 
   filter_rewards: False
-  rewards_lower_bound: 0.1
-  rewards_upper_bound: 0.9
+  rewards_lower_bound: 0.0
+  rewards_upper_bound: 1.0
 
   sampling_params:
     do_sample: True
@@ -121,58 +136,115 @@ env:
     max_episode_steps: 100
     max_steps_per_rollout_epoch: 100
     control_rate_hz: 10.0
-    task_description: "pick and place"  # Human-readable description for VLA conditioning
+
+    task_description: "bimanual pick and place"
+
+    # Enable TOPReward dense progress signal.
+    top_reward_enabled: True
+    top_reward_max_frames: 16
+
+    # Subtask planning disabled — VLM is used for TOPReward only.
+    # Set subtask_interval > 0 to enable VLM subtask predictions (see topreward config).
+    subtask_interval: 0
+
+    # Dummy mode: controlled at the ROBOT SERVER, not here.
+    # RemoteEnv does not read is_dummy — it proxies calls over gRPC to the server.
+    # To test without real hardware, start the robot server with --dummy:
+    #   bash scripts/start_robot_server.sh --config .../yam.yaml --dummy
 
   eval:
     total_num_envs: 1
     max_episode_steps: 100
     max_steps_per_rollout_epoch: 100
     control_rate_hz: 10.0
-    task_description: "pick and place"
+    task_description: "bimanual pick and place"
+
+# VLM planner: Qwen3-VL-8B for TOPReward scoring only (no subtask planning).
+# reward_scale is read from THIS section by TOPReward (not from reward.reward_scale).
+vlm_planner:
+  model_path: "Qwen/Qwen3-VL-8B"
+  backend: "transformers"
+  dtype: "bfloat16"
+  max_new_tokens_subtask: 64
+  max_new_tokens_reward: 16
+  max_memory_entries: 20
+  success_threshold: 0.5
+  top_reward_enabled: True
+  top_reward_max_frames: 16
+  reward_scale: 1.0  # multiplied onto each log-prob score before delta computation
 
 rollout:
   group_name: "RolloutGroup"
-  backend: "huggingface"
+  generation_backend: "huggingface"
+  recompute_logprobs: False
+  unnorm_key: libero_10
   enable_offload: False
   pipeline_stage_num: 1
 
   collect_transitions: True
-  collect_prev_infos: False
+  collect_prev_infos: True  # required for adv_type: gae — prev_values must be collected for GAE bootstrap
 
   model:
-    model_path: "/path/to/pi0_checkpoint"
+    model_path: "/path/to/model/RLinf-Pi05-SFT"
     precision: ${actor.model.precision}
 
-  enable_torch_compile: True
+  enable_torch_compile: False
   enable_cuda_graph: False
 
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
 
-  micro_batch_size: 16
-  global_batch_size: 16
-  seed: 1234
+  # rollout_size = n_chunk_steps * total_num_envs * rollout_epoch = 10 * 1 * 1 = 10
+  # global_batch_size must divide rollout_size; micro_batch_size must divide global_batch_size.
+  micro_batch_size: 10
+  global_batch_size: 10
+  seed: 42
   enable_offload: False
 
   model:
-    model_path: "/path/to/pi0_checkpoint"
+    model_path: "/path/to/model/RLinf-Pi05-SFT"
+    model_type: "openpi"
+    add_value_head: True
+    num_action_chunks: 10
+    action_dim: 14   # YAM bimanual: 2 × 7 DOF; sets openpi.action_env_dim via interpolation
+    num_steps: 4
+    openpi:
+      value_after_vlm: True
+      value_vlm_mode: mean_token
+      config_name: "pi05_libero"
+      num_images_in_input: 1
+      noise_method: "flow_noise"
+      action_horizon: 10
+      noise_params: [0.16, 0.12, 200]
+      joint_logprob: True
 
   optim:
-    clip_grad: 10.0
-    lr: 1e-5
+    lr: 5.0e-6
+    value_lr: 1.55e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    clip_grad: 1.0
+    weight_decay: 0.01
     lr_scheduler: torch_constant
+    critic_warmup_steps: 0
 
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
+    gradient_checkpointing: False
     mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
 
+# reward section is metadata only when use_reward_model: False.
+# TOPReward is computed inline by VLMPlannerWorker (see vlm_planner.reward_scale above).
+# reward_scale here is NOT read by TOPReward — configure it under vlm_planner instead.
 reward:
   use_reward_model: False
+  reward_type: top_reward
 
 critic:
   use_critic_model: False

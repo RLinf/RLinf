@@ -10,25 +10,31 @@
 #        log p("True" | frames_1:t, instruction) as a progress score.
 #        The reward delta r_t = score_t - score_{t-1} is injected into EnvOutput.
 #
-# Hardware topology (4 nodes):
-#   node 0 – Desktop GPU (Robo room)
-#             └── Rollout worker  (π₀.5 inference)
-#   node 1 – YAM robot controller (Robo room)
-#             └── Env worker  (YAMEnv → yam_realtime → CAN bus → arms)
-#   node 2 – Beaker GPU (remote, job 1)
-#             └── Actor worker  (π₀.5 FSDP training with value head)
-#   node 3 – Beaker GPU (remote, job 2)
-#             └── VLMPlannerWorker  (TOPReward scoring + subtask planning)
+# Hardware topology (single Beaker node, 3 GPUs):
+#   GPU 0 – actor (π₀.5 FSDP training with value head)
+#   GPU 1 – rollout (π₀.5 inference)
+#   GPU 2 – VLMPlannerWorker (Qwen3-VL-8B for TOPReward + subtask planning)
+#   CPU   – EnvWorker (RemoteEnv gRPC client → desktop RobotServer)
+#
+# Desktop:
+#   RobotServer wrapping YAMEnv, exposed via reverse SSH tunnel on :50051.
+#   Start with: bash scripts/start_robot_server.sh --config .../yam.yaml \
+#                   --remote-host <beaker-tailscale-ip>
+#
+# Submit with:
+#   bash scripts/submit_yam_training.sh --config yam_ppo_openpi_topreward \
+#       --model-path /path/to/pi05_checkpoint
+#
+# For TOPReward without VLM subtask planning, set subtask_interval: 0.
 #
 # Prerequisites:
 #   pip install "transformers @ git+https://github.com/huggingface/transformers.git@main"
-#   pip install qwen-vl-utils accelerate torchvision pillow  (on Beaker nodes)
+#   pip install qwen-vl-utils accelerate torchvision pillow  (on Beaker)
 #   huggingface-cli download Qwen/Qwen3-VL-8B
-#   Set is_dummy: True in env.train / env.eval for initial e2e testing.
 
 defaults:
-  - env/yam@env.train
-  - env/yam@env.eval
+  - env/remote_yam@env.train
+  - env/remote_yam@env.eval
   - model/pi0_5@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
@@ -41,33 +47,22 @@ hydra:
     - file://${oc.env:EMBODIED_PATH}/config/
 
 cluster:
-  num_nodes: 4
+  num_nodes: 1
   component_placement:
     actor:
-      node_group: "beaker_actor"
-      placement: 0           # Beaker GPU job 1 — FSDP training
+      node_group: "gpu"
+      placement: 0
     rollout:
-      node_group: "desktop_gpu"
-      placement: 0
+      node_group: "gpu"
+      placement: 1   # π₀.5 requires a dedicated GPU; cannot share GPU 0 with actor
     env:
-      node_group: yam
-      placement: 0
+      node_group: "gpu"
+      placement: 0   # RemoteEnv runs CPU-only; placement on same node
   node_groups:
-    - label: "desktop_gpu"
+    - label: "gpu"
       node_ranks: 0
-    - label: yam
-      node_ranks: 1
-      hardware:
-        type: YAM
-        configs:
-          - node_rank: 1
-            left_ip: 192.168.1.10
-            right_ip: 192.168.1.11
-            disable_validate: False
-    - label: "beaker_actor"
-      node_ranks: 2          # Set RLINF_NODE_RANK=2 on the actor Beaker job
     - label: "beaker_vlm"
-      node_ranks: 3          # Set RLINF_NODE_RANK=3 on the VLM Beaker job
+      node_ranks: 0  # VLMPlannerWorker — heuristic assigns GPU 2 (max distinct placement + 1)
 
 runner:
   task_type: embodied
@@ -108,7 +103,7 @@ algorithm:
   loss_agg_func: "token-mean"
 
   bootstrap_type: always
-  kl_beta: 0.0
+  kl_beta: 0.0    # NOTE: not used by EmbodiedFSDPActor (KL penalty only applies to reasoning tasks)
   entropy_bonus: 0.005
   clip_ratio_high: 0.2
   clip_ratio_low: 0.2
@@ -152,24 +147,18 @@ env:
     top_reward_enabled: True
     top_reward_max_frames: 16
 
-    # Subtask update interval (0 to disable VLM planning).
-    subtask_interval: 30
+    # Subtask update interval in CHUNK STEPS (0 to disable VLM planning).
+    # With num_action_chunks=10 and max_steps_per_rollout_epoch=100,
+    # n_train_chunk_steps=10. The EnvWorker resets the subtask counter at the
+    # start of each rollout epoch (bootstrap_step), so subtask_interval must
+    # be <= n_train_chunk_steps to fire within an episode.
+    # 3 chunk steps = 30 env steps = subtask update at 30%, 60%, 90% of episode.
+    subtask_interval: 3
 
-    # Set is_dummy: True for initial e2e testing without real hardware.
-    is_dummy: True
-
-    # --- YAM robot config (fill in before running) ---
-    # robot_cfgs:
-    #   left:  ["/path/to/yam_realtime/robot_configs/yam/left.yaml"]
-    #   right: ["/path/to/yam_realtime/robot_configs/yam/right.yaml"]
-    #
-    # camera_cfgs:
-    #   cam_front:
-    #     _target_: yam_realtime.sensors.cameras.camera.CameraNode
-    #     camera:
-    #       _target_: yam_realtime.sensors.cameras.opencv_camera.OpencvCamera
-    #       device_path: "/dev/video0"
-    #       camera_type: "realsense_camera"
+    # Dummy mode: controlled at the ROBOT SERVER, not here.
+    # RemoteEnv does not read is_dummy — it proxies calls over gRPC to the server.
+    # To test without real hardware, start the robot server with --dummy:
+    #   bash scripts/start_robot_server.sh --config .../yam.yaml --dummy
 
   eval:
     total_num_envs: 1
@@ -179,6 +168,7 @@ env:
     task_description: "bimanual manipulation"
 
 # VLM planner: Qwen3-VL-8B for both subtask planning and TOPReward scoring.
+# reward_scale is read from THIS section by TOPReward (not from reward.reward_scale).
 vlm_planner:
   model_path: "Qwen/Qwen3-VL-8B"
   backend: "transformers"
@@ -189,6 +179,7 @@ vlm_planner:
   success_threshold: 0.5
   top_reward_enabled: True
   top_reward_max_frames: 16
+  reward_scale: 1.0  # multiplied onto each log-prob score before delta computation
 
 rollout:
   group_name: "RolloutGroup"
@@ -199,7 +190,7 @@ rollout:
   pipeline_stage_num: 1
 
   collect_transitions: True
-  collect_prev_infos: False
+  collect_prev_infos: True  # required for adv_type: gae — prev_values must be collected for GAE bootstrap
 
   model:
     model_path: "/path/to/model/RLinf-Pi05-SFT"
@@ -212,8 +203,10 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
 
-  micro_batch_size: 16
-  global_batch_size: 16
+  # rollout_size = n_chunk_steps * total_num_envs * rollout_epoch = 10 * 1 * 1 = 10
+  # global_batch_size must divide rollout_size; micro_batch_size must divide global_batch_size.
+  micro_batch_size: 10
+  global_batch_size: 10
   seed: 42
   enable_offload: False
 
@@ -222,6 +215,7 @@ actor:
     model_type: "openpi"
     add_value_head: True
     num_action_chunks: 10
+    action_dim: 14   # YAM bimanual: 2 × 7 DOF; sets openpi.action_env_dim via interpolation
     num_steps: 4
     openpi:
       value_after_vlm: True
@@ -253,10 +247,12 @@ actor:
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
 
+# reward section is metadata only when use_reward_model: False.
+# TOPReward is computed inline by VLMPlannerWorker (see vlm_planner.reward_scale above).
+# reward_scale here is NOT read by TOPReward — configure it under vlm_planner instead.
 reward:
   use_reward_model: False
   reward_type: top_reward
-  reward_scale: 1.0
 
 critic:
   use_critic_model: False

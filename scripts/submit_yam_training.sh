@@ -2,15 +2,15 @@
 #
 # submit_yam_training.sh — Submit YAM training to Beaker.
 #
-# Supports both basic PPO and TOPReward configs:
-#   yam_ppo_openpi           — actor + rollout + env (3 components)
-#   yam_ppo_openpi_topreward — actor + rollout + env + VLM planner (4 components)
+# Supports two configs (both use TOPReward, both need 3 GPUs):
+#   yam_ppo_openpi                  — PPO + π₀.5 + TOPReward (no subtask planning)
+#   yam_ppo_openpi_topreward        — PPO + π₀.5 + TOPReward + subtask planning
 #
-# Topology (single Beaker node):
+# Topology (both configs, single Beaker node):
 #   GPU 0 — actor (FSDP training)
 #   GPU 1 — rollout (inference)
-#   GPU 2 — VLM planner (TOPReward, only for topreward configs)
-#   env   — RemoteEnv (no GPU, gRPC to robot server via SSH tunnel)
+#   GPU 2 — VLM planner (Qwen3-VL-8B, TOPReward scoring; + subtask for topreward variant)
+#   CPU   — RemoteEnv (gRPC to robot server via SSH tunnel)
 #
 # The robot server runs on the local desktop with a reverse SSH tunnel
 # to the Beaker head node.
@@ -53,9 +53,9 @@ Usage: bash scripts/submit_yam_training.sh [OPTIONS] [-- HYDRA_OVERRIDES...]
 
 Submit YAM training to Beaker with automatic component placement.
 
-Supported configs:
-  yam_ppo_openpi             2 GPUs (actor + rollout)
-  yam_ppo_openpi_topreward   3 GPUs (actor + rollout + VLM planner)
+Supported configs (both use TOPReward, both require 3 GPUs):
+  yam_ppo_openpi                  3 GPUs — TOPReward only, no subtask planning
+  yam_ppo_openpi_topreward        3 GPUs — TOPReward + VLM subtask planning
 
 Options:
   --config NAME         Hydra config name (default: yam_ppo_openpi)
@@ -66,7 +66,7 @@ Options:
   --gpus N              GPUs per replica (0 = auto based on config)
   --cluster CLUSTER     Beaker cluster (default: ai2/ceres-cirrascale)
   --budget BUDGET       Beaker budget account
-  --priority PRIORITY   Job priority (default: normal)
+  --priority PRIORITY   Job priority (default: urgent)
   --show-logs           Stream Beaker logs after submission
   --allow-dirty         Allow dirty git working directory
   --dry-run             Print command without executing
@@ -108,12 +108,15 @@ if [ -z "$EXP_NAME" ]; then
     EXP_NAME="rlinf-${CONFIG_NAME}"
 fi
 
-# --- Detect config type and set GPU count / entry point / placement ---
+# --- Detect config type and set GPU count / entry point ---
 IS_TOPREWARD=false
 ENTRY_SCRIPT="train_embodied_agent.py"
 
 case "$CONFIG_NAME" in
-    *topreward*|*staged*)
+    *topreward*|*staged*|yam_ppo_openpi)
+        # All YAM configs use TOPReward → 3 GPUs, staged entry point.
+        # yam_ppo_openpi uses TOPReward with subtask_interval=0 (no subtask planning).
+        # yam_ppo_openpi_topreward also enables subtask planning (subtask_interval=3).
         IS_TOPREWARD=true
         ENTRY_SCRIPT="train_embodied_agent_staged.py"
         [ "$GPUS" -eq 0 ] && GPUS=3
@@ -126,50 +129,21 @@ esac
 # --- Build the training command (runs on head node only) ---
 TRAIN_CMD="python examples/embodiment/${ENTRY_SCRIPT}"
 TRAIN_CMD+=" --config-name ${CONFIG_NAME}"
-TRAIN_CMD+=" 'env/remote_yam@env.train' 'env/remote_yam@env.eval'"
 TRAIN_CMD+=" cluster.num_nodes=${REPLICAS}"
 
-if [ "$IS_TOPREWARD" = true ]; then
-    # TOPReward: actor + rollout + env on "gpu" group, VLM planner on "beaker_vlm" group.
-    # For single-node, both groups point to the same node (rank 0).
-    if [ "$REPLICAS" -eq 1 ]; then
-        TRAIN_CMD+=" 'cluster.component_placement.actor.node_group=gpu'"
-        TRAIN_CMD+=" 'cluster.component_placement.actor.placement=0'"
-        TRAIN_CMD+=" 'cluster.component_placement.rollout.node_group=gpu'"
-        TRAIN_CMD+=" 'cluster.component_placement.rollout.placement=0'"
-        TRAIN_CMD+=" 'cluster.component_placement.env.node_group=gpu'"
-        TRAIN_CMD+=" 'cluster.component_placement.env.placement=0'"
-        TRAIN_CMD+=" 'cluster.node_groups=[{label: gpu, node_ranks: 0}, {label: beaker_vlm, node_ranks: 0}]'"
-    else
-        LAST_RANK=$((REPLICAS - 1))
-        ALL_RANKS=$(seq -s, 0 "$LAST_RANK")
-        TRAIN_CMD+=" 'cluster.component_placement.actor.node_group=gpu'"
-        TRAIN_CMD+=" 'cluster.component_placement.actor.placement=0-${LAST_RANK}'"
-        TRAIN_CMD+=" 'cluster.component_placement.rollout.node_group=gpu'"
-        TRAIN_CMD+=" 'cluster.component_placement.rollout.placement=0-${LAST_RANK}'"
-        TRAIN_CMD+=" 'cluster.component_placement.env.node_group=gpu'"
-        TRAIN_CMD+=" 'cluster.component_placement.env.placement=0'"
+# For single replica the placement is baked into the config:
+#   yam_ppo_openpi:           actor:0  rollout:1
+#   yam_ppo_openpi_topreward: actor:0  rollout:1  VLM:2 (heuristic: max(0,1)+1)
+# For multiple replicas, distribute actor + rollout across node ranks.
+if [ "$REPLICAS" -gt 1 ]; then
+    LAST_RANK=$((REPLICAS - 1))
+    ALL_RANKS=$(seq -s, 0 "$LAST_RANK")
+    TRAIN_CMD+=" 'cluster.component_placement.actor.placement=0-${LAST_RANK}'"
+    TRAIN_CMD+=" 'cluster.component_placement.rollout.placement=0-${LAST_RANK}'"
+    if [ "$IS_TOPREWARD" = true ]; then
+        # WARNING: Multi-replica placement for VLM configs is NOT fully tested.
         TRAIN_CMD+=" 'cluster.node_groups=[{label: gpu, node_ranks: \"${ALL_RANKS}\"}, {label: beaker_vlm, node_ranks: 0}]'"
-    fi
-else
-    # Basic PPO: actor + rollout + env all on "gpu" group.
-    if [ "$REPLICAS" -eq 1 ]; then
-        TRAIN_CMD+=" 'cluster.component_placement.env.node_group=gpu'"
-        TRAIN_CMD+=" 'cluster.component_placement.env.placement=0'"
-        TRAIN_CMD+=" 'cluster.component_placement.actor.node_group=gpu'"
-        TRAIN_CMD+=" 'cluster.component_placement.actor.placement=0'"
-        TRAIN_CMD+=" 'cluster.component_placement.rollout.node_group=gpu'"
-        TRAIN_CMD+=" 'cluster.component_placement.rollout.placement=0'"
-        TRAIN_CMD+=" 'cluster.node_groups=[{label: gpu, node_ranks: 0}]'"
     else
-        LAST_RANK=$((REPLICAS - 1))
-        ALL_RANKS=$(seq -s, 0 "$LAST_RANK")
-        TRAIN_CMD+=" 'cluster.component_placement.env.node_group=gpu'"
-        TRAIN_CMD+=" 'cluster.component_placement.env.placement=0'"
-        TRAIN_CMD+=" 'cluster.component_placement.actor.node_group=gpu'"
-        TRAIN_CMD+=" 'cluster.component_placement.actor.placement=0-${LAST_RANK}'"
-        TRAIN_CMD+=" 'cluster.component_placement.rollout.node_group=gpu'"
-        TRAIN_CMD+=" 'cluster.component_placement.rollout.placement=0-${LAST_RANK}'"
         TRAIN_CMD+=" 'cluster.node_groups=[{label: gpu, node_ranks: \"${ALL_RANKS}\"}]'"
     fi
 fi

@@ -77,8 +77,13 @@ def preprocess_embodied_advantages_inputs(
     Unify names & formats, align with math interfaces.
     """
     if kwargs["reward_type"] == "chunk_level":
-        # TODO: need check
-        # rewards, dones, loss_mask, loss_mask_sum: [n_chunk_steps, bsz, num_action_chunks] -> [n_chunk_steps, bsz, 1]
+        # Collapse the action-chunk dimension to a scalar per chunk step.
+        # rewards: [n_chunk_steps, bsz, num_action_chunks] -> [n_chunk_steps, bsz, 1]
+        # Sum is correct: for TOPReward-only envs (e.g. YAM) only the last
+        # chunk slot is non-zero (delta injected by _compute_top_reward), so
+        # sum == that delta. For envs with per-step rewards, the sum aggregates
+        # the full chunk's reward into a single GAE input.
+        # dones/loss_mask use max to propagate any termination across the chunk.
         rewards = rewards.sum(dim=-1, keepdim=True)
         dones = dones.max(dim=-1, keepdim=True)[0]
         if loss_mask is not None:
@@ -112,7 +117,7 @@ def preprocess_embodied_advantages_inputs(
     )
     dones = flattened_dones_full[-(n_steps + 1) :]
 
-    if kwargs["adv_type"] == "gae":
+    if kwargs["adv_type"] == "gae" and values is not None:
         flattened_values_full = values.transpose(1, 2).reshape(
             (num_chunk + 1) * chunk_size, bsz
         )

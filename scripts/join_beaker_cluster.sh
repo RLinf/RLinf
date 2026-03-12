@@ -6,8 +6,14 @@
 #   1. submit_yam_beaker_cluster.sh starts a Beaker job with Ray head + GPUs (idle).
 #   2. This script joins the cluster from the desktop and runs training locally.
 #
-# The env worker runs directly on the desktop with YAMEnv — no gRPC, no SSH tunnel.
-# Actor and rollout workers are placed on the Beaker GPUs via the config's placement.
+# NOTE: The canonical YAM configs (yam_ppo_openpi, yam_ppo_openpi_topreward) use
+# env/remote_yam (RemoteEnv via gRPC) and cluster.num_nodes: 1.  For those configs,
+# use submit_yam_training.sh instead — it runs everything on Beaker.
+#
+# This script is useful when you have a custom config with env/yam (direct YAMEnv)
+# and a multi-node cluster layout that puts the env worker on the desktop.  In that
+# case the desktop joins as a Ray worker node and the training script drives the env
+# directly without gRPC.
 #
 # Usage:
 #   bash scripts/join_beaker_cluster.sh --head-ip <tailscale-ip> [OPTIONS] [-- HYDRA_OVERRIDES...]
@@ -47,21 +53,13 @@ Extra Hydra overrides can be passed after '--':
   bash scripts/join_beaker_cluster.sh --head-ip 100.x.y.z -- algorithm.update_epoch=2
 
 Examples:
-  # Basic PPO (2-node: Beaker GPU rank 0, desktop rank 1)
+  # Custom 2-node config with env/yam (desktop at rank 1, Beaker GPUs at rank 0)
   bash scripts/join_beaker_cluster.sh \
       --head-ip 100.64.1.2 \
-      --config yam_ppo_openpi \
-      --model-path /path/to/pi0_checkpoint \
-      --task "pick and place"
-
-  # TOPReward (4-node: desktop rollout rank 0, desktop env rank 1,
-  #            Beaker actor rank 2, Beaker VLM rank 3)
-  bash scripts/join_beaker_cluster.sh \
-      --head-ip 100.64.1.2 \
-      --config yam_ppo_openpi_topreward \
-      --node-rank 0 \
+      --config my_custom_yam_config \
+      --node-rank 1 \
       --model-path /path/to/pi05_checkpoint \
-      --task "bimanual manipulation"
+      --task "pick and place"
 EOF
     exit 0
 }
@@ -89,7 +87,7 @@ fi
 # --- Detect entry script ---
 ENTRY_SCRIPT="train_embodied_agent.py"
 case "$CONFIG_NAME" in
-    *topreward*|*staged*)
+    *topreward*|*staged*|yam_ppo_openpi)
         ENTRY_SCRIPT="train_embodied_agent_staged.py"
         ;;
 esac

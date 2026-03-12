@@ -14,36 +14,47 @@
 
 """VLM Planner Worker for stage-aware embodied RL.
 
-This Ray actor runs on the Beaker GPU node and serves two roles:
+This Ray actor runs on the Beaker GPU node and exposes three methods:
 
-1. **Subtask generation** - given recent robot observations (images) and a
-   rolling text memory of past actions/observations, it generates the current
-   subtask instruction (e.g. "pick up the red block").
+1. **Subtask generation** ``get_next_subtask()`` - given recent robot
+   observations (images) and a rolling text memory of past actions, generates
+   the next subtask instruction (e.g. "pick up the red block").
+   Called by ``EnvWorker._maybe_update_subtask()`` when ``subtask_interval > 0``.
 
-2. **Subtask reward evaluation** - given the same context plus the completed
-   subtask description, it decides whether the subtask succeeded (1.0) or
-   failed (0.0).
+2. **Subtask reward evaluation** ``evaluate_subtask()`` - given the same
+   context plus the completed subtask description, decides whether the subtask
+   succeeded (1.0) or failed (0.0).
+   **Not currently called** by EnvWorker in the YAM pipeline; available for
+   future use.
 
-The worker loads a local Qwen3.5 multimodal model (no external API required)
-and is placed on a node with a GPU.
+3. **TOPReward scoring** ``compute_top_reward()`` - given accumulated
+   trajectory frames and the current task instruction, returns
+   log P("True" | frames, instruction) as a dense progress reward signal.
+   Called by ``EnvWorker._compute_top_reward()`` every chunk step when
+   ``top_reward_enabled: True`` (both YAM training configs).
 
-Architecture
-~~~~~~~~~~~~
+The worker loads a local Qwen3-VL-8B vision-language model (no external API
+required) and is placed on a dedicated GPU node.
+
+Architecture (active call paths for YAM)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ::
 
     EnvWorker (YAM node)
-        │  every subtask_interval steps
+        │  every subtask_interval steps          (subtask_interval > 0 only)
         │  images + memory ──────────────────▶  VLMPlannerWorker (Beaker)
         │                                           │
         │  ◀── new subtask text ─────────────────  │  get_next_subtask()
         │                                           │
-        │  at subtask boundary:                     │
-        │  images + memory + subtask ─────────────▶ │  evaluate_subtask()
-        │  ◀── scalar reward (0.0 or 1.0) ────────  │
+        │  every chunk step (top_reward_enabled):   │
+        │  episode frames + instruction ──────────▶ │  compute_top_reward()
+        │  ◀── log P("True" | frames, instr) ─────  │
 
 Configuration (under ``vlm_planner`` in the top-level YAML):
     model_path: str
-        HuggingFace model ID or local path, e.g. "Qwen/Qwen3.5-9B".
+        HuggingFace model ID or local path, e.g. "Qwen/Qwen3-VL-8B".
+        Must be a vision-language model — image inputs are required for
+        subtask planning and TOPReward scoring.
     backend: str
         Inference backend: "transformers" (default) or "sglang".
     dtype: str
@@ -56,17 +67,26 @@ Configuration (under ``vlm_planner`` in the top-level YAML):
         Maximum number of text entries kept in the rolling memory buffer.
     success_threshold: float
         Confidence threshold [0, 1] above which the VLM vote counts as success.
+    top_reward_enabled: bool
+        Enable TOPReward dense progress reward (default: False).  When True,
+        ``compute_top_reward()`` scores each step via log P("True" | frames,
+        instruction).  Should match ``env.train.top_reward_enabled``.
+    top_reward_max_frames: int
+        Maximum trajectory frames to pass to the TOPReward VLM (default: 16).
+        Older frames are dropped when the buffer exceeds this limit.
 
 Example YAML::
 
     vlm_planner:
-      model_path: "Qwen/Qwen3.5-9B"
+      model_path: "Qwen/Qwen3-VL-8B"
       backend: "transformers"
       dtype: "bfloat16"
       max_new_tokens_subtask: 64
       max_new_tokens_reward: 16
       max_memory_entries: 20
       success_threshold: 0.5
+      top_reward_enabled: True
+      top_reward_max_frames: 16
 """
 
 import warnings
@@ -112,7 +132,7 @@ class VLMPlannerWorker:
         if "model" in planner_cfg:
             warnings.warn(
                 "[VLMPlannerWorker] Config field 'vlm_planner.model' is deprecated. "
-                "Use 'vlm_planner.model_path' instead (e.g. 'Qwen/Qwen3.5-9B').",
+                "Use 'vlm_planner.model_path' instead (e.g. 'Qwen/Qwen3-VL-8B').",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -124,7 +144,7 @@ class VLMPlannerWorker:
                 stacklevel=2,
             )
 
-        self._model_path: str = planner_cfg.get("model_path", "Qwen/Qwen3.5-9B")
+        self._model_path: str = planner_cfg.get("model_path", "Qwen/Qwen3-VL-8B")
         self._backend: str = planner_cfg.get("backend", "transformers")
         self._dtype_str: str = planner_cfg.get("dtype", "bfloat16")
         self._max_new_tokens_subtask: int = int(
@@ -348,8 +368,9 @@ class VLMPlannerWorker:
             fps: Frames per second metadata for video input.
 
         Returns:
-            Mean (or summed) log-probability of the instruction suffix + "True"
-            tokens (a float, typically negative).
+            Log-probability of the final "True" token given the video frames
+            and instruction (a float, typically negative).  All preceding
+            tokens are masked; only the last token of the sequence is scored.
         """
         if not self._top_reward_enabled:
             return 0.0
@@ -411,9 +432,15 @@ class VLMPlannerWorker:
         text = self._processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
-        image_inputs, video_inputs, video_kwargs = process_vision_info(
-            messages, return_video_metadata=True
-        )
+        image_inputs, video_inputs = process_vision_info(messages)
+        video_kwargs = {}
+        # Handle newer qwen_vl_utils that returns 3 values (same guard as top_reward.py).
+        try:
+            image_inputs, video_inputs, video_kwargs = process_vision_info(
+                messages, return_video_metadata=True
+            )
+        except TypeError:
+            pass
         inputs = self._processor(
             text=[text],
             images=image_inputs,

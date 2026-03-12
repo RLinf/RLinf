@@ -1184,6 +1184,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "reward_type": self.cfg.algorithm.reward_type,
             "loss_mask": self.rollout_batch.get("loss_mask", None),
             "loss_mask_sum": self.rollout_batch.get("loss_mask_sum", None),
+            # Pass normalize_advantages so the config value is respected; the GAE
+            # function defaults to True but the explicit config setting is authoritative.
+            "normalize_advantages": self.cfg.algorithm.get("normalize_advantages", True),
         }
 
         advantages_and_returns = calculate_adv_and_returns(**kwargs)
@@ -1441,7 +1444,16 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                             action_dim=self.cfg.actor.model.get("action_dim", 7),
                             batch_size=output_dict["logprobs"].shape[0],
                         )
-                        entropy_loss = masked_mean(entropy, mask=loss_mask)
+                        # Align loss_mask shape with entropy after reshaping.
+                        # e.g. chunk_level entropy: [bsz, 1] → sum → [bsz]; mask is
+                        # still [bsz, 1], so reshape to [bsz] to avoid broadcasting
+                        # (which would give sum instead of mean).
+                        entropy_mask = (
+                            loss_mask.reshape(entropy.shape)
+                            if loss_mask is not None and entropy is not None
+                            else loss_mask
+                        )
+                        entropy_loss = masked_mean(entropy, mask=entropy_mask)
                         loss -= self.cfg.algorithm.entropy_bonus * entropy_loss
                     metrics_data["actor/entropy_loss"] = entropy_loss.detach().item()
 

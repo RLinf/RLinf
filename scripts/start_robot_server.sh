@@ -13,7 +13,7 @@
 #   --config PATH         Path to YAM env YAML config (required)
 #   --port PORT           gRPC server port (default: 50051)
 #   --remote-host HOST    Beaker container Tailscale IP (for reverse SSH tunnel)
-#   --remote-user USER    SSH user on the Beaker container (default: current user)
+#   --remote-user USER    SSH user on the Beaker container (default: shiruic)
 #   --dummy               Run without real hardware (zero observations)
 #   --help                Show this help
 
@@ -36,7 +36,7 @@ Options:
   --config PATH         Path to YAM env YAML config (required)
   --port PORT           gRPC server port (default: 50051)
   --remote-host HOST    Beaker container Tailscale IP (for reverse SSH tunnel)
-  --remote-user USER    SSH user on the Beaker container (default: current user)
+  --remote-user USER    SSH user on the Beaker container (default: shiruic)
   --dummy               Run without real hardware (zero observations)
   --help                Show this help
 
@@ -88,14 +88,18 @@ SERVER_PID=$!
 
 if [ -n "$REMOTE_HOST" ]; then
     echo "=== Setting up reverse SSH tunnel ==="
-    echo "Forwarding ${REMOTE_HOST}:localhost:${PORT} -> localhost:${PORT}"
+    echo "Tunnel: container localhost:${PORT} -> this machine :${PORT}"
     echo ""
-    # -N: no remote command, -R: reverse tunnel, -o: keep alive
+    # -N: no remote command
+    # -R: reverse tunnel — anyone on the container connecting to localhost:${PORT}
+    #     is forwarded back through this SSH connection to localhost:${PORT} here
+    # StrictHostKeyChecking=no: Beaker containers have a fresh host key each run
     ssh -N \
         -R "${PORT}:localhost:${PORT}" \
         -o ServerAliveInterval=30 \
         -o ServerAliveCountMax=3 \
         -o ExitOnForwardFailure=yes \
+        -o StrictHostKeyChecking=no \
         "${REMOTE_USER}@${REMOTE_HOST}" &
     SSH_PID=$!
     echo "SSH tunnel PID: ${SSH_PID}"

@@ -21,3 +21,4 @@ rlinf/envs/maniskill/assets
 PKG-INFO
 ./*.sh
 YAM/
+.claude/
