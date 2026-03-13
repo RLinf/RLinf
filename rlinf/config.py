@@ -1054,9 +1054,14 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
 
     if cfg.actor.training_backend == "megatron":
         cfg.actor = validate_megatron_cfg(cfg.actor)
-        cfg.actor = validate_model_cfg_by_hf_config(
-            cfg.actor, cfg.rollout.model.model_path
-        )
+        if cfg.runner.task_type == "sft":
+            cfg.actor = validate_model_cfg_by_hf_config(
+                cfg.actor, cfg.actor.model.model_path
+            )
+        else:
+            cfg.actor = validate_model_cfg_by_hf_config(
+                cfg.actor, cfg.rollout.model.model_path
+            )
         # TODO. Need actually pad padded_vocab_size.
         assert (
             cfg.actor.model.padded_vocab_size
