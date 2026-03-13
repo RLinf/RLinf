@@ -1,4 +1,4 @@
-strategy: "fsdp"            # FSDP strategy: ["fsdp", "fsdp2"]
+strategy: "fsdp2"            # FSDP strategy: ["fsdp", "fsdp2"]
 
 # Sharding strategy: "full_shard" (shard parameters, gradients, optimizer states),
 # "shard_grad_op" (shard gradients and optimizer states only), 

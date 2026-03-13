@@ -32,8 +32,8 @@ dependencies = [
     # Core System
     # These are the dependencies of the core scheduler
     "ray[default]>=2.47.0",
-    "torch>=2.5.0,<=2.9.0",
-    "hydra-core",
+    #"torch==2.6.0",
+    "hydra-core==1.4.0.dev1",
     "numpy",
 
     # Data processing
@@ -66,11 +66,21 @@ dependencies = [
     "tensorboard",
 ]
 
+<<<<<<< HEAD
 [project.urls]
 Homepage = "https://github.com/RLinf/RLinf"
 Repository = "https://github.com/RLinf/RLinf"
 Documentation = "https://rlinf.readthedocs.io/"
 "Bug Report" = "https://github.com/RLinf/RLinf/issues"
+=======
+[build-system]
+requires = ["setuptools>=69.5.1,<75.9", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["rlinf*", "toolkits*"]
+exclude = ["logs*", "outputs*", "tests*", "docs*", "examples*", "ray_utils*"]
+>>>>>>> 26e50b2 (wan support)
 
 [project.optional-dependencies]
 agentic-sglang = [

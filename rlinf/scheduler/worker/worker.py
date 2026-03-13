@@ -44,6 +44,10 @@ if TYPE_CHECKING:
 WorkerClsType = TypeVar("WorkerClsType")
 
 
+def _is_musa_available() -> bool:
+    return hasattr(torch, "musa") and torch.musa.is_available()
+
+
 class WorkerMeta(type):
     """Metaclass to capture failures in worker classes."""
 
@@ -805,7 +809,7 @@ class Worker(metaclass=WorkerMeta):
         with self._lock:
             worker_addresses.sort()
             group = self._collective.create_collective_group(worker_addresses)
-
+        
         return group.broadcast(
             object=object,
             src_addr=src_addr,

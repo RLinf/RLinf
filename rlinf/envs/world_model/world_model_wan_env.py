@@ -14,6 +14,7 @@
 
 import io
 import os
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Optional, Union
 
@@ -111,12 +112,13 @@ class WanEnv(BaseWorldEnv):
     def _build_pipeline(self):
         pipe = WanVideoPipeline.from_pretrained(
             torch_dtype=torch.bfloat16,
-            device="cuda:0",
+            device=self._get_runtime_device_str(),
             model_configs=[
                 # Paths are loaded from yaml
                 ModelConfig(path=self.cfg.model_path, offload_device="cpu"),
                 ModelConfig(path=self.cfg.VAE_path, offload_device="cpu"),
             ],
+            tokenizer_config=ModelConfig(model_id="/data/qian.ren/robot_vla/models/Wan2.1-T2V-1.3B", origin_file_pattern="google/*")
         )
         # pipe.enable_vram_management()
         pipe.dit.to(self.device)
@@ -527,7 +529,9 @@ class WanEnv(BaseWorldEnv):
         for env_idx in range(num_envs):
             frames = []
             for img in output[env_idx]:
-                arr = np.array(img) / 255.0
+                # Keep frame tensors in fp32 to avoid silent fp64 promotion
+                # that can significantly increase GPU memory usage.
+                arr = np.asarray(img, dtype=np.float32) / 255.0
                 arr = arr * 2.0 - 1.0
                 frames.append(arr)
 
@@ -543,7 +547,9 @@ class WanEnv(BaseWorldEnv):
             all_samples.append(video[:, 5:])
 
         # Stack all environments: [num_envs, C, T, H, W]
-        x_samples = torch.stack(all_samples, dim=0).to(self.device)
+        x_samples = torch.stack(all_samples, dim=0).to(
+            self.device, dtype=self.current_obs.dtype
+        )
 
         # Reshape to match current_obs format: [num_envs, C, 1, T, H, W]
         x_samples = x_samples.unsqueeze(2)
@@ -586,7 +592,7 @@ class WanEnv(BaseWorldEnv):
         full_image = last_frame.permute(0, 2, 3, 1)  # [b, H, W, 3]
         # Denormalize from [-1, 1] to [0, 255]
         full_image = (full_image + 1.0) / 2.0 * 255.0
-        full_image = torch.clamp(full_image, 0, 255)
+        full_image = torch.clamp(full_image.float(), 0, 255)
         # print(f'full_image:{full_image.shape}')
         # print(f'image_size:{self.image_size}')
         # Resize to 256x256 to match libero_env format
@@ -642,7 +648,12 @@ class WanEnv(BaseWorldEnv):
         """Execute a chunk of actions - optimized version that processes chunk actions together"""
         # chunk_actions: [num_envs, chunk_steps, action_dim=8]
         self.onload()
-        with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
+        autocast_context = (
+            torch.amp.autocast(device_type=self.device.type, dtype=torch.bfloat16)
+            if self.device.type in {"cuda", "musa"}
+            else nullcontext()
+        )
+        with autocast_context:
             self._infer_next_chunk_frames(policy_output_action)
 
         # Update elapsed steps (incremented after inference)
@@ -727,7 +738,7 @@ class WanEnv(BaseWorldEnv):
         if self.record_metrics:
             self.success_once = self.success_once.cpu()
             self.returns = self.returns.cpu()
-        torch.cuda.empty_cache()
+        self._clear_accelerator_cache()
         self._is_offloaded = True
 
     def onload(self):

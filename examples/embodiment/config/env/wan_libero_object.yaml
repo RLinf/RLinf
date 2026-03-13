@@ -37,6 +37,10 @@ enable_offload: False
 
 wan_wm_hf_ckpt_path: null
 
+# Optional: explicitly set tokenizer directory or HF repo id for DiffSynth WAN.
+# If null, RLinf auto-tries: <wan_wm_hf_ckpt_path>/google, /tokenizer, and root dir.
+wan_tokenizer_path: null
+
 VAE_path: ${env.train.wan_wm_hf_ckpt_path}/Wan2.2_VAE.pth
 model_path: ${env.train.wan_wm_hf_ckpt_path}/model-00001.safetensors
 

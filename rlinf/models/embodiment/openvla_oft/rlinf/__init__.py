@@ -24,6 +24,8 @@ from transformers import (
     AutoTokenizer,
 )
 
+from rlinf.models.embodiment.openvla_oft.attn_utils import resolve_attn_implementation
+
 
 def get_model_config_and_input_processor(cfg: DictConfig):
     from prismatic.extern.hf.configuration_prismatic import (
@@ -72,6 +74,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     actor_model_config = AutoConfig.from_pretrained(
         cfg.model_path, trust_remote_code=cfg.trust_remote_code
     )
+    attn_implementation = resolve_attn_implementation(cfg)
 
     dataset_statistics_path = os.path.join(cfg.model_path, "dataset_statistics.json")
     if os.path.isfile(dataset_statistics_path):
@@ -85,11 +88,13 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     if override_config_kwargs is not None:
         for key, val in override_config_kwargs.items():
             setattr(actor_model_config, key, val)
+    setattr(actor_model_config, "attn_implementation", attn_implementation)
+    setattr(actor_model_config, "_attn_implementation", attn_implementation)
 
     model = OpenVLAOFTForRLActionPrediction.from_pretrained(
         pretrained_model_name_or_path=cfg.model_path,
         torch_dtype=torch_dtype,
-        # attn_implementation="flash_attention_2",
+        attn_implementation=attn_implementation,
         config=actor_model_config,
         action_dim=cfg.action_dim,
         num_action_chunks=cfg.num_action_chunks,
@@ -100,6 +105,15 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
 
     # oft add
     model.vision_backbone.set_num_images_in_input(cfg.get("num_images_in_input", 1))
+    if hasattr(model, "config"):
+        setattr(model.config, "attn_implementation", attn_implementation)
+        setattr(model.config, "_attn_implementation", attn_implementation)
+    if hasattr(model, "language_model") and hasattr(model.language_model, "config"):
+        setattr(
+            model.language_model.config,
+            "_attn_implementation",
+            attn_implementation,
+        )
 
     model.to(torch_dtype)
 

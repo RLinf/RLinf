@@ -168,11 +168,28 @@ class FSDP2Strategy(FSDPStrategyBase):
         Returns:
             - float: The total norm of the gradients before clipping.
         """
+        debug_nan_checks = self.cfg.get("debug_nan_checks", False)
         grad_norm = get_grad_norm(
             model.parameters(),
             dp_group=self._dp_group,
             norm_type=norm_type,
         )
+        if debug_nan_checks and not torch.isfinite(torch.as_tensor(grad_norm)):
+            nonfinite_grad_count = 0
+            for param in model.parameters():
+                grad = param.grad
+                if grad is None:
+                    continue
+                nonfinite_grad_count += int((~torch.isfinite(grad)).sum().item())
+            if nonfinite_grad_count == 0:
+                raise RuntimeError(
+                    "Non-finite grad_norm in FSDP2 clip_grad_norm_ with finite "
+                    "gradients. Suspect get_grad_norm operator path."
+                )
+            raise RuntimeError(
+                "Non-finite grad_norm in FSDP2 clip_grad_norm_ and gradients already "
+                f"contain non-finite values (count={nonfinite_grad_count})."
+            )
         clip_grad_by_total_norm_(
             model.parameters(),
             max_grad_norm=self.cfg.optim.clip_grad,

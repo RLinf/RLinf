@@ -20,6 +20,7 @@ import io
 import json
 import os
 from collections import deque
+from contextlib import nullcontext
 from typing import Optional, Union
 
 import numpy as np
@@ -55,8 +56,9 @@ class OpenSoraEnv(BaseWorldEnv):
         )
         self.world_model_cfg = self.cfg.world_model_cfg
         self.inference_dtype = to_torch_dtype(self.world_model_cfg.get("dtype", "bf16"))
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
+        if self.device.type == "cuda":
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
 
         # Reset state management
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
@@ -274,7 +276,7 @@ class OpenSoraEnv(BaseWorldEnv):
                 ],
                 maxlen=self.z_condition_frame_length,
             )
-        torch.cuda.empty_cache()
+        self._clear_accelerator_cache()
         self._is_offloaded = True
 
     def onload(self):
@@ -810,7 +812,12 @@ class OpenSoraEnv(BaseWorldEnv):
         self.onload()
         # policy_output_action: [num_envs, chunk, action_dim]
 
-        with torch.amp.autocast(device_type="cuda", dtype=self.inference_dtype):
+        autocast_context = (
+            torch.amp.autocast(device_type=self.device.type, dtype=self.inference_dtype)
+            if self.device.type in {"cuda", "musa"}
+            else nullcontext()
+        )
+        with autocast_context:
             # Infer next chunk frames
             self._infer_next_chunk_frames(policy_output_action)
 

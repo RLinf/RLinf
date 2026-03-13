@@ -14,6 +14,7 @@
 
 import os
 import time
+from contextlib import nullcontext
 from functools import partial
 from typing import Optional
 
@@ -35,6 +36,8 @@ from rlinf.data.embodied_io_struct import Trajectory, convert_trajectories_to_ba
 from rlinf.data.io_struct import BatchResizingIterator, RolloutResult
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
+    dump_last_sdpa_inputs,
+    get_last_sdpa_input_shapes,
 )
 from rlinf.hybrid_engines.fsdp.utils import (
     pack_fsdp_input,
@@ -123,6 +126,21 @@ def process_nested_dict_for_train(nested_dict, shuffle_id):
         elif isinstance(value, dict):
             ret_dict[key] = process_nested_dict_for_train(value, shuffle_id)
     return ret_dict
+
+
+def _metric_has_nonfinite(value: object) -> bool:
+    """Return True if a metric value contains non-finite numbers."""
+    if isinstance(value, torch.Tensor):
+        if not value.is_floating_point():
+            return False
+        return not torch.isfinite(value).all().item()
+    if isinstance(value, float | np.floating):
+        return not np.isfinite(float(value))
+    return False
+
+
+def _is_musa_available() -> bool:
+    return hasattr(torch, "musa") and torch.musa.is_available()
 
 
 class FSDPActor(FSDPModelManager, Worker):
@@ -986,7 +1004,6 @@ class FSDPActor(FSDPModelManager, Worker):
                     ),
                 )
                 batch["advantages"] = advantages
-
         return batch
 
 
@@ -1001,9 +1018,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         # stage_num: default to 2, use for pipeline rollout process
         self.stage_num = cfg.rollout.pipeline_stage_num
-
         self.enable_offload = self.cfg.actor.get("enable_offload", False)
         self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "torch")
+        self.debug_detect_anomaly = self.cfg.actor.get("debug_detect_anomaly", False)
+        self.debug_nan_checks = self.cfg.actor.get("debug_nan_checks", False)
 
         # Sync weight comm options
         max_ctas = cfg.rollout.get("sync_weight_nccl_max_ctas", None)
@@ -1069,6 +1087,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self.load_param_and_grad(self.device)
 
         state_dict = self.get_model_state_dict(cpu_offload=False, full_state_dict=True)
+        for k,v in state_dict.items():
+            state_dict[k] = v.cpu()
         for rank in self._weight_dst_rank_in_rollout:
             self.send(
                 state_dict,
@@ -1273,6 +1293,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             )
 
         sft_loss = sft_losses.mean()
+        if sft_loss.device != loss.device:
+            # Keep SFT co-training compatible when actor loss is computed on CPU.
+            sft_loss = sft_loss.to(loss.device)
         metrics_data["sft_loss"] = sft_loss.clone().detach().item()
         total_loss = loss + self.sft_loss_weight * sft_loss
         loss = total_loss
@@ -1290,6 +1313,163 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 f"ppo_loss={metrics_data['ppo_loss']:.6f}, "
                 f"sft_loss_weight={self.sft_loss_weight:.6f}"
             )
+
+    def _summarize_tensor_for_debug(
+        self, name: str, tensor: torch.Tensor | None
+    ) -> str:
+        """Build a concise numerical-health summary for a tensor."""
+        if tensor is None:
+            return f"{name}=None"
+        if not isinstance(tensor, torch.Tensor):
+            return f"{name}=<{type(tensor).__name__}>"
+
+        with torch.no_grad():
+            t = tensor.detach()
+            shape = tuple(t.shape)
+            dtype = str(t.dtype)
+            total = t.numel()
+            if total == 0:
+                return f"{name}: shape={shape}, dtype={dtype}, numel=0"
+            if t.dtype == torch.bool:
+                true_count = int(t.sum().item())
+                return (
+                    f"{name}: shape={shape}, dtype={dtype}, "
+                    f"true={true_count}/{total}"
+                )
+            if not t.is_floating_point():
+                t_min = t.min().item()
+                t_max = t.max().item()
+                return (
+                    f"{name}: shape={shape}, dtype={dtype}, "
+                    f"min={t_min}, max={t_max}"
+                )
+
+            finite = torch.isfinite(t)
+            finite_count = int(finite.sum().item())
+            nan_count = int(torch.isnan(t).sum().item())
+            inf_count = int(torch.isinf(t).sum().item())
+            if finite_count == 0:
+                return (
+                    f"{name}: shape={shape}, dtype={dtype}, "
+                    f"finite=0/{total}, nan={nan_count}, inf={inf_count}"
+                )
+
+            finite_t = t[finite]
+            t_min = float(finite_t.min().item())
+            t_max = float(finite_t.max().item())
+            t_mean = float(finite_t.mean().item())
+            abs_max = float(finite_t.abs().max().item())
+            return (
+                f"{name}: shape={shape}, dtype={dtype}, "
+                f"finite={finite_count}/{total}, nan={nan_count}, inf={inf_count}, "
+                f"min={t_min:.6e}, max={t_max:.6e}, mean={t_mean:.6e}, "
+                f"abs_max={abs_max:.6e}"
+            )
+
+    def _summarize_gradients_for_debug(self) -> str:
+        """Build a summary for gradient numerical health."""
+        total = 0
+        finite_total = 0
+        nan_total = 0
+        inf_total = 0
+        abs_max = 0.0
+
+        with torch.no_grad():
+            for param in self.model.parameters():
+                grad = param.grad
+                if grad is None or not grad.is_floating_point():
+                    continue
+                g = grad.detach()
+                total += g.numel()
+                finite = torch.isfinite(g)
+                finite_count = int(finite.sum().item())
+                finite_total += finite_count
+                nan_total += int(torch.isnan(g).sum().item())
+                inf_total += int(torch.isinf(g).sum().item())
+                if finite_count > 0:
+                    abs_max = max(abs_max, float(g[finite].abs().max().item()))
+
+        if total == 0:
+            return "gradients: no floating gradients found"
+        return (
+            f"gradients: finite={finite_total}/{total}, nan={nan_total}, "
+            f"inf={inf_total}, finite_abs_max={abs_max:.6e}"
+        )
+
+    def _collect_nonfinite_grad_params_for_debug(
+        self, max_items: int = 12
+    ) -> tuple[int, list[dict]]:
+        """Collect parameter-level non-finite gradient statistics."""
+        total_nonfinite = 0
+        bad_params = []
+
+        with torch.no_grad():
+            for name, param in self.model.named_parameters():
+                grad = param.grad
+                if grad is None or not grad.is_floating_point():
+                    continue
+                g = grad.detach()
+                nonfinite_mask = ~torch.isfinite(g)
+                nonfinite_count = int(nonfinite_mask.sum().item())
+                if nonfinite_count == 0:
+                    continue
+                total_nonfinite += nonfinite_count
+                if len(bad_params) >= max_items:
+                    continue
+
+                finite_mask = torch.isfinite(g)
+                finite_count = int(finite_mask.sum().item())
+                item = {
+                    "name": name,
+                    "shape": tuple(g.shape),
+                    "dtype": str(g.dtype),
+                    "nan_count": int(torch.isnan(g).sum().item()),
+                    "inf_count": int(torch.isinf(g).sum().item()),
+                }
+                if finite_count > 0:
+                    finite_g = g[finite_mask]
+                    item["finite_abs_max"] = float(finite_g.abs().max().item())
+                    item["finite_mean"] = float(finite_g.mean().item())
+                bad_params.append(item)
+
+        return total_nonfinite, bad_params
+
+    def _log_nonfinite_loss_context(
+        self,
+        loss: torch.Tensor,
+        metrics_data: dict,
+        logprobs: torch.Tensor | None,
+        old_logprobs: torch.Tensor | None,
+        advantages: torch.Tensor | None,
+        loss_mask: torch.Tensor | None,
+        returns: torch.Tensor | None,
+        prev_values: torch.Tensor | None,
+    ) -> None:
+        bad_metrics = [k for k, v in metrics_data.items() if _metric_has_nonfinite(v)]
+        self.log_warning(
+            "Non-finite actor loss/metric detected. "
+            f"rank={self._rank}, step={self.optimizer_steps}, "
+            f"loss_is_finite={torch.isfinite(loss).item()}, "
+            f"bad_metrics={bad_metrics}, grad_scaler={self.grad_scaler.get_scale():.6e}"
+        )
+        self.log_warning(self._summarize_tensor_for_debug("logprobs", logprobs))
+        self.log_warning(
+            self._summarize_tensor_for_debug("old_logprobs", old_logprobs)
+        )
+        self.log_warning(self._summarize_tensor_for_debug("advantages", advantages))
+        self.log_warning(self._summarize_tensor_for_debug("loss_mask", loss_mask))
+        self.log_warning(self._summarize_tensor_for_debug("returns", returns))
+        self.log_warning(self._summarize_tensor_for_debug("prev_values", prev_values))
+
+    def _log_nonfinite_aggregated_metrics(self, metrics: dict) -> None:
+        """Log non-finite metrics after cross-rank aggregation."""
+        bad_items = {k: v for k, v in metrics.items() if _metric_has_nonfinite(v)}
+        if not bad_items:
+            return
+        self.log_warning(
+            "Non-finite metrics detected after aggregation: "
+            + ", ".join(f"{k}={v}" for k, v in bad_items.items())
+        )
 
     @Worker.timer("run_training")
     def run_training(self) -> None:
@@ -1336,6 +1516,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         )
         metrics = {}
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
+        nonfinite_gradnorm_reported = False
         for _ in range(update_epoch):
             rollout_dataloader_iter = split_dict_to_chunk(
                 self.rollout_batch,
@@ -1433,8 +1614,22 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         "task_type": self.cfg.runner.task_type,
                         "critic_warmup": self.optimizer_steps
                         < self.critic_warmup_steps,
+                        "debug_nan_checks": self.debug_nan_checks,
                     }
                     loss, metrics_data = policy_loss(**kwargs)
+                    if (not torch.isfinite(loss).item()) or any(
+                        _metric_has_nonfinite(v) for v in metrics_data.values()
+                    ):
+                        self._log_nonfinite_loss_context(
+                            loss=loss.detach(),
+                            metrics_data=metrics_data,
+                            logprobs=output_dict.get("logprobs", None),
+                            old_logprobs=prev_logprobs,
+                            advantages=advantages,
+                            loss_mask=loss_mask,
+                            returns=returns,
+                            prev_values=prev_values,
+                        )
 
                     entropy_loss = torch.tensor(
                         0.0, device=Worker.torch_platform.current_device()
@@ -1458,18 +1653,134 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         self._train_sft_epoch(metrics_data, loss)
 
                     loss /= self.gradient_accumulation
+                    anomaly_ctx = (
+                        torch.autograd.detect_anomaly(check_nan=True)
+                        if self.debug_detect_anomaly
+                        else nullcontext()
+                    )
                     with backward_ctx:
-                        self.grad_scaler.scale(loss).backward()
+                        with anomaly_ctx:
+                            try:
+                                self.grad_scaler.scale(loss).backward()
+                            except RuntimeError as exc:
+                                exc_msg = str(exc)
+                                if (
+                                    "ScaledDotProductAttention" in exc_msg
+                                    or "scaled_dot_product_attention" in exc_msg
+                                ):
+                                    sdpa_shapes = get_last_sdpa_input_shapes()
+                                    save_dir = self.cfg.actor.get(
+                                        "debug_sdpa_save_dir", "./sdpa_debug"
+                                    )
+                                    dump_path = dump_last_sdpa_inputs(
+                                        save_dir=save_dir,
+                                        rank=self._rank,
+                                        step=self.optimizer_steps,
+                                        logger=self._logger,
+                                    )
+                                    self.log_warning(
+                                        "Detected SDPA backward failure. "
+                                        f"rank={self._rank}, step={self.optimizer_steps}"
+                                    )
+                                    self.log_warning(
+                                        "Latest SDPA input shapes: "
+                                        f"{sdpa_shapes}"
+                                    )
+                                    if sdpa_shapes is None:
+                                        self.log_warning(
+                                            "SDPA input debug cache is empty. "
+                                            "Enable actor.debug_sdpa_input_shapes=true "
+                                            "or actor.debug_detect_anomaly=true."
+                                        )
+                                    raise RuntimeError(
+                                        f"{exc_msg}\n"
+                                        f"[SDPA-DEBUG] latest_inputs={sdpa_shapes}\n"
+                                        f"[SDPA-DEBUG] dump_path={dump_path}"
+                                    ) from exc
+                                raise
 
                     metrics_data["actor/total_loss"] = loss.detach().item()
+                    if (not np.isfinite(metrics_data["actor/total_loss"])) or any(
+                        _metric_has_nonfinite(v) for v in metrics_data.values()
+                    ):
+                        self.log_warning(
+                            "Non-finite metric detected before append_to_dict. "
+                            f"rank={self._rank}, step={self.optimizer_steps}, "
+                            f"grad_scaler={self.grad_scaler.get_scale():.6e}, "
+                            f"total_loss={metrics_data['actor/total_loss']}"
+                        )
+                        self.log_warning(
+                            self._summarize_tensor_for_debug(
+                                "loss_for_backward", loss
+                            )
+                        )
                     append_to_dict(metrics, metrics_data)
 
                 self.torch_platform.empty_cache()
 
                 grad_norm, lr_list = self.optimizer_step()
+                if not np.isfinite(float(grad_norm)):
+                    self.log_warning(
+                        "Non-finite grad_norm detected in EmbodiedFSDPActor. "
+                        f"rank={self._rank}, step={self.optimizer_steps}, "
+                        f"grad_norm={grad_norm}, "
+                        f"grad_scaler={self.grad_scaler.get_scale():.6e}"
+                    )
+                    self.log_warning(self._summarize_gradients_for_debug())
+                    nonfinite_grad_count, bad_grad_params = (
+                        self._collect_nonfinite_grad_params_for_debug()
+                    )
+                    self.log_warning(
+                        "Non-finite grad details: "
+                        f"rank={self._rank}, nonfinite_grad_count={nonfinite_grad_count}, "
+                        f"bad_params={bad_grad_params}"
+                    )
+                    if self.debug_nan_checks:
+                        if nonfinite_grad_count == 0:
+                            raise RuntimeError(
+                                "grad_norm is non-finite but all parameter gradients "
+                                "are finite. Suspect grad-norm operator path "
+                                "(clip_grad_norm_/get_grad_norm_for_mixed_precision)."
+                            )
+                        raise RuntimeError(
+                            "grad_norm is non-finite and parameter gradients contain "
+                            "non-finite values. See bad_params in logs above."
+                        )
+
+                # Cross-rank probe: surface grad_norm issues even when only non-zero ranks are affected.
+                local_grad_norm = float(grad_norm)
+                local_gradnorm_finite = int(np.isfinite(local_grad_norm))
+                all_gradnorm_finite = all_reduce_int(
+                    local_gradnorm_finite, op=torch.distributed.ReduceOp.MIN
+                )
+                if all_gradnorm_finite == 0 and not nonfinite_gradnorm_reported:
+                    world_size = torch.distributed.get_world_size()
+                    gradnorm_snapshots = [None for _ in range(world_size)]
+                    local_snapshot = {
+                        "rank": self._rank,
+                        "grad_norm": local_grad_norm,
+                        "grad_summary": (
+                            self._summarize_gradients_for_debug()
+                            if not np.isfinite(local_grad_norm)
+                            else None
+                        ),
+                    }
+                    torch.distributed.all_gather_object(
+                        gradnorm_snapshots, local_snapshot
+                    )
+                    if self._rank == 0:
+                        self.log_warning(
+                            "Detected non-finite grad_norm on at least one rank. "
+                            f"Snapshots={gradnorm_snapshots}"
+                        )
+                    nonfinite_gradnorm_reported = True
                 data = {
                     "actor/grad_norm": grad_norm,
                     "actor/lr": lr_list[0],
+                    "actor/nonfinite_gradnorm_flag": float(
+                        1 - all_gradnorm_finite
+                    ),
+                    "actor/local_gradnorm_finite": float(local_gradnorm_finite),
                 }
                 if len(lr_list) > 1:
                     data["critic/lr"] = lr_list[1]
@@ -1482,6 +1793,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         mean_metric_dict = all_reduce_dict(
             mean_metric_dict, op=torch.distributed.ReduceOp.AVG
         )
+        self._log_nonfinite_aggregated_metrics(mean_metric_dict)
 
         return mean_metric_dict
 

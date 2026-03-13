@@ -19,6 +19,17 @@ from rlinf.config import SupportedModel
 from rlinf.envs import SupportedEnvType
 
 
+def prepare_actions_for_wan(
+    raw_chunk_actions,
+    action_scale=np.array([[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]]),
+
+) -> torch.Tensor:
+
+    chunk_actions = raw_chunk_actions * action_scale
+
+    return torch.from_numpy(chunk_actions)
+
+
 def prepare_actions_for_maniskill(
     raw_chunk_actions,
     num_action_chunks,
@@ -232,6 +243,10 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             action_dim=action_dim,
             model_type=model_type,
+        )
+    elif env_type == SupportedEnvType.WAN:
+        chunk_actions = prepare_actions_for_wan(
+            raw_chunk_actions=raw_chunk_actions,
         )
     elif env_type == SupportedEnvType.REALWORLD:
         chunk_actions = raw_chunk_actions

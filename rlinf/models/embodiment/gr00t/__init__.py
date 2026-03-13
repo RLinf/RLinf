@@ -47,6 +47,10 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         data_config = load_data_config(
             "rlinf.models.embodiment.gr00t.modality_config:ManiskillWidowXDataConfig"
         )
+    elif cfg.embodiment_tag == "new_embodiment":
+        data_config = load_data_config(
+            "rlinf.models.embodiment.gr00t.modality_config:BridgeDataConfig"
+        )
     else:
         raise ValueError(f"Invalid embodiment tag: {cfg.embodiment_tag}")
     modality_config = data_config.modality_config()

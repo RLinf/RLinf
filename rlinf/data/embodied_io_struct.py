@@ -89,6 +89,9 @@ class EnvOutput:
         return {
             "main_images": image_tensor,  # [N_ENV, H, W, C]
             "wrist_images": wrist_image_tensor,  # [N_ENV, H, W, C] or [N_ENV, N_IMG, H, W, C]
+            "images_0": obs.get("images_0", None),
+            "images_1": obs.get("images_1", None),
+            "images_2": obs.get("images_2", None),
             "extra_view_images": extra_view_image_tensor,  # [N_ENV, N_IMG, H, W, C]
             "states": states,
             "task_descriptions": task_descriptions,

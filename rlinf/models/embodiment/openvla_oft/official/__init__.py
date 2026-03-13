@@ -15,6 +15,8 @@
 import torch
 from omegaconf import DictConfig
 
+from rlinf.models.embodiment.openvla_oft.attn_utils import resolve_attn_implementation
+
 
 def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     """
@@ -52,6 +54,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     AutoImageProcessor.register(OpenVLAOFTRLConfig, PrismaticImageProcessor)
     AutoProcessor.register(OpenVLAOFTRLConfig, PrismaticProcessor)
     AutoModelForVision2Seq.register(OpenVLAOFTRLConfig, OpenVLAOFTForRLActionPrediction)
+    attn_implementation = resolve_attn_implementation(cfg)
 
     # Load the config first
     model_config = AutoConfig.from_pretrained(
@@ -79,11 +82,14 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     }
     for key, val in custom_params.items():
         setattr(model_config, key, val)
+    setattr(model_config, "attn_implementation", attn_implementation)
+    setattr(model_config, "_attn_implementation", attn_implementation)
 
     # Load the model with the updated config
     vla = OpenVLAOFTForRLActionPrediction.from_pretrained(
         cfg.model_path,
         config=model_config,
+        attn_implementation=attn_implementation,
         torch_dtype=torch_dtype,
         trust_remote_code=True,
     )
@@ -112,6 +118,15 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     # Load processor
     processor = AutoProcessor.from_pretrained(cfg.model_path)
     vla.set_processor(processor)
+    if hasattr(vla, "config"):
+        setattr(vla.config, "attn_implementation", attn_implementation)
+        setattr(vla.config, "_attn_implementation", attn_implementation)
+    if hasattr(vla, "language_model") and hasattr(vla.language_model, "config"):
+        setattr(
+            vla.language_model.config,
+            "_attn_implementation",
+            attn_implementation,
+        )
 
     vla.to(torch_dtype)
 

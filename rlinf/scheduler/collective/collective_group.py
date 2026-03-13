@@ -908,7 +908,7 @@ class CollectiveGroup:
             self._logger.debug(
                 f"Initializing process group for collective group {self._group_info.group_name}, master address {self._group_info.master_addr}, master port {master_port}, world size {self._group_info.world_size}, rank {self._rank}"
             )
-
+            
             self._mc_group.init(
                 init_method=f"tcp://{self._group_info.master_addr}:{master_port}",
                 world_size=self._group_info.world_size,

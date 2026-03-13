@@ -138,18 +138,62 @@ def convert_to_isaaclab_stack_cube_action(
     )
     return action_array
 
+def convert_wan_obs_to_gr00t_format(env_obs):
+    groot_obs = {}
+    # [B, H, W, C] -> [B, T, H, W, C]
+    groot_obs["video.image_0"] = env_obs["images_0"].unsqueeze(1).numpy()
+    # [B, 8] -> [B, T(1), 8]
+    groot_obs["state.x"] = env_obs["states"].unsqueeze(1)[:, :, 0:1].numpy() 
+    groot_obs["state.y"] = env_obs["states"].unsqueeze(1)[:, :, 1:2].numpy()
+    groot_obs["state.z"] = env_obs["states"].unsqueeze(1)[:, :, 2:3].numpy()
+    groot_obs["state.roll"] = env_obs["states"].unsqueeze(1)[:, :, 3:4].numpy()
+    groot_obs["state.pitch"] = env_obs["states"].unsqueeze(1)[:, :, 4:5].numpy()
+    groot_obs["state.yaw"] = env_obs["states"].unsqueeze(1)[:, :, 5:6].numpy()
+    groot_obs["state.pad"] = env_obs["states"].unsqueeze(1)[:, :, 6:7].numpy()
+    groot_obs["state.gripper"] = env_obs["states"].unsqueeze(1)[:, :, 7:].numpy()
+    groot_obs["annotation.human.action.task_description"] = env_obs["task_descriptions"]
+    return groot_obs
+
+def convert_to_wan_action(
+    action_chunk: dict[str, np.array], chunk_size: int = 1
+) -> np.ndarray:
+    """Convert GR00T action chunk to Libero format.
+
+    Args:
+        action_chunk: Dictionary of action components from GR00T policy
+        chunk_size: Number of action steps to consider from the chunk
+
+    Returns:
+        7-dim numpy array: [dx, dy, dz, droll, dpitch, dyaw, gripper]
+    """
+    action_components = [
+        action_chunk["action.x"][:, :chunk_size],
+        action_chunk["action.y"][:, :chunk_size],
+        action_chunk["action.z"][:, :chunk_size],
+        action_chunk["action.roll"][:, :chunk_size],
+        action_chunk["action.pitch"][:, :chunk_size],
+        action_chunk["action.yaw"][:, :chunk_size],
+        action_chunk["action.gripper"][:, :chunk_size],
+    ]
+    action_array = np.concatenate(action_components, axis=-1)
+    assert action_array.shape[-1] == 7, (
+        f"Expected 7-dim action, got {action_array.shape[-1]}"
+    )
+    return action_array
 
 # TODO: we need a unified embodiement data.
 OBS_CONVERSION = {
     "maniskill": convert_maniskill_obs_to_gr00t_format,
     "libero": convert_libero_obs_to_gr00t_format,
     "isaaclab_stack_cube": convert_libero_obs_to_gr00t_format,
+    "wan": convert_wan_obs_to_gr00t_format,
 }
 
 ACTION_CONVERSION = {
     "libero": convert_to_libero_action,
     "maniskill": convert_to_maniskill_action,
     "isaaclab_stack_cube": convert_to_isaaclab_stack_cube_action,
+    "wan": convert_to_wan_action,
 }
 
 

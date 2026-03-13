@@ -1,0 +1,244 @@
+env:
+  train:
+    simulator_type: wan
+    simulator_name: wan
+    task_suite_name: jesbu1/bridge_v2_lerobot
+    seed: 0
+    auto_reset: false
+    ignore_terminations: true
+    max_steps_per_rollout_epoch: 128
+    max_episode_steps: 128
+    use_fixed_reset_state_ids: true
+    group_size: 1
+    num_envs: 4
+    use_rel_reward: true
+    reward_coef: 5.0
+    video_cfg:
+      save_video: true
+      info_on_video: false
+      video_base_dir: /tmp/video/train
+    dataset_cfg:
+      repo_id: local/unseen
+      root: /workspace/qian.ren/robot_vla/datasets/bridge_orig_lerobot
+      revision: v2.0
+      start_select_policy: first_frame
+      target_select_policy: last_frame
+      start_n_frames: 1
+      target_n_frames: 1
+      camera_heights: 256
+      camera_widths: 256
+      camera_names:
+      - observation.images.image_0
+      - observation.images.image_1
+      - observation.images.image_2
+    backend_cfg:
+      vllm_base_url: http://172.31.208.6:8008/v1
+      batch_size: 4
+      num_prompt_frames: 4
+      max_episode_steps: 128
+      action_length: 16
+      tmp_video: /tmp/video/tmp_video/
+      model_cfg:
+        model_folder: /workspace/qian.ren/robot_vla/models
+        checkpoint_file: /workspace/qian.ren/robot_vla/models/train/Wan2.1-Fun-V1.1-1.3B-InP_action_state_multiview/step-500.safetensors
+        model_id: Wan2.1-Fun-V1.1-1.3B-InP
+        num_frames: 17
+        video_size:
+        - 256
+        - 256
+        infer_num_sampling_steps: 50
+        guidance_scale: 1.0
+      # episodes_list: /workspace/shiyu.yang/data/bridge_orig_lerobot/multiview_ids/train_ids.txt
+    total_num_envs: 64
+  eval:
+    simulator_type: wan
+    simulator_name: wan
+    task_suite_name: jesbu1/bridge_v2_lerobot
+    seed: 0
+    auto_reset: true
+    ignore_terminations: true
+    max_steps_per_rollout_epoch: 128
+    max_episode_steps: 128
+    use_fixed_reset_state_ids: true
+    group_size: 1
+    num_envs: 4
+    use_rel_reward: true
+    reward_coef: 5.0
+    video_cfg:
+      save_video: false
+      info_on_video: false
+      video_base_dir: /tmp/video/eval
+    dataset_cfg:
+      repo_id: local/unseen
+      root: /workspace/qian.ren/robot_vla/RLinf/datasets/bridge_orig_lerobot
+      revision: v2.0
+      start_select_policy: first_frame
+      target_select_policy: last_frame
+      start_n_frames: 1
+      target_n_frames: 1
+      camera_heights: 256
+      camera_widths: 256
+      camera_names:
+      - observation.images.image_0
+      - observation.images.image_1
+      - observation.images.image_2
+    backend_cfg:
+      vllm_base_url: http://172.31.208.6:8008/v1
+      batch_size: 4
+      num_prompt_frames: 4
+      max_episode_steps: 128
+      action_length: 16
+      tmp_video: /tmp/tmp_video/
+      model_cfg:
+        model_folder: /workspace/qian.ren/robot_vla/models
+        checkpoint_file: /workspace/qian.ren/robot_vla/models/train/Wan2.1-Fun-V1.1-1.3B-InP_action_state_multiview/step-500.safetensors
+        model_id: Wan2.1-Fun-V1.1-1.3B-InP
+        num_frames: 17
+        video_size:
+        - 256
+        - 256
+        infer_num_sampling_steps: 50
+        guidance_scale: 1.0
+      # episodes_list: /workspace/shiyu.yang/data/bridge_orig_lerobot/multiview_ids/test_ids.txt
+    total_num_envs: 64
+    is_eval: true
+  group_name: EnvGroup
+  enable_offload: false
+actor:
+  model:
+    model_type: gr00t
+    model_path: /workspace/qian.ren/robot_vla/RLinf/models/gr00t-n1.5-bridge-posttrain
+    precision: bf16
+    trust_remote_code: true
+    is_lora: false
+    action_dim: 7
+    num_action_chunks: 15
+    denoising_steps: 4
+    policy_setup: widowx_bridge
+    obs_converter_type: wan
+    embodiment_tag: new_embodiment
+    add_value_head: true
+    rl_head_config:
+      joint_logprob: false
+      noise_method: flow_sde
+      ignore_last: false
+      safe_get_logprob: false
+      noise_anneal: false
+      noise_params:
+      - 0.7
+      - 0.3
+      - 400
+      noise_level: 0.5
+      add_value_head: true
+      chunk_critic_input: false
+      detach_critic_input: true
+      valid_action_dim: 7
+      disable_dropout: true
+  fsdp_config:
+    strategy: fsdp
+    sharding_strategy: full_shard
+    gradient_checkpointing: false
+    cpu_offload: false
+    offload_pin_memory: false
+    reshard_after_forward: true
+    enable_gradient_accumulation: true
+    forward_prefetch: false
+    limit_all_gathers: false
+    backward_prefetch: null
+    use_orig_params: false
+    use_liger_kernel: false
+    fsdp_size: -1
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: bf16
+      buffer_dtype: bf16
+    amp:
+      enabled: false
+      precision: bf16
+      use_grad_scaler: false
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 64
+  global_batch_size: 512
+  seed: 1234
+  enable_offload: false
+  optim:
+    lr: 2.0e-05
+    value_lr: 2.0e-05
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-05
+    weight_decay: 0.01
+    clip_grad: 1.0
+    critic_warmup_steps: 0
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout:: all
+runner:
+  task_type: embodied
+  logger:
+    log_path: /workspace/qian.ren/robot_vla/RLinf/logs/20260204-06:41:41
+    project_name: rlinf
+    experiment_name: wan_ppo_gr00t_bridge
+    logger_backends:
+    - tensorboard
+  max_epochs: 1000
+  max_steps: -1
+  only_eval: false
+  eval_policy_path: null
+  val_check_interval: -1
+  save_interval: 10
+  seq_length: 4096
+  max_prompt_length: 30
+  resume_dir: null
+algorithm:
+  normalize_advantages: true
+  kl_penalty: kl
+  group_size: 1
+  reward_coef: 1.0
+  rollout_epoch: 1
+  eval_rollout_epoch: 1
+  reward_type: chunk_level
+  logprob_type: chunk_level
+  entropy_type: chunk_level
+  update_epoch: 1
+  adv_type: gae
+  loss_type: actor_critic
+  loss_agg_func: token-mean
+  kl_beta: 0.0
+  entropy_bonus: 0
+  clip_ratio_high: 0.2
+  clip_ratio_low: 0.2
+  clip_ratio_c: 3.0
+  value_clip: 0.2
+  huber_delta: 10.0
+  gamma: 0.99
+  gae_lambda: 0.95
+  filter_rewards: false
+  rewards_lower_bound: 0.1
+  rewards_upper_bound: 0.9
+  sampling_params:
+    do_sample: true
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+    add_BOS: false
+  length_params:
+    max_new_token: null
+    max_length: 1024
+    min_length: 1
+rollout:
+  group_name: RolloutGroup
+  backend: huggingface
+  enable_offload: true
+  pipeline_stage_num: 1
+  model:
+    model_path: /workspace/qian.ren/robot_vla/RLinf/models/gr00t-n1.5-bridge-posttrain
+    precision: bf16
+reward:
+  use_reward_model: false
+critic:
+  use_critic_model: false

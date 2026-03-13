@@ -41,11 +41,16 @@ class EmbodimentTag(Enum):
     """
     The maniskill widowx dataset.
     """
+<<<<<<< HEAD
 
     ISAACLAB_FRANKA = "isaaclab_franka"
     """
     The isaaclab Franka dataset.
     """
+=======
+    NEW_EMBODIMENT = "new_embodiment"
+    
+>>>>>>> f9d3b95 (gr00t support)
 
 
 # Embodiment tag string: to projector index in the Action Expert Module
@@ -56,4 +61,5 @@ EMBODIMENT_TAG_MAPPING = {
     EmbodimentTag.GR1.value: 24,
     EmbodimentTag.MANISKILL_WIDOWX.value: 30,
     EmbodimentTag.ISAACLAB_FRANKA.value: 31,
+    EmbodimentTag.NEW_EMBODIMENT.value: 31,
 }

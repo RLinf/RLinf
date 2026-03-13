@@ -1,0 +1,53 @@
+env_type: wan
+simulator_type: wan
+simulator_name: wan
+task_suite_name: jesbu1/bridge_v2_lerobot
+
+total_num_envs: null
+seed: 0
+auto_reset: false
+ignore_terminations: true
+max_steps_per_rollout_epoch: 128
+max_episode_steps: 128
+use_fixed_reset_state_ids: true
+group_size: 1
+num_envs: 1
+use_rel_reward: true
+reward_coef: 5.0
+video_cfg:
+  save_video: true
+  info_on_video: false
+  video_base_dir: /tmp/video/train
+dataset_cfg:
+  repo_id: local/unseen
+  root: /data/qian.ren/robot_vla/datasets/bridge_orig_lerobot
+  revision: v2.0
+  start_select_policy: first_frame
+  target_select_policy: last_frame
+  start_n_frames: 1
+  target_n_frames: 1
+  camera_heights: 256
+  camera_widths: 256
+  camera_names:
+  - observation.images.image_0
+  - observation.images.image_1
+  - observation.images.image_2
+backend_cfg:
+  vllm_base_url: null
+  vllm_model: /data/qian.ren/robot_vla/models/Qwen2.5-VL-3B-Instruct
+  batch_size: null
+  num_prompt_frames: 4
+  max_episode_steps: 128
+  action_length: 16
+  tmp_video: /tmp/video/tmp_video/
+  model_cfg:
+    model_folder: /data/qian.ren/robot_vla/models
+    checkpoint_file: /data/qian.ren/robot_vla/models/train/Wan2.1-Fun-V1.1-1.3B-InP_action_state_multiview/step-500.safetensors
+    model_id: Wan2.1-Fun-V1.1-1.3B-InP
+    num_frames: 17
+    video_size:
+    - 256
+    - 256
+    infer_num_sampling_steps: 50
+    guidance_scale: 1.0
+    episodes_list: null

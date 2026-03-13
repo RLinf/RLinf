@@ -40,6 +40,14 @@ from rlinf.scheduler import Worker
 from rlinf.utils.utils import clear_memory
 
 
+def _is_musa_available() -> bool:
+    return hasattr(torch, "musa") and torch.musa.is_available()
+
+
+def _is_cuda_backend_available() -> bool:
+    return torch.cuda.is_available() and hasattr(torch._C, "_cuda_setDevice")
+
+
 class FSDPStrategy(FSDPStrategyBase):
     def wrap_model(self, model: nn.Module, device_mesh: DeviceMesh) -> FSDP:
         """
@@ -238,6 +246,7 @@ class FSDPStrategy(FSDPStrategyBase):
         device = torch.device(f"{Worker.torch_device_type}:{os.environ['LOCAL_RANK']}")
         max_norm = float(self.cfg.optim.clip_grad)
         norm_type = float(norm_type)
+        debug_nan_checks = self.cfg.get("debug_nan_checks", False)
         all_handles = getattr(model, "_all_handles", None)
         if all_handles is None:
             raise RuntimeError("Expected FSDP root module with `_all_handles`.")
@@ -290,6 +299,11 @@ class FSDPStrategy(FSDPStrategyBase):
             torch.tensor(0.0, device=device, dtype=torch.float32),
             device,
         )
+        if debug_nan_checks and not torch.isfinite(local_sharded_norm):
+            raise RuntimeError(
+                "Non-finite local_sharded_norm from "
+                "get_grad_norm_for_mixed_precision(sharded_params)."
+            )
         local_nonsharded_norm = (
             get_grad_norm_for_mixed_precision(
                 nonsharded_params,
@@ -300,6 +314,15 @@ class FSDPStrategy(FSDPStrategyBase):
             if nonsharded_params
             else None
         )
+        if (
+            debug_nan_checks
+            and local_nonsharded_norm is not None
+            and not torch.isfinite(local_nonsharded_norm)
+        ):
+            raise RuntimeError(
+                "Non-finite local_nonsharded_norm from "
+                "get_grad_norm_for_mixed_precision(nonsharded_params)."
+            )
 
         if norm_type == torch.inf:
             total_norm = (
@@ -318,6 +341,19 @@ class FSDPStrategy(FSDPStrategyBase):
             if local_nonsharded_norm is not None:
                 total_norm += local_nonsharded_norm**norm_type
             total_norm = total_norm ** (1.0 / norm_type)
+        if debug_nan_checks and not torch.isfinite(total_norm):
+            nonfinite_grad_count = 0
+            for grad in grads:
+                nonfinite_grad_count += int((~torch.isfinite(grad)).sum().item())
+            if nonfinite_grad_count == 0:
+                raise RuntimeError(
+                    "Non-finite total_norm in clip_grad_norm_ with finite gradients. "
+                    "Suspect reduction/power path inside grad norm computation."
+                )
+            raise RuntimeError(
+                "Non-finite total_norm in clip_grad_norm_ and gradients already "
+                f"contain non-finite values (count={nonfinite_grad_count})."
+            )
 
         grad_norm = float(total_norm.item())
 

@@ -21,6 +21,40 @@ from rlinf.algorithms.utils import huber_loss
 from rlinf.utils.utils import masked_mean, masked_mean_ratio
 
 
+def _raise_if_nonfinite(
+    tensor: torch.Tensor | None, tensor_name: str, *, enabled: bool
+) -> None:
+    """Raise with tensor stats when non-finite values appear during loss computation."""
+    if not enabled or tensor is None:
+        return
+    if not isinstance(tensor, torch.Tensor) or not tensor.is_floating_point():
+        return
+
+    finite_mask = torch.isfinite(tensor)
+    if finite_mask.all():
+        return
+
+    total = tensor.numel()
+    finite_count = int(finite_mask.sum().item())
+    nan_count = int(torch.isnan(tensor).sum().item())
+    inf_count = int(torch.isinf(tensor).sum().item())
+    msg = (
+        "[policy_loss debug] Non-finite detected at "
+        f"{tensor_name}: shape={tuple(tensor.shape)}, dtype={tensor.dtype}, "
+        f"device={tensor.device}, finite={finite_count}/{total}, "
+        f"nan={nan_count}, inf={inf_count}"
+    )
+    if finite_count > 0:
+        finite_vals = tensor[finite_mask]
+        msg += (
+            ", "
+            f"finite_min={float(finite_vals.min().item()):.6e}, "
+            f"finite_max={float(finite_vals.max().item()):.6e}, "
+            f"finite_mean={float(finite_vals.mean().item()):.6e}"
+        )
+    raise RuntimeError(msg)
+
+
 def compute_decoupled_ppo_actor_loss(
     logprobs: torch.Tensor,
     old_logprobs: torch.Tensor,
@@ -176,6 +210,7 @@ def compute_ppo_actor_loss(
     max_episode_steps: Optional[int] = None,
     loss_mask_sum: Optional[torch.Tensor] = None,
     critic_warmup: Optional[bool] = False,
+    debug_nan_checks: bool = False,
     clip_log_ratio_min: Optional[float] = None,
     clip_log_ratio_max: Optional[float] = None,
     fast_path_zero_loss_mask: Optional[bool] = False,
@@ -235,6 +270,15 @@ def compute_ppo_actor_loss(
     assert advantages.dtype == torch.float32, (
         "advantages must be float32 to keep numerical stability"
     )
+    _raise_if_nonfinite(
+        logprobs, "compute_ppo_actor_loss/logprobs", enabled=debug_nan_checks
+    )
+    _raise_if_nonfinite(
+        old_logprobs, "compute_ppo_actor_loss/old_logprobs", enabled=debug_nan_checks
+    )
+    _raise_if_nonfinite(
+        advantages, "compute_ppo_actor_loss/advantages", enabled=debug_nan_checks
+    )
 
     loss_mask_count = loss_mask.count_nonzero() or 1
     # For numerical stability.
@@ -245,10 +289,23 @@ def compute_ppo_actor_loss(
         log_ratio = torch.clamp(log_ratio, max=clip_log_ratio_max)
     ratio = torch.where(loss_mask, torch.exp(log_ratio), 0)
     approx_kl = torch.where(loss_mask, log_ratio.detach(), 0.0)
+    _raise_if_nonfinite(ratio, "compute_ppo_actor_loss/ratio", enabled=debug_nan_checks)
+    _raise_if_nonfinite(
+        approx_kl, "compute_ppo_actor_loss/approx_kl_raw", enabled=debug_nan_checks
+    )
 
     clipped_ratio = torch.clamp(ratio, 1.0 - clip_ratio_low, 1.0 + clip_ratio_high)
+    _raise_if_nonfinite(
+        clipped_ratio, "compute_ppo_actor_loss/clipped_ratio", enabled=debug_nan_checks
+    )
     policy_loss1 = -advantages * ratio
     policy_loss2 = -advantages * clipped_ratio
+    _raise_if_nonfinite(
+        policy_loss1, "compute_ppo_actor_loss/policy_loss1", enabled=debug_nan_checks
+    )
+    _raise_if_nonfinite(
+        policy_loss2, "compute_ppo_actor_loss/policy_loss2", enabled=debug_nan_checks
+    )
 
     clip_mask = policy_loss1.detach() < policy_loss2.detach()
 
@@ -264,9 +321,17 @@ def compute_ppo_actor_loss(
     metric_policy_loss_abs = loss_agg_func(
         policy_loss.abs(), loss_mask, loss_mask_ratio
     )
+    _raise_if_nonfinite(
+        metric_policy_loss_abs,
+        "compute_ppo_actor_loss/metric_policy_loss_abs",
+        enabled=debug_nan_checks,
+    )
     policy_loss = loss_agg_func(
         policy_loss, loss_mask, loss_mask_ratio
     )  # default max_episode_steps is None
+    _raise_if_nonfinite(
+        policy_loss, "compute_ppo_actor_loss/policy_loss", enabled=debug_nan_checks
+    )
 
     clip_mask = policy_loss1.detach() < policy_loss2.detach()
     dual_clip_mask = (dual_clip_mask * loss_mask).bool()
@@ -275,6 +340,11 @@ def compute_ppo_actor_loss(
     approx_kl = -torch.sum(approx_kl) / float(loss_mask_count)
 
     dual_cliped_ratio = torch.where(dual_clip_mask, ratio, 0)
+    _raise_if_nonfinite(
+        dual_cliped_ratio,
+        "compute_ppo_actor_loss/dual_cliped_ratio",
+        enabled=debug_nan_checks,
+    )
 
     if critic_warmup:
         policy_loss = torch.tensor(0.0, device=policy_loss.device)
@@ -318,6 +388,7 @@ def compute_ppo_critic_loss(
     loss_mask: Optional[torch.Tensor] = None,
     max_episode_steps: Optional[int] = None,
     loss_mask_sum: Optional[torch.Tensor] = None,
+    debug_nan_checks: bool = False,
     **kwargs,
 ) -> tuple[torch.Tensor, dict]:
     """
@@ -347,15 +418,33 @@ def compute_ppo_critic_loss(
     value_pred_clipped = prev_values + (values - prev_values).clamp(
         -value_clip, value_clip
     )  # [bsz, ] | [bsz, chunk-step]
+    _raise_if_nonfinite(
+        value_pred_clipped,
+        "compute_ppo_critic_loss/value_pred_clipped",
+        enabled=debug_nan_checks,
+    )
 
     value_loss_original = huber_loss(
         returns - values, huber_delta
     )  # [bsz, ] | [bsz, chunk-step]
+    _raise_if_nonfinite(
+        value_loss_original,
+        "compute_ppo_critic_loss/value_loss_original",
+        enabled=debug_nan_checks,
+    )
     value_loss_clipped = huber_loss(
         returns - value_pred_clipped, huber_delta
     )  # [bsz, ] | [bsz, chunk-step]
+    _raise_if_nonfinite(
+        value_loss_clipped,
+        "compute_ppo_critic_loss/value_loss_clipped",
+        enabled=debug_nan_checks,
+    )
     value_loss = torch.max(value_loss_original, value_loss_clipped)
     value_loss = loss_agg_func(value_loss, loss_mask, loss_mask_ratio)
+    _raise_if_nonfinite(
+        value_loss, "compute_ppo_critic_loss/value_loss", enabled=debug_nan_checks
+    )
 
     value_clip_indicator = (value_pred_clipped - prev_values).abs() > value_clip
     value_clip_ratio = value_clip_indicator.float().mean()
