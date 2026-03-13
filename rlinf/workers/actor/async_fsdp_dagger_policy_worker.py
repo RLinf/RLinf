@@ -23,10 +23,10 @@ from rlinf.utils.metric_utils import (
     append_to_dict,
     compute_split_num,
 )
-from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
+from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPolicy
 
 
-class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
+class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
     should_stop = False
 
     async def recv_rollout_trajectories(self, input_channel):
@@ -68,17 +68,13 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
         if not recv_list:
             return
 
-        self.replay_buffer.add_trajectories(recv_list)
-
-        if self.demo_buffer is not None:
-            intervene_traj_list = []
-            for traj in recv_list:
-                intervene_traj = traj.extract_intervene_traj()
-                if intervene_traj is not None:
-                    intervene_traj_list.extend(intervene_traj)
-
-            if len(intervene_traj_list) > 0:
-                self.demo_buffer.add_trajectories(intervene_traj_list)
+        intervene_traj_list = []
+        for traj in recv_list:
+            intervene_traj = traj.extract_intervene_traj(mode="all")
+            if intervene_traj is not None:
+                intervene_traj_list.extend(intervene_traj)
+        if len(intervene_traj_list) > 0:
+            self.replay_buffer.add_trajectories(intervene_traj_list)
 
     async def _wait_for_replay_buffer_ready(self, min_buffer_size: int):
         while True:
@@ -91,7 +87,7 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
 
     @Worker.timer("run_training")
     async def run_training(self):
-        """SAC training using replay buffer"""
+        """DAGGER training using replay buffer"""
         if self.cfg.actor.get("enable_offload", False):
             self.load_param_and_grad(self.device)
             self.load_optimizer(self.device)
@@ -132,7 +128,6 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
 
     async def stop(self):
         self.should_stop = True
-        self.buffer_dataset.close()
         recv_thread = getattr(self, "_recv_rollout_thread", None)
         if recv_thread is not None and recv_thread.is_alive():
             await asyncio.to_thread(recv_thread.join, 5)

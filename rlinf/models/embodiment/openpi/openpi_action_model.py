@@ -474,6 +474,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             "denoise_inds": outputs["denoise_inds"],
             "tokenized_prompt": processed_obs["tokenized_prompt"],
             "tokenized_prompt_mask": processed_obs["tokenized_prompt_mask"],
+            "action": torch.from_numpy(actions).reshape(actions.shape[0], -1),
+            "model_action": outputs["actions"].reshape(outputs["actions"].shape[0], -1),
         }
         if forward_action is not None:
             forward_inputs["action"] = forward_action

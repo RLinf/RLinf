@@ -125,6 +125,8 @@ class MLPPolicy(nn.Module, BasePolicy):
             return self.crossq_q_forward(**kwargs)
         elif forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
+        elif forward_type == ForwardType.SFT:
+            return self.sft_forward(**kwargs)
         else:
             raise NotImplementedError
 
@@ -244,6 +246,13 @@ class MLPPolicy(nn.Module, BasePolicy):
 
         return action, chunk_actions, chunk_logprobs, chunk_values
 
+    def sft_forward(self, data, **kwargs):
+        states = data["states"]
+        actions = data["action"]
+        feat = self.backbone(states)
+        action_mean = self.actor_mean(feat)
+        return torch.nn.functional.mse_loss(action_mean, actions)
+
     @torch.inference_mode()
     def predict_action_batch(
         self,
@@ -261,7 +270,7 @@ class MLPPolicy(nn.Module, BasePolicy):
         )
 
         chunk_actions = chunk_actions.cpu().numpy()
-        forward_inputs = {"action": action}
+        forward_inputs = {"action": action, "model_action": action}
         if return_obs:
             forward_inputs["states"] = env_obs["states"]
 

@@ -14,7 +14,7 @@
 
 import asyncio
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
 from omegaconf.dictconfig import DictConfig
 
@@ -24,6 +24,9 @@ from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.runner_utils import check_progress
 
 if TYPE_CHECKING:
+    from rlinf.workers.actor.async_fsdp_dagger_policy_worker import (
+        AsyncEmbodiedDAGGERFSDPPolicy,
+    )
     from rlinf.workers.actor.async_fsdp_sac_policy_worker import (
         AsyncEmbodiedSACFSDPPolicy,
     )
@@ -37,7 +40,7 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
     def __init__(
         self,
         cfg: DictConfig,
-        actor: "AsyncEmbodiedSACFSDPPolicy",
+        actor: Union["AsyncEmbodiedSACFSDPPolicy", "AsyncEmbodiedDAGGERFSDPPolicy"],
         rollout: "AsyncMultiStepRolloutWorker",
         env: "AsyncEnvWorker",
         critic=None,
