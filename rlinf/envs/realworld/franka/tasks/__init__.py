@@ -14,7 +14,9 @@
 
 from gymnasium.envs.registration import register
 
-from rlinf.envs.realworld.franka.tasks.bottle import BottleEnv as BottleEnv
+from rlinf.envs.realworld.franka.tasks.dex_pnp import (
+    DexpnpEnv as DexpnpEnv,
+)
 from rlinf.envs.realworld.franka.tasks.franka_bin_relocation import (
     FrankaBinRelocationEnv as FrankaBinRelocationEnv,
 )
@@ -32,4 +34,7 @@ register(
     entry_point="rlinf.envs.realworld.franka.tasks:FrankaBinRelocationEnv",
 )
 
-register(id="BottleEnv-v1", entry_point="rlinf.envs.realworld.franka.tasks:BottleEnv")
+register(
+    id="DexpnpEnv-v1", 
+    entry_point="rlinf.envs.realworld.franka.tasks:DexpnpEnv"
+)

@@ -15,6 +15,11 @@ else
     CONFIG_NAME=$1
 fi
 
+# Ensure DISPLAY is forwarded to Ray workers for camera preview window
+if [ -n "$DISPLAY" ]; then
+    export RAY_RUNTIME_ENV_DISPLAY="$DISPLAY"
+fi
+
 echo "Using Python at $(which python)"
 LOG_DIR="${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')" #/$(date +'%Y%m%d-%H:%M:%S')"
 MEGA_LOG_FILE="${LOG_DIR}/run_embodiment.log"

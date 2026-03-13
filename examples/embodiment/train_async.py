@@ -29,6 +29,28 @@ from rlinf.workers.rollout.hf.async_huggingface_worker import (
 mp.set_start_method("spawn", force=True)
 
 
+def _launch_classifier_reward_server(cfg, cluster, component_placement):
+    """Launch ClassifierRewardServer if configured in component_placement.
+
+    Returns:
+        Worker group handle or None if not configured.
+    """
+    reward_server_placement = component_placement.get_strategy(
+        "reward_server", required=False
+    )
+    if reward_server_placement is not None:
+        from rlinf.workers.reward.classifier_reward_worker import (
+            launch_classifier_reward_server,
+        )
+
+        print("[train_async] Launching ClassifierRewardServer")
+        return launch_classifier_reward_server(
+            cfg, cluster, reward_server_placement
+        )
+
+    return None
+
+
 @hydra.main(
     version_base="1.1", config_path="config", config_name="maniskill_sac_mlp_async"
 )
@@ -40,6 +62,9 @@ def main(cfg) -> None:
         cluster_cfg=cfg.cluster, distributed_log_dir=cfg.runner.per_worker_log_path
     )
     component_placement = HybridComponentPlacement(cfg, cluster)
+
+    # Launch ClassifierRewardServer if configured
+    _launch_classifier_reward_server(cfg, cluster, component_placement)
 
     # Create actor worker group
     actor_placement = component_placement.get_strategy("actor")

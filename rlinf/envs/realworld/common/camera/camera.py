@@ -27,6 +27,13 @@ class CameraInfo:
     resolution: tuple[int, int] = (640, 480)
     fps: int = 15
     enable_depth: bool = False
+    auto_exposure: bool = True
+    exposure: float | None = None
+    gain: float | None = None
+    # Relative crop region as percentages [0..1]: [top, left, bottom, right].
+    # For example [0.1, 0.2, 0.9, 0.8] crops 10% from top, 20% from left,
+    # 10% from bottom, 20% from right.  None means default center-square crop.
+    crop_region: tuple[float, float, float, float] | None = None
 
 
 class Camera:
@@ -71,6 +78,7 @@ class Camera:
                 camera_info.fps,
             )
         self.profile = self._pipeline.start(self._config)
+        self._configure_color_sensor_options()
 
         # Create an align object
         # rs.align allows us to perform alignment of depth frames to others frames
@@ -83,6 +91,58 @@ class Camera:
             target=self._capture_frames, daemon=True
         )
         self._frame_capturing_start = False
+
+    def _configure_color_sensor_options(self):
+        """Configure RealSense color sensor exposure options."""
+        import sys
+
+        import pyrealsense2 as rs
+
+        try:
+            color_sensor = self.profile.get_device().first_color_sensor()
+        except Exception:
+            print(
+                f"[Camera {self._camera_info.name}] WARNING: could not get color sensor, "
+                f"skipping exposure config.",
+                flush=True, file=sys.stderr,
+            )
+            return
+
+        if color_sensor is None:
+            return
+
+        if color_sensor.supports(rs.option.enable_auto_exposure):
+            auto_val = 1.0 if self._camera_info.auto_exposure else 0.0
+            color_sensor.set_option(rs.option.enable_auto_exposure, auto_val)
+            print(
+                f"[Camera {self._camera_info.name}] set auto_exposure = {auto_val}",
+                flush=True, file=sys.stderr,
+            )
+
+        if not self._camera_info.auto_exposure:
+            if (
+                self._camera_info.exposure is not None
+                and color_sensor.supports(rs.option.exposure)
+            ):
+                rng = color_sensor.get_option_range(rs.option.exposure)
+                exposure_val = float(self._camera_info.exposure)
+                color_sensor.set_option(rs.option.exposure, exposure_val)
+                actual = color_sensor.get_option(rs.option.exposure)
+                print(
+                    f"[Camera {self._camera_info.name}] set exposure = {exposure_val} "
+                    f"(actual={actual}, range=[{rng.min}, {rng.max}], default={rng.default})",
+                    flush=True, file=sys.stderr,
+                )
+            if self._camera_info.gain is not None and color_sensor.supports(rs.option.gain):
+                rng = color_sensor.get_option_range(rs.option.gain)
+                gain_val = float(self._camera_info.gain)
+                color_sensor.set_option(rs.option.gain, gain_val)
+                actual = color_sensor.get_option(rs.option.gain)
+                print(
+                    f"[Camera {self._camera_info.name}] set gain = {gain_val} "
+                    f"(actual={actual}, range=[{rng.min}, {rng.max}], default={rng.default})",
+                    flush=True, file=sys.stderr,
+                )
 
     @property
     def name(self):
@@ -115,7 +175,11 @@ class Camera:
     def _capture_frames(self):
         while self._frame_capturing_start:
             time.sleep(1 / self._camera_info.fps)
-            has_frame, frame = self._read_frame()
+            try:
+                has_frame, frame = self._read_frame()
+            except RuntimeError:
+                # RealSense may timeout on the first few frames; retry.
+                continue
             if not has_frame:
                 break
             if not self._frame_queue.empty():

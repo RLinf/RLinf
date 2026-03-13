@@ -1,5 +1,6 @@
 defaults:
-  - env/realworld_peg_insertion@env.eval
+  - env/realworld_dex_pnp@env.eval
+  - cameras/realsense@cameras.realsense
   - override hydra/job_logging: stdout
 
 hydra:
@@ -21,7 +22,7 @@ cluster:
       hardware:
         type: Franka
         configs:
-          - robot_ip: ROBOT_IP
+          - robot_ip: ROBOT_IP # Replace with your robot's IP address
             node_rank: 0
 
 runner:
@@ -39,7 +40,24 @@ env:
   eval:
     ignore_terminations: False
     auto_reset: False
+    no_gripper: False
     use_spacemouse: True
+    glove_config:
+      left_port: "/dev/ttyACM0"
+      frequency: 30
     override_cfg:
-      target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
+      camera_configs: ${cameras.realsense}
+      target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
+      end_effector_type: "ruiyan_hand"
+      end_effector_config:
+        port: "/dev/ttyUSB0"
+        baudrate: 460800
+        motor_ids: [1, 2, 3, 4, 5, 6]
+        default_velocity: 2000
+        default_current: 800
+        default_state: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      hand_target_state: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      hand_reset_state: [0.4, 0.0, 0.0, 0.0, 0.0, 0.0]
+      hand_action_scale: 1.0
+      joint_reset_qpos: [0, 0, 0, -1.9, 0, 2, 0]
       success_hold_steps: 1  # define how many consecutive steps the robot must hold the position to succeed
