@@ -121,12 +121,8 @@ def main(cfg, step_per_env: int = 1) -> None:
 
             # Save the profile data for this round
             env_num_per_instance = env_num // component_placement.get_world_size("env")
-            env_cost_dict[env_num_per_instance] = (
-                collector.env_cost / component_placement.get_world_size("env")
-            )
-            rollout_cost_dict[env_num_per_instance] = (
-                collector.rollout_cost / component_placement.get_world_size("rollout")
-            )
+            env_cost_dict[env_num_per_instance] = collector.env_cost
+            rollout_cost_dict[env_num_per_instance] = collector.rollout_cost
             if env_num == cfg.data.env_num:
                 actor_cost = collector.actor_cost
             logger.info(
