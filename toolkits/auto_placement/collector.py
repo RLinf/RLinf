@@ -69,6 +69,10 @@ class EmbodiedCostCollector(EmbodiedRunner):
             self.rollout_cost_list.append(rollout_durations["generate_one_epoch"])
             self.actor_cost_list.append(actor_durations["run_training"])
 
-        self.env_cost = sum(self.env_cost_list) / len(self.env_cost_list)
-        self.rollout_cost = sum(self.rollout_cost_list) / len(self.rollout_cost_list)
-        self.actor_cost = sum(self.actor_cost_list) / len(self.actor_cost_list)
+        self.env_cost = round(sum(self.env_cost_list) / len(self.env_cost_list), 2)
+        self.rollout_cost = round(
+            sum(self.rollout_cost_list) / len(self.rollout_cost_list), 2
+        )
+        self.actor_cost = round(
+            sum(self.actor_cost_list) / len(self.actor_cost_list), 2
+        )
