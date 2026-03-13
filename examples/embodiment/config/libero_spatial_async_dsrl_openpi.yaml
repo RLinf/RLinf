@@ -10,27 +10,28 @@ hydra:
     dir: .
   output_subdir: null
   searchpath:
-    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+    - file://${oc.env:EMBODIED_PATH}/config/
 
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: 0-1
+    env, rollout, actor: all
 
 runner:
   task_type: embodied
   logger:
-    log_path: "../results/libero_spatial_dsrl_openpi"
+    log_path: "../results"
     project_name: rlinf
-    experiment_name: "test_openpi"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    experiment_name: "libero_spatial_async_dsrl_openpi"
+    logger_backends: ["tensorboard"]
 
-  max_epochs: 1
+  max_epochs: 20000
   max_steps: -1
 
   only_eval: False
   val_check_interval: -1
-  save_interval: -1
+  save_interval: 40
+  weight_sync_interval: 30
 
 algorithm:
   normalize_advantages: False
@@ -106,8 +107,8 @@ env:
     auto_reset: False
     use_rel_reward: False
     use_step_penalty: True
-    max_episode_steps: 5
-    max_steps_per_rollout_epoch: 5
+    max_episode_steps: 240
+    max_steps_per_rollout_epoch: 240
     specific_reset_id: 0
     use_ordered_reset_state_ids: True
   eval:
@@ -123,7 +124,7 @@ env:
     specific_reset_id: 0
     use_ordered_reset_state_ids: True
     video_cfg:
-      save_video: False
+      save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
@@ -137,20 +138,20 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/workspace/dataset/pi0_libero"
+    model_path: "/path/to/model/RLinf-Pi0-SFT"
     precision: ${actor.model.precision}
 
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 2
-  global_batch_size: 8 # maximum : global batch size = micro batch size * actor num_processes.
+  micro_batch_size: 32
+  global_batch_size: 512
   seed: 42
   enable_offload: False
 
   model:
-    model_path: "/workspace/dataset/pi0_libero"
-    num_action_chunks: 5 # interface for the env
+    model_path: "/path/to/model/RLinf-Pi0-SFT"
+    num_action_chunks: 5
     add_value_head: False
     add_q_head: True
     q_head_type: "default"

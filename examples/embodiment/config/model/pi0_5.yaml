@@ -32,3 +32,13 @@ openpi:
   value_after_vlm: False
   value_vlm_mode: "mean_token"
   detach_critic_input: null
+
+  # DSRL specific configurations (disabled by default)
+  use_dsrl: False
+  dsrl_state_dim: 8
+  dsrl_action_noise_dim: 32
+  dsrl_num_q_heads: 10
+  dsrl_agg_q: "mean"
+  dsrl_image_latent_dim: 64
+  dsrl_state_latent_dim: 64
+  dsrl_hidden_dims: [128, 128, 128]

@@ -1,7 +1,7 @@
 defaults:
   - env/libero_spatial@env.train
   - env/libero_spatial@env.eval
-  - model/pi0@actor.model
+  - model/pi0_5@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
@@ -10,27 +10,30 @@ hydra:
     dir: .
   output_subdir: null
   searchpath:
-    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+    - file://${oc.env:EMBODIED_PATH}/config/
 
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: 0-1
+    env, rollout, actor: all
 
 runner:
   task_type: embodied
   logger:
-    log_path: "../results/libero_spatial_dsrl_openpi"
+    log_path: "../results"
     project_name: rlinf
-    experiment_name: "test_openpi"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    experiment_name: "libero_spatial_dsrl_openpi_pi05"
+    logger_backends: ["tensorboard"]
 
-  max_epochs: 1
+  max_epochs: 20000
   max_steps: -1
 
   only_eval: False
   val_check_interval: -1
-  save_interval: -1
+  save_interval: 40
+
+  resume_dir: null
+  ckpt_path: null
 
 algorithm:
   normalize_advantages: False
@@ -102,12 +105,12 @@ env:
   enable_offload: False
 
   train:
-    total_num_envs: 8
+    total_num_envs: 16
     auto_reset: False
     use_rel_reward: False
     use_step_penalty: True
-    max_episode_steps: 5
-    max_steps_per_rollout_epoch: 5
+    max_episode_steps: 240
+    max_steps_per_rollout_epoch: 240
     specific_reset_id: 0
     use_ordered_reset_state_ids: True
   eval:
@@ -123,7 +126,7 @@ env:
     specific_reset_id: 0
     use_ordered_reset_state_ids: True
     video_cfg:
-      save_video: False
+      save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
@@ -137,20 +140,21 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/workspace/dataset/pi0_libero"
+    model_path: "/path/to/model/RLinf-Pi05-SFT"
     precision: ${actor.model.precision}
 
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 2
-  global_batch_size: 8 # maximum : global batch size = micro batch size * actor num_processes.
+  micro_batch_size: 64
+  global_batch_size: 512
   seed: 42
   enable_offload: False
 
   model:
-    model_path: "/workspace/dataset/pi0_libero"
-    num_action_chunks: 5 # interface for the env
+    model_path: "/path/to/model/RLinf-Pi05-SFT"
+    num_action_chunks: 5
+    num_steps: 3
     add_value_head: False
     add_q_head: True
     q_head_type: "default"
