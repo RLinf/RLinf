@@ -19,7 +19,7 @@ import torch
 from omegaconf import DictConfig
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
-
+from rlinf.data.datasets.android import AndroidWorldDataset
 from rlinf.data.datasets.item import DatasetItem
 from rlinf.data.datasets.reasoning import ReasoningDataset
 from rlinf.data.datasets.rstar2 import Rstar2Dataset
@@ -67,6 +67,22 @@ def create_rl_dataset(
                 tokenizer=tokenizer,
             )
 
+        return train_dataset, val_dataset
+    elif config.data.type == "android":
+        logging.info(f"Using dataset class: {AndroidWorldDataset.__name__}")
+        train_seed = config.data.get("seed", 42)
+        val_seed = train_seed + 10000
+
+        train_dataset = AndroidWorldDataset(
+            config=config,
+            tokenizer=tokenizer,
+            seed=train_seed,
+        )
+        val_dataset = AndroidWorldDataset(
+            config=config,
+            tokenizer=tokenizer,
+            seed=val_seed,
+        )
         return train_dataset, val_dataset
     elif config.data.type == "vision_language":
         # Prefer new factory-based VLM datasets; fallback to legacy if requested

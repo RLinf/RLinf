@@ -1,0 +1,120 @@
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 1
+    rollout: 0
+    reward: all
+    
+    agent_worker:
+      node_group: android_world
+      placement: 0
+    reward_worker:
+      node_group: android_world
+      placement: 0
+
+  node_groups:
+    - label: "android_world"
+      node_ranks: 0
+      env_configs:
+        - node_ranks: 0
+          python_interpreter_path: /opt/venv/reason/bin/python3 # change to your python interpreter path
+      hardware:
+        type: ADB
+        configs:
+          - device_id: localhost:5555
+            adb_path: "adb"
+            node_rank: 0
+          # - device_id: localhost:5557
+          #   adb_path: "adb"
+          #   node_rank: 0
+
+runner:
+  task_type: reasoning
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: rlinf
+    experiment_name: ${runner.experiment_name}
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: 5
+  max_steps: -1
+
+  val_check_interval: 1
+  save_interval: 50
+
+  seq_length: 28672
+
+  enable_dynamic_batch_size: False
+  max_tokens_per_mbs: 28672
+
+  resume_dir: null
+  experiment_name: qwen3-vl-4b-eval
+  output_dir: ./logs
+
+algorithm:
+  group_size: 2
+  sampling_params:
+    do_sample: true
+    temperature: 0.6
+    top_k: 1000000
+    top_p: 1.0
+    repetition_penalty: 1.0
+    max_new_tokens: 1024
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  enable_offload: false
+  model:
+    model_path: /mnt/project_rlinf/hf_models/Qwen3-VL-4B-Instruct  # change to your model path
+    model_type: qwen3_vl
+    precision: bf16
+    enable_memory_saver: false
+
+rollout:
+  rollout_backend: sglang
+  gpu_memory_utilization: 0.79325
+  model:
+    model_path: /mnt/project_rlinf/hf_models/Qwen3-VL-4B-Instruct  # change to your model path
+    model_type: qwen3_vl
+    precision: bf16
+  enforce_eager: false
+  tensor_parallel_size: 1
+  max_running_requests: 64
+  cuda_graph_max_bs: 256
+  validate_weight: true
+  sglang:
+    attention_backend: triton
+    sampling_backend: triton
+    grammar_backend: xgrammar
+    decode_log_interval: 40
+    use_torch_compile: false
+    torch_compile_max_bs: 32
+    chunked_prefill_size: 8192
+    max_prefill_tokens: 16384
+  detokenize: true
+  return_logprobs: false
+
+data:
+  type: android
+  task_family: android_world
+  android_world_parent: /mnt/project_rlinf/yingcheng/mobile-agent/android_world #/absolute/path/to/android_world
+  n_instances_per_task: 1
+  seed: 1234
+  max_prompt_length: 81920
+  tokenizer:
+    tokenizer_model: /mnt/project_rlinf/hf_models/Qwen3-VL-4B-Instruct  # change to your tokenizer path
+    use_fast: false
+    trust_remote_code: true
+    padding_side: right
+
+reward:
+  reward_type: android
+  reward_scale: 1.0
+  reward_weights:
+    qa_accuracy: 1.0
