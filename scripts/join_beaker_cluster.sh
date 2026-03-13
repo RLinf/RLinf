@@ -106,12 +106,6 @@ export RLINF_NODE_RANK="$NODE_RANK"
 # Ray requires this env var to allow non-Linux nodes to join a cluster.
 export RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1
 
-# Increase GCS health check tolerance to prevent the desktop node from being
-# marked dead due to transient Tailscale connectivity issues.
-# Default: failure_threshold=5, timeout=10000ms.
-export RAY_health_check_failure_threshold=10
-export RAY_health_check_timeout_ms=30000
-
 echo "=== Joining Beaker Ray Cluster ==="
 echo "Head IP:      ${HEAD_IP}"
 echo "Ray port:     ${RAY_PORT}"

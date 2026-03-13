@@ -140,6 +140,8 @@ gantry_args=(
     --weka "${WEKA_MOUNT}"
     --env "HF_HOME=/weka/oe-training-default/shiruic/hf_cache"
     --env "EMBODIED_PATH=examples/embodiment"
+    --env "RAY_health_check_failure_threshold=10"
+    --env "RAY_health_check_timeout_ms=30000"
     --env-secret "HF_TOKEN=hf_token_shirui"
     --env-secret "TAILSCALE_AUTHKEY=SHIRUI_TAILSCALE_KEY"
 )
