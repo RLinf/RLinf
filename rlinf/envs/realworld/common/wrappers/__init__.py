@@ -12,6 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .classifier_reward import (
+    ClassifierRewardWrapper,
+    MultiStageClassifierRewardWrapper,
+)
+from .dexhand_intervention import DexHandIntervention
 from .euler_obs import Quat2EulerWrapper
 from .gripper_close import GripperCloseEnv
 from .relative_frame import RelativeFrame
@@ -22,6 +27,9 @@ from .reward_done_wrapper import (
 from .spacemouse_intervention import SpacemouseIntervention
 
 __all__ = [
+    "ClassifierRewardWrapper",
+    "MultiStageClassifierRewardWrapper",
+    "DexHandIntervention",
     "Quat2EulerWrapper",
     "GripperCloseEnv",
     "RelativeFrame",

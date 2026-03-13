@@ -11,40 +11,53 @@ hydra:
     - file://${oc.env:EMBODIED_PATH}/config/
 
 cluster:
-  num_nodes: 1
+  num_nodes: 2
   component_placement:
     env:
       node_group: franka
       placement: 0
+    reward_server:
+      node_group: "4090"
+      placement: 0
   node_groups:
-    - label: franka
+    - label: "4090"
       node_ranks: 0
+    - label: franka
+      node_ranks: 1
       hardware:
         type: Franka
         configs:
           - robot_ip: ROBOT_IP # Replace with your robot's IP address
-            node_rank: 0
+            node_rank: 1
+
+reward_server:
+  checkpoint_path: "/path/to/reward_classifier.pt"
+  image_keys: null
+  device: cuda
+  server_name: "ClassifierRewardServer"
 
 runner:
   task_type: embodied
   logger:
     log_path: null
     project_name: rlinf
-    experiment_name: "collect-data"
-    logger_backends: ["tensorboard"] # wandb, swanlab
-  num_data_episodes: 20
+    experiment_name: "collect-dexpnp-demo"
+    logger_backends: ["tensorboard"]
+  num_data_episodes: 20       # target number of successful demos
   record_task_description: False
 
 env:
   group_name: "EnvGroup"
   eval:
-    ignore_terminations: False
-    auto_reset: False
+    ignore_terminations: False  # let classifier-triggered termination take effect
+    auto_reset: False           # controlled by collector
     no_gripper: False
     use_spacemouse: True
     glove_config:
       left_port: "/dev/ttyACM0"
       frequency: 30
+    classifier_reward_wrapper:
+      threshold: 0.75
     override_cfg:
       camera_configs: ${cameras.realsense}
       target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
@@ -60,4 +73,5 @@ env:
       hand_reset_state: [0.4, 0.0, 0.0, 0.0, 0.0, 0.0]
       hand_action_scale: 1.0
       joint_reset_qpos: [0, 0, 0, -1.9, 0, 2, 0]
-      success_hold_steps: 1  # define how many consecutive steps the robot must hold the position to succeed
+      use_dense_reward: False
+      is_dummy: False

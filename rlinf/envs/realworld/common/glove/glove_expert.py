@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""PSI data-glove expert that reads finger angles in a background thread.
 
-from .end_effectors.base import EndEffectorType
-from .franka_env import FrankaEnv, FrankaRobotConfig, FrankaRobotState
+This module re-exports :class:`GloveExpert` from the standalone
+``rlinf_dexhand`` package (``pip install RLinf-dexterous-hands[glove]``).
+"""
 
-__all__ = [
-    "EndEffectorType",
-    "FrankaEnv",
-    "FrankaRobotConfig",
-    "FrankaRobotState",
-]
+from rlinf_dexhand.glove import GloveExpert
+
+__all__ = ["GloveExpert"]

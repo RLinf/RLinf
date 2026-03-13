@@ -12,7 +12,7 @@ use_fixed_reset_state_ids: False
 max_steps_per_rollout_epoch: 100
 max_episode_steps: 100
 use_spacemouse: True
-main_image_key: camera_1
+main_image_key: global
 
 video_cfg:
   save_video: False
@@ -20,6 +20,6 @@ video_cfg:
   video_base_dir: ${runner.logger.log_path}/video/train
 
 init_params:
-  id: "BottleEnv-v1"
+  id: "DexpnpEnv-v1"
   num_envs: null
 

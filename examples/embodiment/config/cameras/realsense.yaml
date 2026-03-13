@@ -1,0 +1,28 @@
+# Unified RealSense camera configuration for real-world tasks.
+#
+# Schema:
+# defaults: per-camera default values.
+# overrides: serial-number-specific overrides.
+#
+# Supported fields: name, auto_exposure, exposure, gain, crop_region,
+# resolution, fps, enable_depth.
+#
+# Naming rule in code:
+# - If a serial has no explicit `name` override, cameras are sorted by serial
+#   (numeric-first ascending) and named camera_1, camera_2, ...
+
+camera_defaults:
+  auto_exposure: true
+  exposure: null
+  gain: null
+  crop_region: null
+  resolution: [640, 480]
+  fps: 15
+  enable_depth: false
+
+overrides:
+  "105322251046":
+    crop_region: [0.4, 0.3, 0.85, 0.7]
+    name: "global"
+  "218722271009":
+    name: "wrist_1"
