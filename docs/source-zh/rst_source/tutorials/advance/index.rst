@@ -30,6 +30,10 @@
    介绍如何配置和使用异构软硬件集群，  
    以充分利用不同类型的计算资源和硬件设备。  
 
+- :doc:`cloud-edge`
+   展示如何使用 EasyTier 搭建云边协同训练环境，把云端与边缘节点接入同一个
+   overlay 网络，并在该网络之上运行 RLinf。
+
 - :doc:`logger`  
    介绍如何在训练过程中可视化和跟踪关键指标。  
    目前，我们支持三种实验追踪与可视化后端：  
@@ -46,4 +50,5 @@
    resume
    convertor
    hetero
+   cloud-edge
    logger

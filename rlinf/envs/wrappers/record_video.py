@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numbers
 import os
 import warnings
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -283,7 +284,10 @@ class RecordVideo(gym.Wrapper):
                         value = value.item()
                     elif value.size == 1:
                         value = value.reshape(-1)[0].item()
+                elif isinstance(value, numbers.Number):
+                    pass
                 else:
+                    warnings.warn(f"Unsupported value type {type(value)} for key {key}")
                     continue
                 info_item[key] = value
 

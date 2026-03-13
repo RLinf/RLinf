@@ -217,6 +217,12 @@ def preprocess_reasoning_advantages_inputs(
     elif kwargs["adv_type"] == "reinpp":
         kwargs.update({"rewards": rewards.unsqueeze(0)})
 
+    elif kwargs["adv_type"] == "raw":
+        kwargs.update({"rewards": rewards})
+
+    else:
+        assert False, f"Unsupported adv_type {kwargs['adv_type']}"
+
     if values is not None:  # [bsz, seq_len]
         assert values.ndim == 2, f"Unsupported values shape {values.shape}"
         values = values.transpose(0, 1)  # [seq_len, bsz]
@@ -262,9 +268,11 @@ def postprocess_reasoning_advantages_outputs(
     Post-process results for Reasoning tasks; transpose tensors back.
     """
 
-    advantages = advantages.transpose(0, 1)  # [bsz, seq_len]
+    # remember to call contiguous() to ensure correctness when being
+    # transmitted through channels
+    advantages = advantages.transpose(0, 1).contiguous()  # [bsz, seq_len]
     if returns is not None:
-        returns = returns.transpose(0, 1)  # [bsz, seq_len]
+        returns = returns.transpose(0, 1).contiguous()  # [bsz, seq_len]
 
     return advantages, returns
 

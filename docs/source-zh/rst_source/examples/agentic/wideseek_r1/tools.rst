@@ -34,7 +34,7 @@ API 密钥
 配置
 ~~~~
 
-在 ``examples/wideseek_r1/config`` 下的 YAML 配置中设置：
+在 ``examples/agent/wideseek_r1/config`` 下的 YAML 配置中设置：
 
 .. code-block:: yaml
 
@@ -92,17 +92,19 @@ API 密钥
 
       hostname -I
 
-3. 编辑 `examples/wideseek_r1/search_engine/launch_qdrant.sh` 并更新以下变量：
+3. 编辑 `examples/agent/tools/search_local_server_qdrant/launch_local_server.sh` 并更新以下变量：
 
-   - ``pages_file``：``/PATH/TO/Wiki-2018-Corpus/wiki_webpages.jsonl``
-   - ``retriever_path``：``/PATH/TO/e5-model``
+   - ``WIKI2018_DIR``： ``/PATH/TO/Wiki-2018-Corpus``
+   - ``retriever_path``： ``/PATH/TO/e5-model``
    - ``qdrant_url``：例如 ``http://<host_ip>:6333``
+   - ``qdrant_collection_name``：设置为 ``wiki_collection_m32_cef512``.
+   - ``qdrant_search_param``：设置为 ``{"hnsw_ef":256}``.   
 
 4. 启动检索服务：
 
    .. code-block:: bash
 
-      bash examples/wideseek_r1/search_engine/launch_qdrant.sh
+      bash examples/agent/tools/search_local_server_qdrant/launch_local_server.sh
 
 我们建议将该检索服务部署在与训练或评测相同的机器上，以避免不必要的网络延迟。如果部署在其他机器上，请相应配置 ``tools.search.server_addr``。默认地址为 ``localhost:8000``。
 

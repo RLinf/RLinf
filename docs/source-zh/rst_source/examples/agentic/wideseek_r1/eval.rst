@@ -55,7 +55,7 @@ WideSearch 基准
 
 与原始未处理的基准相比，这个版本已被转换为 RLinf 所需的格式，并包含若干数据修复。
 
-请按如下方式更新 `examples/wideseek_r1/config/eval_qwen3_widesearch.yaml`：
+请按如下方式更新 `examples/agent/wideseek_r1/config/eval_qwen3_widesearch.yaml`：
 
 .. code-block:: yaml
 
@@ -72,7 +72,7 @@ WideSearch 基准
 
 如果只是快速检查流程是否正常，建议先使用较小的 ``data_size``。
 
-在参考配置中，使用 8 张 GPU 做生成、8 张 GPU 运行评判模型，对 200 条 WideSearch 样本做完整评测大约需要 7 小时。
+在参考配置中，使用 8 张 GPU 做生成、8 张 GPU 运行评判模型，对 200 条 WideSearch 样本做完整评测大约需要 **7 小时** 。
 
 标准 QA 评测
 ~~~~~~~~~~~~
@@ -83,7 +83,7 @@ WideSearch 基准
 
 该数据集同时包含单跳任务（如 Natural Questions）和多跳任务（如 HotpotQA）。
 
-请按如下方式更新 `examples/wideseek_r1/config/eval_qwen3_qa.yaml`：
+请按如下方式更新 `examples/agent/wideseek_r1/config/eval_qwen3_qa.yaml`：
 
 .. code-block:: yaml
 
@@ -93,6 +93,9 @@ WideSearch 基准
      data_size: -1
 
 这里 ``is_markdown`` 必须为 ``False``。
+
+与 WideSearch 评测相比，标准 QA 评测速度更快。
+建议先在部分标准 QA 数据上运行评测，以进行快速的基本正确性检查。
 
 运行评测
 --------
@@ -108,8 +111,8 @@ WideSearch 基准
 
 .. code-block:: bash
 
-   bash examples/wideseek_r1/run_eval.sh eval_qwen3_widesearch
-   bash examples/wideseek_r1/run_eval.sh eval_qwen3_qa
+   bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_widesearch
+   bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_qa
 
 输出文件
 --------
@@ -144,7 +147,7 @@ WideSearch 基准
 
 WideSeek-R1 还支持在多智能体设定下使用两个独立模型实例进行评测，从而让 planner 和 worker 角色使用不同模型。
 
-请使用 `examples/wideseek_r1/config/eval_qwen3_qa_2eng.yaml`。相关字段如下：
+请使用 `examples/agent/wideseek_r1/config/eval_qwen3_qa_2eng.yaml`。相关字段如下：
 
 .. code-block:: yaml
 

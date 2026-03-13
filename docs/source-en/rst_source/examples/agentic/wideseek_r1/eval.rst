@@ -57,7 +57,7 @@ Compared with the original raw benchmark, this version is converted into the
 format expected by RLinf and includes several data fixes.
 
 Update
-`examples/wideseek_r1/config/eval_qwen3_widesearch.yaml`
+`examples/agent/wideseek_r1/config/eval_qwen3_widesearch.yaml`
 as follows:
 
 .. code-block:: yaml
@@ -76,7 +76,7 @@ Key fields:
 For a quick sanity check, start with a smaller ``data_size``.
 
 In the reference setup, full evaluation on 200 WideSearch examples took about
-7 hours with 8 GPUs for generation and 8 GPUs for the judge model.
+**7 hours** with 8 GPUs for generation and 8 GPUs for the judge model.
 
 Standard QA Evaluation
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -89,7 +89,7 @@ This dataset includes both single-hop tasks, such as Natural Questions, and
 multi-hop tasks, such as HotpotQA.
 
 Update
-`examples/wideseek_r1/config/eval_qwen3_qa.yaml`
+`examples/agent/wideseek_r1/config/eval_qwen3_qa.yaml`
 as follows:
 
 .. code-block:: yaml
@@ -100,6 +100,9 @@ as follows:
      data_size: -1
 
 Here ``is_markdown`` must be ``False``.
+
+Compared to the WideSearch evaluation, the standard QA evaluation is much faster.
+It is recommended to first evaluate a subset of the standard QA data as a quick sanity check.
 
 Run Evaluation
 --------------
@@ -115,8 +118,8 @@ Then run one of the following commands:
 
 .. code-block:: bash
 
-   bash examples/wideseek_r1/run_eval.sh eval_qwen3_widesearch
-   bash examples/wideseek_r1/run_eval.sh eval_qwen3_qa
+   bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_widesearch
+   bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_qa
 
 Output Files
 ------------
@@ -155,7 +158,7 @@ WideSeek-R1 also supports evaluation with two separate model instances in the
 multi-agent setting, so the planner and worker roles can use different models.
 
 Use
-`examples/wideseek_r1/config/eval_qwen3_qa_2eng.yaml`.
+`examples/agent/wideseek_r1/config/eval_qwen3_qa_2eng.yaml`.
 The relevant fields are:
 
 .. code-block:: yaml

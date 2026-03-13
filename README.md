@@ -185,6 +185,11 @@ Multiple Backend Integrations
             </a> ✅
           </li>
           <li>
+            <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/rstar2.html">
+              rStar2
+            </a> ✅
+          </li>
+          <li>
             <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/coding_online_rl.html">
               Online Coder
             </a> ✅
@@ -201,7 +206,7 @@ Multiple Backend Integrations
           <li>
             <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/wideseek_r1/index.html">
               WideSeek-R1
-            </a> ✅          
+            </a> ✅
           </li>
         </ul>
       </td>

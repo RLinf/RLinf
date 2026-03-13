@@ -557,17 +557,20 @@ class EnvWorker(Worker):
     def evaluate(self, input_channel: Channel, output_channel: Channel):
         eval_metrics = defaultdict(list)
 
-        for _ in range(self.cfg.algorithm.eval_rollout_epoch):
-            for stage_id in range(self.stage_num):
-                self.eval_env_list[stage_id].is_start = True
-                extracted_obs, infos = self.eval_env_list[stage_id].reset()
-                env_output = EnvOutput(
-                    obs=extracted_obs,
-                    final_obs=infos["final_observation"]
-                    if "final_observation" in infos
-                    else None,
-                )
-                self.send_env_batch(output_channel, env_output.to_dict(), mode="eval")
+        for eval_rollout_epoch in range(self.cfg.algorithm.eval_rollout_epoch):
+            if not self.cfg.env.eval.auto_reset or eval_rollout_epoch == 0:
+                for stage_id in range(self.stage_num):
+                    self.eval_env_list[stage_id].is_start = True
+                    extracted_obs, infos = self.eval_env_list[stage_id].reset()
+                    env_output = EnvOutput(
+                        obs=extracted_obs,
+                        final_obs=infos["final_observation"]
+                        if "final_observation" in infos
+                        else None,
+                    )
+                    self.send_env_batch(
+                        output_channel, env_output.to_dict(), mode="eval"
+                    )
 
             for eval_step in range(self.n_eval_chunk_steps):
                 for stage_id in range(self.stage_num):
@@ -580,8 +583,18 @@ class EnvWorker(Worker):
 
                     for key, value in env_info.items():
                         eval_metrics[key].append(value)
-                    if eval_step == self.n_eval_chunk_steps - 1:
-                        continue
+
+                    if self.cfg.env.eval.auto_reset:
+                        if (
+                            eval_rollout_epoch
+                            == self.cfg.algorithm.eval_rollout_epoch - 1
+                            and eval_step == self.n_eval_chunk_steps - 1
+                        ):
+                            continue
+                    else:
+                        if eval_step == self.n_eval_chunk_steps - 1:
+                            continue
+
                     self.send_env_batch(
                         output_channel, env_output.to_dict(), mode="eval"
                     )
