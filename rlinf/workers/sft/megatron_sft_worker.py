@@ -466,7 +466,7 @@ class MegatronVlmSftWorker(MegatronSftWorker):
             position_ids = batch["position_ids"]
             labels = batch["labels"]
             loss_mask = batch["loss_mask"]
-            multi_modal_inputs = batch["multi_modal_inputs"]
+            # multi_modal_inputs = batch["multi_modal_inputs"]
 
             def logits_processor(logits, labels, loss_mask):
                 log_probs = vocab_parallel_log_probs_from_logits(logits, labels)
