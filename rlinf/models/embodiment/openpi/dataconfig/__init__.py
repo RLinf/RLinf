@@ -339,8 +339,18 @@ def _override_with_model_path(config: TrainConfig, model_path: str) -> TrainConf
     return dataclasses.replace(config, **replace_kwargs)
 
 
+def _override_with_data_kwargs(config: TrainConfig, data_kwargs: dict) -> TrainConfig:
+    """Return a copy of the config with data_config set from openpi_data."""
+    data_config = dataclasses.replace(config.data, **data_kwargs)
+    replace_kwargs = {"data": data_config}
+    return dataclasses.replace(config, **replace_kwargs)
+
+
 def get_openpi_config(
-    config_name: str, model_path: Optional[str] = None, batch_size: Optional[int] = None
+    config_name: str,
+    model_path: Optional[str] = None,
+    data_kwargs: Optional[dict] = None,
+    batch_size: Optional[int] = None,
 ) -> TrainConfig:
     """Get a config by name."""
     if config_name not in _CONFIGS_DICT:
@@ -353,6 +363,8 @@ def get_openpi_config(
     config = _CONFIGS_DICT[config_name]
     if model_path is not None:
         config = _override_with_model_path(config, model_path)
+    if data_kwargs is not None:
+        config = _override_with_data_kwargs(config, data_kwargs)
     if batch_size is not None:
         config = dataclasses.replace(config, batch_size=batch_size)
 

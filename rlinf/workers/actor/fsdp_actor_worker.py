@@ -1222,7 +1222,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 )
             training_config_name = self.cfg.actor.config_name
             data_loader_config = get_openpi_config(
-                training_config_name, model_path=self.cfg.actor.model.model_path
+                training_config_name,
+                model_path=self.cfg.actor.model.model_path,
+                data_kwargs=getattr(self.cfg.actor, "openpi_data", None),
             )
             self.data_loader = _data.create_data_loader(
                 data_loader_config, framework="pytorch", shuffle=True
