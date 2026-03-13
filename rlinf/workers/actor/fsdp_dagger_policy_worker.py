@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -41,19 +41,14 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
 
-        # SAC-specific initialization
+        # DAgger-specific initialization
         self.replay_buffer = None
-        # self.target_model = None
-        # self.entropy_temp = None
-        # self.demo_buffer = None
-        # self.alpha_optimizer = None
         self.update_step = 0
         self.enable_drq = bool(getattr(self.cfg.actor, "enable_drq", False))
 
     def init_worker(self):
         super().setup_model_and_optimizer()
         self.setup_dagger_components()
-        # self.soft_update_target_model(tau=1.0)
         if self.cfg.actor.get("enable_offload", False):
             self.offload_param_and_grad()
             self.offload_optimizer()
@@ -63,85 +58,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             self.model = torch.compile(
                 self.model, mode="default"
             )  # max-autotune-no-cudagraphs
-            # self.target_model = torch.compile(self.target_model, mode="default")
-
-    # def setup_model_and_optimizer(self, initialize_target=False) -> None:
-    #     """Setup model, lr_scheduler, optimizer and grad_scaler."""
-    #     """Add initializing target model logic."""
-    #     module = self.model_provider_func()
-    #     if initialize_target:
-    #         target_module = self.model_provider_func()
-
-    #     # Enable gradient checkpointing if configured
-    #     if self.cfg.actor.model.get("gradient_checkpointing", False):
-    #         self.logger.info("[FSDP] Enabling gradient checkpointing")
-    #         module.gradient_checkpointing_enable()
-    #         if initialize_target:
-    #             target_module.gradient_checkpointing_enable()
-    #     else:
-    #         self.logger.info("[FSDP] Gradient checkpointing is disabled")
-
-    #     # build model, optimizer, lr_scheduler, grad_scaler
-    #     self.model = self._strategy.wrap_model(
-    #         model=module, device_mesh=self._device_mesh
-    #     )
-    #     if initialize_target:
-    #         self.target_model = self._strategy.wrap_model(
-    #             model=target_module, device_mesh=self._device_mesh
-    #         )
-    #         self.target_model.requires_grad_(False)
-    #         self.target_model_initialized = True
-
-    #     param_filters = {"critic": ["encoders", "encoder", "q_head", "state_proj"]}
-    #     filtered_optim_config = {"critic": self.cfg.actor.critic_optim}
-    #     optimizers = self.build_optimizers(
-    #         model=self.model,
-    #         main_optim_config=self.cfg.actor.optim,
-    #         param_filters=param_filters,
-    #         filtered_optim_config=filtered_optim_config,
-    #     )
-    #     self.optimizer = optimizers[0]
-    #     self.qf_optimizer = optimizers[1]
-
-    #     # SAC alpha
-    #     # Initialize temperature parameter for automatic entropy tuning
-    #     alpha_type = self.cfg.algorithm.entropy_tuning.get(
-    #         "alpha_type", "softplus"
-    #     )  # supported type: ["softplus","exp","fixed_alpha"]
-    #     self.entropy_temp = EntropyTemperature(
-    #         initial_alpha=self.cfg.algorithm.entropy_tuning.get("initial_alpha", 0.01),
-    #         alpha_type=alpha_type,
-    #         device=self.device,
-    #         dtype=self.torch_dtype,
-    #     )
-    #     if alpha_type != "fixed_alpha":
-    #         self.target_entropy = self.cfg.algorithm.entropy_tuning.get(
-    #             "target_entropy",
-    #             -self.cfg.actor.model.action_dim,
-    #         )
-
-    #         self.alpha_optimizer = torch.optim.Adam(
-    #             self.entropy_temp.parameters(),
-    #             lr=self.cfg.algorithm.entropy_tuning.optim.lr,
-    #         )
-
-    #     self.build_lr_schedulers()
-
-    #     self.grad_scaler = self.build_grad_scaler(
-    #         self.cfg.actor.fsdp_config.amp.use_grad_scaler
-    #     )
-
-    # def build_lr_schedulers(self):
-    #     self.lr_scheduler = self.build_lr_scheduler(
-    #         self.optimizer, self.cfg.actor.optim
-    #     )
-    #     self.qf_lr_scheduler = self.build_lr_scheduler(
-    #         self.qf_optimizer, self.cfg.actor.critic_optim
-    #     )
-    #     if self.alpha_optimizer is not None:
-    #         self.alpha_lr_scheduler = self.build_lr_scheduler(
-    #             self.optimizer, self.cfg.algorithm.entropy_tuning.optim
-    #         )
 
     def setup_dagger_components(self):
         """Initialize DAGGER-specific components"""
@@ -165,41 +81,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 "trajectory_format", "pt"
             ),
         )
-
-        # if self.cfg.algorithm.get("demo_buffer", None) is not None:
-        #     auto_save_path = self.cfg.algorithm.demo_buffer.get("auto_save_path", None)
-        #     if auto_save_path is None:
-        #         auto_save_path = os.path.join(
-        #             self.cfg.runner.logger.log_path, f"demo_buffer/rank_{self._rank}"
-        #         )
-        #     else:
-        #         auto_save_path = os.path.join(auto_save_path, f"rank_{self._rank}")
-        #     self.demo_buffer = TrajectoryReplayBuffer(
-        #         seed=seed,
-        #         enable_cache=self.cfg.algorithm.demo_buffer.enable_cache,
-        #         cache_size=self.cfg.algorithm.demo_buffer.cache_size,
-        #         sample_window_size=self.cfg.algorithm.demo_buffer.sample_window_size,
-        #         auto_save=self.cfg.algorithm.demo_buffer.get("auto_save", False),
-        #         auto_save_path=auto_save_path,
-        #         trajectory_format="pt",
-        #     )
-        #     if self.cfg.algorithm.demo_buffer.get("load_path", None) is not None:
-        #         self.demo_buffer.load_checkpoint(
-        #             self.cfg.algorithm.demo_buffer.load_path,
-        #             is_distributed=True,
-        #             local_rank=self._rank,
-        #             world_size=self._world_size,
-        #         )
-
-        # self.critic_actor_ratio = self.cfg.algorithm.get("critic_actor_ratio", 1)
-        # self.critic_subsample_size = self.cfg.algorithm.get("critic_subsample_size", -1)
-        # self.critic_sample_generator = torch.Generator(self.device)
-        # self.critic_sample_generator.manual_seed(seed)
-
-        # self.target_update_type = self.cfg.algorithm.get("target_update_type", "all")
-        # assert self.target_update_type in ["all", "q_head_only"], (
-        #     f"{self.target_update_type=} is not suppported!"
-        # )
 
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
         """
@@ -337,7 +218,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         )
 
         with self.worker_timer("sample"):
-            # Sample batch from replay buffer
             # TODO: sample from dataset & buffer
             global_batch = self.replay_buffer.sample(
                 num_chunks=global_batch_size_per_rank
@@ -348,39 +228,13 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             global_batch_size_per_rank // self.cfg.actor.micro_batch_size,
         )
 
-        # move train_micro_batch_list to device and apply DRQ for critic/actor/alpha passes
+        # move train_micro_batch_list to device and apply DRQ for dagger passes
         for i, batch in enumerate(train_micro_batch_list):
             batch = put_tensor_device(batch, device=self.device)
             if self.enable_drq:
                 drq.apply_drq(batch["curr_obs"], pad=4)
                 drq.apply_drq(batch["next_obs"], pad=4)
             train_micro_batch_list[i] = batch
-
-        # self.qf_optimizer.zero_grad()
-        # gbs_critic_loss = []
-        # all_critic_metrics = {}
-        # for batch in train_micro_batch_list:
-        #     critic_loss, critic_metrics = self.forward_critic(batch)
-        #     critic_loss = critic_loss / self.gradient_accumulation
-        #     critic_loss.backward()
-        #     gbs_critic_loss.append(critic_loss.item() * self.gradient_accumulation)
-        #     append_to_dict(all_critic_metrics, critic_metrics)
-        # all_critic_metrics = {
-        #     f"critic/{key}": np.mean(value) for key, value in all_critic_metrics.items()
-        # }
-        # qf_grad_norm = self.model.clip_grad_norm_(
-        #     max_norm=self.cfg.actor.critic_optim.clip_grad
-        # )
-
-        # self.qf_optimizer.step()
-        # self.qf_lr_scheduler.step()
-
-        # metrics_data = {
-        #     "sac/critic_loss": np.mean(gbs_critic_loss),
-        #     "critic/lr": self.qf_optimizer.param_groups[0]["lr"],
-        #     "critic/grad_norm": qf_grad_norm,
-        #     **all_critic_metrics,
-        # }
 
         self.optimizer.zero_grad()
         gbs_actor_loss = []
@@ -395,39 +249,13 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             actor_loss = actor_loss / self.gradient_accumulation
             with backward_ctx:
                 self.grad_scaler.scale(actor_loss).backward()
-            # actor_loss.backward()
             gbs_actor_loss.append(actor_loss.item() * self.gradient_accumulation)
-        # all_actor_metrics = {
-        #     f"actor/{key}": np.mean(value)
-        #     for key, value in all_actor_metrics.items()
-        # }
+
         actor_grad_norm = self.model.clip_grad_norm_(
             max_norm=self.cfg.actor.optim.clip_grad
         )
         self.optimizer.step()
         self.lr_scheduler.step()
-
-        # Update temperature parameter if using automatic entropy tuning
-        # gbs_alpha_loss = [0]
-        # alpha_grad_norm = 0
-        # if self.alpha_optimizer is not None:
-        #     self.alpha_optimizer.zero_grad()
-        #     gbs_alpha_loss = []
-        #     for batch in train_micro_batch_list:
-        #         alpha_loss = self.forward_alpha(batch) / self.gradient_accumulation
-        #         alpha_loss.backward()
-        #         gbs_alpha_loss.append(
-        #             alpha_loss.item() * self.gradient_accumulation
-        #         )
-        #     torch.distributed.all_reduce(
-        #         self.entropy_temp.base_alpha.grad, op=torch.distributed.ReduceOp.AVG
-        #     )
-        #     alpha_grad_norm = torch.nn.utils.clip_grad_norm_(
-        #         self.entropy_temp.base_alpha,
-        #         self.cfg.algorithm.entropy_tuning.optim.clip_grad,
-        #     )
-        #     self.alpha_optimizer.step()
-        #     self.alpha_lr_scheduler.step()
 
         # Collect metrics
         metrics_data = {
@@ -435,12 +263,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             "actor/lr": self.optimizer.param_groups[0]["lr"],
             "actor/grad_norm": actor_grad_norm,
         }
-        # Soft update target network
-        # if (
-        #     self.target_model_initialized
-        #     and self.update_step % self.cfg.algorithm.get("target_update_freq", 1) == 0
-        # ):
-        #     self.soft_update_target_model()
 
         return metrics_data
 
@@ -518,7 +340,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     def compute_advantages_and_returns(self):
         """
-        SAC doesn't compute advantages/returns like PPO.
+        DAgger doesn't compute advantages/returns like PPO.
         This method is kept for compatibility but returns empty metrics.
         """
         return {}
@@ -544,7 +366,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
         # save replay buffer
         buffer_save_path = os.path.join(
-            save_base_path, f"sac_components/replay_buffer/rank_{self._rank}"
+            save_base_path, f"dagger_components/replay_buffer/rank_{self._rank}"
         )
         self.replay_buffer.save_checkpoint(buffer_save_path)
 
@@ -560,32 +382,8 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             else "dcp",
         )
 
-        # load alpha
-        if self.alpha_optimizer is not None:
-            alpha_load_path = os.path.join(load_base_path, "sac_components/alpha")
-            self._strategy.load_checkpoint(
-                model=self.entropy_temp,
-                optimizers=self.alpha_optimizer,
-                lr_schedulers=self.alpha_lr_scheduler,
-                load_path=alpha_load_path,
-            )
-
-        # load target model
-        target_model_load_path = os.path.join(
-            load_base_path, "sac_components/target_model"
-        )
-        target_model_state_dict = torch.load(
-            os.path.join(target_model_load_path, f"checkpoint_rank_{self._rank}.pt")
-        )
-        self._strategy.load_model_with_state_dict(
-            self.target_model,
-            target_model_state_dict,
-            cpu_offload=False,
-            full_state_dict=True,
-        )
-
         # load replay buffer
         buffer_load_path = os.path.join(
-            load_base_path, f"sac_components/replay_buffer/rank_{self._rank}"
+            load_base_path, f"dagger_components/replay_buffer/rank_{self._rank}"
         )
         self.replay_buffer.load_checkpoint(buffer_load_path)

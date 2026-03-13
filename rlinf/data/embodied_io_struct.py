@@ -343,6 +343,8 @@ class Trajectory:
 
     def extract_intervene_traj(self, mode="any"):
         """
+        Extract intervene trajecories.
+
         This function is a little bit dangerous, it will filter out the trajectories based on intervene_flags.
         The new filtered trajectory will not keep the property of a 'trajectory', and not keep markovian.
         This function could only be used in sac and dagger.
@@ -362,18 +364,13 @@ class Trajectory:
             raise NotImplementedError(
                 f"Unsupported extract_intervene_traj mode: {mode}"
             )
-        # if mask.dim() > 1:
-        #     mask = mask.reshape(mask.shape[0], -1).any(dim=-1)
         assert mask.dim() == 2, (
             f"Expected 2D mask after processing (traj len, bsz), got {mask.shape=}"
         )
         traj_len = int(mask.shape[0])
-        # Apply mask to fields with same length as intervene_flags
 
         def apply_mask(tensor, i):
             return tensor[:, i][mask[:, i]].unsqueeze(1) if tensor is not None else None
-
-        # Apply mask to dict fields
 
         def apply_mask_to_dict(d, i):
             return (
@@ -499,10 +496,6 @@ class EmbodiedRolloutResult:
         intervene_actions: torch.Tensor,
         intervene_flags: torch.Tensor,
     ):
-        # action: [bsz, num-chunk-size x action-dim]
-        # intervene_actions: [bsz, num-chunk-size x action-dim]
-        # intervene_flags: [bsz, num-chunk-size]
-
         if self.actions and len(self.actions) > 0:
             last_action = self.actions[-1]
             assert last_action.dim() == 2, (
@@ -531,10 +524,6 @@ class EmbodiedRolloutResult:
             full_flags = flags.expand_as(last_full_action).reshape(bsz, -1)
             self.intervene_flags[-1] = full_flags
 
-            # Sync forward_inputs["action"] with the merged human action so the student
-            # imitates the human, not its own prediction. Remove "model_action" because
-            # it is the student's own model-space prediction and must not be used as a
-            # supervised imitation target.
             if self.forward_inputs:
                 last_fi = self.forward_inputs[-1]
                 if "action" in last_fi:

@@ -475,9 +475,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             "tokenized_prompt": processed_obs["tokenized_prompt"],
             "tokenized_prompt_mask": processed_obs["tokenized_prompt_mask"],
             "action": torch.from_numpy(actions).reshape(actions.shape[0], -1),
-            # Raw model-space action before output_transform: [B, action_horizon * action_dim].
-            # Used as the imitation target when the expert model provides supervision,
-            # so the student avoids a redundant env→model renormalization round-trip.
             "model_action": outputs["actions"].reshape(outputs["actions"].shape[0], -1),
         }
         if forward_action is not None:

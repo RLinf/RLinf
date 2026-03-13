@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -75,7 +75,7 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
             for traj in recv_list:
                 intervene_traj = traj.extract_intervene_traj()
                 if intervene_traj is not None:
-                    intervene_traj_list.append(intervene_traj)
+                    intervene_traj_list.extend(intervene_traj)
 
             if len(intervene_traj_list) > 0:
                 self.demo_buffer.add_trajectories(intervene_traj_list)
