@@ -121,3 +121,128 @@ Replay Buffer 使用教程
 
 - **吞吐优先**：开启 `enable_cache`，`cache_size` 设为近期活跃轨迹数。
 - **数据新鲜度**：使用 `sample_window_size` 限制采样窗口。
+
+可视化工具
+----------
+
+RLinf 提供了交互式可视化工具，用于检查 replay buffer 保存的轨迹数据。
+
+功能特性
+~~~~~~~~
+
+- **延迟加载**：使用 `TrajectoryReplayBuffer` 按需加载轨迹，避免将所有数据加载到内存
+- **自动切换**：到达最后一帧时自动前进到下一条轨迹
+- **跳转轨迹**：在文本框中输入轨迹 ID 直接跳转
+- **多相机支持**：查看主相机、腕部相机或额外视角相机
+- **批次导航**：在 B > 1 时可在批次索引间导航
+- **SSH/无显示器模式支持**：保存图像以便查看
+
+交互模式（本地机器有显示）
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   python toolkits/replay_buffer/visualize.py \
+       --replay_dir logs/my_run/replay_buffer/rank_0
+
+键盘导航：
+
+- ``←`` / ``→`` (或 ``p`` / ``n``)：上一步/下一步（在边界自动切换轨迹）
+- ``↑`` / ``↓``：上一条/下一条轨迹
+- ``b`` / ``v``：在批次索引间切换（如果 B > 1）
+- ``s``：保存当前视图到图像文件
+- ``Home`` / ``End``：跳转到第一步/最后一步
+- ``q`` / ``Esc``：退出
+- 在文本框中输入轨迹 ID 直接跳转
+
+SSH/无显示器模式（例如 VSCode Remote SSH）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+使用无显示器交互脚本：
+
+.. code-block:: bash
+
+   python toolkits/replay_buffer/visualize_headless.py \
+       --replay_dir logs/my_run/replay_buffer/rank_0 \
+       --output viz.png
+
+然后在 VSCode 中：
+
+1. 在编辑器中打开 ``viz.png``
+2. 使用命令行提示进行导航
+3. 图像自动更新 - VSCode 会显示变化
+
+**命令：**
+
+- ``n`` / ``next``：下一步（在末尾自动切换到下一条轨迹）
+- ``p`` / ``prev``：上一步
+- ``nt`` / ``nexttraj``：下一条轨迹
+- ``pt`` / ``prevtraj``：上一条轨迹
+- ``j <id>``：跳转到轨迹 ID（例如 ``j 42``）
+- ``info``：显示当前位置
+- ``q`` / ``quit``：退出
+
+带 X11 转发的自动保存
+~~~~~~~~~~~~~~~~~~~~~
+
+如果启用了 X11 转发：
+
+.. code-block:: bash
+
+   python toolkits/replay_buffer/visualize.py \
+       --replay_dir logs/my_run/replay_buffer/rank_0 \
+       --save_image --output viz.png
+
+使用键盘导航，图像文件会自动更新。在 VSCode 中打开 ``viz.png`` 查看当前视图。
+
+静态图像导出
+~~~~~~~~~~~~
+
+保存单帧而不进行交互：
+
+.. code-block:: bash
+
+   python toolkits/replay_buffer/visualize.py \
+       --replay_dir logs/my_run/replay_buffer/rank_0 \
+       --save_image --output viz.png --no_display
+
+显示信息
+~~~~~~~~
+
+可视化工具显示：
+
+-  **当前观察**（左面板）
+-  **下一个观察**（右面板）
+-  **轨迹 ID** 和索引位置
+-  **步骤** 和 **批次** 索引
+- 每个转换的 **动作**、 **奖励** 和 **完成** 标志
+
+查看不同相机角度
+~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   # 主相机（默认）
+   python toolkits/replay_buffer/visualize.py \
+       --replay_dir logs/my_run/replay_buffer/rank_0 \
+       --camera main_images
+
+   # 腕部相机
+   python toolkits/replay_buffer/visualize.py \
+       --replay_dir logs/my_run/replay_buffer/rank_0 \
+       --camera wrist_images
+
+   # 额外视角相机
+   python toolkits/replay_buffer/visualize.py \
+       --replay_dir logs/my_run/replay_buffer/rank_0 \
+       --camera extra_view_images
+
+注意事项
+~~~~~~~~
+
+- 工具使用 ``TrajectoryReplayBuffer.load_checkpoint()`` 读取元数据和索引文件
+- 轨迹使用 ``_load_trajectory()`` 按需延迟加载
+- 缓存大小设置为 5 条轨迹以平衡内存和性能
+- 当在轨迹 i 的最后一帧按 ``→`` 时，会自动跳转到轨迹 i+1 的第 0 帧
+- 当在轨迹 i 的第一帧按 ``←`` 时，会自动跳转到轨迹 i-1 的最后一帧
+- 图像文件以 150 DPI 保存，在保持良好质量的同时控制文件大小
