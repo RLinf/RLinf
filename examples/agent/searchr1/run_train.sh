@@ -12,7 +12,7 @@ MEGATRON_PATH=/opt/Megatron-LM
 export PYTHONPATH=${REPO_PATH}:${MEGATRON_PATH}:${REPO_PATH}/examples:$PYTHONPATH
 
 if [ -z "$1" ]; then
-    CONFIG_NAME="qwen2.5-3b-tool-1node"
+    CONFIG_NAME="train_qwen2.5"
 else
     CONFIG_NAME=$1
 fi
