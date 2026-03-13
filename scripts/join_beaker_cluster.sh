@@ -161,6 +161,45 @@ for i in $(seq 1 30); do
     sleep 10
 done
 
+# --- Verify bidirectional Ray connectivity ---
+# Schedule a task pinned to this desktop node from the cluster to confirm
+# Beaker can reach back to the desktop (the direction GCS health checks use).
+echo "Verifying Beaker → desktop connectivity..."
+python3 - <<'PYEOF'
+import sys, ray, socket
+ray.init(address="auto")
+desktop_ip = None
+for node in ray.nodes():
+    if node["Alive"] and node["NodeManagerAddress"] not in ("127.0.0.1",):
+        # Find the desktop node (not the head node)
+        if node.get("NodeManagerAddress", "").startswith("100."):
+            desktop_ip = node["NodeManagerAddress"]
+            node_id = node["NodeID"]
+            break
+if desktop_ip is None:
+    print("WARNING: Could not identify desktop node in Ray cluster — skipping connectivity check")
+    sys.exit(0)
+
+@ray.remote
+def ping():
+    return socket.gethostname()
+
+try:
+    result = ray.get(
+        ping.options(
+            scheduling_strategy=ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
+                node_id=node_id, soft=False
+            )
+        ).remote(),
+        timeout=30,
+    )
+    print(f"Beaker → desktop connectivity OK (hostname: {result})")
+except Exception as e:
+    print(f"ERROR: Beaker could not reach desktop node ({desktop_ip}): {e}")
+    print("GCS health checks will likely fail. Check: tailscale status")
+    sys.exit(1)
+PYEOF
+
 # --- Activate .venv if present ---
 if [ -f ".venv/bin/activate" ]; then
     echo "Activating .venv in $(pwd)"
