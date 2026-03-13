@@ -117,17 +117,6 @@ as well as reinforcement learning training examples on real robots.
     
   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-      <img src="https://github.com/RLinf/misc/raw/main/pic/dagger.jpg"
-          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-       <a href="dagger.html" style="text-decoration: underline; color: blue;">
-          <b>DAgger for Embodied Policies</b>
-        </a><br>
-        Guiding the student model in online imitation learning with an expert model
-      </p>
-    </div>
-
-    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
       <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -267,6 +256,19 @@ as well as reinforcement learning training examples on real robots.
           <b>Real-World RL with XSquare Turtle2</b>
         </a><br>
         SAC + CNN policy on the XSquare Turtle2 dual-arm robot
+      </p>
+    </div>
+  </div>
+
+  <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/dagger.jpg"
+          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+       <a href="dagger.html" style="text-decoration: underline; color: blue;">
+          <b>DAgger for Embodied Policies</b>
+        </a><br>
+        Guiding the student model in online imitation learning with an expert model
       </p>
     </div>
   </div>

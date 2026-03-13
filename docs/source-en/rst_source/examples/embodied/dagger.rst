@@ -80,7 +80,7 @@ Please switch to the corresponding virtual environment via the built-in `switch_
 
 .. code:: bash
 
-   source switch_env openvla-oft
+   source switch_env openpi
 
 **Option 2: Custom Environment**
 
@@ -90,7 +90,7 @@ Install dependencies directly in your environment by running the following comma
 
    # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
 
-   bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
 Checkpoint Setup
@@ -210,7 +210,7 @@ Visualization and Results
 Experiment Results
 ------------------
 
-.. csv-table:: Experiment Results
+.. csv-table::
    :header: "Configuration", "Student init SR", "Expert SR", "Training Time", "Student final SR"
 
    "MLP + Maniskill", "0%", "100%", "20min", "100%"

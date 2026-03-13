@@ -80,7 +80,7 @@
 
 .. code:: bash
 
-   source switch_env openvla-oft
+   source switch_env openpi
 
 **选项 2：自定义环境**
 
@@ -90,7 +90,7 @@
 
    # 为提高国内依赖安装速度，可以添加 `--use-mirror` 到下面的 install.sh 命令
 
-   bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
 Checkpoint 配置
@@ -211,7 +211,7 @@ Checkpoint 配置
 实验结果
 --------
 
-.. csv-table:: 实验结果
+.. csv-table::
    :header: "配置", "学生初始成功率", "专家成功率", "训练时间", "学生最终成功率"
 
    "MLP + Maniskill", "0%", "100%", "20min", "100%"
