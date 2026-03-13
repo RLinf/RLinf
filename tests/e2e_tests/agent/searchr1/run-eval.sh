@@ -10,4 +10,4 @@ export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 
 CONFIG_NAME=qwen2.5-1.5b-eval
 
-python ${REPO_PATH}/examples/agent/searchr1/main_searchr1_eval.py --config-path ${REPO_PATH}/tests/e2e_tests/agent/searchr1  --config-name $CONFIG_NAME
+python ${REPO_PATH}/examples/agent/searchr1/eval.py --config-path ${REPO_PATH}/tests/e2e_tests/agent/searchr1  --config-name $CONFIG_NAME
