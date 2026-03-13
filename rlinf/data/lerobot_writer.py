@@ -119,6 +119,7 @@ class LeRobotDatasetWriter:
         # Internal state
         self._episodes: list[dict[str, Any]] = []  # Episode metadata
         self._tasks: dict[str, int] = {}  # task_str -> task_index
+        self._task_records: dict[str, dict[str, Any]] = {}
         self._global_frame_index = 0  # Global frame counter
 
         if use_incremental_stats:
@@ -226,19 +227,32 @@ class LeRobotDatasetWriter:
         os.makedirs(chunk_dir, exist_ok=True)
         return chunk_dir
 
-    def _get_task_index(self, task: str) -> int:
+    def _get_task_index(self, task: str, task_metadata: dict[str, Any] | None = None) -> int:
         """Get the task index, creating a new one if it does not exist."""
         if task not in self._tasks:
             new_index = len(self._tasks)
             self._tasks[task] = new_index
-            self._append_task_record(task, new_index)
+            self._task_records[task] = {
+                "task_index": new_index,
+                "task": task,
+                **(task_metadata or {}),
+            }
+            self._append_task_record(task, new_index, task_metadata=task_metadata)
         return self._tasks[task]
 
-    def _append_task_record(self, task: str, task_index: int) -> None:
+    def _append_task_record(
+        self,
+        task: str,
+        task_index: int,
+        task_metadata: dict[str, Any] | None = None,
+    ) -> None:
         """Immediately append a new task entry to tasks.jsonl."""
         path = os.path.join(self.root_dir, "meta", "tasks.jsonl")
         with open(path, "a") as f:
-            f.write(json.dumps({"task_index": task_index, "task": task}) + "\n")
+            record = {"task_index": task_index, "task": task}
+            if task_metadata:
+                record.update(task_metadata)
+            f.write(json.dumps(record) + "\n")
 
     def _encode_image_to_png(self, image: np.ndarray) -> bytes:
         """Encode a numpy image to PNG bytes."""
@@ -266,6 +280,7 @@ class LeRobotDatasetWriter:
         actions: np.ndarray,
         task: str,
         is_success: bool,
+        task_metadata: dict[str, Any] | None = None,
         dones: np.ndarray | None = None,
     ) -> int:
         """
@@ -286,7 +301,7 @@ class LeRobotDatasetWriter:
         episode_index = len(self._episodes)
         chunk_index = self._get_chunk_index(episode_index)
         chunk_dir = self._get_chunk_dir(chunk_index)
-        task_index = self._get_task_index(task)
+        task_index = self._get_task_index(task, task_metadata=task_metadata)
 
         T = len(images)
 
@@ -374,6 +389,8 @@ class LeRobotDatasetWriter:
             "length": T,
             "is_success": is_success,
         }
+        if task_metadata:
+            episode_meta["task_metadata"] = task_metadata
         self._episodes.append(episode_meta)
         self._append_episode_record(episode_meta)
 
@@ -765,6 +782,16 @@ class LeRobotDatasetWriter:
                 "is_success": {"dtype": "bool", "shape": [1], "names": None},
             },
         }
+        metadata_keys = sorted(
+            {
+                key
+                for task_record in self._task_records.values()
+                for key in task_record.keys()
+                if key not in {"task_index", "task"}
+            }
+        )
+        if metadata_keys:
+            info["task_metadata_keys"] = metadata_keys
 
         with open(os.path.join(meta_dir, "info.json"), "w") as f:
             json.dump(info, f, indent=4)
@@ -846,6 +873,7 @@ def merge_distributed_datasets(
     # Collect data from all episodes
     all_episodes_data = []  # [(parquet_path, episode_meta), ...]
     all_tasks = {}  # task_str -> task_index (globally re-indexed)
+    all_task_records = {}  # task_str -> task record with optional metadata
 
     for sub_dir in sub_dirs:
         # Check directory structure
@@ -882,6 +910,11 @@ def merge_distributed_datasets(
                     for task in ep_meta.get("tasks", []):
                         if task not in all_tasks:
                             all_tasks[task] = len(all_tasks)
+                            all_task_records[task] = {
+                                "task_index": all_tasks[task],
+                                "task": task,
+                                **ep_meta.get("task_metadata", {}),
+                            }
                 else:
                     logger.warning(f"[merge] Parquet not found: {parquet_path}")
 
@@ -983,14 +1016,15 @@ def merge_distributed_datasets(
         pq.write_table(new_table, new_parquet_path)
 
         # Update episode metadata
-        merged_episodes.append(
-            {
-                "episode_index": new_ep_idx,
-                "tasks": ep_meta.get("tasks", []),
-                "length": T,
-                "is_success": ep_meta.get("is_success", False),
-            }
-        )
+        merged_episode = {
+            "episode_index": new_ep_idx,
+            "tasks": ep_meta.get("tasks", []),
+            "length": T,
+            "is_success": ep_meta.get("is_success", False),
+        }
+        if "task_metadata" in ep_meta:
+            merged_episode["task_metadata"] = ep_meta["task_metadata"]
+        merged_episodes.append(merged_episode)
 
         global_frame_index += T
 
@@ -1044,6 +1078,16 @@ def merge_distributed_datasets(
             "is_success": {"dtype": "bool", "shape": [1], "names": None},
         },
     }
+    metadata_keys = sorted(
+        {
+            key
+            for task_record in all_task_records.values()
+            for key in task_record.keys()
+            if key not in {"task_index", "task"}
+        }
+    )
+    if metadata_keys:
+        info["task_metadata_keys"] = metadata_keys
     with open(os.path.join(meta_dir, "info.json"), "w") as f:
         json.dump(info, f, indent=4)
 
@@ -1056,7 +1100,8 @@ def merge_distributed_datasets(
     sorted_tasks = sorted(all_tasks.items(), key=lambda x: x[1])
     with open(os.path.join(meta_dir, "tasks.jsonl"), "w") as f:
         for task, task_index in sorted_tasks:
-            f.write(json.dumps({"task_index": task_index, "task": task}) + "\n")
+            record = all_task_records.get(task, {"task_index": task_index, "task": task})
+            f.write(json.dumps(record) + "\n")
 
     logger.info(
         f"[merge] Merge complete: {total_episodes} episodes, {global_frame_index} frames -> {output_dir}"
