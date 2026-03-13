@@ -112,7 +112,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-Pi0-RoboCasa"  # Update this to your pi0 model path
+    model_path: "/path/to/model/RLinf-Pi0-RoboCasa"  # https://huggingface.co/RLinf/RLinf-Pi0-RoboCasa
     precision: ${actor.model.precision}
 
 actor:
@@ -125,7 +125,7 @@ actor:
 
   # Override the default values in model/pi0
   model:
-    model_path: "/path/to/model/RLinf-Pi0-RoboCasa"  # Update this to your pi0 model path
+    model_path: "/path/to/model/RLinf-Pi0-RoboCasa"  # https://huggingface.co/RLinf/RLinf-Pi0-RoboCasa
     num_action_chunks: 10 # interface for the env
     action_dim: 12  # Pi0 outputs 32D, extract first 12D, then convert [5:12] to PandaOmron's 12D format
     num_steps: 5

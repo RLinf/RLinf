@@ -115,7 +115,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: ""
+    model_path: ""  # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     precision: ${actor.model.precision}
 
   enable_torch_compile: True
@@ -130,7 +130,7 @@ actor:
 
   model:
     model_type: mlp_policy
-    model_path: ""
+    model_path: ""  # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     policy_setup: panda-qpos
     obs_dim: 10
     action_dim: 8
