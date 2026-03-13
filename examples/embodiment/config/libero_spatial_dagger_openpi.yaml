@@ -1,5 +1,3 @@
-# FIXME before exp: batch, min_buffer_size, num_env, component_placement, breakpoint()
-
 defaults:
   - env/libero_spatial@env.train
   - env/libero_spatial@env.eval
@@ -111,11 +109,11 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/home/dataset-assist-0/ysa/dagger/ckpt/libero-sft"
+    model_path: "/path/to/model"
     precision: ${actor.model.precision}
 
   expert_model:
-    model_path: "/home/dataset-assist-0/ysa/dagger/ckpt/libero-spatial-final"
+    model_path: "/path/to/expert_model"
     precision: ${actor.model.precision}
 
 actor:
@@ -129,7 +127,7 @@ actor:
   # Override the default values in model/pi0
   model:
     precision: null
-    model_path: "/home/dataset-assist-0/ysa/dagger/ckpt/libero-sft"
+    model_path: "/path/to/model"
     num_action_chunks: 10 # interface for the env
     add_value_head: False
     # openpi specific parameters
@@ -166,9 +164,3 @@ reward:
 
 critic:
   use_critic_model: False
-
-# only train expert
-# lr
-# bf16
-# ignore termination
-# fix reset id

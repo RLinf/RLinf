@@ -33,8 +33,8 @@ runner:
   save_interval: -1
 
   resume_dir: null
-  ckpt_path: null
-  expert_ckpt_path: ???  # path to expert actor full_weights.pt
+  ckpt_path: null # null if train the student from-scratch
+  expert_ckpt_path: "/path/to/ckpt"
 
 algorithm:
   dagger:

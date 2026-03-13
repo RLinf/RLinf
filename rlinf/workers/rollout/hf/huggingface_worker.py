@@ -189,20 +189,22 @@ class MultiStepRolloutWorker(Worker):
             "max_new_tokens": self._length_params["max_new_token"],
         }
 
-        # dagger sampling parameters
-        self._dagger_sampling_params = {
-            "init_beta": self.cfg.algorithm.get("dagger", {}).get("init_beta", 0.5),
-            "beta": self.cfg.algorithm.get("dagger", {}).get("init_beta", 0.5),
-            "current_rollout_epoch": 0,
-            "beta_schedule": self.cfg.algorithm.get("dagger", {}).get(
-                "beta_schedule", "exponential"
-            ),
-            "beta_min": self.cfg.algorithm.get("dagger", {}).get("beta_min", 0.05),
-            "beta_decay": self.cfg.algorithm.get("dagger", {}).get("beta_decay", 0.99),
-            "beta_decay_steps": self.cfg.algorithm.get("dagger", {}).get(
-                "beta_decay_steps", 1000
-            ),
-        }
+        if self.expert_model is not None:  # dagger sampling parameters
+            self._dagger_sampling_params = {
+                "init_beta": self.cfg.algorithm.get("dagger", {}).get("init_beta", 0.5),
+                "beta": self.cfg.algorithm.get("dagger", {}).get("init_beta", 0.5),
+                "current_rollout_epoch": 0,
+                "beta_schedule": self.cfg.algorithm.get("dagger", {}).get(
+                    "beta_schedule", "exponential"
+                ),
+                "beta_min": self.cfg.algorithm.get("dagger", {}).get("beta_min", 0.05),
+                "beta_decay": self.cfg.algorithm.get("dagger", {}).get(
+                    "beta_decay", 0.99
+                ),
+                "beta_decay_steps": self.cfg.algorithm.get("dagger", {}).get(
+                    "beta_decay_steps", 1000
+                ),
+            }
 
     def update_dagger_beta(self):
         if self.expert_model is None:

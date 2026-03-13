@@ -385,7 +385,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self.optimizer.zero_grad()
         gbs_actor_loss = []
         # all_actor_metrics = {}
-        for (mb_idx, batch) in enumerate(train_micro_batch_list):
+        for mb_idx, batch in enumerate(train_micro_batch_list):
             backward_ctx = self.before_micro_batch(
                 self.model,
                 is_last_micro_batch=(mb_idx + 1) == self.gradient_accumulation,
@@ -501,8 +501,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         )
 
         self.model.train()
-        if hasattr(self.model, "gradient_checkpointing_disable"):
-            self.model.gradient_checkpointing_disable()
         metrics = {}
 
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
