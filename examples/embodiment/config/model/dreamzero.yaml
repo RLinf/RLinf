@@ -1,0 +1,12 @@
+# DreamZero DROID policy for embodied evaluation
+# Action space: 8D (7 joint positions + 1 gripper) - matches Franka pd_joint_pos control
+model_type: "dreamzero"
+model_path: /mnt/public/liyanghao/data/model/DreamZero-DROID  # DreamZero checkpoint with experiment_cfg/
+
+# DROID embodiment: absolute joint position control for Maniskill panda-droid
+policy_setup: "panda-droid"
+action_dim: 8
+num_action_chunks: 24  # Action chunk size (DROID typically uses 16-32)
+
+embodiment_tag: "oxe_droid"
+precision: "bf16"
