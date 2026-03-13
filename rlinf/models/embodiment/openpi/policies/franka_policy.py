@@ -55,7 +55,7 @@ class FrankaEEOutputs(transforms.DataTransformFn):
 
     def __call__(self, data: dict) -> dict:
         return {
-            "actions": np.asarray(data["actions"][:, :7])
+            "actions": np.asarray(data["actions"][:, :6]) # TODO: Need to use config !!!!!!!
         }  # use abs actions [x,y,z,rx,ry,rz,gripper] for Franka
 
 
@@ -80,9 +80,6 @@ class FrankaEEInputs(transforms.DataTransformFn):
     action_train_with_rotation_6d: bool = False
 
     def __call__(self, data: dict) -> dict:
-        assert data["observation/state"].shape == (7,), (
-            f"Expected state shape (7,), got {data['observation/state'].shape}"
-        )
         if isinstance(data["observation/state"], np.ndarray):
             data["observation/state"] = torch.from_numpy(
                 data["observation/state"]
@@ -123,9 +120,6 @@ class FrankaEEInputs(transforms.DataTransformFn):
         # Pad actions to the model action dimension. Keep this for your own dataset.
         # Actions are only available during training.
         if "actions" in data:
-            assert len(data["actions"].shape) == 2 and data["actions"].shape[-1] == 7, (
-                f"Expected actions shape (N, 7), got {data['actions'].shape}"
-            )
             actions = transforms.pad_to_dim(data["actions"], self.action_dim)
             inputs["actions"] = actions
 

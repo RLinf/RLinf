@@ -108,9 +108,11 @@ class PegInsertionEnv(FrankaEnv):
         config = PegInsertionConfig(**override_cfg)
         super().__init__(config, worker_info, hardware_info, env_idx)
 
+    # ???: maybe should change the task description...
     @property
     def task_description(self):
-        return "peg and insertion"
+        return "push the button"
+        # return "peg and insertion"
 
     def go_to_rest(self, joint_reset=False):
         """
