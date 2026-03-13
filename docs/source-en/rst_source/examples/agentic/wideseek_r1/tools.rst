@@ -98,18 +98,20 @@ Launch the Retrieval Service
       hostname -I
 
 3. Edit
-   `examples/agent/wideseek_r1/search_engine/launch_qdrant.sh`
+   `examples/agent/tools/search_local_server_qdrant/launch_local_server.sh`
    and update these variables:
 
-   - ``pages_file``: ``/PATH/TO/Wiki-2018-Corpus/wiki_webpages.jsonl``
+   - ``WIKI2018_DIR``: ``/PATH/TO/Wiki-2018-Corpus``
    - ``retriever_path``: ``/PATH/TO/e5-model``
    - ``qdrant_url``: for example ``http://<host_ip>:6333``
+   - ``qdrant_collection_name``: set it to ``wiki_collection_m32_cef512``.
+   - ``qdrant_search_param``: set it to ``{"hnsw_ef":256}``.
 
 4. Start the retrieval service:
 
    .. code-block:: bash
 
-      bash examples/agent/wideseek_r1/search_engine/launch_qdrant.sh
+      bash examples/agent/tools/search_local_server_qdrant/launch_local_server.sh
 
 We recommend running this retrieval service on the same machine as training or
 evaluation to avoid unnecessary network latency. If you run it elsewhere,
