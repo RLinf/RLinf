@@ -141,7 +141,7 @@ gantry_args=(
     --env "HF_HOME=/weka/oe-training-default/shiruic/hf_cache"
     --env "EMBODIED_PATH=examples/embodiment"
     --env-secret "HF_TOKEN=hf_token_shirui"
-    --env-secret "TAILSCALE_AUTHKEY=tailscale_authkey_shirui"
+    --env-secret "TAILSCALE_AUTHKEY=SHIRUI_TAILSCALE_KEY"
 )
 
 [ -n "$BUDGET" ]      && gantry_args+=("--budget" "$BUDGET")
