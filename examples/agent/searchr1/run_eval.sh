@@ -17,4 +17,4 @@ else
     CONFIG_NAME=$1
 fi
 
-python ${REPO_PATH}/examples/agent/searchr1/main_searchr1_eval.py --config-path ${CONFIG_PATH}/config/  --config-name $CONFIG_NAME
+python ${REPO_PATH}/examples/agent/searchr1/eval.py --config-path ${CONFIG_PATH}/config/  --config-name $CONFIG_NAME
