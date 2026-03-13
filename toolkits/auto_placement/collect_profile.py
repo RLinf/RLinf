@@ -68,8 +68,8 @@ def main(cfg, step_per_env: int = 1) -> None:
         rollout_cost_dict: dict[int, float] = {}
         actor_cost: float = 0.0
         env_num_test_list = [
-            cfg.data.env_num // 4,
-            cfg.data.env_num // 2,
+            cfg.data.env_num * 4,
+            cfg.data.env_num * 2,
             cfg.data.env_num,
         ]
 
