@@ -9,7 +9,7 @@ Dataset
 We also use the boba dataset. For details, please refer to `Reinforcement Learning Training for Math Reasoning <reasoning.html>`_.
 
 Algorithm
---------
+---------
 
 We use the standard PPO (Proximal Policy Optimization) algorithm. For a detailed introduction to this algorithm, please refer to `PPO <../../tutorials/rlalg/ppo.html>`_.
 
