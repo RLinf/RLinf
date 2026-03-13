@@ -12,7 +12,7 @@ export RAY_DEDUP_LOGS=0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-PROJECT_ROOT="/path/to/your/root_project"
+PROJECT_ROOT="/mnt/project_rlinf/yingcheng/mobile-agent"
 RLINF_ROOT="$PROJECT_ROOT/RLinf"
 ANDROID_WORLD_ROOT="$PROJECT_ROOT/android_world"
 
