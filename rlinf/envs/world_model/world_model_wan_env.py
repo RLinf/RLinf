@@ -58,6 +58,7 @@ class WanEnv(BaseWorldEnv):
         self.update_reset_state_ids()
 
         # Model hyperparameters
+        self.num_inference_steps = cfg.num_inference_steps
         self.chunk = cfg.chunk  # Ta = 8
         self.condition_frame_length = cfg.condition_frame_length  # To = 5
         self.num_frames = cfg.num_frames  # Total number of frames to encode = 13
@@ -78,21 +79,32 @@ class WanEnv(BaseWorldEnv):
         self.reward_model = self._load_reward_model().eval().to(self.device)
 
         # Initialize state
-        self.current_obs = None  # Will be a tensor [num_envs, 3, 1, t, h, w]
+        # Will be a tensor [num_envs, 3, 1, T, h, w]
+        self.current_obs = None  
         self.task_descriptions = [""] * self.num_envs
         self.init_ee_poses = [None] * self.num_envs
 
-        # Image queue for condition frames
+        # Image queue for condition frames to generate video, 
+        # keep length of condition_frame_length
         self.image_queue = [
             [None] * self.condition_frame_length for _ in range(self.num_envs)
         ]
 
+        # Condition action to generate video, 
+        # keep length of condition_frame_length
         self.condition_action = torch.zeros(
             self.num_envs,
             self.condition_frame_length,
             7,
         )
-        self.condition_action[..., -1] = -1
+
+        self.reset_gripper_open = cfg.get("reset_gripper_open", True)
+        self.is_libero_env = cfg.get("wm_env_type", "libero") == "libero"
+
+        # If reset_gripper_open is True and the environment is Libero, set the gripper open action to -1
+        if self.reset_gripper_open and self.is_libero_env:
+            self.condition_action[:, -1] = -1
+
         self.trans_norm = transforms.Compose(
             [
                 transforms.Normalize(
@@ -276,6 +288,7 @@ class WanEnv(BaseWorldEnv):
         img_tensors = []
         task_descriptions = []
         init_ee_poses = []
+        condition_actions = []
 
         for env_idx, episode_idx in enumerate(episode_indices):
             # Get episode data from dataset wrapper
@@ -321,15 +334,29 @@ class WanEnv(BaseWorldEnv):
             # Normalize to [-1, 1]
             img_tensor = self.trans_norm(img_tensor)
 
+            # Repeat to fill condition frames: [3, H, W] -> [3, condition_frame_length, H, W]
+            env_img_tensor = img_tensor.unsqueeze(1).repeat(
+                1, self.condition_frame_length, 1, 1
+            )  # [3, condition_frame_length, H, W]
+
+            env_condition_action = np.zeros(
+                (self.condition_frame_length, 7), dtype=np.float32
+            )
+
+            if self.reset_gripper_open and self.is_libero_env:
+                env_condition_action[:, -1] = -1
+
             # KIR trick: use the last four frames as condition frames, while
             # keeping the reference frame unchanged as the first frame.
             target_items = episode_data.get("target_items", [])
+
+            # first condition frame is the reference frame,
+            # so the length of target_items should be condition_frame_length - 1
             if len(target_items) == self.condition_frame_length - 1:
-                final_frames = []
-                for target_frame in target_items:
-                    if "image" not in target_frame:
+                for target_idx, target_frame in enumerate(target_items):
+                    if "image" not in target_frame or "action" not in target_frame:
                         raise ValueError(
-                            f"No 'image' key in target frame for episode {episode_idx}"
+                            f"No 'image' or 'action' key in target frame for episode {episode_idx}"
                         )
                     target_img = target_frame["image"]
                     if target_img.shape[1:] != self.image_size:
@@ -342,18 +369,13 @@ class WanEnv(BaseWorldEnv):
                         )
                         target_img = target_img.squeeze(0)  # [3, H, W]
                     target_img = self.trans_norm(target_img)
-                    final_frames.append(target_img)
-                final_img_tensor = torch.stack(final_frames, dim=1)
-                img_tensor = img_tensor.unsqueeze(1)
-                # [3, condition_frame_length, H, W]
-                img_tensor = torch.cat([img_tensor, final_img_tensor], dim=1)
-            else:
-                # Repeat to fill condition frames: [3, H, W] -> [3, condition_frame_length, H, W]
-                img_tensor = img_tensor.unsqueeze(1).repeat(
-                    1, self.condition_frame_length, 1, 1
-                )  # [3, condition_frame_length, H, W]
-            # print(f'img_tensor:{img_tensor.shape}')
-            img_tensors.append(img_tensor)
+
+                    # keep first frame as reference frame, update the rest
+                    env_img_tensor[:, target_idx + 1] = target_img
+                    env_condition_action[target_idx + 1] = target_frame["action"]
+            
+            img_tensors.append(env_img_tensor)
+            condition_actions.append(torch.from_numpy(env_condition_action))
 
         # Stack all environments: [num_envs, 3, condition_frame_length, H, W]
         # [8, 3, 5, 256, 256]
@@ -362,18 +384,20 @@ class WanEnv(BaseWorldEnv):
         # Reshape to [num_envs, 3, 1, condition_frame_length, H, W] for compatibility
         # [8, 3, 1, 5, 256, 256]
         self.current_obs = stacked_imgs.unsqueeze(2).to(self.device)
-        # Shape: [num_envs, 3, 1, condition_frame_length, H, W]
+        self.condition_action = torch.stack(condition_actions, dim=0).to(self.device)
 
         num_envs, c, v, t, h, w = self.current_obs.shape
+        assert t == self.condition_frame_length, (
+            f"Unexpected current_obs shape: {self.current_obs.shape}, expected {num_envs, c, v, self.condition_frame_length, h, w}"
+        )
 
-        # Fill image queues for each environment
+        # Fill image queues for each environment with per-frame tensors [C, 1, H, W]
         for env_idx in range(num_envs):
-            # self.image_queue[env_idx].clear()
-            self.image_queue[env_idx] = [None] * self.condition_frame_length
-            for t_idx in range(t):
-                self.image_queue[env_idx][t_idx : t_idx + 1] = self.current_obs[
-                    env_idx : env_idx + 1, :, 0, t_idx : t_idx + 1, :, :
-                ]
+            frames = [
+                self.current_obs[env_idx, :, 0, t_idx : t_idx + 1, :, :]
+                for t_idx in range(self.condition_frame_length)
+            ]
+            self.image_queue[env_idx] = frames
 
         self._reset_metrics()
 
@@ -517,11 +541,11 @@ class WanEnv(BaseWorldEnv):
             "tiled": False,
             "input_image": batch_input_image,  # List[PIL], len = B
             "input_image4": batch_input_image4,  # List[List[PIL]], B×4
-            "action": actions_tensor,  # [B, T, A], T=13
+            "action": actions_tensor,  # [B, T, A], T=13 or 8
             "height": 256,
             "width": 256,
             "num_frames": self.num_frames,
-            "num_inference_steps": 5,
+            "num_inference_steps": self.num_inference_steps,
             "cfg_scale": 1.0,
             "progress_bar_cmd": lambda x: x,
             "batch_size": B,
@@ -552,22 +576,13 @@ class WanEnv(BaseWorldEnv):
         # Reshape to match current_obs format: [num_envs, C, 1, T, H, W]
         x_samples = x_samples.unsqueeze(2)
 
-        # Update current observation
-        # For first chunk, we need to replace condition frames
-        # For subsequent chunks, we concatenate new frames
-        if self.current_obs.shape[3] == self.condition_frame_length:
-            # First chunk: keep condition frames and add new frames
-            # But we need to decode the condition frames back to image space first
-            # Actually, current_obs is already in image space, so we just concatenate
-            self.current_obs = torch.cat([self.current_obs, x_samples], dim=3)
-        else:
-            # Subsequent chunks: concatenate new frames
-            self.current_obs = torch.cat([self.current_obs, x_samples], dim=3)
+        # Update current observation: append new generated frames to the time dimension
+        self.current_obs = torch.cat([self.current_obs, x_samples], dim=3)
 
         # Keep only the last condition_frame_length + chunk frames
         # Note: chunk might be different from T in x_samples due to VAE decoding
         # We'll keep a sliding window of recent frames
-        max_frames = self.condition_frame_length + self.chunk * 2  # Keep some buffer
+        max_frames = self.condition_frame_length + self.chunk 
         if self.current_obs.shape[3] > max_frames:
             self.current_obs = self.current_obs[:, :, :, -max_frames:, :, :]
 
@@ -770,14 +785,6 @@ class WanEnv(BaseWorldEnv):
                     "returns": self.returns.cpu(),
                 }
             )
-
-        # image_queue_state = []
-        # for env_idx in range(self.num_envs):
-        #     queue_frames = []
-        #     for frame in self.image_queue[env_idx]:
-        #         queue_frames.append(recursive_to_device(frame, "cpu"))
-        #     image_queue_state.append(queue_frames)
-        # env_state["image_queue"] = image_queue_state
 
         buffer = io.BytesIO()
         torch.save(env_state, buffer)
