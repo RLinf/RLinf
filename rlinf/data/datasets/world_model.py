@@ -164,7 +164,6 @@ class NpyTrajectoryDatasetWrapper(Dataset):
             self.camera_names = camera_names
 
         # Determine action dimension
-        self.action_key = action_key
         if action_key in sample_frame:
             self.action_dim = sample_frame[action_key].shape[0]
         else:

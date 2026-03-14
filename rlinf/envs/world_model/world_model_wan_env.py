@@ -103,7 +103,7 @@ class WanEnv(BaseWorldEnv):
 
         # If reset_gripper_open is True and the environment is Libero, set the gripper open action to -1
         if self.reset_gripper_open and self.is_libero_env:
-            self.condition_action[:, -1] = -1
+            self.condition_action[:, :, -1] = -1
 
         self.trans_norm = transforms.Compose(
             [

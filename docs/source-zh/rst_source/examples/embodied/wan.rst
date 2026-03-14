@@ -238,7 +238,7 @@ RLinf-Wan-LIBERO-Spatial 的目录结构如下：
    reset_gripper_open: True
    # 是否使用 KeyFrame-Init Rollout 
    enable_kir: True
-   # World Mode 的生成步数
+   # World Model 的生成步数
    num_inference_steps: 5
    # world model 初始化的初始图像路径
    initial_image_path: /Pathto/model/RLinf-Wan-LIBERO-Spatial/dataset
@@ -254,7 +254,7 @@ RLinf-Wan-LIBERO-Spatial 的目录结构如下：
 环境配置中的关键参数说明：
 
 - ``enable_kir``：是否启用关键帧初始化 KIR (KeyFrame-Init) ，如果关闭，环境将会从 dataset/ 中名字中不含 kir 的 npy 文件进行初始化，如果开启，环境将会从 dataset/ 中的所有初始化文件中进行等可能的初始化
-- ``num_inference_steps``：World Mode 的生成步数，默认 5, 生成步数越低，生成速度越快，但生成质量可能下降，单步生成同样可以提升性能
+- ``num_inference_steps``：World Model 的生成步数，默认 5, 生成步数越低，生成速度越快，但生成质量可能下降，单步生成同样可以提升性能
 - ``reward_model.type``：奖励模型类型，支持多种选择，包括 ``ResnetRewModel``和 ``TaskEmbedResnetRewModel`` 等。
 - ``reset_gripper_open``：是否在初始化时将夹爪打开，在训练和测试中均默认 True，建议不修改。
 
