@@ -233,10 +233,13 @@ RLinf-Wan-LIBERO-Spatial 的目录结构如下：
    env/eval: libero_spatial
 
    # 在 env/train/wan_libero_spatial.yaml 中：
-   simulator_type: libero
+   wm_env_type: libero
    task_suite_name: libero_spatial
+   reset_gripper_open: True
    # 是否使用 KeyFrame-Init Rollout 
    enable_kir: True
+   # World Mode 的生成步数
+   num_inference_steps: 5
    # world model 初始化的初始图像路径
    initial_image_path: /Pathto/model/RLinf-Wan-LIBERO-Spatial/dataset
    # VAE权重
@@ -251,7 +254,9 @@ RLinf-Wan-LIBERO-Spatial 的目录结构如下：
 环境配置中的关键参数说明：
 
 - ``enable_kir``：是否启用关键帧初始化 KIR (KeyFrame-Init) ，如果关闭，环境将会从 dataset/ 中名字中不含 kir 的 npy 文件进行初始化，如果开启，环境将会从 dataset/ 中的所有初始化文件中进行等可能的初始化
+- ``num_inference_steps``：World Mode 的生成步数，默认 5, 生成步数越低，生成速度越快，但生成质量可能下降，单步生成同样可以提升性能
 - ``reward_model.type``：奖励模型类型，支持多种选择，包括 ``ResnetRewModel``和 ``TaskEmbedResnetRewModel`` 等。
+- ``reset_gripper_open``：是否在初始化时将夹爪打开，在训练和测试中均默认 True，建议不修改。
 
 **3. 配置文件**
 
@@ -344,7 +349,7 @@ LIBERO 部分结果
 对于每个 LIBERO 套件，我们评估所有 task_id 与 trial_id 的组合。Spatial、Object 和 Goal 套件共评估 1500 个环境（10 个任务 × 150 个试次）。
 
 我们根据模型的训练配置设置评估超参：
-对于 SFT 模型与 RL 训练模型，均设置 `do_sample = True`、`temperature = 1.6` 以评估性能。
+对于 SFT 模型与 RL 训练模型，均设置 `do_sample = True`、`temperature = 1.6` 以评估性能，同时，确保设置 `reset_gripper_open = True`，以确保夹爪在初始化时处于打开状态。
 
 .. note::
 
@@ -364,10 +369,10 @@ LIBERO 部分结果
       - 36.7%
       - 48.2%
     * - OpenVLA-OFT（Wan 作为世界模型的 RLinf-GRPO）
-      - 71.5%
+      - 77.5%
       - 77.9%
       - 60.1%
     * - **效果提升**
-      - **+10.3%**
+      - **+16.3%**
       - **+41.2%**
       - **+11.9%**
