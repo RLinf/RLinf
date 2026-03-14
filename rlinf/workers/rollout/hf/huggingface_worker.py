@@ -51,6 +51,7 @@ class MultiStepRolloutWorker(Worker):
         self.actor_weight_src_rank = self._rank % actor_world_size
         self.rollout_epoch = cfg.algorithm.get("rollout_epoch", 1)
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
+        self.expert_model = None
 
         # Sync weight comm options
         max_ctas = cfg.rollout.get("sync_weight_nccl_max_ctas", None)
@@ -95,7 +96,22 @@ class MultiStepRolloutWorker(Worker):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
             self.hf_model.load_state_dict(model_dict)
 
+        if self.cfg.rollout.get("expert_model", None):
+            expert_model_config = copy.deepcopy(self.cfg.actor.model)
+            with open_dict(expert_model_config):
+                expert_model_config.precision = self.cfg.rollout.expert_model.precision
+                expert_model_config.model_path = (
+                    self.cfg.rollout.expert_model.model_path
+                )
+            self.expert_model = get_model(expert_model_config)
+
+            if self.cfg.runner.get("expert_ckpt_path", None):
+                expert_model_dict = torch.load(self.cfg.runner.expert_ckpt_path)
+                self.expert_model.load_state_dict(expert_model_dict)
+
         self.hf_model.eval()
+        if self.expert_model is not None:
+            self.expert_model.eval()
 
         if self.cfg.rollout.get("enable_torch_compile", False):
             mode = self.cfg.rollout.get(
@@ -161,6 +177,33 @@ class MultiStepRolloutWorker(Worker):
             "max_new_tokens": self._length_params["max_new_token"],
         }
 
+        if self.expert_model is not None:
+            self._dagger_sampling_params = {
+                "beta": self.cfg.algorithm.get("dagger", {}).get("init_beta", 0.5),
+                "beta_schedule": self.cfg.algorithm.get("dagger", {}).get(
+                    "beta_schedule", "exponential"
+                ),
+                "beta_min": self.cfg.algorithm.get("dagger", {}).get("beta_min", 0.05),
+                "beta_decay": self.cfg.algorithm.get("dagger", {}).get(
+                    "beta_decay", 0.99
+                ),
+            }
+
+    def update_dagger_beta(self):
+        if self.expert_model is None:
+            return
+
+        if self._dagger_sampling_params["beta_schedule"] == "exponential":
+            self._dagger_sampling_params["beta"] = max(
+                self._dagger_sampling_params["beta_min"],
+                self._dagger_sampling_params["beta"]
+                * self._dagger_sampling_params["beta_decay"],
+            )
+        else:
+            raise NotImplementedError(
+                f"Beta schedule {self._dagger_sampling_params['beta_schedule']} is not implemented"
+            )
+
     def _setup_dst_ranks(self, batch_size: int) -> list[tuple[int, int]]:
         """Compute env peer ranks for this rollout worker.
 
@@ -211,7 +254,10 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.GR00T,
             SupportedModel.CNN_POLICY,
         ]:
-            kwargs = {"mode": mode}
+            if self.cfg.algorithm.loss_type == "embodied_dagger":
+                kwargs = {"mode": "eval"}
+            else:
+                kwargs = {"mode": mode}
 
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.CNN_POLICY,
@@ -220,15 +266,49 @@ class MultiStepRolloutWorker(Worker):
         ]:
             kwargs["return_obs"] = not hasattr(self.hf_model, "q_head")
 
+        only_save_expert = self.cfg.algorithm.get("dagger", {}).get(
+            "only_save_expert", True
+        )
+
+        if mode == "eval":
+            use_expert = False
+        elif self.expert_model is not None:
+            use_expert = torch.rand(1).item() < self._dagger_sampling_params["beta"]
+        else:
+            use_expert = False
+
         with torch.no_grad():
-            actions, result = self.hf_model.predict_action_batch(
-                env_obs=env_obs,
-                **kwargs,
-            )
+            if use_expert:
+                actions, result = self.expert_model.predict_action_batch(
+                    env_obs=env_obs,
+                    **kwargs,
+                )
+            else:
+                actions, result = self.hf_model.predict_action_batch(
+                    env_obs=env_obs,
+                    **kwargs,
+                )
+                if (
+                    not only_save_expert
+                    and self.expert_model is not None
+                    and mode == "train"
+                ):
+                    _, expert_result = self.expert_model.predict_action_batch(
+                        env_obs=env_obs,
+                        **kwargs,
+                    )
+                    expert_forward_inputs = expert_result["forward_inputs"]
+                    expert_target = expert_forward_inputs.get(
+                        "model_action", expert_forward_inputs.get("action")
+                    )
+                    if expert_target is not None:
+                        result["forward_inputs"]["model_action"] = expert_target
+                    use_expert = True
 
         if isinstance(actions, np.ndarray):
             actions = torch.from_numpy(actions)
 
+        result["use_expert"] = bool(use_expert)
         return actions, result
 
     def get_bootstrap_values(
@@ -264,11 +344,20 @@ class MultiStepRolloutWorker(Worker):
 
     @Worker.timer("generate_one_epoch")
     async def generate_one_epoch(self, input_channel: Channel, output_channel: Channel):
+        self.update_dagger_beta()
         for _ in range(self.n_train_chunk_steps):
             for _ in range(self.num_pipeline_stages):
                 env_output = await self.recv_env_output(input_channel)
                 actions, result = self.predict(env_output["obs"])
 
+                save_flags = None
+                if result.get("use_expert", False):
+                    save_flags = torch.full(
+                        (actions.shape[0], self.cfg.actor.model.num_action_chunks),
+                        True,
+                        dtype=torch.bool,
+                        device=actions.device,
+                    )
                 rollout_result = RolloutResult(
                     actions=actions,
                     prev_logprobs=result["prev_logprobs"]
@@ -280,6 +369,7 @@ class MultiStepRolloutWorker(Worker):
                     bootstrap_values=self.get_bootstrap_values(
                         env_output.get("final_obs", None)
                     ),
+                    save_flags=save_flags,
                     forward_inputs=result["forward_inputs"],
                     versions=torch.full_like(
                         result["prev_logprobs"],
@@ -494,6 +584,7 @@ class MultiStepRolloutWorker(Worker):
         split_prev_logprobs = _split_optional_tensor(rollout_result.prev_logprobs)
         split_prev_values = _split_optional_tensor(rollout_result.prev_values)
         split_bootstrap_values = _split_optional_tensor(rollout_result.bootstrap_values)
+        split_save_flags = _split_optional_tensor(rollout_result.save_flags)
         split_versions = _split_optional_tensor(rollout_result.versions)
         split_forward_inputs = (
             [{} for _ in sizes]
@@ -513,6 +604,7 @@ class MultiStepRolloutWorker(Worker):
                 prev_logprobs=split_prev_logprobs[idx],
                 prev_values=split_prev_values[idx],
                 bootstrap_values=split_bootstrap_values[idx],
+                save_flags=split_save_flags[idx],
                 forward_inputs=split_forward_inputs[idx],
                 versions=split_versions[idx],
             )

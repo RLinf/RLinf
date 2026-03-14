@@ -329,9 +329,9 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             intervene_traj_list = []
             for traj in recv_list:
                 assert isinstance(traj, Trajectory)
-                intervene_traj = traj.extract_intervene_traj()
-                if intervene_traj is not None:
-                    intervene_traj_list.append(intervene_traj)
+                intervene_trajs = traj.extract_intervene_traj()
+                if intervene_trajs is not None:
+                    intervene_traj_list.extend(intervene_trajs)
 
             if len(intervene_traj_list) > 0:
                 self.demo_buffer.add_trajectories(intervene_traj_list)
