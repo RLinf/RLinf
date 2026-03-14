@@ -622,13 +622,13 @@ jobs:
           export ROBOCASA_PATH=/workspace/dataset/robocasa
           bash requirements/install.sh embodied --model openpi --env robocasa
 
-      - name: Robocasa GRPO test
+      - name: Robocasa PPO test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh robocasa_grpo_openpi
+          bash tests/e2e_tests/embodied/run.sh robocasa_closedrawer_ppo_openpi
 
       - name: Clean up
         run: |

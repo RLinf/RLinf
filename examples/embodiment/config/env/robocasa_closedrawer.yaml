@@ -3,12 +3,6 @@ env_type: robocasa
 # Robot configuration
 robot_name: PandaOmron
 
-# Camera configuration
-# Pi0 model uses two 128x128 cameras: left view and wrist view
-camera_names:
-  - robot0_agentview_left
-  - robot0_eye_in_hand
-
 # Task configuration (simplified atomic tasks)
 task_names:
   # - OpenSingleDoor
@@ -28,7 +22,7 @@ use_rel_reward: True
 reward_coef: 1.0
 is_eval: False
 
-seed: 0
+seed: 42
 group_size: 1
 
 video_cfg:
@@ -39,3 +33,7 @@ video_cfg:
 init_params:
   camera_heights: 224
   camera_widths: 224
+
+action_space: 12d
+state_space: 25d
+image_space: 2views
