@@ -158,7 +158,7 @@ Navigate with keyboard:
 - ``q`` / ``Esc``: Quit
 - Type trajectory ID in the text box to jump directly
 
-SSH/Headless Mode (e.g. VSCode Remote SSH)
+SSH/Headless Mode
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Use the headless interactive script:
