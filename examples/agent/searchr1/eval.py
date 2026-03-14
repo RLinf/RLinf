@@ -20,7 +20,7 @@ from omegaconf.omegaconf import OmegaConf
 
 from rlinf.agents.searchr1.eval_runner import Searchr1AgentEvalRunner as AgentEvalRunner
 from rlinf.agents.searchr1.search_tool_worker import SearchToolWorker
-from rlinf.agents.searchr1.searchr1_agent_loop import Searchr1ToolAgentLoopWorker
+from rlinf.agents.searchr1.searchr1_agent_loop import Searchr1AgentLoopWorker
 from rlinf.config import validate_cfg
 from rlinf.data.datasets import create_rl_dataset
 from rlinf.data.tokenizers import hf_tokenizer
@@ -28,10 +28,9 @@ from rlinf.scheduler import Cluster, NodePlacementStrategy
 from rlinf.utils.placement import ModelParallelEvalComponentPlacement
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.agent.tool_worker import ToolWorkerInfo
-from rlinf.workers.reward.reward_worker import RewardWorker
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
 
-"""Script to start GRPO training"""
+"""Script to start Search-R1 evaluation"""
 mp.set_start_method("spawn", force=True)
 
 
@@ -66,7 +65,7 @@ def main(cfg) -> None:
         len(agentloop_placement_strategy._node_ranks)
         == component_placement.rollout_dp_size
     ), "agentloop worker num now should be equal to rollout dp size"
-    agentloop_group = Searchr1ToolAgentLoopWorker.create_group(
+    agentloop_group = Searchr1AgentLoopWorker.create_group(
         cfg, component_placement
     ).launch(
         cluster,
@@ -74,16 +73,8 @@ def main(cfg) -> None:
         placement_strategy=agentloop_placement_strategy,
     )
 
-    # Reward group
-    reward_placement_strategy = component_placement.get_strategy("reward")
-    reward_group = RewardWorker.create_group(cfg, component_placement).launch(
-        cluster,
-        name=cfg.reward.group_name,
-        placement_strategy=reward_placement_strategy,
-    )
-
     # Dataset
-    tokenizer = hf_tokenizer(cfg.reward.tokenizer.tokenizer_model)
+    tokenizer = hf_tokenizer(cfg.rollout.model.model_path)
     train_ds, val_ds = create_rl_dataset(cfg, tokenizer)
 
     # Tool workers group
@@ -99,7 +90,7 @@ def main(cfg) -> None:
         placement=component_placement,
         val_dataset=val_ds,
         rollout=rollout_group,
-        reward=reward_group,
+        reward=None,
         agent_loop=agentloop_group,
         tool_workers=tool_workers,
     )
