@@ -190,6 +190,7 @@ def get_benchmark_overridden(benchmark_name) -> Benchmark:
     if libero_cls is not None:
         return libero_cls
 
+    # Build aggregated task map once, preserving order and de-duplicating by task name
     aggregated_task_map: dict[str, benchmark.Task] = {}
     suites = getattr(benchmark, "libero_suites", [])
     
