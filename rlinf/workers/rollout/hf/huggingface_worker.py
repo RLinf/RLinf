@@ -561,7 +561,9 @@ class MultiStepRolloutWorker(Worker):
             dst_ranks_and_sizes, chunk_actions_split
         ):
             if isinstance(chunk_action_i, torch.Tensor):
-                chunk_action_i = chunk_action_i.detach().cpu()
+                chunk_action_i = (
+                    chunk_action_i.detach().cpu().contiguous()
+                )  # for evaluation
             output_channel.put(
                 chunk_action_i,
                 key=CommMapper.build_channel_key(
