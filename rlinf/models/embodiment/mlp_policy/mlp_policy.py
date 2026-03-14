@@ -260,7 +260,6 @@ class MLPPolicy(nn.Module, BasePolicy):
             env_obs["states"], mode=mode, calculate_values=calculate_values
         )
 
-        chunk_actions = chunk_actions.cpu().numpy()
         forward_inputs = {"action": action}
         if return_obs:
             forward_inputs["states"] = env_obs["states"]
