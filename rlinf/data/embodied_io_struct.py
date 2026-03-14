@@ -553,7 +553,7 @@ class EmbodiedRolloutResult:
             self.prev_values.append(result.prev_values)
         if result.versions is not None:
             self.versions.append(result.versions)
-        if result.forward_inputs is not None:
+        if result.forward_inputs:
             self.forward_inputs.append(result.forward_inputs)
 
     def mark_last_step_with_flags(self, save_flags: torch.Tensor):
