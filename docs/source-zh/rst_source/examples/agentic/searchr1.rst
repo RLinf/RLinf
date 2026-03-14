@@ -124,7 +124,7 @@ Qdrant 默认使用 HNSW 图索引算法。关于 HNSW 图索引的优化,请参
 --------------
 
 从huggingface上下载\ `训练集 <https://huggingface.co/datasets/RLinf/Search-R1-Data>`__
-，并将路径写入examples/agent/searchr1/config/qwen2.5-3b-tool-1node.yaml
+，并将路径写入 `examples/agent/searchr1/config/train_qwen2.5.yaml`:
 
 .. code-block:: yaml
 
@@ -132,7 +132,7 @@ Qdrant 默认使用 HNSW 图索引算法。关于 HNSW 图索引的优化,请参
      ……
      train_data_paths: ["/path/to/train.jsonl"]
 
-修改examples/agent/searchr1/config/qwen2.5-3b-tool-1node.yaml中rollout.model.model_path的路径
+修改 `train_qwen2.5.yaml` 中 `rollout.model.model_path` 的路径
 
 .. code-block:: yaml
 
@@ -144,7 +144,7 @@ Qdrant 默认使用 HNSW 图索引算法。关于 HNSW 图索引的优化,请参
        model_path: /path/to/model/Qwen2.5-3B-Instruct
        model_type: qwen2.5
 
-如果使用sampling_params.stop来控制模型停止节省训练时间，detokenize应当设置为True
+如果使用 `sampling_params.stop` 来控制模型停止节省训练时间，detokenize应当设置为True
 
 .. code-block:: yaml
 
@@ -154,7 +154,7 @@ Qdrant 默认使用 HNSW 图索引算法。关于 HNSW 图索引的优化,请参
       disable_log_stats: False
       detokenize: True  
 
-由于search-R1会re-tokenize模型输出，recompute_logprobs应当设置为True
+由于 Search-R1 会re-tokenize模型输出， `recompute_logprobs` 应当设置为True
 
 .. code-block:: yaml
 
@@ -163,7 +163,7 @@ Qdrant 默认使用 HNSW 图索引算法。关于 HNSW 图索引的优化,请参
       recompute_logprobs: True
       shuffle_rollout: False
 
-运行examples/agent/searchr1/run_main_searchr1_single.sh启动训练。
+运行 `bash examples/agent/searchr1/run_train.sh` 启动训练。
 
 测试
 ----
@@ -197,7 +197,7 @@ Qdrant 默认使用 HNSW 图索引算法。关于 HNSW 图索引的优化,请参
    cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index.json) "${CKPT_PATH_HF}"
 
 将转换得到的huggingface
-model路径填入examples/agent/searchr1/config/qwen2.5-3b-tool-1node-eval.yaml
+model路径填入 `examples/agent/searchr1/config/eval_qwen2.5.yaml`
 
 .. code-block:: yaml
 
@@ -217,7 +217,7 @@ model路径填入examples/agent/searchr1/config/qwen2.5-3b-tool-1node-eval.yaml
      ……
      val_data_paths: ["/path/to/eval.jsonl"]
 
-运行examples/agent/searchr1/run_main_searchr1_single_eval.sh启动测试。
+运行 `bash examples/agent/searchr1/run_eval.sh` 启动测试。
 
 训练曲线
 --------
