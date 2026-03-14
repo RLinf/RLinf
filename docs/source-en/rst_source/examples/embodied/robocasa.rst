@@ -74,21 +74,23 @@ RoboCasa Kitchen provides 24 atomic tasks covering multiple categories (excludin
 
 **Observation Structure**
 
-- **Base Camera Image** (``base_image``): Robot left view (128×128 RGB)
-- **Wrist Camera Image** (``wrist_image``): End-effector view camera (128×128 RGB)
-- **Proprioceptive State** (``state``): 16-dimensional vector containing:
-
-  - ``[0:2]`` Robot base position (x, y)
-  - ``[2:5]`` Padding zeros
-  - ``[5:9]`` End-effector quaternion relative to base
-  - ``[9:12]`` End-effector position relative to base
-  - ``[12:14]`` Gripper joint velocities
-  - ``[14:16]`` Gripper joint positions
+- **Base Camera Image** (``base_image``): Robot left view (224×224 RGB)
+- **Wrist Camera Image** (``wrist_image``): End-effector view camera (224×224 RGB)
+- **Wrist Camera Image** (``extra_view_image``): Robot right view (224×224 RGB, not included by default.)
+- **Proprioceptive State** (``state``): 25-dimensional vector containing:
+  - ``[0:3]`` End-effector position (x, y, z)
+  - ``[3:7]`` End-effector quaternion (w, x, y, z)
+  - ``[7:9]`` Gripper joint position
+  - ``[9:11]`` Gripper joint velocities
+  - ``[11:14]`` End-effector position relative to base (x, y, z)
+  - ``[14:18]`` End-effector quaternion relative to base (w, x, y, z)
+  - ``[18:21]`` Base position (x, y, z)
+  - ``[21:25]`` Base quaternion (w, x, y, z)
 
 **Data Structure**
 
-- **Images**: Base camera RGB tensor ``[batch_size, 3, 128, 128]`` and wrist camera ``[batch_size, 3, 128, 128]``
-- **State**: Proprioceptive state tensor ``[batch_size, 16]``
+- **Images**: Left camera RGB tensor ``[batch_size, 3, 224, 224]`` and wrist camera ``[batch_size, 3, 224, 224]``. Right camera RGB tensor ``[batch_size, 3, 224, 224]`` can also be included.
+- **State**: Proprioceptive state tensor ``[batch_size, 25]``. 
 - **Task Description**: Natural language instructions
 - **Actions**: 12-dimensional continuous actions
 - **Reward**: Sparse reward based on task completion
