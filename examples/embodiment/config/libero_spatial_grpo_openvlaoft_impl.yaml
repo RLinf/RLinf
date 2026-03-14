@@ -113,7 +113,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/mnt/project_rlinf/mjwei/download_models/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1/" # https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1
+    model_path: "/mnt/project_rlinf/mjwei/download_models/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1/"
     precision: ${actor.model.precision}
 
 actor:
@@ -126,7 +126,7 @@ actor:
 
   # Override the default values in model/openvla_oft
   model:
-    model_path: "/mnt/project_rlinf/mjwei/download_models/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1/" # https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1
+    model_path: "/mnt/project_rlinf/mjwei/download_models/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1/"
     model_type: "openvla_oft"
 
     unnorm_key: libero_spatial_no_noops

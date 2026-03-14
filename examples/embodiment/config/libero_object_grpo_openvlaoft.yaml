@@ -114,7 +114,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/Openvla-oft-SFT-libero-object-traj1/" # https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-object-traj1
+    model_path: "/path/to/model/Openvla-oft-SFT-libero-object-traj1/"
     precision: ${actor.model.precision}
 
 actor:
@@ -127,7 +127,7 @@ actor:
 
   # Override the default values in model/openvla_oft
   model:
-    model_path: "/path/to/model/Openvla-oft-SFT-libero-object-traj1/" # https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-object-traj1
+    model_path: "/path/to/model/Openvla-oft-SFT-libero-object-traj1/"
     model_type: "openvla_oft"
     unnorm_key: libero_object_no_noops
     max_prompt_length: 128
