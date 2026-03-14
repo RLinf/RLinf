@@ -264,11 +264,11 @@ class EmbodiedRunner:
                     env_handle: Handle = self.env.interact(
                         input_channel=self.rollout_channel,
                         output_channel=self.env_channel,
+                        actor_channel=self.actor_channel,
                     )
                     rollout_handle: Handle = self.rollout.generate(
                         input_channel=self.env_channel,
                         output_channel=self.rollout_channel,
-                        actor_channel=self.actor_channel,
                     )
                     self.actor.recv_rollout_trajectories(
                         input_channel=self.actor_channel
