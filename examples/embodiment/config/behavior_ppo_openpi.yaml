@@ -103,7 +103,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-Pi0-SFT"
+    model_path: "/path/to/model/RLinf-Pi0-SFT" # https://huggingface.co/RLinf/RLinf-Pi0-Behavior
     precision: ${actor.model.precision}
 
 actor:
@@ -116,7 +116,7 @@ actor:
 
   # Override the default values in model/openpi
   model:
-    model_path: "/path/to/model/RLinf-Pi0-SFT"
+    model_path: "/path/to/model/RLinf-Pi0-SFT" # https://huggingface.co/RLinf/RLinf-Pi0-Behavior
     add_value_head: True
     num_images_in_input: 3
     proprio_dim: 32
