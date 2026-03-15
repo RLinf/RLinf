@@ -84,9 +84,9 @@ Use Docker image for the experiment.
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.1-metaworld
+      rlinf/rlinf:agentic-rlinf0.2-metaworld
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-metaworld
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-metaworld
 
 Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
 

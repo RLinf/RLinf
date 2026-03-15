@@ -76,7 +76,7 @@ Key fields:
 For a quick sanity check, start with a smaller ``data_size``.
 
 In the reference setup, full evaluation on 200 WideSearch examples took about
-7 hours with 8 GPUs for generation and 8 GPUs for the judge model.
+**7 hours** with 8 GPUs for generation and 8 GPUs for the judge model.
 
 Standard QA Evaluation
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -100,6 +100,9 @@ as follows:
      data_size: -1
 
 Here ``is_markdown`` must be ``False``.
+
+Compared to the WideSearch evaluation, the standard QA evaluation is much faster.
+It is recommended to first evaluate a subset of the standard QA data as a quick sanity check.
 
 Run Evaluation
 --------------

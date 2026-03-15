@@ -30,7 +30,7 @@ VLM模型监督微调训练
 具体的运行流程开始前准备
 ------------------------
 
-1. 准备好环境，下载 RLinf 官方镜像 ``rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1``
+1. 准备好环境，下载 RLinf 官方镜像 ``rlinf/rlinf:math-rlinf0.2-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1``
 2. 准备好模型权重目录，下载网址 ``https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct``
 3. 准备好 Robo2VLM 数据集目录 ``https://huggingface.co/datasets/keplerccc/Robo2VLM-1``
 4. 修改 ``examples/sft/config/qwen2_5_sft_vlm.yaml`` 文件，运行脚本 ``examples/sft/run_vlm_sft.sh``

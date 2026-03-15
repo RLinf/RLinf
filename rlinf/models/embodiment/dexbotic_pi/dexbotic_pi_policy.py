@@ -751,7 +751,7 @@ class DexboticPi0ForRLActionPrediction(BasePolicy, Pi0ForCausalLM):
         else:
             pass
 
-        actions = outputs["actions"][:, :, : self.config.action_env_dim].cpu().numpy()
+        actions = outputs["actions"][:, :, : self.config.action_env_dim]
         forward_inputs = {
             "chains": outputs["chains"],
             "denoise_inds": outputs["denoise_inds"],

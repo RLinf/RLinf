@@ -738,7 +738,9 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         else:
             chunk_values = torch.zeros_like(chunk_logprobs[..., :1])
 
-        chunk_actions = actions.reshape(-1, self.num_action_chunks, self.action_dim)
+        chunk_actions = torch.as_tensor(
+            actions.reshape(-1, self.num_action_chunks, self.action_dim)
+        )
         chunk_action_tokens = action_tokens.reshape(
             -1, self.num_action_chunks, self.action_dim
         )

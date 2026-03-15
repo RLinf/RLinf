@@ -475,7 +475,11 @@ class WanEnv(BaseWorldEnv):
         )
 
         # Normalize actions
-        actions_tensor = torch.from_numpy(actions).to(self.device)
+        actions_tensor = (
+            torch.from_numpy(actions).to(self.device)
+            if isinstance(actions, np.ndarray)
+            else actions.to(self.device)
+        )
         self.condition_action = self.condition_action.to(
             device=actions_tensor.device, dtype=actions_tensor.dtype
         )

@@ -32,7 +32,7 @@ We recommend the prebuilt Docker image:
 
 .. code-block:: bash
 
-   docker pull rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1
+   docker pull rlinf/rlinf:math-rlinf0.2-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1
 
 If you prefer a local environment, install the agentic stack:
 
@@ -43,7 +43,7 @@ If you prefer a local environment, install the agentic stack:
 Our startup scripts and configuration files are located in ``examples/agent/wideseek_r1``.
 
 - ``examples/agent/wideseek_r1/config`` contains the YAML configuration files for training and evaluation.
-- ``examples/agent/wideseek_r1/search_engine`` provides the search engine implementation used by offline tools.
+- ``examples/agent/tools/search_local_server_qdrant`` provides the search engine implementation used by offline tools.
 - ``examples/agent/wideseek_r1/run_train.sh`` and ``examples/agent/wideseek_r1/run_eval.sh`` are the main entry points for training and evaluation, respectively.
 
 Tool Backends
