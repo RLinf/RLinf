@@ -1,0 +1,36 @@
+model_type: "lingbotvla"
+
+# Model paths - should be overridden in specific experiment configs or via CLI
+model_path: "/path/to/model/lingbot-vla-4b"
+tokenizer_path: "/path/to/model/Qwen2.5-VL-3B-Instruct"
+
+precision: "bf16"
+
+# Action and chunk settings
+num_action_chunks: 50
+action_dim: 14
+
+# LoRA settings
+is_lora: False
+lora_rank: 4
+
+# Training settings
+use_proprio: True
+proprio_dim: 14
+num_steps: 10
+add_value_head: False
+value_type: "action_level"
+
+# Lingbotvla specific parameters 
+lingbotvla:
+  stats_path: "${oc.env:LINGBOT_VLA_PATH}/assets/norm_stats/robotwin_50.json"
+  max_prompt_length: 512
+  noise_level: 0.5
+  noise_method: "flow_sde"
+  joint_logprob: False
+  
+  # Interpolation pointers to global actor settings (Hydra magic)
+  action_chunk: ${actor.model.num_action_chunks}
+  action_env_dim: ${actor.model.action_dim}
+  num_steps: ${actor.model.num_steps}
+  add_value_head: ${actor.model.add_value_head}

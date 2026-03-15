@@ -13,6 +13,7 @@ The script is organized by **targets** and **models**:
 	- `openvla`
 	- `openvla-oft`
 	- `openpi`
+	- `lingbotvla`
 
 	Each embodied model also requires an `--env` argument to specify the environment, e.g. `maniskill_libero`, `behavior`, or `metaworld`.
 
