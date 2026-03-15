@@ -33,7 +33,7 @@ SHOW_LOGS=""
 ALLOW_DIRTY=""
 
 BEAKER_IMAGE="shiruic/shirui-torch2.8.0_cuda12.8"
-WORKSPACE="ai2/molmo-act"
+WORKSPACE="ai2/molmoact-ablations"
 WEKA_MOUNT="oe-training-default:/weka/oe-training-default"
 INSTALL_CMD="bash requirements/install.sh embodied --model openpi --env remote"
 RAY_PORT=6379

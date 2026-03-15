@@ -173,7 +173,7 @@ if [ -n "$INTERACTIVE" ]; then
 
     session_args=(
         beaker session create
-        --remote --bare --detach
+        --remote --bare
         --cluster "${CLUSTER}"
         --gpus "${GPUS}"
         --workspace "${WORKSPACE}"
@@ -196,6 +196,7 @@ if [ -n "$INTERACTIVE" ]; then
     echo "Config:       ${CONFIG_NAME}"
     echo "GPUs:         ${GPUS}"
     echo "Cluster:      ${CLUSTER}"
+    echo "Priority:     ${PRIORITY}"
     echo "Image:        ${BEAKER_IMAGE}"
     echo "Repo:         ${REPO_DIR}"
     echo "Model DL:     ${MODEL_DL}"
