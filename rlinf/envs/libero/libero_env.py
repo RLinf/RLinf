@@ -504,6 +504,7 @@ class LiberoEnv(gym.Env):
         return obs, infos
 
     def step(self, actions=None, auto_reset=True):
+        """Step the environment with the given actions."""
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
 
@@ -601,15 +602,6 @@ class LiberoEnv(gym.Env):
         infos["_elapsed_steps"] = dones
         return obs, infos
 
-    def _calc_step_reward(self, terminations):
-        reward = self.cfg.reward_coef * terminations
-        reward_diff = reward - self.prev_step_reward
-        self.prev_step_reward = reward
-
-        if self.use_rel_reward:
-            return reward_diff
-        else:
-            return reward
         
     def _calc_step_reward(self, terminations):
         step_penalty = -1 if self.use_step_penalty else 0
