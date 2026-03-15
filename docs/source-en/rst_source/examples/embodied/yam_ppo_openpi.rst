@@ -227,6 +227,39 @@ print the Beaker submission command without executing:
        --model-path /path/to/RLinf-Pi05-SFT \
        --dry-run
 
+Interactive Session
+-------------------
+
+Pass ``--interactive`` to create a `beaker session`_ instead of a gantry
+training job.  The container runs full setup automatically (Tailscale, deps,
+Ray head, model download), then drops into an interactive shell you can attach
+to from the cluster.
+
+.. code-block:: bash
+
+   # Submit the interactive session
+   bash scripts/submit_yam_training.sh \
+       --config yam_ppo_openpi \
+       --interactive --allow-dirty
+
+   # Beaker prints a session ID.  Attach from the cluster:
+   beaker session attach <session-id>
+
+Inside the shell, the venv is activated and Ray is already running.  Start
+training manually:
+
+.. code-block:: bash
+
+   python examples/embodiment/train_embodied_agent_staged.py \
+       --config-name yam_ppo_openpi \
+       actor.model.model_path=thomas0829/folding_towel_pi05 \
+       rollout.model.model_path=thomas0829/folding_towel_pi05
+
+Pass ``--model-path`` to pre-download a different checkpoint (default:
+``thomas0829/folding_towel_pi05``).
+
+.. _beaker session: https://beaker-py.readthedocs.io/
+
 Visualisation and Results
 --------------------------
 

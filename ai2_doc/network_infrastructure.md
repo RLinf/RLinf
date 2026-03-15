@@ -310,7 +310,8 @@ Worker discovery flow in `ray_utils/start_ray_beaker.sh`:
 
 ### `scripts/submit_yam_training.sh`
 
-Submits a Beaker training job via gantry.
+Submits a Beaker training job via gantry, or creates an interactive Beaker
+session for manual debugging (with `--interactive`).
 
 ```bash
 # TOPReward only, no subtask planning (3 GPUs: actor GPU 0, rollout GPU 1, VLM GPU 2)
@@ -330,9 +331,16 @@ bash scripts/submit_yam_training.sh \
     --config yam_ppo_openpi \
     --model-path /weka/.../checkpoint \
     -- algorithm.update_epoch=2 runner.save_interval=50
+
+# Interactive session: full setup, then drop into a shell (no training)
+bash scripts/submit_yam_training.sh \
+    --config yam_ppo_openpi \
+    --interactive --allow-dirty
+# Beaker prints a session ID; then from the cluster:
+# beaker session attach <session-id>
 ```
 
-**What the script does:**
+**What the script does (training mode):**
 
 1. Auto-detects config type (`yam_ppo_openpi` exact / `*topreward*` / `*staged*` → 3 GPUs + `train_embodied_agent_staged.py`)
 2. Builds Hydra training command (placement is baked into config defaults for single replica)
@@ -340,21 +348,29 @@ bash scripts/submit_yam_training.sh \
 4. Builds entrypoint that installs Tailscale, starts Ray, runs training
 5. Submits via `gantry run` with the correct Beaker image, secrets, and mounts
 
+**What the script does (interactive mode):**
+
+1. Auto-detects GPU count from config (same as training mode)
+2. Builds a setup command: Tailscale → `bash requirements/install.sh` → venv → `ray start --head` → `huggingface-cli download` → `exec bash -i`
+3. Submits via `beaker session create --remote --bare --detach`
+4. User attaches with `beaker session attach <session-id>` and drives training manually
+
 **Key options:**
 
 | Option | Default | Description |
 |---|---|---|
 | `--config` | `yam_ppo_openpi` | Hydra config name |
-| `--model-path` | (none) | Model checkpoint path |
-| `--task` | `"pick and place"` | Task description |
-| `--name` | `rlinf-<config>` | Beaker experiment name |
-| `--replicas` | 1 | Beaker replicas (Ray nodes) |
+| `--model-path` | (none) | Model checkpoint / HF ID; also selects the model to pre-download in interactive mode (default: `thomas0829/folding_towel_pi05`) |
+| `--task` | `"pick and place"` | Task description (training mode only) |
+| `--name` | `rlinf-<config>` | Beaker experiment/session name (appends `-interactive` in interactive mode) |
+| `--replicas` | 1 | Beaker replicas / Ray nodes (training mode only) |
 | `--gpus` | auto | GPUs per replica (3 for all YAM configs) |
 | `--cluster` | `ai2/ceres-cirrascale` | Beaker cluster |
 | `--budget` | (none) | Beaker budget account |
 | `--priority` | `urgent` | Job priority |
-| `--show-logs` | off | Stream Beaker logs after submission |
-| `--allow-dirty` | off | Allow dirty git working directory |
+| `--interactive` | off | Create an interactive Beaker session instead of submitting a training job |
+| `--show-logs` | off | Stream Beaker logs after submission (training mode only) |
+| `--allow-dirty` | off | Allow dirty git working directory (training mode only) |
 | `--dry-run` | off | Print command without executing |
 
 ### `scripts/start_robot_server.sh`

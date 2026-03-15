@@ -45,6 +45,19 @@ bash scripts/submit_yam_training.sh \
     --allow-dirty
 ```
 
+> **Interactive mode (optional):** To get a shell inside the container and drive
+> training manually, pass `--interactive`. This creates a `beaker session` instead
+> of a gantry job, runs full setup (Tailscale → install → Ray → model download),
+> then drops into an interactive bash shell you can attach to:
+>
+> ```bash
+> bash scripts/submit_yam_training.sh \
+>     --config yam_ppo_openpi \
+>     --interactive --allow-dirty
+> # Beaker prints a session ID; then from the cluster:
+> beaker session attach <session-id>
+> ```
+
 ### Step 2: Get the container's Tailscale IP
 
 Watch the Beaker logs for:
