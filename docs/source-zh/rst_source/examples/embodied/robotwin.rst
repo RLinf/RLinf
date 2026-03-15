@@ -331,7 +331,7 @@ RoboTwin 当前可直接参考的配置文件如下：
 
 - **OpenVLA-OFT + GRPO**：``examples/embodiment/config/robotwin_place_empty_cup_grpo_openvlaoft.yaml``
 - **π₀ + PPO**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi.yaml``
-- **π₀ Eval**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi_eval.yaml``-
+- **π₀ Eval**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi_eval.yaml``
 - **π₀.₅ + PPO**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi_pi05.yaml``
 - **π₀.₅ Eval**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi_pi05_eval.yaml``
 
