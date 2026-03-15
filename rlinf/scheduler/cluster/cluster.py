@@ -31,6 +31,7 @@ from ray.util.state import list_actors
 
 from .config import ClusterConfig
 from .node import NodeGroupInfo, NodeProbe
+from .utils import DistributedRayLogCollector, without_http_proxies
 
 ray_version = version("ray")
 assert vs.parse(ray_version) >= vs.parse("2.47.0"), (
@@ -116,22 +117,29 @@ class Cluster:
         return cls._instance
 
     def __init__(
-        self, num_nodes: Optional[int] = None, cluster_cfg: Optional[DictConfig] = None
+        self,
+        num_nodes: Optional[int] = None,
+        cluster_cfg: Optional[DictConfig] = None,
+        distributed_log_dir: Optional[str] = None,
     ):
         """Initialize the cluster.
 
         Args:
             num_nodes (int): The number of nodes in the cluster. When you wish to acquire the cluster instance in a processes other than the main driver process, do not pass this argument. Instead, use the `Cluster()` constructor without arguments. If num_nodes is 0, it will initialize the cluster with all ray-connected nodes.
             cluster_cfg (Optional[DictConfig]): The cluster's configuration dictionary. If set, num_nodes will be ignored and inferred from the config.
+            distributed_log_dir (Optional[str]): Output directory for split logs. This must be provided when ``distributed_logging`` is True.
         """
         if self._has_initialized:
             return
         self._setup_logger()
+        self._distributed_log_collector: Optional[DistributedRayLogCollector] = None
         if num_nodes is not None or cluster_cfg is not None:
             self._ray_instance_count = 0
             while True:
                 try:
-                    self._init_and_launch_managers(num_nodes, cluster_cfg)
+                    self._init_and_launch_managers(
+                        num_nodes, cluster_cfg, distributed_log_dir
+                    )
                     break
                 except Cluster.NamespaceConflictError:
                     # Switch the namespace when multiple ray instances are created in the same node
@@ -147,7 +155,10 @@ class Cluster:
                 self._logger.warning(
                     "Could not connect to an existing Ray cluster. Initializing a new cluster with all connected nodes."
                 )
-                return self.__init__(num_nodes=0)
+                return self.__init__(
+                    num_nodes=0,
+                    distributed_log_dir=distributed_log_dir,
+                )
 
         self._has_initialized = True
 
@@ -167,7 +178,10 @@ class Cluster:
         self._logger.addHandler(handler)
 
     def _init_and_launch_managers(
-        self, num_nodes: int, cluster_cfg: Optional[DictConfig]
+        self,
+        num_nodes: int,
+        cluster_cfg: Optional[DictConfig],
+        distributed_log_dir: Optional[str],
     ):
         if ray.is_initialized():
             if self._ray_instance_count > 0:
@@ -186,6 +200,8 @@ class Cluster:
         if "RAY_DEDUP_LOGS" not in os.environ:
             # Default disabling deduplication of logs to ensure all logs are printed.
             ray_logging.RAY_DEDUP_LOGS = 0
+        if "RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO" not in os.environ:
+            os.environ["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] = "0"
 
         # Cluster configurations
         self._cluster_cfg = (
@@ -216,6 +232,15 @@ class Cluster:
                 logging_level=Cluster.LOGGING_LEVEL,
                 namespace=Cluster.NAMESPACE,
             )
+
+        # Ray log collector
+        if distributed_log_dir is not None:
+            self._distributed_log_collector = DistributedRayLogCollector(
+                logger=self._logger,
+                output_dir=distributed_log_dir,
+                namespace=Cluster.NAMESPACE,
+            )
+            self._distributed_log_collector.start()
 
         # If num_nodes is 0, infer the number of nodes from the connected Ray cluster
         if self._num_nodes == 0:
@@ -289,13 +314,16 @@ class Cluster:
             # Exit the main process if SIGUSR1 is received, which is sent by the worker group when an exception occurs.
             sys.stdout.flush()
             sys.stderr.flush()
+            if self._distributed_log_collector is not None:
+                self._distributed_log_collector.stop()
 
-            alive_actors = list_actors(
-                filters=[
-                    ("STATE", "=", "ALIVE"),
-                    ("RAY_NAMESPACE", "=", Cluster.NAMESPACE),
-                ]
-            )
+            with without_http_proxies():
+                alive_actors = list_actors(
+                    filters=[
+                        ("STATE", "=", "ALIVE"),
+                        ("RAY_NAMESPACE", "=", Cluster.NAMESPACE),
+                    ]
+                )
             for actor_state in alive_actors:
                 actor = ray.get_actor(actor_state.name)
                 ray.kill(actor, no_restart=True)
@@ -421,10 +449,12 @@ class Cluster:
         self,
         cls: type["Worker"],
         worker_name: str,
+        worker_rank: int,
         node_rank: int,
         max_concurrency: int,
         env_vars: dict,
         node_group_label: str,
+        disable_distributed_log: bool,
         cls_args: tuple,
         cls_kwargs: dict,
     ) -> ActorHandle:
@@ -433,10 +463,12 @@ class Cluster:
         Args:
             cls (Type[Worker]): The class to allocate.
             worker_name (str): The name of the worker.
+            worker_rank (int): The rank of the worker in the worker group.
             node_rank (int): The rank of the node to allocate on.
             max_concurrency (Optional[int]): The maximum concurrency for the worker's underlying ray actor.
             env_vars (dict): Environment variables to set for the worker.
             node_group_label (str): The label of the node group to allocate on.
+            disable_distributed_log (bool): Whether to disable distributed log for the worker.
             cls_args (tuple): Positional arguments to pass to the class constructor.
             cls_kwargs (dict): Keyword arguments to pass to the class constructor.
 
@@ -483,4 +515,11 @@ class Cluster:
             )
             options["max_concurrency"] = max_concurrency
 
-        return remote_cls.options(**options).remote(*cls_args, **cls_kwargs)
+        actor = remote_cls.options(**options).remote(*cls_args, **cls_kwargs)
+        if self._distributed_log_collector is not None and not disable_distributed_log:
+            self._distributed_log_collector.register_worker(
+                worker_name=worker_name,
+                rank=worker_rank,
+                actor_handle=actor,
+            )
+        return actor

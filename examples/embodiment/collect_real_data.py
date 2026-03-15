@@ -88,7 +88,6 @@ class DataCollector(Worker):
 
         current_rollout = EmbodiedRolloutResult(
             max_episode_length=self.cfg.env.eval.max_episode_steps,
-            model_weights_id="demo_expert",
         )
 
         current_obs_processed = self._process_obs(obs)
@@ -169,7 +168,6 @@ class DataCollector(Worker):
                 current_obs_processed = self._process_obs(obs)
                 current_rollout = EmbodiedRolloutResult(
                     max_episode_length=self.cfg.env.eval.max_episode_steps,
-                    model_weights_id="demo_expert",
                 )
                 progress_bar.update(1)
 

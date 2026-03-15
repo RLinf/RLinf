@@ -47,7 +47,7 @@ class AgentRunner(ReasoningRunner):
         cfg: DictConfig,
         placement: ModelParallelComponentPlacement,
         train_dataset: Dataset,
-        val_dataset: Dataset,
+        val_dataset: Optional[Dataset],
         rollout: Union["SGLangWorker", "VLLMWorker"],
         inference: Optional[MegatronInference],
         actor: MegatronActor,
@@ -83,6 +83,7 @@ class AgentRunner(ReasoningRunner):
             f"AgentRunner: tool_calls must be unique. all tool_calls are {all_tool_calls}"
         )
         self.agent_loop = agent_loop
+        self.batch_split_num = len(agent_loop._workers)
         self.tool_workers = tool_workers
         self.solid_rollouts = solid_rollouts
         self.generate_input_channel = Channel.create("GenerateInput")
@@ -106,6 +107,8 @@ class AgentRunner(ReasoningRunner):
                 self.tool_name_map[tool_name] = worker.worker_group_name
 
         self.tool_output_channel = Channel.create("ToolOutput")
+        if self.recompute_logprobs:
+            self.inference_channel = Channel.create("Inference", local=True)
 
     def init_rollout_workers(self):
         """init rollout workers, tool workers and agent loop worker."""
@@ -189,7 +192,7 @@ class AgentRunner(ReasoningRunner):
                 for batch in self.train_dataloader:
                     with self.timer("step"):
                         with self.timer("prepare_data"):
-                            self._put_batch(batch)
+                            self._put_batch(batch, self.batch_split_num)
 
                         with self.timer("sync_weights"):
                             self._sync_weights()
@@ -201,7 +204,7 @@ class AgentRunner(ReasoningRunner):
                         )
 
                         if not self.is_pipeline:
-                            rollout_handle.wait()
+                            agent_metrics = rollout_handle.wait()[0]
                             offload_handles = [self.rollout.offload_engine()]
                             for solid_rollout in self.solid_rollouts.values():
                                 offload_handles.append(solid_rollout.offload_engine())
@@ -231,6 +234,8 @@ class AgentRunner(ReasoningRunner):
                             inference_channel = inference_input_channel
 
                         # Actor training, Advantages and returns
+                        if self.is_pipeline:
+                            agent_metrics = rollout_handle.wait()[0]
                         actor_handle: Handle = self.actor.run_training(
                             input_channel=inference_channel,
                         )
@@ -287,6 +292,7 @@ class AgentRunner(ReasoningRunner):
                         f"rollout/{k}": v for k, v in actor_rollout_metrics.items()
                     }
 
+                    self.metric_logger.log(agent_metrics, logging_steps)
                     self.metric_logger.log(log_time_metrics, logging_steps)
                     self.metric_logger.log(rollout_metrics, logging_steps)
                     for i in range(self.cfg.algorithm.n_minibatches):
@@ -294,20 +300,21 @@ class AgentRunner(ReasoningRunner):
                             f"train/{k}": v
                             for k, v in actor_training_metrics[i].items()
                         }
-                        self.metric_logger.log(training_metrics, logging_steps + i)
 
-                    logging_metrics = {f"{k}_time": v for k, v in time_metrics.items()}
+                        self.metric_logger.log(log_time_metrics, logging_steps)
+                        self.metric_logger.log(rollout_metrics, logging_steps)
+                        for i in range(self.cfg.algorithm.n_minibatches):
+                            training_metrics = {
+                                f"train/{k}": v
+                                for k, v in actor_training_metrics[i].items()
+                            }
+                            self.metric_logger.log(training_metrics, logging_steps + i)
 
-                    if self.cfg.actor.get("calculate_flops", False):
-                        flops_metrics = self._compute_flops_metrics(
-                            time_metrics, actor_rollout_metrics
-                        )
-                        flops_metrics = {
-                            f"flops/{k}": v for k, v in flops_metrics.items()
+                        logging_metrics = {
+                            f"{k}_time": v for k, v in time_metrics.items()
                         }
-                        self.metric_logger.log(flops_metrics, logging_steps)
-                        logging_metrics.update(flops_metrics)
 
+                    logging_metrics.update(agent_metrics)
                     logging_metrics.update(actor_rollout_metrics)
                     logging_metrics.update(actor_training_metrics[-1])
 

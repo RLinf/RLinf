@@ -15,6 +15,7 @@
 
 import os
 
+import torch
 from omegaconf import DictConfig
 
 
@@ -34,18 +35,29 @@ def get_model(cfg: DictConfig, torch_dtype=None):
 
     # config
     config_name = getattr(cfg.openpi, "config_name", None)
-    actor_train_config = get_openpi_config(config_name, model_path=cfg.model_path)
+    data_kwargs = getattr(cfg, "openpi_data", None)
+    actor_train_config = get_openpi_config(
+        config_name, model_path=cfg.model_path, data_kwargs=data_kwargs
+    )
+
     actor_model_config = actor_train_config.model
     actor_model_config = OpenPi0Config(**actor_model_config.__dict__)
-    override_config_kwargs = cfg.openpi
-    if override_config_kwargs is not None:
-        for key, val in override_config_kwargs.items():
+    override_model_config_kwargs = cfg.openpi
+    if override_model_config_kwargs is not None:
+        for key, val in override_model_config_kwargs.items():
             actor_model_config.__dict__[key] = val
+
     # load model
     checkpoint_dir = download.maybe_download(str(cfg.model_path))
-    weight_paths = sorted(glob.glob(os.path.join(checkpoint_dir, "*.safetensors")))
-    if not weight_paths:
-        weight_paths = [os.path.join(checkpoint_dir, "model.safetensors")]
+
+    # Check if this is a checkpoint directory (saved by FSDP)
+    # Check for model_state_dict/full_weights.pt (direct checkpoint) or actor/model_state_dict/full_weights.pt (from runner)
+    full_weights_path = os.path.join(
+        checkpoint_dir, "model_state_dict", "full_weights.pt"
+    )
+    actor_full_weights_path = os.path.join(
+        checkpoint_dir, "actor", "model_state_dict", "full_weights.pt"
+    )
 
     model: OpenPi0ForRLActionPrediction = OpenPi0ForRLActionPrediction(
         actor_model_config
@@ -54,8 +66,23 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     if actor_model_config.train_expert_only:
         model.freeze_vlm()
 
-    for weight_path in weight_paths:
-        safetensors.torch.load_model(model, weight_path, strict=False)
+    # Load weights from checkpoint if it's a checkpoint directory, otherwise load from safetensors
+    if os.path.exists(full_weights_path):
+        # Direct checkpoint directory
+        model_state_dict = torch.load(full_weights_path, map_location="cpu")
+        model.load_state_dict(model_state_dict, strict=False)
+    elif os.path.exists(actor_full_weights_path):
+        # Checkpoint directory from runner
+        model_state_dict = torch.load(actor_full_weights_path, map_location="cpu")
+        model.load_state_dict(model_state_dict, strict=False)
+    else:
+        # Original model directory with safetensors files
+        weight_paths = sorted(glob.glob(os.path.join(checkpoint_dir, "*.safetensors")))
+        if not weight_paths:
+            weight_paths = [os.path.join(checkpoint_dir, "model.safetensors")]
+        for weight_path in weight_paths:
+            safetensors.torch.load_model(model, weight_path, strict=False)
+
     model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
     # fsdp replace
     # model.paligemma_with_expert.replace_gemma_decoder_layers()

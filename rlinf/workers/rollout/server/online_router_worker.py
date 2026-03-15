@@ -64,8 +64,8 @@ class OnlineRouterWorker(Worker):
         self._cfg = cfg
 
         # Configuration
-        self._server_host = cfg.server.online_router.get("host", "0.0.0.0")
-        self._server_port = cfg.server.online_router.get("port", 8081)
+        self._server_host = cfg.rollout_server.online_router.get("host", "0.0.0.0")
+        self._server_port = cfg.rollout_server.online_router.get("port", 8081)
         self._rollout_instance_num = placement.rollout_dp_size
         self._sampling_params = SGLangWorker.get_sampling_param_from_config(
             self._cfg.algorithm.sampling_params

@@ -1,0 +1,39 @@
+env_type: robocasa
+
+# Robot configuration
+robot_name: PandaOmron
+
+# Task configuration (simplified atomic tasks)
+task_names:
+  # - OpenSingleDoor
+  # - TurnOnSinkFaucet
+  - CloseDrawer
+
+total_num_envs: null
+
+auto_reset: False
+ignore_terminations: False
+max_steps_per_rollout_epoch: 300
+max_episode_steps: 300 # max episode steps for truncation
+use_fixed_reset_state_ids: False
+use_ordered_reset_state_ids: False
+
+use_rel_reward: True
+reward_coef: 1.0
+is_eval: False
+
+seed: 42
+group_size: 1
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+init_params:
+  camera_heights: 224
+  camera_widths: 224
+
+action_space: 12d
+state_space: 25d
+image_space: 2views

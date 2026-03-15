@@ -236,6 +236,28 @@ as well as reinforcement learning training examples on real robots.
         PPO in sim + SFT on real data for better sim-to-real transfer
       </p>
     </div>
+
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/dsrl.png"
+          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="dsrl.html" style="text-decoration: underline; color: blue;">
+          <b>DSRL for Pi0</b>
+        </a><br>
+        Steer a frozen Pi0 diffusion policy with lightweight SAC in noise space
+      </p>
+    </div>
+
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/xsquare_turtle2_arm_small.jpg"
+          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+       <a href="xsquare_turtle2.html" style="text-decoration: underline; color: blue;">
+          <b>Real-World RL with XSquare Turtle2</b>
+        </a><br>
+        SAC + CNN policy on the XSquare Turtle2 dual-arm robot
+      </p>
+    </div>
   </div>
 
 
@@ -261,6 +283,9 @@ as well as reinforcement learning training examples on real robots.
    mlp
    dexbotic
    franka
-   sft
+   xsquare_turtle2
+   sft_openpi
+   sft_vlm
    co_training
+   dsrl
 
