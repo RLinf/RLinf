@@ -20,6 +20,7 @@ from .hardware import (
     HardwareResource,
     NodeHardwareConfig,
 )
+from .phone import ADBConfig, ADBHWInfo
 from .robots import FrankaConfig, FrankaHWInfo, Turtle2Config, Turtle2HWInfo
 
 __all__ = [
@@ -35,4 +36,6 @@ __all__ = [
     "FrankaHWInfo",
     "Turtle2Config",
     "Turtle2HWInfo",
+    "ADBConfig",
+    "ADBHWInfo",
 ]
