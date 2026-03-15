@@ -88,6 +88,7 @@ SUPPORTED_TASK_TYPE = [
     "reasoning_eval",
     "coding_online_rl",
     "sft",
+    "offline",
 ]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 __all__ = ["build_config"]
@@ -882,6 +883,17 @@ def validate_embodied_cfg(cfg):
     return cfg
 
 
+def validate_offline_cfg(cfg: DictConfig) -> DictConfig:
+    """Minimal validation for offline tasks (e.g. IQL). Sets batch sizes for shared actor validation."""
+    with open_dict(cfg):
+        batch = cfg.algorithm.get("batch_size", 256)
+        if cfg.actor.get("global_batch_size", None) is None:
+            cfg.actor.global_batch_size = batch
+        if cfg.actor.get("micro_batch_size", None) is None:
+            cfg.actor.micro_batch_size = batch
+    return cfg
+
+
 def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
     assert cfg.actor.get("global_batch_size", None) is not None, (
         "the actor.global_batch_size is not set"
@@ -1044,6 +1056,8 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         return cfg
     elif cfg.runner.task_type == "sft":
         cfg = validate_sft_cfg(cfg)
+    elif cfg.runner.task_type == "offline":
+        cfg = validate_offline_cfg(cfg)
 
     if cfg.algorithm.adv_type in ("grpo", "grpo_dynamic", "reinpp_baseline"):
         assert cfg.algorithm.group_size > 1

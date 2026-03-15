@@ -1,0 +1,121 @@
+defaults:
+  - model/mlp_policy@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0-0
+    dataset: 0-0
+    env: 0-0
+    rollout: 0-0
+
+runner:
+  task_type: "offline"
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "d4rl_iql_antmaze"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1000000
+  max_steps: 1000000
+
+  val_check_interval: 100000
+  save_interval: 100000
+
+  log_interval: 1000
+  local_update_steps: 500
+  eval_episodes: 100
+
+  resume_dir: null
+  
+algorithm:
+  loss_type: "offline_iql"
+  adv_type: null
+  batch_size: 256
+  actor_lr: 3.0e-4
+  value_lr: 3.0e-4
+  critic_lr: 3.0e-4
+  hidden_dims: [256, 256]
+  discount: 0.99
+  tau: 0.005
+  expectile: 0.9
+  temperature: 10.0
+  gamma: 0.99
+  dropout_rate: null
+  opt_decay_schedule: "cosine"
+  length_params:
+    max_new_token: 1
+  sampling_params:
+    do_sample: false
+    temperature_train: 1.0
+    temperature_eval: 0.0
+    top_k: 0
+    top_p: 1.0
+  eval_rollout_epoch: 100
+
+dataset:
+  group_name: "DatasetGroup"
+
+env:
+  group_name: "EnvGroup"
+  env_name: "antmaze-large-play-v0"
+  dataset_type: "d4rl"
+  dataset_path: null
+  train:
+    env_type: "d4rl"
+    env_name: "antmaze-large-play-v0"
+    seed: 42
+    total_num_envs: 1
+    max_steps_per_rollout_epoch: 1000
+    auto_reset: true
+    ignore_terminations: false
+    video_cfg:
+      save_video: false
+  eval:
+    env_type: "d4rl"
+    env_name: "antmaze-large-play-v0"
+    seed: 42
+    total_num_envs: 1
+    max_steps_per_rollout_epoch: 1000
+    auto_reset: true
+    ignore_terminations: false
+    video_cfg:
+      save_video: false
+  
+rollout:
+  group_name: "RolloutGroup"
+  pipeline_stage_num: 1
+  model:
+    precision: "32"
+    model_path: ""
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  use_fsdp_wrap: false
+  seed: 42
+  offline_torch_compile: true
+  worker_cls: "iql"
+  model:
+    num_action_chunks: 1
+    iql_config:
+      type: "actor"
+      hidden_dims: ${algorithm.hidden_dims}
+      dropout_rate: ${algorithm.dropout_rate}
+      state_dependent_std: false
+      log_std_min: -5.0
+      log_std_max: 2.0
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false

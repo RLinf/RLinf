@@ -23,6 +23,11 @@ For example, to install the dependencies for the OpenVLA + ManiSkill LIBERO expe
 bash requirements/install.sh embodied --model openvla --env maniskill_libero
 ```
 
+For D4RL offline experiments (env-only install), run:
+```shell
+bash requirements/install.sh embodied --env d4rl
+```
+
 This will create a virtual environment under the current path named `.venv`.
 To activate the virtual environment, you can use the following command:
 ```shell

@@ -102,6 +102,12 @@ jobs:
           bash requirements/install.sh embodied --env xsquare_turtle2
           rm -rf .venv
 
+      - name: Install d4rl (offline env)
+        run: |
+          pip install uv
+          uv cache prune --ci
+          bash requirements/install.sh embodied --env d4rl
+          rm -rf .venv
 
       - name: Install behavior-openvla-oft
         run: |

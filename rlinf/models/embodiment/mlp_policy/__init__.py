@@ -17,15 +17,28 @@ from omegaconf import DictConfig
 
 
 def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
+    from rlinf.models.embodiment.mlp_policy.iql_mlp_policy import IQLMLPPolicy
     from rlinf.models.embodiment.mlp_policy.mlp_policy import MLPPolicy
 
-    model = MLPPolicy(
-        cfg.obs_dim,
-        cfg.action_dim,
-        num_action_chunks=cfg.num_action_chunks,
-        add_value_head=cfg.add_value_head,
-        add_q_head=cfg.get("add_q_head", False),
-        q_head_type=cfg.get("q_head_type", "default"),
-    )
+    iql_config = cfg.get("iql_config", None)
+    if iql_config is not None:
+        model = IQLMLPPolicy(
+            cfg.obs_dim,
+            cfg.action_dim,
+            num_action_chunks=cfg.num_action_chunks,
+            add_value_head=cfg.add_value_head,
+            add_q_head=cfg.get("add_q_head", False),
+            q_head_type=cfg.get("q_head_type", "default"),
+        )
+        model.configure_iql(iql_config)
+    else:
+        model = MLPPolicy(
+            cfg.obs_dim,
+            cfg.action_dim,
+            num_action_chunks=cfg.num_action_chunks,
+            add_value_head=cfg.add_value_head,
+            add_q_head=cfg.get("add_q_head", False),
+            q_head_type=cfg.get("q_head_type", "default"),
+        )
 
     return model

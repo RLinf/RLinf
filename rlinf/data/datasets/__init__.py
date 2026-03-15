@@ -20,6 +20,7 @@ from omegaconf import DictConfig
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 
+from rlinf.data.datasets.d4rl import D4RLDataset as D4RLDataset
 from rlinf.data.datasets.item import DatasetItem
 from rlinf.data.datasets.reasoning import ReasoningDataset
 from rlinf.data.datasets.rstar2 import Rstar2Dataset

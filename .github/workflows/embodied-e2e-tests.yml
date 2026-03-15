@@ -48,7 +48,43 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
-  
+
+  embodied-d4rl-offline-iql-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment (d4rl)
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --env d4rl
+
+      - name: D4RL Offline IQL test (no FSDP wrap)
+        timeout-minutes: 15
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run_offline.sh d4rl_iql_mujoco
+
+      - name: D4RL Offline IQL test (FSDP wrap)
+        timeout-minutes: 15
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run_offline.sh d4rl_iql_mujoco egl actor.use_fsdp_wrap=true
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-cnn-realworld-dummy-sac-test:
     runs-on: embodied
     steps:
