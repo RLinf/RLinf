@@ -314,6 +314,16 @@ If you use RL-based sim-real co-training in RLinf, you can cite our paper:
 }
 ```
 
+If you use WideSeek-R1 in RLinf, you can cite our paper:
+```bibtex
+@article{xu2026wideseek,
+  title={WideSeek-R1: Exploring Width Scaling for Broad Information Seeking via Multi-Agent Reinforcement Learning},
+  author={Xu, Zelai and Xu, Zhexuan and Zhang, Ruize and Zhu, Chunyang and Yu, Shi and Liu, Weilin and Zhang, Quanlu and Ding, Wenbo and Yu, Chao and Wang, Yu},
+  journal={arXiv preprint arXiv:2602.04634},
+  year={2026},
+}
+```   
+
 **Acknowledgements**
 RLinf has been inspired by, and benefits from, the ideas and tooling of the broader open-source community.
 In particular, we would like to thank the teams and contributors behind VeRL, AReaL, Megatron-LM, SGLang, and PyTorch Fully Sharded Data Parallel (FSDP), and if we have inadvertently missed your project or contribution, please open an issue or a pull request so we can properly credit you.

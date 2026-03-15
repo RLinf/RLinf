@@ -32,7 +32,7 @@ We recommend the prebuilt Docker image:
 
 .. code-block:: bash
 
-   docker pull rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1
+   docker pull rlinf/rlinf:math-rlinf0.2-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1
 
 If you prefer a local environment, install the agentic stack:
 
