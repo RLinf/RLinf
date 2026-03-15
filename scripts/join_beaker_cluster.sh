@@ -58,7 +58,7 @@ Examples:
       --head-ip 100.64.1.2 \
       --config my_custom_yam_config \
       --node-rank 1 \
-      --model-path /path/to/pi05_checkpoint \
+      --model-path thomas0829/folding_towel_pi05 \
       --task "pick and place"
 EOF
     exit 0
@@ -116,7 +116,16 @@ echo "Model:        ${MODEL_PATH:-<not set>}"
 echo "Task:         ${TASK_DESC}"
 echo ""
 
-RAY_JOIN_ARGS=(--address="${HEAD_IP}:${RAY_PORT}")
+# Use the Tailscale IP as the node IP so the GCS health checks reach the
+# correct interface. Auto-detection may pick a local IP Beaker cannot reach.
+DESKTOP_IP=$(tailscale ip -4 2>/dev/null || true)
+if [ -n "$DESKTOP_IP" ]; then
+    echo "Using Tailscale IP for Ray node: ${DESKTOP_IP}"
+    RAY_JOIN_ARGS=(--address="${HEAD_IP}:${RAY_PORT}" --node-ip-address="${DESKTOP_IP}")
+else
+    echo "WARNING: Could not detect Tailscale IP — Ray will auto-detect node IP"
+    RAY_JOIN_ARGS=(--address="${HEAD_IP}:${RAY_PORT}")
+fi
 
 # --- TCP pre-check ---
 echo "Checking TCP connectivity to ${HEAD_IP}:${RAY_PORT}..."
@@ -155,44 +164,21 @@ for i in $(seq 1 30); do
     sleep 10
 done
 
-# --- Verify bidirectional Ray connectivity ---
-# Schedule a task pinned to this desktop node from the cluster to confirm
-# Beaker can reach back to the desktop (the direction GCS health checks use).
-echo "Verifying Beaker → desktop connectivity..."
-python3 - <<'PYEOF'
-import sys, ray, socket
-ray.init(address="auto")
-desktop_ip = None
-for node in ray.nodes():
-    if node["Alive"] and node["NodeManagerAddress"] not in ("127.0.0.1",):
-        # Find the desktop node (not the head node)
-        if node.get("NodeManagerAddress", "").startswith("100."):
-            desktop_ip = node["NodeManagerAddress"]
-            node_id = node["NodeID"]
-            break
-if desktop_ip is None:
-    print("WARNING: Could not identify desktop node in Ray cluster — skipping connectivity check")
-    sys.exit(0)
-
-@ray.remote
-def ping():
-    return socket.gethostname()
-
-try:
-    result = ray.get(
-        ping.options(
-            scheduling_strategy=ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
-                node_id=node_id, soft=False
-            )
-        ).remote(),
-        timeout=30,
-    )
-    print(f"Beaker → desktop connectivity OK (hostname: {result})")
-except Exception as e:
-    print(f"ERROR: Beaker could not reach desktop node ({desktop_ip}): {e}")
-    print("GCS health checks will likely fail. Check: tailscale status")
-    sys.exit(1)
-PYEOF
+# --- Verify raylet stays alive after joining ---
+# Wait 15 seconds and confirm the local raylet socket still exists.
+# Active health checks from Beaker → desktop don't work with userspace
+# Tailscale (no kernel TUN interface). Node death detection relies on
+# heartbeats (desktop → Beaker), which do work.
+echo "Waiting 15s to verify local raylet stays alive..."
+sleep 15
+SESSION_LATEST=$(readlink -f /tmp/ray/session_latest 2>/dev/null || echo "")
+if [ -n "$SESSION_LATEST" ] && [ -S "${SESSION_LATEST}/sockets/raylet" ]; then
+    echo "Raylet is alive."
+else
+    echo "ERROR: Local raylet socket is gone — raylet died within 15s of joining."
+    echo "Check: cat /tmp/ray/session_latest/logs/raylet.out | tail -20"
+    exit 1
+fi
 
 # --- Activate .venv if present ---
 if [ -f ".venv/bin/activate" ]; then

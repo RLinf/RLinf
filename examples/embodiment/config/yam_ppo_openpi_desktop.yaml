@@ -23,7 +23,7 @@
 #        bash scripts/join_beaker_cluster.sh \
 #            --head-ip <beaker-tailscale-ip> \
 #            --config yam_ppo_openpi_desktop \
-#            --model-path /path/to/pi05_checkpoint \
+#            --model-path thomas0829/folding_towel_pi05 \
 #            --task "fold the towel"
 #
 # Prerequisites:
@@ -202,7 +202,7 @@ rollout:
   collect_prev_infos: True
 
   model:
-    model_path: "/path/to/model/RLinf-Pi05-SFT"
+    model_path: "thomas0829/folding_towel_pi05"
     precision: ${actor.model.precision}
 
   enable_torch_compile: False
@@ -218,7 +218,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/path/to/model/RLinf-Pi05-SFT"
+    model_path: "thomas0829/folding_towel_pi05"
     model_type: "openpi"
     add_value_head: True
     num_action_chunks: 10

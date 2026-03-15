@@ -73,7 +73,7 @@ Options:
   --help                Show this help
 
 Extra Hydra overrides can be passed after '--':
-  bash scripts/submit_yam_training.sh --model-path /path -- algorithm.update_epoch=2
+  bash scripts/submit_yam_training.sh --model-path thomas0829/folding_towel_pi05 -- algorithm.update_epoch=2
 
 After submission:
   1. Check Beaker logs for the head node's Tailscale IP

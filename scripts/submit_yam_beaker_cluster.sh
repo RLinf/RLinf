@@ -67,7 +67,7 @@ After submission:
        bash scripts/join_beaker_cluster.sh \
            --head-ip <tailscale-ip> \
            --config yam_ppo_openpi \
-           --model-path /path/to/checkpoint \
+           --model-path thomas0829/folding_towel_pi05 \
            --task "pick and place"
 EOF
     exit 0
@@ -120,6 +120,11 @@ ENTRYPOINT_CMD+=" && echo '=== Tailscale IP ===' && tailscale ip -4 && echo '===
 ENTRYPOINT_CMD+=" && TAILSCALE_NODE_IP=\$(tailscale ip -4)"
 ENTRYPOINT_CMD+=" && if ip addr add \${TAILSCALE_NODE_IP}/32 dev lo 2>/dev/null; then echo '=== lo alias added: Ray will advertise Tailscale IP ==='; RAY_NODE_IP_ARG=\"--node-ip \${TAILSCALE_NODE_IP}\"; else echo '=== WARNING: ip addr add failed (no CAP_NET_ADMIN) — Ray will use internal IP ==='; RAY_NODE_IP_ARG=''; fi"
 ENTRYPOINT_CMD+=" && INSTALL_CMD_DECODED=\$(echo ${INSTALL_CMD_B64} | base64 -d)"
+# Beaker uses userspace Tailscale (--tun=userspace-networking) which has no
+# kernel TUN interface. The GCS cannot open new TCP connections to desktop
+# Tailscale IPs (100.x.x.x) for active health checks. Disable active health
+# checks and rely solely on heartbeats (desktop → Beaker), which do work.
+ENTRYPOINT_CMD+=" && export RAY_health_check_period_ms=3600000"
 ENTRYPOINT_CMD+=" && bash ray_utils/start_ray_beaker.sh"
 ENTRYPOINT_CMD+=" --entrypoint"
 ENTRYPOINT_CMD+=" --ray-port ${RAY_PORT}"
@@ -166,7 +171,7 @@ echo "  2. Join from desktop:"
 echo "       bash scripts/join_beaker_cluster.sh \\"
 echo "           --head-ip <tailscale-ip> \\"
 echo "           --config ${CONFIG_NAME} \\"
-echo "           --model-path /path/to/checkpoint \\"
+echo "           --model-path thomas0829/folding_towel_pi05 \\"
 echo "           --task \"pick and place\""
 echo ""
 
