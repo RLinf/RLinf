@@ -4,7 +4,7 @@
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     https://www.apache.org/licenses/LICENSE-2.0
+#      https://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,16 +13,45 @@
 # limitations under the License.
 
 import copy
+import glob
+import importlib
 import os
+import warnings
+import sys
 from typing import Optional, Union
 
 import gym
 import numpy as np
 import torch
-from libero.libero import get_libero_path
-from libero.libero.benchmark import Benchmark
-from libero.libero.envs import OffScreenRenderEnv
 from omegaconf.omegaconf import OmegaConf
+
+libero_type = os.environ.get("LIBERO_TYPE", "standard")
+
+if libero_type in ["pro", "plus"]:
+    sys.path[:] = [p for p in sys.path if "opt/libero" not in p]
+    LIBERO_PKG_NAME = f"libero{libero_type}"
+    LIBERO_MAIN_MODULE_PATH = f"{LIBERO_PKG_NAME}.{LIBERO_PKG_NAME}"
+    try:
+        real_libero_pkg = importlib.import_module(LIBERO_PKG_NAME)
+        real_libero_core = importlib.import_module(LIBERO_MAIN_MODULE_PATH)
+        
+        try:
+            real_libero_benchmark = importlib.import_module(f"{LIBERO_MAIN_MODULE_PATH}.benchmark")
+        except ImportError:
+            real_libero_benchmark = importlib.import_module(f"{LIBERO_PKG_NAME}.benchmark")
+            
+        try:
+            real_libero_envs = importlib.import_module(f"{LIBERO_MAIN_MODULE_PATH}.envs")
+        except ImportError:
+            real_libero_envs = importlib.import_module(f"{LIBERO_PKG_NAME}.envs")
+
+        sys.modules["libero"] = real_libero_pkg
+        sys.modules["libero.libero"] = real_libero_core
+        sys.modules["libero.libero.benchmark"] = real_libero_benchmark
+        sys.modules["libero.libero.envs"] = real_libero_envs
+    except ImportError as e:
+        print(f"[Main Process Routing Error] Failed to import '{LIBERO_MAIN_MODULE_PATH}'. Error: {e}")
+
 
 from rlinf.envs.libero.utils import (
     get_benchmark_overridden,
@@ -32,7 +61,6 @@ from rlinf.envs.libero.utils import (
 )
 from rlinf.envs.libero.venv import ReconfigureSubprocEnv
 from rlinf.envs.utils import list_of_dict_to_dict_of_list, to_tensor
-
 
 class LiberoEnv(gym.Env):
     def __init__(self, cfg, num_envs, seed_offset, total_num_processes, worker_info):
@@ -55,7 +83,7 @@ class LiberoEnv(gym.Env):
         self._generator_ordered = np.random.default_rng(seed=0)
         self.start_idx = 0
 
-        self.task_suite: Benchmark = get_benchmark_overridden(cfg.task_suite_name)()
+        self.task_suite = get_benchmark_overridden(cfg.task_suite_name)()
 
         self._compute_total_num_group_envs()
         self.reset_state_ids_all = self.get_reset_state_ids_all()
@@ -65,7 +93,6 @@ class LiberoEnv(gym.Env):
 
         self.prev_step_reward = np.zeros(self.num_envs)
         self.use_rel_reward = cfg.use_rel_reward
-        self.use_step_penalty = getattr(cfg, "use_step_penalty", False)
 
         self._init_metrics()
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
@@ -80,11 +107,47 @@ class LiberoEnv(gym.Env):
     def get_env_fns(self):
         env_fn_params = self.get_env_fn_params()
         env_fns = []
-        for env_fn_param in env_fn_params:
+        
+        current_type_val = os.environ.get("LIBERO_TYPE", "standard")
 
-            def env_fn(param=env_fn_param):
+        for env_fn_param in env_fn_params:
+            def env_fn(param=env_fn_param, _type_val=current_type_val):
+                
+                os.environ["LIBERO_TYPE"] = _type_val
                 seed = param.pop("seed")
-                env = OffScreenRenderEnv(**param)
+                
+                if _type_val in ["pro", "plus"]:
+                    sys.path[:] = [p for p in sys.path if "opt/libero" not in p]
+                    
+                    pkg_name = f"libero{_type_val}"
+                    core_name = f"{pkg_name}.{pkg_name}"
+                    
+                    try:
+                        real_pkg = importlib.import_module(pkg_name)
+                        real_core = importlib.import_module(core_name)
+                        real_bench = importlib.import_module(f"{core_name}.benchmark")
+                        real_envs = importlib.import_module(f"{core_name}.envs")
+                        
+                        sys.modules["libero"] = real_pkg
+                        sys.modules["libero.libero"] = real_core
+                        sys.modules["libero.libero.benchmark"] = real_bench
+                        sys.modules["libero.libero.envs"] = real_envs
+
+                        loaded_path = os.path.dirname(real_core.__file__)
+                        os.environ["LIBERO_ASSET_ROOT"] = os.path.join(loaded_path, "assets")
+                        os.environ["LIBERO_BDDL_PATH"] = os.path.join(loaded_path, "bddl_files")
+                        os.environ["LIBERO_INIT_STATES_PATH"] = os.path.join(loaded_path, "init_files")
+                        
+                        
+                        WorkerEnv = real_envs.OffScreenRenderEnv
+                            
+                    except ImportError as e:
+                        print(f"[Worker Env Error] {e}")
+                        raise e
+                else:
+                    from libero.libero.envs import OffScreenRenderEnv as WorkerEnv
+
+                env = WorkerEnv(**param)
                 env.seed(seed)
                 return env
 
@@ -95,28 +158,114 @@ class LiberoEnv(gym.Env):
         env_fn_params = []
         base_env_args = OmegaConf.to_container(self.cfg.init_params, resolve=True)
 
+        variant = os.environ.get("LIBERO_TYPE", self.cfg.get("libero_variant", "standard") if hasattr(self.cfg, "get") else "standard")
+        raw_suffix = os.environ.get("LIBERO_SUFFIX", os.environ.get("LIBERO_PERTURBATION", self.cfg.get("perturbation_suffix", None) if hasattr(self.cfg, "get") else None))
+        if variant == "pro":
+            import liberopro.liberopro as l_pro
+            bddl_root = l_pro.get_libero_path("bddl_files")
+        elif variant == "plus":
+            import liberoplus.liberoplus as l_plus
+            bddl_root = l_plus.get_libero_path("bddl_files")
+        else:
+            from libero.libero import get_libero_path
+            bddl_root = get_libero_path("bddl_files")
+
+        suite_name = self.cfg.task_suite_name.lower()
+        suite_keyword = suite_name.replace("libero_", "").strip()
+
         task_descriptions = []
         if env_idx is None:
             env_idx = np.arange(self.num_envs)
+            
         for env_id in range(self.num_envs):
             if env_id not in env_idx:
-                task_descriptions.append(self.task_descriptions[env_id])
+                task_descriptions.append(self.task_descriptions[env_id] if hasattr(self, "task_descriptions") else "")
                 continue
+                
             task = self.task_suite.get_task(self.task_ids[env_id])
-            task_bddl_file = os.path.join(
-                get_libero_path("bddl_files"), task.problem_folder, task.bddl_file
-            )
-            env_fn_params.append(
-                {
-                    **base_env_args,
-                    "bddl_file_name": task_bddl_file,
-                    "seed": self.seed,
-                }
-            )
+            folder_name = task.problem_folder 
+            file_name = task.bddl_file
+            original_path = os.path.join(bddl_root, folder_name, file_name)
+            
+            final_path = original_path
+            
+            
+            
+            if variant == "pro":
+                pro_suffix = raw_suffix.replace(".bddl", "") if raw_suffix else None
+                
+                if pro_suffix == "all":
+                    valid_perts = ["_lan", "_object", "_swap", "_task"]
+                    
+                    all_sub_dirs = [
+                        d for d in os.listdir(bddl_root) 
+                        if os.path.isdir(os.path.join(bddl_root, d)) 
+                        and suite_keyword in d
+                        and any(d.endswith(pert) for pert in valid_perts)
+                    ]
+
+                    core_task_name = file_name.replace(".bddl", "")
+                    all_candidates = []
+                    
+                    for sub_dir in all_sub_dirs:
+                        target_dir_path = os.path.join(bddl_root, sub_dir)
+                        matches = [
+                            os.path.join(target_dir_path, f) 
+                            for f in os.listdir(target_dir_path) 
+                            if core_task_name in f and f.endswith(".bddl")
+                        ]
+                        all_candidates.extend(matches)
+                    
+                    if all_candidates:
+                        all_candidates.sort()
+                        if getattr(self.cfg, "is_eval", False):
+                            idx_offset = list(env_idx).index(env_id) if env_id in env_idx else 0
+                            final_path = all_candidates[(self.seed + idx_offset) % len(all_candidates)]
+                        else:
+                            final_path = self._generator.choice(all_candidates)
+
+            elif variant == "plus":
+                plus_suffix = raw_suffix.replace(".bddl", "") if raw_suffix else None
+                if plus_suffix == "all":
+                    clean_name = file_name.replace(".bddl", "")
+                    for marker in ['_view', '_initstate', '_noise', '_sample', '_light', '_table', '_add_1', '_lan', '_language', '_copy', '_level', '_tb']:
+                        if marker in clean_name:
+                            clean_name = clean_name.split(marker)[0]
+                            break
+                    
+                    suite_pattern = folder_name.replace("_", "").lower()
+                    all_dirs = [d for d in os.listdir(bddl_root) if os.path.isdir(os.path.join(bddl_root, d))]
+                    search_dirs = [os.path.join(bddl_root, d) for d in all_dirs if suite_pattern in d.lower().replace("_", "")]
+                    
+                    if not search_dirs:
+                        search_dirs = [os.path.join(bddl_root, folder_name)]
+                    
+                    all_candidates = []
+                    for target_dir in search_dirs:
+                        matches = [f for f in glob.glob(os.path.join(target_dir, "*.bddl")) if clean_name in os.path.basename(f)]
+                        all_candidates.extend(matches)
+                    
+                    if all_candidates:
+                        all_candidates.sort()
+                        if getattr(self.cfg, "is_eval", False):
+                            idx_offset = list(env_idx).index(env_id) if env_id in env_idx else 0
+                            final_path = all_candidates[(self.seed + idx_offset) % len(all_candidates)]
+                        else:
+                            final_path = self._generator.choice(all_candidates)
+
+            # short_path = os.path.join(os.path.basename(os.path.dirname(final_path)), os.path.basename(final_path))
+            # print(f"[Env Worker {env_id}] Loading BDDL: {short_path}")
+
+            env_fn_params.append({
+                **base_env_args,
+                "bddl_file_name": final_path,
+                "seed": self.seed,
+            })
             task_descriptions.append(task.language)
+            
         self.task_descriptions = task_descriptions
         return env_fn_params
-
+    
     def _compute_total_num_group_envs(self):
         self.total_num_group_envs = 0
         self.trial_id_bins = []
@@ -177,7 +326,6 @@ class LiberoEnv(gym.Env):
     def _get_task_and_trial_ids_from_reset_state_ids(self, reset_state_ids):
         task_ids = []
         trial_ids = []
-        # get task id and trial id from reset state ids
         for reset_state_id in reset_state_ids:
             start_pivot = 0
             for task_id, end_pivot in enumerate(self.cumsum_trial_id_bins):
@@ -288,23 +436,36 @@ class LiberoEnv(gym.Env):
         }
         return obs
 
+
     def _reconfigure(self, reset_state_ids, env_idx):
         reconfig_env_idx = []
         task_ids, trial_ids = self._get_task_and_trial_ids_from_reset_state_ids(
             reset_state_ids
         )
         for j, env_id in enumerate(env_idx):
-            if self.task_ids[env_id] != task_ids[j]:
-                reconfig_env_idx.append(env_id)
+            task_changed = self.task_ids[env_id] != task_ids[j]
             self.task_ids[env_id] = task_ids[j]
             self.trial_ids[env_id] = trial_ids[j]
+            
+
+            if task_changed or not getattr(self.cfg, "is_eval", False):
+                reconfig_env_idx.append(env_id)
+        
         if reconfig_env_idx:
             env_fn_params = self.get_env_fn_params(reconfig_env_idx)
             self.env.reconfigure_env_fns(env_fn_params, reconfig_env_idx)
+            
         self.env.seed(self.seed * len(env_idx))
+        
+
         self.env.reset(id=env_idx)
-        init_state = self._get_reset_states(env_idx=env_idx)
-        self.env.set_init_state(init_state=init_state, id=env_idx)
+        
+        variant = os.environ.get("LIBERO_TYPE", self.cfg.get("libero_variant", "standard") if hasattr(self.cfg, "get") else "standard")
+        
+
+        if variant != "plus":
+            init_state = self._get_reset_states(env_idx=env_idx)
+            self.env.set_init_state(init_state=init_state, id=env_idx)
 
     def reset(
         self,
@@ -374,13 +535,11 @@ class LiberoEnv(gym.Env):
         )
 
     def chunk_step(self, chunk_actions):
-        # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
         obs_list = []
         infos_list = []
 
         chunk_rewards = []
-
         raw_chunk_terminations = []
         raw_chunk_truncations = []
         for i in range(chunk_size):
@@ -395,13 +554,9 @@ class LiberoEnv(gym.Env):
             raw_chunk_terminations.append(terminations)
             raw_chunk_truncations.append(truncations)
 
-        chunk_rewards = torch.stack(chunk_rewards, dim=1)  # [num_envs, chunk_steps]
-        raw_chunk_terminations = torch.stack(
-            raw_chunk_terminations, dim=1
-        )  # [num_envs, chunk_steps]
-        raw_chunk_truncations = torch.stack(
-            raw_chunk_truncations, dim=1
-        )  # [num_envs, chunk_steps]
+        chunk_rewards = torch.stack(chunk_rewards, dim=1)
+        raw_chunk_terminations = torch.stack(raw_chunk_terminations, dim=1)
+        raw_chunk_truncations = torch.stack(raw_chunk_truncations, dim=1)
 
         past_terminations = raw_chunk_terminations.any(dim=1)
         past_truncations = raw_chunk_truncations.any(dim=1)
@@ -415,12 +570,12 @@ class LiberoEnv(gym.Env):
         if self.auto_reset or self.ignore_terminations:
             chunk_terminations = torch.zeros_like(raw_chunk_terminations)
             chunk_terminations[:, -1] = past_terminations
-
             chunk_truncations = torch.zeros_like(raw_chunk_truncations)
             chunk_truncations[:, -1] = past_truncations
         else:
             chunk_terminations = raw_chunk_terminations.clone()
             chunk_truncations = raw_chunk_truncations.clone()
+            
         return (
             obs_list,
             chunk_rewards,
@@ -437,9 +592,7 @@ class LiberoEnv(gym.Env):
             self.update_reset_state_ids()
         obs, infos = self.reset(
             env_idx=env_idx,
-            reset_state_ids=self.reset_state_ids[env_idx]
-            if self.use_fixed_reset_state_ids
-            else None,
+            reset_state_ids=self.reset_state_ids[env_idx] if self.use_fixed_reset_state_ids else None,
         )
         # gymnasium calls it final observation but it really is just o_{t+1} or the true next observation
         infos["final_observation"] = final_obs
@@ -449,6 +602,7 @@ class LiberoEnv(gym.Env):
         infos["_elapsed_steps"] = dones
         return obs, infos
 
+        
     def _calc_step_reward(self, terminations):
         step_penalty = -1 if self.use_step_penalty else 0
         termination_bonus = self.cfg.reward_coef * terminations
@@ -460,3 +614,4 @@ class LiberoEnv(gym.Env):
             return reward_diff
         else:
             return reward
+        

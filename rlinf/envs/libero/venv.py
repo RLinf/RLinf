@@ -13,13 +13,51 @@
 # limitations under the License.
 
 import multiprocessing
+import os
 import warnings
 from multiprocessing import connection
 from typing import Any, Callable, Optional, Union
 
 import gym
 import numpy as np
-from libero.libero.envs import OffScreenRenderEnv
+
+# ---------------------------------------------------------------------------
+# Dynamic Module Import Logic for Libero Pro / Plus
+# ---------------------------------------------------------------------------
+libero_type = os.environ.get("LIBERO_TYPE", "standard")
+
+if libero_type == "pro":
+    try:
+        from liberopro.liberopro.envs import OffScreenRenderEnv
+    except ImportError as e:
+        print(
+            f"[Venv] Warning: LIBERO_TYPE=pro but import failed ({e}). Falling back to standard libero..."
+        )
+        from libero.libero.envs import OffScreenRenderEnv
+
+elif libero_type == "plus":
+    try:
+        from liberoplus.liberoplus.envs import OffScreenRenderEnv
+    except ImportError as e:
+        print(
+            f"[Venv] Warning: LIBERO_TYPE=plus but import failed ({e}). Falling back to standard libero..."
+        )
+        from libero.libero.envs import OffScreenRenderEnv
+
+else:
+    try:
+        from libero.libero.envs import OffScreenRenderEnv
+    except ImportError:
+        try:
+            from liberopro.liberopro.envs import OffScreenRenderEnv
+        except ImportError:
+            try:
+                from liberoplus.liberoplus.envs import OffScreenRenderEnv
+            except ImportError:
+                raise ImportError(
+                    "Could not import OffScreenRenderEnv from libero, liberopro, or liberoplus."
+                )
+# ---------------------------------------------------------------------------
 
 from rlinf.envs.venv import (
     BaseVectorEnv,

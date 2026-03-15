@@ -258,7 +258,32 @@ as well as reinforcement learning training examples on real robots.
         SAC + CNN policy on the XSquare Turtle2 dual-arm robot
       </p>
     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://raw.githubusercontent.com/RLinf/misc/378920588652fff0a2a0b163b392c94694993345/pic/libero-pro.png" 
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="liberopro_plus.html" style="text-decoration: underline; color: blue;">
+          <b>RL with LIBERO-Pro</b>
+         </a><br>
+         Support LIBERO-Pro + OpenVLA-OFT / π₀ / π₀.₅ + PPO/GRPO training
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://raw.githubusercontent.com/RLinf/misc/378920588652fff0a2a0b163b392c94694993345/pic/libero-plus.jpg" 
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="liberopro_plus.html" style="text-decoration: underline; color: blue;">
+          <b>RL with LIBERO-Plus</b>
+         </a><br>
+         Support LIBERO-Plus + OpenVLA-OFT / π₀ / π₀.₅ + PPO/GRPO training
+       </p>
+     </div>
+
   </div>
+
+  
 
 
 .. toctree::
@@ -267,6 +292,7 @@ as well as reinforcement learning training examples on real robots.
 
    maniskill
    libero
+   liberoplus_pro
    behavior
    metaworld
    isaaclab
