@@ -187,7 +187,7 @@ class MLPPolicy(nn.Module, BasePolicy):
         **kwargs,
     ):
         states = forward_inputs["states"]
-        action = forward_inputs["action"]
+        action = forward_inputs["raw_actions"]
 
         feat = self.backbone(states)
         action_mean = self.actor_mean(feat)

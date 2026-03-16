@@ -1,0 +1,139 @@
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# =============================================================================
+# ResNet Reward Model Training Configuration
+# =============================================================================
+# This config trains a ResNet-based reward model using binary classification loss.
+# Data should be collected using DataCollectorWrapper.
+#
+# Labels are determined per-frame using 'is_obj_placed' field from infos,
+# NOT from episode-level success/fail filenames.
+#
+# Usage:
+#   python -m rlinf.runners.reward_training_runner --config reward_training.yaml
+# =============================================================================
+
+defaults:
+  - _self_
+
+# -----------------------------------------------------------------------------
+# Runner Configuration
+# -----------------------------------------------------------------------------
+runner:
+  task_type: reward_training
+  seed: 42
+  log_dir: logs/reward_training
+  save_interval: 500  # Save checkpoint every N steps
+  log_interval: 10    # Log metrics every N steps
+  val_interval: 100   # Run validation every N steps
+  max_steps: 10000    # Maximum training steps
+
+# -----------------------------------------------------------------------------
+# Worker Configuration
+# -----------------------------------------------------------------------------
+worker_type: FSDPRewardTrainingWorker
+
+# -----------------------------------------------------------------------------
+# Reward Model Configuration
+# -----------------------------------------------------------------------------
+reward:
+  # Model architecture
+  model:
+    arch: resnet18           # Options: resnet18, resnet34, resnet50, resnet101
+    pretrained: true         # Use ImageNet pretrained weights
+    hidden_dim: 256          # Hidden dimension for MLP head (null for linear)
+    dropout: 0.1             # Dropout rate in classification head
+    image_size: [3, 224, 224]  # [C, H, W]
+    normalize: true          # Apply ImageNet normalization
+    checkpoint_path: null    # Path to load existing checkpoint (null for training from scratch)
+
+  # Training hyperparameters
+  precision: bf16
+  micro_batch_size: 32
+  global_batch_size: 64
+  grad_clip: 1.0
+
+  # Optimizer
+  optim:
+    lr: 1e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    weight_decay: 1e-5
+    lr_warmup_steps: 100
+    warmup_style: linear
+
+  # FSDP configuration (for distributed training)
+  fsdp_config:
+    strategy: fsdp
+    sharding_strategy: no_shard  # Options: no_shard, shard_grad_op, full_shard
+    amp:
+      enabled: true
+      precision: bf16
+
+# -----------------------------------------------------------------------------
+# Data Configuration
+# -----------------------------------------------------------------------------
+data:
+  # Path to collected data (from DataCollectorWrapper)
+  # Should contain .pkl files with observations and infos
+  data_path: ${runner.log_dir}/collected_data
+
+  # Data loading settings
+  # Labels are determined per-frame using info['is_obj_placed']
+  # Data is automatically balanced to 1:1 success/fail ratio
+  val_split: 0.1           # Fraction of data for validation
+  num_workers: 4           # DataLoader workers
+
+# -----------------------------------------------------------------------------
+# Validation Configuration
+# -----------------------------------------------------------------------------
+validation:
+  enabled: true
+  val_split: 0.1           # Fraction of data for validation (10%)
+  val_interval: 100        # Validate every N training steps
+
+# -----------------------------------------------------------------------------
+# Logging Configuration
+# -----------------------------------------------------------------------------
+logging:
+  # Metrics to track
+  metrics:
+    # Training metrics
+    - loss              # Binary cross-entropy loss
+    - accuracy          # Classification accuracy (KEY METRIC)
+    - learning_rate
+    - grad_norm
+    # Validation metrics
+    - val_loss
+    - val_accuracy      # Should be close to train accuracy (no overfitting)
+
+  # Logging backends
+  tensorboard: true
+  wandb: false
+  wandb_project: rlinf-reward-model
+
+# -----------------------------------------------------------------------------
+# Channel Configuration (Pipeline Driven)
+# -----------------------------------------------------------------------------
+input_channels:
+  - name: training_data
+    from: dataloader
+
+output_channels:
+  - name: logs
+    to: logger
+  - name: checkpoints
+    to: checkpoint_saver
+

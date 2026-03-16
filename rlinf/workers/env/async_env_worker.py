@@ -30,6 +30,8 @@ class AsyncEnvWorker(EnvWorker):
         self,
         input_channel: Channel,
         output_channel: Channel,
+        reward_channel: Channel | None,
+        actor_channel: Channel | None,
         metric_channel: Channel,
         replay_channel: Channel | None = None,
     ):
@@ -38,7 +40,7 @@ class AsyncEnvWorker(EnvWorker):
         )
         self._interact_task = asyncio.create_task(
             self._interact(
-                input_channel, output_channel, metric_channel, replay_channel
+                input_channel, output_channel, reward_channel, actor_channel, metric_channel
             )
         )
         try:
@@ -50,6 +52,8 @@ class AsyncEnvWorker(EnvWorker):
         self,
         input_channel: Channel,
         output_channel: Channel,
+        reward_channel: Channel | None,
+        actor_channel: Channel | None,
         metric_channel: Channel,
         replay_channel: Channel | None,
     ):
@@ -57,7 +61,8 @@ class AsyncEnvWorker(EnvWorker):
             env_metrics = await self._run_interact_once(
                 input_channel,
                 output_channel,
-                replay_channel,
+                reward_channel,
+                actor_channel,
                 cooperative_yield=True,
             )
 

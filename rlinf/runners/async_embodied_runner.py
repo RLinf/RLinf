@@ -138,9 +138,20 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         start_time = time.time()
         self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
 
+        if self.reward is not None:
+            # Env -> Reward Input -> Reward Worker -> Env Channel -> Rollout
+            current_env_output_channel = self.reward_input_channel
+
+            self.reward.run_inference_loop(
+                input_channel=self.reward_input_channel, output_channel=self.env_channel
+            )
+        else:
+            # Env -> Env Channel -> Rollout
+            current_env_output_channel = self.env_channel
+
         env_handle: Handle = self.env.interact(
             input_channel=self.rollout_channel,
-            output_channel=self.env_channel,
+            output_channel=current_env_output_channel,
             metric_channel=self.env_metric_channel,
             replay_channel=self.replay_channel,
         )

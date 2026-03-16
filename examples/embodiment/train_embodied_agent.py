@@ -60,6 +60,7 @@ def main(cfg) -> None:
     actor_group = actor_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
     )
+
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
     rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
