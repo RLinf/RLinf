@@ -17,12 +17,12 @@ import copy
 import json
 import re
 from io import StringIO
+from typing import Any, Optional
 
 import pandas as pd
 from omegaconf import DictConfig
 
 from rlinf.agents.wideseek_r1.utils.sglang_client import SGLangClient
-from rlinf.agents.wideseek_r1.wideseek_r1 import WideSeekR1AgentLoopWorker
 from rlinf.workers.agent.agent_loop import AgentLoopOutput
 
 
@@ -139,8 +139,8 @@ async def get_final_reward_score(
     is_markdown,
     norm_column,
     sgl_client: SGLangClient | None,
-    agent_loop_worker: WideSeekR1AgentLoopWorker | None,
-    use_local_judge: bool | False,
+    agent_loop_worker: Optional[Any] = None,
+    use_local_judge: Optional[bool] = False,
 ):
     """Compute final reward score for boxed answers or markdown-table answers.
 

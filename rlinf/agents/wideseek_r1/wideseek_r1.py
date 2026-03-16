@@ -682,26 +682,16 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
 
         # credit assignment
         norm_column = self.cfg.data.get("norm_column", False)
-        if not self.use_local_judge:
-            llm_reward, format = await get_final_reward_score(
-                origin_question,
-                final_answer_extract,
-                answer,
-                is_markdown,
-                norm_column,
-                self.sgl_client,
-                None,
-            )
-        else:
-            llm_reward, format = await get_final_reward_score(
-                origin_question,
-                final_answer_extract,
-                answer,
-                is_markdown,
-                norm_column,
-                self.sgl_client,
-                self,
-            )
+        llm_reward, format = await get_final_reward_score(
+            origin_question,
+            final_answer_extract,
+            answer,
+            is_markdown,
+            norm_column,
+            self.sgl_client,
+            self,
+            self.use_local_judge,
+        )
 
         output_buffer, train_buffer, final_answer_format, reward_score = (
             credit_assignment(
