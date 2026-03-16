@@ -1302,6 +1302,10 @@ def main(cfg: DictConfig) -> None:
         tag = cfg.advantage.get("tag", None)
         returns_tag = cfg.advantage.get("returns_tag", tag)
 
+        if rank == 0:
+            if returns_tag != tag:
+                logger.info(f"Returns tag: {returns_tag}, Advantages tag: {tag}")
+
         for ds_cfg in cfg.data.train_data_paths:
             ds_path = Path(ds_cfg.dataset_path)
             if rank == 0:

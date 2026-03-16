@@ -72,7 +72,6 @@ class ValueDataset(LeRobotRLDataset):
         action_horizon: int = 10,
         gamma: float = 0.99,
         include_next_obs: bool = False,  # Set True for distributional RL
-        num_return_bins: int = 201,
         return_norm_stats_path: Optional[str] = None,
         return_min: Optional[float] = None,
         return_max: Optional[float] = None,
@@ -107,7 +106,6 @@ class ValueDataset(LeRobotRLDataset):
             history_keys: Keys to include in history
             action_horizon: Number of future actions/rewards
             gamma: Discount factor
-            num_return_bins: Number of bins for discretization (paper uses 201)
             return_norm_stats_path: Path to norm_stats.json for min/max
             return_min: Override minimum return value
             return_max: Override maximum return value
@@ -138,18 +136,16 @@ class ValueDataset(LeRobotRLDataset):
                 include_done=False,  # Not needed for offline value training
                 gamma=gamma,
                 discretize_return=True,  # Required for value training
-                num_return_bins=num_return_bins,
                 return_norm_stats_path=return_norm_stats_path,
                 return_min=return_min,
                 return_max=return_max,
                 normalize_to_minus_one_zero=normalize_to_minus_one_zero,
             )
-        elif not rl_config.discretize_return:
+        elif not rl_config.discretize_return or not rl_config.include_return:
             raise ValueError(
-                "ValueDataset requires discretize_return=True in rl_config. "
-                "Value training predicts discretized return tokens."
+                "ValueDataset requires discretize_return=True and include_return=True "
+                "in rl_config to compute return_normalized for value training."
             )
-
         # Initialize parent LeRobotRLDataset with only rl_config
         super().__init__(
             dataset_path=dataset_path,
@@ -254,8 +250,6 @@ class ValueDataset(LeRobotRLDataset):
             )
         if "return_normalized" in rl_sample:
             sample["return_normalized"] = rl_sample["return_normalized"]
-        if "return_bin_id" in rl_sample:
-            sample["return_bin_id"] = rl_sample["return_bin_id"]
 
         # =====================================================================
         # Additional RL fields (next observation, rewards)

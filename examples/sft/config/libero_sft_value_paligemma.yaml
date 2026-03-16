@@ -1,13 +1,13 @@
-# SigLIP-Gemma3 value model training config
+# PaliGemma value model training config
 #
-# Architecture: SigLIP2-so400m (1152-dim) + Gemma3-270M (640-dim) + Gemma expert
-# Forward mode: two-stage only (no interleaved)
+# Architecture: PaliGemma (gemma_2b VLM) + Gemma expert (100m) + Value head
+# Forward mode: vla (PI05 base)
 #
 # Usage:
-#   bash run_value_sft.sh libero_sft_value_siglip_gemma3
+#   bash run_value_sft.sh libero_sft_value_paligemma
 
 defaults:
-  - model/value_siglip_gemma3@actor.model
+  - model/value_paligemma@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
@@ -28,7 +28,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "value_sft_siglip_gemma3"
+    experiment_name: "value_sft_paligemma"
     logger_backends: ["tensorboard"]
 
   max_epochs: 30000
@@ -91,9 +91,7 @@ actor:
 
   model:
     precision: bf16
-    siglip_path: "/path/to/siglip"
-    gemma3_path: "path/to/gemma3"
-    tokenizer_path: "/path/to/gemma/tokenizer"
+    model_path: "/path/to/pi05_base_pytorch"
     freeze_vlm: false
     action_dim: 7
     action_horizon: 10
@@ -107,14 +105,14 @@ actor:
     weight_decay: 1e-10
     clip_grad: 1.0
     lr_scheduler: "constant"
-    lr_warmup_steps: 500
-    total_training_steps: 8000
+    lr_warmup_steps: 10000
+    total_training_steps: 30000
 
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
     use_orig_params: False
-    gradient_checkpointing: False
+    gradient_checkpointing: True
     mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}

@@ -158,9 +158,6 @@ class RLDataConfig:
     # Whether to discretize return into bins for language model prediction
     discretize_return: bool = False
 
-    # Number of discrete bins for return (paper uses 201)
-    num_return_bins: int = 201
-
     # Path to norm_stats.json for loading return min/max
     # If None, return_min and return_max must be provided
     return_norm_stats_path: Optional[str] = None
@@ -168,9 +165,6 @@ class RLDataConfig:
     # Override return range (if not using norm_stats)
     return_min: Optional[float] = None
     return_max: Optional[float] = None
-
-    # Output key for discretized return token
-    return_token_key: str = "return_token"
 
     # Whether to keep the continuous return value after discretization
     keep_continuous_return: bool = True
@@ -265,7 +259,6 @@ def create_rl_config(
     gamma: float = 0.99,
     # Return discretization
     discretize_return: bool = False,
-    num_return_bins: int = 201,
     return_norm_stats_path: Optional[str] = None,
     return_min: Optional[float] = None,
     return_max: Optional[float] = None,
@@ -281,7 +274,6 @@ def create_rl_config(
         include_return: Whether to include precomputed return
         gamma: Discount factor
         discretize_return: Whether to discretize return into bins
-        num_return_bins: Number of bins for discretization
         return_norm_stats_path: Path to norm_stats.json for min/max
         return_min: Override minimum return value
         return_max: Override maximum return value
@@ -297,7 +289,6 @@ def create_rl_config(
         include_return=include_return,
         gamma=gamma,
         discretize_return=discretize_return,
-        num_return_bins=num_return_bins,
         return_norm_stats_path=return_norm_stats_path,
         return_min=return_min,
         return_max=return_max,

@@ -16,7 +16,6 @@
 Value transforms for RL datasets.
 
 This module provides:
-- Value bin special tokens (<v0>, <v1>, ...) for discretized return prediction
 - Return normalization and discretization transforms for value learning
 """
 
@@ -36,84 +35,33 @@ from rlinf.datasets.lerobot.transforms import DataTransformFn
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# Value bin tokens
-# ============================================================================
-
-# Default number of bins (matching paper: 201 bins for [-1, 0] range)
-DEFAULT_NUM_VALUE_BINS = 201
-
-# Token format: <v0>, <v1>, ..., <v200>
-VALUE_TOKEN_PREFIX = "<v"
-VALUE_TOKEN_SUFFIX = ">"
-
-
-def get_value_token(bin_id: int) -> str:
-    """Get the special token string for a bin ID."""
-    return f"{VALUE_TOKEN_PREFIX}{bin_id}{VALUE_TOKEN_SUFFIX}"
-
-
-def get_all_value_tokens(num_bins: int = DEFAULT_NUM_VALUE_BINS) -> list[str]:
-    """Get list of all value bin tokens."""
-    return [get_value_token(i) for i in range(num_bins)]
-
-
-def parse_value_token(token: str) -> int:
-    """Parse a value token string to get the bin ID."""
-    if not token.startswith(VALUE_TOKEN_PREFIX) or not token.endswith(
-        VALUE_TOKEN_SUFFIX
-    ):
-        raise ValueError(f"Invalid value token format: {token}")
-
-    bin_str = token[len(VALUE_TOKEN_PREFIX) : -len(VALUE_TOKEN_SUFFIX)]
-    return int(bin_str)
-
-
-def add_value_tokens_to_tokenizer(
-    tokenizer, num_bins: int = DEFAULT_NUM_VALUE_BINS
-) -> dict[str, int]:
-    """Add value bin tokens to a tokenizer."""
-    value_tokens = get_all_value_tokens(num_bins)
-    tokenizer.add_special_tokens({"additional_special_tokens": value_tokens})
-
-    token_to_id = {
-        token: tokenizer.convert_tokens_to_ids(token) for token in value_tokens
-    }
-
-    return token_to_id
-
-
-# ============================================================================
 # Return discretization and normalization
 # ============================================================================
 
 
 class ReturnDiscretizer(DataTransformFn):
-    """Discretize continuous return values into bin IDs.
+    """Normalize continuous return values for value model training.
 
-    Discretizes return values into N bins evenly spaced between [min, max].
-    The bin ID is converted to a string token for use with language models.
-
-    Supports optional normalization to (-1, 0) range as per the paper:
+    Optionally normalizes return values to the (-1, 0) range as per the paper:
     "we normalize the values predicted to be between (-1, 0). Since we train
     on diverse tasks that have very different typical lengths, we normalize
     the values per task based on the maximum episode length of the task."
+
+    When ``normalize_to_minus_one_zero=True`` (default), outputs
+    ``return_normalized`` (float in [-1, 0]) into the sample dict.
     """
 
     def __init__(
         self,
-        num_bins: int = 201,
         return_min: Optional[float] = None,
         return_max: Optional[float] = None,
         norm_stats: Optional[dict[str, NormStats]] = None,
         norm_stats_path: Optional[Path] = None,
         return_key: str = "return",
-        output_key: str = "return_token",
         keep_continuous: bool = True,
         normalize_to_minus_one_zero: bool = True,
     ):
-        self.num_bins = num_bins
         self.return_key = return_key
-        self.output_key = output_key
         self.keep_continuous = keep_continuous
         self.normalize_to_minus_one_zero = normalize_to_minus_one_zero
 
@@ -131,19 +79,13 @@ class ReturnDiscretizer(DataTransformFn):
                 "Must provide either (return_min, return_max), norm_stats, or norm_stats_path"
             )
 
-        # Set discretization range based on normalization mode
+        # Set normalization factor
         if self.normalize_to_minus_one_zero:
-            self.return_min = -1.0
-            self.return_max = 0.0
             self.norm_factor = (
                 abs(self.raw_return_min) if self.raw_return_min != 0 else 1.0
             )
         else:
-            self.return_min = self.raw_return_min
-            self.return_max = self.raw_return_max
             self.norm_factor = 1.0
-
-        self.bin_width = (self.return_max - self.return_min) / self.num_bins
 
         logger.info("ReturnDiscretizer initialized:")
         logger.info(
@@ -151,9 +93,6 @@ class ReturnDiscretizer(DataTransformFn):
         )
         logger.info(f"  normalize_to_minus_one_zero={self.normalize_to_minus_one_zero}")
         logger.info(f"  norm_factor={self.norm_factor}")
-        logger.info(
-            f"  discretization_range=({self.return_min}, {self.return_max}), num_bins={self.num_bins}"
-        )
 
     def _load_from_norm_stats(self, norm_stats: dict[str, NormStats]):
         if "return" not in norm_stats:
@@ -181,22 +120,6 @@ class ReturnDiscretizer(DataTransformFn):
             return normalized
         return normalized * self.norm_factor
 
-    def discretize(self, value: float) -> int:
-        if self.normalize_to_minus_one_zero:
-            value = self.normalize_value(value)
-
-        clipped = np.clip(value, self.return_min, self.return_max)
-        bin_id = int((clipped - self.return_min) / self.bin_width)
-        return min(max(bin_id, 0), self.num_bins - 1)
-
-    def undiscretize(self, bin_id: int) -> float:
-        normalized = self.return_min + (bin_id + 0.5) * self.bin_width
-        return normalized
-
-    def undiscretize_to_raw(self, bin_id: int) -> float:
-        normalized = self.undiscretize(bin_id)
-        return self.denormalize_value(normalized)
-
     def __call__(self, data: dict[str, Any]) -> dict[str, Any]:
         if self.return_key not in data:
             return data
@@ -218,11 +141,7 @@ class ReturnDiscretizer(DataTransformFn):
 
         raw_value = float(return_value)
 
-        bin_id = self.discretize(raw_value)
-
         result = dict(data)
-        result[self.output_key] = get_value_token(bin_id)
-        result["return_bin_id"] = bin_id
 
         if self.normalize_to_minus_one_zero:
             result["return_normalized"] = self.normalize_value(raw_value)
@@ -327,7 +246,6 @@ class ReturnNormalizer(DataTransformFn):
 
 
 def create_return_discretizer(
-    num_bins: int = 201,
     norm_stats_path: Optional[str] = None,
     return_min: Optional[float] = None,
     return_max: Optional[float] = None,
@@ -336,13 +254,11 @@ def create_return_discretizer(
     """Factory function to create ReturnDiscretizer."""
     if norm_stats_path:
         return ReturnDiscretizer(
-            num_bins=num_bins,
             norm_stats_path=Path(norm_stats_path),
             **kwargs,
         )
     elif return_min is not None and return_max is not None:
         return ReturnDiscretizer(
-            num_bins=num_bins,
             return_min=return_min,
             return_max=return_max,
             **kwargs,

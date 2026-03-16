@@ -55,10 +55,14 @@ advantage:
   # 0.3 means top 30% are positive (threshold at 70th percentile)
   positive_quantile: 0.2
 
-  # Tag: reads from meta/returns_{tag}.parquet, saves to meta/advantages_{tag}.parquet
-  # Must match the tag used in compute_returns.py
+  # Tag for saving advantages: saves to meta/advantages_{tag}.parquet
   # Usage: advantage.tag=my_experiment
-  tag: default
+  tag: null
+
+  # Tag for reading returns: reads from meta/returns_{returns_tag}.parquet
+  # Independent from tag above. Must match the tag used in compute_returns.py
+  # Usage: advantage.returns_tag=my_returns_experiment
+  returns_tag: null
 
   # Model configuration (loaded from defaults, override here if needed)
   model:

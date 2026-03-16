@@ -58,11 +58,7 @@ from rlinf.datasets.value_dataset import ValueDataset  # noqa: E402
 from rlinf.datasets.value_transforms import (  # noqa: E402
     ReturnDiscretizer,
     ReturnNormalizer,
-    add_value_tokens_to_tokenizer,
     create_return_discretizer,
-    get_all_value_tokens,
-    get_value_token,
-    parse_value_token,
 )
 
 
@@ -166,9 +162,4 @@ __all__ = [
     "ReturnDiscretizer",
     "ReturnNormalizer",
     "create_return_discretizer",
-    # Value tokens
-    "get_value_token",
-    "get_all_value_tokens",
-    "parse_value_token",
-    "add_value_tokens_to_tokenizer",
 ]

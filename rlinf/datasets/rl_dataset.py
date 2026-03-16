@@ -265,10 +265,6 @@ class LeRobotRLDataset(LeRobotPyTorchDataset):
         self.return_discretizer = None
         if self.rl_config.discretize_return:
             self.return_discretizer = self._create_return_discretizer()
-            if self.return_discretizer:
-                logger.info(
-                    f"Return discretization enabled: {self.rl_config.num_return_bins} bins"
-                )
 
         # Log dataset info
         self._log_dataset_info()
@@ -396,9 +392,7 @@ class LeRobotRLDataset(LeRobotPyTorchDataset):
 
         # Common kwargs for discretizer
         common_kwargs = {
-            "num_bins": self.rl_config.num_return_bins,
             "return_key": self.rl_config.return_key,
-            "output_key": self.rl_config.return_token_key,
             "keep_continuous": self.rl_config.keep_continuous_return,
             "normalize_to_minus_one_zero": self.rl_config.normalize_to_minus_one_zero,
         }

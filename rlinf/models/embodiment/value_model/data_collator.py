@@ -107,7 +107,6 @@ class ValueDataCollator(DataCollatorMixin):
 
         return_raw_list = []
         return_normalized_list = []
-        return_bin_id_list = []
         target_values_list = []
 
         next_images_list = []
@@ -127,7 +126,6 @@ class ValueDataCollator(DataCollatorMixin):
             action_mask_list.append(1.0 if actions is not None else 0.0)
             return_raw_list.append(ex.get("return_raw"))
             return_normalized_list.append(ex.get("return_normalized"))
-            return_bin_id_list.append(ex.get("return_bin_id"))
             target_values_list.append(ex.get("target_values"))
 
             next_images_list.append(ex.get("next_images"))
@@ -205,8 +203,6 @@ class ValueDataCollator(DataCollatorMixin):
             batch["return_normalized"] = torch.tensor(
                 return_normalized_list, dtype=torch.float32
             )
-        if return_bin_id_list[0] is not None:
-            batch["return_bin_id"] = torch.tensor(return_bin_id_list, dtype=torch.long)
         if target_values_list[0] is not None:
             batch["target_values"] = torch.tensor(
                 target_values_list, dtype=torch.float32
