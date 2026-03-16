@@ -58,6 +58,41 @@ bash scripts/submit_yam_training.sh \
 > beaker session attach <session-id>
 > ```
 
+> **Idle cluster mode (recommended for debugging):** Instead of submitting a job
+> that runs training immediately, you can submit a job that starts Ray and idles.
+> You then SSH into the container at any time and run (or re-run) the training
+> script manually. This is better for iterative debugging because the cluster
+> stays up between training attempts — no need to re-submit when a run fails or
+> you want to tweak arguments.
+>
+> ```bash
+> # 1. Submit the idle cluster job (starts Ray head, installs deps, then waits)
+> bash scripts/submit_yam_beaker_cluster.sh \
+>     --config yam_ppo_openpi \
+>     --priority high \
+>     --cluster ai2/jupiter \
+>     --workspace ai2/molmoact-ablations \
+>     --allow-dirty
+>
+> # 2. Watch Beaker logs for the Tailscale IP (same as Step 2 below)
+>
+> # 3. SSH into the container and run training manually
+> ssh shiruic@beaker-0  # or ssh shiruic@<tailscale-ip>
+> cd /weka/oe-training-default/shiruic/RLinf
+> source .venv/bin/activate
+> python examples/embodiment/train_embodied_agent_staged.py \
+>     --config-name yam_ppo_openpi \
+>     actor.model.model_path=thomas0829/folding_towel_pi05 \
+>     rollout.model.model_path=thomas0829/folding_towel_pi05 \
+>     'env.train.task_description=pick and place' \
+>     'env.eval.task_description=pick and place'
+> ```
+>
+> The robot server + SSH tunnel workflow (Steps 2–3 below) is the same — the
+> container still uses `RemoteEnv` over `localhost:50051`. The only difference
+> is that you drive the training command yourself instead of the job running it
+> automatically.
+
 ### Step 2: Get the container's Tailscale IP
 
 Watch the Beaker logs for:
@@ -118,6 +153,9 @@ VLMPlanner (GPU 2) ◄── frames + instruction ── EnvWorker ────�
 |---|---|---|---|
 | `yam_ppo_openpi` | TOPReward (dense, VLM-based) | no (`subtask_interval: 0`) | `submit_yam_training.sh` |
 | `yam_ppo_openpi_topreward` | TOPReward (dense, VLM-based) | yes (`subtask_interval: 3`) | `submit_yam_training.sh` |
+
+Both configs also work with `submit_yam_beaker_cluster.sh` (idle cluster mode) — the
+script auto-detects the GPU count from the config name.
 
 ## Next Steps
 

@@ -26,6 +26,7 @@ CONFIG_NAME="yam_ppo_openpi"
 EXP_NAME=""
 GPUS=0  # 0 = auto-detect based on config
 CLUSTER="ai2/ceres-cirrascale"
+WORKSPACE="ai2/molmoact-ablations"
 BUDGET=""
 PRIORITY="urgent"
 DRY_RUN=""
@@ -33,7 +34,6 @@ SHOW_LOGS=""
 ALLOW_DIRTY=""
 
 BEAKER_IMAGE="shiruic/shirui-torch2.8.0_cuda12.8"
-WORKSPACE="ai2/molmoact-ablations"
 WEKA_MOUNT="oe-training-default:/weka/oe-training-default"
 INSTALL_CMD="bash requirements/install.sh embodied --model openpi --env remote"
 RAY_PORT=6379
@@ -54,6 +54,7 @@ Options:
   --gpus N              GPUs (0 = auto based on config)
   --name NAME           Experiment name (default: rlinf-cluster-<config>)
   --cluster CLUSTER     Beaker cluster (default: ai2/ceres-cirrascale)
+  --workspace WORKSPACE Beaker workspace (default: ai2/molmoact-ablations)
   --budget BUDGET       Beaker budget account
   --priority PRIORITY   Job priority (default: urgent)
   --show-logs           Stream Beaker logs after submission
@@ -80,6 +81,7 @@ while [[ $# -gt 0 ]]; do
         --gpus)         GPUS="$2"; shift 2 ;;
         --name)         EXP_NAME="$2"; shift 2 ;;
         --cluster)      CLUSTER="$2"; shift 2 ;;
+        --workspace)    WORKSPACE="$2"; shift 2 ;;
         --budget)       BUDGET="$2"; shift 2 ;;
         --priority)     PRIORITY="$2"; shift 2 ;;
         --show-logs)    SHOW_LOGS="true"; shift ;;
