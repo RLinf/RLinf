@@ -1,5 +1,5 @@
-Math Reasoning RL Training (PPO)
-========================================================
+PPO training for Math Reasoning
+==================================
 
 In the example `Reinforcement Learning Training for Math Reasoning <reasoning.html>`_, we have already introduced how to use GRPO to train a math reasoning model. RLinf also supports using the PPO algorithm for the same task. This page explains how to train this task with PPO. Since GRPO can be regarded as a variant of standard PPO, and we try to make PPO and GRPO share most of the code and configuration items, this page omits the parts that are largely repetitive. We recommend reading the `Reinforcement Learning Training for Math Reasoning <reasoning.html>`_ example first.
 
