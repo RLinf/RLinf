@@ -345,7 +345,7 @@ Then run:
    chmod +x eval.sh
    ./eval.sh
 
-If successful, evaluation results will be written to ``results/eval_results2.json``,
+If successful, evaluation results will be written to ``results/eval_results.json``,
 including per-task rewards and summary statistics.
 
 -----------------------------

@@ -107,7 +107,7 @@ def main(cfg: DictConfig) -> None:
     output_dir = project_root / "results"
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = output_dir / "eval_results2.json"  # Fixed path for checkpointing
+    output_path = output_dir / "eval_results.json"  # Fixed path for checkpointing
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = ComponentPlacement(cfg, cluster)
