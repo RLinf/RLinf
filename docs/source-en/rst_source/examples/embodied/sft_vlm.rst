@@ -30,7 +30,7 @@ Preparation Before Running
 --------------------------
 
 1. Prepare the environment. Pull the RLinf Docker image:
-   ``rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1``.
+   ``rlinf/rlinf:math-rlinf0.2-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1``.
 2. Prepare model weights:
    ``https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct``.
 3. Prepare Robo2VLM dataset:
