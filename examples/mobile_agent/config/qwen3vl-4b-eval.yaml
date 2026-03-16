@@ -22,16 +22,13 @@ cluster:
       node_ranks: 0
       env_configs:
         - node_ranks: 0
-          python_interpreter_path: /opt/venv/reason/bin/python3 # change to your python interpreter path
+          python_interpreter_path: /path/to/your/python3 # change to your python interpreter path
       hardware:
         type: ADB
         configs:
           - device_id: localhost:5555
             adb_path: "adb"
             node_rank: 0
-          # - device_id: localhost:5557
-          #   adb_path: "adb"
-          #   node_rank: 0
 
 runner:
   task_type: reasoning
@@ -71,7 +68,7 @@ actor:
   training_backend: fsdp
   enable_offload: false
   model:
-    model_path: /mnt/project_rlinf/hf_models/Qwen3-VL-4B-Instruct  # change to your model path
+    model_path: /path/to/your/Qwen3-VL-4B-Instruct  # change to your model path
     model_type: qwen3_vl
     precision: bf16
     enable_memory_saver: false
@@ -80,7 +77,7 @@ rollout:
   rollout_backend: sglang
   gpu_memory_utilization: 0.79325
   model:
-    model_path: /mnt/project_rlinf/hf_models/Qwen3-VL-4B-Instruct  # change to your model path
+    model_path: /path/to/your/Qwen3-VL-4B-Instruct  # change to your model path
     model_type: qwen3_vl
     precision: bf16
   enforce_eager: false
@@ -103,12 +100,12 @@ rollout:
 data:
   type: android
   task_family: android_world
-  android_world_parent: /mnt/project_rlinf/yingcheng/mobile-agent/android_world #/absolute/path/to/android_world
+  android_world_parent: /path/to/your/android_world #/absolute/path/to/android_world
   n_instances_per_task: 1
   seed: 1234
   max_prompt_length: 81920
   tokenizer:
-    tokenizer_model: /mnt/project_rlinf/hf_models/Qwen3-VL-4B-Instruct  # change to your tokenizer path
+    tokenizer_model: /path/to/your/Qwen3-VL-4B-Instruct  # change to your tokenizer path
     use_fast: false
     trust_remote_code: true
     padding_side: right
