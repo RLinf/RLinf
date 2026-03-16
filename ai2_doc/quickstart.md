@@ -113,7 +113,7 @@ bash scripts/start_robot_server.sh \
 # Dummy mode (no CAN bus / robot hardware needed — for pipeline testing)
 bash scripts/start_robot_server.sh \
     --config examples/embodiment/config/env/yam.yaml \
-    --no-tunnel --dummy
+    --dummy
 ```
 
 The server stays running indefinitely. `autossh` reconnects the reverse tunnel
