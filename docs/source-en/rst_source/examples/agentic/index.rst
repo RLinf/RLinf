@@ -81,3 +81,4 @@ The following examples include math reasoning RL and agentic AI workflows, such 
    searchr1
    reasoning
    rstar2
+   abdroid_world_evaluation

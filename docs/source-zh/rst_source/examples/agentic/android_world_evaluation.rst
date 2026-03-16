@@ -2,13 +2,13 @@
 使用 Android World 的 M3A 进行 Android 评估
 =====================================================
 
-本文档说明如何在 RLinf 中使用 `m3a_worker.py`（M3A Agent Worker）和
-`android_reward_worker.py`（Android Reward Worker）进行 Android World 任务评估，
+本文档说明如何在 RLinf 中使用 m3a_worker.py（M3A Agent Worker）和
+android_reward_worker.py（Android Reward Worker）进行 Android World 任务评估，
 方便其他用户安装环境并复现整个流程。
 
 本示例基于 Android World 官方仓库中的 M3A agent，并将其与 RLinf 的调度、
 rollout 和 reward 体系集成在一起。
-
+ 
 ----------------
 1. 总体概览
 ----------------
@@ -42,12 +42,15 @@ rollout 和 reward 体系集成在一起。
 2.2 安装 RLinf 依赖
 ====================
 
-在 RLinf 根目录下，安装文档中列出的依赖和 qwen-vl-utils：
+在 RLinf 根目录下，可以采用 requirements/install.sh 进行安装依赖和 qwen-vl-utils。
+在 RLinf 中采用 uv 进行 Python 包管理，具体可参考 RLinf 文档：https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/wideseek_r1/index.html
 
 .. code-block:: bash
 
-   pip install -r RLinf/docs/requirements.txt
-   pip install qwen-vl-utils
+   cd path/to/RLinf
+   bash requirements/install.sh agentic --venv reason
+   source reason/bin/activate
+   uv pip install qwen-vl-utils
 
 2.3 安装 Android World 及其依赖
 ================================
@@ -62,8 +65,8 @@ rollout 和 reward 体系集成在一起。
 
    # 安装 android_world 使用到的依赖
    sudo apt update && sudo apt install ffmpeg 
-   pip install -r /path/to/android_world/requirements.txt
-   pip install uiautomator2
+   uv pip install -r /path/to/android_world/requirements.txt
+   uv pip install uiautomator2
 
 2.4 路径配置
 ============

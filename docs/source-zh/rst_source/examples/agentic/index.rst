@@ -80,3 +80,4 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
    searchr1
    reasoning
    rstar2
+   android_world_evaluation

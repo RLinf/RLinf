@@ -32,9 +32,9 @@ Together they allow you to **evaluate the M3A agent only** (no training) in a
 way similar to the existing ``agent_worker`` + ``reward_worker`` flow, but with
 much simpler agent-side logic that is easier to reproduce and debug.
 
---------------------------
+---------------------------------------
 2. Environment and Dependencies
---------------------------
+---------------------------------------
 
 2.1 Basic environment
 =====================
@@ -47,12 +47,14 @@ much simpler agent-side logic that is easier to reproduce and debug.
 2.2 RLinf dependencies
 ======================
 
-Install RLinf documentation and Qwen-VL utilities:
-
+Install RLinf dependencies and Qwen-VL utilities:
+In RLinf, we use uv to manage python packages, you can refer to RLinf documentation "https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/wideseek_r1/index.html" for more details.
 .. code-block:: bash
 
-   pip install -r RLinf/docs/requirements.txt
-   pip install qwen-vl-utils
+   cd path/to/RLinf
+   bash requirements/install.sh agentic --venv reason
+   source reason/bin/activate
+   uv pip install qwen-vl-utils
 
 2.3 Android World and its dependencies
 ======================================
@@ -68,8 +70,8 @@ and installing its dependencies:
 
    # Install dependencies used by android_world
    sudo apt update && sudo apt install ffmpeg
-   pip install -r /path/to/android_world/requirements.txt
-   pip install uiautomator2
+   uv pip install -r /path/to/android_world/requirements.txt
+   uv pip install uiautomator2
 
 2.4 Path configuration
 ======================
@@ -346,9 +348,9 @@ Then run:
 If successful, evaluation results will be written to ``results/eval_results2.json``,
 including per-task rewards and summary statistics.
 
-----------------
+-----------------------------
 5. Tests and Verification
-----------------
+-----------------------------
 
 To comply with RLinf's Prime Directive, the Android World integration is
 covered by unit tests in:
