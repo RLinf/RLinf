@@ -84,6 +84,14 @@ class RecordVideo(gym.Wrapper):
         else:
             self._fps = self._get_fps_from_env(env)
 
+    @property
+    def is_start(self):
+        return getattr(self.env, "is_start")
+
+    @is_start.setter
+    def is_start(self, value):
+        setattr(self.env, "is_start", value)
+
     def _get_fps_from_env(self, env: gym.Env) -> int:
         """Resolve FPS from config/env metadata with fallback."""
         if hasattr(self.video_cfg, "fps") and self.video_cfg.fps is not None:
