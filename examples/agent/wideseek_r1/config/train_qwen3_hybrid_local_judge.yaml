@@ -1,0 +1,119 @@
+defaults:
+  - base_train
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,reward: all
+    rollout: 0-1
+    rollout_judge: 2-3
+
+runner:
+  experiment_name: mas_qwen3_4b_hybrid
+  # output_dir: ./logs/train
+  output_dir: ../results/train
+  seq_length: 32000  
+
+  max_epochs: 1
+  max_steps: -1  
+
+  val_check_interval: 30
+  save_interval: 30
+
+algorithm:
+  group_size: 8
+  n_minibatches: 1
+
+  clip_ratio_low: 0.2
+  clip_ratio_high: 0.28
+  clip_ratio_c: 10
+
+  loss_scales: ["group_level", "agent_level", "turn_level"] # used for implementing our GRPO alg. Details in `rlinf/algorithms/loss_scales.py`
+  advantage_mode: trajectory
+
+agentloop:
+  workflow: mas # or sa, mas refers to multi-agent, sa refers to single-agent
+  max_planner_turns: 2
+  max_worker_turns: 4
+  max_sa_turns: 4
+  max_workers_per_planner: 5
+
+  llm_ip: 127.0.0.1 # TODO:(USER) Replace with the actual IP address of the LLM judge server
+  llm_port: 7000 # TODO:(USER) Replace with the actual port of the LLM judge server
+  use_local_judge: true # Whether to use the RLinf internal judge llm. If set to true, the judge llm will be run within RLinf framwork. Otherwise, the judge llm will be run on the external server.
+  fixed_role: worker
+
+rollout:
+  model:
+    model_path: /mnt/public/zhouyiming/models/Qwen3-4B # TODO:(USER) Replace with the actual path to the model checkpoint
+  
+  use_fixed_worker: True
+
+rollout_judge:
+  group_name: "RolloutJudgeGroup"
+  gpu_memory_utilization: 0.5
+  use_fixed_worker: True
+  model:
+    model_type: qwen3
+    model_path: /mnt/public/zhouyiming/models/Qwen3-4B
+    precision: ${actor.model.precision}
+  enforce_eager: False
+  distributed_executor_backend: mp
+  disable_log_stats: False
+  detokenize: True
+  padding: null
+  eos: null
+  return_logprobs: False
+
+  rollout_backend: sglang
+  sglang:
+    attention_backend: triton
+    decode_log_interval: 500000
+    use_torch_compile: False
+    torch_compile_max_bs: 128
+  vllm:
+    attention_backend: FLASH_ATTN
+    enable_chunked_prefill: True
+    enable_prefix_caching: True
+    enable_flash_infer_sampler: True
+    max_num_batched_tokens: null
+    torch_profiler_dir: null
+
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+  max_running_requests: 64
+  cuda_graph_max_bs: 128
+
+  validate_weight_first_sync: False
+  validate_weight: False
+  validate_save_dir: null
+  print_outputs: False
+
+tools:
+  online: False
+
+data:
+  type: wideseek_r1
+  rollout_batch_size: 2
+  prompt_key: question
+  answer_key: answer
+  is_markdown: True
+  unique_columns: unique_columns 
+  train_data_paths: /mnt/public/zhouyiming/datasets/wideseek/hybrid_20k.jsonl # TODO:(USER) Replace with the actual path to the training dataset
+  shuffle: False
+  is_hybrid: True
+  data_size: -1
+
+actor:
+  model:
+    megatron_checkpoint: null
+    recompute_num_layers: 36
+
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 1
+    sequence_parallel: True
+
+  megatron:
+    use_hf_ckpt: True
+    ckpt_convertor:
+      model: Qwen3-4B

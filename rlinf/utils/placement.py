@@ -621,7 +621,49 @@ class MultiAgentModelParallelComponentPlacement(ModelParallelComponentPlacement)
         """
         super().__init__(config, cluster)
         self._validate_resource_coverage()
-        # self._placement_mode = PlacementMode.COLLOCATED
+
+    def _is_collocated(self):
+        """Check if the placement is collocated for multi-agent scenario.
+
+        This method checks if the placement is collocated for multi-agent scenario.
+        This method will override the default behavior of _is_collocated method in ModelParallelComponentPlacement.
+
+        In multi-agent scenario, we consider it collocated if:
+        1. actor and reward are placed on all GPUs
+        2. rollout components are distributed across different GPU ranges
+        3. all rollout components' GPUs are subsets of actor/reward's GPUs
+        """
+        if super()._is_collocated():
+            return True
+
+        # Get actor and reward GPUs
+        actor_gpus = set(self._get_component_hardware("actor"))
+        reward_gpus = set(self._get_component_hardware("reward"))
+
+        # Check if actor and reward are on the same GPUs (all GPUs)
+        if actor_gpus != reward_gpus:
+            return False
+
+        # Check all rollout components
+        rollout_components = [
+            key for key in self._component_rank_map if key.startswith("rollout")
+        ]
+        if not rollout_components:
+            return False
+
+        # Check if all rollout components' GPUs are subsets of actor's GPUs
+        all_rollout_gpus = set()
+        for component in rollout_components:
+            component_gpus = set(self._get_component_hardware(component))
+            if not component_gpus.issubset(actor_gpus):
+                return False
+            all_rollout_gpus.update(component_gpus)
+
+        # Check if rollout components cover all actor's GPUs
+        if all_rollout_gpus != actor_gpus:
+            return False
+
+        return True
 
     def _validate_resource_coverage(self):
         """

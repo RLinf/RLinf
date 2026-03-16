@@ -36,9 +36,11 @@ from rlinf.scheduler.dynamic_scheduler.manager import RolloutScalingScheduler
 from rlinf.scheduler.dynamic_scheduler.utils import (
     get_scheduler_channel,
 )
-from rlinf.utils.placement import ModelParallelComponentPlacement
+from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.workers.rollout.sglang import Engine, io_struct
 from rlinf.workers.rollout.utils import (
+    CollocateRankMapper,
+    DisaggRankMapper,
     MetaInfoStatsCollector,
     RolloutEngineStats,
     RunningStatusManager,
@@ -87,6 +89,9 @@ class SGLangWorker(Worker):
             "The future of AI is",
         ]
 
+        self.use_fixed_worker = self._cfg_rollout.get("use_fixed_worker", False)
+        if self._placement.placement_mode == PlacementMode.COLLOCATED:
+            self._setup_rollout_weight_dst_ranks()
         self.status_manager = RunningStatusManager()
 
         # Initialize meta_stats_collector for async operations
@@ -107,6 +112,27 @@ class SGLangWorker(Worker):
 
         self._scheduler = RolloutScalingScheduler(
             self._rank, self.schedule_channel, self
+        )
+
+    def _setup_rollout_weight_dst_ranks(self):
+        """Setup destination ranks for token and weight communication."""
+        assert self._placement.placement_mode == PlacementMode.COLLOCATED
+        if not self.use_fixed_worker:
+            rank_mapper = CollocateRankMapper
+
+        else:
+            rank_mapper = DisaggRankMapper
+
+        rank_map = rank_mapper.get_actor_rank_to_rollout_rank_map(
+            self._placement.actor_tp_size,
+            self._placement.actor_pp_size,
+            self._placement.actor_world_size,
+            self._placement.rollout_tp_size,
+            self._placement.rollout_world_size,
+        )
+        self._weight_dst_rank_in_rollout = rank_map[self._rank]
+        self.log_info(
+            f"Actor rank {self._rank} will send weights to {self._weight_dst_rank_in_rollout}"
         )
 
     def _init_meta_stats_collector(self):
@@ -261,6 +287,7 @@ class SGLangWorker(Worker):
         return result, request_info
 
     async def init_worker(self):
+        self._setup_rollout_weight_dst_ranks()
         self._init_engine()
         if self.weight_reload == "sync":
             await self._engine.tokenizer_manager.run_task_method(

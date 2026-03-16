@@ -113,7 +113,7 @@ class Scheduler(_Scheduler):
         model = self.tp_worker.worker.model_runner.model
         colocate = self.placement_mode == PlacementMode.COLLOCATED
         batch_weight = []
-        if colocate:
+        if colocate and not self.cfg.rollout.use_fixed_worker:
             for name, handle in state_dict.items():
                 func, args = handle
                 list_args = list(args)

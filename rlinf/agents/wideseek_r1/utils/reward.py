@@ -22,6 +22,7 @@ import pandas as pd
 from omegaconf import DictConfig
 
 from rlinf.agents.wideseek_r1.utils.sglang_client import SGLangClient
+from rlinf.agents.wideseek_r1.wideseek_r1 import WideSeekR1AgentLoopWorker
 from rlinf.workers.agent.agent_loop import AgentLoopOutput
 
 
@@ -138,7 +139,8 @@ async def get_final_reward_score(
     is_markdown,
     norm_column,
     sgl_client: SGLangClient | None,
-    agent_loop_worker=None,
+    agent_loop_worker: WideSeekR1AgentLoopWorker | None,
+    use_local_judge: bool | False,
 ):
     """Compute final reward score for boxed answers or markdown-table answers.
 
@@ -166,7 +168,7 @@ async def get_final_reward_score(
     label_answer = label_answer["answer"]
     if label_answer is not None and extract_answer is not None:
         # Use LLM as judge
-        if agent_loop_worker is None:
+        if not use_local_judge:
             # Use external server LLM judge
             llm_score = await verify_answer_with_llm_judge(
                 question=origin_question,

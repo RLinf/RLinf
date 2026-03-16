@@ -103,7 +103,7 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
             llm_port = self.cfg.agentloop.get("llm_port", "")
             llm_type = self.cfg.agentloop.get("llm_type", "")
             self.sgl_client = SGLangClient(llm_ip, llm_port, llm_type)
-            self.use_local_judge = self.cfg.agentloop.get("use_local_judge", False)           
+            self.use_local_judge = self.cfg.agentloop.get("use_local_judge", False)
         else:
             self.sgl_client = None
         assert self.return_logprobs if not self.is_eval else True
@@ -412,7 +412,11 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
                 context_failed = True
                 break
 
-            if role == self.fixed_role and self.use_fixed_rollout:
+            if (
+                role == self.fixed_role
+                and self.use_fixed_rollout
+                and not self.use_local_judge
+            ):
                 generate_result = await self.generate(
                     prompt_ids,
                     sampling_params={"max_new_tokens": max_resp_len},

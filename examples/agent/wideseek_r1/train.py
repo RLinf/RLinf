@@ -54,9 +54,9 @@ def main(cfg) -> None:
     # Generator group
     rollout_worker_cls = get_rollout_backend_worker(cfg)
     rollout_placement_strategy = component_placement.get_strategy("rollout")
-    assert not cfg.rollout.get("use_fixed_worker", False), (
-        "Currently we only support two engine in evluation"
-    )
+    # assert not cfg.rollout.get("use_fixed_worker", False), (
+    #     "Currently we only support two engine in evluation"
+    # )
 
     rollout_group = rollout_worker_cls.create_group(cfg, component_placement).launch(
         cluster,
