@@ -31,6 +31,28 @@ CONFIG_DIR = Path(__file__).resolve().parent
 LOGGER = logging.getLogger(__name__)
 
 
+def find_project_root(start_path: Path) -> Path:
+    """Infer project root by walking up from the given path.
+
+    The project root is defined as the nearest ancestor directory that
+    contains the ``RLinf`` package directory. This avoids relying on
+    a fixed number of ``..`` traversals, which can be fragile when
+    files are moved.
+
+    Args:
+        start_path: Path inside the repository (typically ``__file__``).
+
+    Returns:
+        The inferred project root path.
+    """
+    resolved = start_path.resolve()
+    for parent in resolved.parents:
+        if (parent / "RLinf").is_dir():
+            return parent
+    # Fallback to the directory two levels above the current file if no marker is found.
+    return resolved.parent.parent
+
+
 def load_resume_state(
     output_path: Path,
     dataset_size: int,
@@ -61,11 +83,10 @@ def load_resume_state(
                 output_path,
                 len(finished_indices),
             )
-        except Exception as exc:  # pylint: disable=broad-except
+        except Exception:  # pylint: disable=broad-except
             LOGGER.warning(
-                "Failed to read existing results file %s, starting from scratch: %s",
+                "Failed to read existing results file %s, starting from scratch.",
                 output_path,
-                exc,
             )
             existing_results = []
             finished_indices = set()
@@ -100,9 +121,7 @@ def main(cfg: DictConfig) -> None:
     LOGGER.info("\n%s", OmegaConf.to_yaml(cfg))
 
     # Derive project root from __file__ for consistent result directory with eval.sh.
-    project_root = (
-        Path(__file__).resolve().parent / ".." / ".." / ".." / ".."
-    ).resolve()
+    project_root = find_project_root(Path(__file__))
     LOGGER.info("project_root: %s", project_root)
     output_dir = project_root / "results"
     output_dir.mkdir(parents=True, exist_ok=True)
