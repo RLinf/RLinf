@@ -17,6 +17,8 @@ import os
 import numpy as np
 import torch
 from omegaconf import DictConfig
+import jax
+import openpi.models.model as _model
 
 from rlinf.config import SupportedModel, get_supported_model
 from rlinf.data.embodied_io_struct import Trajectory
@@ -48,6 +50,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             self.model = torch.compile(self.model, mode="default")
 
     def setup_dagger_components(self):
+        """Initialize DAgger-specific replay buffer state."""
         seed = self.cfg.actor.get("seed", 1234)
         auto_save_path = self.cfg.algorithm.replay_buffer.get("auto_save_path", None)
         if auto_save_path is None:
@@ -88,14 +91,14 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             self.replay_buffer.add_trajectories(intervene_traj_list)
 
     def _prepare_mlp_sft_batch(self, batch):
+        """Prepare batch SFT data for MLP policies."""
         target_actions = (
             batch["model_action"] if "model_action" in batch else batch["action"]
         )
         return {"states": batch["states"], "action": target_actions}
 
     def _prepare_openpi_sft_batch(self, batch):
-        import jax
-        import openpi.models.model as _model
+        """Prepare batch SFT data for OpenPI policies."""
 
         obs_dict = {}
         obs_prefix_keys = [k for k in batch.keys() if k.startswith("observation/")]
@@ -163,6 +166,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         }
 
     def _prepare_sft_batch(self, batch):
+        """Prepare model-specific DAgger training inputs."""
         model_type = get_supported_model(self.cfg.actor.model.model_type)
         if model_type == SupportedModel.MLP_POLICY:
             return self._prepare_mlp_sft_batch(batch)
@@ -173,6 +177,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         )
 
     def _reduce_sft_loss(self, loss):
+        """Reduce model-specific SFT loss to a scalar."""
         if not isinstance(loss, torch.Tensor):
             loss = torch.as_tensor(loss, device=self.device)
 
@@ -188,12 +193,14 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     @Worker.timer("forward_actor")
     def forward_actor(self, batch):
+        """Run one supervised forward pass for DAgger."""
         data = self._prepare_sft_batch(batch)
         actor_loss = self.model(forward_type=ForwardType.SFT, data=data)
         return self._reduce_sft_loss(actor_loss)
 
     @Worker.timer("update_one_epoch")
     def update_one_epoch(self):
+        """Run one replay-buffer update epoch for DAgger."""
         global_batch_size_per_rank = (
             self.cfg.actor.global_batch_size // self._world_size
         )
@@ -240,6 +247,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         }
 
     def process_train_metrics(self, metrics):
+        """Aggregate DAgger training and replay-buffer metrics."""
         replay_buffer_stats = self.replay_buffer.get_stats()
         replay_buffer_stats = {
             f"replay_buffer/{key}": value for key, value in replay_buffer_stats.items()
@@ -265,6 +273,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     @Worker.timer("run_training")
     def run_training(self):
+        """Run DAgger updates with replay-buffer samples."""
         if self.cfg.actor.get("enable_offload", False):
             self.load_param_and_grad(self.device)
             self.load_optimizer(self.device)
@@ -301,6 +310,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         return self.process_train_metrics(metrics)
 
     def compute_advantages_and_returns(self):
+        """Skip advantage computation for supervised DAgger updates."""
         return {}
 
     def save_checkpoint(self, save_base_path, step):

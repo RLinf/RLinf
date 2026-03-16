@@ -85,6 +85,7 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
 
     @Worker.timer("run_training")
     async def run_training(self):
+        """Run async DAgger updates with replay-buffer samples."""
         if self.cfg.actor.get("enable_offload", False):
             self.load_param_and_grad(self.device)
             self.load_optimizer(self.device)
