@@ -14,11 +14,11 @@
 
 import os
 
+import jax
 import numpy as np
+import openpi.models.model as _model
 import torch
 from omegaconf import DictConfig
-import jax
-import openpi.models.model as _model
 
 from rlinf.config import SupportedModel, get_supported_model
 from rlinf.data.embodied_io_struct import Trajectory
