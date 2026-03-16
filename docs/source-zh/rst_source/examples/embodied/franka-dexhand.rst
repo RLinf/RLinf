@@ -658,7 +658,7 @@ Franka + 灵巧手真机强化学习
 脚本会自动：
 
 1. 在 GPU 节点上启动 ``ClassifierRewardServer``，加载分类器模型到 GPU
-2. 在控制节点上启动 ``DataCollector``（env worker），通过 Ray 远程调用分类器
+2. 在控制节点上启动 ``DataCollector`` （env worker），通过 Ray 远程调用分类器
 
 demo 采集流程中：
 
@@ -709,6 +709,7 @@ demo 采集流程中：
          device: cuda
          remote: false              # 使用显式 reward_server 时设为 false
          threshold: 0.75
+
 修改配置中的 ``checkpoint_path`` 为步骤 3 训练得到的分类器路径，
 以及 ``robot_ip``、``env_vars`` 等为实际值后，在 **head 节点** 运行：
 
@@ -737,7 +738,7 @@ demo 采集流程中：
 步骤 6：训练 RL（使用 demo 和分类器奖励）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-采集完 demo 后，**确保 Ray 集群仍在运行**（或重新启动），
+采集完 demo 后，**确保 Ray 集群仍在运行** （或重新启动），
 然后在训练配置 YAML 中指定：
 
 1. ``component_placement`` 中的 ``reward_server`` + ``reward_server:`` 配置段

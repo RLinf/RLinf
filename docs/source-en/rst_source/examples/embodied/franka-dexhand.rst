@@ -422,7 +422,7 @@ the full configuration.
 
 
 Visual Reward Classifier
------------------------
+-------------------------
 
 In dexterous hand tasks, the end-effector pose alone is insufficient to
 determine success (e.g., whether an object is stably grasped). A visual

@@ -20,7 +20,6 @@ Usage
 
     python examples/embodiment/train_reward_classifier.py \\
         --log_dir logs/<timestamp>-reward-classifier-<env> \\
-        --pretrained_ckpt RLinf-ResNet10-pretrained/resnet10_pretrained.pt \\
         --image_keys wrist_1 wrist_2 \\
         --num_epochs 200
 
@@ -239,8 +238,8 @@ def main():
     parser.add_argument(
         "--pretrained_ckpt",
         type=str,
-        default="RLinf-ResNet10-pretrained/resnet10_pretrained.pt",
-        help="Path to pretrained ResNet-10 weights.",
+        default=None,
+        help="Optional path to pretrained ResNet-10 weights. Default: None.",
     )
     parser.add_argument(
         "--image_keys", nargs="+", default=["wrist_1"],
