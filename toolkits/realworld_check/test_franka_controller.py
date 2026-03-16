@@ -33,7 +33,6 @@ Example
    python -m toolkits.realworld_check.test_franka_controller
 """
 
-import json
 import os
 import time
 

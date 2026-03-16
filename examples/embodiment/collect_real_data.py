@@ -181,7 +181,7 @@ class DataCollector(Worker):
                 rewards=reward_tensor,
                 dones=done_tensor | trunc_tensor,
                 terminations=done_tensor,
-                truncations=trunc_tensor,
+                truncations=torch.zeros_like(done_tensor),
                 forward_inputs={"action": action_tensor},
             )
 

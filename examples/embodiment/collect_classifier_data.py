@@ -83,14 +83,10 @@ class ClassifierDataCollector(Worker):
         """Determine camera key names from the first observation."""
         self.main_image_key = self.env.main_image_key
 
-        extra = obs.get("extra_view_images", None)
-        n_extra = 0
-        if extra is not None:
-            if isinstance(extra, (torch.Tensor, np.ndarray)):
-                n_extra = extra.shape[1] if extra.ndim == 5 else 1
-
-        n_total = 1 + n_extra
-        all_keys = sorted(f"wrist_{i + 1}" for i in range(n_total))
+        # Derive actual camera key names from the underlying env's
+        # observation space rather than synthesizing wrist_* names.
+        frame_space = self.env.env.single_observation_space["frames"]
+        all_keys = sorted(frame_space.spaces.keys())
         self.extra_image_keys = sorted(
             k for k in all_keys if k != self.main_image_key
         )
@@ -102,7 +98,7 @@ class ClassifierDataCollector(Worker):
     def _extract_frames(self, obs) -> dict[str, np.ndarray] | None:
         """Extract all camera frames from wrapped observation.
 
-        Returns a dict mapping camera key (e.g. ``wrist_1``, ``wrist_2``)
+        Returns a dict mapping camera key (e.g. ``global``, ``wrist_1``)
         to a ``(H, W, 3)`` BGR uint8 numpy array, or ``None`` if no
         images are available.
         """

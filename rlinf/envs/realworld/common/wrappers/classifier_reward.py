@@ -28,14 +28,17 @@ class ClassifierRewardWrapper(gym.Wrapper):
     """Replace the environment reward with a visual-classifier prediction.
 
     At each step the wrapper feeds the camera frames through a classifier
-    function and uses the output as the reward signal.  An episode is
-    terminated when the classifier predicts success.
+    function, applies sigmoid to obtain a success probability, and returns
+    a binary reward (``1.0`` if the probability exceeds the threshold,
+    ``0.0`` otherwise).  The raw probability is stored in
+    ``info["classifier_reward"]``.  An episode is terminated when the
+    classifier predicts success.
 
     Args:
         env: The base environment.
         classifier_func: A callable ``obs_dict → float`` that returns
-            the reward (typically 0 or 1) given the current observation.
-        reward_threshold: Probability threshold for declaring success.
+            the classifier logit given the current observation.
+        reward_threshold: Sigmoid probability threshold for declaring success.
     """
 
     def __init__(

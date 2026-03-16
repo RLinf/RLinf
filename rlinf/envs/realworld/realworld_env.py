@@ -86,13 +86,18 @@ class RealWorldEnv(gym.Env):
             hardware_info=hardware_info,
             env_idx=env_idx,
         )
-        if self.cfg.get("no_gripper", True):
+        is_dex_hand = (
+            env.action_space.shape == (12,)
+            or (
+                hasattr(env, "config")
+                and getattr(env.config, "end_effector_type", "franka_gripper")
+                != "franka_gripper"
+            )
+        )
+        if self.cfg.get("no_gripper", True) and not is_dex_hand:
             env = GripperCloseEnv(env)
         if not env.config.is_dummy and self.cfg.get("use_spacemouse", True):
-            if env.action_space.shape == (12,) or (
-                hasattr(env, "config")
-                and getattr(env.config, "end_effector_type", "franka_gripper") != "franka_gripper"
-            ):
+            if is_dex_hand:
                 glove_cfg = self.cfg.get("glove_config", {})
                 env = DexHandIntervention(
                     env,

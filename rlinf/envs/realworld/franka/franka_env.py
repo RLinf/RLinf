@@ -52,7 +52,7 @@ class FrankaRobotConfig:
     # Unified RealSense camera config.
     # Expected schema:
     # camera_configs:
-    #   defaults: {name, auto_exposure, exposure, gain, crop_region, resolution, fps, enable_depth}
+    #   camera_defaults: {name, auto_exposure, exposure, gain, crop_region, resolution, fps, enable_depth}
     #   overrides:
     #     "<serial>": {name, auto_exposure, exposure, gain, crop_region, ...}
     camera_configs: Optional[dict[str, Any]] = None
@@ -550,7 +550,7 @@ class FrankaEnv(gym.Env):
         frame: np.ndarray,
         reshape_size: tuple[int, int],
         crop_region: tuple[float, float, float, float] | None = None,
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Crop the frame and resize.
 
         Args:
@@ -559,6 +559,9 @@ class FrankaEnv(gym.Env):
             crop_region: Optional relative crop ``(top, left, bottom, right)``
                 where each value is in ``[0, 1]``.  ``None`` falls back to the
                 default centre-square crop.
+
+        Returns:
+            A tuple of ``(cropped_frame, resized_frame)``.
         """
         h, w, _ = frame.shape
         if crop_region is not None:
