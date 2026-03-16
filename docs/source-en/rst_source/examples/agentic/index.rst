@@ -60,16 +60,27 @@ The following examples include math reasoning RL and agentic AI workflows, such 
        </p>
      </div>
 
-   <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-     <img src="https://github.com/RLinf/misc/raw/main/pic/math_numbers_small.jpg"
-          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-     <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-      <a href="reasoning.html" style="text-decoration: underline; color: blue;">
-        <b>Math Reasoning RL Training</b>
-       </a><br>
-       SOTA RL training for math reasoning (AIME24/AIME25/GPQA-diamond) with Qwen-based models
-     </p>
-   </div>
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/math_numbers_small.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="reasoning.html" style="text-decoration: underline; color: blue;">
+          <b>Math Reasoning RL Training</b>
+         </a><br>
+         SOTA RL training for math reasoning (AIME24/AIME25/GPQA-diamond) with Qwen-based models
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/ppo_vs_grpo.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="reasoning_ppo.html" style="text-decoration: underline; color: blue;">
+          <b>Math Reasoning RL Training (PPO)</b>
+         </a><br>
+           Math reasoning RL training using the PPO algorithm
+       </p>
+     </div>
    </div>
 
 .. toctree::
@@ -80,4 +91,5 @@ The following examples include math reasoning RL and agentic AI workflows, such 
    coding_online_rl
    searchr1
    reasoning
+   reasoning_ppo
    rstar2
