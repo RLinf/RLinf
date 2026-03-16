@@ -15,6 +15,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions.normal import Normal
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
@@ -115,7 +116,9 @@ class MLPPolicy(nn.Module, BasePolicy):
             next_obs = self.preprocess_env_obs(next_obs)
             kwargs.update({"next_obs": next_obs})
 
-        if forward_type == ForwardType.SAC:
+        if forward_type == ForwardType.SFT:
+            return self.sft_forward(**kwargs)
+        elif forward_type == ForwardType.SAC:
             return self.sac_forward(**kwargs)
         elif forward_type == ForwardType.SAC_Q:
             return self.sac_q_forward(**kwargs)
@@ -127,6 +130,23 @@ class MLPPolicy(nn.Module, BasePolicy):
             return self.default_forward(**kwargs)
         else:
             raise NotImplementedError
+
+    def sft_forward(self, data, **kwargs):
+        states = data["states"]
+        target_actions = data["action"]
+
+        feat = self.backbone(states)
+        pred_actions = self.actor_mean(feat)
+
+        if pred_actions.shape != target_actions.shape:
+            if pred_actions.numel() != target_actions.numel():
+                raise ValueError(
+                    "MLP DAgger targets must match the predicted action shape, "
+                    f"got predicted {pred_actions.shape} and target {target_actions.shape}."
+                )
+            target_actions = target_actions.reshape_as(pred_actions)
+
+        return F.mse_loss(pred_actions, target_actions, reduction="none")
 
     def sac_forward(self, obs, **kwargs):
         feat = self.backbone(obs["states"])
