@@ -28,11 +28,11 @@ except ImportError:  # pragma: no cover
 
 def to_tensor(
     array: Union[dict, torch.Tensor, np.ndarray, list, Any], device: str = "cpu"
-) -> Union[dict, torch.Tensor]:
+) -> Union[dict, torch.Tensor, list, None]:
     """
     Copied from ManiSkill!
     Maps any given sequence to a torch tensor on the CPU/GPU. If physx gpu is not enabled then we use CPU, otherwise GPU, unless specified
-    by the device argument
+    by the device argument. Also handles None inputs (or lists/arrays containing None) by returning None or a list of None/Tensors.
 
     Args:
         array: The data to map to a tensor
@@ -40,23 +40,37 @@ def to_tensor(
             and CPU otherwise
 
     """
-    if isinstance(array, (dict)):
+    if array is None:
+        return None
+
+    if isinstance(array, dict):
         return {k: to_tensor(v, device=device) for k, v in array.items()}
     elif isinstance(array, torch.Tensor):
         ret = array.to(device)
     elif isinstance(array, np.ndarray):
+        if array.dtype == object:
+            return [to_tensor(x, device=device) for x in array]
+
         if array.dtype == np.uint16:
             array = array.astype(np.int32)
         elif array.dtype == np.uint32:
             array = array.astype(np.int64)
         ret = torch.tensor(array).to(device)
     else:
-        if isinstance(array, list) and isinstance(array[0], np.ndarray):
-            ret = torch.tensor(np.array(array), device=device)
-        elif isinstance(array, list) and isinstance(array[0], torch.Tensor):
-            ret = torch.stack(array).to(device)
-        else:
-            ret = torch.tensor(array, device=device)
+        if isinstance(array, list) and any(x is None for x in array):
+            return [to_tensor(x, device=device) for x in array]
+
+        if (
+            isinstance(array, list)
+            and len(array) > 0
+            and isinstance(array[0], np.ndarray)
+        ):
+            array = np.array(array)
+            if array.dtype == object:
+                return [to_tensor(x, device=device) for x in array]
+
+        ret = torch.tensor(array, device=device)
+
     if ret.dtype == torch.float64:
         ret = ret.to(torch.float32)
     return ret
