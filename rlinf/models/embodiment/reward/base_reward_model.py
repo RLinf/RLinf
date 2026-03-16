@@ -44,34 +44,9 @@ class BaseRewardModel(nn.Module, ABC):
         Args:
             cfg: Configuration dictionary containing:
                 - checkpoint_path: Optional path to model checkpoint.
-                - device: Device to place the model on (default: "cuda").
         """
         super().__init__()
         self.cfg = cfg
-        self._device = torch.device(cfg.get("device", "cuda"))
-
-    @property
-    def device(self) -> torch.device:
-        """Return the device where the model is located."""
-        # Get actual device from model parameters
-        try:
-            return next(self.parameters()).device
-        except StopIteration:
-            return self._device
-
-    def to_device(self, device: Optional[torch.device] = None) -> "BaseRewardModel":
-        """Move the model to the specified device.
-
-        Args:
-            device: Target device. If None, uses self._device.
-
-        Returns:
-            self for method chaining.
-        """
-        if device is not None:
-            self._device = device
-        self.to(self._device)
-        return self
 
     @abstractmethod
     def forward(
@@ -114,33 +89,5 @@ class BaseRewardModel(nn.Module, ABC):
 
         Returns:
             torch.Tensor: Reward tensor of shape [B] or [B, 1].
-        """
-        pass
-
-    def scale_reward(
-        self,
-        rewards: torch.Tensor,
-        scale: float = 1.0,
-        shift: float = 0.0,
-    ) -> torch.Tensor:
-        """Apply scaling and shifting to rewards.
-
-        Args:
-            rewards: Raw reward tensor.
-            scale: Multiplicative scale factor.
-            shift: Additive shift.
-
-        Returns:
-            Scaled rewards: scale * rewards + shift.
-        """
-        return scale * rewards + shift
-
-    @property
-    @abstractmethod
-    def model_type(self) -> str:
-        """Return the type identifier of this reward model.
-
-        Returns:
-            String identifier (e.g., "image", "video", "text").
         """
         pass

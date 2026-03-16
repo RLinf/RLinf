@@ -33,7 +33,7 @@ channels:
 
 # Worker settings
 worker:
-  worker_type: "ImageRewardWorker"
+  worker_type: "RewardInferenceWorker"
   batch_size: 64  # Process images in batches
 
 # Cluster settings (for distributed inference)

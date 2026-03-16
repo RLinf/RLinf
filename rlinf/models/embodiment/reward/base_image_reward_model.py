@@ -145,8 +145,3 @@ class BaseImageRewardModel(BaseRewardModel):
             torch.Tensor: Reward tensor of shape [B].
         """
         pass
-
-    @property
-    def model_type(self) -> str:
-        """Return the type identifier of this reward model."""
-        return "image"

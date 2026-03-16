@@ -12,15 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Reward Workers for RLinf.
-
-This module provides:
-- RewardWorker: For inference/computing rewards during RL training
-- FSDPRewardWorker: For training reward models with FSDP (like FSDPSftWorker)
-"""
-
-import re as _re
-
+import asyncio
 import os
 from typing import Optional
 
@@ -30,28 +22,25 @@ from omegaconf import DictConfig
 from torch.utils.data import DataLoader, DistributedSampler
 
 from rlinf.algorithms.rewards import get_reward_class
+from rlinf.data.datasets.reward_model import (
+    RewardBinaryDataset,
+    balance_and_split_by_episode,
+    load_episodes_with_labels,
+)
 from rlinf.data.io_struct import RolloutResult
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
-from rlinf.models.embodiment.reward import ResNetRewardModel
+from rlinf.models.embodiment.reward import ResNetRewardModel, get_reward_model_class
 from rlinf.scheduler import Channel, Cluster, Worker
+from rlinf.utils.comm_mapping import CommMapper
 from rlinf.utils.distributed import all_reduce_dict
+from rlinf.utils.down_sampling import down_sample_batch
 from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.placement import (
     HybridComponentPlacement,
 )
 from rlinf.utils.utils import clear_memory
-from rlinf.utils.logging import get_logger
 
-from rlinf.data.datasets.reward_model import (
-    load_episodes_with_labels,
-    balance_and_split_by_episode,
-    RewardBinaryDataset,
-)
-
-from rlinf.models.embodiment.reward import get_reward_model_class
-from rlinf.utils.down_sampling import down_sample_batch
-from rlinf.utils.comm_mapping import CommMapper
 
 class RewardWorker(Worker):
     """Reward Worker for inference during RL training."""
@@ -67,15 +56,23 @@ class RewardWorker(Worker):
             * self.cfg.algorithm.get("group_size", 1)
             // self._world_size
         )
-        self.do_down_sampling = self.cfg.algorithm.get("down_sampling", {}).get("do_down_sampling", False)
+        self.do_down_sampling = self.cfg.algorithm.get("down_sampling", {}).get(
+            "do_down_sampling", False
+        )
         if self.do_down_sampling:
-            self.down_sampling_config = self.cfg.algorithm.get("down_sampling", {}).get("down_sampling_config", {})
+            self.down_sampling_config = self.cfg.algorithm.get("down_sampling", {}).get(
+                "down_sampling_config", {}
+            )
 
     def init_worker(self):
         if self.cfg.reward.use_reward_model:
-            self.reward_model = get_reward_model_class(self.cfg.reward.model.model_type)(self.cfg.reward.model)
+            self.reward_model = get_reward_model_class(
+                self.cfg.reward.model.model_type
+            )(self.cfg.reward.model)
         else:
-            self.rule_based_reward = get_reward_class(self.cfg.reward.reward_type)(self.cfg.reward)
+            self.rule_based_reward = get_reward_class(self.cfg.reward.reward_type)(
+                self.cfg.reward
+            )
 
         if self.cfg.reward.get("tokenizer", None) is not None:
             self.tokenizer = hf_tokenizer(self.cfg.reward.tokenizer.tokenizer_model)
@@ -114,7 +111,9 @@ class RewardWorker(Worker):
                         self.tokenizer.decode(ids, skip_special_tokens=True)
                         for ids in rollout_result.response_ids
                     ]
-                rollout_result = down_sample_batch(rollout_result, self.down_sampling_config)
+                rollout_result = down_sample_batch(
+                    rollout_result, self.down_sampling_config
+                )
             # answer is not needed in training
             rollout_result.answers = None
 
@@ -140,7 +139,9 @@ class RewardWorker(Worker):
                     rollout_result.prompt_ids, skip_special_tokens=True
                 )
             kwargs["prompts"] = prompts
-        scores = self.rule_based_reward.get_reward(texts, rollout_result.answers, **kwargs)
+        scores = self.rule_based_reward.get_reward(
+            texts, rollout_result.answers, **kwargs
+        )
         return (
             torch.as_tensor(scores, dtype=torch.float, device=torch.device("cpu"))
             .view(-1, 1)
@@ -151,6 +152,7 @@ class RewardWorker(Worker):
 # =============================================================================
 # FSDP Reward Worker for Training (like FSDPSftWorker)
 # =============================================================================
+
 
 class FSDPRewardWorker(FSDPModelManager, Worker):
     """FSDP-based worker for reward model training.
@@ -228,7 +230,9 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
                 img_pil.save(os.path.join(fail_dir, f"{split}_{idx:05d}.png"))
                 fail_count += 1
 
-        self.logger.info(f"Saved {split} images: {success_count} success, {fail_count} fail")
+        self.logger.info(
+            f"Saved {split} images: {success_count} success, {fail_count} fail"
+        )
 
     def model_provider_func(self) -> torch.nn.Module:
         """Provide the ResNet reward model."""
@@ -462,8 +466,7 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
 # =============================================================================
 
 
-class ImageRewardWorker(RewardWorker):
-
+class RewardInferenceWorker(RewardWorker):
     def __init__(self, cfg: DictConfig, placement: HybridComponentPlacement):
         super().__init__(cfg, placement)
 
@@ -471,7 +474,8 @@ class ImageRewardWorker(RewardWorker):
         torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", 0)))
         self.device = torch.cuda.current_device()
 
-        self.enable_offload = self.cfg.reward.get("enable_offload", True)
+        self.enable_offload = self.cfg.reward.get("enable_offload", False)
+        self._interact_task = None
 
         self.reward_threshold = 0.6
 
@@ -508,9 +512,7 @@ class ImageRewardWorker(RewardWorker):
 
             state_dict = load_file(model_path)
         else:
-            state_dict = torch.load(
-                model_path, map_location="cpu", weights_only=False
-            )
+            state_dict = torch.load(model_path, map_location="cpu", weights_only=False)
 
         new_state_dict = {}
         for k, v in state_dict.items():
@@ -527,12 +529,12 @@ class ImageRewardWorker(RewardWorker):
         self.model.load_state_dict(state_dict, strict=True)
 
     @Worker.timer("compute_rewards")
-    def compute_rewards(self, input_channel: Channel, output_channel: Channel):
+    async def compute_rewards(self, input_channel: Channel, output_channel: Channel):
         if self.enable_offload:
             self.model.to(self.device)
 
         while True:
-            data = input_channel.get()
+            data = await input_channel.get(async_op=True).async_wait()
             images = data.get("images")
             last_run = data.get("last_run", None)
 
@@ -540,9 +542,10 @@ class ImageRewardWorker(RewardWorker):
             self.send_reward_output(output_channel, rewards)
 
             if last_run:
-                if self.enable_offload:
-                    self.model.to("cpu")
                 break
+
+        if self.enable_offload:
+            self.model.to("cpu")
 
     def _compute_image_rewards(self, images: torch.Tensor):
         if isinstance(images, np.ndarray):
@@ -609,7 +612,7 @@ class ImageRewardWorker(RewardWorker):
             dst_world_size=reward_world_size,
             dst_rank=self._rank,
         )
-    
+
     def send_reward_output(
         self,
         output_channel: Channel,
@@ -625,15 +628,39 @@ class ImageRewardWorker(RewardWorker):
         dst_ranks_and_sizes = self.dst_ranks["train"]
         split_sizes = [size for _, size in dst_ranks_and_sizes]
         reward_tensor_split = list(torch.split(reward_tensor, split_sizes, dim=0))
-        for (dst_rank, _), reward_i in zip(
-            dst_ranks_and_sizes, reward_tensor_split
-        ):
+        for (dst_rank, _), reward_i in zip(dst_ranks_and_sizes, reward_tensor_split):
             if isinstance(reward_i, torch.Tensor):
                 reward_i = reward_i.cpu().contiguous()
             output_channel.put(
                 reward_i,
                 key=CommMapper.build_channel_key(
-                    self._rank, dst_rank, extra=f"reward_output"
+                    self._rank, dst_rank, extra="reward_output"
                 ),
                 async_op=True,
             )
+
+    async def compute_rewards_async(
+        self, input_channel: Channel, output_channel: Channel
+    ):
+        assert self._interact_task is None or self._interact_task.done(), (
+            "Previous interact task is still running while a new interact call is made."
+        )
+        self._interact_task = asyncio.create_task(
+            self._compute_rewards(input_channel, output_channel)
+        )
+        try:
+            await self._interact_task
+        except asyncio.CancelledError:
+            pass
+
+    async def _compute_rewards(self, input_channel: Channel, output_channel: Channel):
+        while True:
+            data = await input_channel.get(async_op=True).async_wait()
+            images = data.get("images")
+
+            rewards = self._compute_image_rewards(images=images)
+            self.send_reward_output(output_channel, rewards)
+
+    async def stop(self):
+        if self._interact_task is not None and not self._interact_task.done():
+            self._interact_task.cancel()

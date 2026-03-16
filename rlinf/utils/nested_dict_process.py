@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
 from typing import Any
+
+import torch
 
 
 def update_nested_cfg(base_cfg, override_cfg):
@@ -122,6 +123,7 @@ def cat_list_of_dict_tensor(list_of_dict: list, dim=0):
         else:
             raise ValueError(f"{key=}, {type(_v0)} is not supported!")
     return ret
+
 
 def split_dict(
     batch: dict[str, Any],

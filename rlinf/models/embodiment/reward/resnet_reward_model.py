@@ -19,8 +19,6 @@ cross-entropy loss for training. It is designed for fast inference during
 online RL training, similar to the HIL-SERL approach.
 """
 
-import logging
-import os
 from typing import Any, Optional
 
 import torch
@@ -30,8 +28,6 @@ import torchvision.models as models
 from omegaconf import DictConfig
 
 from rlinf.models.embodiment.reward.base_image_reward_model import BaseImageRewardModel
-
-logger = logging.getLogger(__name__)
 
 
 class ResNetRewardModel(BaseImageRewardModel):
@@ -61,7 +57,6 @@ class ResNetRewardModel(BaseImageRewardModel):
                 - pretrained: Whether to use pretrained weights (default: True).
                 - hidden_dim: Optional hidden dimension for MLP head.
                 - dropout: Dropout rate for classification head (default: 0.1).
-                - checkpoint_path: Optional path to load trained weights.
         """
         super().__init__(cfg)
 
@@ -183,8 +178,3 @@ class ResNetRewardModel(BaseImageRewardModel):
             rewards = torch.sigmoid(logits)
 
         return rewards
-
-    @property
-    def model_type(self) -> str:
-        """Return the type identifier of this reward model."""
-        return "resnet_image"

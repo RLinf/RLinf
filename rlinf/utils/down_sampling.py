@@ -1,8 +1,24 @@
-import torch
-import numpy as np
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import re as _re
 
+import numpy as np
+import torch
+
 from rlinf.data.io_struct import RolloutResult
+
 
 def down_sample_batch(rollout_result: RolloutResult, down_sampling_config: dict):
     def _build_group_uids_by_chunks(total_num: int, group_size: int):
@@ -55,9 +71,7 @@ def down_sample_batch(rollout_result: RolloutResult, down_sampling_config: dict)
             return min((closed_cnt - 1) / num_turns, 1.0)
 
         err_w = np.array([error_ratio(t) for t in response_texts], dtype=float)
-        fmt_w = np.array(
-            [answer_tag_penalty(t) for t in response_texts], dtype=float
-        )
+        fmt_w = np.array([answer_tag_penalty(t) for t in response_texts], dtype=float)
         return err_w, fmt_w
 
     def _weighted_group_choice(uids, rewards, response_texts):
@@ -125,9 +139,7 @@ def down_sample_batch(rollout_result: RolloutResult, down_sampling_config: dict)
             if len(chosen) != down_sample_to_n:
                 all_sorted = [
                     i
-                    for i, _ in sorted(
-                        non_zero_pairs + zero_pairs, key=lambda x: x[1]
-                    )
+                    for i, _ in sorted(non_zero_pairs + zero_pairs, key=lambda x: x[1])
                 ]
                 chosen = all_sorted[:down_sample_to_n]
             valid_mask[torch.tensor(chosen, dtype=torch.long)] = True
@@ -137,16 +149,16 @@ def down_sample_batch(rollout_result: RolloutResult, down_sampling_config: dict)
     reject_equal = bool(down_sampling_config.get("reject_equal_reward", False))
 
     original_group_size = rollout_result.group_size
-    uids = _build_group_uids_by_chunks(
-        rollout_result.num_sequence, original_group_size
-    )
+    uids = _build_group_uids_by_chunks(rollout_result.num_sequence, original_group_size)
 
     if reject_equal and rollout_result.rewards is not None:
         mask1 = _reject_equal_reward(uids, rollout_result.rewards)
     else:
         mask1 = torch.ones(rollout_result.num_sequence, dtype=torch.bool)
 
-    mask2 = _weighted_group_choice(uids, rollout_result.rewards, rollout_result.response_texts)
+    mask2 = _weighted_group_choice(
+        uids, rollout_result.rewards, rollout_result.response_texts
+    )
 
     final_mask = mask1 & mask2
 
