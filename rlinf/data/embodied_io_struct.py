@@ -505,7 +505,6 @@ class EmbodiedRolloutResult:
     """
 
     max_episode_length: int = 0
-    model_weights_id: str = ""
 
     actions: list[torch.Tensor] = field(default_factory=list)  # trajectory_length
     intervene_flags: list[torch.Tensor] = field(
@@ -627,7 +626,6 @@ class EmbodiedRolloutResult:
         # return [trajectory_length, B, ...]
         trajectory = Trajectory(
             max_episode_length=self.max_episode_length,
-            model_weights_id=self.model_weights_id,
         )
         if len(self.actions) > 0:
             trajectory.actions = torch.stack(self.actions, dim=0).cpu().contiguous()
