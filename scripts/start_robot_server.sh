@@ -122,6 +122,11 @@ if [ "$NO_TUNNEL" = false ]; then
     echo "ROBOT_SERVER_URL=localhost:${PORT} is set in submit_yam_training.sh."
     echo ""
 
+    # AUTOSSH_GATETIME=0: retry forever even if SSH fails immediately (e.g.
+    # beaker-0 not reachable yet).  Default (30s) causes autossh to give up
+    # after repeated "quick failures", silently killing the tunnel.
+    export AUTOSSH_GATETIME=0
+
     # -M 0:  disable autossh's own monitoring port; rely on SSH keepalives instead
     # -N:    no remote command, tunnel only
     # -R:    reverse tunnel — Beaker localhost:PORT -> this machine localhost:PORT
@@ -138,7 +143,47 @@ if [ "$NO_TUNNEL" = false ]; then
         "${REMOTE_USER}@${REMOTE_HOST}" &
     AUTOSSH_PID=$!
     echo "autossh PID: ${AUTOSSH_PID}"
-    echo ""
+
+    # Give autossh a moment to start, then verify it's still alive.
+    sleep 3
+    if ! kill -0 "$AUTOSSH_PID" 2>/dev/null; then
+        echo ""
+        echo "ERROR: autossh (PID ${AUTOSSH_PID}) died within 3 seconds."
+        echo "  Try manually:  ssh -v -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} echo ok"
+        echo "  Common causes: host unreachable, SSH key rejected, autossh bug"
+        echo ""
+        echo "RobotServer is still running (PID ${SERVER_PID}). Tunnel is NOT active."
+        echo "You can start the tunnel manually with:"
+        echo "  autossh -M 0 -N -R ${PORT}:localhost:${PORT} -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${REMOTE_USER}@${REMOTE_HOST}"
+    else
+        echo "autossh is running."
+        echo ""
+    fi
 fi
+
+# Monitor both processes: warn if autossh dies while robot server is still up.
+while true; do
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+        echo "RobotServer (PID ${SERVER_PID}) exited."
+        break
+    fi
+    if [ "$NO_TUNNEL" = false ] && [ -n "${AUTOSSH_PID:-}" ]; then
+        if ! kill -0 "$AUTOSSH_PID" 2>/dev/null; then
+            echo ""
+            echo "WARNING: autossh (PID ${AUTOSSH_PID}) died. Restarting tunnel..."
+            autossh -M 0 -N \
+                -R "${PORT}:localhost:${PORT}" \
+                -o ServerAliveInterval=10 \
+                -o ServerAliveCountMax=3 \
+                -o ExitOnForwardFailure=yes \
+                -o StrictHostKeyChecking=no \
+                -o ConnectTimeout=10 \
+                "${REMOTE_USER}@${REMOTE_HOST}" &
+            AUTOSSH_PID=$!
+            echo "Restarted autossh with PID ${AUTOSSH_PID}"
+        fi
+    fi
+    sleep 10
+done
 
 wait
