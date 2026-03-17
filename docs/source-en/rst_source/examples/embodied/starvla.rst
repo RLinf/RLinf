@@ -188,27 +188,24 @@ Key config snippet
 
    rollout:
      model:
-       model_path: "/path/to/model/Qwen2.5-VL-OFT-LIBERO-4in1"
+       model_path: "/path/to/model"
 
    actor:
      model:
-       model_path: "/path/to/model/Qwen2.5-VL-OFT-LIBERO-4in1"
+       model_path: "/path/to/model"
        action_dim: 7
        num_action_chunks: 8
        starvla:
          framework_name: "QwenOFT"
          expected_action_dim: ${actor.model.action_dim}
          expected_num_action_chunks: ${actor.model.num_action_chunks}
-         clip_log_ratio_min: -0.22314355
-         clip_log_ratio_max: 0.18232156
-         clip_log_ratio_level: action_level
 
 Run training
 ^^^^^^^^^^^^
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh libero_10_grpo_starvla
+   bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_starvla
 
 Evaluation
 ----------
