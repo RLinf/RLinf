@@ -23,8 +23,8 @@ from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
-from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 from rlinf.workers.reward.reward_worker import RewardInferenceWorker
+from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 mp.set_start_method("spawn", force=True)
 
@@ -81,7 +81,6 @@ def main(cfg) -> None:
         reward_group = RewardInferenceWorker.create_group(cfg).launch(
             cluster, name=cfg.reward.group_name, placement_strategy=reward_placement
         )
-
 
     runner = EmbodiedRunner(
         cfg=cfg,

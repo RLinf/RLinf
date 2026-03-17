@@ -22,6 +22,7 @@ from omegaconf import DictConfig
 from torch.utils.data import DataLoader, DistributedSampler
 
 from rlinf.algorithms.rewards import get_reward_class
+from rlinf.config import torch_dtype_from_precision
 from rlinf.data.datasets.reward_model import (
     RewardBinaryDataset,
     balance_and_split_by_episode,
@@ -51,6 +52,16 @@ class RewardWorker(Worker):
 
         self.placement = HybridComponentPlacement(cfg, Cluster())
 
+    def model_provider_func(self):
+        reward_cls = get_reward_model_class(self.cfg.reward.model.model_type)
+
+        model_cfg = self.cfg.reward.model
+        torch_dtype = torch_dtype_from_precision(model_cfg.precision)
+
+        model = reward_cls(model_cfg)
+        model.to(torch_dtype)
+        return model
+
     def init_worker(self):
         self.total_batch_size_per_dp = (
             self.cfg.data.rollout_batch_size
@@ -66,9 +77,7 @@ class RewardWorker(Worker):
             )
 
         if self.cfg.reward.use_reward_model:
-            self.reward_model = get_reward_model_class(
-                self.cfg.reward.model.model_type
-            )(self.cfg.reward.model)
+            self.reward_model = self.model_provider_func()
         else:
             self.rule_based_reward = get_reward_class(self.cfg.reward.reward_type)(
                 self.cfg.reward
@@ -155,8 +164,7 @@ class RewardWorker(Worker):
 
 
 class FSDPRewardWorker(FSDPModelManager, Worker):
-    """FSDP-based worker for reward model training.
-    """
+    """FSDP-based worker for reward model training."""
 
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
@@ -475,14 +483,14 @@ class RewardInferenceWorker(RewardWorker):
         self.enable_offload = self.cfg.reward.get("enable_offload", False)
         self._interact_task = None
 
-        self.reward_threshold = 0.6
+        self.reward_threshold = self.cfg.reward.get("reward_threshold", 0.6)
 
     def init_worker(self):
         """Initialize the reward model from checkpoint."""
         model_cfg = self.cfg.reward.get("model", {})
 
         # build model
-        self.model = ResNetRewardModel(model_cfg)
+        self.model = super().model_provider_func()
 
         model_path = model_cfg.get("model_path", None)
         if model_path is not None:

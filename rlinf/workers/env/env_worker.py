@@ -61,6 +61,9 @@ class EnvWorker(Worker):
         self.stage_num = self.cfg.rollout.pipeline_stage_num
 
         self.reward_mode = self.cfg.get("reward", {}).get("reward_mode", "per_step")
+        if self.cfg.get("reward", {}).get("use_reward_model", False):
+            self.reward_weight = self.cfg.reward.get("reward_weight", 1.0)
+            self.env_reward_weight = self.cfg.reward.get("env_reward_weight", 0.0)
 
         # Env configurations
         self.enable_offload = self.cfg.env.train.get("enable_offload", False)
@@ -503,17 +506,10 @@ class EnvWorker(Worker):
             return None
 
         if reward_model_output is not None:
-            combine_mode = self.cfg.reward.get("combine_mode", "replace")
-            if combine_mode == "replace":
-                rewards = reward_model_output
-            elif combine_mode == "add":
-                rewards = reward_model_output + env_output.rewards
-            elif combine_mode == "multiply":
-                rewards = reward_model_output * env_output.rewards
-            elif combine_mode == "average":
-                rewards = (reward_model_output + env_output.rewards) / 2
-            else:
-                raise ValueError(f"Invalid combine mode: {combine_mode}")
+            rewards = (
+                self.env_reward_weight * rewards
+                + self.reward_weight * reward_model_output
+            )
 
         adjusted_rewards = rewards.clone()
         if (
@@ -595,7 +591,9 @@ class EnvWorker(Worker):
         for (rank, _), reward_input_i in zip(dst_ranks_and_sizes, reward_input_batches):
             send_channel.put(
                 item=reward_input_i,
-                key=CommMapper.build_channel_key(self._rank, rank, extra=f"{mode}_reward_input"),
+                key=CommMapper.build_channel_key(
+                    self._rank, rank, extra=f"{mode}_reward_input"
+                ),
                 async_op=True,
             )
 
@@ -638,7 +636,13 @@ class EnvWorker(Worker):
 
         reward_input = {"images": reward_input_obs["main_images"]}
         if last_run:
-            reward_input.update({"last_run": torch.ones((self.train_num_envs_per_stage, 1), dtype=torch.bool)})
+            reward_input.update(
+                {
+                    "last_run": torch.ones(
+                        (self.train_num_envs_per_stage, 1), dtype=torch.bool
+                    )
+                }
+            )
         self.send_reward_input(send_channel=send_channel, reward_input=reward_input)
         return self.recv_reward_results(recv_channel=recv_channel)
 
