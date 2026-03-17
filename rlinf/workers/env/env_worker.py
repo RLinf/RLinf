@@ -60,6 +60,8 @@ class EnvWorker(Worker):
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self.stage_num = self.cfg.rollout.pipeline_stage_num
 
+        self.reward_mode = self.cfg.get("reward", {}).get("reward_mode", "per_step")
+
         # Env configurations
         self.enable_offload = self.cfg.env.train.get("enable_offload", False)
         self.only_eval = getattr(self.cfg.runner, "only_eval", False)
@@ -593,9 +595,8 @@ class EnvWorker(Worker):
         for (rank, _), reward_input_i in zip(dst_ranks_and_sizes, reward_input_batches):
             send_channel.put(
                 item=reward_input_i,
-                key=CommMapper.build_channel_key(
-                    self._rank, rank, extra="reward_input"
-                ),
+                key=CommMapper.build_channel_key(self._rank, rank, extra=f"{mode}_reward_input"),
+                async_op=True,
             )
 
     @Worker.timer("recv_reward_results")
@@ -616,12 +617,13 @@ class EnvWorker(Worker):
             reward_results.append(rewards)
         return torch.cat(reward_results, dim=0)
 
+    @Worker.timer("get_reward_model_output")
     def get_reward_model_output(
         self,
         env_output: EnvOutput,
         send_channel: Channel,
         recv_channel: Channel,
-        last_run: bool,
+        last_run: bool = False,
     ):
         if self.reward_mode == "per_step":
             reward_input_obs = (
@@ -636,7 +638,7 @@ class EnvWorker(Worker):
 
         reward_input = {"images": reward_input_obs["main_images"]}
         if last_run:
-            reward_input.update({"last_run": True})
+            reward_input.update({"last_run": torch.ones((self.train_num_envs_per_stage, 1), dtype=torch.bool)})
         self.send_reward_input(send_channel=send_channel, reward_input=reward_input)
         return self.recv_reward_results(recv_channel=recv_channel)
 
@@ -765,14 +767,10 @@ class EnvWorker(Worker):
 
                     reward_model_output = None
                     if reward_channel is not None and chunk_step_idx != 0:
-                        last_run = (epoch == self.rollout_epoch - 1) and (
-                            chunk_step_idx == self.n_train_chunk_steps - 1
-                        )
                         reward_model_output = self.get_reward_model_output(
                             env_output,
                             send_channel=reward_channel,
                             recv_channel=input_channel,
-                            last_run=last_run,
                         )
 
                     rollout_result = self.recv_rollout_results(
@@ -782,7 +780,7 @@ class EnvWorker(Worker):
                         env_output, rollout_result.bootstrap_values, reward_model_output
                     )
                     chunk_step_result = ChunkStepResult(
-                        actions=rollout_result.forward_inputs.get("raw_actions", None),
+                        actions=rollout_result.forward_inputs.get("action", None),
                         prev_logprobs=rollout_result.prev_logprobs
                         if self.collect_prev_infos
                         else None,
@@ -834,9 +832,18 @@ class EnvWorker(Worker):
                         env_output.intervene_flags,
                     )
 
+                reward_model_output = None
+                if reward_channel is not None:
+                    last_run = epoch == self.rollout_epoch - 1
+                    reward_model_output = self.get_reward_model_output(
+                        env_output,
+                        send_channel=reward_channel,
+                        recv_channel=input_channel,
+                        last_run=last_run,
+                    )
                 rollout_result = self.recv_rollout_results(input_channel, mode="train")
                 rewards = self.compute_bootstrap_rewards(
-                    env_output, rollout_result.bootstrap_values, reward_channel
+                    env_output, rollout_result.bootstrap_values, reward_model_output
                 )
                 chunk_step_result = ChunkStepResult(
                     prev_values=rollout_result.prev_values

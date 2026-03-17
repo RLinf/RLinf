@@ -73,6 +73,8 @@ class EmbodiedRunner:
         self.actor_channel = Channel.create("Actor")
         if self.reward is not None:
             self.reward_channel = Channel.create("Reward")
+        else:
+            self.reward_channel = None
 
         # this timer checks if we should stop training
         self.run_timer = Timer(None)  # Timer that checks if we should stop training

@@ -84,8 +84,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
-  use_full_state: True  # ManiskillFullStateWrapper: RGB mode + full state
 
   train:
     total_num_envs: 128
@@ -93,6 +91,7 @@ env:
     use_fixed_reset_state_ids: False
     max_episode_steps: 50
     max_steps_per_rollout_epoch: 50
+    use_full_state: True
     # RGB mode: obs contains both main_images (for reward) and states (for policy)
     init_params:
       id: "PickCube-v1"
@@ -103,6 +102,9 @@ env:
         sim_freq: 100
         control_freq: 20
       render_mode: all
+    # video_cfg:
+    #   save_video: True
+    #   video_base_dir: ${runner.logger.log_path}/video/train
 
   eval:
     total_num_envs: 32
@@ -112,6 +114,7 @@ env:
     max_steps_per_rollout_epoch: 50
     use_fixed_reset_state_ids: True
     group_size: 1
+    use_full_state: True
     init_params:
       id: "PickCube-v1"
       obs_mode: "rgb"
@@ -194,20 +197,13 @@ reward:
   
   model:
     model_type: "resnet_reward"
+    pretrained: False # if pretrained is set to True, rlinf will automatically download pretrained weights.
     arch: "resnet18"
     hidden_dim: 256
     dropout: 0
     image_size: [3, 128, 128]
     normalize: true 
     precision: "bf16"
-    
-    # Path to trained reward model checkpoint
-    checkpoint_path: "logs/reward_model/checkpoints/best_model"
-    
-    # Debug image save directory (for visualizing ResNet classification results)
-    # Set to a path to enable debug image saving, leave empty to disable
-    # debug_save_dir: "${runner.logger.log_path}/training_data_debug"
-    debug_save_dir: null
 
 critic:
   use_critic_model: False

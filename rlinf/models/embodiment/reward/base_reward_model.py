@@ -34,16 +34,14 @@ class BaseRewardModel(nn.Module, ABC):
     typically trained using pairwise comparison data (chosen vs rejected).
 
     Attributes:
-        cfg: Configuration dictionary containing model parameters.
-        device: The device (CPU/GPU) where the model is located.
+        cfg: Configuration dictionary.
     """
 
     def __init__(self, cfg: DictConfig):
         """Initialize the reward model.
 
         Args:
-            cfg: Configuration dictionary containing:
-                - checkpoint_path: Optional path to model checkpoint.
+            cfg: Configuration dictionary
         """
         super().__init__()
         self.cfg = cfg

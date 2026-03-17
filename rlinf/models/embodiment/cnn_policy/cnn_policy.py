@@ -293,7 +293,7 @@ class CNNPolicy(nn.Module, BasePolicy):
         if "extra_view_images" in forward_inputs:
             obs["extra_view_images"] = forward_inputs["extra_view_images"]
         obs = self.preprocess_env_obs(obs)
-        action = forward_inputs["raw_actions"]
+        action = forward_inputs["action"]
         full_feature, mix_feature, action_mean, action_logstd = (
             self._actor_forward_from_processed_tensors(
                 obs["main_images"],

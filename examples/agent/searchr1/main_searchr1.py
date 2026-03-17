@@ -92,7 +92,7 @@ def main(cfg) -> None:
 
     # Reward group
     reward_placement_strategy = component_placement.get_strategy("reward")
-    reward_group = RewardWorker.create_group(cfg, component_placement).launch(
+    reward_group = RewardWorker.create_group(cfg).launch(
         cluster,
         name=cfg.reward.group_name,
         placement_strategy=reward_placement_strategy,

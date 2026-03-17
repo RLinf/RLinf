@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -109,7 +109,7 @@ class BaseImageRewardModel(BaseRewardModel):
         if self.normalize:
             images = (images - self._mean) / self._std
 
-        return images.to(self.device)
+        return images
 
     @abstractmethod
     def forward(

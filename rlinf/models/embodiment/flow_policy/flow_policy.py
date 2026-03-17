@@ -374,7 +374,7 @@ class FlowPolicy(nn.Module, BasePolicy):
         else:
             chunk_values = torch.zeros_like(log_prob[..., :1])
 
-        forward_inputs = {"raw_actions": action}
+        forward_inputs = {"action": action}
         if return_obs:
             # x1. image indexing logic changed
             forward_inputs["main_images"] = env_obs["main_images"]
@@ -619,7 +619,7 @@ class FlowStatePolicy(nn.Module, BasePolicy):
 
         chunk_values = torch.zeros_like(log_prob[..., :1])
 
-        forward_inputs = {"raw_actions": action}
+        forward_inputs = {"action": action}
         if return_obs:
             forward_inputs["states"] = env_obs[
                 "states"
