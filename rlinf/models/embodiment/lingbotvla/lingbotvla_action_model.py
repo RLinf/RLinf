@@ -22,21 +22,20 @@ from typing import Any, Literal, Optional
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from transformers import AutoProcessor
-
-from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
-from rlinf.models.embodiment.lingbotvla.data.vla_data.transform import (
+from lingbotvla.data.vla_data.transform import (
     Normalizer,
     prepare_images,
     prepare_language,
     prepare_state,
 )
-from rlinf.models.embodiment.lingbotvla.models.module_utils import load_model_weights
-from rlinf.models.embodiment.lingbotvla.models.vla.pi0.modeling_lingbot_vla import (
+from lingbotvla.models.module_utils import load_model_weights
+from lingbotvla.models.vla.pi0.modeling_lingbot_vla import (
     LingbotVlaPolicy,
     make_att_2d_masks,
 )
+from transformers import AutoProcessor
+
+from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.modules.explore_noise_net import ExploreNoiseNet
 from rlinf.models.embodiment.modules.value_head import ValueHead
 from rlinf.utils.logging import get_logger
@@ -190,57 +189,6 @@ class LingbotvlaActionModel(nn.Module, BasePolicy):
                 ),
                 noise_scheduler_type="learn",
             ).to(self.torch_dtype)
-
-        if getattr(self.config, "use_dsrl", False):
-            from rlinf.models.embodiment.modules.compact_encoders import (
-                CompactMultiQHead,
-                CompactStateEncoder,
-                LightweightImageEncoder64,
-            )
-            from rlinf.models.embodiment.modules.gaussian_policy import GaussianPolicy
-
-            _dsrl_dtype = self.torch_dtype
-            dsrl_input_dim = (
-                self.config.dsrl_state_latent_dim + self.config.dsrl_image_latent_dim
-            )
-
-            self.dsrl_action_noise_net = GaussianPolicy(
-                input_dim=dsrl_input_dim,
-                output_dim=self.config.dsrl_action_noise_dim,
-                hidden_dims=self.config.dsrl_hidden_dims,
-                low=None,
-                high=None,
-                action_horizon=getattr(
-                    self.config, "action_horizon", self.action_chunk
-                ),
-            ).to(dtype=_dsrl_dtype)
-
-            self.actor_image_encoder = LightweightImageEncoder64(
-                num_images=1,
-                latent_dim=self.config.dsrl_image_latent_dim,
-                image_size=64,
-            ).to(dtype=_dsrl_dtype)
-            self.actor_state_encoder = CompactStateEncoder(
-                state_dim=self.config.dsrl_state_dim,
-                hidden_dim=self.config.dsrl_state_latent_dim,
-            ).to(dtype=_dsrl_dtype)
-            self.critic_image_encoder = LightweightImageEncoder64(
-                num_images=1,
-                latent_dim=self.config.dsrl_image_latent_dim,
-                image_size=64,
-            ).to(dtype=_dsrl_dtype)
-            self.critic_state_encoder = CompactStateEncoder(
-                state_dim=self.config.dsrl_state_dim,
-                hidden_dim=self.config.dsrl_state_latent_dim,
-            ).to(dtype=_dsrl_dtype)
-            self.q_head = CompactMultiQHead(
-                state_dim=self.config.dsrl_state_latent_dim,
-                image_dim=self.config.dsrl_image_latent_dim,
-                action_dim=self.config.dsrl_action_noise_dim,
-                hidden_dims=self.config.dsrl_hidden_dims,
-                num_q_heads=self.config.dsrl_num_q_heads,
-                output_dim=1,
-            ).to(dtype=_dsrl_dtype)
 
         for name, module in self.named_modules():
             path_parts = name.split(".")
@@ -921,10 +869,6 @@ class LingbotvlaActionModel(nn.Module, BasePolicy):
             return self.sft_forward(**kwargs)
         elif forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
-        elif forward_type == ForwardType.SAC:
-            return self.sac_forward(**kwargs)
-        elif forward_type == ForwardType.SAC_Q:
-            return self.sac_q_forward(**kwargs)
         else:
             raise NotImplementedError
 
@@ -997,116 +941,3 @@ class LingbotvlaActionModel(nn.Module, BasePolicy):
             "values": value_t.to(torch.float32),
             "entropy": entropy.to(torch.float32),
         }
-
-    def sac_forward(
-        self, obs=None, data=None, train=False, return_dist_params=False, **kwargs
-    ):
-        if not getattr(self.config, "use_dsrl", False):
-            raise ValueError("sac_forward called but use_dsrl=False")
-        if obs is None:
-            obs = data.get("obs", data) if data is not None else kwargs.get("obs", {})
-        if "images" not in obs:
-            if "main_images" in obs:
-                obs = {"images": [obs["main_images"]], "states": obs["states"]}
-            else:
-                raise ValueError(
-                    f"Invalid obs format: {obs.keys()}. Expected 'images' or 'main_images' key."
-                )
-
-        images = self._preprocess_dsrl_images(obs["images"], train=train)
-        states = self._preprocess_states(obs["states"])
-
-        device = next(self.actor_image_encoder.parameters()).device
-        images = images.to(device=device, dtype=torch.bfloat16)
-        states = states.to(device=device, dtype=torch.bfloat16)
-
-        image_features = self.actor_image_encoder(images)
-        state_features = self.actor_state_encoder(states)
-        features = torch.cat([state_features, image_features], dim=-1)
-
-        mode = kwargs.get("mode", "train")
-        deterministic = mode == "eval"
-        action_noise, logprobs = self.dsrl_action_noise_net.sample(
-            features, deterministic=deterministic
-        )
-
-        dist_params = None
-        if return_dist_params:
-            dist = self.dsrl_action_noise_net.forward(features)
-            dist_params = (dist.mean, dist.stddev)
-
-        return action_noise, logprobs, dist_params
-
-    def sac_q_forward(
-        self,
-        obs=None,
-        data=None,
-        actions=None,
-        detach_encoder=False,
-        train=False,
-        **kwargs,
-    ):
-        if not getattr(self.config, "use_dsrl", False):
-            raise ValueError("sac_q_forward called but use_dsrl=False")
-        if obs is None:
-            obs = data.get("obs", data) if data is not None else kwargs.get("obs", {})
-        if actions is None:
-            actions = kwargs.get("actions")
-        if "images" not in obs:
-            if "main_images" in obs:
-                obs = {"images": [obs["main_images"]], "states": obs["states"]}
-            else:
-                raise ValueError(
-                    f"Invalid obs format: {obs.keys()}. Expected 'images' or 'main_images' key."
-                )
-
-        images = self._preprocess_dsrl_images(obs["images"], train=train)
-        states = self._preprocess_states(obs["states"])
-
-        device = next(self.critic_image_encoder.parameters()).device
-        images = images.to(device=device, dtype=torch.bfloat16)
-        states = states.to(device=device, dtype=torch.bfloat16)
-        actions = actions.to(device=device, dtype=torch.bfloat16)
-
-        image_features = self.critic_image_encoder(images)
-        state_features = self.critic_state_encoder(states)
-
-        if detach_encoder:
-            image_features = image_features.detach()
-            state_features = state_features.detach()
-
-        if actions.dim() == 3:
-            actions = actions[:, 0, :]
-
-        q_values = self.q_head(state_features, image_features, actions)
-        return q_values
-
-    def _preprocess_dsrl_images(self, images, train=False):
-        if isinstance(images, list):
-            agentview_img = images[0]
-        else:
-            agentview_img = images
-
-        if agentview_img.shape[-1] == 3:
-            agentview_img = agentview_img.permute(0, 3, 1, 2)
-
-        if agentview_img.dtype == torch.uint8:
-            agentview_img = agentview_img.float() / 255.0
-        else:
-            if agentview_img.min() < 0:
-                agentview_img = (agentview_img + 1.0) / 2.0
-
-        agentview_img = agentview_img.clamp(0.0, 1.0)
-        resized_img = F.interpolate(
-            agentview_img, size=(64, 64), mode="bilinear", align_corners=False
-        )
-        resized_img = resized_img * 2.0 - 1.0
-        resized_img = resized_img.unsqueeze(1)
-        return resized_img
-
-    def _preprocess_states(self, states):
-        if states.dim() > 2:
-            states = states.reshape(states.shape[0], -1)
-        if states.dtype != torch.bfloat16:
-            states = states.to(torch.bfloat16)
-        return states
