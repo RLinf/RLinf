@@ -804,7 +804,7 @@ class FSDPActor(FSDPModelManager, Worker):
             # scale loss for gradient accumulation and backprop
             final_loss_metric = loss.detach()
             loss = loss / self.gradient_accumulation
-            with backward_ctx:
+            with backward_ctx, self.grad_anomaly_context():
                 self.grad_scaler.scale(loss).backward()
 
             mbs_metrics_data.update(
@@ -1014,6 +1014,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         self.enable_sft_co_train = cfg.actor.get("enable_sft_co_train", False)
         self.version = 0
+        self._nonfinite_training_warnings: set[str] = set()
         if self.enable_sft_co_train:
             self._build_sft_data_loader()
 
@@ -1296,6 +1297,51 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 f"sft_loss_weight={self.sft_loss_weight:.6f}"
             )
 
+    def _sanitize_training_tensor(
+        self,
+        name: str,
+        tensor: torch.Tensor | None,
+        mask: torch.Tensor | None = None,
+    ) -> torch.Tensor | None:
+        """Replace non-finite values and zero masked-out entries before loss math."""
+        if tensor is None or not torch.is_tensor(tensor):
+            return tensor
+
+        sanitized = torch.nan_to_num(tensor, nan=0.0, posinf=0.0, neginf=0.0)
+        if mask is not None:
+            try:
+                mask = torch.broadcast_tensors(sanitized, mask.bool())[1]
+                sanitized = torch.where(mask, sanitized, torch.zeros_like(sanitized))
+            except RuntimeError:
+                pass
+
+        if not torch.equal(sanitized, tensor):
+            if name not in self._nonfinite_training_warnings:
+                self._nonfinite_training_warnings.add(name)
+                self.logger.warning(
+                    "[ActorTrain] Sanitized non-finite values in %s before loss computation.",
+                    name,
+                )
+
+        return sanitized
+
+    def _masked_abs_max(
+        self, tensor: torch.Tensor | None, mask: torch.Tensor | None = None
+    ) -> float:
+        """Return the maximum absolute value over valid entries."""
+        if tensor is None or not torch.is_tensor(tensor):
+            return 0.0
+        values = tensor.detach()
+        if mask is not None:
+            try:
+                mask = torch.broadcast_tensors(values, mask.bool())[1]
+                values = values[mask]
+            except RuntimeError:
+                pass
+        if values.numel() == 0:
+            return 0.0
+        return float(values.abs().max().item())
+
     @Worker.timer("run_training")
     def run_training(self) -> None:
         """
@@ -1380,6 +1426,19 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     loss_mask = batch.get("loss_mask", None)
                     loss_mask_sum = batch.get("loss_mask_sum", None)
 
+                    advantages = self._sanitize_training_tensor(
+                        "advantages", advantages, loss_mask
+                    )
+                    prev_logprobs = self._sanitize_training_tensor(
+                        "prev_logprobs", prev_logprobs, loss_mask
+                    )
+                    returns = self._sanitize_training_tensor(
+                        "returns", returns, loss_mask
+                    )
+                    prev_values = self._sanitize_training_tensor(
+                        "prev_values", prev_values, loss_mask
+                    )
+
                     forward_inputs = batch.get("forward_inputs", None)
 
                     kwargs = {}
@@ -1401,21 +1460,32 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         True if self.cfg.algorithm.adv_type == "gae" else False
                     )
 
-                    with self.amp_context:
-                        output_dict = self.model(
-                            forward_inputs=forward_inputs,
-                            compute_logprobs=True,
-                            compute_entropy=self.cfg.algorithm.entropy_bonus > 0,
-                            compute_values=compute_values,
-                            use_cache=False,
-                            **kwargs,
-                        )
+                    with self.grad_anomaly_context():
+                        with self.amp_context:
+                            output_dict = self.model(
+                                forward_inputs=forward_inputs,
+                                compute_logprobs=True,
+                                compute_entropy=self.cfg.algorithm.entropy_bonus > 0,
+                                compute_values=compute_values,
+                                use_cache=False,
+                                **kwargs,
+                            )
 
                     if (
                         SupportedModel(self.cfg.actor.model.model_type)
                         == SupportedModel.GR00T
                     ):
                         prev_logprobs = output_dict["prev_logprobs"]
+
+                    output_dict["logprobs"] = self._sanitize_training_tensor(
+                        "logprobs", output_dict["logprobs"], loss_mask
+                    )
+                    output_dict["values"] = self._sanitize_training_tensor(
+                        "values", output_dict.get("values"), loss_mask
+                    )
+                    output_dict["entropy"] = self._sanitize_training_tensor(
+                        "entropy", output_dict.get("entropy"), loss_mask
+                    )
 
                     kwargs = {
                         "loss_type": self.cfg.algorithm.loss_type,
@@ -1439,7 +1509,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         "critic_warmup": self.optimizer_steps
                         < self.critic_warmup_steps,
                     }
-                    loss, metrics_data = policy_loss(**kwargs)
+                    with self.grad_anomaly_context():
+                        loss, metrics_data = policy_loss(**kwargs)
 
                     entropy_loss = torch.tensor(
                         0.0, device=Worker.torch_platform.current_device()
@@ -1464,18 +1535,51 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                             if loss_mask is not None and entropy is not None
                             else loss_mask
                         )
-                        entropy_loss = masked_mean(entropy, mask=entropy_mask)
+                        with self.grad_anomaly_context():
+                            entropy_loss = masked_mean(entropy, mask=entropy_mask)
                         loss -= self.cfg.algorithm.entropy_bonus * entropy_loss
                     metrics_data["actor/entropy_loss"] = entropy_loss.detach().item()
 
                     if self.enable_sft_co_train:
                         self._train_sft_epoch(metrics_data, loss)
 
+                    total_loss_metric = loss.detach()
+                    actor_signal_abs_max = self._masked_abs_max(advantages, loss_mask)
+                    critic_signal_abs_max = self._masked_abs_max(
+                        None
+                        if returns is None or prev_values is None
+                        else returns - prev_values,
+                        loss_mask,
+                    )
+                    if actor_signal_abs_max == 0.0 and critic_signal_abs_max == 0.0:
+                        if "zero_train_signal" not in self._nonfinite_training_warnings:
+                            self._nonfinite_training_warnings.add("zero_train_signal")
+                            self.logger.warning(
+                                "[ActorTrain] Skipping backward for a micro-batch with zero policy and critic signal."
+                            )
+                        metrics_data["actor/total_loss"] = total_loss_metric.item()
+                        append_to_dict(metrics, metrics_data)
+                        continue
+                    if torch.isfinite(total_loss_metric) and total_loss_metric.abs() == 0:
+                        if "zero_total_loss" not in self._nonfinite_training_warnings:
+                            self._nonfinite_training_warnings.add("zero_total_loss")
+                            self.logger.warning(
+                                "[ActorTrain] Skipping backward for a zero total loss micro-batch."
+                            )
+                        metrics_data["actor/total_loss"] = 0.0
+                        append_to_dict(metrics, metrics_data)
+                        continue
+
                     loss /= self.gradient_accumulation
-                    with backward_ctx:
+                    if not torch.isfinite(loss):
+                        self.logger.warning(
+                            "[ActorTrain] Skipping micro-batch with non-finite total loss."
+                        )
+                        continue
+                    with backward_ctx, self.grad_anomaly_context():
                         self.grad_scaler.scale(loss).backward()
 
-                    metrics_data["actor/total_loss"] = loss.detach().item()
+                    metrics_data["actor/total_loss"] = total_loss_metric.item()
                     append_to_dict(metrics, metrics_data)
 
                 self.torch_platform.empty_cache()

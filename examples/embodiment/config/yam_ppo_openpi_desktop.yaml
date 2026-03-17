@@ -182,6 +182,7 @@ vlm_planner:
   model_path: "Qwen/Qwen3-VL-8B-Instruct"
   backend: "transformers"
   dtype: "bfloat16"
+  transformers_runtime_path: ".qwen3_runtime"
   max_new_tokens_subtask: 64
   max_new_tokens_reward: 16
   max_memory_entries: 20

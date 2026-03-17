@@ -28,6 +28,13 @@ img_width: 224
 # Must match (or be a prefix of) one of the keys in camera_cfgs below.
 main_camera: "cam_"
 
+# Optional explicit wrist / extra-view camera selectors. If unset, YAMEnv
+# classifies non-main cameras heuristically: names containing "wrist",
+# "hand", "gripper", "eye_in_hand", "eef", or "tcp" become wrist cameras,
+# and any remaining non-main cameras become extra views.
+wrist_cameras: null
+extra_view_cameras: null
+
 # Human-readable task description injected into observations (used by VLA models).
 task_description: ""
 

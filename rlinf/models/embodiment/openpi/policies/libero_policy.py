@@ -40,6 +40,40 @@ def _parse_image(image) -> np.ndarray:
     return image
 
 
+def _parse_wrist_images(
+    data: dict, base_image: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, bool]:
+    """Split wrist-camera observations into left/right views when available."""
+    wrist_image = _parse_image(data["observation/wrist_image"])
+    extra_view_image = (
+        _parse_image(data["observation/extra_view_image"])
+        if "observation/extra_view_image" in data
+        else None
+    )
+
+    if wrist_image.ndim == 4:
+        left_wrist_image = wrist_image[0]
+        right_wrist_image = (
+            wrist_image[1] if wrist_image.shape[0] > 1 else None
+        )
+    else:
+        left_wrist_image = wrist_image
+        right_wrist_image = None
+
+    if right_wrist_image is None and extra_view_image is not None:
+        right_wrist_image = (
+            extra_view_image[0]
+            if extra_view_image.ndim == 4
+            else extra_view_image
+        )
+
+    has_right_wrist = right_wrist_image is not None
+    if right_wrist_image is None:
+        right_wrist_image = np.zeros_like(base_image)
+
+    return left_wrist_image, right_wrist_image, has_right_wrist
+
+
 @dataclasses.dataclass(frozen=True)
 class LiberoInputs(transforms.DataTransformFn):
     """
@@ -66,23 +100,23 @@ class LiberoInputs(transforms.DataTransformFn):
         # replace it with zeros like we do for the
         # right wrist image below.
         base_image = _parse_image(data["observation/image"])
-        wrist_image = _parse_image(data["observation/wrist_image"])
+        left_wrist_image, right_wrist_image, has_right_wrist = _parse_wrist_images(
+            data, base_image
+        )
 
         # Create inputs dict. Do not change the keys in the dict below.
         inputs = {
             "state": data["observation/state"],
             "image": {
                 "base_0_rgb": base_image,
-                "left_wrist_0_rgb": wrist_image,
-                # Pad any non-existent images with zero-arrays of the appropriate shape.
-                "right_wrist_0_rgb": np.zeros_like(base_image),
+                "left_wrist_0_rgb": left_wrist_image,
+                "right_wrist_0_rgb": right_wrist_image,
             },
             "image_mask": {
                 "base_0_rgb": np.True_,
                 "left_wrist_0_rgb": np.True_,
-                # We only mask padding images for pi0 model, not pi0-FAST. Do not change this for your own dataset.
                 "right_wrist_0_rgb": np.True_
-                if self.model_type == _model.ModelType.PI0_FAST
+                if has_right_wrist or self.model_type == _model.ModelType.PI0_FAST
                 else np.False_,
             },
         }

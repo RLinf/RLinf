@@ -37,6 +37,30 @@ def _compress_image(img: np.ndarray, quality: int = _JPEG_QUALITY) -> bytes:
     return buf.tobytes()
 
 
+def _to_single_image(images: np.ndarray) -> np.ndarray:
+    """Normalize an observation image field to a single HWC uint8 image."""
+    if hasattr(images, "cpu"):
+        images = images.cpu().numpy()
+    images = np.asarray(images, dtype=np.uint8)
+    if images.ndim == 4:
+        images = images[0]
+    return images
+
+
+def _to_image_list(images: np.ndarray | None) -> list[np.ndarray]:
+    """Normalize an observation image field to a list of HWC uint8 images."""
+    if images is None:
+        return []
+    if hasattr(images, "cpu"):
+        images = images.cpu().numpy()
+    images = np.asarray(images, dtype=np.uint8)
+    if images.ndim == 5:
+        images = images[0]
+    elif images.ndim == 3:
+        images = images[np.newaxis, ...]
+    return [np.asarray(image, dtype=np.uint8) for image in images]
+
+
 def _obs_to_proto(
     obs: dict,
     img_h: int,
@@ -53,20 +77,27 @@ def _obs_to_proto(
     state_shape = list(states.shape)
 
     # Main image: tensor → numpy → optionally JPEG compress
-    main_images = obs["main_images"]
-    if hasattr(main_images, "cpu"):
-        main_images = main_images.cpu().numpy()
-    main_images = np.asarray(main_images, dtype=np.uint8)
-
-    # Remove batch dim if present: (1, H, W, 3) → (H, W, 3)
-    if main_images.ndim == 4:
-        main_images = main_images[0]
+    main_images = _to_single_image(obs["main_images"])
 
     if compress:
         img_bytes = _compress_image(main_images, jpeg_quality)
+        wrist_image_bytes = [
+            _compress_image(image, jpeg_quality)
+            for image in _to_image_list(obs.get("wrist_images"))
+        ]
+        extra_view_image_bytes = [
+            _compress_image(image, jpeg_quality)
+            for image in _to_image_list(obs.get("extra_view_images"))
+        ]
         is_compressed = True
     else:
         img_bytes = main_images.tobytes()
+        wrist_image_bytes = [
+            image.tobytes() for image in _to_image_list(obs.get("wrist_images"))
+        ]
+        extra_view_image_bytes = [
+            image.tobytes() for image in _to_image_list(obs.get("extra_view_images"))
+        ]
         is_compressed = False
 
     # Task description
@@ -80,6 +111,8 @@ def _obs_to_proto(
         states=states.tobytes(),
         state_shape=state_shape,
         main_image=img_bytes,
+        wrist_images=wrist_image_bytes,
+        extra_view_images=extra_view_image_bytes,
         img_height=img_h,
         img_width=img_w,
         is_compressed=is_compressed,
@@ -97,19 +130,30 @@ class RobotEnvServicer(robot_env_pb2_grpc.RobotEnvServiceServicer):
 
     def GetSpaces(self, request, context):
         obs_space = self._env.observation_space
+        obs_spaces = obs_space.spaces
         act_space = self._env.action_space
         return robot_env_pb2.SpacesResponse(
-            state_dim=obs_space["states"].shape[0],
+            state_dim=obs_spaces["states"].shape[0],
             action_dim=act_space.shape[0],
             action_low=float(act_space.low[0]),
             action_high=float(act_space.high[0]),
-            img_height=obs_space["main_images"].shape[0],
-            img_width=obs_space["main_images"].shape[1],
-            img_channels=obs_space["main_images"].shape[2],
+            img_height=obs_spaces["main_images"].shape[0],
+            img_width=obs_spaces["main_images"].shape[1],
+            img_channels=obs_spaces["main_images"].shape[2],
             max_episode_steps=self._env._max_episode_steps,
             control_rate_hz=self._env._control_rate_hz,
             auto_reset=self._env.auto_reset,
             ignore_terminations=self._env.ignore_terminations,
+            num_wrist_images=(
+                obs_spaces["wrist_images"].shape[0]
+                if "wrist_images" in obs_spaces
+                else 0
+            ),
+            num_extra_view_images=(
+                obs_spaces["extra_view_images"].shape[0]
+                if "extra_view_images" in obs_spaces
+                else 0
+            ),
         )
 
     def Reset(self, request, context):

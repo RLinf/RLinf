@@ -14,6 +14,7 @@
 
 import os
 import warnings
+from contextlib import nullcontext
 from typing import ContextManager, Union
 
 import torch
@@ -69,6 +70,13 @@ class FSDPModelManager:
         self._cfg = cfg
         self._logger = get_logger()
         self.torch_dtype = torch_dtype_from_precision(self._cfg.model.precision)
+        self._debug_grad_anomaly = os.getenv("RLINF_DEBUG_GRAD_ANOMALY", "").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        self._debug_grad_topk = int(os.getenv("RLINF_DEBUG_GRAD_TOPK", "5"))
 
         self.optimizer_steps = 0
         self.critic_warmup_steps = 0
@@ -100,6 +108,89 @@ class FSDPModelManager:
 
         self.is_weight_offloaded = False
         self.is_optimizer_offloaded = False
+
+        if self._debug_grad_anomaly:
+            self._logger.info(
+                "[FSDP] Gradient anomaly debug mode is enabled. "
+                "Backward will run under torch.autograd.detect_anomaly()."
+            )
+
+    def grad_anomaly_context(self) -> ContextManager:
+        """Return an optional anomaly-detection context for backward passes."""
+        if self._debug_grad_anomaly:
+            return torch.autograd.detect_anomaly(check_nan=True)
+        return nullcontext()
+
+    def _log_nonfinite_gradient_details(self) -> None:
+        """Log parameter-level diagnostics for non-finite gradients."""
+        if self._debug_grad_topk <= 0:
+            return
+
+        offenders = []
+        total_nonfinite_params = 0
+        total_nonfinite_values = 0
+        checked_params = 0
+        params_with_grad = 0
+
+        for name, param in self.model.named_parameters():
+            checked_params += 1
+            grad = param.grad
+            if grad is None:
+                continue
+
+            params_with_grad += 1
+            grad_tensor = grad.detach()
+            if hasattr(grad_tensor, "to_local"):
+                grad_tensor = grad_tensor.to_local()
+
+            finite_mask = torch.isfinite(grad_tensor)
+            finite_count = int(finite_mask.sum().item())
+            nonfinite_count = int((~finite_mask).sum().item())
+            if nonfinite_count == 0:
+                continue
+
+            total_nonfinite_params += 1
+            total_nonfinite_values += nonfinite_count
+            finite_values = grad_tensor[finite_mask]
+            finite_abs_max = (
+                float(finite_values.abs().max().item())
+                if finite_count > 0
+                else float("nan")
+            )
+            offenders.append(
+                {
+                    "name": name,
+                    "shape": tuple(param.shape),
+                    "dtype": str(grad_tensor.dtype),
+                    "nonfinite_count": nonfinite_count,
+                    "numel": grad_tensor.numel(),
+                    "finite_abs_max": finite_abs_max,
+                }
+            )
+
+        if not offenders:
+            self._logger.warning(
+                "[FSDP][GradDebug] Grad norm was non-finite, but no individual parameter gradient contained "
+                "NaN/Inf values at inspection time. This can happen when the aggregate norm overflows."
+            )
+            return
+
+        offenders.sort(
+            key=lambda item: (item["nonfinite_count"], item["numel"], item["finite_abs_max"]),
+            reverse=True,
+        )
+        self._logger.warning(
+            "[FSDP][GradDebug] Found non-finite gradients in "
+            f"{total_nonfinite_params}/{params_with_grad} parameters "
+            f"({total_nonfinite_values} values; scanned {checked_params} parameters total)."
+        )
+        for offender in offenders[: self._debug_grad_topk]:
+            self._logger.warning(
+                "[FSDP][GradDebug] "
+                f"{offender['name']}: nonfinite={offender['nonfinite_count']}/{offender['numel']}, "
+                f"dtype={offender['dtype']}, shape={offender['shape']}, "
+                f"finite_abs_max={offender['finite_abs_max']}"
+            )
 
     def _create_amp_context(self) -> ContextManager:
         """
@@ -391,6 +482,7 @@ class FSDPModelManager:
             self._logger.warning(
                 f"[FSDP] Non-finite grad norm {grad_norm} detected. Skipping optimizer step."
             )
+            self._log_nonfinite_gradient_details()
         else:
             self.grad_scaler.step(optimizer=self.optimizer)
 

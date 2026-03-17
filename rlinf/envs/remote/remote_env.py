@@ -39,6 +39,26 @@ def _decompress_image(data: bytes, height: int, width: int) -> np.ndarray:
     return img
 
 
+def _decode_image(data: bytes, height: int, width: int, is_compressed: bool) -> np.ndarray:
+    """Decode one image payload into a uint8 HWC numpy array."""
+    if is_compressed:
+        return _decompress_image(data, height, width)
+    return np.frombuffer(data, dtype=np.uint8).reshape(height, width, 3)
+
+
+def _decode_image_stack(
+    image_payloads, height: int, width: int, is_compressed: bool
+) -> np.ndarray | None:
+    """Decode repeated image payloads into a batched NHWC image tensor."""
+    if not image_payloads:
+        return None
+    images = [
+        _decode_image(image_payload, height, width, is_compressed)
+        for image_payload in image_payloads
+    ]
+    return np.stack(images, axis=0)[np.newaxis, :]
+
+
 def _proto_to_obs(proto_obs: robot_env_pb2.Observation) -> dict:
     """Convert a protobuf Observation to a YAMEnv-compatible dict."""
     # States
@@ -47,10 +67,7 @@ def _proto_to_obs(proto_obs: robot_env_pb2.Observation) -> dict:
 
     # Image
     h, w = proto_obs.img_height, proto_obs.img_width
-    if proto_obs.is_compressed:
-        img = _decompress_image(proto_obs.main_image, h, w)
-    else:
-        img = np.frombuffer(proto_obs.main_image, dtype=np.uint8).reshape(h, w, 3)
+    img = _decode_image(proto_obs.main_image, h, w, proto_obs.is_compressed)
 
     # Add batch dim: (H,W,3) → (1,H,W,3)
     img = img[np.newaxis, :]
@@ -60,6 +77,16 @@ def _proto_to_obs(proto_obs: robot_env_pb2.Observation) -> dict:
         "main_images": to_tensor(img),
         "task_descriptions": [proto_obs.task_description],
     }
+    wrist_images = _decode_image_stack(
+        proto_obs.wrist_images, h, w, proto_obs.is_compressed
+    )
+    if wrist_images is not None:
+        obs["wrist_images"] = to_tensor(wrist_images)
+    extra_view_images = _decode_image_stack(
+        proto_obs.extra_view_images, h, w, proto_obs.is_compressed
+    )
+    if extra_view_images is not None:
+        obs["extra_view_images"] = to_tensor(extra_view_images)
     return obs
 
 
@@ -143,22 +170,45 @@ class RemoteEnv(gym.Env):
         )
 
         # Gym spaces
-        self.observation_space = gym.spaces.Dict(
-            {
-                "states": gym.spaces.Box(
-                    low=-np.inf,
-                    high=np.inf,
-                    shape=(self._state_dim,),
-                    dtype=np.float32,
+        obs_space = {
+            "states": gym.spaces.Box(
+                low=-np.inf,
+                high=np.inf,
+                shape=(self._state_dim,),
+                dtype=np.float32,
+            ),
+            "main_images": gym.spaces.Box(
+                low=0,
+                high=255,
+                shape=(self._img_h, self._img_w, self._img_c),
+                dtype=np.uint8,
+            ),
+        }
+        if spaces.num_wrist_images > 0:
+            obs_space["wrist_images"] = gym.spaces.Box(
+                low=0,
+                high=255,
+                shape=(
+                    spaces.num_wrist_images,
+                    self._img_h,
+                    self._img_w,
+                    self._img_c,
                 ),
-                "main_images": gym.spaces.Box(
-                    low=0,
-                    high=255,
-                    shape=(self._img_h, self._img_w, self._img_c),
-                    dtype=np.uint8,
+                dtype=np.uint8,
+            )
+        if spaces.num_extra_view_images > 0:
+            obs_space["extra_view_images"] = gym.spaces.Box(
+                low=0,
+                high=255,
+                shape=(
+                    spaces.num_extra_view_images,
+                    self._img_h,
+                    self._img_w,
+                    self._img_c,
                 ),
-            }
-        )
+                dtype=np.uint8,
+            )
+        self.observation_space = gym.spaces.Dict(obs_space)
         self.action_space = gym.spaces.Box(
             low=spaces.action_low,
             high=spaces.action_high,

@@ -43,6 +43,12 @@ message Observation {
 
   // Task description string.
   string task_description = 7;
+
+  // Optional wrist-camera images. Each entry is one JPEG-compressed image
+  // (or raw if uncompressed), all sharing the same height/width metadata.
+  repeated bytes wrist_images = 8;
+  // Optional additional non-wrist views.
+  repeated bytes extra_view_images = 9;
 }
 
 // Spaces metadata.
@@ -65,6 +71,8 @@ message SpacesResponse {
   float control_rate_hz = 9;
   bool auto_reset = 10;
   bool ignore_terminations = 11;
+  int32 num_wrist_images = 12;
+  int32 num_extra_view_images = 13;
 }
 
 // Result from a single step within a chunk.

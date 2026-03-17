@@ -34,8 +34,10 @@ Architecture
 
 Observation space
 ~~~~~~~~~~~~~~~~~
-``states``        – concatenated joint positions of both arms (14D).
-``main_images``   – uint8 RGB image (H, W, 3) from the primary camera.
+``states``        - concatenated joint positions of both arms (14D).
+``main_images``   - uint8 RGB image (H, W, 3) from the primary camera.
+``wrist_images``  - optional uint8 RGB image stack from wrist cameras.
+``extra_view_images`` - optional uint8 RGB image stack from additional cameras.
 
 Action space
 ~~~~~~~~~~~~
@@ -111,6 +113,17 @@ class YAMEnv(gym.Env):
         self._img_w = int(cfg.get("img_width", _DEFAULT_IMG_W))
         self._main_camera = str(cfg.get("main_camera", "top_camera"))
         self.main_image_key = self._main_camera
+        self._wrist_camera_patterns = self._normalize_camera_patterns(
+            cfg.get("wrist_cameras", None)
+        )
+        self._extra_view_camera_patterns = self._normalize_camera_patterns(
+            cfg.get("extra_view_cameras", None)
+        )
+        camera_cfgs_raw = cfg.get("camera_cfgs", None)
+        self._camera_names = list(camera_cfgs_raw.keys()) if camera_cfgs_raw else []
+        self._main_camera_name: Optional[str] = None
+        self._wrist_camera_names: list[str] = []
+        self._extra_view_camera_names: list[str] = []
 
         self.auto_reset = bool(cfg.get("auto_reset", False))
         self.ignore_terminations = bool(cfg.get("ignore_terminations", True))
@@ -131,21 +144,40 @@ class YAMEnv(gym.Env):
         self._robot_env = None
         if not self._is_dummy:
             self._setup_robot()
+        self._resolve_camera_roles(self._camera_names)
 
         # Gym spaces
-        self.observation_space = gym.spaces.Dict(
-            {
-                "states": gym.spaces.Box(
-                    low=-np.inf, high=np.inf, shape=(_STATE_DIM,), dtype=np.float32
+        obs_space = {
+            "states": gym.spaces.Box(
+                low=-np.inf, high=np.inf, shape=(_STATE_DIM,), dtype=np.float32
+            ),
+            "main_images": gym.spaces.Box(
+                low=0,
+                high=255,
+                shape=(self._img_h, self._img_w, 3),
+                dtype=np.uint8,
+            ),
+        }
+        if self._wrist_camera_names:
+            obs_space["wrist_images"] = gym.spaces.Box(
+                low=0,
+                high=255,
+                shape=(len(self._wrist_camera_names), self._img_h, self._img_w, 3),
+                dtype=np.uint8,
+            )
+        if self._extra_view_camera_names:
+            obs_space["extra_view_images"] = gym.spaces.Box(
+                low=0,
+                high=255,
+                shape=(
+                    len(self._extra_view_camera_names),
+                    self._img_h,
+                    self._img_w,
+                    3,
                 ),
-                "main_images": gym.spaces.Box(
-                    low=0,
-                    high=255,
-                    shape=(self._img_h, self._img_w, 3),
-                    dtype=np.uint8,
-                ),
-            }
-        )
+                dtype=np.uint8,
+            )
+        self.observation_space = gym.spaces.Dict(obs_space)
         self.action_space = gym.spaces.Box(
             low=-1.0, high=1.0, shape=(_STATE_DIM,), dtype=np.float32
         )
@@ -208,6 +240,7 @@ class YAMEnv(gym.Env):
                 "cameras": OmegaConf.to_container(camera_cfgs_raw, resolve=True)
             }
             camera_dict, _ = initialize_sensors(sensors_cfg, self._server_processes)
+            self._camera_names = list(camera_dict.keys())
             self._logger.info(
                 f"[YAMEnv] Cameras initialized: {list(camera_dict.keys())}"
             )
@@ -219,6 +252,7 @@ class YAMEnv(gym.Env):
             control_rate_hz=rate,
             use_joint_state_as_action=False,
         )
+        self._resolve_camera_roles(self._camera_names)
         self._logger.info("[YAMEnv] Robot connected.")
 
     # ------------------------------------------------------------------
@@ -404,6 +438,136 @@ class YAMEnv(gym.Env):
             "right": {"pos": right_pos},
         }
 
+    @staticmethod
+    def _normalize_camera_patterns(patterns) -> list[str]:
+        if patterns is None:
+            return []
+        if isinstance(patterns, str):
+            return [patterns]
+        return [str(pattern) for pattern in patterns]
+
+    @staticmethod
+    def _name_matches_pattern(name: str, pattern: str) -> bool:
+        name_lower = name.lower()
+        pattern_lower = pattern.lower()
+        return (
+            name_lower == pattern_lower
+            or name_lower.startswith(pattern_lower)
+            or pattern_lower in name_lower
+        )
+
+    def _match_camera_patterns(
+        self, patterns: list[str], camera_names: list[str], exclude: set[str]
+    ) -> list[str]:
+        matched: list[str] = []
+        for pattern in patterns:
+            for camera_name in camera_names:
+                if camera_name in exclude or camera_name in matched:
+                    continue
+                if self._name_matches_pattern(camera_name, pattern):
+                    matched.append(camera_name)
+        return matched
+
+    @staticmethod
+    def _is_wrist_camera(camera_name: str) -> bool:
+        camera_name = camera_name.lower()
+        return any(
+            token in camera_name
+            for token in ("wrist", "hand", "gripper", "eye_in_hand", "eef", "tcp")
+        )
+
+    def _resolve_camera_roles(self, camera_names: list[str]) -> None:
+        if not camera_names:
+            self._main_camera_name = None
+            self._wrist_camera_names = []
+            self._extra_view_camera_names = []
+            return
+
+        main_camera_name = None
+        for camera_name in camera_names:
+            if self._name_matches_pattern(camera_name, self._main_camera):
+                main_camera_name = camera_name
+                break
+        if main_camera_name is None:
+            main_camera_name = camera_names[0]
+
+        used_names = {main_camera_name}
+        wrist_camera_names = self._match_camera_patterns(
+            self._wrist_camera_patterns, camera_names, used_names
+        )
+        if not wrist_camera_names:
+            wrist_camera_names = [
+                camera_name
+                for camera_name in camera_names
+                if camera_name not in used_names
+                and self._is_wrist_camera(camera_name)
+            ]
+        used_names.update(wrist_camera_names)
+
+        extra_view_camera_names = self._match_camera_patterns(
+            self._extra_view_camera_patterns, camera_names, used_names
+        )
+        if not extra_view_camera_names:
+            extra_view_camera_names = [
+                camera_name
+                for camera_name in camera_names
+                if camera_name not in used_names
+            ]
+
+        self._main_camera_name = main_camera_name
+        self.main_image_key = main_camera_name
+        self._wrist_camera_names = wrist_camera_names
+        self._extra_view_camera_names = extra_view_camera_names
+        self._logger.info(
+            "[YAMEnv] Camera roles resolved: "
+            f"main={self._main_camera_name}, "
+            f"wrist={self._wrist_camera_names}, "
+            f"extra={self._extra_view_camera_names}"
+        )
+
+    def _normalize_image(self, image: np.ndarray) -> np.ndarray:
+        image = np.asarray(image, dtype=np.uint8)
+        if image.shape != (self._img_h, self._img_w, 3):
+            import cv2
+
+            image = cv2.resize(image, (self._img_w, self._img_h))
+        return image
+
+    def _extract_camera_images(self, raw_obs: dict) -> dict[str, np.ndarray]:
+        camera_images: dict[str, np.ndarray] = {}
+        for cam_key, cam_data in raw_obs.items():
+            if cam_key in {"left", "right"}:
+                continue
+
+            image = None
+            if isinstance(cam_data, dict):
+                images = cam_data.get("images")
+                if isinstance(images, dict) and images:
+                    if len(images) == 1:
+                        image = next(iter(images.values()))
+                        if image is not None:
+                            camera_images[cam_key] = self._normalize_image(image)
+                            continue
+                    for image_name, image_value in images.items():
+                        if image_value is None:
+                            continue
+                        derived_name = (
+                            image_name
+                            if image_name in self._camera_names
+                            else f"{cam_key}/{image_name}"
+                        )
+                        camera_images[derived_name] = self._normalize_image(
+                            image_value
+                        )
+                    continue
+                image = cam_data.get("rgb", cam_data.get("color", None))
+            elif isinstance(cam_data, np.ndarray):
+                image = cam_data
+
+            if image is not None:
+                camera_images[cam_key] = self._normalize_image(image)
+        return camera_images
+
     def _wrap_obs(self, raw_obs: dict) -> dict:
         """Convert raw yam_realtime observation dict to RLinf-compatible format.
 
@@ -429,39 +593,42 @@ class YAMEnv(gym.Env):
         # Add batch dimension for vectorised env compatibility
         states = states[np.newaxis, :]  # (1, 14)
 
-        # --- camera image ---
-        # yam_realtime CameraNode.read() returns {"images": {name: ndarray}, "timestamp": ...}
-        img = None
-        for cam_key in raw_obs:
-            if self._main_camera in cam_key or "rgb" in cam_key.lower():
-                cam_data = raw_obs[cam_key]
-                if isinstance(cam_data, dict):
-                    # yam_realtime format: {"images": {name: ndarray}, "timestamp": ...}
-                    images = cam_data.get("images")
-                    if isinstance(images, dict) and images:
-                        img = next(iter(images.values()))
-                    else:
-                        img = cam_data.get("rgb", cam_data.get("color", None))
-                elif isinstance(cam_data, np.ndarray):
-                    img = cam_data
-                if img is not None:
-                    break
+        camera_images = self._extract_camera_images(raw_obs)
+        zero_image = np.zeros((self._img_h, self._img_w, 3), dtype=np.uint8)
 
-        if img is None:
-            img = np.zeros((self._img_h, self._img_w, 3), dtype=np.uint8)
+        main_image = (
+            camera_images.get(self._main_camera_name)
+            if self._main_camera_name is not None
+            else None
+        )
+        if main_image is None and camera_images:
+            main_image = next(iter(camera_images.values()))
+        if main_image is None:
+            main_image = zero_image
 
-        img = np.asarray(img, dtype=np.uint8)
-        if img.shape != (self._img_h, self._img_w, 3):
-            import cv2
-
-            img = cv2.resize(img, (self._img_w, self._img_h))
-        img = img[np.newaxis, :]  # (1, H, W, 3)
+        main_image = main_image[np.newaxis, :]  # (1, H, W, 3)
 
         obs = {
             "states": to_tensor(states),
-            "main_images": to_tensor(img),
+            "main_images": to_tensor(main_image),
             "task_descriptions": [self._task_description],
         }
+        if self._wrist_camera_names:
+            wrist_images = [
+                camera_images.get(camera_name, zero_image)
+                for camera_name in self._wrist_camera_names
+            ]
+            obs["wrist_images"] = to_tensor(
+                np.stack(wrist_images, axis=0)[np.newaxis, :]
+            )
+        if self._extra_view_camera_names:
+            extra_view_images = [
+                camera_images.get(camera_name, zero_image)
+                for camera_name in self._extra_view_camera_names
+            ]
+            obs["extra_view_images"] = to_tensor(
+                np.stack(extra_view_images, axis=0)[np.newaxis, :]
+            )
         return obs
 
     def _dummy_obs(self) -> dict:

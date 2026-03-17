@@ -89,8 +89,11 @@ Example YAML::
       top_reward_max_frames: 16
 """
 
+import os
+import sys
 import warnings
 from collections import deque
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -112,6 +115,49 @@ You are an AI evaluator for a bimanual robot arm. \
 You will be shown images from the robot's cameras and a description of the subtask that was attempted. \
 Decide whether the robot successfully completed the subtask. \
 Reply with ONLY "success" or "failure" — no other text."""
+
+
+def _process_vision_info_compat(process_vision_info, messages):
+    """Handle qwen_vl_utils versions that return either 2 or 3 values."""
+    video_kwargs = {}
+    try:
+        processed = process_vision_info(
+            messages,
+            return_video_kwargs=True,
+            return_video_metadata=True,
+        )
+    except TypeError:
+        try:
+            processed = process_vision_info(messages, return_video_kwargs=True)
+        except TypeError:
+            processed = process_vision_info(messages)
+
+    if len(processed) == 3:
+        image_inputs, video_inputs, video_kwargs = processed
+    elif len(processed) == 2:
+        image_inputs, video_inputs = processed
+    else:
+        raise ValueError(
+            "process_vision_info returned an unexpected number of values: "
+            f"{len(processed)}"
+        )
+
+    if isinstance(video_kwargs.get("fps"), list) and len(video_kwargs["fps"]) == 0:
+        video_kwargs.pop("fps", None)
+    elif isinstance(video_kwargs.get("fps"), list) and len(video_kwargs["fps"]) == 1:
+        video_kwargs["fps"] = video_kwargs["fps"][0]
+
+    if video_inputs and isinstance(video_inputs[0], tuple) and len(video_inputs[0]) == 2:
+        videos = []
+        video_metadata = []
+        for video, metadata in video_inputs:
+            videos.append(video)
+            video_metadata.append(metadata)
+        video_inputs = videos
+        video_kwargs["video_metadata"] = video_metadata
+        video_kwargs.pop("fps", None)
+
+    return image_inputs, video_inputs, video_kwargs
 
 
 @ray.remote(num_gpus=1)
@@ -167,6 +213,9 @@ class VLMPlannerWorker:
         self._top_reward_max_frames: int = int(
             planner_cfg.get("top_reward_max_frames", 16)
         )
+        self._transformers_runtime_path: Optional[str] = planner_cfg.get(
+            "transformers_runtime_path", None
+        )
 
         if self._backend == "sglang":
             self._load_sglang_backend()
@@ -190,6 +239,8 @@ class VLMPlannerWorker:
 
     def _load_transformers_backend(self) -> None:
         """Load Qwen model via HuggingFace Transformers."""
+        self._activate_transformers_runtime_path()
+
         import torch
         from transformers import AutoModelForImageTextToText, AutoProcessor
 
@@ -205,6 +256,17 @@ class VLMPlannerWorker:
             f"with dtype={self._dtype_str} via transformers."
         )
         self._processor = AutoProcessor.from_pretrained(self._model_path)
+        if not (
+            hasattr(self._processor, "tokenizer")
+            and hasattr(self._processor, "image_processor")
+            and hasattr(self._processor, "video_processor")
+        ):
+            raise RuntimeError(
+                f"[VLMPlannerWorker] '{self._model_path}' did not expose a "
+                "multimodal processor in the active transformers runtime. "
+                "Install a Qwen3-VL-capable transformers build or set "
+                "'vlm_planner.transformers_runtime_path' to one."
+            )
         self._model = AutoModelForImageTextToText.from_pretrained(
             self._model_path,
             torch_dtype=torch_dtype,
@@ -212,6 +274,41 @@ class VLMPlannerWorker:
         )
         self._model.eval()
         self._logger.info("[VLMPlannerWorker] Model loaded.")
+
+    def _activate_transformers_runtime_path(self) -> None:
+        """Optionally prepend an isolated Transformers runtime for Qwen3-VL."""
+        runtime_path = self._transformers_runtime_path
+        if not runtime_path and "Qwen/Qwen3-VL" in self._model_path:
+            repo_root = Path(__file__).resolve().parents[3]
+            default_runtime = repo_root / ".qwen3_runtime"
+            if default_runtime.exists():
+                runtime_path = str(default_runtime)
+
+        if not runtime_path:
+            return
+
+        runtime_dir = Path(runtime_path)
+        if not runtime_dir.is_absolute():
+            runtime_dir = (Path(__file__).resolve().parents[3] / runtime_dir).resolve()
+        if not runtime_dir.exists():
+            self._logger.warning(
+                "[VLMPlannerWorker] transformers_runtime_path '%s' does not exist.",
+                runtime_dir,
+            )
+            return
+
+        runtime_str = str(runtime_dir)
+        if runtime_str not in sys.path:
+            sys.path.insert(0, runtime_str)
+            os.environ["PYTHONPATH"] = (
+                runtime_str
+                if not os.environ.get("PYTHONPATH")
+                else f"{runtime_str}:{os.environ['PYTHONPATH']}"
+            )
+            self._logger.info(
+                "[VLMPlannerWorker] Prepending isolated Transformers runtime: %s",
+                runtime_str,
+            )
 
     def _load_sglang_backend(self) -> None:
         """Launch a local SGLang engine for Qwen inference.
@@ -388,16 +485,9 @@ class VLMPlannerWorker:
         if len(frames) > self._top_reward_max_frames:
             frames = frames[-self._top_reward_max_frames :]
 
-        try:
-            score = self._top_reward.compute_score(
-                frames, instruction, reduction=reduction, fps=fps
-            )
-        except Exception as exc:
-            self._logger.warning(
-                f"[VLMPlannerWorker] compute_top_reward failed: {exc}. Returning 0.0."
-            )
-            score = 0.0
-
+        score = self._top_reward.compute_score(
+            frames, instruction, reduction=reduction, fps=fps
+        )
         return float(score)
 
     # ------------------------------------------------------------------
@@ -434,15 +524,9 @@ class VLMPlannerWorker:
         text = self._processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
-        image_inputs, video_inputs = process_vision_info(messages)
-        video_kwargs = {}
-        # Handle newer qwen_vl_utils that returns 3 values (same guard as top_reward.py).
-        try:
-            image_inputs, video_inputs, video_kwargs = process_vision_info(
-                messages, return_video_metadata=True
-            )
-        except TypeError:
-            pass
+        image_inputs, video_inputs, video_kwargs = _process_vision_info_compat(
+            process_vision_info, messages
+        )
         inputs = self._processor(
             text=[text],
             images=image_inputs,

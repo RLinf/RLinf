@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import math
+import os
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -240,6 +241,61 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             # Set _fsdp_wrap_name to the last part of the path (e.g., "model.action_in_proj" -> "action_in_proj")
             path_parts = name.split(".")
             setattr(module, "_fsdp_wrap_name", path_parts[-1] if path_parts else name)
+
+    def _sanitize_tensor(
+        self,
+        tensor: torch.Tensor,
+        *,
+        nan: float = 0.0,
+        posinf: float | None = None,
+        neginf: float | None = None,
+    ) -> torch.Tensor:
+        """Replace non-finite values before they poison PPO statistics."""
+        if not torch.is_tensor(tensor) or torch.isfinite(tensor).all():
+            return tensor
+        if posinf is None:
+            posinf = nan
+        if neginf is None:
+            neginf = nan
+        return torch.nan_to_num(tensor, nan=nan, posinf=posinf, neginf=neginf)
+
+    def _maybe_register_grad_debug_hook(
+        self, name: str, tensor: torch.Tensor | None
+    ) -> torch.Tensor | None:
+        """Optionally log gradient stats for a tensor during backward."""
+        if tensor is None or not torch.is_tensor(tensor) or not tensor.requires_grad:
+            return tensor
+        if os.getenv("RLINF_DEBUG_OPENPI_GRADS", "").lower() not in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return tensor
+
+        def _log_grad(grad: torch.Tensor) -> torch.Tensor:
+            grad_detached = grad.detach()
+            finite_mask = torch.isfinite(grad_detached)
+            nonfinite = int((~finite_mask).sum().item())
+            finite_vals = grad_detached[finite_mask]
+            finite_abs_max = (
+                float(finite_vals.abs().max().item())
+                if finite_vals.numel() > 0
+                else float("nan")
+            )
+            self.logger.warning(
+                "[OpenPI][GradDebug] %s grad: nonfinite=%s/%s dtype=%s shape=%s finite_abs_max=%s",
+                name,
+                nonfinite,
+                grad_detached.numel(),
+                grad_detached.dtype,
+                tuple(grad_detached.shape),
+                finite_abs_max,
+            )
+            return grad
+
+        tensor.register_hook(_log_grad)
+        return tensor
 
     def set_global_step(self, global_step):
         self.global_step = global_step
@@ -753,6 +809,25 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = (
             self.embed_suffix(state, x_t, timestep)
         )
+        expert_input_dtype = (
+            self.paligemma_with_expert.gemma_expert.model.layers[0]
+            .self_attn.q_proj.weight.dtype
+        )
+        if suffix_embs.dtype != expert_input_dtype:
+            suffix_embs = suffix_embs.to(dtype=expert_input_dtype)
+        if (
+            adarms_cond is not None
+            and torch.is_tensor(adarms_cond)
+            and adarms_cond.dtype != expert_input_dtype
+        ):
+            adarms_cond = adarms_cond.to(dtype=expert_input_dtype)
+        suffix_past_key_values = past_key_values
+        if past_key_values is not None:
+            from transformers.cache_utils import DynamicCache
+
+            if hasattr(past_key_values, "to_legacy_cache"):
+                past_key_values = past_key_values.to_legacy_cache()
+            suffix_past_key_values = DynamicCache.from_legacy_cache(past_key_values)
 
         suffix_len = suffix_pad_masks.shape[1]
         batch_size = prefix_pad_masks.shape[0]
@@ -778,7 +853,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         outputs_embeds, _ = self.paligemma_with_expert.forward(
             attention_mask=full_att_2d_masks_4d,
             position_ids=position_ids,
-            past_key_values=past_key_values,
+            past_key_values=suffix_past_key_values,
             inputs_embeds=[None, suffix_embs],
             use_cache=False,
             adarms_cond=[None, adarms_cond],
@@ -787,15 +862,22 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.action_horizon :]
         suffix_out = suffix_out.to(dtype=torch.float32)
+        suffix_out = self._sanitize_tensor(
+            suffix_out, nan=0.0, posinf=1e4, neginf=-1e4
+        )
+        suffix_out = self._maybe_register_grad_debug_hook("suffix_out", suffix_out)
         return suffix_out
 
     # TODO: to check potential nan here
     def get_logprob_norm(self, sample, mu, sigma):
         # logprob = log p(x|mu,sigma) = -log(sigma) - 0.5 * log(2 * pi) - 0.5 * ((x - mu) / sigma) ** 2
+        sample = self._sanitize_tensor(sample, nan=0.0, posinf=1e4, neginf=-1e4)
+        mu = self._sanitize_tensor(mu, nan=0.0, posinf=1e4, neginf=-1e4)
         if self.config.safe_get_logprob:
             log_prob = -torch.pow((sample - mu), 2)
         else:
-            mask = sigma == 0
+            sigma = self._sanitize_tensor(sigma, nan=0.0, posinf=1.0, neginf=0.0)
+            mask = sigma <= 0
             sigma_safe = torch.where(mask, torch.ones_like(sigma), sigma)
             constant_term = -torch.log(sigma_safe) - 0.5 * torch.log(
                 2 * torch.pi * torch.ones_like(sample)
@@ -803,7 +885,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             exponent_term = -0.5 * torch.pow((sample - mu) / sigma_safe, 2)
             log_prob = constant_term + exponent_term
             log_prob = torch.where(mask, torch.zeros_like(log_prob), log_prob)
-        return log_prob
+        return self._sanitize_tensor(log_prob, nan=0.0, posinf=0.0, neginf=0.0)
 
     def preprocess_for_train(self, data):
         return data
@@ -912,14 +994,19 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         prefix_out_value = prefix_output[:, prefix_mask, :]
         prefix_out_value = prefix_out_value.mean(dim=1, keepdim=False)
         prefix_out_value = prefix_out_value.to(dtype=torch.float32)
+        prefix_out_value = self._sanitize_tensor(
+            prefix_out_value, nan=0.0, posinf=1e4, neginf=-1e4
+        )
         values_vlm = self.value_head(prefix_out_value)[:, 0]
-        return values_vlm
+        return self._sanitize_tensor(values_vlm, nan=0.0, posinf=0.0, neginf=0.0)
 
     def gaussian_entropy(self, sigma):
-        mask = sigma == 0
+        sigma = self._sanitize_tensor(sigma, nan=0.0, posinf=1.0, neginf=0.0)
+        mask = sigma <= 0
         sigma_safe = torch.where(mask, torch.ones_like(sigma), sigma)
         entropy = 0.5 * torch.log(2 * math.pi * math.e * (sigma_safe**2))
-        return entropy
+        entropy = torch.where(mask, torch.zeros_like(entropy), entropy)
+        return self._sanitize_tensor(entropy, nan=0.0, posinf=0.0, neginf=0.0)
 
     def freeze_vlm(self):
         if self.config.train_expert_only:

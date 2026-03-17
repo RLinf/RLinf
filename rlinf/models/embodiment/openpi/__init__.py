@@ -168,16 +168,94 @@ def get_model(cfg: DictConfig, torch_dtype=None):
             model.load_state_dict(model_state_dict, strict=False)
 
     model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
+    if actor_model_config.train_expert_only:
+        logging.info(
+            "Keeping OpenPI Gemma expert in float32 for training stability while the frozen VLM stays mixed-precision."
+        )
+        model.paligemma_with_expert.gemma_expert.to(dtype=torch.float32)
+
+        def _make_stable_gemma_rmsnorm_forward(forward_fn):
+            def _stable_gemma_rmsnorm_forward(self, hidden_states, *args, **kwargs):
+                hidden_states = torch.nan_to_num(
+                    hidden_states, nan=0.0, posinf=1e4, neginf=-1e4
+                )
+                outputs = forward_fn(hidden_states, *args, **kwargs)
+                return torch.nan_to_num(outputs, nan=0.0, posinf=1e4, neginf=-1e4)
+
+            return _stable_gemma_rmsnorm_forward
+
+        def _sanitize_decoder_outputs(outputs):
+            if torch.is_tensor(outputs):
+                return torch.nan_to_num(outputs, nan=0.0, posinf=1e4, neginf=-1e4)
+            if isinstance(outputs, tuple) and outputs:
+                first = outputs[0]
+                if torch.is_tensor(first):
+                    first = torch.nan_to_num(first, nan=0.0, posinf=1e4, neginf=-1e4)
+                    return (first, *outputs[1:])
+            return outputs
+
+        def _make_stable_gemma_decoder_forward(forward_fn):
+            def _stable_gemma_decoder_forward(self, *args, **kwargs):
+                return _sanitize_decoder_outputs(forward_fn(*args, **kwargs))
+
+            return _stable_gemma_decoder_forward
+
+        for module_name, module in model.paligemma_with_expert.gemma_expert.model.named_modules():
+            if module.__class__.__name__ == "GemmaRMSNorm":
+                module.forward = MethodType(
+                    _make_stable_gemma_rmsnorm_forward(module.forward), module
+                )
+                logging.info("Patched GemmaRMSNorm for stable training: %s", module_name)
+            elif module.__class__.__name__ == "GemmaDecoderLayer":
+                module.forward = MethodType(
+                    _make_stable_gemma_decoder_forward(module.forward), module
+                )
+                logging.info(
+                    "Patched GemmaDecoderLayer for stable training: %s", module_name
+                )
+
+    vision_model = model.paligemma_with_expert.paligemma.vision_tower.vision_model
+    original_vision_embeddings_forward = vision_model.embeddings.forward
+    vision_encoder_dtype = vision_model.encoder.layers[0].layer_norm1.weight.dtype
+
+    def _vision_embeddings_forward_with_consistent_dtype(
+        self, pixel_values, interpolate_pos_encoding=False
+    ):
+        embeddings = original_vision_embeddings_forward(
+            pixel_values, interpolate_pos_encoding=interpolate_pos_encoding
+        )
+        # SigLIP patch and position embeddings stay in float32, while later
+        # encoder layer norms often live in bfloat16. Casting the embedding
+        # output to the encoder dtype keeps the runtime path uniform without
+        # changing the model's parameter dtypes, so FSDP can still flatten it.
+        if (
+            torch.is_tensor(embeddings)
+            and embeddings.dtype != vision_encoder_dtype
+        ):
+            embeddings = embeddings.to(dtype=vision_encoder_dtype)
+        return embeddings
+
+    vision_model.embeddings.forward = MethodType(
+        _vision_embeddings_forward_with_consistent_dtype,
+        vision_model.embeddings,
+    )
 
     original_embed_image = model.paligemma_with_expert.embed_image
+    language_embed_dtype = (
+        model.paligemma_with_expert.paligemma.language_model.get_input_embeddings()
+        .weight.dtype
+    )
 
     def _embed_image_with_float32(self, image):
-        # Newer transformers/OpenPI combinations can leave parts of the
-        # vision tower in float32 while upstream preprocessing emits
-        # bfloat16 image activations, which trips LayerNorm dtype checks.
-        if torch.is_tensor(image) and image.dtype == torch.bfloat16:
+        # Run the entire vision tower in float32, then cast the projected image
+        # tokens back to the language embedding dtype so the text stack keeps
+        # the precision it expects.
+        if torch.is_tensor(image) and image.dtype != torch.float32:
             image = image.float()
-        return original_embed_image(image)
+        image_embeds = original_embed_image(image)
+        if torch.is_tensor(image_embeds) and image_embeds.dtype != language_embed_dtype:
+            image_embeds = image_embeds.to(dtype=language_embed_dtype)
+        return image_embeds
 
     model.paligemma_with_expert.embed_image = MethodType(
         _embed_image_with_float32, model.paligemma_with_expert
