@@ -85,7 +85,12 @@ def count_answer_tags(text):
 
 
 def compute_score(
-    solution_str, ground_truth, method="strict", format_score=0.0, score=1.0
+    solution_str,
+    ground_truth,
+    method="strict",
+    format_score=0.0,
+    score=1.0,
+    do_print=True,
 ):
     """The scoring function for exact match (EM).
 
@@ -98,7 +103,6 @@ def compute_score(
     """
     answer = extract_solution(solution_str=solution_str)
     open_count, close_count = count_answer_tags(solution_str)
-    do_print = random.randint(1, 64) == 1
     if do_print:
         print("--------------------------------")
         print(f"Golden answers: {ground_truth}")
@@ -121,7 +125,12 @@ def compute_score(
 
 
 def compute_score_subem(
-    solution_str, ground_truth, method="strict", format_score=0.0, score=1.0
+    solution_str,
+    ground_truth,
+    method="strict",
+    format_score=0.0,
+    score=1.0,
+    do_print=True,
 ):
     """The scoring function for substring exact match (EM).
 
@@ -133,8 +142,6 @@ def compute_score_subem(
         score: the score for the correct answer
     """
     answer = extract_solution(solution_str=solution_str)
-    do_print = random.randint(1, 64) == 1
-
     if do_print:
         print("--------------------------------")
         print(f"Golden answers: {ground_truth['target']}")
@@ -153,9 +160,22 @@ def compute_score_subem(
 class SearchR1Reward:
     def __init__(self, config: DictConfig):
         self.scale = config.get("reward_scale", 1.0)
+        self.random_print_percent = config.get("random_print_percent", 0.01)
 
     def get_reward(
         self, response: list[str], reference: list[list[str]]
     ) -> list[float]:
-        rewards = [compute_score(sol, gt) for sol, gt in zip(response, reference)]
+        if self.random_print_percent <= 0:
+            do_prints = [False for _ in range(len(response))]
+        elif self.random_print_percent >= 1:
+            do_prints = [True for _ in range(len(response))]
+        else:
+            do_prints = [
+                random.random() < self.random_print_percent
+                for _ in range(len(response))
+            ]
+        rewards = [
+            compute_score(sol, gt, do_print=do_print)
+            for sol, gt, do_print in zip(response, reference, do_prints)
+        ]
         return rewards

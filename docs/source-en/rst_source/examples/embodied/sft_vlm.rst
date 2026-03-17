@@ -30,7 +30,7 @@ Preparation Before Running
 --------------------------
 
 1. Prepare the environment. Pull the RLinf Docker image:
-   ``rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1``.
+   ``rlinf/rlinf:math-rlinf0.2-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1``.
 2. Prepare model weights:
    ``https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct``.
 3. Prepare Robo2VLM dataset:
@@ -190,30 +190,55 @@ Use the same launch command:
 Experiment Results
 ------------------
 
-We provide a reference experiment run on a single machine with 8 × H100 GPUs for 6000 iterations.
+RLinf provide a reference experiment using the Qwen2.5-VL-3B model, run on a single machine with 8 × H100 GPUs for 6000 iterations.
 
 Evaluation accuracy on test_data every 1000 iterations:
 
 .. image:: https://github.com/RLinf/misc/raw/main/pic/sft_vlm_eval_accuracy.png
-   :alt: VLM SFT eval accuracy
+   :alt: Qwen2.5-VL-3B VLM SFT eval accuracy
    :width: 85%
    :align: center
 
 grad_norm curve:
 
 .. image:: https://github.com/RLinf/misc/raw/main/pic/sft_vlm_eval_grad_norm.png
-   :alt: VLM SFT grad norm
+   :alt: Qwen2.5-VL-3B VLM SFT grad norm
    :width: 85%
    :align: center
 
 loss curve:
 
 .. image:: https://github.com/RLinf/misc/raw/main/pic/sft_vlm_eval_loss.png
-   :alt: VLM SFT loss
+   :alt: Qwen2.5-VL-3B VLM SFT loss
    :width: 85%
    :align: center
 
-Final eval accuracy: ``0.8995802998542786`` (about ``89.96%``).
+The final evaluation accuracy of the Qwen2.5-VL-3B model is ``0.8995802998542786`` (about ``89.96%``).
+
+RLinf provide a reference experiment using the Qwen3-VL-4B model, run on a single machine with 4 × H100 GPUs for 6000 iterations.
+
+Evaluation accuracy on test_data every 1000 iterations:
+
+.. image:: https://github.com/RLinf/misc/raw/main/pic/qwen3_sft_vlm_eval_accuracy.png
+   :alt: Qwen3-VL-4B VLM SFT eval accuracy
+   :width: 85%
+   :align: center
+
+grad_norm curve:
+
+.. image:: https://github.com/RLinf/misc/raw/main/pic/qwen3_sft_vlm_eval_grad_norm.png
+   :alt: Qwen3-VL-4B VLM SFT grad norm
+   :width: 85%
+   :align: center
+
+loss curve:
+
+.. image:: https://github.com/RLinf/misc/raw/main/pic/qwen3_sft_vlm_eval_loss.png
+   :alt: Qwen3-VL-4B VLM SFT loss
+   :width: 85%
+   :align: center
+
+The final evaluation accuracy of the Qwen3-VL-4B model is ``96.9%`` .
 
 Checkpoint Notes
 ----------------

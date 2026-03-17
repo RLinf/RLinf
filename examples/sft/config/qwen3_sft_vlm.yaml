@@ -61,7 +61,7 @@ actor:
   model:
     model_type: "qwen3_vl"
     precision: fp32
-    model_path: "/path/to/Qwen3-VL-4B-Instruct"
+    model_path: "/path/to/Qwen3-VL-4B-Instruct" # https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct
     is_lora: False
 
   optim:

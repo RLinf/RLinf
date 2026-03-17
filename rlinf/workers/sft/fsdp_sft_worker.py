@@ -130,8 +130,6 @@ class FSDPSftWorker(FSDPModelManager, Worker):
     def run_training(self):
         with self.worker_timer():
             self.model.train()
-            if hasattr(self.model, "gradient_checkpointing_disable"):
-                self.model.gradient_checkpointing_disable()
 
             metrics = {}
             avg_loss = 0.0

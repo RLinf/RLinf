@@ -42,13 +42,18 @@ def get_model(cfg: DictConfig, torch_dtype=None):
 
     # config
     config_name = getattr(cfg.openpi, "config_name", None)
-    actor_train_config = get_openpi_config(config_name, model_path=model_path)
+    data_kwargs = getattr(cfg, "openpi_data", None)
+    actor_train_config = get_openpi_config(
+        config_name, model_path=model_path, data_kwargs=data_kwargs
+    )
+
     actor_model_config = actor_train_config.model
     actor_model_config = OpenPi0Config(**actor_model_config.__dict__)
-    override_config_kwargs = cfg.openpi
-    if override_config_kwargs is not None:
-        for key, val in override_config_kwargs.items():
+    override_model_config_kwargs = cfg.openpi
+    if override_model_config_kwargs is not None:
+        for key, val in override_model_config_kwargs.items():
             actor_model_config.__dict__[key] = val
+
     # load model
     checkpoint_dir = download.maybe_download(model_path)
 
