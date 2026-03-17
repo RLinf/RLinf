@@ -722,7 +722,7 @@ install_franka_env() {
     export CMAKE_PREFIX_PATH=$ROS_CATKIN_PATH/libfranka/build:$CMAKE_PREFIX_PATH
 
     # Then franka_ros
-    catkin_make -DCMAKE_BUILD_TYPE=Release -DFranka_DIR:PATH=$ROS_CATKIN_PATH/libfranka/build --pkg franka_ros
+    catkin_make -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17 -DFranka_DIR:PATH=$ROS_CATKIN_PATH/libfranka/build
 
     # Finally serl_franka_controllers
     catkin_make -DCMAKE_CXX_STANDARD=17 --pkg serl_franka_controllers
