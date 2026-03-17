@@ -125,9 +125,18 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         self,
         config: OpenPi0Config,
     ):
-        # Override `sample_actions` to prevent parent class polymorphic call
+        # Override `sample_actions` to prevent parent class polymorphic call.
+        # Upstream OpenPI also unconditionally wraps ``sample_actions`` with
+        # ``torch.compile(...)`` inside ``PI0Pytorch.__init__``. That adds a
+        # long Inductor compile phase during worker startup even when RLinf has
+        # explicitly disabled torch compile for this run.
         sample_actions_func = self.sample_actions
-        super().__init__(config)
+        torch_compile = torch.compile
+        try:
+            torch.compile = lambda fn, *args, **kwargs: fn
+            super().__init__(config)
+        finally:
+            torch.compile = torch_compile
         self.sample_actions = sample_actions_func
         self.logger = get_logger()
         self.global_step = 0
@@ -387,11 +396,18 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         else:
             processed_obs["observation/state"] = env_obs["states"]
         # wrist image observation
-        if env_obs["wrist_images"] is not None:
-            processed_obs["observation/wrist_image"] = env_obs["wrist_images"]
+        wrist_images = env_obs.get("wrist_images")
+        if wrist_images is not None:
+            processed_obs["observation/wrist_image"] = wrist_images
+        else:
+            # Remote YAM exposes a single camera view. Libero-style OpenPI
+            # checkpoints still require a wrist image key, so fall back to the
+            # main image rather than failing the first rollout step.
+            processed_obs["observation/wrist_image"] = env_obs["main_images"]
         # extra view image observation
-        if env_obs["extra_view_images"] is not None:
-            processed_obs["observation/extra_view_image"] = env_obs["extra_view_images"]
+        extra_view_images = env_obs.get("extra_view_images")
+        if extra_view_images is not None:
+            processed_obs["observation/extra_view_image"] = extra_view_images
         # store used keys
         return processed_obs
 

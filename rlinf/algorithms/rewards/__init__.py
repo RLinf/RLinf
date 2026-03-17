@@ -12,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from rlinf.algorithms.rewards.code import CodeRewardOffline
-from rlinf.algorithms.rewards.math import MathReward
-from rlinf.algorithms.rewards.rstar2 import Rstar2Reward
-from rlinf.algorithms.rewards.searchr1 import SearchR1Reward
-from rlinf.algorithms.rewards.subtask import SubtaskReward
-from rlinf.algorithms.rewards.top_reward import TOPReward
-from rlinf.algorithms.rewards.vqa import VQAReward
+import importlib
 
 
 def register_reward(name: str, reward_class: type):
@@ -27,16 +21,20 @@ def register_reward(name: str, reward_class: type):
 
 
 def get_reward_class(name: str):
+    if name not in reward_registry and name in _LAZY_REWARD_IMPORTS:
+        module_name, class_name = _LAZY_REWARD_IMPORTS[name]
+        reward_registry[name] = getattr(importlib.import_module(module_name), class_name)
     assert name in reward_registry, f"Reward {name} not found"
     return reward_registry[name]
 
 
 reward_registry = {}
-
-register_reward("math", MathReward)
-register_reward("vqa", VQAReward)
-register_reward("code_offline", CodeRewardOffline)
-register_reward("searchr1", SearchR1Reward)
-register_reward("rstar2", Rstar2Reward)
-register_reward("subtask", SubtaskReward)
-register_reward("top_reward", TOPReward)
+_LAZY_REWARD_IMPORTS = {
+    "math": ("rlinf.algorithms.rewards.math", "MathReward"),
+    "vqa": ("rlinf.algorithms.rewards.vqa", "VQAReward"),
+    "code_offline": ("rlinf.algorithms.rewards.code", "CodeRewardOffline"),
+    "searchr1": ("rlinf.algorithms.rewards.searchr1", "SearchR1Reward"),
+    "rstar2": ("rlinf.algorithms.rewards.rstar2", "Rstar2Reward"),
+    "subtask": ("rlinf.algorithms.rewards.subtask", "SubtaskReward"),
+    "top_reward": ("rlinf.algorithms.rewards.top_reward", "TOPReward"),
+}

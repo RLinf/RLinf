@@ -22,7 +22,14 @@ from omegaconf import DictConfig
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
-from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForVision2Seq
+from transformers import AutoConfig, AutoModelForCausalLM
+
+try:
+    from transformers import AutoModelForVision2Seq as AutoModelForVisionLanguage
+except ImportError:
+    from transformers import (
+        AutoModelForImageTextToText as AutoModelForVisionLanguage,
+    )
 
 from rlinf.config import SupportedModel, get_supported_model, torch_dtype_from_precision
 from rlinf.data.tokenizers import hf_tokenizer
@@ -157,8 +164,8 @@ class FSDPModelManager:
                 load_in_8bit=True,
             )
         else:
-            if type(model_config) in AutoModelForVision2Seq._model_mapping.keys():
-                auto_model_class = AutoModelForVision2Seq
+            if type(model_config) in AutoModelForVisionLanguage._model_mapping.keys():
+                auto_model_class = AutoModelForVisionLanguage
             else:
                 auto_model_class = AutoModelForCausalLM
 

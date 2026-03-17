@@ -32,12 +32,14 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         PrismaticImageProcessor,
         PrismaticProcessor,
     )
-    from transformers import (
-        AutoConfig,
-        AutoImageProcessor,
-        AutoModelForVision2Seq,
-        AutoProcessor,
-    )
+    from transformers import AutoConfig, AutoImageProcessor, AutoProcessor
+
+    try:
+        from transformers import AutoModelForVision2Seq as AutoModelForVisionLanguage
+    except ImportError:
+        from transformers import (
+            AutoModelForImageTextToText as AutoModelForVisionLanguage,
+        )
 
     from rlinf.models.embodiment.openvla_oft.official.openvla_oft_action_model import (
         OpenVLAOFTForRLActionPrediction,
@@ -51,7 +53,9 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     AutoConfig.register("openvla", OpenVLAOFTRLConfig)
     AutoImageProcessor.register(OpenVLAOFTRLConfig, PrismaticImageProcessor)
     AutoProcessor.register(OpenVLAOFTRLConfig, PrismaticProcessor)
-    AutoModelForVision2Seq.register(OpenVLAOFTRLConfig, OpenVLAOFTForRLActionPrediction)
+    AutoModelForVisionLanguage.register(
+        OpenVLAOFTRLConfig, OpenVLAOFTForRLActionPrediction
+    )
 
     # Load the config first
     model_config = AutoConfig.from_pretrained(

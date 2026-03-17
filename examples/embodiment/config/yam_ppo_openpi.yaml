@@ -162,7 +162,7 @@ env:
 # VLM planner: Qwen3-VL-8B for TOPReward scoring only (no subtask planning).
 # reward_scale is read from THIS section by TOPReward (not from reward.reward_scale).
 vlm_planner:
-  model_path: "Qwen/Qwen3-VL-8B"
+  model_path: "Qwen/Qwen3-VL-8B-Instruct"
   backend: "transformers"
   dtype: "bfloat16"
   max_new_tokens_subtask: 64

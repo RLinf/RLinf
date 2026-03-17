@@ -52,7 +52,7 @@ Architecture (active call paths for YAM)
 
 Configuration (under ``vlm_planner`` in the top-level YAML):
     model_path: str
-        HuggingFace model ID or local path, e.g. "Qwen/Qwen3-VL-8B".
+        HuggingFace model ID or local path, e.g. "Qwen/Qwen3-VL-8B-Instruct".
         Must be a vision-language model — image inputs are required for
         subtask planning and TOPReward scoring.
     backend: str
@@ -78,7 +78,7 @@ Configuration (under ``vlm_planner`` in the top-level YAML):
 Example YAML::
 
     vlm_planner:
-      model_path: "Qwen/Qwen3-VL-8B"
+      model_path: "Qwen/Qwen3-VL-8B-Instruct"
       backend: "transformers"
       dtype: "bfloat16"
       max_new_tokens_subtask: 64
@@ -132,7 +132,7 @@ class VLMPlannerWorker:
         if "model" in planner_cfg:
             warnings.warn(
                 "[VLMPlannerWorker] Config field 'vlm_planner.model' is deprecated. "
-                "Use 'vlm_planner.model_path' instead (e.g. 'Qwen/Qwen3-VL-8B').",
+                "Use 'vlm_planner.model_path' instead (e.g. 'Qwen/Qwen3-VL-8B-Instruct').",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -144,7 +144,9 @@ class VLMPlannerWorker:
                 stacklevel=2,
             )
 
-        self._model_path: str = planner_cfg.get("model_path", "Qwen/Qwen3-VL-8B")
+        self._model_path: str = planner_cfg.get(
+            "model_path", "Qwen/Qwen3-VL-8B-Instruct"
+        )
         self._backend: str = planner_cfg.get("backend", "transformers")
         self._dtype_str: str = planner_cfg.get("dtype", "bfloat16")
         self._max_new_tokens_subtask: int = int(

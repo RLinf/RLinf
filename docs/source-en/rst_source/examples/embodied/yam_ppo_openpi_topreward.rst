@@ -93,7 +93,7 @@ Download π₀.5 SFT checkpoint and Qwen3-VL-8B:
 
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi05-SFT --local-dir /path/to/RLinf-Pi05-SFT
-   hf download Qwen/Qwen3-VL-8B --local-dir /path/to/Qwen3-VL-8B
+   hf download Qwen/Qwen3-VL-8B-Instruct --local-dir /path/to/Qwen3-VL-8B-Instruct
 
 Configuration
 -------------
@@ -114,7 +114,7 @@ The ready-to-use config is at
        model_path: "/path/to/RLinf-Pi05-SFT"
 
    vlm_planner:
-     model_path: "Qwen/Qwen3-VL-8B"  # or local path
+     model_path: "Qwen/Qwen3-VL-8B-Instruct"  # or local path
 
 **2. Task description**
 

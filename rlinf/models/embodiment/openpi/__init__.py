@@ -13,10 +13,74 @@
 # limitations under the License.
 # openpi model configs
 
+import json
+import logging
 import os
+from types import MethodType
+from contextlib import nullcontext
+from pathlib import Path
 
 import torch
 from omegaconf import DictConfig
+
+
+def _load_hf_export_norm_stats(checkpoint_dir):
+    """Recover normalization stats from Hugging Face processor exports.
+
+    Some OpenPI checkpoints are exported in LeRobot/Hugging Face format and do
+    not bundle the original ``norm_stats.json`` files. Instead, they store the
+    same statistics inside processor safetensors referenced by
+    ``policy_preprocessor.json`` / ``policy_postprocessor.json``.  RLinf still
+    expects OpenPI-style norm stats, so we reconstruct the subset it needs.
+    """
+
+    from safetensors.torch import load_file
+    from openpi.shared.normalize import NormStats
+
+    checkpoint_dir = Path(checkpoint_dir)
+    processor_specs = [
+        checkpoint_dir / "policy_preprocessor.json",
+        checkpoint_dir / "policy_postprocessor.json",
+    ]
+    if not any(path.exists() for path in processor_specs):
+        return None
+
+    feature_aliases = {
+        "action": "actions",
+        "actions": "actions",
+        "observation.state": "state",
+        "state": "state",
+    }
+    stat_suffixes = ("mean", "std", "q01", "q99")
+    recovered_stats = {}
+
+    for spec_path in processor_specs:
+        if not spec_path.exists():
+            continue
+        spec = json.loads(spec_path.read_text())
+        for step in spec.get("steps", []):
+            state_file = step.get("state_file")
+            if not state_file:
+                continue
+            state_path = checkpoint_dir / state_file
+            if not state_path.exists():
+                continue
+
+            tensors = load_file(str(state_path), device="cpu")
+            for feature_name, alias in feature_aliases.items():
+                if alias in recovered_stats:
+                    continue
+                stats = {}
+                for suffix in stat_suffixes:
+                    tensor = tensors.get(f"{feature_name}.{suffix}")
+                    if tensor is None:
+                        stats = {}
+                        break
+                    stats[suffix] = tensor.detach().cpu().numpy()
+                if stats:
+                    recovered_stats[alias] = NormStats(**stats)
+
+    return recovered_stats or None
 
 
 def get_model(cfg: DictConfig, torch_dtype=None):
@@ -26,12 +90,16 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     import openpi.transforms as transforms
     import safetensors
     from openpi.training import checkpoints as _checkpoints
-
     from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
     from rlinf.models.embodiment.openpi.openpi_action_model import (
         OpenPi0Config,
         OpenPi0ForRLActionPrediction,
     )
+
+    try:
+        from transformers.modeling_utils import no_init_weights
+    except ImportError:
+        no_init_weights = nullcontext
 
     # Resolve model_path
     model_path = str(cfg.model_path)
@@ -66,9 +134,13 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         checkpoint_dir, "actor", "model_state_dict", "full_weights.pt"
     )
 
-    model: OpenPi0ForRLActionPrediction = OpenPi0ForRLActionPrediction(
-        actor_model_config
-    )
+    # These checkpoints are loaded immediately afterwards, so skipping the
+    # default random initialization avoids spending minutes filling large
+    # PaliGemma weights that will be overwritten anyway.
+    with no_init_weights():
+        model: OpenPi0ForRLActionPrediction = OpenPi0ForRLActionPrediction(
+            actor_model_config
+        )
     # train expert only
     if actor_model_config.train_expert_only:
         model.freeze_vlm()
@@ -88,22 +160,62 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         if not weight_paths:
             weight_paths = [os.path.join(checkpoint_dir, "model.safetensors")]
         for weight_path in weight_paths:
-            safetensors.torch.load_model(model, weight_path, strict=False)
+            # Pretrained OpenPI checkpoints do not contain RL-specific heads
+            # such as value/noise heads. Load the raw state dict and rely on
+            # ``strict=False`` so those task-specific weights stay randomly
+            # initialized instead of failing inside safetensors' stricter helper.
+            model_state_dict = safetensors.torch.load_file(weight_path, device="cpu")
+            model.load_state_dict(model_state_dict, strict=False)
 
     model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
+
+    original_embed_image = model.paligemma_with_expert.embed_image
+
+    def _embed_image_with_float32(self, image):
+        # Newer transformers/OpenPI combinations can leave parts of the
+        # vision tower in float32 while upstream preprocessing emits
+        # bfloat16 image activations, which trips LayerNorm dtype checks.
+        if torch.is_tensor(image) and image.dtype == torch.bfloat16:
+            image = image.float()
+        return original_embed_image(image)
+
+    model.paligemma_with_expert.embed_image = MethodType(
+        _embed_image_with_float32, model.paligemma_with_expert
+    )
     # fsdp replace
     # model.paligemma_with_expert.replace_gemma_decoder_layers()
     # load data stats
     data_config = actor_train_config.data.create(
         actor_train_config.assets_dirs, actor_model_config
     )
-    norm_stats = None
+    # Prefer the asset-config norm stats if already available, and only
+    # override them from the checkpoint when that metadata exists there.
+    norm_stats = data_config.norm_stats
+    if data_config.asset_id is None:
+        raise ValueError("Asset id is required to load norm stats.")
+    try:
+        checkpoint_norm_stats = _checkpoints.load_norm_stats(
+            checkpoint_dir, data_config.asset_id
+        )
+        if checkpoint_norm_stats is not None:
+            norm_stats = checkpoint_norm_stats
+    except FileNotFoundError:
+        logging.info(
+            "Norm stats were not bundled with checkpoint %s; falling back to asset config stats.",
+            checkpoint_dir,
+        )
     if norm_stats is None:
-        # We are loading the norm stats from the checkpoint instead of the config assets dir to make sure
-        # that the policy is using the same normalization stats as the original training process.
-        if data_config.asset_id is None:
-            raise ValueError("Asset id is required to load norm stats.")
-        norm_stats = _checkpoints.load_norm_stats(checkpoint_dir, data_config.asset_id)
+        norm_stats = _load_hf_export_norm_stats(checkpoint_dir)
+        if norm_stats is not None:
+            logging.info(
+                "Recovered OpenPI norm stats from Hugging Face processor export in %s.",
+                checkpoint_dir,
+            )
+    if norm_stats is None:
+        raise FileNotFoundError(
+            f"Norm stats were not found in checkpoint {checkpoint_dir!r} or asset config "
+            f"for asset_id {data_config.asset_id!r}."
+        )
     # wrappers
     repack_transforms = transforms.Group()
     default_prompt = None
