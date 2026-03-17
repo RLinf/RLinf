@@ -550,7 +550,7 @@ install_lingbot_vla_model() {
     create_and_sync_venv
     install_common_embodied_deps
     local lingbotvla_dir
-    lingbotvla_dir=$(clone_or_reuse_repo LINGBOT_PATH "$VENV_DIR/lingbot-vla" ${GITHUB_PREFIX}https://github.com/robbyant/lingbot-vla.git --recurse-submodules)
+    lingbotvla_dir=$(clone_or_reuse_repo LINGBOT_PATH "$VENV_DIR/lingbot-vla" ${GITHUB_PREFIX}https://github.com/RLinf/lingbot-vla.git --recurse-submodules)
     uv pip install -e $lingbotvla_dir
     uv pip install -r $lingbotvla_dir/requirements.txt
     uv pip install -e $lingbotvla_dir/lingbotvla/models/vla/vision_models/lingbot-depth/ --no-deps
