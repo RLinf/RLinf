@@ -270,45 +270,50 @@ class MultiStepRolloutWorker(Worker):
             "only_save_expert", True
         )
 
-        if mode == "eval":
-            use_expert = False
-        elif self.expert_model is not None:
+        if mode == "train" and self.expert_model is not None:
+            # training with expert model. Beta-probability acting.
             use_expert = torch.rand(1).item() < self._dagger_sampling_params["beta"]
         else:
             use_expert = False
 
         with torch.no_grad():
+            expert_label_flag = False
+            # Decide which model to act via use_expert
             if use_expert:
                 actions, result = self.expert_model.predict_action_batch(
                     env_obs=env_obs,
                     **kwargs,
                 )
+                expert_label_flag = True
             else:
                 actions, result = self.hf_model.predict_action_batch(
                     env_obs=env_obs,
                     **kwargs,
                 )
-                if (
-                    not only_save_expert
-                    and self.expert_model is not None
-                    and mode == "train"
-                ):
-                    _, expert_result = self.expert_model.predict_action_batch(
-                        env_obs=env_obs,
-                        **kwargs,
-                    )
-                    expert_forward_inputs = expert_result["forward_inputs"]
-                    expert_target = expert_forward_inputs.get(
-                        "model_action", expert_forward_inputs.get("action")
-                    )
-                    if expert_target is not None:
-                        result["forward_inputs"]["model_action"] = expert_target
-                    use_expert = True
+
+            # Decide re-label or not
+            if (
+                not only_save_expert  # only re-label in classic dagger mode
+                and not use_expert  # only re-label if not using expert
+                and self.expert_model is not None  # only re-label if expert exists
+                and mode == "train"  # only re-label in train mode
+            ):
+                _, expert_result = self.expert_model.predict_action_batch(
+                    env_obs=env_obs,
+                    **kwargs,
+                )
+                expert_forward_inputs = expert_result["forward_inputs"]
+                expert_target = expert_forward_inputs.get(
+                    "model_action", expert_forward_inputs.get("action")
+                )
+                if expert_target is not None:
+                    result["forward_inputs"]["model_action"] = expert_target
+                expert_label_flag = True
 
         if isinstance(actions, np.ndarray):
             actions = torch.from_numpy(actions)
 
-        result["use_expert"] = bool(use_expert)
+        result["expert_label_flag"] = bool(expert_label_flag)
         return actions, result
 
     def get_bootstrap_values(
@@ -351,7 +356,7 @@ class MultiStepRolloutWorker(Worker):
                 actions, result = self.predict(env_output["obs"])
 
                 save_flags = None
-                if result.get("use_expert", False):
+                if result.get("expert_label_flag", False):
                     save_flags = torch.full(
                         (actions.shape[0], self.cfg.actor.model.num_action_chunks),
                         True,

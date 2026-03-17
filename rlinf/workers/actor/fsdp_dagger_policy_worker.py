@@ -91,14 +91,14 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             self.replay_buffer.add_trajectories(intervene_traj_list)
 
     def _prepare_mlp_sft_batch(self, batch):
-        """Prepare batch SFT data for MLP policies."""
+        """Prepare batch data from buffer-sampled format to SFT loss format."""
         target_actions = (
             batch["model_action"] if "model_action" in batch else batch["action"]
         )
         return {"states": batch["states"], "action": target_actions}
 
     def _prepare_openpi_sft_batch(self, batch):
-        """Prepare batch SFT data for OpenPI policies."""
+        """Prepare batch data from buffer-sampled format to SFT loss format."""
 
         obs_dict = {}
         obs_prefix_keys = [k for k in batch.keys() if k.startswith("observation/")]
