@@ -53,18 +53,14 @@ def _parse_wrist_images(
 
     if wrist_image.ndim == 4:
         left_wrist_image = wrist_image[0]
-        right_wrist_image = (
-            wrist_image[1] if wrist_image.shape[0] > 1 else None
-        )
+        right_wrist_image = wrist_image[1] if wrist_image.shape[0] > 1 else None
     else:
         left_wrist_image = wrist_image
         right_wrist_image = None
 
     if right_wrist_image is None and extra_view_image is not None:
         right_wrist_image = (
-            extra_view_image[0]
-            if extra_view_image.ndim == 4
-            else extra_view_image
+            extra_view_image[0] if extra_view_image.ndim == 4 else extra_view_image
         )
 
     has_right_wrist = right_wrist_image is not None

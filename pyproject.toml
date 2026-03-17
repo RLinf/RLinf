@@ -185,6 +185,7 @@ rlinf = ["**/*.yaml", "**/*.yml"]
 line-length = 88
 indent-width = 4
 target-version = "py311"
+extend-exclude = ["third_party", "rlinf/envs/remote/proto"]
 
 [tool.ruff.lint]
 isort = {known-first-party = ["rlinf"]}

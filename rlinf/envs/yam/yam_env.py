@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 Shirui Chen
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -499,8 +499,7 @@ class YAMEnv(gym.Env):
             wrist_camera_names = [
                 camera_name
                 for camera_name in camera_names
-                if camera_name not in used_names
-                and self._is_wrist_camera(camera_name)
+                if camera_name not in used_names and self._is_wrist_camera(camera_name)
             ]
         used_names.update(wrist_camera_names)
 
@@ -556,9 +555,7 @@ class YAMEnv(gym.Env):
                             if image_name in self._camera_names
                             else f"{cam_key}/{image_name}"
                         )
-                        camera_images[derived_name] = self._normalize_image(
-                            image_value
-                        )
+                        camera_images[derived_name] = self._normalize_image(image_value)
                     continue
                 image = cam_data.get("rgb", cam_data.get("color", None))
             elif isinstance(cam_data, np.ndarray):

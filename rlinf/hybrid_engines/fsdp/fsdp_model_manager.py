@@ -70,7 +70,9 @@ class FSDPModelManager:
         self._cfg = cfg
         self._logger = get_logger()
         self.torch_dtype = torch_dtype_from_precision(self._cfg.model.precision)
-        self._debug_grad_anomaly = os.getenv("RLINF_DEBUG_GRAD_ANOMALY", "").lower() in {
+        self._debug_grad_anomaly = os.getenv(
+            "RLINF_DEBUG_GRAD_ANOMALY", ""
+        ).lower() in {
             "1",
             "true",
             "yes",
@@ -176,7 +178,11 @@ class FSDPModelManager:
             return
 
         offenders.sort(
-            key=lambda item: (item["nonfinite_count"], item["numel"], item["finite_abs_max"]),
+            key=lambda item: (
+                item["nonfinite_count"],
+                item["numel"],
+                item["finite_abs_max"],
+            ),
             reverse=True,
         )
         self._logger.warning(

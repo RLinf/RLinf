@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 Shirui Chen
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -147,7 +147,11 @@ def _process_vision_info_compat(process_vision_info, messages):
     elif isinstance(video_kwargs.get("fps"), list) and len(video_kwargs["fps"]) == 1:
         video_kwargs["fps"] = video_kwargs["fps"][0]
 
-    if video_inputs and isinstance(video_inputs[0], tuple) and len(video_inputs[0]) == 2:
+    if (
+        video_inputs
+        and isinstance(video_inputs[0], tuple)
+        and len(video_inputs[0]) == 2
+    ):
         videos = []
         video_metadata = []
         for video, metadata in video_inputs:

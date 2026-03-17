@@ -1,3 +1,17 @@
+# Copyright 2026 Shirui Chen
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """RemoteEnv — a gym.Env that proxies to a remote RobotServer over gRPC.
 
 This environment presents the same interface as ``YAMEnv`` but forwards all
@@ -13,8 +27,8 @@ Usage in YAML config::
 import time
 from typing import Optional
 
-import gymnasium as gym
 import grpc
+import gymnasium as gym
 import numpy as np
 import torch
 from omegaconf import DictConfig
@@ -39,7 +53,9 @@ def _decompress_image(data: bytes, height: int, width: int) -> np.ndarray:
     return img
 
 
-def _decode_image(data: bytes, height: int, width: int, is_compressed: bool) -> np.ndarray:
+def _decode_image(
+    data: bytes, height: int, width: int, is_compressed: bool
+) -> np.ndarray:
     """Decode one image payload into a uint8 HWC numpy array."""
     if is_compressed:
         return _decompress_image(data, height, width)
@@ -126,9 +142,7 @@ class RemoteEnv(gym.Env):
             ("grpc.max_receive_message_length", max_msg),
         ]
 
-        self._channel = grpc.insecure_channel(
-            server_url, options=channel_options
-        )
+        self._channel = grpc.insecure_channel(server_url, options=channel_options)
 
         self._stub = robot_env_pb2_grpc.RobotEnvServiceStub(self._channel)
 
@@ -478,7 +492,9 @@ class RemoteEnv(gym.Env):
     def task_description(self, value: str) -> None:
         self._task_description = str(value)
         self._stub.SetTaskDescription(
-            robot_env_pb2.TaskDescriptionRequest(task_description=self._task_description),
+            robot_env_pb2.TaskDescriptionRequest(
+                task_description=self._task_description
+            ),
             timeout=self._timeout,
         )
 

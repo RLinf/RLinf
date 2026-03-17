@@ -16,9 +16,9 @@
 import json
 import logging
 import os
-from types import MethodType
 from contextlib import nullcontext
 from pathlib import Path
+from types import MethodType
 
 import torch
 from omegaconf import DictConfig
@@ -34,8 +34,8 @@ def _load_hf_export_norm_stats(checkpoint_dir):
     expects OpenPI-style norm stats, so we reconstruct the subset it needs.
     """
 
-    from safetensors.torch import load_file
     from openpi.shared.normalize import NormStats
+    from safetensors.torch import load_file
 
     checkpoint_dir = Path(checkpoint_dir)
     processor_specs = [
@@ -90,6 +90,7 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     import openpi.transforms as transforms
     import safetensors
     from openpi.training import checkpoints as _checkpoints
+
     from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
     from rlinf.models.embodiment.openpi.openpi_action_model import (
         OpenPi0Config,
@@ -200,12 +201,17 @@ def get_model(cfg: DictConfig, torch_dtype=None):
 
             return _stable_gemma_decoder_forward
 
-        for module_name, module in model.paligemma_with_expert.gemma_expert.model.named_modules():
+        for (
+            module_name,
+            module,
+        ) in model.paligemma_with_expert.gemma_expert.model.named_modules():
             if module.__class__.__name__ == "GemmaRMSNorm":
                 module.forward = MethodType(
                     _make_stable_gemma_rmsnorm_forward(module.forward), module
                 )
-                logging.info("Patched GemmaRMSNorm for stable training: %s", module_name)
+                logging.info(
+                    "Patched GemmaRMSNorm for stable training: %s", module_name
+                )
             elif module.__class__.__name__ == "GemmaDecoderLayer":
                 module.forward = MethodType(
                     _make_stable_gemma_decoder_forward(module.forward), module
@@ -228,10 +234,7 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         # encoder layer norms often live in bfloat16. Casting the embedding
         # output to the encoder dtype keeps the runtime path uniform without
         # changing the model's parameter dtypes, so FSDP can still flatten it.
-        if (
-            torch.is_tensor(embeddings)
-            and embeddings.dtype != vision_encoder_dtype
-        ):
+        if torch.is_tensor(embeddings) and embeddings.dtype != vision_encoder_dtype:
             embeddings = embeddings.to(dtype=vision_encoder_dtype)
         return embeddings
 
@@ -241,10 +244,7 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     )
 
     original_embed_image = model.paligemma_with_expert.embed_image
-    language_embed_dtype = (
-        model.paligemma_with_expert.paligemma.language_model.get_input_embeddings()
-        .weight.dtype
-    )
+    language_embed_dtype = model.paligemma_with_expert.paligemma.language_model.get_input_embeddings().weight.dtype
 
     def _embed_image_with_float32(self, image):
         # Run the entire vision tower in float32, then cast the projected image

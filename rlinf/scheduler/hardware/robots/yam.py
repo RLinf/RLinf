@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 Shirui Chen
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -92,7 +92,10 @@ class YAMRobot(Hardware):
                 continue
 
             # Validate IP connectivity for both arms
-            for arm_label, arm_ip in [("left", config.left_ip), ("right", config.right_ip)]:
+            for arm_label, arm_ip in [
+                ("left", config.left_ip),
+                ("right", config.right_ip),
+            ]:
                 if arm_ip is None:
                     continue
                 try:
@@ -183,6 +186,7 @@ class YAMConfig(HardwareConfig):
     """Skip connectivity and camera validation during hardware enumeration."""
 
     def __post_init__(self):
+        """Validate YAM node and controller address settings after init."""
         assert isinstance(self.node_rank, int), (
             f"'node_rank' in YAMConfig must be an integer. Got {type(self.node_rank)}."
         )

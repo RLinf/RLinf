@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 Shirui Chen
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -132,7 +132,11 @@ def _compute_vlm_gpu_index(cfg) -> int | None:
             continue  # Component is on a different physical node — no conflict.
         placement_val = str(getattr(comp, "placement", 0))
         # Handle range syntax "0-2" — use the high watermark.
-        high = int(placement_val.split("-")[-1]) if "-" in placement_val else int(placement_val)
+        high = (
+            int(placement_val.split("-")[-1])
+            if "-" in placement_val
+            else int(placement_val)
+        )
         placements_on_shared_node.add(high)
 
     # Only one distinct GPU index in use (or dedicated node): VLM shares GPU 0.

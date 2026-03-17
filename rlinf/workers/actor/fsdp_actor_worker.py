@@ -1196,7 +1196,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "loss_mask_sum": self.rollout_batch.get("loss_mask_sum", None),
             # Pass normalize_advantages so the config value is respected; the GAE
             # function defaults to True but the explicit config setting is authoritative.
-            "normalize_advantages": self.cfg.algorithm.get("normalize_advantages", True),
+            "normalize_advantages": self.cfg.algorithm.get(
+                "normalize_advantages", True
+            ),
         }
 
         advantages_and_returns = calculate_adv_and_returns(**kwargs)
@@ -1560,7 +1562,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         metrics_data["actor/total_loss"] = total_loss_metric.item()
                         append_to_dict(metrics, metrics_data)
                         continue
-                    if torch.isfinite(total_loss_metric) and total_loss_metric.abs() == 0:
+                    if (
+                        torch.isfinite(total_loss_metric)
+                        and total_loss_metric.abs() == 0
+                    ):
                         if "zero_total_loss" not in self._nonfinite_training_warnings:
                             self._nonfinite_training_warnings.add("zero_total_loss")
                             self.logger.warning(

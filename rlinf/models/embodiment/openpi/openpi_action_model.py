@@ -809,10 +809,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = (
             self.embed_suffix(state, x_t, timestep)
         )
-        expert_input_dtype = (
-            self.paligemma_with_expert.gemma_expert.model.layers[0]
-            .self_attn.q_proj.weight.dtype
-        )
+        expert_input_dtype = self.paligemma_with_expert.gemma_expert.model.layers[
+            0
+        ].self_attn.q_proj.weight.dtype
         if suffix_embs.dtype != expert_input_dtype:
             suffix_embs = suffix_embs.to(dtype=expert_input_dtype)
         if (
@@ -862,9 +861,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.action_horizon :]
         suffix_out = suffix_out.to(dtype=torch.float32)
-        suffix_out = self._sanitize_tensor(
-            suffix_out, nan=0.0, posinf=1e4, neginf=-1e4
-        )
+        suffix_out = self._sanitize_tensor(suffix_out, nan=0.0, posinf=1e4, neginf=-1e4)
         suffix_out = self._maybe_register_grad_debug_hook("suffix_out", suffix_out)
         return suffix_out
 

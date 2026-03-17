@@ -1,3 +1,17 @@
+# Copyright 2026 Shirui Chen
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import sys
 import types
 
@@ -25,7 +39,9 @@ class _FakeProcessor:
         self.last_videos = None
         self.calls = []
 
-    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=False):
+    def apply_chat_template(
+        self, messages, tokenize=False, add_generation_prompt=False
+    ):
         self.last_messages = messages
         return "<|im_start|>user\nPROMPT<|im_end|>\n"
 
@@ -93,7 +109,10 @@ def test_top_reward_matches_reference_qwen_prompt_and_video_path(monkeypatch):
     assert processor.last_messages[0]["content"][0]["type"] == "video"
     assert processor.last_images is None
     assert processor.last_videos == ["dummy-video"]
-    assert processor.last_text == "<|im_start|>user\nPROMPTpick and place Decide whether the above statement is True or not. The answer is: True"
+    assert (
+        processor.last_text
+        == "<|im_start|>user\nPROMPTpick and place Decide whether the above statement is True or not. The answer is: True"
+    )
     assert isinstance(score, float)
 
 
@@ -113,7 +132,9 @@ def test_top_reward_scores_final_token_like_reference(monkeypatch):
     frames = [torch.zeros((8, 8, 3), dtype=torch.uint8).numpy() for _ in range(4)]
     score = reward.compute_score(frames, "pick and place")
 
-    expected = torch.log_softmax(torch.tensor([0.0] * 2 + [9.0] + [0.0] * 13), dim=0)[2].item()
+    expected = torch.log_softmax(torch.tensor([0.0] * 2 + [9.0] + [0.0] * 13), dim=0)[
+        2
+    ].item()
     assert score == pytest.approx(expected, abs=1e-6)
 
 

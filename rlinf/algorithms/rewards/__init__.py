@@ -23,7 +23,9 @@ def register_reward(name: str, reward_class: type):
 def get_reward_class(name: str):
     if name not in reward_registry and name in _LAZY_REWARD_IMPORTS:
         module_name, class_name = _LAZY_REWARD_IMPORTS[name]
-        reward_registry[name] = getattr(importlib.import_module(module_name), class_name)
+        reward_registry[name] = getattr(
+            importlib.import_module(module_name), class_name
+        )
     assert name in reward_registry, f"Reward {name} not found"
     return reward_registry[name]
 

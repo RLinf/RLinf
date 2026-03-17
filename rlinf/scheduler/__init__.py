@@ -21,7 +21,7 @@ from .hardware import (
     FrankaHWInfo,
     HardwareInfo,
     Turtle2HWInfo,
-    YAMHWInfo
+    YAMHWInfo,
 )
 from .manager import WorkerInfo
 from .placement import (
