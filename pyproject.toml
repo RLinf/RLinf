@@ -65,6 +65,7 @@ dependencies = [
     "wandb<0.25.1",
     "swanlab>=0.6.11",
     "tensorboard",
+    "beaker-gantry>=1.16.0",
 ]
 
 [project.urls]
