@@ -123,6 +123,14 @@ class CollectEpisode(gym.Wrapper):
         atexit.register(self._finalize_on_exit)
         signal.signal(signal.SIGTERM, self._handle_signal)
 
+    @property
+    def is_start(self):
+        return getattr(self.env, "is_start")
+
+    @is_start.setter
+    def is_start(self, value):
+        setattr(self.env, "is_start", value)
+
     # ─────────────────────────────────────────── gymnasium interface ──────────
 
     def reset(
