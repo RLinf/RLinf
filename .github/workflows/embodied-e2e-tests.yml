@@ -27,7 +27,7 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh maniskill_sac_mlp
-      
+
       - name: ManiSkill Async SAC test
         timeout-minutes: 20
         run: |
@@ -48,7 +48,7 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
-  
+
   embodied-cnn-realworld-dummy-sac-test:
     runs-on: embodied
     steps:
@@ -180,7 +180,7 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
-          
+
   embodied-openvlaoft-maniskill-libero-test:
     runs-on: embodied
     steps:
@@ -260,7 +260,7 @@ jobs:
           rm -rf .venv
           uv cache prune
           rm -rf /tmp/tmp*
-  
+
   embodied-openvlaoft-robotwin-test:
     runs-on: embodied
     steps:
@@ -354,7 +354,7 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
-  
+
   embodied-gr00t-isaaclab-test:
     runs-on: embodied
     steps:
@@ -724,7 +724,7 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
-          
+
   embodied-lingbotvla-robotwin-test:
     runs-on: embodied
     steps:
@@ -751,7 +751,7 @@ jobs:
           export ROBOT_PLATFORM=ALOHA
           export ROBOTWIN_PATH="/workspace/dataset/RoboTwin"
           export PYTHONPATH=${ROBOTWIN_PATH}:$PYTHONPATH
-          export LINGBOT_VLA_PATH="${REPO_PATH}/.venv/lingbot-vla"
+          export LINGBOT_VLA_PATH="/workspace/dataset/lingbot-vla"
           bash tests/e2e_tests/embodied/run.sh robotwin_grpo_lingbotvla
 
       - name: Clean up
