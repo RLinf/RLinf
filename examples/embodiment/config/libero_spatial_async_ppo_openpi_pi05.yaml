@@ -112,7 +112,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-Pi05-SFT"
+    model_path: "/path/to/model/RLinf-Pi05-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
     precision: ${actor.model.precision}
 
 actor:
@@ -124,7 +124,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/path/to/model/RLinf-Pi05-SFT"
+    model_path: "/path/to/model/RLinf-Pi05-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
     model_type: "openpi"
     num_action_chunks: 5 # interface for the env
     num_steps: 3

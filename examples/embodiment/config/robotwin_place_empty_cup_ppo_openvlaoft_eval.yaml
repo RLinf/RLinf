@@ -116,7 +116,7 @@ actor:
   enable_offload: True
 
   model:
-    model_path: "/path/to/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup"
+    model_path: "/path/to/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup" # https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
     model_type: "openvla_oft"
     implement_version: "official"
     value_type: ${algorithm.reward_type}  # 'action' or 'token'

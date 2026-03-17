@@ -102,7 +102,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
+    model_path: "/path/to/model/RLinf-OpenVLAOFT-Behavior/" # https://huggingface.co/RLinf/RLinf-OpenVLAOFT-Behavior
     precision: ${actor.model.precision}
 
 actor:
@@ -115,7 +115,7 @@ actor:
 
   # Override the default values in model/openvla_oft
   model:
-    model_path: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
+    model_path: "/path/to/model/RLinf-OpenVLAOFT-Behavior/" # https://huggingface.co/RLinf/RLinf-OpenVLAOFT-Behavior
     model_type: "openvla_oft"
     value_type: ${algorithm.reward_type}
     action_dim: 23
