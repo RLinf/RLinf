@@ -400,33 +400,73 @@ RoboTwin 当前可直接参考的配置文件如下：
    * - Task
      - OpenVLA-OFT (SFT)
      - OpenVLA-OFT (RLinf-GRPO)
+     - OpenVLA-OFT (RLinf-PPO)
    * - beat_block_hammer
      - |huggingface| `10.15% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-beat_block_hammer>`_
      - |huggingface| `96.09% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-beat_block_hammer>`__
+     - ---
    * - pick_dual_bottles
      - |huggingface| `20.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-pick_dual_bottles>`_
      - |huggingface| `92.96% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-pick_dual_bottles>`__
+     - ---
    * - place_empty_cup
      - |huggingface| `75.78% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_
      - |huggingface| `94.53% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_empty_cup>`__
+     - |huggingface| `92.97% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-PPO-place_empty_cup>`_
    * - place_container_plate
      - |huggingface| `54.69% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_container_plate>`_
      - |huggingface| `95.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_container_plate>`__
+     - ---
    * - move_can_pot
      - |huggingface| `9.37% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-move_can_pot>`_
      - |huggingface| `83.59% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-move_can_pot>`__
+     - ---
    * - lift_pot
      - |huggingface| `3.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-lift_pot>`_
      - |huggingface| `70.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-lift_pot>`__
+     - ---
    * - handover_block
      - |huggingface| `28.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-handover_block>`_
      - |huggingface| `70.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-handover_block>`__
+     - ---
    * - Average
      - 28.79%
      - **86.16**
+     - ---
    * - Δ Avg.
      - ---
      - **+57.37%**
+     - ---
+
+
+.. list-table:: **OpenPi 在 RoboTwin 任务上的评估结果**
+   :header-rows: 1
+
+   * - Task
+     - Pi0 (SFT)
+     - Pi0 (RLinf-PPO)
+     - Pi0.5 (SFT)
+     - Pi0.5 (RLinf-PPO)
+   * - adjust_bottle
+     - |huggingface| `81.25% <https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle>`_
+     - |huggingface| `95.53% <https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-PPO-adjust_bottle>`_
+     - |huggingface| `82.03% <https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle>`_
+     - |huggingface| `97.66% <https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-PPO-adjust_bottle>`_
+   * - Average
+     - 81.25%
+     - 95.53%
+     - 82.03%
+     - 97.66%
+   * - Δ Avg.
+     - ---
+     - **14.28%**
+     - ---
+     - **15.63%**
+
+.. note::
+   **OpenVLA-OFT** 模型的所有任务都在 **demo_randomized** 设置下进行训练；
+   **OpenPi** 模型的所有任务都在 **demo_clean** 设置下进行训练。
+   更多信息请参考 `RoboTwin 参数配置文档 <https://robotwin-platform.github.io/doc/usage/configurations.html>`_。
 
 评估脚本
 ~~~~~~~~~~~~~~~~~~~
