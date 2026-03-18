@@ -323,6 +323,72 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         actions = data["actions"]
         return super().forward(observation, actions)
 
+    def prepare_dagger_sft_batch(self, batch):
+        """Prepare replay-buffer samples for DAgger SFT updates."""
+        device = next(self.parameters()).device
+        obs_dict = {}
+        obs_prefix_keys = [k for k in batch.keys() if k.startswith("observation/")]
+        for key in obs_prefix_keys:
+            obs_dict[key] = batch[key]
+        if "tokenized_prompt" in batch:
+            obs_dict["tokenized_prompt"] = batch["tokenized_prompt"]
+        if "tokenized_prompt_mask" in batch:
+            obs_dict["tokenized_prompt_mask"] = batch["tokenized_prompt_mask"]
+
+        bsz = batch["action"].shape[0]
+        if "model_action" in batch:
+            actions = (
+                batch["model_action"]
+                .reshape(bsz, self.config.action_horizon, self.config.action_dim)
+                .clone()
+            )
+            processed_obs = self.input_transform(obs_dict, transpose=False)
+            processed_obs = self.precision_processor(processed_obs)
+            observation = _model.Observation.from_dict(processed_obs)
+        else:
+            obs_dict["actions"] = batch["action"].reshape(
+                bsz, self.config.action_chunk, -1
+            )
+            if obs_dict["actions"].shape[2] < self.config.action_dim:
+                padding_action_dim = torch.zeros(
+                    bsz,
+                    obs_dict["actions"].shape[1],
+                    self.config.action_dim - obs_dict["actions"].shape[2],
+                    device=obs_dict["actions"].device,
+                )
+                obs_dict["actions"] = torch.cat(
+                    [obs_dict["actions"], padding_action_dim], dim=2
+                )
+            if obs_dict["actions"].shape[1] < self.config.action_horizon:
+                padding_action_chunk = torch.zeros(
+                    bsz,
+                    self.config.action_horizon - obs_dict["actions"].shape[1],
+                    self.config.action_dim,
+                    device=obs_dict["actions"].device,
+                )
+                obs_dict["actions"] = torch.cat(
+                    [obs_dict["actions"], padding_action_chunk], dim=1
+                )
+            obs_dict["prompt"] = ["empty" for _ in range(bsz)]
+            processed_obs = self.input_transform(obs_dict, transpose=False)
+            if "tokenized_prompt" in batch:
+                processed_obs["tokenized_prompt"] = batch["tokenized_prompt"]
+            if "tokenized_prompt_mask" in batch:
+                processed_obs["tokenized_prompt_mask"] = batch["tokenized_prompt_mask"]
+            processed_obs = self.precision_processor(processed_obs)
+            observation = _model.Observation.from_dict(processed_obs)
+            actions = processed_obs["actions"].clone()
+            processed_obs.pop("actions")
+
+        observation = jax.tree.map(
+            lambda x: torch.as_tensor(x, device=device).contiguous().clone(),
+            observation,
+        )
+        return {
+            "observation": observation,
+            "actions": actions.to(torch.float32).to(device),
+        }
+
     def default_forward(
         self,
         forward_inputs: dict[str, torch.Tensor],
@@ -477,6 +543,13 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             "denoise_inds": outputs["denoise_inds"],
             "tokenized_prompt": processed_obs["tokenized_prompt"],
             "tokenized_prompt_mask": processed_obs["tokenized_prompt_mask"],
+            # "action" is the env-executed action, and "model_action" is the original output by the model.
+            # For small models, they are consistent. For large models (like pi), "action" is the result after output_transform.
+            # For realworld human-in-the-loop training, only "action" can be provided by human.
+            "action": actions.reshape(actions.shape[0], -1).contiguous(),
+            "model_action": outputs["actions"]
+            .reshape(outputs["actions"].shape[0], -1)
+            .contiguous(),
         }
         if forward_action is not None:
             forward_inputs["action"] = forward_action

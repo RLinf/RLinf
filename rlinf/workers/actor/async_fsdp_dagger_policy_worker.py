@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,14 +19,11 @@ import threading
 import torch
 
 from rlinf.scheduler import Worker
-from rlinf.utils.metric_utils import (
-    append_to_dict,
-    compute_split_num,
-)
-from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
+from rlinf.utils.metric_utils import append_to_dict, compute_split_num
+from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPolicy
 
 
-class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
+class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
     should_stop = False
 
     async def recv_rollout_trajectories(self, input_channel):
@@ -55,6 +52,7 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
     def _drain_received_trajectories(self, max_trajectories: int | None = None):
         if getattr(self, "_recv_queue", None) is None:
             return
+
         recv_list = []
         processed = 0
         while True:
@@ -68,17 +66,13 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
         if not recv_list:
             return
 
-        self.replay_buffer.add_trajectories(recv_list)
-
-        if self.demo_buffer is not None:
-            intervene_traj_list = []
-            for traj in recv_list:
-                intervene_trajs = traj.extract_intervene_traj()
-                if intervene_trajs is not None:
-                    intervene_traj_list.extend(intervene_trajs)
-
-            if len(intervene_traj_list) > 0:
-                self.demo_buffer.add_trajectories(intervene_traj_list)
+        intervene_traj_list = []
+        for traj in recv_list:
+            intervene_trajs = traj.extract_intervene_traj(mode="all")
+            if intervene_trajs is not None:
+                intervene_traj_list.extend(intervene_trajs)
+        if intervene_traj_list:
+            self.replay_buffer.add_trajectories(intervene_traj_list)
 
     async def _wait_for_replay_buffer_ready(self, min_buffer_size: int):
         while True:
@@ -91,17 +85,15 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
 
     @Worker.timer("run_training")
     async def run_training(self):
-        """SAC training using replay buffer"""
+        """Run async DAgger updates with replay-buffer samples."""
         if self.cfg.actor.get("enable_offload", False):
             self.load_param_and_grad(self.device)
             self.load_optimizer(self.device)
 
-        # Check if replay buffer has enough samples
         min_buffer_size = self.cfg.algorithm.replay_buffer.get("min_buffer_size", 100)
         await self._wait_for_replay_buffer_ready(min_buffer_size)
 
         torch.distributed.barrier()
-
         assert (
             self.cfg.actor.global_batch_size
             % (self.cfg.actor.micro_batch_size * self._world_size)
@@ -115,7 +107,6 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
 
         self.model.train()
         metrics = {}
-
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
         for _ in range(update_epoch):
             await asyncio.sleep(0)
@@ -123,16 +114,13 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
             append_to_dict(metrics, metrics_data)
             self.update_step += 1
 
-        mean_metric_dict = self.process_train_metrics(metrics)
-
         torch.cuda.synchronize()
         torch.distributed.barrier()
         torch.cuda.empty_cache()
-        return mean_metric_dict
+        return self.process_train_metrics(metrics)
 
     async def stop(self):
         self.should_stop = True
-        self.buffer_dataset.close()
         recv_thread = getattr(self, "_recv_rollout_thread", None)
         if recv_thread is not None and recv_thread.is_alive():
             await asyncio.to_thread(recv_thread.join, 5)
