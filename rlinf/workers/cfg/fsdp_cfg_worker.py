@@ -20,7 +20,7 @@ CFG (Classifier-Free Guidance) training with pre-computed advantage labels.
 Key features:
 - Uses AdvantageMixtureDataset for data loading with weighted sampling
 - Pre-computed advantages from datasets (computed by compute_advantages.py)
-- Positive/negative guidance selection based on advantage (bool)
+- Optional positive-only conditional routing based on advantage labels
 
 Example config:
     data:
@@ -84,7 +84,7 @@ class FSDPCfgWorker(FSDPSftWorker):
     3. Passes advantage to model.forward for guidance selection
 
     Config options:
-        data.balance_dataset_weights: Balance by dataset length
+        data.balance_dataset_weights: Multiply weights by dataset length when True
         data.seed: Random seed for sampling
         data.train_data_paths: List of dataset configs with path, episodes, weight
     """
@@ -466,7 +466,9 @@ class FSDPCfgWorker(FSDPSftWorker):
                 observation, actions, advantage = next(self.data_iter)
 
                 observation = jax.tree.map(
-                    lambda x: torch.as_tensor(x).contiguous().to(self.device, non_blocking=True),
+                    lambda x: torch.as_tensor(x)
+                    .contiguous()
+                    .to(self.device, non_blocking=True),
                     observation,
                 )
                 actions = actions.to(torch.float32).to(self.device, non_blocking=True)
@@ -522,15 +524,29 @@ class FSDPCfgWorker(FSDPSftWorker):
 
             self.lr_scheduler.step()
 
-            # CFG: handle positive/negative guidance metrics
-            special_keys = {
+            # CFG: handle conditional-routing metrics
+            count_keys = {
                 "conditional_count",
                 "unconditional_count",
-                "conditional_loss",
-                "unconditional_loss",
-                "positive_guidance_count",
-                "negative_guidance_count",
+                "positive_label_count",
+                "negative_label_count",
+                "positive_conditional_count",
+                "positive_unconditional_count",
+                "negative_conditional_count",
+                "negative_unconditional_count",
+                "positive_probe_count",
             }
+            loss_sum_keys = {
+                "conditional_loss_sum",
+                "unconditional_loss_sum",
+                "positive_conditional_loss_sum",
+                "positive_unconditional_loss_sum",
+                "negative_conditional_loss_sum",
+                "negative_unconditional_loss_sum",
+                "positive_probe_conditional_loss_sum",
+                "positive_probe_unconditional_loss_sum",
+            }
+            special_keys = count_keys | loss_sum_keys
             has_cfg_metrics = any(k in metrics for k in special_keys)
 
             if has_cfg_metrics:
@@ -541,24 +557,99 @@ class FSDPCfgWorker(FSDPSftWorker):
                 sum_m = all_reduce_dict(sum_m, op=torch.distributed.ReduceOp.SUM)
                 mean_m = all_reduce_dict(mean_m, op=torch.distributed.ReduceOp.AVG)
 
-                # Calculate conditional/unconditional ratios
                 total = sum_m.get("conditional_count", 0) + sum_m.get(
                     "unconditional_count", 0
                 )
                 if total > 0:
-                    for key in ["conditional", "unconditional"]:
-                        count = sum_m.get(f"{key}_count", 0)
-                        mean_m[f"{key}_ratio"] = count / total
-                        if count > 0 and f"{key}_loss" in sum_m:
-                            mean_m[f"{key}_loss"] = sum_m[f"{key}_loss"] / count
+                    mean_m["conditional_ratio"] = (
+                        sum_m.get("conditional_count", 0) / total
+                    )
+                    mean_m["unconditional_ratio"] = (
+                        sum_m.get("unconditional_count", 0) / total
+                    )
+                    mean_m["positive_label_ratio"] = (
+                        sum_m.get("positive_label_count", 0) / total
+                    )
+                    mean_m["negative_label_ratio"] = (
+                        sum_m.get("negative_label_count", 0) / total
+                    )
+                    mean_m["positive_conditional_ratio"] = (
+                        sum_m.get("positive_conditional_count", 0) / total
+                    )
+                    mean_m["positive_unconditional_ratio"] = (
+                        sum_m.get("positive_unconditional_count", 0) / total
+                    )
+                    mean_m["negative_conditional_ratio"] = (
+                        sum_m.get("negative_conditional_count", 0) / total
+                    )
+                    mean_m["negative_unconditional_ratio"] = (
+                        sum_m.get("negative_unconditional_count", 0) / total
+                    )
 
-                # Calculate positive/negative guidance ratios
-                pos_count = sum_m.get("positive_guidance_count", 0)
-                neg_count = sum_m.get("negative_guidance_count", 0)
-                guidance_total = pos_count + neg_count
-                if guidance_total > 0:
-                    mean_m["positive_guidance_ratio"] = pos_count / guidance_total
-                    mean_m["negative_guidance_ratio"] = neg_count / guidance_total
+                positive_total = sum_m.get("positive_label_count", 0)
+                if positive_total > 0:
+                    mean_m["positive_effective_conditional_ratio"] = (
+                        sum_m.get("positive_conditional_count", 0) / positive_total
+                    )
+                    mean_m["positive_effective_unconditional_ratio"] = (
+                        sum_m.get("positive_unconditional_count", 0) / positive_total
+                    )
+
+                negative_total = sum_m.get("negative_label_count", 0)
+                if negative_total > 0:
+                    mean_m["negative_effective_conditional_ratio"] = (
+                        sum_m.get("negative_conditional_count", 0) / negative_total
+                    )
+                    mean_m["negative_effective_unconditional_ratio"] = (
+                        sum_m.get("negative_unconditional_count", 0) / negative_total
+                    )
+
+                loss_map = {
+                    "conditional_loss": (
+                        "conditional_loss_sum",
+                        "conditional_count",
+                    ),
+                    "unconditional_loss": (
+                        "unconditional_loss_sum",
+                        "unconditional_count",
+                    ),
+                    "positive_conditional_loss": (
+                        "positive_conditional_loss_sum",
+                        "positive_conditional_count",
+                    ),
+                    "positive_unconditional_loss": (
+                        "positive_unconditional_loss_sum",
+                        "positive_unconditional_count",
+                    ),
+                    "negative_conditional_loss": (
+                        "negative_conditional_loss_sum",
+                        "negative_conditional_count",
+                    ),
+                    "negative_unconditional_loss": (
+                        "negative_unconditional_loss_sum",
+                        "negative_unconditional_count",
+                    ),
+                    "positive_probe_conditional_loss": (
+                        "positive_probe_conditional_loss_sum",
+                        "positive_probe_count",
+                    ),
+                    "positive_probe_unconditional_loss": (
+                        "positive_probe_unconditional_loss_sum",
+                        "positive_probe_count",
+                    ),
+                }
+                for metric_name, (loss_key, count_key) in loss_map.items():
+                    count = sum_m.get(count_key, 0)
+                    if count > 0:
+                        mean_m[metric_name] = sum_m.get(loss_key, 0) / count
+
+                if "positive_probe_conditional_loss" in mean_m and (
+                    "positive_probe_unconditional_loss" in mean_m
+                ):
+                    mean_m["positive_probe_guidance_gain"] = (
+                        mean_m["positive_probe_unconditional_loss"]
+                        - mean_m["positive_probe_conditional_loss"]
+                    )
 
                 train_metrics = mean_m
             else:

@@ -27,6 +27,8 @@ import logging
 import os
 from pathlib import Path
 
+import numpy as np
+
 os.environ["LIBAV_LOG_LEVEL"] = "quiet"
 os.environ["OPENCV_LOG_LEVEL"] = "OFF"
 logging.getLogger("libav").setLevel(logging.ERROR)
@@ -107,6 +109,67 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
     def model_provider_func(self) -> torch.nn.Module:
         """Load the value model."""
         return get_model(self.cfg.actor.model)
+
+    @staticmethod
+    def _compute_spearman(values_a: np.ndarray, values_b: np.ndarray) -> float:
+        """Compute Spearman correlation with simple rank-based Pearson."""
+        if len(values_a) < 2 or len(values_b) < 2:
+            return 0.0
+
+        rank_a = np.empty_like(values_a, dtype=np.float64)
+        rank_b = np.empty_like(values_b, dtype=np.float64)
+        order_a = np.argsort(values_a, kind="mergesort")
+        order_b = np.argsort(values_b, kind="mergesort")
+        rank_a[order_a] = np.arange(len(values_a), dtype=np.float64)
+        rank_b[order_b] = np.arange(len(values_b), dtype=np.float64)
+
+        rank_a -= rank_a.mean()
+        rank_b -= rank_b.mean()
+        denom = np.linalg.norm(rank_a) * np.linalg.norm(rank_b)
+        if denom == 0.0:
+            return 0.0
+        return float(np.dot(rank_a, rank_b) / denom)
+
+    @classmethod
+    def _compute_value_spearman(
+        cls,
+        predicted_values: torch.Tensor,
+        target_values: torch.Tensor,
+    ) -> dict[str, float]:
+        """Compute Spearman rank correlation for predicted values."""
+        preds = predicted_values.detach().float().view(-1).cpu().numpy()
+        targets = target_values.detach().float().view(-1).cpu().numpy()
+        return {"value_spearman": cls._compute_spearman(preds, targets)}
+
+    @classmethod
+    def _compute_value_spearman_from_arrays(
+        cls,
+        predicted_values: np.ndarray,
+        target_values: np.ndarray,
+    ) -> dict[str, float]:
+        """Compute Spearman rank correlation for full eval arrays."""
+        if len(predicted_values) == 0 or len(target_values) == 0:
+            return {}
+        return {
+            "value_spearman": cls._compute_spearman(
+                predicted_values,
+                target_values,
+            )
+        }
+
+    def _gather_eval_array(self, values: np.ndarray | None) -> np.ndarray | None:
+        """Gather eval arrays across ranks for dataset-level diagnostics."""
+        if values is None:
+            return None
+        if not torch.distributed.is_initialized():
+            return values
+
+        gathered: list[np.ndarray | None] = [None for _ in range(self._world_size)]
+        torch.distributed.all_gather_object(gathered, values)
+        valid_arrays = [arr for arr in gathered if arr is not None and len(arr) > 0]
+        if not valid_arrays:
+            return None
+        return np.concatenate(valid_arrays, axis=0)
 
     # -----------------------------------------------------------------------
     # DataLoader
@@ -548,6 +611,13 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                         if isinstance(result.cat_mae, torch.Tensor)
                         else result.cat_mae
                     )
+                if result.predicted_values is not None and target_values is not None:
+                    metrics.update(
+                        self._compute_value_spearman(
+                            result.predicted_values,
+                            target_values,
+                        )
+                    )
 
                 scaled_loss = loss / grad_accum
                 with backward_ctx:
@@ -607,6 +677,8 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             with torch.no_grad():
                 for ds_name, loader in self.eval_data_loaders:
                     batch_metrics: list[dict[str, float]] = []
+                    pred_batches: list[np.ndarray] = []
+                    target_batches: list[np.ndarray] = []
                     for batch in loader:
                         obs, target_values, actions, _ = self._prepare_input(batch)
 
@@ -652,6 +724,26 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                                 if isinstance(result.cat_mae, torch.Tensor)
                                 else result.cat_mae
                             )
+                        if (
+                            result.predicted_values is not None
+                            and target_values is not None
+                        ):
+                            metrics.update(
+                                self._compute_value_spearman(
+                                    result.predicted_values,
+                                    target_values,
+                                )
+                            )
+                            pred_batches.append(
+                                result.predicted_values.detach()
+                                .float()
+                                .view(-1)
+                                .cpu()
+                                .numpy()
+                            )
+                            target_batches.append(
+                                target_values.detach().float().view(-1).cpu().numpy()
+                            )
                         metrics["loss"] = loss.detach().item()
                         if target_values is not None:
                             metrics["target_value_mean"] = (
@@ -671,6 +763,23 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                         all_dataset_metrics[ds_name] = {
                             k: sum(v) / len(v) for k, v in agg.items()
                         }
+                        if pred_batches and target_batches:
+                            gathered_pred = self._gather_eval_array(
+                                np.concatenate(pred_batches, axis=0)
+                            )
+                            gathered_target = self._gather_eval_array(
+                                np.concatenate(target_batches, axis=0)
+                            )
+                            if (
+                                gathered_pred is not None
+                                and gathered_target is not None
+                            ):
+                                all_dataset_metrics[ds_name].update(
+                                    self._compute_value_spearman_from_arrays(
+                                        gathered_pred,
+                                        gathered_target,
+                                    )
+                                )
 
             if not all_dataset_metrics:
                 return {}
