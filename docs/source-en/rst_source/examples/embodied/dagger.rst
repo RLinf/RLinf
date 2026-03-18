@@ -132,7 +132,7 @@ You can find pretrained Pi0 checkpoints on Hugging Face for student initializati
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir /path/to/model
 
-The expert model ckeckpoint could also come from a PPO running :doc:`pi0` .
+The expert model checkpoint could also come from a PPO running :doc:`pi0` .
 
 Running Scripts
 ---------------

@@ -14,9 +14,7 @@
 
 import os
 
-import jax
 import numpy as np
-import openpi.models.model as _model
 import torch
 from omegaconf import DictConfig
 
@@ -90,91 +88,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         if intervene_traj_list:
             self.replay_buffer.add_trajectories(intervene_traj_list)
 
-    def _prepare_mlp_sft_batch(self, batch):
-        """Prepare batch data from buffer-sampled format to SFT loss format."""
-        target_actions = (
-            batch["model_action"] if "model_action" in batch else batch["action"]
-        )
-        return {"states": batch["states"], "action": target_actions}
-
-    def _prepare_openpi_sft_batch(self, batch):
-        """Prepare batch data from buffer-sampled format to SFT loss format."""
-
-        obs_dict = {}
-        obs_prefix_keys = [k for k in batch.keys() if k.startswith("observation/")]
-        for key in obs_prefix_keys:
-            obs_dict[key] = batch[key]
-        if "tokenized_prompt" in batch:
-            obs_dict["tokenized_prompt"] = batch["tokenized_prompt"]
-        if "tokenized_prompt_mask" in batch:
-            obs_dict["tokenized_prompt_mask"] = batch["tokenized_prompt_mask"]
-
-        bsz = batch["action"].shape[0]
-        if "model_action" in batch:
-            actions = (
-                batch["model_action"]
-                .reshape(
-                    bsz, self.model.config.action_horizon, self.model.config.action_dim
-                )
-                .clone()
-            )
-            processed_obs = self.model.input_transform(obs_dict, transpose=False)
-            processed_obs = self.model.precision_processor(processed_obs)
-            observation = _model.Observation.from_dict(processed_obs)
-        else:
-            obs_dict["actions"] = batch["action"].reshape(
-                bsz, self.model.config.action_chunk, -1
-            )
-            if obs_dict["actions"].shape[2] < self.model.config.action_dim:
-                padding_action_dim = torch.zeros(
-                    bsz,
-                    obs_dict["actions"].shape[1],
-                    self.model.config.action_dim - obs_dict["actions"].shape[2],
-                    device=obs_dict["actions"].device,
-                )
-                obs_dict["actions"] = torch.cat(
-                    [obs_dict["actions"], padding_action_dim], dim=2
-                )
-            if obs_dict["actions"].shape[1] < self.model.config.action_horizon:
-                padding_action_chunk = torch.zeros(
-                    bsz,
-                    self.model.config.action_horizon - obs_dict["actions"].shape[1],
-                    self.model.config.action_dim,
-                    device=obs_dict["actions"].device,
-                )
-                obs_dict["actions"] = torch.cat(
-                    [obs_dict["actions"], padding_action_chunk], dim=1
-                )
-            obs_dict["prompt"] = ["empty" for _ in range(bsz)]
-            processed_obs = self.model.input_transform(obs_dict, transpose=False)
-            if "tokenized_prompt" in batch:
-                processed_obs["tokenized_prompt"] = batch["tokenized_prompt"]
-            if "tokenized_prompt_mask" in batch:
-                processed_obs["tokenized_prompt_mask"] = batch["tokenized_prompt_mask"]
-            processed_obs = self.model.precision_processor(processed_obs)
-            observation = _model.Observation.from_dict(processed_obs)
-            actions = processed_obs["actions"].clone()
-            processed_obs.pop("actions")
-
-        observation = jax.tree.map(
-            lambda x: torch.as_tensor(x, device=self.device).contiguous().clone(),
-            observation,
-        )
-        return {
-            "observation": observation,
-            "actions": actions.to(torch.float32).to(self.device),
-        }
-
     def _prepare_sft_batch(self, batch):
         """Prepare model-specific DAgger training inputs."""
-        model_type = get_supported_model(self.cfg.actor.model.model_type)
-        if model_type == SupportedModel.MLP_POLICY:
-            return self._prepare_mlp_sft_batch(batch)
-        if model_type == SupportedModel.OPENPI:
-            return self._prepare_openpi_sft_batch(batch)
-        raise NotImplementedError(
-            f"Model type {self.cfg.actor.model.model_type} is not supported for DAgger."
-        )
+        return self.model.prepare_dagger_sft_batch(batch)
 
     def _reduce_sft_loss(self, loss):
         """Reduce model-specific SFT loss to a scalar."""

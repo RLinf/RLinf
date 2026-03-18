@@ -106,6 +106,13 @@ class MLPPolicy(nn.Module, BasePolicy):
         device = next(self.parameters()).device
         return {"states": env_obs["states"].to(device)}
 
+    def prepare_dagger_sft_batch(self, batch):
+        """Prepare replay-buffer samples for DAgger SFT updates."""
+        target_actions = (
+            batch["model_action"] if "model_action" in batch else batch["action"]
+        )
+        return {"states": batch["states"], "action": target_actions}
+
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
         obs = kwargs.get("obs")
         if obs is not None:
