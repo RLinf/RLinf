@@ -105,6 +105,8 @@ The MLP DAgger config uses a student checkpoint and an expert checkpoint under
      ckpt_path: null                       # Optional student warm start
      expert_ckpt_path: /path/to/expert_ckpt
 
+The expert model in ``expert_ckpt_path`` could be produced by a PPO running :doc:`mlp` .
+
 **2. LIBERO Spatial + Pi0**
 
 The Pi0 DAgger config uses separate student and expert model paths:
@@ -121,7 +123,7 @@ The Pi0 DAgger config uses separate student and expert model paths:
      expert_model:
        model_path: /path/to/expert_model
 
-You can find trained Pi0 checkpoints on Hugging Face. For example:
+You can find pretrained Pi0 checkpoints on Hugging Face for student initialization. For example:
 
 .. code:: bash
 
@@ -129,6 +131,8 @@ You can find trained Pi0 checkpoints on Hugging Face. For example:
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir /path/to/model
+
+The expert model ckeckpoint could also come from a PPO running :doc:`pi0` .
 
 Running Scripts
 ---------------
