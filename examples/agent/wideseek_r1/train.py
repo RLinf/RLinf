@@ -69,7 +69,12 @@ def main(cfg) -> None:
     if cfg.agentloop.get("use_local_judge", False):
         subworker_specs = [
             # componet name in cfg, dict_key in solid_rollouts, rollout cfg in cfg, launch_name
-            ("rollout_judge", "rollout_judge", cfg.rollout_judge, "rollout_judge"),
+            (
+                "rollout_judge",
+                "rollout_judge",
+                cfg.rollout_judge,
+                cfg.rollout_judge.group_name,
+            ),
         ]
         for comp_name, dict_key, rollout, launch_name in subworker_specs:
             strategy = component_placement.get_strategy(

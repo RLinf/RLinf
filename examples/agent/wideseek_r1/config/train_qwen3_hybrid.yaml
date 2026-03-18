@@ -5,7 +5,7 @@ cluster:
   num_nodes: 1
   component_placement:
     actor,rollout,reward: all
-    
+
 runner:
   experiment_name: mas_qwen3_4b_hybrid
   output_dir: ./logs/train
@@ -37,46 +37,6 @@ agentloop:
 rollout:
   model:
     model_path: /PATH/TO/MODEL # TODO:(USER) Replace with the actual path to the model checkpoint
-
-rollout_judge:
-  group_name: "RolloutJudgeGroup"
-  gpu_memory_utilization: 0.5
-  use_fixed_worker: False
-  model:
-    model_type: qwen3
-    model_path: /mnt/public/zhouyiming/models/Qwen3-4B
-    precision: ${actor.model.precision}
-  enforce_eager: False
-  distributed_executor_backend: mp
-  disable_log_stats: False
-  detokenize: True
-  padding: null
-  eos: null
-  return_logprobs: False
-
-  rollout_backend: sglang
-  sglang:
-    attention_backend: triton
-    decode_log_interval: 500000
-    use_torch_compile: False
-    torch_compile_max_bs: 128
-  vllm:
-    attention_backend: FLASH_ATTN
-    enable_chunked_prefill: True
-    enable_prefix_caching: True
-    enable_flash_infer_sampler: True
-    max_num_batched_tokens: null
-    torch_profiler_dir: null
-
-  tensor_parallel_size: 1
-  pipeline_parallel_size: 1
-  max_running_requests: 64
-  cuda_graph_max_bs: 128
-
-  validate_weight_first_sync: False
-  validate_weight: False
-  validate_save_dir: null
-  print_outputs: False
 
 tools:
   online: False

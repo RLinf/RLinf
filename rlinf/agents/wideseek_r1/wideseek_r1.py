@@ -106,6 +106,12 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
             self.use_local_judge = self.cfg.agentloop.get("use_local_judge", False)
         else:
             self.sgl_client = None
+
+        if self.use_local_judge:
+            self.llm_generator = self.local_judge_llm_generator
+        else:
+            self.llm_generator = self.sgl_client.call_sglang_api
+
         assert self.return_logprobs if not self.is_eval else True
 
         assert self.toolcall_parser is not None, (
@@ -135,6 +141,22 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
             "access": access_count,
             "role": role,
         }
+
+    async def local_judge_llm_generator(self, messages: list) -> str:
+        prompt_ids = self.tokenizer.apply_chat_template(
+            messages, tokenize=True, add_generation_prompt=True
+        )
+        prompt_ids = prompt_ids[: self.max_total_len]
+
+        # invocate generate method
+        generate_result = await self.generate(
+            prompt_ids,
+            rollout_name="rollout_judge",
+        )
+
+        # decode generate_result["output_ids"] to judge_response_text
+        judge_response_text = self.tokenizer.decode(generate_result["output_ids"])
+        return judge_response_text
 
     async def extract_tool_calls(
         self, response_text: str, role: str
@@ -687,9 +709,7 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
             answer,
             is_markdown,
             norm_column,
-            self.sgl_client,
-            self,
-            self.use_local_judge,
+            self.llm_generator,
         )
 
         output_buffer, train_buffer, final_answer_format, reward_score = (

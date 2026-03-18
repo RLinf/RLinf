@@ -17,12 +17,11 @@ import copy
 import json
 import re
 from io import StringIO
-from typing import Any, Optional
+from typing import Awaitable, Callable
 
 import pandas as pd
 from omegaconf import DictConfig
 
-from rlinf.agents.wideseek_r1.utils.sglang_client import SGLangClient
 from rlinf.workers.agent.agent_loop import AgentLoopOutput
 
 
@@ -138,9 +137,7 @@ async def get_final_reward_score(
     label_answer,
     is_markdown,
     norm_column,
-    sgl_client: SGLangClient | None,
-    agent_loop_worker: Optional[Any] = None,
-    use_local_judge: Optional[bool] = False,
+    judge_llm_generator: Callable[[list], Awaitable[str]] | None,
 ):
     """Compute final reward score for boxed answers or markdown-table answers.
 
@@ -150,40 +147,30 @@ async def get_final_reward_score(
         label_answer: Ground-truth answer payload from dataset.
         is_markdown: Whether to evaluate in markdown-table mode.
         norm_column: Whether to normalize markdown column names aggressively.
-        sgl_client: Shared SGLang client used by LLM judges.
+        judge_llm_generator: Shared LLM judge generator function backed by SGLang.
 
     Returns:
         Tuple of `(reward_score, format_ok)`.
     """
-    if sgl_client is None:
+    if judge_llm_generator is None:
         return 0.0, False
 
     format = True
     if is_markdown:
         reward_score, format = await evaluate_markdown(
-            extract_answer, label_answer, sgl_client, norm_column, agent_loop_worker
+            extract_answer, label_answer, judge_llm_generator, norm_column
         )
         return reward_score, format
 
     label_answer = label_answer["answer"]
     if label_answer is not None and extract_answer is not None:
         # Use LLM as judge
-        if not use_local_judge:
-            # Use external server LLM judge
-            llm_score = await verify_answer_with_llm_judge(
-                question=origin_question,
-                predicted_answer=extract_answer,
-                correct_answer=label_answer,
-                sgl_client=sgl_client,
-            )
-        else:
-            # Use local RLinf LLM judge
-            llm_score = await verify_answer_with_local_llm_judge(
-                question=origin_question,
-                predicted_answer=extract_answer,
-                correct_answer=label_answer,
-                agent_loop_worker=agent_loop_worker,
-            )
+        llm_score = await verify_answer_with_llm_judge(
+            question=origin_question,
+            predicted_answer=extract_answer,
+            correct_answer=label_answer,
+            judge_llm_generator=judge_llm_generator,
+        )
 
         reward_score = llm_score
 
@@ -193,66 +180,11 @@ async def get_final_reward_score(
     return reward_score, format
 
 
-async def verify_answer_with_local_llm_judge(
-    question: str, predicted_answer: str, correct_answer: list, agent_loop_worker=None
-) -> float:
-    """Use an LLM judge to score equivalence between prediction and reference.
-
-    Args:
-        question: Original user question.
-        predicted_answer: Model-predicted boxed answer.
-        correct_answer: Reference answer list from dataset.
-        agent_loop_worker: Agent loop worker used to query the judge model.
-
-    Returns:
-        `1.0` if judged correct, otherwise `0.0`.
-    """
-    from rlinf.agents.wideseek_r1.utils.prompt import LLM_JUDGE_PROMPT
-
-    if len(correct_answer) == 1:
-        # Format the judge prompt
-        judge_prompt_text = LLM_JUDGE_PROMPT.format(
-            question=question,
-            correct_answer=correct_answer[0],
-            response=predicted_answer,
-        )
-    else:
-        judge_prompt_text = LLM_JUDGE_PROMPT.format(
-            question=question, correct_answer=correct_answer, response=predicted_answer
-        )
-
-    judge_messages = [
-        {
-            "role": "system",
-            "content": "You are an evaluation assistant. Please determine if the predicted answer is equivalent to the labeled answer.",
-        },
-        {"role": "user", "content": judge_prompt_text},
-    ]
-    # convert judge_messages to prompt_ids
-    prompt_ids = agent_loop_worker.tokenizer.apply_chat_template(
-        judge_messages, tokenize=True, add_generation_prompt=True
-    )
-    prompt_ids = prompt_ids[: agent_loop_worker.max_total_len]
-
-    # invocate generate method
-    generate_result = await agent_loop_worker.generate(
-        prompt_ids,
-        rollout_name="rollout_judge",
-    )
-
-    # decode generate_result["output_ids"] to judge_response_text
-    judge_response_text = agent_loop_worker.tokenizer.decode(
-        generate_result["output_ids"]
-    )
-    judge_response_clean = judge_response_text.strip().lower()
-    if "correct" in judge_response_clean and "incorrect" not in judge_response_clean:
-        return 1.0
-    else:
-        return 0.0
-
-
 async def verify_answer_with_llm_judge(
-    question: str, predicted_answer: str, correct_answer: list, sgl_client: SGLangClient
+    question: str,
+    predicted_answer: str,
+    correct_answer: list,
+    judge_llm_generator: Callable[[list], Awaitable[str]],
 ) -> float:
     """Use an LLM judge to score equivalence between prediction and reference.
 
@@ -260,7 +192,7 @@ async def verify_answer_with_llm_judge(
         question: Original user question.
         predicted_answer: Model-predicted boxed answer.
         correct_answer: Reference answer list from dataset.
-        sgl_client: SGLang client used to query the judge model.
+        judge_llm_generator: Shared LLM judge generator function backed by SGLang.
 
     Returns:
         `1.0` if judged correct, otherwise `0.0`.
@@ -286,7 +218,9 @@ async def verify_answer_with_llm_judge(
         },
         {"role": "user", "content": judge_prompt_text},
     ]
-    judge_response_text = await sgl_client.call_sglang_api(judge_messages)
+    # Use provided judge_llm_generator function to get judge response
+    judge_response_text = await judge_llm_generator(judge_messages)
+
     judge_response_clean = judge_response_text.strip().lower()
     if "correct" in judge_response_clean and "incorrect" not in judge_response_clean:
         return 1.0
@@ -295,14 +229,17 @@ async def verify_answer_with_llm_judge(
 
 
 async def evaluate_markdown(
-    extract_answer, label_answer, sgl_client, norm_column_=False, agent_loop_worker=None
+    extract_answer,
+    label_answer,
+    judge_llm_generator: Callable[[list], Awaitable[str]],
+    norm_column_=False,
 ):
     """Evaluate markdown-table answers with schema checks and LLM cell matching.
 
     Args:
         extract_answer: Parsed prediction DataFrame.
         label_answer: Ground-truth markdown payload or DataFrame.
-        sgl_client: SGLang client used for semantic matching.
+        judge_llm_generator: Shared LLM judge generator function backed by SGLang.
         norm_column_: Whether to normalize spaces in column names.
 
     Returns:
@@ -394,8 +331,7 @@ async def evaluate_markdown(
             column_map = await primary_key_preprocess(
                 list(response_df.columns),
                 required_columns,
-                sgl_client,
-                agent_loop_worker,
+                judge_llm_generator,
             )
             response_df.rename(columns=column_map, inplace=True)
 
@@ -417,8 +353,7 @@ async def evaluate_markdown(
                 primary_key_map = await primary_key_preprocess(
                     response_df[col].tolist(),
                     answer_df[col].tolist(),
-                    sgl_client,
-                    agent_loop_worker,
+                    judge_llm_generator,
                 )
                 response_df[col + "_before_map"] = response_df[col]
                 response_df[col] = response_df[col].apply(
@@ -448,7 +383,7 @@ async def evaluate_markdown(
                 responses = df_inner[col + "_response"].tolist()
                 targets = df_inner[col + "_query"].tolist()
                 llm_tasks.append(
-                    llm_judge_column(responses, targets, sgl_client, agent_loop_worker)
+                    llm_judge_column(responses, targets, judge_llm_generator)
                 )
                 llm_columns.append(col)
 
@@ -479,14 +414,16 @@ async def evaluate_markdown(
 
 
 async def llm_judge_column(
-    responses: list, targets: list, sgl_client: SGLangClient, agent_loop_worker=None
+    responses: list,
+    targets: list,
+    judge_llm_generator: Callable[[list], Awaitable[str]],
 ) -> list:
     """Score non-key markdown table cells using semantic LLM comparison.
 
     Args:
         responses: Predicted cell values for one column.
         targets: Ground-truth cell values for one column.
-        sgl_client: SGLang client used for judge inference.
+        judge_llm_generator: Shared LLM judge generator function backed by SGLang.
 
     Returns:
         List of float scores aligned with `responses`.
@@ -536,23 +473,8 @@ Each answer and each response has an idx. Please score each pair of answers and 
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
-    if agent_loop_worker is None:
-        result_text = await sgl_client.call_sglang_api(messages)
-    else:
-        # convert judge_messages to prompt_ids
-        prompt_ids = agent_loop_worker.tokenizer.apply_chat_template(
-            messages, tokenize=True, add_generation_prompt=True
-        )
-        prompt_ids = prompt_ids[: agent_loop_worker.max_total_len]
-
-        # invocate generate method
-        generate_result = await agent_loop_worker.generate(
-            prompt_ids,
-            rollout_name="rollout_judge",
-        )
-
-        # decode generate_result["output_ids"] to judge_response_text
-        result_text = agent_loop_worker.tokenizer.decode(generate_result["output_ids"])
+    # Use provided judge_llm_generator function to get judge response
+    result_text = await judge_llm_generator(messages)
 
     try:
         pat = r"```json\s*(\{.*?\})\s*```"
@@ -577,14 +499,14 @@ Each answer and each response has an idx. Please score each pair of answers and 
 
 
 async def primary_key_preprocess(
-    response_list, reference_list, sgl_client: SGLangClient, agent_loop_worker=None
+    response_list, reference_list, judge_llm_generator: Callable[[list], Awaitable[str]]
 ):
     """Align predicted primary-key values to reference canonical forms.
 
     Args:
         response_list: Candidate values from prediction side.
         reference_list: Reference values used as canonical vocabulary.
-        sgl_client: SGLang client used for semantic alignment.
+        judge_llm_generator: Shared LLM judge generator function backed by SGLang.
 
     Returns:
         Mapping from predicted string to aligned reference string.
@@ -629,23 +551,8 @@ The reference vocabulary is as follows:
         {"role": "user", "content": user_prompt},
     ]
 
-    if agent_loop_worker is None:
-        result_text = await sgl_client.call_sglang_api(messages)
-    else:
-        # convert judge_messages to prompt_ids
-        prompt_ids = agent_loop_worker.tokenizer.apply_chat_template(
-            messages, tokenize=True, add_generation_prompt=True
-        )
-        prompt_ids = prompt_ids[: agent_loop_worker.max_total_len]
-
-        # invocate generate method
-        generate_result = await agent_loop_worker.generate(
-            prompt_ids,
-            rollout_name="rollout_judge",
-        )
-
-        # decode generate_result["output_ids"] to judge_response_text
-        result_text = agent_loop_worker.tokenizer.decode(generate_result["output_ids"])
+    # Use provided judge_llm_generator function to get judge response
+    result_text = await judge_llm_generator(messages)
 
     # Parse JSON from result
     try:

@@ -539,12 +539,6 @@ class WideSeekR1ToolWorker(ToolWorker):
                 "[INFO] WideSeekR1ToolWorker: Using online search (Serper API)"
             )
             self.search_client = AsyncOnlineSearchClient(cfg=self.cfg)
-        elif self.use_local_judge:
-            self.log_info(
-                "[INFO] WideSeekR1ToolWorker: Using RLinf interal rollout_judge server"
-            )
-            # TODO: remove this client in the future
-            self.search_client = AsyncSearchClient(cfg=self.cfg)
         else:
             self.log_info("[INFO] WideSeekR1ToolWorker: Using local search server")
             self.search_client = AsyncSearchClient(cfg=self.cfg)
