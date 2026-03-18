@@ -380,20 +380,14 @@ class CollectEpisode(gym.Wrapper):
                 info_with_intervene = copy.deepcopy(buf["infos"][i]["final_info"])
             else:
                 info_with_intervene = copy.deepcopy(buf["infos"][i])
-            print("info_with_intervene.keys()", info_with_intervene.keys())
-            if (
-                "intervene_flags" in info_with_intervene.keys()
-                and "intervene_action" in info_with_intervene.keys()
-            ):
-                # overwrite action with
-                print(
-                    "intervene_flags.shape:",
-                    info_with_intervene["intervene_flags"].shape,
-                    ", intervene_action.shape:",
-                    info_with_intervene["intervene_action"].shape,
-                )
 
             np_action = self._to_numpy(action)
+            if (
+                "intervene_flag" in info_with_intervene.keys()
+                and "intervene_action" in info_with_intervene.keys()
+            ):
+                if info_with_intervene["intervene_flag"].all():
+                    np_action = self._to_numpy(info_with_intervene["intervene_action"])
 
             if image is None or state is None or np_action is None:
                 continue
