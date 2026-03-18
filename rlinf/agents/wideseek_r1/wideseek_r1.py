@@ -192,7 +192,6 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
             generate_result = await self.generate(
                 prompt_ids,
                 rollout_name="rollout_judge",
-                sampling_params={"max_new_tokens": 100},
             )
 
             # decode generate_result to result_text

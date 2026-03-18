@@ -238,7 +238,6 @@ async def verify_answer_with_local_llm_judge(
     generate_result = await agent_loop_worker.generate(
         prompt_ids,
         rollout_name="rollout_judge",
-        sampling_params={"max_new_tokens": 100},
     )
 
     # decode generate_result["output_ids"] to judge_response_text
@@ -550,7 +549,6 @@ Each answer and each response has an idx. Please score each pair of answers and 
         generate_result = await agent_loop_worker.generate(
             prompt_ids,
             rollout_name="rollout_judge",
-            sampling_params={"max_new_tokens": 100},
         )
 
         # decode generate_result["output_ids"] to judge_response_text
@@ -644,7 +642,6 @@ The reference vocabulary is as follows:
         generate_result = await agent_loop_worker.generate(
             prompt_ids,
             rollout_name="rollout_judge",
-            sampling_params={"max_new_tokens": 100},
         )
 
         # decode generate_result["output_ids"] to judge_response_text

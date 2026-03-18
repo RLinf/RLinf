@@ -605,7 +605,7 @@ class MultiAgentModelParallelComponentPlacement(ModelParallelComponentPlacement)
 
     The components must be actor, rollout, and optionally inference, whose GPUs must be continuous.
 
-    This placement supports both collocated and disaggregated modes.
+    This placement supports only collocated mode.
 
     In the collocated mode, all components share the same set of GPUs. In particular, the rollout group is specially placed in a strided manner to enable fast cudaIPC-based weight sync.
     In the disaggregated mode, each component has its own dedicated set of GPUs.
