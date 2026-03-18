@@ -20,7 +20,7 @@ CFG models directly from LeRobot datasets without environment rollout.
 Key features:
 - Uses AdvantageMixtureDataset for data loading with weighted sampling
 - Pre-computed advantages from datasets (computed by compute_advantages.py)
-- Positive/negative guidance selection based on advantage (bool)
+- Optional positive-only conditional routing based on advantage labels
 
 Example config:
     data:
@@ -460,7 +460,9 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
             observation, actions, advantage = next(self.cfg_data_iter)
 
             observation = jax.tree.map(
-                lambda x: torch.as_tensor(x).contiguous().to(self.device, non_blocking=True),
+                lambda x: torch.as_tensor(x)
+                .contiguous()
+                .to(self.device, non_blocking=True),
                 observation,
             )
             actions = actions.to(torch.float32).to(self.device, non_blocking=True)
@@ -511,14 +513,28 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
         self.optimizer.zero_grad(set_to_none=True)
 
         # Handle CFG-specific metrics
-        special_keys = [
+        count_keys = [
             "conditional_count",
             "unconditional_count",
-            "conditional_loss",
-            "unconditional_loss",
-            "positive_guidance_count",
-            "negative_guidance_count",
+            "positive_label_count",
+            "negative_label_count",
+            "positive_conditional_count",
+            "positive_unconditional_count",
+            "negative_conditional_count",
+            "negative_unconditional_count",
+            "positive_probe_count",
         ]
+        loss_sum_keys = [
+            "conditional_loss_sum",
+            "unconditional_loss_sum",
+            "positive_conditional_loss_sum",
+            "positive_unconditional_loss_sum",
+            "negative_conditional_loss_sum",
+            "negative_unconditional_loss_sum",
+            "positive_probe_conditional_loss_sum",
+            "positive_probe_unconditional_loss_sum",
+        ]
+        special_keys = count_keys + loss_sum_keys
 
         sum_metric_dict = {
             key: np.sum(value) for key, value in metrics.items() if key in special_keys
@@ -549,23 +565,85 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
                     / total,
                 }
             )
-        for key in ["conditional", "unconditional"]:
-            count = sum_metric_dict.get(f"{key}_count", 0)
-            if count > 0:
-                mean_metric_dict[f"{key}_loss"] = (
-                    sum_metric_dict.get(f"{key}_loss", 0) / count
-                )
-
-        # Calculate positive/negative guidance ratio
-        guidance_total = sum_metric_dict.get(
-            "positive_guidance_count", 0
-        ) + sum_metric_dict.get("negative_guidance_count", 0)
-        if guidance_total > 0:
-            mean_metric_dict["positive_guidance_ratio"] = (
-                sum_metric_dict.get("positive_guidance_count", 0) / guidance_total
+            mean_metric_dict["positive_label_ratio"] = (
+                sum_metric_dict.get("positive_label_count", 0) / total
             )
-            mean_metric_dict["negative_guidance_ratio"] = (
-                sum_metric_dict.get("negative_guidance_count", 0) / guidance_total
+            mean_metric_dict["negative_label_ratio"] = (
+                sum_metric_dict.get("negative_label_count", 0) / total
+            )
+            mean_metric_dict["positive_conditional_ratio"] = (
+                sum_metric_dict.get("positive_conditional_count", 0) / total
+            )
+            mean_metric_dict["positive_unconditional_ratio"] = (
+                sum_metric_dict.get("positive_unconditional_count", 0) / total
+            )
+            mean_metric_dict["negative_conditional_ratio"] = (
+                sum_metric_dict.get("negative_conditional_count", 0) / total
+            )
+            mean_metric_dict["negative_unconditional_ratio"] = (
+                sum_metric_dict.get("negative_unconditional_count", 0) / total
+            )
+
+        positive_total = sum_metric_dict.get("positive_label_count", 0)
+        if positive_total > 0:
+            mean_metric_dict["positive_effective_conditional_ratio"] = (
+                sum_metric_dict.get("positive_conditional_count", 0) / positive_total
+            )
+            mean_metric_dict["positive_effective_unconditional_ratio"] = (
+                sum_metric_dict.get("positive_unconditional_count", 0) / positive_total
+            )
+
+        negative_total = sum_metric_dict.get("negative_label_count", 0)
+        if negative_total > 0:
+            mean_metric_dict["negative_effective_conditional_ratio"] = (
+                sum_metric_dict.get("negative_conditional_count", 0) / negative_total
+            )
+            mean_metric_dict["negative_effective_unconditional_ratio"] = (
+                sum_metric_dict.get("negative_unconditional_count", 0) / negative_total
+            )
+
+        loss_map = {
+            "conditional_loss": ("conditional_loss_sum", "conditional_count"),
+            "unconditional_loss": (
+                "unconditional_loss_sum",
+                "unconditional_count",
+            ),
+            "positive_conditional_loss": (
+                "positive_conditional_loss_sum",
+                "positive_conditional_count",
+            ),
+            "positive_unconditional_loss": (
+                "positive_unconditional_loss_sum",
+                "positive_unconditional_count",
+            ),
+            "negative_conditional_loss": (
+                "negative_conditional_loss_sum",
+                "negative_conditional_count",
+            ),
+            "negative_unconditional_loss": (
+                "negative_unconditional_loss_sum",
+                "negative_unconditional_count",
+            ),
+            "positive_probe_conditional_loss": (
+                "positive_probe_conditional_loss_sum",
+                "positive_probe_count",
+            ),
+            "positive_probe_unconditional_loss": (
+                "positive_probe_unconditional_loss_sum",
+                "positive_probe_count",
+            ),
+        }
+        for metric_name, (loss_key, count_key) in loss_map.items():
+            count = sum_metric_dict.get(count_key, 0)
+            if count > 0:
+                mean_metric_dict[metric_name] = sum_metric_dict.get(loss_key, 0) / count
+
+        if "positive_probe_conditional_loss" in mean_metric_dict and (
+            "positive_probe_unconditional_loss" in mean_metric_dict
+        ):
+            mean_metric_dict["positive_probe_guidance_gain"] = (
+                mean_metric_dict["positive_probe_unconditional_loss"]
+                - mean_metric_dict["positive_probe_conditional_loss"]
             )
 
         return mean_metric_dict

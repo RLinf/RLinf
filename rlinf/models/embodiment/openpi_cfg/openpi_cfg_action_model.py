@@ -103,6 +103,67 @@ class Observation(Obs[ArrayT]):
 _VALID_GUIDANCE_TYPES = ("positive", "negative", "no_guide")
 
 
+def compute_cfg_routing_masks(
+    advantage: torch.Tensor,
+    *,
+    positive_only_conditional: bool,
+    unconditional_prob: float,
+    positive_unconditional_prob: float,
+    random_values: torch.Tensor | None = None,
+) -> dict[str, torch.Tensor]:
+    """Compute sample routing masks for CFG training.
+
+    Args:
+        advantage: Boolean tensor where True marks positive samples.
+        positive_only_conditional: Route only positive samples to the
+            conditional branch when True.
+        unconditional_prob: Dropout probability for the legacy CFG training
+            mode that routes both positive and negative samples conditionally.
+        positive_unconditional_prob: Dropout probability applied only to
+            positive samples when ``positive_only_conditional`` is enabled.
+        random_values: Optional pre-sampled uniform noise in ``[0, 1)`` used to
+            make routing deterministic in tests.
+
+    Returns:
+        Dictionary of boolean masks describing how the batch is routed.
+    """
+    advantage = advantage.to(dtype=torch.bool)
+    batch_size = advantage.shape[0]
+    device = advantage.device
+
+    if random_values is None:
+        random_values = torch.rand(batch_size, device=device)
+    else:
+        random_values = random_values.to(device=device)
+
+    positive_mask = advantage
+    negative_mask = ~positive_mask
+
+    if positive_only_conditional:
+        positive_conditional_mask = positive_mask & (
+            random_values > positive_unconditional_prob
+        )
+        negative_conditional_mask = torch.zeros_like(positive_mask)
+    else:
+        guidance_mask = random_values > unconditional_prob
+        positive_conditional_mask = positive_mask & guidance_mask
+        negative_conditional_mask = negative_mask & guidance_mask
+
+    conditional_mask = positive_conditional_mask | negative_conditional_mask
+    positive_unconditional_mask = positive_mask & ~positive_conditional_mask
+    negative_unconditional_mask = negative_mask & ~negative_conditional_mask
+
+    return {
+        "positive_mask": positive_mask,
+        "negative_mask": negative_mask,
+        "conditional_mask": conditional_mask,
+        "positive_conditional_mask": positive_conditional_mask,
+        "positive_unconditional_mask": positive_unconditional_mask,
+        "negative_conditional_mask": negative_conditional_mask,
+        "negative_unconditional_mask": negative_unconditional_mask,
+    }
+
+
 @dataclass(frozen=True)
 class OpenPi0Config(Pi0Config):
     # config for rl
@@ -120,6 +181,9 @@ class OpenPi0Config(Pi0Config):
     cfgrl_guidance_scale: float = 1.0
     unconditional_prob: float = 0.3
     guidance_type: str = "positive"  # "positive", "negative", "no_guide"
+    positive_only_conditional: bool = False
+    positive_unconditional_prob: float = 0.0
+    positive_probe_diagnostics: bool = False
 
     def __post_init__(self):
         if self.guidance_type not in _VALID_GUIDANCE_TYPES:
@@ -130,6 +194,11 @@ class OpenPi0Config(Pi0Config):
         if not 0.0 <= self.unconditional_prob <= 1.0:
             raise ValueError(
                 f"unconditional_prob must be in [0, 1], got {self.unconditional_prob}"
+            )
+        if not 0.0 <= self.positive_unconditional_prob <= 1.0:
+            raise ValueError(
+                "positive_unconditional_prob must be in [0, 1], "
+                f"got {self.positive_unconditional_prob}"
             )
         if not isinstance(self.num_steps, int) or self.num_steps <= 0:
             raise ValueError(
@@ -239,9 +308,7 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
             # convert from [3,256,256] -> [256,256,3]
             if transpose:
                 sample = jax.tree.map(
-                    lambda x: x.transpose(1, 2, 0)
-                    if len(x.shape) == 3
-                    else x,
+                    lambda x: x.transpose(1, 2, 0) if len(x.shape) == 3 else x,
                     sample,
                 )
             if first_process:
@@ -317,6 +384,96 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
         """Default forward — delegates to forward()."""
         return self.forward(**kwargs)
 
+    def _compute_flow_losses(
+        self,
+        images,
+        img_masks,
+        state,
+        actions,
+        lang_tokens,
+        lang_masks,
+        device,
+        time=None,
+        noise=None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute flow loss and detached per-sample loss for a language route."""
+        images = [img.to(device) for img in images]
+        img_masks = [img_mask.to(device) for img_mask in img_masks]
+        state = state.to(device)
+        actions = actions.to(device, dtype=torch.float32)
+
+        if time is None:
+            time = self.sample_time(actions.shape[0], device)
+        if noise is None:
+            noise = self.sample_noise(actions.shape, device)
+        noise = noise.to(device)
+
+        time_expanded = time[:, None, None]
+        x_t = time_expanded * noise + (1 - time_expanded) * actions
+        u_t = noise - actions
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks
+        )
+
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = (
+            self.embed_suffix(state, x_t, time)
+        )
+        if (
+            self.paligemma_with_expert.paligemma.language_model.layers[
+                0
+            ].self_attn.q_proj.weight.dtype
+            == torch.bfloat16
+        ):
+            suffix_embs = suffix_embs.to(dtype=torch.bfloat16)
+            prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
+
+        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
+        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
+
+        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
+        position_ids = torch.cumsum(pad_masks, dim=1) - 1
+        att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
+
+        def forward_func(
+            prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond
+        ):
+            (_, suffix_out), _ = self.paligemma_with_expert.forward(
+                attention_mask=att_2d_masks_4d,
+                position_ids=position_ids,
+                past_key_values=None,
+                inputs_embeds=[prefix_embs, suffix_embs],
+                use_cache=False,
+                adarms_cond=[None, adarms_cond],
+            )
+            return suffix_out
+
+        suffix_out = self._apply_checkpoint(
+            forward_func,
+            prefix_embs,
+            suffix_embs,
+            att_2d_masks_4d,
+            position_ids,
+            adarms_cond,
+        )
+        suffix_out = suffix_out[:, -self.config.action_horizon :]
+        suffix_out = suffix_out.to(dtype=torch.float32)
+
+        def action_out_proj_func(suffix_out):
+            return self.action_out_proj(suffix_out)
+
+        v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
+        per_element_loss = F.mse_loss(u_t, v_t, reduction="none")
+        flow_loss = per_element_loss.mean()
+        per_sample_loss = per_element_loss.detach().mean(dim=(-1, -2))
+        return flow_loss, per_sample_loss
+
+    @staticmethod
+    def _masked_loss_sum(per_sample_loss: torch.Tensor, mask: torch.Tensor) -> float:
+        """Return the summed loss over a boolean mask."""
+        if mask.numel() == 0 or not torch.any(mask):
+            return 0.0
+        return (per_sample_loss * mask.float()).sum().item()
+
     def forward(
         self,
         data: dict[str, torch.Tensor],
@@ -366,31 +523,55 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
                 "Please run compute_advantages.py first to generate "
                 "meta/advantages.parquet for your dataset."
             )
-        advantage_expanded = advantage.unsqueeze(-1)  # [batch_size, 1]
-        guidance_lang_tokens = torch.where(
-            advantage_expanded,
-            positive_guidance_lang_tokens,
-            negative_guidance_lang_tokens,
+        advantage = advantage.to(dtype=torch.bool)
+        routing = compute_cfg_routing_masks(
+            advantage,
+            positive_only_conditional=self.config.positive_only_conditional,
+            unconditional_prob=self.config.unconditional_prob,
+            positive_unconditional_prob=self.config.positive_unconditional_prob,
         )
-        guidance_lang_masks = torch.where(
-            advantage_expanded,
-            positive_guidance_lang_masks,
-            negative_guidance_lang_masks,
-        )
-        positive_guidance_count = advantage.sum().item()
-        negative_guidance_count = advantage.numel() - positive_guidance_count
+        positive_mask = routing["positive_mask"]
+        negative_mask = routing["negative_mask"]
+        conditional_mask = routing["conditional_mask"]
+        positive_conditional_mask = routing["positive_conditional_mask"]
+        positive_unconditional_mask = routing["positive_unconditional_mask"]
+        negative_conditional_mask = routing["negative_conditional_mask"]
+        negative_unconditional_mask = routing["negative_unconditional_mask"]
 
-        # ========== 4. Sample-level unconditional dropout ==========
-        batch_size = guidance_lang_tokens.shape[0]
-        guidance_mask = torch.rand(batch_size, device=device) > self.config.unconditional_prob
-        guidance_mask_expanded = guidance_mask.unsqueeze(-1)  # [batch_size, 1]
-        final_lang_tokens = torch.where(guidance_mask_expanded, guidance_lang_tokens, lang_tokens)
-        final_lang_masks = torch.where(guidance_mask_expanded, guidance_lang_masks, lang_masks)
+        if self.config.positive_only_conditional:
+            final_lang_tokens = torch.where(
+                positive_conditional_mask.unsqueeze(-1),
+                positive_guidance_lang_tokens,
+                lang_tokens,
+            )
+            final_lang_masks = torch.where(
+                positive_conditional_mask.unsqueeze(-1),
+                positive_guidance_lang_masks,
+                lang_masks,
+            )
+        else:
+            guidance_lang_tokens = torch.where(
+                positive_mask.unsqueeze(-1),
+                positive_guidance_lang_tokens,
+                negative_guidance_lang_tokens,
+            )
+            guidance_lang_masks = torch.where(
+                positive_mask.unsqueeze(-1),
+                positive_guidance_lang_masks,
+                negative_guidance_lang_masks,
+            )
+            final_lang_tokens = torch.where(
+                conditional_mask.unsqueeze(-1),
+                guidance_lang_tokens,
+                lang_tokens,
+            )
+            final_lang_masks = torch.where(
+                conditional_mask.unsqueeze(-1),
+                guidance_lang_masks,
+                lang_masks,
+            )
 
-        # ========== 5. Align device ==========
-        images = [img.to(device) for img in images]
-        img_masks = [img_mask.to(device) for img_mask in img_masks]
-        state = state.to(device)
+        # ========== 4. Compute selected-route loss ==========
         actions = actions.to(device, dtype=torch.float32)
         if kwargs.get("time", None) is not None:
             time = kwargs.get("time")
@@ -401,83 +582,106 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
             noise = kwargs.get("noise")
         else:
             noise = self.sample_noise(actions.shape, device)
-        noise = noise.to(device)
-        time_expanded = time[:, None, None]
-        x_t = time_expanded * noise + (1 - time_expanded) * actions
-        u_t = noise - actions
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-            images, img_masks, final_lang_tokens, final_lang_masks
+        flow_loss, per_sample_loss = self._compute_flow_losses(
+            images=images,
+            img_masks=img_masks,
+            state=state,
+            actions=actions,
+            lang_tokens=final_lang_tokens,
+            lang_masks=final_lang_masks,
+            device=device,
+            time=time,
+            noise=noise,
         )
 
-        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = (
-            self.embed_suffix(state, x_t, time)
-        )
-        # [i.sum() for i in img_masks]  [i.sum() for i in images]
-        if (
-            self.paligemma_with_expert.paligemma.language_model.layers[
-                0
-            ].self_attn.q_proj.weight.dtype
-            == torch.bfloat16
-        ):
-            suffix_embs = suffix_embs.to(dtype=torch.bfloat16)
-            prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
+        conditional_count = conditional_mask.sum().item()
+        unconditional_count = (~conditional_mask).sum().item()
+        positive_label_count = positive_mask.sum().item()
+        negative_label_count = negative_mask.sum().item()
 
-        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
-        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
-
-        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
-        position_ids = torch.cumsum(pad_masks, dim=1) - 1
-
-        # Prepare attention masks
-        att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
-
-        # Apply gradient checkpointing if enabled
-        def forward_func(
-            prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond
-        ):
-            (_, suffix_out), _ = self.paligemma_with_expert.forward(
-                attention_mask=att_2d_masks_4d,
-                position_ids=position_ids,
-                past_key_values=None,
-                inputs_embeds=[prefix_embs, suffix_embs],
-                use_cache=False,
-                adarms_cond=[None, adarms_cond],
-            )
-            return suffix_out
-
-        suffix_out = self._apply_checkpoint(
-            forward_func,
-            prefix_embs,
-            suffix_embs,
-            att_2d_masks_4d,
-            position_ids,
-            adarms_cond,
-        )
-        suffix_out = suffix_out[:, -self.config.action_horizon :]
-        suffix_out = suffix_out.to(dtype=torch.float32)
-
-        # Apply gradient checkpointing to final action projection if enabled
-        def action_out_proj_func(suffix_out):
-            return self.action_out_proj(suffix_out)
-
-        v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
-        per_element_loss = F.mse_loss(u_t, v_t, reduction="none")
-        flow_loss = per_element_loss.mean()
-        conditional_count = guidance_mask.sum().item()
-        unconditional_count = batch_size - conditional_count
-        # Per-sample loss for accurate conditional/unconditional metrics
-        per_sample_loss = per_element_loss.detach().mean(dim=(-1, -2))
-        conditional_loss = (per_sample_loss * guidance_mask.float()).sum().item()
-        unconditional_loss = (per_sample_loss * (~guidance_mask).float()).sum().item()
-
-        return flow_loss, {
+        metrics = {
             "conditional_count": conditional_count,
             "unconditional_count": unconditional_count,
-            "conditional_loss": conditional_loss,
-            "unconditional_loss": unconditional_loss,
-            "positive_guidance_count": positive_guidance_count,
-            "negative_guidance_count": negative_guidance_count,
+            "conditional_loss_sum": self._masked_loss_sum(
+                per_sample_loss, conditional_mask
+            ),
+            "unconditional_loss_sum": self._masked_loss_sum(
+                per_sample_loss, ~conditional_mask
+            ),
+            "positive_label_count": positive_label_count,
+            "negative_label_count": negative_label_count,
+            "positive_conditional_count": positive_conditional_mask.sum().item(),
+            "positive_unconditional_count": positive_unconditional_mask.sum().item(),
+            "negative_conditional_count": negative_conditional_mask.sum().item(),
+            "negative_unconditional_count": negative_unconditional_mask.sum().item(),
+            "positive_conditional_loss_sum": self._masked_loss_sum(
+                per_sample_loss, positive_conditional_mask
+            ),
+            "positive_unconditional_loss_sum": self._masked_loss_sum(
+                per_sample_loss, positive_unconditional_mask
+            ),
+            "negative_conditional_loss_sum": self._masked_loss_sum(
+                per_sample_loss, negative_conditional_mask
+            ),
+            "negative_unconditional_loss_sum": self._masked_loss_sum(
+                per_sample_loss, negative_unconditional_mask
+            ),
         }
+        # TODO: zhihao: remove this future
+        if (
+            self.config.positive_only_conditional
+            and self.config.positive_probe_diagnostics
+            and positive_label_count > 0
+        ):
+            probe_images = [img[positive_mask] for img in images]
+            probe_img_masks = [img_mask[positive_mask] for img_mask in img_masks]
+            probe_state = state[positive_mask]
+            probe_actions = actions[positive_mask]
+            probe_time = time[positive_mask]
+            probe_noise = noise[positive_mask]
+            probe_positive_tokens = positive_guidance_lang_tokens[positive_mask]
+            probe_positive_masks = positive_guidance_lang_masks[positive_mask]
+            probe_uncond_tokens = lang_tokens[positive_mask]
+            probe_uncond_masks = lang_masks[positive_mask]
+
+            checkpointing_enabled = self.gradient_checkpointing_enabled
+            self.gradient_checkpointing_enabled = False
+            try:
+                with torch.no_grad():
+                    _, probe_positive_cond_loss = self._compute_flow_losses(
+                        images=probe_images,
+                        img_masks=probe_img_masks,
+                        state=probe_state,
+                        actions=probe_actions,
+                        lang_tokens=probe_positive_tokens,
+                        lang_masks=probe_positive_masks,
+                        device=device,
+                        time=probe_time,
+                        noise=probe_noise,
+                    )
+                    _, probe_positive_uncond_loss = self._compute_flow_losses(
+                        images=probe_images,
+                        img_masks=probe_img_masks,
+                        state=probe_state,
+                        actions=probe_actions,
+                        lang_tokens=probe_uncond_tokens,
+                        lang_masks=probe_uncond_masks,
+                        device=device,
+                        time=probe_time,
+                        noise=probe_noise,
+                    )
+            finally:
+                self.gradient_checkpointing_enabled = checkpointing_enabled
+
+            metrics.update(
+                {
+                    "positive_probe_count": positive_label_count,
+                    "positive_probe_conditional_loss_sum": probe_positive_cond_loss.sum().item(),
+                    "positive_probe_unconditional_loss_sum": probe_positive_uncond_loss.sum().item(),
+                }
+            )
+
+        return flow_loss, metrics
 
     def obs_processor(self, env_obs):
         # base observation
@@ -486,12 +690,10 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
             "prompt": env_obs["task_descriptions"],
         }
         positive_guidance_prompt = [
-            f"{desc}\nAdvantage: positive"
-            for desc in env_obs["task_descriptions"]
+            f"{desc}\nAdvantage: positive" for desc in env_obs["task_descriptions"]
         ]
         negative_guidance_prompt = [
-            f"{desc}\nAdvantage: negative"
-            for desc in env_obs["task_descriptions"]
+            f"{desc}\nAdvantage: negative" for desc in env_obs["task_descriptions"]
         ]
         processed_obs["positive_guidance_prompt"] = positive_guidance_prompt
         processed_obs["negative_guidance_prompt"] = negative_guidance_prompt
@@ -591,6 +793,11 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
         v = v_uncond (when guidance_type == "no_guide")
         """
         guidance_type = self.config.guidance_type
+        if self.config.positive_only_conditional and guidance_type == "negative":
+            raise ValueError(
+                "guidance_type='negative' is incompatible with "
+                "positive_only_conditional training."
+            )
         bsize = observation.state.shape[0]
         device = observation.state.device
         num_steps = self.config.num_steps
