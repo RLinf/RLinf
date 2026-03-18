@@ -1,7 +1,7 @@
 defaults:
   - env/libero_spatial@env.train
   - env/libero_spatial@env.eval
-  - model/dexbotic_pi@actor.model
+  - model/dexbotic_dm0@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
@@ -22,7 +22,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "libero_spatial_ppo_dexbotic_pi0"
+    experiment_name: "libero_spatial_ppo_dexbotic_dm0"
     logger_backends: ["tensorboard"]
 
   max_epochs: 1000
@@ -112,7 +112,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/mlp_vepfs/share/gxy/rlinf_work/dexbotic/checkpoints/libero_pi0" # https://huggingface.co/Dexmal/libero-db-pi0
+    model_path: "/path/to/dexbotic_dm0_checkpoint"
     precision: ${actor.model.precision}
 
 actor:
@@ -124,7 +124,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/mlp_vepfs/share/gxy/rlinf_work/dexbotic/checkpoints/libero_pi0" # https://huggingface.co/Dexmal/libero-db-pi0
+    model_path: "/path/to/dexbotic_dm0_checkpoint"
     precision: "bf16"
     num_action_chunks: 10
     num_steps: 4
