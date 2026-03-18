@@ -14,12 +14,15 @@ export PYTHONPATH=${REPO_PATH}:${MEGATRON_PATH}:${REPO_PATH}/examples:$PYTHONPAT
 
 # Check if first argument is eval parameter (starts with "eval=")
 if [[ "$1" == eval=* ]] || [[ "$1" == +eval=* ]]; then
-    CONFIG_NAME="qwen2.5-1.5b-trajectory"
+    CONFIG_NAME="qwen2.5-1.5b-multiturn"
     # HF eval mode: force eval=true and disable resume_dir auto loading.
     ARGS=()
     for arg in "$@"; do
         if [[ "$arg" == eval=* ]] && [[ "$arg" != +eval=* ]]; then
             ARGS+=("+eval=true")
+        elif [[ "$arg" == eval_checkpoint_dir=* ]] && [[ "$arg" != +eval_checkpoint_dir=* ]]; then
+            # Hydra struct may not have eval_checkpoint_dir; + adds the key.
+            ARGS+=("+${arg}")
         else
             ARGS+=("$arg")
         fi
@@ -28,7 +31,7 @@ if [[ "$1" == eval=* ]] || [[ "$1" == +eval=* ]]; then
     python ${CONFIG_PATH}/main.py --config-path ${CONFIG_PATH}/config/ --config-name $CONFIG_NAME "${ARGS[@]}"
 else
     if [ -z "$1" ]; then
-        CONFIG_NAME="qwen2.5-1.5b-trajectory"
+        CONFIG_NAME="qwen2.5-1.5b-multiturn"
     else
         CONFIG_NAME=$1
         shift

@@ -34,9 +34,9 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
         super().__init__(config, placement, weight_reload, config_rollout)
 
         self._enable_http_server = enable_http_server
-        self._http_server_host = http_server_host or self._cfg.get("server", {}).get("sglang_http", {}).get("host", "0.0.0.0")
-        base_port = self._cfg.get("server", {}).get("sglang_http", {}).get("port", http_server_port)
-        self._http_server_port = base_port + self._rank
+        sv = (self._cfg.rollout.get("sglang") or {}).get("server") or {}
+        self._http_server_host = http_server_host or str(sv.get("host", "0.0.0.0"))
+        self._http_server_port = int(sv.get("port", http_server_port)) + self._rank
         self._http_server = None
         self._http_server_task = None
         self._http_app = None
