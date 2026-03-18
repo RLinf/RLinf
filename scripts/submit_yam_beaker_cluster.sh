@@ -121,6 +121,12 @@ ENTRYPOINT_CMD+=" && tailscale up --authkey=\"\${TAILSCALE_AUTHKEY}\" --advertis
 ENTRYPOINT_CMD+=" && echo '=== Tailscale IP ===' && tailscale ip -4 && echo '=================='"
 ENTRYPOINT_CMD+=" && TAILSCALE_NODE_IP=\$(tailscale ip -4)"
 ENTRYPOINT_CMD+=" && if ip addr add \${TAILSCALE_NODE_IP}/32 dev lo 2>/dev/null; then echo '=== lo alias added: Ray will advertise Tailscale IP ==='; RAY_NODE_IP_ARG=\"--node-ip \${TAILSCALE_NODE_IP}\"; else echo '=== WARNING: ip addr add failed (no CAP_NET_ADMIN) — Ray will use internal IP ==='; RAY_NODE_IP_ARG=''; fi"
+ENTRYPOINT_CMD+=" && mkdir -p /root/.ssh && chmod 700 /root/.ssh"
+ENTRYPOINT_CMD+=" && ssh-keygen -t ed25519 -f /root/.ssh/container_key -N '' -C beaker-container"
+ENTRYPOINT_CMD+=" && chmod 600 /root/.ssh/container_key"
+ENTRYPOINT_CMD+=" && echo '=== Container SSH Public Key (add to your desktop ~/.ssh/authorized_keys) ==='"
+ENTRYPOINT_CMD+=" && cat /root/.ssh/container_key.pub"
+ENTRYPOINT_CMD+=" && echo '=================='"
 ENTRYPOINT_CMD+=" && INSTALL_CMD_DECODED=\$(echo ${INSTALL_CMD_B64} | base64 -d)"
 # Beaker uses userspace Tailscale (--tun=userspace-networking) which has no
 # kernel TUN interface. The GCS cannot open new TCP connections to desktop
