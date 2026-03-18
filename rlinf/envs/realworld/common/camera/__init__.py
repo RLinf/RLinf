@@ -12,6 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .camera import Camera, CameraInfo
+from .base_camera import BaseCamera, CameraInfo
+from .camera import Camera, RealSenseCamera
 
-__all__ = ["Camera", "CameraInfo"]
+__all__ = [
+    "BaseCamera",
+    "Camera",
+    "CameraInfo",
+    "RealSenseCamera",
+    "create_camera",
+]
+
+
+def create_camera(camera_info: CameraInfo) -> BaseCamera:
+    """Factory that instantiates the right camera backend from *camera_info*.
+
+    Supported ``camera_info.camera_type`` values:
+
+    * ``"realsense"`` / ``"rs"`` — Intel RealSense (requires ``pyrealsense2``)
+    * ``"zed"`` — Stereolabs ZED (requires the ZED SDK / ``pyzed``)
+    """
+    camera_type = camera_info.camera_type.lower()
+    if camera_type == "zed":
+        from .zed_camera import ZEDCamera
+
+        return ZEDCamera(camera_info)
+    if camera_type in ("realsense", "rs"):
+        return RealSenseCamera(camera_info)
+    raise ValueError(
+        f"Unsupported camera_type={camera_type!r}. Supported types: 'realsense', 'zed'."
+    )

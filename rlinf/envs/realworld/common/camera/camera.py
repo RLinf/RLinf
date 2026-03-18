@@ -12,35 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import queue
-import threading
-import time
-from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 
-
-@dataclass
-class CameraInfo:
-    name: str
-    serial_number: str
-    resolution: tuple[int, int] = (640, 480)
-    fps: int = 15
-    enable_depth: bool = False
+from .base_camera import BaseCamera, CameraInfo
 
 
-class Camera:
-    """Camera class for capturing images from Intel RealSense cameras and storing them in a queue. This is adapted from SERL's RSCapture class.
-    For RealSense usage, see https://github.com/IntelRealSense/librealsense/blob/jupyter/notebooks/quick_start_live.ipynb.
+class RealSenseCamera(BaseCamera):
+    """Camera capture for Intel RealSense cameras.
+
+    Adapted from SERL's RSCapture class.
+    For RealSense usage, see
+    https://github.com/IntelRealSense/librealsense/blob/jupyter/notebooks/quick_start_live.ipynb.
     """
 
-    def __init__(
-        self,
-        camera_info: CameraInfo,
-    ):
-        import pyrealsense2 as rs  # Intel RealSense cross-platform open-source API
+    def __init__(self, camera_info: CameraInfo):
+        import pyrealsense2 as rs
 
-        self._camera_info = camera_info
+        super().__init__(camera_info)
+
         self._device_info = {}
         for device in rs.context().devices:
             self._device_info[device.get_info(rs.camera_info.serial_number)] = device
@@ -72,60 +63,10 @@ class Camera:
             )
         self.profile = self._pipeline.start(self._config)
 
-        # Create an align object
-        # rs.align allows us to perform alignment of depth frames to others frames
-        # The "align_to" is the stream type to which we plan to align depth frames.
+        # rs.align allows us to perform alignment of depth frames to color frames
         self._align = rs.align(rs.stream.color)
 
-        # Create a queue to store captured frames
-        self._frame_queue = queue.Queue()
-        self._frame_capturing_thread = threading.Thread(
-            target=self._capture_frames, daemon=True
-        )
-        self._frame_capturing_start = False
-
-    @property
-    def name(self):
-        return self._camera_info.name
-
-    def open(self):
-        """Start the frame capturing thread."""
-        self._frame_capturing_start = True
-        self._frame_capturing_thread.start()
-
-    def close(self):
-        """Stop the frame capturing thread and close the camera."""
-        self._frame_capturing_start = False
-        self._frame_capturing_thread.join()
-        self._pipeline.stop()
-        self._config.disable_all_streams()
-
-    def get_frame(self, timeout: int = 5):
-        """Get the latest frame from the frame queue. The frame is in RGB format.
-
-        Args:
-            timeout (int): The maximum time to wait for a frame (in seconds).
-
-        """
-        assert self._frame_capturing_start, (
-            "Frame capturing is not started. Cannot get frame."
-        )
-        return self._frame_queue.get(timeout=timeout)
-
-    def _capture_frames(self):
-        while self._frame_capturing_start:
-            time.sleep(1 / self._camera_info.fps)
-            has_frame, frame = self._read_frame()
-            if not has_frame:
-                break
-            if not self._frame_queue.empty():
-                try:
-                    self._frame_queue.get_nowait()  # discard previous frame
-                except queue.Empty:
-                    pass
-            self._frame_queue.put(frame)
-
-    def _read_frame(self):
+    def _read_frame(self) -> tuple[bool, Optional[np.ndarray]]:
         frames = self._pipeline.wait_for_frames()
         aligned_frames = self._align.process(frames)
         color_frame = aligned_frames.get_color_frame()
@@ -141,3 +82,23 @@ class Camera:
                 return True, frame
         else:
             return False, None
+
+    def _close_device(self) -> None:
+        self._pipeline.stop()
+        self._config.disable_all_streams()
+
+    @staticmethod
+    def get_device_serial_numbers() -> set[str]:
+        """Return serial numbers of all connected RealSense cameras."""
+        cameras: set[str] = set()
+        try:
+            import pyrealsense2 as rs
+        except ImportError:
+            return cameras
+        for device in rs.context().devices:
+            cameras.add(device.get_info(rs.camera_info.serial_number))
+        return cameras
+
+
+# Backward-compatibility alias
+Camera = RealSenseCamera
