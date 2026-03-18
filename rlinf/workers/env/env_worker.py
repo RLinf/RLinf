@@ -682,6 +682,10 @@ class EnvWorker(Worker):
                         rewards=rewards,
                     )
                     self.rollout_results[stage_id].append_step_result(chunk_step_result)
+                    if rollout_result.save_flags is not None:
+                        self.rollout_results[stage_id].mark_last_step_with_flags(
+                            rollout_result.save_flags
+                        )
 
                     env_output, env_info = self.env_interact_step(
                         rollout_result.actions, stage_id
