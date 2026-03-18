@@ -105,6 +105,10 @@ rollout:
     use_torch_compile: False
     torch_compile_max_bs: 128
     tool_call_parser: qwen25
+    serving_mode: worker_http
+    server:
+      host: 0.0.0.0
+      port: 8020
 
   vllm:
     attention_backend: FLASH_ATTN
@@ -283,9 +287,3 @@ critic:
 
 agentlightning:
   n_runners: 10
-
-
-server:
-  sglang_http:
-    host: 0.0.0.0
-    port: 8020

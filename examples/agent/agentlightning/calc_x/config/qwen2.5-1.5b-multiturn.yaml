@@ -107,6 +107,14 @@ rollout:
     use_torch_compile: False
     torch_compile_max_bs: 128
     tool_call_parser: qwen25
+    # AgentLightning 对外 HTTP：worker_http（进程内 FastAPI）| router_server（子进程 server + Router）
+    serving_mode: router_server
+    server:
+      host: 0.0.0.0
+      port: 8020
+    router:
+      host: 0.0.0.0
+      port: 30000
 
   vllm:
     attention_backend: FLASH_ATTN
@@ -285,9 +293,3 @@ critic:
 
 agentlightning:
   n_runners: 10
-
-
-server:
-  sglang_http:
-    host: 0.0.0.0
-    port: 8020

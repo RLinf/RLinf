@@ -19,21 +19,47 @@ import typing
 if typing.TYPE_CHECKING:
     from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
     from rlinf.workers.actor.megatron_actor_worker import MegatronActor
-    from rlinf.workers.rollout.sglang.sglang_worker_server import SGLangWorkerWithHTTPServer
+    from rlinf.workers.rollout.sglang.sglang_router_worker import SGLangRouterWorker
+    from rlinf.workers.rollout.sglang.sglang_server_worker import SGLangServerWorker
+
+
+def _normalize_rollout_server_addrs(raw: Any) -> list[str]:
+    if isinstance(raw, list):
+        return [a for a in raw if a]
+    if raw:
+        return [raw]
+    return []
+
+
+def _resolve_agl_rollout_http_addrs(rollout_group: Any, sglang_router_worker: Any) -> list[str]:
+    """SGLang worker_http：直连各 backend；router_server：经 Router 聚成单一入口。"""
+    addrs = _normalize_rollout_server_addrs(rollout_group.get_server_address().wait())
+    logging.info("[AgentLightningEvalRunner] rollout HTTP backends: %s", addrs)
+    if sglang_router_worker is None or not addrs:
+        return addrs
+    worker_urls = [f"http://{a}" for a in addrs]
+    logging.info("[AgentLightningEvalRunner] router <- %s", worker_urls)
+    sglang_router_worker.server_start(worker_urls=worker_urls).wait()
+    r = sglang_router_worker.get_router_address().wait()
+    entry = r[0] if isinstance(r, list) and r else r
+    logging.info("[AgentLightningEvalRunner] AgentLightning HTTP entry: %s", entry)
+    return [entry]
 
 
 class AgentLightningEvalRunner:
+    """评估；与训练 runner 相同，支持 SGLang worker_http / router_server 两种底座。"""
 
     def __init__(
         self,
         cfg: DictConfig,
         placement: ModelParallelComponentPlacement,
         val_dataset: Dataset,
-        rollout: "SGLangWorkerWithHTTPServer",
+        rollout: Optional["SGLangServerWorker" | "SGLangWorkerWithHTTPServer"],
         actor: Optional["MegatronActor | MAMegatronActor"],
         store: LightningStore,
         adapter: TraceToTripletBase,
         agentlightning_rollout_worker: AgentLightningRolloutWorker,
+        sglang_router_worker: "SGLangRouterWorker | None",
     ):
         self.cfg = cfg
         self.placement = placement
@@ -43,10 +69,11 @@ class AgentLightningEvalRunner:
         self.store = store
         self.adapter = adapter
         self.agentlightning_rollout_worker = agentlightning_rollout_worker
+        self.sglang_router_worker = sglang_router_worker
 
         self.dataloader_channel = Channel.create("DataLoader")
         self.rollout_channel = Channel.create("Rollout")
-
+        # sglang_dp_ready_* 在 entrypoint 创建，Server worker 按名字 connect，Runner 不创建
         self._build_dataloader()
 
     def _build_dataloader(self):
@@ -69,29 +96,33 @@ class AgentLightningEvalRunner:
         )
 
     def init_rollout_workers(self):
+        logging.info("[AgentLightningEvalRunner] init_rollout_workers: calling rollout.init_worker(start_http_server=True)")
         rollout_handle = self.rollout.init_worker(start_http_server=True)
         rollout_handle.wait()
+        logging.info("[AgentLightningEvalRunner] rollout.init_worker finished")
 
         use_pre_process_policy = getattr(self.cfg.cluster, "use_pre_process_policy", False)
         if use_pre_process_policy:
             self.rollout.offload_engine().wait()
 
-        server_addresses: list[str] = []
-        server_addresses_result = self.rollout.get_server_address().wait()
-        if isinstance(server_addresses_result, list):
-            server_addresses = [addr for addr in server_addresses_result if addr]
-        elif server_addresses_result:
-            server_addresses = [server_addresses_result]
+        agl_server_addresses = _resolve_agl_rollout_http_addrs(
+            self.rollout, self.sglang_router_worker
+        )
 
+        logging.info(
+            "[AgentLightningEvalRunner] initializing AgentLightningRolloutWorker with server_addresses=%s",
+            agl_server_addresses,
+        )
         self.agentlightning_rollout_worker.init_worker(
             store=self.store,
             adapter=self.adapter,
-            server_addresses=server_addresses,
+            server_addresses=agl_server_addresses,
             group_size=self.cfg.algorithm.group_size,
             model=self.cfg.rollout.model.model_path,
             reward_fillna_value=self.cfg.algorithm.get("reward_fillna_value", 0.0),
             is_eval_mode=True,
         ).wait()
+        logging.info("[AgentLightningEvalRunner] AgentLightningRolloutWorker.init_worker finished")
 
     def init_workers(self):
         self.init_rollout_workers()
@@ -100,15 +131,24 @@ class AgentLightningEvalRunner:
         self.dataloader_channel.put(batch, async_op=True)
 
     def _run_eval_loop(self) -> float:
+        logging.info("[AgentLightningEvalRunner] _run_eval_loop: fetching first batch from val_dataloader")
         batch = next(iter(self.val_dataloader))
-        
+        logging.info(
+            "[AgentLightningEvalRunner] _run_eval_loop: got batch with keys=%s size=%d",
+            list(batch.keys()) if isinstance(batch, dict) else type(batch),
+            len(next(iter(batch.values()))) if isinstance(batch, dict) and batch else 0,
+        )
+
         self._put_batch(batch)
-        
+        logging.info("[AgentLightningEvalRunner] _run_eval_loop: submitted batch to dataloader_channel, calling process_eval_batch")
+
         rollout_handle: Handle = self.agentlightning_rollout_worker.process_eval_batch(
             input_channel=self.dataloader_channel
         )
-        
+
+        logging.info("[AgentLightningEvalRunner] _run_eval_loop: waiting for rollout_handle")
         results = rollout_handle.wait()
+        logging.info("[AgentLightningEvalRunner] _run_eval_loop: rollout_handle returned results=%r", results)
         avg_reward = results[0] if results and len(results) > 0 else 0.0
         return avg_reward
 
