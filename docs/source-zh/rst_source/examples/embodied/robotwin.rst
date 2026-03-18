@@ -14,7 +14,7 @@
 1. **视觉理解**：处理来自机器人相机的 RGB 图像。  
 2. **语言理解**：理解自然语言的任务描述。  
 3. **动作生成**：产生精确的机器人动作（位置、旋转、夹爪控制）。  
-4. **强化学习**：结合环境反馈，使用 PPO 优化策略。
+4. **强化学习**：结合环境反馈，使用 PPO 和 GRPO 优化策略。
 
 RoboTwinEnv 环境介绍
 --------------------------
@@ -234,9 +234,14 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
 -------------------
 
 请确保您在运行下面的命令前已激活正确的 Python 虚拟环境（venv）。
-如果您使用的是官方 Docker 镜像，您需要通过`source switch_env openvla-oft`命令切换到`openvla-oft`环境。
+如果您使用的是官方 Docker 镜像，请根据模型类型切换环境：
+
+- OpenVLA-OFT：``source switch_env openvla-oft``
+- OpenPI（π\ :sub:`0`\ / π\ :sub:`0.5`\ ）：``source switch_env openpi``
 
 **1. 关键参数配置**
+
+**1.1 OpenVLA-OFT + GRPO**
 
 以 OpenVLA-OFT 模型为例，在 ``actor.model`` 中需要配置以下关键参数：
 
@@ -246,7 +251,7 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
      model:
        model_path: "/path/to/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup"  # SFT 模型路径
        model_type: "openvla_oft"                                             # 模型类型设置为openvla_oft
-       implement_version: "official"                                          # openvla_oft实现版本（RLinf OpenVLA-OFT模型的实现接入了oft官方版本和rlinf sft微调版本，RoboTwin环境使用官方版本）
+       implement_version: "official"                                         # openvla_oft实现版本（RLinf OpenVLA-OFT模型的实现接入了oft官方版本和rlinf sft微调版本，RoboTwin环境使用官方版本）
        action_dim: 14                                                        # RoboTwin 动作维度（14维）
        use_proprio: True                                                     # 是否使用本体感觉信息
        proprio_dim: 14                                                       # 本体感觉维度
@@ -254,6 +259,41 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
        num_images_in_input: 1                                                # 输入图像数量
        num_action_chunks: 25                                                 # 动作块数量
        unnorm_key: "place_empty_cup"                                         # 动作归一化键（需与SFT训练时使用的unnorm_key一致）
+
+**1.2** :math:`\pi_0` **+ PPO**
+
+RoboTwin 中的 π\ :sub:`0`\ + PPO 训练推荐沿用 OpenPI 的 RoboTwin 配置，并切换为 actor-critic 形式：
+
+.. code-block:: yaml
+
+   actor:
+     model:
+      model_path: "/path/to/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle"
+      num_action_chunks: 50 # interface for the env
+      add_value_head: True
+      action_dim: 14
+      openpi:
+         config_name: "pi0_aloha_robotwin"
+         num_images_in_input: 3
+         detach_critic_input: True
+
+
+**1.3** :math:`\pi_0.5` **+ PPO**
+
+π\ :sub:`0.5`\ 在 RoboTwin 中已提供现成的 PPO 训练配置，示例如下：
+
+.. code-block:: yaml
+
+   actor:
+      model:
+         model_path: "/path/to/RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle"
+         num_action_chunks: 50 # interface for the env
+         action_dim: 14
+         add_value_head: True
+         openpi:
+            config_name: "pi05_aloha_robotwin"
+            num_images_in_input: 3
+            detach_critic_input: True
 
 
 **2. 环境配置**
@@ -279,11 +319,21 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
        collect_head_camera: true
        collect_wrist_camera: false
 
+对于 OpenPI（π\ :sub:`0`\ / π\ :sub:`0.5`\ ）配置，还需要额外注意：
+
+- ``env.train.center_crop: False`` 和 ``env.eval.center_crop: False``：关闭中心裁剪
+- ``env.*.task_config.embodiment: [aloha-agilex]``：切换到 AgileX 机器人配置
+- ``env.*.task_config.camera.collect_wrist_camera: true``：启用腕部相机输入
+
 **3. 配置文件**
 
-以 **OpenVLA-OFT** 模型， **GRPO** 算法为例，对应配置文件为：
+RoboTwin 当前可直接参考的配置文件如下：
 
 - **OpenVLA-OFT + GRPO**：``examples/embodiment/config/robotwin_place_empty_cup_grpo_openvlaoft.yaml``
+- **π₀ + PPO**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi.yaml``
+- **π₀ Eval**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi_eval.yaml``
+- **π₀.₅ + PPO**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi_pi05.yaml``
+- **π₀.₅ Eval**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi_pi05_eval.yaml``
 
 **4. 启动命令**
 
@@ -308,6 +358,15 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
    export ROBOTWIN_PATH=/path/to/RoboTwin
 
    bash examples/embodiment/run_embodiment.sh robotwin_place_empty_cup_grpo_openvlaoft
+
+例如，使用 PPO 训练 π\ :sub:`0.5`\ 模型：
+
+.. code-block:: bash
+
+   export ROBOT_PLATFORM=ALOHA
+   export ROBOTWIN_PATH=/path/to/RoboTwin
+
+   bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_ppo_openpi_pi05
 
 可视化与结果
 -------------------------
@@ -341,33 +400,73 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
    * - Task
      - OpenVLA-OFT (SFT)
      - OpenVLA-OFT (RLinf-GRPO)
+     - OpenVLA-OFT (RLinf-PPO)
    * - beat_block_hammer
      - |huggingface| `10.15% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-beat_block_hammer>`_
      - |huggingface| `96.09% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-beat_block_hammer>`__
+     - ---
    * - pick_dual_bottles
      - |huggingface| `20.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-pick_dual_bottles>`_
      - |huggingface| `92.96% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-pick_dual_bottles>`__
+     - ---
    * - place_empty_cup
      - |huggingface| `75.78% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_
      - |huggingface| `94.53% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_empty_cup>`__
+     - |huggingface| `92.97% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-PPO-place_empty_cup>`_
    * - place_container_plate
      - |huggingface| `54.69% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_container_plate>`_
      - |huggingface| `95.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_container_plate>`__
+     - ---
    * - move_can_pot
      - |huggingface| `9.37% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-move_can_pot>`_
      - |huggingface| `83.59% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-move_can_pot>`__
+     - ---
    * - lift_pot
      - |huggingface| `3.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-lift_pot>`_
      - |huggingface| `70.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-lift_pot>`__
+     - ---
    * - handover_block
      - |huggingface| `28.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-handover_block>`_
      - |huggingface| `70.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-handover_block>`__
+     - ---
    * - Average
      - 28.79%
      - **86.16**
+     - ---
    * - Δ Avg.
      - ---
      - **+57.37%**
+     - ---
+
+
+.. list-table:: **OpenPi 在 RoboTwin 任务上的评估结果**
+   :header-rows: 1
+
+   * - Task
+     - Pi0 (SFT)
+     - Pi0 (RLinf-PPO)
+     - Pi0.5 (SFT)
+     - Pi0.5 (RLinf-PPO)
+   * - adjust_bottle
+     - |huggingface| `81.25% <https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle>`_
+     - |huggingface| `95.53% <https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-PPO-adjust_bottle>`_
+     - |huggingface| `82.03% <https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle>`_
+     - |huggingface| `97.66% <https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-PPO-adjust_bottle>`_
+   * - Average
+     - 81.25%
+     - 95.53%
+     - 82.03%
+     - 97.66%
+   * - Δ Avg.
+     - ---
+     - **14.28%**
+     - ---
+     - **15.63%**
+
+.. note::
+   **OpenVLA-OFT** 模型的所有任务都在 **demo_randomized** 设置下进行训练；
+   **OpenPi** 模型的所有任务都在 **demo_clean** 设置下进行训练。
+   更多信息请参考 `RoboTwin 参数配置文档 <https://robotwin-platform.github.io/doc/usage/configurations.html>`_。
 
 评估脚本
 ~~~~~~~~~~~~~~~~~~~
@@ -398,11 +497,24 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
 
       source switch_env openpi
 
-   以 GRPO 算法、``place_empty_cup`` 任务为例，对应配置文件为：
+   以 PPO 算法、``adjust_bottle`` 任务为例，对应配置文件为：
 
-   - ``examples/embodiment/config/robotwin_place_empty_cup_openpi_eval.yaml``
+   - ``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi_eval.yaml``
 
-3. **评估模式设置**
+3. **π₀.₅ 模型评估**
+
+   请确保在运行前已激活正确的 Python 虚拟环境。  
+   若使用官方 Docker 镜像，需要通过：
+
+   .. code-block:: bash
+
+      source switch_env openpi
+
+   以 PPO 算法、``adjust_bottle`` 任务为例，对应配置文件为：
+
+   - ``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi_pi05_eval.yaml``
+
+4. **评估模式设置**
 
    在上述任一配置文件中，将 ``runner.only_eval`` 设置为 ``True``：
 
@@ -420,7 +532,7 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
         max_steps: -1
         only_eval: True
 
-4. **启动评估**
+5. **启动评估**
 
    .. code-block:: bash
 
@@ -429,10 +541,10 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
 
       bash examples/embodiment/eval_embodiment.sh CHOSEN_CONFIG
 
-5. **注意事项**
+6. **注意事项**
 
    - OpenVLA-OFT 模型目前使用 ``[piper, piper, 0.6]`` 机械臂配置  
-   - π\ :sub:`0`\ 模型目前使用 ``[aloha-agilex]`` 机械臂配置  
+   - π\ :sub:`0`\ 和 π\ :sub:`0.5`\ 模型目前使用 ``[aloha-agilex]`` 机械臂配置  
    - 其余详细参数请参考下一节 **配置说明**
 
 配置说明
@@ -462,21 +574,34 @@ OpenVLA-OFT关键配置
    - ``env.train.task_config.embodiment``：机器人配置
    - ``env.train.task_config.camera``：相机配置
 
-π\ :sub:`0`\关键配置
-~~~~~~~~~~~~~~~~~~~~~~
+π\ :sub:`0`\ 和 π\ :sub:`0.5`\关键配置
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 1. **模型配置**：
 
    - ``actor.model.num_action_chunks: 50``：动作块数量
-   - ``actor.model.action_dim: 14``：本体感觉维度
+   - ``actor.model.action_dim: 14``：动作维度
+   - ``actor.model.add_value_head: True``：PPO 训练需要 value head
    - ``actor.model.openpi.num_images_in_input: 3``：输入图像数量
-   - ``actor.model.openpi.config_name: "pi0_aloha_robotwin"``：配置名称
 
-2. **环境配置**：
+2. **模型配置名称**：
 
-   - ``env.eval.center_crop: False``：关闭对图像进行中心裁剪，OFT默认开启
-   - ``env.eval.task_config.embodiment: [aloha-agilex]``：使用AgileX机器人，而非oft中使用的[piper, piper, 0.6]
-   - ``env.eval.task_config.camera: collect_wrist_camera: true``：收集腕部相机图像，OFT默认不开启
+   - π\ :sub:`0`：``actor.model.openpi.config_name: "pi0_aloha_robotwin"``
+   - π\ :sub:`0.5`：``actor.model.openpi.config_name: "pi05_aloha_robotwin"``
+
+3. **算法配置**：
+
+   - ``algorithm.reward_type: chunk_level``：chunk 级奖励
+   - ``algorithm.logprob_type: chunk_level``：chunk 级对数概率
+   - ``algorithm.adv_type: gae``：使用 GAE 估计优势
+   - ``algorithm.loss_type: actor_critic``：使用 actor-critic 损失
+
+4. **环境配置**：
+
+   - ``env.train.center_crop: False`` 与 ``env.eval.center_crop: False``：关闭中心裁剪
+   - ``env.*.task_config.embodiment: [aloha-agilex]``：使用 AgileX 机器人配置，而非oft中使用的[piper, piper, 0.6]
+   - ``env.*.task_config.camera.collect_wrist_camera: true``：启用腕部相机
+   - ``fsdp.gradient_checkpointing: False``：OpenPI 当前不支持开启梯度检查点
 
 更多关于 RoboTwin 配置的详细信息，请参考 `RoboTwin 配置文档 <https://robotwin-platform.github.io/doc/usage/configurations.html>`_。
 
@@ -488,4 +613,3 @@ OpenVLA-OFT关键配置
 3. **RoboTwin Repo**：确保正确设置 ``ROBOTWIN_PATH``，如 ``export ROBOTWIN_PATH=/path/to/RoboTwin``
 4. **GPU 内存**：RoboTwin 环境可能需要较多 GPU 内存，建议使用 ``enable_offload: True``
 5. **任务配置**：根据具体任务修改 ``task_config`` 中的参数
-
