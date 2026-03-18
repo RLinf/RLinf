@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import atexit
+import copy
 import os
 import pickle
 import signal
@@ -373,6 +374,25 @@ class CollectEpisode(gym.Wrapper):
         for i, action in enumerate(actions):
             obs = obs_steps[i] if i < len(obs_steps) else None
             image, wrist_image, state = self._extract_obs_image_state(obs)
+
+            # overwrite action with intervene action
+            if "final_info" in buf["infos"][i]:
+                info_with_intervene = copy.deepcopy(buf["infos"][i]["final_info"])
+            else:
+                info_with_intervene = copy.deepcopy(buf["infos"][i])
+            print("info_with_intervene.keys()", info_with_intervene.keys())
+            if (
+                "intervene_flags" in info_with_intervene.keys()
+                and "intervene_action" in info_with_intervene.keys()
+            ):
+                # overwrite action with
+                print(
+                    "intervene_flags.shape:",
+                    info_with_intervene["intervene_flags"].shape,
+                    ", intervene_action.shape:",
+                    info_with_intervene["intervene_action"].shape,
+                )
+
             np_action = self._to_numpy(action)
 
             if image is None or state is None or np_action is None:
@@ -517,7 +537,12 @@ class CollectEpisode(gym.Wrapper):
         for info in reversed(buf["infos"]):
             if not isinstance(info, dict):
                 continue
-            for src in (info.get("final_info", info).get("episode"), info.get("final_info"), info.get("episode"), info):
+            for src in (
+                info.get("final_info", info).get("episode"),
+                info.get("final_info"),
+                info.get("episode"),
+                info,
+            ):
                 if not isinstance(src, dict):
                     continue
                 for key in ("success_once", "success_at_end", "success"):
