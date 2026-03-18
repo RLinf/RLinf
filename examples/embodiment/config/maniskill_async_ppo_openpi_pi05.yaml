@@ -119,7 +119,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-Pi05-ManiSkill-25Main-SFT"
+    model_path: "/path/to/model/RLinf-Pi05-ManiSkill-25Main-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT
     precision: ${actor.model.precision}
 actor:
   group_name: "ActorGroup"
@@ -130,7 +130,7 @@ actor:
   enable_offload: False
   # Override the default values in model/pi0_5
   model:
-    model_path: "/path/to/model/RLinf-Pi05-ManiSkill-25Main-SFT"
+    model_path: "/path/to/model/RLinf-Pi05-ManiSkill-25Main-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT
     model_type: "openpi"
     add_value_head: True
     num_action_chunks: 5 # interface for the env

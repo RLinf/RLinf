@@ -153,7 +153,7 @@ rollout:
   use_fixed_worker: False 
   model:
     model_type: qwen3
-    model_path: /path/to/Qwen3-4B
+    model_path: /path/to/Qwen3-4B # https://huggingface.co/Qwen/Qwen3-4B
     precision: ${actor.model.precision}            # precision for rollout model, support [fp16, bf16, fp32]
   enforce_eager: False          # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp

@@ -112,7 +112,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-Pi0-SFT-Spatial-Object-Goal"
+    model_path: "/path/to/model/RLinf-Pi0-SFT-Spatial-Object-Goal" # https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
     precision: ${actor.model.precision}
 
 actor:
@@ -125,7 +125,7 @@ actor:
 
   # Override the default values in model/pi0
   model:
-    model_path: "/path/to/model/RLinf-Pi0-SFT-Spatial-Object-Goal"
+    model_path: "/path/to/model/RLinf-Pi0-SFT-Spatial-Object-Goal" # https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
     num_action_chunks: 5 # interface for the env
     add_value_head: True
     # openpi specific parameters
