@@ -258,9 +258,10 @@ RUN echo "source ${UV_PATH}/franka-0.15.0/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-robotwin-image
 
-# Install openvla-oft env
+# Install openvla-oft, openpi, and lingbotvla envs
 RUN bash requirements/install.sh embodied --venv openvla-oft --model openvla-oft --env robotwin && \
-    bash requirements/install.sh embodied --venv openpi --model openpi --env robotwin
+    bash requirements/install.sh embodied --venv openpi --model openpi --env robotwin && \
+    bash requirements/install.sh embodied --venv lingbotvla --model lingbotvla --env robotwin
 
 RUN source switch_env openpi && download_assets --dir /opt/assets --assets openpi
 RUN link_assets
