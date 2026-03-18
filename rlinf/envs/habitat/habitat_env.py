@@ -105,8 +105,6 @@ class HabitatEnv(gym.Env):
         obs_list = []
         infos_list = []
 
-        chunk_rewards = []
-
         # Truncate chunk if it contains "stop" and pad with "no_op"
         for env_idx, chunk_action in enumerate(chunk_actions):
             stop_idx = np.where(chunk_action == "stop")[0]
@@ -218,10 +216,7 @@ class HabitatEnv(gym.Env):
         if self.ignore_terminations:
             terminations[:] = False
         dones = terminations | truncations
-        # # GRPO: sync group done — when any env in a group is done, treat the whole group as done and reset together.
-        # dones, terminations, truncations = self._sync_group_dones(
-        #     dones, terminations, truncations
-        # )
+
         if dones.any() and self.auto_reset:
             if self.video_cfg.save_video:
                 self.flush_video(dones=dones)
@@ -256,9 +251,11 @@ class HabitatEnv(gym.Env):
             and "episode" in self.record_first_done_infos
         ):
             episode = self.record_first_done_infos["episode"]
+            device = next(iter(episode.values())).device
+            mask = torch.zeros(self.num_envs, dtype=torch.bool, device=device)
+            mask[env_idx] = True
             for v in episode.values():
-                # v[env_idx] 能够同时处理 int, list 或 bool mask 索引
-                v[env_idx] = 0
+                v[mask] = 0
         infos = {}
 
         if self.current_raw_obs is None:
@@ -363,25 +360,6 @@ class HabitatEnv(gym.Env):
         infos["_final_observation"] = dones
         infos["_elapsed_steps"] = dones
         return obs, infos
-
-    def _sync_group_dones(self, dones, terminations, truncations):
-        """GRPO: sync group done. When any env in a group is done, treat the whole group as done; mark unfinished envs as truncation."""
-        if self.group_size <= 1:
-            return dones, terminations, truncations
-        dones = np.asarray(dones).copy()
-        terminations = np.asarray(terminations).copy()
-        truncations = np.asarray(truncations).copy()
-        for g in range(self.num_group):
-            start = g * self.group_size
-            end = start + self.group_size
-            group_dones = dones[start:end]
-            if group_dones.any():
-                dones[start:end] = True
-                for i in range(start, end):
-                    if not (terminations[i] or truncations[i]):
-                        terminations[i] = False
-                        truncations[i] = True
-        return dones, terminations, truncations
 
     def _calc_step_reward(self, terminations, success):
         reward = self.cfg.reward_coef * terminations * success
@@ -531,27 +509,17 @@ class HabitatEnv(gym.Env):
 
         episode_ids = self._build_ordered_episodes(habitat_dataset)
 
-        num_episodes = len(episode_ids)
-        # 1) Split episodes across processes: this worker (seed_offset) gets a contiguous block.
-        episodes_per_process = num_episodes // self.total_num_processes
-        start_process = self.seed_offset * episodes_per_process
-        end_process = start_process + episodes_per_process
-
-        process_episode_ids = episode_ids[start_process:end_process]
-        num_episodes_this_process = len(process_episode_ids)
-
-        # 2) Within this process, split by group (GRPO): group_size envs per group share the same episode list; num_group episode streams in total.
-        episodes_per_group = num_episodes_this_process // self.num_group
         episode_ranges = []
-        start = 0
-        for _ in range(self.num_group):
-            episode_ranges.append((start, start + episodes_per_group))
-            start += episodes_per_group
+        num_episodes = len(episode_ids)
+        episodes_per_env = num_episodes // self.num_envs // self.total_num_processes
+        start = self.seed_offset * episodes_per_env * self.num_envs
+        for i in range(self.num_envs):
+            episode_ranges.append((start, start + episodes_per_env))
+            start += episodes_per_env
 
         for env_id in range(self.num_envs):
-            group_id = env_id // self.group_size
-            start, end = episode_ranges[group_id]
-            assigned_ids = process_episode_ids[start:end]
+            start, end = episode_ranges[env_id]
+            assigned_ids = episode_ids[start:end]
 
             env_fn_params.append(
                 {

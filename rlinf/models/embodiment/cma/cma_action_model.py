@@ -41,7 +41,8 @@ class CMAConfig:
 
     # Image and action configs
     image_size: list[int] = field(default_factory=lambda: [256, 256, 3])
-    action_dim: int = 4
+    action_dim: int = 1
+    num_action_classes: int = 4
     state_dim: int = 0  # Not used in CMA, but kept for compatibility
     num_action_chunks: int = 1
     model_path: Optional[str] = None
@@ -80,6 +81,7 @@ class CMAConfig:
         for key, value in config_dict.items():
             if hasattr(self, key):
                 self.__setattr__(key, value)
+
         self._update_info()
 
     def _update_info(self):
@@ -190,8 +192,7 @@ class CMANet(nn.Module):
         )
 
         # Action embedding (for prev_action)
-        num_actions = cfg.action_dim
-        self.prev_action_embedding = nn.Embedding(num_actions + 1, 32)
+        self.prev_action_embedding = nn.Embedding(cfg.num_action_classes + 1, 32)
 
         hidden_size = cfg.hidden_size
         self._hidden_size = hidden_size
@@ -420,9 +421,12 @@ class CMAPolicy(nn.Module, BasePolicy):
             2: "turn_left",
             3: "turn_right",
         }
+        assert len(self.action_map) == self.cfg.num_action_classes, (
+            "CMA action_map size must match num_action_classes"
+        )
 
         self.policy = CMABasePolicy(
-            net=CMANet(cfg, observation_space), dim_actions=cfg.action_dim
+            net=CMANet(cfg, observation_space), dim_actions=cfg.num_action_classes
         )
 
         assert self.cfg.add_value_head + self.cfg.add_q_head <= 1
@@ -555,7 +559,6 @@ class CMAPolicy(nn.Module, BasePolicy):
         **kwargs,
     ):
         """Predict actions for a batch of observations."""
-        mode = kwargs.get("mode", "train")
         env_obs = self.preprocess_env_obs(env_obs=env_obs)
         batch_size = env_obs["rgb"].shape[0]
         device = env_obs["rgb"].device
@@ -575,11 +578,8 @@ class CMAPolicy(nn.Module, BasePolicy):
         )
         distribution = self.policy.action_distribution(features)
 
-        if mode == "train":
-            action = distribution.sample()
-        else:
-            action = distribution.mode()
-        logprobs = distribution.logits.unsqueeze(1)
+        action = distribution.mode()
+        logprobs = distribution.log_prob(action)
 
         forward_inputs = {
             "action": action,
@@ -652,7 +652,8 @@ class CMAPolicy(nn.Module, BasePolicy):
         output_dict = {}
 
         if compute_logprobs:
-            logprobs = distribution.logits.unsqueeze(1)
+            action = forward_inputs["action"]
+            logprobs = distribution.log_prob(action)
             output_dict.update(logprobs=logprobs)
 
         if compute_entropy:

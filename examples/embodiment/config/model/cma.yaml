@@ -5,7 +5,8 @@ model_type: "cma"
 precision: "fp32"
 
 # Action configuration
-action_dim: 4  # Discrete actions: STOP, FORWARD, TURN_LEFT, TURN_RIGHT
+action_dim: 1
+num_action_classes: 4  # Discrete actions: STOP, FORWARD, TURN_LEFT, TURN_RIGHT
 num_action_chunks: 1  # CMA predicts one action at a time
 
 # Model path for loading pretrained weights
