@@ -90,7 +90,8 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
         self.use_access_summary = self.cfg.tools.get("use_access_summary", False)
         self.use_llm_judge = self.cfg.agentloop.get("use_llm_judge", True)
 
-        self.use_fixed_rollout = cfg.rollout.get("use_fixed_worker", False)
+        self.placement = placement
+        self.use_fixed_rollout = self.placement.use_fixed_worker
         self.fixed_role = self.cfg.agentloop.get("fixed_role", None)
         if self.use_fixed_rollout:
             assert self.fixed_role
@@ -202,23 +203,7 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
             return "No useful Information is Found under this URL."
 
         messages = get_access_summary_messages(info_to_extract, page_content)
-        if not self.use_local_judge:
-            result_text = await self.sgl_client.call_sglang_api(messages)
-        else:
-            # convert judge_messages to prompt_ids
-            prompt_ids = self.tokenizer.apply_chat_template(
-                messages, tokenize=True, add_generation_prompt=True
-            )
-            prompt_ids = prompt_ids[: self.max_total_len]
-            # invocate generate method
-            generate_result = await self.generate(
-                prompt_ids,
-                rollout_name="rollout_judge",
-            )
-
-            # decode generate_result to result_text
-            result_text = self.tokenizer.decode(generate_result["output_ids"])
-
+        result_text = await self.llm_generator(messages)
         return result_text
 
     async def worker_call(

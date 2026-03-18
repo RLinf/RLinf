@@ -75,8 +75,8 @@ class MAMegatronActor(MegatronActor):
         assert self.enable_dp_load_balance, (
             "enable_dp_load_balance must be True when is_dynamic_rollout_batch is True"
         )
-
-        self.use_fixed_worker = self.cfg.rollout.get("use_fixed_worker", False)
+        self.placement = placement
+        self.use_fixed_worker = self.placement.use_fixed_worker
         assert self.placement_mode == PlacementMode.COLLOCATED, (
             "Only collocated placement is supported for multi-agent actor"
         )

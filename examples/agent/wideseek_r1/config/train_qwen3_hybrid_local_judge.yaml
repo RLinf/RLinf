@@ -46,13 +46,10 @@ agentloop:
 rollout:
   model:
     model_path: /mnt/public/zhouyiming/models/Qwen3-4B # TODO:(USER) Replace with the actual path to the model checkpoint
-  
-  use_fixed_worker: True
 
 rollout_judge:
   group_name: "RolloutJudgeGroup"
   gpu_memory_utilization: 0.5
-  use_fixed_worker: True
   model:
     model_type: qwen3
     model_path: /mnt/public/zhouyiming/models/Qwen3-4B

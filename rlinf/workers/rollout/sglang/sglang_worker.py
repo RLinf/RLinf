@@ -89,7 +89,7 @@ class SGLangWorker(Worker):
             "The future of AI is",
         ]
 
-        self.use_fixed_worker = self._cfg_rollout.get("use_fixed_worker", False)
+        self.use_fixed_worker = self._placement.use_fixed_worker
         if self._placement.placement_mode == PlacementMode.COLLOCATED:
             self._setup_rollout_weight_dst_ranks()
         self.status_manager = RunningStatusManager()
