@@ -75,6 +75,9 @@ Documentation = "https://rlinf.readthedocs.io/"
 "Bug Report" = "https://github.com/RLinf/RLinf/issues"
 
 [project.optional-dependencies]
+dev = [
+    "pre-commit",
+]
 agentic-sglang = [
     "sglang[all]==0.4.6.post5",
     "torch-memory-saver",
