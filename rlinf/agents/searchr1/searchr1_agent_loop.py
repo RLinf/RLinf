@@ -62,6 +62,7 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
                 "answer": answer,
                 "turn": 0,
                 "all_llm_response_ids": [],  # accumulate only LLM-generated tokens for reward
+                "problem_prompt_ids": copy.deepcopy(prompt_ids[: self.max_prompt_len]),
             },
         )
 
@@ -189,46 +190,6 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         generate_context["turn"] += 1
         return True, next_turn_prompt_ids
 
-    async def run_one_query_turn(
-        self,
-        output_buffer: list[AgentLoopOutput],
-        generate_context: dict[str, Any],
-        trace_prints: list[dict],
-        problem_prompt_ids: list[int],
-        turn_prompt_ids: list[int],
-    ):
-        (
-            is_continue,
-            llm_response_ids,
-            llm_response_text,
-            llm_output,
-        ) = await self.generate_llm_response(
-            generate_context,
-            trace_prints,
-            problem_prompt_ids,
-            turn_prompt_ids,
-        )
-
-        if llm_output is not None:
-            output_buffer.append(llm_output)
-
-        if not is_continue:
-            return False, None
-
-        (
-            is_continue,
-            next_turn_prompt_ids,
-        ) = await self.generate_tool_response(
-            generate_context,
-            trace_prints,
-            problem_prompt_ids,
-            turn_prompt_ids,
-            llm_response_ids,
-            llm_response_text,
-        )
-
-        return is_continue, next_turn_prompt_ids
-
     def gen_extra_fields(self, task_results, answer):
         if self.is_eval:
             # Eval: store per-traj reward/text/turns and group-level answer
@@ -257,30 +218,3 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
                 idx_to_sub_traj.append(0)
         extra_fields_train = {"idx_to_sub_traj": idx_to_sub_traj}
         return None, None, None, extra_fields_train
-
-    async def run_one_query(self, *args, **kwargs) -> MultiAgentLoopOutput:
-        prompt_ids, generate_context = await self.pre_process_query(*args, **kwargs)
-        problem_prompt_ids = copy.deepcopy(prompt_ids)
-        generate_context["problem_prompt_ids"] = problem_prompt_ids
-        output_buffer = []
-        trace_prints = []
-        while True:
-            (
-                is_continue,
-                prompt_ids,
-            ) = await self.run_one_query_turn(
-                output_buffer,
-                generate_context,
-                trace_prints,
-                problem_prompt_ids,
-                prompt_ids,
-            )
-            if not is_continue:
-                break
-
-        output = MultiAgentLoopOutput(
-            single_turn_outputs=output_buffer,
-            trace_prints=trace_prints,
-        )
-
-        return await self.post_process_query(generate_context, output)

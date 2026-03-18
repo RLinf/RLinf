@@ -90,7 +90,7 @@ data:
   type: wideseek_r1
   max_prompt_length: 4096
   filter_prompt_by_length: True
-  rollout_batch_size: 128 
+  rollout_batch_size: 128
   val_rollout_batch_size: null
   num_workers: 2
   prompt_key: question
