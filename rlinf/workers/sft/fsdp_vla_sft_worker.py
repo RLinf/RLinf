@@ -43,6 +43,16 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                 config, framework="pytorch", shuffle=True
             )
             return data_loader, data_loader.data_config()
+        elif SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.LINGBOTVLA
+        ]:
+            from rlinf.models.embodiment.lingbotvla.sft_builder import (
+                build_lingbot_sft_dataloader,
+            )
+
+            return build_lingbot_sft_dataloader(
+                self.cfg, self._world_size, self._rank, data_paths
+            )
         else:
             raise KeyError(
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
@@ -53,6 +63,19 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         raise NotImplementedError("eval is not supported for embodied sft right now.")
 
     def get_train_model_output(self, batch: dict[str, Any]):
+        if SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.LINGBOTVLA
+        ]:
+            batch_data = next(self.data_iter)
+            batch_data = _pytree.tree_map(
+                lambda x: torch.as_tensor(x, device=self.device).contiguous().clone()
+                if isinstance(x, torch.Tensor)
+                else x,
+                batch_data,
+            )
+            with self.amp_context:
+                losses_dict = self.model(forward_type=ForwardType.SFT, data=batch_data)
+            return losses_dict["loss"]
         observation, actions = next(self.data_iter)
 
         register_pytree_dataclasses(observation)
