@@ -517,7 +517,7 @@ class CollectEpisode(gym.Wrapper):
         for info in reversed(buf["infos"]):
             if not isinstance(info, dict):
                 continue
-            for src in (info.get("final_info"), info.get("episode"), info):
+            for src in (info.get("final_info", info).get("episode"), info.get("final_info"), info.get("episode"), info):
                 if not isinstance(src, dict):
                     continue
                 for key in ("success_once", "success_at_end", "success"):
