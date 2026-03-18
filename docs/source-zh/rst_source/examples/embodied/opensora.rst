@@ -101,9 +101,9 @@ OpenSora 主要希望赋予模型以下能力：
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.1-opensora
+      rlinf/rlinf:agentic-rlinf0.2-opensora
       # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-opensora
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-opensora
 
 **选项 2：自定义环境**
 

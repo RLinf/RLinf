@@ -104,9 +104,9 @@ Run experiments in Docker.
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.1-wan
+      rlinf/rlinf:agentic-rlinf0.2-wan
       # For better image download speed in mainland China:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-wan
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-wan
 
 **Option 2: Custom local environment**
 
