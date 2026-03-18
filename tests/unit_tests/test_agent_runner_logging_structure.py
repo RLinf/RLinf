@@ -21,3 +21,10 @@ def test_agent_runner_has_single_minibatch_logging_loop():
     _, _, run_body = source.partition("def run(self):")
     loop_stmt = "for i in range(self.cfg.algorithm.n_minibatches):"
     assert run_body.count(loop_stmt) == 1
+
+
+def test_agent_runner_handles_none_rollout_metrics():
+    """Agent runner should guard rollout metrics update when metrics are None."""
+    source = Path("rlinf/runners/agent_runner.py").read_text(encoding="utf-8")
+    _, _, run_body = source.partition("def run(self):")
+    assert "if actor_rollout_metrics is not None:" in run_body
