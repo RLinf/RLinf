@@ -358,6 +358,7 @@ bash scripts/submit_yam_training.sh \
 3. Uses the shared `ray_utils/start_ray_beaker.sh --entrypoint` path, but starts an interactive shell on the head node instead of idling forever
 4. Submits via `beaker session create --remote --bare`
 5. User attaches with `beaker session attach <session-id>` and drives training manually
+6. The local machine running `beaker session create` must have a default SSH key (for example `~/.ssh/id_ed25519`) so Beaker can attach
 
 **Key options:**
 

@@ -62,6 +62,9 @@ Pass `--workspace <beaker-workspace>` if you want to submit outside the default
 > # Beaker prints a session ID; then from the cluster:
 > beaker session attach <session-id>
 > ```
+>
+> This path requires a default local SSH key such as `~/.ssh/id_ed25519`,
+> because `beaker session create --remote` attaches via SSH.
 
 > **Idle cluster mode (recommended for debugging):** Instead of submitting a job
 > that runs training immediately, you can submit a job that starts Ray and idles.
