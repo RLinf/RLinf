@@ -288,15 +288,13 @@ class AgentRunner(ReasoningRunner):
                     ) * self.cfg.algorithm.n_minibatches
                     # add prefix to the metrics
                     log_time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
-                    rollout_metrics = {}
+
+                    self.metric_logger.log(agent_metrics, logging_steps)
+                    self.metric_logger.log(log_time_metrics, logging_steps)
                     if actor_rollout_metrics is not None:
                         rollout_metrics = {
                             f"rollout/{k}": v for k, v in actor_rollout_metrics.items()
                         }
-
-                    self.metric_logger.log(agent_metrics, logging_steps)
-                    self.metric_logger.log(log_time_metrics, logging_steps)
-                    if rollout_metrics:
                         self.metric_logger.log(rollout_metrics, logging_steps)
                     for i in range(self.cfg.algorithm.n_minibatches):
                         training_metrics = {
