@@ -1,7 +1,7 @@
 import logging
 import time
 import typing
-from typing import Optional, Any
+from typing import Any, Optional, Union
 
 import torch
 from omegaconf.dictconfig import DictConfig
@@ -30,7 +30,7 @@ if typing.TYPE_CHECKING:
     from rlinf.workers.inference.megatron_inference_worker import MegatronInference
     from rlinf.workers.rollout.sglang.sglang_server_worker import SGLangServerWorker
     from rlinf.workers.rollout.sglang.sglang_router_worker import SGLangRouterWorker
-    from rlinf.workers.rollout.sglang.sglang_server_worker import SGLangServerWorker
+    from rlinf.workers.rollout.sglang.sglang_worker_server import SGLangWorkerWithHTTPServer
 
 
 def _normalize_rollout_server_addrs(raw: Any) -> list[str]:
@@ -64,13 +64,13 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         placement: ModelParallelComponentPlacement,
         train_dataset: Dataset,
         val_dataset: Dataset,
-        rollout: Optional["SGLangServerWorker" | "SGLangWorkerWithHTTPServer"],
+        rollout: Union["SGLangServerWorker", "SGLangWorkerWithHTTPServer"],
         inference: Optional["MegatronInference"],
-        actor: "MegatronActor | MAMegatronActor",
+        actor: Union["MegatronActor", "MAMegatronActor"],
         store: LightningStore,
         adapter: TraceToTripletBase,
         agentlightning_rollout_worker: AgentLightningRolloutWorker,
-        sglang_router_worker: "SGLangRouterWorker | None",
+        sglang_router_worker: Optional["SGLangRouterWorker"],
     ):
         super().__init__(
             cfg,
