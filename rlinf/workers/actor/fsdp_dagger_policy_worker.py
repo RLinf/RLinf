@@ -27,6 +27,7 @@ from rlinf.utils import drq
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict, compute_split_num
 from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
+from rlinf.utils.utils import clear_memory
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -70,6 +71,8 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         )
 
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
+        clear_memory(sync=False)
+
         send_num = self._component_placement.get_world_size("env") * self.stage_num
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(send_num, recv_num)
