@@ -313,6 +313,9 @@ Worker discovery flow in `ray_utils/start_ray_beaker.sh`:
 Submits a Beaker training job via gantry, or creates an interactive Beaker
 session for manual debugging (with `--interactive`).
 
+Use `--workspace <beaker-workspace>` to override the default `ai2/molmo-act`
+workspace.
+
 ```bash
 # TOPReward only, no subtask planning (3 GPUs: actor GPU 0, rollout GPU 1, VLM GPU 2)
 bash scripts/submit_yam_training.sh \
@@ -351,16 +354,17 @@ bash scripts/submit_yam_training.sh \
 **What the script does (interactive mode):**
 
 1. Auto-detects GPU count from config (same as training mode)
-2. Builds a setup command: Tailscale → `bash requirements/install.sh` → venv → `ray start --head` → `huggingface-cli download` → `exec bash -i`
-3. Submits via `beaker session create --remote --bare --detach`
-4. User attaches with `beaker session attach <session-id>` and drives training manually
+2. Builds the same Beaker-side startup flow as `submit_yam_beaker_cluster.sh`: Tailscale → Tailscale-IP alias on `lo` when available → install → Ray head startup
+3. Uses the shared `ray_utils/start_ray_beaker.sh --entrypoint` path, but starts an interactive shell on the head node instead of idling forever
+4. Submits via `beaker session create --remote --bare`
+5. User attaches with `beaker session attach <session-id>` and drives training manually
 
 **Key options:**
 
 | Option | Default | Description |
 |---|---|---|
 | `--config` | `yam_ppo_openpi` | Hydra config name |
-| `--model-path` | (none) | Model checkpoint / HF ID; also selects the model to pre-download in interactive mode (default: `thomas0829/folding_towel_pi05`) |
+| `--model-path` | (none) | Model checkpoint / HF ID (training mode only) |
 | `--task` | `"pick and place"` | Task description (training mode only) |
 | `--name` | `rlinf-<config>` | Beaker experiment/session name (appends `-interactive` in interactive mode) |
 | `--replicas` | 1 | Beaker replicas / Ray nodes (training mode only) |

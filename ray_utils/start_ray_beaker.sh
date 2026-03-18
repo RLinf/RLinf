@@ -56,6 +56,7 @@ Submission mode (run from your local machine to submit Beaker jobs):
 Entrypoint mode (called inside Beaker container):
   --entrypoint            Run as Beaker replica entrypoint
   --train-cmd CMD         Training command (head only)
+  --interactive-shell     On the head node, start an interactive shell after Ray is ready
   --ray-port PORT         Ray port (default: 6379)
   --node-ip IP            IP address for Ray to advertise (e.g. Tailscale IP)
   --install CMD           Install command to run before starting Ray
@@ -87,6 +88,7 @@ SHOW_LOGS=""
 DRY_RUN=""
 ALLOW_DIRTY=""
 ENTRYPOINT_MODE=""
+INTERACTIVE_SHELL=""
 EXTRA_GANTRY_ARGS=()
 _CLUSTERS_SET="" _WEKA_SET="" _ENVS_SET="" _SECRETS_SET=""
 
@@ -95,6 +97,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --help)           usage ;;
         --entrypoint)     ENTRYPOINT_MODE="true"; shift ;;
+        --interactive-shell) INTERACTIVE_SHELL="true"; shift ;;
         --image)          BEAKER_IMAGE="$2"; shift 2 ;;
         --workspace)      WORKSPACE="$2"; shift 2 ;;
         --cluster)        if [ -z "$_CLUSTERS_SET" ]; then CLUSTERS=(); _CLUSTERS_SET=1; fi; CLUSTERS+=("$2"); shift 2 ;;
@@ -161,6 +164,9 @@ if [ "$ENTRYPOINT_MODE" = "true" ]; then
         if [ -n "$TRAIN_CMD" ]; then
             echo "Running training command: ${TRAIN_CMD}"
             eval "$TRAIN_CMD"
+        elif [ -n "$INTERACTIVE_SHELL" ]; then
+            echo "No --train-cmd specified; Ray head is ready. Starting interactive shell..."
+            exec bash -i
         else
             echo "No --train-cmd specified; head node idle. Blocking..."
             tail -f /dev/null

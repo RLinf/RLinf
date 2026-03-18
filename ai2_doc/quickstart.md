@@ -47,10 +47,13 @@ bash scripts/submit_yam_training.sh \
     --allow-dirty
 ```
 
+Pass `--workspace <beaker-workspace>` if you want to submit outside the default
+`ai2/molmo-act` workspace.
+
 > **Interactive mode (optional):** To get a shell inside the container and drive
 > training manually, pass `--interactive`. This creates a `beaker session` instead
-> of a gantry job, runs full setup (Tailscale → install → Ray → model download),
-> then drops into an interactive bash shell you can attach to:
+> of a gantry job, runs the same Tailscale/install/Ray-head startup path as the
+> idle-cluster workflow, then leaves you in an interactive shell you can attach to:
 >
 > ```bash
 > bash scripts/submit_yam_training.sh \

@@ -68,9 +68,10 @@ Options:
   --replicas N          Number of Beaker replicas (default: 1)
   --gpus N              GPUs per replica (0 = auto based on config)
   --cluster CLUSTER     Beaker cluster (default: ai2/ceres-cirrascale)
+  --workspace WORKSPACE Beaker workspace (default: ai2/molmo-act)
   --budget BUDGET       Beaker budget account
   --priority PRIORITY   Job priority (default: urgent)
-  --interactive         Create an interactive Beaker session with full setup (no training).
+  --interactive         Create an interactive Beaker session with Ray head started and no training.
                         Attach from the cluster with: beaker session attach <session-id>
   --show-logs           Stream Beaker logs after submission
   --allow-dirty         Allow dirty git working directory
@@ -99,6 +100,7 @@ while [[ $# -gt 0 ]]; do
         --replicas)     REPLICAS="$2"; shift 2 ;;
         --gpus)         GPUS="$2"; shift 2 ;;
         --cluster)      CLUSTER="$2"; shift 2 ;;
+        --workspace)    WORKSPACE="$2"; shift 2 ;;
         --budget)       BUDGET="$2"; shift 2 ;;
         --priority)     PRIORITY="$2"; shift 2 ;;
         --show-logs)    SHOW_LOGS="true"; shift ;;
@@ -138,38 +140,30 @@ esac
 
 if [ -n "$INTERACTIVE" ]; then
     # ----------------------------------------------------------------
-    # Interactive mode: beaker session create (no gantry, no training)
+    # Interactive mode: same startup flow as submit_yam_beaker_cluster.sh,
+    # but submitted as a Beaker session instead of a Beaker job.
     # ----------------------------------------------------------------
 
-    # Build setup command (runs inside the container before going interactive).
-    SETUP_CMD="cd ${REPO_DIR}"
+    INSTALL_CMD_B64=$(echo "$INSTALL_CMD" | base64 | tr -d '\n')
 
-    # Tailscale (userspace networking for containers)
-    SETUP_CMD+=" && curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg -o /usr/share/keyrings/tailscale-archive-keyring.gpg"
-    SETUP_CMD+=" && echo 'deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu jammy main' > /etc/apt/sources.list.d/tailscale.list"
-    SETUP_CMD+=" && (apt-get update || true) && apt-get install -y tailscale"
-    SETUP_CMD+=" && (nohup tailscaled --tun=userspace-networking --state=mem: > /dev/null 2>&1 &)"
-    SETUP_CMD+=" && sleep 2"
-    SETUP_CMD+=" && tailscale up --authkey=\${TAILSCALE_AUTHKEY} --hostname=beaker-interactive --accept-routes"
-    SETUP_CMD+=" && echo '=== Tailscale IP ===' && tailscale ip -4 && echo '=================='"
-
-    # Install deps and activate venv
-    SETUP_CMD+=" && ${INSTALL_CMD}"
-    SETUP_CMD+=" && source ${REPO_DIR}/.venv/bin/activate"
-
-    # Start Ray head
-    SETUP_CMD+=" && ray start --head --port=${RAY_PORT}"
-
-    # Download model checkpoint (defaults to folding_towel_pi05 if --model-path not given)
-    MODEL_DL="${MODEL_PATH:-thomas0829/folding_towel_pi05}"
-    SETUP_CMD+=" && huggingface-cli download ${MODEL_DL}"
-
-    # Persist venv activation into ~/.bashrc for the interactive shell
-    SETUP_CMD+=" && echo 'source ${REPO_DIR}/.venv/bin/activate && cd ${REPO_DIR}' >> ~/.bashrc"
-
-    # Hand off to interactive bash (user attaches here)
-    SETUP_CMD+=" && echo '=== Setup complete. Attach with: beaker session attach <session-id> ==='"
-    SETUP_CMD+=" && exec bash -i"
+    ENTRYPOINT_CMD="curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg -o /usr/share/keyrings/tailscale-archive-keyring.gpg"
+    ENTRYPOINT_CMD+=" && echo 'deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu jammy main' > /etc/apt/sources.list.d/tailscale.list"
+    ENTRYPOINT_CMD+=" && (apt-get update || true) && apt-get install -y tailscale"
+    ENTRYPOINT_CMD+=" && (nohup tailscaled --tun=userspace-networking --state=mem: > /dev/null 2>&1 &)"
+    ENTRYPOINT_CMD+=" && sleep 2"
+    ENTRYPOINT_CMD+=" && tailscale up --authkey=\"\${TAILSCALE_AUTHKEY}\" --advertise-tags=tag:robo-beaker --hostname=beaker-\${BEAKER_REPLICA_RANK:-0} --accept-routes"
+    ENTRYPOINT_CMD+=" && echo '=== Tailscale IP ===' && tailscale ip -4 && echo '=================='"
+    ENTRYPOINT_CMD+=" && TAILSCALE_NODE_IP=\$(tailscale ip -4)"
+    ENTRYPOINT_CMD+=" && if ip addr add \${TAILSCALE_NODE_IP}/32 dev lo 2>/dev/null; then echo '=== lo alias added: Ray will advertise Tailscale IP ==='; RAY_NODE_IP_ARG=\"--node-ip \${TAILSCALE_NODE_IP}\"; else echo '=== WARNING: ip addr add failed (no CAP_NET_ADMIN) — Ray will use internal IP ==='; RAY_NODE_IP_ARG=''; fi"
+    ENTRYPOINT_CMD+=" && INSTALL_CMD_DECODED=\$(echo ${INSTALL_CMD_B64} | base64 -d)"
+    ENTRYPOINT_CMD+=" && export RAY_health_check_period_ms=3600000"
+    ENTRYPOINT_CMD+=" && cd ${REPO_DIR}"
+    ENTRYPOINT_CMD+=" && bash ray_utils/start_ray_beaker.sh"
+    ENTRYPOINT_CMD+=" --entrypoint"
+    ENTRYPOINT_CMD+=" --interactive-shell"
+    ENTRYPOINT_CMD+=" --ray-port ${RAY_PORT}"
+    ENTRYPOINT_CMD+=" \${RAY_NODE_IP_ARG}"
+    ENTRYPOINT_CMD+=" --install \"\${INSTALL_CMD_DECODED}\""
 
     session_args=(
         beaker session create
@@ -184,10 +178,12 @@ if [ -n "$INTERACTIVE" ]; then
         --workdir "${REPO_DIR}"
         --env "HF_HOME=/weka/oe-training-default/shiruic/hf_cache"
         --env "EMBODIED_PATH=examples/embodiment"
+        --env "RAY_health_check_failure_threshold=10"
+        --env "RAY_health_check_timeout_ms=30000"
         --secret-env "HF_TOKEN=hf_token_shirui"
         --secret-env "TAILSCALE_AUTHKEY=tailscale_authkey_shirui"
         --
-        bash -c "${SETUP_CMD}"
+        bash -c "${ENTRYPOINT_CMD}"
     )
 
     [ -n "$BUDGET" ] && session_args+=("--budget" "$BUDGET")
@@ -196,10 +192,10 @@ if [ -n "$INTERACTIVE" ]; then
     echo "Config:       ${CONFIG_NAME}"
     echo "GPUs:         ${GPUS}"
     echo "Cluster:      ${CLUSTER}"
+    echo "Workspace:    ${WORKSPACE}"
     echo "Priority:     ${PRIORITY}"
     echo "Image:        ${BEAKER_IMAGE}"
     echo "Repo:         ${REPO_DIR}"
-    echo "Model DL:     ${MODEL_DL}"
     echo ""
 
     if [ "$DRY_RUN" = "true" ]; then
@@ -208,7 +204,7 @@ if [ -n "$INTERACTIVE" ]; then
     else
         "${session_args[@]}"
         echo ""
-        echo "Setup running in background (Tailscale → install → Ray → model download)."
+        echo "Setup running in background (Tailscale → install → Ray head → interactive shell)."
         echo "Check session logs, then attach from the cluster:"
         echo "  beaker session attach <session-id>"
     fi
@@ -310,6 +306,7 @@ else
     echo "Replicas:     ${REPLICAS}"
     echo "GPUs/node:    ${GPUS}"
     echo "Cluster:      ${CLUSTER}"
+    echo "Workspace:    ${WORKSPACE}"
     echo "TOPReward:    ${IS_TOPREWARD}"
     echo ""
     echo "Training command (head node):"
