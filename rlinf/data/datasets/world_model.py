@@ -166,10 +166,6 @@ class NpyTrajectoryDatasetWrapper(Dataset):
         # Determine action dimension
         if action_key in sample_frame:
             self.action_dim = sample_frame[action_key].shape[0]
-        elif "abs_action" in sample_frame:
-            self.action_dim = sample_frame["abs_action"].shape[0]
-        elif "delta_action" in sample_frame:
-            self.action_dim = sample_frame["delta_action"].shape[0]
         else:
             raise ValueError(f"Action key '{action_key}' not found in trajectory data")
 
@@ -304,6 +300,16 @@ class NpyTrajectoryDatasetWrapper(Dataset):
             converted["task"] = str(task)
         else:
             raise ValueError(f"No instruction or task found in frame {frame}")
+
+        # Convert action
+        if self.action_key in frame:
+            action = frame[self.action_key]
+            if isinstance(action, np.ndarray):
+                converted["action"] = torch.from_numpy(action).float()
+            else:
+                converted["action"] = torch.tensor(action, dtype=torch.float32)
+        else:
+            raise ValueError(f"No action found in frame {frame}")
 
         return converted
 

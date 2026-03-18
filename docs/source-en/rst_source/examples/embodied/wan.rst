@@ -243,10 +243,13 @@ Set key parameters in env config:
    env/eval: libero_spatial
 
    # In env/train/wan_libero_spatial.yaml:
-   simulator_type: libero
+   wm_env_type: libero
    task_suite_name: libero_spatial
+   reset_gripper_open: True
    # Whether to enable KeyFrame-Init Rollout
    enable_kir: True
+   # Number of World Model denoising inference steps
+   num_inference_steps: 5
    # Initialization dataset path for world model reset
    initial_image_path: /Pathto/model/RLinf-Wan-LIBERO-Spatial/dataset
    # VAE weights
@@ -261,7 +264,9 @@ Set key parameters in env config:
 Key parameter notes in environment config:
 
 - ``enable_kir``: Whether to enable KIR (KeyFrame-Init Rollout). If disabled, environment reset samples only ``.npy`` files whose names do not include ``_kir``; if enabled, reset samples from all initialization files in ``dataset/``.
+- ``num_inference_steps``: Number of World Model generation/inference steps (default: ``5``). Fewer steps increase generation speed but may reduce visual quality. Even single-step generation can still improve performance.
 - ``reward_model.type``: Reward model class. Multiple options are supported, including ``ResnetRewModel`` and ``TaskEmbedResnetRewModel``.
+- ``reset_gripper_open``: Whether to initialize with an open gripper. Default is ``True`` for both training and evaluation; changing this is not recommended.
 
 **3. Configuration files**
 
@@ -356,6 +361,7 @@ Across Object, Spatial, and Goal suites, this totals 1500 environments
 
 Evaluation settings follow training configurations:
 for both SFT and RL-trained models, we use ``do_sample=True`` and ``temperature=1.6``.
+Also set ``reset_gripper_open=True`` so the gripper starts in the open state at reset.
 
 .. note::
 
@@ -376,10 +382,10 @@ for both SFT and RL-trained models, we use ``do_sample=True`` and ``temperature=
       - 36.7%
       - 48.2%
     * - OpenVLA-OFT (RLinf-GRPO with Wan as world model)
-      - 71.5%
+      - 77.5%
       - 77.9%
       - 60.1%
     * - **Improvement**
-      - **+10.3%**
+      - **+16.3%**
       - **+41.2%**
       - **+11.9%**
