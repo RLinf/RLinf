@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any, Callable, Optional
 
 import torch
+import yaml
 from fastapi import Request
 from sglang.srt.entrypoints import http_server as _http_server
 from sglang.srt.server_args import ServerArgs
@@ -121,7 +122,6 @@ def _apply_patch() -> None:
 
             if weight_reload == "sync":
                 placement_dict = body.get("placement", {})
-                cfg_dict = body.get("cfg", {})
                 pm = placement_dict.get("placement_mode", 1)
                 placement = SimpleNamespace(
                     rollout_dp_size=int(placement_dict.get("rollout_dp_size", 1)),
@@ -132,7 +132,12 @@ def _apply_patch() -> None:
                     rollout_world_size=int(placement_dict.get("rollout_world_size", 1)),
                     placement_mode=PlacementMode(pm) if isinstance(pm, int) else pm,
                 )
-                cfg = OmegaConf.create(cfg_dict)
+                cfg_yaml = body.get("cfg_yaml")
+                if not cfg_yaml:
+                    raise ValueError(
+                        "init_rlinf_worker requires non-empty cfg_yaml (full resolved config)."
+                    )
+                cfg = OmegaConf.create(yaml.safe_load(cfg_yaml))
                 args = (parent_address, weight_reload, placement, cfg)
             else:
                 # "cpu" 或 None：与 SGLangWorker 一致，只传 2 个参数

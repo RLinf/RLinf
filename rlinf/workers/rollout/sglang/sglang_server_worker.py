@@ -7,6 +7,7 @@ import multiprocessing as mp
 from typing import Literal, Optional
 
 import requests
+import yaml
 from omegaconf import DictConfig, OmegaConf
 
 from sglang.srt.server_args import ServerArgs
@@ -183,22 +184,11 @@ class SGLangServerWorker(Worker):
         }
 
     @staticmethod
-    def _cfg_to_minimal_dict(cfg: DictConfig) -> dict:
-        """提取 Scheduler 端真正会用到的 config 字段，避免传太多参数."""
-        actor = getattr(cfg, "actor", None)
-        rollout = getattr(cfg, "rollout", None)
-        out: dict = {}
-        if actor is not None:
-            out["actor"] = {
-                "group_name": getattr(actor, "group_name", None),
-                "training_backend": getattr(actor, "training_backend", None),
-            }
-        if rollout is not None:
-            out["rollout"] = {
-                "group_name": getattr(rollout, "group_name", None),
-                "enforce_eager": getattr(rollout, "enforce_eager", False),
-            }
-        return out
+    def _cfg_to_resolved_yaml(cfg: DictConfig) -> str:
+        data = OmegaConf.to_container(cfg, resolve=True)
+        return yaml.safe_dump(
+            data, default_flow_style=False, allow_unicode=True, sort_keys=False
+        )
 
     def sync_model_from_actor(self):
         url = self._base_url() + "/sync_hf_weight"
@@ -237,22 +227,10 @@ class SGLangServerWorker(Worker):
             "parent_worker_name": parent_address.get_name(),
             "weight_reload": weight_reload,
             "placement": self._placement_to_minimal_dict(placement),
-            "cfg": self._cfg_to_minimal_dict(cfg),
+            "cfg_yaml": self._cfg_to_resolved_yaml(cfg),
         }
-        last_err = None
-        for attempt in range(30):
-            try:
-                resp = requests.post(url, json=payload, timeout=60)
-                resp.raise_for_status()
-                break
-            except (requests.exceptions.ConnectionError, OSError) as e:
-                last_err = e
-                if attempt < 29:
-                    time.sleep(2)
-                    continue
-                raise RuntimeError(
-                    f"init_rlinf_worker HTTP failed after 30 retries: {last_err}"
-                ) from last_err
+        resp = requests.post(url, json=payload, timeout=300)
+        resp.raise_for_status()
 
     def init_worker(self, start_http_server: bool = False, ready_channels=None):
         self._ready_channels = ready_channels  # list[Channel] 或 None

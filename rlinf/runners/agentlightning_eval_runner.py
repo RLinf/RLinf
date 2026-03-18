@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Optional, Any
+from typing import Any, Optional, Union
 
 if "CUDA_LAUNCH_BLOCKING" not in os.environ:
     os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
@@ -21,6 +21,7 @@ if typing.TYPE_CHECKING:
     from rlinf.workers.actor.megatron_actor_worker import MegatronActor
     from rlinf.workers.rollout.sglang.sglang_router_worker import SGLangRouterWorker
     from rlinf.workers.rollout.sglang.sglang_server_worker import SGLangServerWorker
+    from rlinf.workers.rollout.sglang.sglang_worker_server import SGLangWorkerWithHTTPServer
 
 
 def _normalize_rollout_server_addrs(raw: Any) -> list[str]:
@@ -54,12 +55,12 @@ class AgentLightningEvalRunner:
         cfg: DictConfig,
         placement: ModelParallelComponentPlacement,
         val_dataset: Dataset,
-        rollout: Optional["SGLangServerWorker" | "SGLangWorkerWithHTTPServer"],
-        actor: Optional["MegatronActor | MAMegatronActor"],
+        rollout: Union["SGLangServerWorker", "SGLangWorkerWithHTTPServer"],
+        actor: Union["MegatronActor", "MAMegatronActor"],
         store: LightningStore,
         adapter: TraceToTripletBase,
         agentlightning_rollout_worker: AgentLightningRolloutWorker,
-        sglang_router_worker: "SGLangRouterWorker | None",
+        sglang_router_worker: Optional["SGLangRouterWorker"],
     ):
         self.cfg = cfg
         self.placement = placement
