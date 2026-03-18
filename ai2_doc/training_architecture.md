@@ -4,6 +4,8 @@ This document covers the data flow, tensor shapes, configuration reference, and
 implementation notes for the YAM PPO training pipeline. For setup and running a
 first training job, see [quickstart](quickstart.md). For network and
 infrastructure details, see [network_infrastructure](network_infrastructure.md).
+For config-specific runbooks, see [yam_ppo_openpi](yam_ppo_openpi.md) and
+[yam_ppo_openpi_topreward](yam_ppo_openpi_topreward.md).
 
 ## Supported Configs
 

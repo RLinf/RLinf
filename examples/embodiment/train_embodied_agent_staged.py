@@ -41,6 +41,13 @@ run_realworld.sh / submit_yam_training.sh):
   - ``yam_ppo_openpi``        — TOPReward only (``subtask_interval: 0``)
   - ``*topreward*``           — TOPReward + optional subtask planning
   - ``*staged*``              — subtask planning + TOPReward (legacy pattern)
+
+Optional remote-desktop simulation:
+  - Set ``env.remote_desktop_simulation.enabled: true`` when using
+    ``env_type: remote`` to have this script launch a local dummy
+    ``RobotServer`` automatically.
+  - This simulates the robot desktop input path end to end, so ``RemoteEnv``
+    still talks gRPC, but no real desktop machine or SSH tunnel is required.
 """
 
 import json
@@ -52,6 +59,10 @@ import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
 from rlinf.config import validate_cfg
+from rlinf.envs.remote.simulated_desktop import (
+    launch_simulated_desktop_server,
+    stop_process,
+)
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
@@ -217,42 +228,46 @@ def main(cfg) -> None:
     cfg = validate_cfg(cfg)
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
-    cluster = Cluster(cluster_cfg=cfg.cluster)
-    component_placement = HybridComponentPlacement(cfg, cluster)
+    simulated_desktop_server = launch_simulated_desktop_server(cfg)
+    try:
+        cluster = Cluster(cluster_cfg=cfg.cluster)
+        component_placement = HybridComponentPlacement(cfg, cluster)
 
-    # Create actor worker group (FSDP training on Beaker).
-    actor_placement = component_placement.get_strategy("actor")
-    actor_group = EmbodiedFSDPActor.create_group(cfg).launch(
-        cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
-    )
+        # Create actor worker group (FSDP training on Beaker).
+        actor_placement = component_placement.get_strategy("actor")
+        actor_group = EmbodiedFSDPActor.create_group(cfg).launch(
+            cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
+        )
 
-    # Create rollout worker group (inference).
-    rollout_placement = component_placement.get_strategy("rollout")
-    rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
-        cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
-    )
+        # Create rollout worker group (inference).
+        rollout_placement = component_placement.get_strategy("rollout")
+        rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
+            cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
+        )
 
-    # Create env worker group (direct YAMEnv or RemoteEnv per config).
-    env_placement = component_placement.get_strategy("env")
-    env_group = EnvWorker.create_group(cfg).launch(
-        cluster, name=cfg.env.group_name, placement_strategy=env_placement
-    )
+        # Create env worker group (direct YAMEnv or RemoteEnv per config).
+        env_placement = component_placement.get_strategy("env")
+        env_group = EnvWorker.create_group(cfg).launch(
+            cluster, name=cfg.env.group_name, placement_strategy=env_placement
+        )
 
-    runner = EmbodiedRunner(
-        cfg=cfg,
-        actor=actor_group,
-        rollout=rollout_group,
-        env=env_group,
-    )
+        runner = EmbodiedRunner(
+            cfg=cfg,
+            actor=actor_group,
+            rollout=rollout_group,
+            env=env_group,
+        )
 
-    runner.init_workers()
+        runner.init_workers()
 
-    # Wire the VLM planner into env workers after they have initialised.
-    vlm_actor = _launch_vlm_planner(cfg, cluster)
-    if vlm_actor is not None:
-        env_group.set_vlm_planner(vlm_actor).wait()
+        # Wire the VLM planner into env workers after they have initialised.
+        vlm_actor = _launch_vlm_planner(cfg, cluster)
+        if vlm_actor is not None:
+            env_group.set_vlm_planner(vlm_actor).wait()
 
-    runner.run()
+        runner.run()
+    finally:
+        stop_process(simulated_desktop_server)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,11 @@
 # Every Beaker job registers the Tailscale hostname "beaker-0", so the
 # tunnel automatically reconnects when a new job starts — no IP needed.
 #
+# Because Beaker jobs are ephemeral, the SSH host key behind "beaker-0" also
+# changes across preemptions / restarts.  The tunnel therefore disables
+# known_hosts persistence for this connection so stale host keys do not block
+# reverse port forwarding on the desktop.
+#
 # RemoteEnv retries the gRPC connection for grpc_connect_timeout seconds
 # (default 300s), giving the tunnel time to establish after job submission.
 #
@@ -33,6 +38,9 @@ REMOTE_HOST="beaker-0"
 REMOTE_USER="shiruic"
 NO_TUNNEL=false
 DUMMY=false
+TUNNEL_PID=""
+TUNNEL_LOG=""
+TUNNEL_LAUNCHER=""
 
 usage() {
     cat <<'EOF'
@@ -91,6 +99,50 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+start_tunnel() {
+    local ssh_args=(
+        -N
+        -R "${PORT}:localhost:${PORT}"
+        -o ServerAliveInterval=10
+        -o ServerAliveCountMax=3
+        -o ExitOnForwardFailure=yes
+        -o StrictHostKeyChecking=no
+        -o UserKnownHostsFile=/dev/null
+        -o GlobalKnownHostsFile=/dev/null
+        -o ConnectTimeout=10
+        -o BatchMode=yes
+    )
+
+    if command -v autossh &>/dev/null; then
+        TUNNEL_LAUNCHER="autossh"
+        export AUTOSSH_GATETIME=0
+        autossh -M 0 "${ssh_args[@]}" "${REMOTE_USER}@${REMOTE_HOST}" \
+            >"${TUNNEL_LOG}" 2>&1 &
+    else
+        TUNNEL_LAUNCHER="ssh"
+        echo "WARNING: autossh not found; falling back to plain ssh." | tee -a "${TUNNEL_LOG}"
+        echo "         The tunnel will work, but it will not auto-reconnect if it drops." | tee -a "${TUNNEL_LOG}"
+        ssh "${ssh_args[@]}" "${REMOTE_USER}@${REMOTE_HOST}" \
+            >>"${TUNNEL_LOG}" 2>&1 &
+    fi
+
+    TUNNEL_PID=$!
+}
+
+print_tunnel_failure_hint() {
+    echo ""
+    echo "ERROR: ${TUNNEL_LAUNCHER} (PID ${TUNNEL_PID}) died within 3 seconds."
+    echo "  Try manually:  ssh -v -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} echo ok"
+    echo "  Common causes: host unreachable, SSH key rejected, autossh not installed"
+    echo "  Tunnel log: ${TUNNEL_LOG}"
+    if [ -s "${TUNNEL_LOG}" ]; then
+        echo "  Last tunnel log lines:"
+        tail -n 20 "${TUNNEL_LOG}" | sed 's/^/    /'
+    fi
+    echo ""
+    echo "RobotServer is still running (PID ${SERVER_PID}). Tunnel is NOT active."
+}
+
 echo "=== Resetting CAN interfaces ==="
 bash YAM/yam_realtime/yam_realtime/scripts/reset_all_can.sh
 echo ""
@@ -107,80 +159,46 @@ python -m rlinf.envs.remote.robot_server "${SERVER_ARGS[@]}" &
 SERVER_PID=$!
 
 if [ "$NO_TUNNEL" = false ]; then
-    if ! command -v autossh &>/dev/null; then
-        echo "Error: autossh not found. Install with:"
-        echo "  sudo apt-get install autossh   # Ubuntu/Debian"
-        echo "  brew install autossh           # macOS"
-        exit 1
-    fi
-
+    TUNNEL_LOG=$(mktemp "/tmp/rlinf_robot_tunnel.${PORT}.XXXX.log")
     echo "=== Starting persistent reverse SSH tunnel ==="
     echo "Remote: ${REMOTE_USER}@${REMOTE_HOST}"
     echo "Tunnel: ${REMOTE_HOST}:localhost:${PORT} -> this machine:${PORT}"
+    echo "Log:    ${TUNNEL_LOG}"
     echo ""
     echo "autossh will reconnect automatically when a new Beaker job starts."
+    echo "If autossh is unavailable, the script falls back to plain ssh."
     echo "ROBOT_SERVER_URL=localhost:${PORT} is set in submit_yam_training.sh."
     echo ""
 
-    # AUTOSSH_GATETIME=0: retry forever even if SSH fails immediately (e.g.
-    # beaker-0 not reachable yet).  Default (30s) causes autossh to give up
-    # after repeated "quick failures", silently killing the tunnel.
-    export AUTOSSH_GATETIME=0
+    start_tunnel
+    echo "${TUNNEL_LAUNCHER} PID: ${TUNNEL_PID}"
 
-    # -M 0:  disable autossh's own monitoring port; rely on SSH keepalives instead
-    # -N:    no remote command, tunnel only
-    # -R:    reverse tunnel — Beaker localhost:PORT -> this machine localhost:PORT
-    # ServerAliveInterval/CountMax: SSH detects dead connection within 30s
-    # ExitOnForwardFailure: SSH exits if the tunnel can't be bound (triggers autossh retry)
-    # StrictHostKeyChecking=no: Beaker containers have a fresh host key each run
-    autossh -M 0 -N \
-        -R "${PORT}:localhost:${PORT}" \
-        -o ServerAliveInterval=10 \
-        -o ServerAliveCountMax=3 \
-        -o ExitOnForwardFailure=yes \
-        -o StrictHostKeyChecking=no \
-        -o ConnectTimeout=10 \
-        "${REMOTE_USER}@${REMOTE_HOST}" &
-    AUTOSSH_PID=$!
-    echo "autossh PID: ${AUTOSSH_PID}"
-
-    # Give autossh a moment to start, then verify it's still alive.
+    # Give the tunnel a moment to start, then verify it's still alive.
     sleep 3
-    if ! kill -0 "$AUTOSSH_PID" 2>/dev/null; then
-        echo ""
-        echo "ERROR: autossh (PID ${AUTOSSH_PID}) died within 3 seconds."
-        echo "  Try manually:  ssh -v -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} echo ok"
-        echo "  Common causes: host unreachable, SSH key rejected, autossh bug"
-        echo ""
-        echo "RobotServer is still running (PID ${SERVER_PID}). Tunnel is NOT active."
-        echo "You can start the tunnel manually with:"
-        echo "  autossh -M 0 -N -R ${PORT}:localhost:${PORT} -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${REMOTE_USER}@${REMOTE_HOST}"
+    if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
+        print_tunnel_failure_hint
     else
-        echo "autossh is running."
+        echo "${TUNNEL_LAUNCHER} is running."
         echo ""
     fi
 fi
 
-# Monitor both processes: warn if autossh dies while robot server is still up.
+# Monitor both processes: warn if the tunnel dies while robot server is still up.
 while true; do
     if ! kill -0 "$SERVER_PID" 2>/dev/null; then
         echo "RobotServer (PID ${SERVER_PID}) exited."
         break
     fi
-    if [ "$NO_TUNNEL" = false ] && [ -n "${AUTOSSH_PID:-}" ]; then
-        if ! kill -0 "$AUTOSSH_PID" 2>/dev/null; then
+    if [ "$NO_TUNNEL" = false ] && [ -n "${TUNNEL_PID:-}" ]; then
+        if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
             echo ""
-            echo "WARNING: autossh (PID ${AUTOSSH_PID}) died. Restarting tunnel..."
-            autossh -M 0 -N \
-                -R "${PORT}:localhost:${PORT}" \
-                -o ServerAliveInterval=10 \
-                -o ServerAliveCountMax=3 \
-                -o ExitOnForwardFailure=yes \
-                -o StrictHostKeyChecking=no \
-                -o ConnectTimeout=10 \
-                "${REMOTE_USER}@${REMOTE_HOST}" &
-            AUTOSSH_PID=$!
-            echo "Restarted autossh with PID ${AUTOSSH_PID}"
+            echo "WARNING: ${TUNNEL_LAUNCHER} (PID ${TUNNEL_PID}) died. Restarting tunnel..."
+            start_tunnel
+            echo "Restarted ${TUNNEL_LAUNCHER} with PID ${TUNNEL_PID}"
+            sleep 1
+            if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
+                print_tunnel_failure_hint
+            fi
         fi
     fi
     sleep 10

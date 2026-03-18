@@ -130,6 +130,18 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
+  # Optional local simulation of the robot desktop input path.
+  # When enabled, train_embodied_agent_staged.py starts a local dummy
+  # RobotServer automatically, so RemoteEnv still talks over gRPC but no
+  # separate desktop machine or reverse SSH tunnel is required.
+  #
+  # Keep env.train.remote_server_url / env.eval.remote_server_url pointed at
+  # localhost:<port> when using this mode.
+  remote_desktop_simulation:
+    enabled: False
+    dummy: True
+    env_config_path: null
+    startup_timeout: 30.0
 
   train:
     total_num_envs: 1

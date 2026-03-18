@@ -6,6 +6,8 @@ YAM experiments.
 
 For network and infrastructure details, see [network_infrastructure](network_infrastructure.md).
 For algorithm and implementation details, see [training_architecture](training_architecture.md).
+For config-specific guides, see [yam_ppo_openpi](yam_ppo_openpi.md) and
+[yam_ppo_openpi_topreward](yam_ppo_openpi_topreward.md).
 
 ## Prerequisites
 
@@ -163,3 +165,5 @@ script auto-detects the GPU count from the config name.
   setup, SSH tunnel mechanics, CAN bus, scripts reference, and troubleshooting
 - [Training architecture](training_architecture.md) — data flow, tensor shapes,
   PPO/GAE internals, Hydra config reference, and implementation notes
+- [YAM PPO + TOPReward config guide](yam_ppo_openpi.md)
+- [YAM PPO + TOPReward + subtask planning guide](yam_ppo_openpi_topreward.md)
