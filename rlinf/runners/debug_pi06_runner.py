@@ -191,6 +191,9 @@ class DebugPi06Runner:
                         self.metric_logger.log(data=eval_metrics, step=_step)
                         self._check_and_save_best(eval_metrics, step=_step)
 
+                # Update global step on actor (triggers epoch-based iterator reset)
+                self.actor.set_global_step(self.global_step)
+
                 # Single training step
                 with self.timer("actor_training"):
                     actor_training_metrics = self.actor.run_training().wait()
