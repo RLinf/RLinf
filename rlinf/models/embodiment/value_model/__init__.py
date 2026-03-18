@@ -96,6 +96,18 @@ def get_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticModel:
     model_path = getattr(cfg, "model_path", None)
     backbone_variant = getattr(cfg, "backbone_variant", "paligemma")
 
+    # Resolve model_path to the best available weights file/dir
+    if model_path is not None:
+        full_weights_path = os.path.join(
+            model_path, "model_state_dict", "full_weights.pt"
+        )
+        actor_full_weights_path = os.path.join(
+            model_path, "actor", "model_state_dict", "full_weights.pt"
+        )
+        if os.path.exists(full_weights_path):
+            model_path = full_weights_path
+        elif os.path.exists(actor_full_weights_path):
+            model_path = actor_full_weights_path
     if backbone_variant == "paligemma":
         # PaliGemma: all weights come from a single checkpoint (e.g. PI05)
         if model_path is None or not os.path.exists(model_path):
