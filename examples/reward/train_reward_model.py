@@ -17,8 +17,10 @@
 Usage:
     python examples/reward/train_reward_model.py
 
-    # Or with custom config
-    python examples/reward/train_reward_model.py data.data_path=/path/to/data
+    # Or with custom preprocessed split paths
+    python examples/reward/train_reward_model.py \
+        data.train_data_path=/path/to/train.pt \
+        data.val_data_path=/path/to/val.pt
 """
 
 import json
@@ -28,7 +30,7 @@ import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
 from rlinf.config import validate_cfg
-from rlinf.runners.reward_training_runner import RewardTrainingRunner
+from rlinf.runners.sft_runner import SFTRunner
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.reward.reward_worker import FSDPRewardWorker
@@ -55,8 +57,8 @@ def main(cfg) -> None:
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
     )
 
-    # Use RewardTrainingRunner with early stopping support
-    runner = RewardTrainingRunner(
+    # Use SFTRunner for reward model training.
+    runner = SFTRunner(
         cfg=cfg,
         actor=actor_group,
     )

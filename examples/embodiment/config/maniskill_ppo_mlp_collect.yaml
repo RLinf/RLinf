@@ -32,7 +32,7 @@ runner:
 
   only_eval: False
   eval_policy_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
-  val_check_interval: 25
+  val_check_interval: 50
   save_interval: -1
 
   resume_dir: null
@@ -121,7 +121,7 @@ env:
       enabled: True
       save_dir: ${runner.logger.log_path}/collected_data
       export_format: "pickle"
-      only_success: False       # set True to discard failed episodes
+      only_success: True       # set True to discard failed episodes
 
     # ── lerobot format ───────────────────────────────────────
     # data_collection:
