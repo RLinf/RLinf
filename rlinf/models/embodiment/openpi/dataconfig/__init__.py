@@ -50,6 +50,9 @@ from rlinf.models.embodiment.openpi.dataconfig.maniskill_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.metaworld_dataconfig import (
     LeRobotMetaworldDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.realworld_pnp_dataconfig import (
+    LeRobotRealworldPnPDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
     LeRobotRobocasaDataConfig,
 )
@@ -303,7 +306,28 @@ _CONFIGS = [
             ),  # we need language instruction
             assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base/assets"),
             extra_delta_transform=False,  # True for delta action, False for abs_action
-            action_train_with_rotation_6d=False,  # User can add extra config in custom dataset
+            action_train_with_rotation_6d=False,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_base",
+    ),
+    TrainConfig(
+        name="pi0_realworld_pnp",
+        model=pi0_config.Pi0Config(action_horizon=10),
+        data=LeRobotRealworldPnPDataConfig(
+            repo_id="realworld_pnp",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base/assets"),
+            extra_delta_transform=True,  # True: training data is already delta, skip DeltaActions/AbsoluteActions
+            state_indices=(4, 5, 6, 7, 8, 9, 0),
+            extra_image_keys=("extra_image_0", "extra_image_1"),
+            pi0_slot_keys=(
+                "observation/extra_image_0",
+                "observation/image",
+                "observation/extra_image_1",
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi0_base/params"
         ),
         pytorch_weight_path="checkpoints/torch/pi0_base",
     ),
