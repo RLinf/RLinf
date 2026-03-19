@@ -157,11 +157,9 @@ def test_realworld_inputs_select_state_and_unpack_extra_views(openpi_runtime):
         }
     )
 
-    assert openpi_runtime.torch.equal(
-        outputs["state"],
-        openpi_runtime.torch.tensor(
-            [4, 5, 6, 7, 8, 9, 0], dtype=openpi_runtime.torch.float32
-        ),
+    assert np.array_equal(
+        np.asarray(outputs["state"]),
+        np.array([4, 5, 6, 7, 8, 9, 0], dtype=np.float32),
     )
     assert np.array_equal(outputs["image"]["base_0_rgb"], extra0)
     assert np.array_equal(outputs["image"]["left_wrist_0_rgb"], main)
@@ -258,11 +256,9 @@ def test_realworld_inputs_supports_sparse_slot_mapping_and_bytes_prompt(openpi_r
     )
 
     assert outputs["state"].shape[-1] == 10
-    assert openpi_runtime.torch.equal(
-        outputs["state"][..., :7],
-        openpi_runtime.torch.tensor(
-            [0, 1, 2, 3, 4, 5, 6], dtype=openpi_runtime.torch.float32
-        ),
+    assert np.array_equal(
+        np.asarray(outputs["state"])[..., :7],
+        np.array([0, 1, 2, 3, 4, 5, 6], dtype=np.float32),
     )
     assert np.array_equal(outputs["image"]["left_wrist_0_rgb"], main)
     assert np.array_equal(outputs["image"]["base_0_rgb"], np.zeros_like(main))
