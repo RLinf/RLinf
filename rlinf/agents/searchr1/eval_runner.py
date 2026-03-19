@@ -235,7 +235,7 @@ class Searchr1AgentEvalRunner(AgentEvalRunner):
         # Update progress bar with current metrics
         total_correct = context["total_correct"]
         total_samples = context["total_samples"]
-        batch_accuracy = context['batch_accuracy']
+        batch_accuracy = context["batch_accuracy"]
         current_accuracy = total_correct / total_samples if total_samples > 0 else 0.0
         eval_pbar.set_postfix(
             {
