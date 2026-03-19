@@ -413,7 +413,6 @@ class CMAPolicy(nn.Module, BasePolicy):
 
         self.rnn_states = None
         self.prev_actions = None
-        self.not_done_masks = None
         self.prev_episode_id = None
         self.action_map = {
             0: "stop",
@@ -540,19 +539,6 @@ class CMAPolicy(nn.Module, BasePolicy):
             processed_env_obs["states"] = env_obs["states"].clone().to(device)
         return processed_env_obs
 
-    def reset_latent_state(self, batch_size, device):
-        self.rnn_states = torch.zeros(
-            batch_size,
-            self.policy.net.state_encoder.num_recurrent_layers
-            + self.policy.net.second_state_encoder.num_recurrent_layers,
-            self.cfg.hidden_size,
-            device=device,
-        )
-        self.prev_actions = torch.zeros(batch_size, 1, device=device, dtype=torch.long)
-        self.not_done_masks = torch.ones(
-            batch_size, 1, device=device, dtype=torch.uint8
-        )
-
     def predict_action_batch(
         self,
         env_obs,
@@ -563,49 +549,53 @@ class CMAPolicy(nn.Module, BasePolicy):
         batch_size = env_obs["rgb"].shape[0]
         device = env_obs["rgb"].device
         current_episode_ids = env_obs["states"]
-        if self.prev_episode_id is None:
+
+        is_first_step = self.prev_episode_id is None
+        if is_first_step:
             self.prev_episode_id = current_episode_ids.clone()
-            self.reset_latent_state(batch_size, device)
+            self.rnn_states = torch.zeros(
+                batch_size,
+                self.policy.net.state_encoder.num_recurrent_layers
+                + self.policy.net.second_state_encoder.num_recurrent_layers,
+                self.cfg.hidden_size,
+                device=device,
+            )
+            self.prev_actions = torch.zeros(batch_size, 1, device=device, dtype=torch.long)
+            step_masks = torch.zeros_like(self.prev_actions, dtype=torch.uint8)
         else:
+            step_masks = torch.ones_like(self.prev_actions, dtype=torch.uint8)
             reset_mask = current_episode_ids != self.prev_episode_id
             if reset_mask.any():
                 self.rnn_states[reset_mask] = 0
                 self.prev_actions[reset_mask] = 0
+                step_masks[reset_mask] = 0
                 self.prev_episode_id[reset_mask] = current_episode_ids[reset_mask]
 
         features, rnn_states = self.policy.net(
-            env_obs, self.rnn_states, self.prev_actions, self.not_done_masks
+            env_obs, self.rnn_states, self.prev_actions, step_masks
         )
         distribution = self.policy.action_distribution(features)
-
         action = distribution.mode()
-        logprobs = distribution.log_prob(action)
-
-        forward_inputs = {
-            "action": action,
-            "pre_rnn_states": self.rnn_states,
-            "env_obs_rgb": env_obs["rgb"],
-            "env_obs_depth": env_obs["depth"],
-            "env_obs_instruction": env_obs["instruction"],
-            "env_obs_states": env_obs["states"],
-            "masks": self.not_done_masks,
-            "prev_actions": self.prev_actions,
-        }
-
+        prev_logprobs = distribution.log_prob(action)
         self.rnn_states, self.prev_actions = rnn_states, action
+
         chunk_actions = []
         for i in range(batch_size):
             chunk_actions.append(
                 [self.action_map[a.item()] for a in action[i].cpu().numpy()]
             )
         chunk_actions = np.array(chunk_actions)
+
         if hasattr(self, "value_head"):
             chunk_values = self.value_head(features)
         else:
-            chunk_values = torch.zeros_like(logprobs[..., :1])
+            chunk_values = torch.zeros_like(prev_logprobs[..., :1])
+
+        forward_inputs = {
+        }
 
         result = {
-            "prev_logprobs": logprobs,
+            "prev_logprobs": prev_logprobs,
             "prev_values": chunk_values,
             "forward_inputs": forward_inputs,
         }
@@ -634,40 +624,7 @@ class CMAPolicy(nn.Module, BasePolicy):
         compute_values=True,
         **kwargs,
     ):
-        pre_rnn_states = forward_inputs["pre_rnn_states"]
-        env_obs = {}
-        env_obs["rgb"] = forward_inputs["env_obs_rgb"]
-        env_obs["depth"] = forward_inputs["env_obs_depth"]
-        env_obs["instruction"] = forward_inputs["env_obs_instruction"]
-        env_obs["states"] = forward_inputs["env_obs_states"]
-        masks = forward_inputs["masks"]
-        prev_actions = forward_inputs["prev_actions"]
-
-        features, rnn_states = self.policy.net(
-            env_obs, pre_rnn_states, prev_actions, masks
-        )
-
-        distribution = self.policy.action_distribution(features)
-
-        output_dict = {}
-
-        if compute_logprobs:
-            action = forward_inputs["action"]
-            logprobs = distribution.log_prob(action)
-            output_dict.update(logprobs=logprobs)
-
-        if compute_entropy:
-            entropy = distribution.entropy()
-            output_dict.update(entropy=entropy)
-
-        if compute_values:
-            if getattr(self, "value_head", None):
-                values = self.value_head(features)
-                output_dict.update(values=values)
-            else:
-                raise NotImplementedError
-
-        return output_dict
+        pass
 
     def sac_forward(self, obs, **kwargs):
         raise NotImplementedError
