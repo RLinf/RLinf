@@ -33,6 +33,7 @@ from rlinf.envs.wrappers import RecordVideo
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.comm_mapping import CommMapper
 from rlinf.utils.metric_utils import compute_split_num
+from rlinf.utils.nested_dict_process import update_nested_cfg
 from rlinf.utils.placement import HybridComponentPlacement
 
 
@@ -141,8 +142,11 @@ class EnvWorker(Worker):
             override_cfg = OmegaConf.to_container(
                 train_override_cfgs[self._rank], resolve=True
             ).copy()
-            override_cfg.update(general_train_override_cfg)
-            setattr(self.cfg.env.train, "override_cfg", override_cfg)
+
+            base_cfg = {}
+            base_cfg = update_nested_cfg(base_cfg, general_train_override_cfg)
+            base_cfg = update_nested_cfg(base_cfg, override_cfg)
+            setattr(self.cfg.env.train, "override_cfg", OmegaConf.create(base_cfg))
 
         eval_override_cfgs = self.cfg.env.eval.get("override_cfgs", None)
         if eval_override_cfgs is not None:
@@ -152,8 +156,10 @@ class EnvWorker(Worker):
             eval_override_cfg = OmegaConf.to_container(
                 eval_override_cfgs[self._rank], resolve=True
             ).copy()
-            eval_override_cfg.update(general_eval_override_cfg)
-            setattr(self.cfg.env.eval, "override_cfg", override_cfg)
+            base_eval_cfg = {}
+            base_eval_cfg = update_nested_cfg(base_eval_cfg, general_eval_override_cfg)
+            base_eval_cfg = update_nested_cfg(base_eval_cfg, eval_override_cfg)
+            setattr(self.cfg.env.eval, "override_cfg", OmegaConf.create(base_eval_cfg))
 
     def _setup_env_and_wrappers(self, env_cls, env_cfg, num_envs_per_stage: int):
         env_list = []
