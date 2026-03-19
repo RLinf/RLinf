@@ -81,8 +81,10 @@ jobs:
             embodied_filter: &embodied
               - *shared
               - 'rlinf/workers/actor/async_ppo_fsdp_worker.py'
+              - 'rlinf/workers/actor/async_fsdp_dagger_policy_worker.py'
               - 'rlinf/envs/**'
               - 'rlinf/workers/actor/async_fsdp_sac_policy_worker.py'
+              - 'rlinf/workers/actor/fsdp_dagger_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_sac_policy_worker.py'
               - 'rlinf/workers/env/**'
               - 'rlinf/workers/rollout/hf/**'
