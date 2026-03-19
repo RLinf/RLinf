@@ -39,9 +39,8 @@ from rlinf.scheduler.dynamic_scheduler.utils import (
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.workers.rollout.sglang import Engine, io_struct
 from rlinf.workers.rollout.utils import (
-    CollocateRankMapper,
-    DisaggRankMapper,
     MetaInfoStatsCollector,
+    RankMapper,
     RolloutEngineStats,
     RunningStatusManager,
     print_sglang_outputs,
@@ -116,20 +115,7 @@ class SGLangWorker(Worker):
 
     def _setup_rollout_weight_dst_ranks(self):
         """Setup destination ranks for token and weight communication."""
-        assert self._placement.placement_mode == PlacementMode.COLLOCATED
-        if not self.use_fixed_rollout_worker:
-            rank_mapper = CollocateRankMapper
-
-        else:
-            rank_mapper = DisaggRankMapper
-
-        rank_map = rank_mapper.get_actor_rank_to_rollout_rank_map(
-            self._placement.actor_tp_size,
-            self._placement.actor_pp_size,
-            self._placement.actor_world_size,
-            self._placement.rollout_tp_size,
-            self._placement.rollout_world_size,
-        )
+        rank_map = RankMapper.get_actor_rank_to_rollout_rank_map(self._placement)
         self._weight_dst_rank_in_rollout = rank_map[self._rank]
         self.log_info(
             f"Actor rank {self._rank} will send weights to {self._weight_dst_rank_in_rollout}"

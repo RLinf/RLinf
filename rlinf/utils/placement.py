@@ -32,6 +32,13 @@ class PlacementMode(Enum):
     AUTO = auto()
 
 
+class RolloutSyncMode(Enum):
+    COLLOCATED = auto()
+    DISAGGREGATED = auto()
+    HYBRID = auto()
+    AUTO = auto()
+
+
 class HybridComponentPlacement(ComponentPlacement):
     """Hybrid component placement that allows components to run on any sets of GPUs."""
 
@@ -43,6 +50,7 @@ class HybridComponentPlacement(ComponentPlacement):
         """
         super().__init__(config, cluster)
         self._placement_mode = PlacementMode.HYBRID
+        self._rollout_sync_mode = RolloutSyncMode.HYBRID
 
 
 class ModelParallelComponentPlacement(ComponentPlacement):
@@ -153,7 +161,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             raise ValueError(
                 f"The specified placement does not match either the collocated mode (all the components use the same GPUs) or the disaggregated mode (all the components use completely different GPUs), but got {self._component_rank_map}"
             )
-
+        self._rollout_sync_mode = self._placement_mode
         # Sanity checking
         assert self.actor_tp_size <= self.actor_world_size, (
             f"Actor TP size {self.actor_tp_size} must be less than or equal to Actor world size {self.actor_world_size}."
@@ -534,7 +542,7 @@ class ModelParallelEvalComponentPlacement(ComponentPlacement):
         self._reward_num_gpus = len(self._reward_gpus) if self._reward_gpus else 0
 
         self._placement_mode = PlacementMode.COLLOCATED
-
+        self._rollout_sync_mode = self._placement_mode
         # Sanity checking
         assert self.rollout_tp_size <= self.rollout_world_size, (
             f"Rollout TP size {self.rollout_tp_size} must be less than or equal to Rollout world size {self.rollout_world_size}."
@@ -622,8 +630,10 @@ class MultiAgentModelParallelComponentPlacement(ModelParallelComponentPlacement)
         self._cfg = config
         super().__init__(config, cluster)
         if self._is_collocated_multiagent():
+            self._rollout_sync_mode = RolloutSyncMode.DISAGGREGATED
             self.use_fixed_rollout_worker = True
         else:
+            self._rollout_sync_mode = self._placement_mode
             self.use_fixed_rollout_worker = False
         self._validate_resource_coverage()
 
@@ -632,7 +642,7 @@ class MultiAgentModelParallelComponentPlacement(ModelParallelComponentPlacement)
         if super()._is_collocated():
             return True
         # Check if the placement is collocated for multi-agent scenario
-        self._is_collocated_multiagent()
+        return self._is_collocated_multiagent()
 
     def _is_collocated_multiagent(self):
         """Check if the placement is collocated for multi-agent scenario.
