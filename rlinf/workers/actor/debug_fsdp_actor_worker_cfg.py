@@ -48,7 +48,7 @@ from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.models import get_model
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.distributed import all_reduce_dict
-from rlinf.utils.utils import clear_memory
+from rlinf.utils.utils import clear_memory, seed_dataloader_worker, seed_everything
 from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.cfg.utils import (
@@ -88,8 +88,20 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
             return model
         return super().model_provider_func()
 
+    def _seed_worker_process(self) -> int:
+        """Seed RNG state for this actor worker process."""
+        actor_seed = int(self.cfg.actor.get("seed", 42))
+        worker_seed = actor_seed + int(self._rank)
+        seed_everything(worker_seed)
+        self.log_info(
+            "Initialized debug CFG actor RNG "
+            f"with seed={worker_seed} (base={actor_seed}, rank={self._rank})"
+        )
+        return worker_seed
+
     def init_worker(self) -> None:
         """Initialize the actor worker."""
+        self._worker_seed = self._seed_worker_process()
         self.setup_model_and_optimizer()
 
         if self.enable_offload:
@@ -393,6 +405,9 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
         """Create PyTorch DataLoader with distributed sampler."""
         batch_size = config.batch_size
         sampler = None
+        actor_seed = int(self.cfg.actor.get("seed", 42))
+        data_loader_generator = torch.Generator()
+        data_loader_generator.manual_seed(actor_seed + int(self._rank))
 
         if torch.distributed.is_initialized():
             sampler = torch.utils.data.distributed.DistributedSampler(
@@ -401,6 +416,7 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
                 rank=self._rank,
                 shuffle=shuffle,
                 drop_last=True,
+                seed=actor_seed,
             )
             local_batch_size = batch_size // self._world_size
         else:
@@ -419,6 +435,8 @@ class DebugCFGFSDPActor(FSDPModelManager, Worker):
             pin_memory=True,
             prefetch_factor=4 if num_workers > 0 else None,
             persistent_workers=num_workers > 0,
+            worker_init_fn=seed_dataloader_worker if num_workers > 0 else None,
+            generator=data_loader_generator,
         )
 
     # =========================================================================
