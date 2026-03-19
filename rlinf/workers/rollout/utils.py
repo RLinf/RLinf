@@ -143,7 +143,6 @@ class RankMapper:
             PlacementMode.DISAGGREGATED,
             PlacementMode.AUTO,
             RolloutSyncMode.DISAGGREGATED,
-            RolloutSyncMode.AUTO,
         ]:
             return DisaggRankMapper
         else:

@@ -26,6 +26,15 @@ from rlinf.scheduler import (
 
 
 class PlacementMode(Enum):
+    """
+    Component placement mode represents the way to place components on GPUs.
+
+    COLLOCATED: All components share the same set of GPUs.
+    DISAGGREGATED: Each component has its own dedicated set of GPUs.
+    HYBRID: Hybrid placement mode that allows components to run on any sets of GPUs.
+    AUTO: Automatically choose the placement mode based on the component placement.
+    """
+
     COLLOCATED = auto()
     DISAGGREGATED = auto()
     HYBRID = auto()
@@ -33,10 +42,35 @@ class PlacementMode(Enum):
 
 
 class RolloutSyncMode(Enum):
+    """
+    Rollout sync mode represents the way to sync rollout model weights.
+
+    COLLOCATED: Sync rollout model weights to all rollout GPUs.
+    DISAGGREGATED: Sync rollout model weights to each individual rollout GPU group.
+    """
+
     COLLOCATED = auto()
     DISAGGREGATED = auto()
-    HYBRID = auto()
-    AUTO = auto()
+
+
+def placement_mode_to_rollout_sync_mode(
+    placement_mode: PlacementMode,
+) -> RolloutSyncMode:
+    """Map placement mode to rollout sync mode in general cases.
+
+    In special scenarios, the rollout sync mode is not the same as the placement mode. Thus, rollout sync mode should assigned separately, do not use this function in such scenarios.
+
+    Args:
+        placement_mode (PlacementMode): The placement mode.
+
+    Returns:
+        RolloutSyncMode: The corresponding rollout sync mode.
+    """
+    return (
+        RolloutSyncMode.COLLOCATED
+        if placement_mode == PlacementMode.COLLOCATED
+        else RolloutSyncMode.DISAGGREGATED
+    )
 
 
 class HybridComponentPlacement(ComponentPlacement):
@@ -50,7 +84,6 @@ class HybridComponentPlacement(ComponentPlacement):
         """
         super().__init__(config, cluster)
         self._placement_mode = PlacementMode.HYBRID
-        self._rollout_sync_mode = RolloutSyncMode.HYBRID
 
 
 class ModelParallelComponentPlacement(ComponentPlacement):
@@ -161,7 +194,9 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             raise ValueError(
                 f"The specified placement does not match either the collocated mode (all the components use the same GPUs) or the disaggregated mode (all the components use completely different GPUs), but got {self._component_rank_map}"
             )
-        self._rollout_sync_mode = self._placement_mode
+        self._rollout_sync_mode = placement_mode_to_rollout_sync_mode(
+            self._placement_mode
+        )
         # Sanity checking
         assert self.actor_tp_size <= self.actor_world_size, (
             f"Actor TP size {self.actor_tp_size} must be less than or equal to Actor world size {self.actor_world_size}."
@@ -542,7 +577,9 @@ class ModelParallelEvalComponentPlacement(ComponentPlacement):
         self._reward_num_gpus = len(self._reward_gpus) if self._reward_gpus else 0
 
         self._placement_mode = PlacementMode.COLLOCATED
-        self._rollout_sync_mode = self._placement_mode
+        self._rollout_sync_mode = placement_mode_to_rollout_sync_mode(
+            self._placement_mode
+        )
         # Sanity checking
         assert self.rollout_tp_size <= self.rollout_world_size, (
             f"Rollout TP size {self.rollout_tp_size} must be less than or equal to Rollout world size {self.rollout_world_size}."
@@ -629,28 +666,30 @@ class MultiAgentModelParallelComponentPlacement(ModelParallelComponentPlacement)
         """
         self._cfg = config
         super().__init__(config, cluster)
-        if self._is_collocated_multiagent():
+        if self._is_collocated_multi_engine():
             self._rollout_sync_mode = RolloutSyncMode.DISAGGREGATED
-            self.use_fixed_rollout_worker = True
         else:
-            self._rollout_sync_mode = self._placement_mode
-            self.use_fixed_rollout_worker = False
+            self._rollout_sync_mode = placement_mode_to_rollout_sync_mode(
+                self._placement_mode
+            )
         self._validate_resource_coverage()
 
     def _is_collocated(self):
-        # Check if the placement is collocated for single-agent scenario
+        """Check if the placement is collocated for multi-engine scenario.
+        This method will override the default behavior of _is_collocated method in ModelParallelComponentPlacement.
+        """
+        # Check if the placement is collocated for single-engine scenario
         if super()._is_collocated():
             return True
-        # Check if the placement is collocated for multi-agent scenario
-        return self._is_collocated_multiagent()
+        # Check if the placement is collocated for multi-engine scenario
+        return self._is_collocated_multi_engine()
 
-    def _is_collocated_multiagent(self):
-        """Check if the placement is collocated for multi-agent scenario.
+    def _is_collocated_multi_engine(self):
+        """Check if the placement is collocated for multi-engine scenario.
 
-        This method checks if the placement is collocated for multi-agent scenario.
-        This method will override the default behavior of _is_collocated method in ModelParallelComponentPlacement.
+        This method checks if the placement is collocated for multi-engine scenario.
 
-        In multi-agent scenario, we consider it collocated if:
+        In multi-engine scenario, we consider it collocated if:
         1. actor and reward are placed on all GPUs
         2. rollout components are distributed across different GPU ranges
         3. all rollout components' GPUs are subsets of actor/reward's GPUs

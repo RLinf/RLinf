@@ -30,7 +30,11 @@ from sglang.srt.managers.scheduler import (
 )
 
 from rlinf.scheduler import Worker, WorkerAddress
-from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
+from rlinf.utils.placement import (
+    ModelParallelComponentPlacement,
+    PlacementMode,
+    RolloutSyncMode,
+)
 from rlinf.workers.rollout.utils import (
     RankMapper,
 )
@@ -111,9 +115,12 @@ class Scheduler(_Scheduler):
             "only sglang with 'sync' can run 'batch_load_hf_weight'"
         )
         model = self.tp_worker.worker.model_runner.model
-        colocate = self.placement_mode == PlacementMode.COLLOCATED
+        placement_mode_collocated = self.placement_mode == PlacementMode.COLLOCATED
+        rollout_sync_mode_collocated = (
+            self.rollout_sync_mode == RolloutSyncMode.COLLOCATED
+        )
         batch_weight = []
-        if colocate and not self.placement_use_fixed_rollout_worker:
+        if placement_mode_collocated and rollout_sync_mode_collocated:
             for name, handle in state_dict.items():
                 func, args = handle
                 list_args = list(args)
@@ -240,7 +247,7 @@ class Scheduler(_Scheduler):
             self.cfg = config
             self._actor_group_name = self.cfg.actor.group_name
             self.placement_mode = placement.placement_mode
-            self.placement_use_fixed_rollout_worker = placement.use_fixed_rollout_worker
+            self.rollout_sync_mode = placement._rollout_sync_mode
             self.actor_weight_rank = RankMapper.get_rollout_rank_to_actor_rank_map(
                 placement
             )[(self._rlinf_worker.get_parent_rank(), self._rlinf_worker._rank)]

@@ -49,7 +49,11 @@ from rlinf.utils.distributed import (
     vocab_parallel_entropy_and_log_probs,
     vocab_parallel_log_probs_from_logits,
 )
-from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
+from rlinf.utils.placement import (
+    ModelParallelComponentPlacement,
+    PlacementMode,
+    RolloutSyncMode,
+)
 from rlinf.utils.utils import (
     clear_memory,
     configure_batch_sizes,
@@ -76,7 +80,9 @@ class MAMegatronActor(MegatronActor):
             "enable_dp_load_balance must be True when is_dynamic_rollout_batch is True"
         )
         self.placement = placement
-        self.use_fixed_rollout_worker = self.placement.use_fixed_rollout_worker
+        self.use_fixed_rollout_worker = (
+            self.placement._rollout_sync_mode == RolloutSyncMode.DISAGGREGATED
+        )
         assert self.placement_mode == PlacementMode.COLLOCATED, (
             "Only collocated placement is supported for multi-agent actor"
         )
