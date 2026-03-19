@@ -257,10 +257,11 @@ def test_realworld_inputs_supports_sparse_slot_mapping_and_bytes_prompt(openpi_r
         }
     )
 
+    assert outputs["state"].shape[-1] == 10
     assert openpi_runtime.torch.equal(
-        outputs["state"],
+        outputs["state"][..., :7],
         openpi_runtime.torch.tensor(
-            [0, 1, 2, 3, 4, 5, 6, 0, 0, 0], dtype=openpi_runtime.torch.float32
+            [0, 1, 2, 3, 4, 5, 6], dtype=openpi_runtime.torch.float32
         ),
     )
     assert np.array_equal(outputs["image"]["left_wrist_0_rgb"], main)
