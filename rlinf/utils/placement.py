@@ -577,9 +577,7 @@ class ModelParallelEvalComponentPlacement(ComponentPlacement):
         self._reward_num_gpus = len(self._reward_gpus) if self._reward_gpus else 0
 
         self._placement_mode = PlacementMode.COLLOCATED
-        self._rollout_sync_mode = placement_mode_to_rollout_sync_mode(
-            self._placement_mode
-        )
+
         # Sanity checking
         assert self.rollout_tp_size <= self.rollout_world_size, (
             f"Rollout TP size {self.rollout_tp_size} must be less than or equal to Rollout world size {self.rollout_world_size}."
@@ -666,25 +664,29 @@ class MultiAgentModelParallelComponentPlacement(ModelParallelComponentPlacement)
         """
         self._cfg = config
         super().__init__(config, cluster)
-        if self._is_collocated_multi_engine():
+        self._validate_collocated_placement()
+        self._validate_resource_coverage()
+        if not self._is_single_engine_placement():
+            # use disaggregated rollout sync mode for multi-engine scenario
             self._rollout_sync_mode = RolloutSyncMode.DISAGGREGATED
         else:
+            # use collocated rollout sync mode for single-engine scenario
             self._rollout_sync_mode = placement_mode_to_rollout_sync_mode(
                 self._placement_mode
             )
-        self._validate_resource_coverage()
 
     def _is_collocated(self):
         """Check if the placement is collocated for multi-engine scenario.
         This method will override the default behavior of _is_collocated method in ModelParallelComponentPlacement.
         """
-        # Check if the placement is collocated for single-engine scenario
-        if super()._is_collocated():
-            return True
-        # Check if the placement is collocated for multi-engine scenario
-        return self._is_collocated_multi_engine()
+        return True
 
-    def _is_collocated_multi_engine(self):
+    def _is_single_engine_placement(self):
+        if self._actor_gpus == self._rollout_gpus:
+            return True
+        return False
+
+    def _validate_collocated_placement(self):
         """Check if the placement is collocated for multi-engine scenario.
 
         This method checks if the placement is collocated for multi-engine scenario.
@@ -716,15 +718,13 @@ class MultiAgentModelParallelComponentPlacement(ModelParallelComponentPlacement)
         all_rollout_gpus = set()
         for component in rollout_components:
             component_gpus = set(self._get_component_hardware(component))
-            assert component_gpus.issubset(actor_gpus), (
-                f"Rollout component '{component}' must be placed on actor's GPUs during multi-agent scenario."
-            )
+            if not component_gpus.issubset(actor_gpus):
+                return False
             all_rollout_gpus.update(component_gpus)
 
         # Check if rollout components cover all actor's GPUs
-        assert all_rollout_gpus == actor_gpus, (
-            "Rollout components must cover all actor's GPUs during multi-agent scenario."
-        )
+        if all_rollout_gpus != actor_gpus:
+            return False
         return True
 
     def _validate_resource_coverage(self):
