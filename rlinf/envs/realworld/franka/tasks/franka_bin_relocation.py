@@ -26,12 +26,12 @@ from ..franka_env import FrankaEnv, FrankaRobotConfig
 
 @dataclass
 class BinEnvConfig(FrankaRobotConfig):
-    random_xy_range: float = 0.03  # for randomization
+    random_xy_range: float = 0.01  # for randomization
     clip_x_range: float = 0.10  # for bounding box
     clip_y_range: float = 0.15  # for bounding box
     clip_z_range_high: float = 0.1
     clip_z_range_low: float = 0.001
-    random_rz_range: float = np.pi / 8  # for random reset
+    random_rz_range: float = np.pi / 9  # for random reset
     clip_rz_range: float = np.pi / 6  # for bounding box
     enable_random_reset: bool = True
 
@@ -42,7 +42,7 @@ class BinEnvConfig(FrankaRobotConfig):
 
     def __post_init__(self):
         self.compliance_param = {
-            "translational_stiffness": 2000,
+            "translational_stiffness": 2800,
             "translational_damping": 89,
             "rotational_stiffness": 150,
             "rotational_damping": 7,
@@ -86,7 +86,7 @@ class BinEnvConfig(FrankaRobotConfig):
             [0.0, 0.0, self.clip_z_range_high, 0.0, 0.0, 0.0]
         )
         self.reward_threshold = np.array(self.reward_threshold)
-        self.action_scale = np.array([0.03, 0.1, 1])
+        self.action_scale = np.array([0.04, 0.1, 1])
         self.ee_pose_limit_min = np.array(
             [
                 self.target_ee_pose[0] - self.clip_x_range,
