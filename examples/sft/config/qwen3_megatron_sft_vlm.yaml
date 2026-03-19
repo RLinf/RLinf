@@ -1,0 +1,179 @@
+defaults:
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: rlinf
+    experiment_name: ${runner.experiment_name}
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  # sft runner use the len(dataset) as one epoch
+  max_epochs: 6000
+  max_steps: -1
+  # eval the model intenval
+  val_check_interval: 1000
+  # save the model interval
+  save_interval: 1000
+  experiment_name: qwen3_vl_megatron_sft
+  output_dir: ../results
+  resume_dir: null
+
+data:
+  type: vlm
+  dataset_name: "robo2vlmsft"
+  apply_chat_template: True
+  use_chat_template: True
+  # if train_data_paths is not None, the sft code will just eval the model
+  train_data_paths: "/mnt/public/new_fuxu/Robo2VLM-1/eval_data"
+  eval_data_paths: "/mnt/public/new_fuxu/Robo2VLM-1/eval_data"
+  prompt_key: "question"
+  choice_key: "choices"
+  answer_key: "correct_answer"
+  image_keys: ["image"]
+  max_prompt_length: 1024
+  lazy_loading: false
+  num_workers: 16
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: megatron
+  mcore_gpt: True
+  spec_name: decoder_gpt
+
+  enable_dp_load_balance: False
+  calculate_flops: False
+
+  micro_batch_size: 4
+  eval_batch_size: 4
+  global_batch_size: 256
+  seed: 42
+
+  model:
+    megatron_checkpoint: null
+    precision: bf16
+    add_bias_linear: False
+
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 1
+    # expert_model_parallel_size: 8
+    # expert_tensor_parallel_size: 1
+    # moe_grouped_gemm: te # grouped_gemm type, avail in [null, te]. null means do not use grouped_gemm
+
+    model_type: "qwen3_vl"
+    model_path: "/mnt/public/new_fuxu/Qwen3-VL-4B-Instruct"
+    is_lora: False
+  
+    activation: swiglu
+    sequence_parallel: True
+    # recompute_method: block
+    # recompute_granularity: selective
+
+    # recompute_method: uniform
+    # recompute_granularity: full
+    # recompute_num_layers: 1
+
+    seq_length: 1024
+    encoder_seq_length: ${actor.model.seq_length}
+
+    normalization: rmsnorm
+
+    position_embedding_type: rope
+
+    apply_rope_fusion: True
+    bias_dropout_fusion: False
+    persist_layer_norm: False
+    bias_activation_fusion: True
+    attention_softmax_in_fp32: True
+    batch_p2p_comm: False
+    variable_seq_lengths: True
+    gradient_accumulation_fusion: True
+    moe_token_dispatcher_type: alltoall
+    use_cpu_initialization: False
+
+    # MoE related
+    # moe_router_load_balancing_type: "aux_loss"
+    # init_method_std: 0.008
+    # moe_router_topk: 2
+    # moe_router_pre_softmax: False
+    # moe_aux_loss_coeff: 0.0
+
+  optim:
+    optimizer: adam
+    bf16: True
+    fp16: False
+    lr: 1e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-08
+    min_lr: 2.0e-6
+    weight_decay: 0.01
+    use_distributed_optimizer: True
+    overlap_grad_reduce: True
+    overlap_param_gather: True
+    optimizer_enable_pin: false
+    overlap_param_gather_with_optimizer_step: False
+    clip_grad: 1.0
+
+  lr_sched:
+    lr_warmup_fraction: 0.01
+    lr_warmup_init: 0.0
+    lr_warmup_iters: 0
+    max_lr: 2.0e-6
+    min_lr: 2.0e-6
+    lr_decay_style: constant
+    lr_decay_iters: 200
+
+  tokenizer:
+    tokenizer_model: /mnt/public/new_fuxu/Qwen3-VL-4B-Instruct
+    use_fast: False
+    trust_remote_code: True
+    padding_side: 'right'
+
+  megatron:
+    ddp_bucket_size: null
+    distributed_backend: nccl # Support 'nccl' and 'gloo'
+    distributed_timeout_minutes: 30
+    ckpt_format: torch
+    use_dist_ckpt: False
+    tp_comm_bootstrap_backend: nccl
+    tp_comm_overlap_cfg: null # tp_comm_overlap_cfg.yaml
+    use_hf_ckpt: True # if true, will transfer hf model to generate megatron checkpoint and use it for training.
+    use_profiler: False # if true, will enable torch profiler when training, pay attention it has influence on performance
+
+    # ckpt_convertor: # config for ckpt convertor
+    #   model: Qwen3-30B-A3B
+    #   hf_model_path: ${rollout.model.model_path} # path to the hf model
+    #   save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
+    #   use_gpu_num : 0
+    #   use_gpu_index: null
+    #   process_num: 16 # number of processes to use for checkpointing
+    #   tensor_model_parallel_size: ${actor.model.tensor_model_parallel_size}
+    #   pipeline_model_parallel_size: ${actor.model.pipeline_model_parallel_size}
+    #   expert_model_parallel_size: ${actor.model.expert_model_parallel_size}
+    #   expert_tensor_parallel_size: ${actor.model.expert_tensor_parallel_size}
+    #   grouped_gemm: ${actor.model.moe_grouped_gemm}
+    #   te_ln_linear_qkv: True
+    #   te_ln_linear_mlp_fc1: True
+    #   # avail in [None, 'none', 'tensor_pickle_none', 'tensor_0_dim'], and only 'tensor_pickle_none' can be used if transformer engine version  in [2.3, 2.5]
+    #   te_ln_add_extra_state: 'tensor_pickle_none'
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False
