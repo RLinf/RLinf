@@ -151,7 +151,7 @@ Modify `rollout.model.model_path` in `train_qwen2.5.yaml`:
        model_path: /path/to/model/Qwen2.5-3B-Instruct
        model_type: qwen2.5
 
-If you use `sampling_params.stop`` to control model stop and save training time, detokenize should be set to True.
+If you use `sampling_params.stop` to control model stop and save training time, detokenize should be set to True.
 
 .. code-block:: yaml
 
