@@ -127,7 +127,9 @@ class CMANet(nn.Module):
     https://arxiv.org/abs/2004.02857
     """
 
-    def __init__(self, cfg: CMAConfig, observation_space: spaces.Space = None):
+    def __init__(
+        self, cfg: CMAConfig, observation_space: Optional[spaces.Space] = None
+    ):
         super().__init__()
         self.cfg = cfg
 
@@ -436,19 +438,32 @@ class CMAPolicy(nn.Module, BasePolicy):
                 activation="relu",
             )
 
-    def load_state_dict(self, state_dict, strict=True):
+    def load_state_dict(self, state_dict, strict=True, assign=False):
         if isinstance(state_dict, dict):
             if "state_dict" in state_dict:
                 state_dict = state_dict["state_dict"]
             elif "model_state_dict" in state_dict:
                 state_dict = state_dict["model_state_dict"]
-        new_state_dict = {}
-        for k, v in state_dict.items():
-            if k.startswith("policy."):
-                new_state_dict[k[7:]] = v
+
+        policy_state_keys = set(self.policy.state_dict().keys())
+        value_head_state_keys = set()
+        if hasattr(self, "value_head"):
+            value_head_state_keys = set(self.value_head.state_dict().keys())
+
+        normalized_state_dict = {}
+        for key, value in state_dict.items():
+            if key.startswith("policy.") or key.startswith("value_head."):
+                normalized_state_dict[key] = value
+            elif key in policy_state_keys:
+                normalized_state_dict[f"policy.{key}"] = value
+            elif key in value_head_state_keys:
+                normalized_state_dict[f"value_head.{key}"] = value
             else:
-                new_state_dict[k] = v
-        self.policy.load_state_dict(new_state_dict, strict=False)
+                normalized_state_dict[key] = value
+
+        return super().load_state_dict(
+            normalized_state_dict, strict=False, assign=assign
+        )
 
     @property
     def num_action_chunks(self):
@@ -456,92 +471,51 @@ class CMAPolicy(nn.Module, BasePolicy):
 
     def preprocess_env_obs(self, env_obs):
         """Preprocess environment observations.
-
-        Habitat R2R environment provides:
+        Input env_obs:
+        - "main_images": [B, C, H, W] tensor (rgb)
+        - "extra_view_images": [B, 1, C, H, W] tensor (depth)
+        - "wrist_images": [B] tensor (instruction tokens)
+        - "task_descriptions": [B] tensor (instruction text)
+        - "states": [B] tensor (episode_ids)
+        Output processed_env_obs:
         - "rgb": [B, C, H, W] tensor
-        - "depth": [B, C, H, W] tensor
-        - "instruction": dict with "tokens" key (from raw observations)
-
+        - "depth": [B, 1, 1, H, W] tensor
+        - "instruction": [B] tensor
+        - "states": [B] tensor
         We need to handle both the wrapped obs (from HabitatEnv._wrap_obs)
         and raw obs (from HabitatRLEnv) which may contain instruction.
         """
         device = next(self.parameters()).device
         processed_env_obs = {}
-        # Process RGB images - Habitat uses "rgb" key
-        if "rgb" in env_obs and env_obs["rgb"] is not None:
-            rgb = env_obs["rgb"]
-            if isinstance(rgb, torch.Tensor):
-                rgb = rgb.clone().to(device)
-                processed_env_obs["rgb"] = rgb
-        elif "main_images" in env_obs and env_obs["main_images"] is not None:
-            # Fallback for other environments
-            processed_env_obs["rgb"] = env_obs["main_images"].clone().to(device)
-
-        # Process depth images - Habitat uses "depth" key
-        if "depth" in env_obs and env_obs["depth"] is not None:
-            depth = env_obs["depth"]
-            if isinstance(depth, torch.Tensor):
-                depth = depth.clone().to(device).float()
-                processed_env_obs["depth"] = depth
-        elif (
+        # Process main images to rgb
+        assert "main_images" in env_obs and env_obs["main_images"] is not None
+        processed_env_obs["rgb"] = env_obs["main_images"].clone().to(device)
+        # Process depth images
+        assert (
             "extra_view_images" in env_obs and env_obs["extra_view_images"] is not None
-        ):
-            # Fallback for other environments
-            if len(env_obs["extra_view_images"].shape) == 5:
-                processed_env_obs["depth"] = (
-                    env_obs["extra_view_images"][:, 0].clone().to(device).float()
-                )
-            else:
-                processed_env_obs["depth"] = (
-                    env_obs["extra_view_images"].clone().to(device).float()
-                )
-        if processed_env_obs["depth"].shape[3] == processed_env_obs["depth"].shape[3]:
-            processed_env_obs["depth"] = processed_env_obs["depth"][
-                :, :, :, 0
-            ].unsqueeze(3)
+        )
+        processed_env_obs["depth"] = (
+            env_obs["extra_view_images"][:, 0][:, :, :, 0]
+            .unsqueeze(3)
+            .clone()
+            .to(device)
+            .float()
+        )
         # Process instruction
-        # Instruction tokens should be provided by HabitatEnv._wrap_obs from raw observations
-        if "instruction" in env_obs:
-            instruction = env_obs["instruction"]
-            if isinstance(instruction, dict) and "tokens" in instruction:
-                # Extract tokens from dict structure (from HabitatEnv._wrap_obs)
-                tokens = instruction["tokens"]
-                if isinstance(tokens, torch.Tensor):
-                    processed_env_obs["instruction"] = tokens.to(device).long()
-                elif isinstance(tokens, (list, np.ndarray)):
-                    processed_env_obs["instruction"] = torch.tensor(
-                        tokens, device=device
-                    ).long()
-            elif isinstance(instruction, torch.Tensor):
-                # Already tokenized tensor
-                processed_env_obs["instruction"] = instruction.to(device).long()
-        elif "wrist_images" in env_obs:
-            processed_env_obs["instruction"] = env_obs["wrist_images"]
-            if isinstance(processed_env_obs["instruction"], str):
-                processed_env_obs["instruction"] = torch.tensor(
-                    processed_env_obs["instruction"], device=device
-                ).long()
-            elif isinstance(processed_env_obs["instruction"], list):
-                processed_env_obs["instruction"] = torch.tensor(
-                    processed_env_obs["instruction"], device=device
-                ).long()
-            elif isinstance(processed_env_obs["instruction"], np.ndarray):
-                processed_env_obs["instruction"] = torch.tensor(
-                    processed_env_obs["instruction"], device=device
-                ).long()
-            else:
-                raise ValueError(
-                    f"Unsupported instruction type: {type(processed_env_obs['instruction'])}"
-                )
-
+        assert "wrist_images" in env_obs and env_obs["wrist_images"] is not None
+        processed_env_obs["instruction"] = torch.tensor(
+            env_obs["wrist_images"], device=device
+        )
         # Process states (if needed)
         if "states" in env_obs and env_obs["states"] is not None:
             processed_env_obs["states"] = env_obs["states"].clone().to(device)
+
         return processed_env_obs
 
     def predict_action_batch(
         self,
         env_obs,
+        mode="train",
         **kwargs,
     ):
         """Predict actions for a batch of observations."""
@@ -560,9 +534,16 @@ class CMAPolicy(nn.Module, BasePolicy):
                 self.cfg.hidden_size,
                 device=device,
             )
-            self.prev_actions = torch.zeros(batch_size, 1, device=device, dtype=torch.long)
+            self.prev_actions = torch.zeros(
+                batch_size, 1, device=device, dtype=torch.long
+            )
             step_masks = torch.zeros_like(self.prev_actions, dtype=torch.uint8)
         else:
+            assert (
+                self.prev_actions is not None
+                and self.rnn_states is not None
+                and self.prev_episode_id is not None
+            ), "CMA recurrent state must be initialized."
             step_masks = torch.ones_like(self.prev_actions, dtype=torch.uint8)
             reset_mask = current_episode_ids != self.prev_episode_id
             if reset_mask.any():
@@ -571,11 +552,20 @@ class CMAPolicy(nn.Module, BasePolicy):
                 step_masks[reset_mask] = 0
                 self.prev_episode_id[reset_mask] = current_episode_ids[reset_mask]
 
+        pre_rnn_states = self.rnn_states.clone()
+        prev_actions = self.prev_actions.clone()
+        step_masks = step_masks.clone()
+
         features, rnn_states = self.policy.net(
-            env_obs, self.rnn_states, self.prev_actions, step_masks
+            env_obs, pre_rnn_states, prev_actions, step_masks
         )
         distribution = self.policy.action_distribution(features)
-        action = distribution.mode()
+        if mode == "train":
+            action = distribution.sample()
+        elif mode == "eval":
+            action = distribution.mode()
+        else:
+            raise NotImplementedError(f"{mode=}")
         prev_logprobs = distribution.log_prob(action)
         self.rnn_states, self.prev_actions = rnn_states, action
 
@@ -592,6 +582,14 @@ class CMAPolicy(nn.Module, BasePolicy):
             chunk_values = torch.zeros_like(prev_logprobs[..., :1])
 
         forward_inputs = {
+            "action": action.clone(),
+            "pre_rnn_states": pre_rnn_states,
+            "prev_actions": prev_actions,
+            "masks": step_masks,
+            "env_obs_rgb": env_obs["rgb"].clone(),
+            "env_obs_depth": env_obs["depth"].clone(),
+            "env_obs_instruction": env_obs["instruction"].clone(),
+            "env_obs_states": env_obs["states"].clone(),
         }
 
         result = {
@@ -624,7 +622,39 @@ class CMAPolicy(nn.Module, BasePolicy):
         compute_values=True,
         **kwargs,
     ):
-        pass
+        obs = {
+            "rgb": forward_inputs["env_obs_rgb"],
+            "depth": forward_inputs["env_obs_depth"],
+            "instruction": forward_inputs["env_obs_instruction"],
+            "states": forward_inputs["env_obs_states"],
+        }
+        action = forward_inputs["action"].long()
+        if action.ndim == 1:
+            action = action.unsqueeze(-1)
+
+        pre_rnn_states = forward_inputs["pre_rnn_states"].clone()
+        prev_actions = forward_inputs["prev_actions"].long().clone()
+        masks = forward_inputs["masks"].clone()
+
+        features, _ = self.policy.net(obs, pre_rnn_states, prev_actions, masks)
+        distribution = self.policy.action_distribution(features)
+
+        output_dict = {}
+        if compute_logprobs:
+            logprobs = distribution.log_prob(action)
+            output_dict.update(logprobs=logprobs)
+        if compute_entropy:
+            entropy = distribution.entropy()
+            if entropy.ndim == 1:
+                entropy = entropy.unsqueeze(-1)
+            output_dict.update(entropy=entropy)
+        if compute_values:
+            if hasattr(self, "value_head"):
+                values = self.value_head(features)
+                output_dict.update(values=values)
+            else:
+                raise NotImplementedError
+        return output_dict
 
     def sac_forward(self, obs, **kwargs):
         raise NotImplementedError
