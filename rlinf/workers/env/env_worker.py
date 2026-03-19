@@ -205,14 +205,13 @@ class EnvWorker(Worker):
         )
 
     def _init_env(self):
-        if self.cfg.env.train.auto_reset:
-            for i in range(self.stage_num):
+        for i in range(self.stage_num):
+            if self.cfg.env.train.auto_reset:
                 extracted_obs, _ = self.env_list[i].reset()
                 self.last_obs_list.append(extracted_obs)
                 self.last_intervened_info_list.append((None, None))
-
-                if self.enable_offload and hasattr(self.env_list[i], "offload"):
-                    self.env_list[i].offload()
+            if self.enable_offload and hasattr(self.env_list[i], "offload"):
+                self.env_list[i].offload()
 
     @Worker.timer("env_interact_step")
     def env_interact_step(
