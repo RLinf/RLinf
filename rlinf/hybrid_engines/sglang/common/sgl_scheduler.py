@@ -113,7 +113,7 @@ class Scheduler(_Scheduler):
         model = self.tp_worker.worker.model_runner.model
         colocate = self.placement_mode == PlacementMode.COLLOCATED
         batch_weight = []
-        if colocate and not self.placement_use_fixed_worker:
+        if colocate and not self.placement_use_fixed_rollout_worker:
             for name, handle in state_dict.items():
                 func, args = handle
                 list_args = list(args)
@@ -240,7 +240,7 @@ class Scheduler(_Scheduler):
             self.cfg = config
             self._actor_group_name = self.cfg.actor.group_name
             self.placement_mode = placement.placement_mode
-            self.placement_use_fixed_worker = placement.use_fixed_worker
+            self.placement_use_fixed_rollout_worker = placement.use_fixed_rollout_worker
             self.actor_weight_rank = RankMapper.get_rollout_rank_to_actor_rank_map(
                 placement
             )[(self._rlinf_worker.get_parent_rank(), self._rlinf_worker._rank)]

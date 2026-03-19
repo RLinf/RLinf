@@ -89,7 +89,7 @@ class SGLangWorker(Worker):
             "The future of AI is",
         ]
 
-        self.use_fixed_worker = self._placement.use_fixed_worker
+        self.use_fixed_rollout_worker = self._placement.use_fixed_rollout_worker
         if self._placement.placement_mode == PlacementMode.COLLOCATED:
             self._setup_rollout_weight_dst_ranks()
         self.status_manager = RunningStatusManager()
@@ -117,7 +117,7 @@ class SGLangWorker(Worker):
     def _setup_rollout_weight_dst_ranks(self):
         """Setup destination ranks for token and weight communication."""
         assert self._placement.placement_mode == PlacementMode.COLLOCATED
-        if not self.use_fixed_worker:
+        if not self.use_fixed_rollout_worker:
             rank_mapper = CollocateRankMapper
 
         else:

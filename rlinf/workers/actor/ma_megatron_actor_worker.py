@@ -76,7 +76,7 @@ class MAMegatronActor(MegatronActor):
             "enable_dp_load_balance must be True when is_dynamic_rollout_batch is True"
         )
         self.placement = placement
-        self.use_fixed_worker = self.placement.use_fixed_worker
+        self.use_fixed_rollout_worker = self.placement.use_fixed_rollout_worker
         assert self.placement_mode == PlacementMode.COLLOCATED, (
             "Only collocated placement is supported for multi-agent actor"
         )
@@ -479,7 +479,7 @@ class MAMegatronActor(MegatronActor):
     def _setup_rollout_weight_dst_ranks(self):
         """Setup destination ranks for token and weight communication."""
         assert self.placement_mode == PlacementMode.COLLOCATED
-        if not self.use_fixed_worker:
+        if not self.use_fixed_rollout_worker:
             rank_mapper = CollocateRankMapper
         else:
             rank_mapper = DisaggRankMapper
@@ -521,7 +521,7 @@ class MAMegatronActor(MegatronActor):
         if len(self._weight_dst_rank_in_rollout) > 0:
             if (
                 self.placement_mode == PlacementMode.COLLOCATED
-                and not self.use_fixed_worker
+                and not self.use_fixed_rollout_worker
             ):
                 send_handle = None
                 for bucket_weight in model_bucket_list:

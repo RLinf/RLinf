@@ -75,7 +75,6 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         self._reward_gpus = self._get_component_hardware("reward")
         self._critic_gpus = self._get_component_hardware("critic")
         self._cluster_num_gpus = cluster.num_accelerators
-        self.use_fixed_worker = False
         assert self._actor_gpus is not None, (
             "Actor GPUs must be specified in the component_placement config."
         )
@@ -197,35 +196,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
     def _is_collocated(self):
         if self._actor_gpus == self._rollout_gpus:
             return True
-
-        # Get actor and reward GPUs
-        actor_gpus = set(self._get_component_hardware("actor"))
-        reward_gpus = set(self._get_component_hardware("reward"))
-
-        # Check if actor and reward are on the same GPUs (all GPUs)
-        if actor_gpus != reward_gpus:
-            return False
-
-        # Check all rollout components
-        rollout_components = [
-            key for key in self._component_rank_map if key.startswith("rollout")
-        ]
-        if not rollout_components:
-            return False
-
-        # Check if all rollout components' GPUs are subsets of actor's GPUs
-        all_rollout_gpus = set()
-        for component in rollout_components:
-            component_gpus = set(self._get_component_hardware(component))
-            if not component_gpus.issubset(actor_gpus):
-                return False
-            all_rollout_gpus.update(component_gpus)
-
-        # Check if rollout components cover all actor's GPUs
-        if all_rollout_gpus != actor_gpus:
-            return False
-        self.use_fixed_worker = True
-        return True
+        return False
 
     def _is_disaggregated(self):
         actor_gpu_set = set(self._actor_gpus)
@@ -650,22 +621,62 @@ class MultiAgentModelParallelComponentPlacement(ModelParallelComponentPlacement)
         """
         self._cfg = config
         super().__init__(config, cluster)
+        if self._is_collocated_multiagent():
+            self.use_fixed_rollout_worker = True
+        else:
+            self.use_fixed_rollout_worker = False
         self._validate_resource_coverage()
 
-    # def _is_collocated(self):
-    #     """Check if the placement is collocated for multi-agent scenario.
+    def _is_collocated(self):
+        # Check if the placement is collocated for single-agent scenario
+        if super()._is_collocated():
+            return True
+        # Check if the placement is collocated for multi-agent scenario
+        self._is_collocated_multiagent()
 
-    #     This method checks if the placement is collocated for multi-agent scenario.
-    #     This method will override the default behavior of _is_collocated method in ModelParallelComponentPlacement.
+    def _is_collocated_multiagent(self):
+        """Check if the placement is collocated for multi-agent scenario.
 
-    #     In multi-agent scenario, we consider it collocated if:
-    #     1. actor and reward are placed on all GPUs
-    #     2. rollout components are distributed across different GPU ranges
-    #     3. all rollout components' GPUs are subsets of actor/reward's GPUs
-    #     """
-    #     if super()._is_collocated():
-    #         return True
-    #     return False
+        This method checks if the placement is collocated for multi-agent scenario.
+        This method will override the default behavior of _is_collocated method in ModelParallelComponentPlacement.
+
+        In multi-agent scenario, we consider it collocated if:
+        1. actor and reward are placed on all GPUs
+        2. rollout components are distributed across different GPU ranges
+        3. all rollout components' GPUs are subsets of actor/reward's GPUs
+        """
+        # Get actor and reward GPUs
+        actor_gpus = set(self._get_component_hardware("actor"))
+        reward_gpus = set(self._get_component_hardware("reward"))
+
+        # Check if actor and reward are on the same GPUs (all GPUs)
+        assert actor_gpus == reward_gpus, (
+            "Actor and reward must be placed on the same GPUs during multi-agent scenario."
+        )
+
+        # Check all rollout components
+        rollout_components = [
+            key for key in self._component_rank_map if key.startswith("rollout")
+        ]
+
+        assert rollout_components, (
+            "Rollout components must exist during multi-agent scenario."
+        )
+
+        # Check if all rollout components' GPUs are subsets of actor's GPUs
+        all_rollout_gpus = set()
+        for component in rollout_components:
+            component_gpus = set(self._get_component_hardware(component))
+            assert component_gpus.issubset(actor_gpus), (
+                f"Rollout component '{component}' must be placed on actor's GPUs during multi-agent scenario."
+            )
+            all_rollout_gpus.update(component_gpus)
+
+        # Check if rollout components cover all actor's GPUs
+        assert all_rollout_gpus == actor_gpus, (
+            "Rollout components must cover all actor's GPUs during multi-agent scenario."
+        )
+        return True
 
     def _validate_resource_coverage(self):
         """

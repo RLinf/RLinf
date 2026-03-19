@@ -91,7 +91,7 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
         self.use_llm_judge = self.cfg.agentloop.get("use_llm_judge", True)
 
         self.placement = placement
-        self.use_fixed_rollout = self.placement.use_fixed_worker
+        self.use_fixed_rollout = self.placement.use_fixed_rollout_worker
         self.fixed_role = self.cfg.agentloop.get("fixed_role", None)
         if self.use_fixed_rollout:
             assert self.fixed_role
