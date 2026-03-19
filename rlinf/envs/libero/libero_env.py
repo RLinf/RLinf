@@ -326,9 +326,6 @@ class LiberoEnv(gym.Env):
                         else:
                             final_path = self._generator.choice(all_candidates)
 
-            # short_path = os.path.join(os.path.basename(os.path.dirname(final_path)), os.path.basename(final_path))
-            # print(f"[Env Worker {env_id}] Loading BDDL: {short_path}")
-
             env_fn_params.append(
                 {
                     **base_env_args,

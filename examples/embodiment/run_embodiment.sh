@@ -6,7 +6,7 @@ export SRC_FILE="${EMBODIED_PATH}/train_embodied_agent.py"
 
 export MUJOCO_GL="egl"
 export PYOPENGL_PLATFORM="egl"
-export ROBOTWIN_PATH=${ROBOTWIN_PATH:-"/path/to/RoboTwin"}
+export ROBOTWIN_PATH=${ROBOTWIN_PATH:-"/path/to/RoboTwin"}:$PYTHONPATH
 export PYTHONPATH=${REPO_PATH}:${ROBOTWIN_PATH}
 
 # Base path to the BEHAVIOR dataset, which is the BEHAVIOR-1k repo's dataset folder
