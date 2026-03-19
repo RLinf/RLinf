@@ -159,7 +159,7 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
    bash start_ray.sh
 
    # return to repo root
-   bash examples/sft/train_vla_sft.sh --config libero_sft_openpi
+   bash examples/sft/run_vla_sft.sh --config libero_sft_openpi
 
 同一脚本也适用于通用文本 SFT，只需替换配置文件。
 
