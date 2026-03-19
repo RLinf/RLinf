@@ -91,7 +91,7 @@ rollout:
   gpu_memory_utilization: 0.3
 
   model:
-    model_path: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B/
+    model_path: /path/to/model/Qwen2.5-1.5B-Instruct/ # https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct
     model_type: qwen2.5
     precision: ${actor.model.precision}
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
@@ -350,10 +350,10 @@ critic:
     end_weight_decay: 0.01
 
   tokenizer:
-    tokenizer_model: /mnt/project_rlinf/shiletong/models/Qwen2___5-1___5B-Instruct
-    use_fast: False
-    trust_remote_code: True
-    padding_side: 'right'
+    tokenizer_model: ${actor.tokenizer.tokenizer_model}
+    use_fast: ${actor.tokenizer.use_fast}
+    trust_remote_code: ${actor.tokenizer.trust_remote_code}
+    padding_side: ${actor.tokenizer.padding_side}
 
   megatron:
     ddp_bucket_size: null
