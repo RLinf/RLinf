@@ -68,29 +68,24 @@ def main(cfg) -> None:
 
     if cfg.agentloop.get("use_local_judge", False):
         subworker_specs = [
+            "rollout_judge",
             # componet name in cfg, dict_key in solid_rollouts, rollout cfg in cfg, launch_name
-            (
-                "rollout_judge",
-                "rollout_judge",
-                cfg.rollout_judge,
-                cfg.rollout_judge.group_name,
-            ),
+            # (
+            #     "rollout_judge",
+            #     "rollout_judge",
+            #     cfg.rollout_judge,
+            #     cfg.rollout_judge.group_name,
+            # ),
         ]
-        for comp_name, dict_key, rollout, launch_name in subworker_specs:
+        # for comp_name, dict_key, rollout, launch_name in subworker_specs:
+        for comp_name in subworker_specs:
+            dict_key = comp_name
+            rollout = cfg.get(comp_name, None)
+            assert rollout is not None, f"comp_name {comp_name} not found in cfg"
+            launch_name = rollout.get("group_name", comp_name)
             strategy = component_placement.get_strategy(
                 comp_name, PackedPlacementStrategy
             )
-
-            rollout_accel_num = strategy._end_hw_rank - strategy._start_hw_rank + 1
-
-            # validation
-            if rollout.get("tensor_parallel_size", None) is not None:
-                assert rollout_accel_num % rollout.tensor_parallel_size == 0
-            if rollout.get("pipeline_parallel_size", None) is not None:
-                assert rollout_accel_num % rollout.pipeline_parallel_size == 0
-            if rollout.get("dp_size", None) is not None:
-                assert rollout_accel_num % component_placement.rollout_dp_size == 0
-                # assert rollout_accel_num % rollout.dp_size == 0
 
             solid_rollouts[dict_key] = rollout_worker_cls.create_group(
                 cfg,

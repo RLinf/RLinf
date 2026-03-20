@@ -32,7 +32,6 @@ from sglang.srt.managers.scheduler import (
 from rlinf.scheduler import Worker, WorkerAddress
 from rlinf.utils.placement import (
     ModelParallelComponentPlacement,
-    PlacementMode,
     RolloutSyncMode,
 )
 from rlinf.workers.rollout.utils import (
@@ -115,12 +114,11 @@ class Scheduler(_Scheduler):
             "only sglang with 'sync' can run 'batch_load_hf_weight'"
         )
         model = self.tp_worker.worker.model_runner.model
-        placement_mode_collocated = self.placement_mode == PlacementMode.COLLOCATED
         rollout_sync_mode_collocated = (
             self.rollout_sync_mode == RolloutSyncMode.COLLOCATED
         )
         batch_weight = []
-        if placement_mode_collocated and rollout_sync_mode_collocated:
+        if rollout_sync_mode_collocated:
             for name, handle in state_dict.items():
                 func, args = handle
                 list_args = list(args)

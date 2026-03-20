@@ -36,11 +36,10 @@ from rlinf.scheduler.dynamic_scheduler.manager import RolloutScalingScheduler
 from rlinf.scheduler.dynamic_scheduler.utils import (
     get_scheduler_channel,
 )
-from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
+from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.rollout.sglang import Engine, io_struct
 from rlinf.workers.rollout.utils import (
     MetaInfoStatsCollector,
-    RankMapper,
     RolloutEngineStats,
     RunningStatusManager,
     print_sglang_outputs,
@@ -88,8 +87,6 @@ class SGLangWorker(Worker):
             "The future of AI is",
         ]
 
-        if self._placement.placement_mode == PlacementMode.COLLOCATED:
-            self._setup_rollout_weight_dst_ranks()
         self.status_manager = RunningStatusManager()
 
         # Initialize meta_stats_collector for async operations
@@ -110,14 +107,6 @@ class SGLangWorker(Worker):
 
         self._scheduler = RolloutScalingScheduler(
             self._rank, self.schedule_channel, self
-        )
-
-    def _setup_rollout_weight_dst_ranks(self):
-        """Setup destination ranks for token and weight communication."""
-        rank_map = RankMapper.get_actor_rank_to_rollout_rank_map(self._placement)
-        self._weight_dst_rank_in_rollout = rank_map[self._rank]
-        self.log_info(
-            f"Actor rank {self._rank} will send weights to {self._weight_dst_rank_in_rollout}"
         )
 
     def _init_meta_stats_collector(self):
@@ -272,7 +261,6 @@ class SGLangWorker(Worker):
         return result, request_info
 
     async def init_worker(self):
-        self._setup_rollout_weight_dst_ranks()
         self._init_engine()
         if self.weight_reload == "sync":
             await self._engine.tokenizer_manager.run_task_method(

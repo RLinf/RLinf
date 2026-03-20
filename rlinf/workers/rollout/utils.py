@@ -95,33 +95,22 @@ class RankMapper:
         cls,
         placement: ModelParallelComponentPlacement,
     ) -> dict[int, list[tuple[int, int]]]:
-        if placement._rollout_sync_mode is not None:
-            return cls._get_rank_mapper(
-                placement._rollout_sync_mode
-            ).get_actor_rank_to_rollout_rank_map(
-                placement.actor_tp_size,
-                placement.actor_pp_size,
-                placement.actor_world_size,
-                placement.rollout_tp_size,
-                placement.rollout_world_size,
-            )
-        else:
-            return cls._get_rank_mapper(
-                placement.placement_mode
-            ).get_actor_rank_to_rollout_rank_map(
-                placement.actor_tp_size,
-                placement.actor_pp_size,
-                placement.actor_world_size,
-                placement.rollout_tp_size,
-                placement.rollout_world_size,
-            )
+        return cls._get_rank_mapper(
+            placement._rollout_sync_mode
+        ).get_actor_rank_to_rollout_rank_map(
+            placement.actor_tp_size,
+            placement.actor_pp_size,
+            placement.actor_world_size,
+            placement.rollout_tp_size,
+            placement.rollout_world_size,
+        )
 
     @classmethod
     def get_rollout_rank_to_actor_rank_map(
         cls, placement: ModelParallelComponentPlacement
     ) -> dict[tuple[int, int], int]:
         return cls._get_rank_mapper(
-            placement.placement_mode
+            placement._rollout_sync_mode
         ).get_rollout_rank_to_actor_rank_map(
             placement.actor_tp_size,
             placement.actor_pp_size,
