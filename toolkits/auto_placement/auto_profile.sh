@@ -1,15 +1,13 @@
 #! /bin/bash
 # auto profile (if needed) + auto placement for embodied training.
 # Requires Ray to be running (e.g. ray start --head).
-set -x
-
-tabs 4
 
 CONFIG_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../examples/embodiment" && pwd)"
 REPO_PATH=$(dirname $(dirname "$CONFIG_PATH"))
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 export REPO_PATH
 export EMBODIED_PATH="${REPO_PATH}/examples/embodiment"
+export SRC_FILE="${REPO_PATH}/toolkits/auto_placement/collect_profile.py"
 
 export MUJOCO_GL="egl"
 export PYOPENGL_PLATFORM="egl"
@@ -29,6 +27,7 @@ export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
 export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
 export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 
+CONFIG_NAME="${1:-maniskill_ppo_openvlaoft_quickstart}"
 
 ROBOT_PLATFORM=${2:-${ROBOT_PLATFORM:-"LIBERO"}}
 
@@ -37,8 +36,13 @@ echo "Using ROBOT_PLATFORM=$ROBOT_PLATFORM"
 
 echo "Using Python at $(which python)"
 
-CONFIG_NAME="${1:-maniskill_ppo_openvlaoft_quickstart}"
+LOG_DIR="${REPO_PATH}/logs/profile_logs/$(date +'%Y%m%d-%H:%M:%S')-${CONFIG_NAME}" #/$(date +'%Y%m%d-%H:%M:%S')"
+MEGA_LOG_FILE="${LOG_DIR}/run_embodiment.log"
+mkdir -p "${LOG_DIR}"
+export LOG_DIR
 
-python ${REPO_PATH}/toolkits/auto_placement/collect_profile.py \
-    --config-path ${EMBODIED_PATH}/config \
-    --config-name $CONFIG_NAME \
+CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ --config-name ${CONFIG_NAME} runner.logger.log_path=${LOG_DIR}"
+
+
+echo ${CMD} > ${MEGA_LOG_FILE}
+${CMD} 2>&1 | tee -a ${MEGA_LOG_FILE}
