@@ -80,7 +80,9 @@ jobs:
           rm -rf .venv
           bash requirements/install.sh embodied --model openpi --env calvin
           rm -rf .venv
-
+          bash requirements/install.sh embodied --model openpi --env isaaclab
+          rm -rf .venv
+          
       - name: Install gr00t
         run: |
           pip install uv
