@@ -123,7 +123,7 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/path/to/model"
+    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     precision: ${actor.model.precision}
 
   enable_torch_compile: True
@@ -138,7 +138,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/path/to/model"
+    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     state_dim: 19
     action_dim: 6
 

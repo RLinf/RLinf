@@ -19,4 +19,4 @@ outputs/*
 uv.lock
 rlinf/envs/maniskill/assets
 PKG-INFO
-
+*.egg-info/

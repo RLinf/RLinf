@@ -44,6 +44,32 @@ class DataCollector(Worker):
             worker_info=self.worker_info,
         )
 
+        if self.cfg.env.get("data_collection", None) and getattr(
+            self.cfg.env.data_collection, "enabled", False
+        ):
+            from rlinf.envs.wrappers import CollectEpisode
+
+            self.env = CollectEpisode(
+                self.env,
+                save_dir=self.cfg.env.data_collection.save_dir,
+                # rank=self._rank,
+                # num_envs=1,
+                export_format=getattr(
+                    self.cfg.env.data_collection, "export_format", "pickle"
+                ),
+                robot_type=getattr(self.cfg.env.data_collection, "robot_type", "panda"),
+                fps=getattr(self.cfg.env.data_collection, "fps", 10),
+                only_success=getattr(
+                    self.cfg.env.data_collection, "only_success", False
+                ),
+                stats_sample_ratio=getattr(
+                    self.cfg.env.data_collection, "stats_sample_ratio", 0.1
+                ),
+                finalize_interval=getattr(
+                    self.cfg.env.data_collection, "finalize_interval", 100
+                ),
+            )
+
         # Initialize TrajectoryReplayBuffer
         # Change directory name to 'demos' as requested
         buffer_path = os.path.join(self.cfg.runner.logger.log_path, "demos")
@@ -112,7 +138,7 @@ class DataCollector(Worker):
         )
 
         current_rollout = EmbodiedRolloutResult(
-            max_episode_length=max_steps,
+            max_episode_length=self.cfg.env.eval.max_episode_steps,,
             model_weights_id="demo_expert",
         )
 
@@ -237,6 +263,12 @@ class DataCollector(Worker):
                 trajectory.intervene_flags = torch.ones_like(trajectory.intervene_flags)
                 self.buffer.add_trajectories([trajectory])
 
+                # Reset for next episode
+                obs, _ = self.env.reset()
+                current_obs_processed = self._process_obs(obs)
+                current_rollout = EmbodiedRolloutResult(
+                    max_episode_length=self.cfg.env.eval.max_episode_steps,
+                )
                 progress_bar.update(1)
 
                 # Reset for next episode

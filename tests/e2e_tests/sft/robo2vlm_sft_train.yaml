@@ -26,7 +26,7 @@ runner:
   val_check_interval: -1
   # save the model interval
   save_interval: -1
-  experiment_name: qwen2_5_vl_sft_train
+  experiment_name: qwen3_vl_sft_train
   output_dir: /workspace/results
   resume_dir: null
 
@@ -45,7 +45,6 @@ data:
   max_prompt_length: 1024
   lazy_loading: false
   num_workers: 16
-  answer_separator: ""
 
 algorithm:
   adv_type: gae
@@ -60,7 +59,7 @@ actor:
   model:
     model_type: "qwen2.5_vl"
     precision: fp32
-    model_path: "/workspace/dataset/Qwen2.5-VL-3B-Instruct-Robo2vlm-sft"
+    model_path: "/workspace/dataset/Qwen3-VL-4B-Instruct-Robo2vlm-sft/"
     is_lora: False
 
   optim:
@@ -77,7 +76,7 @@ actor:
   # Override the default values in training_backend/fsdp
   fsdp_config:
     strategy: "fsdp"
-    sharding_strategy: "no_shard"
+    sharding_strategy: "full_shard"
     use_orig_params: False
     gradient_checkpointing: False
     mixed_precision:

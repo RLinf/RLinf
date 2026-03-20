@@ -16,6 +16,8 @@ FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-robotwin
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-opensora
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-frankasim
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-wan
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-liberopro
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-liberoplus
 
 # Franka depends on ros-noetic, which is not available on Ubuntu 22.04
 FROM ubuntu:20.04 AS base-image-embodied-franka
@@ -258,9 +260,10 @@ RUN echo "source ${UV_PATH}/franka-0.15.0/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-robotwin-image
 
-# Install openvla-oft env
+# Install openvla-oft, openpi, and lingbotvla envs
 RUN bash requirements/install.sh embodied --venv openvla-oft --model openvla-oft --env robotwin && \
-    bash requirements/install.sh embodied --venv openpi --model openpi --env robotwin
+    bash requirements/install.sh embodied --venv openpi --model openpi --env robotwin && \
+    bash requirements/install.sh embodied --venv lingbotvla --model lingbotvla --env robotwin
 
 RUN source switch_env openpi && download_assets --dir /opt/assets --assets openpi
 RUN link_assets
@@ -301,6 +304,28 @@ RUN bash requirements/install.sh embodied --venv openvla --model openvla --env f
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: LIBERO-Pro
+##################################################################################################
+FROM embodied-common-image AS embodied-liberopro-image
+
+# Install openvla-oft env for LIBERO-Pro
+RUN bash requirements/install.sh embodied --venv openvla-oft --model openvla-oft --env liberopro
+
+# Set default env
+RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: LIBERO-Plus
+##################################################################################################
+FROM embodied-common-image AS embodied-liberoplus-image
+
+# Install openvla-oft env for LIBERO-Plus
+RUN bash requirements/install.sh embodied --venv openvla-oft --model openvla-oft --env liberoplus
+
+# Set default env
+RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Final image selection

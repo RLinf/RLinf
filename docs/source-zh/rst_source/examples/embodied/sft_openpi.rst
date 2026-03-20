@@ -126,9 +126,9 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
         --network host \
         --name rlinf \
         -v .:/workspace/RLinf \
-        rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
+        rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
         # 如果需要国内加速下载镜像，可以使用：
-        # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
+        # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
 进入容器后，请通过内置的 `switch_env` 工具切换到对应的虚拟环境：
 
@@ -159,7 +159,7 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
    bash start_ray.sh
 
    # return to repo root
-   bash examples/sft/train_embodiment_sft.sh --config libero_sft_openpi
+   bash examples/sft/run_vla_sft.sh --config libero_sft_openpi
 
 同一脚本也适用于通用文本 SFT，只需替换配置文件。
 

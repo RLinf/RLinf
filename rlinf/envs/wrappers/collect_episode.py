@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import atexit
+import copy
 import os
 import pickle
 import signal
@@ -122,6 +123,14 @@ class CollectEpisode(gym.Wrapper):
         os.makedirs(self.save_dir, exist_ok=True)
         atexit.register(self._finalize_on_exit)
         signal.signal(signal.SIGTERM, self._handle_signal)
+
+    @property
+    def is_start(self):
+        return getattr(self.env, "is_start")
+
+    @is_start.setter
+    def is_start(self, value):
+        setattr(self.env, "is_start", value)
 
     # ─────────────────────────────────────────── gymnasium interface ──────────
 
@@ -365,7 +374,20 @@ class CollectEpisode(gym.Wrapper):
         for i, action in enumerate(actions):
             obs = obs_steps[i] if i < len(obs_steps) else None
             image, wrist_image, state = self._extract_obs_image_state(obs)
+
+            # overwrite action with intervene action
+            if "final_info" in buf["infos"][i]:
+                info_with_intervene = copy.deepcopy(buf["infos"][i]["final_info"])
+            else:
+                info_with_intervene = copy.deepcopy(buf["infos"][i])
+
             np_action = self._to_numpy(action)
+            if (
+                "intervene_flag" in info_with_intervene.keys()
+                and "intervene_action" in info_with_intervene.keys()
+            ):
+                if info_with_intervene["intervene_flag"].all():
+                    np_action = self._to_numpy(info_with_intervene["intervene_action"])
 
             if image is None or state is None or np_action is None:
                 continue
@@ -509,7 +531,12 @@ class CollectEpisode(gym.Wrapper):
         for info in reversed(buf["infos"]):
             if not isinstance(info, dict):
                 continue
-            for src in (info.get("final_info"), info.get("episode"), info):
+            for src in (
+                info.get("final_info", info).get("episode"),
+                info.get("final_info"),
+                info.get("episode"),
+                info,
+            ):
                 if not isinstance(src, dict):
                     continue
                 for key in ("success_once", "success_at_end", "success"):

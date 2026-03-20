@@ -27,7 +27,7 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh maniskill_sac_mlp
-      
+
       - name: ManiSkill Async SAC test
         timeout-minutes: 20
         run: |
@@ -48,7 +48,7 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
-  
+
   embodied-cnn-realworld-dummy-sac-test:
     runs-on: embodied
     steps:
@@ -180,7 +180,7 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
-          
+
   embodied-openvlaoft-maniskill-libero-test:
     runs-on: embodied
     steps:
@@ -260,7 +260,7 @@ jobs:
           rm -rf .venv
           uv cache prune
           rm -rf /tmp/tmp*
-  
+
   embodied-openvlaoft-robotwin-test:
     runs-on: embodied
     steps:
@@ -354,7 +354,7 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
-  
+
   embodied-gr00t-isaaclab-test:
     runs-on: embodied
     steps:
@@ -418,6 +418,14 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi
+
+      - name: Libero-Spatial DAgger test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_dagger_openpi
 
       - name: Libero-Spatial PPO Pi05 test
         timeout-minutes: 20
@@ -622,13 +630,13 @@ jobs:
           export ROBOCASA_PATH=/workspace/dataset/robocasa
           bash requirements/install.sh embodied --model openpi --env robocasa
 
-      - name: Robocasa GRPO test
+      - name: Robocasa PPO test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh robocasa_grpo_openpi
+          bash tests/e2e_tests/embodied/run.sh robocasa_closedrawer_ppo_openpi
 
       - name: Clean up
         run: |
@@ -719,6 +727,102 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh wan_libero_spatial_grpo_openvlaoft
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-lingbotvla-robotwin-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export ROBOTWIN_PATH=/workspace/dataset/RoboTwin
+          export LINGBOT_PATH=/workspace/dataset/lingbot-vla
+          bash requirements/install.sh embodied --model lingbotvla --env robotwin
+
+      - name: RoboTwin-LingBotVLA GRPO test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export ROBOT_PLATFORM=ALOHA
+          export ROBOTWIN_PATH="/workspace/dataset/RoboTwin"
+          export PYTHONPATH=${ROBOTWIN_PATH}:$PYTHONPATH
+          export LINGBOT_VLA_PATH="/workspace/dataset/lingbot-vla"
+          bash tests/e2e_tests/embodied/run.sh robotwin_grpo_lingbotvla
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-openvlaoft-liberopro-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          export LIBERO_PRO_PATH=/workspace/dataset/LIBERO-PRO
+          bash requirements/install.sh embodied --model openvla-oft --env liberopro
+
+      - name: LIBERO-Pro GRPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export LIBERO_TYPE=pro
+          bash tests/e2e_tests/embodied/run.sh liberopro_10_grpo_openvlaoft
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-openvlaoft-liberoplus-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          export LIBERO_PLUS_PATH=/workspace/dataset/LIBERO-PLUS
+          bash requirements/install.sh embodied --model openvla-oft --env liberoplus
+
+      - name: LIBERO-Plus GRPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export LIBERO_TYPE=plus
+          bash tests/e2e_tests/embodied/run.sh liberoplus_10_grpo_openvlaoft
 
       - name: Clean up
         run: |

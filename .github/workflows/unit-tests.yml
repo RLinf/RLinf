@@ -5,7 +5,7 @@ on:
 
 jobs:
   unit-tests-cuda:
-    runs-on: self-hosted
+    runs-on: reason
     steps:
       - name: Checkout code
         uses: actions/checkout@v5

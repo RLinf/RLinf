@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rlinf"
-version = "0.2.0.dev2"
+version = "0.2.0"
 authors = [{ name = "RLinf Contributors" }]
 description = "Reinforcement Learning Infrastructure for Embodied and Agentic AI"
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -61,7 +61,7 @@ dependencies = [
     "pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
     # Logging
-    "wandb",
+    "wandb<0.25.1",
     "swanlab>=0.6.11",
     "tensorboard",
 ]

@@ -7,7 +7,7 @@ export SRC_FILE="${VLM_PATH}/train_vlm_sft.py"
 export PYTHONPATH=${REPO_PATH}:${LIBERO_REPO_PATH}:$PYTHONPATH
 
 if [ -z "$1" ]; then
-    CONFIG_NAME="custom_sft_vlm"
+    CONFIG_NAME="qwen2_5_sft_vlm"
 else
     CONFIG_NAME=$1
 fi

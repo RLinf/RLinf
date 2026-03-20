@@ -81,8 +81,10 @@ jobs:
             embodied_filter: &embodied
               - *shared
               - 'rlinf/workers/actor/async_ppo_fsdp_worker.py'
+              - 'rlinf/workers/actor/async_fsdp_dagger_policy_worker.py'
               - 'rlinf/envs/**'
               - 'rlinf/workers/actor/async_fsdp_sac_policy_worker.py'
+              - 'rlinf/workers/actor/fsdp_dagger_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_sac_policy_worker.py'
               - 'rlinf/workers/env/**'
               - 'rlinf/workers/rollout/hf/**'
@@ -91,6 +93,7 @@ jobs:
               - 'rlinf/runners/*embodied*.py'
               - 'examples/embodiment/**'
               - 'tests/e2e_tests/embodied/**'
+              - 'tests/e2e_tests/training_backend/**'
               - 'toolkits/eval_scripts_openpi/**'
               - 'toolkits/eval_scripts_dexbotic/**'
               - 'toolkits/realworld_check/**'
@@ -99,7 +102,10 @@ jobs:
             agent_reason_filter: &agent
               - *shared
               - 'rlinf/agents/**'
+              - 'rlinf/workers/actor/ma_megatron_actor_worker.py'
               - 'rlinf/workers/actor/megatron_actor_worker.py'
+              - 'rlinf/workers/critic/**'
+              - 'rlinf/workers/megatron_worker.py'
               - 'rlinf/workers/agent/**'
               - 'rlinf/workers/inference/**'
               - 'rlinf/workers/rollout/server/**'
@@ -110,14 +116,9 @@ jobs:
               - 'rlinf/runners/coding_online_rl_runner.py'
               - 'rlinf/runners/agent_eval_runner.py'
               - 'rlinf/runners/reasoning_eval_runner.py'
-              - 'examples/coding_online_rl/**'
-              - 'examples/multiturn_demo/**'
+              - 'examples/agent/**'
               - 'examples/reasoning/**'
-              - 'examples/searchr1/**'
-              - 'examples/mas-search/**'
-              - 'examples/rstar2/**'
               - 'tests/e2e_tests/agent/**'
-              - 'tests/e2e_tests/coding_online_rl/**'
               - 'tests/e2e_tests/reasoning/**'
               - '.github/workflows/agent-e2e-tests.yml'
             sft_filter: &sft
