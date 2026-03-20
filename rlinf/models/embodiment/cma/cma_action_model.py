@@ -566,7 +566,7 @@ class CMAPolicy(nn.Module, BasePolicy):
             action = distribution.mode()
         else:
             raise NotImplementedError(f"{mode=}")
-        prev_logprobs = distribution.log_prob(action)
+        prev_logprobs = distribution.log_probs(action)
         self.rnn_states, self.prev_actions = rnn_states, action
 
         chunk_actions = []
@@ -641,7 +641,7 @@ class CMAPolicy(nn.Module, BasePolicy):
 
         output_dict = {}
         if compute_logprobs:
-            logprobs = distribution.log_prob(action)
+            logprobs = distribution.log_probs(action)
             output_dict.update(logprobs=logprobs)
         if compute_entropy:
             entropy = distribution.entropy()
