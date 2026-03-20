@@ -796,3 +796,65 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
+
+  embodied-openvlaoft-liberopro-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          export LIBERO_PRO_PATH=/workspace/dataset/LIBERO-PRO
+          bash requirements/install.sh embodied --model openvla-oft --env liberopro
+
+      - name: LIBERO-Pro GRPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export LIBERO_TYPE=pro
+          bash tests/e2e_tests/embodied/run.sh liberopro_10_grpo_openvlaoft
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-openvlaoft-liberoplus-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          export LIBERO_PLUS_PATH=/workspace/dataset/LIBERO-PLUS
+          bash requirements/install.sh embodied --model openvla-oft --env liberoplus
+
+      - name: LIBERO-Plus GRPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export LIBERO_TYPE=plus
+          bash tests/e2e_tests/embodied/run.sh liberoplus_10_grpo_openvlaoft
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune

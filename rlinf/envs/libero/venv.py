@@ -19,8 +19,8 @@ from typing import Any, Callable, Optional, Union
 
 import gym
 import numpy as np
-from libero.libero.envs import OffScreenRenderEnv
 
+from rlinf.envs.libero.utils import get_libero_type
 from rlinf.envs.venv import (
     BaseVectorEnv,
     CloudpickleWrapper,
@@ -30,6 +30,44 @@ from rlinf.envs.venv import (
     SubprocVectorEnv,
     _setup_buf,
 )
+
+# ---------------------------------------------------------------------------
+# Dynamic Module Import Logic for Libero Pro / Plus
+# ---------------------------------------------------------------------------
+libero_type = get_libero_type()
+
+if libero_type == "pro":
+    try:
+        from liberopro.liberopro.envs import OffScreenRenderEnv
+    except ImportError as e:
+        print(
+            f"[Venv] Warning: LIBERO_TYPE=pro but import failed ({e}). Falling back to standard libero..."
+        )
+        from libero.libero.envs import OffScreenRenderEnv
+
+elif libero_type == "plus":
+    try:
+        from liberoplus.liberoplus.envs import OffScreenRenderEnv
+    except ImportError as e:
+        print(
+            f"[Venv] Warning: LIBERO_TYPE=plus but import failed ({e}). Falling back to standard libero..."
+        )
+        from libero.libero.envs import OffScreenRenderEnv
+
+else:
+    try:
+        from libero.libero.envs import OffScreenRenderEnv
+    except ImportError:
+        try:
+            from liberopro.liberopro.envs import OffScreenRenderEnv
+        except ImportError:
+            try:
+                from liberoplus.liberoplus.envs import OffScreenRenderEnv
+            except ImportError:
+                raise ImportError(
+                    "Could not import OffScreenRenderEnv from libero, liberopro, or liberoplus."
+                )
+
 
 gym_old_venv_step_type = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 gym_new_venv_step_type = tuple[
