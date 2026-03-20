@@ -182,7 +182,7 @@ RLinf provides a pre-configured RoboTwin environment Docker image that includes 
 **Option 2: Custom Environment**
 
 Install dependencies directly in your environment by running the following command. 
-Replace the ``--model openvla-oft`` parameter with the corresponding model name (``openvla-oft`` or ``openpi``) based on the model you want to train:
+Replace the ``--model openvla-oft`` parameter with the corresponding model name (``openvla-oft`` or ``OpenPI``) based on the model you want to train:
 
 .. code:: bash
 
@@ -238,7 +238,7 @@ Please ensure that the correct Python virtual environment (venv) is activated be
 If you are using the official Docker image, switch the environment according to the model type:
 
 - OpenVLA-OFT：``source switch_env openvla-oft``
-- OpenPI（π\ :sub:`0`\ / π\ :sub:`0.5`\ ）：``source switch_env openpi``
+- OpenPI（π\ :sub:`0`\ / π\ :sub:`0.5`\ ）：``source switch_env OpenPI``
 
 **1. Key Parameter Configuration**
 
@@ -273,7 +273,7 @@ For π\ :sub:`0`\ + PPO training in RoboTwin, it is recommended to reuse the Rob
       num_action_chunks: 50 # interface for the env
       add_value_head: True
       action_dim: 14
-      openpi:
+      OpenPI:
          config_name: "pi0_aloha_robotwin"
          num_images_in_input: 3
          detach_critic_input: True
@@ -291,7 +291,7 @@ For π\ :sub:`0`\ + PPO training in RoboTwin, it is recommended to reuse the Rob
          num_action_chunks: 50 # interface for the env
          action_dim: 14
          add_value_head: True
-         openpi:
+         OpenPI:
             config_name: "pi05_aloha_robotwin"
             num_images_in_input: 3
             detach_critic_input: True
@@ -332,10 +332,10 @@ For OpenPI configurations (π\ :sub:`0`\ / π\ :sub:`0.5`\ ), the following addi
 The following configuration files can be directly referenced for RoboTwin:
 
 - **OpenVLA-OFT + GRPO**：``examples/embodiment/config/robotwin_place_empty_cup_grpo_openvlaoft.yaml``
-- **π₀ + PPO**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi.yaml``
-- **π₀ Eval**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi_eval.yaml``
-- **π₀.₅ + PPO**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi_pi05.yaml``
-- **π₀.₅ Eval**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi_pi05_eval.yaml``
+- **π₀ + PPO**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_OpenPI.yaml``
+- **π₀ Eval**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_OpenPI_eval.yaml``
+- **π₀.₅ + PPO**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_OpenPI_pi05.yaml``
+- **π₀.₅ Eval**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_OpenPI_pi05_eval.yaml``
 
 
 **4. Launch Command**
@@ -369,7 +369,7 @@ For example, to train the π\ :sub:`0.5`\ model using PPO:
    export ROBOT_PLATFORM=ALOHA
    export ROBOTWIN_PATH=/path/to/RoboTwin
 
-   bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_ppo_openpi_pi05
+   bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_ppo_OpenPI_pi05
 
 
 Visualization and Results
@@ -435,7 +435,7 @@ Evaluation Results
      - ---
    * - Average
      - 28.79%
-     - **86.16**
+     - **86.16%**
      - ---
    * - Δ Avg.
      - ---
@@ -443,7 +443,7 @@ Evaluation Results
      - ---
 
 
-.. list-table:: **Evaluation Results of OpenPi on RoboTwin Tasks**
+.. list-table:: **Evaluation Results of OpenPI on RoboTwin Tasks**
    :header-rows: 1
 
    * - Task
@@ -452,24 +452,24 @@ Evaluation Results
      - Pi0.5 (SFT)
      - Pi0.5 (RLinf-PPO)
    * - adjust_bottle
-     - |huggingface| `81.25% <https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle>`_
-     - |huggingface| `95.53% <https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-PPO-adjust_bottle>`_
-     - |huggingface| `82.03% <https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle>`_
-     - |huggingface| `97.66% <https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-PPO-adjust_bottle>`_
+     - |huggingface| `76.56% <https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle>`_
+     - |huggingface| `98.44% <https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-PPO-adjust_bottle>`_
+     - |huggingface| `85.94% <https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle>`_
+     - |huggingface| `96.09% <https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-PPO-adjust_bottle>`_
    * - Average
-     - 81.25%
-     - 95.53%
-     - 82.03%
-     - 97.66%
+     - 76.56%
+     - 98.44%
+     - 85.94%
+     - 96.09%
    * - Δ Avg.
      - ---
-     - **14.28%**
+     - **21.88%**
      - ---
-     - **15.63%**
+     - **10.15%**
 
 .. note::
    All **OpenVLA-OFT** models are trained under the **demo_randomized** setting;
-   all **OpenPi** models are trained under the **demo_clean** setting.
+   all **OpenPI** models are trained under the **demo_clean** setting.
    For more details, please refer to the
    `RoboTwin configuration documentation <https://robotwin-platform.github.io/doc/usage/configurations.html>`_.
 
@@ -501,11 +501,11 @@ In most cases, evaluation mode can be enabled by simply setting ``runner.only_ev
 
    .. code-block:: bash
 
-      source switch_env openpi
+      source switch_env OpenPI
 
    Taking the PPO algorithm and the ``adjust_bottle`` task as an example, the corresponding configuration file is:
 
-   - ``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi_eval.yaml``
+   - ``examples/embodiment/config/robotwin_adjust_bottle_ppo_OpenPI_eval.yaml``
 
 3. **π₀.₅ Model Evaluation**
 
@@ -514,11 +514,11 @@ In most cases, evaluation mode can be enabled by simply setting ``runner.only_ev
 
    .. code-block:: bash
 
-      source switch_env openpi
+      source switch_env OpenPI
 
    Taking the PPO algorithm and the ``adjust_bottle`` task as an example, the corresponding configuration file is:
 
-   - ``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi_pi05_eval.yaml``
+   - ``examples/embodiment/config/robotwin_adjust_bottle_ppo_OpenPI_pi05_eval.yaml``
 
 4. **Evaluation Mode Configuration**
 
@@ -588,12 +588,12 @@ OpenVLA-OFT Key Configuration
    - ``actor.model.num_action_chunks: 50``：number of action chunks
    - ``actor.model.action_dim: 14``：action dimension
    - ``actor.model.add_value_head: True``：PPO training requires a value head
-   - ``actor.model.openpi.num_images_in_input: 3``：number of input images
+   - ``actor.model.OpenPI.num_images_in_input: 3``：number of input images
 
 2. **Model Configuration Name**：
 
-   - π\ :sub:`0`：``actor.model.openpi.config_name: "pi0_aloha_robotwin"``
-   - π\ :sub:`0.5`：``actor.model.openpi.config_name: "pi05_aloha_robotwin"``
+   - π\ :sub:`0`：``actor.model.OpenPI.config_name: "pi0_aloha_robotwin"``
+   - π\ :sub:`0.5`：``actor.model.OpenPI.config_name: "pi05_aloha_robotwin"``
 
 3. **Algorithm Configuration**：
 
