@@ -139,3 +139,5 @@ Notes:
 - [quickstart](quickstart.md)
 - [training_architecture](training_architecture.md)
 - [network_infrastructure](network_infrastructure.md)
+- [openpi_joint_logprob](openpi_joint_logprob.md)
+- [openpi_nan_gradients](openpi_nan_gradients.md)

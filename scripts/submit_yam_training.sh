@@ -18,7 +18,7 @@
 # Prerequisites:
 #   1. Robot server + reverse SSH tunnel running on desktop:
 #        bash scripts/start_robot_server.sh --config examples/embodiment/config/env/yam.yaml \
-#            --remote-host <beaker-head-tailscale-ip> [--dummy]
+#            [--remote-host beaker-0] [--dummy]
 #   2. gantry installed: pip install beaker-gantry
 #
 # Usage:
@@ -82,10 +82,14 @@ Extra Hydra overrides can be passed after '--':
   bash scripts/submit_yam_training.sh --model-path thomas0829/folding_towel_pi05 -- algorithm.update_epoch=2
 
 After submission:
-  1. Check Beaker logs for the head node's Tailscale IP
-  2. Start robot server with reverse SSH tunnel to that IP:
-       bash scripts/start_robot_server.sh --config .../yam.yaml \
-           --remote-host <head-tailscale-ip> [--dummy]
+  1. Check Beaker logs until the head node is up on Tailscale
+  2. Start robot server with reverse SSH tunnel to the stable hostname:
+     bash scripts/start_robot_server.sh --config .../yam.yaml \
+           --remote-host beaker-0 [--dummy]
+
+Using the stable Tailscale hostname is more reliable than using a one-off IP:
+if the Beaker node is replaced, autossh can reconnect to the new job when it
+comes back as "beaker-0".
 EOF
     exit 0
 }
@@ -168,18 +172,31 @@ if [ -n "$INTERACTIVE" ]; then
 
     ENTRYPOINT_CMD="curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg -o /usr/share/keyrings/tailscale-archive-keyring.gpg"
     ENTRYPOINT_CMD+=" && echo 'deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu jammy main' > /etc/apt/sources.list.d/tailscale.list"
-    ENTRYPOINT_CMD+=" && (apt-get update || true) && apt-get install -y tailscale openssh-client"
+    ENTRYPOINT_CMD+=" && (apt-get update || true) && apt-get install -y tailscale openssh-client openssh-server"
     ENTRYPOINT_CMD+=" && (nohup tailscaled --tun=userspace-networking --state=mem: > /dev/null 2>&1 &)"
     ENTRYPOINT_CMD+=" && sleep 2"
     ENTRYPOINT_CMD+=" && tailscale up --advertise-tags=tag:robo-beaker --authkey=\"\${TAILSCALE_AUTHKEY}\" --hostname=beaker-\${BEAKER_REPLICA_RANK:-0} --accept-routes"
     ENTRYPOINT_CMD+=" && echo '=== Tailscale IP ===' && tailscale ip -4 && echo '=================='"
     ENTRYPOINT_CMD+=" && TAILSCALE_NODE_IP=\$(tailscale ip -4)"
     ENTRYPOINT_CMD+=" && if ip addr add \${TAILSCALE_NODE_IP}/32 dev lo 2>/dev/null; then echo '=== lo alias added: Ray will advertise Tailscale IP ==='; RAY_NODE_IP_ARG=\"--node-ip \${TAILSCALE_NODE_IP}\"; else echo '=== WARNING: ip addr add failed (no CAP_NET_ADMIN) — Ray will use internal IP ==='; RAY_NODE_IP_ARG=''; fi"
+    ENTRYPOINT_CMD+=" && id -u shiruic >/dev/null 2>&1 || useradd -m -s /bin/bash shiruic"
+    ENTRYPOINT_CMD+=" && install -d -m 0755 /run/sshd"
+    ENTRYPOINT_CMD+=" && install -d -m 0700 /home/shiruic/.ssh"
+    ENTRYPOINT_CMD+=" && if [ -s /root/.ssh/authorized_keys ]; then cp /root/.ssh/authorized_keys /home/shiruic/.ssh/authorized_keys; chown -R shiruic:shiruic /home/shiruic/.ssh; chmod 0600 /home/shiruic/.ssh/authorized_keys; fi"
+    ENTRYPOINT_CMD+=" && if ! grep -q '^PubkeyAuthentication yes' /etc/ssh/sshd_config; then echo 'PubkeyAuthentication yes' >> /etc/ssh/sshd_config; fi"
+    ENTRYPOINT_CMD+=" && if ! grep -q '^PasswordAuthentication no' /etc/ssh/sshd_config; then echo 'PasswordAuthentication no' >> /etc/ssh/sshd_config; fi"
+    ENTRYPOINT_CMD+=" && if ! grep -q '^PermitRootLogin prohibit-password' /etc/ssh/sshd_config; then echo 'PermitRootLogin prohibit-password' >> /etc/ssh/sshd_config; fi"
+    ENTRYPOINT_CMD+=" && if ! grep -q '^AllowTcpForwarding yes' /etc/ssh/sshd_config; then echo 'AllowTcpForwarding yes' >> /etc/ssh/sshd_config; fi"
+    ENTRYPOINT_CMD+=" && if ! grep -q '^GatewayPorts no' /etc/ssh/sshd_config; then echo 'GatewayPorts no' >> /etc/ssh/sshd_config; fi"
+    ENTRYPOINT_CMD+=" && /usr/sbin/sshd"
     ENTRYPOINT_CMD+=" && mkdir -p /root/.ssh && chmod 700 /root/.ssh"
     ENTRYPOINT_CMD+=" && ssh-keygen -t ed25519 -f /root/.ssh/container_key -N '' -C beaker-container"
     ENTRYPOINT_CMD+=" && chmod 600 /root/.ssh/container_key"
-    ENTRYPOINT_CMD+=" && echo '=== Container SSH Public Key (add to your desktop ~/.ssh/authorized_keys) ==='"
+    ENTRYPOINT_CMD+=" && echo '=== Container SSH Public Key (used only for Beaker -> desktop SSH) ==='"
     ENTRYPOINT_CMD+=" && cat /root/.ssh/container_key.pub"
+    ENTRYPOINT_CMD+=" && echo '=================='"
+    ENTRYPOINT_CMD+=" && echo '=== Desktop -> Beaker SSH Status ==='"
+    ENTRYPOINT_CMD+=" && if [ -s /home/shiruic/.ssh/authorized_keys ]; then echo 'shiruic account ready for SSH on port 22'; else echo 'WARNING: /home/shiruic/.ssh/authorized_keys is empty; desktop pubkey still needs to be installed in the container'; fi"
     ENTRYPOINT_CMD+=" && echo '=================='"
     ENTRYPOINT_CMD+=" && INSTALL_CMD_DECODED=\$(echo ${INSTALL_CMD_B64} | base64 -d)"
     ENTRYPOINT_CMD+=" && export RAY_health_check_period_ms=3600000"
@@ -194,6 +211,7 @@ if [ -n "$INTERACTIVE" ]; then
     session_args=(
         beaker session create
         --detach --bare
+        --host-networking
         --cluster "${CLUSTER}"
         --gpus "${GPUS}"
         --workspace "${WORKSPACE}"
@@ -207,7 +225,7 @@ if [ -n "$INTERACTIVE" ]; then
         --env "RAY_health_check_failure_threshold=10"
         --env "RAY_health_check_timeout_ms=30000"
         --secret-env "HF_TOKEN=hf_token_shirui"
-        --secret-env "TAILSCALE_AUTHKEY=tailscale_authkey_shirui"
+        --secret-env "TAILSCALE_AUTHKEY=SHIRUI_TAILSCALE_KEY"
         --
         bash -c "${ENTRYPOINT_CMD}"
     )
@@ -286,18 +304,31 @@ else
 
     ENTRYPOINT_CMD="curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg -o /usr/share/keyrings/tailscale-archive-keyring.gpg"
     ENTRYPOINT_CMD+=" && echo 'deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu jammy main' > /etc/apt/sources.list.d/tailscale.list"
-    ENTRYPOINT_CMD+=" && (apt-get update || true) && apt-get install -y tailscale openssh-client"
+    ENTRYPOINT_CMD+=" && (apt-get update || true) && apt-get install -y tailscale openssh-client openssh-server"
     ENTRYPOINT_CMD+=" && (nohup tailscaled --tun=userspace-networking --state=mem: > /dev/null 2>&1 &)"
     ENTRYPOINT_CMD+=" && sleep 2"
     ENTRYPOINT_CMD+=" && tailscale up --authkey=\${TAILSCALE_AUTHKEY} --hostname=beaker-\${BEAKER_REPLICA_RANK:-0} --accept-routes"
     ENTRYPOINT_CMD+=" && echo '=== Tailscale IP ===' && tailscale ip -4 && echo '=================='"
     ENTRYPOINT_CMD+=" && TAILSCALE_NODE_IP=\$(tailscale ip -4)"
     ENTRYPOINT_CMD+=" && if ip addr add \${TAILSCALE_NODE_IP}/32 dev lo 2>/dev/null; then echo '=== lo alias added: Ray will advertise Tailscale IP ==='; RAY_NODE_IP_ARG=\"--node-ip \${TAILSCALE_NODE_IP}\"; else echo '=== WARNING: ip addr add failed (no CAP_NET_ADMIN) — Ray will use internal IP ==='; RAY_NODE_IP_ARG=''; fi"
+    ENTRYPOINT_CMD+=" && id -u shiruic >/dev/null 2>&1 || useradd -m -s /bin/bash shiruic"
+    ENTRYPOINT_CMD+=" && install -d -m 0755 /run/sshd"
+    ENTRYPOINT_CMD+=" && install -d -m 0700 /home/shiruic/.ssh"
+    ENTRYPOINT_CMD+=" && if [ -s /root/.ssh/authorized_keys ]; then cp /root/.ssh/authorized_keys /home/shiruic/.ssh/authorized_keys; chown -R shiruic:shiruic /home/shiruic/.ssh; chmod 0600 /home/shiruic/.ssh/authorized_keys; fi"
+    ENTRYPOINT_CMD+=" && if ! grep -q '^PubkeyAuthentication yes' /etc/ssh/sshd_config; then echo 'PubkeyAuthentication yes' >> /etc/ssh/sshd_config; fi"
+    ENTRYPOINT_CMD+=" && if ! grep -q '^PasswordAuthentication no' /etc/ssh/sshd_config; then echo 'PasswordAuthentication no' >> /etc/ssh/sshd_config; fi"
+    ENTRYPOINT_CMD+=" && if ! grep -q '^PermitRootLogin prohibit-password' /etc/ssh/sshd_config; then echo 'PermitRootLogin prohibit-password' >> /etc/ssh/sshd_config; fi"
+    ENTRYPOINT_CMD+=" && if ! grep -q '^AllowTcpForwarding yes' /etc/ssh/sshd_config; then echo 'AllowTcpForwarding yes' >> /etc/ssh/sshd_config; fi"
+    ENTRYPOINT_CMD+=" && if ! grep -q '^GatewayPorts no' /etc/ssh/sshd_config; then echo 'GatewayPorts no' >> /etc/ssh/sshd_config; fi"
+    ENTRYPOINT_CMD+=" && /usr/sbin/sshd"
     ENTRYPOINT_CMD+=" && mkdir -p /root/.ssh && chmod 700 /root/.ssh"
     ENTRYPOINT_CMD+=" && ssh-keygen -t ed25519 -f /root/.ssh/container_key -N '' -C beaker-container"
     ENTRYPOINT_CMD+=" && chmod 600 /root/.ssh/container_key"
-    ENTRYPOINT_CMD+=" && echo '=== Container SSH Public Key (add to your desktop ~/.ssh/authorized_keys) ==='"
+    ENTRYPOINT_CMD+=" && echo '=== Container SSH Public Key (used only for Beaker -> desktop SSH) ==='"
     ENTRYPOINT_CMD+=" && cat /root/.ssh/container_key.pub"
+    ENTRYPOINT_CMD+=" && echo '=================='"
+    ENTRYPOINT_CMD+=" && echo '=== Desktop -> Beaker SSH Status ==='"
+    ENTRYPOINT_CMD+=" && if [ -s /home/shiruic/.ssh/authorized_keys ]; then echo 'shiruic account ready for SSH on port 22'; else echo 'WARNING: /home/shiruic/.ssh/authorized_keys is empty; desktop pubkey still needs to be installed in the container'; fi"
     ENTRYPOINT_CMD+=" && echo '=================='"
     ENTRYPOINT_CMD+=" && TRAIN_CMD_DECODED=\$(echo ${TRAIN_CMD_B64} | base64 -d)"
     ENTRYPOINT_CMD+=" && INSTALL_CMD_DECODED=\$(echo ${INSTALL_CMD_B64} | base64 -d)"

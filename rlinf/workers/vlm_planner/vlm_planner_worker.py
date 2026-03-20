@@ -282,11 +282,6 @@ class VLMPlannerWorker:
     def _activate_transformers_runtime_path(self) -> None:
         """Optionally prepend an isolated Transformers runtime for Qwen3-VL."""
         runtime_path = self._transformers_runtime_path
-        if not runtime_path and "Qwen/Qwen3-VL" in self._model_path:
-            repo_root = Path(__file__).resolve().parents[3]
-            default_runtime = repo_root / ".qwen3_runtime"
-            if default_runtime.exists():
-                runtime_path = str(default_runtime)
 
         if not runtime_path:
             return

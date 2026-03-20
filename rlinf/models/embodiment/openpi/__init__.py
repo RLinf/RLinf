@@ -16,12 +16,18 @@
 import json
 import logging
 import os
+import re
 from contextlib import nullcontext
 from pathlib import Path
 from types import MethodType
 
 import torch
 from omegaconf import DictConfig
+
+from rlinf.models.embodiment.openpi.adarms_expert import (
+    AdaRMSGemmaRMSNorm,
+    enable_openpi_adarms_expert,
+)
 
 
 def _load_hf_export_norm_stats(checkpoint_dir):
@@ -83,8 +89,115 @@ def _load_hf_export_norm_stats(checkpoint_dir):
     return recovered_stats or None
 
 
+def _ensure_openpi_transformers_overlay() -> None:
+    """Relax OpenPI's strict Transformers version gate in RLinf workers."""
+    try:
+        from transformers.models.siglip import check
+    except ImportError:
+        pass
+        return
+    check.check_whether_transformers_replace_is_installed_correctly = lambda: True
+
+
+def _normalize_openpi_state_dict_keys(
+    state_dict: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    """Normalize checkpoint keys exported by external OpenPI conversions.
+
+    Hugging Face / LeRobot exports often wrap model parameters under a leading
+    ``model.`` prefix, while RLinf's OpenPI module expects the raw parameter
+    names. Strip that prefix when present so pretrained weights actually land
+    in the model instead of being silently treated as unexpected under
+    ``strict=False``.
+    """
+
+    if not state_dict:
+        return state_dict
+
+    if all(key.startswith("model.") for key in state_dict):
+        return {key[len("model.") :]: value for key, value in state_dict.items()}
+    return state_dict
+
+
+def _inject_missing_paligemma_embeddings(
+    state_dict: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    """Backfill missing PaliGemma input embeddings from tied lm_head weights.
+
+    OpenPI checkpoints commonly serialize the PaliGemma output head but omit
+    ``embed_tokens.weight``. RLinf's integrated runtime materializes a distinct
+    input embedding parameter, so we provide the missing key explicitly before
+    ``load_state_dict``.
+    """
+
+    normalized_state_dict = dict(state_dict)
+    lm_head_key = "paligemma_with_expert.paligemma.lm_head.weight"
+    embed_tokens_key = (
+        "paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+    )
+    if (
+        lm_head_key in normalized_state_dict
+        and embed_tokens_key not in normalized_state_dict
+    ):
+        normalized_state_dict[embed_tokens_key] = normalized_state_dict[lm_head_key]
+    return normalized_state_dict
+
+
+def _retie_paligemma_embeddings(model: torch.nn.Module) -> None:
+    """Retie PaliGemma input/output embeddings after checkpoint load."""
+
+    paligemma = model.paligemma_with_expert.paligemma
+    input_embeddings = paligemma.model.language_model.embed_tokens
+    lm_head = paligemma.lm_head
+
+    if input_embeddings.weight.data_ptr() != lm_head.weight.data_ptr():
+        input_embeddings.weight = lm_head.weight
+    paligemma.tie_weights()
+
+
+def _get_model_weight_paths(checkpoint_dir: str) -> list[str]:
+    """Return only actual model weight files from a checkpoint directory."""
+
+    checkpoint_path = Path(checkpoint_dir)
+    preferred = [
+        checkpoint_path / "model.safetensors",
+        checkpoint_path / "model-00001-of-00001.safetensors",
+    ]
+    preferred_paths = [str(path) for path in preferred if path.exists()]
+    if preferred_paths:
+        return preferred_paths
+
+    weight_paths = []
+    for path in sorted(checkpoint_path.glob("*.safetensors")):
+        # Processor/export stats safetensors are not model weights.
+        if re.search(r"(pre|post)processor", path.name):
+            continue
+        weight_paths.append(str(path))
+    return weight_paths
+
+
+def _load_pretrained_state_dict(
+    model: torch.nn.Module, model_state_dict: dict[str, torch.Tensor], source: str
+) -> None:
+    """Load a state dict and log a compact match summary."""
+
+    normalized_state_dict = _normalize_openpi_state_dict_keys(model_state_dict)
+    normalized_state_dict = _inject_missing_paligemma_embeddings(normalized_state_dict)
+    load_result = model.load_state_dict(normalized_state_dict, strict=False)
+    _retie_paligemma_embeddings(model)
+    missing = len(load_result.missing_keys)
+    unexpected = len(load_result.unexpected_keys)
+    logging.info(
+        "Loaded OpenPI weights from %s with %d state keys (%d missing, %d unexpected).",
+        source,
+        len(normalized_state_dict),
+        missing,
+        unexpected,
+    )
+
+
 def get_model(cfg: DictConfig, torch_dtype=None):
-    import glob
+    _ensure_openpi_transformers_overlay()
 
     import openpi.shared.download as download
     import openpi.transforms as transforms
@@ -142,6 +255,8 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         model: OpenPi0ForRLActionPrediction = OpenPi0ForRLActionPrediction(
             actor_model_config
         )
+    if getattr(actor_model_config, "pi05", False):
+        enable_openpi_adarms_expert(model.paligemma_with_expert)
     # train expert only
     if actor_model_config.train_expert_only:
         model.freeze_vlm()
@@ -150,23 +265,21 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     if os.path.exists(full_weights_path):
         # Direct checkpoint directory
         model_state_dict = torch.load(full_weights_path, map_location="cpu")
-        model.load_state_dict(model_state_dict, strict=False)
+        _load_pretrained_state_dict(model, model_state_dict, full_weights_path)
     elif os.path.exists(actor_full_weights_path):
         # Checkpoint directory from runner
         model_state_dict = torch.load(actor_full_weights_path, map_location="cpu")
-        model.load_state_dict(model_state_dict, strict=False)
+        _load_pretrained_state_dict(model, model_state_dict, actor_full_weights_path)
     else:
         # Original model directory with safetensors files
-        weight_paths = sorted(glob.glob(os.path.join(checkpoint_dir, "*.safetensors")))
-        if not weight_paths:
-            weight_paths = [os.path.join(checkpoint_dir, "model.safetensors")]
+        weight_paths = _get_model_weight_paths(checkpoint_dir)
         for weight_path in weight_paths:
             # Pretrained OpenPI checkpoints do not contain RL-specific heads
             # such as value/noise heads. Load the raw state dict and rely on
             # ``strict=False`` so those task-specific weights stay randomly
             # initialized instead of failing inside safetensors' stricter helper.
             model_state_dict = safetensors.torch.load_file(weight_path, device="cpu")
-            model.load_state_dict(model_state_dict, strict=False)
+            _load_pretrained_state_dict(model, model_state_dict, weight_path)
 
     model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
     if actor_model_config.train_expert_only:
@@ -181,7 +294,18 @@ def get_model(cfg: DictConfig, torch_dtype=None):
                     hidden_states, nan=0.0, posinf=1e4, neginf=-1e4
                 )
                 outputs = forward_fn(hidden_states, *args, **kwargs)
-                return torch.nan_to_num(outputs, nan=0.0, posinf=1e4, neginf=-1e4)
+                if torch.is_tensor(outputs):
+                    return torch.nan_to_num(outputs, nan=0.0, posinf=1e4, neginf=-1e4)
+                if isinstance(outputs, tuple) and outputs:
+                    sanitized = []
+                    for value in outputs:
+                        if torch.is_tensor(value):
+                            value = torch.nan_to_num(
+                                value, nan=0.0, posinf=1e4, neginf=-1e4
+                            )
+                        sanitized.append(value)
+                    return tuple(sanitized)
+                return outputs
 
             return _stable_gemma_rmsnorm_forward
 
@@ -205,7 +329,10 @@ def get_model(cfg: DictConfig, torch_dtype=None):
             module_name,
             module,
         ) in model.paligemma_with_expert.gemma_expert.model.named_modules():
-            if module.__class__.__name__ == "GemmaRMSNorm":
+            if (
+                isinstance(module, AdaRMSGemmaRMSNorm)
+                or module.__class__.__name__ == "GemmaRMSNorm"
+            ):
                 module.forward = MethodType(
                     _make_stable_gemma_rmsnorm_forward(module.forward), module
                 )

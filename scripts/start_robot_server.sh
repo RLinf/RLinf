@@ -26,6 +26,7 @@
 #   --port PORT           gRPC server port (default: 50051)
 #   --remote-host HOST    Beaker Tailscale hostname or IP (default: beaker-0)
 #   --remote-user USER    SSH user on the Beaker container (default: shiruic)
+#   --allow-plain-ssh     Allow fallback to plain ssh if autossh is unavailable
 #   --no-tunnel           Start RobotServer only, no SSH tunnel
 #   --dummy               Run without real hardware (zero observations)
 #   --help                Show this help
@@ -36,6 +37,7 @@ CONFIG=""
 PORT=50051
 REMOTE_HOST="beaker-0"
 REMOTE_USER="shiruic"
+ALLOW_PLAIN_SSH=false
 NO_TUNNEL=false
 DUMMY=false
 TUNNEL_PID=""
@@ -55,6 +57,7 @@ Options:
   --port PORT           gRPC server port (default: 50051)
   --remote-host HOST    Beaker Tailscale hostname or IP (default: beaker-0)
   --remote-user USER    SSH user on the Beaker container (default: shiruic)
+  --allow-plain-ssh     Allow fallback to plain ssh if autossh is unavailable
   --no-tunnel           Start RobotServer only, without SSH tunnel
   --dummy               Run without real hardware (zero observations)
   --help                Show this help
@@ -81,6 +84,7 @@ while [[ $# -gt 0 ]]; do
         --port)         PORT="$2"; shift 2 ;;
         --remote-host)  REMOTE_HOST="$2"; shift 2 ;;
         --remote-user)  REMOTE_USER="$2"; shift 2 ;;
+        --allow-plain-ssh) ALLOW_PLAIN_SSH=true; shift ;;
         --no-tunnel)    NO_TUNNEL=true; shift ;;
         --dummy)        DUMMY=true; shift ;;
         *)              echo "Unknown option: $1"; usage ;;
@@ -99,6 +103,26 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+is_ipv4_address() {
+    [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+}
+
+validate_tunnel_prereqs() {
+    if command -v autossh &>/dev/null; then
+        return 0
+    fi
+
+    if [ "$ALLOW_PLAIN_SSH" = true ]; then
+        echo "WARNING: autossh not found; falling back to plain ssh."
+        echo "         The tunnel will not auto-reconnect if the Beaker node restarts."
+        return 0
+    fi
+
+    echo "ERROR: autossh is required for a persistent reverse tunnel but was not found."
+    echo "Install autossh, or rerun with --allow-plain-ssh for a one-shot tunnel."
+    exit 1
+}
+
 start_tunnel() {
     local ssh_args=(
         -N
@@ -116,11 +140,13 @@ start_tunnel() {
     if command -v autossh &>/dev/null; then
         TUNNEL_LAUNCHER="autossh"
         export AUTOSSH_GATETIME=0
+        export AUTOSSH_POLL=10
+        export AUTOSSH_LOGLEVEL=7
         autossh -M 0 "${ssh_args[@]}" "${REMOTE_USER}@${REMOTE_HOST}" \
             >"${TUNNEL_LOG}" 2>&1 &
     else
         TUNNEL_LAUNCHER="ssh"
-        echo "WARNING: autossh not found; falling back to plain ssh." | tee -a "${TUNNEL_LOG}"
+        echo "WARNING: autossh not found; using plain ssh because --allow-plain-ssh was set." | tee -a "${TUNNEL_LOG}"
         echo "         The tunnel will work, but it will not auto-reconnect if it drops." | tee -a "${TUNNEL_LOG}"
         ssh "${ssh_args[@]}" "${REMOTE_USER}@${REMOTE_HOST}" \
             >>"${TUNNEL_LOG}" 2>&1 &
@@ -159,14 +185,21 @@ python -m rlinf.envs.remote.robot_server "${SERVER_ARGS[@]}" &
 SERVER_PID=$!
 
 if [ "$NO_TUNNEL" = false ]; then
+    validate_tunnel_prereqs
     TUNNEL_LOG=$(mktemp "/tmp/rlinf_robot_tunnel.${PORT}.XXXX.log")
     echo "=== Starting persistent reverse SSH tunnel ==="
     echo "Remote: ${REMOTE_USER}@${REMOTE_HOST}"
     echo "Tunnel: ${REMOTE_HOST}:localhost:${PORT} -> this machine:${PORT}"
     echo "Log:    ${TUNNEL_LOG}"
     echo ""
+    if is_ipv4_address "${REMOTE_HOST}"; then
+        echo "WARNING: --remote-host is an IP address."
+        echo "         Reconnect after Beaker replacement is less reliable because the new job may get a new IP."
+        echo "         Prefer the stable Tailscale hostname (default: beaker-0)."
+        echo ""
+    fi
     echo "autossh will reconnect automatically when a new Beaker job starts."
-    echo "If autossh is unavailable, the script falls back to plain ssh."
+    echo "This works best when using the stable Tailscale hostname (default: beaker-0)."
     echo "ROBOT_SERVER_URL=localhost:${PORT} is set in submit_yam_training.sh."
     echo ""
 

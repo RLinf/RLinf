@@ -34,7 +34,7 @@ dependencies = [
     "ray[default]>=2.47.0",
     "torch>=2.5.0,<=2.9.0",
     "hydra-core",
-    "numpy",
+    "numpy>=1.22.4,<2.0.0",
     # Data processing
     "datasets",
     "torchdata",
@@ -108,7 +108,7 @@ agentic-vllm = [
     "mcp",
 ]
 embodied = [
-    "transformers<=4.57.6",
+    "transformers==4.57.1",
     "peft",
     "timm",
     "imageio[ffmpeg]",
@@ -116,6 +116,7 @@ embodied = [
     "gym",
     "grpcio>=1.60.0",
     "grpcio-tools>=1.60.0",
+    "qwen-vl-utils",
 ]
 franka = [
     "pyyaml",
@@ -172,6 +173,10 @@ override-dependencies = [
     "setuptools>=69.5.1,<75.9",
     "datasets==3.6.0",
     "peft==0.11.1",
+    "transformers==4.57.1",
+    "tokenizers>=0.22.0,<=0.23.0",
+    "numpy==1.26.4",
+    "fsspec==2025.3.0",
 ]
 
 [tool.setuptools]
