@@ -214,7 +214,7 @@ def main(cfg):
         logging.error(
             "2. The hardware rank provided by component_placement configure is not compatible with that ray cluster detect."
         )
-        return
+        return None
 
     if (
         schedule_result.mode == ScheduleMode.COLLOCATED

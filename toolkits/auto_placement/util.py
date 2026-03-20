@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from argparse import Namespace
+import logging
+from argparse import ArgumentParser, Namespace
+
+import yaml
+from omegaconf import DictConfig, OmegaConf, open_dict
 
 _GLOBAL_CONFIG = None
 
@@ -130,3 +134,58 @@ def get_valid_gpu_num_list(role: str) -> list[int]:
             valid_dp_sizes.append(dp_size)
 
     return [dp_size * model_parallel_size for dp_size in valid_dp_sizes]
+
+
+def has_profile_data(cfg) -> bool:
+    """Check if there is profile data in the config."""
+    if OmegaConf.select(cfg, "profile_data.actor_cost") is None:
+        return False
+    env_profile = OmegaConf.select(cfg, "profile_data.env_profile_data")
+    if not isinstance(env_profile, DictConfig) or env_profile == {}:
+        return False
+    rollout_profile = OmegaConf.select(cfg, "profile_data.rollout_profile_data")
+    if not isinstance(rollout_profile, DictConfig) or rollout_profile == {}:
+        return False
+    return True
+
+
+def has_target_env_num(cfg) -> bool:
+    target_env_num = OmegaConf.select(cfg, "data.env_num")
+    return target_env_num is not None
+
+
+def modify_cfg_for_profiling(cfg, env_num, step_per_env=1):
+    with open_dict(cfg):
+        cfg.cluster.component_placement = {
+            "actor": "all",
+            "rollout": "all",
+            "env": "all",
+        }  # Ensure collocated mode for profiling
+        cfg.env.train.total_num_envs = env_num
+        cfg.runner.max_steps = (
+            step_per_env  # Run the specified number of steps for profiling
+        )
+
+
+def update_yaml_with_profile_data(profile_data):
+    parser = ArgumentParser()
+    parser.add_argument("--config-path", required=True)
+    parser.add_argument("--config-name", required=True)
+    args, _ = parser.parse_known_args()
+    config_path = args.config_path
+    config_name = args.config_name
+
+    original_config_path = f"{config_path}/{config_name}.yaml"
+    new_config_path = original_config_path.replace(".yaml", "_profiled.yaml")
+
+    with open(original_config_path, "r") as f:
+        content = yaml.safe_load(f)
+
+    if "profile_data" not in content:
+        content["profile_data"] = {}
+    content["profile_data"].update(profile_data)
+
+    with open(new_config_path, "w") as f:
+        yaml.dump(content, f, default_flow_style=False, sort_keys=False)
+
+    logging.info(f"Updated profile_data in new file: {new_config_path}")
