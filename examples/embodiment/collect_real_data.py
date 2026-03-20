@@ -119,7 +119,11 @@ class DataCollector(Worker):
         current_obs_processed = self._process_obs(obs)
 
         while success_cnt < self.num_data_episodes:
-            action = np.zeros((1, 6))
+            if self.cfg.env.eval.get("no_gripper", True):
+                action = np.zeros((1, 6))
+            else:
+                action = np.zeros((1, 7))
+            # breakpoint()
             next_obs, reward, done, _, info = self.env.step(action)
 
             if "intervene_action" in info:
@@ -178,7 +182,9 @@ class DataCollector(Worker):
                 if isinstance(r_val, torch.Tensor):
                     r_val = r_val.item()
 
-                success_cnt += int(r_val)
+                if r_val >= 0.5:
+                    success_cnt += 1
+                
                 self.total_cnt += 1
                 self.log_info(
                     f"Success: {r_val}. Total: {success_cnt}/{self.num_data_episodes}"

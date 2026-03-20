@@ -86,7 +86,7 @@ class BinEnvConfig(FrankaRobotConfig):
             [0.0, 0.0, self.clip_z_range_high, 0.0, 0.0, 0.0]
         )
         self.reward_threshold = np.array(self.reward_threshold)
-        self.action_scale = np.array([0.04, 0.1, 1])
+        self.action_scale = np.array([0.03, 0.1, 1])
         self.ee_pose_limit_min = np.array(
             [
                 self.target_ee_pose[0] - self.clip_x_range,

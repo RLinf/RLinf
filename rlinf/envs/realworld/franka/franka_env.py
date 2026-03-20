@@ -202,7 +202,6 @@ class FrankaEnv(gym.Env):
             ).as_quat()
 
             gripper_action = action[6] * self.config.action_scale[2]
-
             is_gripper_action_effective = self._gripper_action(gripper_action)
             self._move_action(self._clip_position_to_safety_box(self.next_position))
         else:

@@ -250,6 +250,7 @@ class RealWorldEnv(gym.Env):
         step_reward = self._calc_step_reward(_reward)
 
         intervene_flag = np.zeros(self.num_envs, dtype=bool)
+        # breakpoint()
         if "intervene_action" in infos:
             for env_id in range(self.num_envs):
                 if infos["intervene_action"][env_id] is not None:
