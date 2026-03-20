@@ -44,7 +44,7 @@ class FrankaRobotConfig:
 
     is_dummy: bool = False
     use_dense_reward: bool = False
-    dense_reward_scale: float = 0.02 # Scale dense reward to make training stable
+    reward_scale: float = 0.02 # Scale dense reward to make training stable
     step_frequency: float = 10.0  # Max number of steps per second
 
     # Positions are stored in eular angles (xyz for position, rzryrx for orientation)
@@ -230,6 +230,7 @@ class FrankaEnv(gym.Env):
         )
 
         truncated = self._num_steps >= self.config.max_num_steps
+        reward *= self.config.reward_scale
         return observation, reward, terminated, truncated, {}
 
     @property
@@ -279,8 +280,6 @@ class FrankaEnv(gym.Env):
 
             if self.config.enable_gripper_penalty and is_gripper_action_effective:
                 reward -= self.config.gripper_penalty
-
-            reward *= self.config.dense_reward_scale
 
             return reward
         else:

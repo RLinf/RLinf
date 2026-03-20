@@ -111,7 +111,7 @@ env:
     override_cfg:
       is_dummy: False
       use_dense_reward: True
-      dense_reward_scale: 0.02
+      reward_scale: 0.02
       max_num_steps: 50
       target_ee_pose: [ 0.68450615,  0.05030787, -0.00968573,  3.1250674,  -0.05904865, -0.09369436] # Replace with your target end-effector pose
 

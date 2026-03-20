@@ -21,13 +21,12 @@ from threading import Lock
 from typing import Any, Optional
 
 import gymnasium as gym
-import imageio
 import numpy as np
 import torch
-
+import imageio
 from rlinf.data.lerobot_writer import LeRobotDatasetWriter
 
-_VALID_FORMATS = ("pickle", "lerobot", "pt")
+_VALID_FORMATS = ("pickle", "lerobot")
 
 
 class CollectEpisode(gym.Wrapper):
@@ -49,8 +48,7 @@ class CollectEpisode(gym.Wrapper):
         num_envs: Number of parallel environments. Defaults to 1.
         show_goal_site: Whether to show goal visualization in renders.
             Defaults to True.
-        export_format: Episode export format, ``"pickle"``, ``"lerobot"`` or
-            ``"pt"``.
+        export_format: Episode export format, ``"pickle"`` or ``"lerobot"``.
             Defaults to ``"pickle"``.
         robot_type: Robot type for LeRobot metadata. Defaults to ``"panda"``.
         fps: FPS for LeRobot metadata. Defaults to 10.
@@ -123,7 +121,7 @@ class CollectEpisode(gym.Wrapper):
 
         os.makedirs(self.save_dir, exist_ok=True)
         atexit.register(self._finalize_on_exit)
-        signal.signal(signal.SIGTERM, self._handle_signal)
+        # signal.signal(signal.SIGTERM, self._handle_signal)
 
     # ─────────────────────────────────────────── gymnasium interface ──────────
 
@@ -310,7 +308,6 @@ class CollectEpisode(gym.Wrapper):
             ep_data = self._buffer_to_lerobot_ep(buf, env_idx, is_success)
             if ep_data is not None:
                 self._submit(self._write_lerobot_episode, ep_data)
-
                 video_dir = os.path.join(self.save_dir, "video")
                 os.makedirs(video_dir, exist_ok=True)
                 label = "success" if is_success else "failure"
@@ -322,32 +319,6 @@ class CollectEpisode(gym.Wrapper):
                     self._write_lerobot_video,
                     os.path.join(video_dir, video_filename),
                     self._copy(ep_data["images"]),
-                )
-
-            # Persist richer per-episode data as sidecar .pt:
-            # success -> success frame, failure -> full trajectory.
-            aux_episode_data = self._buffer_to_pt_ep(buf, env_idx, is_success)
-            if aux_episode_data is not None:
-                label = "success" if is_success else "failure"
-                aux_filename = (
-                    f"rank_{self.rank}_env_{env_idx}_"
-                    f"episode_{self._episode_ids[env_idx]}_{label}_aux.pt"
-                )
-                self._submit(
-                    self._write_pt,
-                    os.path.join(self.save_dir, aux_filename),
-                    aux_episode_data,
-                )
-        elif self.export_format == "pt":
-            episode_data = self._buffer_to_pt_ep(buf, env_idx, is_success)
-            if episode_data is not None:
-                label = "success" if is_success else "failure"
-                filename = (
-                    f"rank_{self.rank}_env_{env_idx}_"
-                    f"episode_{self._episode_ids[env_idx]}_{label}.pt"
-                )
-                self._submit(
-                    self._write_pt, os.path.join(self.save_dir, filename), episode_data
                 )
         else:
             episode_data = self._copy(
@@ -372,62 +343,6 @@ class CollectEpisode(gym.Wrapper):
             self._submit(
                 self._write_pickle, os.path.join(self.save_dir, filename), episode_data
             )
-
-    def _buffer_to_pt_ep(
-        self, buf: dict[str, list], env_idx: int, is_success: bool
-    ) -> Optional[dict[str, Any]]:
-        infos = buf["infos"]
-        observations = buf["observations"]
-
-        success_step = self._extract_success_step(infos)
-        if is_success:
-            if success_step is None:
-                success_step = max(0, len(observations) - 1)
-
-            frame_idx = min(success_step + 1, len(observations) - 1)
-            success_obs = self._copy(observations[frame_idx])
-
-            success_frame = None
-            if isinstance(success_obs, dict):
-                main_images = success_obs.get("main_images")
-                if isinstance(main_images, torch.Tensor) and main_images.numel() > 0:
-                    success_frame = main_images.clone().cpu().contiguous()
-                elif isinstance(main_images, np.ndarray) and main_images.size > 0:
-                    success_frame = np.array(main_images, copy=True)
-
-            return self._copy(
-                {
-                    "schema_version": "v1",
-                    "rank": self.rank,
-                    "env_idx": env_idx,
-                    "episode_id": self._episode_ids[env_idx],
-                    "label": "success",
-                    "is_success": True,
-                    "success_step": success_step,
-                    "success_frame": success_frame,
-                    "success_obs": success_obs,
-                }
-            )
-
-        # Failure: keep full trajectory for debugging / offline replay.
-        return self._copy(
-            {
-                "schema_version": "v1",
-                "rank": self.rank,
-                "env_idx": env_idx,
-                "episode_id": self._episode_ids[env_idx],
-                "label": "failure",
-                "is_success": False,
-                "trajectory": {
-                    "observations": buf["observations"],
-                    "actions": buf["actions"],
-                    "rewards": buf["rewards"],
-                    "terminated": buf["terminated"],
-                    "truncated": buf["truncated"],
-                    "infos": buf["infos"],
-                },
-            }
-        )
 
     # ─────────────────────────────────────────── lerobot helpers ──────────────
 
@@ -548,9 +463,6 @@ class CollectEpisode(gym.Wrapper):
         with open(save_path, "wb") as f:
             pickle.dump(episode_data, f)
 
-    def _write_pt(self, save_path: str, episode_data: dict) -> None:
-        torch.save(episode_data, save_path)
-
     def _write_lerobot_video(self, save_path: str, frames: list[np.ndarray]) -> None:
         """Write a lerobot episode's main camera frames to MP4."""
         if not frames:
@@ -627,27 +539,6 @@ class CollectEpisode(gym.Wrapper):
                             val.item() if isinstance(val, torch.Tensor) else val
                         )
         return self._episode_success[env_idx]
-
-    def _extract_success_step(self, infos: list[Any]) -> Optional[int]:
-        for idx, info in enumerate(infos):
-            if not isinstance(info, dict):
-                continue
-            for src in (info.get("final_info"), info.get("episode"), info):
-                if not isinstance(src, dict):
-                    continue
-                for key in ("success_once", "success_at_end", "success"):
-                    val = src.get(key)
-                    if val is None:
-                        continue
-                    if isinstance(val, torch.Tensor):
-                        if bool(val.any().item()):
-                            return idx
-                    elif isinstance(val, np.ndarray):
-                        if bool(val.any()):
-                            return idx
-                    elif bool(val):
-                        return idx
-        return None
 
     # ─────────────────────────────────────────── data utilities ───────────────
 

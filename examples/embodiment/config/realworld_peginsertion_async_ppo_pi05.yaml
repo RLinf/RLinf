@@ -54,7 +54,7 @@ algorithm:
   staleness_threshold: 1
   behave_weight_threshold: 2
 
-  rollout_epoch: 24
+  rollout_epoch: 20
   eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
   reward_type: chunk_level
   logprob_type: chunk_level
@@ -99,16 +99,16 @@ env:
   group_name: "EnvGroup"
 
   train:
-    ignore_terminations: True
+    ignore_terminations: False
     total_num_envs: 1
     override_cfg:
       is_dummy: False
-      use_dense_reward: True
-      dense_reward_scale: 0.02
-      max_num_steps: 50
+      use_dense_reward: False
+      reward_scale: 1.0
+      max_num_steps: 80
+      max_steps_per_rollout_epoch: 80
       target_ee_pose: [ 0.68074,  0.043378, -0.009091,  -3.12254644,  0.03969363, -0.00712334] # Replace with your target end-effector pose
-      # random_xy_range: 0.08
-      # random_z_range_high: 0.12
+      reward_threshold: [0.02, 0.02, 0.02, 0.2, 0.2, 0.2]
 
   eval:
     total_num_envs: 1
@@ -129,8 +129,8 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 80      # how many samples each GPU processes per sampling step
-  global_batch_size: 480   # after how many sampled examples we perform one loss backward pass. Requirement: global bz must be '_world_size' multiples of local bs.
+  micro_batch_size: 40      # how many samples each GPU processes per sampling step
+  global_batch_size: 320   # after how many sampled examples we perform one loss backward pass. Requirement: global bz must be '_world_size' multiples of local bs.
   seed: 0
   enable_offload: False
   # Override the default values in model/pi0_5
