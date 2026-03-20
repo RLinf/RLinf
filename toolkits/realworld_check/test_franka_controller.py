@@ -45,12 +45,6 @@ def main():
                 tcp_pose = controller.get_state().wait()[0].tcp_pose
                 r = R.from_quat(tcp_pose[3:].copy())
                 euler = r.as_euler("xyz")
-            elif cmd_str == "g":
-                controller.move_gripper(0)
-                print("try to close gripper")
-            elif cmd_str == "o":
-                controller.move_gripper(150)
-                print("try to open gripper")
             else:
                 print(f"Unknown cmd: {cmd_str}")
         except KeyboardInterrupt:
