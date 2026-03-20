@@ -30,6 +30,7 @@ import dataclasses
 import logging
 from tianshou.data import Batch
 from omegaconf import OmegaConf
+from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from groot.vla.data.schema import DatasetMetadata, EmbodimentTag
 from groot.vla.data.transform import ComposedModalityTransform
 import uuid
@@ -518,7 +519,8 @@ class DreamZeroActionModel:
 
     def forward(
         self,
-        batch: Dict[str, Any],
+        forward_type: ForwardType = ForwardType.SFT,
+        batch: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
         """SFT training: forward pass and return loss.
 

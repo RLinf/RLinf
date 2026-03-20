@@ -76,8 +76,22 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             with self.amp_context:
                 losses_dict = self.model(forward_type=ForwardType.SFT, data=batch_data)
             return losses_dict["loss"]
-        observation, actions = next(self.data_iter)
+            
+        elif SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.DREAMZERO_SFT
+        ]:
+            batch_data = next(self.data_iter)
+            batch_data = _pytree.tree_map(
+                lambda x: torch.as_tensor(x, device=self.device).contiguous().clone()
+                if isinstance(x, torch.Tensor)
+                else x,
+                batch_data,
+            )
+            with self.amp_context:
+                losses_dict = self.model(forward_type=ForwardType.SFT, data=batch_data)
+            return losses_dict["loss"]
 
+        observation, actions = next(self.data_iter)
         register_pytree_dataclasses(observation)
         observation = _pytree.tree_map(
             lambda x: torch.as_tensor(x, device=self.device).contiguous().clone()

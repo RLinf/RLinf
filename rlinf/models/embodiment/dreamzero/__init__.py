@@ -18,8 +18,8 @@ import os
 
 from omegaconf import DictConfig
 
-from rlinf.models.embodiment.dreamzero.dreamzero_policy import (
-    DreamZeroForRLActionPrediction,
+from rlinf.models.embodiment.dreamzero.dreamzero_action_model import (
+    DreamZeroActionModel,
 )
 from rlinf.utils.logging import get_logger
 
@@ -48,13 +48,8 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     add_value_head = cfg.get("add_value_head", False)
     device = "cuda" if __import__("torch").cuda.is_available() else "cpu"
 
-    model = DreamZeroForRLActionPrediction(
+    model = DreamZeroActionModel(
         model_path=model_path,
-        embodiment_tag=embodiment_tag,
-        device=device,
-        num_action_chunks=num_action_chunks,
-        action_dim=action_dim,
-        add_value_head=add_value_head,
     )
 
     return model
