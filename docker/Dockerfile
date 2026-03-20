@@ -16,6 +16,8 @@ FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-robotwin
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-opensora
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-frankasim
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-wan
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-liberopro
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-liberoplus
 
 # Franka depends on ros-noetic, which is not available on Ubuntu 22.04
 FROM ubuntu:20.04 AS base-image-embodied-franka
@@ -302,6 +304,28 @@ RUN bash requirements/install.sh embodied --venv openvla --model openvla --env f
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: LIBERO-Pro
+##################################################################################################
+FROM embodied-common-image AS embodied-liberopro-image
+
+# Install openvla-oft env for LIBERO-Pro
+RUN bash requirements/install.sh embodied --venv openvla-oft --model openvla-oft --env liberopro
+
+# Set default env
+RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: LIBERO-Plus
+##################################################################################################
+FROM embodied-common-image AS embodied-liberoplus-image
+
+# Install openvla-oft env for LIBERO-Plus
+RUN bash requirements/install.sh embodied --venv openvla-oft --model openvla-oft --env liberoplus
+
+# Set default env
+RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Final image selection
