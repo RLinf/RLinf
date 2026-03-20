@@ -15,9 +15,10 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor: 0-7
+    actor: 0-3
     env: 0-3
-    rollout: 4-7
+    rollout: 0-3
+
 
 runner:
   task_type: embodied
@@ -105,11 +106,11 @@ env:
 rollout:
   group_name: "RolloutGroup"
   backend: "huggingface"
-  enable_offload: True
+  enable_offload: False
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
+    model_path: "/mnt/public/hao/models/Openvla-oft-SFT-libero10-traj1/"
     precision: ${actor.model.precision}
 
 actor:
@@ -118,11 +119,11 @@ actor:
   micro_batch_size: 40
   global_batch_size: 640
   seed: 1234
-  enable_offload: True
+  enable_offload: False
 
   # Override the default values in model/openvla_oft
   model:
-    model_path: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
+    model_path: "/mnt/public/hao/models/Openvla-oft-SFT-libero10-traj1/"
     model_type: "openvla_oft"
 
     unnorm_key: bridge_orig
@@ -132,7 +133,7 @@ actor:
     is_lora: True
     lora_rank: 32
     # aka RLinf-OpenVLAOFT-ManiSkill-Base-Lora. It can be downloaded from https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
-    lora_path: /path/to/models/oft-sft/lora_004000/
+    lora_path: /mnt/public/hao/models/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
     max_prompt_length: 30
 
   optim:
@@ -159,3 +160,6 @@ reward:
 
 critic:
   use_critic_model: False
+
+data:
+  env_num : 64

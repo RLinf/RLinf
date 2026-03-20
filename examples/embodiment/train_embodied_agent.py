@@ -28,10 +28,7 @@ from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 mp.set_start_method("spawn", force=True)
 
 
-@hydra.main(
-    version_base="1.1", config_path="config", config_name="maniskill_ppo_openvlaoft"
-)
-def main(cfg) -> None:
+def train(cfg):
     cfg = validate_cfg(cfg)
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
@@ -75,6 +72,15 @@ def main(cfg) -> None:
 
     runner.init_workers()
     runner.run()
+
+    return runner, actor_group, rollout_group, env_group, component_placement
+
+
+@hydra.main(
+    version_base="1.1", config_path="config", config_name="maniskill_ppo_openvlaoft"
+)
+def main(cfg):
+    train(cfg)
 
 
 if __name__ == "__main__":

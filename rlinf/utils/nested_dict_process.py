@@ -45,7 +45,7 @@ def split_dict_to_chunk(data: dict, split_size, dim=0):
     splited_list = [{} for _ in range(split_size)]
     for key, value in data.items():
         if isinstance(value, torch.Tensor):
-            split_vs = torch.chunk(value, split_size, dim=dim)
+            split_vs = [v.contiguous() for v in torch.chunk(value, split_size, dim=dim)]
         elif value is None:
             split_vs = [None for _ in range(split_size)]
         elif isinstance(value, dict):

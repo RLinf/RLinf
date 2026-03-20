@@ -13,7 +13,9 @@
 # limitations under the License.
 
 import logging
+import os
 from argparse import ArgumentParser, Namespace
+from pathlib import Path
 
 import yaml
 from omegaconf import DictConfig, OmegaConf, open_dict
@@ -154,7 +156,7 @@ def has_target_env_num(cfg) -> bool:
     return target_env_num is not None
 
 
-def modify_cfg_for_profiling(cfg, env_num, step_per_env=1):
+def modify_cfg_for_profiling(cfg, env_num):
     with open_dict(cfg):
         cfg.cluster.component_placement = {
             "actor": "all",
@@ -163,8 +165,20 @@ def modify_cfg_for_profiling(cfg, env_num, step_per_env=1):
         }  # Ensure collocated mode for profiling
         cfg.env.train.total_num_envs = env_num
         cfg.runner.max_steps = (
-            step_per_env  # Run the specified number of steps for profiling
+            OmegaConf.select(
+                cfg, "data.step_per_env", default=1
+            )  # Run the specified number of steps for profiling
         )
+        cfg.runner.logger.per_worker_log = True
+
+
+def modify_cfg_for_profiling_with_group(cfg, env_num, run_idx: int) -> None:
+    """Profiling config + unique group names to avoid Ray actor name collisions."""
+    modify_cfg_for_profiling(cfg, env_num)
+    with open_dict(cfg):
+        cfg.actor.group_name = f"{cfg.actor.group_name}_env{env_num}_run{run_idx}"
+        cfg.rollout.group_name = f"{cfg.rollout.group_name}_env{env_num}_run{run_idx}"
+        cfg.env.group_name = f"{cfg.env.group_name}_env{env_num}_run{run_idx}"
 
 
 def update_yaml_with_profile_data(profile_data):
@@ -189,3 +203,124 @@ def update_yaml_with_profile_data(profile_data):
         yaml.dump(content, f, default_flow_style=False, sort_keys=False)
 
     logging.info(f"Updated profile_data in new file: {new_config_path}")
+
+
+def log_env_num_instavg_to_tensorboard(cfg, env_num_per_instance: int) -> None:
+    """Log env_num_per_instance to TensorBoard"""
+    try:
+        from torch.utils.tensorboard import SummaryWriter
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError(
+            "tensorboard is required for env_num_per_instance logging. Try `pip install tensorboard`."
+        ) from exc
+
+    log_root = cfg.runner.logger.log_path
+    log_suffix = "all" if cfg.runner.get("per_worker_log", False) else ""
+    tb_logdir = os.path.join(log_root, "tensorboard", log_suffix)
+    os.makedirs(tb_logdir, exist_ok=True)
+    writer = SummaryWriter(tb_logdir)
+    writer.add_scalar("profile/env_num_per_instance", env_num_per_instance, 0)
+    writer.flush()
+    writer.close()
+
+
+def _find_run_dirs(logdir: Path) -> list[Path]:
+    event_prefix = "events.out.tfevents"
+    run_dirs: list[Path] = []
+    for root, _dirs, files in os.walk(logdir):
+        if any(f.startswith(event_prefix) for f in files):
+            run_dirs.append(Path(root))
+    return sorted(set(run_dirs))
+
+
+def _load_scalars(run_dir: Path) -> dict[str, list[tuple[int, float]]]:
+    try:
+        from tensorboard.backend.event_processing import event_accumulator
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError(
+            "tensorboard is required. Try `pip install tensorboard`."
+        ) from exc
+
+    ea = event_accumulator.EventAccumulator(
+        str(run_dir),
+        size_guidance={"scalars": 0},
+    )
+    ea.Reload()
+    available = set(ea.Tags().get("scalars", []))
+    results: dict[str, list[tuple[float, float]]] = {}
+    for tag in (
+        "time/env/interact",
+        "time/rollout/predict",
+        "time/actor/run_training",
+        "profile/env_num_per_instance",
+    ):
+        if tag not in available:
+            continue
+        results[tag] = [(e.wall_time, e.value) for e in ea.Scalars(tag)]
+    return results
+
+
+def extract_from_tensorboard():
+    log_dir_str = os.environ.get("LOG_DIR")
+
+    if not log_dir_str:
+        print("# Error: $LOG_DIR environment variable is not set.")
+        return {}
+
+    logdir = Path(log_dir_str)
+    if not logdir.exists():
+        print(f"# Error: logdir not found: {logdir}")
+        return {}
+
+    run_dirs = _find_run_dirs(logdir)
+    if not run_dirs:
+        print(f"# No TensorBoard event files found under: {logdir}")
+        return {}
+
+    env_profile_data: dict[int, float] = {}
+    rollout_profile_data: dict[int, float] = {}
+    actor_costs_all: list[float] = []
+
+    def _vals_in_window(events, t_start, t_end):
+        return [v for t, v in events if t_start <= t < t_end]
+
+    for run_dir in run_dirs:
+        data = _load_scalars(run_dir)
+        if not data or "profile/env_num_per_instance" not in data:
+            continue
+
+        env_events = sorted(data["profile/env_num_per_instance"], key=lambda x: x[0])
+        env_cost_events = data.get("time/env/interact", [])
+        rollout_cost_events = data.get("time/rollout/predict", [])
+        actor_cost_events = data.get("time/actor/run_training", [])
+
+        for i, (t_start, env_num_val) in enumerate(env_events):
+            t_end = env_events[i + 1][0] if i + 1 < len(env_events) else float("inf")
+            env_num = int(env_num_val)
+            env_vals = _vals_in_window(env_cost_events, t_start, t_end)
+            rollout_vals = _vals_in_window(rollout_cost_events, t_start, t_end)
+            actor_vals = _vals_in_window(actor_cost_events, t_start, t_end)
+
+            if env_vals:
+                env_profile_data[env_num] = sum(env_vals) / len(env_vals)
+            if rollout_vals:
+                rollout_profile_data[env_num] = sum(rollout_vals) / len(rollout_vals)
+            if actor_vals:
+                # collect per-env actor costs; later we select base env_num
+                actor_costs_all.extend([(env_num, v) for v in actor_vals])
+
+    profile_data = {}
+    if env_profile_data:
+        profile_data["env_profile_data"] = env_profile_data
+    if rollout_profile_data:
+        profile_data["rollout_profile_data"] = rollout_profile_data
+    if actor_costs_all:
+        base_env_num = min(env_profile_data.keys()) if env_profile_data else None
+        if base_env_num is not None:
+            base_actor_vals = [v for env, v in actor_costs_all if env == base_env_num]
+            if base_actor_vals:
+                profile_data["actor_cost"] = sum(base_actor_vals) / len(base_actor_vals)
+
+    print(profile_data)
+
+    return profile_data
