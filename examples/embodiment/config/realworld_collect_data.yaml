@@ -1,5 +1,5 @@
 defaults:
-  - env/realworld_bin_relocation@env.eval
+  - env/realworld_peg_insertion@env.eval
   - override hydra/job_logging: stdout
 
 hydra:
@@ -21,7 +21,7 @@ cluster:
       hardware:
         type: Franka
         configs:
-          - robot_ip: 10.100.25.2
+          - robot_ip: ROBOT_IP
             node_rank: 0
 
 runner:
@@ -31,7 +31,7 @@ runner:
     project_name: rlinf
     experiment_name: "collect-data"
     logger_backends: ["tensorboard"] # wandb, swanlab
-  num_data_episodes: 3
+  num_data_episodes: 20
   record_task_description: False
 
 env:
@@ -42,7 +42,7 @@ env:
     auto_reset: False
     use_spacemouse: True
     override_cfg:
-      target_ee_pose: [ 0.5030125,  -0.01383892,  0.00476297,  3.13667154,  0.0583231,  -0.04110637]
+      target_ee_pose: TARGET_EE_POSE
       success_hold_steps: 1  # define how many consecutive steps the robot must hold the position to succeed
 
   data_collection:

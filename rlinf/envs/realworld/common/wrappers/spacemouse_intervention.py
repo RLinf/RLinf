@@ -40,10 +40,7 @@ class SpacemouseIntervention(gym.ActionWrapper):
         - action: spacemouse action if nonezero; else, policy action
         """
         expert_a, buttons = self.expert.get_action()
-        # expert_a = [0,0,0,0,0,0]
-        # buttons = [1, 0]
         self.left, self.right = tuple(buttons)
-        # print(f"buttons: {buttons}, enable_gripper:{self.gripper_enabled}")
 
         if np.linalg.norm(expert_a) > 0.001 or (self.left + self.right) > 0.5:
             self.last_intervene = time.time()
@@ -63,7 +60,6 @@ class SpacemouseIntervention(gym.ActionWrapper):
 
     def step(self, action):
         new_action, replaced = self.action(action)
-        print(f"replaced action:{new_action}")
 
         obs, rew, done, truncated, info = self.env.step(new_action)
         if replaced:
