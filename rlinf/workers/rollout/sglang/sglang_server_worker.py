@@ -62,7 +62,7 @@ def _build_server_args_from_config(
         port=port,
         disable_cuda_graph=not use_cudagraph,
         cuda_graph_max_bs=cuda_graph_max_bs,
-        tp_size=placement.rollout_tp_size,
+        tp_size=rollout_cfg.tensor_parallel_size,
         mem_fraction_static=rollout_cfg.gpu_memory_utilization,
         enable_memory_saver=use_cudagraph,
         enable_torch_compile=rollout_cfg.sglang.use_torch_compile,
@@ -79,7 +79,6 @@ def _build_server_args_from_config(
         ep_size=get_sglang("ep_size", 1),
         moe_a2a_backend=get_sglang("moe_a2a_backend", "none"),
         moe_runner_backend=get_sglang("moe_runner_backend", "auto"),
-        enable_dp_attention=get_sglang("enable_dp_attention", False),
         deepep_mode=get_sglang("deepep_mode", "auto"),
     )
 
@@ -112,6 +111,7 @@ class SGLangServerWorker(Worker):
         self._cfg = config
         self._cfg_rollout = config_rollout if config_rollout is not None else getattr(config, "rollout", None)
         self._server_proc: Optional[mp.Process] = None
+        self._return_logprobs = self._cfg_rollout.return_logprobs
 
     @staticmethod
     def _is_port_in_use(host: str, port: int) -> bool:
@@ -136,7 +136,7 @@ class SGLangServerWorker(Worker):
                 launch_server,
             )
 
-            launch_server(server_args)
+            launch_server(server_args, rollout_return_logprobs=self._return_logprobs)
 
         # daemon=False：launch_server 内会 spawn detokenizer/scheduler 子进程
         proc = mp.Process(target=_run, daemon=False)
@@ -232,11 +232,28 @@ class SGLangServerWorker(Worker):
         resp = requests.post(url, json=payload, timeout=300)
         resp.raise_for_status()
 
+    def _wait_server_ready(self, timeout: float = 180, interval: float = 2) -> None:
+        """轮询直到 SGLang HTTP 开始监听，再返回。避免 server_start() 后立刻调 init_rlinf_worker 出现 Connection refused。"""
+        url = self._base_url()
+        deadline = time.monotonic() + timeout
+        last_err = None
+        while time.monotonic() < deadline:
+            try:
+                resp = requests.get(url, timeout=5)
+                if resp.status_code in (200, 404, 405):
+                    return
+            except (requests.exceptions.ConnectionError, OSError) as e:
+                last_err = e
+            time.sleep(interval)
+        raise TimeoutError(
+            f"SGLang server at {url} did not become ready within {timeout}s"
+        ) from last_err
+
     def init_worker(self, start_http_server: bool = False, ready_channels=None):
         self._ready_channels = ready_channels  # list[Channel] 或 None
         if start_http_server:
             self.server_start()
-            time.sleep(1)
+            self._wait_server_ready()
         if self._placement is not None and self._cfg is not None:
             self.init_rlinf_worker_http(
                 parent_address=self.worker_address,

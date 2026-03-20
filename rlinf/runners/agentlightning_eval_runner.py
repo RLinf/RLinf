@@ -1,6 +1,9 @@
 import logging
 import os
+import time
 from typing import Any, Optional, Union
+
+import requests
 
 if "CUDA_LAUNCH_BLOCKING" not in os.environ:
     os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
@@ -19,33 +22,8 @@ import typing
 if typing.TYPE_CHECKING:
     from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
     from rlinf.workers.actor.megatron_actor_worker import MegatronActor
-    from rlinf.workers.rollout.sglang.sglang_router_worker import SGLangRouterWorker
-    from rlinf.workers.rollout.sglang.sglang_server_worker import SGLangServerWorker
     from rlinf.workers.rollout.sglang.sglang_worker_server import SGLangWorkerWithHTTPServer
-
-
-def _normalize_rollout_server_addrs(raw: Any) -> list[str]:
-    if isinstance(raw, list):
-        return [a for a in raw if a]
-    if raw:
-        return [raw]
-    return []
-
-
-def _resolve_agl_rollout_http_addrs(rollout_group: Any, sglang_router_worker: Any) -> list[str]:
-    """SGLang worker_http：直连各 backend；router_server：经 Router 聚成单一入口。"""
-    addrs = _normalize_rollout_server_addrs(rollout_group.get_server_address().wait())
-    logging.info("[AgentLightningEvalRunner] rollout HTTP backends: %s", addrs)
-    if sglang_router_worker is None or not addrs:
-        return addrs
-    worker_urls = [f"http://{a}" for a in addrs]
-    logging.info("[AgentLightningEvalRunner] router <- %s", worker_urls)
-    sglang_router_worker.server_start(worker_urls=worker_urls).wait()
-    r = sglang_router_worker.get_router_address().wait()
-    entry = r[0] if isinstance(r, list) and r else r
-    logging.info("[AgentLightningEvalRunner] AgentLightning HTTP entry: %s", entry)
-    return [entry]
-
+    from rlinf.workers.rollout.sglang.sglang_router_worker import SGLangRouterWorker
 
 class AgentLightningEvalRunner:
     """评估；与训练 runner 相同，支持 SGLang worker_http / router_server 两种底座。"""
@@ -55,12 +33,11 @@ class AgentLightningEvalRunner:
         cfg: DictConfig,
         placement: ModelParallelComponentPlacement,
         val_dataset: Dataset,
-        rollout: Union["SGLangServerWorker", "SGLangWorkerWithHTTPServer"],
+        rollout: Union["SGLangWorkerWithHTTPServer", "SGLangRouterWorker"],
         actor: Union["MegatronActor", "MAMegatronActor"],
         store: LightningStore,
         adapter: TraceToTripletBase,
         agentlightning_rollout_worker: AgentLightningRolloutWorker,
-        sglang_router_worker: Optional["SGLangRouterWorker"],
     ):
         self.cfg = cfg
         self.placement = placement
@@ -70,7 +47,6 @@ class AgentLightningEvalRunner:
         self.store = store
         self.adapter = adapter
         self.agentlightning_rollout_worker = agentlightning_rollout_worker
-        self.sglang_router_worker = sglang_router_worker
 
         self.dataloader_channel = Channel.create("DataLoader")
         self.rollout_channel = Channel.create("Rollout")
@@ -106,9 +82,7 @@ class AgentLightningEvalRunner:
         if use_pre_process_policy:
             self.rollout.offload_engine().wait()
 
-        agl_server_addresses = _resolve_agl_rollout_http_addrs(
-            self.rollout, self.sglang_router_worker
-        )
+        agl_server_addresses = self.rollout.get_server_address().wait()
 
         logging.info(
             "[AgentLightningEvalRunner] initializing AgentLightningRolloutWorker with server_addresses=%s",

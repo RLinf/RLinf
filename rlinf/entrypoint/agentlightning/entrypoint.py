@@ -22,6 +22,7 @@ from rlinf.workers.inference.utils import get_inference_backend_worker
 from rlinf.workers.actor import get_actor_worker
 from rlinf.workers.agent.agentlightning_rollout_worker import AgentLightningRolloutWorker
 from rlinf.workers.rollout.sglang.sglang_router_worker import SGLangRouterWorker
+from rlinf.workers.rollout.sglang.sglang_server_worker import SGLangServerWorker
 
 logger = logging.getLogger(__name__)
 
@@ -42,27 +43,36 @@ def run_rlinf_training(
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = ModelParallelComponentPlacement(cfg, cluster)
 
-    rollout_worker_cls = get_rollout_backend_worker(cfg)
-    rollout_placement_strategy = component_placement.get_strategy("rollout")
-    rollout_group = rollout_worker_cls.create_group(cfg, component_placement).launch(
-        cluster,
-        name=cfg.rollout.group_name,
-        placement_strategy=rollout_placement_strategy,
-    )
-
     singleton_placement_strategy = PackedPlacementStrategy(
         start_hardware_rank=0, end_hardware_rank=0
     )
 
-    router_group = None
     if (
         cfg.rollout.rollout_backend == "sglang"
         and cfg.rollout.sglang.serving_mode == "router_server"
     ):
-        router_group = SGLangRouterWorker.create_group(cfg, component_placement).launch(
+        # router_server：SGLangServerWorker + SGLangRouterWorker（后者注入 server_group，兼作 rollout，少一个 Ray actor）。
+        server_group = SGLangServerWorker.create_group(cfg, component_placement).launch(
+            cluster,
+            name=cfg.rollout.group_name,
+            placement_strategy=component_placement.get_strategy("rollout"),
+        )
+        rollout_group = SGLangRouterWorker.create_group(
+            cfg, component_placement, server_group=server_group
+        ).launch(
             cluster,
             name="SGLangRouterWorker",
             placement_strategy=singleton_placement_strategy,
+        )
+    else:
+        rollout_worker_cls = get_rollout_backend_worker(cfg)
+        rollout_placement_strategy = component_placement.get_strategy("rollout")
+        rollout_group = rollout_worker_cls.create_group(
+            cfg, component_placement
+        ).launch(
+            cluster,
+            name=cfg.rollout.group_name,
+            placement_strategy=rollout_placement_strategy,
         )
 
     agentlightning_rollout_group = AgentLightningRolloutWorker.create_group(
@@ -111,7 +121,6 @@ def run_rlinf_training(
             store=store,
             adapter=adapter,
             agentlightning_rollout_worker=agentlightning_rollout_group,
-            sglang_router_worker=router_group,
         )
         runner.eval(checkpoint_dir=eval_checkpoint_dir)
     else:
@@ -126,7 +135,6 @@ def run_rlinf_training(
             store=store,
             adapter=adapter,
             agentlightning_rollout_worker=agentlightning_rollout_group,
-            sglang_router_worker=router_group,
         )
         runner.init_workers()
         runner.run()
