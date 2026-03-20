@@ -180,27 +180,29 @@ class DataCollector(Worker):
                 )
                 if isinstance(r_val, torch.Tensor):
                     r_val = r_val.item()
+                
+                self.total_cnt += 1
 
                 if r_val >= 0.5:
                     success_cnt += 1
 
-                self.total_cnt += 1
-                self.log_info(
-                    f"Success: {r_val}. Total: {success_cnt}/{self.num_data_episodes}"
-                )
+                    self.log_info(
+                        f"Success: {r_val}. Total: {success_cnt}/{self.num_data_episodes}"
+                    )
 
-                # Save Trajectory to the 'demos' directory
-                trajectory = current_rollout.to_trajectory()
-                trajectory.intervene_flags = torch.ones_like(trajectory.intervene_flags)
-                self.buffer.add_trajectories([trajectory])
+                    # Save Trajectory to the 'demos' directory
+                    trajectory = current_rollout.to_trajectory()
+                    trajectory.intervene_flags = torch.ones_like(trajectory.intervene_flags)
+                    self.buffer.add_trajectories([trajectory])
 
+                    progress_bar.update(1)
+                
                 # Reset for next episode
                 obs, _ = self.env.reset()
                 current_obs_processed = self._process_obs(obs)
                 current_rollout = EmbodiedRolloutResult(
                     max_episode_length=self.cfg.env.eval.max_episode_steps,
                 )
-                progress_bar.update(1)
 
         self.buffer.close()
         self.log_info(
