@@ -36,7 +36,7 @@ class SFTRunner:
     def __init__(
         self,
         cfg: DictConfig,
-        actor: Union[FSDPSftWorker, FSDPRewardWorker],
+        actor: Union["FSDPSftWorker", "FSDPRewardWorker"],
         run_timer: Optional[ScopedTimer] = None,
     ) -> None:
         self.cfg = cfg
@@ -84,12 +84,11 @@ class SFTRunner:
             ncols=800,
         )
         for _step in range(start_step, self.max_steps):
-            # set global step
-            self.actor.set_global_step(self.global_step)
+            if hasattr(self.actor, "set_global_step"):
+                # set global step
+                self.actor.set_global_step(self.global_step)
 
-            # SFT Training
             with self.timer("step"):
-                # Actor training.
                 actor_handle: Handle = self.actor.run_training()
                 actor_metrics = actor_handle.wait()
 

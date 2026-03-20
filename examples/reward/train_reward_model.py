@@ -19,8 +19,8 @@ Usage:
 
     # Or with custom preprocessed split paths
     python examples/reward/train_reward_model.py \
-        data.train_data_path=/path/to/train.pt \
-        data.val_data_path=/path/to/val.pt
+        data.train_data_paths=/path/to/train.pt \
+        data.val_data_paths=/path/to/val.pt
 """
 
 import json

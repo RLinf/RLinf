@@ -37,8 +37,8 @@ data:
   #   python examples/reward/preprocess_reward_dataset.py \
   #       --raw-data-path /path/to/collected_data \
   #       --output-dir /path/to/processed_reward_data
-  train_data_path: "logs/processed_reward_data/train.pt"
-  val_data_path: "logs/processed_reward_data/val.pt"
+  train_data_paths: "logs/processed_reward_data/train.pt"
+  val_data_paths: "logs/processed_reward_data/val.pt"
   num_workers: 4
 
 actor:
@@ -51,15 +51,15 @@ actor:
 
   # Model configuration
   model:
-    model_type: "resnet_reward"
-    model_path: "resnet18"
+    model_type: "resnet"
+    model_path: null
     arch: "resnet18"
-    pretrained: true
+    pretrained: False
     hidden_dim: 256
     dropout: 0.1
     image_size: [3, 128, 128]
     normalize: true
-    precision: "bf16"
+    precision: "fp32"
 
     add_value_head: false
     is_lora: false
@@ -85,14 +85,11 @@ actor:
     sharding_strategy: "no_shard"
     use_orig_params: true
     gradient_checkpointing: false
-    grad_clip: 1.0
-    amp:
-      enabled: true
-      precision: "bf16"
-    mixed_precision:
-      param_dtype: "bf16"
-      reduce_dtype: "bf16"
-      buffer_dtype: "bf16"
+
+    mixed_precision:            # mixed precision settings for fsdp/fsdp2
+      param_dtype: null
+      reduce_dtype: null
+      buffer_dtype: null
 
 reward:
   use_reward_model: false

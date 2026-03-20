@@ -36,6 +36,7 @@ runner:
   save_interval: -1
 
   resume_dir: null
+  ckpt_path: null
 
 algorithm:
   update_epoch: 8
@@ -97,7 +98,7 @@ env:
       enabled: True
       save_dir: ${runner.logger.log_path}/collected_data
       export_format: "pickle"
-      only_success: False       # set True to discard failed episodes
+      only_success: True       # set True to discard failed episodes
 
   eval:
     total_num_envs: 128
@@ -118,7 +119,7 @@ env:
 
     # ── pickle format ───────────────────────────────────────────────
     data_collection:
-      enabled: True
+      enabled: False
       save_dir: ${runner.logger.log_path}/collected_data
       export_format: "pickle"
       only_success: True       # set True to discard failed episodes

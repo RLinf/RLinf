@@ -183,44 +183,31 @@ actor:
       buffer_dtype: ${actor.model.precision}
 
 reward:
-  use_reward_model: False
+  use_reward_model: True
   group_name: "RewardGroup"
   
   # Reward mode:
   # - "per_step": Compute reward for every frame (default, prone to reward hacking)
   # - "terminal": Only compute reward at episode end (last frame), prevents reward hacking
-  reward_mode: "per_step"
-  
-  # Asymmetric reward: success gets big reward, fail gets small/no penalty
-  # This prevents policy collapse when most episodes fail
-  success_reward: 1.0   # Reward for success (prob > threshold)
-  fail_reward: 0      # Reward for fail (prob < threshold), use 0 or small negative
+  reward_mode: "terminal"
+
   reward_threshold: 0.5 # Probability threshold for success/fail classification
   
   # How to combine learned rewards with environment rewards:
-  # - "replace": Use only learned rewards (default)
-  # - "add": Add learned rewards to env rewards (reward = env + weight * learned)
-  # - "weighted": Weighted sum (reward = env_weight * env + weight * learned)
-  combine_mode: "replace"
-  reward_weight: 10.0  # Bonus reward for terminal success
-  env_reward_weight: 0.0  # Keep env dense reward for learning basic skills
+  # Weighted sum (reward = env_reward_weight * env_reward + reward_weight * reward_model_reward)
+  reward_weight: 1.0
+  env_reward_weight: 0.0
   
   model:
-    model_type: "resnet_reward"
+    model_path: null
+    model_type: "resnet"
+    pretrained: False # if pretrained is set to True, rlinf will automatically download pretrained weights.
     arch: "resnet18"
     hidden_dim: 256
-    dropout: 0.0
+    dropout: 0
     image_size: [3, 128, 128]
-    normalize: true 
-    precision: "bf16"
-    
-    # Path to trained reward model checkpoint
-    checkpoint_path: "logs/reward_model_realworld/checkpoints/best_model"
-    
-    # Debug image save directory (for visualizing ResNet classification results)
-    # Set to a path to enable debug image saving, leave empty to disable
-    # debug_save_dir: "${runner.logger.log_path}/training_data_debug"
-    debug_save_dir: null
+    normalize: true
+    precision: "fp32"
 
 critic:
   use_critic_model: False

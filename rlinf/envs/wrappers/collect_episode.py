@@ -605,17 +605,16 @@ class CollectEpisode(gym.Wrapper):
         """Extract success with episode-level fields taking priority."""
         episode_values: list[bool] = []
 
-        if self._has_final_info_for_env(info):
-            final_info = info.get("final_info")
-            if isinstance(final_info, dict):
-                final_info_success = self._extract_success_from_source(final_info)
-                if final_episode_success is not None:
-                    episode_values.append(final_info_success)
-                final_episode_success = self._extract_success_from_source(
-                    final_info.get("episode")
-                )
-                if final_episode_success is not None:
-                    episode_values.append(final_episode_success)
+        final_info = info.get("final_info", None)
+        if isinstance(final_info, dict):
+            final_info_success = self._extract_success_from_source(final_info)
+            if final_episode_success is not None:
+                episode_values.append(final_info_success)
+            final_episode_success = self._extract_success_from_source(
+                final_info.get("episode")
+            )
+            if final_episode_success is not None:
+                episode_values.append(final_episode_success)
 
         current_episode_success = self._extract_success_from_source(info.get("episode"))
         if current_episode_success is not None:
@@ -625,15 +624,6 @@ class CollectEpisode(gym.Wrapper):
             return any(episode_values)
 
         return self._extract_success_from_source(info)
-
-    def _has_final_info_for_env(self, info, env_idx: Optional[int] = None) -> bool:
-        if not isinstance(info, dict) or "final_info" not in info:
-            return False
-        if "_final_info" not in info:
-            return True
-        if env_idx is None:
-            return bool(self._to_bool_scalar(info.get("_final_info")))
-        return self._scalar_flag(info.get("_final_info"), env_idx)
 
     # ─────────────────────────────────────────── data utilities ───────────────
 

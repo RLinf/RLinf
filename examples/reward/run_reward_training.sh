@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 # Run ResNet Reward Model Training
 
 set -e
@@ -60,30 +60,17 @@ CMD="python examples/reward/train_reward_model.py"
 CMD="$CMD runner.early_stop.enabled=$EARLY_STOP"
 CMD="$CMD runner.early_stop.patience=$PATIENCE"
 
-# Add train data path if provided
-if [[ -n "$TRAIN_DATA_PATH" ]]; then
-    # Convert relative path to absolute if needed
-    if [[ ! "$TRAIN_DATA_PATH" =~ ^/ ]]; then
-        TRAIN_DATA_PATH="$PROJECT_ROOT/$TRAIN_DATA_PATH"
-    fi
-    echo "Train data path: $TRAIN_DATA_PATH"
-    CMD="$CMD data.train_data_path=$TRAIN_DATA_PATH"
-else
-    echo "Train data path: (using config default)"
-fi
+CONFIG_NAME="reward_training"
 
-# Add val data path if provided
-if [[ -n "$VAL_DATA_PATH" ]]; then
-    if [[ ! "$VAL_DATA_PATH" =~ ^/ ]]; then
-        VAL_DATA_PATH="$PROJECT_ROOT/$VAL_DATA_PATH"
-    fi
-    echo "Val data path: $VAL_DATA_PATH"
-    CMD="$CMD data.val_data_path=$VAL_DATA_PATH"
-else
-    echo "Val data path: (using config default)"
-fi
-echo "============================================"
+export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
+export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
+LOG_DIR="${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')-${CONFIG_NAME}" #/$(date +'%Y%m%d-%H:%M:%S')"
+mkdir -p "${LOG_DIR}"
+MEGA_LOG_FILE="${LOG_DIR}/run_reward_training.log"
+
+CMD="$CMD runner.logger.log_path=${LOG_DIR}"
 
 # Run training with remaining arguments
-$CMD "$@"
+echo ${CMD} > ${MEGA_LOG_FILE}
+${CMD} 2>&1 | tee -a ${MEGA_LOG_FILE}
 

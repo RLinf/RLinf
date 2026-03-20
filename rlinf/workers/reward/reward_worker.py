@@ -292,7 +292,7 @@ class RewardInferenceWorker(RewardWorker):
             return images.shape[0]
         raise ValueError(f"Unsupported reward input image type: {type(images)}")
 
-    @Worker.timer("_compute_image_rewards")
+    @Worker.timer("compute_image_rewards")
     def _compute_image_rewards(self, images: torch.Tensor):
         if isinstance(images, np.ndarray):
             images = torch.from_numpy(images)
@@ -465,29 +465,15 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
     def build_dataloader(self) -> tuple[Optional[DataLoader], Optional[DataLoader]]:
         """Build dataloaders from preprocessed train/val dataset files."""
         data_cfg = self.cfg.get("data", {})
-        train_data_path = data_cfg.get("train_data_path")
-        val_data_path = data_cfg.get("val_data_path")
-
-        if not train_data_path or not os.path.exists(train_data_path):
-            self.logger.warning(
-                f"Processed train data path not found: {train_data_path}. "
-                "Please run the reward preprocessing script first."
-            )
-            return None, None
-
-        if not val_data_path or not os.path.exists(val_data_path):
-            self.logger.warning(
-                f"Processed val data path not found: {val_data_path}. "
-                "Please run the reward preprocessing script first."
-            )
-            return None, None
+        train_data_paths = data_cfg.get("train_data_paths")
+        val_data_paths = data_cfg.get("val_data_paths")
 
         self.logger.info(
             f"Loading preprocessed reward datasets from "
-            f"{train_data_path} and {val_data_path}"
+            f"{train_data_paths} and {val_data_paths}"
         )
-        train_dataset = RewardBinaryDataset(train_data_path)
-        val_dataset = RewardBinaryDataset(val_data_path)
+        train_dataset = RewardBinaryDataset(train_data_paths)
+        val_dataset = RewardBinaryDataset(val_data_paths)
 
         if len(train_dataset) == 0:
             self.logger.warning("Training dataset is empty")
@@ -534,6 +520,7 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
 
         return train_loader, val_loader
 
+    @Worker.timer("run_training")
     def run_training(self) -> dict[str, float]:
         """Run one training iteration with gradient accumulation.
         """
@@ -617,6 +604,7 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
 
         return train_metrics
 
+    @Worker.timer("run_eval")
     def run_eval(self) -> dict[str, float]:
         """Run validation over the entire validation set."""
         if self.val_loader is None:

@@ -71,16 +71,16 @@ class RewardBinaryDataset(Dataset):
 
     def __init__(
         self,
-        processed_path: str,
+        data_path: str,
     ):
         """Initialize dataset from a preprocessed .pt file.
 
         Args:
-            processed_path: Path to preprocessed dataset .pt file.
+            data_path: Path to preprocessed dataset .pt file.
 
         Required payload schema is defined by `RewardDatasetPayload`.
         """
-        payload = RewardDatasetPayload.load(processed_path)
+        payload = RewardDatasetPayload.load(data_path)
         self.images = payload.images
         self.labels = payload.labels
         self.metadata = payload.metadata
