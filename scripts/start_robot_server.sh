@@ -96,7 +96,10 @@ if [ -z "$CONFIG" ]; then
     exit 1
 fi
 
+CLEANING_UP=false
 cleanup() {
+    if [ "$CLEANING_UP" = true ]; then return; fi
+    CLEANING_UP=true
     echo "Shutting down..."
     kill 0 2>/dev/null || true
     wait 2>/dev/null || true
