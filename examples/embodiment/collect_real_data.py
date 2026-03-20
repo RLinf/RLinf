@@ -123,7 +123,6 @@ class DataCollector(Worker):
                 action = np.zeros((1, 6))
             else:
                 action = np.zeros((1, 7))
-            # breakpoint()
             next_obs, reward, done, _, info = self.env.step(action)
 
             if "intervene_action" in info:
