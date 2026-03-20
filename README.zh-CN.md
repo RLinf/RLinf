@@ -242,16 +242,11 @@ RLinf具有高度灵活性，可支持多种强化学习训练工作流（PPO、
 💡 希望在此展示您的项目吗？欢迎提交拉取请求（PR），我们非常乐意将其收录其中！
 
 ## 采用方（Adoption）
-RLinf 是一款面向具身智能、可用于生产环境的开源强化学习框架。RLinf 正在被多家企业与创业团队用于具身智能与强化学习相关的研发与落地，包括 智元机器人、自变量机器人、灵初智能、原力灵机、摩尔线程与华为等。
+RLinf 是一款面向具身智能、可用于生产环境的开源强化学习框架。RLinf 正在被多家企业与创业团队用于具身智能与强化学习相关的研发与落地，包括 智元机器人、自变量机器人、灵初智能、原力灵机、摩尔线程与地瓜机器人等。
 
-<p align="center">
-  <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/xsquarerobot-logo.png" height="40" style="vertical-align:middle" alt="XSquare Robot"/>
-  <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/dexmal_logo.png" height="65" style="vertical-align:middle" alt="Dexmal"/>
-  <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/agibot-logo.png" height="40" style="vertical-align:middle" alt="AgiBot"/>
-  <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/PsiBot-logo.jpg" height="30" style="vertical-align:middle" alt="PsiBot"/>
-  <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/Moore_Threads_logo.png" height="35" style="vertical-align:middle" alt="Moore Threads"/>
-  <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/D-Robotics-logo.png" height="65" style="vertical-align:middle" alt="D-Robotics"/>
-</p>
+<div align="center">
+  <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/adoption.png" alt="adoption"/>
+</div>
 
 ✨ 如果您的组织正在使用 RLinf，欢迎联系或提交 PR 加入该列表。
 

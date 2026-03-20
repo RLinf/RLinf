@@ -246,16 +246,11 @@ We are excited to see a growing ecosystem of projects building on top of or inte
 💡 Want to feature your project here? Open a PR and we’ll be happy to include it!
 
 ## Adoption
-RLinf is a production-grade, open-source reinforcement learning framework for embodied AI. It is being adopted by leading companies and startups across AI infrastructure and robotics, including AgiBot, X Square Robot, PsiBot, Dexmal, Moore Threads, and Huawei.
+RLinf is a production-grade, open-source reinforcement learning framework for embodied AI. It is being adopted by leading companies and startups across AI infrastructure and robotics, including AgiBot, X Square Robot, PsiBot, Dexmal, Moore Threads, and D-Robotics.
 
-<p align="center">
-  <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/xsquarerobot-logo.png" height="40" style="vertical-align:middle" alt="XSquare Robot"/>
-  <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/dexmal_logo.png" height="65" style="vertical-align:middle" alt="Dexmal"/>
-  <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/agibot-logo.png" height="40" style="vertical-align:middle" alt="AgiBot"/>
-  <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/PsiBot-logo.jpg" height="30" style="vertical-align:middle" alt="PsiBot"/>
-  <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/Moore_Threads_logo.png" height="35" style="vertical-align:middle" alt="Moore Threads"/>
-  <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/D-Robotics-logo.png" height="65" style="vertical-align:middle" alt="D-Robotics"/>
-</p>
+<div align="center">
+  <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/adoption.png" alt="adoption"/>
+</div>
 
 ✨ If your organization is using RLinf, feel free to reach out or submit a PR to be listed here.
 
