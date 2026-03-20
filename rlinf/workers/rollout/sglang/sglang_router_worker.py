@@ -4,13 +4,12 @@ import asyncio
 import copy
 import multiprocessing as mp
 import socket
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 
 import requests
 from omegaconf import OmegaConf
 from sglang_router.router import Router as SmgRouter
 from sglang_router.router_args import RouterArgs
-from sglang_router.sglang_router_rs import PolicyType
 
 from rlinf.data.io_struct import (
     RolloutRequest,
@@ -31,12 +30,24 @@ def _get(obj: Any, key: str, default: Any = None) -> Any:
 
 
 class SGLangRouterWorker(Worker):
-    """从 rollout.sglang.router 读监听配置。"""
+    """从 rollout.sglang.router 读监听配置。
 
-    def __init__(self, config: Any, placement: Any = None):
+    若 ``create_group(..., server_group=...)`` 传入 backend server 组，则同时承担
+    AgentLightning rollout（经 router HTTP /generate），与原先独立 composite 行为一致。
+    """
+
+    def __init__(
+        self,
+        config: Any,
+        placement: Any = None,
+        server_group: Any = None,
+        weight_reload: Optional[str] = None,
+        config_rollout: Optional[Any] = None,
+    ):
         super().__init__()
         self._router_process: Optional[mp.Process] = None
         self._server_base_urls: List[str] = []
+        self._server_group = server_group
 
         if placement is not None:
             cfg = config
@@ -50,34 +61,46 @@ class SGLangRouterWorker(Worker):
                 self._config["advertised_host"] = _get(sglang_router, "advertised_host")
             self._cfg_rollout = _get(cfg, "rollout")
             self._placement = placement
-            self.weight_reload = _get(_get(cfg, "rollout"), "weight_reload")
+            self.weight_reload = weight_reload if weight_reload is not None else _get(
+                _get(cfg, "rollout"), "weight_reload"
+            )
         else:
-            raw = OmegaConf.to_container(config, resolve=True) if hasattr(config, "get") and not isinstance(config, dict) else config
+            raw = (
+                OmegaConf.to_container(config, resolve=True)
+                if hasattr(config, "get") and not isinstance(config, dict)
+                else config
+            )
             self._config = raw if isinstance(raw, dict) else {}
             self._cfg_rollout = self._config.get("rollout")
             self._placement = self._config.get("placement")
             self.weight_reload = self._config.get("weight_reload")
 
-        self._return_logprobs = _get(self._cfg_rollout, "return_logprobs", False)
-        sampling_params = _get(self._cfg_rollout, "sampling_params")
-        if sampling_params is None:
-            alg = _get(config, "algorithm")
-            sampling_params = _get(alg, "sampling_params") if alg else None
-        if sampling_params is not None and isinstance(sampling_params, dict):
-            sampling_params = OmegaConf.create(sampling_params)
-        self._sampling_params = (
-            SGLangWorker.get_sampling_param_from_config(sampling_params)
-            if sampling_params is not None
-            else {"temperature": 0, "max_new_tokens": 256}
-        )
-        self.status_manager = RunningStatusManager()
-        self._use_auto_scheduler = False
-        self._collect_meta_stats = _get(self._cfg_rollout, "collect_meta_stats", False)
-        if self._collect_meta_stats:
-            self._init_meta_stats_collector()
+        self._cached_router_base_url: Optional[str] = None
+        self._cached_server_addrs: List[str] = []
+
+        if self._server_group is not None:
+            cr = config_rollout or _get(config, "rollout")
+            self._return_logprobs = _get(cr, "return_logprobs", False)
+            sampling_params = _get(cr, "sampling_params")
+            if sampling_params is None:
+                sampling_params = _get(config, "algorithm", {}).get("sampling_params") if config else None
+            if sampling_params is not None and isinstance(sampling_params, dict):
+                sampling_params = OmegaConf.create(sampling_params)
+            self._sampling_params = (
+                SGLangWorker.get_sampling_param_from_config(sampling_params)
+                if sampling_params is not None
+                else {"temperature": 0, "max_new_tokens": 256}
+            )
+            self.status_manager = RunningStatusManager()
+            self._use_auto_scheduler = False
+            self._collect_meta_stats = _get(cr, "collect_meta_stats", False)
+            if self._collect_meta_stats:
+                self._init_meta_stats_collector()
 
     def _init_meta_stats_collector(self) -> None:
-        async_stats_file = _get(self._cfg_rollout, "async_meta_stats_file", "sglang_meta_stats_async_router.jsonl")
+        async_stats_file = _get(
+            self._cfg_rollout, "async_meta_stats_file", "sglang_meta_stats_async_router.jsonl"
+        )
         self.async_meta_stats_collector = MetaInfoStatsCollector(async_stats_file)
         self.async_batch_counter = 0
 
@@ -86,17 +109,6 @@ class SGLangRouterWorker(Worker):
             engine_results, self.async_batch_counter
         )
         self.async_batch_counter += 1
-
-    @staticmethod
-    def _policy_to_enum(name: str) -> PolicyType:
-        name = name.lower()
-        if name == "random":
-            return PolicyType.Random
-        if name == "round_robin":
-            return PolicyType.RoundRobin
-        if name == "power_of_two":
-            return PolicyType.PowerOfTwo
-        return PolicyType.CacheAware
 
     @staticmethod
     def _run_router_in_subprocess(args_dict: dict) -> None:
@@ -116,6 +128,7 @@ class SGLangRouterWorker(Worker):
         port = self._config["port"]
         try:
             import setproctitle
+
             setproctitle.setproctitle("sglang::router")
         except Exception:
             pass
@@ -142,7 +155,7 @@ class SGLangRouterWorker(Worker):
             u if u.startswith("http") else "http://" + u for u in worker_urls
         ]
 
-    def get_router_address(self) -> str:
+    def _compute_router_address_str(self) -> str:
         port = self._config["port"]
         if self._config.get("advertised_host"):
             return f"{self._config['advertised_host']}:{port}"
@@ -154,19 +167,19 @@ class SGLangRouterWorker(Worker):
                 host = "127.0.0.1"
         return f"{host}:{port}"
 
-    def _router_base_url(self) -> str:
-        return "http://" + self.get_router_address()
+    def get_server_address(self) -> str:
+        """返回 Router 的 ``host:port`` 字符串。"""
+        return self._compute_router_address_str()
 
-    def offload_engine(self) -> None:
-        """向所有后端 server 发 /release_memory_occupation，与 SGLangWorker 语义对齐。"""
-        assert self.weight_reload is not None, "offload_engine requires weight_reload is not None"
-        for base_url in self._server_base_urls:
-            url = base_url + "/release_memory_occupation"
-            resp = requests.post(url, json={}, timeout=600)
-            resp.raise_for_status()
+    def _router_base_url(self) -> str:
+        if self._cached_router_base_url is None:
+            addr = self._compute_router_address_str()
+            self._cached_router_base_url = (
+                ("http://" + addr) if addr and not str(addr).startswith("http") else str(addr)
+            )
+        return self._cached_router_base_url
 
     def _post_generate(self, payload: dict) -> dict:
-        """向 Router 发 POST /generate，Router 会负载均衡到后端 server。"""
         url = self._router_base_url() + "/generate"
         resp = requests.post(url, json=payload, timeout=600)
         resp.raise_for_status()
@@ -181,7 +194,6 @@ class SGLangRouterWorker(Worker):
         return_logprob: list[bool] | bool | None = False,
         request_info: Any | None = None,
     ):
-        """向 Router 发 /generate，等结果后返回。"""
         payload: dict = {"return_logprob": bool(return_logprob)}
         if prompt is not None:
             payload["text"] = prompt
@@ -195,37 +207,26 @@ class SGLangRouterWorker(Worker):
         return result, request_info
 
     async def _async_generate_group(self, seq_group_info: SeqGroupInfo):
-        """Generate a group of responses for a request (for GRPO-like behavior)."""
         if seq_group_info.num_aborted == 0:
-            # No aborted sequences, repeat the input for group_size times
             assert seq_group_info.num_returned == 0
             seq_idx_list = list(range(seq_group_info.group_size))
             input_batch = [seq_group_info.input_ids] * seq_group_info.group_size
             sampling_params_list = [self._sampling_params] * seq_group_info.group_size
             image_data_list = [seq_group_info.image_data] * seq_group_info.group_size
         else:
-            # Have aborted sequences (e.g., migrated from other engines)
-            # Continue generation for the aborted group
             idx_aborted = seq_group_info.idx_aborted.copy()
-            seq_idx_list: list[int] = []
+            seq_idx_list = []
             seq_group_info.idx_aborted.clear()
-            input_batch: list[list[int]] = []
-            sampling_params_list: list[dict] = []
-            image_data_list: list = []
+            input_batch = []
+            sampling_params_list = []
+            image_data_list = []
             for idx in idx_aborted:
-                generated_ids: list[int] = seq_group_info.results[idx]["output_ids"]
+                generated_ids = seq_group_info.results[idx]["output_ids"]
                 if len(generated_ids) >= self._sampling_params["max_new_tokens"]:
-                    # avoid genererating for sequences that have already meet their max_new_tokens
-                    self.log_warning(
-                        f"SeqGroup {seq_group_info.id} idx {idx} "
-                        f"has generated {len(generated_ids)} tokens, "
-                        f"exceeding max_new_tokens={self._sampling_params['max_new_tokens']}, "
-                        f"it will be truncatured."
-                    )
                     result = seq_group_info.results[idx]
                     seq_group_info.results[idx] = None
                     result["meta_info"]["finish_reason"]["type"] = "length"
-                    seq_group_info.record_sglang_result(idx, result)
+                    seq_group_info.record_sglang_result(idx, result, self._logger)
                     continue
                 seq_idx_list.append(idx)
                 input_batch.append(seq_group_info.input_ids + generated_ids)
@@ -241,17 +242,11 @@ class SGLangRouterWorker(Worker):
                     image_data=image_data,
                     sampling_params=sampling_params,
                     return_logprob=self._return_logprobs,
-                    request_info={
-                        "seq_idx": seq_idx,
-                    },
+                    request_info={"seq_idx": seq_idx},
                 )
             )
             for seq_idx, input_ids, sampling_params, image_data in zip(
-                seq_idx_list,
-                input_batch,
-                sampling_params_list,
-                image_data_list,
-                strict=True,
+                seq_idx_list, input_batch, sampling_params_list, image_data_list, strict=True
             )
         ]
         for future in asyncio.as_completed(tasks):
@@ -259,10 +254,10 @@ class SGLangRouterWorker(Worker):
             seq_group_info.record_sglang_result(
                 request_info["seq_idx"], result, self._logger
             )
-
         return seq_group_info
 
     async def rollout(self, input_channel: Channel, output_channel: Channel):
+        assert self._server_group is not None, "rollout requires server_group (router_server mode)"
         self.log_on_first_rank("Start generation...")
         request: RolloutRequest = input_channel.get()
         groups = request.to_seq_group_infos()
@@ -270,55 +265,38 @@ class SGLangRouterWorker(Worker):
         with self.device_lock, self.worker_timer():
             num_residual = self.status_manager.num_seq_group
             assert num_residual == 0, (
-                f"There are {num_residual} "
-                f"sequence group{'' if num_residual == 1 else 's'} before rollout."
+                f"There are {num_residual} sequence group(s) before rollout."
             )
-
             for group in groups:
                 task = asyncio.create_task(self._async_generate_group(group))
                 self.status_manager.add_task(group, task)
-
             all_rollout_results = []
             while pending := self.status_manager.get_running_tasks():
                 done, pending = await asyncio.wait(pending, return_when=async_wait_type)
-                returned_seq_groups: list[SeqGroupInfo] = [
-                    task.result() for task in done
-                ]
+                returned_seq_groups = [task.result() for task in done]
                 for group in returned_seq_groups:
                     if group.all_completed:
                         rollout_result = RolloutResult.from_sglang_seq_group(
-                            group,
-                            self._return_logprobs,
+                            group, self._return_logprobs
                         )
                         all_rollout_results.append(rollout_result)
-                        await output_channel.put(
-                            item=rollout_result, async_op=True
-                        ).async_wait()
+                        await output_channel.put(item=rollout_result, async_op=True).async_wait()
                         self.status_manager.mark_done(group)
                     else:
                         self.status_manager.mark_aborted(group)
-
                 if (
                     self._use_auto_scheduler
                     and self.status_manager.num_seq_group_running == 0
                 ):
-                    # rollout should not exit immediately when using auto scheduler
-                    # because there might be migrations
-                    # if so, `pending` will not be empty in while loop condition
                     await self.status_manager.wait_notification()
-
             self.status_manager.clear()
-
             if self._collect_meta_stats:
                 self._collect_stats(all_rollout_results)
-
             if self.weight_reload is not None and self._placement is not None and (
                 getattr(self._placement, "is_collocated", False)
                 or getattr(self._placement, "is_auto", False)
             ):
-                await asyncio.to_thread(self.offload_engine)
-                if self._use_auto_scheduler and getattr(self, "_scheduler", None) is not None:
-                    await self._scheduler.report_offloaded()
+                await asyncio.to_thread(lambda: self._server_group.offload_engine().wait())
 
     async def generate_and_send(
         self,
@@ -327,12 +305,12 @@ class SGLangRouterWorker(Worker):
         prompt_ids: list[int],
         sampling_params: Optional[dict] = None,
     ):
+        assert self._server_group is not None
         final_sampling_params = self._sampling_params
-        if sampling_params is not None and len(sampling_params) > 0:
+        if sampling_params and len(sampling_params) > 0:
             final_sampling_params = copy.deepcopy(self._sampling_params)
             for key, value in sampling_params.items():
                 final_sampling_params[key] = value
-
         result, _ = await self.async_generate(
             input_ids=prompt_ids,
             sampling_params=final_sampling_params,
@@ -347,11 +325,10 @@ class SGLangRouterWorker(Worker):
             result_dict["logprobs"] = [
                 item[0] for item in result["meta_info"]["output_token_logprobs"]
             ]
-        await output_channel.put(
-            result_dict, key=channel_key, async_op=True
-        ).async_wait()
+        await output_channel.put(result_dict, key=channel_key, async_op=True).async_wait()
 
     async def rollout_serverless(self, input_channel: Channel, output_channel: Channel):
+        assert self._server_group is not None
         while True:
             rollout_request = await input_channel.get(async_op=True).async_wait()
             asyncio.create_task(
@@ -362,3 +339,41 @@ class SGLangRouterWorker(Worker):
                     sampling_params=rollout_request.get("sampling_params", None),
                 )
             )
+
+    def init_worker(self, start_http_server: bool = True, **kwargs):
+        """无 server_group 时为空操作；router_server 时先起 server，再 fire-and-forget 起 router。"""
+        del start_http_server, kwargs
+        if self._server_group is None:
+            return
+        self._server_group.init_worker(start_http_server=True).wait()
+        addrs = self._server_group.get_server_address().wait()
+        worker_urls = [
+            a if str(a).startswith("http") else "http://" + a
+            for a in (addrs if isinstance(addrs, list) else [addrs])
+        ]
+        self._cached_server_addrs = [
+            a.replace("http://", "").replace("https://", "") if isinstance(a, str) else str(a)
+            for a in (addrs if isinstance(addrs, list) else [addrs])
+        ]
+        addr = self._compute_router_address_str()
+        router_base_url = ("http://" + addr) if addr and not str(addr).startswith("http") else str(addr)
+        self._cached_router_base_url = router_base_url
+        self.server_start(worker_urls=worker_urls)
+
+    def sync_model_from_actor(self):
+        if self._server_group is None:
+            return None
+        print("sync_model_from_actor start in rollout worker")
+        self._server_group.sync_model_from_actor().wait()
+        return None
+
+    def offload_engine(self):
+        assert self._server_group is not None, "offload_engine only in router_server mode"
+        return self._server_group.offload_engine()
+
+    def onload_engine(self):
+        assert self._server_group is not None, "onload_engine only in router_server mode"
+        return self._server_group.onload_engine()
+
+
+__all__ = ["SGLangRouterWorker"]

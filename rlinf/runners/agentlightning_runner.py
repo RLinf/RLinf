@@ -3,6 +3,7 @@ import time
 import typing
 from typing import Any, Optional, Union
 
+import requests
 import torch
 from omegaconf.dictconfig import DictConfig
 import ray.util
@@ -29,31 +30,38 @@ if typing.TYPE_CHECKING:
     from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
     from rlinf.workers.inference.megatron_inference_worker import MegatronInference
     from rlinf.workers.rollout.sglang.sglang_server_worker import SGLangServerWorker
-    from rlinf.workers.rollout.sglang.sglang_router_worker import SGLangRouterWorker
     from rlinf.workers.rollout.sglang.sglang_worker_server import SGLangWorkerWithHTTPServer
+    from rlinf.workers.rollout.sglang.sglang_router_worker import SGLangRouterWorker
 
 
-def _normalize_rollout_server_addrs(raw: Any) -> list[str]:
-    if isinstance(raw, list):
-        return [a for a in raw if a]
-    if raw:
-        return [raw]
-    return []
+def _wait_router_ready(urls: list[str], timeout: float = 60.0) -> None:
+    """轮询 router URL 直到 GET 返回 200/404/405 或超时。"""
+    if not urls:
+        return
+    base = urls[0]
+    url = base if str(base).startswith("http") else f"http://{base}"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            resp = requests.get(url, timeout=5)
+            if resp.status_code in (200, 404, 405):
+                logging.info("[AgentLightningRLinfRunner] router ready: %s", url)
+                return
+        except (requests.exceptions.ConnectionError, OSError):
+            pass
+        time.sleep(1)
+    raise TimeoutError(f"Router at {url} did not become ready within {timeout}s")
 
 
-def _resolve_agl_rollout_http_addrs(rollout_group: Any, sglang_router_worker: Any) -> list[str]:
-    """SGLang worker_http：直连各 backend；router_server：经 Router 聚成单一入口。"""
-    addrs = _normalize_rollout_server_addrs(rollout_group.get_server_address().wait())
+def _resolve_agl_rollout_http_addrs(rollout_group: Any) -> list[str]:
+    """HTTP 入口：composite 用 get_router_address，并轮询 router 就绪；否则用 get_server_address。"""
+    if hasattr(rollout_group, "get_router_address"):
+        addrs = [str(x) for x in rollout_group.get_router_address().wait() if x]
+        _wait_router_ready(addrs, timeout=60.0)
+    else:
+        addrs = [str(x) for x in rollout_group.get_server_address().wait() if x]
     logging.info("[AgentLightningRLinfRunner] rollout HTTP backends: %s", addrs)
-    if sglang_router_worker is None or not addrs:
-        return addrs
-    worker_urls = [f"http://{a}" for a in addrs]
-    logging.info("[AgentLightningRLinfRunner] router <- %s", worker_urls)
-    sglang_router_worker.server_start(worker_urls=worker_urls).wait()
-    r = sglang_router_worker.get_router_address().wait()
-    entry = r[0] if isinstance(r, list) and r else r
-    logging.info("[AgentLightningRLinfRunner] AgentLightning HTTP entry: %s", entry)
-    return [entry]
+    return addrs
 
 
 class AgentLightningRLinfRunner(ReasoningRunner):
@@ -64,13 +72,12 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         placement: ModelParallelComponentPlacement,
         train_dataset: Dataset,
         val_dataset: Dataset,
-        rollout: Union["SGLangServerWorker", "SGLangWorkerWithHTTPServer"],
+        rollout: Union["SGLangServerWorker", "SGLangWorkerWithHTTPServer", "SGLangRouterWorker"],
         inference: Optional["MegatronInference"],
         actor: Union["MegatronActor", "MAMegatronActor"],
         store: LightningStore,
         adapter: TraceToTripletBase,
         agentlightning_rollout_worker: AgentLightningRolloutWorker,
-        sglang_router_worker: Optional["SGLangRouterWorker"],
     ):
         super().__init__(
             cfg,
@@ -86,7 +93,6 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         self.store = store
         self.adapter = adapter
         self.agentlightning_rollout_worker = agentlightning_rollout_worker
-        self.sglang_router_worker = sglang_router_worker
         # sglang_dp_ready_* 在 entrypoint 创建，Server worker 按名字 connect，Runner 不创建
 
     def _build_dataloader(self, train_dataset, val_dataset, collate_fn=None):
@@ -125,9 +131,8 @@ class AgentLightningRLinfRunner(ReasoningRunner):
 
 
     def init_rollout_workers(self):
-        rollout_handle = self.rollout.init_worker(start_http_server=True)
-        # NOTE: Do not overlap rollout init with HF->MG conversion; running them concurrently can hang inside convert_hf_to_mg in AgentLightning execution.
-        rollout_handle.wait()
+        # Run HF->MG conversion before starting rollout so main process does not read the same
+        # HF path while 4 SGLang Server workers are loading from it (avoids I/O contention / hang).
         if self.cfg.runner.resume_dir is None:
             logging.info("[AgentLightningRLinfRunner] Training from scratch")
             if (
@@ -143,13 +148,13 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                     self.cfg.actor.megatron.ckpt_convertor,
                 )
 
-        
+        rollout_handle = self.rollout.init_worker(start_http_server=True)
+        rollout_handle.wait()
+
         if self.use_pre_process_policy:
             self.rollout.offload_engine().wait()
 
-        agl_server_addresses = _resolve_agl_rollout_http_addrs(
-            self.rollout, self.sglang_router_worker
-        )
+        agl_server_addresses = self.rollout.get_server_address().wait()
 
         self.agentlightning_rollout_worker.init_worker(
             store=self.store,
