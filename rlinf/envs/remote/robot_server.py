@@ -25,7 +25,7 @@ SSH tunnel (Tailscale).
 
 import argparse
 import signal
-import sys
+import threading
 from concurrent import futures
 
 import grpc
@@ -261,16 +261,20 @@ def serve(
     server.start()
     logger.info(f"[RobotServer] Serving on port {port}")
 
+    stop_event = threading.Event()
+
     def _shutdown(signum, frame):
+        if stop_event.is_set():
+            return
+        stop_event.set()
         logger.info("[RobotServer] Shutting down...")
         env.close()
-        server.stop(grace=5)
-        sys.exit(0)
+        server.stop(grace=0)
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
-    server.wait_for_termination()
+    stop_event.wait()
 
 
 def main():
