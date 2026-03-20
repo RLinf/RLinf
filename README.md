@@ -235,7 +235,7 @@ Multiple Backend Integrations
 
 ## Awesome Community Projects with RLinf
 We are excited to see a growing ecosystem of projects building on top of or integrate with RLinf, spanning embodied AI, robotics, and long-horizon agentic systems. Here are some awesome community projects:
-- [i4h-workflows](https://github.com/isaac-for-healthcare/i4h-workflows/tree/main/workflows/rheo): RL-based workflow built on Isaac ecosystem, integrating RLinf for healthcare-oriented embodied intelligence.
+- [i4h-workflows](https://github.com/isaac-for-healthcare/i4h-workflows/tree/main/workflows/rheo): NVIDIA team open sourced RL-based workflow built on Isaac ecosystem, integrating RLinf for healthcare-oriented embodied intelligence.
 - [pi-StepNFT](https://github.com/wangst0181/pi-StepNFT): Extends RLinf for step-level training and optimization of π-series VLA models.
 - [Dexbotic](https://github.com/dexmal/dexbotic): A robotics + RL system integrating RLinf for scalable training and deployment of embodied agents.
 - [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin): A digital twin + robotics platform leveraging RLinf for large-scale embodied RL training.
@@ -252,7 +252,7 @@ RLinf is a production-grade, open-source reinforcement learning framework for em
   <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/agibot-logo.png" height="40" style="vertical-align:middle" alt="AgiBot"/>
   <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/PsiBot-logo.jpg" height="30" style="vertical-align:middle" alt="PsiBot"/>
   <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/Moore_Threads_logo.png" height="35" style="vertical-align:middle" alt="Moore Threads"/>
-  <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/Huawei-Logo.wine.svg" height="75" style="vertical-align:middle" alt="Huawei"/>
+  <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/D-Robotics-logo.png" height="65" style="vertical-align:middle" alt="D-Robotics"/>
 </p>
 
 ✨ If your organization is using RLinf, feel free to reach out or submit a PR to be listed here.
