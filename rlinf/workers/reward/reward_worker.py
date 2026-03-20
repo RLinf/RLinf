@@ -27,7 +27,7 @@ from rlinf.data.datasets.reward_model import RewardBinaryDataset
 from rlinf.data.io_struct import RolloutResult
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
-from rlinf.models.embodiment.reward import ResNetRewardModel, get_reward_model_class
+from rlinf.models.embodiment.reward import get_reward_model_class
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.comm_mapping import CommMapper
 from rlinf.utils.distributed import all_reduce_dict
@@ -64,9 +64,9 @@ class RewardWorker(Worker):
 
         if self.cfg.reward.use_reward_model:
             raise NotImplementedError
-        self.rule_based_reward = get_rule_based_reward_class(self.cfg.reward.reward_type)(
-            self.cfg.reward
-        )
+        self.rule_based_reward = get_rule_based_reward_class(
+            self.cfg.reward.reward_type
+        )(self.cfg.reward)
 
         if self.cfg.reward.get("tokenizer", None) is not None:
             self.tokenizer = hf_tokenizer(self.cfg.reward.tokenizer.tokenizer_model)
@@ -142,6 +142,7 @@ class RewardWorker(Worker):
             .flatten()
         )
 
+
 class RewardInferenceWorker(RewardWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
@@ -174,7 +175,9 @@ class RewardInferenceWorker(RewardWorker):
 
                 state_dict = load_file(model_path)
             else:
-                state_dict = torch.load(model_path, map_location="cpu", weights_only=False)
+                state_dict = torch.load(
+                    model_path, map_location="cpu", weights_only=False
+                )
 
             new_state_dict = {}
             for k, v in state_dict.items():
@@ -427,7 +430,9 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
 
                 state_dict = load_file(model_path)
             else:
-                state_dict = torch.load(model_path, map_location="cpu", weights_only=False)
+                state_dict = torch.load(
+                    model_path, map_location="cpu", weights_only=False
+                )
 
             new_state_dict = {}
             for k, v in state_dict.items():
@@ -449,12 +454,12 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
 
     def init_worker(self):
         """Initialize model and optimizer using base class."""
-        
+
         self.data_loader, self.val_loader = self.build_dataloader()
         if self.data_loader is None:
             raise ValueError("data_loader is not set")
         self.data_iter = iter(self.data_loader)
-        
+
         self.setup_model_and_optimizer()
 
         self.logger.info(
@@ -522,8 +527,7 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
 
     @Worker.timer("run_training")
     def run_training(self) -> dict[str, float]:
-        """Run one training iteration with gradient accumulation.
-        """
+        """Run one training iteration with gradient accumulation."""
         self.model.train()
 
         assert (

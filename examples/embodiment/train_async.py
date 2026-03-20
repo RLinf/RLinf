@@ -22,10 +22,10 @@ from rlinf.config import validate_cfg
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.async_env_worker import AsyncEnvWorker
+from rlinf.workers.reward.reward_worker import RewardInferenceWorker
 from rlinf.workers.rollout.hf.async_huggingface_worker import (
     AsyncMultiStepRolloutWorker,
 )
-from rlinf.workers.reward.reward_worker import RewardInferenceWorker
 
 mp.set_start_method("spawn", force=True)
 

@@ -311,7 +311,7 @@ class CollectEpisode(gym.Wrapper):
                 self._pending_info[env_idx] = None
             else:
                 self._buffers[env_idx]["infos"].append({})
-        
+
             self._buffers[env_idx]["rewards"].append(0.0)
             self._buffers[env_idx]["terminated"].append(False)
             self._buffers[env_idx]["truncated"].append(False)
@@ -608,7 +608,7 @@ class CollectEpisode(gym.Wrapper):
         final_info = info.get("final_info", None)
         if isinstance(final_info, dict):
             final_info_success = self._extract_success_from_source(final_info)
-            if final_episode_success is not None:
+            if final_info_success is not None:
                 episode_values.append(final_info_success)
             final_episode_success = self._extract_success_from_source(
                 final_info.get("episode")

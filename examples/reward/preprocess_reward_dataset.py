@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +29,7 @@ from glob import glob
 from typing import Optional
 
 import torch
+
 from rlinf.data.datasets.reward_model import RewardDatasetPayload
 from rlinf.utils.logging import get_logger
 
@@ -60,11 +60,12 @@ def _compute_sample_indices(
     if num_samples_per_episode == 1:
         return [n - 1]
     return sorted(
-        set(
+        {
             int(i * (n - 1) / (num_samples_per_episode - 1))
             for i in range(num_samples_per_episode)
-        )
+        }
     )
+
 
 def load_episodes_with_labels(
     data_path: str, num_samples_per_episode: int = 5, keep_last_frame: bool = True
@@ -281,8 +282,12 @@ def preprocess_and_save_reward_datasets(
     def _save_split(
         images: list, labels: list[int], output_path: str, split_name: str
     ) -> None:
-        RewardDatasetPayload(images=images, labels=labels, metadata=metadata).save(output_path)
-        logger.info(f"Saved processed reward {split_name} split to {output_path}: {len(images)}")
+        RewardDatasetPayload(images=images, labels=labels, metadata=metadata).save(
+            output_path
+        )
+        logger.info(
+            f"Saved processed reward {split_name} split to {output_path}: {len(images)}"
+        )
 
     _save_split(train_images, train_labels, train_output_path, "train")
     _save_split(val_images, val_labels, val_output_path, "val")
@@ -361,7 +366,9 @@ def main() -> None:
     args = parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
 
-    train_output_path = args.train_output_path or os.path.join(args.output_dir, "train.pt")
+    train_output_path = args.train_output_path or os.path.join(
+        args.output_dir, "train.pt"
+    )
     val_output_path = args.val_output_path or os.path.join(args.output_dir, "val.pt")
 
     metadata = preprocess_and_save_reward_datasets(

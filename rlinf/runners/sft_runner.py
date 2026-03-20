@@ -19,15 +19,15 @@ from typing import TYPE_CHECKING, Optional, Union
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
-from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.runners.early_stop import EarlyStopController
+from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.runner_utils import check_progress
 
 if TYPE_CHECKING:
-    from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
     from rlinf.workers.reward.reward_worker import FSDPRewardWorker
+    from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +141,9 @@ class SFTRunner:
                 break
 
         if self.early_stop is not None and self.early_stop.best_val_acc > 0:
-            logger.info(f"Early stopping triggered! Best val_acc: {self.early_stop.best_val_acc:.4f}")
+            logger.info(
+                f"Early stopping triggered! Best val_acc: {self.early_stop.best_val_acc:.4f}"
+            )
         self.metric_logger.finish()
 
     def run_eval(self) -> None:
