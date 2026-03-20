@@ -45,6 +45,7 @@ def main():
                 tcp_pose = controller.get_state().wait()[0].tcp_pose
                 r = R.from_quat(tcp_pose[3:].copy())
                 euler = r.as_euler("xyz")
+                print(np.concatenate([tcp_pose[:3], euler]))
             else:
                 print(f"Unknown cmd: {cmd_str}")
         except KeyboardInterrupt:

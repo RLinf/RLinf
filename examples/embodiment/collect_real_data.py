@@ -183,7 +183,7 @@ class DataCollector(Worker):
 
                 if r_val >= 0.5:
                     success_cnt += 1
-                
+
                 self.total_cnt += 1
                 self.log_info(
                     f"Success: {r_val}. Total: {success_cnt}/{self.num_data_episodes}"
