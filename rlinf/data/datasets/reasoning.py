@@ -79,7 +79,7 @@ class ReasoningDataset(Dataset):
         self.is_apply_chat_template = config.data.apply_chat_template
         self.filter_prompt_by_length = config.data.get("filter_prompt_by_length", False)
         self.data_size = config.data.get("data_size", None)
-        self.process_workers = config.data.get("process_workers", 16)
+        self.process_workers = config.data.get("process_workers", 1)
         assert self.process_workers > 0, "data.process_workers must be greater than 0"
         self.process_batch_size = config.data.get("process_batch_size", 256)
         assert self.process_batch_size > 0, (
