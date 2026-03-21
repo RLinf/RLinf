@@ -110,10 +110,6 @@ def _candidate_follower_server_paths(explicit_path: str | None) -> list[Path]:
         i2rt_root = Path(i2rt.__file__).resolve().parent.parent
         candidates.append(i2rt_root / "scripts" / "minimum_gello.py")
 
-    # Match the user's known-good external follower checkout.
-    candidates.append(
-        Path("/home/prior/thomas/lerobot_pi05/i2rt/scripts/minimum_gello.py")
-    )
     return candidates
 
 

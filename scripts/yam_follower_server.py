@@ -78,7 +78,7 @@ def main() -> None:
 
     server = portal.Server(args.server_port)
     print(
-        f"Robot Sever Binding to {args.server_port}, Robot: {robot}",
+        f"Robot Server Binding to {args.server_port}, Robot: {robot}",
         flush=True,
     )
     server.bind("num_dofs", robot.num_dofs)
