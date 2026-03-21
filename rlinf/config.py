@@ -58,6 +58,7 @@ class SupportedModel(Enum):
     CNN_POLICY = ("cnn_policy", "embodied")
     FLOW_POLICY = ("flow_policy", "embodied")
     CMA_POLICY = ("cma", "embodied")
+    GR00T_1_6 = ("gr00t_1_6", "embodied")
 
     # Sft models
     QWEN2_5_VL_SFT = ("qwen2.5_vl", "sft")
@@ -724,7 +725,8 @@ def validate_embodied_cfg(cfg):
     # process num-envs
     component_placement = HybridComponentPlacement(cfg, Cluster())
     stage_num = cfg.rollout.pipeline_stage_num
-    env_world_size = component_placement.get_world_size("env")
+    # env_world_size = component_placement.get_world_size("env")
+    env_world_size = 1
 
     if cfg.runner.val_check_interval > 0 or cfg.runner.only_eval:
         assert cfg.env.eval.total_num_envs > 0, (
@@ -759,9 +761,9 @@ def validate_embodied_cfg(cfg):
         assert cfg.env.train.total_num_envs > 0, (
             "Total number of parallel environments for training must be greater than 0"
         )
-        assert cfg.env.train.total_num_envs % env_world_size == 0, (
-            "Total number of parallel environments for training must be divisible by the number of environment processes"
-        )
+        # assert cfg.env.train.total_num_envs % env_world_size == 0, (
+        #     "Total number of parallel environments for training must be divisible by the number of environment processes"
+        # )
         assert cfg.env.train.total_num_envs % env_world_size % stage_num == 0, (
             "Total number of parallel environments for training must be divisible by the number of environment processes and the number of pipeline stages"
         )

@@ -36,6 +36,8 @@ def get_model(cfg: DictConfig):
         from rlinf.models.embodiment.cnn_policy import get_model
     elif model_type == SupportedModel.FLOW_POLICY:
         from rlinf.models.embodiment.flow_policy import get_model
+    elif model_type == SupportedModel.GR00T_1_6:
+        from rlinf.models.embodiment.gr00t_1_6 import get_model
     else:
         return None
 
