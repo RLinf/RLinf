@@ -116,14 +116,10 @@ class YAMEnv(gym.Env):
         self._wrist_camera_patterns = self._normalize_camera_patterns(
             cfg.get("wrist_cameras", None)
         )
-        self._extra_view_camera_patterns = self._normalize_camera_patterns(
-            cfg.get("extra_view_cameras", None)
-        )
         camera_cfgs_raw = cfg.get("camera_cfgs", None)
         self._camera_names = list(camera_cfgs_raw.keys()) if camera_cfgs_raw else []
         self._main_camera_name: Optional[str] = None
         self._wrist_camera_names: list[str] = []
-        self._extra_view_camera_names: list[str] = []
 
         self.auto_reset = bool(cfg.get("auto_reset", False))
         self.ignore_terminations = bool(cfg.get("ignore_terminations", True))
@@ -142,8 +138,11 @@ class YAMEnv(gym.Env):
                 self._yam_hw_info = hw
 
         self._robot_env = None
+        self._dummy_cameras: dict = {}
         if not self._is_dummy:
             self._setup_robot()
+        else:
+            self._setup_dummy_cameras()
         self._resolve_camera_roles(self._camera_names)
 
         # Gym spaces
@@ -163,18 +162,6 @@ class YAMEnv(gym.Env):
                 low=0,
                 high=255,
                 shape=(len(self._wrist_camera_names), self._img_h, self._img_w, 3),
-                dtype=np.uint8,
-            )
-        if self._extra_view_camera_names:
-            obs_space["extra_view_images"] = gym.spaces.Box(
-                low=0,
-                high=255,
-                shape=(
-                    len(self._extra_view_camera_names),
-                    self._img_h,
-                    self._img_w,
-                    3,
-                ),
                 dtype=np.uint8,
             )
         self.observation_space = gym.spaces.Dict(obs_space)
@@ -415,6 +402,12 @@ class YAMEnv(gym.Env):
                 self._robot_env.close()
             except Exception:
                 pass
+        for cam_node in getattr(self, "_dummy_cameras", {}).values():
+            try:
+                cam_node.close()
+            except Exception:
+                pass
+        self._dummy_cameras = {}
         for proc in getattr(self, "_server_processes", []):
             try:
                 if proc is not None and proc.is_alive():
@@ -480,7 +473,6 @@ class YAMEnv(gym.Env):
         if not camera_names:
             self._main_camera_name = None
             self._wrist_camera_names = []
-            self._extra_view_camera_names = []
             return
 
         main_camera_name = None
@@ -501,27 +493,14 @@ class YAMEnv(gym.Env):
                 for camera_name in camera_names
                 if camera_name not in used_names and self._is_wrist_camera(camera_name)
             ]
-        used_names.update(wrist_camera_names)
-
-        extra_view_camera_names = self._match_camera_patterns(
-            self._extra_view_camera_patterns, camera_names, used_names
-        )
-        if not extra_view_camera_names:
-            extra_view_camera_names = [
-                camera_name
-                for camera_name in camera_names
-                if camera_name not in used_names
-            ]
 
         self._main_camera_name = main_camera_name
         self.main_image_key = main_camera_name
         self._wrist_camera_names = wrist_camera_names
-        self._extra_view_camera_names = extra_view_camera_names
         self._logger.info(
             "[YAMEnv] Camera roles resolved: "
             f"main={self._main_camera_name}, "
-            f"wrist={self._wrist_camera_names}, "
-            f"extra={self._extra_view_camera_names}"
+            f"wrist={self._wrist_camera_names}"
         )
 
     def _normalize_image(self, image: np.ndarray) -> np.ndarray:
@@ -618,22 +597,68 @@ class YAMEnv(gym.Env):
             obs["wrist_images"] = to_tensor(
                 np.stack(wrist_images, axis=0)[np.newaxis, :]
             )
-        if self._extra_view_camera_names:
-            extra_view_images = [
-                camera_images.get(camera_name, zero_image)
-                for camera_name in self._extra_view_camera_names
-            ]
-            obs["extra_view_images"] = to_tensor(
-                np.stack(extra_view_images, axis=0)[np.newaxis, :]
-            )
         return obs
 
+    def _setup_dummy_cameras(self):
+        """Initialize cameras without robot hardware for dummy mode.
+
+        When camera_cfgs is provided in the config, real camera frames are
+        captured even though robot arms are not connected.
+        """
+        camera_cfgs_raw = self.cfg.get("camera_cfgs", None)
+        if camera_cfgs_raw is None:
+            return
+
+        try:
+            from omegaconf import OmegaConf
+            from yam_realtime.utils.launch_utils import initialize_sensors
+        except ImportError:
+            self._logger.warning(
+                "[YAMEnv] yam_realtime not installed; dummy mode will use black images."
+            )
+            return
+
+        self._server_processes: list = getattr(self, "_server_processes", [])
+        sensors_cfg = {"cameras": OmegaConf.to_container(camera_cfgs_raw, resolve=True)}
+        try:
+            camera_dict, _ = initialize_sensors(sensors_cfg, self._server_processes)
+            self._dummy_cameras = camera_dict
+            self._camera_names = list(camera_dict.keys())
+            self._logger.info(
+                f"[YAMEnv] Dummy-mode cameras initialized: {self._camera_names}"
+            )
+        except Exception as e:
+            self._logger.warning(
+                f"[YAMEnv] Failed to initialize cameras in dummy mode: {e}. "
+                "Falling back to black images."
+            )
+
+    def _read_dummy_cameras(self) -> dict:
+        """Read frames from dummy-mode cameras and return as observation keys."""
+        camera_obs: dict = {}
+        for cam_name, cam_node in self._dummy_cameras.items():
+            try:
+                cam_data = cam_node.read()
+                camera_obs[cam_name] = cam_data
+            except Exception as e:
+                self._logger.warning(
+                    f"[YAMEnv] Failed to read camera '{cam_name}': {e}"
+                )
+        return camera_obs
+
     def _dummy_obs(self) -> dict:
-        """Return a zeroed observation dict for dummy/simulation mode."""
-        return {
+        """Return observation dict for dummy/simulation mode.
+
+        If cameras were initialized, captures real frames. Otherwise returns
+        zero joint states with no image data (resulting in black images).
+        """
+        obs: dict = {
             "left": {"joint_pos": np.zeros(_JOINTS_PER_ARM, dtype=np.float32)},
             "right": {"joint_pos": np.zeros(_JOINTS_PER_ARM, dtype=np.float32)},
         }
+        if self._dummy_cameras:
+            obs.update(self._read_dummy_cameras())
+        return obs
 
     # ------------------------------------------------------------------
     # Metrics (mirrors RealWorldEnv for compatibility with runners)

@@ -26,14 +26,12 @@ img_height: 224
 img_width: 224
 # Key used to select the primary camera image from observations.
 # Must match (or be a prefix of) one of the keys in camera_cfgs below.
-main_camera: "cam_"
+main_camera: "cam_top"
 
-# Optional explicit wrist / extra-view camera selectors. If unset, YAMEnv
-# classifies non-main cameras heuristically: names containing "wrist",
-# "hand", "gripper", "eye_in_hand", "eef", or "tcp" become wrist cameras,
-# and any remaining non-main cameras become extra views.
-wrist_cameras: null
-extra_view_cameras: null
+# Explicit wrist camera selectors. If unset, YAMEnv classifies non-main
+# cameras heuristically: names containing "wrist", "hand", "gripper",
+# "eye_in_hand", "eef", or "tcp" become wrist cameras.
+wrist_cameras: ["cam_right", "cam_left"]
 
 # Human-readable task description injected into observations (used by VLA models).
 task_description: ""
@@ -71,7 +69,22 @@ robot_cfgs: null
 #         _target_: yam_realtime.sensors.cameras.opencv_camera.OpencvCamera
 #         device_path: "/dev/video0"
 #         camera_type: "realsense_camera"
-camera_cfgs: null
+camera_cfgs:
+  cam_right:
+    _target_: yam_realtime.sensors.cameras.camera.CameraNode
+    camera:
+      _target_: rlinf.envs.yam.realsense_camera.RealsenseCamera
+      serial_number: "128422272697"
+  cam_top:
+    _target_: yam_realtime.sensors.cameras.camera.CameraNode
+    camera:
+      _target_: rlinf.envs.yam.realsense_camera.RealsenseCamera
+      serial_number: "215222073684"
+  cam_left:
+    _target_: yam_realtime.sensors.cameras.camera.CameraNode
+    camera:
+      _target_: rlinf.envs.yam.realsense_camera.RealsenseCamera
+      serial_number: "218622275075"
 
 video_cfg:
   save_video: False
