@@ -217,6 +217,10 @@ class RobotEnvServicer(robot_env_pb2_grpc.RobotEnvServiceServicer):
         self._env.task_description = request.task_description
         return robot_env_pb2.Empty()
 
+    def EnterZeroTorqueMode(self, request, context):
+        self._env.enter_zero_torque_mode()
+        return robot_env_pb2.Empty()
+
     def Close(self, request, context):
         self._env.close()
         return robot_env_pb2.Empty()

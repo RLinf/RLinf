@@ -80,6 +80,62 @@ class OpenPi0Config(Pi0Config):
     )  # Hidden dims for Q-head and GaussianPolicy
 
 
+def _build_pi05_yam_follower_image_obs(
+    env_obs: dict[str, Any],
+    camera_order: Sequence[str] | None,
+) -> dict[str, torch.Tensor] | None:
+    """Map semantic YAM camera roles into OpenPI's fixed image slots.
+
+    YAM observations always arrive here with semantic roles:
+    - ``main_images``: top camera
+    - ``wrist_images[:, 0]``: left camera
+    - ``wrist_images[:, 1]``: right camera
+
+    Different PI0.5 checkpoints do not all expect the same visual feature
+    order. Some use ``left, top, right`` while others use ``left, right, top``.
+    We therefore map the semantic YAM roles into OpenPI's fixed image slots
+    according to the checkpoint's own ``input_features`` order.
+    """
+    if camera_order is None or len(camera_order) < 3:
+        return None
+
+    wrist_images = env_obs.get("wrist_images")
+    if wrist_images is None or wrist_images.ndim < 5 or wrist_images.shape[1] < 1:
+        return None
+    extra_view_images = env_obs.get("extra_view_images")
+    top_image = env_obs["main_images"]
+    left_image = wrist_images[:, 0]
+    right_image = None
+    if wrist_images.shape[1] > 1:
+        right_image = wrist_images[:, 1]
+    elif extra_view_images is not None:
+        right_image = (
+            extra_view_images[:, 0]
+            if extra_view_images.ndim >= 5
+            else extra_view_images
+        )
+    if right_image is None:
+        return None
+
+    semantic_images = {
+        "left": left_image,
+        "right": right_image,
+        "top": top_image,
+    }
+    openpi_slots = (
+        "observation/image",
+        "observation/wrist_image",
+        "observation/extra_view_image",
+    )
+    remapped_obs = {}
+    for slot, camera_name in zip(openpi_slots, camera_order[:3], strict=True):
+        image = semantic_images.get(camera_name)
+        if image is None:
+            return None
+        remapped_obs[slot] = image
+    return remapped_obs
+
+
 class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
     """
     Pi0 model for reinforcement learning action prediction.
@@ -451,6 +507,13 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             processed_obs["observation/state_gripper"] = state[:, 6:7]
         else:
             processed_obs["observation/state"] = env_obs["states"]
+        if self.config.config_name == "pi05_yam_follower":
+            remapped_images = _build_pi05_yam_follower_image_obs(
+                env_obs, getattr(self, "_yam_camera_order", None)
+            )
+            if remapped_images is not None:
+                processed_obs.update(remapped_images)
+                return processed_obs
         # wrist image observation
         wrist_images = env_obs.get("wrist_images")
         if wrist_images is not None:

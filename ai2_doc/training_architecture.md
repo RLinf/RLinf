@@ -276,7 +276,7 @@ auto_reset: false
 ignore_terminations: true
 
 # compress_images / jpeg_quality are server-side settings — put them in the
-# yam.yaml passed to start_robot_server.sh, not here. RemoteEnv handles both
+# yam_pi05_follower.yaml passed to start_robot_server.sh, not here. RemoteEnv handles both
 # compressed and uncompressed images transparently.
 # max_episode_steps / control_rate_hz are fetched from the server at init via
 # GetSpaces() and are not read from this file.
@@ -298,7 +298,7 @@ video_cfg:
 > from the training config — it proxies all calls over gRPC. To test without
 > real hardware, start the robot server with `--dummy`:
 > ```bash
-> bash scripts/start_robot_server.sh --config .../yam.yaml --dummy
+> bash scripts/start_robot_server.sh --config .../yam_pi05_follower.yaml --dummy
 > ```
 > The training config requires no change for dummy mode.
 

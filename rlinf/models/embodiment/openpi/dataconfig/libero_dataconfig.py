@@ -31,6 +31,7 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
     """
 
     extra_delta_transform: bool = False
+    use_direct_resize: bool = False
 
     @override
     def create(
@@ -64,9 +65,10 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
         # We defined these transforms in `libero_policy.py`. You can check the detailed comments there for
         # how to modify the transforms to match your dataset. Once you created your own transforms, you can
         # replace the transforms below with your own.
+        action_env_dim = getattr(model_config, "action_env_dim", 7)
         data_transforms = _transforms.Group(
             inputs=[libero_policy.LiberoInputs(model_type=model_config.model_type)],
-            outputs=[libero_policy.LiberoOutputs()],
+            outputs=[libero_policy.LiberoOutputs(action_dim=action_env_dim)],
         )
 
         # One additional data transform: pi0 models are trained on delta actions (relative to the first
@@ -92,6 +94,20 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
         # Model transforms include things like tokenizing the prompt and action targets
         # You do not need to change anything here for your own dataset.
         model_transforms = ModelTransformFactory()(model_config)
+        if self.use_direct_resize:
+            rewritten_inputs = []
+            for transform in model_transforms.inputs:
+                if isinstance(transform, _transforms.ResizeImages):
+                    rewritten_inputs.append(
+                        libero_policy.ResizeImagesNoPad(
+                            height=transform.height, width=transform.width
+                        )
+                    )
+                else:
+                    rewritten_inputs.append(transform)
+            model_transforms = dataclasses.replace(
+                model_transforms, inputs=tuple(rewritten_inputs)
+            )
 
         # We return all data transforms for training and inference. No need to change anything here.
         return dataclasses.replace(

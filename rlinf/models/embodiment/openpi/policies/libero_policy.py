@@ -17,6 +17,7 @@ import einops
 import numpy as np
 from openpi import transforms
 from openpi.models import model as _model
+from PIL import Image
 
 
 def make_libero_example() -> dict:
@@ -68,6 +69,41 @@ def _parse_wrist_images(
         right_wrist_image = np.zeros_like(base_image)
 
     return left_wrist_image, right_wrist_image, has_right_wrist
+
+
+def _resize_image_exact(image: np.ndarray, height: int, width: int) -> np.ndarray:
+    """Resize an image batch to the exact target size without aspect-ratio padding."""
+    image = np.asarray(image)
+    if image.shape[-3:-1] == (height, width):
+        return image
+
+    original_shape = image.shape
+    image = image.reshape(-1, *original_shape[-3:])
+    resized = np.stack(
+        [
+            np.asarray(
+                Image.fromarray(frame).resize((width, height), resample=Image.BILINEAR)
+            )
+            for frame in image
+        ],
+        axis=0,
+    )
+    return resized.reshape(*original_shape[:-3], height, width, original_shape[-1])
+
+
+@dataclasses.dataclass(frozen=True)
+class ResizeImagesNoPad(transforms.DataTransformFn):
+    """Resize images exactly like the original LeRobot PI0.5 helper path."""
+
+    height: int
+    width: int
+
+    def __call__(self, data: dict) -> dict:
+        data["image"] = {
+            key: _resize_image_exact(value, self.height, self.width)
+            for key, value in data["image"].items()
+        }
+        return data
 
 
 @dataclasses.dataclass(frozen=True)
@@ -140,9 +176,11 @@ class LiberoOutputs(transforms.DataTransformFn):
     For your own dataset, you can copy this class and modify the action dimension based on the comments below.
     """
 
+    # Number of action dimensions to keep from the model's max_action_dim output.
+    # Default 7 for single-arm Libero; set to 14 for bimanual (e.g. YAM).
+    action_dim: int = 7
+
     def __call__(self, data: dict) -> dict:
         # Only return the first N actions -- since we padded actions above to fit the model action
         # dimension, we need to now parse out the correct number of actions in the return dict.
-        # For Libero, we only return the first 7 actions (since the rest is padding).
-        # For your own dataset, replace `7` with the action dimension of your dataset.
-        return {"actions": np.asarray(data["actions"][:, :7])}
+        return {"actions": np.asarray(data["actions"][:, : self.action_dim])}

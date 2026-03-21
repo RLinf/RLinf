@@ -44,6 +44,8 @@ Action space
 14D float32 vector: 7 joint positions for left arm followed by 7 for right arm.
 """
 
+import time
+from contextlib import contextmanager
 from typing import Optional
 
 import gymnasium as gym
@@ -120,9 +122,30 @@ class YAMEnv(gym.Env):
         self._camera_names = list(camera_cfgs_raw.keys()) if camera_cfgs_raw else []
         self._main_camera_name: Optional[str] = None
         self._wrist_camera_names: list[str] = []
+        self._extra_view_camera_names: list[str] = []
 
         self.auto_reset = bool(cfg.get("auto_reset", False))
         self.ignore_terminations = bool(cfg.get("ignore_terminations", True))
+        self._move_to_reset_pose_on_reset = bool(
+            cfg.get("move_to_reset_pose_on_reset", True)
+        )
+        self._reset_motion_steps = max(1, int(cfg.get("reset_motion_steps", 50)))
+        self._reset_motion_duration_s = max(
+            0.0, float(cfg.get("reset_motion_duration_s", 2.0))
+        )
+        self._reset_motion_tolerance = max(
+            0.0, float(cfg.get("reset_motion_tolerance", 0.05))
+        )
+        self._reset_motion_settle_timeout_s = max(
+            0.0, float(cfg.get("reset_motion_settle_timeout_s", 0.75))
+        )
+        self._reset_motion_poll_interval_s = max(
+            0.0, float(cfg.get("reset_motion_poll_interval_s", 0.05))
+        )
+        self._configured_reset_joint_positions = self._load_reset_joint_positions(
+            cfg.get("reset_joint_positions", None)
+        )
+        self._reset_joint_positions: dict[str, np.ndarray] = {}
 
         self._num_steps = 0
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
@@ -144,6 +167,7 @@ class YAMEnv(gym.Env):
         else:
             self._setup_dummy_cameras()
         self._resolve_camera_roles(self._camera_names)
+        self._capture_reset_joint_positions()
 
         # Gym spaces
         obs_space = {
@@ -162,6 +186,13 @@ class YAMEnv(gym.Env):
                 low=0,
                 high=255,
                 shape=(len(self._wrist_camera_names), self._img_h, self._img_w, 3),
+                dtype=np.uint8,
+            )
+        if self._extra_view_camera_names:
+            obs_space["extra_view_images"] = gym.spaces.Box(
+                low=0,
+                high=255,
+                shape=(len(self._extra_view_camera_names), self._img_h, self._img_w, 3),
                 dtype=np.uint8,
             )
         self.observation_space = gym.spaces.Dict(obs_space)
@@ -239,7 +270,6 @@ class YAMEnv(gym.Env):
             control_rate_hz=rate,
             use_joint_state_as_action=False,
         )
-        self._resolve_camera_roles(self._camera_names)
         self._logger.info("[YAMEnv] Robot connected.")
 
     # ------------------------------------------------------------------
@@ -264,9 +294,212 @@ class YAMEnv(gym.Env):
         if self._is_dummy:
             raw_obs = self._dummy_obs()
         else:
+            self._move_robots_to_reset_pose()
             raw_obs = self._robot_env.reset()
 
         return self._wrap_obs(raw_obs), {}
+
+    def _load_reset_joint_positions(
+        self, reset_joint_positions
+    ) -> dict[str, np.ndarray]:
+        """Build optional per-arm reset overrides from config."""
+        if reset_joint_positions is None:
+            return {}
+
+        if isinstance(reset_joint_positions, DictConfig):
+            reset_joint_positions = dict(reset_joint_positions)
+
+        if isinstance(reset_joint_positions, dict):
+            targets = {}
+            for side, target in reset_joint_positions.items():
+                if side not in {"left", "right"}:
+                    continue
+                target_array = np.asarray(target, dtype=np.float32)
+                if target_array.shape != (_JOINTS_PER_ARM,):
+                    raise ValueError(
+                        f"reset_joint_positions.{side} must have shape "
+                        f"({_JOINTS_PER_ARM},), got {target_array.shape}."
+                    )
+                targets[side] = target_array
+            return targets
+
+        target_array = np.asarray(reset_joint_positions, dtype=np.float32)
+        if target_array.shape != (_JOINTS_PER_ARM,):
+            raise ValueError(
+                "reset_joint_positions must be either a 7D joint target list or "
+                "a mapping with 'left'/'right' 7D joint target lists."
+            )
+        return {
+            "left": target_array.copy(),
+            "right": target_array.copy(),
+        }
+
+    def _capture_reset_joint_positions(self) -> None:
+        """Capture the startup joint positions and use them as the reset home."""
+        if self._is_dummy:
+            self._reset_joint_positions = {
+                side: target.copy()
+                for side, target in self._configured_reset_joint_positions.items()
+            }
+            return
+
+        assert self._robot_env is not None, "Robot environment is not initialized."
+        robot_names = tuple(self._robot_env.get_all_robots().keys())
+        reset_joint_positions = {}
+        for name in robot_names:
+            current_pos = self._read_robot_joint_position(name)
+            if current_pos.shape != (_JOINTS_PER_ARM,):
+                raise ValueError(
+                    f"Robot '{name}' startup joint position must have shape "
+                    f"({_JOINTS_PER_ARM},), got {current_pos.shape}."
+                )
+            reset_joint_positions[name] = current_pos.copy()
+
+        for side, target in self._configured_reset_joint_positions.items():
+            reset_joint_positions[side] = target.copy()
+
+        self._reset_joint_positions = reset_joint_positions
+        self._logger.info(
+            f"[YAMEnv] Captured startup home joint positions: "
+            f"{ {side: target.tolist() for side, target in self._reset_joint_positions.items()} }"
+        )
+
+    @contextmanager
+    def _use_robot_command_futures(self, robot_names: tuple[str, ...]):
+        """Temporarily enable future-returning RPC calls for follower clients."""
+        assert self._robot_env is not None, "Robot environment is not initialized."
+        robots = [self._robot_env.robot(name) for name in robot_names]
+        previous_states = []
+        try:
+            for robot in robots:
+                set_use_future = getattr(robot, "set_use_future", None)
+                use_future = getattr(robot, "use_future", None)
+                if callable(set_use_future) and isinstance(use_future, bool):
+                    previous_states.append((robot, use_future))
+                    set_use_future(True)
+            yield
+        finally:
+            for robot, previous_state in reversed(previous_states):
+                robot.set_use_future(previous_state)
+
+    def _read_robot_joint_position(self, robot_name: str) -> np.ndarray:
+        """Read a robot joint vector in the 7D command/state ordering."""
+        assert self._robot_env is not None, "Robot environment is not initialized."
+        robot = self._robot_env.robot(robot_name)
+
+        observations_getter = getattr(robot, "get_observations", None)
+        if callable(observations_getter):
+            observations = observations_getter()
+            if isinstance(observations, dict):
+                components = []
+                joint_pos = observations.get("joint_pos")
+                if joint_pos is not None:
+                    components.append(
+                        np.asarray(joint_pos, dtype=np.float32).reshape(-1)
+                    )
+                gripper_pos = observations.get("gripper_pos")
+                if gripper_pos is not None:
+                    components.append(
+                        np.asarray(gripper_pos, dtype=np.float32).reshape(-1)
+                    )
+                if components:
+                    current_pos = np.concatenate(components)[:_JOINTS_PER_ARM]
+                    if current_pos.shape == (_JOINTS_PER_ARM,):
+                        return current_pos.copy()
+
+        current_pos = np.asarray(robot.get_joint_pos(), dtype=np.float32).reshape(-1)
+        if current_pos.shape != (_JOINTS_PER_ARM,):
+            raise ValueError(
+                f"Robot '{robot_name}' joint position must have shape "
+                f"({_JOINTS_PER_ARM},), got {current_pos.shape}."
+            )
+        return current_pos.copy()
+
+    def _move_robots_to_reset_pose(self) -> None:
+        """Linearly interpolate all connected arms back to their startup home pose."""
+        if not self._move_to_reset_pose_on_reset:
+            return
+
+        assert self._robot_env is not None, "Robot environment is not initialized."
+        robot_names = tuple(self._robot_env.get_all_robots().keys())
+        if not robot_names:
+            return
+
+        missing_targets = [
+            name for name in robot_names if name not in self._reset_joint_positions
+        ]
+        if missing_targets:
+            raise RuntimeError(
+                f"[YAMEnv] Missing startup home targets for robots: {missing_targets}."
+            )
+
+        current_joint_positions = {
+            name: self._read_robot_joint_position(name) for name in robot_names
+        }
+        sleep_s = self._reset_motion_duration_s / self._reset_motion_steps
+        for step_idx in range(self._reset_motion_steps + 1):
+            alpha = step_idx / self._reset_motion_steps
+            with self._use_robot_command_futures(robot_names):
+                for name, current_pos in current_joint_positions.items():
+                    target_pos = self._reset_joint_positions[name]
+                    interpolated_pos = (1.0 - alpha) * current_pos + alpha * target_pos
+                    self._robot_env.robot(name).command_joint_pos(interpolated_pos)
+            if sleep_s > 0:
+                time.sleep(sleep_s)
+
+        deadline = time.monotonic() + self._reset_motion_settle_timeout_s
+        final_joint_positions = {
+            name: self._read_robot_joint_position(name) for name in robot_names
+        }
+        while time.monotonic() <= deadline:
+            failed_robots = [
+                name
+                for name, final_pos in final_joint_positions.items()
+                if not np.allclose(
+                    final_pos,
+                    self._reset_joint_positions[name],
+                    atol=self._reset_motion_tolerance,
+                    rtol=0.0,
+                )
+            ]
+            if not failed_robots:
+                self._logger.info(
+                    "[YAMEnv] Startup home pose reached for robots: "
+                    f"{list(robot_names)}."
+                )
+                return
+
+            if self._reset_motion_poll_interval_s > 0:
+                time.sleep(self._reset_motion_poll_interval_s)
+            final_joint_positions = {
+                name: self._read_robot_joint_position(name) for name in robot_names
+            }
+
+        failure_details = {
+            name: float(
+                np.max(
+                    np.abs(
+                        final_joint_positions[name] - self._reset_joint_positions[name]
+                    )
+                )
+            )
+            for name in robot_names
+            if not np.allclose(
+                final_joint_positions[name],
+                self._reset_joint_positions[name],
+                atol=self._reset_motion_tolerance,
+                rtol=0.0,
+            )
+        }
+        failed_robots = list(failure_details.keys())
+        if failed_robots:
+            raise RuntimeError(
+                "[YAMEnv] Failed to move robots to startup home pose: "
+                f"{failed_robots}. Max abs diff: {failure_details}."
+            )
+        self._logger.info(
+            f"[YAMEnv] Startup home pose reached for robots: {list(robot_names)}."
+        )
 
     def step(self, actions=None, auto_reset=True):
         """Execute one environment step.
@@ -418,6 +651,37 @@ class YAMEnv(gym.Env):
             except Exception:
                 pass
 
+    def enter_zero_torque_mode(self) -> None:
+        """Switch connected robots into zero-torque / zero-gravity mode."""
+        if self._is_dummy or self._robot_env is None:
+            return
+
+        robot_names = tuple(self._robot_env.get_all_robots().keys())
+        if not robot_names:
+            return
+
+        failed_robots = []
+        for name in robot_names:
+            robot = self._robot_env.robot(name)
+            zero_torque_mode = getattr(robot, "zero_torque_mode", None)
+            if not callable(zero_torque_mode):
+                failed_robots.append(name)
+                continue
+            try:
+                zero_torque_mode()
+            except Exception:
+                failed_robots.append(name)
+
+        if failed_robots:
+            raise RuntimeError(
+                "[YAMEnv] Failed to enter zero-torque mode for robots: "
+                f"{failed_robots}."
+            )
+
+        self._logger.info(
+            f"[YAMEnv] Entered zero-torque mode for robots: {list(robot_names)}."
+        )
+
     # ------------------------------------------------------------------
     # Observation / action helpers
     # ------------------------------------------------------------------
@@ -473,6 +737,7 @@ class YAMEnv(gym.Env):
         if not camera_names:
             self._main_camera_name = None
             self._wrist_camera_names = []
+            self._extra_view_camera_names = []
             return
 
         main_camera_name = None
@@ -493,10 +758,15 @@ class YAMEnv(gym.Env):
                 for camera_name in camera_names
                 if camera_name not in used_names and self._is_wrist_camera(camera_name)
             ]
+        used_names.update(wrist_camera_names)
+        extra_view_camera_names = [
+            camera_name for camera_name in camera_names if camera_name not in used_names
+        ]
 
         self._main_camera_name = main_camera_name
         self.main_image_key = main_camera_name
         self._wrist_camera_names = wrist_camera_names
+        self._extra_view_camera_names = extra_view_camera_names
         self._logger.info(
             "[YAMEnv] Camera roles resolved: "
             f"main={self._main_camera_name}, "
@@ -560,11 +830,21 @@ class YAMEnv(gym.Env):
         left_state = np.zeros(_JOINTS_PER_ARM, dtype=np.float32)
         right_state = np.zeros(_JOINTS_PER_ARM, dtype=np.float32)
         if "left" in raw_obs and raw_obs["left"] is not None:
-            jpos = raw_obs["left"].get("joint_pos", np.zeros(_JOINTS_PER_ARM))
-            left_state = np.asarray(jpos, dtype=np.float32)[:_JOINTS_PER_ARM]
+            jpos = np.asarray(
+                raw_obs["left"].get("joint_pos", np.zeros(6)), dtype=np.float32
+            )
+            gpos = np.asarray(
+                raw_obs["left"].get("gripper_pos", np.zeros(1)), dtype=np.float32
+            )
+            left_state = np.concatenate([jpos, gpos])[:_JOINTS_PER_ARM]
         if "right" in raw_obs and raw_obs["right"] is not None:
-            jpos = raw_obs["right"].get("joint_pos", np.zeros(_JOINTS_PER_ARM))
-            right_state = np.asarray(jpos, dtype=np.float32)[:_JOINTS_PER_ARM]
+            jpos = np.asarray(
+                raw_obs["right"].get("joint_pos", np.zeros(6)), dtype=np.float32
+            )
+            gpos = np.asarray(
+                raw_obs["right"].get("gripper_pos", np.zeros(1)), dtype=np.float32
+            )
+            right_state = np.concatenate([jpos, gpos])[:_JOINTS_PER_ARM]
         states = np.concatenate([left_state, right_state])  # (14,)
         # Add batch dimension for vectorised env compatibility
         states = states[np.newaxis, :]  # (1, 14)
@@ -596,6 +876,14 @@ class YAMEnv(gym.Env):
             ]
             obs["wrist_images"] = to_tensor(
                 np.stack(wrist_images, axis=0)[np.newaxis, :]
+            )
+        if self._extra_view_camera_names:
+            extra_view_images = [
+                camera_images.get(camera_name, zero_image)
+                for camera_name in self._extra_view_camera_names
+            ]
+            obs["extra_view_images"] = to_tensor(
+                np.stack(extra_view_images, axis=0)[np.newaxis, :]
             )
         return obs
 
