@@ -29,6 +29,9 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def build_dataloader(self, data_paths: list[str], eval_dataset: bool = False):
         if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:
+            from rlinf.models.embodiment.openpi import ensure_openpi_runtime_compat
+
+            ensure_openpi_runtime_compat()
             import openpi.training.data_loader as openpi_data_loader
 
             from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
@@ -57,9 +60,11 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
         register_pytree_dataclasses(observation)
         observation = _pytree.tree_map(
-            lambda x: torch.as_tensor(x, device=self.device).contiguous().clone()
-            if x is not None
-            else x,
+            lambda x: (
+                torch.as_tensor(x, device=self.device).contiguous().clone()
+                if x is not None
+                else x
+            ),
             observation,
         )
         actions = actions.to(torch.float32)

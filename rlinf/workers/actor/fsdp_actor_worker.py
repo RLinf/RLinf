@@ -1218,6 +1218,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             if self.cfg.actor.get("sft_data_path", None):
                 os.environ["HF_LEROBOT_HOME"] = self.cfg.actor.sft_data_path
 
+            from rlinf.models.embodiment.openpi import ensure_openpi_runtime_compat
+
+            ensure_openpi_runtime_compat()
             import openpi.training.data_loader as _data
 
             from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
