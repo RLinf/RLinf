@@ -38,8 +38,9 @@ from rlinf.models.embodiment.openpi.adarms_expert import (
 class _FakePaliGemmaWithExpert:
     def __init__(self, gemma_model, paligemma=None):
         self.gemma_expert = type("_FakeGemmaExpert", (), {"model": gemma_model})()
-        if paligemma is not None:
-            self.paligemma = paligemma
+        self.paligemma = (
+            paligemma if paligemma is not None else _build_tiny_paligemma_model()
+        )
 
 
 def _build_tiny_gemma_model():

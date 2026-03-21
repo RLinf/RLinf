@@ -124,7 +124,9 @@ def _manual_gemma_model_forward(
     """Run the Gemma expert with AdaRMS/gated residual semantics."""
 
     del kwargs
-    use_cache = use_cache if use_cache is not None else getattr(self.config, "use_cache", False)
+    use_cache = (
+        use_cache if use_cache is not None else getattr(self.config, "use_cache", False)
+    )
     if inputs_embeds is None:
         if input_ids is None:
             raise ValueError("Either input_ids or inputs_embeds must be provided.")
@@ -140,7 +142,10 @@ def _manual_gemma_model_forward(
 
         past_key_values = DynamicCache(config=self.config)
 
-    if len(self.layers) > 0 and self.layers[0].self_attn.q_proj.weight.dtype == torch.bfloat16:
+    if (
+        len(self.layers) > 0
+        and self.layers[0].self_attn.q_proj.weight.dtype == torch.bfloat16
+    ):
         hidden_states = hidden_states.to(dtype=torch.bfloat16)
 
     cache_position = None
