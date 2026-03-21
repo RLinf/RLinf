@@ -17,16 +17,17 @@ import json
 import logging
 import os
 import re
+import sys
 from contextlib import nullcontext
 from pathlib import Path
-from types import MethodType
+from types import MethodType, ModuleType
 
 import torch
 from omegaconf import DictConfig
 
 from rlinf.models.embodiment.openpi.adarms_expert import (
     AdaRMSGemmaRMSNorm,
-    enable_openpi_adarms_expert,
+    enable_openpi_transformers_compat,
 )
 
 
@@ -112,12 +113,27 @@ def _load_hf_visual_feature_order(checkpoint_dir: str) -> tuple[str, ...] | None
 
 
 def _ensure_openpi_transformers_overlay() -> None:
-    """Relax OpenPI's strict Transformers version gate in RLinf workers."""
+    """Expose OpenPI's legacy SigLIP check module without patching Transformers.
+
+    The upstream OpenPI package expects a vendored
+    ``transformers.models.siglip.check`` module from its 4.53 replacement
+    layer. RLinf runs against vanilla Transformers 4.57, so provide a minimal
+    in-memory shim and relax the version gate there instead of copying files
+    into ``site-packages``.
+    """
+
+    try:
+        import transformers.models.siglip as siglip_pkg
+    except ImportError:
+        return
+
     try:
         from transformers.models.siglip import check
     except ImportError:
-        pass
-        return
+        check = ModuleType("transformers.models.siglip.check")
+        sys.modules[check.__name__] = check
+        siglip_pkg.check = check
+
     check.check_whether_transformers_replace_is_installed_correctly = lambda: True
 
 
@@ -284,8 +300,10 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         model: OpenPi0ForRLActionPrediction = OpenPi0ForRLActionPrediction(
             actor_model_config
         )
-    if getattr(actor_model_config, "pi05", False):
-        enable_openpi_adarms_expert(model.paligemma_with_expert)
+    enable_openpi_transformers_compat(
+        model.paligemma_with_expert,
+        enable_adarms=getattr(actor_model_config, "pi05", False),
+    )
     # train expert only
     if actor_model_config.train_expert_only:
         model.freeze_vlm()
