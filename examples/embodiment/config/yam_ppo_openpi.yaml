@@ -58,7 +58,7 @@ cluster:
     - label: "gpu"
       node_ranks: 0
     - label: "beaker_vlm"
-      node_ranks: 0  # VLMPlannerWorker — heuristic assigns GPU 2 (max distinct placement + 1)
+      node_ranks: 0  # VLMPlannerWorker placement group on the Beaker node
 
 runner:
   task_type: embodied
@@ -177,6 +177,11 @@ vlm_planner:
   model_path: "Qwen/Qwen3-VL-8B-Instruct"
   backend: "transformers"
   dtype: "bfloat16"
+  # Optional explicit placement override. By default RLinf chooses GPU 2 here
+  # because actor and rollout occupy GPUs 0 and 1 on the same node.
+  # placement: 2
+  # Optional node-group override for the planner. Defaults to "beaker_vlm".
+  # node_group: "beaker_vlm"
   max_new_tokens_subtask: 64
   max_new_tokens_reward: 16
   max_memory_entries: 20

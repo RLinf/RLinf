@@ -17,7 +17,7 @@
 Extends ``train_embodied_agent.py`` with an additional VLMPlannerWorker Ray
 actor that is launched when either ``env.train.subtask_interval > 0`` (subtask
 planning) or ``env.train.top_reward_enabled`` is True (dense TOPReward reward
-signal).  The planner runs Qwen3-VL-8B as a Ray actor.
+signal). The planner runs Qwen3-VL-8B as a Ray actor.
 
 Usage::
 
@@ -31,10 +31,10 @@ Or directly::
         --config-name yam_ppo_openpi_topreward
 
 The config must contain a ``vlm_planner`` section and a node group labelled
-``"beaker_vlm"`` in ``cluster.node_groups``.  The VLMPlannerWorker is pinned
-to the first node in that group via Ray NodeAffinitySchedulingStrategy.
-``_compute_vlm_gpu_index`` assigns the VLM to GPU ``max(distinct_actor_rollout_placements) + 1``
-to avoid collisions with actor and rollout workers.
+``"beaker_vlm"`` in ``cluster.node_groups``. The VLMPlannerWorker is allocated
+through RLinf's placement stack so it inherits the same GPU isolation model as
+actor and rollout workers, instead of relying on a standalone Ray ``num_gpus``
+reservation.
 
 Configs that use this entry point (auto-selected by run_embodiment.sh /
 run_realworld.sh / submit_yam_training.sh):
@@ -54,7 +54,6 @@ import json
 
 import hydra
 import ray
-import ray.util.scheduling_strategies
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
@@ -64,7 +63,7 @@ from rlinf.envs.remote.simulated_desktop import (
     stop_process,
 )
 from rlinf.runners.embodied_runner import EmbodiedRunner
-from rlinf.scheduler import Cluster
+from rlinf.scheduler import AcceleratorUtil, Cluster, PackedPlacementStrategy
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 from rlinf.workers.env.env_worker import EnvWorker
@@ -76,31 +75,19 @@ mp.set_start_method("spawn", force=True)
 _VLM_PLANNER_NODE_GROUP = "beaker_vlm"
 
 
-def _compute_vlm_gpu_index(cfg) -> int | None:
-    """Return the GPU index to pin VLMPlannerWorker to, or ``None`` to let Ray decide.
+def _compute_vlm_gpu_index(cfg) -> int:
+    """Return the GPU index to use for VLMPlannerWorker.
 
-    Actor and rollout workers bypass Ray's GPU resource pool (they set
-    ``CUDA_VISIBLE_DEVICES`` manually and set
-    ``RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1``).  From Ray's
-    perspective those GPUs are unclaimed, so a bare ``num_gpus=1`` request
-    would assign GPU 0 to VLMPlannerWorker.
+    Configs may set ``vlm_planner.placement`` to override the default. When no
+    override is provided, the default remains the original heuristic:
 
-    This is the correct behaviour when VLM is meant to share a GPU with the
-    actor (e.g. a single-GPU dedicated VLM node where it has the whole device
-    to itself).
+    - if actor/rollout use fewer than two distinct GPU indices on the VLM node,
+      place the VLM on GPU 0
+    - otherwise place it on ``max(actor, rollout, env placements on that node)+1``
 
-    However, on single-node Beaker configs with **multiple** GPUs assigned to
-    different workers (actor on GPU 0, rollout on GPU 1) the VLM must land on
-    yet another GPU (GPU 2) rather than colliding with the actor on GPU 0.
-
-    The heuristic: if two or more *distinct* GPU indices are claimed by other
-    components on the same node, those GPUs are all occupied and the VLM needs
-    ``max(claimed indices) + 1``.  With only one distinct index (all on GPU 0,
-    or a dedicated node), return ``None`` so Ray assigns GPU 0 — which is
-    intentional sharing or an isolated node.
-
-    Configs may set ``vlm_planner.placement`` to override this heuristic with
-    an explicit GPU index.
+    The important difference is that the returned index is now fed into RLinf's
+    placement system, which reserves and isolates the selected GPU in the same
+    way as actor and rollout workers.
     """
     # Explicit placement override takes precedence over the heuristic.
     vlm_cfg = getattr(cfg, "vlm_planner", None)
@@ -153,13 +140,21 @@ def _compute_vlm_gpu_index(cfg) -> int | None:
     # Only one distinct GPU index in use (or dedicated node): VLM shares GPU 0.
     # Two or more distinct indices: every index is occupied — VLM needs max+1.
     if len(placements_on_shared_node) < 2:
-        return None  # Let Ray assign; GPU 0 is correct.
+        return 0
 
     return max(placements_on_shared_node) + 1
 
 
+def _get_vlm_planner_placement(cfg) -> tuple[str, int]:
+    """Resolve the node group label and GPU index for the VLM planner."""
+    vlm_cfg = getattr(cfg, "vlm_planner", None)
+    node_group = str(getattr(vlm_cfg, "node_group", _VLM_PLANNER_NODE_GROUP))
+    gpu_index = _compute_vlm_gpu_index(cfg)
+    return node_group, gpu_index
+
+
 def _launch_vlm_planner(cfg, cluster: Cluster):
-    """Create a VLMPlannerWorker Ray actor pinned to the first Beaker node.
+    """Create a placement-backed VLMPlannerWorker Ray actor.
 
     Args:
         cfg: Top-level Hydra config.
@@ -178,41 +173,61 @@ def _launch_vlm_planner(cfg, cluster: Cluster):
     if not hasattr(cfg, "vlm_planner"):
         return None
 
-    node_group = cluster.get_node_group(_VLM_PLANNER_NODE_GROUP)
+    node_group_label, vlm_gpu = _get_vlm_planner_placement(cfg)
+    node_group = cluster.get_node_group(node_group_label)
     if node_group is None or not node_group.nodes:
         raise RuntimeError(
-            f"VLMPlannerWorker requires a node group labelled '{_VLM_PLANNER_NODE_GROUP}' "
-            f"in cluster.node_groups.  Check your YAML config."
+            "VLMPlannerWorker requires a node group labelled "
+            f"'{node_group_label}' in cluster.node_groups. Check your YAML config."
         )
 
-    # Pin to the first node in the beaker_vlm group.
-    beaker_node = node_group.nodes[0]
-    scheduling_strategy = ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
-        node_id=beaker_node.ray_id,
-        soft=False,
+    placement_strategy = PackedPlacementStrategy(
+        start_hardware_rank=vlm_gpu,
+        end_hardware_rank=vlm_gpu,
+        node_group=node_group_label,
+    )
+    placements = placement_strategy.get_placement(cluster, isolate_accelerator=True)
+    if len(placements) != 1:
+        raise RuntimeError(
+            "Expected exactly one placement for VLMPlannerWorker, got "
+            f"{len(placements)}."
+        )
+
+    placement = placements[0]
+    node = cluster.get_node_info(placement.cluster_node_rank)
+    env_vars = {
+        "VISIBLE_DEVICES": ",".join(placement.visible_accelerators),
+        "ACCELERATOR_TYPE": str(node.accelerator_type),
+        "ACCELERATOR_MODEL": node.accelerator_model,
+        "ISOLATE_ACCELERATOR": "1" if placement.isolate_accelerator else "0",
+        "LOCAL_ACCELERATOR_RANK": str(placement.local_accelerator_rank),
+        "LOCAL_HARDWARE_RANKS": ",".join(map(str, placement.local_hardware_ranks)),
+        "NODE_GROUP_LABEL": placement.node_group_label,
+        "NODE_RANK": str(placement.placement_node_rank),
+        "CLUSTER_NODE_RANK": str(placement.cluster_node_rank),
+        "NODE_LOCAL_RANK": str(placement.local_rank),
+        "NODE_LOCAL_WORLD_SIZE": str(placement.local_world_size),
+        "RAY_ACTOR": str(1),
+    }
+    env_vars.update(
+        AcceleratorUtil.get_accelerator_env_var(
+            node.accelerator_type, placement.visible_accelerators
+        )
     )
 
-    # Determine the correct GPU index for VLMPlannerWorker.
-    # When actor and rollout occupy distinct GPUs on the same node, Ray would
-    # still assign GPU 0 (it doesn't see those GPUs as claimed) and collide
-    # with the actor.  _compute_vlm_gpu_index returns the next free GPU in
-    # that case, or None when sharing GPU 0 is intentional (single-GPU node
-    # or dedicated VLM node).
-    vlm_gpu = _compute_vlm_gpu_index(cfg)
-    options_kwargs: dict = {
-        "num_gpus": 1,
-        "scheduling_strategy": scheduling_strategy,
-    }
-    if vlm_gpu is not None:
-        options_kwargs["runtime_env"] = {
-            "env_vars": {
-                "CUDA_VISIBLE_DEVICES": str(vlm_gpu),
-                # Match the actor/rollout pattern: prevent Ray from overwriting.
-                "RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES": "1",
-            }
-        }
-
-    vlm_actor = VLMPlannerWorker.options(**options_kwargs).remote(cfg)
+    worker_name = f"{cfg.vlm_planner.get('group_name', 'VLMPlannerWorker')}_0"
+    vlm_actor = cluster.allocate(
+        cls=VLMPlannerWorker,
+        worker_name=worker_name,
+        worker_rank=0,
+        node_rank=placement.cluster_node_rank,
+        max_concurrency=1,
+        env_vars=env_vars,
+        node_group_label=placement.node_group_label,
+        disable_distributed_log=False,
+        cls_args=(cfg,),
+        cls_kwargs={},
+    )
 
     # Verify the actor started successfully (will raise if __init__ fails).
     ray.get(vlm_actor.get_memory_text.remote())
