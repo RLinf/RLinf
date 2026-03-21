@@ -15,8 +15,8 @@ env_type: yam
 total_num_envs: null
 
 # Episode settings
-max_episode_steps: 100
-max_steps_per_rollout_epoch: 100
+max_episode_steps: 10000
+max_steps_per_rollout_epoch: 10000
 
 # Robot control
 control_rate_hz: 10.0
@@ -31,7 +31,7 @@ main_camera: "cam_top"
 # Explicit wrist camera selectors. If unset, YAMEnv classifies non-main
 # cameras heuristically: names containing "wrist", "hand", "gripper",
 # "eye_in_hand", "eef", or "tcp" become wrist cameras.
-wrist_cameras: ["cam_right", "cam_left"]
+wrist_cameras: ["cam_left", "cam_right"]
 
 # Human-readable task description injected into observations (used by VLA models).
 task_description: ""
@@ -56,7 +56,9 @@ top_reward_max_frames: 16
 #   robot_cfgs:
 #     left:  ["/path/to/yam_realtime/robot_configs/yam/left.yaml"]
 #     right: ["/path/to/yam_realtime/robot_configs/yam/right.yaml"]
-robot_cfgs: null
+robot_cfgs:
+  left:  ["YAM/yam_realtime/robot_configs/yam/left.yaml"]
+  right: ["YAM/yam_realtime/robot_configs/yam/left.yaml", "YAM/yam_realtime/robot_configs/yam/right.yaml"]
 
 # Camera configs (optional).  Mapping of camera name to yam_realtime
 # CameraNode configuration dict, passed to initialize_sensors().
@@ -75,16 +77,19 @@ camera_cfgs:
     camera:
       _target_: rlinf.envs.yam.realsense_camera.RealsenseCamera
       serial_number: "128422272697"
+      fps: 15
   cam_top:
     _target_: yam_realtime.sensors.cameras.camera.CameraNode
     camera:
       _target_: rlinf.envs.yam.realsense_camera.RealsenseCamera
       serial_number: "215222073684"
+      fps: 15
   cam_left:
     _target_: yam_realtime.sensors.cameras.camera.CameraNode
     camera:
       _target_: rlinf.envs.yam.realsense_camera.RealsenseCamera
       serial_number: "218622275075"
+      fps: 15
 
 video_cfg:
   save_video: False

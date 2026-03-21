@@ -89,6 +89,28 @@ def _load_hf_export_norm_stats(checkpoint_dir):
     return recovered_stats or None
 
 
+def _load_hf_visual_feature_order(checkpoint_dir: str) -> tuple[str, ...] | None:
+    """Read the visual input feature order from a Hugging Face-exported config."""
+
+    config_path = Path(checkpoint_dir) / "config.json"
+    if not config_path.exists():
+        return None
+
+    config = json.loads(config_path.read_text())
+    input_features = config.get("input_features", {})
+    image_feature_order = []
+    for key in input_features:
+        if not key.startswith("observation.images."):
+            continue
+        camera_name = key.removeprefix("observation.images.")
+        if camera_name in {"left", "right", "top"}:
+            image_feature_order.append(camera_name)
+
+    if len(image_feature_order) < 3:
+        return None
+    return tuple(image_feature_order[:3])
+
+
 def _ensure_openpi_transformers_overlay() -> None:
     """Relax OpenPI's strict Transformers version gate in RLinf workers."""
     try:
@@ -115,7 +137,14 @@ def _normalize_openpi_state_dict_keys(
         return state_dict
 
     if all(key.startswith("model.") for key in state_dict):
-        return {key[len("model.") :]: value for key, value in state_dict.items()}
+        state_dict = {key[len("model.") :]: value for key, value in state_dict.items()}
+
+    # torch.compile() wraps the model under _orig_mod.*; strip that prefix too.
+    if all(key.startswith("_orig_mod.") for key in state_dict):
+        state_dict = {
+            key[len("_orig_mod.") :]: value for key, value in state_dict.items()
+        }
+
     return state_dict
 
 
@@ -393,34 +422,52 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     data_config = actor_train_config.data.create(
         actor_train_config.assets_dirs, actor_model_config
     )
-    # Prefer the asset-config norm stats if already available, and only
-    # override them from the checkpoint when that metadata exists there.
-    norm_stats = data_config.norm_stats
-    if data_config.asset_id is None:
-        raise ValueError("Asset id is required to load norm stats.")
-    try:
-        checkpoint_norm_stats = _checkpoints.load_norm_stats(
-            checkpoint_dir, data_config.asset_id
-        )
-        if checkpoint_norm_stats is not None:
-            norm_stats = checkpoint_norm_stats
-    except FileNotFoundError:
-        logging.info(
-            "Norm stats were not bundled with checkpoint %s; falling back to asset config stats.",
-            checkpoint_dir,
-        )
-    if norm_stats is None:
-        norm_stats = _load_hf_export_norm_stats(checkpoint_dir)
-        if norm_stats is not None:
+    asset_norm_stats = data_config.norm_stats
+    checkpoint_norm_stats = None
+    processor_export_norm_stats = _load_hf_export_norm_stats(checkpoint_dir)
+
+    if data_config.asset_id is not None:
+        try:
+            checkpoint_norm_stats = _checkpoints.load_norm_stats(
+                checkpoint_dir, data_config.asset_id
+            )
+        except FileNotFoundError:
             logging.info(
-                "Recovered OpenPI norm stats from Hugging Face processor export in %s.",
+                "Norm stats were not bundled with checkpoint %s; "
+                "falling back to processor export stats or asset config stats.",
                 checkpoint_dir,
             )
+    elif processor_export_norm_stats is None and asset_norm_stats is None:
+        raise ValueError("Asset id is required to load norm stats.")
+
+    if checkpoint_norm_stats is not None:
+        norm_stats = checkpoint_norm_stats
+    elif processor_export_norm_stats is not None:
+        norm_stats = processor_export_norm_stats
+        logging.info(
+            "Recovered OpenPI norm stats from Hugging Face processor export in %s.",
+            checkpoint_dir,
+        )
+    else:
+        norm_stats = asset_norm_stats
     if norm_stats is None:
         raise FileNotFoundError(
             f"Norm stats were not found in checkpoint {checkpoint_dir!r} or asset config "
             f"for asset_id {data_config.asset_id!r}."
         )
+    if getattr(actor_model_config, "config_name", None) == "pi05_yam_follower":
+        model._yam_camera_order = _load_hf_visual_feature_order(checkpoint_dir)
+        if model._yam_camera_order is not None:
+            logging.info(
+                "Using checkpoint-driven YAM camera order: %s",
+                model._yam_camera_order,
+            )
+        else:
+            logging.warning(
+                "Could not infer YAM camera order from %s/config.json; "
+                "falling back to the default OpenPI slot order.",
+                checkpoint_dir,
+            )
     # wrappers
     repack_transforms = transforms.Group()
     default_prompt = None

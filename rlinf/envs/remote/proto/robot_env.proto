@@ -15,6 +15,9 @@ service RobotEnvService {
   // Update the task description string.
   rpc SetTaskDescription(TaskDescriptionRequest) returns (Empty);
 
+  // Switch the robot into zero-torque / zero-gravity mode.
+  rpc EnterZeroTorqueMode(Empty) returns (Empty);
+
   // Close the environment.
   rpc Close(Empty) returns (Empty);
 }

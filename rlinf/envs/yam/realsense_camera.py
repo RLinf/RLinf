@@ -78,7 +78,7 @@ class RealsenseCamera(CameraDriver):
             raise
 
     def read(self) -> CameraData:
-        frames = self._pipeline.wait_for_frames()
+        frames = self._pipeline.wait_for_frames(timeout_ms=5000)
         capture_time_ms = time.time() * 1000
         color_frame = frames.get_color_frame()
         if not color_frame:
