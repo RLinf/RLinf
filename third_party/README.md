@@ -40,15 +40,17 @@ python -c "from i2rt.robots.robot import Robot, RobotType; print('OK')"
 On the robot machine, start the robot server that RLinf env workers connect to:
 
 ```bash
-python -m rlinf.envs.remote.robot_server \
-    --config-path examples/embodiment/config/env/yam.yaml
+bash scripts/start_robot_server.sh \
+    --config examples/embodiment/config/env/yam_pi05_follower.yaml \
+    --use-follower-servers
 ```
 
 For testing without real hardware, use dummy mode:
 
 ```bash
-python -m rlinf.envs.remote.robot_server \
-    --config-path examples/embodiment/config/env/yam.yaml \
+bash scripts/start_robot_server.sh \
+    --config examples/embodiment/config/env/yam_pi05_follower.yaml \
+    --no-tunnel \
     --dummy
 ```
 

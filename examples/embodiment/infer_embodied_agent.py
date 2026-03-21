@@ -19,7 +19,8 @@ can reach the RobotServer gRPC port).
 
 Prerequisites:
     1. RobotServer running (real or dummy):
-         bash scripts/start_robot_server.sh --config .../yam.yaml --no-tunnel [--dummy]
+         bash scripts/start_robot_server.sh --config .../yam_pi05_follower.yaml \
+             --use-follower-servers --no-tunnel [--dummy]
     2. Model weights accessible (auto-downloaded from HuggingFace if needed).
 
 Usage::

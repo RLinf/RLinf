@@ -42,7 +42,8 @@ Then start the desktop-side robot server:
 
 ```bash
 bash scripts/start_robot_server.sh \
-    --config examples/embodiment/config/env/yam.yaml \
+    --config examples/embodiment/config/env/yam_pi05_follower.yaml \
+    --use-follower-servers \
     --remote-host <tailscale-ip>
 ```
 
@@ -50,7 +51,7 @@ For pipeline testing without hardware:
 
 ```bash
 bash scripts/start_robot_server.sh \
-    --config examples/embodiment/config/env/yam.yaml \
+    --config examples/embodiment/config/env/yam_pi05_follower.yaml \
     --dummy
 ```
 
@@ -111,7 +112,7 @@ python examples/embodiment/train_embodied_agent_staged.py \
     --config-path examples/embodiment/config \
     --config-name yam_ppo_openpi \
     env.remote_desktop_simulation.enabled=true \
-    env.remote_desktop_simulation.env_config_path=/path/to/yam.yaml \
+    env.remote_desktop_simulation.env_config_path=/path/to/yam_pi05_follower.yaml \
     env.train.remote_server_url=localhost:50051 \
     env.eval.remote_server_url=localhost:50051
 ```

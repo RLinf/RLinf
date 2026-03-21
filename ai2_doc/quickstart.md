@@ -116,11 +116,12 @@ Watch the Beaker logs for:
 ```bash
 # Real hardware — tunnel reconnects automatically when new Beaker jobs start
 bash scripts/start_robot_server.sh \
-    --config examples/embodiment/config/env/yam.yaml
+    --config examples/embodiment/config/env/yam_pi05_follower.yaml \
+    --use-follower-servers
 
 # Dummy mode (no CAN bus / robot hardware needed — for pipeline testing)
 bash scripts/start_robot_server.sh \
-    --config examples/embodiment/config/env/yam.yaml \
+    --config examples/embodiment/config/env/yam_pi05_follower.yaml \
     --dummy
 ```
 

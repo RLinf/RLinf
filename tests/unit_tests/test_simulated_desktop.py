@@ -68,7 +68,9 @@ def test_build_simulated_desktop_server_spec_uses_default_local_yam_config():
     assert spec.port == 50051
     assert spec.dummy is True
     assert spec.startup_timeout == pytest.approx(12.5)
-    assert spec.env_config_path.endswith("examples/embodiment/config/env/yam.yaml")
+    assert spec.env_config_path.endswith(
+        "examples/embodiment/config/env/yam_pi05_follower.yaml"
+    )
     assert Path(spec.env_config_path).is_absolute()
 
 

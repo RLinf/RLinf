@@ -74,10 +74,12 @@ Options:
 
 Examples:
   # Persistent server + auto-reconnecting tunnel (default beaker-0 hostname):
-  bash scripts/start_robot_server.sh --config examples/embodiment/config/env/yam.yaml
+  bash scripts/start_robot_server.sh \
+      --config examples/embodiment/config/env/yam_pi05_follower.yaml \
+      --use-follower-servers
 
   # Local only (no tunnel, for testing):
-  bash scripts/start_robot_server.sh --config examples/embodiment/config/env/yam.yaml \
+  bash scripts/start_robot_server.sh --config examples/embodiment/config/env/yam_pi05_follower.yaml \
       --no-tunnel --dummy
 
   # YAM follower servers + RobotServer:
@@ -86,7 +88,9 @@ Examples:
       --use-follower-servers --no-tunnel
 
   # Explicit IP instead of hostname (e.g. for one-off debugging):
-  bash scripts/start_robot_server.sh --config examples/embodiment/config/env/yam.yaml \
+  bash scripts/start_robot_server.sh \
+      --config examples/embodiment/config/env/yam_pi05_follower.yaml \
+      --use-follower-servers \
       --remote-host 100.87.5.72
 EOF
     exit 0

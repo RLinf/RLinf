@@ -108,7 +108,7 @@ def build_simulated_desktop_server_spec(
             / "embodiment"
             / "config"
             / "env"
-            / "yam.yaml"
+            / "yam_pi05_follower.yaml"
         )
     env_config_path = os.path.abspath(os.path.expanduser(str(env_config_path)))
 
