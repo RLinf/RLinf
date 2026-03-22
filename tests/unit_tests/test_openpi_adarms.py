@@ -27,6 +27,7 @@ from rlinf.models.embodiment.openpi import (
     _ensure_openpi_transformers_overlay,
     _inject_missing_paligemma_embeddings,
     _retie_paligemma_embeddings,
+    ensure_openpi_runtime_compat,
 )
 from rlinf.models.embodiment.openpi.adarms_expert import (
     AdaRMSGemmaRMSNorm,
@@ -90,6 +91,27 @@ def test_ensure_openpi_transformers_overlay_installs_siglip_check_shim():
 
     try:
         _ensure_openpi_transformers_overlay()
+        check = importlib.import_module("transformers.models.siglip.check")
+        assert check.check_whether_transformers_replace_is_installed_correctly()
+    finally:
+        sys.modules.pop("transformers.models.siglip.check", None)
+        if original_module is not None:
+            sys.modules["transformers.models.siglip.check"] = original_module
+        if had_attr:
+            siglip_pkg.check = original_attr
+
+
+def test_ensure_openpi_runtime_compat_keeps_public_wrapper():
+    import transformers.models.siglip as siglip_pkg
+
+    original_module = sys.modules.pop("transformers.models.siglip.check", None)
+    had_attr = hasattr(siglip_pkg, "check")
+    original_attr = getattr(siglip_pkg, "check", None)
+    if had_attr:
+        delattr(siglip_pkg, "check")
+
+    try:
+        ensure_openpi_runtime_compat()
         check = importlib.import_module("transformers.models.siglip.check")
         assert check.check_whether_transformers_replace_is_installed_correctly()
     finally:
