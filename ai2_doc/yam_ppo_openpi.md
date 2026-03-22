@@ -28,6 +28,34 @@ Main component placement:
 - GPU 2: VLM planner / TOPReward
 - CPU: `RemoteEnv`
 
+## VLM Planner Placement
+
+`train_embodied_agent_staged.py` now launches the VLM planner through RLinf's
+placement stack instead of as a standalone Ray `num_gpus=1` actor. This matters
+because actor and rollout workers were already using RLinf-managed GPU
+isolation, while the older VLM planner path only used a best-effort
+`CUDA_VISIBLE_DEVICES` heuristic.
+
+Current behavior:
+
+- actor, rollout, and VLM planner all use RLinf placement-backed GPU isolation
+- the default YAM single-node layout still resolves to GPU 0 for actor, GPU 1
+  for rollout, and GPU 2 for the VLM planner
+- the planner uses the `beaker_vlm` node group by default
+
+Planner placement overrides:
+
+```yaml
+vlm_planner:
+  # Optional explicit GPU index inside the planner node group.
+  placement: 2
+  # Optional node-group override. Defaults to "beaker_vlm".
+  node_group: "beaker_vlm"
+```
+
+Use an explicit `vlm_planner.placement` override if you want to pin the VLM to
+a different GPU than the default inferred one.
+
 ## Standard Workflow
 
 Submit training from the repo root:

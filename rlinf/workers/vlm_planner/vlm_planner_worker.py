@@ -97,7 +97,6 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-import ray
 from omegaconf import DictConfig
 from PIL import Image
 
@@ -164,11 +163,12 @@ def _process_vision_info_compat(process_vision_info, messages):
     return image_inputs, video_inputs, video_kwargs
 
 
-@ray.remote(num_gpus=1)
 class VLMPlannerWorker:
-    """Ray remote actor that hosts a local Qwen VLM for subtask planning and reward evaluation.
+    """Ray actor class that hosts a local Qwen VLM for subtask planning and reward evaluation.
 
-    Placement: Beaker GPU node.  The actor claims 1 GPU via ``@ray.remote(num_gpus=1)``.
+    Placement is controlled by the caller. In staged embodied training, the
+    worker is allocated through RLinf's placement stack so the selected GPU is
+    reserved and isolated consistently with actor and rollout workers.
 
     Args:
         cfg: Top-level Hydra config.  The worker reads ``cfg.vlm_planner``.

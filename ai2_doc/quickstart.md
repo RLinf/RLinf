@@ -11,11 +11,11 @@ For config-specific guides, see [yam_ppo_openpi](yam_ppo_openpi.md) and
 
 ## Prerequisites
 
-- [ ] `autossh` installed on the desktop (`brew install autossh` on macOS,
+- [x] `autossh` installed on the desktop (`brew install autossh` on macOS,
   `sudo apt-get install autossh` on Ubuntu/Debian)
-- [ ] Desktop has a Tailscale client connected to the AI2 network
-- [ ] Beaker secrets written (see [Beaker Secrets](#beaker-secrets) below)
-- [ ] Model checkpoint available (HuggingFace ID or local path; default: `thomas0829/folding_towel_pi05`)
+- [x] Desktop has a Tailscale client connected to the AI2 network
+- [x] Beaker secrets written (see [Beaker Secrets](#beaker-secrets) below)
+- [x] Model checkpoint available (HuggingFace ID or local path; default: `thomas0829/folding_towel_pi05`)
 
 ## Beaker Secrets
 
