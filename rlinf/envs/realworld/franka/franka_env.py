@@ -33,7 +33,12 @@ from rlinf.scheduler import (
 from rlinf.utils.logging import get_logger
 
 from .franka_robot_state import FrankaRobotState
-from .utils import construct_adjoint_matrix, construct_homogeneous_matrix, quat_slerp
+from .utils import (
+    clip_euler_to_target_window,
+    construct_adjoint_matrix,
+    construct_homogeneous_matrix,
+    quat_slerp,
+)
 
 
 @dataclass
@@ -455,19 +460,11 @@ class FrankaEnv(gym.Env):
             position[:3], self._xyz_safe_space.low, self._xyz_safe_space.high
         )
         euler = R.from_quat(position[3:].copy()).as_euler("xyz")
-
-        # Clip first euler angle separately due to discontinuity from pi to -pi
-        sign = np.sign(euler[0])
-        euler[0] = sign * (
-            np.clip(
-                np.abs(euler[0]),
-                self._rpy_safe_space.low[0],
-                self._rpy_safe_space.high[0],
-            )
-        )
-
-        euler[1:] = np.clip(
-            euler[1:], self._rpy_safe_space.low[1:], self._rpy_safe_space.high[1:]
+        euler = clip_euler_to_target_window(
+            euler=euler,
+            target_euler=self.config.target_ee_pose[3:],
+            lower_euler=self._rpy_safe_space.low,
+            upper_euler=self._rpy_safe_space.high,
         )
         position[3:] = R.from_euler("xyz", euler).as_quat()
 
