@@ -80,8 +80,11 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         weight_paths = sorted(glob.glob(os.path.join(checkpoint_dir, "*.safetensors")))
         if not weight_paths:
             weight_paths = [os.path.join(checkpoint_dir, "model.safetensors")]
+        all_state_dict = {}
         for weight_path in weight_paths:
-            safetensors.torch.load_model(model, weight_path, strict=False)
+            state_dict = safetensors.torch.load_file(weight_path, device="cpu")
+            all_state_dict.update(state_dict)
+        model.load_state_dict(all_state_dict, strict=False)
 
     model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
     # fsdp replace
