@@ -60,6 +60,8 @@ class ResNetRewardModel(BaseImageRewardModel):
         """
         super().__init__(cfg)
 
+        self.cfg = cfg
+
         self.arch = cfg.get("arch", "resnet18")
         if self.arch not in self.SUPPORTED_ARCHS:
             raise ValueError(
@@ -73,6 +75,8 @@ class ResNetRewardModel(BaseImageRewardModel):
 
         # Build model architecture
         self._build_model()
+
+        self._load_model()
 
     def _build_model(self) -> None:
         """Build the ResNet backbone and reward head."""
@@ -106,6 +110,32 @@ class ResNetRewardModel(BaseImageRewardModel):
                 nn.init.xavier_uniform_(module.weight)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
+
+    def _load_model(self):
+        model_path = self.cfg.get("model_path", None)
+        if model_path is not None:
+            if model_path.endswith(".safetensors"):
+                from safetensors.torch import load_file
+
+                state_dict = load_file(model_path)
+            else:
+                state_dict = torch.load(
+                    model_path, map_location="cpu", weights_only=False
+                )
+
+            new_state_dict = {}
+            for k, v in state_dict.items():
+                new_key = k
+                for prefix in ["module.", "_orig_mod.", "model."]:
+                    if new_key.startswith(prefix):
+                        new_key = new_key[len(prefix) :]
+                # Skip mean/std buffers (they are persistent=False, auto-created)
+                if new_key in ["mean", "std", "_mean", "_std"]:
+                    continue
+                new_state_dict[new_key] = v
+            state_dict = new_state_dict
+
+            self.load_state_dict(state_dict, strict=True)
 
     def forward(
         self,

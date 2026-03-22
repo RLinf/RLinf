@@ -28,7 +28,7 @@ if TYPE_CHECKING:
         AsyncEmbodiedSACFSDPPolicy,
     )
     from rlinf.workers.env.async_env_worker import AsyncEnvWorker
-    from rlinf.workers.reward.reward_worker import RewardInferenceWorker
+    from rlinf.workers.reward.reward_worker import EmbodiedRewardWorker
     from rlinf.workers.rollout.hf.async_huggingface_worker import (
         AsyncMultiStepRolloutWorker,
     )
@@ -41,7 +41,7 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         actor: "AsyncEmbodiedSACFSDPPolicy",
         rollout: "AsyncMultiStepRolloutWorker",
         env: "AsyncEnvWorker",
-        reward: "RewardInferenceWorker",
+        reward: "EmbodiedRewardWorker",
         critic=None,
     ):
         super().__init__(cfg, actor, rollout, env, reward, critic)

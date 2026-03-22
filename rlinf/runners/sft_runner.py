@@ -19,11 +19,10 @@ from typing import TYPE_CHECKING, Optional, Union
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
-from rlinf.runners.early_stop import EarlyStopController
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
-from rlinf.utils.runner_utils import check_progress
+from rlinf.utils.runner_utils import EarlyStopController, check_progress
 
 if TYPE_CHECKING:
     from rlinf.workers.reward.reward_worker import FSDPRewardWorker

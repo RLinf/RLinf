@@ -40,7 +40,7 @@ from rlinf.utils.utils import clear_memory
 
 
 class RewardWorker(Worker):
-    """Reward Worker for inference during RL training."""
+    """Reward Worker for inference during reasoning and agentic RL training."""
 
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
@@ -143,9 +143,14 @@ class RewardWorker(Worker):
         )
 
 
-class RewardInferenceWorker(RewardWorker):
+class EmbodiedRewardWorker(Worker):
+    """Reward Worker for inference during embodied RL training."""
+
     def __init__(self, cfg: DictConfig):
-        super().__init__(cfg)
+        Worker.__init__(self)
+        self.cfg = cfg
+
+        self.placement = HybridComponentPlacement(cfg, Cluster())
 
         # Device setup
         torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", 0)))
@@ -168,45 +173,14 @@ class RewardInferenceWorker(RewardWorker):
 
         model = reward_cls(model_cfg)
 
-        model_path = model_cfg.get("model_path", None)
-        if model_path is not None:
-            if model_path.endswith(".safetensors"):
-                from safetensors.torch import load_file
-
-                state_dict = load_file(model_path)
-            else:
-                state_dict = torch.load(
-                    model_path, map_location="cpu", weights_only=False
-                )
-
-            new_state_dict = {}
-            for k, v in state_dict.items():
-                new_key = k
-                for prefix in ["module.", "_orig_mod.", "model."]:
-                    if new_key.startswith(prefix):
-                        new_key = new_key[len(prefix) :]
-                # Skip mean/std buffers (they are persistent=False, auto-created)
-                if new_key in ["mean", "std", "_mean", "_std"]:
-                    continue
-                new_state_dict[new_key] = v
-            state_dict = new_state_dict
-
-            model.load_state_dict(state_dict, strict=True)
-
         model.to(torch_dtype)
 
         return model
 
     def init_worker(self):
-        """Initialize the reward model from checkpoint."""
-        model_cfg = self.cfg.reward.get("model", {})
-
+        """Initialize the reward worker for inference."""
         # build model
         self.model = self.model_provider_func()
-
-        model_path = model_cfg.get("model_path", None)
-        if model_path is not None:
-            self._load_model(model_path)
 
         # Move to device and set eval mode
         self.model = self.model.to(self.device)
@@ -422,31 +396,6 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
         torch_dtype = torch_dtype_from_precision(model_cfg.precision)
 
         model = reward_cls(model_cfg)
-
-        model_path = model_cfg.get("model_path", None)
-        if model_path is not None:
-            if model_path.endswith(".safetensors"):
-                from safetensors.torch import load_file
-
-                state_dict = load_file(model_path)
-            else:
-                state_dict = torch.load(
-                    model_path, map_location="cpu", weights_only=False
-                )
-
-            new_state_dict = {}
-            for k, v in state_dict.items():
-                new_key = k
-                for prefix in ["module.", "_orig_mod.", "model."]:
-                    if new_key.startswith(prefix):
-                        new_key = new_key[len(prefix) :]
-                # Skip mean/std buffers (they are persistent=False, auto-created)
-                if new_key in ["mean", "std", "_mean", "_std"]:
-                    continue
-                new_state_dict[new_key] = v
-            state_dict = new_state_dict
-
-            model.load_state_dict(state_dict, strict=True)
 
         model.to(torch_dtype)
 

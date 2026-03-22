@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
     from rlinf.workers.env.async_env_worker import AsyncEnvWorker
     from rlinf.workers.env.env_worker import EnvWorker
-    from rlinf.workers.reward.reward_worker import RewardInferenceWorker
+    from rlinf.workers.reward.reward_worker import EmbodiedRewardWorker
     from rlinf.workers.rollout.hf.async_huggingface_worker import (
         AsyncMultiStepRolloutWorker,
     )
@@ -57,7 +57,7 @@ class EmbodiedRunner:
         ],
         rollout: Union["MultiStepRolloutWorker", "AsyncMultiStepRolloutWorker"],
         env: Union["EnvWorker", "AsyncEnvWorker"],
-        reward: Union["RewardInferenceWorker"] = None,
+        reward: Union["EmbodiedRewardWorker"] = None,
         critic=None,
     ):
         self.cfg = cfg
@@ -375,7 +375,6 @@ class EmbodiedRunner:
                     actor_rollout_metrics
                 ).items()
             }
-            env_metrics = {f"env/{k}": v for k, v in env_metrics.items()}
             training_metrics = {
                 f"train/{k}": v
                 for k, v in self._aggregate_numeric_metrics(

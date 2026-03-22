@@ -22,7 +22,7 @@ from rlinf.config import validate_cfg
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.async_env_worker import AsyncEnvWorker
-from rlinf.workers.reward.reward_worker import RewardInferenceWorker
+from rlinf.workers.reward.reward_worker import EmbodiedRewardWorker
 from rlinf.workers.rollout.hf.async_huggingface_worker import (
     AsyncMultiStepRolloutWorker,
 )
@@ -91,7 +91,7 @@ def main(cfg) -> None:
     if cfg.get("reward", {}).get("use_reward_model", False):
         # Create reward worker group
         reward_placement = component_placement.get_strategy("rollout")
-        reward_group = RewardInferenceWorker.create_group(cfg).launch(
+        reward_group = EmbodiedRewardWorker.create_group(cfg).launch(
             cluster, name=cfg.reward.group_name, placement_strategy=reward_placement
         )
 
