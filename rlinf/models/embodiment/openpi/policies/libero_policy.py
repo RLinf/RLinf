@@ -177,8 +177,7 @@ class LiberoOutputs(transforms.DataTransformFn):
     """
 
     # Number of action dimensions to keep from the model's max_action_dim output.
-    # Default 7 for single-arm Libero; set to 14 for bimanual (e.g. YAM).
-    action_dim: int = 7
+    action_dim: int = 14
 
     def __call__(self, data: dict) -> dict:
         # Only return the first N actions -- since we padded actions above to fit the model action

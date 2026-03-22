@@ -233,6 +233,7 @@ actor:
       num_images_in_input: 1
       noise_method: "flow_noise"
       action_horizon: 10
+      action_env_dim: 14
       noise_params: [0.16, 0.12, 200]
       joint_logprob: True
 

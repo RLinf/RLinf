@@ -65,7 +65,7 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
         # We defined these transforms in `libero_policy.py`. You can check the detailed comments there for
         # how to modify the transforms to match your dataset. Once you created your own transforms, you can
         # replace the transforms below with your own.
-        action_env_dim = getattr(model_config, "action_env_dim", 7)
+        action_env_dim = getattr(model_config, "action_env_dim", 14)
         data_transforms = _transforms.Group(
             inputs=[libero_policy.LiberoInputs(model_type=model_config.model_type)],
             outputs=[libero_policy.LiberoOutputs(action_dim=action_env_dim)],
