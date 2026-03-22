@@ -108,7 +108,7 @@ agentic-vllm = [
     "mcp",
 ]
 embodied = [
-    "transformers==4.57.1",
+    "transformers==4.57.2",
     "peft",
     "timm",
     "imageio[ffmpeg]",
@@ -173,7 +173,7 @@ override-dependencies = [
     "setuptools>=69.5.1,<75.9",
     "datasets==3.6.0",
     "peft==0.11.1",
-    "transformers==4.57.1",
+    "transformers>=4.57.1,<=4.57.2",
     "tokenizers>=0.22.0,<=0.23.0",
     "numpy==1.26.4",
     "fsspec==2025.3.0",

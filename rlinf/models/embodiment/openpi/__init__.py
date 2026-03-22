@@ -121,6 +121,125 @@ def _ensure_openpi_transformers_overlay() -> None:
     check.check_whether_transformers_replace_is_installed_correctly = lambda: True
 
 
+def _patch_transformers_for_openpi(model: torch.nn.Module) -> None:
+    """Monkey-patch stock transformers 4.57+ to match OpenPI's expected behaviour.
+
+    OpenPI was originally built against a patched transformers 4.53.2 that:
+    1. Removed the ``sqrt(hidden_size)`` normalizer in ``GemmaModel.forward``.
+    2. Did NOT divide image features by ``sqrt(hidden_size)`` in PaliGemma.
+    These two changes cancel when *both* are present in stock 4.57+ but break
+    OpenPI when present individually.  This function patches the specific model
+    *instances* used by the OpenPI runtime so the numerical path is identical
+    to the original patched 4.53.2.
+    """
+    _patch_gemma_model_no_normalizer(model)
+    _patch_paligemma_no_image_scaling(model)
+
+
+def _patch_gemma_model_no_normalizer(model: torch.nn.Module) -> None:
+    """Remove the ``sqrt(hidden_size)`` normalizer from the VLM GemmaModel."""
+    from transformers.cache_utils import DynamicCache
+    from transformers.masking_utils import create_causal_mask
+    from transformers.modeling_outputs import BaseModelOutputWithPast
+
+    gemma_model = model.paligemma_with_expert.paligemma.language_model
+
+    def _forward_no_normalizer(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        position_ids=None,
+        past_key_values=None,
+        inputs_embeds=None,
+        use_cache=None,
+        cache_position=None,
+        **kwargs,
+    ):
+        if (input_ids is None) ^ (inputs_embeds is not None):
+            raise ValueError(
+                "You must specify exactly one of input_ids or inputs_embeds"
+            )
+
+        if inputs_embeds is None:
+            inputs_embeds = self.embed_tokens(input_ids)
+
+        if use_cache and past_key_values is None:
+            past_key_values = DynamicCache(config=self.config)
+
+        if cache_position is None:
+            past_seen_tokens = (
+                past_key_values.get_seq_length() if past_key_values is not None else 0
+            )
+            cache_position = torch.arange(
+                past_seen_tokens,
+                past_seen_tokens + inputs_embeds.shape[1],
+                device=inputs_embeds.device,
+            )
+
+        if position_ids is None:
+            position_ids = cache_position.unsqueeze(0)
+
+        causal_mask = create_causal_mask(
+            config=self.config,
+            input_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            cache_position=cache_position,
+            past_key_values=past_key_values,
+            position_ids=position_ids,
+        )
+
+        hidden_states = inputs_embeds
+        position_embeddings = self.rotary_emb(hidden_states, position_ids)
+
+        # NOTE: normalizer (hidden_states *= sqrt(hidden_size)) intentionally
+        # skipped — OpenPI embeds language tokens with that scale already
+        # applied in embed_prefix().
+
+        for decoder_layer in self.layers[: self.config.num_hidden_layers]:
+            hidden_states = decoder_layer(
+                hidden_states,
+                attention_mask=causal_mask,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+                cache_position=cache_position,
+                position_embeddings=position_embeddings,
+                **kwargs,
+            )
+
+        hidden_states = self.norm(hidden_states)
+        return BaseModelOutputWithPast(
+            last_hidden_state=hidden_states,
+            past_key_values=past_key_values if use_cache else None,
+        )
+
+    gemma_model.forward = MethodType(_forward_no_normalizer, gemma_model)
+    logging.info("Patched VLM GemmaModel.forward to skip sqrt(hidden_size) normalizer.")
+
+
+def _patch_paligemma_no_image_scaling(model: torch.nn.Module) -> None:
+    """Remove the ``image_features / sqrt(hidden_size)`` scaling added in 4.57+."""
+    paligemma_model = model.paligemma_with_expert.paligemma.model
+
+    def _get_image_features_no_scaling(self, pixel_values):
+        image_outputs = self.vision_tower(pixel_values)
+        selected_image_feature = image_outputs.last_hidden_state
+        image_features = self.multi_modal_projector(selected_image_feature)
+        # NOTE: division by sqrt(hidden_size) intentionally skipped — it was
+        # added in transformers 4.57+ to compensate for the GemmaModel
+        # normalizer, which we also skip for OpenPI compatibility.
+        return image_features
+
+    paligemma_model.get_image_features = MethodType(
+        _get_image_features_no_scaling, paligemma_model
+    )
+    # PaliGemmaForConditionalGeneration.get_image_features delegates to
+    # self.model.get_image_features, so patching the inner model is sufficient.
+    logging.info(
+        "Patched PaliGemmaModel.get_image_features to skip sqrt(hidden_size) scaling."
+    )
+
+
 def _normalize_openpi_state_dict_keys(
     state_dict: dict[str, torch.Tensor],
 ) -> dict[str, torch.Tensor]:
@@ -286,6 +405,7 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         )
     if getattr(actor_model_config, "pi05", False):
         enable_openpi_adarms_expert(model.paligemma_with_expert)
+    _patch_transformers_for_openpi(model)
     # train expert only
     if actor_model_config.train_expert_only:
         model.freeze_vlm()
