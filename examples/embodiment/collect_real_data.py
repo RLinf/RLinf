@@ -180,7 +180,7 @@ class DataCollector(Worker):
                 )
                 if isinstance(r_val, torch.Tensor):
                     r_val = r_val.item()
-                
+
                 self.total_cnt += 1
 
                 if r_val >= 0.5:
@@ -192,11 +192,13 @@ class DataCollector(Worker):
 
                     # Save Trajectory to the 'demos' directory
                     trajectory = current_rollout.to_trajectory()
-                    trajectory.intervene_flags = torch.ones_like(trajectory.intervene_flags)
+                    trajectory.intervene_flags = torch.ones_like(
+                        trajectory.intervene_flags
+                    )
                     self.buffer.add_trajectories([trajectory])
 
                     progress_bar.update(1)
-                
+
                 # Reset for next episode
                 obs, _ = self.env.reset()
                 current_obs_processed = self._process_obs(obs)

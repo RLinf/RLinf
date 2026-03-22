@@ -43,10 +43,8 @@ from pathlib import Path
 from typing import Any
 
 # Edit these two paths for your normal workflow.
-DATASET_PATH = "/Users/yushuang/code/dagger/data/20260318-14:04:51/collected_data"
-OUTPUT_DIR = (
-    "/Users/yushuang/code/dagger/data/20260318-14:04:51/collected_data_visualized"
-)
+DATASET_PATH = "collected_data"
+OUTPUT_DIR = "collected_data_visualized"
 
 JPEG_QUALITY = 95
 
