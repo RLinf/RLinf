@@ -27,6 +27,7 @@ from omegaconf import DictConfig
 
 from rlinf.models.embodiment.openpi.adarms_expert import (
     AdaRMSGemmaRMSNorm,
+    enable_openpi_adarms_expert,
     enable_openpi_transformers_compat,
 )
 
@@ -135,12 +136,6 @@ def _ensure_openpi_transformers_overlay() -> None:
         siglip_pkg.check = check
 
     check.check_whether_transformers_replace_is_installed_correctly = lambda: True
-
-
-def ensure_openpi_runtime_compat() -> None:
-    """Install OpenPI's Transformers compatibility shims before OpenPI imports."""
-
-    _ensure_openpi_transformers_overlay()
 
 
 def _normalize_openpi_state_dict_keys(
@@ -306,10 +301,10 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         model: OpenPi0ForRLActionPrediction = OpenPi0ForRLActionPrediction(
             actor_model_config
         )
-    enable_openpi_transformers_compat(
-        model.paligemma_with_expert,
-        enable_adarms=getattr(actor_model_config, "pi05", False),
-    )
+    if getattr(actor_model_config, "pi05", False):
+        enable_openpi_adarms_expert(model.paligemma_with_expert)
+    else:
+        enable_openpi_transformers_compat(model.paligemma_with_expert)
     # train expert only
     if actor_model_config.train_expert_only:
         model.freeze_vlm()

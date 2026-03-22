@@ -190,13 +190,10 @@ def _manual_gemma_model_forward(
         )
         attn_output, _ = layer.self_attn(
             hidden_states=layer_hidden_states,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_value=past_key_values,
-            output_attentions=False,
-            use_cache=bool(use_cache),
-            cache_position=cache_position,
             position_embeddings=position_embeddings,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            cache_position=cache_position,
         )
         layer_hidden_states = _gated_residual(residual, attn_output, gate)
 
