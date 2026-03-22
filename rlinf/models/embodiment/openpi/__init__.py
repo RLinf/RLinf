@@ -138,6 +138,17 @@ def _ensure_openpi_transformers_overlay() -> None:
     check.check_whether_transformers_replace_is_installed_correctly = lambda: True
 
 
+def ensure_openpi_runtime_compat() -> None:
+    """Public compatibility hook used before importing OpenPI runtime modules.
+
+    Some worker paths import and call this symbol before importing
+    ``openpi.training.data_loader`` or related runtime modules. Keep the public
+    wrapper stable and delegate to the current internal compatibility shim.
+    """
+
+    _ensure_openpi_transformers_overlay()
+
+
 def _normalize_openpi_state_dict_keys(
     state_dict: dict[str, torch.Tensor],
 ) -> dict[str, torch.Tensor]:
