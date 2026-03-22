@@ -263,9 +263,7 @@ class EmbodiedRewardWorker(Worker):
 
     @staticmethod
     def _infer_reward_batch_size(images: torch.Tensor | np.ndarray) -> int:
-        if isinstance(images, torch.Tensor):
-            return images.shape[0]
-        if isinstance(images, np.ndarray):
+        if isinstance(images, torch.Tensor) or isinstance(images, np.ndarray):
             return images.shape[0]
         raise ValueError(f"Unsupported reward input image type: {type(images)}")
 
