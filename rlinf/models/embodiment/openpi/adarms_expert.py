@@ -51,6 +51,8 @@ class AdaRMSGemmaRMSNorm(GemmaRMSNorm):
                 normed_inputs = normed_inputs * (1.0 + self.weight.float())
             return normed_inputs.to(dtype), None
 
+        if cond.dtype != self.dense.weight.dtype:
+            cond = cond.to(dtype=self.dense.weight.dtype)
         modulation = self.dense(cond)
         if x.ndim == 3:
             modulation = modulation.unsqueeze(1)
@@ -62,6 +64,15 @@ class AdaRMSGemmaRMSNorm(GemmaRMSNorm):
         if self.dense is None:
             return f"{self.dim}, eps={self.eps}"
         return f"{self.dim}, eps={self.eps}, adaptive=True, cond_dim={self.cond_dim}"
+
+
+def _legacy_paligemma_get_image_features(self, pixel_values: torch.FloatTensor):
+    """Match OpenPI's historical PaliGemma image feature scaling."""
+
+    image_outputs = self.vision_tower(pixel_values)
+    selected_image_feature = image_outputs.last_hidden_state
+    image_features = self.multi_modal_projector(selected_image_feature)
+    return image_features
 
 
 def _gated_residual(
@@ -415,9 +426,13 @@ def enable_openpi_transformers_compat(
 
     _ensure_gated_residual_support()
     expert_model = paligemma_with_expert.gemma_expert.model
+    paligemma_model = paligemma_with_expert.paligemma.model
     prefix_model = paligemma_with_expert.paligemma.language_model
     if enable_adarms:
         replace_gemma_adarms_norms(expert_model)
+    paligemma_model.get_image_features = MethodType(
+        _legacy_paligemma_get_image_features, paligemma_model
+    )
     prefix_model.forward = MethodType(_manual_gemma_model_forward, prefix_model)
     expert_model.forward = MethodType(_manual_gemma_model_forward, expert_model)
     paligemma_with_expert.forward = MethodType(
