@@ -322,8 +322,8 @@ Async PPO 里的关键量之一是 ``proximal_logprobs``。它有两种来源：
 如果这些条件不满足，系统会在训练时直接报错。
 
 
-10. 启动方式
------------------
+10. 启动方式与模型链接
+-----------------------
 
 推荐使用脚本启动：
 
@@ -336,6 +336,20 @@ Async PPO 里的关键量之一是 ``proximal_logprobs``。它有两种来源：
 - 多机训练时，Ray 必须提前启动，且只在 head 节点运行训练入口。
 - ``run_async.sh`` 会设置 ``MUJOCO_GL=egl`` 和 ``PYOPENGL_PLATFORM=egl``。
 - ``ROBOT_PLATFORM`` 必须与机器人平台一致，否则动作维度和归一化逻辑可能不匹配。
+
+目前examples/embodiment/config/ 目录下的 Async PPO 配置都已经过测试，可以直接用来跑具身任务。
+以下是对应yaml所使用模型的下载链接:
+
+- ``libero_goal_async_ppo_gr00t.yaml``: https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Goal
+- ``libero_object_async_ppo_openpi_pi05.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
+- ``libero_spatial_async_ppo_openpi.yaml``: https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
+- ``libero_spatial_async_ppo_openpi_pi05.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
+- ``maniskill_async_ppo_openpi.yaml``: https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT
+- ``maniskill_async_ppo_openpi_pi05.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT
+- ``maniskill_async_ppo_openvla.yaml``: https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup
+- ``maniskill_async_ppo_openvlaoft.yaml``: https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-trajall
+
+其中``maniskill_async_ppo_openvlaoft.yaml``中所使用的lora HF仓库链接为: https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
 
 11. 监控指标
