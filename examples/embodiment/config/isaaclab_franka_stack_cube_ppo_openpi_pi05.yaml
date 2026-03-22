@@ -90,6 +90,7 @@ env:
     max_episode_steps: 450 # for truncation
     max_steps_per_rollout_epoch: 450
     use_fixed_reset_state_ids: True
+    seed: 42
 
   eval:
     total_num_envs: 32
@@ -102,6 +103,7 @@ env:
       save_video: True
       info_on_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
+    seed: 42
 
 rollout:
   group_name: "RolloutGroup"
