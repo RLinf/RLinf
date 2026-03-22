@@ -116,9 +116,12 @@ env:
       use_dense_reward: True
       target_ee_pose: TARGET_EE_POSE  # Should be set according to actual robot setup
       random_xy_range: 0.05
-      random_z_range_low: 0.005
-      random_z_range_high: 0.08
       random_rz_range: 0.35  # About np.pi/9
+      clip_x_range: 0.05
+      clip_y_range: 0.05
+      clip_z_range_low: 0.005
+      clip_z_range_high: 0.08
+      clip_rz_range: 0.35  # About np.pi/9
   
   eval:
     total_num_envs: 1
