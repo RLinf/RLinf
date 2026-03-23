@@ -337,5 +337,5 @@ as well as reinforcement learning training examples on real robots.
    dsrl
    dagger
    lingbotvla
-  abot_m0
+   abot_m0
 

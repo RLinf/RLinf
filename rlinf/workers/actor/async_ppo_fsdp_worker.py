@@ -127,10 +127,10 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                     self.cfg.algorithm.sampling_params.temperature_train
                 )
                 model_kwargs["top_k"] = self.cfg.algorithm.sampling_params.top_k
-            elif (
-                SupportedModel(self.cfg.actor.model.model_type)
-                in [SupportedModel.GR00T, SupportedModel.ABOT_M0]
-            ):
+            elif SupportedModel(self.cfg.actor.model.model_type) in [
+                SupportedModel.GR00T,
+                SupportedModel.ABOT_M0,
+            ]:
                 model_kwargs["prev_logprobs"] = micro_batch["prev_logprobs"]
 
             out = self.model(
@@ -261,10 +261,10 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                             self.cfg.algorithm.sampling_params.temperature_train
                         )
                         model_kwargs["top_k"] = self.cfg.algorithm.sampling_params.top_k
-                    elif (
-                        SupportedModel(self.cfg.actor.model.model_type)
-                        in [SupportedModel.GR00T, SupportedModel.ABOT_M0]
-                    ):
+                    elif SupportedModel(self.cfg.actor.model.model_type) in [
+                        SupportedModel.GR00T,
+                        SupportedModel.ABOT_M0,
+                    ]:
                         model_kwargs["prev_logprobs"] = old_logprobs
 
                     compute_values = self.cfg.algorithm.adv_type == "gae"
@@ -279,10 +279,10 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                             **model_kwargs,
                         )
 
-                    if (
-                        SupportedModel(self.cfg.actor.model.model_type)
-                        in [SupportedModel.GR00T, SupportedModel.ABOT_M0]
-                    ):
+                    if SupportedModel(self.cfg.actor.model.model_type) in [
+                        SupportedModel.GR00T,
+                        SupportedModel.ABOT_M0,
+                    ]:
                         old_logprobs = out["prev_logprobs"]
 
                     loss_kwargs = {

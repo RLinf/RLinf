@@ -138,9 +138,7 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
         expected_keys = set(self.state_dict().keys())
         normalized_state_dict: dict[str, torch.Tensor] = {}
         known_prefixes = ("module.", "_orig_mod.", "model.")
-        alias_pairs = (
-            ("base_model.action_model.", "action_head_rl.base."),
-        )
+        alias_pairs = (("base_model.action_model.", "action_head_rl.base."),)
 
         def strip_known_prefixes(key: str) -> str:
             stripped_key = key
@@ -168,7 +166,11 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
                 candidate_keys.append(f"base_model.{stripped_key}")
 
             mapped_key = next(
-                (candidate for candidate in candidate_keys if candidate in expected_keys),
+                (
+                    candidate
+                    for candidate in candidate_keys
+                    if candidate in expected_keys
+                ),
                 stripped_key,
             )
             normalized_state_dict[mapped_key] = value
@@ -182,7 +184,7 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
         filtered_missing_keys = [
             key
             for key in incompatible.missing_keys
-            if (alias_key := get_alias_key(key)) not in normalized_state_dict
+            if get_alias_key(key) not in normalized_state_dict
         ]
         unexpected_keys = list(incompatible.unexpected_keys)
 
@@ -215,7 +217,9 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
 
         if device is not None:
             qwen_inputs = {
-                k: v.to(device=device).contiguous() if isinstance(v, torch.Tensor) else v
+                k: v.to(device=device).contiguous()
+                if isinstance(v, torch.Tensor)
+                else v
                 for k, v in qwen_inputs.items()
             }
             spatial_images = spatial_images.to(device=device).contiguous()
@@ -230,9 +234,8 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
         device_type = spatial_images.device.type
         autocast_dtype = self.torch_dtype
         use_autocast = (
-            (device_type == "cuda" and autocast_dtype in (torch.float16, torch.bfloat16))
-            or (device_type == "cpu" and autocast_dtype == torch.bfloat16)
-        )
+            device_type == "cuda" and autocast_dtype in (torch.float16, torch.bfloat16)
+        ) or (device_type == "cpu" and autocast_dtype == torch.bfloat16)
         autocast_ctx = (
             torch.autocast(device_type=device_type, dtype=autocast_dtype)
             if use_autocast
@@ -249,10 +252,13 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
 
             with torch.no_grad():
                 spatial_input = preprocess_images(
-                    batch_images, batch_images[0][0].size[0],
+                    batch_images,
+                    batch_images[0][0].size[0],
                 ).to(last_hidden.device)
-                aggregated_tokens_list, ps_idx = self.base_model.spatial_model.aggregator(
-                    spatial_input,
+                aggregated_tokens_list, ps_idx = (
+                    self.base_model.spatial_model.aggregator(
+                        spatial_input,
+                    )
                 )
             spatial_tokens = aggregated_tokens_list[-1][:, 0, ps_idx:, :]
             spatial_tokens = self.base_model.spatial_projector(spatial_tokens)
@@ -262,7 +268,8 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
         if state is not None:
             if isinstance(state, np.ndarray):
                 state_tensor = torch.from_numpy(state).to(
-                    last_hidden.device, dtype=last_hidden.dtype,
+                    last_hidden.device,
+                    dtype=last_hidden.dtype,
                 )
             elif isinstance(state, torch.Tensor):
                 state_tensor = state.to(last_hidden.device, dtype=last_hidden.dtype)
@@ -363,7 +370,9 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
         if forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
-        raise NotImplementedError(f"Forward type {forward_type} not supported for ABot-M0")
+        raise NotImplementedError(
+            f"Forward type {forward_type} not supported for ABot-M0"
+        )
 
     def default_forward(
         self,
@@ -466,7 +475,9 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
         normalized_actions = actions.detach().cpu().numpy()
         normalized_actions = normalized_actions[..., :runtime_action_dim]
         raw_actions = self._unnormalize_actions(normalized_actions)
-        raw_actions = torch.from_numpy(raw_actions).to(actions.device, dtype=actions.dtype)
+        raw_actions = torch.from_numpy(raw_actions).to(
+            actions.device, dtype=actions.dtype
+        )
 
         raw_actions = raw_actions[:, : self.num_action_chunks, :]
         prev_logprobs = rl_outputs["prev_logprobs"][
@@ -490,7 +501,8 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
         return raw_actions, result
 
     def _convert_env_obs(
-        self, env_obs: dict[str, Any],
+        self,
+        env_obs: dict[str, Any],
     ) -> tuple[list[list[Image.Image]], list[str], Optional[torch.Tensor]]:
         """Convert RLinf env observations to ABot-M0 model inputs."""
         instructions = env_obs["task_descriptions"]
@@ -533,7 +545,8 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
         return batch_images, instructions, state
 
     def _unnormalize_actions(
-        self, normalized_actions: np.ndarray,
+        self,
+        normalized_actions: np.ndarray,
     ) -> np.ndarray:
         """De-normalize actions using checkpoint normalization statistics."""
         if not hasattr(self, "norm_stats") or self.norm_stats is None:
@@ -556,7 +569,8 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
         _, _, action_dim = action_shape
         flattened_actions = normalized_actions.reshape(-1, action_dim)
         unnormalized_flattened = baseframework.unnormalize_actions(
-            flattened_actions, action_stats,
+            flattened_actions,
+            action_stats,
         )
 
         return unnormalized_flattened.reshape(action_shape)

@@ -91,24 +91,32 @@ class AMLFlowMatchingActionHeadRL(nn.Module):
         dt = 1.0 / num_steps
         t_discretized = int(t_cont * self.num_timestep_buckets)
         timesteps_tensor = torch.full(
-            (batch_size,), t_discretized, device=device, dtype=torch.long,
+            (batch_size,),
+            t_discretized,
+            device=device,
+            dtype=torch.long,
         )
 
         action_features = self.base.action_encoder(x_t, timesteps_tensor)
 
         if self.base.config.add_pos_embed:
             pos_ids = torch.arange(
-                action_features.shape[1], dtype=torch.long, device=device,
+                action_features.shape[1],
+                dtype=torch.long,
+                device=device,
             )
             pos_embs = self.base.position_embedding(pos_ids).unsqueeze(0)
             action_features = action_features + pos_embs
 
         future_tokens = self.base.future_tokens.weight.unsqueeze(0).expand(
-            batch_size, -1, -1,
+            batch_size,
+            -1,
+            -1,
         )
         if state_features is not None:
             sa_embs = torch.cat(
-                (state_features, future_tokens, action_features), dim=1,
+                (state_features, future_tokens, action_features),
+                dim=1,
             )
         else:
             sa_embs = torch.cat((future_tokens, action_features), dim=1)
@@ -119,10 +127,14 @@ class AMLFlowMatchingActionHeadRL(nn.Module):
             timestep=timesteps_tensor,
         )
         pred = self.base.action_decoder(model_output)
-        pred_actions = pred[:, -self.action_horizon:]
+        pred_actions = pred[:, -self.action_horizon :]
 
         t_broadcast = t_cont * torch.ones(
-            1, 1, 1, device=device, dtype=x_t.dtype,
+            1,
+            1,
+            1,
+            device=device,
+            dtype=x_t.dtype,
         )
         pred_velocity = (pred_actions - x_t) / (1.0 - t_broadcast).clamp_min(
             self.t_eps,
@@ -135,13 +147,15 @@ class AMLFlowMatchingActionHeadRL(nn.Module):
         else:
             if self.noise_method == "flow_sde":
                 noise_level = torch.tensor(
-                    self.noise_level, device=device, dtype=x_t.dtype,
+                    self.noise_level,
+                    device=device,
+                    dtype=x_t.dtype,
                 )
                 timesteps = torch.linspace(0, 1, num_steps + 1, device=device)
                 sigma_i = noise_level * torch.sqrt(
                     (1 - timesteps[idx + 1]) / timesteps[idx + 1].clamp_min(1e-8),
                 )
-                x_t_std = (dt ** 0.5) * sigma_i * torch.ones_like(x_t_mean)
+                x_t_std = (dt**0.5) * sigma_i * torch.ones_like(x_t_mean)
             else:
                 x_t_std = self.noise_level * torch.ones_like(x_t_mean)
 
@@ -150,7 +164,9 @@ class AMLFlowMatchingActionHeadRL(nn.Module):
     def get_value(self, vl_embs: torch.Tensor) -> torch.Tensor:
         """Compute value estimate from VL embeddings."""
         if not hasattr(self, "value_head"):
-            return torch.zeros(vl_embs.shape[0], 1, device=vl_embs.device, dtype=vl_embs.dtype)
+            return torch.zeros(
+                vl_embs.shape[0], 1, device=vl_embs.device, dtype=vl_embs.dtype
+            )
         pooled = vl_embs.mean(dim=1)  # [B, H]
         return self.value_head(pooled)  # [B, 1]
 
@@ -167,13 +183,17 @@ class AMLFlowMatchingActionHeadRL(nn.Module):
         num_steps = self.num_inference_timesteps
 
         state_features = (
-            self.base.state_encoder(state) if state is not None and self.base.state_encoder is not None
+            self.base.state_encoder(state)
+            if state is not None and self.base.state_encoder is not None
             else None
         )
 
         x_t = torch.randn(
-            batch_size, self.action_horizon, self.action_dim,
-            device=device, dtype=vl_embs.dtype,
+            batch_size,
+            self.action_horizon,
+            self.action_dim,
+            device=device,
+            dtype=vl_embs.dtype,
         )
 
         chains = [x_t]
@@ -181,7 +201,9 @@ class AMLFlowMatchingActionHeadRL(nn.Module):
 
         if self.joint_logprob:
             init_lp = self.get_logprob_norm(
-                x_t, torch.zeros_like(x_t), torch.ones_like(x_t),
+                x_t,
+                torch.zeros_like(x_t),
+                torch.ones_like(x_t),
             )
             log_probs.append(init_lp)
 
@@ -190,7 +212,9 @@ class AMLFlowMatchingActionHeadRL(nn.Module):
                 denoise_inds = torch.arange(num_steps, device=device)
             else:
                 max_idx = num_steps - 1
-                if self.noise_method == "flow_sde" and self.rl_config.get("ignore_last", False):
+                if self.noise_method == "flow_sde" and self.rl_config.get(
+                    "ignore_last", False
+                ):
                     max_idx = max(num_steps - 2, 0)
                 sampled_idx = random.randint(0, max_idx)
                 denoise_inds = torch.full((num_steps,), sampled_idx, device=device)
@@ -204,7 +228,12 @@ class AMLFlowMatchingActionHeadRL(nn.Module):
                 step_mode = "eval"
 
             x_t_mean, x_t_std = self._denoise_step(
-                vl_embs, x_t, state_features, idx, num_steps, mode=step_mode,
+                vl_embs,
+                x_t,
+                state_features,
+                idx,
+                num_steps,
+                mode=step_mode,
             )
 
             noise = torch.randn_like(x_t)
@@ -240,7 +269,8 @@ class AMLFlowMatchingActionHeadRL(nn.Module):
         batch_size = vl_embs.shape[0]
 
         state_features = (
-            self.base.state_encoder(state) if state is not None and self.base.state_encoder is not None
+            self.base.state_encoder(state)
+            if state is not None and self.base.state_encoder is not None
             else None
         )
 
@@ -263,8 +293,12 @@ class AMLFlowMatchingActionHeadRL(nn.Module):
             chains_next = chains[torch.arange(batch_size), di + 1]
 
             x_t_mean, x_t_std = self._denoise_step(
-                vl_embs, chains_pre, state_features,
-                idx=di[0].item(), num_steps=self.num_inference_timesteps, mode="train",
+                vl_embs,
+                chains_pre,
+                state_features,
+                idx=di[0].item(),
+                num_steps=self.num_inference_timesteps,
+                mode="train",
             )
 
             lp = self.get_logprob_norm(chains_next, x_t_mean, x_t_std)
@@ -276,7 +310,10 @@ class AMLFlowMatchingActionHeadRL(nn.Module):
             values = self.get_value(vl_embs)
         else:
             values = torch.zeros(
-                batch_size, 1, device=vl_embs.device, dtype=vl_embs.dtype,
+                batch_size,
+                1,
+                device=vl_embs.device,
+                dtype=vl_embs.dtype,
             )
 
         return log_probs, values
