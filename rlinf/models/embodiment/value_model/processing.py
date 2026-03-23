@@ -1,3 +1,17 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Image and text processors for value model.
 
@@ -19,7 +33,7 @@ import os
 import string
 from collections.abc import Sequence
 from pathlib import Path
-from typing import ClassVar, Dict, List, Optional, Tuple, Union
+from typing import ClassVar, Optional, Union
 
 import numpy as np
 import torch
@@ -72,7 +86,10 @@ def resize_with_pad(
     resized_width = int(cur_width / ratio)
 
     resized_images = F.interpolate(
-        images, size=(resized_height, resized_width), mode=mode, align_corners=False if mode == "bilinear" else None
+        images,
+        size=(resized_height, resized_width),
+        mode=mode,
+        align_corners=False if mode == "bilinear" else None,
     )
 
     if images.dtype == torch.uint8:
@@ -102,9 +119,11 @@ def resize_with_pad(
 
     return padded_images
 
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+
 
 IMAGE_KEYS = (
     "base_0_rgb",
@@ -118,6 +137,7 @@ IMAGE_RESOLUTION = (224, 224)
 # ---------------------------------------------------------------------------
 # Utility functions
 # ---------------------------------------------------------------------------
+
 
 def normalize_image_to_model_format(
     img: torch.Tensor,
@@ -181,6 +201,7 @@ def normalize_image_to_model_format(
 # ValueImageProcessor
 # ---------------------------------------------------------------------------
 
+
 class ValueImageProcessor(ImageProcessingMixin):
     """
     Value model image processor that replicates OpenPI's preprocessing logic.
@@ -192,15 +213,15 @@ class ValueImageProcessor(ImageProcessingMixin):
     - Handles multiple camera views
     """
 
-    model_input_names: ClassVar[List[str]] = ["pixel_values", "image_masks"]
+    model_input_names: ClassVar[list[str]] = ["pixel_values", "image_masks"]
 
     def __init__(
         self,
-        image_size: Tuple[int, int] = IMAGE_RESOLUTION,
+        image_size: tuple[int, int] = IMAGE_RESOLUTION,
         do_resize: bool = True,
         do_augment: bool = True,
         image_keys: Sequence[str] = IMAGE_KEYS,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(**kwargs)
         self.image_size = image_size
@@ -209,9 +230,7 @@ class ValueImageProcessor(ImageProcessingMixin):
         self.image_keys = image_keys
 
     def apply_augmentations(
-        self,
-        image: torch.Tensor,
-        is_wrist_camera: bool = False
+        self, image: torch.Tensor, is_wrist_camera: bool = False
     ) -> torch.Tensor:
         """
         Apply OpenPI-style augmentations to the image.
@@ -240,7 +259,12 @@ class ValueImageProcessor(ImageProcessingMixin):
             if max_h > 0 and max_w > 0:
                 start_h = torch.randint(0, max_h + 1, (1,), device=image.device)
                 start_w = torch.randint(0, max_w + 1, (1,), device=image.device)
-                image = image[:, start_h : start_h + crop_height, start_w : start_w + crop_width, :]
+                image = image[
+                    :,
+                    start_h : start_h + crop_height,
+                    start_w : start_w + crop_width,
+                    :,
+                ]
 
             # Resize back to original size
             image = F.interpolate(
@@ -311,10 +335,10 @@ class ValueImageProcessor(ImageProcessingMixin):
 
     def process_images(
         self,
-        images_dict: Dict[str, torch.Tensor],
-        image_masks_dict: Optional[Dict[str, torch.Tensor]] = None,
-        train: bool = False
-    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+        images_dict: dict[str, torch.Tensor],
+        image_masks_dict: Optional[dict[str, torch.Tensor]] = None,
+        train: bool = False,
+    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         """
         Process a batch of images efficiently.
 
@@ -350,9 +374,13 @@ class ValueImageProcessor(ImageProcessingMixin):
             if image is None:
                 if batch_size is not None:
                     h, w = self.image_size
-                    placeholder = torch.zeros(batch_size, 3, h, w, device=template_device)
+                    placeholder = torch.zeros(
+                        batch_size, 3, h, w, device=template_device
+                    )
                     out_images[key] = placeholder
-                    out_masks[key] = torch.zeros(batch_size, dtype=torch.bool, device=template_device)
+                    out_masks[key] = torch.zeros(
+                        batch_size, dtype=torch.bool, device=template_device
+                    )
                 continue
 
             is_wrist = "wrist" in key
@@ -397,18 +425,20 @@ class ValueImageProcessor(ImageProcessingMixin):
             else:
                 # Default to True for all batch elements
                 batch_size = image.shape[0]
-                out_masks[key] = torch.ones(batch_size, dtype=torch.bool, device=image.device)
+                out_masks[key] = torch.ones(
+                    batch_size, dtype=torch.bool, device=image.device
+                )
 
         return out_images, out_masks
 
     def __call__(
         self,
-        images: Dict[str, torch.Tensor],
-        image_masks: Optional[Dict[str, torch.Tensor]] = None,
+        images: dict[str, torch.Tensor],
+        image_masks: Optional[dict[str, torch.Tensor]] = None,
         return_tensors: Optional[Union[str, TensorType]] = None,
         do_augment: Optional[bool] = None,
         train: bool = False,
-        **kwargs
+        **kwargs,
     ) -> BatchFeature:
         """
         Process images for value model following OpenPI's preprocessing.
@@ -424,7 +454,9 @@ class ValueImageProcessor(ImageProcessingMixin):
             BatchFeature containing processed images and image masks
         """
         # Determine if we should apply augmentations
-        apply_augmentations = train and (do_augment if do_augment is not None else self.do_augment)
+        apply_augmentations = train and (
+            do_augment if do_augment is not None else self.do_augment
+        )
 
         # Handle different input formats
         # Dict format with OpenPI camera keys - use batch processing
@@ -432,15 +464,13 @@ class ValueImageProcessor(ImageProcessingMixin):
             images, image_masks, train=apply_augmentations
         )
 
-        return {
-            "pixel_values": output_images,
-            "image_masks": output_masks
-        }
+        return {"pixel_values": output_images, "image_masks": output_masks}
 
 
 # ---------------------------------------------------------------------------
 # ValueProcessor
 # ---------------------------------------------------------------------------
+
 
 class ValueProcessor(ProcessorMixin):
     """
@@ -476,7 +506,7 @@ class ValueProcessor(ProcessorMixin):
         tokenizer_name_or_path: Optional[str] = None,
         image_keys: Optional[tuple] = None,
         do_augment: bool = True,
-        **kwargs
+        **kwargs,
     ):
         if image_processor is None:
             # Use custom image_keys if provided, otherwise use defaults
@@ -517,7 +547,7 @@ class ValueProcessor(ProcessorMixin):
 
     def _strip_trailing_punctuation(self, text: str) -> str:
         """Remove trailing punctuation from text, but preserve quotes."""
-        if text and text[-1] in string.punctuation and text[-1] not in '"\'':
+        if text and text[-1] in string.punctuation and text[-1] not in "\"'":
             return text[:-1]
         return text
 
@@ -525,7 +555,7 @@ class ValueProcessor(ProcessorMixin):
         self,
         prompt: str,
         max_length: Optional[int] = None,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Tokenize a prompt into the value model's input format.
 
         Template: ``Task: {prompt}.``
@@ -553,7 +583,8 @@ class ValueProcessor(ProcessorMixin):
             if seq_len > max_length:
                 logger.warning(
                     "Token length (%d) exceeds max (%d), truncating.",
-                    seq_len, max_length,
+                    seq_len,
+                    max_length,
                 )
             tokens = tokens[:max_length]
             mask = [True] * max_length
@@ -572,17 +603,20 @@ class ValueProcessor(ProcessorMixin):
             decoded = self.tokenizer.decode(tokens, skip_special_tokens=False)
             logger.info(
                 "[Tokenization Example #%d] prompt=%r → %r  (len=%d)",
-                self._tokenize_log_count, prompt, decoded, seq_len,
+                self._tokenize_log_count,
+                prompt,
+                decoded,
+                seq_len,
             )
 
         return np.asarray(tokens), np.asarray(mask), np.asarray(ar_mask)
 
     def process_text(
         self,
-        prompts: List[str],
+        prompts: list[str],
         max_length: Optional[int] = None,
         return_tensors: Optional[str] = "pt",
-    ) -> Dict[str, torch.Tensor]:
+    ) -> dict[str, torch.Tensor]:
         """Process a batch of prompts for the value model.
 
         Returns:
@@ -617,12 +651,12 @@ class ValueProcessor(ProcessorMixin):
 
     def __call__(
         self,
-        text: Union[str, List[str]] = None,
-        images: Union[Dict[str, torch.Tensor], List[torch.Tensor], torch.Tensor] = None,
-        image_masks: Optional[Dict[str, torch.Tensor]] = None,
-        return_tensors: Optional[str] = 'pt',
+        text: Optional[Union[str, list[str]]] = None,
+        images: Union[dict[str, torch.Tensor], list[torch.Tensor], torch.Tensor] = None,
+        image_masks: Optional[dict[str, torch.Tensor]] = None,
+        return_tensors: Optional[str] = "pt",
         train: bool = False,
-        **kwargs
+        **kwargs,
     ) -> BatchFeature:
         """
         Process text and images for value model.
@@ -659,20 +693,22 @@ class ValueProcessor(ProcessorMixin):
                 images,
                 image_masks=image_masks,
                 return_tensors=return_tensors,
-                train=train
+                train=train,
             )
             result_data.update(image_inputs)
 
         return BatchFeature(data=result_data, tensor_type=return_tensors)
 
-    def decode(self, token_ids: Union[List[int], torch.Tensor], **kwargs) -> str:
+    def decode(self, token_ids: Union[list[int], torch.Tensor], **kwargs) -> str:
         """Decode tokens to text."""
         if isinstance(token_ids, torch.Tensor):
             token_ids = token_ids.tolist()
         token_ids = [t for t in token_ids if t != 0]
         return self.tokenizer.decode(token_ids, **kwargs)
 
-    def batch_decode(self, token_ids_batch: Union[List[List[int]], torch.Tensor], **kwargs) -> List[str]:
+    def batch_decode(
+        self, token_ids_batch: Union[list[list[int]], torch.Tensor], **kwargs
+    ) -> list[str]:
         """Decode batch of tokens to text."""
         if isinstance(token_ids_batch, torch.Tensor):
             token_ids_batch = token_ids_batch.tolist()

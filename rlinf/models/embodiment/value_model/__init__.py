@@ -127,9 +127,7 @@ def get_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticModel:
         if model_path and os.path.exists(model_path):
             state_dict = _load_state_dict(model_path)
             if state_dict:
-                missing, unexpected = model.load_state_dict(
-                    state_dict, strict=False
-                )
+                missing, unexpected = model.load_state_dict(state_dict, strict=False)
                 logger.info(
                     "Loaded fine-tuned checkpoint from %s (missing=%d, unexpected=%d)",
                     model_path,
