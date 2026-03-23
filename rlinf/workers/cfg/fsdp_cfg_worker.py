@@ -464,6 +464,7 @@ class FSDPCfgWorker(FSDPSftWorker):
 
                 # CFG: unpack advantage (replaces is_success)
                 observation, actions, advantage = next(self.data_iter)
+                self._data_iter_offset += 1
 
                 observation = jax.tree.map(
                     lambda x: torch.as_tensor(x)
@@ -661,5 +662,27 @@ class FSDPCfgWorker(FSDPSftWorker):
             return train_metrics
 
     def set_global_step(self, global_step):
+        self.global_step = global_step
+
         if hasattr(self.model, "set_global_step"):
             self.model.set_global_step(global_step)
+
+        loader_len = len(self.data_loader)
+        if loader_len == 0:
+            return
+
+        grad_accum = (
+            self.cfg.actor.global_batch_size
+            // self.cfg.actor.micro_batch_size
+            // self._world_size
+        )
+        steps_per_epoch = max(1, loader_len // grad_accum)
+        new_epoch = global_step // steps_per_epoch
+
+        current_epoch = getattr(self, "_current_epoch", -1)
+        if current_epoch != new_epoch:
+            self._current_epoch = new_epoch
+            self._data_epoch = new_epoch
+            self._data_iter_offset = 0
+            self.data_loader.set_epoch(new_epoch)
+            self.data_iter = iter(self.data_loader)

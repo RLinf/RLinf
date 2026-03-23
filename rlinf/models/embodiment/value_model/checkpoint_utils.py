@@ -178,23 +178,29 @@ def build_input_transforms(
         input_transforms.append(InjectDefaultPrompt(default_prompt))
         input_transforms.append(LiberoInputs(mask_padding=True, model_type=model_type))
 
-        if norm_stats is not None:
-            input_transforms.append(
-                Normalize(
-                    norm_stats,
-                    use_quantiles=use_quantile_norm,
-                    skip_dims=action_norm_skip_dims,
-                )
-            )
+    elif env_type == "franka":
+        from rlinf.datasets.lerobot.franka import FrankaEEInputs
 
-        input_transforms.extend(
-            [
-                ResizeImages(224, 224),
-                PadStatesAndActions(model_action_dim=action_dim),
-            ]
-        )
+        input_transforms.append(InjectDefaultPrompt(default_prompt))
+        input_transforms.append(FrankaEEInputs(mask_padding=True, model_type=model_type))
 
     else:
         raise ValueError(f"Unknown environment type: {env_type}")
+
+    if norm_stats is not None:
+        input_transforms.append(
+            Normalize(
+                norm_stats,
+                use_quantiles=use_quantile_norm,
+                skip_dims=action_norm_skip_dims,
+            )
+        )
+
+    input_transforms.extend(
+        [
+            ResizeImages(224, 224),
+            PadStatesAndActions(model_action_dim=action_dim),
+        ]
+    )
 
     return input_transforms

@@ -1297,15 +1297,23 @@ class ValueCritic(CriticPreTrainedModel):
         elif not isinstance(prompt, str):
             prompt = "perform the task"
 
-        # Convert CHW to BHWC for image_processor
+        # Convert to BHWC for image_processor (handles both CHW and HWC input)
         images_bhwc = {}
         for cam_name, img in images_dict.items():
             if isinstance(img, np.ndarray):
                 img = torch.from_numpy(img)
             if img.dim() == 3:
-                img = img.unsqueeze(0).permute(0, 2, 3, 1)
+                if img.shape[0] == 3:
+                    # CHW (3, H, W) -> BHWC (1, H, W, 3)
+                    img = img.unsqueeze(0).permute(0, 2, 3, 1)
+                else:
+                    # HWC (H, W, 3) -> BHWC (1, H, W, 3)
+                    img = img.unsqueeze(0)
             elif img.dim() == 4:
-                img = img.permute(0, 2, 3, 1)
+                if img.shape[1] == 3:
+                    # BCHW -> BHWC
+                    img = img.permute(0, 2, 3, 1)
+                # else: already BHWC
             images_bhwc[cam_name] = img
 
         # Image masks
@@ -1407,15 +1415,23 @@ class ValueCritic(CriticPreTrainedModel):
         elif not isinstance(prompt, str):
             prompt = "perform the task"
 
-        # Convert CHW to BHWC for image_processor
+        # Convert to BHWC for image_processor (handles both CHW and HWC input)
         images_bhwc = {}
         for cam_name, img in images_dict.items():
             if isinstance(img, np.ndarray):
                 img = torch.from_numpy(img)
             if img.dim() == 3:
-                img = img.unsqueeze(0).permute(0, 2, 3, 1)
+                if img.shape[0] == 3:
+                    # CHW (3, H, W) -> BHWC (1, H, W, 3)
+                    img = img.unsqueeze(0).permute(0, 2, 3, 1)
+                else:
+                    # HWC (H, W, 3) -> BHWC (1, H, W, 3)
+                    img = img.unsqueeze(0)
             elif img.dim() == 4:
-                img = img.permute(0, 2, 3, 1)
+                if img.shape[1] == 3:
+                    # BCHW -> BHWC
+                    img = img.permute(0, 2, 3, 1)
+                # else: already BHWC
             images_bhwc[cam_name] = img
 
         # Image masks
