@@ -10,6 +10,12 @@ else
     CONFIG_NAME=$1
 fi
 
+case "$CONFIG_NAME" in
+    yam_async_ppo_openpi*)
+        SRC_FILE="${EMBODIED_PATH}/train_async_staged.py"
+        ;;
+esac
+
 echo "Using Python at $(which python)"
 LOG_DIR="${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')-${CONFIG_NAME}" #/$(date +'%Y%m%d-%H:%M:%S')"
 MEGA_LOG_FILE="${LOG_DIR}/run_embodiment.log"

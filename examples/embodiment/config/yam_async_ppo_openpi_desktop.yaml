@@ -1,0 +1,15 @@
+defaults:
+  - yam_ppo_openpi_desktop
+
+runner:
+  logger:
+    experiment_name: "yam_async_ppo_openpi_desktop"
+
+algorithm:
+  staleness_threshold: 1
+  update_epoch: 1
+  loss_type: decoupled_actor_critic
+
+env:
+  train:
+    top_reward_instruction_source: initial_task

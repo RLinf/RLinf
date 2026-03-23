@@ -1,0 +1,17 @@
+defaults:
+  - yam_ppo_openpi_topreward
+
+runner:
+  logger:
+    experiment_name: "yam_async_ppo_openpi_topreward"
+
+algorithm:
+  staleness_threshold: 1
+  update_epoch: 1
+  loss_type: decoupled_actor_critic
+
+env:
+  train:
+    # Keep dense reward tied to the overarching task so async subtask lag only
+    # affects policy conditioning, not reward semantics.
+    top_reward_instruction_source: initial_task

@@ -2,9 +2,11 @@
 #
 # submit_yam_training.sh — Submit YAM training to Beaker.
 #
-# Supports two configs (both use TOPReward, both need 3 GPUs):
-#   yam_ppo_openpi                  — PPO + π₀.5 + TOPReward (no subtask planning)
-#   yam_ppo_openpi_topreward        — PPO + π₀.5 + TOPReward + subtask planning
+# Supports sync and async YAM configs (all use TOPReward, all need 3 GPUs):
+#   yam_ppo_openpi                  — sync PPO + π₀.5 + TOPReward
+#   yam_ppo_openpi_topreward        — sync PPO + π₀.5 + TOPReward + subtask planning
+#   yam_async_ppo_openpi            — async PPO + π₀.5 + TOPReward
+#   yam_async_ppo_openpi_topreward  — async PPO + π₀.5 + TOPReward + subtask planning
 #
 # Topology (both configs, single Beaker node):
 #   GPU 0 — actor (FSDP training)
@@ -57,9 +59,11 @@ Usage: bash scripts/submit_yam_training.sh [OPTIONS] [-- HYDRA_OVERRIDES...]
 
 Submit YAM training to Beaker with automatic component placement.
 
-Supported configs (both use TOPReward, both require 3 GPUs):
-  yam_ppo_openpi                  3 GPUs — TOPReward only, no subtask planning
-  yam_ppo_openpi_topreward        3 GPUs — TOPReward + VLM subtask planning
+Supported configs (all use TOPReward, all require 3 GPUs):
+  yam_ppo_openpi                  3 GPUs — sync TOPReward only
+  yam_ppo_openpi_topreward        3 GPUs — sync TOPReward + VLM subtask planning
+  yam_async_ppo_openpi            3 GPUs — async TOPReward only
+  yam_async_ppo_openpi_topreward  3 GPUs — async TOPReward + VLM subtask planning
 
 Options:
   --config NAME         Hydra config name (default: yam_ppo_openpi)
@@ -150,6 +154,11 @@ IS_TOPREWARD=false
 ENTRY_SCRIPT="train_embodied_agent.py"
 
 case "$CONFIG_NAME" in
+    yam_async_ppo_openpi*)
+        IS_TOPREWARD=true
+        ENTRY_SCRIPT="train_async_staged.py"
+        [ "$GPUS" -eq 0 ] && GPUS=3
+        ;;
     *topreward*|*staged*|yam_ppo_openpi)
         # All YAM configs use TOPReward → 3 GPUs, staged entry point.
         # yam_ppo_openpi uses TOPReward with subtask_interval=0 (no subtask planning).

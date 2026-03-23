@@ -1,0 +1,17 @@
+defaults:
+  - yam_ppo_openpi
+
+runner:
+  logger:
+    experiment_name: "yam_async_ppo_openpi"
+
+algorithm:
+  staleness_threshold: 1
+  update_epoch: 1
+  loss_type: decoupled_actor_critic
+
+env:
+  train:
+    # Async staged YAM keeps TOPReward anchored to the original task text
+    # rather than the mutable subtask instruction.
+    top_reward_instruction_source: initial_task

@@ -9,9 +9,11 @@
 # The env worker runs directly on the desktop with YAMEnv — no gRPC, no SSH tunnel,
 # no RemoteEnv. The Beaker node only provides GPUs for actor/rollout workers.
 #
-# Supported configs (both use TOPReward, both need 3 GPUs):
-#   yam_ppo_openpi           — 3 GPUs (actor + rollout + VLM TOPReward on Beaker)
-#   yam_ppo_openpi_topreward — 3 GPUs (actor + rollout + VLM TOPReward + subtask planning)
+# Supported configs (all use TOPReward and need 3 GPUs):
+#   yam_ppo_openpi                 — sync actor + rollout + VLM TOPReward on Beaker
+#   yam_ppo_openpi_topreward       — sync actor + rollout + VLM TOPReward + subtask planning
+#   yam_async_ppo_openpi           — async actor + rollout + VLM TOPReward on Beaker
+#   yam_async_ppo_openpi_topreward — async actor + rollout + VLM TOPReward + subtask planning
 #
 # Prerequisites:
 #   gantry installed: pip install beaker-gantry
@@ -46,8 +48,10 @@ Submit a Beaker job that starts Ray head with GPUs and idles, waiting for a
 desktop worker to join and run training via join_beaker_cluster.sh.
 
 Supported configs:
-  yam_ppo_openpi             3 GPUs (actor + rollout + VLM TOPReward)
-  yam_ppo_openpi_topreward   3 GPUs (actor + rollout + VLM TOPReward + subtask planning)
+  yam_ppo_openpi                 3 GPUs (sync actor + rollout + VLM TOPReward)
+  yam_ppo_openpi_topreward       3 GPUs (sync actor + rollout + VLM TOPReward + subtask planning)
+  yam_async_ppo_openpi           3 GPUs (async actor + rollout + VLM TOPReward)
+  yam_async_ppo_openpi_topreward 3 GPUs (async actor + rollout + VLM TOPReward + subtask planning)
 
 Options:
   --config NAME         Hydra config name for GPU auto-detection (default: yam_ppo_openpi)
@@ -97,6 +101,9 @@ fi
 
 # --- Auto-detect GPU count from config ---
 case "$CONFIG_NAME" in
+    yam_async_ppo_openpi*)
+        [ "$GPUS" -eq 0 ] && GPUS=3
+        ;;
     *topreward*|*staged*|yam_ppo_openpi)
         # All YAM configs use TOPReward and need 3 GPUs.
         [ "$GPUS" -eq 0 ] && GPUS=3

@@ -28,6 +28,12 @@ else
     CONFIG_NAME=$1
 fi
 
+case "$CONFIG_NAME" in
+    yam_async_ppo_openpi*)
+        SRC_FILE="${EMBODIED_PATH}/train_async_staged.py"
+        ;;
+esac
+
 # NOTE: Set the active robot platform (required for correct action dimension and normalization), supported platforms are LIBERO, ALOHA, BRIDGE, default is LIBERO
 ROBOT_PLATFORM=${2:-${ROBOT_PLATFORM:-"LIBERO"}}
 
