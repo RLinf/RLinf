@@ -1,0 +1,80 @@
+# YAM bimanual robot environment configuration for PI0.5 follower servers.
+#
+# This is the RLinf-side counterpart to the user's known-good follower setup:
+# - follower servers on localhost:1234 (right) and localhost:1235 (left)
+# - 30 Hz control loop
+# - 30 fps RealSense cameras at 640x360
+# - raw image transport over gRPC (no JPEG compression)
+#
+# Use together with:
+#   bash scripts/start_robot_server.sh \
+#       --config examples/embodiment/config/env/yam_pi05_follower.yaml \
+#       --use-follower-servers \
+#       --no-tunnel
+
+env_type: yam
+
+total_num_envs: null
+
+# Episode settings
+max_episode_steps: 10000
+max_steps_per_rollout_epoch: 10000
+
+# Robot control
+control_rate_hz: 30.0
+
+# Camera / image settings
+img_height: 360
+img_width: 640
+main_camera: "cam_top"
+wrist_cameras: ["cam_left", "cam_right"]
+
+# Keep images uncompressed so the policy sees the closest possible input to
+# the original local follower pipeline.
+compress_images: False
+
+# Human-readable task description injected into observations (used by VLA models).
+task_description: ""
+
+# Set to True to run without real hardware (returns zero observations).
+is_dummy: False
+
+# Auto-reset and termination handling (matches RealWorldEnv contract).
+auto_reset: False
+ignore_terminations: True
+
+# TOPReward dense reward configuration.
+top_reward_enabled: False
+top_reward_max_frames: 16
+
+robot_cfgs:
+  left: ["examples/embodiment/config/env/robot_clients/yam_follower_left.yaml"]
+  right: ["examples/embodiment/config/env/robot_clients/yam_follower_right.yaml"]
+
+camera_cfgs:
+  cam_right:
+    _target_: yam_realtime.sensors.cameras.camera.CameraNode
+    camera:
+      _target_: rlinf.envs.yam.realsense_camera.RealsenseCamera
+      serial_number: "128422272697"
+      resolution: [640, 360]
+      fps: 30
+  cam_top:
+    _target_: yam_realtime.sensors.cameras.camera.CameraNode
+    camera:
+      _target_: rlinf.envs.yam.realsense_camera.RealsenseCamera
+      serial_number: "215222073684"
+      resolution: [640, 360]
+      fps: 30
+  cam_left:
+    _target_: yam_realtime.sensors.cameras.camera.CameraNode
+    camera:
+      _target_: rlinf.envs.yam.realsense_camera.RealsenseCamera
+      serial_number: "218622275075"
+      resolution: [640, 360]
+      fps: 30
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train

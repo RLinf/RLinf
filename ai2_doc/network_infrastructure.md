@@ -252,7 +252,7 @@ training loop) without a physical robot.
 
 ```bash
 bash scripts/start_robot_server.sh \
-    --config examples/embodiment/config/env/yam.yaml \
+    --config examples/embodiment/config/env/yam_pi05_follower.yaml \
     --no-tunnel --dummy
 ```
 
@@ -387,16 +387,18 @@ reconnects the tunnel whenever a new Beaker job starts.
 ```bash
 # Local testing only (no tunnel, dummy robot — no hardware needed)
 bash scripts/start_robot_server.sh \
-    --config examples/embodiment/config/env/yam.yaml \
+    --config examples/embodiment/config/env/yam_pi05_follower.yaml \
     --no-tunnel --dummy
 
 # Persistent server + auto-reconnecting tunnel (default beaker-0 hostname)
 bash scripts/start_robot_server.sh \
-    --config examples/embodiment/config/env/yam.yaml
+    --config examples/embodiment/config/env/yam_pi05_follower.yaml \
+    --use-follower-servers
 
 # With explicit Tailscale IP instead of hostname (e.g. one-off debugging)
 bash scripts/start_robot_server.sh \
-    --config examples/embodiment/config/env/yam.yaml \
+    --config examples/embodiment/config/env/yam_pi05_follower.yaml \
+    --use-follower-servers \
     --remote-host 100.a.b.c
 ```
 

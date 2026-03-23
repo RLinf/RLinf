@@ -51,6 +51,8 @@ class AdaRMSGemmaRMSNorm(GemmaRMSNorm):
                 normed_inputs = normed_inputs * (1.0 + self.weight.float())
             return normed_inputs.to(dtype), None
 
+        if cond.dtype != self.dense.weight.dtype:
+            cond = cond.to(dtype=self.dense.weight.dtype)
         modulation = self.dense(cond)
         if x.ndim == 3:
             modulation = modulation.unsqueeze(1)
@@ -62,6 +64,15 @@ class AdaRMSGemmaRMSNorm(GemmaRMSNorm):
         if self.dense is None:
             return f"{self.dim}, eps={self.eps}"
         return f"{self.dim}, eps={self.eps}, adaptive=True, cond_dim={self.cond_dim}"
+
+
+def _legacy_paligemma_get_image_features(self, pixel_values: torch.FloatTensor):
+    """Match OpenPI's historical PaliGemma image feature scaling."""
+
+    image_outputs = self.vision_tower(pixel_values)
+    selected_image_feature = image_outputs.last_hidden_state
+    image_features = self.multi_modal_projector(selected_image_feature)
+    return image_features
 
 
 def _gated_residual(
@@ -124,6 +135,9 @@ def _manual_gemma_model_forward(
     """Run the Gemma expert with AdaRMS/gated residual semantics."""
 
     del kwargs
+    use_cache = (
+        use_cache if use_cache is not None else getattr(self.config, "use_cache", False)
+    )
     if inputs_embeds is None:
         if input_ids is None:
             raise ValueError("Either input_ids or inputs_embeds must be provided.")
@@ -134,11 +148,34 @@ def _manual_gemma_model_forward(
         hidden_states = inputs_embeds
 
     batch_size, seq_len = hidden_states.shape[:2]
+    if use_cache and past_key_values is None:
+        from transformers.cache_utils import DynamicCache
+
+        past_key_values = DynamicCache(config=self.config)
+
+    if (
+        len(self.layers) > 0
+        and self.layers[0].self_attn.q_proj.weight.dtype == torch.bfloat16
+    ):
+        hidden_states = hidden_states.to(dtype=torch.bfloat16)
+
+    cache_position = None
+    if past_key_values is not None:
+        past_seen_tokens = past_key_values.get_seq_length()
+        cache_position = torch.arange(
+            past_seen_tokens,
+            past_seen_tokens + seq_len,
+            device=hidden_states.device,
+        )
+
     if position_ids is None:
-        position_ids = torch.arange(
-            seq_len, device=hidden_states.device, dtype=torch.long
-        ).unsqueeze(0)
-        position_ids = position_ids.expand(batch_size, -1)
+        if cache_position is None:
+            position_ids = torch.arange(
+                seq_len, device=hidden_states.device, dtype=torch.long
+            ).unsqueeze(0)
+            position_ids = position_ids.expand(batch_size, -1)
+        else:
+            position_ids = cache_position.unsqueeze(0)
 
     position_embeddings = self.rotary_emb(hidden_states, position_ids)
     gradient_checkpointing = (
@@ -148,24 +185,21 @@ def _manual_gemma_model_forward(
 
     def _run_layer(layer, layer_hidden_states):
         residual = layer_hidden_states
-        layer_hidden_states, gate = layer.input_layernorm(
-            layer_hidden_states, cond=adarms_cond
+        layer_hidden_states, gate = _normalize_with_optional_cond(
+            layer.input_layernorm, layer_hidden_states, adarms_cond
         )
         attn_output, _ = layer.self_attn(
             hidden_states=layer_hidden_states,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_value=past_key_values,
-            output_attentions=False,
-            use_cache=bool(use_cache),
-            cache_position=None,
             position_embeddings=position_embeddings,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            cache_position=cache_position,
         )
         layer_hidden_states = _gated_residual(residual, attn_output, gate)
 
         residual = layer_hidden_states
-        layer_hidden_states, gate = layer.post_attention_layernorm(
-            layer_hidden_states, cond=adarms_cond
+        layer_hidden_states, gate = _normalize_with_optional_cond(
+            layer.post_attention_layernorm, layer_hidden_states, adarms_cond
         )
         mlp_dtype = layer.mlp.up_proj.weight.dtype
         if layer_hidden_states.dtype != mlp_dtype:
@@ -185,7 +219,9 @@ def _manual_gemma_model_forward(
         else:
             hidden_states = _run_layer(layer, hidden_states)
 
-    hidden_states, _ = self.norm(hidden_states, cond=adarms_cond)
+    hidden_states, _ = _normalize_with_optional_cond(
+        self.norm, hidden_states, adarms_cond
+    )
     return BaseModelOutputWithPast(
         last_hidden_state=hidden_states,
         past_key_values=returned_cache,
@@ -368,9 +404,33 @@ def _manual_pali_gemma_with_expert_forward(
 def enable_openpi_adarms_expert(paligemma_with_expert: nn.Module) -> None:
     """Enable AdaRMS-compatible expert execution on an OpenPI PaliGemma wrapper."""
 
+    enable_openpi_transformers_compat(paligemma_with_expert, enable_adarms=True)
+
+
+def enable_openpi_transformers_compat(
+    paligemma_with_expert: nn.Module,
+    *,
+    enable_adarms: bool = False,
+) -> None:
+    """Patch OpenPI's legacy custom forwards onto vanilla Transformers models.
+
+    OpenPI's PyTorch runtime was authored against a vendored Transformers 4.53
+    fork that added AdaRMS-aware Gemma norms and a bespoke PaliGemma+expert
+    forward path. RLinf runs against upstream Transformers 4.57 instead, so we
+    install the required forward shims at runtime and only swap in AdaRMS norms
+    when the checkpoint actually expects them.
+    """
+
     _ensure_gated_residual_support()
     expert_model = paligemma_with_expert.gemma_expert.model
-    replace_gemma_adarms_norms(expert_model)
+    paligemma_model = paligemma_with_expert.paligemma.model
+    prefix_model = paligemma_with_expert.paligemma.language_model
+    if enable_adarms:
+        replace_gemma_adarms_norms(expert_model)
+    paligemma_model.get_image_features = MethodType(
+        _legacy_paligemma_get_image_features, paligemma_model
+    )
+    prefix_model.forward = MethodType(_manual_gemma_model_forward, prefix_model)
     expert_model.forward = MethodType(_manual_gemma_model_forward, expert_model)
     paligemma_with_expert.forward = MethodType(
         _manual_pali_gemma_with_expert_forward, paligemma_with_expert

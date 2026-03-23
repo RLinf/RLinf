@@ -491,16 +491,11 @@ install_openpi_model() {
             ;;
     esac
 
-    # Replace transformers models with OpenPI's modified versions
-    local py_major_minor
-    py_major_minor=$(python - <<'EOF'
-import sys
-print(f"{sys.version_info.major}.{sys.version_info.minor}")
-EOF
-)
-    cp -r "$VENV_DIR/lib/python${py_major_minor}/site-packages/openpi/models_pytorch/transformers_replace/"* \
-        "$VENV_DIR/lib/python${py_major_minor}/site-packages/transformers/"
-    
+    # RLinf runs OpenPI against upstream Transformers 4.57 and patches the
+    # remaining OpenPI-specific behavior at runtime. Do not copy OpenPI's
+    # vendored 4.53 replacement files into the transformers package.
+    uv pip install "transformers==4.57.3" "tokenizers>=0.22.0,<=0.23.0"
+
     bash $SCRIPT_DIR/embodied/download_assets.sh --assets openpi
     uv pip uninstall pynvml || true
 }

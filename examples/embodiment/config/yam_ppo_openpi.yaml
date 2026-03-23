@@ -16,8 +16,8 @@
 #
 # Desktop:
 #   RobotServer wrapping YAMEnv, exposed via reverse SSH tunnel on :50051.
-#   Start with: bash scripts/start_robot_server.sh --config .../yam.yaml \
-#                   --remote-host <beaker-tailscale-ip>
+#   Start with: bash scripts/start_robot_server.sh --config .../yam_pi05_follower.yaml \
+#                   --use-follower-servers --remote-host <beaker-tailscale-ip>
 #
 # Submit with:
 #   bash scripts/submit_yam_training.sh --config yam_ppo_openpi \
@@ -162,7 +162,7 @@ env:
     # Dummy mode: controlled at the ROBOT SERVER, not here.
     # RemoteEnv does not read is_dummy — it proxies calls over gRPC to the server.
     # To test without real hardware, start the robot server with --dummy:
-    #   bash scripts/start_robot_server.sh --config .../yam.yaml --dummy
+    #   bash scripts/start_robot_server.sh --config .../yam_pi05_follower.yaml --dummy
 
   eval:
     total_num_envs: 1
@@ -233,6 +233,7 @@ actor:
       num_images_in_input: 1
       noise_method: "flow_noise"
       action_horizon: 10
+      action_env_dim: 14
       noise_params: [0.16, 0.12, 200]
       joint_logprob: True
 

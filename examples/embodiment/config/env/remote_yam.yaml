@@ -6,8 +6,8 @@
 #
 # Usage:
 #   1. On robot machine:
-#        bash scripts/start_robot_server.sh --config /path/to/yam.yaml \
-#            --remote-host <beaker-tailscale-ip>
+#        bash scripts/start_robot_server.sh --config /path/to/yam_pi05_follower.yaml \
+#            --use-follower-servers --remote-host <beaker-tailscale-ip>
 #   2. On Beaker container, launch training with env=remote_yam
 
 env_type: remote
@@ -30,7 +30,8 @@ ignore_terminations: true
 group_size: 1
 
 # NOTE: compress_images / jpeg_quality are server-side settings.
-# Set them in the yam.yaml config passed to start_robot_server.sh, not here.
+# Set them in the yam_pi05_follower.yaml config passed to start_robot_server.sh,
+# not here.
 # RemoteEnv handles both compressed and uncompressed images transparently.
 # Any wrist or extra camera views exposed by the server are forwarded
 # automatically via the observation keys `wrist_images` and
