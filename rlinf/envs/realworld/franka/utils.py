@@ -24,6 +24,37 @@ def normalize(q):
     return q / n
 
 
+def wrap_to_pi(angle: float | np.ndarray) -> float | np.ndarray:
+    """Wrap angle values to the principal range [-pi, pi)."""
+    return (angle + np.pi) % (2 * np.pi) - np.pi
+
+
+def clip_euler_to_target_window(
+    euler: np.ndarray,
+    target_euler: np.ndarray,
+    lower_euler: np.ndarray,
+    upper_euler: np.ndarray,
+) -> np.ndarray:
+    """Clip Euler angles using the shortest wrapped delta to the target pose.
+
+    This keeps the clipping window continuous even when the target is near +/- pi.
+
+    Args:
+        euler: Current Euler angles in radians.
+        target_euler: Target Euler angles in radians.
+        lower_euler: Lower bound expressed in the same absolute Euler convention.
+        upper_euler: Upper bound expressed in the same absolute Euler convention.
+
+    Returns:
+        Euler angles clipped to the target-centered window and wrapped to [-pi, pi).
+    """
+    delta = wrap_to_pi(euler - target_euler)
+    lower_delta = lower_euler - target_euler
+    upper_delta = upper_euler - target_euler
+    clipped_delta = np.clip(delta, lower_delta, upper_delta)
+    return wrap_to_pi(target_euler + clipped_delta)
+
+
 # geometry
 def quat_slerp(q0, q1, t):
     """
