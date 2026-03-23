@@ -34,6 +34,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         num_action_chunks=cfg.num_action_chunks,
         denoising_steps=cfg.denoising_steps,
         qwen_max_length=cfg.get("qwen_max_length", 256),
+        torch_dtype=torch_dtype,
     )
     model.to(torch_dtype)
 

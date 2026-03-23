@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,8 +18,9 @@ Provides rollout action generation and training-time logprob recomputation
 through the `BasePolicy` interface.
 """
 
-from pathlib import Path
-from typing import Any, Literal, Optional
+import warnings
+from contextlib import nullcontext
+from typing import Any, Literal, Mapping, Optional
 
 import numpy as np
 import torch
@@ -45,6 +46,7 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
         image_size: list[int],
         num_action_chunks: int,
         qwen_max_length: int = 256,
+        torch_dtype: torch.dtype = torch.bfloat16,
     ):
         nn.Module.__init__(self)
 
@@ -53,6 +55,7 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
         self.image_size = image_size
         self.num_action_chunks = num_action_chunks
         self.qwen_max_length = int(qwen_max_length)
+        self.torch_dtype = torch_dtype
 
         vl_hidden_size = self.base_model.qwen_vl_interface.model.config.hidden_size
         self.vl_hidden_size = vl_hidden_size
@@ -101,6 +104,7 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
         num_action_chunks: int = 5,
         denoising_steps: Optional[int] = None,
         qwen_max_length: int = 256,
+        torch_dtype: torch.dtype = torch.bfloat16,
         **kwargs,
     ) -> "ABotM0ForRLActionPrediction":
         """Load ABot-M0 checkpoint and attach RL action head."""
@@ -117,12 +121,87 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
             image_size=list(image_size),
             num_action_chunks=num_action_chunks,
             qwen_max_length=qwen_max_length,
+            torch_dtype=torch_dtype,
         )
 
         if hasattr(base_model, "norm_stats"):
             model.norm_stats = base_model.norm_stats
 
         return model
+
+    def load_state_dict(self, state_dict, strict: bool = True):
+        if not isinstance(state_dict, Mapping):
+            raise TypeError(
+                f"Expected state_dict to be a mapping, got {type(state_dict)}."
+            )
+
+        expected_keys = set(self.state_dict().keys())
+        normalized_state_dict: dict[str, torch.Tensor] = {}
+        known_prefixes = ("module.", "_orig_mod.", "model.")
+        alias_pairs = (
+            ("base_model.action_model.", "action_head_rl.base."),
+        )
+
+        def strip_known_prefixes(key: str) -> str:
+            stripped_key = key
+            keep_stripping = True
+            while keep_stripping:
+                keep_stripping = False
+                for prefix in known_prefixes:
+                    if stripped_key.startswith(prefix):
+                        stripped_key = stripped_key.removeprefix(prefix)
+                        keep_stripping = True
+            return stripped_key
+
+        def get_alias_key(key: str) -> Optional[str]:
+            for left_prefix, right_prefix in alias_pairs:
+                if key.startswith(left_prefix):
+                    return f"{right_prefix}{key.removeprefix(left_prefix)}"
+                if key.startswith(right_prefix):
+                    return f"{left_prefix}{key.removeprefix(right_prefix)}"
+            return None
+
+        for raw_key, value in state_dict.items():
+            stripped_key = strip_known_prefixes(raw_key)
+            candidate_keys = [raw_key, stripped_key]
+            if not stripped_key.startswith("base_model."):
+                candidate_keys.append(f"base_model.{stripped_key}")
+
+            mapped_key = next(
+                (candidate for candidate in candidate_keys if candidate in expected_keys),
+                stripped_key,
+            )
+            normalized_state_dict[mapped_key] = value
+
+        incompatible = nn.Module.load_state_dict(
+            self,
+            normalized_state_dict,
+            strict=False,
+        )
+
+        filtered_missing_keys = [
+            key
+            for key in incompatible.missing_keys
+            if (alias_key := get_alias_key(key)) not in normalized_state_dict
+        ]
+        unexpected_keys = list(incompatible.unexpected_keys)
+
+        has_incompatible = bool(filtered_missing_keys or unexpected_keys)
+        if has_incompatible:
+            error_message = (
+                "ABot-M0 checkpoint is incompatible with current model parameters. "
+                f"missing_keys={filtered_missing_keys}, unexpected_keys={unexpected_keys}."
+            )
+            raise RuntimeError(error_message)
+
+        if not strict and incompatible.missing_keys:
+            warnings.warn(
+                "ABot-M0 accepted expected missing keys during load_state_dict: "
+                f"{incompatible.missing_keys}",
+                stacklevel=2,
+            )
+
+        return incompatible
 
     def _encode_observations(
         self,
@@ -148,7 +227,18 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
                 if isinstance(v, torch.Tensor):
                     qwen_inputs[k] = v.to(device)
 
-        with torch.autocast("cuda", dtype=torch.bfloat16):
+        device_type = spatial_images.device.type
+        autocast_dtype = self.torch_dtype
+        use_autocast = (
+            (device_type == "cuda" and autocast_dtype in (torch.float16, torch.bfloat16))
+            or (device_type == "cpu" and autocast_dtype == torch.bfloat16)
+        )
+        autocast_ctx = (
+            torch.autocast(device_type=device_type, dtype=autocast_dtype)
+            if use_autocast
+            else nullcontext()
+        )
+        with autocast_ctx:
             qwenvl_outputs = self.base_model.qwen_vl_interface(
                 **qwen_inputs,
                 output_attentions=False,
@@ -310,14 +400,13 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
         chains = forward_inputs["chains"]
         denoise_inds = forward_inputs["denoise_inds"]
 
-        with torch.autocast("cuda", dtype=torch.float32):
-            log_probs, values = self.action_head_rl(
-                vl_embs=vl_embs,
-                state=state_tensor,
-                chains=chains,
-                denoise_inds=denoise_inds,
-                compute_values=compute_values,
-            )
+        log_probs, values = self.action_head_rl(
+            vl_embs=vl_embs,
+            state=state_tensor,
+            chains=chains,
+            denoise_inds=denoise_inds,
+            compute_values=compute_values,
+        )
 
         runtime_action_dim = self._get_runtime_action_dim()
         log_probs = log_probs[:, :, : self.num_action_chunks, :runtime_action_dim]
@@ -366,12 +455,11 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
             state=state,
         )
 
-        with torch.autocast("cuda", dtype=torch.float32):
-            actions, rl_outputs = self.action_head_rl.get_rl_action(
-                vl_embs=vl_embs,
-                state=state_tensor,
-                mode=mode,
-            )
+        actions, rl_outputs = self.action_head_rl.get_rl_action(
+            vl_embs=vl_embs,
+            state=state_tensor,
+            mode=mode,
+        )
 
         runtime_action_dim = self._get_runtime_action_dim()
 

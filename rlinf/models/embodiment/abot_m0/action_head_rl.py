@@ -19,7 +19,6 @@ from typing import Any, Literal, Optional
 
 import torch
 import torch.nn as nn
-from torch.distributions import Normal
 
 from rlinf.models.embodiment.modules.value_head import ValueHead
 
@@ -41,7 +40,8 @@ class AMLFlowMatchingActionHeadRL(nn.Module):
         self.action_horizon = self.base.action_horizon
         self.num_inference_timesteps = self.base.num_inference_timesteps
         self.num_timestep_buckets = self.base.num_timestep_buckets
-        self.t_eps = self.base.t_eps
+        self.t_eps = float(rl_head_config.get("t_eps", self.base.t_eps))
+        self.base.t_eps = self.t_eps
 
         noise_level = rl_head_config.get("noise_level", 0.5)
         self.noise_level = noise_level

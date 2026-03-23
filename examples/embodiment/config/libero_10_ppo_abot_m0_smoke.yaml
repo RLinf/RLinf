@@ -25,7 +25,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "libero_10_ppo_abot_m0_2gpu_smoke"
+    experiment_name: "libero_10_ppo_abot_m0_smoke"
     logger_backends: ["tensorboard"]
 
   max_epochs: 3
@@ -111,6 +111,8 @@ rollout:
   pipeline_stage_num: 1
 
   model:
+    # Set to local ABot-M0 checkpoint path downloaded from:
+    # https://huggingface.co/acvlab/ABot-M0-LIBERO/tree/main
     model_path: "/path/to/abot_m0_checkpoint"
     precision: ${actor.model.precision}
 
@@ -123,6 +125,7 @@ actor:
   enable_offload: false
 
   model:
+    # Must match rollout.model.model_path
     model_path: "/path/to/abot_m0_checkpoint"
     model_type: "abot_m0"
     num_action_chunks: 5

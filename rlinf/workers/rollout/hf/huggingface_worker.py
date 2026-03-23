@@ -342,7 +342,7 @@ class MultiStepRolloutWorker(Worker):
             async_op=True,
             options=self._sync_weight_comm_options,
         ).async_wait()
-        self.hf_model.load_state_dict(param_state_dict, strict=False)
+        self.hf_model.load_state_dict(param_state_dict)
 
         del param_state_dict
         gc.collect()
