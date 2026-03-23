@@ -1,0 +1,82 @@
+defaults:
+  - model/dreamzero@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "dreamzero_sft_droid"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 30000
+  max_steps: -1
+  val_check_interval: -1
+  save_interval: 1000
+
+data:
+  train_data_paths: "/path/to/droid_dataset"
+  num_workers: 1
+  pin_memory: false
+  persistent_workers: false
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 4
+  global_batch_size: 32
+  seed: 42
+
+  model:
+    model_type: "dreamzero"
+    precision: bf16
+    model_path: "/path/to/DreamZero-AgiBot"
+    pretrained_model_path: "/path/to/DreamZero-AgiBot"
+    train_cfg_path: "/path/to/dreamzero/experiment_cfg/conf.yaml"
+    data_root_key: "droid_data_root"
+
+  optim:
+    lr: 1e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 1e-5
+    clip_grad: 1.0
+    lr_scheduler: "cosine"
+    total_training_steps: ${runner.max_epochs}
+    lr_warmup_steps: 1000
+    num_cycles: 0.5
+    min_lr: 2.5e-6
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "full_shard"
+    use_orig_params: False
+    gradient_checkpointing: False
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

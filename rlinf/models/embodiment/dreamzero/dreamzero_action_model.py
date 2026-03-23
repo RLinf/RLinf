@@ -241,8 +241,16 @@ class DreamZeroActionModel:
         state_dict = {}
         safetensors_path = Path(model_path) / "model.safetensors"
         safetensors_index_path = Path(model_path) / "model.safetensors.index.json"
+        full_weights_path = Path(model_path) / "model_state_dict" / "full_weights.pt"
+        actor_full_weights_path = (
+            Path(model_path) / "actor" / "model_state_dict" / "full_weights.pt"
+        )
 
-        if safetensors_index_path.exists():
+        if full_weights_path.exists():
+            state_dict.update(torch.load(full_weights_path, map_location="cpu"))
+        elif actor_full_weights_path.exists():
+            state_dict.update(torch.load(actor_full_weights_path, map_location="cpu"))
+        elif safetensors_index_path.exists():
             with open(safetensors_index_path) as f:
                 index = json.load(f)
             for shard_file in set(index["weight_map"].values()):
