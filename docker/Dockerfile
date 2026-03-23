@@ -234,7 +234,7 @@ RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-isaaclab-image
 
-# Install gr00t env
+# Install gr00t env, and openpi env
 RUN bash requirements/install.sh embodied --venv gr00t --model gr00t --env isaaclab && \
     bash requirements/install.sh embodied --venv openpi --model openpi --env isaaclab
 
