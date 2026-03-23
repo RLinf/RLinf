@@ -27,6 +27,8 @@
 # limitations under the License.
 
 import functools
+import logging
+import os
 from enum import Enum
 from typing import ContextManager, Iterable, Optional, Union
 
@@ -52,6 +54,8 @@ from rlinf.hybrid_engines.fsdp import (
     fully_shard,
 )
 from rlinf.scheduler import Worker
+
+logger = logging.getLogger(__name__)
 
 
 class FSDPVersion(str, Enum):
@@ -95,6 +99,58 @@ def get_init_weight_context_manager(use_meta_tensor=True):
     return init_context
 
 
+def get_nested_no_split_modules(module: torch.nn.Module) -> Optional[list[str]]:
+    """
+    Discover `_no_split_modules` across common wrapper stacks.
+
+    Some embodied models (for example DreamZero) nest the actual transformer
+    backbone under helper modules such as `action_head.model`, and LoRA/PEFT may
+    wrap that backbone again under attributes like `base_model` / `model`.
+    FSDP/FSDP2 still need the original block class names, so walk a small set of
+    common wrapper attributes until we find them.
+    """
+    visited = set()
+    queue = [module]
+
+    while queue:
+        current = queue.pop(0)
+        if current is None or id(current) in visited:
+            continue
+        visited.add(id(current))
+
+        no_split_modules = getattr(current, "_no_split_modules", None)
+        if no_split_modules:
+            if isinstance(no_split_modules, str):
+                return [no_split_modules]
+            return list(no_split_modules)
+
+        for attr in ("language_model", "action_head", "model", "base_model"):
+            child = getattr(current, attr, None)
+            if isinstance(child, torch.nn.Module) and id(child) not in visited:
+                queue.append(child)
+
+    return None
+
+
+def _log_cuda_memory(stage: str) -> None:
+    if not torch.cuda.is_available():
+        logger.info("[FSDP2][CUDA MEM] stage=%s cuda_unavailable", stage)
+        return
+
+    logger.info(
+        "[FSDP2][CUDA MEM] stage=%s rank=%s local_rank=%s visible=%s "
+        "current_device=%s allocated=%.2fGiB reserved=%.2fGiB max_allocated=%.2fGiB",
+        stage,
+        os.environ.get("RANK"),
+        os.environ.get("LOCAL_RANK"),
+        os.environ.get("CUDA_VISIBLE_DEVICES"),
+        torch.cuda.current_device(),
+        torch.cuda.memory_allocated() / 1024**3,
+        torch.cuda.memory_reserved() / 1024**3,
+        torch.cuda.max_memory_allocated() / 1024**3,
+    )
+
+
 def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
     """
     FSDP wrap policy that handles both standard transformer models and VLA models.
@@ -114,16 +170,7 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
         return None
 
     # Get transformer layer classes to wrap
-    if hasattr(module, "language_model"):
-        # For VLA models, get transformer classes from language_model submodule
-        default_transformer_cls_names_to_wrap = getattr(
-            module.language_model, "_no_split_modules", None
-        )
-    else:
-        # For standard models, get transformer classes directly from module
-        default_transformer_cls_names_to_wrap = getattr(
-            module, "_no_split_modules", None
-        )
+    default_transformer_cls_names_to_wrap = get_nested_no_split_modules(module)
 
     fsdp_transformer_layer_cls_to_wrap = config.get("wrap_policy", {}).get(
         "transformer_layer_cls_to_wrap", default_transformer_cls_names_to_wrap
@@ -293,14 +340,7 @@ def apply_fsdp2_to_model(
     if config is None:
         config = {}
 
-    if hasattr(module, "language_model"):
-        default_transformer_cls_names_to_wrap = getattr(
-            module.language_model, "_no_split_modules", None
-        )
-    else:
-        default_transformer_cls_names_to_wrap = getattr(
-            module, "_no_split_modules", None
-        )
+    default_transformer_cls_names_to_wrap = get_nested_no_split_modules(module)
 
     fsdp_transformer_layer_cls_to_wrap = config.get("wrap_policy", {}).get(
         "transformer_layer_cls_to_wrap", default_transformer_cls_names_to_wrap
@@ -309,10 +349,12 @@ def apply_fsdp2_to_model(
     if isinstance(fsdp_transformer_layer_cls_to_wrap, str):
         fsdp_transformer_layer_cls_to_wrap = [fsdp_transformer_layer_cls_to_wrap]
 
-    assert (
-        len(fsdp_transformer_layer_cls_to_wrap) > 0
-        and fsdp_transformer_layer_cls_to_wrap[0] is not None
-    )
+    if not fsdp_transformer_layer_cls_to_wrap:
+        raise ValueError(
+            "FSDP2 could not determine transformer_layer_cls_to_wrap for model "
+            f"type `{module.__class__.__name__}`. Set "
+            "`fsdp_config.wrap_policy.transformer_layer_cls_to_wrap` explicitly."
+        )
 
     modules_to_shard = []
 
@@ -324,6 +366,9 @@ def apply_fsdp2_to_model(
             modules_to_shard.append((name, submodule, "transformer_or_embedding"))
 
     for name, submodule, module_type in modules_to_shard:
+        _log_cuda_memory(
+            f"apply_fsdp2_to_model:before_fully_shard_submodule:{name}:{submodule.__class__.__name__}"
+        )
         fully_shard(
             submodule,
             mesh=device_mesh,
@@ -331,14 +376,41 @@ def apply_fsdp2_to_model(
             offload_policy=offload_policy,
             reshard_after_forward=reshard_after_forward,
         )
+        _log_cuda_memory(
+            f"apply_fsdp2_to_model:after_fully_shard_submodule:{name}:{submodule.__class__.__name__}"
+        )
 
-    return fully_shard(
-        module,
-        mesh=device_mesh,
-        mp_policy=mp_policy,
-        offload_policy=offload_policy,
-        reshard_after_forward=False,
-    )
+    def _fully_shard_root(root_name: str, root_module: torch.nn.Module):
+        _log_cuda_memory(f"apply_fsdp2_to_model:before_fully_shard_root:{root_name}")
+        sharded_module = fully_shard(
+            root_module,
+            mesh=device_mesh,
+            mp_policy=mp_policy,
+            offload_policy=offload_policy,
+            reshard_after_forward=False,
+        )
+        _log_cuda_memory(f"apply_fsdp2_to_model:after_fully_shard_root:{root_name}")
+        return sharded_module
+
+    # DreamZero's top-level VLA contains several large components under
+    # action_head. If we fully_shard the root VLA first, FSDP2 will try to
+    # move all remaining states for those components at once, causing an
+    # initialization-time peak. Shard the large children first so the final
+    # top-level fully_shard only manages the tiny leftover state on VLA.
+    action_head = getattr(module, "action_head", None)
+    if action_head is not None and all(
+        hasattr(action_head, attr) for attr in ("model", "text_encoder", "image_encoder", "vae")
+    ):
+        for root_name, root_module in (
+            ("action_head.model", action_head.model),
+            ("action_head.text_encoder", action_head.text_encoder),
+            ("action_head.image_encoder", action_head.image_encoder),
+            ("action_head.vae", action_head.vae),
+            ("action_head", action_head),
+        ):
+            _fully_shard_root(root_name, root_module)
+
+    return _fully_shard_root("module", module)
 
 
 def get_fsdp2_full_state_dict_all_ranks(

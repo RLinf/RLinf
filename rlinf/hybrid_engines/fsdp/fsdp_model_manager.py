@@ -116,6 +116,24 @@ class FSDPModelManager:
 
         return torch.amp.autocast(device_type="cuda", dtype=precision)
 
+    def _log_cuda_memory(self, stage: str) -> None:
+        if not torch.cuda.is_available():
+            self._logger.info("[FSDP][CUDA MEM] stage=%s cuda_unavailable", stage)
+            return
+
+        self._logger.info(
+            "[FSDP][CUDA MEM] stage=%s rank=%s local_rank=%s visible=%s "
+            "current_device=%s allocated=%.2fGiB reserved=%.2fGiB max_allocated=%.2fGiB",
+            stage,
+            os.environ.get("RANK"),
+            os.environ.get("LOCAL_RANK"),
+            os.environ.get("CUDA_VISIBLE_DEVICES"),
+            torch.cuda.current_device(),
+            torch.cuda.memory_allocated() / 1024**3,
+            torch.cuda.memory_reserved() / 1024**3,
+            torch.cuda.max_memory_allocated() / 1024**3,
+        )
+
     def model_provider_func(self) -> torch.nn.Module:
         """
         Initialize model used by FSDP actor
@@ -245,7 +263,9 @@ class FSDPModelManager:
         """
         Setup model, lr_scheduler, optimizer and grad_scaler.
         """
+        self._log_cuda_memory("setup_model_and_optimizer:before_model_provider")
         module = self.model_provider_func()
+        self._log_cuda_memory("setup_model_and_optimizer:after_model_provider")
 
         # Enable gradient checkpointing if configured
         if self._cfg.fsdp_config.get("gradient_checkpointing", False):
@@ -255,9 +275,11 @@ class FSDPModelManager:
             self._logger.info("[FSDP] Gradient checkpointing is disabled")
 
         # build model, optimizer, lr_scheduler, grad_scaler
+        self._log_cuda_memory("setup_model_and_optimizer:before_wrap_model")
         self.model = self._strategy.wrap_model(
             model=module, device_mesh=self._device_mesh
         )
+        self._log_cuda_memory("setup_model_and_optimizer:after_wrap_model")
         self.optimizer = self.build_optimizer(
             model=self.model, enable_critic_warmup=self.critic_warmup_steps > 0
         )

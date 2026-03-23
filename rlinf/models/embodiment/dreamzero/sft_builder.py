@@ -1,5 +1,6 @@
 import gc
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -8,6 +9,8 @@ import torch
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf, open_dict
 from torch.utils.data import DataLoader, IterableDataset
+
+logger = logging.getLogger(__name__)
 
 
 def _ensure_groot_importable():
@@ -73,6 +76,49 @@ def load_dreamzero_train_cfg(model_cfg: DictConfig, data_paths=None):
     return train_cfg
 
 
+def _reshape_singleton_state_dict_tensors(
+    model: torch.nn.Module, state_dict: dict[str, torch.Tensor]
+) -> dict[str, torch.Tensor]:
+    """
+    Keep old DreamZero checkpoints with scalar singleton params loadable after
+    reshaping those params to 1D tensors for FSDP2 compatibility.
+    """
+    target_state = model.state_dict()
+    patched_state_dict = dict(state_dict)
+
+    for key, value in state_dict.items():
+        target_value = target_state.get(key)
+        if (
+            isinstance(value, torch.Tensor)
+            and isinstance(target_value, torch.Tensor)
+            and value.numel() == 1
+            and target_value.numel() == 1
+            and value.shape != target_value.shape
+        ):
+            patched_state_dict[key] = value.reshape(target_value.shape)
+
+    return patched_state_dict
+
+
+def _log_cuda_memory(stage: str) -> None:
+    if not torch.cuda.is_available():
+        logger.info("[DreamZero SFT][CUDA MEM] stage=%s cuda_unavailable", stage)
+        return
+
+    logger.info(
+        "[DreamZero SFT][CUDA MEM] stage=%s rank=%s local_rank=%s visible=%s "
+        "current_device=%s allocated=%.2fGiB reserved=%.2fGiB max_allocated=%.2fGiB",
+        stage,
+        os.environ.get("RANK"),
+        os.environ.get("LOCAL_RANK"),
+        os.environ.get("CUDA_VISIBLE_DEVICES"),
+        torch.cuda.current_device(),
+        torch.cuda.memory_allocated() / 1024**3,
+        torch.cuda.memory_reserved() / 1024**3,
+        torch.cuda.max_memory_allocated() / 1024**3,
+    )
+
+
 def _load_weights(model: torch.nn.Module, checkpoint_dir: str) -> None:
     from safetensors.torch import load_file
 
@@ -90,11 +136,13 @@ def _load_weights(model: torch.nn.Module, checkpoint_dir: str) -> None:
 
     if os.path.exists(full_weights_path):
         state_dict = torch.load(full_weights_path, map_location="cpu")
+        state_dict = _reshape_singleton_state_dict_tensors(model, state_dict)
         model.load_state_dict(state_dict, strict=False)
         return
 
     if os.path.exists(actor_full_weights_path):
         state_dict = torch.load(actor_full_weights_path, map_location="cpu")
+        state_dict = _reshape_singleton_state_dict_tensors(model, state_dict)
         model.load_state_dict(state_dict, strict=False)
         return
 
@@ -104,6 +152,9 @@ def _load_weights(model: torch.nn.Module, checkpoint_dir: str) -> None:
         for shard_file in sorted(set(index["weight_map"].values())):
             shard_path = os.path.join(checkpoint_dir, shard_file)
             shard_state_dict = load_file(shard_path)
+            shard_state_dict = _reshape_singleton_state_dict_tensors(
+                model, shard_state_dict
+            )
             model.load_state_dict(shard_state_dict, strict=False)
             del shard_state_dict
             gc.collect()
@@ -111,6 +162,7 @@ def _load_weights(model: torch.nn.Module, checkpoint_dir: str) -> None:
 
     if os.path.exists(safetensors_path):
         state_dict = load_file(safetensors_path)
+        state_dict = _reshape_singleton_state_dict_tensors(model, state_dict)
         model.load_state_dict(state_dict, strict=False)
         return
 
@@ -121,11 +173,14 @@ def _load_weights(model: torch.nn.Module, checkpoint_dir: str) -> None:
 
 
 def build_dreamzero_sft_model(model_cfg: DictConfig) -> torch.nn.Module:
+    _log_cuda_memory("build_dreamzero_sft_model:start")
     train_cfg = load_dreamzero_train_cfg(model_cfg)
     model = instantiate(train_cfg.model)
+    _log_cuda_memory("build_dreamzero_sft_model:after_instantiate")
 
     pretrained_model_path = model_cfg.get("pretrained_model_path", model_cfg.get("model_path"))
     _load_weights(model, pretrained_model_path)
+    _log_cuda_memory("build_dreamzero_sft_model:after_load_weights")
 
     if (
         hasattr(model, "action_head")
@@ -133,7 +188,9 @@ def build_dreamzero_sft_model(model_cfg: DictConfig) -> torch.nn.Module:
         and getattr(getattr(model.action_head, "config", None), "defer_lora_injection", False)
     ):
         model.action_head.inject_lora_after_loading()
+        _log_cuda_memory("build_dreamzero_sft_model:after_inject_lora")
 
+    _log_cuda_memory("build_dreamzero_sft_model:return")
     return model
 
 

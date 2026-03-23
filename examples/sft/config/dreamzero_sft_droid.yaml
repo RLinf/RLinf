@@ -40,6 +40,7 @@ algorithm:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
+  enable_offload: true
   micro_batch_size: 4
   global_batch_size: 32
   seed: 42
@@ -67,10 +68,12 @@ actor:
     min_lr: 2.5e-6
 
   fsdp_config:
-    strategy: "fsdp"
+    strategy: "fsdp2"
     sharding_strategy: "full_shard"
     use_orig_params: False
     gradient_checkpointing: False
+    cpu_offload: True
+    offload_pin_memory: True
     mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}

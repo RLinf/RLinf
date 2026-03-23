@@ -26,6 +26,26 @@ def _ensure_groot_importable():
         sys.path.insert(0, str(dreamzero_root))
 
 
+def _reshape_singleton_state_dict_tensors(
+    model: torch.nn.Module, state_dict: dict[str, torch.Tensor]
+) -> dict[str, torch.Tensor]:
+    target_state = model.state_dict()
+    patched_state_dict = dict(state_dict)
+
+    for key, value in state_dict.items():
+        target_value = target_state.get(key)
+        if (
+            isinstance(value, torch.Tensor)
+            and isinstance(target_value, torch.Tensor)
+            and value.numel() == 1
+            and target_value.numel() == 1
+            and value.shape != target_value.shape
+        ):
+            patched_state_dict[key] = value.reshape(target_value.shape)
+
+    return patched_state_dict
+
+
 class DreamZeroPolicy:
     """Lightweight DreamZero action model: IdentityBackbone + WANPolicyHead.
 
@@ -236,6 +256,7 @@ class DreamZeroPolicy:
         if has_base_layer:
             state_dict = {k.replace(".base_layer.", "."): v for k, v in state_dict.items()}
 
+        state_dict = _reshape_singleton_state_dict_tensors(model, state_dict)
         model.load_state_dict(state_dict, strict=False)
         return model
 
