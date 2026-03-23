@@ -141,6 +141,11 @@ In current stage, we support four libero tasks: Spatial, Object, Goal, and Long.
    pip install huggingface-hub
    hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
 
+Models for other tasks:
+- `Libero-Object <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Object>`_
+- `Libero-Goal <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Goal>`_
+- `Libero-Long <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-10>`_
+
 --------------
 
 Preliminaries of GR00T-N1.5
