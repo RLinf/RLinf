@@ -701,6 +701,11 @@ install_isaaclab_env() {
     pushd ~ >/dev/null
     uv pip install "flatdict==4.0.1" --no-build-isolation
     uv pip install "cuda-toolkit[nvcc]==12.8.0"
+
+    # Force CMake < 4 for egl-probe / robomimic native build compatibility
+    uv pip uninstall -y cmake || true
+    uv pip install "cmake<4"
+
     $isaaclab_dir/isaaclab.sh --install
     popd >/dev/null
 }
