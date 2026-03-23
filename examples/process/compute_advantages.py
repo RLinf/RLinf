@@ -198,10 +198,15 @@ def gather_all_advantages(
 # Maps LeRobot dataset keys to value model observation format
 KEY_MAPPINGS = {
     "franka": {
+        # Multi-cam format (front_cam + wrist_cam)
         "observation.images.front_cam": "observation/images/front_cam",
         "observation.images.wrist_cam": "observation/images/wrist_cam",
         "observation.state.tcp_pose": "observation/state/tcp_pose",
         "observation.state.gripper_pose": "observation/state/gripper_pose",
+        # Single-cam format (push_button style: image + state)
+        "observation.images.image": "observation/image",
+        "image": "observation/image",
+        "state": "observation/state",
         "task": "prompt",
     },
     "franka_3cam": {
@@ -1292,6 +1297,7 @@ def main(cfg: DictConfig) -> None:
         )
 
         tag = cfg.advantage.get("tag", None)
+        returns_tag = cfg.advantage.get("returns_tag", tag)
 
         for ds_cfg in cfg.data.train_data_paths:
             ds_path = Path(ds_cfg.dataset_path)
@@ -1302,7 +1308,7 @@ def main(cfg: DictConfig) -> None:
 
             # Load dataset (each rank loads full dataset but processes shard)
             dataset, tasks, meta, returns_sidecar = load_lerobot_dataset(
-                ds_path, returns_tag=tag
+                ds_path, returns_tag=returns_tag
             )
 
             # Compute advantages for this rank's shard

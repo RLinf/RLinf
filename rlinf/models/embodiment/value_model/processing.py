@@ -475,11 +475,16 @@ class ValueProcessor(ProcessorMixin):
         max_token_len: int = 200,
         tokenizer_name_or_path: Optional[str] = None,
         image_keys: Optional[tuple] = None,
+        do_augment: bool = True,
         **kwargs
     ):
         if image_processor is None:
             # Use custom image_keys if provided, otherwise use defaults
-            image_processor = ValueImageProcessor(image_keys=image_keys) if image_keys else ValueImageProcessor()
+            image_processor = (
+                ValueImageProcessor(image_keys=image_keys, do_augment=do_augment)
+                if image_keys
+                else ValueImageProcessor(do_augment=do_augment)
+            )
 
         if tokenizer is None:
             tokenizer_path = (
