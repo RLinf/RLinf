@@ -1,6 +1,7 @@
 defaults:
   - env/realworld_peg_insertion@env.train
   - env/realworld_peg_insertion@env.eval
+  - cameras/realsense@cameras.realsense
   - model/cnn_policy@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
@@ -94,6 +95,7 @@ env:
   train:
     total_num_envs: 1
     override_cfg:
+      camera_configs: ${cameras.realsense}
       is_dummy: True
       target_ee_pose: [0, 0, 0, 0, 0, 0]
       # Dummy placeholders for robot and camera
@@ -103,6 +105,7 @@ env:
   eval:
     total_num_envs: 1
     override_cfg:
+      camera_configs: ${cameras.realsense}
       is_dummy: True
       target_ee_pose: [0, 0, 0, 0, 0, 0]
       # Dummy placeholders for robot and camera

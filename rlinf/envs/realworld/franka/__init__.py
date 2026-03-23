@@ -13,6 +13,12 @@
 # limitations under the License.
 
 
+from .end_effectors.base import EndEffectorType
 from .franka_env import FrankaEnv, FrankaRobotConfig, FrankaRobotState
 
-__all__ = ["FrankaEnv", "FrankaRobotState", "FrankaRobotConfig"]
+__all__ = [
+    "EndEffectorType",
+    "FrankaEnv",
+    "FrankaRobotConfig",
+    "FrankaRobotState",
+]

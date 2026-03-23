@@ -1,6 +1,7 @@
 defaults:
   - env/realworld_peg_insertion@env.train
   - env/realworld_peg_insertion@env.eval
+  - cameras/realsense@cameras.realsense
   - model/cnn_policy@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
@@ -26,7 +27,7 @@ cluster:
       placement: 0 # Local GPU rank in the 4090 node group (n for the n+1 th GPU)
   node_groups:
     - label: "4090" # GPU node group
-      node_ranks: 0 # The ranks of the nodes to be included in this group， change this if your training node is not rank 0
+      node_ranks: 0 # The ranks of the nodes to be included in this group, change this if your training node is not rank 0
     - label: franka
       node_ranks: 1 # Change this if your robot node is not rank 1
       hardware:
@@ -48,7 +49,7 @@ runner:
 
   only_eval: False
   val_check_interval: -1
-  save_interval: -1
+  save_interval: 50
 
   resume_dir: null # Optional: path to a saved checkpoint directory, such as 'checkpoints/global_step_10'. If not None, it will be used to resume training.
   ckpt_path: null  # Optional: path to a .pt checkpoint. If not None, it will be loaded after the model is instantiated (for evaluation).
@@ -117,16 +118,18 @@ algorithm:
 env:
   group_name: "EnvGroup"
 
+  eval:
+    total_num_envs: 1
+
   train:
     ignore_terminations: False
     total_num_envs: 1
     override_cfg:
+      camera_configs: ${cameras.realsense}
       is_dummy: False
       use_dense_reward: False
       target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
-  
-  eval:
-    total_num_envs: 1
+      reset_ee_pose: RESET_EE_POSE # Replace with your reset end-effector pose
 
 rollout:
   group_name: "RolloutGroup"

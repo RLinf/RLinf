@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import time
+import tqdm
 
 import pyrealsense2 as rs
 
@@ -35,8 +36,7 @@ def main():
     )
     pipeline.start(config)
 
-    for step in range(20):
-        print(step)
+    for step in tqdm.tqdm(range(20), desc="Testing RealSense Camera"):
         time.sleep(0.1)
         pipeline.wait_for_frames()
 

@@ -1,0 +1,77 @@
+defaults:
+  - env/realworld_dex_pnp@env.eval
+  - cameras/realsense@cameras.realsense
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    env:
+      node_group: franka
+      placement: 0
+    reward_server:
+      node_group: "4090"
+      placement: 0
+  node_groups:
+    - label: "4090"
+      node_ranks: 0
+    - label: franka
+      node_ranks: 1
+      hardware:
+        type: Franka
+        configs:
+          - robot_ip: ROBOT_IP # Replace with your robot's IP address
+            node_rank: 1
+
+reward_server:
+  checkpoint_path: REWARD_CLASSIFIER_PATH # Replace with path to reward_classifier.pt
+  image_keys: null
+  device: cuda
+  server_name: "ClassifierRewardServer"
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: null
+    project_name: rlinf
+    experiment_name: "collect-dexpnp-demo"
+    logger_backends: ["tensorboard"]
+  num_data_episodes: 20       # target number of successful demos
+  record_task_description: False
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    ignore_terminations: False  # let classifier-triggered termination take effect
+    auto_reset: False           # controlled by collector
+    no_gripper: False
+    use_spacemouse: True
+    glove_config:
+      left_port: /path/to/glove_port # (e.g. /dev/ttyACM0)
+      frequency: 30
+    classifier_reward_wrapper:
+      threshold: 0.75
+    override_cfg:
+      camera_configs: ${cameras.realsense}
+      target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
+      end_effector_type: "ruiyan_hand"
+      end_effector_config:
+        port: /path/to/hand_port # (e.g. /dev/ttyUSB0)
+        baudrate: 460800
+        motor_ids: [1, 2, 3, 4, 5, 6]
+        default_velocity: 2000
+        default_current: 800
+        default_state: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      hand_target_state: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      hand_reset_state: [0.4, 0.0, 0.0, 0.0, 0.0, 0.0]
+      hand_action_scale: 1.0
+      joint_reset_qpos: [0, 0, 0, -1.9, 0, 2, 0]
+      use_dense_reward: False
+      is_dummy: False

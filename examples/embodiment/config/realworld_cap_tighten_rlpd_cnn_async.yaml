@@ -1,6 +1,7 @@
 defaults:
   - env/realworld_cap_tightening@env.train
   - env/realworld_cap_tightening@env.eval
+  - cameras/realsense@cameras.realsense
   - model/cnn_policy@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
@@ -26,7 +27,7 @@ cluster:
       placement: 0 # Local GPU rank in the 4090 node group (n for the n+1 th GPU)
   node_groups:
     - label: "4090" # GPU node group
-      node_ranks: 0 # The ranks of the nodes to be included in this group， change this if your training node is not rank 0
+       node_ranks: 0 # The ranks of the nodes to be included in this group, change this if your training node is not rank
     - label: franka
       node_ranks: 1 # Change this if your robot node is not rank 1
       hardware:
@@ -128,6 +129,7 @@ env:
     max_steps_per_rollout_epoch: 200
     max_episode_steps: 400
     override_cfg:
+      camera_configs: ${cameras.realsense}
       use_dense_reward: False
       target_ee_pose: TARGET_EE_POSE
       enable_gripper_penalty: False
