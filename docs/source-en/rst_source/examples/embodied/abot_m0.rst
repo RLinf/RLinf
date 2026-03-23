@@ -98,7 +98,7 @@ Set both fields in:
 to your local ABot-M0 checkpoint path.
 
 5. Import Smoke Check
-~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
 

@@ -98,7 +98,7 @@ RLinf 支持两种依赖来源方式（见 ``requirements/install.sh`` 实现）
 * ``actor.model.model_path``
 
 5. 导入冒烟验证
-~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
 
