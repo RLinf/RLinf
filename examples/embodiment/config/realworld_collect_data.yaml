@@ -37,11 +37,12 @@ runner:
 env:
   group_name: "EnvGroup"
   eval:
+    no_gripper: False
     ignore_terminations: False
     auto_reset: False
     use_spacemouse: True
     override_cfg:
-      target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
+      target_ee_pose: TARGET_EE_POSE
       success_hold_steps: 1  # define how many consecutive steps the robot must hold the position to succeed
 
   data_collection:

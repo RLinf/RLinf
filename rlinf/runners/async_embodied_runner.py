@@ -270,5 +270,3 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         env_handle.wait()
         rollout_handle.wait()
         actor_handle.wait()
-
-        self._save_checkpoint()
