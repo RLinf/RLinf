@@ -35,3 +35,15 @@ memory.md
 progress.md
 .cursor
 .claude
+pretrained_models/
+*test.yaml
+# Experiment-specific configs (local only, contain hardcoded paths)
+examples/embodiment/config/one_iter_debug_libero10.yaml
+examples/sft/config/libero_sft_value_siglip_gemma3_fail300_collect8192_task0.yaml
+examples/sft/config/libero_sft_value_siglip_gemma3_fail300_collect8192_task1.yaml
+install_for_use_value_model.sh
+
+# Experiment scripts (generated, local only)
+experiments/
+visualize/
+physical-intelligence

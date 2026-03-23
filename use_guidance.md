@@ -1,170 +1,193 @@
 # Classifier-Free Guidance for Embodied RL (Pi06)
 
-本文档介绍 Pi06 pipeline 中 Classifier-Free Guidance (CFG) 的原理、阶段关系和完整使用流程。
+This document describes the principles, stage relationships, and complete usage flow of Classifier-Free Guidance (CFG) in the Pi06 pipeline.
 
 ---
 
-## 1. 原理概述
+## 1. Overview
 
-Pi06 将 **Classifier-Free Guidance (CFG)** 从扩散模型领域引入到具身智能的策略学习中。核心思想：
+Pi06 brings **Classifier-Free Guidance (CFG)** from diffusion models into embodied policy learning. Core idea:
 
-- **训练时**：根据 advantage 标签，为每个样本选择正向（positive）或负向（negative）引导 prompt，以一定概率随机退化为无条件输入，让模型同时学习两种分布
-- **推理时**：同时计算有条件和无条件两个去噪方向，通过插值得到最终动作
+- **During training**: Based on advantage labels, select a positive or negative guidance prompt for each sample; with some probability, randomly degrade to unconditional input so the model learns both distributions
+- **During inference**: Compute both conditional and unconditional denoising directions simultaneously, then interpolate to obtain the final action
 
-去噪公式（推理）：
+Denoising formula (inference):
 
 ```
 v_t = (1 - w) * v_uncond + w * v_cond
 ```
 
-其中 `w = cfgrl_guidance_scale`。`w > 1` 增强引导效果，`w = 1` 纯有条件生成，`w = 0` 纯无条件生成。
+Where `w = cfgrl_guidance_scale`. `w > 1` amplifies guidance effect, `w = 1` pure conditional generation, `w = 0` pure unconditional generation.
 
-这个过程需要一条 **数据处理和模型训练的 pipeline** 来支撑，共 5 个阶段，严格按顺序执行。
+This process requires a **data processing and model training pipeline** with 5 stages, executed strictly in order.
 
 ---
 
-## 2. Pipeline 阶段详解
+## 2. Pipeline Stages
 
 ```
 ┌──────────────────────┐
 │ Stage 1              │
-│ Compute Returns      │  为原始数据集添加 reward / return 列
-│                      │  输入: LeRobot 数据集 (SFT + Rollout)
-│                      │  输出: 数据集原地更新 (parquet + stats.json)
+│ Compute Returns      │  Generate reward / return sidecar for datasets
+│                      │  Input: LeRobot datasets (SFT + Rollout)
+│                      │  Output: meta/returns_{tag}.parquet + stats.json update
 └──────────┬───────────┘
-           │  Stage 2 需要数据集中有 return 列来构造 value 训练目标
+           │  Stage 2 needs return column to construct value training targets
            │
 ┌──────────▼───────────┐
 │ Stage 2              │
-│ Train Value Model    │  训练 critic 模型学习 V(s)
-│                      │  输入: Stage 1 处理后的数据集 + 基础模型
-│                      │  输出: Value model checkpoint (SafeTensors)
+│ Train Value Model    │  Train critic model to learn V(s)
+│                      │  Input: Stage 1 processed datasets + base model
+│                      │  Output: Value model checkpoint (SafeTensors)
 └──────────┬───────────┘
-           │  Stage 3 需要训练好的 value model 来估计 V(s)
+           │  Stage 3 needs trained value model to estimate V(s)
            │
 ┌──────────▼───────────┐
 │ Stage 3              │
-│ Compute Advantages   │  用 V(s) 计算 TD(N) advantage，标记正/负样本
-│                      │  输入: Stage 1 的数据集 + Stage 2 的 value checkpoint
-│                      │  输出: advantages.parquet (每个样本一个 True/False 标签)
+│ Compute Advantages   │  Compute TD(N) advantage using V(s), label positive/negative samples
+│                      │  Input: Stage 1 datasets + Stage 2 value checkpoint
+│                      │  Output: meta/advantages_{tag}.parquet (True/False label per sample)
 └──────────┬───────────┘
-           │  Stage 4 需要 advantage 标签来区分正/负引导
+           │  Stage 4/5 need advantage labels for positive/negative guidance
            │
 ┌──────────▼───────────┐
 │ Stage 4              │
-│ CFG SFT Training     │  用 advantage 标签 + 引导 prompt 训练 CFG 模型
-│                      │  输入: Stage 1 的数据集 + Stage 3 的 advantage 标签 + 基础模型
-│                      │  输出: CFG action model checkpoint (SafeTensors)
+│ CFG SFT Training     │  Train CFG model with advantage labels + guidance prompts
+│                      │  Input: Stage 1 datasets + Stage 3 advantage labels + base model
+│                      │  Output: CFG action model checkpoint (SafeTensors)
 └──────────┬───────────┘
-           │  Stage 5 使用 Stage 4 的 CFG 模型做完整 RL 调试
-           │  (也可独立使用基础模型运行)
+           │  Stage 5 uses Stage 4's CFG model for full RL debugging
+           │  (can also run independently with base model)
 ┌──────────▼───────────┐
-│ Stage 5 (可选)        │
-│ Debug One-Iter       │  完整 pi06 RL 循环调试 (离线模式)
-│                      │  输入: Stage 3 的 advantage 标签 + 基础模型
-│                      │  输出: 训练后的 checkpoint
+│ Stage 5 (optional)   │
+│ Debug One-Iter       │  Full pi06 RL loop debugging (offline mode, with env evaluation)
+│                      │  Input: Stage 3 advantage labels + base model
+│                      │  Output: Trained checkpoint
 └──────────────────────┘
 ```
 
-### 阶段间的数据依赖关系
+### Inter-stage Data Dependencies
 
-| 阶段 | 依赖 | 为什么需要 |
-|------|------|-----------|
-| **Stage 1 → Stage 2** | Stage 2 读取数据集中的 `return` 列作为 value model 的训练目标。return 由 `G_t = r_t + gamma * G_{t+1}` 反向累积而来，代表从当前时刻到 episode 结束的累积收益 |
-| **Stage 2 → Stage 3** | Stage 3 加载 Stage 2 训练出的 value model，对每个状态推理 `V(s_t)` 和 `V(s_{t+N})`，计算 TD(N) advantage: `A = reward_sum + gamma^N * V(s_{t+N}) - V(s_t)`。advantage 大于阈值（默认 top 30%）的样本标记为 `is_success=True`（正向），其余为 `False`（负向） |
-| **Stage 3 → Stage 4** | Stage 4 的 CFG 训练核心就是根据 `is_success` 标签选择引导 prompt。`True` 的样本使用 `[POSITIVE][POSITIVE]\nTask: ...` 作为条件，`False` 的使用 `[NEGATIVE][NEGATIVE]\nTask: ...`。模型通过这种条件化学习区分好/差动作的分布 |
-| **Stage 3 → Stage 5** | Stage 5 是完整 RL 循环的离线调试，同样需要 advantage 标签来驱动 CFG 训练 |
+| Stage | Dependency | Why |
+|-------|-----------|-----|
+| **Stage 1 → Stage 2** | Stage 2 reads the `return` column from `meta/returns_{tag}.parquet` as value model training targets. Returns are computed via backward accumulation `G_t = r_t + gamma * G_{t+1}`, representing cumulative reward from the current timestep to episode end |
+| **Stage 2 → Stage 3** | Stage 3 loads the value model trained in Stage 2, infers `V(s_t)` and `V(s_{t+N})` for each state, and computes TD(N) advantage: `A = reward_sum + gamma^N * V(s_{t+N}) - V(s_t)`. Samples with advantage above threshold (default top 20%) are labeled `advantage=True` (positive), rest as `False` (negative). **All SFT dataset samples are forced to `advantage=True`** |
+| **Stage 3 → Stage 4** | Stage 4's CFG training core selects guidance prompts based on the `advantage` label. `True` samples use `[POSITIVE][POSITIVE]\nTask: ...` as condition, `False` samples use `[NEGATIVE][NEGATIVE]\nTask: ...`. The model learns to distinguish good/bad action distributions through this conditioning |
+| **Stage 3 → Stage 5** | Stage 5 is offline debugging of the full RL loop, also requiring advantage labels to drive CFG training |
 
-### 数据集说明
+### Tag System
 
-Pipeline 使用两种数据集：
+The pipeline uses two types of tags for returns and advantages, flowing through the entire process:
 
-- **SFT 数据集**：人类示范数据，所有 episode 都是成功的。reward = -1/step，最后一步 = 0。return 单调递减
-- **Rollout 数据集**：策略采集的数据，包含成功和失败 episode。失败 episode 的最后一步 reward = `failure_reward`
+#### returns_tag (generated by Stage 1, read by Stage 2/3)
 
-两者在所有阶段中一起处理，Stage 3 会用统一阈值对两个数据集的 advantage 做 True/False 二分。
+- Stage 1 writes `meta/returns_{returns_tag}.parquet`
+- Stage 2 reads the corresponding returns sidecar via `data.tag`
+- Stage 3 reads via `advantage.returns_tag` (falls back to `advantage.tag` if not set)
+
+#### advantage_tag (generated by Stage 3, read by Stage 4/5)
+
+- Stage 3 writes `meta/advantages_{advantage_tag}.parquet`
+- Stage 4/5 reads the corresponding advantage file via `data.tag`
+
+| Stage | Config field | Value | Purpose |
+|-------|-------------|-------|---------|
+| Stage 1 | `data.tag` | returns_tag (e.g. `fail300`) | Writes `meta/returns_{tag}.parquet` |
+| Stage 2 | `data.tag` | returns_tag (same as Stage 1) | Reads `meta/returns_{tag}.parquet` |
+| Stage 3 | `advantage.returns_tag` | returns_tag (same as Stage 1) | Reads `meta/returns_{tag}.parquet` |
+| Stage 3 | `advantage.tag` | advantage_tag (e.g. `fail300_N5_ckpt18000_q20`) | Writes `meta/advantages_{tag}.parquet` |
+| Stage 4 | `data.tag` | advantage_tag (same as Stage 3) | Reads `meta/advantages_{tag}.parquet` |
+| Stage 5 | `data.tag` | advantage_tag (same as Stage 3) | Reads `meta/advantages_{tag}.parquet` |
+
+### Dataset Types
+
+The pipeline uses two types of datasets:
+
+- **SFT dataset**: Human demonstration data where all episodes are successful. reward = -1/step, last step = 0. Returns are monotonically decreasing. In Stage 3, all SFT samples are forced to `advantage=True`
+- **Rollout dataset**: Policy-collected data containing both successful and failed episodes. Failed episodes' last step reward = `failure_reward`. Stage 3 splits positive/negative based on quantile threshold
+
+Both are processed together in all stages.
 
 ---
 
-## 3. 关键文件索引
+## 3. Key File Index
 
-| 文件 | 说明 |
-|------|------|
+| File | Description |
+|------|-------------|
 | **Stage 1** | |
-| `examples/process/compute_returns.py` | 计算 return 的主脚本（Hydra 入口） |
-| `examples/process/run_compute_returns.sh` | Stage 1 启动器 |
-| `examples/process/config/compute_returns_test.yaml` | Stage 1 测试配置 |
+| `examples/process/compute_returns.py` | Main script for computing returns (Hydra entry) |
+| `examples/process/run_compute_returns.sh` | Stage 1 launcher |
+| `examples/process/config/compute_returns.yaml` | Stage 1 base config |
 | **Stage 2** | |
-| `examples/sft/train_value_sft.py` | Value model 训练入口 |
-| `examples/sft/run_value_sft.sh` | Stage 2 启动器 |
-| `examples/sft/config/libero_sft_value_test.yaml` | Stage 2 测试配置 |
-| `rlinf/runners/sft_runner.py` | `SFTRunner` — 训练循环 |
-| `rlinf/workers/value_sft/fsdp_value_sft_worker.py` | `FSDPValueSftWorker` — FSDP 训练 |
-| `rlinf/models/embodiment/value_model/` | Value model（critic head）定义 |
-| `rlinf/datasets/mixture_datasets.py` | Value 训练数据集 |
-| `rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf_value_model.sh` | Value checkpoint 转换脚本 |
+| `examples/sft/train_value_sft.py` | Value model training entry |
+| `examples/sft/run_value_sft.sh` | Stage 2 launcher |
+| `examples/sft/config/libero_sft_value_siglip_gemma3.yaml` | Stage 2 SigLIP-Gemma3 config |
+| `rlinf/runners/sft_runner.py` | `SFTRunner` — training loop |
+| `rlinf/workers/value_sft/fsdp_value_sft_worker.py` | `FSDPValueSftWorker` — FSDP training |
+| `rlinf/models/embodiment/value_model/` | Value model (critic head) definition |
+| `rlinf/datasets/mixture_datasets.py` | Value training datasets |
+| `rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf_value_model.sh` | Value checkpoint conversion script |
 | **Stage 3** | |
-| `examples/process/compute_advantages.py` | 计算 advantage 的主脚本（支持 torchrun） |
-| `examples/process/run_compute_advantages.sh` | Stage 3 启动器 |
-| `examples/process/config/compute_advantages_test.yaml` | Stage 3 测试配置 |
+| `examples/process/compute_advantages.py` | Main script for computing advantages (supports torchrun) |
+| `examples/process/run_compute_advantages.sh` | Stage 3 launcher |
+| `examples/process/config/compute_advantages_siglip_gemma3.yaml` | Stage 3 SigLIP-Gemma3 config |
 | **Stage 4** | |
-| `examples/sft/train_cfg_sft.py` | CFG SFT 训练入口 |
-| `examples/sft/run_cfg_sft.sh` | Stage 4 启动器 |
-| `examples/sft/config/libero_cfg_openpi_test.yaml` | Stage 4 测试配置 |
-| `rlinf/models/embodiment/openpi_cfg/openpi_cfg_action_model.py` | CFG 模型：训练 forward + 推理 sample_actions |
-| `rlinf/datasets/transforms/tokenize_transforms.py` | `TokenizePromptWithGuidance` — 生成正/负 guidance prompt |
-| `rlinf/workers/cfg/fsdp_cfg_worker.py` | FSDP CFG 训练 worker |
-| `rlinf/workers/cfg/utils.py` | `DatasetWithAdvantage` — 将 advantage 标签注入样本 |
-| `rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf.sh` | Action model checkpoint 转换脚本 |
+| `examples/sft/train_cfg_sft.py` | CFG SFT training entry |
+| `examples/sft/run_cfg_sft.sh` | Stage 4 launcher |
+| `examples/sft/config/libero_cfg_openpi.yaml` | Stage 4 base config |
+| `rlinf/models/embodiment/openpi_cfg/openpi_cfg_action_model.py` | CFG model: training forward + inference sample_actions |
+| `rlinf/workers/cfg/fsdp_cfg_worker.py` | FSDP CFG training worker |
+| `rlinf/workers/cfg/utils.py` | `DatasetWithAdvantage` — injects advantage labels into samples |
+| `rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf.sh` | Action model checkpoint conversion script |
 | **Stage 5** | |
-| `examples/embodiment/train_debug_one_iter.py` | Debug one-iter 入口 |
-| `examples/embodiment/run_debug_one_iter.sh` | Stage 5 启动器 |
-| `examples/embodiment/config/one_iter_debug_libero10_test.yaml` | Stage 5 测试配置 |
-| `rlinf/runners/debug_pi06_runner.py` | `DebugPi06Runner` — 离线 RL 训练循环 |
-| `rlinf/workers/actor/debug_fsdp_actor_worker_cfg.py` | `DebugCFGFSDPActor` — 离线 CFG actor |
+| `examples/embodiment/train_debug_one_iter.py` | Debug one-iter entry |
+| `examples/embodiment/run_debug_one_iter.sh` | Stage 5 launcher |
+| `rlinf/runners/debug_pi06_runner.py` | `DebugPi06Runner` — offline RL training loop |
+| `rlinf/workers/actor/debug_fsdp_actor_worker_cfg.py` | `DebugCFGFSDPActor` — offline CFG actor |
 
 ---
 
-## 4. 完整使用流程
+## 4. Complete Usage Flow
 
-### 前置条件
+### Prerequisites
 
 ```bash
-# 1. 激活 openpi 环境
+# 1. Activate openpi environment
 source switch_env openpi
 
-# 2. 确认 GPU 可用
+# 2. Verify GPU availability
 nvidia-smi
 
-# 3. 确认以下文件存在
-#    - 基础模型:          /path/to/pi05_base_pytorch/
-#    - norm_stats.json:   /path/to/pi05_base_pytorch/physical-intelligence/libero/norm_stats.json
+# 3. Verify the following files exist
+#    - Base model:          /path/to/pi05_base_pytorch/
+#    - norm_stats.json:     /path/to/pi05_base_pytorch/physical-intelligence/libero/norm_stats.json
 #    - Paligemma tokenizer: ~/.cache/openpi/big_vision/paligemma_tokenizer.model
 ```
 
 ### Stage 1: Compute Returns
 
-**作用**：为数据集添加 `reward`、`return`、`prompt` 列，更新 `meta/stats.json`。
+**Purpose**: Generate `reward`, `return`, and `prompt` sidecar files for datasets, update `meta/stats.json`.
 
-**配置**（`examples/process/config/compute_returns_test.yaml`）：
+**Config** (`examples/process/config/compute_returns.yaml`):
 ```yaml
 data:
-  datasets:
-    - dataset_path: /path/to/sft_dataset      # SFT 人类示范数据
+  train_data_paths:
+    - dataset_path: /path/to/sft_dataset      # SFT human demonstration data
       type: sft
-      failure_reward: -300.0
-    - dataset_path: /path/to/rollout_dataset   # Rollout 采集数据
+    - dataset_path: /path/to/rollout_dataset   # Rollout collected data
       type: rollout
-      failure_reward: -300.0
-  gamma: 1.0       # 折扣因子，1.0 表示不折扣
+  gamma: 1.0              # Discount factor, 1.0 means no discounting
+  failure_reward: -300.0   # Reward for last step of failed episodes
+  tag: null                # When set, writes to meta/returns_{tag}.parquet
+  num_workers: 128         # Number of parallel workers
 ```
 
-**启动**：
+**Launch**:
 ```bash
-bash examples/process/run_compute_returns.sh compute_returns_test
+bash examples/process/run_compute_returns.sh compute_returns
 ```
 
-**验证**：
+**Verify**:
 ```bash
 python3 -c "
 import json
@@ -176,148 +199,171 @@ print('Stage 1 PASS')
 "
 ```
 
-**产出**：两个数据集的 parquet 文件原地更新（新增 return/reward/prompt 列）。
+**Output**: `meta/returns_{tag}.parquet` (or `meta/returns.parquet` when tag=null) per dataset, containing columns: `episode_index`, `frame_index`, `return`, `reward`, `prompt`. Also updates `meta/stats.json`.
 
 ---
 
 ### Stage 2: Train Value Model
 
-**作用**：训练 critic 模型学习 `V(s)`（状态值函数），用于下一步计算 advantage。
+**Purpose**: Train a critic model to learn `V(s)` (state value function) for advantage computation in the next stage.
 
-**配置**（`examples/sft/config/libero_sft_value_test.yaml`）：
+**Config** (`examples/sft/config/libero_sft_value_siglip_gemma3.yaml`):
 ```yaml
 data:
-  datasets:
-    - dataset_path: /path/to/sft_dataset       # 同 Stage 1
-    - dataset_path: /path/to/rollout_dataset   # 同 Stage 1
-  num_return_bins: 201              # 分类 loss 的 bin 数量
-  normalize_to_minus_one_zero: true # 归一化到 [-1, 0]
+  train_data_paths:
+    - dataset_path: /path/to/sft_dataset
+      type: sft
+      weight: 1.0
+      robot_type: "libero"
+      model_type: "pi05"
+    - dataset_path: /path/to/rollout_dataset
+      type: rollout
+      weight: 1.0
+      robot_type: "libero"
+      model_type: "pi05"
+  tag: null                        # Must match Stage 1's tag to read returns_{tag}.parquet
+  num_return_bins: 201             # Number of bins for categorical loss
+  normalize_to_minus_one_zero: true # Normalize to [-1, 0]
 
 actor:
-  micro_batch_size: 2
-  global_batch_size: 16    # = micro_batch_size × num_gpus (8 GPUs)
+  micro_batch_size: 32
+  global_batch_size: 256   # = micro_batch_size x num_gpus
   model:
-    model_path: /path/to/pi05_base_pytorch
-    freeze_vlm: True       # 冻结 VLM 骨干，只训练 critic head
+    freeze_vlm: false      # Whether to freeze VLM backbone
 ```
 
-**启动**：
+**Launch**:
 ```bash
-bash examples/sft/run_value_sft.sh libero_sft_value_test
+bash examples/sft/run_value_sft.sh libero_sft_value_siglip_gemma3
 ```
 
-**转换 checkpoint**（Stage 3 需要 SafeTensors 格式）：
+**Convert checkpoint** (Stage 3 requires SafeTensors format):
 ```bash
-# 找到训练产出的 checkpoint
-LATEST_LOG=$(ls -td logs/value_sft/libero_sft_value_test-* | head -1)
-CKPT_DIR="${LATEST_LOG}/value_sft/checkpoints/global_step_5/actor/model_state_dict"
+# Find the training output checkpoint
+LATEST_LOG=$(ls -td logs/value_sft/libero_sft_value_siglip_gemma3-* | head -1)
+CKPT_DIR="${LATEST_LOG}/value_sft_siglip_gemma3/checkpoints/global_step_18000/actor/model_state_dict"
 
-# 用 symlink 避免路径中冒号导致 Hydra 解析错误
+# Use symlink to avoid colon in path causing Hydra parsing errors
 ln -sfn "${CKPT_DIR}" /tmp/step2_ckpt
 
-# FSDP .pt → HuggingFace SafeTensors
+# FSDP .pt -> HuggingFace SafeTensors
 bash rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf_value_model.sh \
     convertor.ckpt_path=/tmp/step2_ckpt/full_weights.pt \
     convertor.save_path=/tmp/step2_ckpt
 ```
 
-**验证**：
+**Verify**:
 ```bash
 ls /tmp/step2_ckpt/*.safetensors && echo "Stage 2 PASS"
 ```
 
-**产出**：`/tmp/step2_ckpt/` 目录下的 SafeTensors 文件（即训练好的 value model）。
+**Output**: SafeTensors files in `/tmp/step2_ckpt/` (the trained value model).
 
 ---
 
 ### Stage 3: Compute Advantages
 
-**作用**：用 Stage 2 的 value model 推理 `V(s_t)` 和 `V(s_{t+N})`，计算 advantage 并标记正/负样本。
+**Purpose**: Use Stage 2's value model to infer `V(s_t)` and `V(s_{t+N})`, compute advantages, and label positive/negative samples.
 
-**公式**：
+**Formula**:
 ```
 A_t = normalize(sum of r_{t:t+N}) + gamma^N * V(s_{t+N}) - V(s_t)
-is_success = (A_t >= threshold)     # threshold = top 30% 分位点
+advantage = (A_t >= threshold)     # threshold = top quantile percentile
 ```
 
-**配置**（`examples/process/config/compute_advantages_test.yaml`）：
+**Note**: All SFT dataset samples are forced to `advantage=True` regardless of threshold.
+
+**Config** (`examples/process/config/compute_advantages_siglip_gemma3.yaml`):
 ```yaml
 advantage:
-  value_checkpoint: /path/to/value_model   # ← Stage 2 产出的 /tmp/step2_ckpt
-  positive_quantile: 0.3     # top 30% 标记为 True
-  tag: "test"                # 产出文件名: advantages_test.parquet
+  value_checkpoint: /path/to/value_model   # <- Stage 2 output
+  positive_quantile: 0.2     # Top 20% labeled as True
+  tag: "fail300_N10_ckpt18000_q20"   # Output filename: advantages_{tag}.parquet
+  returns_tag: null           # Reads returns_{returns_tag}.parquet, falls back to tag when null
 
 data:
-  datasets:
+  train_data_paths:
     - dataset_path: /path/to/sft_dataset
+      dataset_type: sft
+      robot_type: "libero"
+      weight: 1.0
     - dataset_path: /path/to/rollout_dataset
+      dataset_type: rollout
+      robot_type: "libero"
+      weight: 1.0
+  advantage_lookahead_step: 10   # N-step lookahead
 ```
 
-**启动**：
+**Launch**:
 ```bash
-# 单 GPU 运行（--nproc 1），通过命令行覆盖 value_checkpoint 路径
-bash examples/process/run_compute_advantages.sh compute_advantages_test \
-    --nproc 1 \
+# Override value_checkpoint path via command line
+bash examples/process/run_compute_advantages.sh compute_advantages_siglip_gemma3 \
     advantage.value_checkpoint=/tmp/step2_ckpt
 ```
 
-**验证**：
+**Verify**:
 ```bash
 python3 -c "
 import pandas as pd
 for p in ['/path/to/sft_dataset', '/path/to/rollout_dataset']:
-    df = pd.read_parquet(f'{p}/meta/advantages_test.parquet')
-    n_pos = df['is_success'].sum()
+    df = pd.read_parquet(f'{p}/meta/advantages_fail300_N10_ckpt18000_q20.parquet')
+    n_pos = df['advantage'].sum()
     print(f'{p}: {len(df)} samples, {n_pos} positive ({100*n_pos/len(df):.1f}%)')
 print('Stage 3 PASS')
 "
 ```
 
-**产出**：每个数据集下 `meta/advantages_test.parquet`，包含列：`advantage` (float)、`is_success` (bool)、`value_current`、`value_next`。
+**Output**: `meta/advantages_{tag}.parquet` per dataset, containing columns: `advantage` (bool), `advantage_continuous` (float), `episode_index`, `frame_index`.
 
 ---
 
 ### Stage 4: CFG SFT Training
 
-**作用**：使用 Stage 3 的 advantage 标签，训练 Classifier-Free Guidance 模型。
+**Purpose**: Train a Classifier-Free Guidance model using Stage 3's advantage labels. Suitable for scenarios without env evaluation (e.g., real robots).
 
-**训练逻辑**：
-1. 加载数据集，读取 `meta/advantages_test.parquet` 中的 `is_success` 标签
-2. 每个样本根据标签选择引导 prompt：
-   - `is_success=True` → `[POSITIVE][POSITIVE]\nTask: {task}`
-   - `is_success=False` → `[NEGATIVE][NEGATIVE]\nTask: {task}`
-3. 以 `unconditional_prob` (默认 0.3) 概率随机忽略引导，使用原始 prompt
-4. 计算 flow matching loss
+**Training logic**:
+1. Load datasets, read `advantage` labels from `meta/advantages_{tag}.parquet`
+2. Select guidance prompt per sample based on label:
+   - `advantage=True` -> `[POSITIVE][POSITIVE]\nTask: {task}`
+   - `advantage=False` -> `[NEGATIVE][NEGATIVE]\nTask: {task}`
+3. With probability `unconditional_prob` (default 0.3), randomly ignore guidance and use the original prompt
+4. Compute flow matching loss
 
-**配置**（`examples/sft/config/libero_cfg_openpi_test.yaml`）：
+**Config** (`examples/sft/config/libero_cfg_openpi.yaml`):
 ```yaml
 data:
-  advantage_tag: "test"         # ← 必须与 Stage 3 的 tag 一致
-  datasets:
+  tag: "fail300_N10_ckpt18000_q20"   # <- Must match Stage 3's advantage.tag
+  train_data_paths:
     - path: /path/to/sft_dataset
+      type: "sft"
+      weight: 1.0
     - path: /path/to/rollout_dataset
+      type: "rollout"
+      weight: 1.0
+  balance_dataset_weights: true
 
 actor:
-  micro_batch_size: 2
-  global_batch_size: 16         # = micro_batch_size × num_gpus
+  micro_batch_size: 64
+  global_batch_size: 512          # = micro_batch_size x num_gpus
   model:
     model_path: /path/to/pi05_base_pytorch
-    model_type: cfg_model       # ← 必须设为 cfg_model
+    model_type: cfg_model         # <- Must be set to cfg_model
     openpi:
-      unconditional_prob: 0.3   # 30% 概率无条件训练
-      cfgrl_guidance_scale: 1.0 # 推理时 guidance 强度
-      guidance_type: positive   # 推理时使用 positive guidance
+      config_name: "pi05_libero"
+      unconditional_prob: 0.3     # 30% probability of unconditional training
+      cfgrl_guidance_scale: 1.0   # Guidance strength at inference
+      guidance_type: positive     # Use positive guidance at inference
 ```
 
-**启动**：
+**Launch**:
 ```bash
-bash examples/sft/run_cfg_sft.sh libero_cfg_openpi_test
+bash examples/sft/run_cfg_sft.sh libero_cfg_openpi
 ```
 
-**转换 checkpoint**：
+**Convert checkpoint**:
 ```bash
-LATEST_LOG=$(ls -td logs/cfg_sft/libero_cfg_openpi_test-* | head -1)
-CKPT_DIR="${LATEST_LOG}/cfg_sft_test/checkpoints/global_step_5/actor/model_state_dict"
+LATEST_LOG=$(ls -td logs/cfg_sft/libero_cfg_openpi-* | head -1)
+CKPT_DIR="${LATEST_LOG}/cfg_sft/checkpoints/global_step_5000/actor/model_state_dict"
 ln -sfn "${CKPT_DIR}" /tmp/step4_ckpt
 
 bash rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf.sh fsdp_model_convertor \
@@ -327,54 +373,61 @@ bash rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf.sh fsdp_model_co
     model.openpi.config_name=pi05_libero
 ```
 
-**验证**：
+**Verify**:
 ```bash
 ls /tmp/step4_ckpt/*.safetensors && echo "Stage 4 PASS"
 ```
 
-**产出**：CFG action model checkpoint（SafeTensors），可用于推理。
+**Output**: CFG action model checkpoint (SafeTensors), ready for inference.
 
 ---
 
-### Stage 5（可选）: Debug One-Iter
+### Stage 5 (optional): Debug One-Iter
 
-**作用**：验证完整 pi06 RL 训练循环——包含 actor 初始化、advantage 数据集加载、离线训练。使用单 GPU 运行。
+**Purpose**: Validate the full pi06 RL training loop — including actor initialization, advantage dataset loading, offline training, and environment evaluation. Suitable for simulation environments (e.g., LIBERO).
 
-**配置**（`examples/embodiment/config/one_iter_debug_libero10_test.yaml`）：
+**Config** (`examples/embodiment/config/one_iter_debug_libero10.yaml`):
 ```yaml
 cluster:
   component_placement:
-    env, rollout, actor: 0-0     # 单 GPU
+    env, rollout, actor: all
 
 data:
-  advantage_tag: "test"          # ← 与 Stage 3/4 一致
-  datasets:
+  tag: "fail300_N10_ckpt18000_q20"    # <- Must match Stage 3's advantage.tag
+  train_data_paths:
+    - path: /path/to/sft_dataset
+      weight: 1.0
     - path: /path/to/rollout_dataset
+      weight: 1.0
+  balance_dataset_weights: true
 
 runner:
-  offline_training_step: 5       # 离线训练步数
-  val_check_interval: -1         # 不做环境评估
+  offline_training_step: 50000   # Number of offline training steps
+  val_check_interval: 2000       # Env evaluation interval (-1 = no evaluation)
+  save_interval: 6000
 
 actor:
-  micro_batch_size: 2
-  global_batch_size: 2           # 单 GPU，所以 = micro_batch_size × 1
+  micro_batch_size: 64
+  global_batch_size: 1024
   model:
+    model_path: /path/to/pi05_base_pytorch
     model_type: cfg_model
     openpi:
-      unconditional_prob: 0.3
+      config_name: "pi05_libero"
+      unconditional_prob: 0.1
       cfgrl_guidance_scale: 1.0
       guidance_type: positive
 ```
 
-**启动**：
+**Launch**:
 ```bash
-bash examples/embodiment/run_debug_one_iter.sh one_iter_debug_libero10_test
+bash examples/embodiment/run_debug_one_iter.sh one_iter_debug_libero10
 ```
 
-**转换 checkpoint**：
+**Convert checkpoint**:
 ```bash
-LATEST_LOG=$(ls -td logs/debug_one_iter_debug_libero10_test-* | head -1)
-CKPT_DIR="${LATEST_LOG}/debug_pi06_test/checkpoints/global_step_5/actor/model_state_dict"
+LATEST_LOG=$(ls -td logs/debug_one_iter_debug_libero10-* | head -1)
+CKPT_DIR="${LATEST_LOG}/debug_pi06_from_lerobot/checkpoints/global_step_6000/actor/model_state_dict"
 ln -sfn "${CKPT_DIR}" /tmp/step5_ckpt
 
 bash rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf.sh fsdp_model_convertor \
@@ -386,33 +439,33 @@ bash rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf.sh fsdp_model_co
 
 ---
 
-### 快速参考：一键顺序执行
+### Quick Reference: Sequential Execution
 
 ```bash
 source switch_env openpi
 
 # Stage 1: Compute Returns
-bash examples/process/run_compute_returns.sh compute_returns_test
+bash examples/process/run_compute_returns.sh compute_returns
 
 # Stage 2: Train Value Model + Convert Checkpoint
-bash examples/sft/run_value_sft.sh libero_sft_value_test
-CKPT=$(ls -td logs/value_sft/libero_sft_value_test-* | head -1)/value_sft/checkpoints/global_step_5/actor/model_state_dict
+bash examples/sft/run_value_sft.sh libero_sft_value_siglip_gemma3
+CKPT=$(ls -td logs/value_sft/libero_sft_value_siglip_gemma3-* | head -1)/value_sft_siglip_gemma3/checkpoints/global_step_18000/actor/model_state_dict
 ln -sfn "$CKPT" /tmp/step2_ckpt
 bash rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf_value_model.sh \
     convertor.ckpt_path=/tmp/step2_ckpt/full_weights.pt convertor.save_path=/tmp/step2_ckpt
 
 # Stage 3: Compute Advantages
-bash examples/process/run_compute_advantages.sh compute_advantages_test \
-    --nproc 1 advantage.value_checkpoint=/tmp/step2_ckpt
+bash examples/process/run_compute_advantages.sh compute_advantages_siglip_gemma3 \
+    advantage.value_checkpoint=/tmp/step2_ckpt
 
 # Stage 4: CFG SFT Training + Convert Checkpoint
-bash examples/sft/run_cfg_sft.sh libero_cfg_openpi_test
-CKPT=$(ls -td logs/cfg_sft/libero_cfg_openpi_test-* | head -1)/cfg_sft_test/checkpoints/global_step_5/actor/model_state_dict
+bash examples/sft/run_cfg_sft.sh libero_cfg_openpi
+CKPT=$(ls -td logs/cfg_sft/libero_cfg_openpi-* | head -1)/cfg_sft/checkpoints/global_step_5000/actor/model_state_dict
 ln -sfn "$CKPT" /tmp/step4_ckpt
 bash rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf.sh fsdp_model_convertor \
     convertor.ckpt_path=/tmp/step4_ckpt/full_weights.pt convertor.save_path=/tmp/step4_ckpt \
     model.model_path=/path/to/pi05_base_pytorch model.openpi.config_name=pi05_libero
 
-# Stage 5 (可选): Debug One-Iter
-bash examples/embodiment/run_debug_one_iter.sh one_iter_debug_libero10_test
+# Stage 5 (optional): Debug One-Iter
+bash examples/embodiment/run_debug_one_iter.sh one_iter_debug_libero10
 ```
