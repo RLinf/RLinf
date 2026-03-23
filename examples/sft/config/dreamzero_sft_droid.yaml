@@ -45,8 +45,9 @@ actor:
   seed: 42
 
   model:
-    model_type: "dreamzero"
+    model_type: "dreamzero_sft"
     precision: bf16
+    is_lora: False
     model_path: "/path/to/DreamZero-AgiBot"
     pretrained_model_path: "/path/to/DreamZero-AgiBot"
     train_cfg_path: "/path/to/dreamzero/experiment_cfg/conf.yaml"

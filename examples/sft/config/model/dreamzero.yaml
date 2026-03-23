@@ -1,0 +1,20 @@
+model_type: "dreamzero_sft"
+
+# Paths - should be overridden in experiment config or via CLI.
+model_path: "/path/to/DreamZero-AgiBot"
+pretrained_model_path: "/path/to/DreamZero-AgiBot"
+train_cfg_path: null
+data_root_key: null
+tokenizer_path: null
+
+precision: "bf16"
+is_lora: False
+lora_rank: 0
+
+# Action settings
+action_dim: 8
+num_action_chunks: 24
+
+# Eval / control hints kept for compatibility with DreamZero configs.
+embodiment_tag: "oxe_droid"
+policy_setup: "panda-droid"

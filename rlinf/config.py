@@ -65,7 +65,7 @@ class SupportedModel(Enum):
     QWEN2_5_VL_SFT = ("qwen2.5_vl", "sft")
     QWEN3_VL_SFT = ("qwen3_vl", "sft")
     QWEN3_VL_MOE_SFT = ("qwen3_vl_moe", "sft")
-    DREAMZERO_SFT = ("dreamzero", "sft")
+    DREAMZERO_SFT = ("dreamzero_sft", "sft")
 
     def __new__(cls, value, category):
         obj = object.__new__(cls)
