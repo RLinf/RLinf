@@ -34,8 +34,7 @@ from rlinf.scheduler import Channel, Cluster, CollectiveGroupOptions, Worker
 from rlinf.utils.comm_mapping import CommMapper
 from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.utils.utils import seed_everything
-from rlinf.utils.utils import get_model_weights_id
+from rlinf.utils.utils import get_model_weights_id, seed_everything
 
 
 class MultiStepRolloutWorker(Worker):

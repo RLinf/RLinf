@@ -1,3 +1,17 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Value Critic Models for Value Prediction.
 
@@ -10,7 +24,7 @@ import logging
 import math
 import os
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -595,9 +609,8 @@ class ValueCriticModel(VLMObservationEncoder):
                 "ValueHead",
             ]
         if self.backbone_variant == "siglip_gemma3":
-            no_split_modules.extend(["Gemma3RMSNorm","Gemma3DecoderLayer"])
+            no_split_modules.extend(["Gemma3RMSNorm", "Gemma3DecoderLayer"])
         return no_split_modules
-            
 
     @property
     def _no_split_names(self) -> list[str]:
@@ -1073,7 +1086,7 @@ class ValueCritic(CriticPreTrainedModel):
         return self.model.predict(observation).predicted_values
 
     @torch.no_grad()
-    def predict_distribution(self, observation) -> Tuple[Tensor, Tensor, Tensor]:
+    def predict_distribution(self, observation) -> tuple[Tensor, Tensor, Tensor]:
         """Predict value distribution. Returns (values, probs, atoms)."""
         out = self.model.predict(observation)
         return out.predicted_values, out.probs, out.atoms
@@ -1198,9 +1211,7 @@ class ValueCritic(CriticPreTrainedModel):
                     new_key = f"model.{k}"
                     remapped[new_key if new_key in model_keys else k] = v
 
-                if len(set(remapped.keys()) & model_keys) > len(
-                    ckpt_keys & model_keys
-                ):
+                if len(set(remapped.keys()) & model_keys) > len(ckpt_keys & model_keys):
                     logger.info("  Remapped checkpoint keys: added 'model.' prefix")
                     state_dict = remapped
 
@@ -1323,17 +1334,13 @@ class ValueCritic(CriticPreTrainedModel):
             if cam_name in input_masks:
                 mask = input_masks[cam_name]
                 if isinstance(mask, (bool, np.bool_)):
-                    image_masks_batch[cam_name] = torch.tensor(
-                        [mask], dtype=torch.bool
-                    )
+                    image_masks_batch[cam_name] = torch.tensor([mask], dtype=torch.bool)
                 elif isinstance(mask, torch.Tensor):
                     image_masks_batch[cam_name] = (
                         mask.unsqueeze(0) if mask.dim() == 0 else mask
                     )
                 else:
-                    image_masks_batch[cam_name] = torch.tensor(
-                        [True], dtype=torch.bool
-                    )
+                    image_masks_batch[cam_name] = torch.tensor([True], dtype=torch.bool)
             else:
                 image_masks_batch[cam_name] = torch.tensor([True], dtype=torch.bool)
 
@@ -1441,17 +1448,13 @@ class ValueCritic(CriticPreTrainedModel):
             if cam_name in input_masks:
                 mask = input_masks[cam_name]
                 if isinstance(mask, (bool, np.bool_)):
-                    image_masks_batch[cam_name] = torch.tensor(
-                        [mask], dtype=torch.bool
-                    )
+                    image_masks_batch[cam_name] = torch.tensor([mask], dtype=torch.bool)
                 elif isinstance(mask, torch.Tensor):
                     image_masks_batch[cam_name] = (
                         mask.unsqueeze(0) if mask.dim() == 0 else mask
                     )
                 else:
-                    image_masks_batch[cam_name] = torch.tensor(
-                        [True], dtype=torch.bool
-                    )
+                    image_masks_batch[cam_name] = torch.tensor([True], dtype=torch.bool)
             else:
                 image_masks_batch[cam_name] = torch.tensor([True], dtype=torch.bool)
 
@@ -1499,15 +1502,11 @@ class ValueCritic(CriticPreTrainedModel):
         return {
             "images": images_on_device,
             "image_masks": masks_on_device,
-            "tokenized_prompt": torch.tensor(
-                [tokens], dtype=torch.long, device=device
-            ),
+            "tokenized_prompt": torch.tensor([tokens], dtype=torch.long, device=device),
             "tokenized_prompt_mask": torch.tensor(
                 [mask], dtype=torch.bool, device=device
             ),
-            "token_ar_mask": torch.tensor(
-                [ar_mask], dtype=torch.long, device=device
-            ),
+            "token_ar_mask": torch.tensor([ar_mask], dtype=torch.long, device=device),
         }
 
     def _prepare_observation_batch(self, inputs_list: list[dict]) -> dict:
@@ -1610,9 +1609,9 @@ class ValueCritic(CriticPreTrainedModel):
                 first = batch_obs[0]
                 if isinstance(first.get("images"), dict):
                     batched_images = {
-                        k: torch.cat(
-                            [obs["images"][k] for obs in batch_obs], dim=0
-                        ).to(device)
+                        k: torch.cat([obs["images"][k] for obs in batch_obs], dim=0).to(
+                            device
+                        )
                         for k in first["images"]
                     }
                     batched_masks = {

@@ -191,10 +191,9 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         except (ImportError, AttributeError):
             pass
 
+        from rlinf.datasets import ValueDataset
         from rlinf.models.embodiment.value_model.data_collator import ValueDataCollator
         from rlinf.models.embodiment.value_model.processing import ValueProcessor
-
-        from rlinf.datasets import ValueDataset
 
         data_cfg = self.cfg.get("data", {})
         model_cfg = self.cfg.actor.model

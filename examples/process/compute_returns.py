@@ -308,9 +308,7 @@ def process_dataset(
                         tbl = fut.result()
                     except Exception as e:
                         failed_file = futures[fut]
-                        raise RuntimeError(
-                            f"Failed to process {failed_file}"
-                        ) from e
+                        raise RuntimeError(f"Failed to process {failed_file}") from e
                     if tbl is not None:
                         result_tables.append(tbl)
                     pbar.update(1)

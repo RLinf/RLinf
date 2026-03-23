@@ -1,3 +1,17 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Data Collator for value model training.
 
@@ -7,7 +21,7 @@ with support for RL-specific fields (returns, target values, etc.).
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 import torch
@@ -19,7 +33,7 @@ logger = logging.getLogger(__name__)
 _COLLATOR_VERIFIED = False
 
 
-def stack_tensors(list_of_dicts: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+def stack_tensors(list_of_dicts: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
     """Stack a list of dictionaries of tensors/values.
 
     Handles numpy booleans and other non-tensor types by converting to tensors first.
@@ -83,7 +97,7 @@ class ValueDataCollator(DataCollatorMixin):
     return_tensors: str = "pt"
     train: bool = True
 
-    def torch_call(self, examples: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+    def torch_call(self, examples: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
         """Collate examples for value model training."""
         images_batch = []
         image_masks_batch = []
@@ -146,7 +160,9 @@ class ValueDataCollator(DataCollatorMixin):
             _COLLATOR_VERIFIED = True
             logger.info("[Collator Verification] First batch prompts:")
             for i in range(min(len(prompts), 4)):
-                logger.info("  [%d] prompt: %s", i, prompts[i] if prompts[i] else "None")
+                logger.info(
+                    "  [%d] prompt: %s", i, prompts[i] if prompts[i] else "None"
+                )
 
         action_mask = torch.tensor(action_mask_list, dtype=torch.float32)
 

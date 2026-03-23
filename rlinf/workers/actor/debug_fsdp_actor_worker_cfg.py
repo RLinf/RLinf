@@ -48,9 +48,9 @@ from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.models import get_model
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.distributed import all_reduce_dict
-from rlinf.utils.utils import clear_memory, seed_dataloader_worker, seed_everything
 from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.utils import seed_dataloader_worker, seed_everything
 from rlinf.workers.cfg.utils import (
     CFGDataLoaderImpl,
     DatasetWithAdvantage,

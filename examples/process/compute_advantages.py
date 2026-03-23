@@ -349,7 +349,9 @@ def _load_returns_sidecar(
     """
     import pyarrow.parquet as pq
 
-    sidecar_filename = f"returns_{returns_tag}.parquet" if returns_tag else "returns.parquet"
+    sidecar_filename = (
+        f"returns_{returns_tag}.parquet" if returns_tag else "returns.parquet"
+    )
     sidecar_path = dataset_path / "meta" / sidecar_filename
     if not sidecar_path.exists():
         return None
@@ -370,9 +372,7 @@ def _load_returns_sidecar(
             "reward": rew_col[mask][order].astype(np.float32),
         }
 
-    logger.info(
-        f"Loaded returns sidecar: {sidecar_path} ({len(sidecar)} episodes)"
-    )
+    logger.info(f"Loaded returns sidecar: {sidecar_path} ({len(sidecar)} episodes)")
     return sidecar
 
 
@@ -494,7 +494,9 @@ def load_lerobot_dataset(
     has_return = "return" in meta.features
     has_sidecar = returns_sidecar is not None
 
-    sidecar_name = f"returns_{returns_tag}.parquet" if returns_tag else "returns.parquet"
+    sidecar_name = (
+        f"returns_{returns_tag}.parquet" if returns_tag else "returns.parquet"
+    )
     if not has_reward and not has_sidecar:
         raise ValueError(
             f"Dataset {dataset_path} missing 'reward' column and no "
@@ -623,7 +625,10 @@ class AdvantageDataset(torch.utils.data.Dataset):
         # Apply CPU transforms in worker (input_transform + prepare_observation_cpu)
         if self.input_transform is not None:
             obs = self.input_transform(
-                {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in obs.items()}
+                {
+                    k: v.copy() if isinstance(v, np.ndarray) else v
+                    for k, v in obs.items()
+                }
             )
         if self.prepare_observation_cpu is not None:
             obs = self.prepare_observation_cpu(obs)
@@ -973,13 +978,15 @@ def compute_advantages_for_dataset(
             _t_infer_total += _t_infer
 
             # Progress reflects output shard only (not extended tail)
-            n_samples = sum(1 for item in batch[1] if int(item["global_idx"]) < shard_end)
+            n_samples = sum(
+                1 for item in batch[1] if int(item["global_idx"]) < shard_end
+            )
             pbar.update(n_samples)
             if rank == 0:
                 pbar.set_postfix(
-                    fetch=f"{_t_fetch*1000:.0f}ms",
-                    infer=f"{_t_infer*1000:.0f}ms",
-                    GPU=f"{_t_infer*100/((_t_fetch+_t_infer) or 1e-9):.0f}%",
+                    fetch=f"{_t_fetch * 1000:.0f}ms",
+                    infer=f"{_t_infer * 1000:.0f}ms",
+                    GPU=f"{_t_infer * 100 / ((_t_fetch + _t_infer) or 1e-9):.0f}%",
                 )
 
             del batch
@@ -992,7 +999,7 @@ def compute_advantages_for_dataset(
         avg_infer = _t_infer_total / batch_count * 1000
         logger.info(
             f"[Timing] avg_fetch={avg_fetch:.0f}ms  avg_infer={avg_infer:.0f}ms  "
-            f"GPU_busy≈{avg_infer*100/((avg_fetch+avg_infer) or 1e-9):.0f}%  "
+            f"GPU_busy≈{avg_infer * 100 / ((avg_fetch + avg_infer) or 1e-9):.0f}%  "
             f"batches={batch_count}"
         )
 
@@ -1158,11 +1165,7 @@ def save_advantages_to_dataset(
         else:
             save_df["advantage"] = save_df["advantage_continuous"] >= threshold
 
-        adv_filename = (
-            f"advantages_{tag}.parquet"
-            if tag
-            else "advantages.parquet"
-        )
+        adv_filename = f"advantages_{tag}.parquet" if tag else "advantages.parquet"
         save_df.to_parquet(meta_dir / adv_filename, index=False)
         if (dataset_type or "").lower() == "sft":
             logger.info(

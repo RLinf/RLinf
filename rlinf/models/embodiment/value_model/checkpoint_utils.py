@@ -80,9 +80,7 @@ def has_tokenizer_files(checkpoint_dir: pathlib.Path) -> bool:
     return any((checkpoint_dir / f).exists() for f in tokenizer_files)
 
 
-def load_norm_stats(
-    checkpoint_dir: pathlib.Path, asset_id: str = "libero"
-) -> dict:
+def load_norm_stats(checkpoint_dir: pathlib.Path, asset_id: str = "libero") -> dict:
     """Load normalization statistics from checkpoint assets.
 
     Args:
@@ -182,7 +180,9 @@ def build_input_transforms(
         from rlinf.datasets.lerobot.franka import FrankaEEInputs
 
         input_transforms.append(InjectDefaultPrompt(default_prompt))
-        input_transforms.append(FrankaEEInputs(mask_padding=True, model_type=model_type))
+        input_transforms.append(
+            FrankaEEInputs(mask_padding=True, model_type=model_type)
+        )
 
     else:
         raise ValueError(f"Unknown environment type: {env_type}")

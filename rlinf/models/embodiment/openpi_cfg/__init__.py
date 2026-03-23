@@ -19,7 +19,6 @@ import torch
 from omegaconf import DictConfig
 
 
-
 def get_model(cfg: DictConfig, torch_dtype=None):
     import glob
 

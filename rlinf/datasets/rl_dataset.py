@@ -211,9 +211,13 @@ class LeRobotRLDataset(LeRobotPyTorchDataset):
         # Load sidecar returns.parquet if it exists (written by compute_returns.py).
         # When loaded, remove return/reward from delta_timestamps so that LeRobot
         # does not try to read these (possibly absent) columns from episode parquets.
-        self._returns_sidecar = None  # {ep_idx: {"return": np.array, "reward": np.array}}
+        self._returns_sidecar = (
+            None  # {ep_idx: {"return": np.array, "reward": np.array}}
+        )
         if self.is_local:
-            sidecar_filename = f"returns_{self.tag}.parquet" if self.tag else "returns.parquet"
+            sidecar_filename = (
+                f"returns_{self.tag}.parquet" if self.tag else "returns.parquet"
+            )
             sidecar_path = Path(self.repo_id).resolve() / "meta" / sidecar_filename
             if sidecar_path.exists():
                 self._returns_sidecar = self._load_returns_sidecar(sidecar_path)
