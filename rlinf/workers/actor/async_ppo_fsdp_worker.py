@@ -128,7 +128,8 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                 )
                 model_kwargs["top_k"] = self.cfg.algorithm.sampling_params.top_k
             elif (
-                SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.GR00T
+                SupportedModel(self.cfg.actor.model.model_type)
+                in [SupportedModel.GR00T, SupportedModel.ABOT_M0]
             ):
                 model_kwargs["prev_logprobs"] = micro_batch["prev_logprobs"]
 
@@ -262,7 +263,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                         model_kwargs["top_k"] = self.cfg.algorithm.sampling_params.top_k
                     elif (
                         SupportedModel(self.cfg.actor.model.model_type)
-                        == SupportedModel.GR00T
+                        in [SupportedModel.GR00T, SupportedModel.ABOT_M0]
                     ):
                         model_kwargs["prev_logprobs"] = old_logprobs
 
@@ -280,7 +281,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
 
                     if (
                         SupportedModel(self.cfg.actor.model.model_type)
-                        == SupportedModel.GR00T
+                        in [SupportedModel.GR00T, SupportedModel.ABOT_M0]
                     ):
                         old_logprobs = out["prev_logprobs"]
 

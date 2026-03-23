@@ -1392,7 +1392,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         kwargs["top_k"] = self.cfg.algorithm.sampling_params.top_k
                     elif (
                         SupportedModel(self.cfg.actor.model.model_type)
-                        == SupportedModel.GR00T
+                        in [SupportedModel.GR00T, SupportedModel.ABOT_M0]
                     ):
                         kwargs["prev_logprobs"] = prev_logprobs
 
@@ -1412,7 +1412,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
                     if (
                         SupportedModel(self.cfg.actor.model.model_type)
-                        == SupportedModel.GR00T
+                        in [SupportedModel.GR00T, SupportedModel.ABOT_M0]
                     ):
                         prev_logprobs = output_dict["prev_logprobs"]
 

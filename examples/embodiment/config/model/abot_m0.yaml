@@ -1,0 +1,29 @@
+# ABot-M0 model defaults for RLinf embodied RL training
+model_type: "abot_m0"
+
+model_path: "/path/to/abot_m0_checkpoint"
+
+# Model precision and loading settings
+precision: "bf16"
+trust_remote_code: true
+is_lora: false
+lora_rank: 64
+
+# Action and policy settings
+action_dim: 7
+num_action_chunks: 5
+denoising_steps: 10
+image_size: [224, 224]
+qwen_max_length: 256
+
+# Value head
+add_value_head: true
+
+# RL head configuration
+rl_head_config:
+  joint_logprob: false
+  noise_method: "flow_sde"
+  noise_level: 0.5
+  ignore_last: true
+  add_value_head: ${actor.model.add_value_head}
+  t_eps: 5.0e-2
