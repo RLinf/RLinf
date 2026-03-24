@@ -25,10 +25,16 @@ class VideoPlayer:
     def __init__(self, enable: bool = True):
         self.queue = queue.Queue()
         self.is_running = False
+        self._ready = threading.Event()
         if not enable:
+            self._ready.set()
             return
         self._run_thread = threading.Thread(target=self._play, daemon=True)
         self._run_thread.start()
+
+    def wait_ready(self, timeout: float = 15.0) -> bool:
+        """Block until the display window is open (or timeout)."""
+        return self._ready.wait(timeout=timeout)
 
     def put_frame(self, frame):
         if self.is_running:
@@ -74,6 +80,7 @@ class VideoPlayer:
                 return
 
         self.is_running = True
+        self._ready.set()
         try:
             while True:
                 img_array = self.queue.get()  # retrieve an image from the queue

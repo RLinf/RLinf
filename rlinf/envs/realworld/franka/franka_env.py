@@ -184,6 +184,7 @@ class FrankaEnv(gym.Env):
         self._open_cameras()
         # Video player for displaying camera frames
         self.camera_player = VideoPlayer(self.config.enable_camera_player)
+        self.camera_player.wait_ready()
 
     def _setup_hardware(self):
         from .franka_controller import FrankaController
@@ -524,11 +525,23 @@ class FrankaEnv(gym.Env):
         return camera_infos
 
     def _open_cameras(self):
-        self._cameras: list[Camera] = []
+        self._close_cameras()
         if not self._camera_infos:
             return
         for info in self._camera_infos:
-            camera = Camera(info)
+            for attempt in range(6):
+                try:
+                    camera = Camera(info)
+                    break
+                except RuntimeError as e:
+                    if attempt < 5:
+                        self._logger.warning(
+                            f"Camera {info.name} open failed ({e}), retrying in 3s "
+                            f"({attempt + 1}/6)..."
+                        )
+                        time.sleep(3)
+                    else:
+                        raise
             if not self.config.is_dummy:
                 camera.open()
             self._cameras.append(camera)
@@ -541,7 +554,7 @@ class FrankaEnv(gym.Env):
         super().close()
 
     def _close_cameras(self):
-        for camera in self._cameras:
+        for camera in getattr(self, "_cameras", []):
             camera.close()
         self._cameras = []
 
@@ -606,7 +619,7 @@ class FrankaEnv(gym.Env):
                     f"Camera {camera._camera_info.name} is not producing frames. Wait 5 seconds and try again."
                 )
                 time.sleep(5)
-                camera.close()
+                self._close_cameras()
                 self._open_cameras()
                 return self._get_camera_frames()
 
