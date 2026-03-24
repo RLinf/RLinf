@@ -48,9 +48,7 @@ class LeRobotIsaacLabStackCubeDataConfig(DataConfigFactory):
         )
 
         data_transforms = _transforms.Group(
-            inputs=[
-                isaaclab_policy.IsaacLabInputs(model_type=model_config.model_type)
-            ],
+            inputs=[isaaclab_policy.IsaacLabInputs(model_type=model_config.model_type)],
             outputs=[isaaclab_policy.IsaacLabOutputs()],
         )
 
