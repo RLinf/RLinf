@@ -73,8 +73,8 @@ class AgentLightningEvalRunner:
         )
 
     def init_rollout_workers(self):
-        logging.info("[AgentLightningEvalRunner] init_rollout_workers: calling rollout.init_worker(start_http_server=True)")
-        rollout_handle = self.rollout.init_worker(start_http_server=True)
+        logging.info("[AgentLightningEvalRunner] init_rollout_workers: calling rollout.init_worker()")
+        rollout_handle = self.rollout.init_worker()
         rollout_handle.wait()
         logging.info("[AgentLightningEvalRunner] rollout.init_worker finished")
 

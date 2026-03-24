@@ -7,6 +7,7 @@ from typing import List, Literal, Optional
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from starlette.requests import Request
 from omegaconf import DictConfig
 from sglang.srt.server_args import ServerArgs
 from sglang.srt.entrypoints.openai.protocol import ChatCompletionRequest
@@ -41,12 +42,29 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
         self._http_server_task = None
         self._http_app = None
         self._openai_serving_chat = None
+        # Optional: rollout.sglang.server.{http_access_log,http_uvicorn_log_level,http_request_log}
+        self._http_access_log = bool(sv.get("http_access_log", False))
+        self._http_uvicorn_log_level = str(sv.get("http_uvicorn_log_level", "warning")).lower()
+        self._http_request_log = bool(sv.get("http_request_log", False))
 
         if self._enable_http_server:
             self._setup_http_routes()
 
     def _setup_http_routes(self):
         app = FastAPI(title="SGLangWorker-HTTP", version="1.0.0")
+
+        if self._http_request_log:
+
+            @app.middleware("http")
+            async def _log_requests(request: Request, call_next):
+                t0 = time.perf_counter()
+                response = await call_next(request)
+                ms = (time.perf_counter() - t0) * 1000
+                code = getattr(response, "status_code", "?")
+                self.log_info(
+                    f"[SGLangHTTP] {request.method} {request.url.path} -> {code} {ms:.1f}ms"
+                )
+                return response
 
         @app.post("/v1/chat/completions")
         async def handle_chat_completion(request: ChatCompletionRequest):
@@ -70,8 +88,8 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
                 app,
                 host=self._http_server_host,
                 port=self._http_server_port,
-                log_level="warning",
-                access_log=False,
+                log_level=self._http_uvicorn_log_level,
+                access_log=self._http_access_log,
             )
         )
 
@@ -214,13 +232,15 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
         self._http_server_task = None
         self.log_info("HTTP server stopped")
 
-    async def init_worker(self, start_http_server: bool = False):
+    async def init_worker(self, *args, **kwargs):
+        # Legacy callers (e.g. SGLangRouterWorker) may pass start_http_server=True; HTTP is
+        # always started when _enable_http_server — no separate gating.
+        kwargs.pop("start_http_server", None)
         await super().init_worker()
-        
+
         if self._enable_http_server:
             self._init_openai_serving()
-            if start_http_server:
-                self.http_server_start()
+            self.http_server_start()
 
     def get_server_address(self) -> str:
         if not self._enable_http_server:

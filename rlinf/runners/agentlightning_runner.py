@@ -133,6 +133,9 @@ class AgentLightningRLinfRunner(ReasoningRunner):
     def init_rollout_workers(self):
         # Run HF->MG conversion before starting rollout so main process does not read the same
         # HF path while 4 SGLang Server workers are loading from it (avoids I/O contention / hang).
+        rollout_handle = self.rollout.init_worker()
+        rollout_handle.wait()
+        
         if self.cfg.runner.resume_dir is None:
             logging.info("[AgentLightningRLinfRunner] Training from scratch")
             if (
@@ -147,9 +150,6 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                     self.cfg.actor.megatron.ckpt_convertor.hf_model_path,
                     self.cfg.actor.megatron.ckpt_convertor,
                 )
-
-        rollout_handle = self.rollout.init_worker(start_http_server=True)
-        rollout_handle.wait()
 
         if self.use_pre_process_policy:
             self.rollout.offload_engine().wait()

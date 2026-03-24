@@ -51,7 +51,6 @@ def run_rlinf_training(
         cfg.rollout.rollout_backend == "sglang"
         and cfg.rollout.sglang.serving_mode == "router_server"
     ):
-        # router_server：SGLangServerWorker + SGLangRouterWorker（后者注入 server_group，兼作 rollout，少一个 Ray actor）。
         server_group = SGLangServerWorker.create_group(cfg, component_placement).launch(
             cluster,
             name=cfg.rollout.group_name,

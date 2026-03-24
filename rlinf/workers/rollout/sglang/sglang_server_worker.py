@@ -26,13 +26,11 @@ def _build_server_args_from_config(
     base_port: int,
     weight_reload: Literal["sync", "cpu", None] = "sync",
 ) -> ServerArgs:
-    """根据 config 和 placement 构造 ServerArgs，供 __init__ 与 create_group 复用。含 EP/DPA 参数。"""
     from rlinf.config import torch_dtype_from_precision
 
     rollout_cfg = cfg.rollout
     port = base_port + rank_or_idx
     use_cudagraph = not rollout_cfg.get("enforce_eager", True)
-    # 与 SGLangWorker._init_engine 一致：sync 且未 validate 时用 dummy，否则 auto
     if weight_reload == "sync":
         load_format = (
             "auto"
@@ -55,6 +53,11 @@ def _build_server_args_from_config(
 
     sglang = getattr(rollout_cfg, "sglang", {})
     get_sglang = getattr(sglang, "get", lambda k, d=None: d)
+    ep_size = int(get_sglang("ep_size", 1))
+    moe_a2a_backend = str(get_sglang("moe_a2a_backend", "none"))
+    moe_runner_backend = str(get_sglang("moe_runner_backend", "auto"))
+    enable_dp_attention = bool(get_sglang("enable_dp_attention", False))
+    deepep_mode = str(get_sglang("deepep_mode", "auto"))
 
     return ServerArgs(
         model_path=rollout_cfg.model.model_path,
@@ -76,16 +79,15 @@ def _build_server_args_from_config(
         max_running_requests=rollout_cfg.max_running_requests,
         dp_size=1,
         tool_call_parser=rollout_cfg.sglang.get("tool_call_parser", None),
-        ep_size=get_sglang("ep_size", 1),
-        moe_a2a_backend=get_sglang("moe_a2a_backend", "none"),
-        moe_runner_backend=get_sglang("moe_runner_backend", "auto"),
-        deepep_mode=get_sglang("deepep_mode", "auto"),
+        ep_size=ep_size,
+        moe_a2a_backend=moe_a2a_backend,
+        moe_runner_backend=moe_runner_backend,
+        enable_dp_attention=enable_dp_attention,
+        deepep_mode=deepep_mode,
     )
 
 
 class SGLangServerWorker(Worker):
-    """与 SGLangWorker 一致：接受 (config, placement [, weight_reload, config_rollout])，使用基类 create_group(cfg, placement)。"""
-
     def __init__(
         self,
         config: DictConfig,
@@ -115,7 +117,6 @@ class SGLangServerWorker(Worker):
 
     @staticmethod
     def _is_port_in_use(host: str, port: int) -> bool:
-        """检测端口是否已被占用"""
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(1)
@@ -138,7 +139,6 @@ class SGLangServerWorker(Worker):
 
             launch_server(server_args, rollout_return_logprobs=self._return_logprobs)
 
-        # daemon=False：launch_server 内会 spawn detokenizer/scheduler 子进程
         proc = mp.Process(target=_run, daemon=False)
         proc.start()
         self._server_proc = proc
@@ -150,7 +150,6 @@ class SGLangServerWorker(Worker):
                 import ray.util
                 host = ray.util.get_node_ip_address()
             except Exception:
-                # 回退到本地回环地址
                 host = "127.0.0.1"
         return f"{host}:{self._server_args.port}"
 
@@ -233,7 +232,6 @@ class SGLangServerWorker(Worker):
         resp.raise_for_status()
 
     def _wait_server_ready(self, timeout: float = 180, interval: float = 2) -> None:
-        """轮询直到 SGLang HTTP 开始监听，再返回。避免 server_start() 后立刻调 init_rlinf_worker 出现 Connection refused。"""
         url = self._base_url()
         deadline = time.monotonic() + timeout
         last_err = None
@@ -249,11 +247,9 @@ class SGLangServerWorker(Worker):
             f"SGLang server at {url} did not become ready within {timeout}s"
         ) from last_err
 
-    def init_worker(self, start_http_server: bool = False, ready_channels=None):
-        self._ready_channels = ready_channels  # list[Channel] 或 None
-        if start_http_server:
-            self.server_start()
-            self._wait_server_ready()
+    def init_worker(self):
+        self.server_start()
+        self._wait_server_ready()
         if self._placement is not None and self._cfg is not None:
             self.init_rlinf_worker_http(
                 parent_address=self.worker_address,
