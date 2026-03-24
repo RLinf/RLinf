@@ -35,6 +35,9 @@ from rlinf.models.embodiment.openpi.dataconfig.calvin_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.franka_co_training_dataconfig import (
     LeRobotFrankaEEDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.franka_dagger_dataconfig import (
+    LeRobotFrankaDaggerDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.franka_dataconfig import (
     CustomDataConfig,
 )
@@ -306,6 +309,17 @@ _CONFIGS = [
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
         num_train_steps=30_000,
+    ),
+    TrainConfig(
+        name="pi0_franka_dagger",
+        model=pi0_config.Pi0Config(),
+        data=LeRobotFrankaDaggerDataConfig(
+            repo_id="franka_dagger",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base/assets"),
+            extra_delta_transform=False,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_base",
     ),
     TrainConfig(
         name="pi0_custom",
