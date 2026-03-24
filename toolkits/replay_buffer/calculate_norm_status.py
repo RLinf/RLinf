@@ -14,8 +14,35 @@
 
 import os
 import pathlib
-
+import sys
 import numpy as np
+
+
+def _extract_cli_flag_value(args: list[str], flag: str) -> str | None:
+    """Extract a CLI flag value from raw argv before importing openpi modules."""
+    for index, arg in enumerate(args):
+        if arg == flag and index + 1 < len(args):
+            return args[index + 1]
+        if arg.startswith(f"{flag}="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def _set_hf_lerobot_home(dataset_dir: str) -> pathlib.Path:
+    dataset_path = pathlib.Path(dataset_dir).expanduser().resolve()
+    os.environ["HF_LEROBOT_HOME"] = str(dataset_path.parent)
+    return dataset_path
+
+
+# NOTE: openpi may read HF_LEROBOT_HOME during import/module initialization.
+# Parse --dataset-dir from raw argv so local datasets work without exporting the
+# env var manually in the shell.
+_raw_dataset_dir = _extract_cli_flag_value(sys.argv[1:], "--dataset-dir")
+if _raw_dataset_dir is None:
+    _raw_dataset_dir = _extract_cli_flag_value(sys.argv[1:], "--dataset_dir")
+if _raw_dataset_dir:
+    _set_hf_lerobot_home(_raw_dataset_dir)
+
 import openpi.models.model as _model
 import openpi.shared.normalize as normalize
 import openpi.training.data_loader as _data_loader
@@ -107,16 +134,17 @@ def create_rlds_dataloader(
 
 def main(
     config_name: str,
+    model_path: str | None = None,
     dataset_dir: str | None = None,
     repo_id: str | None = None,
-    model_path: str | None = None,
     batch_size: int | None = None,
     max_frames: int | None = None,
 ):
     data_kwargs = {}
     if dataset_dir is not None:
-        dataset_path = pathlib.Path(dataset_dir).expanduser().resolve()
-        os.environ["HF_LEROBOT_HOME"] = str(dataset_path.parent)
+        dataset_path = _set_hf_lerobot_home(dataset_dir)
+        if not dataset_path.exists():
+            raise FileNotFoundError(f"Dataset directory does not exist: {dataset_path}")
         data_kwargs["repo_id"] = repo_id or dataset_path.name
     elif repo_id is not None:
         data_kwargs["repo_id"] = repo_id

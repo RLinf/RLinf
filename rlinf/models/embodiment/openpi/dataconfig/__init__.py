@@ -312,7 +312,7 @@ _CONFIGS = [
     ),
     TrainConfig(
         name="pi0_franka_dagger",
-        model=pi0_config.Pi0Config(),
+        model=pi0_config.Pi0Config(action_horizon=10),
         data=LeRobotFrankaDaggerDataConfig(
             repo_id="franka_dagger",
             base_config=DataConfig(prompt_from_task=True),
