@@ -18,6 +18,7 @@ Run profile script for embodied profiling: runs a few steps and collects profile
 """
 
 import logging
+import time
 
 import hydra
 import torch.multiprocessing as mp
@@ -29,7 +30,7 @@ from toolkits.auto_placement.util import (
     has_profile_data,
     has_target_env_num,
     log_env_num_instavg_to_tensorboard,
-    modify_cfg_for_profiling_with_group,
+    modify_cfg_for_profiling,
     update_yaml_with_profile_data,
 )
 
@@ -62,13 +63,14 @@ def main(cfg) -> None:
     elif not has_profile_data(cfg):
         logger.info("No profile data found in config. Starting profiling...")
         env_num_test_list = [
-            cfg.data.env_num,
-            cfg.data.env_num,
-            cfg.data.env_num,
+            cfg.data.env_num ,
+            cfg.data.env_num * 2,
+            cfg.data.env_num * 3,
+            cfg.data.env_num * 4,
         ]
 
-        for run_idx, env_num in enumerate(env_num_test_list):
-            modify_cfg_for_profiling_with_group(cfg, env_num, run_idx)
+        for env_num in env_num_test_list:
+            modify_cfg_for_profiling(cfg, env_num)
 
             runner, actor_group, rollout_group, env_group, component_placement = train(
                 cfg
@@ -78,13 +80,15 @@ def main(cfg) -> None:
 
             log_env_num_instavg_to_tensorboard(cfg, env_num_per_instance)
 
-            # actor_group._close()
-            # rollout_group._close()
-            # env_group._close()
-            # runner.env_channel._channel_worker_group._close()
-            # runner.rollout_channel._channel_worker_group._close()
-            # runner.actor_channel._channel_worker_group._close()
+            actor_group._close()
+            rollout_group._close()
+            env_group._close()
+            runner.env_channel._channel_worker_group._close()
+            runner.rollout_channel._channel_worker_group._close()
+            runner.actor_channel._channel_worker_group._close()
 
+        # Allow TensorBoard events to flush to disk before extraction
+        time.sleep(2)
         profile_data = extract_from_tensorboard()
         update_yaml_with_profile_data(profile_data)
 

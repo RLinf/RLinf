@@ -166,7 +166,7 @@ def modify_cfg_for_profiling(cfg, env_num):
         cfg.env.train.total_num_envs = env_num
         cfg.runner.max_steps = (
             OmegaConf.select(
-                cfg, "data.step_per_env", default=1
+                cfg, "data.step_per_env", default=3
             )  # Run the specified number of steps for profiling
         )
         cfg.runner.logger.per_worker_log = True
@@ -175,10 +175,13 @@ def modify_cfg_for_profiling(cfg, env_num):
 def modify_cfg_for_profiling_with_group(cfg, env_num, run_idx: int) -> None:
     """Profiling config + unique group names to avoid Ray actor name collisions."""
     modify_cfg_for_profiling(cfg, env_num)
+    base_actor_group_name = cfg.actor.group_name
+    base_rollout_group_name = cfg.rollout.group_name
+    base_env_group_name = cfg.env.group_name
     with open_dict(cfg):
-        cfg.actor.group_name = f"{cfg.actor.group_name}_env{env_num}_run{run_idx}"
-        cfg.rollout.group_name = f"{cfg.rollout.group_name}_env{env_num}_run{run_idx}"
-        cfg.env.group_name = f"{cfg.env.group_name}_env{env_num}_run{run_idx}"
+        cfg.actor.group_name = f"{base_actor_group_name}_env{env_num}_run{run_idx}"
+        cfg.rollout.group_name = f"{base_rollout_group_name}_env{env_num}_run{run_idx}"
+        cfg.env.group_name = f"{base_env_group_name}_env{env_num}_run{run_idx}"
 
 
 def update_yaml_with_profile_data(profile_data):
@@ -281,7 +284,10 @@ def extract_from_tensorboard():
     rollout_profile_data: dict[int, float] = {}
     actor_costs_all: list[float] = []
 
-    def _vals_in_window(events, t_start, t_end):
+    def _vals_in_window(events, t_start, t_end, inclusive_end: bool = False):
+        """Return values with timestamps in (t_start, t_end] if inclusive_end else [t_start, t_end)."""
+        if inclusive_end:
+            return [v for t, v in events if t_start < t <= t_end]
         return [v for t, v in events if t_start <= t < t_end]
 
     for run_dir in run_dirs:
@@ -294,12 +300,20 @@ def extract_from_tensorboard():
         rollout_cost_events = data.get("time/rollout/predict", [])
         actor_cost_events = data.get("time/actor/run_training", [])
 
-        for i, (t_start, env_num_val) in enumerate(env_events):
-            t_end = env_events[i + 1][0] if i + 1 < len(env_events) else float("inf")
+        # Profile events are logged AFTER each run. So for event i at t_i, run i's metrics
+        # have timestamps in (t_{i-1}, t_i]. Use inclusive_end to capture the last run.
+        for i, (t_end, env_num_val) in enumerate(env_events):
+            t_start = env_events[i - 1][0] if i > 0 else 0.0
             env_num = int(env_num_val)
-            env_vals = _vals_in_window(env_cost_events, t_start, t_end)
-            rollout_vals = _vals_in_window(rollout_cost_events, t_start, t_end)
-            actor_vals = _vals_in_window(actor_cost_events, t_start, t_end)
+            env_vals = _vals_in_window(
+                env_cost_events, t_start, t_end, inclusive_end=True
+            )
+            rollout_vals = _vals_in_window(
+                rollout_cost_events, t_start, t_end, inclusive_end=True
+            )
+            actor_vals = _vals_in_window(
+                actor_cost_events, t_start, t_end, inclusive_end=True
+            )
 
             if env_vals:
                 env_profile_data[env_num] = sum(env_vals) / len(env_vals)
