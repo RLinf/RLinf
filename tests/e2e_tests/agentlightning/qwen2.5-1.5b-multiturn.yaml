@@ -36,7 +36,7 @@ runner:
 
 algorithm:
   group_size: 4
-  n_minibatches: 4
+  n_minibatches: 1
   training_batch_size_per_gpu: 1
   rollout_batch_size_per_gpu: null 
 

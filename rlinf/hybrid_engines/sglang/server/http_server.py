@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import multiprocessing
 from types import SimpleNamespace
 from typing import Any, Callable, List, Optional
@@ -62,9 +63,6 @@ def _apply_patch() -> None:
         return await _orig_chat_handle_request(self, request, raw_request)
 
     _serving_chat.OpenAIServingChat.handle_request = _handle_request_force_logprobs
-
-    # Patch chat response to include response_token_ids for AgentLightning (router_server mode).
-    # Stock SGLang only returns standard OpenAI fields; without this, client gets no token_ids -> response_lengths all 0.
     _orig_build_chat_response = _serving_chat.OpenAIServingChat._build_chat_response
 
     def _build_chat_response_with_token_ids(
@@ -83,6 +81,47 @@ def _apply_patch() -> None:
         return ORJSONResponse(content=out)
 
     _serving_chat.OpenAIServingChat._build_chat_response = _build_chat_response_with_token_ids
+
+    _orig_handle_non_streaming = (
+        _serving_chat.OpenAIServingChat._handle_non_streaming_request
+    )
+
+    async def _handle_non_streaming_request_with_prompt_token_ids(
+        self: Any,
+        adapted_request: Any,
+        request: Any,
+        raw_request: Any,
+    ) -> Any:
+        prompt_token_ids = None
+        if hasattr(adapted_request, "input_ids") and adapted_request.input_ids is not None:
+            pt = adapted_request.input_ids
+            prompt_token_ids = (
+                pt.tolist() if hasattr(pt, "tolist") else list(pt)
+            )
+        response = await _orig_handle_non_streaming(
+            self, adapted_request, request, raw_request
+        )
+        if prompt_token_ids is None:
+            return response
+        if isinstance(response, ORJSONResponse):
+            try:
+                payload = json.loads(response.body.decode("utf-8"))
+            except (AttributeError, TypeError, json.JSONDecodeError, UnicodeDecodeError):
+                return response
+            payload["prompt_token_ids"] = prompt_token_ids
+            return ORJSONResponse(content=payload)
+        if hasattr(response, "model_dump"):
+            try:
+                out = response.model_dump(exclude_none=True)
+                out["prompt_token_ids"] = prompt_token_ids
+                return ORJSONResponse(content=out)
+            except Exception:  # noqa: BLE001
+                return response
+        return response
+
+    _serving_chat.OpenAIServingChat._handle_non_streaming_request = (
+        _handle_non_streaming_request_with_prompt_token_ids
+    )
 
     @app.post("/sync_hf_weight")
     async def sync_hf_weight() -> Any:  # type: ignore[override]

@@ -30,11 +30,6 @@ def _get(obj: Any, key: str, default: Any = None) -> Any:
 
 
 class SGLangRouterWorker(Worker):
-    """从 rollout.sglang.router 读监听配置。
-
-    若 ``create_group(..., server_group=...)`` 传入 backend server 组，则同时承担
-    AgentLightning rollout（经 router HTTP /generate），与原先独立 composite 行为一致。
-    """
 
     def __init__(
         self,
@@ -55,7 +50,7 @@ class SGLangRouterWorker(Worker):
             self._config = {
                 "host": _get(sglang_router, "host", "0.0.0.0"),
                 "port": int(_get(sglang_router, "port", 30000)),
-                "policy": _get(sglang_router, "policy", "cache_aware"),
+                "policy": _get(sglang_router, "policy", "round_robin"),
             }
             if _get(sglang_router, "advertised_host"):
                 self._config["advertised_host"] = _get(sglang_router, "advertised_host")
@@ -340,12 +335,11 @@ class SGLangRouterWorker(Worker):
                 )
             )
 
-    def init_worker(self, start_http_server: bool = True, **kwargs):
-        """无 server_group 时为空操作；router_server 时先起 server，再 fire-and-forget 起 router。"""
-        del start_http_server, kwargs
+    def init_worker(self, **kwargs):
+        kwargs.pop("start_http_server", None)
         if self._server_group is None:
             return
-        self._server_group.init_worker(start_http_server=True).wait()
+        self._server_group.init_worker().wait()
         addrs = self._server_group.get_server_address().wait()
         worker_urls = [
             a if str(a).startswith("http") else "http://" + a

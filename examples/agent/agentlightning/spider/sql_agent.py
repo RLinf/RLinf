@@ -426,7 +426,7 @@ class LitSQLAgent(agl.LitAgent[Dict[str, Any]]):
     ) -> None:
         super().__init__(trained_agents=trained_agents)
         self.val_temperature = val_temperature
-        self.spider_dir = os.environ.get("VERL_SPIDER_DATA_DIR", "data")
+        self.spider_dir = os.environ.get("RLINF_SPIDER_DATA_DIR", "data")
         self.max_turns = max_turns
         self.table_info_truncate = table_info_truncate
         self.execution_truncate = execution_truncate
@@ -522,7 +522,7 @@ class LitSQLAgent(agl.LitAgent[Dict[str, Any]]):
 
 
 def debug_sql_agent():
-    spider_dev_data_path = os.path.join(os.environ.get("VERL_SPIDER_DATA_DIR", "data"), "dev.parquet")
+    spider_dev_data_path = os.path.join(os.environ.get("RLINF_SPIDER_DATA_DIR", "data"), "dev.parquet")
     if not os.path.exists(spider_dev_data_path):
         raise FileNotFoundError(f"Spider dev data file {spider_dev_data_path} does not exist.")
     df = pd.read_parquet(spider_dev_data_path).head(10)  # type: ignore
