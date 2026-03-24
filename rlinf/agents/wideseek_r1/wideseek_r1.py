@@ -47,7 +47,7 @@ from rlinf.data.tool_call.tool_io_struct import (
     ToolRequest,
     ToolResponse,
 )
-from rlinf.utils.placement import ModelParallelComponentPlacement, RolloutSyncMode
+from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.agent.agent_loop import (
     AgentLoopOutput,
     MultiAgentLoopOutput,
@@ -91,9 +91,7 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
         self.use_llm_judge = self.cfg.agentloop.get("use_llm_judge", True)
 
         self.placement = placement
-        self.use_fixed_rollout = (
-            self.placement._rollout_sync_mode == RolloutSyncMode.DISAGGREGATED
-        )
+        self.use_fixed_rollout = cfg.rollout.get("use_fixed_worker", False)
         self.fixed_role = self.cfg.agentloop.get("fixed_role", None)
         if self.use_fixed_rollout:
             assert self.fixed_role
@@ -149,7 +147,6 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
         prompt_ids = self.tokenizer.apply_chat_template(
             messages, tokenize=True, add_generation_prompt=True
         )
-        prompt_ids = prompt_ids[: self.max_total_len]
 
         # invocate generate method
         generate_result = await self.generate(
@@ -420,11 +417,7 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
                 context_failed = True
                 break
 
-            if (
-                role == self.fixed_role
-                and self.use_fixed_rollout
-                and not self.use_local_judge
-            ):
+            if role == self.fixed_role and self.use_fixed_rollout:
                 generate_result = await self.generate(
                     prompt_ids,
                     sampling_params={"max_new_tokens": max_resp_len},

@@ -719,14 +719,18 @@ class MultiAgentModelParallelComponentPlacement(ModelParallelComponentPlacement)
         all_rollout_gpus = set()
         for component in rollout_components:
             component_gpus = set(self._get_component_hardware(component))
-            if not component_gpus.issubset(actor_gpus):
-                return False
+            assert component_gpus.issubset(actor_gpus), (
+                f"Component {component} GPUs {component_gpus} are not subsets of actor GPUs {actor_gpus}."
+            )
             all_rollout_gpus.update(component_gpus)
 
         # Check if rollout components cover all actor's GPUs
         if all_rollout_gpus != actor_gpus:
-            return False
-        return True
+            logging.warning(
+                f"Rollout components do not cover all actor GPUs. "
+                f"Current: {all_rollout_gpus}, Missing: {actor_gpus - all_rollout_gpus}"
+            )
+        return
 
     def _validate_resource_coverage(self):
         """

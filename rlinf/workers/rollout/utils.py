@@ -26,7 +26,6 @@ from rlinf.data.io_struct import SeqGroupInfo
 from rlinf.scheduler.worker.worker import Worker
 from rlinf.utils.placement import (
     ModelParallelComponentPlacement,
-    PlacementMode,
     RolloutSyncMode,
 )
 
@@ -121,18 +120,14 @@ class RankMapper:
 
     @staticmethod
     def _get_rank_mapper(
-        rollout_sync_mode: PlacementMode | RolloutSyncMode,
+        rollout_sync_mode: RolloutSyncMode,
     ):
         """
         Get the rank mapper class based on the mode.
         """
-        if rollout_sync_mode in [PlacementMode.COLLOCATED, RolloutSyncMode.COLLOCATED]:
+        if rollout_sync_mode == RolloutSyncMode.COLLOCATED:
             return CollocateRankMapper
-        elif rollout_sync_mode in [
-            PlacementMode.DISAGGREGATED,
-            PlacementMode.AUTO,
-            RolloutSyncMode.DISAGGREGATED,
-        ]:
+        elif rollout_sync_mode == RolloutSyncMode.DISAGGREGATED:
             return DisaggRankMapper
         else:
             raise ValueError(f"Unsupported mode: {rollout_sync_mode}.")
