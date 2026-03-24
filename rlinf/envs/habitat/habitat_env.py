@@ -245,6 +245,7 @@ class HabitatEnv(gym.Env):
 
         raw_obs = self.env.reset(env_idx)
         self._elapsed_steps[env_idx] = 0
+        self.prev_step_reward[env_idx] = 0.0
         self.dones_once[env_idx] = False
         if (
             self.record_first_done_infos is not None
