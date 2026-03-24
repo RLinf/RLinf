@@ -119,7 +119,7 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 32
-  global_batch_size: 512
+  global_batch_size: 256
   seed: 42
   enable_offload: False
 
@@ -136,7 +136,7 @@ actor:
       noise_level: 0.5
       joint_logprob: False
       num_steps: ${actor.model.num_steps}
-      value_after_vlm: False
+      value_after_vlm: True
       value_vlm_mode: "mean_token"
       detach_critic_input: True
 
