@@ -253,9 +253,15 @@ Use Docker image for the experiment.
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      yifwrobotics/rlinf:isaaclab-openpi-gr00t
+      rlinf/rlinf:agentic-rlinf0.2-isaaclab
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/yifwrobotics/rlinf:isaaclab-openpi-gr00t
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-isaaclab
+
+Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
+
+.. code:: bash
+
+   source switch_env openpi
 
 **Option 2: Custom Environment**
 
@@ -336,34 +342,6 @@ To evaluate openpi π0.5 in the IsaacLab environment, run:
 .. code:: bash
 
    bash examples/embodiment/eval_embodiment.sh isaaclab_franka_stack_cube_ppo_openpi_pi05
-
-**4. Alternative Launch Command**
-
-The values in reinforcement learning result below are obtained by running with the following configuration:
-
-.. code:: bash
-
-   export EMBODIED_PATH=/workspace/RLinf/examples/embodiment # or export EMBODIED_PATH=$(pwd)/examples/embodiment if not using docker
-
-   python /workspace/RLinf/examples/embodiment/train_embodied_agent.py \
-      --config-path /workspace/RLinf/examples/embodiment/config/ \
-      --config-name isaaclab_franka_stack_cube_ppo_openpi_pi05 \
-      runner.logger.log_path=/workspace/RLinf/logs/train_$(date +%Y%m%d-%H%M%S) \
-      runner.logger.project_name=rlinf \
-      runner.logger.experiment_name=isaaclab_ppo_openpi_pi05 \
-      'runner.logger.logger_backends=[tensorboard,wandb]' \
-      actor.micro_batch_size=8 \
-      actor.global_batch_size=128 \
-      runner.val_check_interval=20 \
-      algorithm.update_epoch=3 \
-      algorithm.rollout_epoch=1 \
-      algorithm.kl_beta=0.01 \
-      algorithm.entropy_bonus=0.001 \
-      actor.optim.lr=2e-6 \
-      actor.optim.value_lr=5e-5 \
-      actor.fsdp_config.gradient_checkpointing=False \
-      rollout.model.model_path=/workspace/RLinf/outputs/RLinf-pi05-SFT-Stack-cube \
-      actor.model.model_path=/workspace/RLinf/outputs/RLinf-pi05-SFT-Stack-cube
 
 Visualization and Results
 -------------------------

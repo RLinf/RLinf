@@ -19,7 +19,7 @@ import openpi.transforms as _transforms
 from openpi.training.config import DataConfig, DataConfigFactory, ModelTransformFactory
 from typing_extensions import override
 
-from rlinf.models.embodiment.openpi.policies import libero_policy
+from rlinf.models.embodiment.openpi.policies import isaaclab_policy
 
 
 @dataclasses.dataclass(frozen=True)
@@ -48,8 +48,10 @@ class LeRobotIsaacLabStackCubeDataConfig(DataConfigFactory):
         )
 
         data_transforms = _transforms.Group(
-            inputs=[libero_policy.LiberoInputs(model_type=model_config.model_type)],
-            outputs=[libero_policy.LiberoOutputs()],
+            inputs=[
+                isaaclab_policy.IsaacLabInputs(model_type=model_config.model_type)
+            ],
+            outputs=[isaaclab_policy.IsaacLabOutputs()],
         )
 
         model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(
