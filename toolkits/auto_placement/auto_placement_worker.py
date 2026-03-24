@@ -165,6 +165,20 @@ class AutoPlacementWorker:
         return self._find_schedule(self.workflow, self.config.total_gpus)
 
 
+def get_component_predicted_costs(
+    schedule_result: ScheduleResult,
+) -> dict[str, float]:
+    """Estimate per-component predicted cost from final placement."""
+    component_costs: dict[str, float] = {}
+    for node, gpu_range in schedule_result.placement.items():
+        gpu_num = len(gpu_range)
+        cost = node.profile(gpu_num)
+        if cost is None:
+            continue
+        component_costs[node.role] = cost
+    return component_costs
+
+
 def get_workflow_graph(cfg) -> dict[str, list[str]]:
     if cfg.runner.task_type == "reasoning":
         if cfg.algorithm.recompute_logprobs:
@@ -235,6 +249,24 @@ def main(cfg):
 
     logging.info("=" * 50)
     logging.info("Best placement for this task is:\n%s", res)
+    logging.info(
+        "Predicted step time (from profile): %.3f s",
+        schedule_result.total_cost,
+    )
+    component_costs = get_component_predicted_costs(schedule_result)
+    if cfg.runner.task_type == "embodied":
+        generate_cost = component_costs.get("env", 0.0) + component_costs.get(
+            "env_rollout", 0.0
+        )
+        actor_train_cost = component_costs.get("actor", 0.0)
+        logging.info(
+            "Predicted generate time (env + rollout): %.3f s",
+            generate_cost,
+        )
+        logging.info(
+            "Predicted actor train time: %.3f s",
+            actor_train_cost,
+        )
 
 
 if __name__ == "__main__":
