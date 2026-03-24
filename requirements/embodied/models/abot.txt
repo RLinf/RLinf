@@ -26,4 +26,4 @@ tyro
 websocket-client==1.8.0
 websockets
 wandb
-peft>=0.17.0
+peft

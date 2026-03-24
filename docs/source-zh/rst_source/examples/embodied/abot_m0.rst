@@ -60,6 +60,9 @@ RLinf 支持两种依赖来源方式（见 ``requirements/install.sh`` 实现）
 
 .. code-block:: bash
 
+   git clone https://github.com/amap-cvlab/ABot-Manipulation.git
+   git clone https://github.com/facebookresearch/vggt.git
+
    cd <path_to_RLinf>
    export ABOT_PATH=<path_to_ABot-Manipulation>
    export VGGT_PATH=<path_to_vggt>
@@ -186,6 +189,20 @@ Docker 安装
 
 在脚本安装路径中，依赖求解结果会受到已有环境状态影响，可能出现与 ``requirements/embodied/models/abot.txt`` 的版本偏差。
 安装时可能存在 ``peft`` 版本兼容问题，因为 RLinf 顶层依赖解析中对 ``peft`` 进行了固定版本约束。
+
+对 ABot-M0，建议在运行环境中使用 ``peft==0.18.1``。
+在安装脚本执行完成后，手动安装 ABot-M0 需要的 PEFT 版本：
+
+.. code-block:: bash
+
+   source .venv/bin/activate
+   uv pip install peft==0.18.1
+
+然后验证：
+
+.. code-block:: bash
+
+   python -c "import peft; print(peft.__version__)"
 
 可视化
 ------

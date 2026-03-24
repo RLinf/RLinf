@@ -60,6 +60,9 @@ Option A example:
 
 .. code-block:: bash
 
+   git clone https://github.com/amap-cvlab/ABot-Manipulation.git
+   git clone https://github.com/facebookresearch/vggt.git
+
    cd <path_to_RLinf>
    export ABOT_PATH=<path_to_ABot-Manipulation>
    export VGGT_PATH=<path_to_vggt>
@@ -186,6 +189,20 @@ Known Dependency Compatibility Notes
 
 During script-based installation, package version mismatches may appear depending on resolver outcomes and prior environment state.
 There may be a ``peft`` version compatibility issue during installation, because RLinf has a fixed top-level ``peft`` override in dependency resolution.
+
+For ABot-M0, we recommend using ``peft==0.18.1`` in the runtime environment.
+After the install script finishes, explicitly install the ABot-M0 PEFT version:
+
+.. code-block:: bash
+
+   source .venv/bin/activate
+   uv pip install peft==0.18.1
+
+Then verify:
+
+.. code-block:: bash
+
+   python -c "import peft; print(peft.__version__)"
 
 Visualization
 -------------

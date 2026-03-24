@@ -47,6 +47,7 @@ class AMLFlowMatchingActionHeadRL(nn.Module):
         self.noise_level = noise_level
         self.noise_method = rl_head_config.get("noise_method", "flow_sde")
         self.joint_logprob = rl_head_config.get("joint_logprob", False)
+        self._timesteps_cache: dict[tuple[int, str, int], torch.Tensor] = {}
 
         if rl_head_config.get("add_value_head", False):
             self.value_head = ValueHead(
@@ -56,6 +57,22 @@ class AMLFlowMatchingActionHeadRL(nn.Module):
                 activation="relu",
                 bias_last=True,
             )
+
+    def _get_or_build_timesteps(
+        self, num_steps: int, device: torch.device
+    ) -> torch.Tensor:
+        device_index = -1 if device.index is None else int(device.index)
+        cache_key = (num_steps, device.type, device_index)
+        cached = self._timesteps_cache.get(cache_key)
+        if cached is None:
+            cached = torch.linspace(
+                0,
+                1,
+                num_steps + 1,
+                device=device,
+            )
+            self._timesteps_cache[cache_key] = cached
+        return cached
 
     def get_logprob_norm(
         self,
@@ -151,7 +168,7 @@ class AMLFlowMatchingActionHeadRL(nn.Module):
                     device=device,
                     dtype=x_t.dtype,
                 )
-                timesteps = torch.linspace(0, 1, num_steps + 1, device=device)
+                timesteps = self._get_or_build_timesteps(num_steps, device)
                 sigma_i = noise_level * torch.sqrt(
                     (1 - timesteps[idx + 1]) / timesteps[idx + 1].clamp_min(1e-8),
                 )

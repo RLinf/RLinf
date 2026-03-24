@@ -487,10 +487,10 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
         forward_inputs = {
             "chains": rl_outputs["chains"],
             "denoise_inds": rl_outputs["denoise_inds"],
-            "vl_embs": vl_embs,
             "main_images": spatial_images,
             "state": state,
         }
+        forward_inputs.update(self._flatten_qwen_inputs(qwen_inputs))
 
         result = {
             "prev_logprobs": prev_logprobs,
