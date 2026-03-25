@@ -15,7 +15,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor: 0-0
+    actor: 1-1
     env: 0-0
     rollout: 0-0
 
@@ -27,7 +27,7 @@ runner:
     experiment_name: "realworld_pnp_dagger_openpi"
     logger_backends: ["tensorboard"]
 
-  max_epochs: 10
+  max_epochs: 20
   max_steps: -1
 
   only_eval: False
@@ -35,7 +35,7 @@ runner:
   save_interval: -1
 
   resume_dir: null
-  ckpt_path: null
+  ckpt_path: "/workspace/ckpt/pnp-sq-sft/full_weights.pt"
 
 algorithm:
   dagger:
@@ -70,7 +70,7 @@ algorithm:
   replay_buffer:
     enable_cache: True
     cache_size: 200
-    min_buffer_size: 1
+    min_buffer_size: 4
     sample_window_size: 200
     auto_save: False
 
@@ -82,10 +82,10 @@ env:
     ignore_terminations: False
     total_num_envs: 1
     no_gripper: False
-    use_spacemouse: False
+    use_spacemouse: True
     keyboard_reward_wrapper: null
-    max_steps_per_rollout_epoch: 100
-    max_episode_steps: 100
+    max_steps_per_rollout_epoch: 180
+    max_episode_steps: 180
     override_cfg:
       target_ee_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
       success_hold_steps: 1
@@ -93,18 +93,16 @@ env:
       robot_ip: "0.0.0.0"
       use_dense_reward: False
       is_dummy: True
-      max_num_steps: 100
-      enable_gripper_penalty: False
 
   eval:
     total_num_envs: 1
     auto_reset: True
     ignore_terminations: False
     no_gripper: False
-    use_spacemouse: False
+    use_spacemouse: True
     keyboard_reward_wrapper: null
-    max_steps_per_rollout_epoch: 100
-    max_episode_steps: 100
+    max_steps_per_rollout_epoch: 180
+    max_episode_steps: 180
     override_cfg:
       target_ee_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
       success_hold_steps: 1
@@ -112,8 +110,6 @@ env:
       robot_ip: "0.0.0.0"
       use_dense_reward: False
       is_dummy: True
-      max_num_steps: 100
-      enable_gripper_penalty: False
 
 rollout:
   group_name: "RolloutGroup"
@@ -124,7 +120,7 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/path/to/sfted_pi0_ckpt"
+    model_path: "/workspace/ckpt/pi0_base_pnp"
     precision: ${actor.model.precision}
 
 actor:
@@ -137,10 +133,10 @@ actor:
 
   model:
     precision: null
-    model_path: "/path/to/sfted_pi0_ckpt"
+    model_path: "/workspace/ckpt/pi0_base_pnp"
     num_action_chunks: 10
     action_dim: 7
-    add_value_head: False
+    add_value_head: True
     openpi:
       config_name: "pi0_franka_dagger"
       num_images_in_input: 2
