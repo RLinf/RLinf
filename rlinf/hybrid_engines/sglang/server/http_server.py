@@ -49,9 +49,8 @@ def _apply_patch() -> None:
         return
     _patch_applied = True
     app = _http_server.app
-    create_error_response = _http_server._create_error_response  # type: ignore[attr-defined]
+    create_error_response = _http_server._create_error_response \
 
-    # Force logprobs on chat requests when rollout_return_logprobs is True (e.g. autogen doesn't send; same as worker_server).
     _orig_chat_handle_request = _serving_chat.OpenAIServingChat.handle_request
 
     async def _handle_request_force_logprobs(
@@ -115,7 +114,7 @@ def _apply_patch() -> None:
                 out = response.model_dump(exclude_none=True)
                 out["prompt_token_ids"] = prompt_token_ids
                 return ORJSONResponse(content=out)
-            except Exception:  # noqa: BLE001
+            except Exception:  
                 return response
         return response
 
@@ -124,20 +123,20 @@ def _apply_patch() -> None:
     )
 
     @app.post("/sync_hf_weight")
-    async def sync_hf_weight() -> Any:  # type: ignore[override]
+    async def sync_hf_weight() -> Any:  
         try:
-            global_state = _http_server._global_state  # type: ignore[attr-defined]
+            global_state = _http_server._global_state  
             if global_state is None:
                 raise RuntimeError("s_http._global_state is not initialized yet")
-            await global_state.tokenizer_manager.sync_hf_weight(SyncHFWeightInput())  # type: ignore[attr-defined]
+            await global_state.tokenizer_manager.sync_hf_weight(SyncHFWeightInput())  
             return {"status": "ok"}
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  
             return create_error_response(e)
 
     @app.post("/release_memory_occupation")
-    async def release_memory_occupation() -> Any:  # type: ignore[override]
+    async def release_memory_occupation() -> Any:  
         try:
-            global_state = _http_server._global_state  # type: ignore[attr-defined]
+            global_state = _http_server._global_state  
             if global_state is None:
                 raise RuntimeError("s_http._global_state is not initialized yet")
             obj = TaskMethodInput(
@@ -145,15 +144,15 @@ def _apply_patch() -> None:
                 args=(ReleaseMemoryOccupationReqInput(),),
                 kwargs={},
             )
-            await global_state.tokenizer_manager.run_task_method(obj)  # type: ignore[attr-defined]
+            await global_state.tokenizer_manager.run_task_method(obj)  
             return {"status": "ok"}
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  
             return create_error_response(e)
 
     @app.post("/resume_memory_occupation")
-    async def resume_memory_occupation() -> Any:  # type: ignore[override]
+    async def resume_memory_occupation() -> Any: 
         try:
-            global_state = _http_server._global_state  # type: ignore[attr-defined]
+            global_state = _http_server._global_state  
             if global_state is None:
                 raise RuntimeError("s_http._global_state is not initialized yet")
             obj = TaskMethodInput(
@@ -161,15 +160,15 @@ def _apply_patch() -> None:
                 args=(ResumeMemoryOccupationReqInput(),),
                 kwargs={},
             )
-            await global_state.tokenizer_manager.run_task_method(obj)  # type: ignore[attr-defined]
+            await global_state.tokenizer_manager.run_task_method(obj)  
             return {"status": "ok"}
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  
             return create_error_response(e)
 
     @app.post("/run_task_method")
-    async def run_task_method(request: Request) -> Any:  # type: ignore[override]
+    async def run_task_method(request: Request) -> Any: 
         try:
-            global_state = _http_server._global_state  # type: ignore[attr-defined]
+            global_state = _http_server._global_state  
             if global_state is None:
                 raise RuntimeError("s_http._global_state is not initialized yet")
             body = await request.json()
@@ -177,15 +176,15 @@ def _apply_patch() -> None:
             args = body.get("args", [])
             kwargs = body.get("kwargs", _smg_init_kwargs if not args else {})
             obj = TaskMethodInput(method_name=method_name, args=args, kwargs=kwargs)
-            res = await global_state.tokenizer_manager.run_task_method(obj)  # type: ignore[attr-defined]
+            res = await global_state.tokenizer_manager.run_task_method(obj) 
             return {"status": "ok", "result": res}
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  
             return create_error_response(e)
 
     @app.post("/init_rlinf_worker")
-    async def init_rlinf_worker(request: Request) -> Any:  # type: ignore[override]
+    async def init_rlinf_worker(request: Request) -> Any:  
         try:
-            global_state = _http_server._global_state  # type: ignore[attr-defined]
+            global_state = _http_server._global_state  
             if global_state is None:
                 raise RuntimeError("s_http._global_state is not initialized yet")
             body = await request.json()
@@ -216,7 +215,6 @@ def _apply_patch() -> None:
                 cfg = OmegaConf.create(yaml.safe_load(cfg_yaml))
                 args = (parent_address, weight_reload, placement, cfg)
             else:
-                # "cpu" 或 None：与 SGLangWorker 一致，只传 2 个参数
                 args = (parent_address, weight_reload)
 
             obj = TaskMethodInput(
@@ -224,14 +222,14 @@ def _apply_patch() -> None:
                 args=args,
                 kwargs={},
             )
-            await global_state.tokenizer_manager.run_task_method(obj)  # type: ignore[attr-defined]
+            await global_state.tokenizer_manager.run_task_method(obj) 
             return {"status": "ok"}
-        except Exception as e:  # noqa: BLE001
+        except Exception as e: 
             return create_error_response(e)
 
     @app.get("/server_info")
-    async def server_info() -> Any:  # type: ignore[override]
-        global_state = _http_server._global_state  # type: ignore[attr-defined]
+    async def server_info() -> Any: 
+        global_state = _http_server._global_state  
         if global_state is None:
             raise RuntimeError("s_http._global_state is not initialized yet")
         internal_states = await global_state.tokenizer_manager.get_internal_state()
