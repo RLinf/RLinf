@@ -44,15 +44,13 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
 
     def __init__(self, config):
         DM0ForCausalLM.__init__(self, config)
-        self._no_split_modules = [
-            "Qwen3DecoderLayer",
-            "SiglipVisionEmbeddings",
-            "Qwen3RMSNorm",
-            "Qwen3RotaryEmbedding",
-        ]
+        # Use fine-grained FSDP wrapping (Qwen3MLP level), same approach as
+        # dexbotic_pi_policy.py.  This avoids per-decoder-layer wrapping so
+        # _merged_attention_forward can access sub-module parameters directly.
+        self._no_split_modules = ["Qwen3MLP"]
         self.logger = get_logger()
 
-        # Detect model dtype
+        # Force uniform dtype so FSDP can flatten parameters without error.
         model_dtype = None
         if (
             hasattr(self.model, "llm")
@@ -68,10 +66,8 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
                 model_dtype = all_params[0].dtype
             else:
                 model_dtype = torch.float32
+        self.model = self.model.to(dtype=model_dtype)
 
-        for name, module in self.named_modules():
-            path_parts = name.split(".")
-            setattr(module, "_fsdp_wrap_name", path_parts[-1] if path_parts else name)
 
         self.config = config
         self.num_steps = config.num_steps
@@ -313,7 +309,7 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
         return processed_obs
 
     def _build_prefix_kv_cache(self, input_ids, attention_mask, images, image_masks):
-        """Build KV cache from prefix (images + language) using merged attention."""
+        """Build KV cache from prefix (images + language) using per-layer LLM forward."""
         prefix_hidden_states, prefix_padding_mask, prefix_attn_mask = (
             self.get_prefix_hidden_states(input_ids, attention_mask, images, image_masks)
         )
@@ -325,16 +321,25 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
         )
         positions = torch.cumsum(prefix_padding_mask, dim=1) - 1
 
-        module_list = [self.model.llm, self.model.action_expert.model]
-        _, kv_cache = self._merged_attention_forward(
-            module_list=module_list,
-            attention_mask=prefix_attn_mask_4d,
-            position_ids=positions,
-            past_key_values=DynamicCache(),
-            input_embeds_list=[prefix_hidden_states, None],
-            use_cache=True,
-        )
-        return prefix_padding_mask, prefix_attn_mask, kv_cache
+        hidden_states = prefix_hidden_states
+        past_key_values = DynamicCache()
+        mask = prefix_attn_mask_4d.to(dtype=hidden_states.dtype)
+        position_embeddings = self.model.llm.rotary_emb(hidden_states, positions)
+
+        for layer in self.model.llm.layers:
+            layer_outputs = layer(
+                hidden_states,
+                attention_mask=mask,
+                position_ids=positions,
+                past_key_value=past_key_values,
+                use_cache=True,
+                position_embeddings=position_embeddings,
+            )
+            hidden_states = layer_outputs[0]
+
+        del hidden_states, mask, prefix_attn_mask_4d, prefix_attn_mask_2d, position_embeddings
+        torch.cuda.empty_cache()
+        return prefix_padding_mask, prefix_attn_mask, past_key_values
 
     def get_suffix_out(
         self,
@@ -344,14 +349,18 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
         x_t,
         timestep,
     ):
-        """Run suffix (action expert) using cached prefix KV."""
+        """Run suffix (action expert) using cached prefix KV, per-layer forward."""
         batch_size = x_t.shape[0]
         device = x_t.device
+
+        model_dtype = self.model.action_in_proj.weight.dtype
+        x_t = x_t.to(dtype=model_dtype)
 
         if not torch.is_tensor(timestep):
             timestep = torch.tensor(timestep, device=device)
         if timestep.dim() == 0:
             timestep = timestep.broadcast_to(batch_size)
+        timestep = timestep.to(dtype=model_dtype)
 
         suffix_hidden_states, suffix_padding_mask, suffix_attn_mask = (
             self.get_suffix_hidden_states(x_t, timestep)
@@ -368,16 +377,32 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
         prefix_offsets = torch.sum(prefix_padding_mask, dim=-1)[:, None]
         full_positions = prefix_offsets + torch.cumsum(suffix_padding_mask, dim=1) - 1
 
-        module_list = [self.model.llm, self.model.action_expert.model]
-        (_, suffix_out), _ = self._merged_attention_forward(
-            module_list=module_list,
-            attention_mask=full_attn_mask_4d,
-            position_ids=full_positions,
-            past_key_values=kv_cache,
-            input_embeds_list=[None, suffix_hidden_states],
-            use_cache=False,
-        )
-        suffix_out = suffix_out[:, -self.config.chunk_size :].clone()
+        # Shallow-clone the KV cache so suffix forward doesn't corrupt the prefix cache
+        cloned_cache = DynamicCache()
+        for k, v in zip(kv_cache.key_cache, kv_cache.value_cache):
+            cloned_cache.key_cache.append(k)
+            cloned_cache.value_cache.append(v)
+
+        hidden_states = suffix_hidden_states
+        mask = full_attn_mask_4d.to(dtype=hidden_states.dtype)
+        position_embeddings = self.model.llm.rotary_emb(hidden_states, full_positions)
+
+        del full_attn_mask_4d, suffix_attn_mask_2d
+
+        for layer in self.model.action_expert.model.layers:
+            layer_outputs = layer(
+                hidden_states,
+                attention_mask=mask,
+                position_ids=full_positions,
+                past_key_value=cloned_cache,
+                use_cache=False,
+                position_embeddings=position_embeddings,
+            )
+            hidden_states = layer_outputs[0]
+
+        del cloned_cache, mask, position_embeddings
+        hidden_states = self.model.action_expert.model.norm(hidden_states)
+        suffix_out = hidden_states[:, -self.config.chunk_size :].clone()
         return suffix_out
 
     def sample_mean_var_val(
