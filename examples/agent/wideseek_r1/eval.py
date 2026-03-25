@@ -27,7 +27,9 @@ from rlinf.config import validate_cfg
 from rlinf.data.datasets import create_rl_dataset
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.scheduler import Cluster, NodePlacementStrategy, PackedPlacementStrategy
-from rlinf.utils.placement import ModelParallelEvalComponentPlacement
+from rlinf.utils.placement import (
+    MultiAgentModelParallelEvalComponentPlacement,
+)
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.agent.tool_worker import ToolWorkerInfo
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
@@ -43,11 +45,13 @@ def main(cfg) -> None:
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
-    component_placement = ModelParallelEvalComponentPlacement(cfg, cluster)
+    component_placement = MultiAgentModelParallelEvalComponentPlacement(cfg, cluster)
 
     # Generator group
     rollout_worker_cls = get_rollout_backend_worker(cfg)
     rollout_placement_strategy = component_placement.get_strategy("rollout")
+    solid_rollouts = {}
+
     if cfg.rollout.get("use_fixed_worker", False):
         # main agent and sub agent use different rollout engine
         rollout_accel_num = (
@@ -102,6 +106,7 @@ def main(cfg) -> None:
             name=cfg.rollout_fixed_worker.group_name,
             placement_strategy=subwoker_rollout_placement_strategy,
         )
+        solid_rollouts["subworker"] = subworker_rollout_group
     else:
         # only one rollout engine
         rollout_group = rollout_worker_cls.create_group(
@@ -112,6 +117,31 @@ def main(cfg) -> None:
             placement_strategy=rollout_placement_strategy,
         )
         subworker_rollout_group = None
+
+    if cfg.agentloop.get("use_local_judge", False):
+        subworker_specs = [
+            "rollout_judge",  # componet name in cfg
+        ]
+        for comp_name in subworker_specs:
+            dict_key = comp_name
+            rollout = cfg.get(comp_name, None)
+            assert rollout is not None, f"comp_name {comp_name} not found in cfg"
+            launch_name = rollout.get("group_name", comp_name)
+
+            strategy = component_placement.get_strategy(
+                comp_name, PackedPlacementStrategy
+            )
+
+            solid_rollouts[dict_key] = rollout_worker_cls.create_group(
+                cfg,
+                component_placement,
+                weight_reload=None,
+                config_rollout=rollout,
+            ).launch(
+                cluster,
+                name=launch_name,
+                placement_strategy=strategy,
+            )
 
     # AgentLoop group.
     agentloop_placement_strategy = NodePlacementStrategy(
@@ -167,9 +197,7 @@ def main(cfg) -> None:
         reward=None,
         agent_loop=agentloop_group,
         tool_workers=tool_workers,
-        solid_rollouts={"subworker": subworker_rollout_group}
-        if subworker_rollout_group is not None
-        else {},
+        solid_rollouts=solid_rollouts,
     )
 
     runner.init_workers()

@@ -862,3 +862,104 @@ class MultiAgentModelParallelComponentPlacement(ModelParallelComponentPlacement)
         )
         logging.info(f"{component_name}: {component_placement_strategy}")
         return component_placement_strategy
+
+
+class MultiAgentModelParallelEvalComponentPlacement(
+    ModelParallelEvalComponentPlacement
+):
+    """Component placement for model-parallel components.
+
+    The components must be actor, rollout, and optionally inference, whose GPUs must be continuous.
+
+    This placement supports only collocated mode.
+
+    In the collocated mode, all components share the same set of GPUs. In particular, the rollout group is specially placed in a strided manner to enable fast cudaIPC-based weight sync.
+    In the disaggregated mode, each component has its own dedicated set of GPUs.
+
+    In the collocated mode, only actor and rollout exist. While in the disaggregated mode, actor, rollout, and inference should all exist.
+    """
+
+    def __init__(self, config: DictConfig, cluster: Cluster):
+        """Initialize MultiAgentModelParallelEvalComponentPlacement
+
+        Args:
+            config (DictConfig): The configuration dictionary for the component placement.
+        """
+        self._cfg = config
+        super().__init__(config, cluster)
+
+    def _validate_component_placement_strategy(
+        self, component_name, placement_strategy
+    ):
+        """
+        Validates that component placement strategy are valid.
+        )
+        """
+        assert placement_strategy is not None, (
+            f"Placement strategy for component '{component_name}' is None."
+        )
+        component_cfg = self._cfg.get(component_name, None)
+        assert component_cfg is not None, (
+            f"component_name {component_name} not found in cfg"
+        )
+        component_accel_num = (
+            placement_strategy._end_hw_rank - placement_strategy._start_hw_rank + 1
+        )
+
+        if component_cfg.get("tensor_parallel_size", None) is not None:
+            assert component_accel_num % component_cfg.tensor_parallel_size == 0, (
+                f"Component '{component_name}' placement strategy must be divisible by tensor_parallel_size."
+            )
+        if component_cfg.get("pipeline_parallel_size", None) is not None:
+            assert component_accel_num % component_cfg.pipeline_parallel_size == 0, (
+                f"Component '{component_name}' placement strategy must be divisible by pipeline_parallel_size."
+            )
+        if component_cfg.get("dp_size", None) is not None:
+            assert component_accel_num % component_cfg.dp_size == 0, (
+                f"Component '{component_name}' placement strategy must be divisible by dp_size."
+            )
+        logging.info(
+            f"Validation Passed: Placement strategy for component '{component_name}' is valid."
+        )
+
+    def get_strategy(
+        self, component_name: str, placement_strategy: Optional[type] = None
+    ):
+        # handling logic for default placement strategies
+        if placement_strategy is None:
+            component_placement_strategy = super().get_strategy(component_name)
+            logging.info(f"{component_name}: {component_placement_strategy}")
+            return component_placement_strategy
+
+        if component_name in ("rollout", "actor", "reward", "inference"):
+            logging.warning(
+                f"Specifying a PlacementStrategy for '{component_name}' in get_strategy() is not allowed.",
+                f"Using default PackedPlacementStrategy for '{component_name}' instead.",
+            )
+            component_placement_strategy = super().get_strategy(component_name)
+            logging.info(f"{component_name}: {component_placement_strategy}")
+            return component_placement_strategy
+
+        # handling logic for customized placement strategies
+        strategy_class = (
+            placement_strategy
+            if placement_strategy is not None
+            else PackedPlacementStrategy
+        )
+        assert strategy_class in [PackedPlacementStrategy], (
+            f"Unsupported strategy class: {strategy_class}. Currently only PackedPlacementStrategy is supported."
+        )
+
+        component_placement_strategy = strategy_class(
+            self._get_component_hardware(component_name)[0],
+            self._get_component_hardware(component_name)[-1],
+            num_hardware_per_process=self._placements[
+                "rollout"
+            ]._num_hardware_per_process,
+            stride=self._placements["rollout"]._stride,
+        )
+        self._validate_component_placement_strategy(
+            component_name, component_placement_strategy
+        )
+        logging.info(f"{component_name}: {component_placement_strategy}")
+        return component_placement_strategy

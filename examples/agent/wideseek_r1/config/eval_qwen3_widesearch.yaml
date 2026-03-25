@@ -4,7 +4,8 @@ defaults:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,rollout,reward: all
+    actor,reward: all
+    rollout: all
 
 runner:
   experiment_name: ws_online

@@ -64,16 +64,8 @@ def main(cfg) -> None:
 
     if cfg.agentloop.get("use_local_judge", False):
         subworker_specs = [
-            "rollout_judge",
-            # componet name in cfg, dict_key in solid_rollouts, rollout cfg in cfg, launch_name
-            # (
-            #     "rollout_judge",
-            #     "rollout_judge",
-            #     cfg.rollout_judge,
-            #     cfg.rollout_judge.group_name,
-            # ),
+            "rollout_judge",  # componet name in cfg
         ]
-        # for comp_name, dict_key, rollout, launch_name in subworker_specs:
         for comp_name in subworker_specs:
             dict_key = comp_name
             rollout = cfg.get(comp_name, None)
