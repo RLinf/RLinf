@@ -7,6 +7,7 @@ TARGET=""
 MODEL=""
 ENV_NAME=""
 VENV_DIR=".venv"
+CONDA_ENV=""
 PYTHON_VERSION="3.11.14"
 TEST_BUILD=${TEST_BUILD:-0}
 # Absolute path to this script (resolves symlinks)
@@ -18,7 +19,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "lingbotvla")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "dosw1")
 
 #=======================Utility Functions=======================
 
@@ -38,6 +39,8 @@ Options (for target=embodied):
 Common options:
     -h, --help             Show this help message and exit.
     --venv <dir>           Virtual environment directory name (default: .venv).
+    --conda-env <name>     Use an existing conda environment instead of creating a uv venv.
+                           When set, skips venv creation and installs into the conda env directly.
     --use-mirror           Use mirrors for faster downloads.
     --no-root              Avoid system dependency installation for non-root users. Only use this if you are certain system dependencies are already installed.
     --install-rlinf        Install RLinf itself into the python.
@@ -83,6 +86,14 @@ parse_args() {
             --use-mirror)
                 USE_MIRRORS=1
                 shift
+                ;;
+            --conda-env)
+                if [ -z "${2:-}" ]; then
+                    echo "--conda-env requires a conda environment name." >&2
+                    exit 1
+                fi
+                CONDA_ENV="${2:-}"
+                shift 2
                 ;;
             --no-root)
                 NO_ROOT=1
@@ -163,7 +174,34 @@ unset_mirror() {
     fi
 }
 
+pip_install() {
+    if [ -n "$CONDA_ENV" ]; then
+        pip install "$@"
+    else
+        uv pip install "$@"
+    fi
+}
+
+activate_conda_env() {
+    local conda_base
+    conda_base="$(conda info --base 2>/dev/null)" || {
+        echo "conda not found. Please install conda first." >&2
+        exit 1
+    }
+    # shellcheck disable=SC1091
+    source "$conda_base/etc/profile.d/conda.sh"
+    conda activate "$CONDA_ENV" || {
+        echo "Failed to activate conda environment: $CONDA_ENV" >&2
+        exit 1
+    }
+    echo "Using conda environment: $CONDA_ENV ($(python --version))"
+}
+
 create_and_sync_venv() {
+    if [ -n "$CONDA_ENV" ]; then
+        activate_conda_env
+        return
+    fi
     local required_python_mm
     required_python_mm="$(echo "$PYTHON_VERSION" | awk -F. '{print $1"."$2}')"
 
@@ -616,6 +654,9 @@ install_env_only() {
             install_common_embodied_deps
             install_habitat_env
             ;;
+        dosw1)
+            install_dosw1_env
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for env-only installation." >&2
             exit 1
@@ -842,6 +883,13 @@ install_frankasim_env() {
     serldir=$(clone_or_reuse_repo SERL_PATH "$VENV_DIR/serl" https://github.com/RLinf/serl.git -b RLinf/franka-sim)
     uv pip install -e "$serldir/franka_sim"
     uv pip install -r "$serldir/franka_sim/requirements.txt"
+}
+
+install_dosw1_env() {
+    pip_install gymnasium numpy opencv-python-headless hydra-core "ray[default]>=2.47.0"
+    local repo_root
+    repo_root="$(dirname "$SCRIPT_DIR")"
+    pip install -e "$repo_root" --no-deps
 }
 
 install_habitat_env() {
