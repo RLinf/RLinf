@@ -503,9 +503,9 @@ class CollectiveGroup:
         if tensor_data.has_accel_tensor:
             check_cuda_device_result = self._check_same_device_with_peer()
             if check_cuda_device_result == 0:
-                return self._send_single_cuda_tensor_to_uncertain_peer(tensor, comm_id)
+                return self._send_single_tensor_to_uncertain_peer(tensor, comm_id)
             elif check_cuda_device_result == 1:
-                return self._send_single_cuda_tensor_via_ipc(tensor, comm_id)
+                return self._send_single_tensor_via_ipc(tensor, comm_id)
 
         return self._send(tensor, device=device, comm_id=comm_id)
 
@@ -785,10 +785,10 @@ class CollectiveGroup:
         if tensor_data.has_accel_tensor:
             check_cuda_device_result = self._check_same_device_with_peer()
             if check_cuda_device_result == 0:
-                return self._recv_single_cuda_tensor_to_uncertain_peer(tensor, comm_id)
+                return self._recv_single_tensor_to_uncertain_peer(tensor, comm_id)
             elif check_cuda_device_result == 1:
                 # The peer worker is on the same device, so we need to use CUDA IPC to receive the tensors
-                return self._recv_single_cuda_tensor_via_ipc(tensor, comm_id)
+                return self._recv_single_tensor_via_ipc(tensor, comm_id)
         return self._recv(tensor, device=device, comm_id=comm_id)
 
     def _send(
@@ -1080,7 +1080,7 @@ class CollectiveGroup:
         buf = tensor.numpy().tobytes()[:tensor_size]
         return Unpickler(io.BytesIO(buf)).load()
 
-    def _send_single_cuda_tensor_via_ipc(
+    def _send_single_tensor_via_ipc(
         self, tensor: torch.Tensor, comm_id: int, async_op: bool = False
     ):
         """For handling same device send/recv in send_tensor."""
@@ -1095,14 +1095,20 @@ class CollectiveGroup:
             comm_id=comm_id,
             async_op=async_op,
         )
-        return self._send(
+        self._send(
             handle_tensor,
             device=CollectiveGroup.CPU,
             comm_id=comm_id,
             async_op=async_op,
         )
+        self._send(
+            torch.tensor(0, dtype=torch.long, device="cpu"),
+            device=CollectiveGroup.CPU,
+            comm_id=comm_id,
+        )
+        Worker.torch_platform.ipc_collect()
 
-    def _recv_single_cuda_tensor_via_ipc(
+    def _recv_single_tensor_via_ipc(
         self, tensor: torch.Tensor, comm_id: int, async_op: bool = False
     ):
         """For handling same device send/recv in recv_tensor."""
@@ -1126,6 +1132,11 @@ class CollectiveGroup:
             remote_tensor_func, remote_tensor_args = handle
             remote_tensor = remote_tensor_func(*remote_tensor_args)
             tensor.copy_(remote_tensor)
+            Worker.torch_platform.current_stream().synchronize()
+            del remote_tensor
+            zero_tensor = torch.tensor(0, dtype=torch.long, device="cpu")
+            self._recv(zero_tensor, CollectiveGroup.CPU, comm_id)
+            Worker.torch_platform.ipc_collect()
             return None
 
         if async_op:
@@ -1133,7 +1144,7 @@ class CollectiveGroup:
         else:
             recv_and_copy(handle_tensor_size)
 
-    def _send_single_cuda_tensor_to_uncertain_peer(
+    def _send_single_tensor_to_uncertain_peer(
         self, tensor: torch.Tensor, comm_id: int, async_op: bool = False
     ):
         """For handling possible same devices send/recv in send_tensor."""
@@ -1176,6 +1187,12 @@ class CollectiveGroup:
                     comm_id=comm_id,
                     async_op=False,
                 )
+                self._send(
+                    torch.tensor(0, dtype=torch.long, device="cpu"),
+                    CollectiveGroup.CPU,
+                    comm_id=comm_id,
+                )
+                Worker.torch_platform.ipc_collect()
             else:
                 self._send(tensor, CollectiveGroup.ACCEL, comm_id=comm_id)
 
@@ -1184,7 +1201,7 @@ class CollectiveGroup:
         else:
             check_and_send()
 
-    def _recv_single_cuda_tensor_to_uncertain_peer(
+    def _recv_single_tensor_to_uncertain_peer(
         self, tensor: torch.Tensor, comm_id: int, async_op: bool = False
     ):
         """For handling possible same devices send/recv in recv_tensor."""
@@ -1218,6 +1235,11 @@ class CollectiveGroup:
                 remote_tensor_func, remote_tensor_args = handle
                 remote_tensor = remote_tensor_func(*remote_tensor_args)
                 tensor.copy_(remote_tensor)
+                Worker.torch_platform.current_stream().synchronize()
+                del remote_tensor
+                zero_tensor = torch.tensor(0, dtype=torch.long, device="cpu")
+                self._recv(zero_tensor, CollectiveGroup.CPU, comm_id)
+                Worker.torch_platform.ipc_collect()
                 return None
             else:
                 return self._recv(tensor, CollectiveGroup.ACCEL, comm_id)
@@ -1227,7 +1249,7 @@ class CollectiveGroup:
         else:
             check_and_recv(peer_device_tensor_size)
 
-    def _send_cuda_tensor_list_via_ipc(
+    def _send_tensor_list_via_ipc(
         self,
         tensors: list[torch.Tensor],
         comm_id: int,
@@ -1255,10 +1277,17 @@ class CollectiveGroup:
             async_op=async_op,
         )
 
+        self._send(
+            torch.tensor(0, dtype=torch.long, device="cpu"),
+            device=CollectiveGroup.CPU,
+            comm_id=comm_id,
+        )
+        Worker.torch_platform.ipc_collect()
+
         if async_op:
             return work
 
-    def _recv_cuda_tensor_list_via_ipc(self, comm_id: int) -> list[torch.Tensor]:
+    def _recv_tensor_list_via_ipc(self, comm_id: int) -> list[torch.Tensor]:
         self._logger.debug(
             f"Receiving tensors via IPC in worker {self._cur_worker_address.get_name()}"
         )
@@ -1287,9 +1316,15 @@ class CollectiveGroup:
             for tensor in remote_tensors
         ]
 
+        Worker.torch_platform.current_stream().synchronize()
+        remote_tensors.clear()
+        zero_tensor = torch.tensor(0, dtype=torch.long, device="cpu")
+        self._recv(zero_tensor, CollectiveGroup.CPU, comm_id)
+        Worker.torch_platform.ipc_collect()
+
         return tensors
 
-    def _send_cuda_tensor_list_to_uncertain_peer(
+    def _send_tensor_list_to_uncertain_peer(
         self,
         tensors: list[torch.Tensor],
         comm_id: int,
@@ -1335,7 +1370,7 @@ class CollectiveGroup:
                     tensors_via_nccl.append(tensor)
 
             if len(tensors_via_ipc) > 0:
-                self._send_cuda_tensor_list_via_ipc(tensors_via_ipc, comm_id)
+                self._send_tensor_list_via_ipc(tensors_via_ipc, comm_id)
             if len(tensors_via_nccl) > 0:
                 self._logger.debug(f"Sending {len(tensors_via_nccl)} tensors via NCCL")
                 for tensor in tensors_via_nccl:
@@ -1350,7 +1385,7 @@ class CollectiveGroup:
         else:
             send_tensors_with_peer_device_info()
 
-    def _recv_cuda_tensor_list_to_uncertain_peer(
+    def _recv_tensor_list_to_uncertain_peer(
         self, tensor_shapes: torch.Size, comm_id: int
     ):
         """For handling same device send/recv in _recv_tensor_list."""
@@ -1399,7 +1434,7 @@ class CollectiveGroup:
 
         tensors = [None for _ in range(len(tensor_shapes))]
         if len(ipc_tensor_indices) > 0:
-            ipc_tensors = self._recv_cuda_tensor_list_via_ipc(comm_id)
+            ipc_tensors = self._recv_tensor_list_via_ipc(comm_id)
             for i, tensor in zip(ipc_tensor_indices, ipc_tensors):
                 tensors[i] = tensor
         if len(nccl_tensor_indices) > 0:
@@ -1486,13 +1521,11 @@ class CollectiveGroup:
             # Handle CUDA tensor sending with IPC if the peer worker is on the same device
             check_cuda_device_result = self._check_same_device_with_peer()
             if check_cuda_device_result == 0:
-                work = self._send_cuda_tensor_list_to_uncertain_peer(
+                work = self._send_tensor_list_to_uncertain_peer(
                     accel_tensors, comm_id, async_op
                 )
             elif check_cuda_device_result == 1:
-                work = self._send_cuda_tensor_list_via_ipc(
-                    accel_tensors, comm_id, async_op
-                )
+                work = self._send_tensor_list_via_ipc(accel_tensors, comm_id, async_op)
             else:
                 for tensor in accel_tensors:
                     work = self._send(
@@ -1573,13 +1606,13 @@ class CollectiveGroup:
             check_cuda_device_result = self._check_same_device_with_peer()
             if check_cuda_device_result == 0:
                 accel_shapes = [shape_dtype for _, _, shape_dtype in accel_entries]
-                received_accel_tensors = self._recv_cuda_tensor_list_to_uncertain_peer(
+                received_accel_tensors = self._recv_tensor_list_to_uncertain_peer(
                     accel_shapes, comm_id
                 )
                 for (idx, _, _), tensor in zip(accel_entries, received_accel_tensors):
                     tensors[idx] = tensor
             elif check_cuda_device_result == 1:
-                received_accel_tensors = self._recv_cuda_tensor_list_via_ipc(comm_id)
+                received_accel_tensors = self._recv_tensor_list_via_ipc(comm_id)
                 for (idx, _, _), tensor in zip(accel_entries, received_accel_tensors):
                     tensors[idx] = tensor
             else:
