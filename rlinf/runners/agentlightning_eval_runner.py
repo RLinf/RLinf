@@ -23,18 +23,16 @@ if typing.TYPE_CHECKING:
     from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
     from rlinf.workers.actor.megatron_actor_worker import MegatronActor
     from rlinf.workers.rollout.sglang.sglang_worker_server import SGLangWorkerWithHTTPServer
-    from rlinf.workers.rollout.sglang.sglang_router_worker import SGLangRouterWorker
 
 class AgentLightningEvalRunner:
-    """评估；与训练 runner 相同，支持 SGLang worker_http / router_server 两种底座。"""
 
     def __init__(
         self,
         cfg: DictConfig,
         placement: ModelParallelComponentPlacement,
         val_dataset: Dataset,
-        rollout: Union["SGLangWorkerWithHTTPServer", "SGLangRouterWorker"],
-        actor: Union["MegatronActor", "MAMegatronActor"],
+        rollout: SGLangWorkerWithHTTPServer,
+        actor: MAMegatronActor,
         store: LightningStore,
         adapter: TraceToTripletBase,
         agentlightning_rollout_worker: AgentLightningRolloutWorker,
@@ -50,7 +48,6 @@ class AgentLightningEvalRunner:
 
         self.dataloader_channel = Channel.create("DataLoader")
         self.rollout_channel = Channel.create("Rollout")
-        # sglang_dp_ready_* 在 entrypoint 创建，Server worker 按名字 connect，Runner 不创建
         self._build_dataloader()
 
     def _build_dataloader(self):

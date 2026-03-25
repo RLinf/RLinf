@@ -21,8 +21,6 @@ from rlinf.workers.rollout.utils import get_rollout_backend_worker
 from rlinf.workers.inference.utils import get_inference_backend_worker
 from rlinf.workers.actor import get_actor_worker
 from rlinf.workers.agent.agentlightning_rollout_worker import AgentLightningRolloutWorker
-from rlinf.workers.rollout.sglang.sglang_router_worker import SGLangRouterWorker
-from rlinf.workers.rollout.sglang.sglang_server_worker import SGLangServerWorker
 from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
 logger = logging.getLogger(__name__)
 
@@ -47,32 +45,13 @@ def run_rlinf_training(
         start_hardware_rank=0, end_hardware_rank=0
     )
 
-    if (
-        cfg.rollout.rollout_backend == "sglang"
-        and cfg.rollout.sglang.serving_mode == "router_server"
-    ):
-        server_group = SGLangServerWorker.create_group(cfg, component_placement).launch(
-            cluster,
-            name=cfg.rollout.group_name,
-            placement_strategy=component_placement.get_strategy("rollout"),
-        )
-        rollout_group = SGLangRouterWorker.create_group(
-            cfg, component_placement, server_group=server_group
-        ).launch(
-            cluster,
-            name="SGLangRouterWorker",
-            placement_strategy=singleton_placement_strategy,
-        )
-    else:
-        rollout_worker_cls = get_rollout_backend_worker(cfg)
-        rollout_placement_strategy = component_placement.get_strategy("rollout")
-        rollout_group = rollout_worker_cls.create_group(
-            cfg, component_placement
-        ).launch(
-            cluster,
-            name=cfg.rollout.group_name,
-            placement_strategy=rollout_placement_strategy,
-        )
+    rollout_worker_cls = get_rollout_backend_worker(cfg)
+    rollout_placement_strategy = component_placement.get_strategy("rollout")
+    rollout_group = rollout_worker_cls.create_group(cfg, component_placement).launch(
+        cluster,
+        name=cfg.rollout.group_name,
+        placement_strategy=rollout_placement_strategy,
+    )
 
     agentlightning_rollout_group = AgentLightningRolloutWorker.create_group(
         cfg, component_placement

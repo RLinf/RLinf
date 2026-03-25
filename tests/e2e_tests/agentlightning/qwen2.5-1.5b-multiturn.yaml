@@ -108,7 +108,6 @@ rollout:
     use_torch_compile: False
     torch_compile_max_bs: 128
     tool_call_parser: qwen25
-    serving_mode: worker_http
     server:
       host: 0.0.0.0
       port: 8020
@@ -139,7 +138,7 @@ data:
   type: math
   max_prompt_length: 4096
   filter_prompt_by_length: False
-  rollout_batch_size: 32
+  rollout_batch_size: 16
   val_rollout_batch_size: null
   num_workers: 8
   prompt_key: question
@@ -289,4 +288,4 @@ critic:
 
 
 agentlightning:
-  n_runners: 10
+  n_runners: 5

@@ -12,7 +12,3 @@ algorithm:
 
 actor:
   pack_traj: True
-
-rollout:
-  sglang:
-    serving_mode: worker_http

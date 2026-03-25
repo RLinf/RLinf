@@ -233,8 +233,6 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
         self.log_info("HTTP server stopped")
 
     async def init_worker(self, *args, **kwargs):
-        # Legacy callers (e.g. SGLangRouterWorker) may pass start_http_server=True; HTTP is
-        # always started when _enable_http_server — no separate gating.
         kwargs.pop("start_http_server", None)
         await super().init_worker()
 

@@ -29,21 +29,19 @@ if typing.TYPE_CHECKING:
     from rlinf.workers.actor.megatron_actor_worker import MegatronActor
     from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
     from rlinf.workers.inference.megatron_inference_worker import MegatronInference
-    from rlinf.workers.rollout.sglang.sglang_server_worker import SGLangServerWorker
     from rlinf.workers.rollout.sglang.sglang_worker_server import SGLangWorkerWithHTTPServer
-    from rlinf.workers.rollout.sglang.sglang_router_worker import SGLangRouterWorker
 
 class AgentLightningRLinfRunner(ReasoningRunner):
-    """AgentLightning 训练；SGLang 下支持 worker_http 与 router_server 两种 HTTP 暴露方式（由 rollout.sglang.serving_mode 决定）。"""
+
     def __init__(
         self,
         cfg: DictConfig,
         placement: ModelParallelComponentPlacement,
         train_dataset: Dataset,
         val_dataset: Dataset,
-        rollout: Union["SGLangServerWorker", "SGLangWorkerWithHTTPServer", "SGLangRouterWorker"],
+        rollout: SGLangWorkerWithHTTPServer,
         inference: Optional["MegatronInference"],
-        actor: Union["MegatronActor", "MAMegatronActor"],
+        actor: MAMegatronActor,
         store: LightningStore,
         adapter: TraceToTripletBase,
         agentlightning_rollout_worker: AgentLightningRolloutWorker,

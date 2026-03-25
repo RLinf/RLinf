@@ -105,13 +105,7 @@ rollout:
     decode_log_interval: 500000
     use_torch_compile: False
     torch_compile_max_bs: 128
-    # SGLang server expert/deepEP related knobs.
-    ep_size: 1
-    moe_a2a_backend: none
-    moe_runner_backend: auto
-    deepep_mode: auto
     tool_call_parser: qwen25
-    serving_mode: worker_http
     server:
       host: 0.0.0.0
       port: 8020
