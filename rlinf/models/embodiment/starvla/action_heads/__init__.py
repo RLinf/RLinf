@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""starVLA rollout handlers.
+"""Action-head handlers for the RLinf starVLA wrapper.
 
-These functions implement rollout-time action sampling for different starVLA
-action heads. Dispatch is centralized in 'starvla/dispatch.py'.
+This package contains action-head specific rollout/default_forward handlers,
+including OFT, FAST, adapter, and flowmatching implementations.
 """

@@ -22,7 +22,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from .profile import resolve_action_chunk_len, resolve_vlm_interface
+from .profile import resolve_vlm_interface
 
 
 def _to_uint8_image_array(arr: np.ndarray) -> np.ndarray:
@@ -98,33 +98,14 @@ def get_train_image_size(starvla_model: Any) -> Optional[int]:
     return getattr(vla_data, "image_size", None) if vla_data is not None else None
 
 
-def _build_interface_inputs(
-    starvla_model: Any,
-    *,
-    batch_images: list[Any],
-    instructions: list[str],
-    vlm_interface: Any = None,
-) -> dict[str, torch.Tensor]:
-    """Build VLM interface inputs using standardized image/instruction fields."""
-    iface = vlm_interface or resolve_vlm_interface(starvla_model)
-    build_inputs = getattr(iface, "build_qwenvl_inputs", None)
-    if not callable(build_inputs):
-        raise RuntimeError("VLM interface does not provide 'build_qwenvl_inputs(...)'.")
-    return dict(
-        build_inputs(
-            images=batch_images,
-            instructions=instructions,
-        )
-    )
-
-
-def _prepare_images_and_instructions(
+def build_base_vlm_inputs(
     starvla_model: Any,
     *,
     examples: list[dict[str, Any]],
     vlm_type: Optional[str] = None,
-) -> tuple[list[Any], list[str]]:
-    """Prepare per-sample images/instructions before VLM tokenization."""
+    vlm_interface: Any = None,
+) -> dict[str, torch.Tensor]:
+    """Build backbone-only VLM inputs from rollout examples."""
     batch_images = [to_pil_preserve(example["image"]) for example in examples]
     instructions = [example["lang"] for example in examples]
 
@@ -142,144 +123,13 @@ def _prepare_images_and_instructions(
             single_image_batch.append([views[0]])
         batch_images = single_image_batch
 
-    return batch_images, instructions
-
-
-def build_base_vlm_inputs(
-    starvla_model: Any,
-    *,
-    examples: list[dict[str, Any]],
-    vlm_type: Optional[str] = None,
-    vlm_interface: Any = None,
-) -> dict[str, torch.Tensor]:
-    """Build backbone-only VLM inputs from rollout examples."""
-    batch_images, instructions = _prepare_images_and_instructions(
-        starvla_model,
-        examples=examples,
-        vlm_type=vlm_type,
-    )
-    return _build_interface_inputs(
-        starvla_model,
-        batch_images=batch_images,
-        instructions=instructions,
-        vlm_interface=vlm_interface,
-    )
-
-
-def build_oft_vlm_inputs(
-    starvla_model: Any,
-    *,
-    num_action_chunks: int,
-    examples: list[dict[str, Any]],
-    vlm_type: Optional[str] = None,
-    vlm_interface: Any = None,
-) -> dict[str, torch.Tensor]:
-    """Build OFT prompt format by appending action-token placeholders."""
-    batch_images, instructions = _prepare_images_and_instructions(
-        starvla_model,
-        examples=examples,
-        vlm_type=vlm_type,
-    )
-
-    chunk_len = resolve_action_chunk_len(
-        starvla_model,
-        num_action_chunks,
-        action_head_name="oft",
-    )
-    action_token = str(getattr(starvla_model, "action_token", ""))
-    action_tokens = action_token * chunk_len
-    prompt_suffix = (
-        f" Please predict the next {chunk_len} robot actions: "
-        f"<action>{action_tokens}<action>."
-    )
-    instructions = [instruction + prompt_suffix for instruction in instructions]
-
-    return _build_interface_inputs(
-        starvla_model,
-        batch_images=batch_images,
-        instructions=instructions,
-        vlm_interface=vlm_interface,
-    )
-
-
-def build_adapter_vlm_inputs(
-    starvla_model: Any,
-    *,
-    num_action_chunks: int,
-    examples: list[dict[str, Any]],
-    vlm_type: Optional[str] = None,
-    vlm_interface: Any = None,
-) -> dict[str, torch.Tensor]:
-    """Build adapter prompt format with dummy action-query placeholders."""
-    batch_images, instructions = _prepare_images_and_instructions(
-        starvla_model,
-        examples=examples,
-        vlm_type=vlm_type,
-    )
-
-    chunk_len = resolve_action_chunk_len(
-        starvla_model,
-        num_action_chunks,
-        action_head_name="adapter",
-    )
-    dummy_action_prompts = str(getattr(starvla_model, "dummy_action_prompt", ""))
-    if not dummy_action_prompts:
-        action_token = str(getattr(starvla_model, "dummy_action_token", ""))
-        action_query_num = int(getattr(starvla_model, "action_query_num", chunk_len))
-        dummy_action_prompts = action_query_num * action_token
-
-    prompt_suffix = (
-        f" Please predict the next {chunk_len} robot actions: "
-        f"<action>{dummy_action_prompts}<action>."
-    )
-    instructions = [instruction + prompt_suffix for instruction in instructions]
-
-    return _build_interface_inputs(
-        starvla_model,
-        batch_images=batch_images,
-        instructions=instructions,
-        vlm_interface=vlm_interface,
-    )
-
-
-def build_dual_dino_features(
-    starvla_model: Any,
-    *,
-    examples: list[dict[str, Any]],
-) -> torch.Tensor:
-    """Extract DINO wrist-view features for Dual action head conditioning."""
-    wrist_views: list[list[Image.Image]] = []
-    for ex in examples:
-        if "wrist_images" in ex:
-            wrist = ex["wrist_images"]
-            if isinstance(wrist, (list, tuple)):
-                wrist_views.append([to_pil_preserve(img) for img in wrist])
-            else:
-                wrist_views.append([to_pil_preserve(wrist)])
-        else:
-            fallback_views = to_pil_preserve(ex["image"])
-            if isinstance(fallback_views, (list, tuple)):
-                wrist_views.append([to_pil_preserve(img) for img in fallback_views])
-            else:
-                wrist_views.append([to_pil_preserve(fallback_views)])
-
-    train_size = get_train_image_size(starvla_model)
-    if train_size:
-        wrist_views = [resize_images(ws, target_size=train_size) for ws in wrist_views]
-
-    dino_encoder = getattr(starvla_model, "dino_encoder", None)
-    dino_pro = getattr(starvla_model, "dino_pro", None)
-    if dino_encoder is None or dino_pro is None:
-        raise RuntimeError(
-            "Dual action head requires dino_encoder and dino_pro on the model."
+    iface = vlm_interface or resolve_vlm_interface(starvla_model)
+    build_inputs = getattr(iface, "build_qwenvl_inputs", None)
+    if not callable(build_inputs):
+        raise RuntimeError("VLM interface does not provide 'build_qwenvl_inputs(...)'.")
+    return dict(
+        build_inputs(
+            images=batch_images,
+            instructions=instructions,
         )
-
-    flat_views = [img for ws in wrist_views for img in ws]
-    dino_input = dino_encoder.prepare_dino_input(flat_views)
-    with torch.autocast("cuda", dtype=torch.bfloat16):
-        dino_feats = dino_encoder(dino_input)
-
-    bsz = len(examples)
-    dino_feats = dino_feats.reshape(bsz, -1, dino_feats.shape[-1])
-    dino_feats = dino_pro(dino_feats)
-    return dino_feats
+    )

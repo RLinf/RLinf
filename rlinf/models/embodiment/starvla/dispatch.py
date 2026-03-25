@@ -21,14 +21,13 @@ from typing import Any
 
 import torch
 
-from .default_forward.adapter import run_default_forward_adapter
-from .default_forward.fast import run_default_forward_fast
-from .default_forward.flowmatching import run_default_forward_flowmatching
-from .default_forward.oft import run_default_forward_oft
-from .rollout.adapter import run_rollout_adapter
-from .rollout.fast import run_rollout_fast
-from .rollout.flowmatching import run_rollout_flowmatching
-from .rollout.oft import run_rollout_oft
+from .action_heads.adapter import run_default_forward_adapter, run_rollout_adapter
+from .action_heads.fast import run_default_forward_fast, run_rollout_fast
+from .action_heads.flowmatching import (
+    run_default_forward_flowmatching,
+    run_rollout_flowmatching,
+)
+from .action_heads.oft import run_default_forward_oft, run_rollout_oft
 
 DefaultForwardHandler = Callable[..., dict[str, torch.Tensor | None]]
 RolloutHandler = Callable[..., dict[str, Any]]

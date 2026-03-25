@@ -71,31 +71,30 @@ def compute_values_from_hidden(
     return value_head(feat.float()).to(dtype=torch.float32)
 
 
-def run_vlm_backbone(
+def run_backbone_pipeline(
     policy,
-    *,
-    use_cache: bool,
-    examples: Optional[list[dict[str, Any]]] = None,
     model_inputs: Optional[dict[str, torch.Tensor]] = None,
+    examples: Optional[list[dict[str, Any]]] = None,
+    use_cache: bool = False,
     strip_keys: Optional[set[str]] = None,
     input_embedding_hook: Optional[
         Callable[[Any, Any, torch.Tensor], torch.Tensor]
     ] = None,
-) -> dict[str, Any]:
-    """Run VLM forward once and return unified hidden-state payload."""
+) -> BackboneOutput:
+    """Run VLM forward and pack standardized backbone outputs."""
     starvla_model = policy.starvla_model
-    vlm_family = infer_vlm_type(starvla_model)
+    backbone_family = infer_vlm_type(starvla_model)
     vlm_interface = resolve_vlm_interface(starvla_model)
 
     if model_inputs is None:
         if examples is None:
             raise ValueError(
-                "run_vlm_backbone requires either 'examples' or 'model_inputs'."
+                "run_backbone_pipeline requires either 'examples' or 'model_inputs'."
             )
         built_inputs = vlm_input_utils.build_base_vlm_inputs(
             starvla_model,
             examples=examples,
-            vlm_type=vlm_family,
+            vlm_type=backbone_family,
             vlm_interface=vlm_interface,
         )
     else:
@@ -172,7 +171,6 @@ def run_vlm_backbone(
             hook_handle.remove()
 
     hidden_states = _get_vlm_output(vlm_outputs, "hidden_states")
-
     if hidden_states is not None:
         if isinstance(hidden_states, torch.Tensor):
             hidden_layers = (hidden_states,)
@@ -199,40 +197,12 @@ def run_vlm_backbone(
     if isinstance(logits, torch.Tensor):
         stripped_inputs["logits"] = logits
 
-    return {
-        "vlm_family": vlm_family,
-        "hidden_layers": hidden_layers,
-        "model_inputs": built_inputs,
-        "attention_mask": built_inputs.get("attention_mask"),
-        "extras": stripped_inputs,
-    }
-
-
-def run_backbone_pipeline(
-    policy,
-    model_inputs: Optional[dict[str, torch.Tensor]] = None,
-    examples: Optional[list[dict[str, Any]]] = None,
-    use_cache: bool = False,
-    input_embedding_hook: Optional[
-        Callable[[Any, Any, torch.Tensor], torch.Tensor]
-    ] = None,
-) -> BackboneOutput:
-    """Validate/pack raw VLM payload into 'BackboneOutput' with capability flags."""
-    backbone_payload = run_vlm_backbone(
-        policy,
-        model_inputs=model_inputs,
-        examples=examples,
-        use_cache=use_cache,
-        input_embedding_hook=input_embedding_hook,
-    )
-
-    backbone_family = str(backbone_payload["vlm_family"])
+    backbone_family = str(backbone_family)
     if backbone_family not in _SUPPORTED_BACKBONE_FAMILIES:
         raise NotImplementedError(
             f"Backbone family '{backbone_family}' is not supported."
         )
 
-    hidden_layers = tuple(backbone_payload["hidden_layers"])
     if len(hidden_layers) == 0:
         raise RuntimeError("Backbone returned no hidden layers.")
 
@@ -247,8 +217,8 @@ def run_backbone_pipeline(
         backbone_family=backbone_family,
         hidden_layers=hidden_layers,
         last_hidden=hidden_layers[-1],
-        attention_mask=backbone_payload.get("attention_mask"),
-        model_inputs=dict(backbone_payload.get("model_inputs", {})),
-        extras=dict(backbone_payload.get("extras", {})),
+        attention_mask=built_inputs.get("attention_mask"),
+        model_inputs=dict(built_inputs),
+        extras=dict(stripped_inputs),
         capabilities=frozenset(caps),
     )

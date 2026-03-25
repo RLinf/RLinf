@@ -100,38 +100,6 @@ def get_scalar(value: Any, default: Any, cast):
     return cast(value)
 
 
-def apply_sampling_filters(logits: torch.Tensor, data: dict[str, Any]) -> torch.Tensor:
-    """Apply temperature/top-k/top-p filtering to logits."""
-    filtered = logits
-
-    temp = get_scalar(data.get("temperature"), default=1.0, cast=float)
-    if temp <= 0:
-        temp = 1.0
-    filtered = filtered / temp
-
-    top_k = get_scalar(data.get("top_k"), default=0, cast=int)
-    if top_k > 0:
-        k = min(top_k, filtered.size(-1))
-        kth = torch.topk(filtered, k=k, dim=-1).values[..., -1]
-        neg_inf = filtered.new_full((), float("-inf"))
-        filtered = torch.where(filtered < kth.unsqueeze(-1), neg_inf, filtered)
-
-    top_p = get_scalar(data.get("top_p"), default=1.0, cast=float)
-    if 0.0 < top_p < 1.0:
-        sorted_logits, sorted_idx = torch.sort(filtered, descending=True, dim=-1)
-        sorted_probs = torch.softmax(sorted_logits, dim=-1)
-        cumprobs = torch.cumsum(sorted_probs, dim=-1)
-
-        remove = cumprobs > top_p
-        remove[..., 0] = False
-        sorted_logits = sorted_logits.masked_fill(remove, float("-inf"))
-
-        filtered = torch.full_like(filtered, float("-inf"))
-        filtered.scatter_(dim=-1, index=sorted_idx, src=sorted_logits)
-
-    return filtered
-
-
 def collect_tensor_inputs(
     data: dict[str, Any],
     skip_keys: set[str],

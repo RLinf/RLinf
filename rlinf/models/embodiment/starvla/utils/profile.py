@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -197,59 +196,6 @@ def infer_vlm_type(starvla_model: nn.Module) -> str:
         "'config.framework.qwenvl.base_vlm' explicitly. "
         f"framework_name={framework_name!r}, base_vlm={base_vlm!r}."
     )
-
-
-def resolve_fast_action_token_range(starvla_model: nn.Module) -> tuple[int, int]:
-    """Read FAST action-token id range from VLM interface."""
-    iface = resolve_vlm_interface(starvla_model)
-    token_min = getattr(iface, "_ACTION_TOKEN_MIN", None)
-    token_max = getattr(iface, "_ACTION_TOKEN_MAX", None)
-    if token_min is None or token_max is None:
-        raise RuntimeError(
-            "FAST action head requires '_ACTION_TOKEN_MIN/_ACTION_TOKEN_MAX' on the VLM interface."
-        )
-    return int(token_min), int(token_max)
-
-
-def resolve_fast_max_action_tokens(
-    policy: Any,
-    *,
-    default: int = 256,
-    env_key: str = "RLINF_QWENFAST_MAX_ACTION_TOKENS",
-) -> int:
-    """Resolve FAST max generated token length from policy/env settings."""
-    configured = getattr(policy, "qwenfast_max_action_tokens", None)
-    try:
-        max_action_tokens = int(configured or 0)
-    except (TypeError, ValueError):
-        max_action_tokens = 0
-
-    if max_action_tokens <= 0:
-        env_raw = os.environ.get(env_key, str(default))
-        try:
-            max_action_tokens = int(env_raw)
-        except (TypeError, ValueError):
-            max_action_tokens = 0
-
-    if max_action_tokens <= 0:
-        raise ValueError(
-            f"Invalid FAST max action token setting: qwenfast_max_action_tokens={configured!r}, "
-            f"{env_key}={os.environ.get(env_key)!r}."
-        )
-    return max_action_tokens
-
-
-def resolve_vlm_pad_token_id(starvla_model: nn.Module, default: int = 0) -> int:
-    """Resolve pad token id from VLM config with safe fallback."""
-    iface = resolve_vlm_interface(starvla_model)
-    model_cfg = getattr(getattr(iface, "model", None), "config", None)
-    pad_id = (
-        default if model_cfg is None else getattr(model_cfg, "pad_token_id", default)
-    )
-    try:
-        return int(pad_id or default)
-    except (TypeError, ValueError):
-        return int(default)
 
 
 def infer_action_head_type(starvla_model: nn.Module) -> str:
