@@ -251,6 +251,14 @@ class AgentLightningRolloutWorker(Worker):
                     total_tool_calls += self._count_tool_calls_in_triplet(triplet)
         
         training_reward = np.mean(all_rewards) if all_rewards else 0.0
+
+        # Tail metrics: robust signals for stragglers/long-tail generation.
+        sorted_rlen = sorted(total_response_lengths)
+        n = len(sorted_rlen)
+        p90_idx = min(n - 1, int(np.ceil(0.9 * n) - 1))
+        p90_response_length = float(sorted_rlen[p90_idx])
+        top_k = max(1, int(np.ceil(0.1 * n)))
+        mean_top10p_response_length = float(np.mean(sorted_rlen[-top_k:]))
         
         metrics = {
             "agent/reward": float(training_reward),
@@ -260,6 +268,8 @@ class AgentLightningRolloutWorker(Worker):
             "agent/turn_count": total_turns,
             "agent/mean_turn_count_per_rollout": float(total_turns / n_rollouts) if n_rollouts > 0 else 0.0,
             "agent/mean_response_length": float(np.mean(total_response_lengths)) if total_response_lengths else 0.0,
+            "agent/p90_response_length": p90_response_length,
+            "agent/mean_top10p_response_length": mean_top10p_response_length,
             "agent/total_tool_calls": total_tool_calls,
             "agent/mean_tool_calls_per_rollout": float(total_tool_calls / n_rollouts) if n_rollouts > 0 else 0.0,
             "agent/mean_tool_calls_per_turn": float(total_tool_calls / total_turns) if total_turns > 0 else 0.0,
