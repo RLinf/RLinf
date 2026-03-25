@@ -675,9 +675,8 @@ class EnvWorker(Worker):
 
         if self.rollout_epoch > 0:
             epoch = 0
-            env_outputs = self.bootstrap_step()
             for stage_id in range(self.stage_num):
-                env_output: EnvOutput = env_outputs[stage_id]
+                env_output: EnvOutput = self.env_outputs[stage_id]
                 env_batch = env_output.to_dict()
                 self.send_env_batch(
                     output_channel,
@@ -692,7 +691,7 @@ class EnvWorker(Worker):
                     if cooperative_yield:
                         await asyncio.sleep(0)
 
-                    env_output = env_outputs[stage_id]
+                    env_output = self.env_outputs[stage_id]
                     curr_obs = env_output.obs
                     if env_output.intervene_actions is not None:
                         self.rollout_results[stage_id].update_last_actions(
@@ -748,11 +747,11 @@ class EnvWorker(Worker):
                             curr_obs, next_obs
                         )
 
-                    env_outputs[stage_id] = env_output
+                    self.env_outputs[stage_id] = env_output
                     self.record_env_metrics(env_metrics, env_info, epoch)
 
             for stage_id in range(self.stage_num):
-                env_output = env_outputs[stage_id]
+                env_output = self.env_outputs[stage_id]
                 if env_output.intervene_actions is not None:
                     self.rollout_results[stage_id].update_last_actions(
                         env_output.intervene_actions,
@@ -774,13 +773,13 @@ class EnvWorker(Worker):
                 )
                 self.rollout_results[stage_id].append_step_result(chunk_step_result)
 
-            self.store_last_obs_and_intervened_info(env_outputs)
+            self.store_last_obs_and_intervened_info(self.env_outputs)
             self.finish_rollout()
 
         for epoch in range(1, self.rollout_epoch):
-            env_outputs = self.bootstrap_step()
+            self.env_outputs = self.bootstrap_step()
             for stage_id in range(self.stage_num):
-                env_output: EnvOutput = env_outputs[stage_id]
+                env_output: EnvOutput = self.env_outputs[stage_id]
                 env_batch = env_output.to_dict()
                 self.send_env_batch(
                     output_channel,
@@ -795,7 +794,7 @@ class EnvWorker(Worker):
                     if cooperative_yield:
                         await asyncio.sleep(0)
 
-                    env_output = env_outputs[stage_id]
+                    env_output = self.env_outputs[stage_id]
                     curr_obs = env_output.obs
                     if env_output.intervene_actions is not None:
                         self.rollout_results[stage_id].update_last_actions(
@@ -851,11 +850,11 @@ class EnvWorker(Worker):
                             curr_obs, next_obs
                         )
 
-                    env_outputs[stage_id] = env_output
+                    self.env_outputs[stage_id] = env_output
                     self.record_env_metrics(env_metrics, env_info, epoch)
 
             for stage_id in range(self.stage_num):
-                env_output = env_outputs[stage_id]
+                env_output = self.env_outputs[stage_id]
                 if env_output.intervene_actions is not None:
                     self.rollout_results[stage_id].update_last_actions(
                         env_output.intervene_actions,
@@ -877,7 +876,7 @@ class EnvWorker(Worker):
                 )
                 self.rollout_results[stage_id].append_step_result(chunk_step_result)
 
-            self.store_last_obs_and_intervened_info(env_outputs)
+            self.store_last_obs_and_intervened_info(self.env_outputs)
             self.finish_rollout()
 
         if actor_channel is not None:
@@ -898,6 +897,7 @@ class EnvWorker(Worker):
         output_channel: Channel,
         actor_channel: Channel | None = None,
     ):
+        self.env_outputs = self.bootstrap_step()
         env_metrics = await self._run_interact_once(
             input_channel,
             output_channel,
