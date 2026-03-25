@@ -900,7 +900,6 @@ class EnvWorker(Worker):
         output_channel: Channel,
         actor_channel: Channel | None = None,
     ):
-        self.warmup()
         env_metrics = await self._run_interact_once(
             input_channel,
             output_channel,

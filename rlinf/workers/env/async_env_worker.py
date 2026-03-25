@@ -53,7 +53,6 @@ class AsyncEnvWorker(EnvWorker):
         metric_channel: Channel,
         replay_channel: Channel | None,
     ):
-        self.warmup()
         while True:
             env_metrics = await self._run_interact_once(
                 input_channel,

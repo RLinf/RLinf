@@ -251,6 +251,7 @@ class EmbodiedRunner:
     def run(self):
         start_step = self.global_step
         start_time = time.time()
+        self.env.warmup()
         for _step in range(start_step, self.max_steps):
             # set global step
             self.actor.set_global_step(self.global_step)
@@ -283,6 +284,9 @@ class EmbodiedRunner:
 
                 # actor training.
                 actor_training_handle: Handle = self.actor.run_training()
+
+                # warmup environment at the same time for the next iteration
+                self.env.warmup()
 
                 actor_training_metrics = actor_training_handle.wait()
 
