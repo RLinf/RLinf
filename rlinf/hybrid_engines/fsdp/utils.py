@@ -404,9 +404,6 @@ def apply_fsdp2_to_model(
         for root_name, root_module in (
             ("action_head.model", action_head.model),
             ("action_head.text_encoder", action_head.text_encoder),
-            ("action_head.image_encoder", action_head.image_encoder),
-            ("action_head.vae", action_head.vae),
-            ("action_head", action_head),
         ):
             _fully_shard_root(root_name, root_module)
 

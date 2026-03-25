@@ -36,6 +36,50 @@ def _normalize_single_data_path(data_paths):
     raise TypeError(f"Unsupported data_paths type: {type(data_paths)}")
 
 
+def _rewrite_mixture_dataset_paths(train_cfg, original_path: str, override_path: str) -> None:
+    train_dataset = train_cfg.get("train_dataset")
+    if train_dataset is None or "mixture_spec" not in train_dataset:
+        return
+
+    original = Path(original_path)
+    override = str(override_path)
+
+    for spec in train_dataset.mixture_spec:
+        dataset_path_map = spec.get("dataset_path")
+        if dataset_path_map is None:
+            continue
+        for embodiment_tag, paths in list(dataset_path_map.items()):
+            if isinstance(paths, str):
+                path_list = [paths]
+                single_value = True
+            else:
+                path_list = list(paths)
+                single_value = False
+
+            rewritten_paths = []
+            changed = False
+            for path in path_list:
+                candidate = Path(path)
+                should_replace = (
+                    str(path) == original_path
+                    or candidate == original
+                    or (
+                        not candidate.is_absolute()
+                        and candidate.name == original.name
+                    )
+                )
+                if should_replace:
+                    rewritten_paths.append(override)
+                    changed = True
+                else:
+                    rewritten_paths.append(path)
+
+            if changed:
+                dataset_path_map[embodiment_tag] = (
+                    rewritten_paths[0] if single_value else rewritten_paths
+                )
+
+
 def load_dreamzero_train_cfg(model_cfg: DictConfig, data_paths=None):
     _ensure_groot_importable()
 
@@ -58,11 +102,23 @@ def load_dreamzero_train_cfg(model_cfg: DictConfig, data_paths=None):
                     raise KeyError(
                         f"DreamZero data_root_key `{data_root_key}` not found in {train_cfg_path}"
                     )
+                original_data_root = train_cfg[data_root_key]
                 train_cfg[data_root_key] = data_root_override
+                _rewrite_mixture_dataset_paths(
+                    train_cfg,
+                    original_path=str(original_data_root),
+                    override_path=data_root_override,
+                )
             else:
                 data_root_keys = [key for key in train_cfg.keys() if key.endswith("_data_root")]
                 if len(data_root_keys) == 1:
+                    original_data_root = train_cfg[data_root_keys[0]]
                     train_cfg[data_root_keys[0]] = data_root_override
+                    _rewrite_mixture_dataset_paths(
+                        train_cfg,
+                        original_path=str(original_data_root),
+                        override_path=data_root_override,
+                    )
                 elif len(data_root_keys) > 1:
                     raise ValueError(
                         "DreamZero train config contains multiple `*_data_root` keys. "
@@ -72,6 +128,18 @@ def load_dreamzero_train_cfg(model_cfg: DictConfig, data_paths=None):
     if model_cfg.get("tokenizer_path", None) is not None and "tokenizer_path" in train_cfg:
         with open_dict(train_cfg):
             train_cfg.tokenizer_path = model_cfg.tokenizer_path
+
+    component_override_keys = (
+        "dit_version",
+        "text_encoder_pretrained_path",
+        "image_encoder_pretrained_path",
+        "vae_pretrained_path",
+    )
+    with open_dict(train_cfg):
+        for key in component_override_keys:
+            value = model_cfg.get(key, None)
+            if value is not None and key in train_cfg:
+                train_cfg[key] = value
 
     return train_cfg
 
@@ -172,6 +240,32 @@ def _load_weights(model: torch.nn.Module, checkpoint_dir: str) -> None:
     )
 
 
+def _detect_pretrained_layout(checkpoint_dir: str) -> str:
+    if not checkpoint_dir or not os.path.exists(checkpoint_dir):
+        return "missing"
+
+    full_weight_candidates = (
+        os.path.join(checkpoint_dir, "model.safetensors.index.json"),
+        os.path.join(checkpoint_dir, "model.safetensors"),
+        os.path.join(checkpoint_dir, "model_state_dict", "full_weights.pt"),
+        os.path.join(checkpoint_dir, "actor", "model_state_dict", "full_weights.pt"),
+    )
+    if any(os.path.exists(path) for path in full_weight_candidates):
+        return "dreamzero_checkpoint"
+
+    component_weight_candidates = (
+        os.path.join(checkpoint_dir, "diffusion_pytorch_model.safetensors.index.json"),
+        os.path.join(checkpoint_dir, "diffusion_pytorch_model.safetensors"),
+        os.path.join(checkpoint_dir, "models_t5_umt5-xxl-enc-bf16.pth"),
+        os.path.join(checkpoint_dir, "Wan2.1_VAE.pth"),
+        os.path.join(checkpoint_dir, "Wan2.2_VAE.pth"),
+    )
+    if any(os.path.exists(path) for path in component_weight_candidates):
+        return "component_weights"
+
+    return "unknown"
+
+
 def build_dreamzero_sft_model(model_cfg: DictConfig) -> torch.nn.Module:
     _log_cuda_memory("build_dreamzero_sft_model:start")
     train_cfg = load_dreamzero_train_cfg(model_cfg)
@@ -179,8 +273,20 @@ def build_dreamzero_sft_model(model_cfg: DictConfig) -> torch.nn.Module:
     _log_cuda_memory("build_dreamzero_sft_model:after_instantiate")
 
     pretrained_model_path = model_cfg.get("pretrained_model_path", model_cfg.get("model_path"))
-    _load_weights(model, pretrained_model_path)
-    _log_cuda_memory("build_dreamzero_sft_model:after_load_weights")
+    pretrained_layout = _detect_pretrained_layout(pretrained_model_path)
+    if pretrained_layout == "dreamzero_checkpoint":
+        _load_weights(model, pretrained_model_path)
+        _log_cuda_memory("build_dreamzero_sft_model:after_load_weights")
+    elif pretrained_layout == "component_weights":
+        logger.info(
+            "DreamZero SFT builder detected component-only pretrained weights at %s; "
+            "skipping extra full-model load and relying on train_cfg component loading.",
+            pretrained_model_path,
+        )
+        _log_cuda_memory("build_dreamzero_sft_model:skip_extra_full_load")
+    elif pretrained_model_path:
+        _load_weights(model, pretrained_model_path)
+        _log_cuda_memory("build_dreamzero_sft_model:after_load_weights")
 
     if (
         hasattr(model, "action_head")

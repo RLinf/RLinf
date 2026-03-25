@@ -6,6 +6,10 @@ pretrained_model_path: "/path/to/DreamZero-AgiBot"
 train_cfg_path: null
 data_root_key: null
 tokenizer_path: null
+dit_version: null
+text_encoder_pretrained_path: null
+image_encoder_pretrained_path: null
+vae_pretrained_path: null
 
 precision: "bf16"
 is_lora: False
