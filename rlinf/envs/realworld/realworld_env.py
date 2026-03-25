@@ -83,19 +83,29 @@ class RealWorldEnv(gym.Env):
             hardware_info=hardware_info,
             env_idx=env_idx,
         )
+        base_env = env.unwrapped
         if self.cfg.get("no_gripper", True):
             env = GripperCloseEnv(env)
-        if not env.config.is_dummy and self.cfg.get("use_spacemouse", True):
+        if not base_env.config.is_dummy and self.cfg.get("use_spacemouse", True):
             env = SpacemouseIntervention(env)
-        if not env.config.is_dummy and self.cfg.get("keyboard_reward_wrapper", None):
+        if not base_env.config.is_dummy and self.cfg.get("keyboard_reward_wrapper", None):
             if self.cfg.keyboard_reward_wrapper == "multi_stage":
                 env = KeyboardRewardDoneMultiStageWrapper(env)
             elif self.cfg.keyboard_reward_wrapper == "single_stage":
                 env = KeyboardRewardDoneWrapper(env)
-
-        env = RelativeFrame(env)
-        env = Quat2EulerWrapper(env)
+        if self._supports_pose_wrappers(base_env):
+            env = RelativeFrame(env)
+            env = Quat2EulerWrapper(env)
         return env
+
+    @staticmethod
+    def _supports_pose_wrappers(env: gym.Env) -> bool:
+        if not getattr(env.unwrapped, "supports_relative_frame", True):
+            return False
+        state_space = getattr(env.unwrapped.observation_space, "spaces", {}).get("state")
+        if state_space is None:
+            return False
+        return "tcp_pose" in getattr(state_space, "spaces", {})
 
     @staticmethod
     def realworld_setup():
@@ -127,7 +137,7 @@ class RealWorldEnv(gym.Env):
             for env_idx in range(self.num_envs)
         ]
         self.env = NoAutoResetSyncVectorEnv(env_fns)
-        self.task_descriptions = list(self.env.call("task_description"))
+        self.task_descriptions = list(self.env.call("get_wrapper_attr", "task_description"))
 
     @property
     def total_num_group_envs(self):
