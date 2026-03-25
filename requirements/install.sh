@@ -492,6 +492,15 @@ install_openpi_model() {
             install_flash_attn
             install_robotwin_env
             ;;
+        isaaclab)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_isaaclab_env
+            # Torch is modified in Isaac Lab, install flash-attn afterwards
+            install_flash_attn
+            uv pip install numpydantic==1.7.0 pydantic==2.11.7 numpy==1.26.0
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
             exit 1
@@ -692,6 +701,11 @@ install_isaaclab_env() {
     pushd ~ >/dev/null
     uv pip install "flatdict==4.0.1" --no-build-isolation
     uv pip install "cuda-toolkit[nvcc]==12.8.0"
+
+    # Force CMake < 4 for egl-probe / robomimic native build compatibility
+    uv pip uninstall -y cmake || true
+    uv pip install "cmake<4"
+
     $isaaclab_dir/isaaclab.sh --install
     popd >/dev/null
 }
