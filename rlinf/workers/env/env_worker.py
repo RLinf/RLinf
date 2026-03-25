@@ -890,6 +890,9 @@ class EnvWorker(Worker):
 
         return env_metrics
 
+    def warmup(self):
+        self.env_outputs = self.bootstrap_step()
+
     @Worker.timer("interact")
     async def interact(
         self,
@@ -897,7 +900,7 @@ class EnvWorker(Worker):
         output_channel: Channel,
         actor_channel: Channel | None = None,
     ):
-        self.env_outputs = self.bootstrap_step()
+        self.warmup()
         env_metrics = await self._run_interact_once(
             input_channel,
             output_channel,

@@ -53,6 +53,7 @@ class AsyncEnvWorker(EnvWorker):
         metric_channel: Channel,
         replay_channel: Channel | None,
     ):
+        self.warmup()
         while True:
             env_metrics = await self._run_interact_once(
                 input_channel,
@@ -76,3 +77,6 @@ class AsyncEnvWorker(EnvWorker):
     async def stop(self):
         if self._interact_task is not None and not self._interact_task.done():
             self._interact_task.cancel()
+
+    def warmup(self):
+        super().warmup()
