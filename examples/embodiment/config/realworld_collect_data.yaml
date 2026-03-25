@@ -37,7 +37,7 @@ runner:
 env:
   group_name: "EnvGroup"
   eval:
-    no_gripper: False
+    no_gripper: True
     ignore_terminations: False
     auto_reset: False
     use_spacemouse: True

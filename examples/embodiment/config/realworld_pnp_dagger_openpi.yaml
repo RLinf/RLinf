@@ -1,0 +1,176 @@
+defaults:
+  - env/realworld_bin_relocation@env.train
+  - env/realworld_bin_relocation@env.eval
+  - model/pi0@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0-0
+    env: 0-0
+    rollout: 0-0
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "realworld_pnp_dagger_openpi"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 10
+  max_steps: -1
+
+  only_eval: False
+  val_check_interval: -1
+  save_interval: -1
+
+  resume_dir: null
+  ckpt_path: null
+
+algorithm:
+  dagger:
+    init_beta: 1.0
+    beta_schedule: "exponential"
+    beta_decay: 0.99
+    # HG-DAgger: only expert-acted data is saved.
+    only_save_expert: True
+
+  rollout_epoch: 1
+  eval_rollout_epoch: 1
+  gamma: 0.99
+
+  update_epoch: 1
+  adv_type: gae
+  loss_type: embodied_dagger
+
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+    add_BOS: False
+
+  length_params:
+    max_new_token: 7
+    max_length: 1024
+    min_length: 1
+
+  replay_buffer:
+    enable_cache: True
+    cache_size: 200
+    min_buffer_size: 1
+    sample_window_size: 200
+    auto_save: False
+
+env:
+  group_name: "EnvGroup"
+
+  train:
+    auto_reset: True
+    ignore_terminations: False
+    total_num_envs: 1
+    no_gripper: False
+    use_spacemouse: False
+    keyboard_reward_wrapper: null
+    max_steps_per_rollout_epoch: 100
+    max_episode_steps: 100
+    override_cfg:
+      target_ee_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      success_hold_steps: 1
+      camera_serials: ["0123456789", "9876543210"]
+      robot_ip: "0.0.0.0"
+      use_dense_reward: False
+      is_dummy: True
+      max_num_steps: 100
+      enable_gripper_penalty: False
+
+  eval:
+    total_num_envs: 1
+    auto_reset: True
+    ignore_terminations: False
+    no_gripper: False
+    use_spacemouse: False
+    keyboard_reward_wrapper: null
+    max_steps_per_rollout_epoch: 100
+    max_episode_steps: 100
+    override_cfg:
+      target_ee_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      success_hold_steps: 1
+      camera_serials: ["0123456789", "9876543210"]
+      robot_ip: "0.0.0.0"
+      use_dense_reward: False
+      is_dummy: True
+      max_num_steps: 100
+      enable_gripper_penalty: False
+
+rollout:
+  group_name: "RolloutGroup"
+  backend: "huggingface"
+  recompute_logprobs: False
+  enable_offload: False
+  pipeline_stage_num: 1
+  collect_prev_infos: False
+
+  model:
+    model_path: "/path/to/sfted_pi0_ckpt"
+    precision: ${actor.model.precision}
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 32
+  global_batch_size: 32
+  seed: 0
+  enable_offload: False
+
+  model:
+    precision: null
+    model_path: "/path/to/sfted_pi0_ckpt"
+    num_action_chunks: 10
+    action_dim: 7
+    add_value_head: False
+    openpi:
+      config_name: "pi0_franka_dagger"
+      num_images_in_input: 2
+      train_expert_only: False
+      detach_critic_input: True
+      action_chunk: ${actor.model.num_action_chunks}
+
+  optim:
+    lr: 1.0e-5
+    value_lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 1.0e-10
+    clip_grad: 4.0
+    warmup_style: "cosine"
+    lr_warmup_steps: 20
+    total_training_steps: 1000
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    gradient_checkpointing: False
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False
