@@ -87,13 +87,9 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
                                      dtype=self.compute_dtype, device=actions.device)
         padded_actions[:, :, :actions.shape[-1]] = actions.to(dtype=self.compute_dtype)
         
-        # action_mask = torch.zeros((actions.shape[0], actions.shape[1], target_dim), 
-        #                          dtype=self.compute_dtype, device=actions.device)
-        # action_mask[:, :, :actions.shape[-1]] = 1.0
-        action_mask = torch.ones((actions.shape[0], actions.shape[1], target_dim), 
+        action_mask = torch.zeros((actions.shape[0], actions.shape[1], target_dim), 
                                  dtype=self.compute_dtype, device=actions.device)
-        
-        padded_actions = torch.nan_to_num(padded_actions, nan=0.0)
+        action_mask[:, :, :actions.shape[-1]] = 1.0
         
         model_inputs["action"] = padded_actions
         model_inputs["action_mask"] = action_mask
