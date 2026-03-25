@@ -7,7 +7,9 @@ RL with IsaacLab
    :class: inline-icon
 
 This example provides a comprehensive guide to using the **RLinf** framework in the `IsaacLab <https://developer.nvidia.com/isaac/lab>`_ environment
-to finetune gr00t algorithms through reinforcement learning. It covers the entire process—from environment setup and core algorithm design to training configuration, evaluation, and visualization—along with reproducible commands and configuration snippets.
+to finetune gr00t n1.5 algorithms through reinforcement learning. It covers the entire process—from environment setup and core algorithm design to training configuration, evaluation, and visualization—along with reproducible commands and configuration snippets.
+
+A similar process for fine-tuning openpi π0.5 algorithms is also included below.
 
 The primary objective is to develop a model capable of performing robotic manipulation:
 
@@ -73,8 +75,8 @@ Algorithm
    - For every state/prompt, the policy generates *G* independent actions
    - Compute the advantage of each action by subtracting the group's mean reward
 
-Dependency Installation
------------------------
+Dependency Installation for Gr00t n1.5
+----------------------------------------
 
 1. Clone RLinf Repository
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -115,8 +117,8 @@ Install dependencies directly in your environment by running the following comma
    bash requirements/install.sh embodied --model gr00t --env isaaclab
    source .venv/bin/activate
 
-Isaac Sim Download
---------------------
+3. Isaac Sim Download
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Before using IsaacLab, you need to download and set up Isaac Sim. Please follow the instructions below:
 
@@ -138,8 +140,8 @@ After downloading, set environment variables via:
 
    This step must be done every time you open a new terminal to use Isaac Sim.
 
-Model Download
-----------------
+Model Download for Gr00t n1.5
+--------------------------------
 
 .. code-block:: bash
 
@@ -155,12 +157,12 @@ Model Download
    pip install huggingface-hub
    hf download RLinf/RLinf-Gr00t-SFT-Stack-cube --local-dir RLinf-Gr00t-SFT-Stack-cube
 
-To enable the model to improve its performance through reinforcement learning, we collected human demonstration data for the ``stack cube`` task in the IsaacLab environment and conducted supervised fine-tuning with **GR00T N1.5** (<https://github.com/NVIDIA/Isaac-GR00T/tree/n1.5-release>) as the base model, thereby achieving a baseline task success rate.
+To enable the model to improve its performance through reinforcement learning, we collected human demonstration data for the ``stack cube`` task in the IsaacLab environment and conducted supervised fine-tuning with `GR00T N1.5 <https://github.com/NVIDIA/Isaac-GR00T/tree/n1.5-release>`__ as the base model, thereby achieving a baseline task success rate.
 
-The dataset has been open-sourced on HuggingFace: <https://huggingface.co/datasets/RLinf/IsaacLab-Stack-Cube-Data>
+The dataset has been open-sourced on HuggingFace: `IsaacLab-Stack-Cube-Data <https://huggingface.co/datasets/RLinf/IsaacLab-Stack-Cube-Data>`__
 
-Running the Script
-------------------
+Running the Script for Gr00t N1.5
+----------------------------------
 
 The default configuration file for this example is ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_gr00t.yaml``. You can modify the configuration file to adjust the training settings, such as GPU allocation, training hyperparameters, and logging options.
 
@@ -212,17 +214,134 @@ Update the `model_path` in the configuration file to point to the directory wher
 
 **3. Launch Commands**
 
-To train gr00t using the PPO algorithm in the IsaacLab environment, run:
+To train gr00t n1.5 using the PPO algorithm in the IsaacLab environment, run:
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t
 
-To evaluate gr00t in the IsaacLab environment, run:
+To evaluate gr00t n1.5 in the IsaacLab environment, run:
 
 .. code:: bash
 
    bash examples/embodiment/eval_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t
+
+Dependency Installation for Openpi π0.5
+---------------------------------------
+
+1. Clone RLinf Repository
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+   # For mainland China users, you can use the following for better download speed:
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+2. Install Dependencies
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Option 1: Docker Image**
+
+Use Docker image for the experiment.
+
+.. code:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 32g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.2-isaaclab
+      # For mainland China users, you can use the following for better download speed:
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-isaaclab
+
+Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
+
+.. code:: bash
+
+   source switch_env openpi
+
+**Option 2: Custom Environment**
+
+Install dependencies directly in your environment by running the following command:
+
+.. code:: bash
+
+   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
+
+   bash requirements/install.sh embodied --model openpi --env isaaclab
+   source .venv/bin/activate
+
+3. Isaac Sim Download
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Before using IsaacLab, you need to download and set up Isaac Sim. Please follow the instructions below:
+
+.. code-block:: bash
+
+   mkdir -p isaac_sim
+   cd isaac_sim
+   wget https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-5.1.0-linux-x86_64.zip
+   unzip isaac-sim-standalone-5.1.0-linux-x86_64.zip
+   rm isaac-sim-standalone-5.1.0-linux-x86_64.zip
+
+After downloading, set environment variables via:
+
+.. code-block:: bash
+
+   source ./setup_conda_env.sh
+
+.. warning::
+
+   This step must be done every time you open a new terminal to use Isaac Sim.
+
+Model Download for Openpi π0.5
+--------------------------------
+
+.. code-block:: bash
+
+   cd /path/to/save/model
+   # Download IsaacLab stack_cube few-shot SFT model
+   # Method 1: Using git clone
+   git lfs install
+   git clone https://huggingface.co/YifWRobotics/RLinf-pi05-SFT-Stack-cube
+
+   # Method 2: Using huggingface-hub
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
+   pip install huggingface-hub
+   hf download YifWRobotics/RLinf-pi05-SFT-Stack-cube --local-dir RLinf-pi05-SFT-Stack-cube
+
+To enable the model to improve its performance through reinforcement learning, we collected human demonstration data for the ``stack cube`` task in the IsaacLab environment and conducted supervised fine-tuning with `openpi π0.5 <https://github.com/Physical-Intelligence/openpi>`__ as the base model, thereby achieving a baseline task success rate.
+
+The dataset has been open-sourced on HuggingFace: `IsaacLab-Stack-Cube-Data <https://huggingface.co/datasets/RLinf/IsaacLab-Stack-Cube-Data>`__
+
+Running the Script for Openpi π0.5
+----------------------------------
+
+**1. Key Cluster Configuration**
+
+Similar to the counterpart for gr00t n1.5.
+
+**2. Configure model path**
+
+Update the `model_path` in the configuration file to point to the directory where the model was downloaded.
+
+**3. Launch Commands**
+
+To train openpi π0.5 using the PPO algorithm in the IsaacLab environment, run:
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_openpi_pi05
+
+To evaluate openpi π0.5 in the IsaacLab environment, run:
+
+.. code:: bash
+
+   bash examples/embodiment/eval_embodiment.sh isaaclab_franka_stack_cube_ppo_openpi_pi05
 
 Visualization and Results
 -------------------------
@@ -288,7 +407,7 @@ Visualization and Results
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "isaaclab_franka_stack_cube_ppo_gr00t"
+       experiment_name: "isaaclab_franka_stack_cube_ppo_gr00t" # "isaaclab_franka_stack_cube_ppo_openpi_pi05"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 Reinforcement learning result
@@ -296,18 +415,25 @@ Reinforcement learning result
 
 The following table summarizes the performance improvement throughout the training stages:
 
-+-------------------------------+--------------+
-| Model Stage                   | Success Rate |
-+===============================+==============+
-| Base Model (No SFT)           | 0.0          |
-+-------------------------------+--------------+
-| SFT Model                     | 0.654        |
-+-------------------------------+--------------+
-| RL Tuned Model (SFT + RL)     | 0.897        |
-+-------------------------------+--------------+
+.. list-table::
+   :header-rows: 1
+   :widths: 70 30
+
+   * - Model Stage
+     - Success Rate
+   * - Gr00t n1.5 Base Model (No SFT)
+     - 0.0
+   * - Gr00t n1.5 SFT Model
+     - 0.654
+   * - Gr00t n1.5 RL Tuned Model (SFT + RL)
+     - 0.897
+   * - Openpi π0.5 SFT Model
+     - 0.859
+   * - Openpi π0.5 RL Tuned Model (SFT + RL)
+     - 0.953
 
 
 Acknowledgements
 ----------------
-Credit to `Minghui Xu <https://github.com/smallcracker>`_ and `Nan Yang <https://github.com/AquaSage18>`_ for their contribution and support for this example!
- 
+Credit to `Minghui Xu <https://github.com/smallcracker>`_ and `Nan Yang <https://github.com/AquaSage18>`_ for their contribution and support for this example for gr00t-n1.5!
+Credit to `Yifan Wu <https://github.com/YifWRobotics>`_ for their contribution and support for this example for openpi π0.5!
