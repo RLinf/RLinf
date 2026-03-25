@@ -49,7 +49,7 @@ ZED 相机安装
 
 .. warning::
 
-   请使用 **ZED SDK 4.2.x**（如 v4.2.5）。ZED SDK 5.0+ 自带的 NumPy
+   请使用 **ZED SDK 4.2.x** （如 v4.2.5）。ZED SDK 5.0+ 自带的 NumPy
    与 Franka 跨节点序列化所需的 ``numpy<2`` 约束冲突。
    请使用 4.2 系列以避免依赖问题。
 
