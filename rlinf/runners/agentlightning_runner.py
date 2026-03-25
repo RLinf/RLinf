@@ -33,37 +33,6 @@ if typing.TYPE_CHECKING:
     from rlinf.workers.rollout.sglang.sglang_worker_server import SGLangWorkerWithHTTPServer
     from rlinf.workers.rollout.sglang.sglang_router_worker import SGLangRouterWorker
 
-
-def _wait_router_ready(urls: list[str], timeout: float = 60.0) -> None:
-    """轮询 router URL 直到 GET 返回 200/404/405 或超时。"""
-    if not urls:
-        return
-    base = urls[0]
-    url = base if str(base).startswith("http") else f"http://{base}"
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            resp = requests.get(url, timeout=5)
-            if resp.status_code in (200, 404, 405):
-                logging.info("[AgentLightningRLinfRunner] router ready: %s", url)
-                return
-        except (requests.exceptions.ConnectionError, OSError):
-            pass
-        time.sleep(1)
-    raise TimeoutError(f"Router at {url} did not become ready within {timeout}s")
-
-
-def _resolve_agl_rollout_http_addrs(rollout_group: Any) -> list[str]:
-    """HTTP 入口：composite 用 get_router_address，并轮询 router 就绪；否则用 get_server_address。"""
-    if hasattr(rollout_group, "get_router_address"):
-        addrs = [str(x) for x in rollout_group.get_router_address().wait() if x]
-        _wait_router_ready(addrs, timeout=60.0)
-    else:
-        addrs = [str(x) for x in rollout_group.get_server_address().wait() if x]
-    logging.info("[AgentLightningRLinfRunner] rollout HTTP backends: %s", addrs)
-    return addrs
-
-
 class AgentLightningRLinfRunner(ReasoningRunner):
     """AgentLightning 训练；SGLang 下支持 worker_http 与 router_server 两种 HTTP 暴露方式（由 rollout.sglang.serving_mode 决定）。"""
     def __init__(
@@ -93,7 +62,6 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         self.store = store
         self.adapter = adapter
         self.agentlightning_rollout_worker = agentlightning_rollout_worker
-        # sglang_dp_ready_* 在 entrypoint 创建，Server worker 按名字 connect，Runner 不创建
 
     def _build_dataloader(self, train_dataset, val_dataset, collate_fn=None):
         self.train_dataset, self.val_dataset = train_dataset, val_dataset

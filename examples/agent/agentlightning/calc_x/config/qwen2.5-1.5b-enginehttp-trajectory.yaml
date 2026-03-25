@@ -1,0 +1,18 @@
+defaults:
+  - base_calc_x
+
+runner:
+  logger:
+    project_name: rlinf-calc-x-qwen2.5-1.5b-enginehttp-trajectory
+  experiment_name: calc-x-agl-qwen2.5-1.5b-enginehttp-trajectory
+  seq_length: 8192
+
+algorithm:
+  advantage_mode: trajectory
+
+actor:
+  pack_traj: True
+
+rollout:
+  sglang:
+    serving_mode: worker_http
