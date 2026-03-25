@@ -29,6 +29,7 @@ class SupportedEnvType(Enum):
     HABITAT = "habitat"
     OPENSORAWM = "opensora_wm"
     WANWM = "wan_wm"
+    DROID = "droid"
 
 
 def get_env_cls(env_type: str, env_cfg=None):
@@ -113,5 +114,9 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.world_model.world_model_wan_env import WanEnv
 
         return WanEnv
+    elif env_type == SupportedEnvType.DROID:
+        from rlinf.envs.droid.droid_env import DroidEnv
+
+        return DroidEnv
     else:
         raise NotImplementedError(f"Environment type {env_type} not implemented")
