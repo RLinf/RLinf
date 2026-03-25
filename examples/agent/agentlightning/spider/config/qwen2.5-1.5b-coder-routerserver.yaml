@@ -1,0 +1,22 @@
+defaults:
+  - base_spider
+
+runner:
+  logger:
+    project_name: rlinf-spider-qwen2.5-1.5b-coder-routerserver
+  experiment_name: spider-agl-qwen2.5-1.5b-coder-routerserver
+
+algorithm:
+  advantage_mode: turn
+
+actor:
+  pack_traj: False
+
+rollout:
+  sglang:
+    serving_mode: router_server
+    router:
+      host: 0.0.0.0
+      port: 30000
+      policy: round_robin
+

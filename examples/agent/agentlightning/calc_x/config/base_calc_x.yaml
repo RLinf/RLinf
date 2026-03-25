@@ -11,12 +11,11 @@ cluster:
   component_placement:
     actor,rollout,reward: all
 
-
 runner:
   task_type: reasoning
   logger:
     log_path: ${runner.output_dir}/${runner.experiment_name}
-    project_name: rlinf
+    project_name: rlinf-calc-x-base
     experiment_name: ${runner.experiment_name}
     logger_backends: ["tensorboard"]
 
@@ -32,12 +31,12 @@ runner:
   max_tokens_per_mbs: 11008
 
   resume_dir: null
-  experiment_name: calc-agl-qwen2.5-1.5b-instruct
+  experiment_name: calc-x-agl-base
   output_dir: ../results
 
 algorithm:
   group_size: 4
-  n_minibatches: 4
+  n_minibatches: 1
   training_batch_size_per_gpu: 1
   rollout_batch_size_per_gpu: null 
   
@@ -89,7 +88,7 @@ rollout:
 
   gpu_memory_utilization: 0.6
   model:
-    model_path: /path/to/model/Qwen2.5-1.5B-Instruct
+    model_path: /mnt/public/hf_models/Qwen2.5-1.5B-Instruct
     model_type: qwen2.5
     precision: ${actor.model.precision}
   enforce_eager: False
@@ -106,15 +105,16 @@ rollout:
     decode_log_interval: 500000
     use_torch_compile: False
     torch_compile_max_bs: 128
+    # SGLang server expert/deepEP related knobs.
+    ep_size: 1
+    moe_a2a_backend: none
+    moe_runner_backend: auto
+    deepep_mode: auto
     tool_call_parser: qwen25
-    # AgentLightning 对外 HTTP：worker_http（进程内 FastAPI）| router_server（子进程 server + Router）
-    serving_mode: router_server
+    serving_mode: worker_http
     server:
       host: 0.0.0.0
       port: 8020
-    router:
-      host: 0.0.0.0
-      port: 30000
 
   vllm:
     attention_backend: FLASH_ATTN
@@ -151,8 +151,8 @@ data:
   shuffle: True
   validation_shuffle: False
   seed: 42
-  train_data_paths: ["/path/to/train.parquet"]
-  val_data_paths: ["/path/to/test.parquet"]
+  train_data_paths: ["/mnt/public/yule/data/calc_x/train.parquet"]
+  val_data_paths: ["/mnt/public/yule/data/calc_x/test.parquet"]
 
 actor:
   group_name: "ActorGroup"
@@ -164,6 +164,8 @@ actor:
   offload_weight: True
   offload_grad: True
   enable_dp_load_balance: True
+
+  pack_traj: False
 
   calculate_flops: False
 

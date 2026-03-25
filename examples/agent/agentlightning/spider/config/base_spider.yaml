@@ -11,12 +11,11 @@ cluster:
   component_placement:
     actor,rollout,reward: all
 
-
 runner:
   task_type: reasoning
   logger:
     log_path: ${runner.output_dir}/${runner.experiment_name}
-    project_name: rlinf
+    project_name: rlinf-spider-base
     experiment_name: ${runner.experiment_name}
     logger_backends: ["tensorboard"]
 
@@ -26,26 +25,26 @@ runner:
   val_check_interval: 32
   save_interval: 32
 
-  seq_length: 8192
+  seq_length: 6144
 
-  enable_dynamic_batch_size: False
+  enable_dynamic_batch_size: True
   max_tokens_per_mbs: 11008
 
   resume_dir: null
-  experiment_name: calc-agl-qwen2.5-1.5b-instruct
+  experiment_name: spider-agl-base
   output_dir: ../results
 
 algorithm:
   group_size: 4
-  n_minibatches: 4
+  n_minibatches: 1
   training_batch_size_per_gpu: 1
   rollout_batch_size_per_gpu: null 
-
+  
   logprob_forward_micro_batch_size: 4
 
   val_rollout_batch_size_per_gpu: 1
 
-  recompute_logprobs: True
+  recompute_logprobs: False
   shuffle_rollout: False
 
   loss_type: actor
@@ -59,8 +58,10 @@ algorithm:
   clip_ratio_low: 0.2
   clip_ratio_high: 0.3
 
-  adv_type: grpo
-  normalize_advantages: True
+  adv_type: grpo_dynamic
+  advantage_mode: turn 
+  loss_scales: ["group_level"] # used for multi-turn loss scaling
+  normalize_advantages: False #
   early_stop_imp_ratio: null
   use_valid_token_scale: False
 
@@ -81,13 +82,14 @@ inference:
     tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1
     sequence_parallel: False
-
+agentloop:
+  is_dynamic_rollout_batch: True
 rollout:
   group_name: "RolloutGroup"
 
   gpu_memory_utilization: 0.6
   model:
-    model_path: /path/to/model/Qwen2.5-1.5B-Instruct
+    model_path: /mnt/public/yule/models/Qwen2.5-Coder-1.5B-Instruct
     model_type: qwen2.5
     precision: ${actor.model.precision}
   enforce_eager: False
@@ -104,6 +106,10 @@ rollout:
     decode_log_interval: 500000
     use_torch_compile: False
     torch_compile_max_bs: 128
+    ep_size: 1
+    moe_a2a_backend: none
+    moe_runner_backend: auto
+    deepep_mode: auto
     tool_call_parser: qwen25
     serving_mode: worker_http
     server:
@@ -132,6 +138,7 @@ rollout:
   cuda_graph_max_bs: 128
   is_eval: False
 
+# Spider parquet: db_id, question, query (sql_agent uses task["question"], task["query"], task["db_id"])
 data:
   type: math
   max_prompt_length: 4096
@@ -140,14 +147,14 @@ data:
   val_rollout_batch_size: null
   num_workers: 8
   prompt_key: question
-  answer_key: result
+  answer_key: query
   apply_chat_template: False
   shuffle: True
   validation_shuffle: False
   seed: 42
-  train_data_paths: ["/path/to/train.parquet"]
-  val_data_paths: ["/path/to/test.parquet"]
-  
+  train_data_paths: ["/mnt/public/yule/data/spider/train_spider.parquet"]
+  val_data_paths: ["/mnt/public/yule/data/spider/test_dev_500.parquet"]
+
 actor:
   group_name: "ActorGroup"
   training_backend: megatron
@@ -157,7 +164,9 @@ actor:
   offload_optimizer: True
   offload_weight: True
   offload_grad: True
-  enable_dp_load_balance: False
+  enable_dp_load_balance: True
+
+  pack_traj: False
 
   calculate_flops: False
 
@@ -243,7 +252,7 @@ actor:
     use_profiler: False
 
     ckpt_convertor:
-      model: Qwen2.5-1.5B
+      model: Qwen2.5-Coder-1.5B
       model_type: null
       hf_model_path: ${rollout.model.model_path}
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor

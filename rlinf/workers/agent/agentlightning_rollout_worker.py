@@ -17,7 +17,7 @@ from agentlightning.store.base import LightningStore
 from agentlightning.types.core import EnqueueRolloutRequest, Rollout, RolloutConfig, Task, Triplet
 
 
-from rlinf.data.io_struct import RolloutResult, DynamicRolloutResult
+from rlinf.data.io_struct import DynamicRolloutResult
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from agentlightning.llm_proxy import ModelConfig
@@ -52,9 +52,7 @@ class AgentLightningRolloutWorker(Worker):
         self._total_tasks_queued = 0
         self._completed_rollout_ids: Dict[str, RolloutLegacy] = {}
         self._data_id_to_rollout_ids: Dict[str, List[str]] = {}
-        self.tokenizer = AutoTokenizer.from_pretrained(self.cfg.rollout.model.model_path)
         self.is_eval_mode: bool = False
-        self.advantage_mode: str = self.cfg.algorithm.get("advantage_mode", "turn")
 
     def init_worker(
         self,
@@ -191,29 +189,22 @@ class AgentLightningRolloutWorker(Worker):
         return result_rollout
 
     def _count_tool_calls_in_triplet(self, triplet: Triplet) -> int:
-        if triplet.metadata and "tool_calls" in triplet.metadata:
-            tool_calls = triplet.metadata["tool_calls"]
-            if isinstance(tool_calls, list):
-                return len(tool_calls)
-            elif isinstance(tool_calls, int):
-                return tool_calls
-        
-        if isinstance(triplet.response, dict):
-            if "tool_calls" in triplet.response:
-                tool_calls = triplet.response["tool_calls"]
-                if isinstance(tool_calls, list):
-                    return len(tool_calls)
-            if "metadata" in triplet.response and isinstance(triplet.response["metadata"], dict):
-                if "tool_calls" in triplet.response["metadata"]:
-                    tool_calls = triplet.response["metadata"]["tool_calls"]
-                    if isinstance(tool_calls, list):
-                        return len(tool_calls)
-        
+        if not isinstance(triplet.response, dict):
+            return 0
+        response_raw_content = triplet.response.get("raw_content")
+        if isinstance(response_raw_content, list):
+            for msg in response_raw_content:
+                if not isinstance(msg, dict):
+                    continue
+                if msg.get("role") != "assistant":
+                    continue
+                if msg.get("finish_reason") == "tool_calls":
+                    return 1
         return 0
 
     def _compute_rollout_metrics(
         self,
-        rollout_results: List[Union[RolloutResult, DynamicRolloutResult]],
+        rollout_results: List[DynamicRolloutResult],
         rollouts: List[RolloutLegacy],
     ) -> Dict[str, float]:
         if not rollout_results:
@@ -231,17 +222,11 @@ class AgentLightningRolloutWorker(Worker):
         
         total_tool_calls = 0
         total_turns = 0
-        n_triplets = 0
         n_rollouts_w_reward = 0
         
         for rollout_result in rollout_results:
-            if self.advantage_mode == "turn":
-                batch_size = rollout_result.group_size
-            else:
-                batch_size = rollout_result.batch_size
+            batch_size = rollout_result.group_size
             n_rollouts += batch_size
-            n_triplets += rollout_result.num_sequence
-            
             if rollout_result.rewards is not None:
                 if isinstance(rollout_result.rewards, torch.Tensor):
                     rewards_list = rollout_result.rewards.tolist()
@@ -272,7 +257,7 @@ class AgentLightningRolloutWorker(Worker):
             "agent/n_rollouts": n_rollouts,
             "agent/n_rollouts_w_trace": n_rollouts_w_trace,
             "agent/n_rollouts_w_reward": n_rollouts_w_reward,
-            "agent/turn_count": n_triplets,
+            "agent/turn_count": total_turns,
             "agent/mean_turn_count_per_rollout": float(total_turns / n_rollouts) if n_rollouts > 0 else 0.0,
             "agent/mean_response_length": float(np.mean(total_response_lengths)) if total_response_lengths else 0.0,
             "agent/total_tool_calls": total_tool_calls,
@@ -296,155 +281,63 @@ class AgentLightningRolloutWorker(Worker):
                     completed_data_ids.append(data_id)
         return completed_data_ids
 
-    async def _async_get_rollout_result_for_data_id(self, data_id: str) -> Optional[Union[RolloutResult, DynamicRolloutResult]]:
+    async def _async_get_rollout_result_for_data_id(self, data_id: str) -> Optional[DynamicRolloutResult]:
         rollout_ids = self._data_id_to_rollout_ids[data_id]
         rollouts = [self._completed_rollout_ids[rollout_id] for rollout_id in rollout_ids]
         
         max_prompt_len = int(self.cfg.data.get("max_prompt_length", 4096))
         max_response_length = int(self.cfg.data.get("max_response_length", 2048))
-        
-        if self.advantage_mode == "turn":
-            idx_to_traj: List[int] = []
-            input_ids_list: List[List[int]] = []
-            prompt_lengths_list: List[int] = []
-            response_lengths_list: List[int] = []
-            is_end_list: List[bool] = []
-            rewards_list: List[float] = []
-            rollout_logprobs_list: List[List[float]] = []
+
+        idx_to_traj: List[int] = []
+        input_ids_list: List[List[int]] = []
+        prompt_lengths_list: List[int] = []
+        response_lengths_list: List[int] = []
+        is_end_list: List[bool] = []
+        rewards_list: List[float] = []
+        rollout_logprobs_list: List[List[float]] = []
             
-            for traj_idx, rollout_legacy in enumerate(rollouts):
-                for triplet in rollout_legacy.triplets:
-                    prompt_ids = triplet.prompt.get("token_ids", [])
-                    response_ids = triplet.response.get("token_ids", [])
-                    
-                    if len(prompt_ids) > max_prompt_len:
-                        prompt_ids = prompt_ids[:max_prompt_len]
-                    if len(response_ids) > max_response_length:
-                        response_ids = response_ids[:max_response_length]
-                    
-                    input_ids = prompt_ids + response_ids
-                    
-                    turn_logprobs: List[float] = []
-                    if self.cfg.rollout.return_logprobs:
-                        logprobs = triplet.response.get("logprobs", [])
-                        if logprobs:
-                            turn_logprobs = [lp.get("logprob", 0.0) for lp in logprobs]
-                            if len(turn_logprobs) > max_response_length:
-                                turn_logprobs = turn_logprobs[:max_response_length]
-                    
-                    idx_to_traj.append(traj_idx)
-                    input_ids_list.append(input_ids)
-                    prompt_lengths_list.append(len(prompt_ids))
-                    response_lengths_list.append(len(response_ids))
-                    is_end_list.append(True)
-                    rewards_list.append(rollout_legacy.final_reward)
-                    rollout_logprobs_list.append(turn_logprobs)
+        for traj_idx, rollout_legacy in enumerate(rollouts):
+            for triplet in rollout_legacy.triplets:
+                prompt_ids = triplet.prompt.get("token_ids", [])
+                response_ids = triplet.response.get("token_ids", [])
 
-            rewards_tensor = torch.tensor(rewards_list, dtype=torch.float32)
-
-            dynamic_rollout_result = DynamicRolloutResult(
-                num_sequence=len(input_ids_list),
-                group_size=len(rollouts),
-                idx_to_traj=idx_to_traj,
-                input_ids=input_ids_list,
-                prompt_lengths=prompt_lengths_list,
-                response_lengths=response_lengths_list,
-                is_end=is_end_list,
-                rewards=rewards_tensor,
-                rollout_logprobs=rollout_logprobs_list if self.cfg.rollout.return_logprobs else None,
-            )
-            return dynamic_rollout_result
-        else:
-            prompt_ids_list: List[List[int]] = []
-            response_ids_list: List[List[int]] = []
-            prompt_lengths_list: List[int] = []
-            response_lengths_list: List[int] = []
-            is_end_list: List[bool] = []
-            rewards_list: List[float] = []
-            response_mask_list: List[List[int]] = []
-            prompt_texts_list: List[str] = []
-            response_texts_list: List[str] = []
-            rollout_logprobs_list: List[List[float]] = []
-
-            for rollout_legacy in rollouts:
-
-                first_triplet = rollout_legacy.triplets[0]
-                orig_prompt_ids = first_triplet.prompt.get("token_ids", [])
-                
-                if len(orig_prompt_ids) > max_prompt_len:
-                    orig_prompt_ids = orig_prompt_ids[:max_prompt_len]
-                
-                accumulated_response_mask: List[int] = []
-                accumulated_full_sequence: List[int] = []
-                accumulated_logprobs: List[float] = []
-                
-                for triplet_idx, triplet in enumerate(rollout_legacy.triplets):
-                    prompt_token_ids = triplet.prompt.get("token_ids", [])
-                    response_token_ids = triplet.response.get("token_ids", [])
-
-                    if triplet_idx == 0:
-                        accumulated_full_sequence = orig_prompt_ids + response_token_ids
-                        accumulated_response_mask += [1] * len(response_token_ids)
-                        if self.cfg.rollout.return_logprobs:
-                            logprobs = triplet.response.get("logprobs", [])
-                            if logprobs:
-                                accumulated_logprobs += [lp.get("logprob", 0.0) for lp in logprobs]
-                    else:
-                        tool_response_ids = prompt_token_ids[len(accumulated_full_sequence):]
-                        accumulated_full_sequence.extend(tool_response_ids)
-                        accumulated_full_sequence.extend(response_token_ids)
-                        accumulated_response_mask += [0] * len(tool_response_ids)
-                        accumulated_response_mask += [1] * len(response_token_ids)
-                        if self.cfg.rollout.return_logprobs:
-                            logprobs = triplet.response.get("logprobs", [])
-                            if logprobs:
-                                accumulated_logprobs += [0.0] * len(tool_response_ids)
-                                accumulated_logprobs += [lp.get("logprob", 0.0) for lp in logprobs]
-                
-                response_ids = accumulated_full_sequence[len(orig_prompt_ids):]
-                
+                if len(prompt_ids) > max_prompt_len:
+                    prompt_ids = prompt_ids[:max_prompt_len]
                 if len(response_ids) > max_response_length:
                     response_ids = response_ids[:max_response_length]
-                    accumulated_response_mask = accumulated_response_mask[:max_response_length]
-                    if self.cfg.rollout.return_logprobs:
-                        accumulated_logprobs = accumulated_logprobs[:max_response_length]
-
-
-                prompt_ids_list.append(orig_prompt_ids)
-                response_ids_list.append(response_ids)
-                prompt_lengths_list.append(len(orig_prompt_ids))
-                response_lengths_list.append(len(response_ids))
-                response_mask_list.append(accumulated_response_mask)
-                is_end_list.append(True)
                 
-                reward = rollout_legacy.final_reward
-                rewards_list.append(reward)
+                input_ids = prompt_ids + response_ids
                 
+                turn_logprobs: List[float] = []
                 if self.cfg.rollout.return_logprobs:
-                    if len(accumulated_logprobs) > max_response_length:
-                        accumulated_logprobs = accumulated_logprobs[:max_response_length]
-                    rollout_logprobs_list.append(accumulated_logprobs)
+                    logprobs = triplet.response.get("logprobs", [])
+                    if logprobs:
+                        turn_logprobs = [lp.get("logprob", 0.0) for lp in logprobs]
+                        if len(turn_logprobs) > max_response_length:
+                            turn_logprobs = turn_logprobs[:max_response_length]
+                
+                idx_to_traj.append(traj_idx)
+                input_ids_list.append(input_ids)
+                prompt_lengths_list.append(len(prompt_ids))
+                response_lengths_list.append(len(response_ids))
+                is_end_list.append(True)
+                rewards_list.append(rollout_legacy.final_reward)
+                rollout_logprobs_list.append(turn_logprobs)
 
             rewards_tensor = torch.tensor(rewards_list, dtype=torch.float32)
-            
-            prompt_texts_list = [self.tokenizer.decode(prompt_ids) for prompt_ids in prompt_ids_list]
-            response_texts_list = [self.tokenizer.decode(response_ids) for response_ids in response_ids_list]
-            rollout_result = RolloutResult(
-                num_sequence=len(prompt_ids_list),
-                group_size=len(prompt_ids_list),
-                prompt_lengths=prompt_lengths_list,
-                prompt_ids=prompt_ids_list,
-                response_lengths=response_lengths_list,
-                response_ids=response_ids_list,
-                is_end=is_end_list,
-                rewards=rewards_tensor,
-                response_mask=response_mask_list,
-                prompt_texts= prompt_texts_list,
-                response_texts= response_texts_list,
-                rollout_logprobs=rollout_logprobs_list if self.cfg.rollout.return_logprobs else None,
-            )
-
-            return rollout_result
+        
+        dynamic_rollout_result = DynamicRolloutResult(
+            num_sequence=len(input_ids_list),
+            group_size=len(rollouts),
+            idx_to_traj=idx_to_traj,
+            input_ids=input_ids_list,
+            prompt_lengths=prompt_lengths_list,
+            response_lengths=response_lengths_list,
+            is_end=is_end_list,
+            rewards=rewards_tensor,
+            rollout_logprobs=rollout_logprobs_list if self.cfg.rollout.return_logprobs else None,
+        )
+        return dynamic_rollout_result
 
     async def process_rollout_batch(
         self, input_channel: Channel, output_channel: Channel
@@ -458,7 +351,7 @@ class AgentLightningRolloutWorker(Worker):
             
             initial_data_ids_count = len(self._data_id_to_rollout_ids)
             processed_data_ids = set()
-            rollout_results: List[Union[RolloutResult, DynamicRolloutResult]] = []
+            rollout_results: List[DynamicRolloutResult] = []
             
             while len(processed_data_ids) < initial_data_ids_count:
                 rollout_ids_to_query = [
