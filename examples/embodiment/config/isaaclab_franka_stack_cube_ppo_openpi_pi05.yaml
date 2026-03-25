@@ -86,7 +86,7 @@ env:
   group_name: "EnvGroup"
 
   train:
-    total_num_envs: 64
+    total_num_envs: 128
     max_episode_steps: 450 # for truncation
     max_steps_per_rollout_epoch: 450
     use_fixed_reset_state_ids: True
