@@ -216,6 +216,7 @@ class AgentLightningRolloutWorker(Worker):
             }
         
         all_rewards: List[float] = []
+        total_prompt_lengths: List[int] = []
         total_response_lengths: List[int] = []
         n_rollouts = 0
         n_rollouts_w_trace = 0
@@ -238,6 +239,7 @@ class AgentLightningRolloutWorker(Worker):
             
             if rollout_result.response_lengths:
                 n_rollouts_w_trace += batch_size
+                total_prompt_lengths.extend(rollout_result.prompt_lengths)
                 total_response_lengths.extend(rollout_result.response_lengths)
         
         for rollout_legacy in rollouts:
@@ -252,13 +254,21 @@ class AgentLightningRolloutWorker(Worker):
         
         training_reward = np.mean(all_rewards) if all_rewards else 0.0
 
-        # Tail metrics: robust signals for stragglers/long-tail generation.
-        sorted_rlen = sorted(total_response_lengths)
-        n = len(sorted_rlen)
-        p90_idx = min(n - 1, int(np.ceil(0.9 * n) - 1))
-        p90_response_length = float(sorted_rlen[p90_idx])
-        top_k = max(1, int(np.ceil(0.1 * n)))
-        mean_top10p_response_length = float(np.mean(sorted_rlen[-top_k:]))
+        def _p90_and_mean_top10p(lengths: List[int]) -> tuple[float, float]:
+            if not lengths:
+                return 0.0, 0.0
+            sorted_l = sorted(lengths)
+            n_l = len(sorted_l)
+            p90_idx_l = min(n_l - 1, int(np.ceil(0.9 * n_l) - 1))
+            top_k_l = max(1, int(np.ceil(0.1 * n_l)))
+            return float(sorted_l[p90_idx_l]), float(np.mean(sorted_l[-top_k_l:]))
+
+        p90_prompt_length, mean_top10p_prompt_length = _p90_and_mean_top10p(
+            total_prompt_lengths
+        )
+        p90_response_length, mean_top10p_response_length = _p90_and_mean_top10p(
+            total_response_lengths
+        )
         
         metrics = {
             "agent/reward": float(training_reward),
@@ -267,7 +277,8 @@ class AgentLightningRolloutWorker(Worker):
             "agent/n_rollouts_w_reward": n_rollouts_w_reward,
             "agent/turn_count": total_turns,
             "agent/mean_turn_count_per_rollout": float(total_turns / n_rollouts) if n_rollouts > 0 else 0.0,
-            "agent/mean_response_length": float(np.mean(total_response_lengths)) if total_response_lengths else 0.0,
+            "agent/p90_prompt_length": p90_prompt_length,
+            "agent/mean_top10p_prompt_length": mean_top10p_prompt_length,
             "agent/p90_response_length": p90_response_length,
             "agent/mean_top10p_response_length": mean_top10p_response_length,
             "agent/total_tool_calls": total_tool_calls,
