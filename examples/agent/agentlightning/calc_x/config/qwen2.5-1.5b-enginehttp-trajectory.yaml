@@ -9,10 +9,12 @@ runner:
 
 algorithm:
   advantage_mode: trajectory
+  loss_scales: ["group_level"] # used for multi-turn loss scaling
 
 actor:
   pack_traj: True
 
 rollout:
+  gpu_memory_utilization: 0.45
   sglang:
     serving_mode: worker_http

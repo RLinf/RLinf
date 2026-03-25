@@ -15,6 +15,7 @@ actor:
   pack_traj: True
 
 rollout:
+  gpu_memory_utilization: 0.45
   sglang:
     serving_mode: router_server
     router:
