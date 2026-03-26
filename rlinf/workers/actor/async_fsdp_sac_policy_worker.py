@@ -44,7 +44,7 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
             self._recv_rollout_thread.start()
 
     def _recv_rollout_thread_main(self, input_channel):
-        send_num = self._component_placement.get_world_size("rollout") * self.stage_num
+        send_num = self._component_placement.get_world_size("env") * self.stage_num
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(send_num, recv_num)
         while not self.should_stop:
@@ -73,9 +73,9 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
         if self.demo_buffer is not None:
             intervene_traj_list = []
             for traj in recv_list:
-                intervene_traj = traj.extract_intervene_traj()
-                if intervene_traj is not None:
-                    intervene_traj_list.append(intervene_traj)
+                intervene_trajs = traj.extract_intervene_traj()
+                if intervene_trajs is not None:
+                    intervene_traj_list.extend(intervene_trajs)
 
             if len(intervene_traj_list) > 0:
                 self.demo_buffer.add_trajectories(intervene_traj_list)

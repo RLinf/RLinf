@@ -31,7 +31,7 @@ from ray.util.state import list_actors
 
 from .config import ClusterConfig
 from .node import NodeGroupInfo, NodeProbe
-from .utils import DistributedRayLogCollector
+from .utils import DistributedRayLogCollector, without_http_proxies
 
 ray_version = version("ray")
 assert vs.parse(ray_version) >= vs.parse("2.47.0"), (
@@ -317,12 +317,13 @@ class Cluster:
             if self._distributed_log_collector is not None:
                 self._distributed_log_collector.stop()
 
-            alive_actors = list_actors(
-                filters=[
-                    ("STATE", "=", "ALIVE"),
-                    ("RAY_NAMESPACE", "=", Cluster.NAMESPACE),
-                ]
-            )
+            with without_http_proxies():
+                alive_actors = list_actors(
+                    filters=[
+                        ("STATE", "=", "ALIVE"),
+                        ("RAY_NAMESPACE", "=", Cluster.NAMESPACE),
+                    ]
+                )
             for actor_state in alive_actors:
                 actor = ray.get_actor(actor_state.name)
                 ray.kill(actor, no_restart=True)

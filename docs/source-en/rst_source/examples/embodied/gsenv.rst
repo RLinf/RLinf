@@ -78,9 +78,9 @@ Run experiments with the Docker image.
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
       # For mirror in some regions:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
 Switch to the correct virtual environment with the image’s ``switch_env`` tool:
 

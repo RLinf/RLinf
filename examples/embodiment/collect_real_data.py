@@ -44,6 +44,32 @@ class DataCollector(Worker):
             worker_info=self.worker_info,
         )
 
+        if self.cfg.env.get("data_collection", None) and getattr(
+            self.cfg.env.data_collection, "enabled", False
+        ):
+            from rlinf.envs.wrappers import CollectEpisode
+
+            self.env = CollectEpisode(
+                self.env,
+                save_dir=self.cfg.env.data_collection.save_dir,
+                # rank=self._rank,
+                # num_envs=1,
+                export_format=getattr(
+                    self.cfg.env.data_collection, "export_format", "pickle"
+                ),
+                robot_type=getattr(self.cfg.env.data_collection, "robot_type", "panda"),
+                fps=getattr(self.cfg.env.data_collection, "fps", 10),
+                only_success=getattr(
+                    self.cfg.env.data_collection, "only_success", False
+                ),
+                stats_sample_ratio=getattr(
+                    self.cfg.env.data_collection, "stats_sample_ratio", 0.1
+                ),
+                finalize_interval=getattr(
+                    self.cfg.env.data_collection, "finalize_interval", 100
+                ),
+            )
+
         # Initialize TrajectoryReplayBuffer
         # Change directory name to 'demos' as requested
         buffer_path = os.path.join(self.cfg.runner.logger.log_path, "demos")
@@ -88,13 +114,15 @@ class DataCollector(Worker):
 
         current_rollout = EmbodiedRolloutResult(
             max_episode_length=self.cfg.env.eval.max_episode_steps,
-            model_weights_id="demo_expert",
         )
 
         current_obs_processed = self._process_obs(obs)
 
         while success_cnt < self.num_data_episodes:
-            action = np.zeros((1, 6))
+            if self.cfg.env.eval.get("no_gripper", True):
+                action = np.zeros((1, 6))
+            else:
+                action = np.zeros((1, 7))
             next_obs, reward, done, _, info = self.env.step(action)
 
             if "intervene_action" in info:
@@ -153,25 +181,30 @@ class DataCollector(Worker):
                 if isinstance(r_val, torch.Tensor):
                     r_val = r_val.item()
 
-                success_cnt += int(r_val)
                 self.total_cnt += 1
-                self.log_info(
-                    f"Success: {r_val}. Total: {success_cnt}/{self.num_data_episodes}"
-                )
 
-                # Save Trajectory to the 'demos' directory
-                trajectory = current_rollout.to_trajectory()
-                trajectory.intervene_flags = torch.ones_like(trajectory.intervene_flags)
-                self.buffer.add_trajectories([trajectory])
+                if r_val >= 0.5:
+                    success_cnt += 1
+
+                    self.log_info(
+                        f"Success: {r_val}. Total: {success_cnt}/{self.num_data_episodes}"
+                    )
+
+                    # Save Trajectory to the 'demos' directory
+                    trajectory = current_rollout.to_trajectory()
+                    trajectory.intervene_flags = torch.ones_like(
+                        trajectory.intervene_flags
+                    )
+                    self.buffer.add_trajectories([trajectory])
+
+                    progress_bar.update(1)
 
                 # Reset for next episode
                 obs, _ = self.env.reset()
                 current_obs_processed = self._process_obs(obs)
                 current_rollout = EmbodiedRolloutResult(
                     max_episode_length=self.cfg.env.eval.max_episode_steps,
-                    model_weights_id="demo_expert",
                 )
-                progress_bar.update(1)
 
         self.buffer.close()
         self.log_info(

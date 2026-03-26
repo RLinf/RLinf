@@ -317,9 +317,77 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             raise NotImplementedError
 
     def sft_forward(self, data, **kwargs):
+        if hasattr(self, "gradient_checkpointing_disable"):
+            self.gradient_checkpointing_disable()
         observation = data["observation"]
         actions = data["actions"]
         return super().forward(observation, actions)
+
+    def prepare_dagger_sft_batch(self, batch):
+        """Prepare replay-buffer samples for DAgger SFT updates."""
+        device = next(self.parameters()).device
+        obs_dict = {}
+        obs_prefix_keys = [k for k in batch.keys() if k.startswith("observation/")]
+        for key in obs_prefix_keys:
+            obs_dict[key] = batch[key]
+        if "tokenized_prompt" in batch:
+            obs_dict["tokenized_prompt"] = batch["tokenized_prompt"]
+        if "tokenized_prompt_mask" in batch:
+            obs_dict["tokenized_prompt_mask"] = batch["tokenized_prompt_mask"]
+
+        bsz = batch["action"].shape[0]
+        if "model_action" in batch:
+            actions = (
+                batch["model_action"]
+                .reshape(bsz, self.config.action_horizon, self.config.action_dim)
+                .clone()
+            )
+            processed_obs = self.input_transform(obs_dict, transpose=False)
+            processed_obs = self.precision_processor(processed_obs)
+            observation = _model.Observation.from_dict(processed_obs)
+        else:
+            obs_dict["actions"] = batch["action"].reshape(
+                bsz, self.config.action_chunk, -1
+            )
+            if obs_dict["actions"].shape[2] < self.config.action_dim:
+                padding_action_dim = torch.zeros(
+                    bsz,
+                    obs_dict["actions"].shape[1],
+                    self.config.action_dim - obs_dict["actions"].shape[2],
+                    device=obs_dict["actions"].device,
+                )
+                obs_dict["actions"] = torch.cat(
+                    [obs_dict["actions"], padding_action_dim], dim=2
+                )
+            if obs_dict["actions"].shape[1] < self.config.action_horizon:
+                padding_action_chunk = torch.zeros(
+                    bsz,
+                    self.config.action_horizon - obs_dict["actions"].shape[1],
+                    self.config.action_dim,
+                    device=obs_dict["actions"].device,
+                )
+                obs_dict["actions"] = torch.cat(
+                    [obs_dict["actions"], padding_action_chunk], dim=1
+                )
+            obs_dict["prompt"] = ["empty" for _ in range(bsz)]
+            processed_obs = self.input_transform(obs_dict, transpose=False)
+            if "tokenized_prompt" in batch:
+                processed_obs["tokenized_prompt"] = batch["tokenized_prompt"]
+            if "tokenized_prompt_mask" in batch:
+                processed_obs["tokenized_prompt_mask"] = batch["tokenized_prompt_mask"]
+            processed_obs = self.precision_processor(processed_obs)
+            observation = _model.Observation.from_dict(processed_obs)
+            actions = processed_obs["actions"].clone()
+            processed_obs.pop("actions")
+
+        observation = jax.tree.map(
+            lambda x: torch.as_tensor(x, device=device).contiguous().clone(),
+            observation,
+        )
+        return {
+            "observation": observation,
+            "actions": actions.to(torch.float32).to(device),
+        }
 
     def default_forward(
         self,
@@ -387,6 +455,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         # wrist image observation
         if env_obs["wrist_images"] is not None:
             processed_obs["observation/wrist_image"] = env_obs["wrist_images"]
+        # extra view image observation
+        if env_obs["extra_view_images"] is not None:
+            processed_obs["observation/extra_view_image"] = env_obs["extra_view_images"]
         # store used keys
         return processed_obs
 
@@ -415,7 +486,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         mode: Literal["train", "eval"] = "train",
         compute_values=True,
         **kwargs,
-    ) -> tuple[np.ndarray, dict[str, Any]]:
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
         to_process_obs = self.obs_processor(env_obs)  # env obs -> policy input obs
         processed_obs = self.input_transform(
             to_process_obs, transpose=False
@@ -425,16 +496,11 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         )  # obs precision processor
         observation = _model.Observation.from_dict(processed_obs)
 
-        is_dsrl_train = self.config.use_dsrl and mode == "train"
-        if is_dsrl_train:
-            # DSRL mode and train mode
+        is_dsrl_active = self.config.use_dsrl
+        if is_dsrl_active:
+            # DSRL mode (both train and eval)
 
             # Step 1: SAC agent outputs noise
-            # No data augmentation during rollout, train=False
-
-            # Convert env_obs to the format expected by sac_forward
-            # env_obs has: main_images, wrist_images, states
-            # sac_forward expects: images (list), states
             dsrl_obs = {"images": [env_obs["main_images"]], "states": env_obs["states"]}
 
             noise_actions, noise_logprob, _ = self.sac_forward(
@@ -452,7 +518,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             # Step 3: Extract actual actions for environment interaction
             real_actions = self.output_transform(
                 {"actions": outputs["actions"], "state": observation.state}
-            )["actions"].numpy()
+            )["actions"]
 
             # Return actual actions to environment, but forward_inputs stores noise.
             actions = real_actions
@@ -467,7 +533,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             )
             actions = self.output_transform(
                 {"actions": outputs["actions"], "state": observation.state}
-            )["actions"].numpy()
+            )["actions"]
             prev_logprobs = outputs["prev_logprobs"]
             prev_values = outputs["prev_values"]
             forward_action = None
@@ -477,6 +543,13 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             "denoise_inds": outputs["denoise_inds"],
             "tokenized_prompt": processed_obs["tokenized_prompt"],
             "tokenized_prompt_mask": processed_obs["tokenized_prompt_mask"],
+            # "action" is the env-executed action, and "model_action" is the original output by the model.
+            # For small models, they are consistent. For large models (like pi), "action" is the result after output_transform.
+            # For realworld human-in-the-loop training, only "action" can be provided by human.
+            "action": actions.reshape(actions.shape[0], -1).contiguous(),
+            "model_action": outputs["actions"]
+            .reshape(outputs["actions"].shape[0], -1)
+            .contiguous(),
         }
         if forward_action is not None:
             forward_inputs["action"] = forward_action
@@ -922,16 +995,25 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
                     params.requires_grad = False
 
                 # Freeze projection layers (used in rollout/eval but not optimized).
-                # These are from PI0Pytorch parent class: action_in_proj, action_out_proj, state_proj, action_time_mlp
+                # Pi0 has: action_in_proj, action_out_proj, state_proj, action_time_mlp_in/out
+                # Pi0.5 has: action_in_proj, action_out_proj, time_mlp_in/out (no state_proj)
                 self.logger.info(
                     "[FREEZE_VLM] DSRL mode: freezing projection layers (used in rollout/eval but not optimized)"
                 )
-                projection_names = [
-                    "action_in_proj",
-                    "action_out_proj",
-                    "state_proj",
-                    "action_time_mlp",
-                ]
+                if self.pi05:
+                    projection_names = [
+                        "action_in_proj",
+                        "action_out_proj",
+                        "time_mlp_in",
+                        "time_mlp_out",
+                    ]
+                else:
+                    projection_names = [
+                        "action_in_proj",
+                        "action_out_proj",
+                        "state_proj",
+                        "action_time_mlp",
+                    ]
                 frozen_count = 0
                 for name, param in self.named_parameters():
                     if any(proj_name in name for proj_name in projection_names):

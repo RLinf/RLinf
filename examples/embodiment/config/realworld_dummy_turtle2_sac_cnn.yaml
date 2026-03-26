@@ -118,7 +118,7 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/path/to/model"
+    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     precision: ${actor.model.precision}
 
   enable_torch_compile: True
@@ -134,7 +134,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/path/to/model"
+    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     state_dim: 6  # For single arm: 6 (xyz + euler after Quat2EulerWrapper); for dual arms: 12
     action_dim: 6  # For single arm: 6 (xyz_delta + rpy_delta); for dual arms: 12
 

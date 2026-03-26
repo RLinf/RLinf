@@ -117,11 +117,11 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
             input_channel=self.rollout_channel,
             output_channel=self.env_channel,
             metric_channel=self.env_metric_channel,
+            replay_channel=self.actor_channel,
         )
         rollout_handle: Handle = self.rollout.generate(
             input_channel=self.env_channel,
             output_channel=self.rollout_channel,
-            replay_channel=self.actor_channel,
             metric_channel=self.rollout_metric_channel,
         )
 

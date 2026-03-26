@@ -119,9 +119,12 @@ env:
       use_dense_reward: True
       target_ee_pose: TARGET_EE_POSE
       random_xy_range: 0.02
-      random_z_range_low: 0.005
-      random_z_range_high: 0.05
+      clip_x_range: 0.02
+      clip_y_range: 0.02
+      clip_z_range_low: 0.005
+      clip_z_range_high: 0.05
       random_rz_range: 0.35 # About np.pi/9
+      clip_rz_range: 0.35 # About np.pi/9
 
 rollout:
   group_name: "RolloutGroup"
@@ -133,7 +136,7 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/path/to/model"
+    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     precision: ${actor.model.precision}
 
   enable_torch_compile: True
@@ -149,7 +152,7 @@ actor:
   enable_drq: False
 
   model:
-    model_path: "/path/to/model"
+    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     state_dim: 19
     action_dim: 6
 

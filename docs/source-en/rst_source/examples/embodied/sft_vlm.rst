@@ -1,4 +1,4 @@
-VLM Supervised Fine-Tuning (SFT)
+VLM Supervised Fine-Tuning
 ================================
 
 This document explains how to run **full-parameter supervised fine-tuning (Full-parameter SFT)** for VLM models in RLinf.
@@ -6,11 +6,11 @@ This document explains how to run **full-parameter supervised fine-tuning (Full-
 This tutorial mainly focuses on two files:
 
 - Launch script: ``examples/sft/run_vlm_sft.sh``
-- Training config: ``examples/sft/config/custom_sft_vlm.yaml``
+- Training config: ``examples/sft/config/qwen2_5_sft_vlm.yaml``
 
 Launch Script: ``examples/sft/run_vlm_sft.sh``
 
-- The script uses ``examples/sft/config/custom_sft_vlm.yaml`` by default.
+- The script uses ``examples/sft/config/qwen2_5_sft_vlm.yaml`` by default.
 - Logs are redirected to: ``<repo>/logs/<timestamp>/``
 - Actual command:
 
@@ -21,7 +21,9 @@ Launch Script: ``examples/sft/run_vlm_sft.sh``
      --config-name <your_config_name> \
      runner.logger.log_path=<auto_generated_log_dir>
 
-Config Template: ``examples/sft/config/custom_sft_vlm.yaml``
+Config Template: ``examples/sft/config/qwen2_5_sft_vlm.yaml``
+
+If you intend to train models such as **qwen3_vl** or **qwen3_vl_moe**, please ensure that the version of `transformers` in your current environment is **greater than or equal to 4.57.1**.
 
 The VLM config structure is similar to other RLinf training configs.  
 You mainly need to adapt ``data`` and ``actor.model`` for your VLM use case.
@@ -30,16 +32,16 @@ Preparation Before Running
 --------------------------
 
 1. Prepare the environment. Pull the RLinf Docker image:
-   ``rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1``.
+   ``rlinf/rlinf:math-rlinf0.2-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1``.
 2. Prepare model weights:
    ``https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct``.
 3. Prepare Robo2VLM dataset:
    ``https://huggingface.co/datasets/keplerccc/Robo2VLM-1``.
-4. Edit ``examples/sft/config/custom_sft_vlm.yaml`` and run
+4. Edit ``examples/sft/config/qwen2_5_sft_vlm.yaml`` and run
    ``examples/sft/run_vlm_sft.sh``.
 
-Example YAML
-------------
+Example of Qwen2_5_VL_3B SFT
+----------------------------
 
 Important note: after downloading Robo2VLM, train and eval parquet files are mixed in one directory
 (e.g., ``train-00000-of-00262.parquet`` and ``test-0000X-of-00003.parquet``).
@@ -153,7 +155,7 @@ Run from repository root:
 
 Notes:
 
-- If no argument is provided, the script uses ``custom_sft_vlm`` by default.
+- If no argument is provided, the script uses ``qwen2_5_sft_vlm`` by default.
 - If your config name is different (e.g., ``my_vlm_config.yaml``), pass it as an argument:
 
 .. code:: bash
@@ -190,30 +192,55 @@ Use the same launch command:
 Experiment Results
 ------------------
 
-We provide a reference experiment run on a single machine with 8 × H100 GPUs for 6000 iterations.
+RLinf provide a reference experiment using the Qwen2.5-VL-3B model, run on a single machine with 8 × H100 GPUs for 6000 iterations.
 
 Evaluation accuracy on test_data every 1000 iterations:
 
 .. image:: https://github.com/RLinf/misc/raw/main/pic/sft_vlm_eval_accuracy.png
-   :alt: VLM SFT eval accuracy
+   :alt: Qwen2.5-VL-3B VLM SFT eval accuracy
    :width: 85%
    :align: center
 
 grad_norm curve:
 
 .. image:: https://github.com/RLinf/misc/raw/main/pic/sft_vlm_eval_grad_norm.png
-   :alt: VLM SFT grad norm
+   :alt: Qwen2.5-VL-3B VLM SFT grad norm
    :width: 85%
    :align: center
 
 loss curve:
 
 .. image:: https://github.com/RLinf/misc/raw/main/pic/sft_vlm_eval_loss.png
-   :alt: VLM SFT loss
+   :alt: Qwen2.5-VL-3B VLM SFT loss
    :width: 85%
    :align: center
 
-Final eval accuracy: ``0.8995802998542786`` (about ``89.96%``).
+The final evaluation accuracy of the Qwen2.5-VL-3B model is ``0.8995802998542786`` (about ``89.96%``).
+
+RLinf provide a reference experiment using the Qwen3-VL-4B model, run on a single machine with 4 × H100 GPUs for 6000 iterations.
+
+Evaluation accuracy on test_data every 1000 iterations:
+
+.. image:: https://github.com/RLinf/misc/raw/main/pic/qwen3_sft_vlm_eval_accuracy.png
+   :alt: Qwen3-VL-4B VLM SFT eval accuracy
+   :width: 85%
+   :align: center
+
+grad_norm curve:
+
+.. image:: https://github.com/RLinf/misc/raw/main/pic/qwen3_sft_vlm_eval_grad_norm.png
+   :alt: Qwen3-VL-4B VLM SFT grad norm
+   :width: 85%
+   :align: center
+
+loss curve:
+
+.. image:: https://github.com/RLinf/misc/raw/main/pic/qwen3_sft_vlm_eval_loss.png
+   :alt: Qwen3-VL-4B VLM SFT loss
+   :width: 85%
+   :align: center
+
+The final evaluation accuracy of the Qwen3-VL-4B model is ``96.9%`` .
 
 Checkpoint Notes
 ----------------
@@ -230,7 +257,7 @@ Update these fields first:
 - ``convertor.ckpt_path``: path to ``full_weights.pt``
 - ``convertor.save_path``: output HF model directory
 - ``model.model_path``: base model path
-- ``model.model_type``: model type (e.g., ``qwen2.5_vl``)
+- ``model.model_type``: model type (e.g., ``qwen2.5_vl`` , ``qwen3_vl`` or ``qwen3_vl_moe``)
 
 Run:
 

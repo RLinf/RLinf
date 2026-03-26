@@ -18,7 +18,7 @@ We use the code judge tool from the rStar2 example. For installation instruction
 
 .. code-block:: bash
 
-   cd examples/rstar2
+   cd examples/agent/rstar2
 
    # install code judge
    sudo apt-get update -y && sudo apt-get install redis -y
@@ -53,7 +53,7 @@ rStar2-Agent uses Code Judge as a tool invocation server to execute Python code 
    # Replace $WORKSPACE and $MASTER_ADDR with your actual paths
 
    tmux new-session -d -s server \
-   'cd $WORKSPACE/examples/rstar2/code-judge && \
+   'cd $WORKSPACE/examples/agent/rstar2/code-judge && \
       MAX_EXECUTION_TIME=4 \
       REDIS_URI="redis://$MASTER_ADDR:6379" \
       RUN_WORKERS=0 \
@@ -68,7 +68,7 @@ rStar2-Agent uses Code Judge as a tool invocation server to execute Python code 
    # Adjust MAX_WORKERS based on your CPU count per node
 
    tmux new-session -d -s worker \
-   'cd $WORKSPACE/examples/rstar2/code-judge && \
+   'cd $WORKSPACE/examples/agent/rstar2/code-judge && \
       MAX_EXECUTION_TIME=4 \
       REDIS_URI="redis://$MASTER_ADDR:6379" \
       MAX_WORKERS=64 \
@@ -96,7 +96,7 @@ We also use simple rules to ensure the correctness of reward calculation, which 
 Training on 8*H100
 ------------------
 
-Download the training dataset via ``examples/rstar2/data_process/process_train_dataset.py`` and write the path to ``examples/rstar2/config/rstar2-qwen2.5-7b-megatron.yaml``
+Download the training dataset via ``examples/agent/rstar2/data_process/process_train_dataset.py`` and write the path to ``examples/agent/rstar2/config/rstar2-qwen2.5-7b-megatron.yaml``
 
 .. code-block:: yaml
 
@@ -105,7 +105,7 @@ Download the training dataset via ``examples/rstar2/data_process/process_train_d
      train_data_paths: ["/path/to/train.jsonl"]
      val_data_paths: ["/path/to/train.jsonl"]
 
-Modify the ``rollout.model.model_path`` path in ``examples/rstar2/config/rstar2-qwen2.5-7b-megatron.yaml``
+Modify the ``rollout.model.model_path`` path in ``examples/agent/rstar2/config/rstar2-qwen2.5-7b-megatron.yaml``
 
 .. code-block:: yaml
 
@@ -129,7 +129,7 @@ Since the down sample logic is not compatible with the current inference logic, 
 Start Training
 ~~~~~~~~~~~~~~
 
-Run ``examples/rstar2/run_rstar2.sh`` to start training.
+Run ``examples/agent/rstar2/run_rstar2.sh`` to start training.
 
 
 Training Curves

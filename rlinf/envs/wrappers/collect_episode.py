@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import atexit
+import copy
 import os
 import pickle
 import signal
@@ -122,6 +123,14 @@ class CollectEpisode(gym.Wrapper):
         os.makedirs(self.save_dir, exist_ok=True)
         atexit.register(self._finalize_on_exit)
         signal.signal(signal.SIGTERM, self._handle_signal)
+
+    @property
+    def is_start(self):
+        return getattr(self.env, "is_start")
+
+    @is_start.setter
+    def is_start(self, value):
+        setattr(self.env, "is_start", value)
 
     # ─────────────────────────────────────────── gymnasium interface ──────────
 
@@ -357,6 +366,7 @@ class CollectEpisode(gym.Wrapper):
         task_desc = self._extract_task_description(buf, env_idx)
         images: list[np.ndarray] = []
         wrist_images: list[np.ndarray] = []
+        extra_view_images: list[np.ndarray] = []
         states: list[np.ndarray] = []
         np_actions: list[np.ndarray] = []
         dones: list[bool] = []
@@ -364,8 +374,23 @@ class CollectEpisode(gym.Wrapper):
 
         for i, action in enumerate(actions):
             obs = obs_steps[i] if i < len(obs_steps) else None
-            image, wrist_image, state = self._extract_obs_image_state(obs)
+            image, wrist_image, extra_view_image, state = self._extract_obs_image_state(
+                obs
+            )
+
+            # overwrite action with intervene action
+            if "final_info" in buf["infos"][i]:
+                info_with_intervene = copy.deepcopy(buf["infos"][i]["final_info"])
+            else:
+                info_with_intervene = copy.deepcopy(buf["infos"][i])
+
             np_action = self._to_numpy(action)
+            if (
+                "intervene_flag" in info_with_intervene.keys()
+                and "intervene_action" in info_with_intervene.keys()
+            ):
+                if info_with_intervene["intervene_flag"].all():
+                    np_action = self._to_numpy(info_with_intervene["intervene_action"])
 
             if image is None or state is None or np_action is None:
                 continue
@@ -373,6 +398,8 @@ class CollectEpisode(gym.Wrapper):
             images.append(self._to_uint8(np.asarray(image)))
             if wrist_image is not None:
                 wrist_images.append(self._to_uint8(np.asarray(wrist_image)))
+            if extra_view_image is not None:
+                extra_view_images.append(self._to_uint8(np.asarray(extra_view_image)))
             states.append(np.asarray(state).astype(np.float32))
             np_actions.append(np.asarray(np_action).astype(np.float32))
             dones.append(False)
@@ -391,6 +418,7 @@ class CollectEpisode(gym.Wrapper):
         return {
             "images": images[:end],
             "wrist_images": wrist_images[:end] if wrist_images else None,
+            "extra_view_images": extra_view_images[:end] if extra_view_images else None,
             "states": states[:end],
             "actions": np_actions[:end],
             "dones": dones_out,
@@ -417,10 +445,14 @@ class CollectEpisode(gym.Wrapper):
         with self._lerobot_lock:
             writer = self._ensure_lerobot_writer(ep_data)
             wrist_images = ep_data["wrist_images"]
+            extra_view_images = ep_data["extra_view_images"]
             writer.add_episode(
                 images=np.stack(ep_data["images"]),
                 wrist_images=np.stack(wrist_images)
                 if wrist_images is not None
+                else None,
+                extra_view_images=np.stack(extra_view_images)
+                if extra_view_images is not None
                 else None,
                 states=np.stack(ep_data["states"]),
                 actions=np.stack(ep_data["actions"]),
@@ -509,7 +541,12 @@ class CollectEpisode(gym.Wrapper):
         for info in reversed(buf["infos"]):
             if not isinstance(info, dict):
                 continue
-            for src in (info.get("final_info"), info.get("episode"), info):
+            for src in (
+                info.get("final_info", info).get("episode"),
+                info.get("final_info"),
+                info.get("episode"),
+                info,
+            ):
                 if not isinstance(src, dict):
                     continue
                 for key in ("success_once", "success_at_end", "success"):
@@ -533,13 +570,30 @@ class CollectEpisode(gym.Wrapper):
         return "unknown task"
 
     def _extract_obs_image_state(self, obs):
-        """Return ``(image, wrist_image, state)`` numpy arrays from an obs dict."""
+        """Return ``(image, wrist_image, extra_view_image, state)`` from an obs dict."""
         if not isinstance(obs, dict):
-            return None, None, None
+            return None, None, None, None
         image = obs.get("main_images", obs.get("image", obs.get("full_image")))
         wrist_image = obs.get("wrist_images", obs.get("wrist_image"))
+        extra_view_image = self._extract_extra_view_image(
+            obs.get("extra_view_images", obs.get("extra_view_image"))
+        )
         state = obs.get("states", obs.get("state"))
-        return self._to_numpy(image), self._to_numpy(wrist_image), self._to_numpy(state)
+        return (
+            self._to_numpy(image),
+            self._to_numpy(wrist_image),
+            extra_view_image,
+            self._to_numpy(state),
+        )
+
+    def _extract_extra_view_image(self, extra_view_image):
+        """Return the first extra-view image when observations carry multiple views."""
+        extra_view_np = self._to_numpy(extra_view_image)
+        if extra_view_np is None:
+            return None
+        if extra_view_np.ndim == 4:
+            return extra_view_np[0]
+        return extra_view_np
 
     def _slice_data(self, data, env_idx: int):
         """Slice batched data for a single env without copying."""

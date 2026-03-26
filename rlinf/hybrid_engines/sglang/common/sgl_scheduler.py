@@ -253,7 +253,14 @@ class Scheduler(_Scheduler):
                 if hasattr(module, "use_presharded_weights"):
                     module.use_presharded_weights = use_presharded_weights
 
-            if self.cfg.rollout.get("validate_weight_first_sync", False):
+            validate_weight_first_sync = self.cfg.rollout.get(
+                "validate_weight_first_sync", False
+            )
+            if self.cfg.runner.resume_dir is not None:
+                # validate_weight_first_sync compare hf weights with megatron weights,
+                # and if resume_dir is enabled, hf weights can't equal to megatron's.
+                validate_weight_first_sync = False
+            if validate_weight_first_sync:
                 self.weight_norm_dict = validate_weight_init(model)
 
             self._rlinf_worker.log_info(
@@ -300,16 +307,16 @@ class Scheduler(_Scheduler):
         return_logprob: bool,
         skip_req=None,
     ):
+        # for sglang 0.5.0 and later, we use the original _handle_batch_output
+        if not self.patch_return_output_ids:
+            return super().stream_output_generation(reqs, return_logprob, skip_req)
+
         from sglang.srt.managers.scheduler_output_processor_mixin import (
             DEFAULT_FORCE_STREAM_INTERVAL,
             BaseFinishReason,
             BatchTokenIDOut,
             DisaggregationMode,
         )
-
-        # for sglang 0.5.0 and later, we use the original _handle_batch_output
-        if not self.patch_return_output_ids:
-            return super().stream_output_generation(reqs, return_logprob, skip_req)
 
         rids = []
         finished_reasons: list[BaseFinishReason] = []

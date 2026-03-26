@@ -418,7 +418,9 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         else:
             chunk_values = torch.zeros_like(chunk_logprobs[..., :1])
 
-        chunk_actions = actions.reshape(-1, self.num_action_chunks, self.action_dim)
+        chunk_actions = torch.as_tensor(
+            actions.reshape(-1, self.num_action_chunks, self.action_dim)
+        )
         chunk_action_tokens = idxs.reshape(-1, self.num_action_chunks, self.action_dim)
 
         forward_inputs["action_tokens"] = chunk_action_tokens

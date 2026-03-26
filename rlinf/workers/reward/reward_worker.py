@@ -64,7 +64,9 @@ class RewardWorker(Worker):
         )
         return batch, result
 
-    def compute_rewards(self, input_channel: Channel, output_channel: Channel):
+    def compute_rewards(
+        self, input_channel: Channel, output_channel: Channel, total_batch_size=None
+    ):
         """Compute rewards.
 
         Args:
@@ -72,7 +74,14 @@ class RewardWorker(Worker):
             output_channel: The output channel to send results to.
         """
         recv_batch_size = 0
-        while recv_batch_size < self.total_batch_size_per_dp:
+        if total_batch_size is None:
+            total_batch_size_per_dp = self.total_batch_size_per_dp
+        else:
+            assert total_batch_size % self._world_size == 0, (
+                f"Total batch size {total_batch_size} is not divisible by world size {self._world_size}"
+            )
+            total_batch_size_per_dp = total_batch_size // self._world_size
+        while recv_batch_size < total_batch_size_per_dp:
             rollout_result: RolloutResult = input_channel.get()
             recv_batch_size += rollout_result.num_sequence
             with self.worker_timer():
@@ -92,10 +101,12 @@ class RewardWorker(Worker):
                             rollout_result
                         )
             rollout_result = self.down_sample_batch(rollout_result)
+            # answer is not needed in training
+            rollout_result.answers = None
             output_channel.put(rollout_result, async_op=True)
 
-        assert recv_batch_size == self.total_batch_size_per_dp, (
-            f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
+        assert recv_batch_size == total_batch_size_per_dp, (
+            f"Expected {total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
         )
 
     def _compute_rule_based_rewards(self, rollout_result: RolloutResult):

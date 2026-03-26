@@ -58,16 +58,18 @@ class AMDGPUManager(AcceleratorManager):
         env_vars = {}
         visible_accelerators_str = ",".join(visible_accelerators)
 
-        env_vars["ROCR_VISIBLE_DEVICES"] = visible_accelerators_str
+        env_vars["HIP_VISIBLE_DEVICES"] = visible_accelerators_str
         env_vars["RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES"] = "1"
         # https://github.com/ray-project/ray/blob/161849364a784442cc659fb9780f1a6adee85fce/python/ray/_private/accelerators/amd_gpu.py#L99
+        env_vars["RAY_EXPERIMENTAL_NOSET_HIP_VISIBLE_DEVICES"] = "1"
+        # https://github.com/ray-project/ray/blob/5d6c40aba865b2b80ee4dc549e603e89817ad285/python/ray/_private/accelerators/amd_gpu.py#L128
 
         return env_vars
 
     @staticmethod
     def get_visible_devices():
         """Get the visible device IDs."""
-        visible_devices = os.environ.get("ROCR_VISIBLE_DEVICES", None)
+        visible_devices = os.environ.get("HIP_VISIBLE_DEVICES", None)
 
         if visible_devices is None or visible_devices == "":
             return []

@@ -104,9 +104,9 @@
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.1-behavior
+      rlinf/rlinf:agentic-rlinf0.2-behavior
       # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-behavior
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-behavior
 
 **选项 2：自定义环境**
 

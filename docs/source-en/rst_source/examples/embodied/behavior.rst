@@ -102,9 +102,9 @@ Use Docker image for the experiment.
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.1-behavior
+      rlinf/rlinf:agentic-rlinf0.2-behavior
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-behavior
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-behavior
 
 **Option 2: Custom Environment**
 

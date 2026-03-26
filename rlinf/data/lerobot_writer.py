@@ -47,6 +47,7 @@ class LeRobotDatasetWriter:
     Parquet Schema:
         - image: struct<bytes: binary, path: string>
         - wrist_image: struct<bytes: binary, path: string>
+        - extra_view_image: struct<bytes: binary, path: string>
         - state: fixed_size_list<float>[state_dim]
         - actions: fixed_size_list<float>[action_dim]
         - timestamp: float
@@ -62,6 +63,7 @@ class LeRobotDatasetWriter:
             writer.add_episode(
                 images=episode["images"],
                 wrist_images=episode["wrist_images"],
+                extra_view_images=episode.get("extra_view_images"),
                 states=episode["states"],
                 actions=episode["actions"],
                 task=episode["task"],
@@ -138,6 +140,13 @@ class LeRobotDatasetWriter:
                     "min": None,
                     "max": None,
                 },
+                "extra_view_image": {
+                    "sum": None,
+                    "sum_sq": None,
+                    "count": 0,
+                    "min": None,
+                    "max": None,
+                },
                 "state": {
                     "sum": None,
                     "sum_sq": None,
@@ -193,6 +202,7 @@ class LeRobotDatasetWriter:
             self._stats_accumulators: dict[str, dict[str, Any]] = {
                 "image": {"values": []},
                 "wrist_image": {"values": []},
+                "extra_view_image": {"values": []},
                 "state": {"values": []},
                 "actions": {"values": []},
                 "timestamp": {"values": []},
@@ -262,6 +272,7 @@ class LeRobotDatasetWriter:
         self,
         images: np.ndarray,
         wrist_images: np.ndarray | None,
+        extra_view_images: np.ndarray | None,
         states: np.ndarray,
         actions: np.ndarray,
         task: str,
@@ -274,6 +285,7 @@ class LeRobotDatasetWriter:
         Args:
             images: Main camera images [T, H, W, C] uint8
             wrist_images: Wrist camera images [T, H, W, C] uint8 or None
+            extra_view_images: Extra-view camera images [T, H, W, C] uint8 or None
             states: State vectors [T, state_dim] float32
             actions: Action vectors [T, action_dim] float32
             task: Task description string
@@ -316,6 +328,7 @@ class LeRobotDatasetWriter:
         data = {
             "image": [],
             "wrist_image": [],
+            "extra_view_image": [],
             "state": [],
             "actions": [],
             "timestamp": [],
@@ -340,6 +353,13 @@ class LeRobotDatasetWriter:
                 # Create an empty wrist image
                 data["wrist_image"].append({"bytes": b"", "path": ""})
 
+            if extra_view_images is not None:
+                data["extra_view_image"].append(
+                    self._create_image_struct(extra_view_images[t], t)
+                )
+            else:
+                data["extra_view_image"].append({"bytes": b"", "path": ""})
+
             # State and actions as lists (for fixed_size_list)
             data["state"].append(states[t].astype(np.float32).tolist())
             data["actions"].append(actions[t].astype(np.float32).tolist())
@@ -354,7 +374,9 @@ class LeRobotDatasetWriter:
             data["is_success"].append(is_success)
 
         # Update stats accumulators
-        self._update_stats_accumulators(images, wrist_images, states, actions, data)
+        self._update_stats_accumulators(
+            images, wrist_images, extra_view_images, states, actions, data
+        )
 
         # Update global frame index
         self._global_frame_index += T
@@ -394,6 +416,7 @@ class LeRobotDatasetWriter:
             [
                 ("image", image_struct),
                 ("wrist_image", image_struct),
+                ("extra_view_image", image_struct),
                 ("state", pa.list_(pa.float32(), self.state_dim)),
                 ("actions", pa.list_(pa.float32(), self.action_dim)),
                 ("timestamp", pa.float32()),
@@ -412,6 +435,7 @@ class LeRobotDatasetWriter:
                 "features": {
                     "image": {"_type": "Image"},
                     "wrist_image": {"_type": "Image"},
+                    "extra_view_image": {"_type": "Image"},
                     "state": {
                         "feature": {"dtype": "float32", "_type": "Value"},
                         "length": self.state_dim,
@@ -444,6 +468,9 @@ class LeRobotDatasetWriter:
             "wrist_image": pa.array(
                 data["wrist_image"], type=schema.field("wrist_image").type
             ),
+            "extra_view_image": pa.array(
+                data["extra_view_image"], type=schema.field("extra_view_image").type
+            ),
             "state": pa.array(data["state"], type=schema.field("state").type),
             "actions": pa.array(data["actions"], type=schema.field("actions").type),
             "timestamp": pa.array(data["timestamp"], type=pa.float32()),
@@ -460,6 +487,7 @@ class LeRobotDatasetWriter:
         self,
         images: np.ndarray,
         wrist_images: np.ndarray | None,
+        extra_view_images: np.ndarray | None,
         states: np.ndarray,
         actions: np.ndarray,
         data: dict[str, list],
@@ -467,7 +495,9 @@ class LeRobotDatasetWriter:
         """Update the statistics accumulators."""
         if self.use_incremental_stats:
             # Use incremental statistics (Welford's algorithm)
-            self._update_stats_incremental(images, wrist_images, states, actions, data)
+            self._update_stats_incremental(
+                images, wrist_images, extra_view_images, states, actions, data
+            )
         else:
             # Original approach: accumulate raw data
             # Images: normalize to [0, 1] before computing statistics
@@ -478,6 +508,11 @@ class LeRobotDatasetWriter:
                 wrist_normalized = wrist_images.astype(np.float32) / 255.0
                 self._stats_accumulators["wrist_image"]["values"].append(
                     wrist_normalized
+                )
+            if extra_view_images is not None:
+                extra_view_normalized = extra_view_images.astype(np.float32) / 255.0
+                self._stats_accumulators["extra_view_image"]["values"].append(
+                    extra_view_normalized
                 )
 
             self._stats_accumulators["state"]["values"].append(states)
@@ -496,6 +531,7 @@ class LeRobotDatasetWriter:
         self,
         images: np.ndarray,
         wrist_images: np.ndarray | None,
+        extra_view_images: np.ndarray | None,
         states: np.ndarray,
         actions: np.ndarray,
         data: dict[str, list],
@@ -511,6 +547,11 @@ class LeRobotDatasetWriter:
         if wrist_images is not None:
             sampled_wrist = wrist_images[sample_indices].astype(np.float32) / 255.0
             self._update_running_stats_array("wrist_image", sampled_wrist)
+        if extra_view_images is not None:
+            sampled_extra_view = (
+                extra_view_images[sample_indices].astype(np.float32) / 255.0
+            )
+            self._update_running_stats_array("extra_view_image", sampled_extra_view)
 
         # Use all data for state/action
         self._update_running_stats_array("state", states)
@@ -537,7 +578,7 @@ class LeRobotDatasetWriter:
         # Flatten to 2D: [N, ...] -> [N, -1] for easier computation
         # For images: [N, H, W, C] -> we compute per-channel stats
         # For state/actions: [N, D] -> compute per-dimension stats
-        if key in ["image", "wrist_image"]:
+        if key in ["image", "wrist_image", "extra_view_image"]:
             # For images, compute per-channel mean/std
             # Reshape to [N, H*W, C] then mean over H*W
             data_reshaped = data.reshape(n, -1, data.shape[-1])  # [N, H*W, C]
@@ -600,6 +641,12 @@ class LeRobotDatasetWriter:
             )
             stats["wrist_image"] = self._compute_image_stats(all_wrist)
 
+        if self._stats_accumulators["extra_view_image"]["values"]:
+            all_extra_view = np.concatenate(
+                self._stats_accumulators["extra_view_image"]["values"], axis=0
+            )
+            stats["extra_view_image"] = self._compute_image_stats(all_extra_view)
+
         # State stats
         if self._stats_accumulators["state"]["values"]:
             all_states = np.concatenate(
@@ -633,7 +680,7 @@ class LeRobotDatasetWriter:
         stats = {}
 
         # Array-type statistics (image, wrist_image, state, actions)
-        for key in ["image", "wrist_image", "state", "actions"]:
+        for key in ["image", "wrist_image", "extra_view_image", "state", "actions"]:
             acc = self._stats_accumulators[key]
             if acc["count"] == 0:
                 continue
@@ -643,7 +690,7 @@ class LeRobotDatasetWriter:
             variance = (acc["sum_sq"] / n) - (mean**2)
             std = np.sqrt(np.maximum(variance, 0))
 
-            if key in ["image", "wrist_image"]:
+            if key in ["image", "wrist_image", "extra_view_image"]:
                 # Image stats need special format: per-channel with nested structure
                 stats[key] = {
                     "mean": [[[float(m)]] for m in mean],  # [[[ ]]] per channel
@@ -742,6 +789,11 @@ class LeRobotDatasetWriter:
                     "names": ["height", "width", "channel"],
                 },
                 "wrist_image": {
+                    "dtype": "image",
+                    "shape": list(self.image_shape),
+                    "names": ["height", "width", "channel"],
+                },
+                "extra_view_image": {
                     "dtype": "image",
                     "shape": list(self.image_shape),
                     "names": ["height", "width", "channel"],
@@ -956,6 +1008,7 @@ def merge_distributed_datasets(
                 "features": {
                     "image": {"_type": "Image"},
                     "wrist_image": {"_type": "Image"},
+                    "extra_view_image": {"_type": "Image"},
                     "state": {
                         "feature": {"dtype": "float32", "_type": "Value"},
                         "length": state_dim,
@@ -1025,6 +1078,11 @@ def merge_distributed_datasets(
                 "names": ["height", "width", "channel"],
             },
             "wrist_image": {
+                "dtype": "image",
+                "shape": list(image_shape),
+                "names": ["height", "width", "channel"],
+            },
+            "extra_view_image": {
                 "dtype": "image",
                 "shape": list(image_shape),
                 "names": ["height", "width", "channel"],
