@@ -16,6 +16,7 @@ from enum import Enum
 
 
 class SupportedEnvType(Enum):
+    EMBODICHAIN = "embodichain"
     MANISKILL = "maniskill"
     LIBERO = "libero"
     ROBOTWIN = "robotwin"
@@ -45,7 +46,11 @@ def get_env_cls(env_type: str, env_cfg=None):
 
     env_type = SupportedEnvType(env_type)
 
-    if env_type == SupportedEnvType.MANISKILL:
+    if env_type == SupportedEnvType.EMBODICHAIN:
+        from rlinf.envs.embodichain.embodichain_env import EmbodiChainEnv
+
+        return EmbodiChainEnv
+    elif env_type == SupportedEnvType.MANISKILL:
         if env_cfg.get("enable_offload", False):
             from rlinf.envs.maniskill.maniskill_offload_env import ManiskillOffloadEnv
 

@@ -8,6 +8,7 @@ BACKEND=${2:-"egl"}
 
 export MUJOCO_GL=${BACKEND}
 export PYOPENGL_PLATFORM=${BACKEND}
+export EMBODICHAIN_PATH=${EMBODICHAIN_PATH:-"$HOME/workspace/research/EmbodiChain"}
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 
 # Base path to the BEHAVIOR dataset, which is the BEHAVIOR-1k repo's dataset folder
