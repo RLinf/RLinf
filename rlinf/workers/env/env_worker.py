@@ -774,6 +774,10 @@ class EnvWorker(Worker):
                             send_channel=reward_channel,
                             recv_channel=input_channel,
                         )
+                        if reward_model_output is not None:
+                            env_metrics["reward_model_output"].append(
+                                reward_model_output.detach().float().reshape(-1).cpu()
+                            )
 
                     rollout_result = self.recv_rollout_results(
                         input_channel, mode="train"
@@ -843,6 +847,10 @@ class EnvWorker(Worker):
                         recv_channel=input_channel,
                         last_run=last_run,
                     )
+                    if reward_model_output is not None:
+                        env_metrics["reward_model_output"].append(
+                            reward_model_output.detach().float().reshape(-1).cpu()
+                        )
                 rollout_result = self.recv_rollout_results(input_channel, mode="train")
                 rewards = self.compute_bootstrap_rewards(
                     env_output, rollout_result.bootstrap_values, reward_model_output
