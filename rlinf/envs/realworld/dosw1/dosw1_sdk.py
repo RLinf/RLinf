@@ -182,6 +182,27 @@ class DOSW1SDKAdapter:
         robot = self._require_connected()
         robot.right_go_joint(list(joint), float(gripper), interp=interp)
 
+    def forward_kinematics(self, joint: list[float]) -> np.ndarray:
+        """Compute ee_pose from joint angles via SDK FK (arm-agnostic)."""
+        if self._config.is_dummy:
+            return np.zeros(6)
+        robot = self._require_connected()
+        return np.asarray(robot.fk(joint), dtype=np.float64)
+
+    def get_left_pose(self) -> np.ndarray:
+        """Return current left arm ee_pose."""
+        if self._config.is_dummy:
+            return np.zeros(6)
+        robot = self._require_connected()
+        return np.asarray(robot.left_get_pose(), dtype=np.float64)
+
+    def get_right_pose(self) -> np.ndarray:
+        """Return current right arm ee_pose."""
+        if self._config.is_dummy:
+            return np.zeros(6)
+        robot = self._require_connected()
+        return np.asarray(robot.right_get_pose(), dtype=np.float64)
+
     def _require_connected(self) -> object:
         if not self._connected or self._robot is None:
             raise RuntimeError(

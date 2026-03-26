@@ -33,6 +33,8 @@ class PickConfig(DOSW1Config):
     gripper_closed_max_width: float = 0.01
     grasp_bonus: float = 0.3
 
+    max_joint_delta: float = 0.1
+
     enable_gripper_penalty: bool = False
     gripper_penalty: float = 0.05
     use_dense_reward: bool = True

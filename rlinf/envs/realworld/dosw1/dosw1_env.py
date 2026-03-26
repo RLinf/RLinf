@@ -17,7 +17,6 @@ from rlinf.envs.realworld.common.video_player import VideoPlayer
 from rlinf.scheduler import WorkerInfo
 from rlinf.utils.logging import get_logger
 
-from .dosw1_data_recorder import DOSW1DataRecorder
 from .dosw1_robot_state import DOSW1RobotState
 from .dosw1_sdk import DOSW1SDKAdapter
 
@@ -71,15 +70,28 @@ class DOSW1Config:
         default_factory=lambda: np.full(_NUM_JOINTS, 3.14)
     )
 
+    max_joint_delta: float = float("inf")
+    action_scale: float = 1.0
+
+    left_ee_pose_limit_min: np.ndarray = field(
+        default_factory=lambda: np.full(3, -np.inf)
+    )
+    left_ee_pose_limit_max: np.ndarray = field(
+        default_factory=lambda: np.full(3, np.inf)
+    )
+    right_ee_pose_limit_min: np.ndarray = field(
+        default_factory=lambda: np.full(3, -np.inf)
+    )
+    right_ee_pose_limit_max: np.ndarray = field(
+        default_factory=lambda: np.full(3, np.inf)
+    )
+
     step_frequency: float = 30.0
     max_num_steps: int = 1000
 
     enable_human_in_loop: bool = False
     gripper_factor: float = 0.07 / 0.048
     gripper_teleop_scale: float = 5.0
-
-    enable_data_persistence: bool = False
-    persist_data_dir: str = "./dosw1_data"
 
     save_video_path: Optional[str] = None
 
@@ -133,10 +145,6 @@ class DOSW1Env(gym.Env):
             self._keyboard = KeyboardListener()
             self._in_free_teleop = True
 
-        self._recorder: DOSW1DataRecorder | None = None
-        if config.enable_data_persistence:
-            self._recorder = DOSW1DataRecorder(config.persist_data_dir)
-
         self._init_action_obs_spaces()
 
         self._cameras: list[Camera] = []
@@ -157,9 +165,6 @@ class DOSW1Env(gym.Env):
         if self.config.is_dummy:
             return self._get_observation(), {}
 
-        if self._recorder is not None:
-            self._recorder.end_episode()
-
         if self.config.enable_human_in_loop:
             self._in_free_teleop = True
             self._logger.info(
@@ -173,9 +178,6 @@ class DOSW1Env(gym.Env):
         self._num_steps = 0
         self._control_mode = ControlMode.MODEL
         self._robot_state = self._sdk.get_state()
-
-        if self._recorder is not None:
-            self._recorder.start_episode()
 
         return self._get_observation(), {}
 
@@ -196,8 +198,6 @@ class DOSW1Env(gym.Env):
 
         if truncated_by_free:
             obs = self._get_observation()
-            if self._recorder is not None:
-                self._recorder.end_episode()
             return obs, 0.0, False, True, {"control_mode": self._control_mode.value}
 
         prev_left_gripper = self._robot_state.left_gripper
@@ -218,21 +218,10 @@ class DOSW1Env(gym.Env):
         terminated = False
         truncated = self._num_steps >= self.config.max_num_steps
 
-        if self._recorder is not None:
-            self._recorder.record_step(
-                obs=obs,
-                action=actual_action,
-                reward=reward,
-                control_mode=self._control_mode.value,
-                timestamp=time.time(),
-            )
-
         info: dict = {"control_mode": self._control_mode.value}
         return obs, reward, terminated, truncated, info
 
     def close(self) -> None:
-        if self._recorder is not None:
-            self._recorder.end_episode()
         self._close_cameras()
         if self._keyboard is not None:
             try:
@@ -265,18 +254,81 @@ class DOSW1Env(gym.Env):
             )
         )
 
+    def _clip_joint_to_ee_safety_box(
+        self,
+        current_joint: np.ndarray,
+        target_joint: np.ndarray,
+        side: str,
+    ) -> np.ndarray:
+        """Clip target joints so the resulting ee_pose stays within the safety box.
+
+        Uses binary search along the current -> target line in joint space,
+        checking ee_pose via FK at each midpoint.
+        """
+        cfg = self.config
+        if side == "left":
+            lo_limit = np.asarray(cfg.left_ee_pose_limit_min, dtype=np.float64)
+            hi_limit = np.asarray(cfg.left_ee_pose_limit_max, dtype=np.float64)
+        else:
+            lo_limit = np.asarray(cfg.right_ee_pose_limit_min, dtype=np.float64)
+            hi_limit = np.asarray(cfg.right_ee_pose_limit_max, dtype=np.float64)
+
+        if np.all(np.isinf(lo_limit)) and np.all(np.isinf(hi_limit)):
+            return target_joint
+
+        ee = self._sdk.forward_kinematics(target_joint.tolist())
+        if self._ee_in_box(ee, lo_limit, hi_limit):
+            return target_joint
+
+        lo, hi = 0.0, 1.0
+        for _ in range(8):
+            mid = (lo + hi) / 2
+            interp = current_joint + mid * (target_joint - current_joint)
+            ee = self._sdk.forward_kinematics(interp.tolist())
+            if self._ee_in_box(ee, lo_limit, hi_limit):
+                lo = mid
+            else:
+                hi = mid
+
+        return current_joint + lo * (target_joint - current_joint)
+
+    @staticmethod
+    def _ee_in_box(
+        ee: np.ndarray, lo: np.ndarray, hi: np.ndarray
+    ) -> bool:
+        n = min(len(lo), len(ee))
+        return bool(np.all(ee[:n] >= lo[:n]) and np.all(ee[:n] <= hi[:n]))
+
     def _execute_model_action(self, action: np.ndarray) -> np.ndarray:
-        left_joint = np.clip(
-            action[:6],
-            self.config.joint_limit_min,
-            self.config.joint_limit_max,
+        cfg = self.config
+        cur_left = self._robot_state.left_joint_positions
+        cur_right = self._robot_state.right_joint_positions
+
+        left_target = cur_left + cfg.action_scale * (action[:6] - cur_left)
+        right_target = cur_right + cfg.action_scale * (action[7:13] - cur_right)
+
+        left_target = np.clip(
+            left_target,
+            cur_left - cfg.max_joint_delta,
+            cur_left + cfg.max_joint_delta,
         )
+        right_target = np.clip(
+            right_target,
+            cur_right - cfg.max_joint_delta,
+            cur_right + cfg.max_joint_delta,
+        )
+
+        left_joint = np.clip(left_target, cfg.joint_limit_min, cfg.joint_limit_max)
+        right_joint = np.clip(right_target, cfg.joint_limit_min, cfg.joint_limit_max)
+
+        left_joint = self._clip_joint_to_ee_safety_box(
+            cur_left, left_joint, side="left"
+        )
+        right_joint = self._clip_joint_to_ee_safety_box(
+            cur_right, right_joint, side="right"
+        )
+
         left_gripper = self._clip_gripper_width(float(action[6]))
-        right_joint = np.clip(
-            action[7:13],
-            self.config.joint_limit_min,
-            self.config.joint_limit_max,
-        )
         right_gripper = self._clip_gripper_width(float(action[13]))
 
         self._sdk.left_go_joint(left_joint.tolist(), left_gripper)
@@ -312,6 +364,8 @@ class DOSW1Env(gym.Env):
         init_lead_right = self._teleop_init_lead_right
         init_follow_left = self._teleop_init_follow_left
         init_follow_right = self._teleop_init_follow_right
+        cur_left = self._robot_state.left_joint_positions
+        cur_right = self._robot_state.right_joint_positions
 
         gripper_scale = cfg.gripper_teleop_scale * cfg.gripper_factor
 
@@ -322,6 +376,14 @@ class DOSW1Env(gym.Env):
             cfg.joint_limit_min,
             cfg.joint_limit_max,
         )
+        left_joint = np.clip(
+            left_joint,
+            cur_left - cfg.max_joint_delta,
+            cur_left + cfg.max_joint_delta,
+        )
+        left_joint = self._clip_joint_to_ee_safety_box(
+            cur_left, left_joint, side="left"
+        )
         left_gripper = self._clip_gripper_width(float(init_follow_left[6] + delta_left_gripper))
 
         delta_right_joint = lead_right[:6] - init_lead_right[:6]
@@ -330,6 +392,14 @@ class DOSW1Env(gym.Env):
             init_follow_right[:6] + delta_right_joint,
             cfg.joint_limit_min,
             cfg.joint_limit_max,
+        )
+        right_joint = np.clip(
+            right_joint,
+            cur_right - cfg.max_joint_delta,
+            cur_right + cfg.max_joint_delta,
+        )
+        right_joint = self._clip_joint_to_ee_safety_box(
+            cur_right, right_joint, side="right"
         )
         right_gripper = self._clip_gripper_width(
             float(init_follow_right[6] + delta_right_gripper)
@@ -363,6 +433,8 @@ class DOSW1Env(gym.Env):
         init_lead_right = self._teleop_init_lead_right
         init_follow_left = self._teleop_init_follow_left
         init_follow_right = self._teleop_init_follow_right
+        cur_left = self._sdk.get_left_joint()[:6]
+        cur_right = self._sdk.get_right_joint()[:6]
 
         gripper_scale = cfg.gripper_teleop_scale * cfg.gripper_factor
 
@@ -373,6 +445,14 @@ class DOSW1Env(gym.Env):
             cfg.joint_limit_min,
             cfg.joint_limit_max,
         )
+        left_joint = np.clip(
+            left_joint,
+            cur_left - cfg.max_joint_delta,
+            cur_left + cfg.max_joint_delta,
+        )
+        left_joint = self._clip_joint_to_ee_safety_box(
+            cur_left, left_joint, side="left"
+        )
         left_gripper = self._clip_gripper_width(float(init_follow_left[6] + delta_left_gripper))
 
         delta_right_joint = lead_right[:6] - init_lead_right[:6]
@@ -381,6 +461,14 @@ class DOSW1Env(gym.Env):
             init_follow_right[:6] + delta_right_joint,
             cfg.joint_limit_min,
             cfg.joint_limit_max,
+        )
+        right_joint = np.clip(
+            right_joint,
+            cur_right - cfg.max_joint_delta,
+            cur_right + cfg.max_joint_delta,
+        )
+        right_joint = self._clip_joint_to_ee_safety_box(
+            cur_right, right_joint, side="right"
         )
         right_gripper = self._clip_gripper_width(
             float(init_follow_right[6] + delta_right_gripper)
