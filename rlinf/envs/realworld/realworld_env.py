@@ -174,10 +174,17 @@ class RealWorldEnv(gym.Env):
             self.intervened_once[:] = False
             self.intervened_steps[:] = 0
 
-    def _record_metrics(self, step_reward, terminations, intervene_current_step, infos):
+    def _record_metrics(
+        self,
+        step_reward,
+        terminations,
+        success_current_step,
+        intervene_current_step,
+        infos,
+    ):
         episode_info = {}
         self.returns += step_reward
-        self.success_once = self.success_once | terminations
+        self.success_once = self.success_once | success_current_step
         self.intervened_once = self.intervened_once | intervene_current_step
         self.intervened_steps += intervene_current_step.astype(int)
 
@@ -247,13 +254,20 @@ class RealWorldEnv(gym.Env):
 
         obs = self._wrap_obs(raw_obs)
         step_reward = self._calc_step_reward(_reward)
+        success_current_step = np.isclose(step_reward, 1.0)
         intervene_flag = np.zeros(self.num_envs, dtype=bool)
         if "intervene_action" in infos:
             for env_id in range(self.num_envs):
                 if infos["intervene_action"][env_id] is not None:
                     intervene_flag[env_id] = True
 
-        infos = self._record_metrics(step_reward, terminations, intervene_flag, infos)
+        infos = self._record_metrics(
+            step_reward,
+            terminations,
+            success_current_step,
+            intervene_flag,
+            infos,
+        )
         if self.ignore_terminations:
             infos["episode"]["success_at_end"] = to_tensor(terminations)
             terminations[:] = False
