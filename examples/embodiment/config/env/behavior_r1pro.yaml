@@ -23,9 +23,9 @@ policy_wrapper: null
 omni_config:
   env:
     env_wrapper: rlinf
-    action_frequency: 30
+    action_frequency: 60
     physics_frequency: 120
-    rendering_frequency: 30
+    rendering_frequency: 60
     device: null
     automatic_reset: False
     flatten_obs_space: False
@@ -47,7 +47,7 @@ omni_config:
     enable_flatcache: True
     enable_object_states: True
     enable_transition_rules: True
-    render_viewer_camera: True
+    render_viewer_camera: False
     use_numpy_controller_backend: True
 
   robots:
