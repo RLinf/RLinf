@@ -468,10 +468,11 @@ class HabitatEnv(gym.Env):
 
             def env_fn(p=param):
                 config_path = p["config_path"]
+                overrides = p["overrides"]
                 episode_ids = p["episode_ids"]
                 seed = p["seed"]
 
-                config = get_config(config_path)
+                config = get_config(config_path, overrides=overrides)
 
                 dataset = habitat.datasets.make_dataset(
                     config.habitat.dataset.type,
@@ -501,7 +502,11 @@ class HabitatEnv(gym.Env):
             GlobalHydra.instance().clear()
 
         config_path = self.cfg.init_params.config_path
-        habitat_config = get_config(config_path)
+        overrides = [
+            f"habitat.dataset.data_path={self.cfg.data_path}",
+            f"habitat.dataset.scenes_dir={self.cfg.scenes_dir}",
+        ]
+        habitat_config = get_config(config_path, overrides=overrides)
 
         habitat_dataset = habitat.datasets.make_dataset(
             habitat_config.habitat.dataset.type,
@@ -525,6 +530,7 @@ class HabitatEnv(gym.Env):
             env_fn_params.append(
                 {
                     "config_path": config_path,
+                    "overrides": overrides,
                     "episode_ids": assigned_ids,
                     "seed": self.seed + env_id,
                 }

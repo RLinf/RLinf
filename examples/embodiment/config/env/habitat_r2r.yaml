@@ -13,5 +13,8 @@ max_episode_steps: 512
 use_fixed_reset_state_ids: True
 use_ordered_reset_state_ids: False
 
+data_path: "/path/to/data_path_out"
+scenes_dir: "/path/to/scene_dir_out"
+
 init_params:
   config_path: "rlinf/envs/habitat/extensions/config/vlnce_r2r_cma.yaml"

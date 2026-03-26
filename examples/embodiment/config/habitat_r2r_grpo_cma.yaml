@@ -85,13 +85,16 @@ algorithm:
 env:
   group_name: "EnvGroup"
   enable_offload: False
-  
+  data_path: "/data/vln-dependency/VLN-CE/datasets/r2r/val_unseen/val_unseen.json.gz"
+  scenes_dir: "/data/vln-dependency/VLN-CE/scene_dataset"
   # Override the default values in env/habitat_r2r
   train:
     total_num_envs: 64  # Total number of parallel environments for training
     max_steps_per_rollout_epoch: 512
     max_episode_steps: 512 # max episode steps for truncation
     reset_gripper_open: False
+    data_path: ${env.data_path}
+    scenes_dir: ${env.scenes_dir}
   eval:
     total_num_envs: 1 # 608
     auto_reset: True
@@ -103,6 +106,8 @@ env:
     use_ordered_reset_state_ids: True
     reset_gripper_open: False
     is_eval: True
+    data_path: ${env.data_path}
+    scenes_dir: ${env.scenes_dir}
     video_cfg:
       fps: 5
       save_video: True
@@ -117,11 +122,11 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/data/qianyx/RLinf/VLN-CE/models/cma_weights/ckpt/best_ckpt_r2r.pth"
+    model_path: "/data/vln-dependency/VLN-CE/models/cma_weights/ckpt/best_ckpt_r2r.pth"
     instruction_encoder_config:
-      embedding_file: "/data/qianyx/RLinf/VLN-CE/models/cma_weights/instruction_encoder_embedding/embeddings.json.gz"
+      embedding_file: "/data/vln-dependency/VLN-CE/models/cma_weights/instruction_encoder_embedding/embeddings.json.gz"
     depth_encoder_config:
-      ddppo_checkpoint: "/data/qianyx/RLinf/VLN-CE/models/cma_weights/ddppo-models/gibson-2plus-resnet50.pth"
+      ddppo_checkpoint: "/data/vln-dependency/VLN-CE/models/cma_weights/ddppo-models/gibson-2plus-resnet50.pth"
     precision: ${actor.model.precision}
 
 actor:
@@ -135,11 +140,11 @@ actor:
   # Override only the paths that need to be customized
   # All other CMA configs are inherited from model/cma.yaml
   model:
-    model_path: "/data/qianyx/RLinf/VLN-CE/models/cma_weights/ckpt/best_ckpt_r2r.pth"
+    model_path: "/data/vln-dependency/VLN-CE/models/cma_weights/ckpt/best_ckpt_r2r.pth"
     instruction_encoder_config:
-      embedding_file: "/data/qianyx/RLinf/VLN-CE/models/cma_weights/instruction_encoder_embedding/embeddings.json.gz"
+      embedding_file: "/data/vln-dependency/VLN-CE/models/cma_weights/instruction_encoder_embedding/embeddings.json.gz"
     depth_encoder_config:
-      ddppo_checkpoint: "/data/qianyx/RLinf/VLN-CE/models/cma_weights/ddppo-models/gibson-2plus-resnet50.pth"
+      ddppo_checkpoint: "/data/vln-dependency/VLN-CE/models/cma_weights/ddppo-models/gibson-2plus-resnet50.pth"
 
   optim:
     lr: 2.0e-5
