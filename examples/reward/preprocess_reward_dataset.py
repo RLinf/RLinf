@@ -106,7 +106,9 @@ def load_episodes_with_labels(
                 obs = observations[idx]
                 info = infos[idx]
 
-                success_flag = info.get("success", False)
+                success_flag = info.get(
+                    "success", info.get("episode", {}).get("success_once", False)
+                )
 
                 img = obs.get("main_images")
                 if img is None:
