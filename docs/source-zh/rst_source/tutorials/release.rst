@@ -19,7 +19,7 @@ RLinf v0.2 聚焦两个核心方向：**真实世界强化学习（Real-World RL
 
 - :doc:`SFT VLM <../examples/embodied/sft_vlm>` 能力支持在自定义数据集上高效微调，并在 Robo2VLM 数据集上验证 Qwen2.5‑VL 与 Qwen3‑VL 约 95% 的复现精度，详见 `PR 708 <https://github.com/RLinf/RLinf/pull/708>`_ 与 `PR 781 <https://github.com/RLinf/RLinf/pull/781>`_
 
-- 支持基于 :doc:`GSEnv <../examples/embodied/gsenv>`（ManiSkill-GS）的 Real2Sim2Real 训练
+- 支持基于 :doc:`GSEnv <../examples/embodied/gsenv>` 的 Real2Sim2Real 训练（ManiSkill-GS）
 
 - 支持 π(0.5) 模型的 :doc:`Co-training <../examples/embodied/co_training>` sim-real 协同训练
 
@@ -35,7 +35,7 @@ RLinf v0.2 聚焦两个核心方向：**真实世界强化学习（Real-World RL
 
 - 支持 :doc:`RoboCasa <../examples/embodied/robocasa>` 基准
 
-- 支持 Pi0 的 :doc:`DSRL <../examples/embodied/dsrl>`（Diffusion Steering via Reinforcement Learning）
+- 支持 Pi0 的 :doc:`DSRL <../examples/embodied/dsrl>`，即 Diffusion Steering via Reinforcement Learning
 
 - 支持 flow matching policy 的 :doc:`SAC-Flow <../examples/embodied/sac_flow>` 训练
 
