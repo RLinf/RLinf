@@ -52,7 +52,11 @@ def _masked_update(dst: Any, src: Any, mask: torch.Tensor) -> Any:
             return dst
         return src
     if isinstance(src, dict):
-        dst_dict = {} if not isinstance(dst, dict) else {k: _clone_nested(v) for k, v in dst.items()}
+        dst_dict = (
+            {}
+            if not isinstance(dst, dict)
+            else {k: _clone_nested(v) for k, v in dst.items()}
+        )
         for key, value in src.items():
             dst_dict[key] = _masked_update(dst_dict.get(key), value, mask)
         return dst_dict
@@ -71,7 +75,6 @@ def _masked_update(dst: Any, src: Any, mask: torch.Tensor) -> Any:
 
 
 class EmbodiChainEnv(gym.Env):
-
     metadata = {"render_modes": []}
 
     def __init__(
@@ -107,7 +110,9 @@ class EmbodiChainEnv(gym.Env):
         if action_low.ndim > 1:
             action_low = action_low[0]
             action_high = action_high[0]
-        self.action_low = torch.as_tensor(action_low, dtype=torch.float32, device=self.device)
+        self.action_low = torch.as_tensor(
+            action_low, dtype=torch.float32, device=self.device
+        )
         self.action_high = torch.as_tensor(
             action_high, dtype=torch.float32, device=self.device
         )
@@ -211,7 +216,9 @@ class EmbodiChainEnv(gym.Env):
             )
 
         gym_config = load_json(str(gym_config_path))
-        env_cfg = config_to_cfg(deepcopy(gym_config), manager_modules=DEFAULT_MANAGER_MODULES)
+        env_cfg = config_to_cfg(
+            deepcopy(gym_config), manager_modules=DEFAULT_MANAGER_MODULES
+        )
         env_cfg.num_envs = self.num_envs
         env_cfg.max_episode_steps = self.max_episode_steps
         env_cfg.sim_cfg = SimulationManagerCfg(
@@ -231,7 +238,9 @@ class EmbodiChainEnv(gym.Env):
             value = robot_obs[key]
             if not isinstance(value, torch.Tensor):
                 value = torch.as_tensor(value, dtype=torch.float32, device=self.device)
-            value = value.to(self.device, dtype=torch.float32).reshape(self.num_envs, -1)
+            value = value.to(self.device, dtype=torch.float32).reshape(
+                self.num_envs, -1
+            )
             state_parts.append(value)
         if not state_parts:
             raise ValueError(
@@ -266,7 +275,13 @@ class EmbodiChainEnv(gym.Env):
 
     def step(
         self, actions: Union[np.ndarray, torch.Tensor]
-    ) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]]:
+    ) -> tuple[
+        dict[str, torch.Tensor],
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        dict[str, Any],
+    ]:
         action_tensor = (
             actions.to(self.device, dtype=torch.float32)
             if isinstance(actions, torch.Tensor)
@@ -277,7 +292,9 @@ class EmbodiChainEnv(gym.Env):
         action_tensor = action_tensor.reshape(self.num_envs, -1)
         action_tensor = torch.clamp(action_tensor, self.action_low, self.action_high)
 
-        raw_obs, rewards, terminations, truncations, infos = self.env.step(action_tensor)
+        raw_obs, rewards, terminations, truncations, infos = self.env.step(
+            action_tensor
+        )
         infos = self._wrap_info(infos)
         rewards = rewards.to(self.device, dtype=torch.float32)
         terminations = terminations.to(self.device, dtype=torch.bool)
@@ -327,7 +344,9 @@ class EmbodiChainEnv(gym.Env):
         aggregated_final_obs = None
 
         for step_idx in range(int(chunk_actions.shape[1])):
-            obs, rewards, terminations, truncations, infos = self.step(chunk_actions[:, step_idx])
+            obs, rewards, terminations, truncations, infos = self.step(
+                chunk_actions[:, step_idx]
+            )
             obs_list.append(obs)
             infos_list.append(infos)
             chunk_rewards.append(rewards)
@@ -387,7 +406,9 @@ class EmbodiChainEnv(gym.Env):
         return None
 
     def sample_action_space(self) -> torch.Tensor:
-        return torch.as_tensor(self.action_space.sample(), dtype=torch.float32, device=self.device)
+        return torch.as_tensor(
+            self.action_space.sample(), dtype=torch.float32, device=self.device
+        )
 
     def close(self):
         try:
