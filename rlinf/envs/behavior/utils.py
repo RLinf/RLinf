@@ -100,6 +100,23 @@ def set_camera_resolution(camera_cfg: dict | None) -> None:
 
 
 def get_env_wrapper(wrapper_name: str):
+    if wrapper_name == "rlinf":
+        from omnigibson.envs import Environment, EnvironmentWrapper
+        from omnigibson.learning.utils.eval_utils import ROBOT_CAMERA_NAMES
+
+        class RlinfWrapper(EnvironmentWrapper):
+            """Match OmniGibson DefaultWrapper but without all the unnecessary post-processing."""
+
+            def __init__(self, env: Environment):
+                super().__init__(env=env)
+                robot = env.robots[0]
+                for camera_id, camera_name in ROBOT_CAMERA_NAMES["R1Pro"].items():
+                    sensor_name = camera_name.split("::")[1]
+                    if camera_id == "head":
+                        robot.sensors[sensor_name].horizontal_aperture = 40.0
+                env.load_observation_space()
+
+        return RlinfWrapper
     if wrapper_name == "default":
         from omnigibson.learning.wrappers.default_wrapper import DefaultWrapper
 
