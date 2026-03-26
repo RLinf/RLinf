@@ -27,7 +27,7 @@ Embodied Intelligence
 
 - Supported Dexbotic models and RL training with :doc:`Dexbotic <../examples/embodied/dexbotic>`.
 
-- Improved support for :doc:`IsaacLab <../examples/embodied/isaaclab>`, especially for gr00t+isaaclab.
+- Improved support for :doc:`IsaacLab <../examples/embodied/isaaclab>`, especially for GR00T+IsaacLab.
 
 - Supported RL training of the openpi model family on :doc:`RoboTwin 2.0 <../examples/embodied/robotwin>`.
 
