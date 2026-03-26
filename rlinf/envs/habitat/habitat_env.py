@@ -83,6 +83,13 @@ class HabitatEnv(gym.Env):
         self.env_config = self.env.get_env_attr("config")[0]
         self.initial_distance_to_goal = np.zeros(self.num_envs)
 
+        self.action_map = {
+            0: "stop",
+            1: "move_forward",
+            2: "turn_left",
+            3: "turn_right",
+        }
+
     @property
     def elapsed_steps(self):
         return self._elapsed_steps
@@ -101,6 +108,7 @@ class HabitatEnv(gym.Env):
 
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
+        chunk_actions = np.vectorize(lambda x: self.action_map[x])(chunk_actions)
         chunk_size = chunk_actions.shape[1]
         obs_list = []
         infos_list = []

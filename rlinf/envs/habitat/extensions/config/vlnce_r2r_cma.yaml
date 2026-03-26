@@ -68,3 +68,4 @@ habitat:
     split: val_unseen
     scenes_dir: "/path/to/scene_dir"
     data_path: "/path/to/data_path"
+

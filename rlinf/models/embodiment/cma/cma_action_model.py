@@ -569,13 +569,6 @@ class CMAPolicy(nn.Module, BasePolicy):
         prev_logprobs = distribution.log_probs(action)
         self.rnn_states, self.prev_actions = rnn_states, action
 
-        chunk_actions = []
-        for i in range(batch_size):
-            chunk_actions.append(
-                [self.action_map[a.item()] for a in action[i].cpu().numpy()]
-            )
-        chunk_actions = np.array(chunk_actions)
-
         if hasattr(self, "value_head"):
             chunk_values = self.value_head(features)
         else:
@@ -597,7 +590,7 @@ class CMAPolicy(nn.Module, BasePolicy):
             "prev_values": chunk_values,
             "forward_inputs": forward_inputs,
         }
-        return chunk_actions, result
+        return action, result
 
     def forward(self, forward_type="default_forward", **kwargs):
         """Forward pass dispatcher."""
