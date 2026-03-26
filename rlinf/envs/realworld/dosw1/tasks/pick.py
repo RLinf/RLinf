@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from rlinf.envs.realworld.dosw1.dosw1_env import DOSW1Config, DOSW1Env
+from rlinf.envs.realworld.dosw1.dosw1_env import DOSW1Config, DOSW1Env, ControlMode
 
 
 def _default_grasp_joint() -> np.ndarray:
@@ -74,11 +74,6 @@ class PickEnv(DOSW1Env):
     ) -> tuple[dict, dict]:
         obs, info = super().reset(seed=seed, options=options, joint_reset=joint_reset)
 
-        if not self.config.is_dummy:
-            self._sdk.open_gripper()
-            time.sleep(0.4)
-            self._robot_state = self._sdk.get_state()
-
         self._phase = "reach"
         self._holding_object = False
         self._task_success = False
@@ -86,7 +81,7 @@ class PickEnv(DOSW1Env):
 
     def step(self, action: np.ndarray) -> tuple[dict, float, bool, bool, dict]:
         obs, reward, terminated, truncated, info = super().step(action)
-        if self._task_success:
+        if self._task_success or self._manual_done:
             terminated = True
         return obs, reward, terminated, truncated, info
 
@@ -101,7 +96,11 @@ class PickEnv(DOSW1Env):
         grasp_joint = np.asarray(cfg.target_grasp_joint, dtype=np.float64).reshape(6)
         lift_joint = np.asarray(cfg.target_lift_joint, dtype=np.float64).reshape(6)
         sharpness = float(cfg.joint_reward_sharpness)
-        gripper_closed = left_gripper <= cfg.gripper_closed_max_width
+
+        if self._control_mode == ControlMode.TELEOP and self._teleop_target_left_gripper is not None:
+            gripper_closed = self._teleop_target_left_gripper <= cfg.gripper_closed_max_width
+        else:
+            gripper_closed = left_gripper <= cfg.gripper_closed_max_width
 
         reward = 0.0
 

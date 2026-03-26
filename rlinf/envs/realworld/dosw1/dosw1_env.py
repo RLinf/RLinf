@@ -137,6 +137,8 @@ class DOSW1Env(gym.Env):
         self._teleop_init_lead_right: np.ndarray | None = None
         self._teleop_init_follow_left: np.ndarray | None = None
         self._teleop_init_follow_right: np.ndarray | None = None
+        self._teleop_target_left_gripper: float | None = None
+        self._manual_done: bool = False
         if config.enable_human_in_loop:
             from rlinf.envs.realworld.common.keyboard.keyboard_listener import (
                 KeyboardListener,
@@ -177,6 +179,7 @@ class DOSW1Env(gym.Env):
             self._go_to_home()
         self._num_steps = 0
         self._control_mode = ControlMode.MODEL
+        self._manual_done = False
         self._robot_state = self._sdk.get_state()
 
         return self._get_observation(), {}
@@ -407,6 +410,7 @@ class DOSW1Env(gym.Env):
 
         self._sdk.left_go_joint(left_joint.tolist(), left_gripper)
         self._sdk.right_go_joint(right_joint.tolist(), right_gripper)
+        self._teleop_target_left_gripper = left_gripper
 
         actual = np.empty(_ACTION_DIM, dtype=np.float64)
         actual[:6] = left_joint
@@ -489,6 +493,11 @@ class DOSW1Env(gym.Env):
             self._logger.info("[DOSW1Env] -> FreeTeleop (episode aborted)")
             self._in_free_teleop = True
             return True
+
+        if key == "d":
+            self._logger.info("[DOSW1Env] Manual done (episode saved)")
+            self._manual_done = True
+            return False
 
         if key == "p" and self._control_mode in (ControlMode.MODEL, ControlMode.TELEOP):
             self._logger.info("[DOSW1Env] %s -> PAUSE", self._control_mode.name)
