@@ -10,6 +10,7 @@ dit_version: null
 text_encoder_pretrained_path: null
 image_encoder_pretrained_path: null
 vae_pretrained_path: null
+disable_native_gradient_checkpointing: false
 
 precision: "bf16"
 is_lora: False

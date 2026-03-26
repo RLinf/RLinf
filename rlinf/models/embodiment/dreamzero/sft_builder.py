@@ -10,6 +10,8 @@ from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf, open_dict
 from torch.utils.data import DataLoader, IterableDataset
 
+from rlinf.config import torch_dtype_from_precision
+
 logger = logging.getLogger(__name__)
 
 
@@ -266,6 +268,76 @@ def _detect_pretrained_layout(checkpoint_dir: str) -> str:
     return "unknown"
 
 
+def _set_native_gradient_checkpointing(
+    module: torch.nn.Module, enabled: bool
+) -> list[str]:
+    changed_modules = []
+    for name, submodule in module.named_modules():
+        changed = False
+        if hasattr(submodule, "gradient_checkpointing"):
+            setattr(submodule, "gradient_checkpointing", enabled)
+            changed = True
+        if hasattr(submodule, "use_gradient_checkpointing"):
+            setattr(submodule, "use_gradient_checkpointing", enabled)
+            changed = True
+        if not enabled and hasattr(submodule, "use_gradient_checkpointing_offload"):
+            setattr(submodule, "use_gradient_checkpointing_offload", False)
+            changed = True
+        if changed:
+            changed_modules.append(name or "<root>")
+    return changed_modules
+
+
+def _collect_param_numel_by_dtype(module: torch.nn.Module) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for param in module.parameters():
+        key = str(param.dtype)
+        counts[key] = counts.get(key, 0) + param.numel()
+    return counts
+
+
+def _cast_model_to_target_precision(
+    model: torch.nn.Module, model_cfg: DictConfig
+) -> torch.dtype | None:
+    precision = model_cfg.get("precision", None)
+    if precision is None:
+        return None
+
+    target_dtype = torch_dtype_from_precision(precision)
+    if target_dtype is None or target_dtype == torch.float32:
+        return target_dtype
+
+    action_head = getattr(model, "action_head", None)
+    components_to_cast: list[tuple[str, torch.nn.Module]] = []
+    if action_head is not None:
+        for name in ("model", "text_encoder", "image_encoder", "vae"):
+            component = getattr(action_head, name, None)
+            if isinstance(component, torch.nn.Module):
+                components_to_cast.append((f"action_head.{name}", component))
+
+    if not components_to_cast:
+        components_to_cast = [("model", model)]
+
+    before_counts = {
+        name: _collect_param_numel_by_dtype(component)
+        for name, component in components_to_cast
+    }
+    for _, component in components_to_cast:
+        component.to(dtype=target_dtype)
+    after_counts = {
+        name: _collect_param_numel_by_dtype(component)
+        for name, component in components_to_cast
+    }
+    logger.info(
+        "DreamZero SFT builder cast components to %s. "
+        "dtype_numel_before=%s dtype_numel_after=%s",
+        target_dtype,
+        before_counts,
+        after_counts,
+    )
+    return target_dtype
+
+
 def build_dreamzero_sft_model(model_cfg: DictConfig) -> torch.nn.Module:
     _log_cuda_memory("build_dreamzero_sft_model:start")
     train_cfg = load_dreamzero_train_cfg(model_cfg)
@@ -295,6 +367,21 @@ def build_dreamzero_sft_model(model_cfg: DictConfig) -> torch.nn.Module:
     ):
         model.action_head.inject_lora_after_loading()
         _log_cuda_memory("build_dreamzero_sft_model:after_inject_lora")
+
+    if model_cfg.get("disable_native_gradient_checkpointing", False):
+        changed_modules = _set_native_gradient_checkpointing(model, enabled=False)
+        logger.info(
+            "DreamZero SFT builder disabled native gradient checkpointing on %d modules: %s",
+            len(changed_modules),
+            changed_modules[:12],
+        )
+        _log_cuda_memory("build_dreamzero_sft_model:after_disable_native_gradient_checkpointing")
+
+    cast_dtype = _cast_model_to_target_precision(model, model_cfg)
+    if cast_dtype is not None:
+        _log_cuda_memory(
+            f"build_dreamzero_sft_model:after_cast_model_to_target_precision:{cast_dtype}"
+        )
 
     _log_cuda_memory("build_dreamzero_sft_model:return")
     return model
