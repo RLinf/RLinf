@@ -18,6 +18,7 @@ from argparse import ArgumentParser, Namespace
 from pathlib import Path
 
 import yaml
+from fitter import DataFitter
 from omegaconf import DictConfig, OmegaConf, open_dict
 
 _GLOBAL_CONFIG = None
@@ -73,10 +74,32 @@ def init_global_config_reasoning(config, component_placement) -> None:
 def init_global_config_env(config, component_placement, cluster) -> None:
     global _GLOBAL_CONFIG
 
+    # Use actor_profile_data (env_num_per_instance -> time).
+    actor_profile_cfg = OmegaConf.select(config, "profile_data.actor_profile_data")
+    if not isinstance(actor_profile_cfg, DictConfig) or actor_profile_cfg == {}:
+        raise ValueError(
+            "Missing profile_data.actor_profile_data. "
+            "Please run collect_profile to generate actor_profile_data."
+        )
+    actor_profile_data = OmegaConf.to_container(actor_profile_cfg, resolve=True)
+    actor_profile_data = {int(k): float(v) for k, v in actor_profile_data.items()}
+
+    total_env_num = OmegaConf.select(config, "env.train.total_num_envs")
+    if total_env_num is None:
+        total_env_num = OmegaConf.select(config, "data.env_num")
+    if total_env_num is None:
+        raise ValueError(
+            "Missing env.train.total_num_envs (and data.env_num fallback). "
+            "Please set env.train.total_num_envs in config."
+        )
+    total_env_num = int(total_env_num)
+    actor_cost_total = DataFitter(actor_profile_data).get_value(total_env_num)
+
     _GLOBAL_CONFIG = Namespace(
         task_type=config.runner.task_type,
         total_gpus=cluster.num_accelerators,
-        env_num=config.data.env_num,
+        env_num=total_env_num,
+        pipeline_stage_num=config.rollout.pipeline_stage_num,
         profile_data=config.profile_data,
         rollout_batch_size=1,  # For actor node init
         group_size=1,  # For actor node init
@@ -106,7 +129,11 @@ def init_global_config_env(config, component_placement, cluster) -> None:
             _GLOBAL_CONFIG.components_config[component] = Namespace(
                 model_parallel_size=model_parallel_size,
                 max_world_size=world_size,
-                collocated_cost_total=getattr(config.profile_data, f"{component}_cost"),
+                collocated_cost_total=(
+                    actor_cost_total
+                    if component == "actor"
+                    else getattr(config.profile_data, f"{component}_cost")
+                ),
             )
 
 
@@ -140,7 +167,7 @@ def get_valid_gpu_num_list(role: str) -> list[int]:
 
 def has_profile_data(cfg) -> bool:
     """Check if there is profile data in the config."""
-    if OmegaConf.select(cfg, "profile_data.actor_cost") is None:
+    if OmegaConf.select(cfg, "profile_data.actor_profile_data") is None:
         return False
     env_profile = OmegaConf.select(cfg, "profile_data.env_profile_data")
     if not isinstance(env_profile, DictConfig) or env_profile == {}:
@@ -152,7 +179,9 @@ def has_profile_data(cfg) -> bool:
 
 
 def has_target_env_num(cfg) -> bool:
-    target_env_num = OmegaConf.select(cfg, "data.env_num")
+    target_env_num = OmegaConf.select(cfg, "env.train.total_num_envs")
+    if target_env_num is None:
+        target_env_num = OmegaConf.select(cfg, "data.env_num")
     return target_env_num is not None
 
 
@@ -170,6 +199,7 @@ def modify_cfg_for_profiling(cfg, env_num):
             )  # Run the specified number of steps for profiling
         )
         cfg.runner.logger.per_worker_log = True
+        cfg.rollout.pipeline_stage_num = 1
 
 
 def modify_cfg_for_profiling_with_group(cfg, env_num, run_idx: int) -> None:
@@ -227,6 +257,25 @@ def log_env_num_instavg_to_tensorboard(cfg, env_num_per_instance: int) -> None:
     writer.close()
 
 
+def log_total_env_num_to_tensorboard(cfg, total_env_num: int) -> None:
+    """Log total_env_num (env.train.total_num_envs for this run) to TensorBoard."""
+    try:
+        from torch.utils.tensorboard import SummaryWriter
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError(
+            "tensorboard is required for total_env_num logging. Try `pip install tensorboard`."
+        ) from exc
+
+    log_root = cfg.runner.logger.log_path
+    log_suffix = "all" if cfg.runner.get("per_worker_log", False) else ""
+    tb_logdir = os.path.join(log_root, "tensorboard", log_suffix)
+    os.makedirs(tb_logdir, exist_ok=True)
+    writer = SummaryWriter(tb_logdir)
+    writer.add_scalar("profile/total_env_num", int(total_env_num), 0)
+    writer.flush()
+    writer.close()
+
+
 def _find_run_dirs(logdir: Path) -> list[Path]:
     event_prefix = "events.out.tfevents"
     run_dirs: list[Path] = []
@@ -256,6 +305,7 @@ def _load_scalars(run_dir: Path) -> dict[str, list[tuple[int, float]]]:
         "time/rollout/predict",
         "time/actor/run_training",
         "profile/env_num_per_instance",
+        "profile/total_env_num",
     ):
         if tag not in available:
             continue
@@ -282,7 +332,7 @@ def extract_from_tensorboard():
 
     env_profile_data: dict[int, float] = {}
     rollout_profile_data: dict[int, float] = {}
-    actor_costs_all: list[float] = []
+    actor_profile_data: dict[int, float] = {}
 
     def _vals_in_window(events, t_start, t_end, inclusive_end: bool = False):
         """Return values with timestamps in (t_start, t_end] if inclusive_end else [t_start, t_end)."""
@@ -296,6 +346,9 @@ def extract_from_tensorboard():
             continue
 
         env_events = sorted(data["profile/env_num_per_instance"], key=lambda x: x[0])
+        total_env_events = sorted(
+            data.get("profile/total_env_num", []), key=lambda x: x[0]
+        )
         env_cost_events = data.get("time/env/interact", [])
         rollout_cost_events = data.get("time/rollout/predict", [])
         actor_cost_events = data.get("time/actor/run_training", [])
@@ -304,7 +357,15 @@ def extract_from_tensorboard():
         # have timestamps in (t_{i-1}, t_i]. Use inclusive_end to capture the last run.
         for i, (t_end, env_num_val) in enumerate(env_events):
             t_start = env_events[i - 1][0] if i > 0 else 0.0
-            env_num = int(env_num_val)
+            env_num_per_instance = int(env_num_val)
+            total_env_vals = _vals_in_window(
+                total_env_events, t_start, t_end, inclusive_end=True
+            )
+            if not total_env_vals:
+                # Older logs may miss total_env_num. Skip actor curve in that case.
+                total_env_num = None
+            else:
+                total_env_num = int(total_env_vals[-1])
             env_vals = _vals_in_window(
                 env_cost_events, t_start, t_end, inclusive_end=True
             )
@@ -316,24 +377,21 @@ def extract_from_tensorboard():
             )
 
             if env_vals:
-                env_profile_data[env_num] = sum(env_vals) / len(env_vals)
+                env_profile_data[env_num_per_instance] = sum(env_vals) / len(env_vals)
             if rollout_vals:
-                rollout_profile_data[env_num] = sum(rollout_vals) / len(rollout_vals)
-            if actor_vals:
-                # collect per-env actor costs; later we select base env_num
-                actor_costs_all.extend([(env_num, v) for v in actor_vals])
+                rollout_profile_data[env_num_per_instance] = sum(rollout_vals) / len(
+                    rollout_vals
+                )
+            if actor_vals and total_env_num is not None:
+                actor_profile_data[total_env_num] = sum(actor_vals) / len(actor_vals)
 
     profile_data = {}
     if env_profile_data:
         profile_data["env_profile_data"] = env_profile_data
     if rollout_profile_data:
         profile_data["rollout_profile_data"] = rollout_profile_data
-    if actor_costs_all:
-        base_env_num = min(env_profile_data.keys()) if env_profile_data else None
-        if base_env_num is not None:
-            base_actor_vals = [v for env, v in actor_costs_all if env == base_env_num]
-            if base_actor_vals:
-                profile_data["actor_cost"] = sum(base_actor_vals) / len(base_actor_vals)
+    if actor_profile_data:
+        profile_data["actor_profile_data"] = actor_profile_data
 
     print(profile_data)
 

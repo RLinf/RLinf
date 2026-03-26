@@ -140,7 +140,7 @@ class AutoPlacementWorker:
             best_res = ScheduleResult.find_best_schedule(best_res, collocated_res)
 
             # Pipeline schedule
-            for source_gpu_num in range(1, gpu_num - 1):
+            for source_gpu_num in range(1, gpu_num):
                 sink_gpu_num = gpu_num - source_gpu_num
                 source_res: ScheduleResult = self._find_schedule(
                     source_workflow, source_gpu_num
@@ -152,7 +152,6 @@ class AutoPlacementWorker:
                 disaggregated_res = ScheduleResult.merger_schedule_results(
                     gpu_num, source_res, sink_res, is_collocated=False
                 )
-
                 best_res = ScheduleResult.find_best_schedule(
                     best_res, disaggregated_res
                 )
@@ -253,20 +252,6 @@ def main(cfg):
         "Predicted step time (from profile): %.3f s",
         schedule_result.total_cost,
     )
-    component_costs = get_component_predicted_costs(schedule_result)
-    if cfg.runner.task_type == "embodied":
-        generate_cost = component_costs.get("env", 0.0) + component_costs.get(
-            "env_rollout", 0.0
-        )
-        actor_train_cost = component_costs.get("actor", 0.0)
-        logging.info(
-            "Predicted generate time (env + rollout): %.3f s",
-            generate_cost,
-        )
-        logging.info(
-            "Predicted actor train time: %.3f s",
-            actor_train_cost,
-        )
 
 
 if __name__ == "__main__":

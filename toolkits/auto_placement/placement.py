@@ -148,6 +148,24 @@ class CollocatedScheduleResult(ScheduleResult):
         )
         self.source_res = source_res
         self.sink_res = sink_res
+        config = get_global_config()
+
+        def _roles(res: ScheduleResult) -> set[str]:
+            return {node.role for node in res.placement.keys()}
+
+        def _embodied_merge_total_cost(a: ScheduleResult, b: ScheduleResult) -> float:
+            """Merge two embodied sub-workflows' costs in seconds/step.
+
+            Collocated placement implies components share the same GPU(s) and thus
+            occupy devices sequentially in time. In particular, generate (env +
+            rollout) is not overlapped under collocation.
+
+            Therefore, collocated sub-workflows are summed.
+            """
+            _ = _roles(a)
+            _ = _roles(b)
+            return a.total_cost + b.total_cost
+
         super().__init__(
             mode=ScheduleMode.COLLOCATED,
             total_gpu_num=total_gpu_num,
@@ -156,7 +174,11 @@ class CollocatedScheduleResult(ScheduleResult):
                 **sink_res.placement,
             },
             cost_per_group_batch=None,
-            total_cost=self.source_res.total_cost + self.sink_res.total_cost,
+            total_cost=(
+                _embodied_merge_total_cost(self.source_res, self.sink_res)
+                if config.task_type == "embodied"
+                else self.source_res.total_cost + self.sink_res.total_cost
+            ),
         )
 
     def get_cost_per_group_batch(self, is_source: bool) -> float:
@@ -194,6 +216,29 @@ class DisaggregatedScheduleResult(ScheduleResult):
 
     def _get_disaggregated_time(self) -> tuple[float, float]:
         config = get_global_config()
+
+        if config.task_type == "embodied":
+
+            def _roles(res: ScheduleResult) -> set[str]:
+                return {node.role for node in res.placement.keys()}
+
+            source_roles = _roles(self.source_res)
+            sink_roles = _roles(self.sink_res)
+            source_has_actor = "actor" in source_roles
+            sink_has_actor = "actor" in sink_roles
+
+            # Warmup/drain for embodied pipeline is treated as negligible in this model.
+            self.warmup_time = 0.0
+
+            # If this cut separates generate components from actor training, runner
+            # executes them sequentially => sum. Otherwise, env vs rollout are
+            # overlapped and bottleneck dominates => max.
+            if source_has_actor ^ sink_has_actor:
+                stable_cost = self.source_res.total_cost + self.sink_res.total_cost
+            else:
+                stable_cost = max(self.source_res.total_cost, self.sink_res.total_cost)
+
+            return stable_cost, stable_cost
 
         source_cost_per_group_batch = self.source_res.get_cost_per_group_batch(
             is_source=True
