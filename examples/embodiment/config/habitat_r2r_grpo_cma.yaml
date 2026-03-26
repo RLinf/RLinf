@@ -93,7 +93,8 @@ env:
     max_steps_per_rollout_epoch: 512
     max_episode_steps: 512 # max episode steps for truncation
     reset_gripper_open: False
-    data_path: ${env.data_path}
+    split: train
+    data_path: ${env.data_path_dir}/${env.train.split}/${env.train.split}.json.gz
     scenes_dir: ${env.scenes_dir}
   eval:
     total_num_envs: 608 # 608
@@ -106,7 +107,8 @@ env:
     use_ordered_reset_state_ids: True
     reset_gripper_open: False
     is_eval: True
-    data_path: ${env.data_path}
+    split: val_unseen
+    data_path: ${env.data_path_dir}/${env.eval.split}/${env.eval.split}.json.gz
     scenes_dir: ${env.scenes_dir}
     video_cfg:
       fps: 5

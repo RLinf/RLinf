@@ -146,23 +146,23 @@ Before running, make sure parameters in yaml are correctly set.
 
 .. code:: yaml
    env:
-    data_path: /path/to/data_path
-    scenes_dir: /path/to/scene_dataset
+      data_path_dir: "VLN-CE/datasets/r2r"
+      scenes_dir: "VLN-CE/scene_dataset"
 
    rollout:
       model:
-         model_path: path/to/model/path
+         model_path: "VLN-CE/models/cma_weights/ckpt/best_ckpt_r2r.pth"
          instruction_encoder_config:
-            embedding_file: path/to/instruction_encoder_embedding
+            embedding_file: "VLN-CE/models/cma_weights/instruction_encoder_embedding/embeddings.json.gz"
          depth_encoder_config:
-            ddppo_checkpoint: path/to/ddppo-checkpoint
+            ddppo_checkpoint: "VLN-CE/models/cma_weights/ddppo-models/gibson-2plus-resnet50.pth"
    actor:
       model:
-         model_path: path/to/model/path
+         model_path: "VLN-CE/models/cma_weights/ckpt/best_ckpt_r2r.pth"
          instruction_encoder_config:
-            embedding_file: path/to/instruction_encoder_embedding
+            embedding_file: "VLN-CE/models/cma_weights/instruction_encoder_embedding/embeddings.json.gz"
          depth_encoder_config:
-            ddppo_checkpoint: path/to/ddppo-checkpoint
+            ddppo_checkpoint: "VLN-CE/models/cma_weights/ddppo-models/gibson-2plus-resnet50.pth"
 
 
 Running the Script

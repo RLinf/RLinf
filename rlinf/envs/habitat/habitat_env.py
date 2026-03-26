@@ -511,6 +511,7 @@ class HabitatEnv(gym.Env):
 
         config_path = self.cfg.init_params.config_path
         overrides = [
+            f"habitat.dataset.split={self.cfg.split}",
             f"habitat.dataset.data_path={self.cfg.data_path}",
             f"habitat.dataset.scenes_dir={self.cfg.scenes_dir}",
         ]

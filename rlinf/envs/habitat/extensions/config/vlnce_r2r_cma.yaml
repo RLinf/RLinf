@@ -65,7 +65,7 @@ habitat:
 
   dataset:
     type: R2RVLN-v1
-    split: val_unseen
+    split: None
     scenes_dir: "/path/to/scene_dir"
     data_path: "/path/to/data_path"
 
