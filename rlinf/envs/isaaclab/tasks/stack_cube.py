@@ -56,6 +56,9 @@ class IsaaclabStackCubeEnv(IsaaclabBaseEnv):
             isaac_env_cfg = load_cfg_from_registry(
                 self.isaaclab_env_id, "env_cfg_entry_point"
             )
+            # Seed the IsaacLab env config before construction so the simulator's
+            # initial reset path is deterministic and doesn't warn about an unset seed.
+            isaac_env_cfg.seed = self.seed
             isaac_env_cfg.scene.num_envs = (
                 self.cfg.init_params.num_envs
             )  # default 4096 ant_env_spaces.pkl
