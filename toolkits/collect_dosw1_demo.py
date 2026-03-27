@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Collect DOSW1 pick demonstrations via leader-arm teleop.
 
 Saves data in ``TrajectoryReplayBuffer`` checkpoint format so it can be
@@ -11,7 +25,7 @@ Usage (on the robot machine):
         --target-grasp-joint -0.47 -1.13 0.65 1.41 -0.60 -1.09 \
         --target-lift-joint  -0.51 -0.94 0.61 1.40 -0.63 -1.12 \
         --num-episodes 10 \
-        --save-dir /mlp_vepfs/share/wyf/RLinf-open/demo_data
+        --save-dir ./demo_data
 
 Keyboard controls:
     FreeTeleop (before each episode):
@@ -42,8 +56,8 @@ _ACTION_DIM = 14
 
 def _force_teleop_mode(env: PickEnv) -> None:
     """Switch env to TELEOP right after reset so every step reads from leader arm."""
-    env._control_mode = ControlMode.TELEOP
-    env._snapshot_teleop_init()
+    env.control_mode = ControlMode.TELEOP
+    env.snapshot_teleop_init()
 
 
 def _parse_args() -> argparse.Namespace:
@@ -71,7 +85,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--num-episodes", type=int, default=10)
     p.add_argument(
         "--save-dir", type=str,
-        default="/mlp_vepfs/share/wyf/RLinf-open/demo_data",
+        default="./demo_data",
     )
     return p.parse_args()
 
@@ -105,7 +119,7 @@ def _raw_obs_to_model_obs(
 
 def _read_actual_action(env: PickEnv) -> np.ndarray:
     """Read the robot's current joint state as the executed action."""
-    state = env._robot_state
+    state = env.robot_state
     actual = np.empty(_ACTION_DIM, dtype=np.float64)
     actual[:6] = state.left_joint_positions
     actual[6] = state.left_gripper
@@ -225,12 +239,12 @@ def main() -> None:
             raw_next_obs, reward, terminated, truncated, info = env.step(placeholder)
             done = terminated or truncated
 
-            if done and env._in_free_teleop:
+            if done and env.in_free_teleop:
                 aborted = True
                 break
 
-            left_joint = env._robot_state.left_joint_positions
-            if env._phase == "reach":
+            left_joint = env.robot_state.left_joint_positions
+            if env.phase == "reach":
                 target = grasp_joint
                 tag = "reach->grasp"
             else:
@@ -240,8 +254,8 @@ def main() -> None:
             dist = float(np.linalg.norm(diff))
             per_joint = " ".join(f"{d:+.3f}" for d in diff)
             grip_info = ""
-            if env._teleop_target_left_gripper is not None:
-                grip_info = f" | grip_target={env._teleop_target_left_gripper:.4f}"
+            if env.teleop_target_left_gripper is not None:
+                grip_info = f" | grip_target={env.teleop_target_left_gripper:.4f}"
             print(f"  [{tag}] dist={dist:.4f} delta=[{per_joint}]{grip_info} r={reward:.3f}")
 
             actual_action = _read_actual_action(env)

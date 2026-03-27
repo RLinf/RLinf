@@ -19,10 +19,10 @@ import numpy as np
 import pytest
 
 from rlinf.envs.realworld.dosw1.dosw1_env import (
-    _ACTION_DIM,
-    _IMAGE_H,
-    _IMAGE_W,
-    _NUM_JOINTS,
+    ACTION_DIM,
+    IMAGE_H,
+    IMAGE_W,
+    NUM_JOINTS,
     ControlMode,
     DOSW1Config,
     DOSW1Env,
@@ -50,10 +50,10 @@ class FakeInferenceService:
         right_gripper = float(state["right_gripper"][0])
 
         phase = 2.0 * np.pi * self._freq * t
-        delta = _PERTURB_AMP * np.sin(phase + np.arange(_NUM_JOINTS) * 0.5)
+        delta = _PERTURB_AMP * np.sin(phase + np.arange(NUM_JOINTS) * 0.5)
         gripper_delta = _GRIPPER_AMP * (0.5 + 0.5 * np.sin(phase))
 
-        action = np.empty(_ACTION_DIM, dtype=np.float64)
+        action = np.empty(ACTION_DIM, dtype=np.float64)
         action[:6] = left_joint + delta
         action[6] = left_gripper + gripper_delta
         action[7:13] = right_joint + delta
@@ -180,13 +180,13 @@ class TestEpisodeWithFakeInference:
     def _check_obs(obs: dict, env: DOSW1Env) -> None:
         assert "state" in obs and "frames" in obs
         state = obs["state"]
-        assert state["left_joint_positions"].shape == (_NUM_JOINTS,)
+        assert state["left_joint_positions"].shape == (NUM_JOINTS,)
         assert state["left_gripper"].shape == (1,)
-        assert state["right_joint_positions"].shape == (_NUM_JOINTS,)
+        assert state["right_joint_positions"].shape == (NUM_JOINTS,)
         assert state["right_gripper"].shape == (1,)
-        for name in env._effective_camera_names():
+        for name in env.effective_camera_names():
             assert name in obs["frames"]
-            assert obs["frames"][name].shape == (_IMAGE_H, _IMAGE_W, 3)
+            assert obs["frames"][name].shape == (IMAGE_H, IMAGE_W, 3)
 
 
 @pytest.mark.interactive
@@ -194,7 +194,7 @@ class TestTeleopLeaderSignal:
     def test_leader_follower_tracking(self, shared_env: DOSW1Env) -> None:
         """Verify leader arm signals are readable in TELEOP mode."""
         env = shared_env
-        sdk: DOSW1SDKAdapter = env._sdk
+        sdk: DOSW1SDKAdapter = env.sdk
         assert sdk is not None, "SDK must be connected for this test"
 
         print("\n" + "=" * 72)
@@ -238,7 +238,7 @@ class TestInteractiveFourModes:
     def test_mode_switching_loop(self, shared_env: DOSW1Env) -> None:
         """Interactive test for all four control modes."""
         env = shared_env
-        sdk: DOSW1SDKAdapter = env._sdk
+        sdk: DOSW1SDKAdapter = env.sdk
         inference = FakeInferenceService()
 
         max_episodes = 3

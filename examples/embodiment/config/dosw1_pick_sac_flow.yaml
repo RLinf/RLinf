@@ -95,7 +95,7 @@ algorithm:
     cache_size: 200
     min_buffer_size: 1
     sample_window_size: 200
-    load_path: "/mlp_vepfs/share/wyf/RLinf-open/demo_data"  # Replace with your demo data path, or remove this section if not using RLPD
+    load_path: "/path/to/demo_data"  # Replace with your demo data path, or remove this section if not using RLPD
     auto_save: False
 
   num_updates_per_step: 64
@@ -159,7 +159,7 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/mlp_vepfs/share/wyf/RLinf-open"  # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    model_path: "/path/to/resnet10_pretrained"  # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     precision: ${actor.model.precision}
     num_q_heads: 10
 
@@ -176,7 +176,7 @@ actor:
     model_type: "flow_policy"
     input_type: "mixed"  # only mixed input can be used in real world
 
-    model_path: "/mlp_vepfs/share/wyf/RLinf-open"  # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    model_path: "/path/to/resnet10_pretrained"  # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
 
     state_dim: 14   # DOS-W1: left 6 joints + 1 gripper + right 6 joints + 1 gripper
     action_dim: 14  # DOS-W1: left 6 joints + 1 gripper + right 6 joints + 1 gripper
