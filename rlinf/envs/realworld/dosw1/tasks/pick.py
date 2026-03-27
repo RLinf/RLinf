@@ -35,6 +35,8 @@ class PickConfig(DOSW1Config):
 
     max_joint_delta: float = 0.1
 
+    right_arm_home_penalty: float = 0.3
+
     enable_gripper_penalty: bool = False
     gripper_penalty: float = 0.05
     use_dense_reward: bool = True
@@ -126,6 +128,11 @@ class PickEnv(DOSW1Env):
 
         if cfg.enable_gripper_penalty and gripper_changed:
             reward -= cfg.gripper_penalty
+
+        right_joint = self._robot_state.right_joint_positions
+        right_home = np.asarray(cfg.right_reset_joint, dtype=np.float64).reshape(6)
+        right_dist_sq = float(np.sum(np.square(right_joint - right_home)))
+        reward -= cfg.right_arm_home_penalty * right_dist_sq
 
         return float(np.clip(reward, -1.0, 1.0))
 

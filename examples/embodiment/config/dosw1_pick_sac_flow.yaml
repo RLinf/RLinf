@@ -139,8 +139,12 @@ env:
       # ee_pose safety box (xyz in meters, calibrate for your workspace)
       left_ee_pose_limit_min: [-0.3, -0.3, 0.02]     # z > 0 prevents table collision
       left_ee_pose_limit_max: [0.3, 0.3, 0.4]
-      # right_ee_pose_limit_min: [-0.3, -0.3, 0.02]
-      # right_ee_pose_limit_max: [0.3, 0.3, 0.4]
+      right_ee_pose_limit_min: [-0.3, -0.3, 0.02]
+      right_ee_pose_limit_max: [0.3, 0.3, 0.4]
+
+      # support human-in-the-loop teleop
+      enable_human_in_loop: True
+      keyboard_socket_path: "/tmp/dosw1_keyboard.sock"
 
   eval:
     total_num_envs: 1

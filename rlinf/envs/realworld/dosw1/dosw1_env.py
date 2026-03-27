@@ -90,6 +90,7 @@ class DOSW1Config:
     max_num_steps: int = 1000
 
     enable_human_in_loop: bool = False
+    keyboard_socket_path: str = "/tmp/dosw1_keyboard.sock"
     gripper_factor: float = 0.07 / 0.048
     gripper_teleop_scale: float = 5.0
 
@@ -140,11 +141,11 @@ class DOSW1Env(gym.Env):
         self._teleop_target_left_gripper: float | None = None
         self._manual_done: bool = False
         if config.enable_human_in_loop:
-            from rlinf.envs.realworld.common.keyboard.keyboard_listener import (
-                KeyboardListener,
+            from rlinf.envs.realworld.common.keyboard.socket_keyboard_listener import (
+                SocketKeyboardListener,
             )
 
-            self._keyboard = KeyboardListener()
+            self._keyboard = SocketKeyboardListener(config.keyboard_socket_path)
             self._in_free_teleop = True
 
         self._init_action_obs_spaces()
@@ -228,7 +229,7 @@ class DOSW1Env(gym.Env):
         self._close_cameras()
         if self._keyboard is not None:
             try:
-                self._keyboard.listener.stop()
+                self._keyboard.stop()
             except Exception:
                 pass
             self._keyboard = None
