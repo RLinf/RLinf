@@ -361,7 +361,6 @@ class EmbodiChainEnv(gym.Env):
         if action_tensor.ndim == 1:
             action_tensor = action_tensor.unsqueeze(0).repeat(self.num_envs, 1)
         action_tensor = action_tensor.reshape(self.num_envs, -1)
-        action_tensor = torch.clamp(action_tensor, self.action_low, self.action_high)
 
         raw_obs, rewards, terminations, truncations, infos = self.env.step(
             action_tensor
