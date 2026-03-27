@@ -261,6 +261,67 @@ Using behavior as an example:
   ``examples/embodiment/config/behavior_ppo_openvlaoft.yaml``
 - OpenVLA-OFT + GRPO:
   ``examples/embodiment/config/behavior_grpo_openvlaoft.yaml``
+- OpenPI (Pi0) + PPO:
+  ``examples/embodiment/config/behavior_ppo_openpi.yaml``
+- OpenPI (Pi0.5) + PPO:
+  ``examples/embodiment/config/behavior_ppo_openpi_pi05.yaml``
+
+.. warning::
+
+   Known issue: under the current Behavior setup, training success rate
+   (``env/success_once``) may stay at 0 for ``OpenVLA-OFT`` / ``OpenPI (Pi0)``.
+   This issue will be fixed in a later release.
+
+.. note::
+
+   The Behavior configs above all load
+   ``examples/embodiment/config/env/behavior_r1pro.yaml`` via ``defaults``
+   (for both ``env.train`` and ``env.eval``). This file defines the base R1 Pro
+   environment settings, including ``task_idx``, ``max_episode_steps``,
+   ``max_steps_per_rollout_epoch``, camera resolution, and ``omni_config``.
+   You can override these defaults in each concrete config under
+   ``env.train`` / ``env.eval``.
+
+**Key Settings in behavior_r1pro.yaml**
+
+- ``base_config_name: r1pro_behavior``:
+  RLinf first loads OmniGibson's base ``r1pro_behavior.yaml`` and then applies
+  overrides from ``omni_config`` (see ``setup_omni_cfg`` in
+  ``rlinf/envs/behavior/utils.py``).
+- ``task_idx``:
+  Current task id (0-49). RLinf maps it to the concrete task name and writes it
+  into ``task.activity_name`` (see ``rlinf/envs/behavior/behavior_env.py``).
+- ``omni_config.task.resample_task_when_reset: True``:
+  Before each ``env.reset()``, RLinf calls ``update_task`` to resample, so scene
+  and object layouts can change across episodes under the same
+  ``activity_name``. This requires ``online_object_sampling: True`` and
+  ``use_presampled_robot_pose: False`` (otherwise an assertion is raised). Set
+  it to ``False`` if you need fixed scenes for strict A/B comparisons.
+- ``camera.head_resolution`` / ``camera.wrist_resolution``:
+  Head / wrist camera resolutions. RLinf overrides default values in
+  ``omnigibson.learning.utils.eval_utils`` (default 720x720 and 480x480), then
+  applies them through the environment wrapper to R1Pro sensors.
+- ``omni_config.env.action_frequency / rendering_frequency / physics_frequency``:
+  Controls action stepping, rendering, and physics frequency respectively
+  (common default: 30 / 30 / 120). Higher frequencies are usually slower.
+- ``omni_config.env.automatic_reset: False``:
+  Do not auto-reset when an episode ends; reset is explicitly controlled by the
+  RLinf training / evaluation loop.
+- ``omni_config.env.flatten_obs_space: False`` and ``flatten_action_space: False``:
+  Keep structured observation / action spaces instead of flattening to 1D.
+- ``omni_config.macro.use_gpu_dynamics: False``:
+  Disables GPU dynamics and usually improves performance; enable it only when
+  advanced features like particles / fluids are required.
+- ``omni_config.macro.enable_flatcache: True``:
+  Enables flatcache, which generally improves performance for large scenes.
+- ``omni_config.macro.enable_object_states: True``:
+  BehaviorTask depends on object states, so this should stay enabled.
+- ``omni_config.macro.enable_transition_rules: True``:
+  Enables transition-rule-based state changes (e.g., slicing, cooking-related
+  transitions).
+- ``omni_config.macro.use_numpy_controller_backend: True``:
+  Uses the numpy controller backend, which is usually faster in single-process
+  or moderate-parallel settings.
 
 --------------
 
@@ -283,6 +344,48 @@ the Behavior environment, run:
    export ISAAC_PATH=/path/to/isaac-sim
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
    bash examples/embodiment/run_embodiment.sh behavior_ppo_openvlaoft
+
+--------------
+
+**4. Evaluate with behavior_ppo_openpi_pi05.yaml**
+
+In principle, any ``pi05`` checkpoint that has non-zero success rate on
+Behavior and has been converted to PyTorch format can be used for evaluation
+with this config. We use OpenPI-Comet only as an example source:
+
+- https://huggingface.co/sunshk/openpi_comet/tree/main
+
+After download, you can use the following repository to convert weights to
+PyTorch format:
+
+- https://github.com/mli0603/openpi-comet
+
+Thanks to the OpenPI-Comet authors for open-sourcing the model and tools, which
+helps reproducibility and evaluation in RLinf.
+
+After conversion, update ``behavior_ppo_openpi_pi05.yaml`` as follows:
+
+1. Set ``actor.model.model_path`` and ``rollout.model.model_path`` to the converted model directory.
+2. Increase ``max_episode_steps`` and ``max_steps_per_rollout_epoch`` in both
+   ``env.train`` and ``env.eval`` (for example, ``4096``).
+
+.. code:: yaml
+
+   env:
+     train:
+       max_episode_steps: 4096
+       max_steps_per_rollout_epoch: 4096
+     eval:
+       max_episode_steps: 4096
+       max_steps_per_rollout_epoch: 4096
+
+Run evaluation with:
+
+.. code:: bash
+
+   export ISAAC_PATH=/path/to/isaac-sim
+   export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
+   bash examples/embodiment/eval_embodiment.sh behavior_ppo_openpi_pi05
 
 
 Visualization and Results
@@ -347,4 +450,3 @@ Visualization and Results
 For the Behavior experiment, we were inspired by 
 `Behavior-1K baselines <https://github.com/StanfordVL/b1k-baselines.git>`_, 
 with only minor modifications. We thank the authors for releasing their open-source code.
-
