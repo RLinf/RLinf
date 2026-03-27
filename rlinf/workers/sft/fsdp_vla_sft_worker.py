@@ -68,9 +68,11 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         ]:
             batch_data = next(self.data_iter)
             batch_data = _pytree.tree_map(
-                lambda x: torch.as_tensor(x, device=self.device).contiguous().clone()
-                if isinstance(x, torch.Tensor)
-                else x,
+                lambda x: (
+                    torch.as_tensor(x, device=self.device).contiguous().clone()
+                    if isinstance(x, torch.Tensor)
+                    else x
+                ),
                 batch_data,
             )
             with self.amp_context:
@@ -80,9 +82,11 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
         register_pytree_dataclasses(observation)
         observation = _pytree.tree_map(
-            lambda x: torch.as_tensor(x, device=self.device).contiguous().clone()
-            if x is not None
-            else x,
+            lambda x: (
+                torch.as_tensor(x, device=self.device).contiguous().clone()
+                if x is not None
+                else x
+            ),
             observation,
         )
         actions = actions.to(torch.float32)
