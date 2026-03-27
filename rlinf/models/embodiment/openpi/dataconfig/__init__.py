@@ -294,6 +294,24 @@ _CONFIGS = [
         num_train_steps=30_000,
     ),
     TrainConfig(
+        name="pi05_behavior",
+        model=pi0_config.Pi0Config(pi05=True, action_horizon=32),
+        data=LeRobotBehaviorDataConfig(
+            repo_id="physical-intelligence/behavior",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_behavior/assets"),
+            extra_delta_transform=False,
+            extract_state_from_proprio=True,
+            use_all_wrist_images=True,
+            use_quantile_norm=True,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi0_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_base",
+        num_train_steps=30_000,
+    ),
+    TrainConfig(
         name="pi05_gsenv",
         model=pi0_config.Pi0Config(
             pi05=True, action_horizon=5, discrete_state_input=False
