@@ -79,6 +79,25 @@ def _cfg_get(cfg: Any, key: str, default: Any = None) -> Any:
     return getattr(cfg, key, default)
 
 
+def _resolve_sim_device_and_gpu_id(
+    cfg: Any, worker_info: Any
+) -> tuple[torch.device, int]:
+    sim_device = torch.device(str(_cfg_get(cfg, "sim_device", "cpu")))
+    configured_gpu_id = _cfg_get(cfg, "gpu_id", None)
+
+    if sim_device.type != "cuda":
+        return sim_device, int(configured_gpu_id or 0)
+
+    scheduler_gpu_id = int(getattr(worker_info, "accelerator_rank", -1))
+    if scheduler_gpu_id < 0:
+        if sim_device.index is not None:
+            scheduler_gpu_id = int(sim_device.index)
+        else:
+            scheduler_gpu_id = int(configured_gpu_id or 0)
+
+    return torch.device(f"cuda:{scheduler_gpu_id}"), scheduler_gpu_id
+
+
 def _clone_nested(value: Any) -> Any:
     if isinstance(value, torch.Tensor):
         return value.clone()
@@ -150,7 +169,10 @@ class EmbodiChainEnv(gym.Env):
         self.max_episode_steps = int(_cfg_get(cfg, "max_episode_steps", 500))
         self.video_cfg = _cfg_get(cfg, "video_cfg", None)
         self.state_keys = list(_cfg_get(cfg, "state_keys", ["qpos", "qvel", "qf"]))
-        self._device = torch.device(str(_cfg_get(cfg, "sim_device", "cpu")))
+        self._sim_device, self._gpu_id = _resolve_sim_device_and_gpu_id(
+            cfg, worker_info
+        )
+        self._device = self._sim_device
         self._is_start = True
         self._elapsed_steps = torch.zeros(0, dtype=torch.int32)
 
@@ -272,9 +294,9 @@ class EmbodiChainEnv(gym.Env):
         env_cfg.max_episode_steps = self.max_episode_steps
         env_cfg.sim_cfg = SimulationManagerCfg(
             headless=bool(_cfg_get(self.cfg, "headless", True)),
-            sim_device=torch.device(str(_cfg_get(self.cfg, "sim_device", "cpu"))),
+            sim_device=self._sim_device,
             enable_rt=bool(_cfg_get(self.cfg, "enable_rt", False)),
-            gpu_id=int(_cfg_get(self.cfg, "gpu_id", 0)),
+            gpu_id=self._gpu_id,
         )
         return build_env(gym_config["id"], base_env_cfg=env_cfg)
 
