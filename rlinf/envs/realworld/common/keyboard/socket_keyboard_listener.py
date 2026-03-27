@@ -30,8 +30,11 @@ import socket
 import threading
 from pathlib import Path
 
+from rlinf.utils.logging import get_logger
+
 
 _DEFAULT_SOCKET_PATH = "/tmp/dosw1_keyboard.sock"
+_log = get_logger()
 
 
 class SocketKeyboardListener:
@@ -51,6 +54,7 @@ class SocketKeyboardListener:
         self._server.bind(self.socket_path)
         self._server.listen(1)
         self._server.settimeout(1.0)
+        _log.info("[SocketKeyboard] Listening on %s", self.socket_path)
 
         self._thread = threading.Thread(target=self._accept_loop, daemon=True)
         self._thread.start()
@@ -61,6 +65,7 @@ class SocketKeyboardListener:
             return self._latest_key
 
     def stop(self) -> None:
+        _log.info("[SocketKeyboard] Stopping listener")
         self._running = False
         self._thread.join(timeout=3.0)
         self._server.close()
@@ -78,6 +83,7 @@ class SocketKeyboardListener:
                 continue
             except OSError:
                 break
+            _log.info("[SocketKeyboard] Relay client connected")
             threading.Thread(
                 target=self._handle_client, args=(conn,), daemon=True
             ).start()
@@ -100,6 +106,7 @@ class SocketKeyboardListener:
         except OSError:
             pass
         finally:
+            _log.info("[SocketKeyboard] Relay client disconnected")
             conn.close()
 
     def _process_line(self, line: str) -> None:
@@ -107,6 +114,8 @@ class SocketKeyboardListener:
             key = line[6:]
             with self._lock:
                 self._latest_key = key if key else None
+            if key:
+                _log.info("[SocketKeyboard] Key pressed: %s", key)
         elif line == "release":
             with self._lock:
                 self._latest_key = None

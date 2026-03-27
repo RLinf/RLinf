@@ -79,6 +79,9 @@ def concat_batch(data1, data2):
                 continue
             batch[key] = torch.cat([data1[key], data2[key]], dim=0)
         elif isinstance(value, dict):
+            # XXX: added this for dealing with different keys in demo data.
+            if key not in data2:
+                continue
             batch[key] = concat_batch(data1[key], data2[key])
     return batch
 
