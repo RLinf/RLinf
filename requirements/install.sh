@@ -597,11 +597,6 @@ install_lingbot_vla_model() {
 
 install_env_only() {
     SKIP_ROS=${SKIP_ROS:-0}
-    case "$ENV_NAME" in
-        embodichain)
-            PYTHON_VERSION="3.10"
-            ;;
-    esac
     create_and_sync_venv
     case "$ENV_NAME" in
         franka)
