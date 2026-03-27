@@ -275,7 +275,9 @@ class EmbodiChainEnv(gym.Env):
 
         gym_config_path_cfg = _cfg_get(self.cfg, "gym_config_path")
         if not gym_config_path_cfg:
-            raise ValueError("EmbodiChain requires `gym_config_path` in the env config.")
+            raise ValueError(
+                "EmbodiChain requires `gym_config_path` in the env config."
+            )
         gym_config_path = _resolve_gym_config_path(str(gym_config_path_cfg))
 
         gym_config = load_json(str(gym_config_path))
