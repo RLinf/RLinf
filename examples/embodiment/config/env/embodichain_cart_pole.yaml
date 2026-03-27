@@ -4,7 +4,7 @@ gym_config_path: configs/agents/rl/basic/cart_pole/gym_config.json
 
 headless: true
 enable_rt: false
-sim_device: cpu
+sim_device: cuda
 
 state_keys: ["qpos", "qvel", "qf"]
 

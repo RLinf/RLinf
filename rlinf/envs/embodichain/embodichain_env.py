@@ -83,19 +83,11 @@ def _resolve_sim_device_and_gpu_id(
     cfg: Any, worker_info: Any
 ) -> tuple[torch.device, int]:
     sim_device = torch.device(str(_cfg_get(cfg, "sim_device", "cpu")))
-    configured_gpu_id = _cfg_get(cfg, "gpu_id", None)
 
-    if sim_device.type != "cuda":
-        return sim_device, int(configured_gpu_id or 0)
+    # RLinf will set `CUDA_VISIBLE_DEVICES` to each sub process according to the `component_placement` config,
+    # So for EmbodiChain, we should always use `gpu_id=0` and cuda device `cuda:0` to access the GPU (which is actually the GPU assigned to the current process by RLinf).
 
-    scheduler_gpu_id = int(getattr(worker_info, "accelerator_rank", -1))
-    if scheduler_gpu_id < 0:
-        if sim_device.index is not None:
-            scheduler_gpu_id = int(sim_device.index)
-        else:
-            scheduler_gpu_id = int(configured_gpu_id or 0)
-
-    return torch.device(f"cuda:{scheduler_gpu_id}"), scheduler_gpu_id
+    return sim_device, 0
 
 
 def _clone_nested(value: Any) -> Any:
