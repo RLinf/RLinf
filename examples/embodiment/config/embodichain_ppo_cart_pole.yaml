@@ -84,7 +84,7 @@ env:
   group_name: EnvGroup
 
   train:
-    total_num_envs: 16
+    total_num_envs: 256
     group_size: ${algorithm.group_size}
     max_steps_per_rollout_epoch: 64
     max_episode_steps: 500
