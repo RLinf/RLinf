@@ -8,7 +8,7 @@ The primary objective is to develop a model capable of performing robotic naviga
 1. **Visual Understanding**: Processing RGB images from the robot's camera.
 2. **Language Comprehension**: Interpreting natural-language task descriptions.
 3. **Action Generation**: Producing precise robotic actions (navigation control).
-4. **Reinforcement Learning**: Optimizing the policy via the PPO with environment feedback.
+4. **Reinforcement Learning**: Optimizing the policy via PPO with environment feedback.
 
 Environment
 -----------
@@ -80,16 +80,17 @@ Before starting training, you need to download the corresponding pretrained mode
 .. code:: bash
 
    # Download CMA model
-   # Method 1: Using gdown
    # This link contains the ckpt of the CMA model.
    gdown https://drive.google.com/uc?id=1o9PgBT38BH9pw_7V1QB3XUkY8auJqGKw
 
-   # Method 2: Using wget
    # This link contains the depth encoder pretrained weights.
    wget https://dl.fbaipublicfiles.com/habitat/data/baselines/v1/ddppo/ddppo-models.zip
+
    # This link contains the dataset which is preprocessed and instruction encoder embedding.
    wget https://drive.google.com/file/d/1fo8F4NKgZDH-bPSdVU3cONAkt5EW-tyr/view
+
    # The rgb encoder pretrained weights is official resnet50 weights.
+   # It will automatically download the weights when you run the script.
    # It's location is RLinf/rlinf/models/embodiment/cma/modules/resnet_encoders.py:186
 
 Put them into the ``VLN-CE/models/cma_weights`` folder.Then use the following script to convert the checkpoint to a ``best_ckpt_r2r.pth``:
@@ -99,16 +100,19 @@ Put them into the ``VLN-CE/models/cma_weights`` folder.Then use the following sc
    import torch
    import pickle
 
-   # ========== Modify the path here ==========
    CKPT_PATH = "/path/to/your/checkpoint.pth"
    OUTPUT_PATH = "/path/to/output/best_ckpt_r2r.pth"
+
    class Placeholder:
       def __init__(self, *args, **kwargs):
          self.__dict__ = {}
+
       def __setitem__(self, k, v):
          self.__dict__[k] = v
+
       def __setstate__(self, state):
          self.__dict__ = state if isinstance(state, dict) else {}
+
    class SafeUnpickler(pickle.Unpickler):
       def find_class(self, module, name):
          if 'habitat' in module.lower() or 'vlnce' in module.lower():
@@ -117,13 +121,16 @@ Put them into the ``VLN-CE/models/cma_weights`` folder.Then use the following sc
                return super().find_class(module, name)
          except:
                return Placeholder
+
    class SafePickleModule:
       Unpickler = SafeUnpickler
+
    SafePickleModule.__name__ = 'pickle'
 
    checkpoint = torch.load(CKPT_PATH, map_location="cpu", pickle_module=SafePickleModule)
    state_dict = checkpoint.get("state_dict") or checkpoint.get("model") or checkpoint.get("model_state_dict") or checkpoint
    torch.save(state_dict, OUTPUT_PATH)
+
    print(f"successfully saved to {OUTPUT_PATH}")
 
 Dataset structure:
@@ -142,9 +149,10 @@ Dataset structure:
    `-- scene_dataset
        |-- mp3d
 
-Before running, make sure parameters in yaml are correctly set.
+Before running, make sure the dataset path and model path in yaml are correctly set.
 
 .. code:: yaml
+
    env:
       data_path_dir: "VLN-CE/datasets/r2r"
       scenes_dir: "VLN-CE/scene_dataset"
@@ -218,10 +226,19 @@ Using Habitat R2R as an example:
 - CMA + GRPO:
   ``examples/embodiment/config/habitat_r2r_grpo_cma.yaml``
 
+- CMA + PPO:
+  ``examples/embodiment/config/habitat_r2r_ppo_cma.yaml``
+
 **3. Launch Commands**
 
-To evaluate NaVid using in the Habitat environment, run:
+To evaluate CMA model using in the Habitat environment, run:
 
 .. code:: bash
 
    bash examples/embodiment/eval_embodiment.sh habitat_r2r_grpo_cma
+
+To train CMA model using in the Habitat environment, run:
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh habitat_r2r_ppo_cma
