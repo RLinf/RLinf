@@ -106,7 +106,7 @@ you can test it by:
    python rlinf/agents/wideseek_r1/utils/sglang_client.py --llm-ip LLM_JUDGE_IP
 
 Using RLinf Built-in Rollout Engine as Judge
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Alternatively, you can use RLinf's built-in rollout engine as the judge instead of an external server. This approach runs the judge LLM within the RLinf framework, which can be more convenient for local development and testing.
 
