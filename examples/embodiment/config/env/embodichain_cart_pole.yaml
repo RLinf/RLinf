@@ -1,6 +1,6 @@
 env_type: embodichain
 
-gym_config_path: ${oc.env:EMBODICHAIN_PATH,/root/workspace/research/EmbodiChain}/configs/agents/rl/basic/cart_pole/gym_config.json
+gym_config_path: configs/agents/rl/basic/cart_pole/gym_config.json
 
 headless: true
 enable_rt: false

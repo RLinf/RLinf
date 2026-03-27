@@ -13,12 +13,62 @@
 # limitations under the License.
 
 import copy
+import os
 from pathlib import Path
 from typing import Any, Optional, Union
 
 import gymnasium as gym
 import numpy as np
 import torch
+
+
+def _resolve_gym_config_path(gym_config_path: str) -> Path:
+    raw = Path(gym_config_path).expanduser()
+    checked_paths: list[Path] = []
+
+    def _try_resolve(candidate: Path) -> Optional[Path]:
+        checked_paths.append(candidate)
+        if candidate.is_file():
+            return candidate.resolve()
+        return None
+
+    if raw.is_absolute():
+        resolved = _try_resolve(raw)
+        if resolved is not None:
+            return resolved
+        rel_path: Optional[Path] = None
+    else:
+        rel_path = raw
+
+    root = os.environ.get("EMBODICHAIN_PATH")
+    if root and rel_path is not None:
+        resolved = _try_resolve(Path(root).expanduser().resolve() / rel_path)
+        if resolved is not None:
+            return resolved
+
+    import_error: Optional[ImportError] = None
+    try:
+        import embodichain
+    except ImportError as exc:
+        import_error = exc
+    else:
+        pkg = Path(embodichain.__file__).resolve().parent
+        if rel_path is not None:
+            for base in (pkg, pkg.parent):
+                resolved = _try_resolve(base / rel_path)
+                if resolved is not None:
+                    return resolved
+
+    checked = ", ".join(str(path) for path in checked_paths)
+    import_hint = ""
+    if import_error is not None:
+        import_hint = f" Importing `embodichain` also failed: {import_error}."
+
+    raise FileNotFoundError(
+        f"EmbodiChain gym config not found: {gym_config_path!r}. "
+        f"Checked: {checked}. Set EMBODICHAIN_PATH or install embodichain with "
+        f"configs next to the package.{import_hint}"
+    )
 
 
 def _cfg_get(cfg: Any, key: str, default: Any = None) -> Any:
@@ -209,11 +259,10 @@ class EmbodiChainEnv(gym.Env):
         from embodichain.lab.sim import SimulationManagerCfg
         from embodichain.utils.utility import load_json
 
-        gym_config_path = Path(str(_cfg_get(self.cfg, "gym_config_path"))).expanduser()
-        if not gym_config_path.exists():
-            raise FileNotFoundError(
-                f"EmbodiChain gym config not found: {gym_config_path}"
-            )
+        gym_config_path_cfg = _cfg_get(self.cfg, "gym_config_path")
+        if not gym_config_path_cfg:
+            raise ValueError("EmbodiChain requires `gym_config_path` in the env config.")
+        gym_config_path = _resolve_gym_config_path(str(gym_config_path_cfg))
 
         gym_config = load_json(str(gym_config_path))
         env_cfg = config_to_cfg(
