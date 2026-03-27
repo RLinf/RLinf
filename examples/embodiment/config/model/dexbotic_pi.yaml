@@ -18,13 +18,6 @@ use_proprio: True
 num_steps: 10  # Number of diffusion/denoising steps
 add_value_head: True  # Add value head for PPO
 
-# RL training specific settings
-safe_get_logprob: False  # Use simplified logprob calculation (False = full Gaussian)
-chunk_critic_input: True  # Use only action chunk for critic (not full sequence)
-noise_anneal: False  # Whether to anneal noise during training
-joint_logprob: False  # Whether to include initial state in logprob (False = only transitions)
-value_after_vlm: False  # Whether value head comes after VLM (False = after action expert)
-
 # dexbotic specific parameters
 dexbotic:
   num_images_in_input: 2  # Number of camera views

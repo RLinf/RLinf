@@ -29,7 +29,6 @@ runner:
   max_steps: -1
 
   only_eval: False
-  eval_policy_path: null
   val_check_interval: -1
   save_interval: 50
 
@@ -126,7 +125,7 @@ actor:
   model:
     model_path: "/mlp_vepfs/share/gxy/rlinf_work/dexbotic/checkpoints/libero_pi0" # https://huggingface.co/Dexmal/libero-db-pi0
     precision: "bf16"
-    num_action_chunks: 10
+    num_action_chunks: 5
     num_steps: 4
     action_dim: 7
     add_value_head: True
@@ -142,7 +141,7 @@ actor:
       detach_critic_input: True
 
   optim:
-    lr: 1.0e-6
+    lr: 5.0e-6
     value_lr: 1.0e-4
     adam_beta1: 0.9
     adam_beta2: 0.95

@@ -26,7 +26,7 @@ runner:
     logger_backends: ["tensorboard"]
 
   max_epochs: 1000
-  max_steps: -1
+  max_steps: 300
 
   only_eval: False
   eval_policy_path: null
@@ -83,7 +83,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
 
   train:
     total_num_envs: 64
@@ -118,16 +117,16 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 64
-  global_batch_size: 1024
+  micro_batch_size: 32
+  global_batch_size: 2048
   seed: 42
   enable_offload: False
 
   model:
     model_path: "/path/to/dexbotic_dm0_checkpoint"
     precision: "bf16"
-    num_action_chunks: 10
-    num_steps: 4
+    num_action_chunks: 5
+    num_steps: 3
     action_dim: 7
     add_value_head: True
     dexbotic:
@@ -142,7 +141,7 @@ actor:
       detach_critic_input: True
 
   optim:
-    lr: 1.0e-6
+    lr: 5.0e-6
     value_lr: 1.0e-4
     adam_beta1: 0.9
     adam_beta2: 0.95
