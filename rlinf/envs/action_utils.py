@@ -185,7 +185,7 @@ def prepare_actions_for_mujoco(raw_chunk_actions, model_type):
 
 def prepare_actions_for_habitat(
     raw_chunk_actions,
-) -> torch.Tensor:
+) -> np.ndarray:
     chunk_actions = raw_chunk_actions
     if isinstance(chunk_actions, torch.Tensor):
         chunk_actions = chunk_actions.detach().cpu().numpy()
