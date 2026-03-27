@@ -16,7 +16,6 @@ from enum import Enum
 
 
 class SupportedEnvType(Enum):
-    EMBODICHAIN = "embodichain"
     MANISKILL = "maniskill"
     LIBERO = "libero"
     ROBOTWIN = "robotwin"
@@ -30,6 +29,7 @@ class SupportedEnvType(Enum):
     HABITAT = "habitat"
     OPENSORAWM = "opensora_wm"
     WANWM = "wan_wm"
+    EMBODICHAIN = "embodichain"
 
 
 def get_env_cls(env_type: str, env_cfg=None):
@@ -46,11 +46,7 @@ def get_env_cls(env_type: str, env_cfg=None):
 
     env_type = SupportedEnvType(env_type)
 
-    if env_type == SupportedEnvType.EMBODICHAIN:
-        from rlinf.envs.embodichain.embodichain_env import EmbodiChainEnv
-
-        return EmbodiChainEnv
-    elif env_type == SupportedEnvType.MANISKILL:
+    if env_type == SupportedEnvType.MANISKILL:
         if env_cfg.get("enable_offload", False):
             from rlinf.envs.maniskill.maniskill_offload_env import ManiskillOffloadEnv
 
@@ -118,5 +114,9 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.world_model.world_model_wan_env import WanEnv
 
         return WanEnv
+    elif env_type == SupportedEnvType.EMBODICHAIN:
+        from rlinf.envs.embodichain.embodichain_env import EmbodiChainEnv
+
+        return EmbodiChainEnv
     else:
         raise NotImplementedError(f"Environment type {env_type} not implemented")
