@@ -280,6 +280,7 @@ as well as reinforcement learning training examples on real robots.
           <b>DAgger for Embodied Policies</b>
         </a><br>
         Guide online imitation learning with expert relabeling and replay-buffer updates
+      </p>
     </div>
     
     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
@@ -290,6 +291,17 @@ as well as reinforcement learning training examples on real robots.
           <b>RL with Lingbot-VLA Model</b>
         </a><br>
         Support Lingbot-VLA + RoboTwin + GRPO training
+      </p>
+    </div>
+
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="../../../_static/embodichain.gif"
+          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="embodichain.html" style="text-decoration: underline; color: blue;">
+          <b>RL with EmbodiChain</b>
+        </a><br>
+        MLP + PPO on EmbodiChain gym tasks
       </p>
     </div>
   </div>
@@ -326,4 +338,5 @@ as well as reinforcement learning training examples on real robots.
    dsrl
    dagger
    lingbotvla
+   embodichain
 
