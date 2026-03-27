@@ -93,7 +93,7 @@ class CMAConfig:
             self.std_range = (1e-5, 5)
 
         # Validate model path if needed
-        if self.model_path is not None:
+        if self.model_path:
             assert os.path.exists(self.model_path), (
                 f"Model path does not exist: {self.model_path}"
             )
@@ -141,7 +141,6 @@ class CMANet(nn.Module):
         # Build observation_space from config if not provided (like VLN-CE)
         if observation_space is None:
             observation_space = cfg.build_observation_space()
-            print("Built observation_space from CMAConfig defaults for depth encoder")
 
         # Init the depth encoder
         depth_cfg = cfg.depth_encoder_config.copy()
@@ -537,14 +536,14 @@ class CMAPolicy(nn.Module, BasePolicy):
             self.prev_actions = torch.zeros(
                 batch_size, 1, device=device, dtype=torch.long
             )
-            step_masks = torch.zeros_like(self.prev_actions, dtype=torch.uint8)
+            step_masks = torch.zeros_like(self.prev_actions, dtype=torch.bool)
         else:
             assert (
                 self.prev_actions is not None
                 and self.rnn_states is not None
                 and self.prev_episode_id is not None
             ), "CMA recurrent state must be initialized."
-            step_masks = torch.ones_like(self.prev_actions, dtype=torch.uint8)
+            step_masks = torch.ones_like(self.prev_actions, dtype=torch.bool)
             reset_mask = current_episode_ids != self.prev_episode_id
             if reset_mask.any():
                 self.rnn_states[reset_mask] = 0
