@@ -85,14 +85,14 @@ algorithm:
 env:
   group_name: "EnvGroup"
   train:
-    total_num_envs: 16
+    total_num_envs: 4
     max_episode_steps: 240
     max_steps_per_rollout_epoch: 240
     reward_coef: ${algorithm.reward_coef}
     use_fixed_reset_state_ids: true
     use_ordered_reset_state_ids: false
   eval:
-    total_num_envs: 32
+    total_num_envs: 2
     max_episode_steps: 240
     max_steps_per_rollout_epoch: 240
     group_size: 1
@@ -113,20 +113,20 @@ rollout:
   model:
     # Set to local ABot-M0 checkpoint path downloaded from:
     # https://huggingface.co/acvlab/ABot-M0-LIBERO/tree/main
-    model_path: "/path/to/abot_m0_checkpoint"
+    model_path: "/mnt/workspace/zengshuang.zs/checkpoints/ABot-M0-LIBERO/checkpoints/steps_40000_pytorch_model.pt"
     precision: ${actor.model.precision}
 
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 16
-  global_batch_size: 128
+  micro_batch_size: 2
+  global_batch_size: 8
   seed: 1234
   enable_offload: false
 
   model:
     # Must match rollout.model.model_path
-    model_path: "/path/to/abot_m0_checkpoint"
+    model_path: "/mnt/workspace/zengshuang.zs/checkpoints/ABot-M0-LIBERO/checkpoints/steps_40000_pytorch_model.pt"
     model_type: "abot_m0"
     num_action_chunks: 5
     add_value_head: true

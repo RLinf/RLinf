@@ -193,11 +193,11 @@ def prepare_actions(
     policy: str = "widowx_bridge",
     wm_env_type=None,
 ) -> torch.Tensor | np.ndarray:
-    raw_chunk_actions = (
-        raw_chunk_actions.cpu().numpy()
-        if isinstance(raw_chunk_actions, torch.Tensor)
-        else raw_chunk_actions
-    )
+    if isinstance(raw_chunk_actions, torch.Tensor):
+        raw_chunk_actions = raw_chunk_actions.detach().cpu().contiguous()
+        if raw_chunk_actions.dtype == torch.bfloat16:
+            raw_chunk_actions = raw_chunk_actions.float()
+        raw_chunk_actions = raw_chunk_actions.numpy()
 
     env_type = SupportedEnvType(env_type)
     if env_type == SupportedEnvType.LIBERO:

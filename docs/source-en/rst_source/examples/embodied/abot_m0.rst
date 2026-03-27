@@ -89,6 +89,49 @@ Example with huggingface-cli:
    huggingface-cli download acvlab/ABot-M0-LIBERO \
      --local-dir <path_to_ABot-M0-LIBERO>
 
+3.1 Update ``base_vlm`` in ABot checkpoint config
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+ABot-M0 checkpoints include ``config.yaml``. In some releases, the field below may point to a developer-local path,
+which is invalid on other machines.
+
+After downloading ABot-M0, open:
+``<path_to_ABot-M0-LIBERO>/config.yaml``
+
+Find and update:
+
+.. code-block:: yaml
+
+   qwenvl:
+     base_vlm: /some/developer/local/path/Qwen3-VL-4B-Instruct-Action
+
+to your actual local path of the downloaded Qwen3-VL backbone.
+
+Recommended model sources:
+
+* Qwen3-VL backbone: ``https://huggingface.co/StarVLA/Qwen3-VL-4B-Instruct-Action``
+* ABot-M0-LIBERO checkpoints: ``https://huggingface.co/acvlab/ABot-M0-LIBERO``
+
+3.2 Offline VGGT loading (no internet)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+ABot currently initializes VGGT with:
+``VGGT.from_pretrained("facebook/VGGT-1B")``
+
+If your runtime cannot access Hugging Face, pre-download:
+``https://huggingface.co/facebook/VGGT-1B/``
+
+Then either:
+
+* place the model in your local Hugging Face cache, or
+* explicitly set VGGT loading to a local directory in your ABot installation.
+
+Example local override:
+
+.. code-block:: python
+
+   self.spatial_model = spatial_model = VGGT.from_pretrained('/workspace/models/VGGT-1B')
+
 4. Configure ``model_path`` in ABot Smoke YAML
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -105,7 +148,7 @@ to your local ABot-M0 checkpoint path.
 
 .. code-block:: bash
 
-   python -c "import rlinf; import ABot; import vggt; print('IMPORT_SMOKE_OK')"
+   python -c "import rlinf; import abot; import vggt; print('IMPORT_SMOKE_OK')"
 
 If the command prints ``IMPORT_SMOKE_OK``, the package-level dependency wiring is valid.
 
@@ -137,7 +180,7 @@ Inside container:
    export VGGT_PATH=/workspace/vggt
    bash requirements/install.sh embodied --venv .venv --model abot_m0 --env maniskill_libero --install-rlinf
    source .venv/bin/activate
-   python -c "import rlinf; import ABot; import vggt; print('IMPORT_SMOKE_OK')"
+   python -c "import rlinf; import abot; import vggt; print('IMPORT_SMOKE_OK')"
 
 Quick Start (Smoke Test)
 ------------------------

@@ -138,6 +138,22 @@ class AMLFlowMatchingActionHeadRL(nn.Module):
         else:
             sa_embs = torch.cat((future_tokens, action_features), dim=1)
 
+        try:
+            model_dtype = next(self.base.model.parameters()).dtype
+        except StopIteration:
+            model_buffer = next(self.base.model.buffers(), None)
+            model_dtype = (
+                model_buffer.dtype if model_buffer is not None else sa_embs.dtype
+            )
+        if sa_embs.dtype != model_dtype:
+            sa_embs = sa_embs.to(dtype=model_dtype)
+        if vl_embs.dtype != model_dtype:
+            vl_embs = vl_embs.to(dtype=model_dtype)
+
+        timestep_encoder = getattr(self.base.model, "timestep_encoder", None)
+        if timestep_encoder is not None and hasattr(timestep_encoder, "compute_dtype"):
+            timestep_encoder.compute_dtype = model_dtype
+
         model_output = self.base.model(
             hidden_states=sa_embs,
             encoder_hidden_states=vl_embs,

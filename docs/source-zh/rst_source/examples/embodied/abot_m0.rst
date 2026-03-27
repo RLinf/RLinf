@@ -89,6 +89,49 @@ RLinf 支持两种依赖来源方式（见 ``requirements/install.sh`` 实现）
    huggingface-cli download acvlab/ABot-M0-LIBERO \
      --local-dir <path_to_ABot-M0-LIBERO>
 
+3.1 更新 ABot checkpoint 配置中的 ``base_vlm``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+ABot-M0 checkpoint 自带 ``config.yaml``。在部分版本中，下面这个字段可能是开发者本地绝对路径，
+在其他机器上会失效。
+
+下载 ABot-M0 后，请打开：
+``<path_to_ABot-M0-LIBERO>/config.yaml``
+
+找到并修改：
+
+.. code-block:: yaml
+
+   qwenvl:
+     base_vlm: /some/developer/local/path/Qwen3-VL-4B-Instruct-Action
+
+改为你机器上真实可用的 Qwen3-VL backbone 本地路径。
+
+推荐模型来源：
+
+* Qwen3-VL backbone：``https://huggingface.co/StarVLA/Qwen3-VL-4B-Instruct-Action``
+* ABot-M0-LIBERO checkpoints：``https://huggingface.co/acvlab/ABot-M0-LIBERO``
+
+3.2 VGGT 离线加载（无公网环境）
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+ABot 当前默认使用以下方式初始化 VGGT：
+``VGGT.from_pretrained("facebook/VGGT-1B")``
+
+如果运行环境无法访问 Hugging Face，请先离线下载：
+``https://huggingface.co/facebook/VGGT-1B/``
+
+之后可采用以下方式之一：
+
+* 放入本地 Hugging Face cache 目录，或
+* 在 ABot 安装代码中将 VGGT 加载路径显式改为本地目录。
+
+本地路径示例：
+
+.. code-block:: python
+
+   self.spatial_model = spatial_model = VGGT.from_pretrained('/workspace/models/VGGT-1B')
+
 4. 在 ABot 冒烟配置中设置 ``model_path``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -105,7 +148,7 @@ RLinf 支持两种依赖来源方式（见 ``requirements/install.sh`` 实现）
 
 .. code-block:: bash
 
-   python -c "import rlinf; import ABot; import vggt; print('IMPORT_SMOKE_OK')"
+   python -c "import rlinf; import abot; import vggt; print('IMPORT_SMOKE_OK')"
 
 若输出 ``IMPORT_SMOKE_OK``，说明包级依赖链路正常。
 
@@ -137,7 +180,7 @@ Docker 安装
    export VGGT_PATH=/workspace/vggt
    bash requirements/install.sh embodied --venv .venv --model abot_m0 --env maniskill_libero --install-rlinf
    source .venv/bin/activate
-   python -c "import rlinf; import ABot; import vggt; print('IMPORT_SMOKE_OK')"
+   python -c "import rlinf; import abot; import vggt; print('IMPORT_SMOKE_OK')"
 
 快速开始（Smoke Test）
 -----------------------

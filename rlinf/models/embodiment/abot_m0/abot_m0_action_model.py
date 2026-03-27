@@ -249,12 +249,27 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
                 return_dict=True,
             )
             last_hidden = qwenvl_outputs.hidden_states[-1]  # [B, L, H]
+            expected_batch = spatial_images.shape[0]
+            if last_hidden.ndim == 2 and expected_batch == 1:
+                last_hidden = last_hidden.unsqueeze(0)
+            elif (
+                last_hidden.ndim == 3
+                and last_hidden.shape[0] != expected_batch
+                and last_hidden.shape[1] == expected_batch
+            ):
+                last_hidden = last_hidden.transpose(0, 1).contiguous()
 
             with torch.no_grad():
+                spatial_dtype = last_hidden.dtype
+                spatial_model = getattr(self.base_model, "spatial_model", None)
+                if spatial_model is not None:
+                    first_param = next(iter(spatial_model.parameters()), None)
+                    if first_param is not None:
+                        spatial_dtype = first_param.dtype
                 spatial_input = preprocess_images(
                     batch_images,
                     batch_images[0][0].size[0],
-                ).to(last_hidden.device)
+                ).to(device=last_hidden.device, dtype=spatial_dtype)
                 aggregated_tokens_list, ps_idx = (
                     self.base_model.spatial_model.aggregator(
                         spatial_input,
@@ -472,7 +487,10 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
 
         runtime_action_dim = self._get_runtime_action_dim()
 
-        normalized_actions = actions.detach().cpu().numpy()
+        actions_cpu = actions.detach().cpu().contiguous()
+        if actions_cpu.dtype == torch.bfloat16:
+            actions_cpu = actions_cpu.float()
+        normalized_actions = actions_cpu.numpy()
         normalized_actions = normalized_actions[..., :runtime_action_dim]
         raw_actions = self._unnormalize_actions(normalized_actions)
         raw_actions = torch.from_numpy(raw_actions).to(
@@ -487,10 +505,9 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
         forward_inputs = {
             "chains": rl_outputs["chains"],
             "denoise_inds": rl_outputs["denoise_inds"],
-            "main_images": spatial_images,
-            "state": state,
+            "vl_embs": vl_embs,
+            "state": state_tensor,
         }
-        forward_inputs.update(self._flatten_qwen_inputs(qwen_inputs))
 
         result = {
             "prev_logprobs": prev_logprobs,
