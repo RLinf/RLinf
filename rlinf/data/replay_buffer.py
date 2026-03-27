@@ -728,7 +728,10 @@ class TrajectoryReplayBuffer:
                             extra, epoch_len + 1, *tensor.shape[1:]
                         )[:, 1:]
                         tensor = tensor.reshape(traj_len, *tensor.shape[2:])
-                flat[field] = tensor.reshape(-1, *tensor.shape[2:])
+                reshaped = tensor.reshape(-1, *tensor.shape[2:])
+                if reshaped.dim() == 1:
+                    reshaped = reshaped.unsqueeze(-1)
+                flat[field] = reshaped
 
         if trajectory.curr_obs:
             flat["curr_obs"] = {}

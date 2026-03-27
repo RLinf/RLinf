@@ -126,11 +126,11 @@ def _build_trajectory(
     T = len(actions)
 
     action_t = torch.from_numpy(np.stack(actions)).unsqueeze(1).float()   # (T, 1, 14)
-    reward_t = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1)    # (T, 1)
-    term_t = torch.tensor(terminations, dtype=torch.bool).unsqueeze(1)    # (T, 1)
-    trunc_t = torch.tensor(truncations, dtype=torch.bool).unsqueeze(1)    # (T, 1)
-    done_t = (term_t | trunc_t)                                           # (T, 1)
-    intervene_t = torch.ones_like(action_t, dtype=torch.bool)             # (T, 1, 14)
+    reward_t = torch.tensor(rewards, dtype=torch.float32).reshape(-1, 1, 1)   # (T, 1, 1)
+    term_t = torch.tensor(terminations, dtype=torch.bool).reshape(-1, 1, 1)   # (T, 1, 1)
+    trunc_t = torch.tensor(truncations, dtype=torch.bool).reshape(-1, 1, 1)   # (T, 1, 1)
+    done_t = (term_t | trunc_t)                                                # (T, 1, 1)
+    intervene_t = torch.ones_like(action_t, dtype=torch.bool)                  # (T, 1, 14)
 
     def _stack_obs(seq: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
         stacked: dict[str, torch.Tensor] = {}
@@ -138,7 +138,7 @@ def _build_trajectory(
             stacked[k] = torch.stack([o[k] for o in seq]).unsqueeze(1)  # (T, 1, ...)
         return stacked
 
-    versions = torch.zeros(T, 1, dtype=torch.float32)
+    versions = torch.zeros(T, 1, 1, dtype=torch.float32)
     model_weights_id = str(
         uuid.uuid5(uuid.NAMESPACE_DNS, versions.numpy().tobytes().hex())
     )

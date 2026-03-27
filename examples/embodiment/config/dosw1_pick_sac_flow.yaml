@@ -137,10 +137,10 @@ env:
       max_joint_delta: 0.1                              # Max joint change per step (rad), ~5.7 deg
       action_scale: 1.0                                 # Interpolation factor toward target (<1 = slower)
       # ee_pose safety box (xyz in meters, calibrate for your workspace)
-      left_ee_pose_limit_min: [-0.3, -0.3, 0.02]     # z > 0 prevents table collision
-      left_ee_pose_limit_max: [0.3, 0.3, 0.4]
-      right_ee_pose_limit_min: [-0.3, -0.3, 0.02]
-      right_ee_pose_limit_max: [0.3, 0.3, 0.4]
+      left_ee_pose_limit_min: [0.1, -0.35, 0.02]     # z > 0 prevents table collision
+      left_ee_pose_limit_max: [0.4, 0.08, 0.4]
+      right_ee_pose_limit_min: [0.28, -0.01, 0.16]
+      right_ee_pose_limit_max: [0.3, 0.01, 0.17]
 
       # support human-in-the-loop teleop
       enable_human_in_loop: True
