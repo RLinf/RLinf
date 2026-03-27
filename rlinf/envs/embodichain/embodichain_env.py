@@ -366,9 +366,6 @@ class EmbodiChainEnv(gym.Env):
             action_tensor
         )
         infos = self._wrap_info(infos)
-        rewards = rewards.to(self.device, dtype=torch.float32)
-        terminations = terminations.to(self.device, dtype=torch.bool)
-        truncations = truncations.to(self.device, dtype=torch.bool)
         self._elapsed_steps += 1
         infos = self._record_metrics(rewards, infos)
         if self.ignore_terminations:
