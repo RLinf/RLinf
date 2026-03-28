@@ -84,7 +84,8 @@ Hardware Setup
 The real-world setup requires the following hardware components:
 
 - **Robotic Arm**: Franka Emika Panda
-- **Cameras**: Intel RealSense cameras for capturing RGB images
+- **Cameras**: Intel RealSense cameras (default) or Stereolabs ZED cameras
+- **Gripper**: Franka hand (default) or Robotiq 2F-85/2F-140
 - **Computing Unit**: A computer with GPU support for training the CNN policy
 - **Robot Controller**: A small computer (does not require GPU) connected with the robotic arm in the same local network
 - **Space Mouse (Optional)**: For teleoperation data collection or human intervention during training.
@@ -93,6 +94,12 @@ The real-world setup requires the following hardware components:
 
   Ensure all computers are networked in the same local network.
   The robot arm is only required to be in the same local network as the robot controller.
+
+.. note::
+
+   **Using ZED cameras or Robotiq grippers?**  See the dedicated guide
+   :doc:`franka_zed_robotiq` for SDK installation, serial-device setup,
+   YAML configuration fields, and data collection.
 
 Dependency Installation
 -------------------------
@@ -353,6 +360,13 @@ During the data collection, you can manually intervene the robot using a space m
 The script will terminate after 20 episodes of data collection (can be configured with the `num_data_episodes` field in the configuration file), and the collected data will be stored in the ``logs/[running-timestamp]/data.pkl`` folder.
 
 5. After data collection, you can upload the collected data to the training/rollout nodes.
+
+.. note::
+
+   **Using ZED cameras and Robotiq grippers?**  A dedicated data collection
+   script and config are available.  See the
+   :ref:`Data Collection <franka-zed-robotiq-data-collection>` section in
+   :doc:`franka_zed_robotiq`.
 
 Cluster Setup
 ~~~~~~~~~~~~~~~~~

@@ -31,6 +31,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 ## What's NEW!
 - [2026/03] 🔥 RLinf supports EmbodiChain as an embodied environment for RL, with a reference MLP + PPO CartPole recipe. Doc: [EmbodiChain](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/embodichain.html).
+- [2026/03] 🔥 RLinf now supports Stereolabs ZED cameras and Robotiq 2F-85 / 2F-140 grippers for Franka real-world RL. Doc: [Franka with ZED & Robotiq](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_zed_robotiq.html).
 - [2026/03] 🎉 RLinf v0.2 is released with major upgrades in Real-World RL and Multi-Agent RL. Release notes: [RLinf v0.2](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/release.html).
 - [2026/03] 🔥 RLinf supports reinforcement learning fine-tuning for LIBERO-Pro & LIBERO-Plus. Doc: [LIBERO-Pro & LIBERO-Plus](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/liberoplus_pro.html).
 - [2026/03] 🔥 RLinf supports DAgger for embodied policies. Doc: [DAgger for Embodied Policies](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dagger.html).
@@ -117,7 +118,7 @@ Multiple Backend Integrations
       </td>
       <td>
         <ul style="margin-left: 0; padding-left: 16px;">
-          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/franka.html">Franka Arm</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka.html">Franka Arm</a> (<a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka.html">Intel RealSense</a> / <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_zed_robotiq.html">Stereolabs ZED</a>, <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka.html">Franka Hand</a> / <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_zed_robotiq.html">Robotiq 2F-85 / 2F-140</a>) ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/xsquare_turtle2.html">XSquare Turtle2</a> ✅</li>
           <li>More...</li>
         </ul>
