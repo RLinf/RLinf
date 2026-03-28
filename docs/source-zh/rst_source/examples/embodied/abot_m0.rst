@@ -148,7 +148,7 @@ ABot 当前默认使用以下方式初始化 VGGT：
 
 .. code-block:: bash
 
-   python -c "import rlinf; import abot; import vggt; print('IMPORT_SMOKE_OK')"
+   python -c "import rlinf; import ABot; import vggt; print('IMPORT_SMOKE_OK')"
 
 若输出 ``IMPORT_SMOKE_OK``，说明包级依赖链路正常。
 
@@ -180,7 +180,7 @@ Docker 安装
    export VGGT_PATH=/workspace/vggt
    bash requirements/install.sh embodied --venv .venv --model abot_m0 --env maniskill_libero --install-rlinf
    source .venv/bin/activate
-   python -c "import rlinf; import abot; import vggt; print('IMPORT_SMOKE_OK')"
+   python -c "import rlinf; import ABot; import vggt; print('IMPORT_SMOKE_OK')"
 
 快速开始（Smoke Test）
 -----------------------
@@ -226,26 +226,6 @@ Docker 安装
 
 * **已通过**：上述最小 smoke 命令已验证可运行。
 * **待完成**：Docker 路径下的 smoke 全流程尚未完成验证。
-
-已知依赖兼容性说明
-------------------
-
-在脚本安装路径中，依赖求解结果会受到已有环境状态影响，可能出现与 ``requirements/embodied/models/abot.txt`` 的版本偏差。
-安装时可能存在 ``peft`` 版本兼容问题，因为 RLinf 顶层依赖解析中对 ``peft`` 进行了固定版本约束。
-
-对 ABot-M0，建议在运行环境中使用 ``peft==0.18.1``。
-在安装脚本执行完成后，手动安装 ABot-M0 需要的 PEFT 版本：
-
-.. code-block:: bash
-
-   source .venv/bin/activate
-   uv pip install peft==0.18.1
-
-然后验证：
-
-.. code-block:: bash
-
-   python -c "import peft; print(peft.__version__)"
 
 可视化
 ------

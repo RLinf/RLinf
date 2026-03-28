@@ -148,7 +148,7 @@ to your local ABot-M0 checkpoint path.
 
 .. code-block:: bash
 
-   python -c "import rlinf; import abot; import vggt; print('IMPORT_SMOKE_OK')"
+   python -c "import rlinf; import ABot; import vggt; print('IMPORT_SMOKE_OK')"
 
 If the command prints ``IMPORT_SMOKE_OK``, the package-level dependency wiring is valid.
 
@@ -180,7 +180,7 @@ Inside container:
    export VGGT_PATH=/workspace/vggt
    bash requirements/install.sh embodied --venv .venv --model abot_m0 --env maniskill_libero --install-rlinf
    source .venv/bin/activate
-   python -c "import rlinf; import abot; import vggt; print('IMPORT_SMOKE_OK')"
+   python -c "import rlinf; import ABot; import vggt; print('IMPORT_SMOKE_OK')"
 
 Quick Start (Smoke Test)
 ------------------------
@@ -226,26 +226,6 @@ Current Validation Status
 
 * **Passed**: The minimal smoke command above has been verified.
 * **Pending**: Full Docker-path smoke verification is not completed yet.
-
-Known Dependency Compatibility Notes
-------------------------------------
-
-During script-based installation, package version mismatches may appear depending on resolver outcomes and prior environment state.
-There may be a ``peft`` version compatibility issue during installation, because RLinf has a fixed top-level ``peft`` override in dependency resolution.
-
-For ABot-M0, we recommend using ``peft==0.18.1`` in the runtime environment.
-After the install script finishes, explicitly install the ABot-M0 PEFT version:
-
-.. code-block:: bash
-
-   source .venv/bin/activate
-   uv pip install peft==0.18.1
-
-Then verify:
-
-.. code-block:: bash
-
-   python -c "import peft; print(peft.__version__)"
 
 Visualization
 -------------

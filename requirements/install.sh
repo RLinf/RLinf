@@ -628,6 +628,10 @@ install_abot_m0_model() {
             exit 1
             ;;
     esac
+
+    # Keep ABot-M0 runtime PEFT on the expected version after all installs.
+    uv pip install peft==0.18.1
+
     uv pip uninstall pynvml || true
 }
 
