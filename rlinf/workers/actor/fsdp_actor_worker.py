@@ -1058,7 +1058,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         return model
 
-    def sync_model_to_rollout(self) -> None:
+    async def sync_model_to_rollout(self) -> None:
         """
         Sync the model's full state dict to the rollout worker.
         """
@@ -1081,7 +1081,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 )
             )
         for handle in handles:
-            handle.wait()
+            await handle.async_wait()
         if self.enable_offload and not self.is_weight_offloaded:
             self.offload_param_and_grad()
 
