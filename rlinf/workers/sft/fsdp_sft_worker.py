@@ -81,6 +81,16 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         self._data_iter_offset = 0
 
     def init_worker(self):
+        logging.info(
+            "[FSDP SFT] rank=%s local_rank=%s node_local_rank=%s "
+            "CUDA_VISIBLE_DEVICES=%s current_device=%s device_count=%s",
+            self._rank,
+            os.environ.get("LOCAL_RANK"),
+            os.environ.get("NODE_LOCAL_RANK"),
+            os.environ.get("CUDA_VISIBLE_DEVICES"),
+            torch.cuda.current_device(),
+            torch.cuda.device_count(),
+        )
         self.setup_model_and_optimizer()
 
         if self.cfg.actor.get("enable_offload", False):

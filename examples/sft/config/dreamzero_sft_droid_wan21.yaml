@@ -1,0 +1,96 @@
+defaults:
+  - model/dreamzero@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "dreamzero_sft_droid_wan21"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 30000
+  max_steps: 100
+  val_check_interval: -1
+  save_interval: 1000
+
+data:
+  train_data_paths: "/mnt/project_rlinf/yingcheng/dreamzero/data/droid_lerobot"
+  num_workers: 1
+  pin_memory: false
+  persistent_workers: false
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  enable_offload: false
+  micro_batch_size: 1
+  global_batch_size: 2
+  seed: 42
+
+  model:
+    model_type: "dreamzero_sft"
+    precision: bf16
+    is_lora: True
+    model_path: "/mnt/project_rlinf/hf_models/Wan2.1-I2V-14B-480P"
+    pretrained_model_path: "/mnt/project_rlinf/hf_models/Wan2.1-I2V-14B-480P"
+    train_cfg_path: "/mnt/project_rlinf/yingcheng/dreamzero/RLinf/examples/sft/generated/dreamzero_droid_wan21_component/conf.yaml"
+    data_root_key: "droid_data_root"
+
+    dit_version: ${actor.model.model_path}
+    text_encoder_pretrained_path: ${actor.model.model_path}/models_t5_umt5-xxl-enc-bf16.pth
+    image_encoder_pretrained_path: ${actor.model.model_path}/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth
+    vae_pretrained_path: ${actor.model.model_path}/Wan2.1_VAE.pth
+    # Keep native DreamZero checkpointing enabled for the first 14B attempt;
+    # the 14B path is much less likely to fit without it.
+    disable_native_gradient_checkpointing: false
+
+  optim:
+    lr: 1e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-08
+    weight_decay: 1e-5
+    clip_grad: 1.0
+    lr_scheduler: "cosine"
+    total_training_steps: ${runner.max_steps}
+    lr_warmup_steps: -1
+    lr_warmup_steps_ratio: 0.05
+    num_cycles: 0.5
+    min_lr: 0.0
+
+  fsdp_config:
+    strategy: "fsdp2"
+    sharding_strategy: "full_shard"
+    use_orig_params: False
+    gradient_checkpointing: False
+    cpu_offload: False
+    offload_pin_memory: False
+    reshard_after_forward: True
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

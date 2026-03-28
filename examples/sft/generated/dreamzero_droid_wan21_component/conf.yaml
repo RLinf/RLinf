@@ -1,0 +1,2555 @@
+model:
+  _target_: groot.vla.model.dreamzero.base_vla.VLA
+  _convert_: object
+  config:
+    _target_: groot.vla.model.dreamzero.base_vla.VLAConfig
+    _recursive_: false
+    model_dtype: float32
+    hidden_size: 0
+    action_horizon: 24
+    action_dim: 32
+    backbone_cfg:
+      _target_: groot.vla.model.dreamzero.backbone.identity.IdentityBackbone
+    action_head_cfg:
+      config:
+        backbone_features_projector_cfg: null
+        _target_: groot.vla.model.dreamzero.action_head.wan_flow_matching_action_tf.WANPolicyHeadConfig
+        _recursive_: false
+        tiled: false
+        tile_size_height: 34
+        tile_size_width: 34
+        tile_stride_height: 18
+        tile_stride_width: 16
+        lora_rank: 4
+        lora_alpha: 4
+        num_frames: 33
+        num_frame_per_block: 2
+        lora_target_modules: q,k,v,o,ffn.0,ffn.2
+        init_lora_weights: kaiming
+        train_architecture: lora
+        use_gradient_checkpointing: true
+        add_pos_embed: true
+        model_dtype: float32
+        max_state_dim: 64
+        max_action_dim: 32
+        action_loss_embodiment_ids:
+        - 26
+        - 17
+        - 32
+        hidden_size: 64
+        input_embedding_dim: 1536
+        backbone_embedding_dim: 0
+        repa_layer: 8
+        repa_coeff: 1.0
+        load_pretrained_det_decode_layer_path: null
+        freeze_decode_layer: false
+        expand_batch: null
+        use_vlln: true
+        vl_self_attention_cfg:
+          _target_: groot.vla.model.n1_5.modules.cross_attention_dit.SelfAttentionTransformer
+          positional_embeddings: null
+          num_layers: 4
+          num_attention_heads: 24
+          attention_head_dim: 64
+          dropout: 0.2
+          final_dropout: true
+        diffusion_model_cfg:
+          _target_: groot.vla.model.dreamzero.modules.wan_video_dit_action_casual_chunk.CausalWanModel
+          _convert_: object
+          diffusion_model_pretrained_path: /mnt/project_rlinf/hf_models/Wan2.1-I2V-14B-480P
+          model_type: i2v
+          frame_seqlen: 880
+          dim: 5120
+          in_dim: 36
+          ffn_dim: 13824
+          out_dim: 16
+          freq_dim: 256
+          eps: 1.0e-06
+          num_heads: 40
+          num_layers: 40
+          max_chunk_size: 4
+          num_frame_per_block: 2
+          num_action_per_block: 24
+          num_state_per_block: 1
+        text_encoder_cfg:
+          _target_: groot.vla.model.dreamzero.modules.wan_video_text_encoder.WanTextEncoder
+          _convert_: object
+          text_encoder_pretrained_path: /mnt/project_rlinf/hf_models/Wan2.1-I2V-14B-480P/models_t5_umt5-xxl-enc-bf16.pth
+        image_encoder_cfg:
+          _target_: groot.vla.model.dreamzero.modules.wan_video_image_encoder.WanImageEncoder
+          _convert_: object
+          image_encoder_pretrained_path: /mnt/project_rlinf/hf_models/Wan2.1-I2V-14B-480P/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth
+        vae_cfg:
+          _target_: groot.vla.model.dreamzero.modules.wan_video_vae.WanVideoVAE
+          _convert_: object
+          vae_pretrained_path: /mnt/project_rlinf/hf_models/Wan2.1-I2V-14B-480P/Wan2.1_VAE.pth
+        action_dim: 32
+        action_horizon: 24
+        num_inference_timesteps: 4
+        noise_beta_alpha: 1.5
+        noise_beta_beta: 1.0
+        noise_s: 0.999
+        num_timestep_buckets: 1000
+        decouple_video_action_noise: false
+        video_noise_beta_alpha: 3.0
+        video_noise_beta_beta: 1.0
+        tune_projector: true
+        tune_diffusion_model: true
+      _target_: groot.vla.model.dreamzero.action_head.wan_flow_matching_action_tf.WANPolicyHead
+      _convert_: object
+train_dataset:
+  _target_: groot.vla.data.dataset.lerobot_sharded.ShardedLeRobotMixtureDataset.from_mixture_spec
+  _convert_: object
+  mixture_spec:
+  - dataset_path:
+      oxe_droid:
+      - /mnt/project_rlinf/yingcheng/dreamzero/data/droid_lerobot
+    dataset_weight: 1.0
+    distribute_weights: true
+  dataset_class: groot.vla.data.dataset.lerobot_sharded.ShardedLeRobotSubLangSingleActionChunkDatasetDROID
+  all_modality_configs:
+    oxe_droid:
+      video:
+        _target_: groot.vla.data.dataset.ModalityConfig
+        delta_indices:
+        - 0
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
+        - 6
+        - 7
+        - 8
+        - 9
+        - 10
+        - 11
+        - 12
+        - 13
+        - 14
+        - 15
+        - 16
+        - 17
+        - 18
+        - 19
+        - 20
+        - 21
+        - 22
+        - 23
+        - 24
+        eval_delta_indices:
+        - 0
+        modality_keys:
+        - video.exterior_image_1_left
+        - video.exterior_image_2_left
+        - video.wrist_image_left
+      state:
+        _target_: groot.vla.data.dataset.ModalityConfig
+        delta_indices:
+        - 0
+        modality_keys:
+        - state.joint_position
+        - state.gripper_position
+      action:
+        _target_: groot.vla.data.dataset.ModalityConfig
+        delta_indices:
+        - 0
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
+        - 6
+        - 7
+        - 8
+        - 9
+        - 10
+        - 11
+        - 12
+        - 13
+        - 14
+        - 15
+        - 16
+        - 17
+        - 18
+        - 19
+        - 20
+        - 21
+        - 22
+        - 23
+        modality_keys:
+        - action.joint_position
+        - action.gripper_position
+      language:
+        _target_: groot.vla.data.dataset.ModalityConfig
+        delta_indices:
+        - 0
+        modality_keys:
+        - annotation.language.language_instruction
+        - annotation.language.language_instruction_2
+        - annotation.language.language_instruction_3
+      lapa_action:
+        _target_: groot.vla.data.dataset.ModalityConfig
+        delta_indices:
+        - 0
+        modality_keys:
+        - lapa_action
+    agibot:
+      video:
+        _target_: groot.vla.data.dataset.ModalityConfig
+        delta_indices:
+        - 0
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
+        - 6
+        - 7
+        - 8
+        - 9
+        - 10
+        - 11
+        - 12
+        - 13
+        - 14
+        - 15
+        - 16
+        - 17
+        - 18
+        - 19
+        - 20
+        - 21
+        - 22
+        - 23
+        - 24
+        eval_delta_indices:
+        - -3
+        - -2
+        - -1
+        - 0
+        modality_keys:
+        - video.top_head
+        - video.hand_left
+        - video.hand_right
+      state:
+        _target_: groot.vla.data.dataset.ModalityConfig
+        delta_indices:
+        - 0
+        modality_keys:
+        - state.left_arm_joint_position
+        - state.right_arm_joint_position
+        - state.left_effector_position
+        - state.right_effector_position
+        - state.head_position
+        - state.waist_position
+      action:
+        _target_: groot.vla.data.dataset.ModalityConfig
+        delta_indices:
+        - 0
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
+        - 6
+        - 7
+        - 8
+        - 9
+        - 10
+        - 11
+        - 12
+        - 13
+        - 14
+        - 15
+        - 16
+        - 17
+        - 18
+        - 19
+        - 20
+        - 21
+        - 22
+        - 23
+        modality_keys:
+        - action.left_arm_joint_position
+        - action.right_arm_joint_position
+        - action.left_effector_position
+        - action.right_effector_position
+        - action.head_position
+        - action.waist_position
+        - action.robot_velocity
+      language:
+        _target_: groot.vla.data.dataset.ModalityConfig
+        delta_indices:
+        - 0
+        modality_keys:
+        - annotation.language.action_text
+    yam:
+      video:
+        _target_: groot.vla.data.dataset.ModalityConfig
+        delta_indices:
+        - 0
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
+        - 6
+        - 7
+        - 8
+        - 9
+        - 10
+        - 11
+        - 12
+        - 13
+        - 14
+        - 15
+        - 16
+        - 17
+        - 18
+        - 19
+        - 20
+        - 21
+        - 22
+        - 23
+        - 24
+        eval_delta_indices:
+        - 0
+        modality_keys:
+        - video.top_camera-images-rgb
+        - video.left_camera-images-rgb
+        - video.right_camera-images-rgb
+      state:
+        _target_: groot.vla.data.dataset.ModalityConfig
+        delta_indices:
+        - 0
+        modality_keys:
+        - state.left_joint_pos
+        - state.left_gripper_pos
+        - state.right_joint_pos
+        - state.right_gripper_pos
+      action:
+        _target_: groot.vla.data.dataset.ModalityConfig
+        delta_indices:
+        - 0
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
+        - 6
+        - 7
+        - 8
+        - 9
+        - 10
+        - 11
+        - 12
+        - 13
+        - 14
+        - 15
+        - 16
+        - 17
+        - 18
+        - 19
+        - 20
+        - 21
+        - 22
+        - 23
+        modality_keys:
+        - action.left_joint_pos
+        - action.left_gripper_pos
+        - action.right_joint_pos
+        - action.right_gripper_pos
+      language:
+        _target_: groot.vla.data.dataset.ModalityConfig
+        delta_indices:
+        - 0
+        modality_keys:
+        - annotation.task
+  all_transforms:
+    oxe_droid:
+      _target_: groot.vla.data.transform.ComposedModalityTransform
+      transforms:
+      - _target_: groot.vla.data.transform.VideoToTensor
+        apply_to:
+        - video.exterior_image_1_left
+        - video.exterior_image_2_left
+        - video.wrist_image_left
+      - _target_: groot.vla.data.transform.VideoCrop
+        apply_to:
+        - video.exterior_image_1_left
+        - video.exterior_image_2_left
+        - video.wrist_image_left
+        scale: 0.95
+        mode: random
+      - _target_: groot.vla.data.transform.VideoResize
+        apply_to:
+        - video.exterior_image_1_left
+        - video.exterior_image_2_left
+        - video.wrist_image_left
+        height: 176
+        width: 320
+        interpolation: linear
+      - _target_: groot.vla.data.transform.VideoColorJitter
+        apply_to:
+        - video.exterior_image_1_left
+        - video.exterior_image_2_left
+        - video.wrist_image_left
+        brightness: 0.3
+        contrast: 0.4
+        saturation: 0.5
+        hue: 0.08
+      - _target_: groot.vla.data.transform.VideoToNumpy
+        apply_to:
+        - video.exterior_image_1_left
+        - video.exterior_image_2_left
+        - video.wrist_image_left
+      - _target_: groot.vla.data.transform.StateActionToTensor
+        apply_to:
+        - state.joint_position
+        - state.gripper_position
+      - _target_: groot.vla.data.transform.StateActionTransform
+        apply_to:
+        - state.joint_position
+        - state.gripper_position
+        normalization_modes:
+          state.joint_position: q99
+          state.gripper_position: q99
+      - _target_: groot.vla.data.transform.StateActionToTensor
+        apply_to:
+        - action.joint_position
+        - action.gripper_position
+      - _target_: groot.vla.data.transform.StateActionTransform
+        apply_to:
+        - action.joint_position
+        - action.gripper_position
+        normalization_modes:
+          action.joint_position: q99
+          action.gripper_position: q99
+      - _target_: groot.vla.data.transform.ConcatTransform
+        video_concat_order:
+        - video.exterior_image_1_left
+        - video.exterior_image_2_left
+        - video.wrist_image_left
+        state_concat_order:
+        - state.joint_position
+        - state.gripper_position
+        action_concat_order:
+        - action.joint_position
+        - action.gripper_position
+      - _target_: groot.vla.model.dreamzero.transform.dreamzero_cotrain.DreamTransform
+        default_instruction: Perform the default behavior.
+        language_dropout_prob: 0.0
+        always_use_default_instruction: false
+        max_state_dim: 64
+        max_action_dim: 32
+        max_length: 512
+        state_horizon: 1
+        action_horizon: 24
+        embodiment_tag_mapping:
+          real_gr1_arms_only: 0
+          real_gr1_arms_only_annotated: 1
+          real_gr1_arms_waist: 2
+          real_gr1_arms_waist_annotated: 3
+          dexmg_gr1_arms_only_inspire: 4
+          dexmg_gr1_arms_only_fourier: 5
+          dexmg_gr1_arms_waist_fourier: 6
+          robocasa_single_arm: 7
+          onex_eve_gripper: 8
+          robocasa_gr1_arms_only_inspire_hands: 9
+          robocasa_gr1_arms_only_fourier_hands: 10
+          robocasa_gr1_fixed_lower_body_inspire_hands: 11
+          robocasa_gr1_fixed_lower_body_fourier_hands: 12
+          robocasa_panda_omron: 13
+          robocasa_bimanual_panda_parallel_gripper: 15
+          robocasa_bimanual_panda_inspire_hand: 16
+          oxe_droid: 17
+          oxe_fractal: 18
+          oxe_language_table: 19
+          oxe_bridge: 20
+          real_panda_single_arm: 21
+          hot3d_hands_only: 23
+          gr1_unified: 24
+          robocasa_gr1_arms_waist_fourier_hands: 25
+          agibot: 26
+          lapa: 27
+          oxe_mutex: 28
+          oxe_roboset: 29
+          oxe_plex: 30
+          dream: 31
+          yam: 32
+          xdof: 22
+          gr1_unified_segmentation: 14
+          language_table_sim: 7
+          gr1_isaac: 0
+          sim_behavior_r1_pro: 31
+          mecka_hands: 27
+          real_r1_pro_sharpa: 28
+        tokenizer_path: /mnt/project_rlinf/hf_models/umt5-xxl
+    agibot:
+      _target_: groot.vla.data.transform.ComposedModalityTransform
+      transforms:
+      - _target_: groot.vla.data.transform.VideoToTensor
+        apply_to:
+        - video.top_head
+        - video.hand_left
+        - video.hand_right
+      - _target_: groot.vla.data.transform.VideoCrop
+        apply_to:
+        - video.top_head
+        - video.hand_left
+        - video.hand_right
+        scale: 0.95
+        mode: random
+      - _target_: groot.vla.data.transform.VideoResize
+        apply_to:
+        - video.top_head
+        - video.hand_left
+        - video.hand_right
+        height: 176
+        width: 320
+        interpolation: linear
+      - _target_: groot.vla.data.transform.VideoColorJitter
+        apply_to:
+        - video.top_head
+        - video.hand_left
+        - video.hand_right
+        brightness: 0.3
+        contrast: 0.4
+        saturation: 0.5
+        hue: 0.08
+      - _target_: groot.vla.data.transform.VideoToNumpy
+        apply_to:
+        - video.top_head
+        - video.hand_left
+        - video.hand_right
+      - _target_: groot.vla.data.transform.StateActionToTensor
+        apply_to:
+        - state.left_arm_joint_position
+        - state.right_arm_joint_position
+        - state.left_effector_position
+        - state.right_effector_position
+        - state.head_position
+        - state.waist_position
+      - _target_: groot.vla.data.transform.StateActionTransform
+        apply_to:
+        - state.left_arm_joint_position
+        - state.right_arm_joint_position
+        - state.left_effector_position
+        - state.right_effector_position
+        - state.head_position
+        - state.waist_position
+        normalization_modes:
+          state.left_arm_joint_position: q99
+          state.right_arm_joint_position: q99
+          state.left_effector_position: q99
+          state.right_effector_position: q99
+          state.head_position: q99
+          state.waist_position: q99
+      - _target_: groot.vla.data.transform.StateActionToTensor
+        apply_to:
+        - action.left_arm_joint_position
+        - action.right_arm_joint_position
+        - action.left_effector_position
+        - action.right_effector_position
+        - action.head_position
+        - action.waist_position
+        - action.robot_velocity
+      - _target_: groot.vla.data.transform.StateActionTransform
+        apply_to:
+        - action.left_arm_joint_position
+        - action.right_arm_joint_position
+        - action.left_effector_position
+        - action.right_effector_position
+        - action.head_position
+        - action.waist_position
+        - action.robot_velocity
+        normalization_modes:
+          action.left_arm_joint_position: q99
+          action.right_arm_joint_position: q99
+          action.left_effector_position: q99
+          action.right_effector_position: q99
+          action.head_position: q99
+          action.waist_position: q99
+          action.robot_velocity: q99
+      - _target_: groot.vla.data.transform.ConcatTransform
+        video_concat_order:
+        - video.top_head
+        - video.hand_left
+        - video.hand_right
+        state_concat_order:
+        - state.left_arm_joint_position
+        - state.right_arm_joint_position
+        - state.left_effector_position
+        - state.right_effector_position
+        - state.head_position
+        - state.waist_position
+        action_concat_order:
+        - action.left_arm_joint_position
+        - action.right_arm_joint_position
+        - action.left_effector_position
+        - action.right_effector_position
+        - action.head_position
+        - action.waist_position
+        - action.robot_velocity
+      - _target_: groot.vla.model.dreamzero.transform.dreamzero_cotrain.DreamTransform
+        default_instruction: Perform the default behavior.
+        language_dropout_prob: 0.0
+        always_use_default_instruction: false
+        max_state_dim: 64
+        max_action_dim: 32
+        max_length: 512
+        state_horizon: 1
+        action_horizon: 24
+        embodiment_tag_mapping:
+          real_gr1_arms_only: 0
+          real_gr1_arms_only_annotated: 1
+          real_gr1_arms_waist: 2
+          real_gr1_arms_waist_annotated: 3
+          dexmg_gr1_arms_only_inspire: 4
+          dexmg_gr1_arms_only_fourier: 5
+          dexmg_gr1_arms_waist_fourier: 6
+          robocasa_single_arm: 7
+          onex_eve_gripper: 8
+          robocasa_gr1_arms_only_inspire_hands: 9
+          robocasa_gr1_arms_only_fourier_hands: 10
+          robocasa_gr1_fixed_lower_body_inspire_hands: 11
+          robocasa_gr1_fixed_lower_body_fourier_hands: 12
+          robocasa_panda_omron: 13
+          robocasa_bimanual_panda_parallel_gripper: 15
+          robocasa_bimanual_panda_inspire_hand: 16
+          oxe_droid: 17
+          oxe_fractal: 18
+          oxe_language_table: 19
+          oxe_bridge: 20
+          real_panda_single_arm: 21
+          hot3d_hands_only: 23
+          gr1_unified: 24
+          robocasa_gr1_arms_waist_fourier_hands: 25
+          agibot: 26
+          lapa: 27
+          oxe_mutex: 28
+          oxe_roboset: 29
+          oxe_plex: 30
+          dream: 31
+          yam: 32
+          xdof: 22
+          gr1_unified_segmentation: 14
+          language_table_sim: 7
+          gr1_isaac: 0
+          sim_behavior_r1_pro: 31
+          mecka_hands: 27
+          real_r1_pro_sharpa: 28
+        tokenizer_path: /mnt/project_rlinf/hf_models/umt5-xxl
+    yam:
+      _target_: groot.vla.data.transform.ComposedModalityTransform
+      transforms:
+      - _target_: groot.vla.data.transform.VideoToTensor
+        apply_to:
+        - video.top_camera-images-rgb
+        - video.left_camera-images-rgb
+        - video.right_camera-images-rgb
+      - _target_: groot.vla.data.transform.VideoCrop
+        apply_to:
+        - video.top_camera-images-rgb
+        - video.left_camera-images-rgb
+        - video.right_camera-images-rgb
+        scale: 0.95
+        mode: random
+      - _target_: groot.vla.data.transform.VideoResize
+        apply_to:
+        - video.top_camera-images-rgb
+        - video.left_camera-images-rgb
+        - video.right_camera-images-rgb
+        height: 176
+        width: 320
+        interpolation: linear
+      - _target_: groot.vla.data.transform.VideoColorJitter
+        apply_to:
+        - video.top_camera-images-rgb
+        - video.left_camera-images-rgb
+        - video.right_camera-images-rgb
+        brightness: 0.3
+        contrast: 0.4
+        saturation: 0.5
+        hue: 0.08
+      - _target_: groot.vla.data.transform.VideoToNumpy
+        apply_to:
+        - video.top_camera-images-rgb
+        - video.left_camera-images-rgb
+        - video.right_camera-images-rgb
+      - _target_: groot.vla.data.transform.StateActionToTensor
+        apply_to:
+        - state.left_joint_pos
+        - state.left_gripper_pos
+        - state.right_joint_pos
+        - state.right_gripper_pos
+      - _target_: groot.vla.data.transform.StateActionTransform
+        apply_to:
+        - state.left_joint_pos
+        - state.left_gripper_pos
+        - state.right_joint_pos
+        - state.right_gripper_pos
+        normalization_modes:
+          state.left_joint_pos: q99
+          state.left_gripper_pos: q99
+          state.right_joint_pos: q99
+          state.right_gripper_pos: q99
+      - _target_: groot.vla.data.transform.StateActionToTensor
+        apply_to:
+        - action.left_joint_pos
+        - action.left_gripper_pos
+        - action.right_joint_pos
+        - action.right_gripper_pos
+      - _target_: groot.vla.data.transform.StateActionTransform
+        apply_to:
+        - action.left_joint_pos
+        - action.left_gripper_pos
+        - action.right_joint_pos
+        - action.right_gripper_pos
+        normalization_modes:
+          action.left_joint_pos: q99
+          action.left_gripper_pos: q99
+          action.right_joint_pos: q99
+          action.right_gripper_pos: q99
+      - _target_: groot.vla.data.transform.ConcatTransform
+        video_concat_order:
+        - video.top_camera-images-rgb
+        - video.left_camera-images-rgb
+        - video.right_camera-images-rgb
+        state_concat_order:
+        - state.left_joint_pos
+        - state.left_gripper_pos
+        - state.right_joint_pos
+        - state.right_gripper_pos
+        action_concat_order:
+        - action.left_joint_pos
+        - action.left_gripper_pos
+        - action.right_joint_pos
+        - action.right_gripper_pos
+      - _target_: groot.vla.model.dreamzero.transform.dreamzero_cotrain.DreamTransform
+        default_instruction: Perform the default behavior.
+        language_dropout_prob: 0.0
+        always_use_default_instruction: false
+        max_state_dim: 64
+        max_action_dim: 32
+        max_length: 512
+        state_horizon: 1
+        action_horizon: 24
+        embodiment_tag_mapping:
+          real_gr1_arms_only: 0
+          real_gr1_arms_only_annotated: 1
+          real_gr1_arms_waist: 2
+          real_gr1_arms_waist_annotated: 3
+          dexmg_gr1_arms_only_inspire: 4
+          dexmg_gr1_arms_only_fourier: 5
+          dexmg_gr1_arms_waist_fourier: 6
+          robocasa_single_arm: 7
+          onex_eve_gripper: 8
+          robocasa_gr1_arms_only_inspire_hands: 9
+          robocasa_gr1_arms_only_fourier_hands: 10
+          robocasa_gr1_fixed_lower_body_inspire_hands: 11
+          robocasa_gr1_fixed_lower_body_fourier_hands: 12
+          robocasa_panda_omron: 13
+          robocasa_bimanual_panda_parallel_gripper: 15
+          robocasa_bimanual_panda_inspire_hand: 16
+          oxe_droid: 17
+          oxe_fractal: 18
+          oxe_language_table: 19
+          oxe_bridge: 20
+          real_panda_single_arm: 21
+          hot3d_hands_only: 23
+          gr1_unified: 24
+          robocasa_gr1_arms_waist_fourier_hands: 25
+          agibot: 26
+          lapa: 27
+          oxe_mutex: 28
+          oxe_roboset: 29
+          oxe_plex: 30
+          dream: 31
+          yam: 32
+          xdof: 22
+          gr1_unified_segmentation: 14
+          language_table_sim: 7
+          gr1_isaac: 0
+          sim_behavior_r1_pro: 31
+          mecka_hands: 27
+          real_r1_pro_sharpa: 28
+        tokenizer_path: /mnt/project_rlinf/hf_models/umt5-xxl
+  metadata_versions:
+    oxe_droid: '0221'
+    agibot: '0221'
+    yam: '0221'
+  fps:
+    yam: 30
+  dataset_kwargs:
+    video_backend: decord
+    use_global_metadata: false
+    max_chunk_size: 4
+    relative_action: true
+    relative_action_keys:
+    - joint_position
+    relative_action_per_horizon: false
+  mixture_kwargs:
+    training: true
+    balance_dataset_weights: false
+    seed: 42
+    shard_sampling_rate: 0.1
+trainer:
+  _target_: groot.vla.experiment.VLATrainer
+  _partial_: true
+  _recursive_: false
+  callbacks: null
+  model: ???
+  train_dataset: ???
+  compute_dtype: ???
+  benchmark_time: false
+  enable_profiling: false
+  profiling_steps: 5
+  enable_prof_callback: false
+  profile_start_step: 50
+  profile_warmup_steps: 1
+  profile_active_steps: 3
+  profile_record_shapes: false
+  profile_with_stack: false
+  profile_memory: false
+wandb_project: dreamzero
+output_dir: /mnt/project_rlinf/yingcheng/dreamzero/checkpoints/dreamzero_droid_wan21_lora_smoke
+load_from_yaml: null
+gear_credentials: null
+upload_checkpoints: false
+upload_every: 1000
+upload_last_n_checkpoints: 5
+remove_unused_columns: false
+bf16: true
+tf32: true
+global_batch_size: null
+raise_error_if_global_batch_size_not_set: false
+per_device_train_batch_size: 1
+per_device_eval_batch_size: 64
+gradient_accumulation_steps: 1
+dataloader_num_workers: 1
+dataloader_pin_memory: false
+dataloader_persistent_workers: true
+optim: adamw_torch
+learning_rate: 0.0001
+adam_beta1: 0.95
+adam_beta2: 0.999
+adam_epsilon: 1.0e-08
+weight_decay: 1.0e-05
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+logging_steps: 10.0
+num_train_epochs: 1000
+max_steps: 100
+save_strategy: 'no'
+save_steps: 1000
+eval_strategy: 'no'
+save_total_limit: 10
+report_to: none
+seed: 42
+do_eval: false
+gradient_checkpointing: false
+ddp_find_unused_parameters: false
+ddp_bucket_cap_mb: 100
+ray_num_workers: ???
+eval_bf16: true
+torch_compile_mode: null
+pretrained_model_path: null
+only_tune_projectors: false
+save_llm: false
+save_lora_only: true
+save_value_model: false
+save_q_model: false
+download_cache: false
+training_args:
+  _target_: transformers.TrainingArguments
+  output_dir: /mnt/project_rlinf/yingcheng/dreamzero/checkpoints/dreamzero_droid_wan21_lora_smoke
+  run_name: ???
+  remove_unused_columns: false
+  deepspeed: groot/vla/configs/deepspeed/zero2.json
+  gradient_checkpointing: false
+  bf16: true
+  tf32: true
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 64
+  gradient_accumulation_steps: 1
+  dataloader_num_workers: 1
+  dataloader_pin_memory: false
+  dataloader_persistent_workers: true
+  optim: adamw_torch
+  adam_beta1: 0.95
+  adam_beta2: 0.999
+  adam_epsilon: 1.0e-08
+  learning_rate: 0.0001
+  weight_decay: 1.0e-05
+  warmup_ratio: 0.05
+  lr_scheduler_type: cosine
+  logging_steps: 10.0
+  num_train_epochs: 1000
+  max_steps: 100
+  save_strategy: 'no'
+  save_steps: 1000
+  save_total_limit: 10
+  report_to: none
+  seed: 42
+  do_eval: false
+  ddp_find_unused_parameters: false
+  ddp_bucket_cap_mb: 100
+  torch_compile_mode: null
+profile_dir: null
+backbone_hidden_size: 0
+backbone_cfg:
+  _target_: groot.vla.model.dreamzero.backbone.identity.IdentityBackbone
+action_head_cfg:
+  config:
+    backbone_features_projector_cfg: null
+    _target_: groot.vla.model.dreamzero.action_head.wan_flow_matching_action_tf.WANPolicyHeadConfig
+    _recursive_: false
+    tiled: false
+    tile_size_height: 34
+    tile_size_width: 34
+    tile_stride_height: 18
+    tile_stride_width: 16
+    lora_rank: 4
+    lora_alpha: 4
+    num_frames: 33
+    num_frame_per_block: 2
+    lora_target_modules: q,k,v,o,ffn.0,ffn.2
+    init_lora_weights: kaiming
+    train_architecture: lora
+    use_gradient_checkpointing: true
+    add_pos_embed: true
+    model_dtype: float32
+    max_state_dim: 64
+    max_action_dim: 32
+    action_loss_embodiment_ids:
+    - 26
+    - 17
+    - 32
+    hidden_size: 64
+    input_embedding_dim: 1536
+    backbone_embedding_dim: 0
+    repa_layer: 8
+    repa_coeff: 1.0
+    load_pretrained_det_decode_layer_path: null
+    freeze_decode_layer: false
+    expand_batch: null
+    use_vlln: true
+    vl_self_attention_cfg:
+      _target_: groot.vla.model.n1_5.modules.cross_attention_dit.SelfAttentionTransformer
+      positional_embeddings: null
+      num_layers: 4
+      num_attention_heads: 24
+      attention_head_dim: 64
+      dropout: 0.2
+      final_dropout: true
+    diffusion_model_cfg:
+      _target_: groot.vla.model.dreamzero.modules.wan_video_dit_action_casual_chunk.CausalWanModel
+      _convert_: object
+      diffusion_model_pretrained_path: /mnt/project_rlinf/hf_models/Wan2.1-I2V-14B-480P
+      model_type: i2v
+      frame_seqlen: 880
+      dim: 5120
+      in_dim: 36
+      ffn_dim: 13824
+      out_dim: 16
+      freq_dim: 256
+      eps: 1.0e-06
+      num_heads: 40
+      num_layers: 40
+      max_chunk_size: 4
+      num_frame_per_block: 2
+      num_action_per_block: 24
+      num_state_per_block: 1
+    text_encoder_cfg:
+      _target_: groot.vla.model.dreamzero.modules.wan_video_text_encoder.WanTextEncoder
+      _convert_: object
+      text_encoder_pretrained_path: /mnt/project_rlinf/hf_models/Wan2.1-I2V-14B-480P/models_t5_umt5-xxl-enc-bf16.pth
+    image_encoder_cfg:
+      _target_: groot.vla.model.dreamzero.modules.wan_video_image_encoder.WanImageEncoder
+      _convert_: object
+      image_encoder_pretrained_path: /mnt/project_rlinf/hf_models/Wan2.1-I2V-14B-480P/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth
+    vae_cfg:
+      _target_: groot.vla.model.dreamzero.modules.wan_video_vae.WanVideoVAE
+      _convert_: object
+      vae_pretrained_path: /mnt/project_rlinf/hf_models/Wan2.1-I2V-14B-480P/Wan2.1_VAE.pth
+    action_dim: 32
+    action_horizon: 24
+    num_inference_timesteps: 4
+    noise_beta_alpha: 1.5
+    noise_beta_beta: 1.0
+    noise_s: 0.999
+    num_timestep_buckets: 1000
+    decouple_video_action_noise: false
+    video_noise_beta_alpha: 3.0
+    video_noise_beta_beta: 1.0
+    tune_projector: true
+    tune_diffusion_model: true
+  _target_: groot.vla.model.dreamzero.action_head.wan_flow_matching_action_tf.WANPolicyHead
+  _convert_: object
+add_pos_embed: true
+hidden_size: 64
+attn_dropout: 0.2
+repa_layer: 8
+repa_coeff: 1.0
+load_pretrained_det_decode_layer_path: null
+expand_batch: null
+dit_version: /mnt/project_rlinf/hf_models/Wan2.1-I2V-14B-480P
+text_encoder_pretrained_path: /mnt/project_rlinf/hf_models/Wan2.1-I2V-14B-480P/models_t5_umt5-xxl-enc-bf16.pth
+image_encoder_pretrained_path: /mnt/project_rlinf/hf_models/Wan2.1-I2V-14B-480P/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth
+vae_pretrained_path: /mnt/project_rlinf/hf_models/Wan2.1-I2V-14B-480P/Wan2.1_VAE.pth
+train_architecture: lora
+num_frame_per_block: 2
+num_action_per_block: 24
+num_state_per_block: 1
+frame_seqlen: 880
+embodiment_tag_to_projector_index:
+  real_gr1_arms_only: 0
+  real_gr1_arms_only_annotated: 1
+  real_gr1_arms_waist: 2
+  real_gr1_arms_waist_annotated: 3
+  dexmg_gr1_arms_only_inspire: 4
+  dexmg_gr1_arms_only_fourier: 5
+  dexmg_gr1_arms_waist_fourier: 6
+  robocasa_single_arm: 7
+  onex_eve_gripper: 8
+  robocasa_gr1_arms_only_inspire_hands: 9
+  robocasa_gr1_arms_only_fourier_hands: 10
+  robocasa_gr1_fixed_lower_body_inspire_hands: 11
+  robocasa_gr1_fixed_lower_body_fourier_hands: 12
+  robocasa_panda_omron: 13
+  robocasa_bimanual_panda_parallel_gripper: 15
+  robocasa_bimanual_panda_inspire_hand: 16
+  oxe_droid: 17
+  oxe_fractal: 18
+  oxe_language_table: 19
+  oxe_bridge: 20
+  real_panda_single_arm: 21
+  hot3d_hands_only: 23
+  gr1_unified: 24
+  robocasa_gr1_arms_waist_fourier_hands: 25
+  agibot: 26
+  lapa: 27
+  oxe_mutex: 28
+  oxe_roboset: 29
+  oxe_plex: 30
+  dream: 31
+  yam: 32
+  xdof: 22
+  gr1_unified_segmentation: 14
+  language_table_sim: 7
+  gr1_isaac: 0
+  sim_behavior_r1_pro: 31
+  mecka_hands: 27
+  real_r1_pro_sharpa: 28
+max_length: 512
+num_views: 3
+tokenizer_path: /mnt/project_rlinf/hf_models/umt5-xxl
+data_collator:
+  _target_: groot.vla.model.dreamzero.transform.dreamzero_cotrain.DefaultDataCollator
+  tokenizer_path: /mnt/project_rlinf/hf_models/umt5-xxl
+  max_length: 512
+  num_views: 3
+  embodiment_tag_mapping:
+    real_gr1_arms_only: 0
+    real_gr1_arms_only_annotated: 1
+    real_gr1_arms_waist: 2
+    real_gr1_arms_waist_annotated: 3
+    dexmg_gr1_arms_only_inspire: 4
+    dexmg_gr1_arms_only_fourier: 5
+    dexmg_gr1_arms_waist_fourier: 6
+    robocasa_single_arm: 7
+    onex_eve_gripper: 8
+    robocasa_gr1_arms_only_inspire_hands: 9
+    robocasa_gr1_arms_only_fourier_hands: 10
+    robocasa_gr1_fixed_lower_body_inspire_hands: 11
+    robocasa_gr1_fixed_lower_body_fourier_hands: 12
+    robocasa_panda_omron: 13
+    robocasa_bimanual_panda_parallel_gripper: 15
+    robocasa_bimanual_panda_inspire_hand: 16
+    oxe_droid: 17
+    oxe_fractal: 18
+    oxe_language_table: 19
+    oxe_bridge: 20
+    real_panda_single_arm: 21
+    hot3d_hands_only: 23
+    gr1_unified: 24
+    robocasa_gr1_arms_waist_fourier_hands: 25
+    agibot: 26
+    lapa: 27
+    oxe_mutex: 28
+    oxe_roboset: 29
+    oxe_plex: 30
+    dream: 31
+    yam: 32
+    xdof: 22
+    gr1_unified_segmentation: 14
+    language_table_sim: 7
+    gr1_isaac: 0
+    sim_behavior_r1_pro: 31
+    mecka_hands: 27
+    real_r1_pro_sharpa: 28
+num_visual_tokens_per_frame: 16
+max_state_dim: 64
+max_action_dim: 32
+language_dropout_prob: 0.0
+model_specific_transform:
+  _target_: groot.vla.model.dreamzero.transform.dreamzero_cotrain.DreamTransform
+  default_instruction: Perform the default behavior.
+  language_dropout_prob: 0.0
+  always_use_default_instruction: false
+  max_state_dim: 64
+  max_action_dim: 32
+  max_length: 512
+  state_horizon: 1
+  action_horizon: 24
+  embodiment_tag_mapping:
+    real_gr1_arms_only: 0
+    real_gr1_arms_only_annotated: 1
+    real_gr1_arms_waist: 2
+    real_gr1_arms_waist_annotated: 3
+    dexmg_gr1_arms_only_inspire: 4
+    dexmg_gr1_arms_only_fourier: 5
+    dexmg_gr1_arms_waist_fourier: 6
+    robocasa_single_arm: 7
+    onex_eve_gripper: 8
+    robocasa_gr1_arms_only_inspire_hands: 9
+    robocasa_gr1_arms_only_fourier_hands: 10
+    robocasa_gr1_fixed_lower_body_inspire_hands: 11
+    robocasa_gr1_fixed_lower_body_fourier_hands: 12
+    robocasa_panda_omron: 13
+    robocasa_bimanual_panda_parallel_gripper: 15
+    robocasa_bimanual_panda_inspire_hand: 16
+    oxe_droid: 17
+    oxe_fractal: 18
+    oxe_language_table: 19
+    oxe_bridge: 20
+    real_panda_single_arm: 21
+    hot3d_hands_only: 23
+    gr1_unified: 24
+    robocasa_gr1_arms_waist_fourier_hands: 25
+    agibot: 26
+    lapa: 27
+    oxe_mutex: 28
+    oxe_roboset: 29
+    oxe_plex: 30
+    dream: 31
+    yam: 32
+    xdof: 22
+    gr1_unified_segmentation: 14
+    language_table_sim: 7
+    gr1_isaac: 0
+    sim_behavior_r1_pro: 31
+    mecka_hands: 27
+    real_r1_pro_sharpa: 28
+  tokenizer_path: /mnt/project_rlinf/hf_models/umt5-xxl
+use_global_metadata: false
+num_frames: 33
+action_horizon: 24
+state_horizon: 1
+image_resolution_width: 320
+image_resolution_height: 176
+image_resolution_width_single_frame: 256
+image_resolution_height_single_frame: 256
+totensor_cfg:
+  _target_: groot.vla.data.transform.VideoToTensor
+  apply_to: ???
+crop_cfg:
+  _target_: groot.vla.data.transform.VideoCrop
+  apply_to: ???
+  scale: 0.95
+  mode: random
+resize_cfg:
+  _target_: groot.vla.data.transform.VideoResize
+  apply_to: ???
+  height: 176
+  width: 320
+  interpolation: linear
+resize_cfg_single_frame:
+  _target_: groot.vla.data.transform.VideoResize
+  apply_to: ???
+  height: 256
+  width: 256
+  interpolation: linear
+color_jitter_cfg:
+  _target_: groot.vla.data.transform.VideoColorJitter
+  apply_to: ???
+  brightness: 0.3
+  contrast: 0.4
+  saturation: 0.5
+  hue: 0.08
+random_grayscale_cfg:
+  _target_: groot.vla.data.transform.VideoRandomGrayscale
+  apply_to: ???
+  p: 0.1
+random_posterize_cfg:
+  _target_: groot.vla.data.transform.VideoRandomPosterize
+  apply_to: ???
+  bits: 4
+  p: 0.1
+normalize_cfg:
+  _target_: groot.vla.data.transform.VideoNormalize
+  apply_to: ???
+  mean:
+  - 0.5
+  - 0.5
+  - 0.5
+  std:
+  - 0.5
+  - 0.5
+  - 0.5
+to_numpy_cfg:
+  _target_: groot.vla.data.transform.VideoToNumpy
+  apply_to: ???
+modality_config_oxe_droid:
+  video:
+    _target_: groot.vla.data.dataset.ModalityConfig
+    delta_indices:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    eval_delta_indices:
+    - 0
+    modality_keys:
+    - video.exterior_image_1_left
+    - video.exterior_image_2_left
+    - video.wrist_image_left
+  state:
+    _target_: groot.vla.data.dataset.ModalityConfig
+    delta_indices:
+    - 0
+    modality_keys:
+    - state.joint_position
+    - state.gripper_position
+  action:
+    _target_: groot.vla.data.dataset.ModalityConfig
+    delta_indices:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    modality_keys:
+    - action.joint_position
+    - action.gripper_position
+  language:
+    _target_: groot.vla.data.dataset.ModalityConfig
+    delta_indices:
+    - 0
+    modality_keys:
+    - annotation.language.language_instruction
+    - annotation.language.language_instruction_2
+    - annotation.language.language_instruction_3
+  lapa_action:
+    _target_: groot.vla.data.dataset.ModalityConfig
+    delta_indices:
+    - 0
+    modality_keys:
+    - lapa_action
+transform_oxe_droid:
+  _target_: groot.vla.data.transform.ComposedModalityTransform
+  transforms:
+  - _target_: groot.vla.data.transform.VideoToTensor
+    apply_to:
+    - video.exterior_image_1_left
+    - video.exterior_image_2_left
+    - video.wrist_image_left
+  - _target_: groot.vla.data.transform.VideoCrop
+    apply_to:
+    - video.exterior_image_1_left
+    - video.exterior_image_2_left
+    - video.wrist_image_left
+    scale: 0.95
+    mode: random
+  - _target_: groot.vla.data.transform.VideoResize
+    apply_to:
+    - video.exterior_image_1_left
+    - video.exterior_image_2_left
+    - video.wrist_image_left
+    height: 176
+    width: 320
+    interpolation: linear
+  - _target_: groot.vla.data.transform.VideoColorJitter
+    apply_to:
+    - video.exterior_image_1_left
+    - video.exterior_image_2_left
+    - video.wrist_image_left
+    brightness: 0.3
+    contrast: 0.4
+    saturation: 0.5
+    hue: 0.08
+  - _target_: groot.vla.data.transform.VideoToNumpy
+    apply_to:
+    - video.exterior_image_1_left
+    - video.exterior_image_2_left
+    - video.wrist_image_left
+  - _target_: groot.vla.data.transform.StateActionToTensor
+    apply_to:
+    - state.joint_position
+    - state.gripper_position
+  - _target_: groot.vla.data.transform.StateActionTransform
+    apply_to:
+    - state.joint_position
+    - state.gripper_position
+    normalization_modes:
+      state.joint_position: q99
+      state.gripper_position: q99
+  - _target_: groot.vla.data.transform.StateActionToTensor
+    apply_to:
+    - action.joint_position
+    - action.gripper_position
+  - _target_: groot.vla.data.transform.StateActionTransform
+    apply_to:
+    - action.joint_position
+    - action.gripper_position
+    normalization_modes:
+      action.joint_position: q99
+      action.gripper_position: q99
+  - _target_: groot.vla.data.transform.ConcatTransform
+    video_concat_order:
+    - video.exterior_image_1_left
+    - video.exterior_image_2_left
+    - video.wrist_image_left
+    state_concat_order:
+    - state.joint_position
+    - state.gripper_position
+    action_concat_order:
+    - action.joint_position
+    - action.gripper_position
+  - _target_: groot.vla.model.dreamzero.transform.dreamzero_cotrain.DreamTransform
+    default_instruction: Perform the default behavior.
+    language_dropout_prob: 0.0
+    always_use_default_instruction: false
+    max_state_dim: 64
+    max_action_dim: 32
+    max_length: 512
+    state_horizon: 1
+    action_horizon: 24
+    embodiment_tag_mapping:
+      real_gr1_arms_only: 0
+      real_gr1_arms_only_annotated: 1
+      real_gr1_arms_waist: 2
+      real_gr1_arms_waist_annotated: 3
+      dexmg_gr1_arms_only_inspire: 4
+      dexmg_gr1_arms_only_fourier: 5
+      dexmg_gr1_arms_waist_fourier: 6
+      robocasa_single_arm: 7
+      onex_eve_gripper: 8
+      robocasa_gr1_arms_only_inspire_hands: 9
+      robocasa_gr1_arms_only_fourier_hands: 10
+      robocasa_gr1_fixed_lower_body_inspire_hands: 11
+      robocasa_gr1_fixed_lower_body_fourier_hands: 12
+      robocasa_panda_omron: 13
+      robocasa_bimanual_panda_parallel_gripper: 15
+      robocasa_bimanual_panda_inspire_hand: 16
+      oxe_droid: 17
+      oxe_fractal: 18
+      oxe_language_table: 19
+      oxe_bridge: 20
+      real_panda_single_arm: 21
+      hot3d_hands_only: 23
+      gr1_unified: 24
+      robocasa_gr1_arms_waist_fourier_hands: 25
+      agibot: 26
+      lapa: 27
+      oxe_mutex: 28
+      oxe_roboset: 29
+      oxe_plex: 30
+      dream: 31
+      yam: 32
+      xdof: 22
+      gr1_unified_segmentation: 14
+      language_table_sim: 7
+      gr1_isaac: 0
+      sim_behavior_r1_pro: 31
+      mecka_hands: 27
+      real_r1_pro_sharpa: 28
+    tokenizer_path: /mnt/project_rlinf/hf_models/umt5-xxl
+modality_config_agibot:
+  video:
+    _target_: groot.vla.data.dataset.ModalityConfig
+    delta_indices:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    eval_delta_indices:
+    - -3
+    - -2
+    - -1
+    - 0
+    modality_keys:
+    - video.top_head
+    - video.hand_left
+    - video.hand_right
+  state:
+    _target_: groot.vla.data.dataset.ModalityConfig
+    delta_indices:
+    - 0
+    modality_keys:
+    - state.left_arm_joint_position
+    - state.right_arm_joint_position
+    - state.left_effector_position
+    - state.right_effector_position
+    - state.head_position
+    - state.waist_position
+  action:
+    _target_: groot.vla.data.dataset.ModalityConfig
+    delta_indices:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    modality_keys:
+    - action.left_arm_joint_position
+    - action.right_arm_joint_position
+    - action.left_effector_position
+    - action.right_effector_position
+    - action.head_position
+    - action.waist_position
+    - action.robot_velocity
+  language:
+    _target_: groot.vla.data.dataset.ModalityConfig
+    delta_indices:
+    - 0
+    modality_keys:
+    - annotation.language.action_text
+transform_agibot:
+  _target_: groot.vla.data.transform.ComposedModalityTransform
+  transforms:
+  - _target_: groot.vla.data.transform.VideoToTensor
+    apply_to:
+    - video.top_head
+    - video.hand_left
+    - video.hand_right
+  - _target_: groot.vla.data.transform.VideoCrop
+    apply_to:
+    - video.top_head
+    - video.hand_left
+    - video.hand_right
+    scale: 0.95
+    mode: random
+  - _target_: groot.vla.data.transform.VideoResize
+    apply_to:
+    - video.top_head
+    - video.hand_left
+    - video.hand_right
+    height: 176
+    width: 320
+    interpolation: linear
+  - _target_: groot.vla.data.transform.VideoColorJitter
+    apply_to:
+    - video.top_head
+    - video.hand_left
+    - video.hand_right
+    brightness: 0.3
+    contrast: 0.4
+    saturation: 0.5
+    hue: 0.08
+  - _target_: groot.vla.data.transform.VideoToNumpy
+    apply_to:
+    - video.top_head
+    - video.hand_left
+    - video.hand_right
+  - _target_: groot.vla.data.transform.StateActionToTensor
+    apply_to:
+    - state.left_arm_joint_position
+    - state.right_arm_joint_position
+    - state.left_effector_position
+    - state.right_effector_position
+    - state.head_position
+    - state.waist_position
+  - _target_: groot.vla.data.transform.StateActionTransform
+    apply_to:
+    - state.left_arm_joint_position
+    - state.right_arm_joint_position
+    - state.left_effector_position
+    - state.right_effector_position
+    - state.head_position
+    - state.waist_position
+    normalization_modes:
+      state.left_arm_joint_position: q99
+      state.right_arm_joint_position: q99
+      state.left_effector_position: q99
+      state.right_effector_position: q99
+      state.head_position: q99
+      state.waist_position: q99
+  - _target_: groot.vla.data.transform.StateActionToTensor
+    apply_to:
+    - action.left_arm_joint_position
+    - action.right_arm_joint_position
+    - action.left_effector_position
+    - action.right_effector_position
+    - action.head_position
+    - action.waist_position
+    - action.robot_velocity
+  - _target_: groot.vla.data.transform.StateActionTransform
+    apply_to:
+    - action.left_arm_joint_position
+    - action.right_arm_joint_position
+    - action.left_effector_position
+    - action.right_effector_position
+    - action.head_position
+    - action.waist_position
+    - action.robot_velocity
+    normalization_modes:
+      action.left_arm_joint_position: q99
+      action.right_arm_joint_position: q99
+      action.left_effector_position: q99
+      action.right_effector_position: q99
+      action.head_position: q99
+      action.waist_position: q99
+      action.robot_velocity: q99
+  - _target_: groot.vla.data.transform.ConcatTransform
+    video_concat_order:
+    - video.top_head
+    - video.hand_left
+    - video.hand_right
+    state_concat_order:
+    - state.left_arm_joint_position
+    - state.right_arm_joint_position
+    - state.left_effector_position
+    - state.right_effector_position
+    - state.head_position
+    - state.waist_position
+    action_concat_order:
+    - action.left_arm_joint_position
+    - action.right_arm_joint_position
+    - action.left_effector_position
+    - action.right_effector_position
+    - action.head_position
+    - action.waist_position
+    - action.robot_velocity
+  - _target_: groot.vla.model.dreamzero.transform.dreamzero_cotrain.DreamTransform
+    default_instruction: Perform the default behavior.
+    language_dropout_prob: 0.0
+    always_use_default_instruction: false
+    max_state_dim: 64
+    max_action_dim: 32
+    max_length: 512
+    state_horizon: 1
+    action_horizon: 24
+    embodiment_tag_mapping:
+      real_gr1_arms_only: 0
+      real_gr1_arms_only_annotated: 1
+      real_gr1_arms_waist: 2
+      real_gr1_arms_waist_annotated: 3
+      dexmg_gr1_arms_only_inspire: 4
+      dexmg_gr1_arms_only_fourier: 5
+      dexmg_gr1_arms_waist_fourier: 6
+      robocasa_single_arm: 7
+      onex_eve_gripper: 8
+      robocasa_gr1_arms_only_inspire_hands: 9
+      robocasa_gr1_arms_only_fourier_hands: 10
+      robocasa_gr1_fixed_lower_body_inspire_hands: 11
+      robocasa_gr1_fixed_lower_body_fourier_hands: 12
+      robocasa_panda_omron: 13
+      robocasa_bimanual_panda_parallel_gripper: 15
+      robocasa_bimanual_panda_inspire_hand: 16
+      oxe_droid: 17
+      oxe_fractal: 18
+      oxe_language_table: 19
+      oxe_bridge: 20
+      real_panda_single_arm: 21
+      hot3d_hands_only: 23
+      gr1_unified: 24
+      robocasa_gr1_arms_waist_fourier_hands: 25
+      agibot: 26
+      lapa: 27
+      oxe_mutex: 28
+      oxe_roboset: 29
+      oxe_plex: 30
+      dream: 31
+      yam: 32
+      xdof: 22
+      gr1_unified_segmentation: 14
+      language_table_sim: 7
+      gr1_isaac: 0
+      sim_behavior_r1_pro: 31
+      mecka_hands: 27
+      real_r1_pro_sharpa: 28
+    tokenizer_path: /mnt/project_rlinf/hf_models/umt5-xxl
+modality_config_yam:
+  video:
+    _target_: groot.vla.data.dataset.ModalityConfig
+    delta_indices:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    eval_delta_indices:
+    - 0
+    modality_keys:
+    - video.top_camera-images-rgb
+    - video.left_camera-images-rgb
+    - video.right_camera-images-rgb
+  state:
+    _target_: groot.vla.data.dataset.ModalityConfig
+    delta_indices:
+    - 0
+    modality_keys:
+    - state.left_joint_pos
+    - state.left_gripper_pos
+    - state.right_joint_pos
+    - state.right_gripper_pos
+  action:
+    _target_: groot.vla.data.dataset.ModalityConfig
+    delta_indices:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    modality_keys:
+    - action.left_joint_pos
+    - action.left_gripper_pos
+    - action.right_joint_pos
+    - action.right_gripper_pos
+  language:
+    _target_: groot.vla.data.dataset.ModalityConfig
+    delta_indices:
+    - 0
+    modality_keys:
+    - annotation.task
+transform_yam:
+  _target_: groot.vla.data.transform.ComposedModalityTransform
+  transforms:
+  - _target_: groot.vla.data.transform.VideoToTensor
+    apply_to:
+    - video.top_camera-images-rgb
+    - video.left_camera-images-rgb
+    - video.right_camera-images-rgb
+  - _target_: groot.vla.data.transform.VideoCrop
+    apply_to:
+    - video.top_camera-images-rgb
+    - video.left_camera-images-rgb
+    - video.right_camera-images-rgb
+    scale: 0.95
+    mode: random
+  - _target_: groot.vla.data.transform.VideoResize
+    apply_to:
+    - video.top_camera-images-rgb
+    - video.left_camera-images-rgb
+    - video.right_camera-images-rgb
+    height: 176
+    width: 320
+    interpolation: linear
+  - _target_: groot.vla.data.transform.VideoColorJitter
+    apply_to:
+    - video.top_camera-images-rgb
+    - video.left_camera-images-rgb
+    - video.right_camera-images-rgb
+    brightness: 0.3
+    contrast: 0.4
+    saturation: 0.5
+    hue: 0.08
+  - _target_: groot.vla.data.transform.VideoToNumpy
+    apply_to:
+    - video.top_camera-images-rgb
+    - video.left_camera-images-rgb
+    - video.right_camera-images-rgb
+  - _target_: groot.vla.data.transform.StateActionToTensor
+    apply_to:
+    - state.left_joint_pos
+    - state.left_gripper_pos
+    - state.right_joint_pos
+    - state.right_gripper_pos
+  - _target_: groot.vla.data.transform.StateActionTransform
+    apply_to:
+    - state.left_joint_pos
+    - state.left_gripper_pos
+    - state.right_joint_pos
+    - state.right_gripper_pos
+    normalization_modes:
+      state.left_joint_pos: q99
+      state.left_gripper_pos: q99
+      state.right_joint_pos: q99
+      state.right_gripper_pos: q99
+  - _target_: groot.vla.data.transform.StateActionToTensor
+    apply_to:
+    - action.left_joint_pos
+    - action.left_gripper_pos
+    - action.right_joint_pos
+    - action.right_gripper_pos
+  - _target_: groot.vla.data.transform.StateActionTransform
+    apply_to:
+    - action.left_joint_pos
+    - action.left_gripper_pos
+    - action.right_joint_pos
+    - action.right_gripper_pos
+    normalization_modes:
+      action.left_joint_pos: q99
+      action.left_gripper_pos: q99
+      action.right_joint_pos: q99
+      action.right_gripper_pos: q99
+  - _target_: groot.vla.data.transform.ConcatTransform
+    video_concat_order:
+    - video.top_camera-images-rgb
+    - video.left_camera-images-rgb
+    - video.right_camera-images-rgb
+    state_concat_order:
+    - state.left_joint_pos
+    - state.left_gripper_pos
+    - state.right_joint_pos
+    - state.right_gripper_pos
+    action_concat_order:
+    - action.left_joint_pos
+    - action.left_gripper_pos
+    - action.right_joint_pos
+    - action.right_gripper_pos
+  - _target_: groot.vla.model.dreamzero.transform.dreamzero_cotrain.DreamTransform
+    default_instruction: Perform the default behavior.
+    language_dropout_prob: 0.0
+    always_use_default_instruction: false
+    max_state_dim: 64
+    max_action_dim: 32
+    max_length: 512
+    state_horizon: 1
+    action_horizon: 24
+    embodiment_tag_mapping:
+      real_gr1_arms_only: 0
+      real_gr1_arms_only_annotated: 1
+      real_gr1_arms_waist: 2
+      real_gr1_arms_waist_annotated: 3
+      dexmg_gr1_arms_only_inspire: 4
+      dexmg_gr1_arms_only_fourier: 5
+      dexmg_gr1_arms_waist_fourier: 6
+      robocasa_single_arm: 7
+      onex_eve_gripper: 8
+      robocasa_gr1_arms_only_inspire_hands: 9
+      robocasa_gr1_arms_only_fourier_hands: 10
+      robocasa_gr1_fixed_lower_body_inspire_hands: 11
+      robocasa_gr1_fixed_lower_body_fourier_hands: 12
+      robocasa_panda_omron: 13
+      robocasa_bimanual_panda_parallel_gripper: 15
+      robocasa_bimanual_panda_inspire_hand: 16
+      oxe_droid: 17
+      oxe_fractal: 18
+      oxe_language_table: 19
+      oxe_bridge: 20
+      real_panda_single_arm: 21
+      hot3d_hands_only: 23
+      gr1_unified: 24
+      robocasa_gr1_arms_waist_fourier_hands: 25
+      agibot: 26
+      lapa: 27
+      oxe_mutex: 28
+      oxe_roboset: 29
+      oxe_plex: 30
+      dream: 31
+      yam: 32
+      xdof: 22
+      gr1_unified_segmentation: 14
+      language_table_sim: 7
+      gr1_isaac: 0
+      sim_behavior_r1_pro: 31
+      mecka_hands: 27
+      real_r1_pro_sharpa: 28
+    tokenizer_path: /mnt/project_rlinf/hf_models/umt5-xxl
+modality_configs:
+  oxe_droid:
+    video:
+      _target_: groot.vla.data.dataset.ModalityConfig
+      delta_indices:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
+      - 11
+      - 12
+      - 13
+      - 14
+      - 15
+      - 16
+      - 17
+      - 18
+      - 19
+      - 20
+      - 21
+      - 22
+      - 23
+      - 24
+      eval_delta_indices:
+      - 0
+      modality_keys:
+      - video.exterior_image_1_left
+      - video.exterior_image_2_left
+      - video.wrist_image_left
+    state:
+      _target_: groot.vla.data.dataset.ModalityConfig
+      delta_indices:
+      - 0
+      modality_keys:
+      - state.joint_position
+      - state.gripper_position
+    action:
+      _target_: groot.vla.data.dataset.ModalityConfig
+      delta_indices:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
+      - 11
+      - 12
+      - 13
+      - 14
+      - 15
+      - 16
+      - 17
+      - 18
+      - 19
+      - 20
+      - 21
+      - 22
+      - 23
+      modality_keys:
+      - action.joint_position
+      - action.gripper_position
+    language:
+      _target_: groot.vla.data.dataset.ModalityConfig
+      delta_indices:
+      - 0
+      modality_keys:
+      - annotation.language.language_instruction
+      - annotation.language.language_instruction_2
+      - annotation.language.language_instruction_3
+    lapa_action:
+      _target_: groot.vla.data.dataset.ModalityConfig
+      delta_indices:
+      - 0
+      modality_keys:
+      - lapa_action
+  agibot:
+    video:
+      _target_: groot.vla.data.dataset.ModalityConfig
+      delta_indices:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
+      - 11
+      - 12
+      - 13
+      - 14
+      - 15
+      - 16
+      - 17
+      - 18
+      - 19
+      - 20
+      - 21
+      - 22
+      - 23
+      - 24
+      eval_delta_indices:
+      - -3
+      - -2
+      - -1
+      - 0
+      modality_keys:
+      - video.top_head
+      - video.hand_left
+      - video.hand_right
+    state:
+      _target_: groot.vla.data.dataset.ModalityConfig
+      delta_indices:
+      - 0
+      modality_keys:
+      - state.left_arm_joint_position
+      - state.right_arm_joint_position
+      - state.left_effector_position
+      - state.right_effector_position
+      - state.head_position
+      - state.waist_position
+    action:
+      _target_: groot.vla.data.dataset.ModalityConfig
+      delta_indices:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
+      - 11
+      - 12
+      - 13
+      - 14
+      - 15
+      - 16
+      - 17
+      - 18
+      - 19
+      - 20
+      - 21
+      - 22
+      - 23
+      modality_keys:
+      - action.left_arm_joint_position
+      - action.right_arm_joint_position
+      - action.left_effector_position
+      - action.right_effector_position
+      - action.head_position
+      - action.waist_position
+      - action.robot_velocity
+    language:
+      _target_: groot.vla.data.dataset.ModalityConfig
+      delta_indices:
+      - 0
+      modality_keys:
+      - annotation.language.action_text
+  yam:
+    video:
+      _target_: groot.vla.data.dataset.ModalityConfig
+      delta_indices:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
+      - 11
+      - 12
+      - 13
+      - 14
+      - 15
+      - 16
+      - 17
+      - 18
+      - 19
+      - 20
+      - 21
+      - 22
+      - 23
+      - 24
+      eval_delta_indices:
+      - 0
+      modality_keys:
+      - video.top_camera-images-rgb
+      - video.left_camera-images-rgb
+      - video.right_camera-images-rgb
+    state:
+      _target_: groot.vla.data.dataset.ModalityConfig
+      delta_indices:
+      - 0
+      modality_keys:
+      - state.left_joint_pos
+      - state.left_gripper_pos
+      - state.right_joint_pos
+      - state.right_gripper_pos
+    action:
+      _target_: groot.vla.data.dataset.ModalityConfig
+      delta_indices:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
+      - 11
+      - 12
+      - 13
+      - 14
+      - 15
+      - 16
+      - 17
+      - 18
+      - 19
+      - 20
+      - 21
+      - 22
+      - 23
+      modality_keys:
+      - action.left_joint_pos
+      - action.left_gripper_pos
+      - action.right_joint_pos
+      - action.right_gripper_pos
+    language:
+      _target_: groot.vla.data.dataset.ModalityConfig
+      delta_indices:
+      - 0
+      modality_keys:
+      - annotation.task
+transforms:
+  oxe_droid:
+    _target_: groot.vla.data.transform.ComposedModalityTransform
+    transforms:
+    - _target_: groot.vla.data.transform.VideoToTensor
+      apply_to:
+      - video.exterior_image_1_left
+      - video.exterior_image_2_left
+      - video.wrist_image_left
+    - _target_: groot.vla.data.transform.VideoCrop
+      apply_to:
+      - video.exterior_image_1_left
+      - video.exterior_image_2_left
+      - video.wrist_image_left
+      scale: 0.95
+      mode: random
+    - _target_: groot.vla.data.transform.VideoResize
+      apply_to:
+      - video.exterior_image_1_left
+      - video.exterior_image_2_left
+      - video.wrist_image_left
+      height: 176
+      width: 320
+      interpolation: linear
+    - _target_: groot.vla.data.transform.VideoColorJitter
+      apply_to:
+      - video.exterior_image_1_left
+      - video.exterior_image_2_left
+      - video.wrist_image_left
+      brightness: 0.3
+      contrast: 0.4
+      saturation: 0.5
+      hue: 0.08
+    - _target_: groot.vla.data.transform.VideoToNumpy
+      apply_to:
+      - video.exterior_image_1_left
+      - video.exterior_image_2_left
+      - video.wrist_image_left
+    - _target_: groot.vla.data.transform.StateActionToTensor
+      apply_to:
+      - state.joint_position
+      - state.gripper_position
+    - _target_: groot.vla.data.transform.StateActionTransform
+      apply_to:
+      - state.joint_position
+      - state.gripper_position
+      normalization_modes:
+        state.joint_position: q99
+        state.gripper_position: q99
+    - _target_: groot.vla.data.transform.StateActionToTensor
+      apply_to:
+      - action.joint_position
+      - action.gripper_position
+    - _target_: groot.vla.data.transform.StateActionTransform
+      apply_to:
+      - action.joint_position
+      - action.gripper_position
+      normalization_modes:
+        action.joint_position: q99
+        action.gripper_position: q99
+    - _target_: groot.vla.data.transform.ConcatTransform
+      video_concat_order:
+      - video.exterior_image_1_left
+      - video.exterior_image_2_left
+      - video.wrist_image_left
+      state_concat_order:
+      - state.joint_position
+      - state.gripper_position
+      action_concat_order:
+      - action.joint_position
+      - action.gripper_position
+    - _target_: groot.vla.model.dreamzero.transform.dreamzero_cotrain.DreamTransform
+      default_instruction: Perform the default behavior.
+      language_dropout_prob: 0.0
+      always_use_default_instruction: false
+      max_state_dim: 64
+      max_action_dim: 32
+      max_length: 512
+      state_horizon: 1
+      action_horizon: 24
+      embodiment_tag_mapping:
+        real_gr1_arms_only: 0
+        real_gr1_arms_only_annotated: 1
+        real_gr1_arms_waist: 2
+        real_gr1_arms_waist_annotated: 3
+        dexmg_gr1_arms_only_inspire: 4
+        dexmg_gr1_arms_only_fourier: 5
+        dexmg_gr1_arms_waist_fourier: 6
+        robocasa_single_arm: 7
+        onex_eve_gripper: 8
+        robocasa_gr1_arms_only_inspire_hands: 9
+        robocasa_gr1_arms_only_fourier_hands: 10
+        robocasa_gr1_fixed_lower_body_inspire_hands: 11
+        robocasa_gr1_fixed_lower_body_fourier_hands: 12
+        robocasa_panda_omron: 13
+        robocasa_bimanual_panda_parallel_gripper: 15
+        robocasa_bimanual_panda_inspire_hand: 16
+        oxe_droid: 17
+        oxe_fractal: 18
+        oxe_language_table: 19
+        oxe_bridge: 20
+        real_panda_single_arm: 21
+        hot3d_hands_only: 23
+        gr1_unified: 24
+        robocasa_gr1_arms_waist_fourier_hands: 25
+        agibot: 26
+        lapa: 27
+        oxe_mutex: 28
+        oxe_roboset: 29
+        oxe_plex: 30
+        dream: 31
+        yam: 32
+        xdof: 22
+        gr1_unified_segmentation: 14
+        language_table_sim: 7
+        gr1_isaac: 0
+        sim_behavior_r1_pro: 31
+        mecka_hands: 27
+        real_r1_pro_sharpa: 28
+      tokenizer_path: /mnt/project_rlinf/hf_models/umt5-xxl
+  agibot:
+    _target_: groot.vla.data.transform.ComposedModalityTransform
+    transforms:
+    - _target_: groot.vla.data.transform.VideoToTensor
+      apply_to:
+      - video.top_head
+      - video.hand_left
+      - video.hand_right
+    - _target_: groot.vla.data.transform.VideoCrop
+      apply_to:
+      - video.top_head
+      - video.hand_left
+      - video.hand_right
+      scale: 0.95
+      mode: random
+    - _target_: groot.vla.data.transform.VideoResize
+      apply_to:
+      - video.top_head
+      - video.hand_left
+      - video.hand_right
+      height: 176
+      width: 320
+      interpolation: linear
+    - _target_: groot.vla.data.transform.VideoColorJitter
+      apply_to:
+      - video.top_head
+      - video.hand_left
+      - video.hand_right
+      brightness: 0.3
+      contrast: 0.4
+      saturation: 0.5
+      hue: 0.08
+    - _target_: groot.vla.data.transform.VideoToNumpy
+      apply_to:
+      - video.top_head
+      - video.hand_left
+      - video.hand_right
+    - _target_: groot.vla.data.transform.StateActionToTensor
+      apply_to:
+      - state.left_arm_joint_position
+      - state.right_arm_joint_position
+      - state.left_effector_position
+      - state.right_effector_position
+      - state.head_position
+      - state.waist_position
+    - _target_: groot.vla.data.transform.StateActionTransform
+      apply_to:
+      - state.left_arm_joint_position
+      - state.right_arm_joint_position
+      - state.left_effector_position
+      - state.right_effector_position
+      - state.head_position
+      - state.waist_position
+      normalization_modes:
+        state.left_arm_joint_position: q99
+        state.right_arm_joint_position: q99
+        state.left_effector_position: q99
+        state.right_effector_position: q99
+        state.head_position: q99
+        state.waist_position: q99
+    - _target_: groot.vla.data.transform.StateActionToTensor
+      apply_to:
+      - action.left_arm_joint_position
+      - action.right_arm_joint_position
+      - action.left_effector_position
+      - action.right_effector_position
+      - action.head_position
+      - action.waist_position
+      - action.robot_velocity
+    - _target_: groot.vla.data.transform.StateActionTransform
+      apply_to:
+      - action.left_arm_joint_position
+      - action.right_arm_joint_position
+      - action.left_effector_position
+      - action.right_effector_position
+      - action.head_position
+      - action.waist_position
+      - action.robot_velocity
+      normalization_modes:
+        action.left_arm_joint_position: q99
+        action.right_arm_joint_position: q99
+        action.left_effector_position: q99
+        action.right_effector_position: q99
+        action.head_position: q99
+        action.waist_position: q99
+        action.robot_velocity: q99
+    - _target_: groot.vla.data.transform.ConcatTransform
+      video_concat_order:
+      - video.top_head
+      - video.hand_left
+      - video.hand_right
+      state_concat_order:
+      - state.left_arm_joint_position
+      - state.right_arm_joint_position
+      - state.left_effector_position
+      - state.right_effector_position
+      - state.head_position
+      - state.waist_position
+      action_concat_order:
+      - action.left_arm_joint_position
+      - action.right_arm_joint_position
+      - action.left_effector_position
+      - action.right_effector_position
+      - action.head_position
+      - action.waist_position
+      - action.robot_velocity
+    - _target_: groot.vla.model.dreamzero.transform.dreamzero_cotrain.DreamTransform
+      default_instruction: Perform the default behavior.
+      language_dropout_prob: 0.0
+      always_use_default_instruction: false
+      max_state_dim: 64
+      max_action_dim: 32
+      max_length: 512
+      state_horizon: 1
+      action_horizon: 24
+      embodiment_tag_mapping:
+        real_gr1_arms_only: 0
+        real_gr1_arms_only_annotated: 1
+        real_gr1_arms_waist: 2
+        real_gr1_arms_waist_annotated: 3
+        dexmg_gr1_arms_only_inspire: 4
+        dexmg_gr1_arms_only_fourier: 5
+        dexmg_gr1_arms_waist_fourier: 6
+        robocasa_single_arm: 7
+        onex_eve_gripper: 8
+        robocasa_gr1_arms_only_inspire_hands: 9
+        robocasa_gr1_arms_only_fourier_hands: 10
+        robocasa_gr1_fixed_lower_body_inspire_hands: 11
+        robocasa_gr1_fixed_lower_body_fourier_hands: 12
+        robocasa_panda_omron: 13
+        robocasa_bimanual_panda_parallel_gripper: 15
+        robocasa_bimanual_panda_inspire_hand: 16
+        oxe_droid: 17
+        oxe_fractal: 18
+        oxe_language_table: 19
+        oxe_bridge: 20
+        real_panda_single_arm: 21
+        hot3d_hands_only: 23
+        gr1_unified: 24
+        robocasa_gr1_arms_waist_fourier_hands: 25
+        agibot: 26
+        lapa: 27
+        oxe_mutex: 28
+        oxe_roboset: 29
+        oxe_plex: 30
+        dream: 31
+        yam: 32
+        xdof: 22
+        gr1_unified_segmentation: 14
+        language_table_sim: 7
+        gr1_isaac: 0
+        sim_behavior_r1_pro: 31
+        mecka_hands: 27
+        real_r1_pro_sharpa: 28
+      tokenizer_path: /mnt/project_rlinf/hf_models/umt5-xxl
+  yam:
+    _target_: groot.vla.data.transform.ComposedModalityTransform
+    transforms:
+    - _target_: groot.vla.data.transform.VideoToTensor
+      apply_to:
+      - video.top_camera-images-rgb
+      - video.left_camera-images-rgb
+      - video.right_camera-images-rgb
+    - _target_: groot.vla.data.transform.VideoCrop
+      apply_to:
+      - video.top_camera-images-rgb
+      - video.left_camera-images-rgb
+      - video.right_camera-images-rgb
+      scale: 0.95
+      mode: random
+    - _target_: groot.vla.data.transform.VideoResize
+      apply_to:
+      - video.top_camera-images-rgb
+      - video.left_camera-images-rgb
+      - video.right_camera-images-rgb
+      height: 176
+      width: 320
+      interpolation: linear
+    - _target_: groot.vla.data.transform.VideoColorJitter
+      apply_to:
+      - video.top_camera-images-rgb
+      - video.left_camera-images-rgb
+      - video.right_camera-images-rgb
+      brightness: 0.3
+      contrast: 0.4
+      saturation: 0.5
+      hue: 0.08
+    - _target_: groot.vla.data.transform.VideoToNumpy
+      apply_to:
+      - video.top_camera-images-rgb
+      - video.left_camera-images-rgb
+      - video.right_camera-images-rgb
+    - _target_: groot.vla.data.transform.StateActionToTensor
+      apply_to:
+      - state.left_joint_pos
+      - state.left_gripper_pos
+      - state.right_joint_pos
+      - state.right_gripper_pos
+    - _target_: groot.vla.data.transform.StateActionTransform
+      apply_to:
+      - state.left_joint_pos
+      - state.left_gripper_pos
+      - state.right_joint_pos
+      - state.right_gripper_pos
+      normalization_modes:
+        state.left_joint_pos: q99
+        state.left_gripper_pos: q99
+        state.right_joint_pos: q99
+        state.right_gripper_pos: q99
+    - _target_: groot.vla.data.transform.StateActionToTensor
+      apply_to:
+      - action.left_joint_pos
+      - action.left_gripper_pos
+      - action.right_joint_pos
+      - action.right_gripper_pos
+    - _target_: groot.vla.data.transform.StateActionTransform
+      apply_to:
+      - action.left_joint_pos
+      - action.left_gripper_pos
+      - action.right_joint_pos
+      - action.right_gripper_pos
+      normalization_modes:
+        action.left_joint_pos: q99
+        action.left_gripper_pos: q99
+        action.right_joint_pos: q99
+        action.right_gripper_pos: q99
+    - _target_: groot.vla.data.transform.ConcatTransform
+      video_concat_order:
+      - video.top_camera-images-rgb
+      - video.left_camera-images-rgb
+      - video.right_camera-images-rgb
+      state_concat_order:
+      - state.left_joint_pos
+      - state.left_gripper_pos
+      - state.right_joint_pos
+      - state.right_gripper_pos
+      action_concat_order:
+      - action.left_joint_pos
+      - action.left_gripper_pos
+      - action.right_joint_pos
+      - action.right_gripper_pos
+    - _target_: groot.vla.model.dreamzero.transform.dreamzero_cotrain.DreamTransform
+      default_instruction: Perform the default behavior.
+      language_dropout_prob: 0.0
+      always_use_default_instruction: false
+      max_state_dim: 64
+      max_action_dim: 32
+      max_length: 512
+      state_horizon: 1
+      action_horizon: 24
+      embodiment_tag_mapping:
+        real_gr1_arms_only: 0
+        real_gr1_arms_only_annotated: 1
+        real_gr1_arms_waist: 2
+        real_gr1_arms_waist_annotated: 3
+        dexmg_gr1_arms_only_inspire: 4
+        dexmg_gr1_arms_only_fourier: 5
+        dexmg_gr1_arms_waist_fourier: 6
+        robocasa_single_arm: 7
+        onex_eve_gripper: 8
+        robocasa_gr1_arms_only_inspire_hands: 9
+        robocasa_gr1_arms_only_fourier_hands: 10
+        robocasa_gr1_fixed_lower_body_inspire_hands: 11
+        robocasa_gr1_fixed_lower_body_fourier_hands: 12
+        robocasa_panda_omron: 13
+        robocasa_bimanual_panda_parallel_gripper: 15
+        robocasa_bimanual_panda_inspire_hand: 16
+        oxe_droid: 17
+        oxe_fractal: 18
+        oxe_language_table: 19
+        oxe_bridge: 20
+        real_panda_single_arm: 21
+        hot3d_hands_only: 23
+        gr1_unified: 24
+        robocasa_gr1_arms_waist_fourier_hands: 25
+        agibot: 26
+        lapa: 27
+        oxe_mutex: 28
+        oxe_roboset: 29
+        oxe_plex: 30
+        dream: 31
+        yam: 32
+        xdof: 22
+        gr1_unified_segmentation: 14
+        language_table_sim: 7
+        gr1_isaac: 0
+        sim_behavior_r1_pro: 31
+        mecka_hands: 27
+        real_r1_pro_sharpa: 28
+      tokenizer_path: /mnt/project_rlinf/hf_models/umt5-xxl
+metadata_versions:
+  oxe_droid: '0221'
+  agibot: '0221'
+  yam: '0221'
+fps:
+  yam: 30
+relative_action: true
+relative_action_per_horizon: false
+relative_action_keys:
+- joint_position
+max_chunk_size: 4
+dataset_shard_sampling_rate: 0.1
+mixture_dataset_cls: groot.vla.data.dataset.lerobot_sharded.ShardedLeRobotMixtureDataset.from_mixture_spec
+single_dataset_cls: groot.vla.data.dataset.lerobot_sharded.ShardedLeRobotSubLangSingleActionChunkDatasetDROID
+droid_data_root: /mnt/project_rlinf/yingcheng/dreamzero/data/droid_lerobot

@@ -1,0 +1,119 @@
+# DreamZero eval on Maniskill - embodied evaluation only
+# DROID action space (8D: 7 joint + gripper) with pd_joint_pos (absolute) control
+defaults:
+  - env/maniskill_put_on_plate_in_scene_25_main@env.train
+  - env/maniskill_put_on_plate_in_scene_25_main@env.eval
+  - model/dreamzero@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "maniskill_eval_dreamzero"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+
+  resume_dir: null
+  ckpt_path: null
+
+algorithm:
+  adv_type: grpo
+  group_size: 4
+  loss_type: actor
+  rollout_epoch: 1
+  eval_rollout_epoch: 1
+  length_params:
+    max_new_token: null
+    max_length: 1024
+    min_length: 1
+  # params for generation
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+
+env:
+  group_name: "EnvGroup"
+  train:
+    total_num_envs: 8
+    auto_reset: True
+    max_episode_steps: 24
+    max_steps_per_rollout_epoch: 24
+    init_params:
+      sim_config:
+        control_freq: 10  # Match DROID control frequency
+  eval:
+    total_num_envs: 8
+    auto_reset: True
+    ignore_terminations: True
+    max_episode_steps: 24
+    max_steps_per_rollout_epoch: 24
+    use_fixed_reset_state_ids: True
+    group_size: 1
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+    init_params:
+      sim_config:
+        control_freq: 10
+
+rollout:
+  group_name: "RolloutGroup"
+  backend: "huggingface"
+  enable_offload: False
+  pipeline_stage_num: 1
+
+  model:
+    model_path: ${actor.model.model_path}
+    precision: ${actor.model.precision}
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 1
+  global_batch_size: 64
+  seed: 0
+
+  model:
+    model_type: "dreamzero"
+    model_path: /mnt/project_rlinf/liyanghao/data/models/DreamZero-DROID
+    policy_setup: "panda-droid"
+    action_dim: 8
+    num_action_chunks: 24
+    is_lora: False
+
+  fsdp_config:
+    strategy: "fsdp"
+    gradient_checkpointing: False
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

@@ -1,0 +1,115 @@
+defaults:
+  - model/dreamzero@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "dreamzero_sft_droid_wan22"
+    logger_backends: ["tensorboard"]
+
+  # Keep the default run short for smoke testing the 5B pipeline.
+  max_epochs: 30000
+  max_steps: 100
+  val_check_interval: -1
+  save_interval: 1000
+
+data:
+  train_data_paths: "/mnt/project_rlinf/yingcheng/dreamzero/data/droid_lerobot"
+  num_workers: 1
+  pin_memory: false
+  persistent_workers: false
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  # Keep the default smoke test close to native DreamZero LoRA training:
+  # avoid CPU offload unless we are explicitly debugging offload behavior.
+  enable_offload: false
+  micro_batch_size: 1
+  global_batch_size: 2
+  seed: 42
+
+  model:
+    model_type: "dreamzero_sft"
+    precision: bf16
+    # DreamZero's generated train_cfg uses train_architecture=lora; keep RLinf's
+    # FSDP wrap policy aligned with that mode.
+    is_lora: True
+
+    # Point these two paths to the Wan2.2-TI2V-5B directory. RLinf now treats
+    # this layout as component weights instead of requiring a full DreamZero checkpoint.
+    model_path: "/mnt/project_rlinf/hf_models/Wan2.2-TI2V-5B"
+    pretrained_model_path: "/mnt/project_rlinf/hf_models/Wan2.2-TI2V-5B"
+
+    # This must be a resolved DreamZero 5B train config whose model path uses:
+    #   model/dreamzero/action_head=wan_flow_matching_action_tf_wan22
+    # and whose data path uses:
+    #   data=dreamzero/droid_relative_wan22
+    train_cfg_path: "/mnt/project_rlinf/yingcheng/dreamzero/RLinf/examples/sft/generated/dreamzero_droid_wan22_component/conf.yaml"
+    data_root_key: "droid_data_root"
+
+    # Component weights for Wan2.2 5B.
+    dit_version: ${actor.model.model_path}
+    text_encoder_pretrained_path: ${actor.model.model_path}/models_t5_umt5-xxl-enc-bf16.pth
+    vae_pretrained_path: ${actor.model.model_path}/Wan2.2_VAE.pth
+
+    # Wan2.2-TI2V-5B does not include the CLIP image encoder; provide it separately.
+    image_encoder_pretrained_path: "/mnt/project_rlinf/hf_models/Wan2.1-I2V-14B-480P/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth"
+    # DreamZero 5B currently uses raw torch.utils.checkpoint inside the backbone.
+    # Under RLinf FSDP2 this is a likely source of extra steady-state memory.
+    disable_native_gradient_checkpointing: true
+
+  optim:
+    lr: 1e-5
+    # Match native DreamZero Trainer defaults/overrides used by
+    # scripts/train/droid_training_wan22.sh.
+    adam_beta1: 0.95
+    adam_beta2: 0.999
+    adam_eps: 1.0e-08
+    weight_decay: 1e-5
+    clip_grad: 1.0
+    lr_scheduler: "cosine"
+    total_training_steps: ${runner.max_steps}
+    lr_warmup_steps: -1
+    lr_warmup_steps_ratio: 0.05
+    num_cycles: 0.5
+    # Native HF cosine scheduler decays to zero by default.
+    min_lr: 0.0
+
+  fsdp_config:
+    strategy: "fsdp2"
+    sharding_strategy: "full_shard"
+    use_orig_params: False
+    gradient_checkpointing: False
+    cpu_offload: False
+    offload_pin_memory: False
+    reshard_after_forward: True
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

@@ -1,0 +1,175 @@
+{
+    "codebase_version": "v2.0",
+    "robot_type": "droid",
+    "total_episodes": 57774,
+    "total_frames": 14748517,
+    "total_tasks": 123259,
+    "total_videos": 3,
+    "total_chunks": 58,
+    "chunks_size": 1000,
+    "fps": 15,
+    "splits": {
+        "train": "0:100"
+    },
+    "data_path": "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet",
+    "video_path": "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4",
+    "features": {
+        "observation.images.exterior_image_1_left": {
+            "dtype": "video",
+            "shape": [
+                180,
+                320,
+                3
+            ],
+            "names": [
+                "height",
+                "width",
+                "channel"
+            ],
+            "video_info": {
+                "video.fps": 15,
+                "video.codec": "h264",
+                "video.pix_fmt": "yuv420p",
+                "video.is_depth_map": false,
+                "has_audio": false
+            }
+        },
+        "observation.images.exterior_image_2_left": {
+            "dtype": "video",
+            "shape": [
+                180,
+                320,
+                3
+            ],
+            "names": [
+                "height",
+                "width",
+                "channel"
+            ],
+            "video_info": {
+                "video.fps": 15,
+                "video.codec": "h264",
+                "video.pix_fmt": "yuv420p",
+                "video.is_depth_map": false,
+                "has_audio": false
+            }
+        },
+        "observation.images.wrist_image_left": {
+            "dtype": "video",
+            "shape": [
+                180,
+                320,
+                3
+            ],
+            "names": [
+                "height",
+                "width",
+                "channel"
+            ],
+            "video_info": {
+                "video.fps": 15,
+                "video.codec": "h264",
+                "video.pix_fmt": "yuv420p",
+                "video.is_depth_map": false,
+                "has_audio": false
+            }
+        },
+        "observation.state": {
+            "dtype": "float64",
+            "shape": [
+                14
+            ],
+            "names": [
+                "cartesian_position",
+                "gripper_position",
+                "joint_position"
+            ]
+        },
+        "action": {
+            "dtype": "float64",
+            "shape": [
+                28
+            ],
+            "names": [
+                "cartesian_position",
+                "cartesian_velocity",
+                "gripper_position",
+                "gripper_velocity",
+                "joint_position",
+                "joint_velocity"
+            ]
+        },
+        "timestamp": {
+            "dtype": "float64",
+            "shape": [
+                1
+            ]
+        },
+        "task_index": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ]
+        },
+        "episode_index": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ]
+        },
+        "index": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ]
+        },
+        "next.reward": {
+            "dtype": "float64",
+            "shape": [
+                1
+            ]
+        },
+        "next.done": {
+            "dtype": "bool",
+            "shape": [
+                1
+            ]
+        },
+        "is_terminal": {
+            "dtype": "bool",
+            "shape": [
+                1
+            ]
+        },
+        "is_first": {
+            "dtype": "bool",
+            "shape": [
+                1
+            ]
+        },
+        "discount": {
+            "dtype": "float64",
+            "shape": [
+                1
+            ]
+        },
+        "annotation.language.language_instruction": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ]
+        },
+        "annotation.language.language_instruction_2": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ]
+        },
+        "annotation.language.language_instruction_3": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ]
+        }
+    }
+}

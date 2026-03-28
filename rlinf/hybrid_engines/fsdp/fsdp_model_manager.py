@@ -22,6 +22,7 @@ from omegaconf import DictConfig
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
+from transformers.trainer import get_parameter_names
 from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForVision2Seq
 
 from rlinf.config import SupportedModel, get_supported_model, torch_dtype_from_precision
@@ -115,6 +116,24 @@ class FSDPModelManager:
         self._logger.info(f"[FSDP] AMP is enabled with precision: {precision}.")
 
         return torch.amp.autocast(device_type="cuda", dtype=precision)
+
+    def _log_cuda_memory(self, stage: str) -> None:
+        if not torch.cuda.is_available():
+            self._logger.info("[FSDP][CUDA MEM] stage=%s cuda_unavailable", stage)
+            return
+
+        self._logger.info(
+            "[FSDP][CUDA MEM] stage=%s rank=%s local_rank=%s visible=%s "
+            "current_device=%s allocated=%.2fGiB reserved=%.2fGiB max_allocated=%.2fGiB",
+            stage,
+            os.environ.get("RANK"),
+            os.environ.get("LOCAL_RANK"),
+            os.environ.get("CUDA_VISIBLE_DEVICES"),
+            torch.cuda.current_device(),
+            torch.cuda.memory_allocated() / 1024**3,
+            torch.cuda.memory_reserved() / 1024**3,
+            torch.cuda.max_memory_allocated() / 1024**3,
+        )
 
     def model_provider_func(self) -> torch.nn.Module:
         """
@@ -245,7 +264,9 @@ class FSDPModelManager:
         """
         Setup model, lr_scheduler, optimizer and grad_scaler.
         """
+        self._log_cuda_memory("setup_model_and_optimizer:before_model_provider")
         module = self.model_provider_func()
+        self._log_cuda_memory("setup_model_and_optimizer:after_model_provider")
 
         # Enable gradient checkpointing if configured
         if self._cfg.fsdp_config.get("gradient_checkpointing", False):
@@ -255,9 +276,11 @@ class FSDPModelManager:
             self._logger.info("[FSDP] Gradient checkpointing is disabled")
 
         # build model, optimizer, lr_scheduler, grad_scaler
+        self._log_cuda_memory("setup_model_and_optimizer:before_wrap_model")
         self.model = self._strategy.wrap_model(
             model=module, device_mesh=self._device_mesh
         )
+        self._log_cuda_memory("setup_model_and_optimizer:after_wrap_model")
         self.optimizer = self.build_optimizer(
             model=self.model, enable_critic_warmup=self.critic_warmup_steps > 0
         )
@@ -454,6 +477,28 @@ class FSDPModelManager:
 
         params_actor = []
         params_critic = []
+        actor_no_decay = []
+        critic_no_decay = []
+
+        model_type = get_supported_model(self._cfg.model.get("model_type", "").lower())
+        use_hf_decay_grouping = model_type == SupportedModel.DREAMZERO_SFT
+
+        decay_parameters = set()
+        if use_hf_decay_grouping:
+            layernorm_layers = [
+                torch.nn.LayerNorm,
+                torch.nn.GroupNorm,
+                torch.nn.InstanceNorm1d,
+                torch.nn.InstanceNorm2d,
+                torch.nn.InstanceNorm3d,
+                torch.nn.LocalResponseNorm,
+                torch.nn.BatchNorm1d,
+                torch.nn.BatchNorm2d,
+                torch.nn.BatchNorm3d,
+                torch.nn.SyncBatchNorm,
+            ]
+            decay_parameters = set(get_parameter_names(model, layernorm_layers))
+            decay_parameters = {name for name in decay_parameters if "bias" not in name}
 
         if enable_critic_warmup:
             self._logger.info("[FSDP] Enable critic warmup for value head.")
@@ -470,10 +515,16 @@ class FSDPModelManager:
                 if name in self.store_requires_grad_param_name:
                     param.requires_grad = True
                 if param.requires_grad:
+                    target_params = params_actor
+                    target_no_decay = actor_no_decay
                     if "value_head" in name or "model.value_head" in name:
-                        params_critic.append(param)
+                        target_params = params_critic
+                        target_no_decay = critic_no_decay
+
+                    if use_hf_decay_grouping and name not in decay_parameters:
+                        target_no_decay.append(param)
                     else:
-                        params_actor.append(param)
+                        target_params.append(param)
 
         param_groups = []
         if len(params_actor) > 0:
@@ -482,6 +533,16 @@ class FSDPModelManager:
                     "params": params_actor,
                     "lr": self._cfg.optim.lr,
                     "betas": betas,
+                    "weight_decay": weight_decay,
+                }
+            )
+        if len(actor_no_decay) > 0:
+            param_groups.append(
+                {
+                    "params": actor_no_decay,
+                    "lr": self._cfg.optim.lr,
+                    "betas": betas,
+                    "weight_decay": 0.0,
                 }
             )
         if len(params_critic) > 0:
@@ -490,12 +551,22 @@ class FSDPModelManager:
                     "params": params_critic,
                     "lr": self._cfg.optim.value_lr,
                     "betas": betas,
+                    "weight_decay": weight_decay,
+                }
+            )
+        if len(critic_no_decay) > 0:
+            param_groups.append(
+                {
+                    "params": critic_no_decay,
+                    "lr": self._cfg.optim.value_lr,
+                    "betas": betas,
+                    "weight_decay": 0.0,
                 }
             )
         optimizer = torch.optim.AdamW(
             param_groups,
             eps=adam_eps,
-            weight_decay=weight_decay,
+            weight_decay=0.0,
         )
 
         # run optimizer empty step to initialize optimizer.state
