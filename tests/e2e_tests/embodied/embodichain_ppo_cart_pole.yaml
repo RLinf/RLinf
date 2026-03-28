@@ -24,7 +24,7 @@ runner:
     log_path: /workspace/results/embodichain_ppo_cart_pole
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["wandb"]
+    logger_backends: ["tensorboard"]
 
   max_epochs: 1
   max_steps: -1

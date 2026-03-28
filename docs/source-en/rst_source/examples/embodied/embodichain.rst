@@ -155,8 +155,10 @@ path explicitly:
    export EMBODICHAIN_PATH=/path/to/EmbodiChain
 
 The helper launcher ``examples/embodiment/run_embodiment.sh`` defaults
-``EMBODICHAIN_PATH`` to ``$HOME/workspace/research/EmbodiChain`` if it is not
-set, so adjust it if your checkout lives elsewhere.
+``EMBODICHAIN_PATH`` to ``/path/to/EmbodiChain`` if it is not set. Set it to your real
+EmbodiChain checkout, or use ``bash requirements/install.sh embodied --env
+embodichain`` so ``EMBODICHAIN_PATH`` is written into your virtual environment
+``activate`` script.
 
 Quick Start
 -----------
