@@ -83,11 +83,9 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     data_config = actor_train_config.data.create(
         actor_train_config.assets_dirs, actor_model_config
     )
-    norm_stats = None
-    if norm_stats is None:
-        if data_config.asset_id is None:
-            raise ValueError("Asset id is required to load norm stats.")
-        norm_stats = _checkpoints.load_norm_stats(checkpoint_dir, data_config.asset_id)
+    if data_config.asset_id is None:
+        raise ValueError("Asset id is required to load norm stats.")
+    norm_stats = _checkpoints.load_norm_stats(checkpoint_dir, data_config.asset_id)
 
     # wrappers
     repack_transforms = transforms.Group()

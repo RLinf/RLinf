@@ -93,6 +93,7 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         self.data_loader, self.eval_data_loaders, self.data_config = (
             self.build_dataloader()
         )
+        self.data_iter = iter(self.data_loader)
 
     # -----------------------------------------------------------------------
     # Worker interface

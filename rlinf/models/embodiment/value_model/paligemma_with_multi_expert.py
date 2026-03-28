@@ -47,9 +47,8 @@ def check_transformers_replace():
             "ERROR: transformers_replace is NOT installed!\n"
             "=" * 70 + "\n\n"
             "PI0.5 requires custom AdaRMS modifications in transformers.\n\n"
-            "Run this command from the project root:\n\n"
-            "    cp -r ./rlinf/models/embodiment/value_model/openpi/transformers_replace/* \\\n"
-            "        $(python -c 'import transformers; import os; print(os.path.dirname(transformers.__file__))')/\n\n"
+            "Please reinstall the openpi environment which patches transformers:\n\n"
+            "    bash requirements/install.sh embodied --model openpi --env <your_env>\n\n"
             + "="
             * 70
         )

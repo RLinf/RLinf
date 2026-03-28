@@ -92,7 +92,7 @@ actor:
   model:
     precision: bf16
     siglip_path: "/path/to/siglip"
-    gemma3_path: "path/to/gemma3"
+    gemma3_path: "/path/to/gemma3"
     tokenizer_path: "/path/to/gemma/tokenizer"
     freeze_vlm: false
     action_dim: 7
