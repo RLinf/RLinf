@@ -15,7 +15,7 @@
 import numpy as np
 import torch
 
-from rlinf.config import SupportedModel
+from rlinf.config import SupportedModel, get_supported_model
 from rlinf.envs import SupportedEnvType
 
 
@@ -68,7 +68,7 @@ def prepare_actions_for_libero(
     model_type,
 ) -> np.ndarray:
     chunk_actions = raw_chunk_actions
-    if SupportedModel(model_type) in [
+    if get_supported_model(model_type) in [
         SupportedModel.OPENVLA,
         SupportedModel.OPENVLA_OFT,
     ]:
@@ -90,7 +90,7 @@ def prepare_actions_for_isaaclab(
         if isinstance(raw_chunk_actions, np.ndarray)
         else raw_chunk_actions
     )
-    if SupportedModel(model_type) in [
+    if get_supported_model(model_type) in [
         SupportedModel.OPENVLA,
         SupportedModel.OPENVLA_OFT,
     ]:
@@ -104,7 +104,7 @@ def prepare_actions_for_calvin(
     model_type,
 ) -> np.ndarray:
     chunk_actions = raw_chunk_actions
-    if SupportedModel(model_type) == SupportedModel.OPENPI:
+    if get_supported_model(model_type) == SupportedModel.OPENPI:
         chunk_actions[..., -1] = np.sign(chunk_actions[..., -1])
     else:
         chunk_actions[..., -1] = np.where(chunk_actions[..., -1] > 0, 1, -1)
@@ -116,7 +116,7 @@ def prepare_actions_for_metaworld(
     model_type,
 ) -> np.ndarray:
     chunk_actions = raw_chunk_actions
-    if SupportedModel(model_type) in [
+    if get_supported_model(model_type) in [
         SupportedModel.OPENVLA,
         SupportedModel.OPENVLA_OFT,
     ]:
@@ -178,7 +178,7 @@ def prepare_actions_for_mujoco(raw_chunk_actions, model_type):
         )
     else:
         chunk_actions = raw_chunk_actions[..., :4]
-    if SupportedModel(model_type) == SupportedModel.OPENPI:
+    if get_supported_model(model_type) == SupportedModel.OPENPI:
         chunk_actions[..., -1] = np.clip(chunk_actions[..., -1], -1.0, 1.0)
     return chunk_actions
 
@@ -255,6 +255,6 @@ def prepare_actions(
             model_type=model_type,
         )
     else:
-        raise NotImplementedError
+        chunk_actions = raw_chunk_actions
 
     return chunk_actions

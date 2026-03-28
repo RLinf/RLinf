@@ -22,7 +22,7 @@ import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
 
-from rlinf.config import SupportedModel
+from rlinf.config import SupportedModel, get_supported_model
 from rlinf.data.embodied_buffer_dataset import (
     PreloadReplayBufferDataset,
     ReplayBufferDataset,
@@ -362,7 +362,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
 
         with torch.no_grad():
             kwargs = {}
-            if SupportedModel(self.cfg.actor.model.model_type) in [
+            if get_supported_model(self.cfg.actor.model.model_type) in [
                 SupportedModel.OPENVLA,
                 SupportedModel.OPENVLA_OFT,
             ]:

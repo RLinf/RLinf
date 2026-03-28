@@ -21,7 +21,7 @@ from typing import Any
 import torch
 from omegaconf import DictConfig
 
-from rlinf.config import SupportedModel
+from rlinf.config import SupportedModel, get_supported_model
 from rlinf.hybrid_engines.fsdp.utils import generate_with_kv_cache
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
@@ -86,7 +86,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         return tokenizer
 
     def build_dataloader(self, data_paths: list[str], eval_dataset: bool = False):
-        if SupportedModel(self.cfg.actor.model.model_type) in [
+        if get_supported_model(self.cfg.actor.model.model_type) in [
             SupportedModel.QWEN2_5_VL_SFT,
             SupportedModel.QWEN3_VL_SFT,
             SupportedModel.QWEN3_VL_MOE_SFT,
@@ -183,7 +183,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         return ans or None
 
     def _extract_answer(self, text: str) -> str:
-        if SupportedModel(self.cfg.actor.model.model_type) not in [
+        if get_supported_model(self.cfg.actor.model.model_type) not in [
             SupportedModel.QWEN2_5_VL_SFT,
             SupportedModel.QWEN3_VL_SFT,
             SupportedModel.QWEN3_VL_MOE_SFT,

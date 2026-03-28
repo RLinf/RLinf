@@ -72,11 +72,60 @@ class SupportedModel(Enum):
         return obj
 
 
-def get_supported_model(model_type: str) -> SupportedModel:
+@dataclasses.dataclass(frozen=True)
+class RegisteredModel:
+    value: str
+    category: str
+
+
+_CUSTOM_SUPPORTED_MODELS: dict[str, RegisteredModel] = {}
+
+
+def register_supported_model(
+    model_type: str, category: str, force: bool = False
+) -> RegisteredModel:
+    if not model_type:
+        raise ValueError("model_type must be a non-empty string.")
+    if category not in {"reasoning", "embodied", "sft"}:
+        raise ValueError(
+            f"Unsupported model category: {category}. "
+            "Expected one of ['reasoning', 'embodied', 'sft']."
+        )
+    try:
+        built_in_model = SupportedModel(model_type)
+    except ValueError:
+        built_in_model = None
+
+    if built_in_model is not None:
+        if built_in_model.category != category:
+            raise ValueError(
+                f"Model type `{model_type}` is a built-in model with category "
+                f"`{built_in_model.category}`, got `{category}`."
+            )
+        return RegisteredModel(
+            value=built_in_model.value, category=built_in_model.category
+        )
+
+    if not force and model_type in _CUSTOM_SUPPORTED_MODELS:
+        raise ValueError(
+            f"Model type `{model_type}` is already registered. "
+            "Set force=True to override it."
+        )
+    model = RegisteredModel(value=model_type, category=category)
+    _CUSTOM_SUPPORTED_MODELS[model_type] = model
+    return model
+
+
+def get_supported_model(model_type: str) -> Union[SupportedModel, RegisteredModel]:
     try:
         return SupportedModel(model_type)
     except ValueError as err:
-        supported_models = [e.value for e in SupportedModel]
+        custom_model = _CUSTOM_SUPPORTED_MODELS.get(model_type)
+        if custom_model is not None:
+            return custom_model
+        supported_models = sorted(
+            set([e.value for e in SupportedModel] + list(_CUSTOM_SUPPORTED_MODELS))
+        )
         raise NotImplementedError(
             f"Model Type: {model_type} not supported. Supported models: {supported_models}"
         ) from err
