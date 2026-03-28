@@ -48,7 +48,7 @@ This process requires a **data processing and model training pipeline** with 5 s
 │                      │  Input: Stage 1 datasets + Stage 2 value checkpoint
 │                      │  Output: meta/advantages_{tag}.parquet (True/False label per sample)
 └──────────┬───────────┘
-           │  Stage 4/5 need advantage labels for positive/negative guidance
+           │  Stage 4 needs advantage labels for positive/negative guidance
            │
 ┌──────────▼───────────┐
 │ Stage 4              │
@@ -56,14 +56,6 @@ This process requires a **data processing and model training pipeline** with 5 s
 │                      │  Input: Stage 1 datasets + Stage 3 advantage labels + base model
 │                      │  Output: CFG action model checkpoint (SafeTensors)
 └──────────┬───────────┘
-           │  Stage 5 uses Stage 4's CFG model for full RL debugging
-           │  (can also run independently with base model)
-┌──────────▼───────────┐
-│ Stage 5 (optional)   │
-│ Debug One-Iter       │  Full pi06 RL loop debugging (offline mode, with env evaluation)
-│                      │  Input: Stage 3 advantage labels + base model
-│                      │  Output: Trained checkpoint
-└──────────────────────┘
 ```
 
 ### Inter-stage Data Dependencies
@@ -73,7 +65,6 @@ This process requires a **data processing and model training pipeline** with 5 s
 | **Stage 1 → Stage 2** | Stage 2 reads the `return` column from `meta/returns_{tag}.parquet` as value model training targets. Returns are computed via backward accumulation `G_t = r_t + gamma * G_{t+1}`, representing cumulative reward from the current timestep to episode end |
 | **Stage 2 → Stage 3** | Stage 3 loads the value model trained in Stage 2, infers `V(s_t)` and `V(s_{t+N})` for each state, and computes TD(N) advantage: `A = reward_sum + gamma^N * V(s_{t+N}) - V(s_t)`. Samples with advantage above threshold (default top 20%) are labeled `advantage=True` (positive), rest as `False` (negative). **All SFT dataset samples are forced to `advantage=True`** |
 | **Stage 3 → Stage 4** | Stage 4's CFG training core selects guidance prompts based on the `advantage` label. `True` samples use `[POSITIVE][POSITIVE]\nTask: ...` as condition, `False` samples use `[NEGATIVE][NEGATIVE]\nTask: ...`. The model learns to distinguish good/bad action distributions through this conditioning |
-| **Stage 3 → Stage 5** | Stage 5 is offline debugging of the full RL loop, also requiring advantage labels to drive CFG training |
 
 ### Tag System
 
@@ -97,7 +88,6 @@ The pipeline uses two types of tags for returns and advantages, flowing through 
 | Stage 3 | `advantage.returns_tag` | returns_tag (same as Stage 1) | Reads `meta/returns_{tag}.parquet` |
 | Stage 3 | `advantage.tag` | advantage_tag (e.g. `fail300_N5_ckpt18000_q20`) | Writes `meta/advantages_{tag}.parquet` |
 | Stage 4 | `data.tag` | advantage_tag (same as Stage 3) | Reads `meta/advantages_{tag}.parquet` |
-| Stage 5 | `data.tag` | advantage_tag (same as Stage 3) | Reads `meta/advantages_{tag}.parquet` |
 
 ### Dataset Types
 
@@ -139,11 +129,6 @@ Both are processed together in all stages.
 | `rlinf/workers/cfg/fsdp_cfg_worker.py` | FSDP CFG training worker |
 | `rlinf/workers/cfg/utils.py` | `DatasetWithAdvantage` — injects advantage labels into samples |
 | `rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf.sh` | Action model checkpoint conversion script |
-| **Stage 5** | |
-| `examples/embodiment/train_debug_one_iter.py` | Debug one-iter entry |
-| `examples/embodiment/run_debug_one_iter.sh` | Stage 5 launcher |
-| `rlinf/runners/debug_pi06_runner.py` | `DebugPi06Runner` — offline RL training loop |
-| `rlinf/workers/actor/debug_fsdp_actor_worker_cfg.py` | `DebugCFGFSDPActor` — offline CFG actor |
 
 ---
 
@@ -382,63 +367,6 @@ ls /tmp/step4_ckpt/*.safetensors && echo "Stage 4 PASS"
 
 ---
 
-### Stage 5 (optional): Debug One-Iter
-
-**Purpose**: Validate the full pi06 RL training loop — including actor initialization, advantage dataset loading, offline training, and environment evaluation. Suitable for simulation environments (e.g., LIBERO).
-
-**Config** (`examples/embodiment/config/one_iter_debug_libero10.yaml`):
-```yaml
-cluster:
-  component_placement:
-    env, rollout, actor: all
-
-data:
-  tag: "fail300_N10_ckpt18000_q20"    # <- Must match Stage 3's advantage.tag
-  train_data_paths:
-    - path: /path/to/sft_dataset
-      weight: 1.0
-    - path: /path/to/rollout_dataset
-      weight: 1.0
-  balance_dataset_weights: true
-
-runner:
-  offline_training_step: 50000   # Number of offline training steps
-  val_check_interval: 2000       # Env evaluation interval (-1 = no evaluation)
-  save_interval: 6000
-
-actor:
-  micro_batch_size: 64
-  global_batch_size: 1024
-  model:
-    model_path: /path/to/pi05_base_pytorch
-    model_type: cfg_model
-    openpi:
-      config_name: "pi05_libero"
-      unconditional_prob: 0.1
-      cfgrl_guidance_scale: 1.0
-      guidance_type: positive
-```
-
-**Launch**:
-```bash
-bash examples/embodiment/run_debug_one_iter.sh one_iter_debug_libero10
-```
-
-**Convert checkpoint**:
-```bash
-LATEST_LOG=$(ls -td logs/debug_one_iter_debug_libero10-* | head -1)
-CKPT_DIR="${LATEST_LOG}/debug_pi06_from_lerobot/checkpoints/global_step_6000/actor/model_state_dict"
-ln -sfn "${CKPT_DIR}" /tmp/step5_ckpt
-
-bash rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf.sh fsdp_model_convertor \
-    convertor.ckpt_path=/tmp/step5_ckpt/full_weights.pt \
-    convertor.save_path=/tmp/step5_ckpt \
-    model.model_path=/path/to/pi05_base_pytorch \
-    model.openpi.config_name=pi05_libero
-```
-
----
-
 ### Quick Reference: Sequential Execution
 
 ```bash
@@ -465,7 +393,4 @@ ln -sfn "$CKPT" /tmp/step4_ckpt
 bash rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf.sh fsdp_model_convertor \
     convertor.ckpt_path=/tmp/step4_ckpt/full_weights.pt convertor.save_path=/tmp/step4_ckpt \
     model.model_path=/path/to/pi05_base_pytorch model.openpi.config_name=pi05_libero
-
-# Stage 5 (optional): Debug One-Iter
-bash examples/embodiment/run_debug_one_iter.sh one_iter_debug_libero10
 ```

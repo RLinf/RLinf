@@ -14,8 +14,7 @@
 
 """Shared utilities for CFG (Classifier-Free Guidance) workers.
 
-Contains data loading and dataset wrapper classes used by both FSDPCfgWorker
-and DebugCFGFSDPActor to avoid code duplication.
+Contains data loading and dataset wrapper classes used by FSDPCfgWorker.
 """
 
 from __future__ import annotations
