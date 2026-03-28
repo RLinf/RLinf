@@ -1,0 +1,84 @@
+env_type: realworld
+
+total_num_envs: 1
+
+auto_reset: False
+ignore_terminations: False
+reward_mode: raw
+wrap_obs_mode: simple
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+max_steps_per_rollout_epoch: 300
+max_episode_steps: 300
+use_spacemouse: False
+no_gripper: False
+main_image_key: wrist_1
+
+video_cfg:
+  save_video: True
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/eval
+
+init_params:
+  id: "FrankaEnv-v1"
+  num_envs: null
+
+override_cfg:
+  is_dummy: false
+  # Replace with your task description.
+  task_description: "pick up the object and place it into the container"
+  # Replace with your goal pose [x, y, z, rx, ry, rz] used by success checking and orientation clipping.
+  target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
+  # Replace with your reset pose [x, y, z, rx, ry, rz]. Keep it above the target for a safe approach.
+  reset_ee_pose: [0.5, 0.0, 0.2, -3.14, 0.0, 0.0]
+  max_num_steps: 300
+  # Position success tolerance [x, y, z, rx, ry, rz]. FrankaEnv currently checks xyz.
+  reward_threshold: [0.01, 0.01, 0.01, 0.2, 0.2, 0.2]
+  # Disable extra gripper penalties for rollout-only evaluation.
+  enable_gripper_penalty: false
+  # [xyz delta scale, rpy delta scale, gripper scale]. Keep 1.0 for Pi0 realworld actions.
+  action_scale: [1.0, 1.0, 1.0]
+  # Replace with your workspace clip box [x, y, z, rx, ry, rz] used by FrankaEnv._clip_position_to_safety_box().
+  ee_pose_limit_min: [0.4, -0.2, 0.05, -3.64, -0.5, -0.5]
+  ee_pose_limit_max: [0.6, 0.2, 0.35, -2.64, 0.5, 0.5]
+  # Compliance controller parameters for normal motion.
+  compliance_param:
+    translational_stiffness: 2000
+    translational_damping: 89
+    rotational_stiffness: 150
+    rotational_damping: 7
+    translational_Ki: 0
+    translational_clip_x: 0.003
+    translational_clip_y: 0.003
+    translational_clip_z: 0.01
+    translational_clip_neg_x: 0.003
+    translational_clip_neg_y: 0.003
+    translational_clip_neg_z: 0.01
+    rotational_clip_x: 0.02
+    rotational_clip_y: 0.02
+    rotational_clip_z: 0.02
+    rotational_clip_neg_x: 0.02
+    rotational_clip_neg_y: 0.02
+    rotational_clip_neg_z: 0.02
+    rotational_Ki: 0
+  # Precision controller parameters for fine positioning.
+  precision_param:
+    translational_stiffness: 3000
+    translational_damping: 89
+    rotational_stiffness: 300
+    rotational_damping: 9
+    translational_Ki: 0.1
+    translational_clip_x: 0.01
+    translational_clip_y: 0.01
+    translational_clip_z: 0.01
+    translational_clip_neg_x: 0.01
+    translational_clip_neg_y: 0.01
+    translational_clip_neg_z: 0.01
+    rotational_clip_x: 0.05
+    rotational_clip_y: 0.05
+    rotational_clip_z: 0.05
+    rotational_clip_neg_x: 0.05
+    rotational_clip_neg_y: 0.05
+    rotational_clip_neg_z: 0.05
+    rotational_Ki: 0.1
