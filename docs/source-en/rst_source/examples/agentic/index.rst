@@ -93,3 +93,4 @@ The following examples include math reasoning RL and agentic AI workflows, such 
    reasoning
    reasoning_ppo
    rstar2
+   agentlightning_calc_x

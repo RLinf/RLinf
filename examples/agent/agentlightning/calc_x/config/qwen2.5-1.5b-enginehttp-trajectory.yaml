@@ -1,0 +1,20 @@
+defaults:
+  - base_calc_x
+
+runner:
+  logger:
+    project_name: rlinf-calc-x-qwen2.5-1.5b-enginehttp-trajectory
+  experiment_name: calc-x-agl-qwen2.5-1.5b-enginehttp-trajectory
+  seq_length: 8192
+
+algorithm:
+  advantage_mode: trajectory
+  loss_scales: ["group_level"] # used for multi-turn loss scaling
+
+actor:
+  pack_traj: True
+
+rollout:
+  gpu_memory_utilization: 0.45
+  sglang:
+    serving_mode: worker_http
