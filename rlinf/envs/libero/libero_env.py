@@ -238,7 +238,11 @@ class LiberoEnv(gym.Env):
                     filter_perts = valid_perts
                 elif pro_suffix is not None:
                     # Map bare name (e.g. "task") to directory suffix (e.g. "_task")
-                    normalized = f"_{pro_suffix}" if not pro_suffix.startswith("_") else pro_suffix
+                    normalized = (
+                        f"_{pro_suffix}"
+                        if not pro_suffix.startswith("_")
+                        else pro_suffix
+                    )
                     filter_perts = [normalized] if normalized in valid_perts else []
                 else:
                     filter_perts = []
