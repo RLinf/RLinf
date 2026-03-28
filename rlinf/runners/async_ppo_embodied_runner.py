@@ -113,6 +113,7 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         self.rollout.set_global_step(self.global_step).wait()
         self.update_rollout_weights()
 
+        self.env.warmup()
         env_handle: Handle = self.env.interact(
             input_channel=self.rollout_channel,
             output_channel=self.env_channel,

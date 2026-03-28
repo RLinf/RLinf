@@ -673,10 +673,10 @@ class EnvWorker(Worker):
         ]
         env_metrics = defaultdict(list)
 
-        for epoch in range(self.rollout_epoch):
-            env_outputs = self.bootstrap_step()
+        if self.rollout_epoch > 0:
+            epoch = 0
             for stage_id in range(self.stage_num):
-                env_output: EnvOutput = env_outputs[stage_id]
+                env_output: EnvOutput = self.env_outputs[stage_id]
                 env_batch = env_output.to_dict()
                 self.send_env_batch(
                     output_channel,
@@ -691,7 +691,7 @@ class EnvWorker(Worker):
                     if cooperative_yield:
                         await asyncio.sleep(0)
 
-                    env_output = env_outputs[stage_id]
+                    env_output = self.env_outputs[stage_id]
                     curr_obs = env_output.obs
                     if env_output.intervene_actions is not None:
                         self.rollout_results[stage_id].update_last_actions(
@@ -747,11 +747,11 @@ class EnvWorker(Worker):
                             curr_obs, next_obs
                         )
 
-                    env_outputs[stage_id] = env_output
+                    self.env_outputs[stage_id] = env_output
                     self.record_env_metrics(env_metrics, env_info, epoch)
 
             for stage_id in range(self.stage_num):
-                env_output = env_outputs[stage_id]
+                env_output = self.env_outputs[stage_id]
                 if env_output.intervene_actions is not None:
                     self.rollout_results[stage_id].update_last_actions(
                         env_output.intervene_actions,
@@ -773,7 +773,110 @@ class EnvWorker(Worker):
                 )
                 self.rollout_results[stage_id].append_step_result(chunk_step_result)
 
-            self.store_last_obs_and_intervened_info(env_outputs)
+            self.store_last_obs_and_intervened_info(self.env_outputs)
+            self.finish_rollout()
+
+        for epoch in range(1, self.rollout_epoch):
+            self.env_outputs = self.bootstrap_step()
+            for stage_id in range(self.stage_num):
+                env_output: EnvOutput = self.env_outputs[stage_id]
+                env_batch = env_output.to_dict()
+                self.send_env_batch(
+                    output_channel,
+                    {
+                        "obs": env_batch["obs"],
+                        "final_obs": env_batch["final_obs"],
+                    },
+                )
+
+            for _ in range(self.n_train_chunk_steps):
+                for stage_id in range(self.stage_num):
+                    if cooperative_yield:
+                        await asyncio.sleep(0)
+
+                    env_output = self.env_outputs[stage_id]
+                    curr_obs = env_output.obs
+                    if env_output.intervene_actions is not None:
+                        self.rollout_results[stage_id].update_last_actions(
+                            env_output.intervene_actions,
+                            env_output.intervene_flags,
+                        )
+
+                    rollout_result = self.recv_rollout_results(
+                        input_channel, mode="train"
+                    )
+                    rewards = self.compute_bootstrap_rewards(
+                        env_output, rollout_result.bootstrap_values
+                    )
+                    chunk_step_result = ChunkStepResult(
+                        actions=rollout_result.forward_inputs.get("action", None),
+                        prev_logprobs=rollout_result.prev_logprobs
+                        if self.collect_prev_infos
+                        else None,
+                        prev_values=rollout_result.prev_values
+                        if self.collect_prev_infos
+                        else None,
+                        forward_inputs=rollout_result.forward_inputs,
+                        versions=rollout_result.versions,
+                        dones=env_output.dones,
+                        truncations=env_output.truncations,
+                        terminations=env_output.terminations,
+                        rewards=rewards,
+                    )
+                    self.rollout_results[stage_id].append_step_result(chunk_step_result)
+                    if rollout_result.save_flags is not None:
+                        self.rollout_results[stage_id].mark_last_step_with_flags(
+                            rollout_result.save_flags
+                        )
+
+                    env_output, env_info = self.env_interact_step(
+                        rollout_result.actions, stage_id
+                    )
+                    env_batch = env_output.to_dict()
+                    self.send_env_batch(
+                        output_channel,
+                        {
+                            "obs": env_batch["obs"],
+                            "final_obs": env_batch["final_obs"],
+                        },
+                    )
+                    if self.collect_transitions:
+                        next_obs = (
+                            env_output.final_obs
+                            if env_output.dones.any() and self.cfg.env.train.auto_reset
+                            else env_output.obs
+                        )
+                        self.rollout_results[stage_id].append_transitions(
+                            curr_obs, next_obs
+                        )
+
+                    self.env_outputs[stage_id] = env_output
+                    self.record_env_metrics(env_metrics, env_info, epoch)
+
+            for stage_id in range(self.stage_num):
+                env_output = self.env_outputs[stage_id]
+                if env_output.intervene_actions is not None:
+                    self.rollout_results[stage_id].update_last_actions(
+                        env_output.intervene_actions,
+                        env_output.intervene_flags,
+                    )
+
+                rollout_result = self.recv_rollout_results(input_channel, mode="train")
+                rewards = self.compute_bootstrap_rewards(
+                    env_output, rollout_result.bootstrap_values
+                )
+                chunk_step_result = ChunkStepResult(
+                    prev_values=rollout_result.prev_values
+                    if self.collect_prev_infos
+                    else None,
+                    dones=env_output.dones,
+                    truncations=env_output.truncations,
+                    terminations=env_output.terminations,
+                    rewards=rewards,
+                )
+                self.rollout_results[stage_id].append_step_result(chunk_step_result)
+
+            self.store_last_obs_and_intervened_info(self.env_outputs)
             self.finish_rollout()
 
         if actor_channel is not None:
@@ -786,6 +889,9 @@ class EnvWorker(Worker):
             env_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
 
         return env_metrics
+
+    def warmup(self):
+        self.env_outputs = self.bootstrap_step()
 
     @Worker.timer("interact")
     async def interact(

@@ -138,6 +138,7 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         start_time = time.time()
         self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
 
+        self.env.warmup()
         env_handle: Handle = self.env.interact(
             input_channel=self.rollout_channel,
             output_channel=self.env_channel,
