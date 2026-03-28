@@ -23,7 +23,7 @@ runner:
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1
-  max_steps: 200
+  max_steps: -1
 
   val_check_interval: 25
   save_interval: 25
@@ -34,7 +34,7 @@ runner:
   max_tokens_per_mbs: 11008
 
   resume_dir: null
-  experiment_name: mas-search-qwen2.5-3b-tool-1node
+  experiment_name: searchr1-grpo-qwen2.5-3b-ins
   output_dir: ../results
 
 
@@ -68,7 +68,8 @@ algorithm:
   clip_ratio_high: null # if null or not set, will use ratio_clip_eps
 
   adv_type: grpo_dynamic
-  advantage_mode: turn # "trajectory" for trajectory-level GRPO, "turn" for turn-level GRPO
+  loss_scales: ["group_level", "agent_level", "turn_level"] # used for implementing our GRPO alg. Details in `rlinf/algorithms/loss_scales.py`
+  advantage_mode: trajectory
   normalize_advantages: False
   early_stop_imp_ratio: 5.0
   use_valid_token_scale: False
@@ -82,13 +83,14 @@ algorithm:
     repetition_penalty: 1.0
     max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
     min_new_tokens: 1
+    stop: ["</search>","?</search>","?</search>\n","?</search>\n\n","?</search><","?</search><\n","</search>\n","</search>\n\n","</search><","</search><\n","</search><think>","</search><|","</answer>","</answer><","</answer><think>","</answer>\n","</answer>\n\n","<|im_end|>"]
 
 
 data:
   type: math
   max_prompt_length: 4096
   filter_prompt_by_length: True
-  rollout_batch_size: 256
+  rollout_batch_size: 512
   val_rollout_batch_size: null
   num_workers: 2
   prompt_key: prompt
@@ -97,12 +99,12 @@ data:
   shuffle: True
   validation_shuffle: True
   seed: 1234
-  train_data_paths: ["/path/to/data/train.jsonl"]
-  data_size: -1
+  train_data_paths: ["/path/to/data/searchr1_train.jsonl"]
 
 
 agentloop:
   group_name: "AgentLoopGroup"
+  toolcall_parser: "searchr1-qwen"
   max_turns: 2
   max_tool_response_length: 500
   tool_response_truncate_side: "right"
@@ -176,7 +178,8 @@ actor:
   enable_dp_load_balance: True
   calculate_flops: False
   seed: 1234
-
+  
+  pack_traj: True
   # megatron config
   mcore_gpt: True
   spec_name: decoder_gpt

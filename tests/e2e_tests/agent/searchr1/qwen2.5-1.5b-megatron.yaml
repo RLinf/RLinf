@@ -67,7 +67,9 @@ algorithm:
   clip_ratio_low: null # if null or not set, will use ratio_clip_eps
   clip_ratio_high: null # if null or not set, will use ratio_clip_eps
 
-  adv_type: grpo
+  adv_type: grpo_dynamic
+  loss_scales: ["group_level", "agent_level", "turn_level"] # used for implementing our GRPO alg. Details in `rlinf/algorithms/loss_scales.py`
+  advantage_mode: trajectory
   normalize_advantages: False
   early_stop_imp_ratio: 5.0
   use_valid_token_scale: False
@@ -103,10 +105,11 @@ data:
 agentloop:
   group_name: "AgentLoopGroup"
   toolcall_parser: "searchr1-qwen"
-  maxturn: 2
+  max_turns: 2
   max_tool_response_length: 500
   tool_response_truncate_side: "right"
   print_outputs: False
+  is_dynamic_rollout_batch: True
 
 
 # Tools configuration for AgentLoop
@@ -174,10 +177,11 @@ reward:
 actor:
   group_name: "ActorGroup"
   training_backend: megatron
-  enable_dp_load_balance: False
+  enable_dp_load_balance: True
   calculate_flops: False
   seed: 1234
-
+  
+  pack_traj: True
   # megatron config
   mcore_gpt: True
   spec_name: decoder_gpt

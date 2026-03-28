@@ -10,4 +10,4 @@ export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 
 CONFIG_NAME=$1
 
-python ${REPO_PATH}/examples/agent/searchr1/main_searchr1.py --config-path ${REPO_PATH}/tests/e2e_tests/agent/searchr1  --config-name $CONFIG_NAME
+python ${REPO_PATH}/examples/agent/searchr1/train.py --config-path ${REPO_PATH}/tests/e2e_tests/agent/searchr1  --config-name $CONFIG_NAME

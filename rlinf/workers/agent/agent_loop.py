@@ -541,7 +541,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
                 for k in self.extra_keys_traj:
                     v = task_result.extra_fields.get(k, None)
                     extra_fields_traj[k].append(v)
-        return extra_fields_turn, extra_fields_traj, None, None
+        return extra_fields_turn, extra_fields_traj, None, {}
 
     def post_process_metric(self, agent_metrics_list: list[dict]):
         """Merge per-query metrics, including weighted stats across workers.
@@ -563,41 +563,28 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         if len(agent_metrics_list) == 0:
             return {}
 
-        all_keys = set()
+        all_keys: set[str] = set()
         for metric_dict in agent_metrics_list:
             all_keys.update(metric_dict.keys())
 
-        visible_keys = sorted(k for k in all_keys if not k.startswith("__stat/"))
         whole_metrics = {}
-        for k in visible_keys:
-            sum_key = f"__stat/sum/{k}"
-            cnt_key = f"__stat/count/{k}"
-            has_weighted_stat = any(
-                (sum_key in metric_dict) or (cnt_key in metric_dict)
-                for metric_dict in agent_metrics_list
-            )
-
-            if has_weighted_stat:
-                weighted_sum = sum(
-                    float(metric_dict[sum_key]) for metric_dict in agent_metrics_list
-                )
-                weighted_cnt = sum(
-                    float(metric_dict[cnt_key]) for metric_dict in agent_metrics_list
-                )
-                whole_metrics[k] = (
-                    weighted_sum / weighted_cnt if weighted_cnt > 0 else 0.0
-                )
-                continue
-
-            values_list = [
-                metric_dict[k] for metric_dict in agent_metrics_list if k in metric_dict
-            ]
-            if len(values_list) == 0:
-                continue
-            if "/max/" in k:
-                whole_metrics[k] = max(values_list)
+        stat_methods = {
+            "__sum__/": sum,
+            "__max__/": max,
+            "__min__/": min,
+            "__mean__/": lambda x: sum(i[0] for i in x) / sum(i[1] for i in x),
+        }
+        for key in all_keys:
+            for stat_key in stat_methods:
+                if key.startswith(stat_key):
+                    real_key = key[len(stat_key) :]
+                    break
             else:
-                whole_metrics[k] = sum(values_list) / len(values_list)
+                stat_key, real_key = None, None
+            if stat_key is not None:
+                values = [metric_dict[key] for metric_dict in agent_metrics_list]
+                whole_metrics[real_key] = stat_methods[stat_key](values)
+
         return whole_metrics
 
     def get_rollout_metrics(
@@ -678,6 +665,76 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             extra_fields_train=extra_fields_train,
         )
 
+    async def pre_process_query(self, prompt_ids: list[int]) -> dict[str, Any]:
+        raise NotImplementedError("pre_process_query is not implemented")
+
+    async def post_process_query(
+        self, generate_context: dict[str, Any], output: MultiAgentLoopOutput
+    ) -> dict[str, Any]:
+        raise NotImplementedError("post_process_query is not implemented")
+
+    async def run_one_query_turn(
+        self,
+        output_buffer: list[AgentLoopOutput],
+        generate_context: dict[str, Any],
+        trace_prints: list[dict],
+        problem_prompt_ids: list[int],
+        turn_prompt_ids: list[int],
+    ):
+        (
+            is_continue,
+            llm_response_ids,
+            llm_response_text,
+            llm_output,
+        ) = await self.generate_llm_response(
+            generate_context,
+            trace_prints,
+            problem_prompt_ids,
+            turn_prompt_ids,
+        )
+
+        if llm_output is not None:
+            output_buffer.append(llm_output)
+
+        if not is_continue:
+            return False, None
+
+        (
+            is_continue,
+            next_turn_prompt_ids,
+        ) = await self.generate_tool_response(
+            generate_context,
+            trace_prints,
+            problem_prompt_ids,
+            turn_prompt_ids,
+            llm_response_ids,
+            llm_response_text,
+        )
+
+        return is_continue, next_turn_prompt_ids
+
     async def run_one_query(self, *args, **kwargs) -> MultiAgentLoopOutput:
-        """Run one query and return a multi-turn output (subclass must implement)."""
-        raise NotImplementedError("Subclasses must implement this method")
+        prompt_ids, generate_context = await self.pre_process_query(*args, **kwargs)
+        problem_prompt_ids = copy.deepcopy(prompt_ids)
+        output_buffer = []
+        trace_prints = []
+        while True:
+            (
+                is_continue,
+                prompt_ids,
+            ) = await self.run_one_query_turn(
+                output_buffer,
+                generate_context,
+                trace_prints,
+                problem_prompt_ids,
+                prompt_ids,
+            )
+            if not is_continue:
+                break
+
+        output = MultiAgentLoopOutput(
+            single_turn_outputs=output_buffer,
+            trace_prints=trace_prints,
+        )
+
+        return await self.post_process_query(generate_context, output)

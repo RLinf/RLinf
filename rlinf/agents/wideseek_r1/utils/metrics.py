@@ -32,9 +32,7 @@ def _add_weighted_mean_metric(
         numerator: Sum of weighted values.
         denominator: Sum of weights.
     """
-    metrics[key] = float(numerator) / float(denominator) if denominator > 0 else 0.0
-    metrics[f"__stat/sum/{key}"] = float(numerator)
-    metrics[f"__stat/count/{key}"] = float(denominator)
+    metrics[f"__mean__/{key}"] = (float(numerator), float(denominator))
 
 
 def _compute_tool_call_metrics(
