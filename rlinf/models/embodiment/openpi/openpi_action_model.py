@@ -264,9 +264,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             if transpose:
                 # convert from [3,256,256] -> [256,256,3]
                 sample = jax.tree.map(
-                    lambda x: x.transpose(1, 2, 0)
-                    if len(x.shape) == 3 and transpose
-                    else x,
+                    lambda x: (
+                        x.transpose(1, 2, 0) if len(x.shape) == 3 and transpose else x
+                    ),
                     sample,
                 )
             else:
