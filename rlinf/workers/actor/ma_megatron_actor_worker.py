@@ -388,7 +388,7 @@ class MAMegatronActor(MegatronActor):
             batch, rollout_result = self.get_batch(input_channel)
             batches.append(batch)
         batch = DynamicRolloutResult.merge_batches(
-            batches, self.cfg.algorithm.group_size
+            batches, self.group_size
         )
         assert "prev_logprobs" in batch
         # Compute advantages and returns
@@ -415,11 +415,18 @@ class MAMegatronActor(MegatronActor):
             "enable_scale_of_group": False,
             "actor_global_batch_size": (
                 self.cfg.data.rollout_batch_size
-                * self.cfg.algorithm.get("group_size", 1)
+                * self.group_size
                 / self.cfg.algorithm.n_minibatches
             ),
             "data_parallel_world_size": parallel_state.get_data_parallel_world_size(),
         }
+        if self.do_down_sampling:
+            real_batch_size = len(set(batch["idx_to_traj"]))
+            self.log_info(f'batch size after down_sampling: {self.cfg.data.rollout_batch_size * self.group_size} -> {real_batch_size}')
+            scale_context["actor_global_batch_size"] = (
+                real_batch_size
+                / self.cfg.algorithm.n_minibatches
+            )
         for loss_scale_fn in self.loss_scale_fns:
             batch = loss_scale_fn(scale_context, batch)
         if self.pack_traj:
@@ -691,7 +698,7 @@ class MAMegatronActor(MegatronActor):
                     rewards=batch["rewards"].cuda(),
                     loss_mask=mask.cuda(),
                     num_sequence=len(batch["input_ids"]),
-                    group_size=self.cfg.algorithm.group_size,
+                    group_size=self.group_size,
                     idx_to_traj=batch["idx_to_traj"],
                     kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
                     kl_penalty_type=self.kl_penalty_type,

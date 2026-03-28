@@ -169,14 +169,10 @@ class MegatronWorker(MegatronModelManager, Worker):
             * self.cfg.algorithm.group_size
             // parallel_state.get_data_parallel_world_size()
         )
-        self.do_down_sampling = (
-            self.cfg.algorithm.get("down_sampling", False)
-            and self.cfg.algorithm.down_sampling.do_down_sampling
-        )
+        self.group_size = self.cfg.algorithm.group_size
+        self.do_down_sampling = self.cfg.algorithm.get("down_sampling", {}).get("do_down_sampling", False)
         if self.do_down_sampling:
-            self.down_sampling_config = (
-                self.cfg.algorithm.down_sampling.down_sampling_config
-            )
+            self.group_size = self.cfg.algorithm.down_sampling.down_sampling_config.down_sample_to_n
 
         # Config validation
         if self.is_pipeline:
@@ -1279,9 +1275,7 @@ class MegatronWorker(MegatronModelManager, Worker):
                     rewards=batch["rewards"].cuda(),
                     loss_mask=mask.cuda(),
                     values=prev_values,
-                    group_size=self.down_sampling_config.down_sample_to_n
-                    if self.do_down_sampling
-                    else self.cfg.algorithm.group_size,
+                    group_size=self.group_size,
                     kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
                     kl_penalty_type=self.kl_penalty_type,
                     logprob=prev_logprobs,

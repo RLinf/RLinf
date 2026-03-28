@@ -24,18 +24,27 @@ import datasets
 
 if __name__ == "__main__":
     data_source = "open-r1/DAPO-Math-17k-Processed"
-    dataset = datasets.load_dataset(data_source, "default")
+    dataset = datasets.load_dataset(data_source, "all")
 
     train_dataset = dataset["train"]
 
     # add a row to each data item that represents a unique id
     def make_map_fn(split):
         def process_fn(example, idx):
-            question = example.pop("problem")
-            solution = example.pop("answer")
+            question = example.pop("prompt")
+            solution = example.pop("solution")
             source_prompt = 'Solve the following math problem step by step. The last line of your response should be of the form Answer: $Answer (without quotes) where $Answer is the answer to the problem.\n\n{}\n\nRemember to put your answer on its own line after "Answer:".'.format(
                 question
             )
+
+            for key in [
+                "data_source",
+                "source_prompt",
+                "ability",
+                "reward_model",
+                "extra_info",
+            ]:
+                example.pop(key, None)
 
             data = {
                 "prompt": [
@@ -53,11 +62,8 @@ if __name__ == "__main__":
         return process_fn
 
     train_dataset = train_dataset.map(function=make_map_fn("train"), with_indices=True)
-    local_dir = "dapo"
 
-    os.makedirs(local_dir, exist_ok=True)
-
-    output_file = os.path.join(local_dir, "train.jsonl")
+    output_file = "train.jsonl"
     with open(output_file, "w", encoding="utf-8") as f:
         for item in train_dataset:
             json.dump(item, f, ensure_ascii=False)

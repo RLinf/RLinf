@@ -223,26 +223,26 @@ class AgentRunner(ReasoningRunner):
 
                         if self.recompute_logprobs:
                             # Inference prev/ref logprobs
-                            infer_handle: Handle = self.inference.run_inference(
+                            actor_infer_handle: Handle = self.inference.run_inference(
                                 input_channel=inference_input_channel,
-                                output_channel=self.inference_channel,
+                                output_channel=self.actor_inference_channel,
                                 compute_ref_logprobs=self.compute_ref_logprobs,
                             )
-                            inference_channel = self.inference_channel
+                            actor_inference_channel = self.actor_inference_channel
                         else:
-                            infer_handle = None
-                            inference_channel = inference_input_channel
+                            actor_infer_handle = None
+                            actor_inference_channel = inference_input_channel
 
                         # Actor training, Advantages and returns
                         if self.is_pipeline:
                             agent_metrics = rollout_handle.wait()[0]
                         actor_handle: Handle = self.actor.run_training(
-                            input_channel=inference_channel,
+                            input_channel=actor_inference_channel,
                         )
 
-                        metrics = actor_handle.wait()
-                        actor_rollout_metrics = metrics[0][0]
-                        actor_training_metrics = metrics[0][1]
+                        actor_metrics = actor_handle.wait()
+                        actor_rollout_metrics = actor_metrics[0][0]
+                        actor_training_metrics = actor_metrics[0][1]
                         self.global_steps += 1
 
                         run_time_exceeded = self.run_timer.is_finished()
@@ -275,11 +275,11 @@ class AgentRunner(ReasoningRunner):
                     time_metrics["rollout"] = rollout_handle.consume_duration()
                     if self.reward is not None:
                         time_metrics["reward"] = reward_handle.consume_duration()
-                    if infer_handle is not None:
+                    if actor_infer_handle is not None:
                         # Inference time should be the min time across ranks, because different DP receive the rollout results differently
                         # But at the begin of the pp schedule, there is a timer barrier
                         # This makes all DP end at the same time, while they start at differnt times, and thus only the min time is correct
-                        time_metrics["inference"] = infer_handle.consume_duration(
+                        time_metrics["inference"] = actor_infer_handle.consume_duration(
                             reduction_type="min"
                         )
 
