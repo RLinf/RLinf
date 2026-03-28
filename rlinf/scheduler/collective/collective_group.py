@@ -1036,22 +1036,8 @@ class CollectiveGroup:
             int: -1 means no common device; 0 means have common devices, but not sure if the tensor will be on the same device (the worker has multiple devices); 1 means the two workers are on the same device.
 
         """
-        peer_devices = self._group_info.workers[self._peer_rank].available_accelerators
-        my_devices = self._group_info.workers[self._rank].available_accelerators
-
-        # Check if the peer is on the same node
-        if (
-            self._group_info.workers[self._peer_rank].cluster_node_rank
-            != self._group_info.workers[self._rank].cluster_node_rank
-        ):
-            return -1
-
-        # Check if the two device list has intersection
-        if not set(peer_devices).intersection(set(my_devices)):
-            return -1
-        if len(peer_devices) == 1 and len(my_devices) == 1:
-            return 1
-        return 0
+        # Always use NCCL instead of CUDA IPC, even for colocated workers
+        return -1
 
     def _object_to_tensor(self, obj: Any, device: str):
         """Convert an object to tensor.
