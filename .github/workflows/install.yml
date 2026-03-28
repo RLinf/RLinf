@@ -118,6 +118,12 @@ jobs:
           bash requirements/install.sh embodied --model openvla-oft --env liberoplus
           rm -rf .venv
 
+      - name: Install starvla
+        run: |
+          pip install uv
+          bash requirements/install.sh embodied --model starvla --env maniskill_libero
+          rm -rf .venv
+
       - name: Install behavior-openvla-oft
         run: |
           pip install uv
