@@ -85,7 +85,7 @@ algorithm:
 env:
   group_name: "EnvGroup"
   enable_offload: False
-  data_path: ""
+  data_path_dir: ""
   scenes_dir: ""
   # Override the default values in env/habitat_r2r
   train:
