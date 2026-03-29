@@ -53,6 +53,16 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             return build_lingbot_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths
             )
+        elif SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.DREAMZERO
+        ]:
+            from rlinf.models.embodiment.dreamzero.sft_data import (
+                build_dreamzero_sft_dataloader,
+            )
+
+            return build_dreamzero_sft_dataloader(
+                self.cfg, self._world_size, self._rank, data_paths, eval_dataset
+            )
         else:
             raise KeyError(
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
@@ -78,6 +88,18 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             with self.amp_context:
                 losses_dict = self.model(forward_type=ForwardType.SFT, data=batch_data)
             return losses_dict["loss"]
+        if SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.DREAMZERO
+        ]:
+            batch_data = _pytree.tree_map(
+                lambda x: x.to(self.device, non_blocking=True)
+                if isinstance(x, torch.Tensor)
+                else x,
+                batch,
+            )
+            with self.amp_context:
+                losses = self.model(forward_type=ForwardType.SFT, data=batch_data)
+            return losses
         observation, actions = next(self.data_iter)
 
         register_pytree_dataclasses(observation)

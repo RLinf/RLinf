@@ -38,16 +38,22 @@ def get_model(cfg: DictConfig):
         from rlinf.models.embodiment.flow_policy import get_model
     elif model_type == SupportedModel.LINGBOTVLA:
         from rlinf.models.embodiment.lingbotvla import get_model
+    elif model_type == SupportedModel.DREAMZERO:
+        from rlinf.models.embodiment.dreamzero import get_model
     else:
         return None
 
     torch_dtype = torch_dtype_from_precision(cfg.precision)
     model = get_model(cfg, torch_dtype)
 
-    if Worker.torch_platform.is_available():
+    skip_gpu_move = (
+        model_type == SupportedModel.DREAMZERO
+        and cfg.get("cpu_init", True)
+    )
+    if Worker.torch_platform.is_available() and not skip_gpu_move:
         model = model.to(Worker.torch_device_type)
 
-    if cfg.is_lora:
+    if cfg.is_lora and model_type != SupportedModel.DREAMZERO:
         from peft import LoraConfig, PeftModel, get_peft_model
 
         if not hasattr(cfg, "lora_path") or cfg.lora_path is None:

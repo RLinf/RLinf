@@ -163,6 +163,20 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
         )
         policies.append(prismatic_fsdp_wrapping_policy)
 
+    if SupportedModel(model_type) == SupportedModel.DREAMZERO:
+        from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
+
+        def _dreamzero_wrap_fn(mod):
+            cls_name = type(mod).__name__
+            if cls_name in ("WanAttentionBlock", "GanAttentionBlock",
+                            "CausalWanAttentionBlock", "DiTBlock"):
+                return True
+            return False
+
+        policies.append(
+            functools.partial(lambda_auto_wrap_policy, lambda_fn=_dreamzero_wrap_fn)
+        )
+
     if (
         SupportedModel(model_type) == SupportedModel.CNN_POLICY
         and not config.use_orig_params
