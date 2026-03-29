@@ -135,6 +135,9 @@ class DataConfigFactory(abc.ABC):
     # Set to False for most cases as LIBERO/Franka actions are already delta in the dataset.
     extra_delta_transform: bool = False
 
+    # Action dimensions to skip normalization for (e.g., gripper).
+    action_norm_skip_dims: Optional[dict[str, list[int]]] = None
+
     @abc.abstractmethod
     def create(self, action_dim: int, *args, **kwargs) -> DataConfig:
         """Create a data configuration."""
@@ -288,6 +291,7 @@ class LiberoDataConfig(DataConfigFactory):
             use_quantile_norm=use_quantile_norm,
             action_sequence_keys=["actions"],
             prompt_from_task=True,
+            action_norm_skip_dims=self.action_norm_skip_dims,
         )
 
 
@@ -357,6 +361,7 @@ class LiberoV2DataConfig(DataConfigFactory):
             use_quantile_norm=use_quantile_norm,
             action_sequence_keys=["actions"],
             prompt_from_task=True,
+            action_norm_skip_dims=self.action_norm_skip_dims,
         )
 
 
@@ -443,6 +448,7 @@ class FrankaDataConfig(DataConfigFactory):
             use_quantile_norm=use_quantile_norm,
             action_sequence_keys=["actions"],
             prompt_from_task=True,
+            action_norm_skip_dims=self.action_norm_skip_dims,
         )
 
 
@@ -501,6 +507,7 @@ def create_data_config_factory(
         "default_prompt": default_prompt,
         "model_type": model_type or "pi05",
         "extra_delta_transform": extra_delta_transform,
+        "action_norm_skip_dims": action_norm_skip_dims,
     }
 
     if robot_type == "libero":

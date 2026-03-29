@@ -554,7 +554,7 @@ class ValueCriticModel(VLMObservationEncoder):
                 expert_configs=expert_configs,
                 siglip_path=siglip_path,
                 gemma3_path=gemma3_path,
-                precision=config.dtype,
+                precision=config.precision,
                 freeze_vision_encoder=getattr(config, "freeze_vision_encoder", False),
                 freeze_vlm=getattr(config, "freeze_vlm", False),
             )
@@ -565,7 +565,7 @@ class ValueCriticModel(VLMObservationEncoder):
                 vlm_config=paligemma_config,
                 expert_configs=expert_configs,
                 use_adarms=use_adarms,
-                precision=config.dtype,
+                precision=config.precision,
                 freeze_vision_encoder=getattr(config, "freeze_vision_encoder", False),
                 freeze_vlm=getattr(config, "freeze_vlm", False),
             )

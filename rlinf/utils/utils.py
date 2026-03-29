@@ -160,7 +160,7 @@ def masked_mean(values: torch.Tensor, mask: torch.Tensor, axis=None):
 
 
 def masked_sum(values: torch.Tensor, mask: torch.Tensor, axis=None):
-    """Compute mean of tensor with a masked values."""
+    """Compute sum of tensor with a masked values."""
     return (values * mask).sum(axis=axis)
 
 

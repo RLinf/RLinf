@@ -468,8 +468,9 @@ class PaliGemmaWithMultiExpertModel(nn.Module):
                     scaling,
                 )
 
-            # Reshape for o_proj: [B, total_len, 8 * head_dim]
-            att_output = att_output.reshape(batch_size, -1, 1 * 8 * head_dim)
+            # Reshape for o_proj: [B, total_len, num_heads * head_dim]
+            num_heads = self.paligemma.config.text_config.num_attention_heads
+            att_output = att_output.reshape(batch_size, -1, num_heads * head_dim)
 
             outputs_embeds = []
             start_pos = 0

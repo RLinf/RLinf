@@ -194,11 +194,11 @@ class VLMBaseConfig(PretrainedConfig):
         super().__init__(**kwargs)
 
         if dtype is not None:
-            self.dtype = dtype
+            self.precision = dtype
         elif precision is not None:
-            self.dtype = precision
+            self.precision = precision
         else:
-            self.dtype = "bfloat16"
+            self.precision = "bfloat16"
 
         self.action_dim = action_dim
         self.action_horizon = action_horizon
@@ -225,8 +225,8 @@ class VLMBaseConfig(PretrainedConfig):
         output = super().to_dict()
         output.update(
             {
-                "dtype": self.dtype,
-                "precision": self.dtype,
+                "dtype": self.precision,
+                "precision": self.precision,
                 "action_dim": self.action_dim,
                 "action_horizon": self.action_horizon,
                 "max_token_len": self.max_token_len,

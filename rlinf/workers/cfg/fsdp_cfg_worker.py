@@ -462,7 +462,15 @@ class FSDPCfgWorker(FSDPSftWorker):
                 )
 
                 # CFG: unpack advantage (replaces is_success)
-                observation, actions, advantage = next(self.data_iter)
+                try:
+                    observation, actions, advantage = next(self.data_iter)
+                except StopIteration:
+                    self._data_epoch = getattr(self, "_data_epoch", 0) + 1
+                    self._current_epoch = self._data_epoch
+                    self._data_iter_offset = 0
+                    self.data_loader.set_epoch(self._data_epoch)
+                    self.data_iter = iter(self.data_loader)
+                    observation, actions, advantage = next(self.data_iter)
                 self._data_iter_offset += 1
 
                 observation = jax.tree.map(
