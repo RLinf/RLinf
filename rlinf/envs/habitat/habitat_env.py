@@ -525,19 +525,17 @@ class HabitatEnv(gym.Env):
         episode_ids = self._build_ordered_episodes(habitat_dataset)
 
         num_episodes = len(episode_ids)
-        # 1) Split episodes across processes: this worker (seed_offset) gets a contiguous block.
+        # total_num_processes = world_size * stage_num
+        # Take floor division to ensure each process gets an equal number of episodes.
         episodes_per_process = num_episodes // self.total_num_processes
         start_process = self.seed_offset * episodes_per_process
         end_process = start_process + episodes_per_process
-        if self.seed_offset == self.total_num_processes - 1:
-            end_process = num_episodes  # last process takes remainder
         process_episode_ids = episode_ids[start_process:end_process]
         num_episodes_this_process = len(process_episode_ids)
 
-        # 2) Within this process, split by group (GRPO): group_size envs per group share the same episode list; num_group episode streams in total.
-        episodes_per_group = num_episodes_this_process // self.num_group
-        episode_ranges = []
         start = 0
+        episode_ranges = []
+        episodes_per_group = num_episodes_this_process // self.num_group
         for g in range(self.num_group):
             episode_ranges.append((start, start + episodes_per_group))
             start += episodes_per_group
