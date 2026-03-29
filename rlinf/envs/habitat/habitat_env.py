@@ -524,17 +524,26 @@ class HabitatEnv(gym.Env):
 
         episode_ids = self._build_ordered_episodes(habitat_dataset)
 
-        episode_ranges = []
         num_episodes = len(episode_ids)
-        episodes_per_env = num_episodes // self.num_envs // self.total_num_processes
-        start = self.seed_offset * episodes_per_env * self.num_envs
-        for i in range(self.num_envs):
-            episode_ranges.append((start, start + episodes_per_env))
-            start += episodes_per_env
+        # total_num_processes = world_size * stage_num
+        # Take floor division to ensure each process gets an equal number of episodes.
+        episodes_per_process = num_episodes // self.total_num_processes
+        start_process = self.seed_offset * episodes_per_process
+        end_process = start_process + episodes_per_process
+        process_episode_ids = episode_ids[start_process:end_process]
+        num_episodes_this_process = len(process_episode_ids)
+
+        start = 0
+        episode_ranges = []
+        episodes_per_group = num_episodes_this_process // self.num_group
+        for g in range(self.num_group):
+            episode_ranges.append((start, start + episodes_per_group))
+            start += episodes_per_group
 
         for env_id in range(self.num_envs):
-            start, end = episode_ranges[env_id]
-            assigned_ids = episode_ids[start:end]
+            group_id = env_id // self.group_size
+            start, end = episode_ranges[group_id]
+            assigned_ids = process_episode_ids[start:end]
 
             env_fn_params.append(
                 {
