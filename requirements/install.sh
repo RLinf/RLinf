@@ -18,7 +18,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "lingbotvla")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "embodichain")
 
 #=======================Utility Functions=======================
 
@@ -596,8 +596,8 @@ install_lingbot_vla_model() {
 }
 
 install_env_only() {
-    create_and_sync_venv
     SKIP_ROS=${SKIP_ROS:-0}
+    create_and_sync_venv
     case "$ENV_NAME" in
         franka)
             uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
@@ -615,6 +615,10 @@ install_env_only() {
         habitat)
             install_common_embodied_deps
             install_habitat_env
+            ;;
+        embodichain)
+            install_common_embodied_deps
+            install_embodichain_env
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for env-only installation." >&2
@@ -842,6 +846,13 @@ install_frankasim_env() {
     serldir=$(clone_or_reuse_repo SERL_PATH "$VENV_DIR/serl" https://github.com/RLinf/serl.git -b RLinf/franka-sim)
     uv pip install -e "$serldir/franka_sim"
     uv pip install -r "$serldir/franka_sim/requirements.txt"
+}
+
+install_embodichain_env() {
+    local embodichain_dir
+    embodichain_dir=$(clone_or_reuse_repo EMBODICHAIN_PATH "$VENV_DIR/EmbodiChain" https://github.com/DexForce/EmbodiChain.git)
+    uv pip install -e "$embodichain_dir" --extra-index-url http://pyp.open3dv.site:2345/simple/ --trusted-host pyp.open3dv.site
+    echo "export EMBODICHAIN_PATH=$(realpath "$embodichain_dir")" >> "$VENV_DIR/bin/activate"
 }
 
 install_habitat_env() {

@@ -1,0 +1,27 @@
+env_type: embodichain
+
+gym_config_path: configs/agents/rl/basic/cart_pole/gym_config.json
+
+headless: true
+enable_rt: false
+sim_device: cuda
+
+state_keys: ["qpos", "qvel", "qf"]
+
+seed: 0
+total_num_envs: null
+group_size: 1
+
+auto_reset: True
+ignore_terminations: False
+max_steps_per_rollout_epoch: 128
+max_episode_steps: 500
+
+use_rel_reward: False
+reward_coef: 1.0
+is_eval: False
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
