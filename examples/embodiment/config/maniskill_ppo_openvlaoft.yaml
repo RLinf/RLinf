@@ -50,7 +50,7 @@ algorithm:
   adv_type: gae
   loss_type: actor_critic
   loss_agg_func: "token-mean"
-  
+
   bootstrap_type: always # [standard, always]. Bootstrap Q-values according to terminations and truncations. "standard" only bootstraps when truncations, while "always" bootstraps when truncations or terminations.
   kl_beta: 0.0
   entropy_bonus: 0
@@ -59,7 +59,6 @@ algorithm:
   clip_ratio_c: 3.0
   value_clip: 0.2
   huber_delta: 10.0
-
 
   gamma: 0.99
   gae_lambda: 0.95

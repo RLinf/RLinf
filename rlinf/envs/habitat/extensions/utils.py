@@ -72,11 +72,6 @@ def observations_to_image(
             observation_size = observation["depth"].shape[0]
         depth_map = (observation["depth"].squeeze() * 255).astype(np.uint8)
         depth_map = np.stack([depth_map for _ in range(3)], axis=2)
-        depth_map = cv2.resize(
-            depth_map,
-            dsize=(observation_size, observation_size),
-            interpolation=cv2.INTER_CUBIC,
-        )
         egocentric_view["depth"] = depth_map
 
     assert len(egocentric_view) > 0, "Expected at least one visual sensor enabled."
@@ -110,7 +105,51 @@ def observations_to_image(
         if td_map.shape[0] > td_map.shape[1]:
             td_map = np.rot90(td_map, 1)
 
-        # scale top down map to align with rgb view
+        egocentric_view["top_down_map"] = td_map
+
+    return egocentric_view
+
+
+def resize_observation_images(
+    egocentric_view: dict[str, Any],
+    observation_size: int,
+) -> dict[str, Any]:
+    """Resize images in egocentric_view to target observation_size.
+
+    Args:
+        egocentric_view: Dictionary containing images (rgb, depth, top_down_map).
+        observation_size: Target size for resizing (assumes square images).
+
+    Returns:
+        Dictionary with resized images.
+    """
+    resized_view = {}
+
+    if "rgb" in egocentric_view:
+        rgb = egocentric_view["rgb"]
+        if rgb.shape[0] != observation_size or rgb.shape[1] != observation_size:
+            rgb = cv2.resize(
+                rgb,
+                dsize=(observation_size, observation_size),
+                interpolation=cv2.INTER_CUBIC,
+            )
+        resized_view["rgb"] = rgb
+
+    if "depth" in egocentric_view:
+        depth_map = egocentric_view["depth"]
+        if (
+            depth_map.shape[0] != observation_size
+            or depth_map.shape[1] != observation_size
+        ):
+            depth_map = cv2.resize(
+                depth_map,
+                dsize=(observation_size, observation_size),
+                interpolation=cv2.INTER_CUBIC,
+            )
+        resized_view["depth"] = depth_map
+
+    if "top_down_map" in egocentric_view:
+        td_map = egocentric_view["top_down_map"]
         old_h, old_w, _ = td_map.shape
         top_down_height = observation_size
         top_down_width = int(float(top_down_height) / old_h * old_w)
@@ -120,9 +159,9 @@ def observations_to_image(
             (top_down_width, top_down_height),
             interpolation=cv2.INTER_CUBIC,
         )
-        egocentric_view["top_down_map"] = td_map
+        resized_view["top_down_map"] = td_map
 
-    return egocentric_view
+    return resized_view
 
 
 def pano_observations_to_image(
