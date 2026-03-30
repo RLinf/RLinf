@@ -49,7 +49,10 @@ class EmbodiedRunner:
         self,
         cfg: DictConfig,
         actor: Union[
-            "EmbodiedFSDPActor", "EmbodiedNFTFSDPPolicy", "EmbodiedSACFSDPPolicy", "AsyncEmbodiedSACFSDPPolicy"
+            "EmbodiedFSDPActor",
+            "EmbodiedNFTFSDPPolicy",
+            "EmbodiedSACFSDPPolicy",
+            "AsyncEmbodiedSACFSDPPolicy",
         ],
         rollout: Union["MultiStepRolloutWorker", "AsyncMultiStepRolloutWorker"],
         env: Union["EnvWorker", "AsyncEnvWorker"],

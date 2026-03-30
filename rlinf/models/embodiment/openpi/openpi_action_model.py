@@ -81,6 +81,7 @@ class OpenPi0Config(Pi0Config):
     # ===== NFT-specific parameters =====
     is_nft: bool = False
 
+
 class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
     """
     Pi0 model for reinforcement learning action prediction.
@@ -466,7 +467,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             t = nft_explicit_inputs["timesteps"]
         else:
             if "chains" not in forward_inputs:
-                raise ValueError("forward_nft requires `chains` or `nft_explicit_inputs`.")
+                raise ValueError(
+                    "forward_nft requires `chains` or `nft_explicit_inputs`."
+                )
             x_0 = forward_inputs["chains"][:, -1].to(device)
             bsize = x_0.shape[0]
             t = torch.rand((bsize,), device=device)
@@ -718,16 +721,20 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             # Euler step - use new tensor assignment instead of in-place operation
             x_t = x_t_mean + self.sample_noise(x_t.shape, device) * x_t_std
             if collect_nft_traces:
-                mask = (flow_rand_idx == idx)  
-                mask_bc = mask[:, None, None]  
+                mask = flow_rand_idx == idx
+                mask_bc = mask[:, None, None]
                 if mask.any():
                     flow_x_snap = torch.where(mask_bc, x_t_prev.detach(), flow_x_snap)
                     flow_v_snap = torch.where(mask_bc, v_t.detach(), flow_v_snap)
-                    flow_xnext_snap = torch.where(mask_bc, x_t.detach(), flow_xnext_snap)
+                    flow_xnext_snap = torch.where(
+                        mask_bc, x_t.detach(), flow_xnext_snap
+                    )
                     nl = self._get_noise_level(
                         device=device, dtype=x_t.dtype, sample_method=sample_method
                     )
-                    flow_noise_level = torch.where(mask, nl.expand(bsize), flow_noise_level)
+                    flow_noise_level = torch.where(
+                        mask, nl.expand(bsize), flow_noise_level
+                    )
             log_prob = self.get_logprob_norm(x_t, x_t_mean, x_t_std)
             # store
             values.append(value_t)
@@ -804,7 +811,11 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             state, x_t, t_input, prefix_pad_masks, past_key_values
         )
         # value prediction
-        if self.config.add_value_head and compute_values and not self.config.value_after_vlm:
+        if (
+            self.config.add_value_head
+            and compute_values
+            and not self.config.value_after_vlm
+        ):
             value_t = self._compute_value_from_suffix(suffix_out)
         else:
             value_t = torch.zeros((bsize), device=device)
@@ -1251,7 +1262,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         q_values = self.q_head(state_features, image_features, actions)
 
         return q_values
-
 
     def _get_noise_level(
         self, device: torch.device, dtype: torch.dtype, sample_method: str | None = None

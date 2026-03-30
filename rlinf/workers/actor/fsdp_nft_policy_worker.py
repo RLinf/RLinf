@@ -148,7 +148,11 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
         step_indices = forward_inputs["nft_step_index"]
         num_steps = self.cfg.actor.model.openpi.get("num_steps", 10)
         schedule = torch.linspace(
-            1, 0, num_steps + 1, device=x_t_input.device, dtype=x_t_input.dtype,
+            1,
+            0,
+            num_steps + 1,
+            device=x_t_input.device,
+            dtype=x_t_input.dtype,
         )
         t = schedule[step_indices.long()]
         # compute v_theta
@@ -181,14 +185,14 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
 
     def _compute_embodied_nft_loss(
         self,
-        v_theta: torch.Tensor,         # [batch_size, chunk_len, action_env_dim]
-        v_old: torch.Tensor,           # [batch_size, chunk_len, action_env_dim]
-        x_t: torch.Tensor,             # [batch_size, chunk_len, action_env_dim]
-        x_next: torch.Tensor,          # [batch_size, chunk_len, action_env_dim]
-        schedule: torch.Tensor,        # [num_steps+1]
-        step_indices: torch.Tensor,    
+        v_theta: torch.Tensor,  # [batch_size, chunk_len, action_env_dim]
+        v_old: torch.Tensor,  # [batch_size, chunk_len, action_env_dim]
+        x_t: torch.Tensor,  # [batch_size, chunk_len, action_env_dim]
+        x_next: torch.Tensor,  # [batch_size, chunk_len, action_env_dim]
+        schedule: torch.Tensor,  # [num_steps+1]
+        step_indices: torch.Tensor,
         noise_level: torch.Tensor | float,
-        advantages: torch.Tensor,      
+        advantages: torch.Tensor,
         beta: float = 1.0,
         adv_clip_max: float = 1.0,
         dpo_beta: float = 1.0,
@@ -196,14 +200,17 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
         loss_mask: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, dict]:
         """Compute DPO-style energy-based NFT loss."""
-        # shape alignment 
+        # shape alignment
         batch_size, chunk_len = x_t.shape[:2]
         sum_dims = tuple(range(2, x_t.ndim))
         loss_mask = loss_mask.expand(batch_size, chunk_len)
         advantages = advantages.expand(batch_size, chunk_len)
         # preference y ∈ [-1, 1]
-        y = torch.clamp(advantages * 2.0 - 1.0, -adv_clip_max, adv_clip_max) / adv_clip_max
-        # clip delta v 
+        y = (
+            torch.clamp(advantages * 2.0 - 1.0, -adv_clip_max, adv_clip_max)
+            / adv_clip_max
+        )
+        # clip delta v
         v_old = v_old.detach()
         delta_v = v_theta - v_old
         delta_norm = delta_v.norm(dim=sum_dims, keepdim=True) + 1e-8
@@ -218,13 +225,15 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
             schedule, step_indices, noise_level, x_t
         )
         # flow matching transition mean
+
         def _flow_mean(x_cur: torch.Tensor, vel: torch.Tensor) -> torch.Tensor:
             x0_pred = x_cur - vel * t_bc
             x1_pred = x_cur + vel * (1 - t_bc)
             w0 = 1.0 - (t_bc - dt_bc)
             w1 = t_bc - dt_bc - sigma_i**2 * dt_bc / (2 * t_bc)
             return x0_pred * w0 + x1_pred * w1
-        # x-next prediction 
+
+        # x-next prediction
         x_next_pos = _flow_mean(x_t, v_pos)
         x_next_neg = _flow_mean(x_t, v_neg)
         var = std_t_det**2 + 1e-4
@@ -251,17 +260,19 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
 
     def _build_schedule_params(
         self,
-        schedule: torch.Tensor,        # [num_steps+1] linspace 1→0
-        step_indices: torch.Tensor,    # [B]
+        schedule: torch.Tensor,  # [num_steps+1] linspace 1→0
+        step_indices: torch.Tensor,  # [B]
         noise_level: torch.Tensor | float,
-        x_t: torch.Tensor,            # reference tensor for ndim/device/dtype
+        x_t: torch.Tensor,  # reference tensor for ndim/device/dtype
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Compute timestep & noise params, broadcast to [B, 1, ..., 1] for x_t.ndim.
 
         Returns: (t_bc, dt_bc, sigma_i, std_t_det)
         """
         ndim = x_t.ndim
-        pad = lambda x: x.view(-1, *([1] * (ndim - 1)))
+
+        def pad(x):
+            return x.view(-1, *([1] * (ndim - 1)))
         idx = step_indices.long()
         # timestep: t_cur and dt = t_cur - t_next
         t_bc = pad(schedule[idx])
