@@ -423,7 +423,10 @@ class CNNPolicy(nn.Module, BasePolicy):
         if return_obs:
             forward_inputs["main_images"] = env_obs["main_images"]
             forward_inputs["states"] = env_obs["states"]
-            if "extra_view_images" in env_obs:
+            if (
+                "extra_view_images" in env_obs
+                and env_obs["extra_view_images"] is not None
+            ):
                 forward_inputs["extra_view_images"] = env_obs["extra_view_images"]
 
         result = {
