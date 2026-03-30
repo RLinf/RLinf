@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 import torch
 
 
@@ -121,3 +123,50 @@ def cat_list_of_dict_tensor(list_of_dict: list, dim=0):
         else:
             raise ValueError(f"{key=}, {type(_v0)} is not supported!")
     return ret
+
+
+def split_dict(
+    batch: dict[str, Any],
+    split_sizes: list[int],
+) -> list[dict[str, Any]]:
+    """Split one batch dict into size-specified sub-batches along dim-0.
+
+    Tensor values are chunked on dim-0; list values are sliced proportionally;
+    nested dict values are split recursively.
+
+    Args:
+        batch: Dict.
+        split_sizes: Batch sizes for each destination rank.
+
+    Returns:
+        A list of splited batches, one item per destination rank.
+    """
+    count = len(split_sizes)
+    total_size = sum(split_sizes)
+    splitted_batches = [{} for _ in range(count)]
+    for key, value in batch.items():
+        if isinstance(value, torch.Tensor):
+            assert value.shape[0] == total_size, (
+                f"Tensor field '{key}' expected batch size {total_size}, got {value.shape[0]}."
+            )
+            splitted_values = torch.split(value, split_sizes, dim=0)
+            for i in range(count):
+                splitted_batches[i][key] = splitted_values[i].contiguous()
+        elif isinstance(value, list):
+            length = len(value)
+            assert length == total_size, (
+                f"List field '{key}' expected length {total_size}, got {length}."
+            )
+            begin = 0
+            for i, size in enumerate(split_sizes):
+                splitted_batches[i][key] = value[begin : begin + size]
+                begin += size
+        elif isinstance(value, dict):
+            splitted_sub_batches = split_dict(value, split_sizes)
+            for i in range(count):
+                splitted_batches[i][key] = splitted_sub_batches[i]
+        else:
+            for i in range(count):
+                splitted_batches[i][key] = value
+
+    return splitted_batches

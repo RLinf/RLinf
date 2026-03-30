@@ -28,6 +28,7 @@ if TYPE_CHECKING:
         AsyncEmbodiedSACFSDPPolicy,
     )
     from rlinf.workers.env.async_env_worker import AsyncEnvWorker
+    from rlinf.workers.reward.reward_worker import EmbodiedRewardWorker
     from rlinf.workers.rollout.hf.async_huggingface_worker import (
         AsyncMultiStepRolloutWorker,
     )
@@ -40,16 +41,14 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         actor: "AsyncEmbodiedSACFSDPPolicy",
         rollout: "AsyncMultiStepRolloutWorker",
         env: "AsyncEnvWorker",
+        reward: "EmbodiedRewardWorker",
         critic=None,
-        reward=None,
-        run_timer=None,
     ):
-        super().__init__(cfg, actor, rollout, env, critic, reward, run_timer)
+        super().__init__(cfg, actor, rollout, env, reward, critic)
 
         # Data channels
         self.env_metric_channel = Channel.create("EnvMetric")
         self.rollout_metric_channel = Channel.create("RolloutMetric")
-        self.replay_channel = Channel.create("ReplayBuffer")
 
         self._pending_rollout_weight_sync = None
         self._weight_sync_coalesced_total = 0
@@ -139,18 +138,24 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
 
         env_handle: Handle = self.env.interact(
-            input_channel=self.rollout_channel,
-            output_channel=self.env_channel,
+            input_channel=self.env_channel,
+            rollout_channel=self.rollout_channel,
+            reward_channel=self.reward_channel,
+            actor_channel=self.actor_channel,
             metric_channel=self.env_metric_channel,
-            replay_channel=self.replay_channel,
         )
         rollout_handle: Handle = self.rollout.generate(
-            input_channel=self.env_channel,
-            output_channel=self.rollout_channel,
+            input_channel=self.rollout_channel,
+            output_channel=self.env_channel,
             metric_channel=self.rollout_metric_channel,
         )
+        if self.reward is not None:
+            reward_handle: Handle = self.reward.compute_rewards_async(
+                input_channel=self.reward_channel,
+                output_channel=self.env_channel,
+            )
         actor_handle: Handle = self.actor.recv_rollout_trajectories(
-            input_channel=self.replay_channel
+            input_channel=self.actor_channel
         )
 
         while self.global_step < self.max_steps:
@@ -198,7 +203,7 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
 
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
-            training_metrics["train/replay_channel_qsize"] = self.replay_channel.qsize()
+            training_metrics["train/replay_channel_qsize"] = self.actor_channel.qsize()
             actor_training_time_metrics, actor_time_metrics_per_rank = (
                 actor_training_handle.consume_durations(return_per_rank=True)
             )
@@ -267,6 +272,9 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         self.env.stop().wait()
         self.rollout.stop().wait()
         self.actor.stop().wait()
+        if self.reward is not None:
+            self.reward.stop().wait()
+            reward_handle.wait()
         env_handle.wait()
         rollout_handle.wait()
         actor_handle.wait()

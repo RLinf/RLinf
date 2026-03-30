@@ -149,19 +149,19 @@ class ManiskillEnv(gym.Env):
                         raw_obs, use_torch=True, device=self.device
                     )
 
-            main_images = sensor_data["base_camera"]["rgb"]
-            sorted_images = OrderedDict(sorted(sensor_data.items()))
-            sorted_images.pop("base_camera")
-            extra_view_images = (
-                torch.stack([v["rgb"] for v in sorted_images.values()], dim=1)
-                if sorted_images
-                else None
-            )
-            return {
-                "main_images": main_images,
-                "extra_view_images": extra_view_images,
-                "states": state,
-            }
+                main_images = sensor_data["base_camera"]["rgb"]
+                sorted_images = OrderedDict(sorted(sensor_data.items()))
+                sorted_images.pop("base_camera")
+                extra_view_images = (
+                    torch.stack([v["rgb"] for v in sorted_images.values()], dim=1)
+                    if sorted_images
+                    else None
+                )
+                return {
+                    "main_images": main_images,
+                    "extra_view_images": extra_view_images,
+                    "states": state,
+                }
 
         # Default
         obs_image = raw_obs["sensor_data"]["3rd_view_camera"]["rgb"].to(

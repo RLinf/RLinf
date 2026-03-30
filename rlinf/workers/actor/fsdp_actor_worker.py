@@ -1045,6 +1045,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.enable_offload:
             self.offload_param_and_grad()
             self.offload_optimizer()
+
         self._setup_rollout_weight_dst_ranks()
 
     def model_provider_func(self) -> nn.Module:
