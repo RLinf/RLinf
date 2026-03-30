@@ -25,13 +25,13 @@ runner:
     experiment_name: "habitat_r2r_grpo_cma"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 100
+  max_epochs: 1000
   max_steps: -1
 
   only_eval: False
   eval_policy_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
   val_check_interval: -1
-  save_interval: 5
+  save_interval: 10
 
   resume_dir: null
 
@@ -62,6 +62,9 @@ algorithm:
   gae_lambda: 0.95
 
   reward_coef: 5.0
+  filter_rewards: True
+  rewards_lower_bound: 0.5
+  rewards_upper_bound: 4.5
 
   sampling_params:
     do_sample: True
@@ -78,10 +81,6 @@ algorithm:
     max_length: 1024
     min_length: 1
 
-  filter_rewards: True
-  rewards_lower_bound: 0.5
-  rewards_upper_bound: 4.5
-
 env:
   group_name: "EnvGroup"
   enable_offload: False
@@ -90,9 +89,8 @@ env:
   # Override the default values in env/habitat_r2r
   train:
     total_num_envs: 256  # 256 8H20
-    max_steps_per_rollout_epoch: 80
-    max_episode_steps: 80 # max episode steps for truncation
-    reset_gripper_open: False
+    max_steps_per_rollout_epoch: 120
+    max_episode_steps: 120 # max episode steps for truncation
     group_size: 8
     split: train
     data_path: ${env.data_path_dir}/${env.train.split}/${env.train.split}.json.gz
@@ -105,21 +103,17 @@ env:
       metrics_base_dir: ${runner.logger.log_path}/metrics/train
   eval:
     total_num_envs: 608 # 608 8H20
+    max_episode_steps: 120
+    max_steps_per_rollout_epoch: 360
+    group_size: 1
     auto_reset: True
     ignore_terminations: True
-    max_episode_steps: 80
-    max_steps_per_rollout_epoch: 240
-    group_size: 1
-    use_fixed_reset_state_ids: True
-    use_ordered_reset_state_ids: True
-    reset_gripper_open: False
-    is_eval: True
     split: val_unseen
     data_path: ${env.data_path_dir}/${env.eval.split}/${env.eval.split}.json.gz
     scenes_dir: ${env.scenes_dir}
     video_cfg:
       fps: 5
-      save_video: True
+      save_video: False
       video_base_dir: ${runner.logger.log_path}/video/eval
     metrics_cfg:
       metrics_base_dir: ${runner.logger.log_path}/metrics/eval
@@ -141,8 +135,8 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 64
-  global_batch_size: 512
+  micro_batch_size: 128
+  global_batch_size: 1024
   seed: 1234
   enable_offload: True
 
@@ -156,7 +150,7 @@ actor:
       ddppo_checkpoint: ""
 
   optim:
-    lr: 1e-6
+    lr: 1.0e-5
     value_lr: 3.0e-3
     adam_beta1: 0.9
     adam_beta2: 0.999
