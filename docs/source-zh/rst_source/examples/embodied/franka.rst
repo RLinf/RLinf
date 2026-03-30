@@ -81,7 +81,8 @@ Franka真机强化学习
 真实世界实验需要如下硬件组件：
 
 - **机械臂**：Franka Emika Panda 机械臂。
-- **相机**：Intel RealSense 相机，用于采集 RGB 图像。
+- **相机**：Intel RealSense 相机（默认）或 Stereolabs ZED 相机。
+- **夹爪**：Franka 夹爪（默认）或 Robotiq 2F-85/2F-140。
 - **计算节点**：一台带有 GPU 的计算机，用于训练 CNN 策略。
 - **机器人控制节点**：一台与机械臂处于同一局域网的小型计算机（不需要 GPU），用于控制 Franka 机械臂。
 - **空间鼠标（可选）**：用于远程操控数据采集或在训练过程中进行人工干预。
@@ -90,6 +91,12 @@ Franka真机强化学习
 
   请确保所有计算机均处于同一局域网络中。
   机械臂本体只需要与机器人控制节点处于同一局域网即可。
+
+.. note::
+
+   **使用 ZED 相机或 Robotiq 夹爪？** 请参考专门的指南
+   :doc:`franka_zed_robotiq`，了解 SDK 安装、串口设备配置、
+   YAML 配置字段以及数据采集。
 
 依赖安装
 -------------------------
@@ -356,6 +363,12 @@ b. 安装依赖
 采集到的数据会保存在 ``logs/[running-timestamp]/data.pkl`` 路径下。
 
 5. 数据采集完成后，可以将收集到的数据上传到训练 / rollout 节点。
+
+.. note::
+
+   **使用 ZED 相机和 Robotiq 夹爪？** 我们提供了专用的数据采集脚本和配置文件。
+   请参考 :doc:`franka_zed_robotiq` 中的
+   :ref:`数据采集 <franka-zed-robotiq-data-collection-zh>` 章节。
 
 集群配置
 ~~~~~~~~~~~~~~~~~

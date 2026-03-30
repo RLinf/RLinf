@@ -73,6 +73,21 @@ class ClusterEnvVar(str, Enum):
         export RLINF_EXT_MODULE=workflows.scripts.rlinf_ext
     """
 
+    PATH_ENV_MERGE_MODE = "PATH_ENV_MERGE_MODE"
+    """How to merge path-like env vars when allocating workers.
+
+    Supported modes:
+        - append: keep both new and existing path entries (default)
+        - override: replace existing value with the new value
+    """
+
+
+class PathEnvMergeMode(str, Enum):
+    """Merge mode for path-like worker env vars."""
+
+    APPEND = "append"
+    OVERRIDE = "override"
+
 
 class Cluster:
     """A singleton class that manages the cluster resources for Ray workers."""
@@ -90,6 +105,16 @@ class Cluster:
         ClusterEnvVar.NODE_RANK: None,
         ClusterEnvVar.COMM_NET_DEVICES: None,
         ClusterEnvVar.EXT_MODULE: None,
+        ClusterEnvVar.PATH_ENV_MERGE_MODE: PathEnvMergeMode.APPEND.value,
+    }
+    PATH_LIKE_ENV_VARS = {
+        "PYTHONPATH",
+        "LD_LIBRARY_PATH",
+        "PATH",
+        "LIBRARY_PATH",
+        "CMAKE_PREFIX_PATH",
+        "PKG_CONFIG_PATH",
+        "CPATH",
     }
 
     class NamespaceConflictError(Exception):
@@ -486,11 +511,20 @@ class Cluster:
         remote_cls = ray.remote(cls)
 
         merged_env_vars = node.env_vars.copy()
+        path_env_merge_mode = self.get_path_env_merge_mode(merged_env_vars)
         # Update with user-specified env vars in node group configs
         cfg_node_env_vars = node_group.get_node_env_vars(node_rank)
-        merged_env_vars.update(cfg_node_env_vars)
+        merged_env_vars = self.merge_worker_env_vars(
+            merged_env_vars,
+            cfg_node_env_vars,
+            path_env_merge_mode,
+        )
         # Finally, update with worker-specified env vars
-        merged_env_vars.update(env_vars)
+        merged_env_vars = self.merge_worker_env_vars(
+            merged_env_vars,
+            env_vars,
+            path_env_merge_mode,
+        )
 
         # Update Python interpreter path
         python_interpreter_path = node.python_interpreter_path
@@ -523,3 +557,78 @@ class Cluster:
                 actor_handle=actor,
             )
         return actor
+
+    @classmethod
+    def get_path_env_merge_mode(cls, env_vars: dict[str, str]) -> PathEnvMergeMode:
+        """Resolve the path-like env merge mode from environment variables."""
+        env_key = cls.get_full_env_var_name(ClusterEnvVar.PATH_ENV_MERGE_MODE)
+        mode_str = env_vars.get(
+            env_key, cls.DEFAULT_SYS_ENV_VAR[ClusterEnvVar.PATH_ENV_MERGE_MODE]
+        )
+        mode_str = str(mode_str).lower()
+        try:
+            return PathEnvMergeMode(mode_str)
+        except ValueError:
+            logging.error(
+                f"Invalid {env_key}={mode_str}. "
+                f"Expected one of {[mode.value for mode in PathEnvMergeMode]}. "
+                "Falling back to append."
+            )
+            return PathEnvMergeMode.APPEND
+
+    @classmethod
+    def merge_worker_env_vars(
+        cls,
+        base_env_vars: dict[str, str],
+        incoming_env_vars: dict[str, str],
+        mode: PathEnvMergeMode,
+    ) -> dict[str, str]:
+        """Merge worker env vars with special handling for path-like variables."""
+        merged = base_env_vars.copy()
+        for key, value in incoming_env_vars.items():
+            if (
+                key in Cluster.PATH_LIKE_ENV_VARS
+                and key in merged
+                and mode == PathEnvMergeMode.APPEND
+            ):
+                merged[key] = cls._merge_path_like_env_value(
+                    env_var_name=key,
+                    existing_value=merged[key],
+                    incoming_value=value,
+                )
+            else:
+                merged[key] = value
+        return merged
+
+    @staticmethod
+    def _split_path_entries(path_value: Optional[str]) -> list[str]:
+        if path_value is None:
+            return []
+        return [entry for entry in str(path_value).split(os.pathsep) if entry]
+
+    @staticmethod
+    def _dedupe_path_entries(entries: list[str]) -> list[str]:
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for entry in entries:
+            if entry not in seen:
+                deduped.append(entry)
+                seen.add(entry)
+        return deduped
+
+    @staticmethod
+    def _merge_path_like_env_value(
+        env_var_name: str,
+        existing_value: str,
+        incoming_value: str,
+    ) -> str:
+        """Merge path-like env values with append semantics."""
+        if env_var_name not in Cluster.PATH_LIKE_ENV_VARS:
+            # Safety guard: never apply path-like merge semantics to non-whitelisted vars.
+            return incoming_value
+        existing_entries = Cluster._split_path_entries(existing_value)
+        incoming_entries = Cluster._split_path_entries(incoming_value)
+        merged_entries = Cluster._dedupe_path_entries(
+            incoming_entries + existing_entries
+        )
+        return os.pathsep.join(merged_entries)

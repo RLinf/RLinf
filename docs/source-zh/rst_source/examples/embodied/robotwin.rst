@@ -613,4 +613,3 @@ OpenVLA-OFT关键配置
 3. **RoboTwin Repo**：确保正确设置 ``ROBOTWIN_PATH``，如 ``export ROBOTWIN_PATH=/path/to/RoboTwin``
 4. **GPU 内存**：RoboTwin 环境可能需要较多 GPU 内存，建议使用 ``enable_offload: True``
 5. **任务配置**：根据具体任务修改 ``task_config`` 中的参数
-
