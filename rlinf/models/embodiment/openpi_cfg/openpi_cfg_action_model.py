@@ -108,7 +108,6 @@ def compute_cfg_routing_masks(
     *,
     positive_only_conditional: bool,
     unconditional_prob: float,
-    positive_unconditional_prob: float,
     random_values: torch.Tensor | None = None,
 ) -> dict[str, torch.Tensor]:
     """Compute sample routing masks for CFG training.
@@ -117,10 +116,9 @@ def compute_cfg_routing_masks(
         advantage: Boolean tensor where True marks positive samples.
         positive_only_conditional: Route only positive samples to the
             conditional branch when True.
-        unconditional_prob: Dropout probability for the legacy CFG training
-            mode that routes both positive and negative samples conditionally.
-        positive_unconditional_prob: Dropout probability applied only to
-            positive samples when ``positive_only_conditional`` is enabled.
+        unconditional_prob: Dropout probability for unconditional routing.
+            When ``positive_only_conditional`` is True, applies only to
+            positive samples; otherwise applies to all samples.
         random_values: Optional pre-sampled uniform noise in ``[0, 1)`` used to
             make routing deterministic in tests.
 
@@ -141,7 +139,7 @@ def compute_cfg_routing_masks(
 
     if positive_only_conditional:
         positive_conditional_mask = positive_mask & (
-            random_values > positive_unconditional_prob
+            random_values > unconditional_prob
         )
         negative_conditional_mask = torch.zeros_like(positive_mask)
     else:
@@ -177,7 +175,6 @@ class OpenPi0Config(Pi0Config):
     unconditional_prob: float = 0.3
     guidance_type: str = "positive"
     positive_only_conditional: bool = False
-    positive_unconditional_prob: float = 0.0
 
     def __post_init__(self):
         if self.guidance_type not in _VALID_GUIDANCE_TYPES:
@@ -188,11 +185,6 @@ class OpenPi0Config(Pi0Config):
         if not 0.0 <= self.unconditional_prob <= 1.0:
             raise ValueError(
                 f"unconditional_prob must be in [0, 1], got {self.unconditional_prob}"
-            )
-        if not 0.0 <= self.positive_unconditional_prob <= 1.0:
-            raise ValueError(
-                "positive_unconditional_prob must be in [0, 1], "
-                f"got {self.positive_unconditional_prob}"
             )
         if not isinstance(self.num_steps, int) or self.num_steps <= 0:
             raise ValueError(
@@ -510,7 +502,6 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
             advantage,
             positive_only_conditional=self.config.positive_only_conditional,
             unconditional_prob=self.config.unconditional_prob,
-            positive_unconditional_prob=self.config.positive_unconditional_prob,
         )
         positive_mask = routing["positive_mask"]
         negative_mask = routing["negative_mask"]

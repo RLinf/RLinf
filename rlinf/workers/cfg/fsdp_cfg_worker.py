@@ -139,16 +139,16 @@ class FSDPCfgWorker(FSDPSftWorker):
 
         data_cfg = self.cfg.get("data", {})
         openpi_cfg = self.cfg.actor.model.openpi
-        advantage_tag = data_cfg.get("tag", None)
+        advantage_tag = data_cfg.get("advantage_tag", None)
 
         datasets_config = data_cfg.get("train_data_paths", [])
         if not datasets_config:
             raise ValueError(
                 "At least one dataset must be provided in data.train_data_paths. "
-                "Each dataset should have 'path' and optionally 'episodes' and 'weight' fields."
+                "Each dataset should have 'dataset_path' and optionally 'episodes' and 'weight' fields."
             )
 
-        first_path = datasets_config[0]["path"]
+        first_path = datasets_config[0]["dataset_path"]
         config = get_openpi_config(
             openpi_cfg.config_name,
             model_path=self.cfg.actor.model.model_path,
@@ -162,7 +162,7 @@ class FSDPCfgWorker(FSDPSftWorker):
 
         datasets_with_weights = []
         for ds_config in datasets_config:
-            data_path = ds_config["path"]
+            data_path = ds_config["dataset_path"]
             episodes = ds_config.get("episodes")
             weight = ds_config.get("weight", 1.0)
 

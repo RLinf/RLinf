@@ -322,6 +322,7 @@
    xsquare_turtle2
    sft_openpi
    sft_vlm
+   recap
    co_training
    dsrl
    dagger

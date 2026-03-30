@@ -322,6 +322,7 @@ as well as reinforcement learning training examples on real robots.
    xsquare_turtle2
    sft_openpi
    sft_vlm
+   recap
    co_training
    dsrl
    dagger

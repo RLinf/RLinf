@@ -32,7 +32,7 @@ data:
   num_workers: 8
   # Tag: loads meta/advantages_{tag}.parquet from each dataset
   # If null, loads meta/advantages.parquet (legacy format)
-  tag: null
+  advantage_tag: null
 
   # Balance sampling weights by dataset length
   balance_dataset_weights: true
@@ -40,10 +40,10 @@ data:
   seed: 42
 
   train_data_paths:
-    - path: "/path/to/sft_dataset"
+    - dataset_path: "/path/to/sft_dataset"
       type: "sft"
       weight: 1.0
-    - path: "/path/to/collected_data"
+    - dataset_path: "/path/to/collected_data"
       type: "rollout"
       weight: 1.0
 
@@ -65,11 +65,10 @@ actor:
     openpi:
       config_name: "pi05_libero"
       cfgrl_guidance_scale: 1.0
-      unconditional_prob: 0.1  # legacy CFG dropout; unused in positive-only mode
+      unconditional_prob: 0.1
       train_expert_only: False
       guidance_type: "positive"
       positive_only_conditional: true
-      positive_unconditional_prob: 0.1
 
   optim:
     lr: 1.0e-5

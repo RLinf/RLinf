@@ -1185,7 +1185,7 @@ def main(cfg: DictConfig) -> None:
 
         for ds_path, result in dataset_results.items():
             df = result["df"]
-            dataset_type = result["config"].get("dataset_type")
+            dataset_type = result["config"].get("type")
             save_advantages_to_dataset(
                 dataset_path=ds_path,
                 advantages_df=df,

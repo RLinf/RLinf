@@ -39,13 +39,13 @@ data:
   train_data_paths:
     - dataset_path: "/path/to/sft_dataset"
       robot_type: "libero"
-      dataset_type: "sft"
+      type: "sft"
       weight: 1.0
 
     # Uncomment to add rollout datasets:
     # - dataset_path: "/path/to/rollout_dataset"
     #   robot_type: "libero"
-    #   dataset_type: "rollout"
+    #   type: "rollout"
     #   weight: 1.0
 
   # N in: A = normalize(r_{t:t+N}) + gamma^N * V(o_{t+N}) - V(o_t)

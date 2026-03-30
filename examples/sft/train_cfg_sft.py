@@ -42,7 +42,7 @@ def main(cfg) -> None:
     # Support multiple data path options (new datasets format and legacy)
     datasets = data_cfg.get("train_data_paths")
     if datasets and len(datasets) > 0:
-        os.environ["HF_LEROBOT_HOME"] = datasets[0].get("path", "")
+        os.environ["HF_LEROBOT_HOME"] = datasets[0].get("dataset_path", "")
     elif data_cfg.get("sft_data_path"):
         os.environ["HF_LEROBOT_HOME"] = data_cfg.sft_data_path
     elif data_cfg.get("data_path"):
