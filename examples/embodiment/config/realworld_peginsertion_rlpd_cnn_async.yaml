@@ -32,7 +32,7 @@ cluster:
       hardware:
         type: Franka
         configs:
-          - robot_ip: 192.168.1.2 # Replace with your robot's IP address
+          - robot_ip: ROBOT_IP # Replace with your robot's IP address
             node_rank: 1
 
 runner:
@@ -92,9 +92,9 @@ algorithm:
   demo_buffer:
     enable_cache: True
     cache_size: 200 # number of trajectories cached in memory
-    sample_window_size: 200 # number of latest trajectories to sample from for demo buffer
-    load_path: "/home/ubuntu/zhoujiakai/RLinf/data/demos"
     min_buffer_size: 1
+    sample_window_size: 200 # number of latest trajectories to sample from for demo buffer
+    load_path: "/path/to/demo_data"
     auto_save: False
 
   target_update_freq: 1  # Frequency of target network updates
@@ -123,8 +123,8 @@ env:
     override_cfg:
       is_dummy: False
       use_dense_reward: False
-      target_ee_pose: [ 0.53118626, -0.0625762,  -0.00602859,   3.13221979, -0.0261194,   0.00613792] # Replace with your target end-effector pose
-
+      target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
+  
   eval:
     total_num_envs: 1
 

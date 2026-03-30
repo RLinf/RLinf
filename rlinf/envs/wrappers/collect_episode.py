@@ -24,7 +24,7 @@ from typing import Any, Optional
 import gymnasium as gym
 import numpy as np
 import torch
-import imageio
+
 from rlinf.data.lerobot_writer import LeRobotDatasetWriter
 
 _VALID_FORMATS = ("pickle", "lerobot")
@@ -122,7 +122,7 @@ class CollectEpisode(gym.Wrapper):
 
         os.makedirs(self.save_dir, exist_ok=True)
         atexit.register(self._finalize_on_exit)
-        # signal.signal(signal.SIGTERM, self._handle_signal)
+        signal.signal(signal.SIGTERM, self._handle_signal)
 
     @property
     def is_start(self):
@@ -317,18 +317,6 @@ class CollectEpisode(gym.Wrapper):
             ep_data = self._buffer_to_lerobot_ep(buf, env_idx, is_success)
             if ep_data is not None:
                 self._submit(self._write_lerobot_episode, ep_data)
-                video_dir = os.path.join(self.save_dir, "video")
-                os.makedirs(video_dir, exist_ok=True)
-                label = "success" if is_success else "failure"
-                video_filename = (
-                    f"rank_{self.rank}_env_{env_idx}_"
-                    f"episode_{self._episode_ids[env_idx]}_{label}.mp4"
-                )
-                self._submit(
-                    self._write_lerobot_video,
-                    os.path.join(video_dir, video_filename),
-                    self._copy(ep_data["images"]),
-                )
         else:
             episode_data = self._copy(
                 {
@@ -494,14 +482,6 @@ class CollectEpisode(gym.Wrapper):
     def _write_pickle(self, save_path: str, episode_data: dict) -> None:
         with open(save_path, "wb") as f:
             pickle.dump(episode_data, f)
-
-    def _write_lerobot_video(self, save_path: str, frames: list[np.ndarray]) -> None:
-        """Write a lerobot episode's main camera frames to MP4."""
-        if not frames:
-            return
-        with imageio.get_writer(save_path, fps=self.fps) as writer:
-            for frame in frames:
-                writer.append_data(self._to_uint8(np.asarray(frame)))
 
     # ─────────────────────────────────────────── async I/O ────────────────────
 

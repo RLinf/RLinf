@@ -124,15 +124,6 @@ def process_nested_dict_for_train(nested_dict, shuffle_id):
             ret_dict[key] = process_nested_dict_for_train(value, shuffle_id)
     return ret_dict
 
-def concat_nested_dict(nested_dict1, nested_dict2):
-    ret_dict = {}
-    for key, value in nested_dict1.items():
-        if isinstance(value, torch.Tensor):
-            ret_dict[key] = torch.cat([value, nested_dict2[key]], dim=0)
-        elif isinstance(value, dict):
-            ret_dict[key] = concat_nested_dict(value, nested_dict2[key])
-    return ret_dict
-
 
 class FSDPActor(FSDPModelManager, Worker):
     def __init__(

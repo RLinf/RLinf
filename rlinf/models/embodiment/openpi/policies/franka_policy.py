@@ -49,14 +49,11 @@ class FrankaEEOutputs(transforms.DataTransformFn):
 
     For your own dataset, you can copy this class and modify the action dimension based on the comments below.
     """
-
-    # Whether to train actions using rotation_6d or not.
-    action_train_with_rotation_6d: bool = False
+    output_action_dim: int # default output action dim is 7 (xyz + rpy + gripper)
 
     def __call__(self, data: dict) -> dict:
         return {
-            # "actions": np.asarray(data["actions"][:, :6]) # TODO: Need to use config !!!!!!!
-            "actions": np.asarray(data["actions"][:, :7])
+            "actions": np.asarray(data["actions"][:, :output_action_dim])
         }  # use abs actions [x,y,z,rx,ry,rz,gripper] for Franka
 
 
@@ -76,9 +73,6 @@ class FrankaEEInputs(transforms.DataTransformFn):
     # Determines which model will be used.
     # Do not change this for your own dataset.
     model_type: _model.ModelType = _model.ModelType.PI0
-
-    # Whether to train actions using rotation_6d or not.
-    action_train_with_rotation_6d: bool = False
 
     def __call__(self, data: dict) -> dict:
         if isinstance(data["observation/state"], np.ndarray):
