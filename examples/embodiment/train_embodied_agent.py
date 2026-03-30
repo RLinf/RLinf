@@ -53,6 +53,10 @@ def main(cfg) -> None:
         )
 
         actor_worker_cls = EmbodiedDAGGERFSDPPolicy
+    elif cfg.algorithm.loss_type == "embodied_nft":
+        from rlinf.workers.actor.fsdp_nft_policy_worker import EmbodiedNFTFSDPPolicy
+
+        actor_worker_cls = EmbodiedNFTFSDPPolicy
     else:
         from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 
