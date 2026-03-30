@@ -88,13 +88,13 @@ Dynamixel SDK 用于与 GELLO 设备内部的 Dynamixel 舵机通信。
 
 .. code-block:: bash
 
-   pip install git+https://github.com/Brunch-Life/gello-teleop.git
+   pip install git+https://github.com/RLinf/gello-teleop.git
 
 或者，如果你希望使用可编辑安装：
 
 .. code-block:: bash
 
-   git clone https://github.com/Brunch-Life/gello-teleop.git
+   git clone https://github.com/RLinf/gello-teleop.git
    cd gello-teleop
    pip install -e .
 
@@ -102,7 +102,7 @@ Dynamixel SDK 用于与 GELLO 设备内部的 Dynamixel 舵机通信。
 
 .. code-block:: bash
 
-   pip install "gello-teleop[gello] @ git+https://github.com/Brunch-Life/gello-teleop.git"
+   pip install "gello-teleop[gello] @ git+https://github.com/RLinf/gello-teleop.git"
 
 
 3. 配置串口设备

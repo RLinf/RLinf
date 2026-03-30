@@ -100,13 +100,13 @@ directly from the GitHub repository:
 
 .. code-block:: bash
 
-   pip install git+https://github.com/Brunch-Life/gello-teleop.git
+   pip install git+https://github.com/RLinf/gello-teleop.git
 
 Or, if you prefer an editable installation:
 
 .. code-block:: bash
 
-   git clone https://github.com/Brunch-Life/gello-teleop.git
+   git clone https://github.com/RLinf/gello-teleop.git
    cd gello-teleop
    pip install -e .
 
@@ -115,7 +115,7 @@ installed separately):
 
 .. code-block:: bash
 
-   pip install "gello-teleop[gello] @ git+https://github.com/Brunch-Life/gello-teleop.git"
+   pip install "gello-teleop[gello] @ git+https://github.com/RLinf/gello-teleop.git"
 
 
 3. Set up the serial device
