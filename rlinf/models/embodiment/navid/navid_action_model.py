@@ -69,6 +69,13 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
         self._history_rgb_tensor: dict[str, torch.Tensor | None] = {}
         # TODO: initialize max history len from config
         self._max_history_len: int | None = None
+        self.action_map = {
+            "stop": 0,
+            "move_forward": 1,
+            "turn_left": 2,
+            "turn_right": 3,
+            "no_op": 4,
+        }
 
     @classmethod
     def from_pretrained(
@@ -200,6 +207,7 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
         )
 
         chunk_actions = self._parse_actions_from_texts(gen_texts=gen_texts)
+        chunk_actions = np.vectorize(lambda x: self.action_map[x])(chunk_actions)
 
         prev_logprobs = torch.zeros(
             (bsz, self.action_dim), device=device, dtype=torch.float32

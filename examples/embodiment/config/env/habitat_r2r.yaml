@@ -1,4 +1,5 @@
 env_type: habitat
+task_suite_name: vln_r2r
 
 seed: 0
 group_size: 1
@@ -7,8 +8,14 @@ use_rel_reward: True
 total_num_envs: null
 auto_reset: False
 ignore_terminations: False
-max_steps_per_rollout_epoch: 200
-max_episode_steps: 200
+max_steps_per_rollout_epoch: 512
+max_episode_steps: 512
+use_fixed_reset_state_ids: True
+use_ordered_reset_state_ids: False
+
+split: None
+data_path: "/path/to/data_path_out"
+scenes_dir: "/path/to/scene_dir_out"
 
 init_params:
-  config_path: "path/to/config" # Select in the rlinf/envs/habitat/extensions/config folder
+  config_path: "rlinf/envs/habitat/extensions/config/vlnce_r2r_navid.yaml"
