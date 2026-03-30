@@ -59,10 +59,20 @@ class EnvWorker(Worker):
         self.stage_num = self.cfg.rollout.pipeline_stage_num
 
         # Env configurations
-        self.enable_offload = self.cfg.env.train.get("enable_offload", False)
         self.only_eval = getattr(self.cfg.runner, "only_eval", False)
+        train_env_cfg = self.cfg.env.get("train", None)
+        eval_env_cfg = self.cfg.env.eval
+        self.enable_offload = (
+            train_env_cfg.get("enable_offload", False)
+            if train_env_cfg is not None
+            else eval_env_cfg.get("enable_offload", False)
+        )
         self.enable_eval = self.cfg.runner.val_check_interval > 0 or self.only_eval
         if not self.only_eval:
+            if train_env_cfg is None:
+                raise ValueError(
+                    "env.train config is required when runner.only_eval=False."
+                )
             self.train_num_envs_per_stage = (
                 self.cfg.env.train.total_num_envs // self._world_size // self.stage_num
             )
@@ -70,10 +80,12 @@ class EnvWorker(Worker):
             self.eval_num_envs_per_stage = (
                 self.cfg.env.eval.total_num_envs // self._world_size // self.stage_num
             )
-        self.n_train_chunk_steps = (
-            self.cfg.env.train.max_steps_per_rollout_epoch
-            // self.cfg.actor.model.num_action_chunks
-        )
+        self.n_train_chunk_steps = 0
+        if not self.only_eval:
+            self.n_train_chunk_steps = (
+                self.cfg.env.train.max_steps_per_rollout_epoch
+                // self.cfg.actor.model.num_action_chunks
+            )
         self.n_eval_chunk_steps = (
             self.cfg.env.eval.max_steps_per_rollout_epoch
             // self.cfg.actor.model.num_action_chunks
@@ -81,16 +93,15 @@ class EnvWorker(Worker):
         self.actor_split_num = self.get_actor_split_num()
 
     def init_worker(self):
-        self.dst_ranks = {
-            "train": self._setup_dst_ranks(
+        self.dst_ranks = {}
+        self.src_ranks = {}
+        if not self.only_eval:
+            self.dst_ranks["train"] = self._setup_dst_ranks(
                 self.cfg.env.train.total_num_envs // self.stage_num
-            ),
-        }
-        self.src_ranks = {
-            "train": self._setup_src_ranks(
+            )
+            self.src_ranks["train"] = self._setup_src_ranks(
                 self.cfg.env.train.total_num_envs // self.stage_num
-            ),
-        }
+            )
 
         if self.enable_eval:
             self.dst_ranks["eval"] = self._setup_dst_ranks(
@@ -101,8 +112,6 @@ class EnvWorker(Worker):
             )
         self.log_info(f"Env worker initialized with dst_ranks: {self.dst_ranks}")
         self.log_info(f"Env worker initialized with src_ranks: {self.src_ranks}")
-        train_env_cls = get_env_cls(self.cfg.env.train.env_type, self.cfg.env.train)
-        eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
 
         # This is a barrier to ensure all envs' initial setup upon import is done
         # Essential for RealWorld env to ensure initial ROS node setup is done
@@ -113,16 +122,15 @@ class EnvWorker(Worker):
 
         self.update_env_cfg()
 
-        train_env_cls = get_env_cls(self.cfg.env.train.env_type, self.cfg.env.train)
-        eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
-
         if not self.only_eval:
+            train_env_cls = get_env_cls(self.cfg.env.train.env_type, self.cfg.env.train)
             self.env_list = self._setup_env_and_wrappers(
                 env_cls=train_env_cls,
                 env_cfg=self.cfg.env.train,
                 num_envs_per_stage=self.train_num_envs_per_stage,
             )
         if self.enable_eval:
+            eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
             self.eval_env_list = self._setup_env_and_wrappers(
                 env_cls=eval_env_cls,
                 env_cfg=self.cfg.env.eval,
@@ -134,23 +142,24 @@ class EnvWorker(Worker):
 
     def update_env_cfg(self):
         # train env
-        train_override_cfgs = self.cfg.env.train.get("override_cfgs", None)
-        if train_override_cfgs is not None:
-            assert len(train_override_cfgs) > self._rank, (
-                f"{len(train_override_cfgs)=} > {self._rank=}"
-            )
+        if self.cfg.env.get("train", None) is not None:
+            train_override_cfgs = self.cfg.env.train.get("override_cfgs", None)
+            if train_override_cfgs is not None:
+                assert len(train_override_cfgs) > self._rank, (
+                    f"{len(train_override_cfgs)=} > {self._rank=}"
+                )
 
-            general_train_override_cfg = OmegaConf.to_container(
-                self.cfg.env.train.get("override_cfg", {}), resolve=True
-            )
-            override_cfg = OmegaConf.to_container(
-                train_override_cfgs[self._rank], resolve=True
-            ).copy()
+                general_train_override_cfg = OmegaConf.to_container(
+                    self.cfg.env.train.get("override_cfg", {}), resolve=True
+                )
+                override_cfg = OmegaConf.to_container(
+                    train_override_cfgs[self._rank], resolve=True
+                ).copy()
 
-            base_cfg = {}
-            base_cfg = update_nested_cfg(base_cfg, general_train_override_cfg)
-            base_cfg = update_nested_cfg(base_cfg, override_cfg)
-            setattr(self.cfg.env.train, "override_cfg", OmegaConf.create(base_cfg))
+                base_cfg = {}
+                base_cfg = update_nested_cfg(base_cfg, general_train_override_cfg)
+                base_cfg = update_nested_cfg(base_cfg, override_cfg)
+                setattr(self.cfg.env.train, "override_cfg", OmegaConf.create(base_cfg))
 
         eval_override_cfgs = self.cfg.env.eval.get("override_cfgs", None)
         if eval_override_cfgs is not None:

@@ -40,6 +40,17 @@
          在π₀和π₀.₅上实现强化学习的效果跃升
        </p>
      </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/d4rl.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="iql_d4rl.html" style="text-decoration: underline; color: blue;">
+          <b>基于 D4RL 基准的离线强化学习</b>
+         </a><br>
+         支持 D4RL 场景的 IQL 离线训练
+       </p>
+     </div>
    </div>
 
    <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
@@ -313,6 +324,7 @@
    opensora
    wan
    gsenv
+   iql_d4rl
    pi0
    gr00t
    sac_flow
