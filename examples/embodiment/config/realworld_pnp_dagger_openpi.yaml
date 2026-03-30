@@ -58,7 +58,7 @@ runner:
   save_interval: -1
 
   resume_dir: null
-  ckpt_path: "/workspace/ckpt/pnp-sq-sft/full_weights.pt"
+  ckpt_path: "/path/to/ckpt"
 
 algorithm:
   dagger:

@@ -46,7 +46,7 @@ actor:
     model_path: "/path/to/pi0-model"
     num_action_chunks: 10
     action_dim: 7
-    add_value_head: True
+    add_value_head: False
     openpi:
       config_name: "pi0_franka_dagger"
       detach_critic_input: True
