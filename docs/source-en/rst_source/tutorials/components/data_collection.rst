@@ -283,7 +283,7 @@ Real-robot Replay Buffer Collection
 ------------------------------------
 
 Real-robot collection is used for RLPD (Reinforcement Learning from Prior Data)
-or policy initialization. An operator uses a SpaceMouse or similar device to
+or policy initialization. An operator uses a SpaceMouse or GELLO device to
 demonstrate successful task completions; data is saved in
 ``TrajectoryReplayBuffer`` format for direct use in subsequent real-robot training.
 
@@ -331,6 +331,12 @@ Configuration Parameters
    * - ``env.eval.no_gripper``
      - ``False``
      - Whether the real-world env uses a 6-DoF action without a gripper dimension
+   * - ``env.eval.use_gello``
+     - ``False``
+     - Enable GELLO teleoperation (mutually exclusive with SpaceMouse)
+   * - ``env.eval.gello_port``
+     - —
+     - Serial port of the GELLO device (required when ``use_gello`` is ``True``)
    * - ``env.eval.override_cfg.target_ee_pose``
      - —
      - Target end-effector pose ``[x, y, z, rx, ry, rz]``
@@ -442,9 +448,17 @@ Usage Steps
       # or with a custom config name:
       bash examples/embodiment/collect_data.sh my_custom_config
 
-4. Use the SpaceMouse to operate the robot. Once ``num_data_episodes`` successes
-   are recorded the script saves the buffer and exits. Logs and data are written
-   under ``logs/{timestamp}/``.
+4. Use the SpaceMouse (or GELLO) to operate the robot. Once ``num_data_episodes``
+   successes are recorded the script saves the buffer and exits. Logs and data are
+   written under ``logs/{timestamp}/``.
+
+   To use GELLO instead of SpaceMouse, use the dedicated config:
+
+   .. code-block:: bash
+
+      bash examples/embodiment/collect_data.sh realworld_collect_data_gello
+
+   See :doc:`../../examples/embodied/franka` for GELLO setup details.
 
 ----
 

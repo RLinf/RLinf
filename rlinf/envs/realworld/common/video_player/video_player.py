@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -51,5 +51,5 @@ class VideoPlayer:
                 [v for k, v in img_array.items() if "full" not in k], axis=0
             )
 
-            cv2.imshow("RealSense Cameras", frame)
+            cv2.imshow("Cameras", frame)
             cv2.waitKey(1)

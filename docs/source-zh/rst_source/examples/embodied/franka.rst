@@ -86,6 +86,7 @@ Franka真机强化学习
 - **计算节点**：一台带有 GPU 的计算机，用于训练 CNN 策略。
 - **机器人控制节点**：一台与机械臂处于同一局域网的小型计算机（不需要 GPU），用于控制 Franka 机械臂。
 - **空间鼠标（可选）**：用于远程操控数据采集或在训练过程中进行人工干预。
+- **GELLO（可选）**：一种关节级遥操作设备，可替代空间鼠标，操控更直观，并原生支持夹爪控制。
 
 .. warning::
 
@@ -369,6 +370,44 @@ b. 安装依赖
    **使用 ZED 相机和 Robotiq 夹爪？** 我们提供了专用的数据采集脚本和配置文件。
    请参考 :doc:`franka_zed_robotiq` 中的
    :ref:`数据采集 <franka-zed-robotiq-data-collection-zh>` 章节。
+
+使用 GELLO 进行数据采集
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+除空间鼠标外，RLinf 还支持使用 `GELLO <https://github.com/wuphilipp/gello_software>`_ 进行遥操作数据采集。
+GELLO 是一种关节级遥操作设备，其运动学结构与 Franka 机械臂一致，操控更直观、精确，并原生支持夹爪控制。
+
+**前置条件**
+
+- 安装 ``gello`` 和 ``gello-teleop`` 软件包。详细安装说明请参考 :doc:`franka_gello`。
+- GELLO 设备通过 USB 串口连接到控制节点。
+- 确认 GELLO 串口路径（例如 ``/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0``）。
+  可通过以下命令列出可用串口：
+
+  .. code-block:: bash
+
+     ls /dev/serial/by-id/
+
+**配置**
+
+使用配置文件 ``examples/embodiment/config/realworld_collect_data_gello.yaml``。
+与空间鼠标配置的关键区别如下：
+
+.. code-block:: yaml
+
+   env:
+     eval:
+       use_spacemouse: False
+       use_gello: True
+       gello_port: "/dev/serial/by-id/usb-FTDI_..."  # 替换为你的 GELLO 串口路径
+
+**运行**
+
+.. code-block:: bash
+
+   bash examples/embodiment/collect_data.sh realworld_collect_data_gello
+
+整体流程与空间鼠标采集相同：使用 GELLO 设备操控机器人完成任务，脚本会自动保存成功的 episode。
 
 集群配置
 ~~~~~~~~~~~~~~~~~
