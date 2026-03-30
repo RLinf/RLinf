@@ -106,9 +106,8 @@ env:
       use_dense_reward: False
       reward_scale: 1.0
       max_num_steps: 80
-      max_steps_per_rollout_epoch: 80
       target_ee_pose: [ 0.68074,  0.043378, -0.009091,  -3.12254644,  0.03969363, -0.00712334] # Replace with your target end-effector pose
-      reward_threshold: [0.02, 0.02, 0.02, 0.2, 0.2, 0.2]
+      reward_threshold: [0.015, 0.015, 0.1, 0.2, 0.2, 0.2]
 
   eval:
     total_num_envs: 1
@@ -129,8 +128,8 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 40      # how many samples each GPU processes per sampling step
-  global_batch_size: 320   # after how many sampled examples we perform one loss backward pass. Requirement: global bz must be '_world_size' multiples of local bs.
+  micro_batch_size: 80      # how many samples each GPU processes per sampling step
+  global_batch_size: 400   # after how many sampled examples we perform one loss backward pass. Requirement: global bz must be '_world_size' multiples of local bs.
   seed: 0
   enable_offload: False
   # Override the default values in model/pi0_5
@@ -158,7 +157,7 @@ actor:
     adam_beta2: 0.95
     adam_eps: 1.0e-05
     clip_grad: 1.0
-    critic_warmup_steps: 10
+    critic_warmup_steps: 2
 
   # Override the default values in training_backend/fsdp
   fsdp_config:

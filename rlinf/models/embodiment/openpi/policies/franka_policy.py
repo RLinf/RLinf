@@ -55,7 +55,8 @@ class FrankaEEOutputs(transforms.DataTransformFn):
 
     def __call__(self, data: dict) -> dict:
         return {
-            "actions": np.asarray(data["actions"][:, :6]) # TODO: Need to use config !!!!!!!
+            # "actions": np.asarray(data["actions"][:, :6]) # TODO: Need to use config !!!!!!!
+            "actions": np.asarray(data["actions"][:, :7])
         }  # use abs actions [x,y,z,rx,ry,rz,gripper] for Franka
 
 
