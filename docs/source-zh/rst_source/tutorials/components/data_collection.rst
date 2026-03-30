@@ -272,7 +272,7 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 ----------------------------
 
 真机采集用于 RLPD（Reinforcement Learning from Prior Data）或策略初始化。
-操作员通过 SpaceMouse 等人工干预设备完成任务，数据以 ``Trajectory``
+操作员通过 SpaceMouse 或 GELLO 等人工干预设备完成任务，数据以 ``Trajectory``
 格式保存，可直接供后续真机训练使用。
 
 与仿真的大规模并行采集不同，真机采集在单控制节点运行，按目标成功次数自动停止。
@@ -314,6 +314,12 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
    * - ``env.eval.no_gripper``
      - ``False``
      - 是否使用不带夹爪维度的 6 维真机动作
+   * - ``env.eval.use_gello``
+     - ``False``
+     - 是否启用 GELLO 遥操作（与 SpaceMouse 互斥）
+   * - ``env.eval.gello_port``
+     - —
+     - GELLO 设备串口路径（``use_gello`` 为 ``True`` 时必填）
    * - ``env.eval.override_cfg.target_ee_pose``
      - —
      - 任务目标末端位姿 ``[x, y, z, rx, ry, rz]``
@@ -422,8 +428,17 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
       # 或使用自定义配置：
       bash examples/embodiment/collect_data.sh my_custom_config
 
-4. 用 SpaceMouse 操作机器人完成任务。成功次数达到 ``num_data_episodes`` 后，
-   脚本自动保存并退出，日志和数据存放在 ``logs/{timestamp}/`` 目录下。
+4. 用 SpaceMouse（或 GELLO）操作机器人完成任务。成功次数达到
+   ``num_data_episodes`` 后，脚本自动保存并退出，日志和数据存放在
+   ``logs/{timestamp}/`` 目录下。
+
+   如需使用 GELLO 替代 SpaceMouse，可使用专用配置：
+
+   .. code-block:: bash
+
+      bash examples/embodiment/collect_data.sh realworld_collect_data_gello
+
+   GELLO 的安装与设置请参考 :doc:`../../examples/embodied/franka`。
 
 ----
 

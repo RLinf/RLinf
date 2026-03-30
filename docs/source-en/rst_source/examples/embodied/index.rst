@@ -320,6 +320,7 @@ as well as reinforcement learning training examples on real robots.
    dexbotic
    franka
    franka_zed_robotiq
+   franka_gello
    xsquare_turtle2
    sft_openpi
    sft_vlm
