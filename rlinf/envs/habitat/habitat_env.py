@@ -439,27 +439,28 @@ class HabitatEnv(gym.Env):
             cached_v[m] = v[m]
 
         # Save metrics by episode_id when env first done
-        episode_ids = self.env.get_current_episode_ids()
-        for i in range(len(metric_save_masks)):
-            if metric_save_masks[i]:
-                episode_id = episode_ids[i]
-                metrics_dict = {}
-                for k, v in episode.items():
-                    if torch.is_tensor(v):
-                        if v.dim() == 1:
-                            metrics_dict[k] = v[i].item()
+        if self.metrics_cfg.save_metrics:
+            episode_ids = self.env.get_current_episode_ids()
+            for i in range(len(metric_save_masks)):
+                if metric_save_masks[i]:
+                    episode_id = episode_ids[i]
+                    metrics_dict = {}
+                    for k, v in episode.items():
+                        if torch.is_tensor(v):
+                            if v.dim() == 1:
+                                metrics_dict[k] = v[i].item()
+                            else:
+                                metrics_dict[k] = v[i].cpu().numpy().tolist()
+                        elif isinstance(v, (list, np.ndarray)):
+                            metrics_dict[k] = v[i]
                         else:
-                            metrics_dict[k] = v[i].cpu().numpy().tolist()
-                    elif isinstance(v, (list, np.ndarray)):
-                        metrics_dict[k] = v[i]
-                    else:
-                        metrics_dict[k] = v
-                metrics_file = os.path.join(
-                    self.metrics_cfg.metrics_base_dir, f"episode_{episode_id}.json"
-                )
-                os.makedirs(self.metrics_cfg.metrics_base_dir, exist_ok=True)
-                with open(metrics_file, "w") as f:
-                    json.dump(metrics_dict, f, indent=2, ensure_ascii=False)
+                            metrics_dict[k] = v
+                    metrics_file = os.path.join(
+                        self.metrics_cfg.metrics_base_dir, f"episode_{episode_id}.json"
+                    )
+                    os.makedirs(self.metrics_cfg.metrics_base_dir, exist_ok=True)
+                    with open(metrics_file, "w") as f:
+                        json.dump(metrics_dict, f, indent=2, ensure_ascii=False)
 
     def _overlay_first_done_episode_metrics(self, infos):
         """Overlay cached first-done values onto live episode metrics"""

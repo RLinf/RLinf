@@ -68,4 +68,3 @@ habitat:
     split: None
     scenes_dir: "/path/to/scene_dir"
     data_path: "/path/to/data_path"
-
