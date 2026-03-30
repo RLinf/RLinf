@@ -236,6 +236,76 @@ as well as reinforcement learning training examples on real robots.
      </div>
   </div>
 
+  <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
+          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="co_training.html" style="text-decoration: underline; color: blue;">
+          <b>Sim-Real Co-Training</b>
+        </a><br>
+        PPO in sim + SFT on real data for better sim-to-real transfer
+      </p>
+    </div>
+
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/dsrl.png"
+          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="dsrl.html" style="text-decoration: underline; color: blue;">
+          <b>DSRL for Pi0</b>
+        </a><br>
+        Steer a frozen Pi0 diffusion policy with lightweight SAC in noise space
+      </p>
+    </div>
+
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/xsquare_turtle2_arm_small.jpg"
+          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+       <a href="xsquare_turtle2.html" style="text-decoration: underline; color: blue;">
+          <b>Real-World RL with XSquare Turtle2</b>
+        </a><br>
+        SAC + CNN policy on the XSquare Turtle2 dual-arm robot
+      </p>
+    </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://raw.githubusercontent.com/RLinf/misc/378920588652fff0a2a0b163b392c94694993345/pic/libero-plus.jpg" 
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="liberoplus_pro.html" style="text-decoration: underline; color: blue;">
+          <b>RL with LIBERO-Pro & LIBERO-Plus</b>
+         </a><br>
+         Support LIBERO-Pro / LIBERO-Plus + OpenVLA-OFT / π₀ / π₀.₅ + PPO/GRPO training
+       </p>
+     </div>
+  </div>
+
+  <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/dagger.jpg"
+          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+       <a href="dagger.html" style="text-decoration: underline; color: blue;">
+          <b>DAgger for Embodied Policies</b>
+        </a><br>
+        Guide online imitation learning with expert relabeling and replay-buffer updates
+    </div>
+    
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/lingbotvla.png"
+          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="lingbotvla.html" style="text-decoration: underline; color: blue;">
+          <b>RL with Lingbot-VLA Model</b>
+        </a><br>
+        Support Lingbot-VLA + RoboTwin + GRPO training
+      </p>
+    </div>
+  </div>
+
+
 
 .. toctree::
    :hidden:
@@ -243,6 +313,7 @@ as well as reinforcement learning training examples on real robots.
 
    maniskill
    libero
+   liberoplus_pro
    behavior
    metaworld
    isaaclab
@@ -260,5 +331,12 @@ as well as reinforcement learning training examples on real robots.
    mlp
    dexbotic
    franka
-   sft
-   
+   franka_zed_robotiq
+   xsquare_turtle2
+   sft_openpi
+   sft_vlm
+   co_training
+   dsrl
+   dagger
+   lingbotvla
+

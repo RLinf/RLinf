@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -21,10 +22,26 @@ if TYPE_CHECKING:
     pass
 
 from rlinf.utils.nested_dict_process import (
+    cat_list_of_dict_tensor,
     put_tensor_device,
     split_dict_to_chunk,
     stack_list_of_dict_tensor,
 )
+
+
+def get_model_weights_id(versions: torch.Tensor) -> str:
+    """
+    Get the model weights id from the tensor.
+
+    Args:
+        versions (torch.Tensor): The tensor to get the model weights id from.
+
+    Returns:
+        str: The model weights id.
+    """
+
+    name_bytes = versions.cpu().numpy().tobytes()
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, name_bytes.hex()))
 
 
 @dataclass(kw_only=True)
@@ -81,7 +98,9 @@ class EnvOutput:
         )
         states = obs["states"] if "states" in obs else None
         task_descriptions = (
-            list(obs["task_descriptions"]) if "task_descriptions" in obs else None
+            list(obs["task_descriptions"])
+            if "task_descriptions" in obs and obs["task_descriptions"] is not None
+            else None
         )
 
         return {
@@ -92,7 +111,134 @@ class EnvOutput:
             "task_descriptions": task_descriptions,
         }
 
-    def to_dict(self):
+    @staticmethod
+    def merge_env_outputs(env_outputs: list[dict]) -> dict[str, Any]:
+        """Merge multiple env output dicts into one batch-aligned env output.
+
+        Merge strategy:
+
+        - Tensor fields: concatenate on batch dimension.
+        - List fields: flatten in source order.
+        - ``None`` fields: keep ``None``.
+        - ``final_obs`` supports partial ``None`` across shards. For shards
+            without ``final_obs``, use the corresponding ``obs`` as fallback to
+            keep batch alignment.
+
+        Args:
+            env_outputs: Per-source env output dicts that share the same schema.
+
+        Returns:
+            A merged env output dict produced via ``EnvOutput(...).to_dict()``.
+        """
+
+        def _get_batch_size(env_output: dict[str, Any]) -> int:
+            dones = env_output.get("dones")
+            if isinstance(dones, torch.Tensor):
+                return dones.shape[0]
+
+            obs = env_output["obs"]
+            for key in ("states", "main_images", "task_descriptions"):
+                value = obs.get(key)
+                if isinstance(value, torch.Tensor):
+                    return value.shape[0]
+                if isinstance(value, list):
+                    return len(value)
+            raise ValueError("Cannot infer batch size from env output.")
+
+        def _merge_obs_dicts(obs_dicts: list[dict[str, Any]]) -> dict[str, Any]:
+            merged_obs = {}
+            for key in obs_dicts[0].keys():
+                obs_elements = [obs_dict[key] for obs_dict in obs_dicts]
+                first_non_none = next(
+                    (element for element in obs_elements if element is not None), None
+                )
+                if first_non_none is None:
+                    merged_obs[key] = None
+                elif isinstance(first_non_none, torch.Tensor):
+                    merged_obs[key] = torch.cat(obs_elements, dim=0)
+                elif isinstance(first_non_none, list):
+                    merged_obs[key] = [
+                        item for sublist in obs_elements for item in sublist
+                    ]
+                else:
+                    merged_obs[key] = obs_elements
+            return merged_obs
+
+        def _merge_optional_tensor_field(
+            field_name: str,
+            *,
+            allow_partial_none: bool = False,
+            fill_value: float | bool = 0,
+        ) -> torch.Tensor | None:
+            values = [env_output[field_name] for env_output in env_outputs]
+            if all(value is None for value in values):
+                return None
+
+            if any(value is None for value in values):
+                if not allow_partial_none:
+                    raise ValueError(
+                        f"Inconsistent field '{field_name}': some shards are None while others are tensors."
+                    )
+
+                ref_tensor = next(value for value in values if value is not None)
+                filled_values = []
+                for env_output, value in zip(env_outputs, values):
+                    if value is None:
+                        batch_size = _get_batch_size(env_output)
+                        fill_shape = (batch_size, *ref_tensor.shape[1:])
+                        filled_values.append(
+                            torch.full(
+                                fill_shape,
+                                fill_value=fill_value,
+                                dtype=ref_tensor.dtype,
+                            )
+                        )
+                    else:
+                        filled_values.append(value)
+                values = filled_values
+
+            return torch.cat(values, dim=0)
+
+        merged_obs = _merge_obs_dicts([env_output["obs"] for env_output in env_outputs])
+
+        merged_final_obs = None
+        final_obs_list = [env_output["final_obs"] for env_output in env_outputs]
+        if any(final_obs is not None for final_obs in final_obs_list):
+            # Some shards may not have done episodes in this step, so their final_obs
+            # is None. Use obs as fallback to keep merged batch shape aligned.
+            final_obs_or_obs = [
+                final_obs if final_obs is not None else env_output["obs"]
+                for env_output, final_obs in zip(env_outputs, final_obs_list)
+            ]
+            merged_final_obs = _merge_obs_dicts(final_obs_or_obs)
+
+        merged_dones = _merge_optional_tensor_field("dones")
+        merged_terminations = _merge_optional_tensor_field("terminations")
+        merged_truncations = _merge_optional_tensor_field("truncations")
+        merged_rewards = _merge_optional_tensor_field("rewards")
+        merged_intervene_actions = _merge_optional_tensor_field(
+            "intervene_actions",
+            allow_partial_none=True,
+            fill_value=0.0,
+        )
+        merged_intervene_flags = _merge_optional_tensor_field(
+            "intervene_flags",
+            allow_partial_none=True,
+            fill_value=False,
+        )
+        # turn to EnvOutput and turn to dict to call post init for tensor processing
+        return EnvOutput(
+            obs=merged_obs,
+            final_obs=merged_final_obs,
+            dones=merged_dones,
+            terminations=merged_terminations,
+            truncations=merged_truncations,
+            rewards=merged_rewards,
+            intervene_actions=merged_intervene_actions,
+            intervene_flags=merged_intervene_flags,
+        ).to_dict()
+
+    def to_dict(self) -> dict[str, Any]:
         env_output_dict = {}
 
         env_output_dict["obs"] = self.prepare_observations(self.obs)
@@ -112,6 +258,77 @@ class EnvOutput:
 
 
 @dataclass(kw_only=True)
+class RolloutResult:
+    """Rollout result for a single chunk step."""
+
+    actions: torch.Tensor = None  # [B, action_dim]
+    prev_logprobs: torch.Tensor = None  # [B, action_dim]
+    prev_values: torch.Tensor = None  # [B, 1]
+
+    bootstrap_values: torch.Tensor = None  # [B, 1]
+    save_flags: torch.Tensor = None  # [B, num_action_chunks]
+    forward_inputs: dict[str, torch.Tensor] = field(default_factory=dict)
+    versions: torch.Tensor = None  # [B, 1]
+
+    def __post_init__(self):
+        if self.actions is not None:
+            self.actions = self.actions.cpu().contiguous()
+        if self.prev_logprobs is not None:
+            self.prev_logprobs = self.prev_logprobs.cpu().contiguous()
+        if self.prev_values is not None:
+            self.prev_values = self.prev_values.cpu().contiguous()
+        if self.bootstrap_values is not None:
+            self.bootstrap_values = self.bootstrap_values.cpu().contiguous()
+        if self.save_flags is not None:
+            self.save_flags = self.save_flags.cpu().contiguous()
+        if self.forward_inputs:
+            self.forward_inputs = put_tensor_device(self.forward_inputs, "cpu")
+        if self.versions is not None:
+            self.versions = self.versions.cpu().contiguous()
+
+    @staticmethod
+    def merge_rollout_results(
+        rollout_results: list["RolloutResult"],
+    ) -> "RolloutResult":
+        def _merge_optional_tensor(field_name: str) -> torch.Tensor | None:
+            values = [
+                getattr(rollout_result, field_name)
+                for rollout_result in rollout_results
+            ]
+            if all(value is None for value in values):
+                return None
+            if any(value is None for value in values):
+                raise ValueError(
+                    f"Inconsistent field '{field_name}': some shards are None while others are tensors."
+                )
+            return torch.cat(values, dim=0)
+
+        merged_actions = _merge_optional_tensor("actions")
+        merged_prev_logprobs = _merge_optional_tensor("prev_logprobs")
+        merged_prev_values = _merge_optional_tensor("prev_values")
+        merged_bootstrap_values = _merge_optional_tensor("bootstrap_values")
+        merged_save_flags = _merge_optional_tensor("save_flags")
+        merged_versions = _merge_optional_tensor("versions")
+
+        forward_inputs_list = [
+            rollout_result.forward_inputs for rollout_result in rollout_results
+        ]
+        if all(not forward_inputs for forward_inputs in forward_inputs_list):
+            merged_forward_inputs = {}
+        else:
+            merged_forward_inputs = cat_list_of_dict_tensor(forward_inputs_list)
+        return RolloutResult(
+            actions=merged_actions,
+            prev_logprobs=merged_prev_logprobs,
+            prev_values=merged_prev_values,
+            bootstrap_values=merged_bootstrap_values,
+            save_flags=merged_save_flags,
+            forward_inputs=merged_forward_inputs,
+            versions=merged_versions,
+        )
+
+
+@dataclass(kw_only=True)
 class ChunkStepResult:
     """Model outputs, env outputs (without observations), and training forward inputs for a chunk step."""
 
@@ -123,6 +340,7 @@ class ChunkStepResult:
     terminations: torch.Tensor = None  # [B, 1]
     rewards: torch.Tensor = None  # [B, 1]
     forward_inputs: dict[str, torch.Tensor] = field(default_factory=dict)
+    versions: torch.Tensor = None  # [B, 1]
 
     def __post_init__(self):
         if self.actions is not None:
@@ -141,6 +359,8 @@ class ChunkStepResult:
             self.rewards = self.rewards.cpu().contiguous()
         if self.forward_inputs:
             self.forward_inputs = put_tensor_device(self.forward_inputs, "cpu")
+        if self.versions is not None:
+            self.versions = self.versions.cpu().contiguous()
 
 
 @dataclass
@@ -150,9 +370,7 @@ class Trajectory:
     """
 
     max_episode_length: int = 0  # max episode length
-    model_weights_id: str = (
-        ""  # str(model_weigths_uuid) + "_" + str(model_update_count)
-    )
+    model_weights_id: str = ""  # str(uuid(versions))
     actions: torch.Tensor = None
     intervene_flags: torch.Tensor = None
     rewards: torch.Tensor = None
@@ -161,6 +379,7 @@ class Trajectory:
     dones: torch.Tensor = None
     prev_logprobs: torch.Tensor = None
     prev_values: torch.Tensor = None
+    versions: torch.Tensor = None
     forward_inputs: dict[str, Any] = field(default_factory=dict)
 
     curr_obs: dict[str, Any] = field(default_factory=dict)
@@ -208,56 +427,74 @@ class Trajectory:
                 f"Reference tensor length {ref_tensor.shape[0]} < traj_len {traj_len}"
             )
 
-    def extract_intervene_traj(self):
+    def extract_intervene_traj(self, mode="any"):
         if self.intervene_flags is None or (~self.intervene_flags).all():
             return None
 
-        mask = self.intervene_flags.any(dim=-1)
-        if mask.dim() > 1:
-            mask = mask.reshape(mask.shape[0], -1).any(dim=-1)
+        if mode == "any":
+            mask = self.intervene_flags.any(dim=-1)
+        elif mode == "all":
+            mask = self.intervene_flags.all(dim=-1)
+        else:
+            raise NotImplementedError(
+                f"Unsupported extract_intervene_traj mode: {mode}"
+            )
+        assert mask.dim() == 2, (
+            f"Expected 2D mask after processing (traj len, bsz), got {mask.shape=}"
+        )
         traj_len = int(mask.shape[0])
 
-        # Apply mask to fields with same length as intervene_flags
-        def apply_mask(tensor):
-            return tensor[mask] if tensor is not None else None
+        def apply_mask(tensor, i):
+            return tensor[:, i][mask[:, i]].unsqueeze(1) if tensor is not None else None
 
-        actions = apply_mask(self.actions)
-        rewards = apply_mask(self.rewards)
-        prev_logprobs = apply_mask(self.prev_logprobs)
-        prev_values = apply_mask(self.prev_values)
-        intervene_flags = apply_mask(self.intervene_flags)
+        def apply_mask_to_dict(d, i):
+            return (
+                {k: v[:, i][mask[:, i]].unsqueeze(1) for k, v in d.items()} if d else {}
+            )
 
-        # Apply mask to dict fields
-        def apply_mask_to_dict(d):
-            return {k: v[mask] for k, v in d.items()} if d else {}
+        filtered_trajectories = []
+        for i in range(mask.shape[1]):
+            if not mask[:, i].any():
+                continue
 
-        forward_inputs = apply_mask_to_dict(self.forward_inputs)
-        curr_obs = apply_mask_to_dict(self.curr_obs)
-        next_obs = apply_mask_to_dict(self.next_obs)
+            actions = apply_mask(self.actions, i)
+            rewards = apply_mask(self.rewards, i)
+            prev_logprobs = apply_mask(self.prev_logprobs, i)
+            prev_values = apply_mask(self.prev_values, i)
+            intervene_flags = apply_mask(self.intervene_flags, i)
 
-        # Handle terminations, truncations, dones which may have different length
-        terminations = truncations = dones = None
-        if self.terminations is not None:
-            field_mask = self._generate_field_mask(self.terminations, mask, traj_len)
-            terminations = self.terminations[field_mask]
-            truncations = self.truncations[field_mask]
-            dones = self.dones[field_mask]
+            forward_inputs = apply_mask_to_dict(self.forward_inputs, i)
+            curr_obs = apply_mask_to_dict(self.curr_obs, i)
+            next_obs = apply_mask_to_dict(self.next_obs, i)
 
-        return Trajectory(
-            max_episode_length=self.max_episode_length,
-            model_weights_id=self.model_weights_id,
-            actions=actions,
-            intervene_flags=intervene_flags,
-            rewards=rewards,
-            terminations=terminations,
-            truncations=truncations,
-            dones=dones,
-            prev_logprobs=prev_logprobs,
-            prev_values=prev_values,
-            forward_inputs=forward_inputs,
-            curr_obs=curr_obs,
-            next_obs=next_obs,
-        )
+            terminations = truncations = dones = None
+            if self.terminations is not None:
+                field_mask = self._generate_field_mask(
+                    self.terminations[:, i : i + 1], mask[:, i], traj_len
+                )
+                terminations = self.terminations[:, i : i + 1][field_mask]
+                truncations = self.truncations[:, i : i + 1][field_mask]
+                dones = self.dones[:, i : i + 1][field_mask]
+
+            filtered_trajectories.append(
+                Trajectory(
+                    max_episode_length=self.max_episode_length,
+                    model_weights_id=self.model_weights_id,
+                    actions=actions,
+                    intervene_flags=intervene_flags,
+                    rewards=rewards,
+                    terminations=terminations,
+                    truncations=truncations,
+                    dones=dones,
+                    prev_logprobs=prev_logprobs,
+                    prev_values=prev_values,
+                    forward_inputs=forward_inputs,
+                    curr_obs=curr_obs,
+                    next_obs=next_obs,
+                )
+            )
+
+        return filtered_trajectories if filtered_trajectories else None
 
 
 @dataclass(kw_only=True)
@@ -268,7 +505,6 @@ class EmbodiedRolloutResult:
     """
 
     max_episode_length: int = 0
-    model_weights_id: str = ""
 
     actions: list[torch.Tensor] = field(default_factory=list)  # trajectory_length
     intervene_flags: list[torch.Tensor] = field(
@@ -288,6 +524,7 @@ class EmbodiedRolloutResult:
     prev_values: list[torch.Tensor] = field(
         default_factory=list
     )  # trajectory_length + rollout_epoch
+    versions: list[torch.Tensor] = field(default_factory=list)  # trajectory_length
     forward_inputs: list[dict[str, Any]] = field(
         default_factory=list
     )  # trajectory_length
@@ -313,8 +550,25 @@ class EmbodiedRolloutResult:
             self.prev_logprobs.append(result.prev_logprobs)
         if result.prev_values is not None:
             self.prev_values.append(result.prev_values)
-        if result.forward_inputs is not None:
+        if result.versions is not None:
+            self.versions.append(result.versions)
+        if result.forward_inputs:
             self.forward_inputs.append(result.forward_inputs)
+
+    def mark_last_step_with_flags(self, save_flags: torch.Tensor):
+        if not self.intervene_flags:
+            return
+
+        if save_flags.dim() == 1:
+            save_flags = save_flags[:, None]
+        assert save_flags.dim() == 2, f"Expected 2D tensor, got {save_flags.shape=}"
+
+        last_action = self.actions[-1]
+        bsz, num_action_chunks = save_flags.shape
+        expanded_flags = save_flags.reshape(bsz, num_action_chunks, 1).expand_as(
+            last_action.reshape(bsz, num_action_chunks, -1)
+        )
+        self.intervene_flags[-1] = expanded_flags.reshape(bsz, -1).to(torch.bool)
 
     def update_last_actions(
         self, intervene_actions: torch.Tensor, intervene_flags: torch.Tensor
@@ -351,8 +605,20 @@ class EmbodiedRolloutResult:
             full_flags = flags.expand_as(last_full_action).reshape(bsz, -1)
             self.intervene_flags[-1] = full_flags
 
+            if self.forward_inputs:
+                last_fi = self.forward_inputs[-1]
+                if "action" in last_fi:
+                    last_fi["action"] = (
+                        last_full_action.reshape(bsz, -1).cpu().contiguous()
+                    )
+                last_fi.pop("model_action", None)
+
     def append_transitions(self, curr_obs=None, next_obs=None):
         assert curr_obs is not None and next_obs is not None
+        if "task_descriptions" in curr_obs:
+            curr_obs.pop("task_descriptions")
+        if "task_descriptions" in next_obs:
+            next_obs.pop("task_descriptions")
         self.curr_obs.append(curr_obs)
         self.next_obs.append(next_obs)
 
@@ -360,7 +626,6 @@ class EmbodiedRolloutResult:
         # return [trajectory_length, B, ...]
         trajectory = Trajectory(
             max_episode_length=self.max_episode_length,
-            model_weights_id=self.model_weights_id,
         )
         if len(self.actions) > 0:
             trajectory.actions = torch.stack(self.actions, dim=0).cpu().contiguous()
@@ -388,6 +653,8 @@ class EmbodiedRolloutResult:
             trajectory.prev_values = (
                 torch.stack(self.prev_values, dim=0).cpu().contiguous()
             )
+        if len(self.versions) > 0:
+            trajectory.versions = torch.stack(self.versions, dim=0).cpu().contiguous()
         if len(self.forward_inputs) > 0:
             trajectory.forward_inputs = stack_list_of_dict_tensor(self.forward_inputs)
             for key in trajectory.forward_inputs.keys():
@@ -403,6 +670,13 @@ class EmbodiedRolloutResult:
             trajectory.next_obs = stack_list_of_dict_tensor(self.next_obs)
             for key in trajectory.next_obs.keys():
                 trajectory.next_obs[key] = trajectory.next_obs[key].cpu().contiguous()
+
+        trajectory.model_weights_id = get_model_weights_id(
+            trajectory.versions
+            if trajectory.versions is not None
+            else torch.zeros(1, dtype=torch.float32)
+        )
+
         return trajectory
 
     def to_splited_trajectories(self, split_size: int) -> list[Trajectory]:
@@ -507,8 +781,9 @@ def convert_trajectories_to_batch(
                 batch["forward_inputs"][key] = torch.cat(tensors, dim=1)
 
     # -------- tensor fields --------
-    for field_name in trajectories[0].__dataclass_fields__.keys():
-        if not isinstance(getattr(traj, field_name), torch.Tensor):
+    reference_trajectory = trajectories[0]
+    for field_name in reference_trajectory.__dataclass_fields__.keys():
+        if not isinstance(getattr(reference_trajectory, field_name), torch.Tensor):
             continue
         field_list = [
             getattr(traj, field_name)

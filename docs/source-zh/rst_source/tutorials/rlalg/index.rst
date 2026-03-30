@@ -14,6 +14,7 @@
 - :doc:`SAC <sac>` 
 - :doc:`Cross-Q <crossq>` 
 - :doc:`RLPD <rlpd>`
+- :doc:`异步近端策略优化 (Async PPO) <async_ppo>`
 
 我们会持续扩展未来版本中支持的算法，敬请期待后续的更新！  
 
@@ -28,3 +29,4 @@
    sac
    crossq
    rlpd
+   async_ppo

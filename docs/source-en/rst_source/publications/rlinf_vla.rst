@@ -1,6 +1,11 @@
 RLinf-VLA: A Unified and Efficient Framework for VLA+RL Training
 =================================================================
 
+.. |huggingface| image:: /_static/svg/hf-logo.svg
+   :width: 16px
+   :height: 16px
+   :class: inline-icon
+
 **Paper:** `arXiv:2510.06710 <https://arxiv.org/abs/2510.06710>`__ | **Models:** `RLinf-OpenVLA <https://huggingface.co/collections/RLinf/openvla>`__ | `RLinf-OpenVLAOFT <https://huggingface.co/collections/RLinf/openvla-oft>`__
 
 Overview
@@ -137,41 +142,42 @@ LIBERO (unified model, five task groups)
      - +27.62
      - +32.68
 
-RoboTwin (six tasks)
-~~~~~~~~~~~~~~~~~~~~
+RoboTwin (seven tasks)
+~~~~~~~~~~~~~~~~~~~~~~~
 
-.. list-table:: Evaluation results of OpenVLA-OFT on six RoboTwin tasks (%)
+.. list-table:: Evaluation results of OpenVLA-OFT on seven RoboTwin tasks (%)
    :header-rows: 1
-   :widths: 22 12 12 12 10 10 10 8 8
-   :align: left
 
-   * - Model
-     - beat_block_hammer
-     - pick_dual_bottles
-     - place_empty_cup
-     - move_can_pot
-     - lift_pot
-     - handover_block
-     - Average
-     - Δ Avg.
-   * - OpenVLA-OFT (SFT)
-     - 10.15
-     - 20.31
-     - 75.78
-     - 9.37
-     - 3.13
-     - 28.13
-     - 24.48
-     - —
-   * - OpenVLA-OFT (RLinf-GRPO)
-     - **96.09**
-     - **92.96**
-     - **94.53**
-     - **83.59**
-     - **70.31**
-     - **70.31**
-     - **84.63**
-     - **+60.15**
+   * - Task
+     - OpenVLA-OFT (SFT)
+     - OpenVLA-OFT (RLinf-GRPO)
+   * - beat_block_hammer
+     - |huggingface| `10.15% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-beat_block_hammer>`_
+     - |huggingface| `96.09% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-beat_block_hammer>`__
+   * - pick_dual_bottles
+     - |huggingface| `20.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-pick_dual_bottles>`_
+     - |huggingface| `92.96% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-pick_dual_bottles>`__
+   * - place_empty_cup
+     - |huggingface| `75.78% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_
+     - |huggingface| `94.53% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_empty_cup>`__
+   * - place_container_plate
+     - |huggingface| `54.69% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_container_plate>`_
+     - |huggingface| `95.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_container_plate>`__
+   * - move_can_pot
+     - |huggingface| `9.37% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-move_can_pot>`_
+     - |huggingface| `83.59% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-move_can_pot>`__
+   * - lift_pot
+     - |huggingface| `3.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-lift_pot>`_
+     - |huggingface| `70.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-lift_pot>`__
+   * - handover_block
+     - |huggingface| `28.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-handover_block>`_
+     - |huggingface| `70.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-handover_block>`__
+   * - Average
+     - 28.79%
+     - **86.16**
+   * - Δ Avg.
+     - ---
+     - **+57.37%**
 
 "Base" and "SFT" refer to supervised fine-tuned models before RL training.
 

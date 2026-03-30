@@ -47,7 +47,7 @@ class RealWorldEnv(gym.Env):
 
         self.cfg = cfg
         self.override_cfg = OmegaConf.to_container(
-            cfg.get("override_cfg", {}), resolve=True
+            cfg.get("override_cfg", OmegaConf.create({})), resolve=True
         )
 
         self.video_cfg = cfg.video_cfg
@@ -246,9 +246,7 @@ class RealWorldEnv(gym.Env):
         truncations = self.elapsed_steps >= self.cfg.max_episode_steps
 
         obs = self._wrap_obs(raw_obs)
-
         step_reward = self._calc_step_reward(_reward)
-
         intervene_flag = np.zeros(self.num_envs, dtype=bool)
         if "intervene_action" in infos:
             for env_id in range(self.num_envs):

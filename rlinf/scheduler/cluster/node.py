@@ -79,6 +79,14 @@ class NodeInfo:
                 )
         return AcceleratorType.NO_ACCEL.value
 
+    @property
+    def accelerator_model(self) -> str:
+        """Get the model of accelerators on the node."""
+        for resource in self.hardware_resources:
+            if resource.type == Accelerator.HW_TYPE and resource.count > 0:
+                return resource.infos[0].model
+        return ""
+
     def get_hw_resource_count(self, hw_type: Optional[str]) -> int:
         """Get the count of a specific hardware resource type."""
         if hw_type is None:
@@ -382,7 +390,9 @@ class NodeProbe:
         2. Environment variables set between ray start and RLinf initialization on the head node (usually via bash scripts). These env vars are likely set by users intended to configure all nodes in the cluster.
         3. The env_vars field in the ClusterConfig, which are set in yaml config files to configure each node in the cluster. This is set in Cluster.allocate.
         """
-        # Overwrite the the head node's python interpreter path as the current interpreter unless specified in the cluster config
+        from .cluster import Cluster
+
+        # Overwrite the head node's python interpreter path as the current interpreter unless specified in the cluster config
         self.head_node.python_interpreter_path = sys.executable
 
         # First find env vars set between ray start and RLinf initialization on the head node
@@ -401,7 +411,11 @@ class NodeProbe:
             node.env_vars = node.default_env_vars.copy()
 
             # Update with modified env vars on the head node
-            node.env_vars.update(modified_env_vars)
+            node.env_vars = Cluster.merge_worker_env_vars(
+                base_env_vars=node.env_vars,
+                incoming_env_vars=modified_env_vars,
+                mode=Cluster.get_path_env_merge_mode(node.env_vars),
+            )
 
     def _sort_nodes(self, cluster_num_nodes: int):
         """Sort the node info list by node rank if available, otherwise by accelerator type and IP."""

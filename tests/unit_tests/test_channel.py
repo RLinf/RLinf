@@ -160,6 +160,74 @@ class ProducerWorker(Worker):
     def get_qsize(self, channel: Channel):
         return channel.qsize()
 
+    def put_mixed_tensor_list(
+        self, channel: Channel, async_op: bool, key: Optional[str] = None
+    ):
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is required for mixed CPU/GPU tensor tests.")
+        mixed_item = [
+            torch.ones(2, 2, device="cpu") * 1,
+            torch.ones(2, 2, device=get_device()) * 2,
+            torch.ones(2, 2, device="cpu") * 3,
+        ]
+        put_work = channel.put(mixed_item, async_op=async_op, key=key)
+        if async_op:
+            put_work.wait()
+        return True
+
+    def put_mixed_tensor_dict(
+        self, channel: Channel, async_op: bool, key: Optional[str] = None
+    ):
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is required for mixed CPU/GPU tensor tests.")
+        mixed_item = {
+            "cpu_a": torch.ones(2, 2, device="cpu") * 1,
+            "cuda_b": torch.ones(2, 2, device=get_device()) * 2,
+            "cpu_c": torch.ones(2, 2, device="cpu") * 3,
+        }
+        put_work = channel.put(mixed_item, async_op=async_op, key=key)
+        if async_op:
+            put_work.wait()
+        return True
+
+    def put_mixed_tensor_list_dataclass(
+        self, channel: Channel, async_op: bool, key: Optional[str] = None
+    ):
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is required for mixed CPU/GPU tensor tests.")
+        item = TensorListMessage(
+            id=10,
+            payload_list=[
+                torch.ones(2, 2, device="cpu") * 1,
+                torch.ones(2, 2, device=get_device()) * 2,
+                torch.ones(2, 2, device="cpu") * 3,
+            ],
+            note="channel mixed list dataclass",
+        )
+        put_work = channel.put(item, async_op=async_op, key=key)
+        if async_op:
+            put_work.wait()
+        return True
+
+    def put_mixed_tensor_dict_dataclass(
+        self, channel: Channel, async_op: bool, key: Optional[str] = None
+    ):
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is required for mixed CPU/GPU tensor tests.")
+        item = TensorDictMessage(
+            id=20,
+            payload_dict={
+                "cpu_a": torch.ones(2, 2, device="cpu") * 1,
+                "cuda_b": torch.ones(2, 2, device=get_device()) * 2,
+                "cpu_c": torch.ones(2, 2, device="cpu") * 3,
+            },
+            note="channel mixed dict dataclass",
+        )
+        put_work = channel.put(item, async_op=async_op, key=key)
+        if async_op:
+            put_work.wait()
+        return True
+
 
 class ConsumerWorker(Worker):
     """Worker responsible for connecting to channels and getting items."""
@@ -513,6 +581,116 @@ class TestChannel:
             ),
         )
         self._assert_equal(received_item, item_to_send)
+
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
+    def test_put_get_mixed_tensor_list(
+        self, worker_groups, channel, channel_type, async_op
+    ):
+        if not torch.cuda.is_available():
+            pytest.skip("Skipping mixed CPU/GPU test on CPU-only environment.")
+        producer, consumer = worker_groups
+        key = "mixed_tensor_list"
+        received_item = self._run_test(
+            producer,
+            consumer,
+            "put_mixed_tensor_list",
+            (channel, async_op, key),
+            "get_item",
+            (channel, async_op, key),
+        )
+        expected_vals = [1, 2, 3]
+        expected_devices = ["cpu", "cuda", "cpu"]
+        for tensor, expected_val, expected_device in zip(
+            received_item, expected_vals, expected_devices
+        ):
+            assert tensor.device.type == expected_device
+            assert torch.equal(tensor.cpu(), torch.ones(2, 2) * expected_val)
+
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
+    def test_put_get_mixed_tensor_dict(
+        self, worker_groups, channel, channel_type, async_op
+    ):
+        if not torch.cuda.is_available():
+            pytest.skip("Skipping mixed CPU/GPU test on CPU-only environment.")
+        producer, consumer = worker_groups
+        key = "mixed_tensor_dict"
+        received_item = self._run_test(
+            producer,
+            consumer,
+            "put_mixed_tensor_dict",
+            (channel, async_op, key),
+            "get_item",
+            (channel, async_op, key),
+        )
+        assert received_item["cpu_a"].device.type == "cpu"
+        assert received_item["cuda_b"].device.type == "cuda"
+        assert received_item["cpu_c"].device.type == "cpu"
+        assert torch.equal(received_item["cpu_a"].cpu(), torch.ones(2, 2) * 1)
+        assert torch.equal(received_item["cuda_b"].cpu(), torch.ones(2, 2) * 2)
+        assert torch.equal(received_item["cpu_c"].cpu(), torch.ones(2, 2) * 3)
+
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
+    def test_put_get_mixed_tensor_list_dataclass(
+        self, worker_groups, channel, channel_type, async_op
+    ):
+        if not torch.cuda.is_available():
+            pytest.skip("Skipping mixed CPU/GPU test on CPU-only environment.")
+        producer, consumer = worker_groups
+        key = "mixed_tensor_list_dataclass"
+        received_item = self._run_test(
+            producer,
+            consumer,
+            "put_mixed_tensor_list_dataclass",
+            (channel, async_op, key),
+            "get_item",
+            (channel, async_op, key),
+        )
+        assert isinstance(received_item, TensorListMessage)
+        assert received_item.id == 10
+        assert received_item.note == "channel mixed list dataclass"
+        expected_vals = [1, 2, 3]
+        expected_devices = ["cpu", "cuda", "cpu"]
+        for tensor, expected_val, expected_device in zip(
+            received_item.payload_list, expected_vals, expected_devices
+        ):
+            assert tensor.device.type == expected_device
+            assert torch.equal(tensor.cpu(), torch.ones(2, 2) * expected_val)
+
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
+    def test_put_get_mixed_tensor_dict_dataclass(
+        self, worker_groups, channel, channel_type, async_op
+    ):
+        if not torch.cuda.is_available():
+            pytest.skip("Skipping mixed CPU/GPU test on CPU-only environment.")
+        producer, consumer = worker_groups
+        key = "mixed_tensor_dict_dataclass"
+        received_item = self._run_test(
+            producer,
+            consumer,
+            "put_mixed_tensor_dict_dataclass",
+            (channel, async_op, key),
+            "get_item",
+            (channel, async_op, key),
+        )
+        assert isinstance(received_item, TensorDictMessage)
+        assert received_item.id == 20
+        assert received_item.note == "channel mixed dict dataclass"
+        assert received_item.payload_dict["cpu_a"].device.type == "cpu"
+        assert received_item.payload_dict["cuda_b"].device.type == "cuda"
+        assert received_item.payload_dict["cpu_c"].device.type == "cpu"
+        assert torch.equal(
+            received_item.payload_dict["cpu_a"].cpu(), torch.ones(2, 2) * 1
+        )
+        assert torch.equal(
+            received_item.payload_dict["cuda_b"].cpu(), torch.ones(2, 2) * 2
+        )
+        assert torch.equal(
+            received_item.payload_dict["cpu_c"].cpu(), torch.ones(2, 2) * 3
+        )
 
     @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
     @pytest.mark.parametrize("data_name, item_to_send", get_test_data())

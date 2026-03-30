@@ -18,7 +18,8 @@ from datetime import timedelta
 from typing import Optional
 
 import numpy as np
-import torch
+
+from rlinf.scheduler import Worker
 
 
 @dataclass
@@ -127,8 +128,8 @@ class NamedTimer(object):
             )
 
         # synchronize pytorch cuda execution if supported
-        if self._sync_cuda and torch.cuda.is_initialized():
-            torch.cuda.synchronize()
+        if self._sync_cuda and Worker.torch_platform.is_initialized():
+            Worker.torch_platform.synchronize()
 
         timer_data["start"] = time.time()
 
@@ -146,8 +147,8 @@ class NamedTimer(object):
             raise RuntimeError(f"Cannot end timer = '{name}' since it is not active")
 
         # synchronize pytorch cuda execution if supported
-        if self._sync_cuda and torch.cuda.is_initialized():
-            torch.cuda.synchronize()
+        if self._sync_cuda and Worker.torch_platform.is_initialized():
+            Worker.torch_platform.synchronize()
 
         # compute dt and make timer inactive
         dt = time.time() - timer_data.pop("start")

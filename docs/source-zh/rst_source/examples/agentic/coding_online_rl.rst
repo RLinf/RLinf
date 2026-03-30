@@ -96,7 +96,7 @@
 
    确保您有预训练的模型权重，并修改配置文件，匹配模型路径、需要使用的端口等
 
-   - 对于在线强化学习，修改并使用 examples/coding_online_rl/config/qwen2.5-1.5b-ppo.yaml 文件:
+   - 对于在线强化学习，修改并使用 examples/agent/coding_online_rl/config/qwen2.5-1.5b-ppo.yaml 文件:
       .. code-block:: yaml
 
          runner:
@@ -107,7 +107,7 @@
              model_path: /path/to/your/model
 
 
-   - 对于离线验证，修改并使用 examples/coding_online_rl/config/qwen2.5-1.5b-grpo-llm_judge.yaml 文件:
+   - 对于离线验证，修改并使用 examples/agent/coding_online_rl/config/qwen2.5-1.5b-grpo-llm_judge.yaml 文件:
       .. code-block:: yaml
 
          runner:
@@ -138,7 +138,7 @@
          cd /path/to/rlinf_online_rl
          
          # 启动训练服务
-         bash examples/coding_online_rl/run_main_coding_online_rl.sh
+         bash examples/agent/coding_online_rl/run_main_coding_online_rl.sh
 
       这将启动以下服务：
 
@@ -152,7 +152,7 @@
          cd /path/to/rlinf_online_rl
          
          # 启动训练服务
-         bash examples/coding_online_rl/run_main_coding_rl_llm_judge.sh
+         bash examples/agent/coding_online_rl/run_main_coding_rl_llm_judge.sh
 
 **与 Continue 联动**
 
@@ -203,7 +203,7 @@
 .. code-block:: bash
 
    # 运行测试客户端
-   python examples/coding_online_rl/simple_test_client.py
+   python examples/agent/coding_online_rl/simple_test_client.py
 
 测试客户端会模拟 Continue 的行为，发送代码补全请求并提交反馈数据。
 

@@ -15,6 +15,19 @@
 import torch
 
 
+def update_nested_cfg(base_cfg, override_cfg):
+    for key, value in override_cfg.items():
+        if (
+            key in base_cfg
+            and isinstance(base_cfg[key], dict)
+            and isinstance(value, dict)
+        ):
+            update_nested_cfg(base_cfg[key], value)
+        else:
+            base_cfg[key] = value
+    return base_cfg
+
+
 def copy_dict_tensor(next_extracted_obs: dict):
     ret = {}
     for key, value in next_extracted_obs.items():
@@ -32,7 +45,7 @@ def put_tensor_device(data_dict, device):
         return None
 
     if isinstance(data_dict, torch.Tensor):
-        return data_dict.value.to(device=device).contiguous()
+        return data_dict.to(device=device).contiguous()
     for key, value in data_dict.items():
         if isinstance(value, dict):
             data_dict[key] = put_tensor_device(value, device)

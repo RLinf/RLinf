@@ -29,7 +29,7 @@ runner:
   max_steps: -1
 
   only_eval: False
-  val_check_interval: 50
+  val_check_interval: -1
   save_interval: -1
 
   seq_length: 1
@@ -170,10 +170,12 @@ actor:
       buffer_dtype: ${actor.model.precision}
 
 
-    amp:
+    amp_autocast:  
       enabled: false
-      precision: bf16
-      use_grad_scaler: false
+      precision: "bf16"
+    
+    grad_scaler:
+      enabled: false
 
 reward:
   use_reward_model: False

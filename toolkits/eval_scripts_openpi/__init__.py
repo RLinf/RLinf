@@ -25,7 +25,7 @@ from openpi.models_pytorch import pi0_pytorch
 from openpi.training import checkpoints as _checkpoints
 from openpi.training import config as _config
 
-from rlinf.models.embodiment.openpi import _CONFIGS_DICT
+from rlinf.models.embodiment.openpi.dataconfig import _CONFIGS_DICT
 
 
 def setup_logger(exp_name, log_dir):
@@ -99,11 +99,13 @@ def create_trained_policy(
 
     # Determine the device to use for PyTorch models
     if is_pytorch and pytorch_device is None:
-        try:
-            import torch
+        import torch
 
-            pytorch_device = "cuda" if torch.cuda.is_available() else "cpu"
-        except ImportError:
+        if torch.cuda.is_available():
+            pytorch_device = "cuda"
+        elif hasattr(torch, "npu") and torch.npu.is_available():
+            pytorch_device = "npu"
+        else:
             pytorch_device = "cpu"
 
     return _policy.Policy(

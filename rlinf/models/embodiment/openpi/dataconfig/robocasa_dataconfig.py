@@ -17,7 +17,7 @@ import pathlib
 import openpi.models.model as _model
 import openpi.transforms as _transforms
 from openpi.training.config import DataConfig, DataConfigFactory, ModelTransformFactory
-from typing_extensions import override
+from typing_extensions import Dict, Union, override
 
 from rlinf.models.embodiment.openpi.policies import robocasa_policy
 
@@ -26,40 +26,65 @@ from rlinf.models.embodiment.openpi.policies import robocasa_policy
 class LeRobotRobocasaDataConfig(DataConfigFactory):
     """
     This config is used to configure transforms that are applied at various parts of the data pipeline.
-    For robocasa, we configure the transforms to match the robocasa observation and action space.
+    For your own dataset, you can copy this class and modify the transforms to match your dataset based on the
+    comments below.
     """
 
-    extra_delta_transform: bool = False
+    action_space: Union[str, Dict] = "12d"
+    state_space: Union[str, Dict] = "25d"
+    image_space: Union[str, Dict] = "2views"
+    extra_delta_transform: bool = False  # TODO
 
     @override
     def create(
         self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig
     ) -> DataConfig:
+        # The repack transform is *only* applied to the data coming from the dataset,
+        # and *not* during inference. We can use it to make inputs from the dataset look
+        # as close as possible to those coming from the inference environment (e.g. match the keys).
+        # Below, we match the keys in the dataset (which we defined in the data conversion script) to
+        # the keys we use in our inference pipeline (defined in the inference script for libero).
+        # For your own dataset, first figure out what keys your environment passes to the policy server
+        # and then modify the mappings below so your dataset's keys get matched to those target keys.
+        # The repack transform simply remaps key names here.
+
+        # FIXME: repack_transform is not used in RLinf, neither RL nor SFT,
+        # see rlinf/models/embodiment/openpi/__init__.py as a empty repack_transform is used to wrap the model
+        # these keys are features in LerobotDataset, so you can use it to make SFT right.
         repack_transform = _transforms.Group(
             inputs=[
                 _transforms.RepackTransform(
                     {
-                        "observation/image": "observation.image",
-                        "observation/wrist_image": "observation.wrist_image",
-                        "observation/state": "observation.state",
-                        "actions": "action",
+                        "image_left": "image_left",
+                        "image_right": "image_right",
+                        "wrist_image": "wrist_image",
+                        "state": "state",
+                        "actions": "actions",
+                        "task_index": "task_index",
                         "prompt": "prompt",
                     }
                 )
             ]
         )
 
-        data_transforms = _transforms.Group(
-            inputs=[robocasa_policy.RobocasaInputs(model_type=model_config.model_type)],
-            outputs=[robocasa_policy.RobocasaOutputs(action_dim=12)],
-        )
+        # The data transforms are applied to the data coming from the dataset *and* during inference.
+        # Below, we define the transforms for data going into the model (``inputs``) and the transforms
+        # for data coming out of the model (``outputs``) (the latter is only used during inference).
+        # We defined these transforms in `robocasa.py`. You can check the detailed comments there for
+        # how to modify the transforms to match your dataset. Once you created your own transforms, you can
+        # replace the transforms below with your own.
 
-        if self.extra_delta_transform:
-            delta_action_mask = _transforms.make_bool_mask(12, -1)
-            data_transforms = data_transforms.push(
-                inputs=[_transforms.DeltaActions(delta_action_mask)],
-                outputs=[_transforms.AbsoluteActions(delta_action_mask)],
-            )
+        data_transforms = _transforms.Group(
+            inputs=[
+                robocasa_policy.RobocasaInputs(
+                    action_space=self.action_space,
+                    state_space=self.state_space,
+                    image_space=self.image_space,
+                    model_type=model_config.model_type,
+                )
+            ],
+            outputs=[robocasa_policy.RobocasaOutputs(action_space=self.action_space)],
+        )
 
         # Model transforms include things like tokenizing the prompt and action targets
         # You do not need to change anything here for your own dataset.
@@ -71,5 +96,4 @@ class LeRobotRobocasaDataConfig(DataConfigFactory):
             repack_transforms=repack_transform,
             data_transforms=data_transforms,
             model_transforms=model_transforms,
-            action_sequence_keys=("action",),
         )

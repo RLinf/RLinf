@@ -91,7 +91,7 @@ If using the offline validation example, download the dataset:
 
 1. **Prepare Model and Configuration**
 
-   - For online RL, edit and use `examples/coding_online_rl/config/qwen2.5-1.5b-ppo.yaml`:
+   - For online RL, edit and use `examples/agent/coding_online_rl/config/qwen2.5-1.5b-ppo.yaml`:
 
      .. code-block:: yaml
 
@@ -102,7 +102,7 @@ If using the offline validation example, download the dataset:
           model:
             model_path: /path/to/your/model
 
-   - For offline validation, edit and use `examples/coding_online_rl/config/qwen2.5-1.5b-grpo-llm_judge.yaml`:
+   - For offline validation, edit and use `examples/agent/coding_online_rl/config/qwen2.5-1.5b-grpo-llm_judge.yaml`:
 
      .. code-block:: yaml
 
@@ -135,7 +135,7 @@ If using the offline validation example, download the dataset:
         cd /path/to/rlinf_online_rl
 
         # Start training service
-        bash examples/coding_online_rl/run_main_coding_online_rl.sh
+        bash examples/agent/coding_online_rl/run_main_coding_online_rl.sh
 
      This will start the following services:
      - **Inference Service**: Provides code completion API on port 8081
@@ -149,7 +149,7 @@ If using the offline validation example, download the dataset:
         cd /path/to/rlinf_online_rl
 
         # Start training service
-        bash examples/coding_online_rl/run_main_coding_rl_llm_judge.sh
+        bash examples/agent/coding_online_rl/run_main_coding_rl_llm_judge.sh
 
 **Integration with Continue**
 
@@ -200,7 +200,7 @@ You can use the provided test client to verify system functionality:
 .. code-block:: bash
 
    # Run test client
-   python examples/coding_online_rl/simple_test_client.py
+   python examples/agent/coding_online_rl/simple_test_client.py
 
 The test client simulates Continue behavior by sending code completion requests and submitting feedback data.
 

@@ -176,6 +176,60 @@ class SenderWorker(Worker):
         tensor_dict = {f"t{i}": torch.ones(2, 2, device=device) * i for i in range(4)}
         return self._send_data(tensor_dict, async_op)
 
+    def test_send_mixed_tensor_list(self, async_op=False):
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is required for mixed CPU/GPU tensor tests.")
+        cuda_device = get_device()
+        tensor_list = [
+            torch.ones(2, 2, device="cpu") * (self._rank + 1),
+            torch.ones(2, 2, device=cuda_device) * (self._rank + 2),
+            torch.ones(2, 2, device="cpu") * (self._rank + 3),
+        ]
+        return self._send_data(tensor_list, async_op)
+
+    def test_send_mixed_tensor_dict(self, async_op=False):
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is required for mixed CPU/GPU tensor tests.")
+        cuda_device = get_device()
+        tensor_dict = {
+            "cpu_a": torch.ones(2, 2, device="cpu") * (self._rank + 1),
+            "cuda_b": torch.ones(2, 2, device=cuda_device) * (self._rank + 2),
+            "cpu_c": torch.ones(2, 2, device="cpu") * (self._rank + 3),
+        }
+        return self._send_data(tensor_dict, async_op)
+
+    def test_send_mixed_tensor_list_dataclass(self, async_op=False):
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is required for mixed CPU/GPU tensor tests.")
+        cuda_device = get_device()
+        payload_list = [
+            torch.ones(2, 2, device="cpu") * (self._rank + 1),
+            torch.ones(2, 2, device=cuda_device) * (self._rank + 2),
+            torch.ones(2, 2, device="cpu") * (self._rank + 3),
+        ]
+        msg = TensorListMessage(
+            id=self._rank,
+            payload_list=payload_list,
+            note=f"mixed list from rank {self._rank}",
+        )
+        return self._send_data(msg, async_op)
+
+    def test_send_mixed_tensor_dict_dataclass(self, async_op=False):
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is required for mixed CPU/GPU tensor tests.")
+        cuda_device = get_device()
+        payload_dict = {
+            "cpu_a": torch.ones(2, 2, device="cpu") * (self._rank + 1),
+            "cuda_b": torch.ones(2, 2, device=cuda_device) * (self._rank + 2),
+            "cpu_c": torch.ones(2, 2, device="cpu") * (self._rank + 3),
+        }
+        msg = TensorDictMessage(
+            id=self._rank,
+            payload_dict=payload_dict,
+            note=f"mixed dict from rank {self._rank}",
+        )
+        return self._send_data(msg, async_op)
+
     def test_send_tensor_inplace(self, on_cpu, async_op=False):
         device = "cpu" if on_cpu else get_device()
         tensor = torch.ones(3, 3, device=device) * self._rank
@@ -641,6 +695,40 @@ class CommCollectiveWorker(Worker):
         payload = [torch.ones(2, 2, device=device) * i for i in range(4)]
         return self._broadcast_data(payload, async_op)
 
+    def test_broadcast_mixed_tensor_list(self, async_op=False):
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is required for mixed CPU/GPU tensor tests.")
+        cuda_device = get_device()
+        payload = (
+            [
+                torch.ones(2, 2, device="cpu") * 1,
+                torch.ones(2, 2, device=cuda_device) * 2,
+                torch.ones(2, 2, device="cpu") * 3,
+            ]
+            if self._rank == 0
+            else None
+        )
+        return self._broadcast_data(payload, async_op)
+
+    def test_broadcast_mixed_tensor_list_dataclass(self, async_op=False):
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is required for mixed CPU/GPU tensor tests.")
+        cuda_device = get_device()
+        payload = (
+            TensorListMessage(
+                id=0,
+                payload_list=[
+                    torch.ones(2, 2, device="cpu") * 1,
+                    torch.ones(2, 2, device=cuda_device) * 2,
+                    torch.ones(2, 2, device="cpu") * 3,
+                ],
+                note="broadcast mixed list from rank 0",
+            )
+            if self._rank == 0
+            else None
+        )
+        return self._broadcast_data(payload, async_op)
+
     def test_broadcast_tensor_dict(self, on_cpu, async_op=False):
         device = "cpu" if on_cpu else get_device()
         payload = {f"t{i}": torch.ones(2, 2, device=device) * i for i in range(4)}
@@ -1010,6 +1098,106 @@ class TestCommunication:
                 expected = torch.ones(2, 2) * i
                 assert torch.equal(tensor.cpu(), expected)
 
+    @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
+    def test_mixed_tensor_list_communication(self, worker_groups, async_op):
+        if not torch.cuda.is_available():
+            pytest.skip("Skipping mixed CPU/GPU test on CPU-only environment.")
+        results = self._run_test(
+            worker_groups,
+            "test_send_mixed_tensor_list",
+            "test_recv_tensor_list",
+            (async_op,),
+            (async_op,),
+        )
+        for i, res_list in enumerate(results):
+            peer_rank = get_recv_peer_rank(i, len(results))
+            expected_vals = [peer_rank + 1, peer_rank + 2, peer_rank + 3]
+            expected_devices = ["cpu", "cuda", "cpu"]
+            for tensor, expected_val, expected_device in zip(
+                res_list, expected_vals, expected_devices
+            ):
+                assert tensor.device.type == expected_device
+                assert torch.equal(tensor.cpu(), torch.ones(2, 2) * expected_val)
+
+    @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
+    def test_mixed_tensor_dict_communication(self, worker_groups, async_op):
+        if not torch.cuda.is_available():
+            pytest.skip("Skipping mixed CPU/GPU test on CPU-only environment.")
+        results = self._run_test(
+            worker_groups,
+            "test_send_mixed_tensor_dict",
+            "test_recv_tensor_dict",
+            (async_op,),
+            (async_op,),
+        )
+        for i, res_dict in enumerate(results):
+            peer_rank = get_recv_peer_rank(i, len(results))
+            assert res_dict["cpu_a"].device.type == "cpu"
+            assert res_dict["cuda_b"].device.type == "cuda"
+            assert res_dict["cpu_c"].device.type == "cpu"
+            assert torch.equal(
+                res_dict["cpu_a"].cpu(), torch.ones(2, 2) * (peer_rank + 1)
+            )
+            assert torch.equal(
+                res_dict["cuda_b"].cpu(), torch.ones(2, 2) * (peer_rank + 2)
+            )
+            assert torch.equal(
+                res_dict["cpu_c"].cpu(), torch.ones(2, 2) * (peer_rank + 3)
+            )
+
+    @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
+    def test_mixed_tensor_list_dataclass_communication(self, worker_groups, async_op):
+        if not torch.cuda.is_available():
+            pytest.skip("Skipping mixed CPU/GPU test on CPU-only environment.")
+        results = self._run_test(
+            worker_groups,
+            "test_send_mixed_tensor_list_dataclass",
+            "test_recv_tensor_list_dataclass",
+            (async_op,),
+            (async_op,),
+        )
+        for i, res in enumerate(results):
+            peer_rank = get_recv_peer_rank(i, len(results))
+            assert isinstance(res, TensorListMessage)
+            assert res.id == peer_rank
+            assert res.note == f"mixed list from rank {peer_rank}"
+            expected_vals = [peer_rank + 1, peer_rank + 2, peer_rank + 3]
+            expected_devices = ["cpu", "cuda", "cpu"]
+            for tensor, expected_val, expected_device in zip(
+                res.payload_list, expected_vals, expected_devices
+            ):
+                assert tensor.device.type == expected_device
+                assert torch.equal(tensor.cpu(), torch.ones(2, 2) * expected_val)
+
+    @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
+    def test_mixed_tensor_dict_dataclass_communication(self, worker_groups, async_op):
+        if not torch.cuda.is_available():
+            pytest.skip("Skipping mixed CPU/GPU test on CPU-only environment.")
+        results = self._run_test(
+            worker_groups,
+            "test_send_mixed_tensor_dict_dataclass",
+            "test_recv_tensor_dict_dataclass",
+            (async_op,),
+            (async_op,),
+        )
+        for i, res in enumerate(results):
+            peer_rank = get_recv_peer_rank(i, len(results))
+            assert isinstance(res, TensorDictMessage)
+            assert res.id == peer_rank
+            assert res.note == f"mixed dict from rank {peer_rank}"
+            assert res.payload_dict["cpu_a"].device.type == "cpu"
+            assert res.payload_dict["cuda_b"].device.type == "cuda"
+            assert res.payload_dict["cpu_c"].device.type == "cpu"
+            assert torch.equal(
+                res.payload_dict["cpu_a"].cpu(), torch.ones(2, 2) * (peer_rank + 1)
+            )
+            assert torch.equal(
+                res.payload_dict["cuda_b"].cpu(), torch.ones(2, 2) * (peer_rank + 2)
+            )
+            assert torch.equal(
+                res.payload_dict["cpu_c"].cpu(), torch.ones(2, 2) * (peer_rank + 3)
+            )
+
     @pytest.mark.parametrize("on_cpu", [True, False], ids=["cpu", "cuda"])
     @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
     def test_tensor_dict_communication(self, worker_groups, on_cpu, async_op):
@@ -1338,6 +1526,41 @@ class TestCollective:
             for i, tensor in enumerate(res_list):
                 expected = torch.ones(2, 2) * i
                 assert torch.equal(tensor.cpu(), expected)
+
+    @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
+    def test_broadcast_mixed_tensor_list(self, collective_group, async_op):
+        if not torch.cuda.is_available():
+            pytest.skip("Skipping mixed CPU/GPU test on CPU-only environment.")
+        results = self._run_collective_test(
+            collective_group, "test_broadcast_mixed_tensor_list", async_op
+        )
+        expected_vals = [1, 2, 3]
+        expected_devices = ["cpu", "cuda", "cpu"]
+        for res_list in results:
+            for tensor, expected_val, expected_device in zip(
+                res_list, expected_vals, expected_devices
+            ):
+                assert tensor.device.type == expected_device
+                assert torch.equal(tensor.cpu(), torch.ones(2, 2) * expected_val)
+
+    @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
+    def test_broadcast_mixed_tensor_list_dataclass(self, collective_group, async_op):
+        if not torch.cuda.is_available():
+            pytest.skip("Skipping mixed CPU/GPU test on CPU-only environment.")
+        results = self._run_collective_test(
+            collective_group, "test_broadcast_mixed_tensor_list_dataclass", async_op
+        )
+        expected_vals = [1, 2, 3]
+        expected_devices = ["cpu", "cuda", "cpu"]
+        for res in results:
+            assert isinstance(res, TensorListMessage)
+            assert res.id == 0
+            assert res.note == "broadcast mixed list from rank 0"
+            for tensor, expected_val, expected_device in zip(
+                res.payload_list, expected_vals, expected_devices
+            ):
+                assert tensor.device.type == expected_device
+                assert torch.equal(tensor.cpu(), torch.ones(2, 2) * expected_val)
 
     @pytest.mark.parametrize("on_cpu", [True, False], ids=["cpu", "cuda"])
     @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])

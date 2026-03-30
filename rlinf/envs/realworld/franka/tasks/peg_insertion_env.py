@@ -27,9 +27,12 @@ class PegInsertionConfig(FrankaRobotConfig):
         default_factory=lambda: np.array([0.01, 0.01, 0.01, 0.2, 0.2, 0.2])
     )
     random_xy_range: float = 0.05
-    random_z_range_low: float = 0.0
-    random_z_range_high: float = 0.1
+    clip_x_range: float = 0.05
+    clip_y_range: float = 0.05
+    clip_z_range_low: float = 0.0
+    clip_z_range_high: float = 0.1
     random_rz_range: float = np.pi / 6
+    clip_rz_range: float = np.pi / 6
     enable_random_reset: bool = True
     add_gripper_penalty: bool = False
 
@@ -76,28 +79,28 @@ class PegInsertionConfig(FrankaRobotConfig):
         }
         self.target_ee_pose = np.array(self.target_ee_pose)
         self.reset_ee_pose = self.target_ee_pose + np.array(
-            [0.0, 0.0, self.random_z_range_high, 0.0, 0.0, 0.0]
+            [0.0, 0.0, self.clip_z_range_high, 0.0, 0.0, 0.0]
         )
         self.reward_threshold = np.array(self.reward_threshold)
         self.action_scale = np.array([0.02, 0.1, 1])
         self.ee_pose_limit_min = np.array(
             [
-                self.target_ee_pose[0] - self.random_xy_range,
-                self.target_ee_pose[1] - self.random_xy_range,
-                self.target_ee_pose[2] - self.random_z_range_low,
+                self.target_ee_pose[0] - self.clip_x_range,
+                self.target_ee_pose[1] - self.clip_y_range,
+                self.target_ee_pose[2] - self.clip_z_range_low,
                 self.target_ee_pose[3] - 0.01,
                 self.target_ee_pose[4] - 0.01,
-                self.target_ee_pose[5] - self.random_rz_range,
+                self.target_ee_pose[5] - self.clip_rz_range,
             ]
         )
         self.ee_pose_limit_max = np.array(
             [
-                self.target_ee_pose[0] + self.random_xy_range,
-                self.target_ee_pose[1] + self.random_xy_range,
-                self.target_ee_pose[2] + self.random_z_range_high,
+                self.target_ee_pose[0] + self.clip_x_range,
+                self.target_ee_pose[1] + self.clip_y_range,
+                self.target_ee_pose[2] + self.clip_z_range_high,
                 self.target_ee_pose[3] + 0.01,
                 self.target_ee_pose[4] + 0.01,
-                self.target_ee_pose[5] + self.random_rz_range,
+                self.target_ee_pose[5] + self.clip_rz_range,
             ]
         )
 

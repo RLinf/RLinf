@@ -566,7 +566,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         env_obs,
         mode: Literal["train", "eval"] = "train",
         **kwargs,
-    ):
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
         # Here we have a source causing tiny inference-training inconsistency,
         # force convert the state to bf16 then back to float32 to reproduce the info loss in training.
         env_obs["states"] = env_obs["states"].to(torch.bfloat16)
@@ -617,7 +617,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
             unnormalized_action, chunk_size=self.output_action_chunks
         )
 
-        return raw_action, result
+        return torch.from_numpy(raw_action), result
 
     def apply_transforms(self, obs: dict[str, Any]) -> dict[str, Any]:
         """

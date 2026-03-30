@@ -37,6 +37,7 @@ from omegaconf.dictconfig import DictConfig
 from omegaconf.omegaconf import OmegaConf
 
 from rlinf.config import torch_dtype_from_precision
+from rlinf.scheduler import Worker
 
 
 def extract_selected_fields(cfg: DictConfig) -> DictConfig:
@@ -66,14 +67,16 @@ def set_megatron_args(cfg):
     args.consumed_valid_samples = 0
 
     args.use_mp_args_from_checkpoint_args = False
-    args.fp16 = torch_dtype_from_precision(cfg.model.precision) == torch.float16
-    args.bf16 = torch_dtype_from_precision(cfg.model.precision) == torch.bfloat16
-    params_dtype = "${torch.dtype:float32}"
-    if cfg.optim.fp16:
-        params_dtype = "${torch.dtype:half}"
-    elif cfg.optim.bf16:
-        params_dtype = "${torch.dtype:bfloat16}"
-    args.params_dtype = params_dtype
+    precision_dtype = torch_dtype_from_precision(cfg.model.precision)
+    if precision_dtype == torch.float16:
+        args.params_dtype = "${torch.dtype:half}"
+    elif precision_dtype == torch.bfloat16:
+        args.params_dtype = "${torch.dtype:bfloat16}"
+    else:
+        assert False, "Megatron requires model.precision to be set to fp16 or bf16"
+    if args.fp16 is None and args.bf16 is None:
+        args.fp16 = precision_dtype == torch.float16
+        args.bf16 = precision_dtype == torch.bfloat16
 
     args.vocab_file = None
 
@@ -148,7 +151,7 @@ def _set_random_seed(seed_, data_parallel_random_init=False):
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
-        if torch.cuda.device_count() > 0:
+        if Worker.torch_platform.device_count() > 0:
             tensor_parallel.model_parallel_cuda_manual_seed(seed)
     else:
         raise ValueError("Seed ({}) should be a positive integer.".format(seed_))
@@ -276,7 +279,7 @@ def _initialize_distributed(cfg: DictConfig):
     master_port = os.getenv("MASTER_PORT", "29500")
 
     """Initialize torch.distributed and core model parallel."""
-    device_count = torch.cuda.device_count()
+    device_count = Worker.torch_platform.device_count()
 
     if global_rank == 0:
         print(
@@ -287,7 +290,7 @@ def _initialize_distributed(cfg: DictConfig):
         )
 
     if not torch.distributed.is_initialized():
-        torch.cuda.set_device(local_rank)
+        Worker.torch_platform.set_device(local_rank)
         torch.distributed.init_process_group(
             backend=cfg.megatron.distributed_backend,
             rank=global_rank,

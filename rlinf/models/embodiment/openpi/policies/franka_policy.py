@@ -94,7 +94,7 @@ class FrankaEEInputs(transforms.DataTransformFn):
         base_image = _parse_image(data["observation/image"])
 
         # We only mask padding for pi0 model, not pi0-FAST.
-        if self.model_type == _model.ModelType.PI0:
+        if self.model_type in (_model.ModelType.PI0, _model.ModelType.PI05):
             names = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
             images = (
                 base_image,

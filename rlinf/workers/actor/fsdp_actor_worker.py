@@ -23,6 +23,7 @@ from omegaconf import DictConfig
 from torch import nn
 from torch.distributed.tensor import DTensor
 from torch.multiprocessing.reductions import reduce_tensor
+from torch.utils import _pytree
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
@@ -42,6 +43,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
     unpack_sequences,
 )
 from rlinf.models import get_model
+from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel, Cluster, CollectiveGroupOptions, Worker
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
@@ -72,6 +74,7 @@ from rlinf.utils.placement import (
     HybridComponentPlacement,
     ModelParallelComponentPlacement,
 )
+from rlinf.utils.pytree import register_pytree_dataclasses
 from rlinf.utils.utils import (
     clear_memory,
     compute_entropy_from_logits,
@@ -144,21 +147,19 @@ class FSDPActor(FSDPModelManager, Worker):
         self.cfg = cfg
 
         self.response_len = (
-            self.cfg.actor.model.encoder_seq_length - self.cfg.data.max_prompt_length
+            cfg.actor.model.encoder_seq_length - cfg.data.max_prompt_length
         )
-        self.calculate_entropy = self.cfg.algorithm.calculate_entropy
+        self.calculate_entropy = cfg.algorithm.calculate_entropy
         self.calculate_entropy_loss = (
-            self.cfg.algorithm.entropy_bonus > 0 and self.calculate_entropy
+            cfg.algorithm.entropy_bonus > 0 and self.calculate_entropy
         )
-        self.kl_beta = self.cfg.algorithm.kl_beta
-        self.kl_penalty_type = self.cfg.algorithm.kl_penalty_type
+        self.kl_beta = cfg.algorithm.kl_beta
+        self.kl_penalty_type = cfg.algorithm.kl_penalty_type
         self.reinpp_kl_beta = cfg.algorithm.get("reinpp_kl_beta", 0.0)
         self.combine_reference_model = cfg.actor.get("combine_reference_model", True)
 
         self.total_batch_size_per_dp = (
-            self.cfg.data.rollout_batch_size
-            * self.cfg.algorithm.group_size
-            // self._world_size
+            cfg.data.rollout_batch_size * cfg.algorithm.group_size // self._world_size
         )
 
         self._rollout_group_name = cfg.rollout.group_name
@@ -175,20 +176,16 @@ class FSDPActor(FSDPModelManager, Worker):
             self._inference_group_name = None
             self._inference_world_size = 0
             self._inference_dst_map = None
-        self.loss_agg_func = get_loss_agg_func(self.cfg.algorithm.loss_agg_func)
-        self.enable_offload = (
-            self.cfg.actor.get("enable_offload", False) and not self.is_pipeline
+        self.loss_agg_func = get_loss_agg_func(cfg.algorithm.loss_agg_func)
+        self.enable_offload = not self.is_pipeline and cfg.actor.get(
+            "enable_offload", False
         )
-        self.micro_batch_size = self.cfg.actor.micro_batch_size
-        self.n_mini_batches = self.cfg.algorithm.n_minibatches
-        self.task_type = self.cfg.runner.task_type
-        self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "flash_attn")
-        self.enable_dp_load_balance = self.cfg.actor.get(
-            "enable_dp_load_balance", False
-        )
-        self.lr_sched_sync_with_optim = self.cfg.actor.get(
-            "lr_sched_sync_with_optim", True
-        )
+        self.micro_batch_size = cfg.actor.micro_batch_size
+        self.n_mini_batches = cfg.algorithm.n_minibatches
+        self.task_type = cfg.runner.task_type
+        self.entropy_op_type = cfg.algorithm.get("entropy_op_type", "flash_attn")
+        self.enable_dp_load_balance = cfg.actor.get("enable_dp_load_balance", False)
+        self.lr_sched_sync_with_optim = cfg.actor.get("lr_sched_sync_with_optim", True)
         self.enable_dynamic_batch_size = cfg.runner.get(
             "enable_dynamic_batch_size", False
         )
@@ -423,6 +420,9 @@ class FSDPActor(FSDPModelManager, Worker):
                 last_result_len = result_len
                 result_len = all_reduce_int(len(rollout_results))
 
+        cliped_results = list(rollout_results[result_len:])
+        rollout_results = rollout_results[:result_len]
+
         batches = []
         for rollout_result in rollout_results:
             batch = rollout_result.to_actor_batch(
@@ -494,7 +494,7 @@ class FSDPActor(FSDPModelManager, Worker):
                 multi_modal_inputs[key] = torch.cat(
                     [inputs[key] for inputs in m_batch["multi_modal_inputs"]],
                     dim=0,
-                ).cuda()
+                ).to(Worker.torch_device_type)
 
         if self.enable_dynamic_batch_size:
             max_seq_len_pack = self.max_tokens_per_mbs
@@ -611,6 +611,7 @@ class FSDPActor(FSDPModelManager, Worker):
         input_channel: Channel,
         output_channel: Channel,
         compute_ref_logprobs: bool,
+        do_offload=False,
     ):
         """
         Compute prev/ref logprobs using the actor Model's forward.
@@ -619,7 +620,12 @@ class FSDPActor(FSDPModelManager, Worker):
             input_channel: The input channel to read from.
             output_channel: The output channel to send results to.
             compute_ref_logprobs: Whether to compute reference logprobs.
+            do_offload: Whether offload weights after inference is done
         """
+        assert not do_offload, (
+            "do_offload argument of run_inference/run_training is not supported in FSDP for now"
+        )
+
         inference_split = self.cfg.actor.get("inference_split", None)
         if inference_split is None:
             if not self.is_pipeline:
@@ -651,7 +657,7 @@ class FSDPActor(FSDPModelManager, Worker):
                 )
             )
             total_result_len += result_len
-            self.log_info(
+            self.log_debug(
                 f"[dynamic inference rank-{self._rank}] inference result_len={result_len}, total_result_len={total_result_len}/{total_result_len_per_dp}"
             )
             self._load_weight_and_optimizer()
@@ -691,7 +697,7 @@ class FSDPActor(FSDPModelManager, Worker):
                 min(total_result_len, self.cfg.algorithm.n_minibatches),
             )
             for split_result in split_results:
-                output_channel.put(split_result, async_op=True)
+                output_channel.put(split_result)
         assert total_result_len == total_result_len_per_dp, (
             f"Expected {total_result_len_per_dp} sequences from channel, but got {total_result_len}"
         )
@@ -729,7 +735,9 @@ class FSDPActor(FSDPModelManager, Worker):
                 is_last_micro_batch=(idx + 1) == micro_batch_cnt,
             )
             for k, v in m_batch.items():
-                m_batch[k] = v.cuda() if isinstance(v, torch.Tensor) else v
+                m_batch[k] = (
+                    v.to(Worker.torch_device_type) if isinstance(v, torch.Tensor) else v
+                )
 
             # batch for forward
             logprobs, entropy = self.forward_batch(m_batch, True)
@@ -763,25 +771,30 @@ class FSDPActor(FSDPModelManager, Worker):
                 )
 
             loss, mbs_metrics_data = policy_loss(
+                task_type=self.task_type,
                 loss_type=self.cfg.algorithm.loss_type,
                 loss_agg_func=self.loss_agg_func,
                 logprobs=logprobs,
                 old_logprobs=prev_logprobs,
                 advantages=advantages,
+                clip_ratio_c=clip_ratio_c,
                 clip_ratio_low=clip_ratio_low,
                 clip_ratio_high=clip_ratio_high,
-                clip_ratio_c=clip_ratio_c,
                 loss_mask=loss_mask,
-                task_type=self.task_type,
+                clip_log_ratio_min=self.cfg.algorithm.get("clip_log_ratio_min", None),
+                clip_log_ratio_max=self.cfg.algorithm.get("clip_log_ratio_max", None),
+                fast_path_zero_loss_mask=True,
             )
 
-            entropy_loss = torch.tensor(0.0, device=torch.cuda.current_device())
+            entropy_loss = torch.tensor(
+                0.0, device=Worker.torch_platform.current_device()
+            )
             if self.calculate_entropy:
                 entropy_loss = self.loss_agg_func(entropy, mask=loss_mask)
                 if self.calculate_entropy_loss:
                     loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
 
-            kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
+            kl_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
             if self.kl_beta > 0 and ref_logprobs is not None:
                 kld = kl_penalty(ref_logprobs, logprobs, self.kl_penalty_type)
                 kl_loss = self.loss_agg_func(kld, loss_mask)
@@ -876,8 +889,14 @@ class FSDPActor(FSDPModelManager, Worker):
         )
         return batch
 
-    def run_training(self, input_channel: Channel) -> tuple[dict, list]:
+    def run_training(
+        self, input_channel: Channel, do_offload=False
+    ) -> tuple[dict, list]:
         # Get all batches for this DP
+        assert not do_offload, (
+            "do_offload argument of run_inference/run_training is not supported in FSDP for now"
+        )
+
         if self.is_pipeline:
             return self.run_training_pipeline(input_channel)
 
@@ -951,15 +970,15 @@ class FSDPActor(FSDPModelManager, Worker):
                 advantages, _ = calculate_adv_and_returns(
                     task_type=self.task_type,
                     adv_type=self.cfg.algorithm.adv_type,
-                    rewards=batch["rewards"].cuda(),
-                    loss_mask=mask.cuda(),
+                    rewards=batch["rewards"].to(Worker.torch_device_type),
+                    loss_mask=mask.to(Worker.torch_device_type),
                     group_size=self.cfg.algorithm.group_size,
                     kl_beta=self.reinpp_kl_beta,
                     kl_penalty_type=self.kl_penalty_type,
-                    logprob=batch["prev_logprobs"].cuda()
+                    logprob=batch["prev_logprobs"].to(Worker.torch_device_type)
                     if "prev_logprobs" in batch
                     else None,
-                    ref_logprob=batch["ref_logprobs"].cuda()
+                    ref_logprob=batch["ref_logprobs"].to(Worker.torch_device_type)
                     if "ref_logprobs" in batch
                     else None,
                     use_reinpp_baseline=self.cfg.algorithm.get(
@@ -992,6 +1011,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self._sync_weight_comm_options = CollectiveGroupOptions(
             accel_max_ctas=max_ctas, accel_min_ctas=min_ctas
         )
+
+        self.enable_sft_co_train = cfg.actor.get("enable_sft_co_train", False)
+        self.version = 0
+        if self.enable_sft_co_train:
+            self._build_sft_data_loader()
 
     def _setup_rollout_weight_dst_ranks(self) -> None:
         """
@@ -1034,7 +1058,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         return model
 
-    def sync_model_to_rollout(self) -> None:
+    async def sync_model_to_rollout(self) -> None:
         """
         Sync the model's full state dict to the rollout worker.
         """
@@ -1045,14 +1069,19 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self.load_param_and_grad(self.device)
 
         state_dict = self.get_model_state_dict(cpu_offload=False, full_state_dict=True)
+        handles = []
         for rank in self._weight_dst_rank_in_rollout:
-            self.send(
-                state_dict,
-                self._rollout_group_name,
-                rank,
-                async_op=True,
-                options=self._sync_weight_comm_options,
+            handles.append(
+                self.send(
+                    state_dict,
+                    self._rollout_group_name,
+                    rank,
+                    async_op=True,
+                    options=self._sync_weight_comm_options,
+                )
             )
+        for handle in handles:
+            await handle.async_wait()
         if self.enable_offload and not self.is_weight_offloaded:
             self.offload_param_and_grad()
 
@@ -1063,7 +1092,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         Args:
             input_channel: The input channel to read from.
         """
-        send_num = self._component_placement.get_world_size("rollout") * self.stage_num
+        clear_memory(sync=False)
+
+        send_num = self._component_placement.get_world_size("env") * self.stage_num
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(send_num, recv_num)
 
@@ -1182,6 +1213,93 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         rollout_metrics = compute_rollout_metrics(self.rollout_batch)
         return rollout_metrics
 
+    def _build_sft_data_loader(self):
+        if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:
+            # NOTE: This must be set before importing openpi.training.data_loader
+            if self.cfg.actor.get("sft_data_path", None):
+                os.environ["HF_LEROBOT_HOME"] = self.cfg.actor.sft_data_path
+
+            import openpi.training.data_loader as _data
+
+            from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+
+            if "config_name" not in self.cfg.actor:
+                raise ValueError(
+                    "config_name is required when enable_sft_co_train=True"
+                )
+            training_config_name = self.cfg.actor.config_name
+            data_loader_config = get_openpi_config(
+                training_config_name,
+                model_path=self.cfg.actor.model.model_path,
+                data_kwargs=getattr(self.cfg.actor, "openpi_data", None),
+            )
+            self.data_loader = _data.create_data_loader(
+                data_loader_config, framework="pytorch", shuffle=True
+            )
+            self.sft_iterator = iter(self.data_loader)
+            self.train_epoch = 0
+            self.sft_loss_weight = self.cfg.actor.get("sft_loss_weight", 0.1)
+        else:
+            raise KeyError(
+                f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
+            )
+
+    def _train_sft_epoch(
+        self, metrics_data: dict[str, torch.Tensor], loss: torch.Tensor
+    ):
+        """
+        Train one epoch of SFT.
+        """
+        metrics_data["ppo_loss"] = loss.clone().detach().item()
+
+        # Get next data batch
+        try:
+            observation, actions = next(self.sft_iterator)
+        except StopIteration:
+            self.train_epoch += 1
+            self.data_loader.set_epoch(self.train_epoch)
+            self.sft_iterator = iter(self.data_loader)
+            observation, actions = next(self.sft_iterator)
+
+        register_pytree_dataclasses(observation)
+        observation = _pytree.tree_map(
+            lambda x: x.to(self.device) if x is not None else x,
+            observation,
+        )
+        actions = actions.to(torch.float32)
+        actions = actions.to(self.device)
+
+        sft_losses = self.model(
+            data={"observation": observation, "actions": actions},
+            forward_type=ForwardType.SFT,
+        )
+        # Ensure losses is a tensor and handle different return types
+        if isinstance(sft_losses, list | tuple):
+            sft_losses = torch.stack(sft_losses)
+        elif not isinstance(sft_losses, torch.Tensor):
+            sft_losses = torch.tensor(
+                sft_losses, device=self.device, dtype=torch.float32
+            )
+
+        sft_loss = sft_losses.mean()
+        metrics_data["sft_loss"] = sft_loss.clone().detach().item()
+        total_loss = loss + self.sft_loss_weight * sft_loss
+        loss = total_loss
+
+        metrics_data["loss_ratio"] = (
+            np.abs(metrics_data["sft_loss"]) / np.abs(metrics_data["ppo_loss"])
+            if np.abs(metrics_data["ppo_loss"]) > 0
+            else float("inf")
+        )
+        if metrics_data["loss_ratio"] > 1e5:
+            self.logger.warning(
+                "SFT/PPO loss imbalance detected: "
+                f"ratio={metrics_data['loss_ratio']:.3e}, "
+                f"sft_loss={metrics_data['sft_loss']:.6f}, "
+                f"ppo_loss={metrics_data['ppo_loss']:.6f}, "
+                f"sft_loss_weight={self.sft_loss_weight:.6f}"
+            )
+
     @Worker.timer("run_training")
     def run_training(self) -> None:
         """
@@ -1252,7 +1370,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 self.optimizer.zero_grad()
                 for idx, batch in enumerate(train_micro_batch):
                     batch = put_tensor_device(
-                        batch, f"cuda:{int(os.environ['LOCAL_RANK'])}"
+                        batch,
+                        f"{Worker.torch_device_type}:{int(os.environ['LOCAL_RANK'])}",
                     )
                     backward_ctx = self.before_micro_batch(
                         self.model,
@@ -1326,7 +1445,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     }
                     loss, metrics_data = policy_loss(**kwargs)
 
-                    entropy_loss = torch.tensor(0.0, device=torch.cuda.current_device())
+                    entropy_loss = torch.tensor(
+                        0.0, device=Worker.torch_platform.current_device()
+                    )
                     if (
                         self.cfg.algorithm.entropy_bonus > 0
                         and not kwargs["critic_warmup"]
@@ -1342,6 +1463,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         loss -= self.cfg.algorithm.entropy_bonus * entropy_loss
                     metrics_data["actor/entropy_loss"] = entropy_loss.detach().item()
 
+                    if self.enable_sft_co_train:
+                        self._train_sft_epoch(metrics_data, loss)
+
                     loss /= self.gradient_accumulation
                     with backward_ctx:
                         self.grad_scaler.scale(loss).backward()
@@ -1349,7 +1473,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     metrics_data["actor/total_loss"] = loss.detach().item()
                     append_to_dict(metrics, metrics_data)
 
-                torch.cuda.empty_cache()
+                self.torch_platform.empty_cache()
 
                 grad_norm, lr_list = self.optimizer_step()
                 data = {
@@ -1370,9 +1494,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         return mean_metric_dict
 
-    def set_global_step(self, global_step) -> None:
+    def set_global_step(self, global_step: int) -> None:
         """
         Set the global step for the model, if needed.
         """
+        self.version = global_step
         if hasattr(self.model, "set_global_step"):
             self.model.set_global_step(global_step)

@@ -7,7 +7,7 @@
    :class: inline-icon
 
 本示例提供了在 `CALVIN <https://github.com/mees/calvin/>`_ 环境中使用 **RLinf** 框架
-通过强化学习微调 π\ :sub:`0`\和π\ :sub:`0.5` 算法的完整指南。它涵盖了整个过程——从环境设置和核心算法设计到训练配置、评估和可视化——以及可重现的命令和配置片段。
+通过强化学习微调 OpenVLA-OFT，π\ :sub:`0`\和π\ :sub:`0.5` 算法的完整指南。它涵盖了整个过程——从环境设置和核心算法设计到训练配置、评估和可视化——以及可重现的命令和配置片段。
 
 主要目标是开发一个能够执行机器人操作能力的模型：
 
@@ -95,9 +95,19 @@
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.1-calvin
+      rlinf/rlinf:agentic-rlinf0.2-calvin
       # 为了提高国内下载速度，也可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-calvin
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-calvin
+
+请使用内置的 `switch_env` 工具切换到相应的虚拟环境：
+
+.. code:: bash
+
+   # 使用OpenPi模型训练
+   source switch_env openpi
+
+   # 使用OpenVLA-OFT模型训练
+   # source switch_env openvla-oft
 
 **选项 2：自定义环境**
 
@@ -107,7 +117,12 @@
 
    # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
 
+   # 使用OpenPi模型训练
    bash requirements/install.sh embodied --model openpi --env calvin
+
+   # 使用OpenVLA-OFT模型训练
+   # bash requirements/install.sh embodied --model openvla-oft --env calvin
+
    source .venv/bin/activate
 
 模型下载
@@ -122,6 +137,7 @@
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT
    git clone https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT
+   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-CALVIN-SFT
 
    # 方法 2: 使用 huggingface-hub
    # 为了提高国内下载速度，可以添加以下环境变量：
@@ -129,6 +145,7 @@
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT --local-dir RLinf-Pi0-CALVIN-ABC-D-SFT
    hf download RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT --local-dir RLinf-Pi05-CALVIN-ABC-D-SFT
+   hf download RLinf/RLinf-OpenVLAOFT-CALVIN-SFT --local-dir RLinf-OpenVLAOFT-CALVIN-SFT
 
 
 下载后，请确保在配置 yaml 文件中正确指定模型路径。
@@ -186,6 +203,9 @@ CALVIN D 任务上训练配置文件：
 
 - π\ :sub:`0.5`\ + PPO:
   ``examples/embodiment/config/calvin_d_d_ppo_openpi_pi05.yaml``
+
+- OpenVLA-OFT + GRPO:
+  ``examples/embodiment/config/calvin_abc_d_grpo_openvlaoft.yaml``
 
 **3. 启动命令**
 

@@ -21,11 +21,11 @@ from unittest import mock
 import pytest
 from omegaconf import DictConfig
 
-from rlinf.data.datasets.math import MathDataset
+from rlinf.data.datasets.reasoning import ReasoningDataset
 
 
 class TestMathDatasetMultithread:
-    """Tests for MathDataset multithread processing consistency."""
+    """Tests for ReasoningDataset multithread processing consistency."""
 
     @pytest.fixture
     def mock_tokenizer(self):
@@ -116,8 +116,8 @@ class TestMathDatasetMultithread:
         with open(data_file, "w", encoding="utf-8") as f:
             json.dump(sample_data, f)
 
-        # Create MathDataset instance to get the configuration
-        dataset = MathDataset(
+        # Create ReasoningDataset instance to get the configuration
+        dataset = ReasoningDataset(
             data_paths=str(data_file),
             config=mock_config,
             tokenizer=mock_tokenizer,
@@ -186,8 +186,8 @@ class TestMathDatasetMultithread:
         with open(data_file, "w", encoding="utf-8") as f:
             json.dump(sample_data, f)
 
-        # Create MathDataset instance to get the configuration
-        dataset = MathDataset(
+        # Create ReasoningDataset instance to get the configuration
+        dataset = ReasoningDataset(
             data_paths=str(data_file),
             config=mock_config,
             tokenizer=mock_tokenizer,

@@ -1,5 +1,5 @@
-Math Reasoning RL Training
-==========================
+GRPO training for Math Reasoning
+=================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

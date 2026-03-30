@@ -15,9 +15,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor: 0-0
-    env: 0-0
-    rollout: 0-0
+    actor,env,rollout: 0
 
 runner:
   task_type: embodied
@@ -31,7 +29,7 @@ runner:
   max_steps: -1
 
   only_eval: False
-  val_check_interval: 200
+  val_check_interval: -1
   save_interval: -1
 
 algorithm:

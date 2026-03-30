@@ -4,7 +4,7 @@
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     https://www.apache.org/licenses/LICENSE-2.0
+#      https://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,10 +15,59 @@
 """Utils for evaluating policies in LIBERO simulation environments."""
 
 import math
+import os
 from typing import Union
 
-import libero.libero.benchmark as benchmark
 import numpy as np
+
+
+def get_libero_type() -> str:
+    """
+    Returns the type of LIBERO, which can be "standard", "pro", or "plus".
+    """
+    return os.environ.get("LIBERO_TYPE", "standard").lower()
+
+
+libero_type = get_libero_type()
+
+if libero_type == "pro":
+    try:
+        import liberopro.liberopro.benchmark as benchmark
+        from liberopro.liberopro.benchmark import Benchmark
+    except ImportError:
+        print(
+            "[Utils] Warning: LIBERO_TYPE=pro but 'liberopro' not found. Falling back to 'libero'."
+        )
+        import libero.libero.benchmark as benchmark
+        from libero.libero.benchmark import Benchmark
+
+elif libero_type == "plus":
+    try:
+        import liberoplus.liberoplus.benchmark as benchmark
+        from liberoplus.liberoplus.benchmark import Benchmark
+    except ImportError:
+        print(
+            "[Utils] Warning: LIBERO_TYPE=plus but 'liberoplus' not found. Falling back to 'libero'."
+        )
+        import libero.libero.benchmark as benchmark
+        from libero.libero.benchmark import Benchmark
+
+else:
+    try:
+        import libero.libero.benchmark as benchmark
+        from libero.libero.benchmark import Benchmark
+    except ImportError:
+        try:
+            import liberopro.liberopro.benchmark as benchmark
+            from liberopro.liberopro.benchmark import Benchmark
+        except ImportError:
+            try:
+                import liberoplus.liberoplus.benchmark as benchmark
+                from liberoplus.liberoplus.benchmark import Benchmark
+            except ImportError:
+                raise ImportError(
+                    "No valid LIBERO package (libero, liberopro, or liberoplus) found."
+                )
 
 
 def get_libero_image(obs: dict[str, np.ndarray]) -> np.ndarray:
@@ -81,7 +130,7 @@ def quat2axisangle(quat: np.ndarray) -> np.ndarray:
     return (quat[:3] * 2.0 * math.acos(quat[3])) / den
 
 
-def get_benchmark_overridden(benchmark_name) -> benchmark.Benchmark:
+def get_benchmark_overridden(benchmark_name) -> Benchmark:
     """
     Return the Benchmark class for a given name.
     For "libero_130": return a dynamically aggregated class from all suites.
@@ -97,19 +146,20 @@ def get_benchmark_overridden(benchmark_name) -> benchmark.Benchmark:
     if name != "libero_130":
         return benchmark.get_benchmark(benchmark_name)
 
-    libreo_cls = benchmark.BENCHMARK_MAPPING.get("libero_130", None)
-    if libreo_cls is not None:
-        return libreo_cls
+    libero_cls = benchmark.BENCHMARK_MAPPING.get("libero_130", None)
+    if libero_cls is not None:
+        return libero_cls
 
     # Build aggregated task map once, preserving order and de-duplicating by task name
     aggregated_task_map: dict[str, benchmark.Task] = {}
-    for suite_name in getattr(benchmark, "libero_suites", []):
+    suites = getattr(benchmark, "libero_suites", [])
+    for suite_name in suites:
         suite_map = benchmark.task_maps.get(suite_name, {})
         for task_name, task in suite_map.items():
             if task_name not in aggregated_task_map:
                 aggregated_task_map[task_name] = task
 
-    class LIBERO_ALL(benchmark.Benchmark):
+    class LIBERO_ALL(Benchmark):
         def __init__(self, task_order_index=0):
             super().__init__(task_order_index=task_order_index)
             self.name = "libero_130"

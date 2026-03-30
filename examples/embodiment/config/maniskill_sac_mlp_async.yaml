@@ -42,7 +42,7 @@ algorithm:
   group_size: 1
   agg_q: min
 
-  rollout_epoch: 500
+  rollout_epoch: 1
   eval_rollout_epoch: 1
 
   adv_type: embodied_sac
