@@ -4,9 +4,9 @@ defaults:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,reward: all
-    rollout: 0-1
-    rollout_judge: 2-3
+    actor,reward: all     # intend for 8 gpu nodes
+    rollout: 0-3          # gpu nodes 0-3 are used for rollout
+    rollout_judge: 4-7    # gpu nodes 4-7 are used for rollout_judge
 
 runner:
   experiment_name: ws_online
@@ -30,7 +30,6 @@ agentloop:
   use_local_judge: True
 
 rollout:
-  gpu_memory_utilization: 0.6
   model:
     model_path: /PATH/TO/MODEL # TODO:(USER) Replace with the actual path to the model checkpoint
 

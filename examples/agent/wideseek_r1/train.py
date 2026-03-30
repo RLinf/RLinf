@@ -64,7 +64,7 @@ def main(cfg) -> None:
 
     if cfg.agentloop.get("use_local_judge", False):
         subworker_specs = [
-            "rollout_judge",  # componet name in cfg
+            "rollout_judge",  # component name in cfg
         ]
         for comp_name in subworker_specs:
             dict_key = comp_name
