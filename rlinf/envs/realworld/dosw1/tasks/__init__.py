@@ -11,4 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from . import advantages, loss_scales, losses  # noqa: F401
+
+from gymnasium.envs.registration import register
+
+from rlinf.envs.realworld.dosw1.tasks.pick import PickEnv as PickEnv
+
+register(
+    id="DOSW1PickEnv-v1",
+    entry_point="rlinf.envs.realworld.dosw1.tasks:PickEnv",
+)
+
+__all__ = ["PickEnv"]

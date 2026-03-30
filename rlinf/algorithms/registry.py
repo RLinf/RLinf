@@ -150,6 +150,9 @@ def register_toolcall_parser(name: str):
 
 
 def get_toolcall_parser(name: str) -> Callable:
+    if not TOOLCALL_PARSER_REGISTRY:
+        from rlinf.algorithms import toolcall_parsers  # noqa: F401
+
     if name not in TOOLCALL_PARSER_REGISTRY:
         raise ValueError(f"Toolcall parser {name} not registered")
     cls = TOOLCALL_PARSER_REGISTRY[name]

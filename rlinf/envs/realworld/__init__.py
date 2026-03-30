@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .dosw1 import DOSW1Config, DOSW1Env
+from .dosw1 import tasks as dosw1_tasks
 from .franka import FrankaEnv, FrankaRobotConfig, FrankaRobotState
 from .franka import tasks as franka_tasks
 from .realworld_env import RealWorldEnv
@@ -21,6 +23,9 @@ from .xsquare import tasks as xsquare_tasks
 RealWorldEnv.realworld_setup()
 
 __all__ = [
+    "DOSW1Config",
+    "DOSW1Env",
+    "dosw1_tasks",
     "FrankaEnv",
     "FrankaRobotConfig",
     "FrankaRobotState",
