@@ -178,7 +178,6 @@ class OpenPi0Config(Pi0Config):
     guidance_type: str = "positive"
     positive_only_conditional: bool = False
     positive_unconditional_prob: float = 0.0
-    positive_probe_diagnostics: bool = False
 
     def __post_init__(self):
         if self.guidance_type not in _VALID_GUIDANCE_TYPES:
@@ -609,59 +608,6 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
                 per_sample_loss, negative_unconditional_mask
             ),
         }
-        # TODO: zhihao: remove this future
-        if (
-            self.config.positive_only_conditional
-            and self.config.positive_probe_diagnostics
-            and positive_label_count > 0
-        ):
-            probe_images = [img[positive_mask] for img in images]
-            probe_img_masks = [img_mask[positive_mask] for img_mask in img_masks]
-            probe_state = state[positive_mask]
-            probe_actions = actions[positive_mask]
-            probe_time = time[positive_mask]
-            probe_noise = noise[positive_mask]
-            probe_positive_tokens = positive_guidance_lang_tokens[positive_mask]
-            probe_positive_masks = positive_guidance_lang_masks[positive_mask]
-            probe_uncond_tokens = lang_tokens[positive_mask]
-            probe_uncond_masks = lang_masks[positive_mask]
-
-            checkpointing_enabled = self.gradient_checkpointing_enabled
-            self.gradient_checkpointing_enabled = False
-            try:
-                with torch.no_grad():
-                    _, probe_positive_cond_loss = self._compute_flow_losses(
-                        images=probe_images,
-                        img_masks=probe_img_masks,
-                        state=probe_state,
-                        actions=probe_actions,
-                        lang_tokens=probe_positive_tokens,
-                        lang_masks=probe_positive_masks,
-                        device=device,
-                        time=probe_time,
-                        noise=probe_noise,
-                    )
-                    _, probe_positive_uncond_loss = self._compute_flow_losses(
-                        images=probe_images,
-                        img_masks=probe_img_masks,
-                        state=probe_state,
-                        actions=probe_actions,
-                        lang_tokens=probe_uncond_tokens,
-                        lang_masks=probe_uncond_masks,
-                        device=device,
-                        time=probe_time,
-                        noise=probe_noise,
-                    )
-            finally:
-                self.gradient_checkpointing_enabled = checkpointing_enabled
-
-            metrics.update(
-                {
-                    "positive_probe_count": positive_label_count,
-                    "positive_probe_conditional_loss_sum": probe_positive_cond_loss.sum().item(),
-                    "positive_probe_unconditional_loss_sum": probe_positive_uncond_loss.sum().item(),
-                }
-            )
 
         return flow_loss, metrics
 

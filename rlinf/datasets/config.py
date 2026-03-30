@@ -22,65 +22,8 @@ This module extends the VLA dataset configuration with RL-specific settings:
 4. Return at current step
 """
 
-import json
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional, Sequence
-
-
-def load_return_range_from_norm_stats(
-    norm_stats_dir: str,
-    asset_id: Optional[str] = None,
-) -> tuple[Optional[float], Optional[float]]:
-    """Load return min/max from norm_stats.json file.
-
-    Searches for norm_stats.json in the following order:
-    1. {norm_stats_dir}/{asset_id}/norm_stats.json
-    2. {norm_stats_dir}/norm_stats.json
-    3. {norm_stats_dir}/{first_subdir}/norm_stats.json
-
-    Args:
-        norm_stats_dir: Base directory containing norm stats
-        asset_id: Optional asset ID subdirectory
-
-    Returns:
-        Tuple of (return_min, return_max) or (None, None) if not found
-    """
-    base_path = Path(norm_stats_dir)
-    if not base_path.exists():
-        return None, None
-
-    candidates = []
-    if asset_id:
-        candidates.append(base_path / asset_id / "norm_stats.json")
-    candidates.append(base_path / "norm_stats.json")
-
-    for subdir in base_path.iterdir():
-        if subdir.is_dir():
-            candidates.append(subdir / "norm_stats.json")
-            break
-
-    for path in candidates:
-        if not path.exists():
-            continue
-        try:
-            with open(path) as f:
-                data = json.load(f)
-            norm_stats = data.get("norm_stats", data)
-            if "return" not in norm_stats:
-                continue
-            return_stats = norm_stats["return"]
-            ret_min = return_stats.get("min")
-            ret_max = return_stats.get("max")
-            if isinstance(ret_min, list):
-                ret_min = ret_min[0]
-            if isinstance(ret_max, list):
-                ret_max = ret_max[0]
-            return float(ret_min), float(ret_max)
-        except Exception:
-            continue
-
-    return None, None
 
 
 @dataclass(frozen=True)

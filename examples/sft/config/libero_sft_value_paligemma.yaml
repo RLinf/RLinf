@@ -35,7 +35,7 @@ data:
   train_data_paths:
     - dataset_path: "/path/to/sft_dataset"
       type: "sft"
-      weight: 20.0
+      weight: 1.0
       robot_type: "libero"
       model_type: "pi05"
 

@@ -438,7 +438,6 @@ class FSDPCfgWorker(FSDPSftWorker):
                 "positive_unconditional_count",
                 "negative_conditional_count",
                 "negative_unconditional_count",
-                "positive_probe_count",
             }
             loss_sum_keys = {
                 "conditional_loss_sum",
@@ -447,8 +446,6 @@ class FSDPCfgWorker(FSDPSftWorker):
                 "positive_unconditional_loss_sum",
                 "negative_conditional_loss_sum",
                 "negative_unconditional_loss_sum",
-                "positive_probe_conditional_loss_sum",
-                "positive_probe_unconditional_loss_sum",
             }
             special_keys = count_keys | loss_sum_keys
             has_cfg_metrics = any(k in metrics for k in special_keys)
@@ -533,27 +530,11 @@ class FSDPCfgWorker(FSDPSftWorker):
                         "negative_unconditional_loss_sum",
                         "negative_unconditional_count",
                     ),
-                    "positive_probe_conditional_loss": (
-                        "positive_probe_conditional_loss_sum",
-                        "positive_probe_count",
-                    ),
-                    "positive_probe_unconditional_loss": (
-                        "positive_probe_unconditional_loss_sum",
-                        "positive_probe_count",
-                    ),
                 }
                 for metric_name, (loss_key, count_key) in loss_map.items():
                     count = sum_m.get(count_key, 0)
                     if count > 0:
                         mean_m[metric_name] = sum_m.get(loss_key, 0) / count
-
-                if "positive_probe_conditional_loss" in mean_m and (
-                    "positive_probe_unconditional_loss" in mean_m
-                ):
-                    mean_m["positive_probe_guidance_gain"] = (
-                        mean_m["positive_probe_unconditional_loss"]
-                        - mean_m["positive_probe_conditional_loss"]
-                    )
 
                 train_metrics = mean_m
             else:

@@ -22,7 +22,7 @@ advantage:
   discount_next_value: true
 
   # Top X% of samples will have positive advantage (threshold at 1-X percentile)
-  positive_quantile: 0.2
+  positive_quantile: 0.3
 
   # Tag for saving/reading: advantages_{tag}.parquet / returns_{returns_tag}.parquet
   tag: null
@@ -33,7 +33,7 @@ advantage:
 
 data:
   model_type: "pi05"
-  # Options: "libero", "franka", "franka_3cam", "droid", "aloha"
+  # Options: "libero", "franka"
   robot_type: "libero"
 
   train_data_paths:

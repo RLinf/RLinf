@@ -115,24 +115,9 @@ class FrankaEEInputs(_transforms.DataTransformFn):
                     assert actions.shape[-1] == 10, (
                         f"Expected actions shape (N, 10), got {actions.shape}"
                     )
-                elif actions.shape[-1] == 6:
-                    if isinstance(actions, np.ndarray):
-                        gripper = np.zeros((actions.shape[0], 1), dtype=actions.dtype)
-                        actions = np.concatenate([actions, gripper], axis=-1)
-                    elif isinstance(actions, torch.Tensor):
-                        gripper = torch.zeros(
-                            (actions.shape[0], 1),
-                            dtype=actions.dtype,
-                            device=actions.device,
-                        )
-                        actions = torch.cat([actions, gripper], dim=-1)
-                    else:
-                        actions = np.asarray(actions)
-                        gripper = np.zeros((actions.shape[0], 1), dtype=actions.dtype)
-                        actions = np.concatenate([actions, gripper], axis=-1)
                 else:
                     assert actions.shape[-1] == 7, (
-                        f"Expected actions shape (N, 6) or (N, 7), got {actions.shape}"
+                        f"Expected actions shape (N, 7), got {actions.shape}"
                     )
             inputs["actions"] = actions
 

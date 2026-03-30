@@ -36,7 +36,6 @@ from typing import Any, Iterator
 from rlinf.datasets.config import (  # noqa: E402
     RLDataConfig,
     create_rl_config,
-    load_return_range_from_norm_stats,
 )
 from rlinf.datasets.mixture_datasets import (  # noqa: E402
     AdvantageMixtureDataset,
@@ -130,7 +129,6 @@ class TokenizePromptWithGuidance:
 __all__ = [
     "RLDataConfig",
     "create_rl_config",
-    "load_return_range_from_norm_stats",
     "load_return_stats_from_dataset",
     "load_returns_sidecar",
     "LeRobotRLDataset",

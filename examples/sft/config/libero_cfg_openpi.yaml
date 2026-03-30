@@ -53,7 +53,7 @@ algorithm:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 64
+  micro_batch_size: 32
   global_batch_size: 512
   seed: 0
 
@@ -64,22 +64,24 @@ actor:
     add_value_head: False
     openpi:
       config_name: "pi05_libero"
-      detach_critic_input: True
-      train_expert_only: False
       cfgrl_guidance_scale: 1.0
-      unconditional_prob: 0.3
+      unconditional_prob: 0.1  # legacy CFG dropout; unused in positive-only mode
+      train_expert_only: False
       guidance_type: "positive"
+      positive_only_conditional: true
+      positive_unconditional_prob: 0.1
 
   optim:
-    lr: 5.0e-5
-    value_lr: 1.0e-4
+    lr: 1.0e-5
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-8
     weight_decay: 1.0e-10
     clip_grad: 1.0
-    lr_scheduler: "constant"
+    lr_scheduler: "cosine"
+    lr_warmup_steps: 5000
     total_training_steps: 30000
+    min_lr: 0.0
 
   fsdp_config:
     strategy: "fsdp"
