@@ -44,7 +44,7 @@ GELLO 依赖两个软件包，必须 **按顺序** 安装：
 
 两个软件包都应安装在运行 GELLO 设备的节点上（通常为 NUC / 控制节点）。
 
-1. 安装 ``gello``（gello_software）
+1. 安装 ``gello`` （gello_software）
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 选择一个安装目录，然后克隆仓库并初始化其子模块（包含 **Dynamixel SDK**）：
@@ -56,7 +56,7 @@ GELLO 依赖两个软件包，必须 **按顺序** 安装：
    cd gello_software
    git submodule init && git submodule update
 
-安装 ``gello`` 包和 **Dynamixel SDK**（作为第三方子模块）：
+安装 ``gello`` 包和 **Dynamixel SDK** （作为第三方子模块）：
 
 .. code-block:: bash
 
@@ -212,7 +212,7 @@ YAML 配置说明
 
 - 执行 ``sudo chmod 666 /dev/serial/by-id/<your-device>``。
 - 或者将用户添加到 ``dialout`` 组：
-  ``sudo usermod -aG dialout $USER``（需要重新登录）。
+  ``sudo usermod -aG dialout $USER`` （需要重新登录）。
 
 **导入错误：``No module named 'gello'``**
 
