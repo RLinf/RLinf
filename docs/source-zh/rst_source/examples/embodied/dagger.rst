@@ -23,6 +23,13 @@
 - **动作空间**：由 Pi0 策略生成的连续机器人动作
 - **适用场景**：对预训练 VLA 策略进行带专家重标注的 DAgger 微调
 
+**真实 Franka 抓放任务 + Pi0**
+
+- **环境**：运行在机器人节点上的 ``FrankaBinRelocationEnv-v1``
+- **观测**：腕部 / 外部 RGB 图像与机器人状态
+- **动作空间**：末端执行器 delta qpos 与夹爪动作
+- **适用场景**：采集遥操作真实数据，进行 OpenPI SFT，然后在真实环境中继续异步 DAgger
+
 算法
 ----
 
@@ -81,6 +88,9 @@ Docker 镜像或等价的本地环境。
    # 为提高国内依赖安装速度，可以添加 `--use-mirror` 参数。
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
+
+对于真实机器人 DAgger 流程，请在启动任何采集或训练任务之前，先完成
+:doc:`franka` 中的机器人安装和 Ray 配置。
 
 Checkpoint 配置
 ---------------
@@ -174,6 +184,157 @@ Pi0 DAgger 配置使用单独的学生模型与专家模型路径：
 
    bash examples/embodiment/run_async.sh maniskill_dagger_mlp
    bash examples/embodiment/run_async.sh libero_spatial_dagger_openpi
+
+真实 Franka 全流程
+------------------
+
+在开始之前，请先完成 :doc:`franka` 中介绍的机器人部署
+（包括 controller、camera）以及多机 Ray 配置。
+
+如果要在 Franka 机械臂上运行 DAgger 工作流，请按以下四个阶段执行：
+
+1. 收集真实数据
+~~~~~~~~~~~~~~~~
+
+从 ``examples/embodiment/config/realworld_collect_data.yaml`` 开始。对于抓放
+任务，需要将环境从 ``peg_insertion`` 切换为 ``bin_relocation``：
+
+.. code-block:: yaml
+
+   defaults:
+     - env/realworld_bin_relocation@env.eval
+     - override hydra/job_logging: stdout
+
+然后填入真实机器人参数，并保持 LeRobot 导出开启：
+
+.. code-block:: yaml
+
+   cluster:
+     node_groups:
+       - label: franka
+         node_ranks: 0
+         hardware:
+           type: Franka
+           configs:
+             - robot_ip: ROBOT_IP
+               node_rank: 0
+
+   env:
+     eval:
+       use_spacemouse: True
+       override_cfg:
+         target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
+         success_hold_steps: 1
+         camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
+     data_collection:
+       enabled: True
+       save_dir: ${runner.logger.log_path}/collected_data
+       export_format: "lerobot"
+       only_success: True
+       robot_type: "panda"
+       fps: 10
+
+使用你复制后的配置启动采集：
+
+.. code-block:: bash
+
+   bash examples/embodiment/collect_data.sh my_realworld_pnp_collect
+
+遥操作过程中，同一次运行会写出：
+
+- replay-buffer trajectories under ``logs/{timestamp}/demos/``
+- LeRobot data under ``logs/{timestamp}/collected_data/``
+
+关于采集格式，参见
+:doc:`../../tutorials/components/data_collection`
+
+2. 计算归一化统计
+~~~~~~~~~~~~~~~~~
+
+在进行 SFT 或 DAgger 之前，先为采集得到的 LeRobot 数据集计算 OpenPI
+归一化统计：
+
+.. code-block:: bash
+
+   export HF_LEROBOT_HOME=/path/to/lerobot_root
+   python toolkits/replay_buffer/calculate_norm_status.py \
+       --config-name pi0_franka_dagger \
+       --repo-id franka_dagger
+
+这里使用的数据集根目录和数据集 id，需要与后续 SFT 保持一致。OpenPI 相关
+细节见 :doc:`sft_openpi`。
+
+3. 进行 SFT
+~~~~~~~~~~~
+
+启动前，先修改 ``examples/sft/config/franka_dagger_sft_openpi.yaml``：
+
+.. code-block:: yaml
+
+   data:
+     train_data_paths: "/path/to/franka-lerobot-dataset"
+
+   actor:
+     model:
+       model_path: "/path/to/pi0-model"
+       openpi:
+         config_name: "pi0_franka_dagger"
+
+然后执行：
+
+.. code-block:: bash
+
+   bash examples/sft/run_vla_sft.sh franka_dagger_sft_openpi
+
+更多 OpenPI SFT 细节见 :doc:`sft_openpi`。
+
+4. 在真实环境中运行异步 DAgger
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+最后，修改 ``examples/embodiment/config/realworld_pnp_dagger_openpi.yaml``，
+使其与你的环境一致：
+
+.. code-block:: yaml
+
+   cluster:
+     num_nodes: 2
+     node_groups:
+       - label: "train"
+         node_ranks: 0
+       - label: franka
+         node_ranks: 1
+         hardware:
+           type: Franka
+           configs:
+             - robot_ip: ROBOT_IP
+               node_rank: 1
+
+   runner:
+     ckpt_path: "/path/to/sft_checkpoint/full_weights.pt"
+
+   env:
+     train:
+       override_cfg:
+         target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
+         camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
+     eval:
+       override_cfg:
+         target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
+         camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
+
+   rollout:
+     model:
+       model_path: "/path/to/pi0-model"
+
+   actor:
+     model:
+       model_path: "/path/to/pi0-model"
+
+DAgger 的启动命令为：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_realworld_async.sh realworld_pnp_dagger_openpi
 
 可视化与结果
 ------------

@@ -367,6 +367,8 @@ class CollectEpisode(gym.Wrapper):
         images: list[np.ndarray] = []
         wrist_images: list[np.ndarray] = []
         extra_view_images: list[np.ndarray] = []
+        has_wrist_images = True
+        has_extra_view_images = True
         states: list[np.ndarray] = []
         np_actions: list[np.ndarray] = []
         dones: list[bool] = []
@@ -396,9 +398,13 @@ class CollectEpisode(gym.Wrapper):
                 continue
 
             images.append(self._to_uint8(np.asarray(image)))
-            if wrist_image is not None:
+            if wrist_image is None:
+                has_wrist_images = False
+            elif has_wrist_images:
                 wrist_images.append(self._to_uint8(np.asarray(wrist_image)))
-            if extra_view_image is not None:
+            if extra_view_image is None:
+                has_extra_view_images = False
+            elif has_extra_view_images:
                 extra_view_images.append(self._to_uint8(np.asarray(extra_view_image)))
             states.append(np.asarray(state).astype(np.float32))
             np_actions.append(np.asarray(np_action).astype(np.float32))
@@ -417,8 +423,10 @@ class CollectEpisode(gym.Wrapper):
 
         return {
             "images": images[:end],
-            "wrist_images": wrist_images[:end] if wrist_images else None,
-            "extra_view_images": extra_view_images[:end] if extra_view_images else None,
+            "wrist_images": wrist_images[:end] if has_wrist_images else None,
+            "extra_view_images": (
+                extra_view_images[:end] if has_extra_view_images else None
+            ),
             "states": states[:end],
             "actions": np_actions[:end],
             "dones": dones_out,
@@ -436,6 +444,8 @@ class CollectEpisode(gym.Wrapper):
                 image_shape=ep_data["images"][0].shape,
                 state_dim=ep_data["states"][0].shape[-1],
                 action_dim=ep_data["actions"][0].shape[-1],
+                has_wrist_image=ep_data["wrist_images"] is not None,
+                has_extra_view_image=ep_data["extra_view_images"] is not None,
                 use_incremental_stats=True,
                 stats_sample_ratio=self.stats_sample_ratio,
             )

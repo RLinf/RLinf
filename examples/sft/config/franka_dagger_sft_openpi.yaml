@@ -20,8 +20,8 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "test_openpi"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    experiment_name: "franka_sft_openpi"
+    logger_backends: ["tensorboard"]
 
   max_epochs: 30000
   max_steps: -1
@@ -29,7 +29,7 @@ runner:
   save_interval: 2000
 
 data:
-  train_data_paths: "/path/to/libero-data"
+  train_data_paths: "/path/to/franka-lerobot-dataset"
 
 algorithm:
   adv_type: gae
@@ -38,37 +38,37 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 4
-  global_batch_size: 128
+  global_batch_size: 32
   seed: 0
 
-  # Override the default values in model/pi0
   model:
     precision: null
     model_path: "/path/to/pi0-model"
-    num_action_chunks: 4 # interface for the env
+    num_action_chunks: 10
+    action_dim: 7
     add_value_head: False
     openpi:
-      config_name: "pi0_libero"
+      config_name: "pi0_franka_dagger"
       detach_critic_input: True
+      num_images_in_input: 2
 
   optim:
-    lr: 2.5e-5  
+    lr: 2.5e-5
     value_lr: 1.55e-4
     adam_beta1: 0.9
     adam_beta2: 0.95
-    adam_eps: 1.0e-08  
-    weight_decay: 1.0e-10  
+    adam_eps: 1.0e-08
+    weight_decay: 1.0e-10
     clip_grad: 1.0
-    warmup_style: "cosine"  
-    lr_warmup_steps: 1000  
-    total_training_steps: 30000  # for lr scheduler cosine decay
+    warmup_style: "cosine"
+    lr_warmup_steps: 1000
+    total_training_steps: 30000
 
-  # Override the default values in training_backend/fsdp
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "full_shard"
     use_orig_params: False
-    gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
+    gradient_checkpointing: False
     mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}
