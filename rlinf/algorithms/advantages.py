@@ -339,6 +339,8 @@ def compute_raw_advantages(
     Returns:
         torch.Tensor: advantages
     """
+    if rewards.ndim == 2:
+        rewards = rewards.reshape(-1)
     advantages = rewards.unsqueeze(0).expand_as(loss_mask) * loss_mask
 
     # Simple baseline subtraction (mean of valid advantages)
