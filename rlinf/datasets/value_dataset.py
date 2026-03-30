@@ -305,8 +305,3 @@ class ValueDataset(LeRobotRLDataset):
             sample["dones"] = False
 
         return sample
-
-    def get_source_name(self) -> str:
-        """Get a readable source name for this dataset."""
-        base_name = self.repo_id.replace("/", "_").replace("-", "_").lower()
-        return f"value_{base_name}"

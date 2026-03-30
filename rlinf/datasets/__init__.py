@@ -48,8 +48,6 @@ from rlinf.datasets.value_dataset import ValueDataset  # noqa: E402
 
 from rlinf.datasets.value_transforms import (  # noqa: E402
     ReturnDiscretizer,
-    ReturnNormalizer,
-    create_return_discretizer,
 )
 
 
@@ -138,6 +136,4 @@ __all__ = [
     "ValueDataLoaderImpl",
     "TokenizePromptWithGuidance",
     "ReturnDiscretizer",
-    "ReturnNormalizer",
-    "create_return_discretizer",
 ]

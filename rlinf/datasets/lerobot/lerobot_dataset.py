@@ -25,7 +25,7 @@ from typing import Any, Optional
 
 import numpy as np
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
-from torch.utils.data import Dataset, Subset
+from torch.utils.data import Dataset
 
 from .config import (
     DataConfigFactory,
@@ -330,38 +330,3 @@ class LeRobotPyTorchDataset(Dataset):
             idx = self._sample_indices[idx]
         return self.base_dataset[idx]
 
-    def get_train_val_split(
-        self, validation_split: Optional[float] = None
-    ) -> tuple["LeRobotPyTorchDataset", "LeRobotPyTorchDataset"]:
-        """
-        Split the dataset into train and validation sets.
-
-        Args:
-            validation_split: Fraction of data for validation (default: 0.1)
-
-        Returns:
-            Tuple of (train_dataset, val_dataset)
-        """
-        if validation_split is None:
-            validation_split = 0.1
-
-        total_len = len(self)
-        val_len = int(total_len * validation_split)
-        train_len = total_len - val_len
-
-        indices = np.arange(total_len)
-        np.random.shuffle(indices)
-
-        train_indices = indices[:train_len]
-        val_indices = indices[train_len:]
-
-        train_ds = Subset(self, train_indices)
-        val_ds = Subset(self, val_indices)
-
-        return train_ds, val_ds
-
-    def get_custom_tokens(self) -> Optional[list[str]]:
-        return None
-
-    def get_source_name(self) -> str:
-        return self.repo_id.replace("/", "_").replace("-", "_").lower()

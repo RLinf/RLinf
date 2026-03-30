@@ -22,7 +22,7 @@ This module provides:
 
 import hashlib
 import logging
-from typing import Any, Optional, Protocol, Sequence, runtime_checkable
+from typing import Any, Protocol, Sequence, runtime_checkable
 
 import numpy as np
 from torch.utils.data import Dataset
@@ -135,15 +135,6 @@ class _MixtureBase(Dataset):
         dataset, sample_idx = self._sample_step(index)
         return dataset[sample_idx]
 
-    def get_custom_tokens(self) -> Optional[list[str]]:
-        tokens = set()
-        for ds in self.datasets:
-            if hasattr(ds, "get_custom_tokens"):
-                ds_tokens = ds.get_custom_tokens()
-                if ds_tokens:
-                    tokens.update(ds_tokens)
-        return list(tokens) if tokens else None
-
 
 class AdvantageMixtureDataset(_MixtureBase):
     """Mixture of multiple datasets with weighted sampling for CFG-RL training."""
@@ -164,55 +155,6 @@ class AdvantageMixtureDataset(_MixtureBase):
         logger.info(f"  Raw weights: {self._raw_weights.tolist()}")
         logger.info(f"  Sampling weights: {self._dataset_sampling_weights.tolist()}")
         logger.info(f"  Mode: {mode}")
-
-    def get_train_val_split(
-        self, validation_split: Optional[float] = None
-    ) -> tuple["AdvantageMixtureDataset", "AdvantageMixtureDataset"]:
-        if validation_split is None:
-            validation_split = 0.1
-
-        train_datasets = []
-        val_datasets = []
-
-        for ds, weight in zip(self.datasets, self._raw_weights):
-            if hasattr(ds, "get_train_val_split"):
-                train_ds, val_ds = ds.get_train_val_split(validation_split)
-            else:
-                total = len(ds)
-                val_size = int(total * validation_split)
-                indices = np.arange(total)
-                np.random.shuffle(indices)
-                from torch.utils.data import Subset
-
-                val_ds = Subset(ds, indices[:val_size].tolist())
-                train_ds = Subset(ds, indices[val_size:].tolist())
-
-            train_datasets.append((train_ds, weight))
-            val_datasets.append((val_ds, weight))
-
-        train_mixture = AdvantageMixtureDataset(
-            datasets=train_datasets,
-            mode="train",
-            balance_dataset_weights=self.balance_dataset_weights,
-            seed=self.seed,
-        )
-        val_mixture = AdvantageMixtureDataset(
-            datasets=val_datasets,
-            mode="val",
-            balance_dataset_weights=self.balance_dataset_weights,
-            seed=self.seed,
-        )
-
-        return train_mixture, val_mixture
-
-    def get_source_name(self) -> str:
-        names = []
-        for ds in self.datasets:
-            if hasattr(ds, "get_source_name"):
-                names.append(ds.get_source_name())
-            elif hasattr(ds, "repo_id"):
-                names.append(ds.repo_id)
-        return "_".join(names[:3]) if names else "advantage_mixture"
 
 
 class ValueMixtureDataset(_MixtureBase):
@@ -235,51 +177,3 @@ class ValueMixtureDataset(_MixtureBase):
         logger.info(f"  Sampling weights: {self._dataset_sampling_weights.tolist()}")
         logger.info(f"  Mode: {mode}")
 
-    def get_train_val_split(
-        self, validation_split: Optional[float] = None
-    ) -> tuple["ValueMixtureDataset", "ValueMixtureDataset"]:
-        if validation_split is None:
-            validation_split = 0.1
-
-        train_datasets = []
-        val_datasets = []
-
-        for ds, weight in zip(self.datasets, self._raw_weights):
-            if hasattr(ds, "get_train_val_split"):
-                train_ds, val_ds = ds.get_train_val_split(validation_split)
-            else:
-                total = len(ds)
-                val_size = int(total * validation_split)
-                indices = np.arange(total)
-                np.random.shuffle(indices)
-                from torch.utils.data import Subset
-
-                val_ds = Subset(ds, indices[:val_size].tolist())
-                train_ds = Subset(ds, indices[val_size:].tolist())
-
-            train_datasets.append((train_ds, weight))
-            val_datasets.append((val_ds, weight))
-
-        train_mixture = ValueMixtureDataset(
-            datasets=train_datasets,
-            mode="train",
-            balance_dataset_weights=self.balance_dataset_weights,
-            seed=self.seed,
-        )
-        val_mixture = ValueMixtureDataset(
-            datasets=val_datasets,
-            mode="val",
-            balance_dataset_weights=self.balance_dataset_weights,
-            seed=self.seed,
-        )
-
-        return train_mixture, val_mixture
-
-    def get_source_name(self) -> str:
-        names = []
-        for ds in self.datasets:
-            if hasattr(ds, "get_source_name"):
-                names.append(ds.get_source_name())
-            elif hasattr(ds, "repo_id"):
-                names.append(ds.repo_id)
-        return "_".join(names[:3]) if names else "value_mixture"
