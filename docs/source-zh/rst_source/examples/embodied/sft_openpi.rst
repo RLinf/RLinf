@@ -99,7 +99,7 @@ RLinf 提供了 ``toolkits/replay_buffer/calculate_norm_status.py``，用于为
 - ``repo_id`` 必须与你的 LeRobot 格式数据集名称一致。
 
 该脚本会将生成的统计信息写入
-``RLinf/assest/<exp_name>/<repo_id>/norm_stats.json``。
+``<assest_dir>/<exp_name>/<repo_id>/norm_stats.json``。
 
 OpenPI 加载器会在运行时从 ``<model_path>/<repo_id>`` 读取归一化统计信息。
 

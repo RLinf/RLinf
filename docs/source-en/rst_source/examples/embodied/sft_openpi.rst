@@ -96,9 +96,9 @@ Notes:
 
 - ``HF_LEROBOT_HOME`` must be set before running the script.
 - ``config_name`` must match your custom openpi dataconfig used by training.
-- ``repo_id`` must match you lerobot-format dataset name.
+- ``repo_id`` must match your lerobot-format dataset name.
 
-The script writes the generated stats under ``RLinf/assest/<exp_name>/<repo_id>/norm_stats.json``.
+The script writes the generated stats under ``<assest_dir>/<exp_name>/<repo_id>/norm_stats.json``.
 
 The OpenPI loader later reads the normalization stats from the ``<model_path>/<repo_id>`` at runtime.
 

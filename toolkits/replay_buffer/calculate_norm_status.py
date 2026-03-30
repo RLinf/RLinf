@@ -42,7 +42,7 @@ def create_torch_dataloader(
     model_config: _model.BaseModelConfig,
     num_workers: int,
     max_frames: int | None = None,
-) -> tuple[_data_loader.Dataset, int]:
+) -> tuple[_data_loader.TorchDataLoader, int]:
     if data_config.repo_id is None:
         raise ValueError("Data config must have a repo_id")
     dataset = _data_loader.create_torch_dataset(
