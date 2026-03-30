@@ -88,7 +88,7 @@ LIBERO-Plus 将评测扩展至包含 5 个难度级别的 10,030 个任务，在
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:embodied-liberopro
+      rlinf/rlinf:agentic-rlinf0.2-liberopro
 
    # LIBERO-Plus
    docker run -it --rm --gpus all \
@@ -96,7 +96,7 @@ LIBERO-Plus 将评测扩展至包含 5 个难度级别的 10,030 个任务，在
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:embodied-liberoplus
+      rlinf/rlinf:agentic-rlinf0.2-liberoplus
 
 **选项 2：自定义环境**
 

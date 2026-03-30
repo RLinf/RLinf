@@ -619,4 +619,3 @@ Important Notes
 3. **RoboTwin Repo**: Ensure the RoboTwin repo path is added to PYTHONPATH, e.g., ``export PYTHONPATH=/opt/robotwin:$PYTHONPATH``
 4. **GPU Memory**: The RoboTwin environment may require significant GPU memory, it is recommended to use ``enable_offload: True``
 5. **Task Configuration**: Modify parameters in ``task_config`` according to specific tasks
-
