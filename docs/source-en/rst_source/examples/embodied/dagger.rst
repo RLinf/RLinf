@@ -293,7 +293,7 @@ Then run:
 For more OpenPI SFT details, see :doc:`sft_openpi`.
 
 4. Run async DAgger in the realworld
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Finally, edit ``examples/embodiment/config/realworld_pnp_dagger_openpi.yaml`` to match your setup:
 
