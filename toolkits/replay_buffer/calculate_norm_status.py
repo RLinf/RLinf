@@ -13,36 +13,8 @@
 # limitations under the License.
 
 import os
-import pathlib
-import sys
+
 import numpy as np
-
-
-def _extract_cli_flag_value(args: list[str], flag: str) -> str | None:
-    """Extract a CLI flag value from raw argv before importing openpi modules."""
-    for index, arg in enumerate(args):
-        if arg == flag and index + 1 < len(args):
-            return args[index + 1]
-        if arg.startswith(f"{flag}="):
-            return arg.split("=", 1)[1]
-    return None
-
-
-def _set_hf_lerobot_home(dataset_dir: str) -> pathlib.Path:
-    dataset_path = pathlib.Path(dataset_dir).expanduser().resolve()
-    os.environ["HF_LEROBOT_HOME"] = str(dataset_path.parent)
-    return dataset_path
-
-
-# NOTE: openpi may read HF_LEROBOT_HOME during import/module initialization.
-# Parse --dataset-dir from raw argv so local datasets work without exporting the
-# env var manually in the shell.
-_raw_dataset_dir = _extract_cli_flag_value(sys.argv[1:], "--dataset-dir")
-if _raw_dataset_dir is None:
-    _raw_dataset_dir = _extract_cli_flag_value(sys.argv[1:], "--dataset_dir")
-if _raw_dataset_dir:
-    _set_hf_lerobot_home(_raw_dataset_dir)
-
 import openpi.models.model as _model
 import openpi.shared.normalize as normalize
 import openpi.training.data_loader as _data_loader
@@ -134,32 +106,23 @@ def create_rlds_dataloader(
 
 def main(
     config_name: str,
-    model_path: str | None = None,
-    dataset_dir: str | None = None,
-    repo_id: str | None = None,
-    batch_size: int | None = None,
-    max_frames: int | None = None,
+    repo_id: str,
 ):
-    data_kwargs = {}
-    if dataset_dir is not None:
-        dataset_path = _set_hf_lerobot_home(dataset_dir)
-        if not dataset_path.exists():
-            raise FileNotFoundError(f"Dataset directory does not exist: {dataset_path}")
-        data_kwargs["repo_id"] = repo_id or dataset_path.name
-    elif repo_id is not None:
-        data_kwargs["repo_id"] = repo_id
-
+    if not os.environ.get("HF_LEROBOT_HOME"):
+        raise EnvironmentError(
+            "HF_LEROBOT_HOME must be set before running this script. "
+            "Export it manually, for example: "
+            "export HF_LEROBOT_HOME=/path/to/lerobot_root"
+        )
     config = get_openpi_config(
         config_name,
-        model_path=model_path,
-        data_kwargs=data_kwargs or None,
-        batch_size=batch_size,
+        data_kwargs={"repo_id": repo_id},
     )
     data_config = config.data.create(config.assets_dirs, config.model)
 
     if data_config.rlds_data_dir is not None:
         data_loader, num_batches = create_rlds_dataloader(
-            data_config, config.model.action_horizon, config.batch_size, max_frames
+            data_config, config.model.action_horizon, config.batch_size
         )
     else:
         data_loader, num_batches = create_torch_dataloader(
@@ -168,7 +131,6 @@ def main(
             config.batch_size,
             config.model,
             config.num_workers,
-            max_frames,
         )
 
     keys = ["state", "actions"]
