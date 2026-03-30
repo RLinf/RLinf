@@ -846,7 +846,7 @@ install_frankasim_env() {
 
 install_habitat_env() {
     local habitat_sim_dir
-    habitat_sim_dir=$(clone_or_reuse_repo HABITAT_SIM_PATH "$VENV_DIR/habitat" https://github.com/facebookresearch/habitat-sim.git -b v0.3,3 --recurse-submodules)
+    habitat_sim_dir=$(clone_or_reuse_repo HABITAT_SIM_PATH "$VENV_DIR/habitat" https://github.com/facebookresearch/habitat-sim.git -b v0.3.3 --recurse-submodules)
     if [ -d "$habitat_sim_dir/build" ]; then
         rm -rf $habitat_sim_dir/build
     fi
