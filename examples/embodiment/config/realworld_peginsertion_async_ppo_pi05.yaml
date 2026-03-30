@@ -10,13 +10,13 @@ cluster:
   component_placement:
     actor: 
       node_group: "4090"
-      placement: 1 # Local GPU rank in the 4090 node group (n for the n+1 th GPU)
+      placement: 0 # Local GPU rank in the 4090 node group (n for the n+1 th GPU)
     env:
       node_group: franka
       placement: 0 # Local robot rank in the franka node group (n for the n+1 th robot)
     rollout:
       node_group: "4090"
-      placement: 1 # Local GPU rank in the 4090 node group (n for the n+1 th GPU)
+      placement: 0 # Local GPU rank in the 4090 node group (n for the n+1 th GPU)
   node_groups:
     - label: "4090" # GPU node group
       node_ranks: 0 # The ranks of the nodes to be included in this group， change this if your training node is not rank 0
@@ -112,7 +112,6 @@ env:
   eval:
     total_num_envs: 1
 
-# TODO: The main change is rollout, which should add config for openpi
 rollout:
   group_name: "RolloutGroup"
   generation_backend: "huggingface"
