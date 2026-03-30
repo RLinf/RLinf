@@ -119,9 +119,11 @@ franka = [
     "pyquaternion",
     "opencv-python",
     "defusedxml",
-    "pyspacemouse==1.1.5", 
+    "pyspacemouse==1.1.5",
+    "pymodbus>=3.0,<4.0",
     "imageio[ffmpeg]",
-    "pynput"
+    "pynput",
+    "numpy<2",
 ]
 xsquare_turtle2 = [
     "pyyaml",
