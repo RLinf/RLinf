@@ -58,7 +58,7 @@ class FrankaEEInputs(_transforms.DataTransformFn):
     - For non-rotation_6d Franka datasets, accepts either:
       * 7D actions [x,y,z,rx,ry,rz,gripper]
       * 6D actions [x,y,z,rx,ry,rz], in which case gripper=0 is appended
-    - RL fields passed through for value learning
+    - RL fields (return, reward, done) and padding masks passed through for value learning
     """
 
     def __init__(
@@ -81,7 +81,7 @@ class FrankaEEInputs(_transforms.DataTransformFn):
 
         base_image = _parse_image(data["observation/image"])
 
-        # Camera layout and masking differ by model type (matching original franka_policy.py)
+        # Camera layout and masking differ by model type
         model_type_lower = self.model_type.lower()
         if model_type_lower in ("pi0", "pi05"):
             names = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
@@ -108,7 +108,6 @@ class FrankaEEInputs(_transforms.DataTransformFn):
             "image_mask": dict(zip(names, image_masks, strict=True)),
         }
 
-        # Actions: validate shape based on rotation_6d flag
         if "actions" in data:
             actions = data["actions"]
             if hasattr(actions, "shape") and len(actions.shape) == 2:
@@ -137,22 +136,14 @@ class FrankaEEInputs(_transforms.DataTransformFn):
                     )
             inputs["actions"] = actions
 
-        # Prompt: handle bytes (matching original franka_policy.py)
         if "prompt" in data:
             prompt = data["prompt"]
             if isinstance(prompt, bytes):
                 prompt = prompt.decode("utf-8")
             inputs["prompt"] = prompt
 
-        # RL field passthrough (not in original OpenPI, needed for value learning)
-        for rl_key in [
-            "return",
-            "reward",
-            "done",
-            "is_failed",
-            "task_idx",
-            "subtask_idx",
-        ]:
+        # RL field passthrough for value learning pipeline
+        for rl_key in ["return", "reward", "done"]:
             if rl_key in data:
                 value = data[rl_key]
                 if isinstance(value, np.ndarray):
@@ -170,18 +161,10 @@ class FrankaEEInputs(_transforms.DataTransformFn):
                 else:
                     inputs[rl_key] = value
 
+        # Pass through padding masks (e.g. reward_is_pad) for value learning
         for key in data:
-            if (
-                key.startswith(("history_", "reward_", "return_", "action_"))
-                and key not in inputs
-            ):
+            if key.endswith("_is_pad") and key not in inputs:
                 inputs[key] = data[key]
-            elif key.endswith("_is_pad") and key not in inputs:
-                inputs[key] = data[key]
-
-        for idx_key in ["episode_index", "frame_index"]:
-            if idx_key in data:
-                inputs[idx_key] = data[idx_key]
 
         return inputs
 
@@ -198,18 +181,13 @@ class FrankaEEOutputs(_transforms.DataTransformFn):
         self.action_dim = 10 if action_train_with_rotation_6d else 7
 
     def __call__(self, data: dict[str, Any]) -> dict[str, Any]:
-        # if "actions" in data:
-        #     actions = data["actions"]
-        #     if isinstance(actions, np.ndarray):
-        #         actions = actions[..., : self.action_dim]
-        #     elif isinstance(actions, torch.Tensor):
-        #         actions = actions[..., : self.action_dim]
-        #     else:
-        #         actions = np.asarray(actions)[..., : self.action_dim]
-        #     return {"actions": actions}
-        # return data
-        return {
-            "actions": np.asarray(
-                data["actions"][:, :6]
-            )  # TODO: Need to use config !!!!!!!
-        }  # use abs actions [x,y,z,rx,ry,rz,gripper] for Franka
+        if "actions" in data:
+            actions = data["actions"]
+            if isinstance(actions, np.ndarray):
+                actions = actions[..., : self.action_dim]
+            elif isinstance(actions, torch.Tensor):
+                actions = actions[..., : self.action_dim]
+            else:
+                actions = np.asarray(actions)[..., : self.action_dim]
+            return {"actions": actions}
+        return data

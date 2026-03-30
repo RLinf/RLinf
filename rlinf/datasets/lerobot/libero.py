@@ -91,14 +91,7 @@ class LiberoInputs(_transforms.DataTransformFn):
             inputs["prompt"] = data["prompt"]
 
         # Pass through RL-specific fields (for value learning)
-        for rl_key in [
-            "return",
-            "reward",
-            "done",
-            "is_failed",
-            "task_idx",
-            "subtask_idx",
-        ]:
+        for rl_key in ["return", "reward", "done"]:
             if rl_key in data:
                 value = data[rl_key]
                 if isinstance(value, np.ndarray):
@@ -116,21 +109,10 @@ class LiberoInputs(_transforms.DataTransformFn):
                 else:
                     inputs[rl_key] = value
 
-        # Pass through RL keys (rewards, returns, action chunks, padding flags)
-        # Next observation is handled by RL dataset (applies same VLA transforms)
+        # Pass through padding masks (e.g. reward_is_pad) for value learning
         for key in data:
-            if (
-                key.startswith(("history_", "reward_", "return_", "action_"))
-                and key not in inputs
-            ):
+            if key.endswith("_is_pad") and key not in inputs:
                 inputs[key] = data[key]
-            elif key.endswith("_is_pad") and key not in inputs:
-                inputs[key] = data[key]
-
-        # Pass through ECOT-required indices for reasoning transforms
-        for ecot_key in ["episode_index", "frame_index"]:
-            if ecot_key in data:
-                inputs[ecot_key] = data[ecot_key]
 
         return inputs
 
