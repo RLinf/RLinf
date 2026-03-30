@@ -36,6 +36,9 @@ __all__ = ["BehaviorEnv"]
 def _behavior_env_worker(cfg: DictConfig, conn, num_envs: int):
     env = None
     try:
+        from rlinf.envs.behavior.patch import install_patch
+
+        install_patch()
         from omnigibson.envs import VectorEnvironment
 
         omni_cfg = setup_omni_cfg(cfg)

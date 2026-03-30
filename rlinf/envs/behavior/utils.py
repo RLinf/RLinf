@@ -171,12 +171,13 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
     cfg_path = os.path.join(og.example_config_path, "r1pro_behavior.yaml")
     with open(cfg_path, "r", encoding="utf-8") as f:
         omni_cfg = OmegaConf.create(yaml.load(f, Loader=yaml.FullLoader))
-    # override env/render/camera/robots/task config
+    # override env/render/camera/robots/task/scene config
     override_sub_cfg(omni_cfg, override_cfg, "env")
     override_sub_cfg(omni_cfg, override_cfg, "render")
     override_sub_cfg(omni_cfg, override_cfg, "camera")
     override_sub_cfg(omni_cfg, override_cfg, "macro")
     override_sub_cfg(omni_cfg, override_cfg, "task")
+    override_sub_cfg(omni_cfg, override_cfg, "scene")
     # here actually we only needs one robot config (and Behavior actually does do that)
     # we must use update rather than merge to keep default robot config fields.
     robot_override = OmegaConf.select(override_cfg, "robots[0]", default=None)
