@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Value transforms for RL datasets.
-
-This module provides:
-- Return normalization and discretization transforms for value learning
-"""
+"""Return normalization transform for value learning."""
 
 import logging
 from pathlib import Path
@@ -34,16 +29,13 @@ from rlinf.datasets.lerobot.transforms import DataTransformFn
 
 logger = logging.getLogger(__name__)
 
-class ReturnDiscretizer(DataTransformFn):
-    """Normalize continuous return values for value model training.
 
-    Optionally normalizes return values to the (-1, 0) range as per the paper:
-    "we normalize the values predicted to be between (-1, 0). Since we train
-    on diverse tasks that have very different typical lengths, we normalize
-    the values per task based on the maximum episode length of the task."
+class ReturnNormalizer(DataTransformFn):
+    """Normalize return values for value model training.
 
-    When ``normalize_to_minus_one_zero=True`` (default), outputs
-    ``return_normalized`` (float in [-1, 0]) into the sample dict.
+    Two modes controlled by ``normalize_to_minus_one_zero``:
+    - True  (default): maps to (-1, 0) via ``value / abs(return_min)``
+    - False: maps to (0, 1) via ``(value - return_min) / (return_max - return_min)``
     """
 
     def __init__(
@@ -61,83 +53,59 @@ class ReturnDiscretizer(DataTransformFn):
         self.normalize_to_minus_one_zero = normalize_to_minus_one_zero
 
         if return_min is not None and return_max is not None:
-            self.raw_return_min = return_min
-            self.raw_return_max = return_max
+            self.return_min = return_min
+            self.return_max = return_max
         elif norm_stats is not None:
             self._load_from_norm_stats(norm_stats)
         elif norm_stats_path is not None:
-            stats = load_stats(Path(norm_stats_path))
-            self._load_from_norm_stats(stats)
+            self._load_from_norm_stats(load_stats(Path(norm_stats_path)))
         else:
             raise ValueError(
-                "Must provide either (return_min, return_max), norm_stats, or norm_stats_path"
+                "Must provide either (return_min, return_max), norm_stats, "
+                "or norm_stats_path"
             )
 
-        if self.normalize_to_minus_one_zero:
-            self.norm_factor = (
-                abs(self.raw_return_min) if self.raw_return_min != 0 else 1.0
-            )
-        else:
-            self.norm_factor = 1.0
-
-        logger.info("ReturnDiscretizer initialized:")
         logger.info(
-            f"  raw_return_min={self.raw_return_min}, raw_return_max={self.raw_return_max}"
+            "ReturnNormalizer: return_min=%.4f, return_max=%.4f, "
+            "range=%s",
+            self.return_min,
+            self.return_max,
+            "(-1, 0)" if self.normalize_to_minus_one_zero else "(0, 1)",
         )
-        logger.info(f"  normalize_to_minus_one_zero={self.normalize_to_minus_one_zero}")
-        logger.info(f"  norm_factor={self.norm_factor}")
 
     def _load_from_norm_stats(self, norm_stats: dict[str, NormStats]):
         if "return" not in norm_stats:
             raise ValueError("norm_stats must contain 'return' key")
-
-        return_stats = norm_stats["return"]
-        self.raw_return_min = float(
-            return_stats.min[0]
-            if hasattr(return_stats.min, "__len__")
-            else return_stats.min
+        rs = norm_stats["return"]
+        self.return_min = float(
+            rs.min[0] if hasattr(rs.min, "__len__") else rs.min
         )
-        self.raw_return_max = float(
-            return_stats.max[0]
-            if hasattr(return_stats.max, "__len__")
-            else return_stats.max
+        self.return_max = float(
+            rs.max[0] if hasattr(rs.max, "__len__") else rs.max
         )
 
     def normalize_value(self, value: float) -> float:
-        if not self.normalize_to_minus_one_zero:
-            return value
-        return value / self.norm_factor
-
-    def denormalize_value(self, normalized: float) -> float:
-        if not self.normalize_to_minus_one_zero:
-            return normalized
-        return normalized * self.norm_factor
+        if self.normalize_to_minus_one_zero:
+            denom = abs(self.return_min) if self.return_min != 0 else 1.0
+            return value / denom
+        else:
+            span = self.return_max - self.return_min
+            if span == 0:
+                return 0.0
+            return (value - self.return_min) / span
 
     def __call__(self, data: dict[str, Any]) -> dict[str, Any]:
         if self.return_key not in data:
             return data
 
-        return_value = data[self.return_key]
-
-        if isinstance(return_value, torch.Tensor):
-            return_value = (
-                return_value.item()
-                if return_value.numel() == 1
-                else return_value.cpu().numpy()
-            )
-        elif isinstance(return_value, np.ndarray):
-            return_value = (
-                return_value.item()
-                if return_value.size == 1
-                else float(return_value.flatten()[0])
-            )
-
-        raw_value = float(return_value)
+        raw = data[self.return_key]
+        if isinstance(raw, torch.Tensor):
+            raw = raw.item() if raw.numel() == 1 else raw.cpu().numpy()
+        elif isinstance(raw, np.ndarray):
+            raw = raw.item() if raw.size == 1 else float(raw.flatten()[0])
 
         result = dict(data)
-
-        if self.normalize_to_minus_one_zero:
-            result["return_normalized"] = self.normalize_value(raw_value)
+        result["return_normalized"] = self.normalize_value(float(raw))
 
         if not self.keep_continuous:
             del result[self.return_key]

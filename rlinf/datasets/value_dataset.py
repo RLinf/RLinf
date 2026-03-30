@@ -16,7 +16,7 @@
 Value Dataset for return prediction.
 
 This module provides a dataset that extends LeRobotRLDataset to format samples
-for training a value model to predict discretized returns.
+for training a value model to predict normalized returns.
 
 Inheritance chain:
     ValueDataset -> LeRobotRLDataset -> LeRobotPyTorchDataset -> Dataset
@@ -48,7 +48,7 @@ class ValueDataset(LeRobotRLDataset):
     """Dataset for value prediction training.
 
     Extends LeRobotRLDataset with VLM-mode sample formatting for training
-    models to predict discretized return tokens.
+    models to predict normalized return values.
 
     Inheritance chain:
         ValueDataset -> LeRobotRLDataset -> LeRobotPyTorchDataset -> Dataset
@@ -109,7 +109,6 @@ class ValueDataset(LeRobotRLDataset):
             return_norm_stats_path: Path to norm_stats.json for min/max
             return_min: Override minimum return value
             return_max: Override maximum return value
-            normalize_to_minus_one_zero: Normalize returns to (-1, 0) range
             split: Dataset split
             data_config_factory: Factory for transforms
             action_dim: Action dimension
@@ -134,16 +133,15 @@ class ValueDataset(LeRobotRLDataset):
                 include_return=True,  # Required for value training
                 include_done=False,  # Not needed for offline value training
                 gamma=gamma,
-                discretize_return=True,  # Required for value training
+                normalize_return=True,
                 return_norm_stats_path=return_norm_stats_path,
                 return_min=return_min,
                 return_max=return_max,
                 normalize_to_minus_one_zero=normalize_to_minus_one_zero,
             )
-        elif not rl_config.discretize_return or not rl_config.include_return:
+        elif not rl_config.normalize_return or not rl_config.include_return:
             raise ValueError(
-                "ValueDataset requires discretize_return=True and include_return=True "
-                "in rl_config to compute return_normalized for value training."
+                "ValueDataset requires normalize_return=True and include_return=True."
             )
         super().__init__(
             dataset_path=dataset_path,
@@ -286,8 +284,8 @@ class ValueDataset(LeRobotRLDataset):
                     sample["num_valid_rewards"] = n
 
                 # Normalize reward_sum using same scale as returns
-                if self.return_discretizer is not None:
-                    sample["reward_sum"] = self.return_discretizer.normalize_value(
+                if self.return_normalizer is not None:
+                    sample["reward_sum"] = self.return_normalizer.normalize_value(
                         reward_sum_raw
                     )
                 else:

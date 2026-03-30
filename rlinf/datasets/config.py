@@ -60,7 +60,7 @@ class RLDataConfig:
     include_return: bool = True
     return_key: str = "return"
 
-    discretize_return: bool = False
+    normalize_return: bool = False
     # If None, return_min and return_max must be provided
     return_norm_stats_path: Optional[str] = None
     return_min: Optional[float] = None
@@ -149,8 +149,8 @@ def create_rl_config(
     include_next_obs: bool = True,
     include_return: bool = True,
     gamma: float = 0.99,
-    # Return discretization
-    discretize_return: bool = False,
+    # Return normalization
+    normalize_return: bool = False,
     return_norm_stats_path: Optional[str] = None,
     return_min: Optional[float] = None,
     return_max: Optional[float] = None,
@@ -165,7 +165,7 @@ def create_rl_config(
         include_next_obs: Whether to fetch obs at t+H for bootstrapping
         include_return: Whether to include precomputed return
         gamma: Discount factor
-        discretize_return: Whether to discretize return into bins
+        normalize_return: Whether to normalize return values
         return_norm_stats_path: Path to norm_stats.json for min/max
         return_min: Override minimum return value
         return_max: Override maximum return value
@@ -180,7 +180,7 @@ def create_rl_config(
         include_next_obs=include_next_obs,
         include_return=include_return,
         gamma=gamma,
-        discretize_return=discretize_return,
+        normalize_return=normalize_return,
         return_norm_stats_path=return_norm_stats_path,
         return_min=return_min,
         return_max=return_max,

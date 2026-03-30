@@ -48,7 +48,7 @@ from rlinf.datasets.rl_dataset import (  # noqa: E402
 )
 from rlinf.datasets.value_dataset import ValueDataset  # noqa: E402
 from rlinf.datasets.value_transforms import (  # noqa: E402
-    ReturnDiscretizer,
+    ReturnNormalizer,
 )
 
 
@@ -137,5 +137,5 @@ __all__ = [
     "ValueMixtureDataset",
     "ValueDataLoaderImpl",
     "TokenizePromptWithGuidance",
-    "ReturnDiscretizer",
+    "ReturnNormalizer",
 ]

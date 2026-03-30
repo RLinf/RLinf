@@ -50,7 +50,7 @@ from rlinf.datasets.lerobot.transforms import (
 )
 
 from .config import RLDataConfig, create_rl_config
-from .value_transforms import ReturnDiscretizer
+from .value_transforms import ReturnNormalizer
 
 logger = logging.getLogger(__name__)
 
@@ -306,9 +306,9 @@ class LeRobotRLDataset(LeRobotPyTorchDataset):
         transforms = self._create_transform_list()
         self._vla_transform = compose(transforms) if transforms else None
 
-        self.return_discretizer = None
-        if self.rl_config.discretize_return:
-            self.return_discretizer = self._create_return_discretizer()
+        self.return_normalizer = None
+        if self.rl_config.normalize_return:
+            self.return_normalizer = self._create_return_normalizer()
 
         self._log_dataset_info()
 
@@ -396,11 +396,11 @@ class LeRobotRLDataset(LeRobotPyTorchDataset):
 
             transforms.extend(self.data_config.data_transforms.inputs)
 
-            # Exclude 'return' from normalization since ReturnDiscretizer handles its own
+            # Exclude 'return' from normalization since ReturnNormalizer handles its own
             if self.data_config.norm_stats is not None:
                 norm_stats = self.data_config.norm_stats
                 if (
-                    self.rl_config.discretize_return
+                    self.rl_config.normalize_return
                     and self.rl_config.return_key in norm_stats
                 ):
                     norm_stats = {
@@ -420,8 +420,8 @@ class LeRobotRLDataset(LeRobotPyTorchDataset):
 
         return transforms
 
-    def _create_return_discretizer(self) -> Optional[ReturnDiscretizer]:
-        if not self.rl_config.discretize_return:
+    def _create_return_normalizer(self) -> Optional[ReturnNormalizer]:
+        if not self.rl_config.normalize_return:
             return None
 
         common_kwargs = {
@@ -434,20 +434,20 @@ class LeRobotRLDataset(LeRobotPyTorchDataset):
             self.rl_config.return_min is not None
             and self.rl_config.return_max is not None
         ):
-            return ReturnDiscretizer(
+            return ReturnNormalizer(
                 return_min=self.rl_config.return_min,
                 return_max=self.rl_config.return_max,
                 **common_kwargs,
             )
         elif self.rl_config.return_norm_stats_path:
-            return ReturnDiscretizer(
+            return ReturnNormalizer(
                 norm_stats_path=Path(self.rl_config.return_norm_stats_path),
                 **common_kwargs,
             )
         else:
             logger.warning(
-                "Return discretization enabled but no min/max or norm_stats_path provided. "
-                "Discretization will be skipped."
+                "Return normalization enabled but no min/max or norm_stats_path "
+                "provided. Normalization will be skipped."
             )
             return None
 
@@ -518,8 +518,8 @@ class LeRobotRLDataset(LeRobotPyTorchDataset):
                         self._logged_next_obs_warning = True
                     rl_sample["next_observation"] = {"is_pad": True}
 
-        if self.return_discretizer is not None:
-            rl_sample = self.return_discretizer(rl_sample)
+        if self.return_normalizer is not None:
+            rl_sample = self.return_normalizer(rl_sample)
 
         return rl_sample
 
