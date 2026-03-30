@@ -1,8 +1,8 @@
-NFT：π\ :sub:`0`\  步级噪声流训练
+NFT：π\ :sub:`0`\  Negative-aware FineTuning
 ====================================
 
-本文档介绍如何在 RLinf 框架中使用 **StepNFT（Step-wise Noise Flow Training）** 对预训练的 **π₀ flow-matching 策略** 进行强化学习微调。
-StepNFT 是一个无需 critic 和 likelihood 的在线 RL 框架，专为 flow-based 视觉语言动作（VLA）策略设计。它在 flow-matching 去噪轨迹上直接应用步级 DPO 风格的偏好优化，每个优化步骤仅需一次前向传播，无需辅助价值网络。
+本文档介绍如何在 RLinf 框架中使用 **NFT（Negative-aware FineTuning）** 对预训练的 **π₀ flow-matching 策略** 进行强化学习微调。
+NFT 是一个无需 critic 和 likelihood 的在线 RL 框架，专为 flow-based 视觉语言动作（VLA）策略设计。它在 flow-matching 去噪轨迹上直接应用步级 DPO 风格的偏好优化，每个优化步骤仅需一次前向传播，无需辅助价值网络。
 
 论文: `π-StepNFT: Wider Space Needs Finer Steps in Online RL for Flow-based VLAs <https://arxiv.org/abs/2603.02083>`_ (Wang et al., 2026)
 
@@ -28,7 +28,7 @@ StepNFT 是一个无需 critic 和 likelihood 的在线 RL 框架，专为 flow-
 算法
 ----
 
-**StepNFT 流程**
+**NFT 流程**
 
 1. **SDE 采样 Rollout**: π₀ 策略使用多步 flow-matching 去噪生成动作轨迹。在每条轨迹的随机去噪步处，记录中间状态 ``x_t``、速度 ``v_t`` 和下一状态 ``x_{t+1}`` 作为 NFT traces。
 
@@ -43,7 +43,7 @@ StepNFT 是一个无需 critic 和 likelihood 的在线 RL 框架，专为 flow-
 安装
 ----
 
-StepNFT 使用与 π₀ 相同的环境和模型依赖。请参阅 :doc:`pi0` 获取完整的安装指南，包括 Docker 镜像设置、依赖安装和模型下载。
+NFT 使用与 π₀ 相同的环境和模型依赖。请参阅 :doc:`pi0` 获取完整的安装指南，包括 Docker 镜像设置、依赖安装和模型下载。
 
 运行脚本
 --------

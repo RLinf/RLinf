@@ -1,8 +1,8 @@
-NFT on π\ :sub:`0`\ : Step-wise Noise Flow Training
+NFT on π\ :sub:`0`\ : Negative-aware FineTuning
 =====================================================
 
-This document provides a guide for fine-tuning a pre-trained **π₀ flow-matching policy** using **StepNFT (Step-wise Noise Flow Training)** in the RLinf framework.
-StepNFT is a critic-and-likelihood-free online RL framework for flow-based vision-language-action (VLA) policies. It applies step-level DPO-style preference optimization directly on the flow-matching denoising trajectory, requiring only one forward pass per optimization step without auxiliary value networks.
+This document provides a guide for fine-tuning a pre-trained **π₀ flow-matching policy** using **NFT (Negative-aware FineTuning)** in the RLinf framework.
+NFT is a critic-and-likelihood-free online RL framework for flow-based vision-language-action (VLA) policies. It applies step-level DPO-style preference optimization directly on the flow-matching denoising trajectory, requiring only one forward pass per optimization step without auxiliary value networks.
 
 Paper: `π-StepNFT: Wider Space Needs Finer Steps in Online RL for Flow-based VLAs <https://arxiv.org/abs/2603.02083>`_ (Wang et al., 2026)
 
@@ -11,7 +11,7 @@ Reference implementation: `pi-StepNFT <https://github.com/wangst0181/pi-StepNFT>
 The key idea is:
 
 1. **SDE-based Exploration**: A reverse-time SDE formulation injects stochasticity during flow-matching sampling, expanding the exploration manifold beyond deterministic ODE trajectories.
-2. **Step-wise Supervision**: Instead of optimizing the entire denoising chain, StepNFT targets the immediate next denoising step with a noise-aware regression signal, providing finer-grained learning.
+2. **Step-wise Supervision**: Instead of optimizing the entire denoising chain, NFT targets the immediate next denoising step with a noise-aware regression signal, providing finer-grained learning.
 3. **DPO-style Preference Loss**: A logistic contrastive ranking loss implements push-pull dynamics — promoting velocity predictions from successful trajectories while suppressing those from failures.
 4. **Lightweight Training**: Only one forward pass per optimization step. No critic network or likelihood computation is needed, making it significantly more efficient than PPO-based approaches.
 
@@ -28,7 +28,7 @@ Environment
 Algorithm
 ---------
 
-**StepNFT Pipeline**
+**NFT Pipeline**
 
 1. **Rollout with SDE Sampling**: The π₀ policy generates action trajectories using multi-step flow-matching denoising. At a randomly sampled denoising step per trajectory, the intermediate state ``x_t``, velocity ``v_t``, and next state ``x_{t+1}`` are recorded as NFT traces.
 
@@ -43,7 +43,7 @@ Algorithm
 Installation
 ------------
 
-StepNFT uses the same environment and model dependencies as π₀. Please refer to :doc:`pi0` for the full installation guide, including Docker image setup, dependency installation, and model download.
+NFT uses the same environment and model dependencies as π₀. Please refer to :doc:`pi0` for the full installation guide, including Docker image setup, dependency installation, and model download.
 
 Running Scripts
 ---------------
