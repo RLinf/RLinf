@@ -8,7 +8,7 @@ version = "0.2.0"
 authors = [{ name = "RLinf Contributors" }]
 description = "Reinforcement Learning Infrastructure for Embodied and Agentic AI"
 readme = {file = "README.md", content-type = "text/markdown"}
-requires-python = ">=3.10,<=3.11.14"
+requires-python = ">=3.10,<=3.11.15"
 license = {file = "LICENSE"}
 keywords = [
     "reinforcement-learning",
@@ -136,9 +136,19 @@ xsquare_turtle2 = [
     "pyquaternion",
     "opencv-python",
     "defusedxml",
-    "pyspacemouse==1.1.5", 
+    "pyspacemouse==1.1.5",
     "imageio[ffmpeg]",
     "pynput"
+]
+gim_arm = [
+    # gim_arm_control SDK: install separately via
+    #   pip install -e ~/code/gim_arm_control/python
+    "numpy",
+    "scipy",
+    "opencv-python",
+    "pyrealsense2",
+    "imageio[ffmpeg]",
+    "pynput",
 ]
 
 [tool.uv]
@@ -149,7 +159,8 @@ conflicts = [
       { extra = "agentic-vllm" },
       { extra = "embodied" },
       { extra = "franka" },
-      { extra = "xsquare_turtle2" }
+      { extra = "xsquare_turtle2" },
+      { extra = "gim_arm" }
     ],
 ]
 override-dependencies = [

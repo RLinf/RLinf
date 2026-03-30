@@ -14,6 +14,8 @@
 
 from .franka import FrankaEnv, FrankaRobotConfig, FrankaRobotState
 from .franka import tasks as franka_tasks
+from .gim_arm import GimArmEnv, GimArmRobotConfig, GimArmRobotState
+from .gim_arm import tasks as gim_arm_tasks
 from .realworld_env import RealWorldEnv
 from .xsquare import Turtle2Env, Turtle2RobotConfig, Turtle2RobotState
 from .xsquare import tasks as xsquare_tasks
@@ -25,6 +27,10 @@ __all__ = [
     "FrankaRobotConfig",
     "FrankaRobotState",
     "franka_tasks",
+    "GimArmEnv",
+    "GimArmRobotConfig",
+    "GimArmRobotState",
+    "gim_arm_tasks",
     "Turtle2Env",
     "Turtle2RobotConfig",
     "Turtle2RobotState",

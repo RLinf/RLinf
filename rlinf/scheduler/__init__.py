@@ -19,6 +19,7 @@ from .hardware import (
     AcceleratorType,
     AcceleratorUtil,
     FrankaHWInfo,
+    GimArmHWInfo,
     HardwareInfo,
     Turtle2HWInfo,
 )
@@ -37,6 +38,7 @@ __all__ = [
     "AcceleratorType",
     "HardwareInfo",
     "FrankaHWInfo",
+    "GimArmHWInfo",
     "Turtle2HWInfo",
     "CollectiveGroupOptions",
     "Cluster",
