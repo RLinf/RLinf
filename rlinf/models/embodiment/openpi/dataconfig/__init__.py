@@ -147,7 +147,7 @@ _CONFIGS = [
             pi05=True, action_horizon=8, discrete_state_input=False
         ),  # discrete_state_input=False: stateless policy, True: with state policy
         data=LeRobotFrankaEEDataConfig(
-            repo_id="physical-intelligence/real_rl", # Not important
+            repo_id="physical-intelligence/real_rl",  # Not important
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(
                 assets_dir="checkpoints/torch/pi05_franka_pretrained/assets"
