@@ -28,7 +28,11 @@ from rlinf.utils.distributed import (
     vocab_parallel_entropy_and_log_probs,
     vocab_parallel_log_probs_from_logits,
 )
-from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
+from rlinf.utils.placement import (
+    ModelParallelComponentPlacement,
+    PlacementMode,
+    RolloutSyncMode,
+)
 from rlinf.utils.resharding.mcore_weight_reshard import MegatronCoreWeightReshard
 from rlinf.utils.resharding.reshard_config import ReshardConfig
 from rlinf.utils.utils import retrieve_model_state_dict_in_cpu
@@ -334,7 +338,7 @@ class MegatronActor(MegatronWorker):
 
         # send bucket size
         if len(self._weight_dst_rank_in_rollout) > 0:
-            if self.placement_mode == PlacementMode.COLLOCATED:
+            if self.rollout_sync_mode == RolloutSyncMode.COLLOCATED:
                 send_handle = None
                 for bucket_weight in model_bucket_list:
                     reshard_state_dict = self._get_rollout_model_state_dict(

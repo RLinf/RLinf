@@ -533,7 +533,6 @@ class WideSeekR1ToolWorker(ToolWorker):
 
         # Determine whether to use online or local search
         self.use_online_search = self.cfg.tools.get("online", False)
-
         if self.use_online_search:
             self.log_info(
                 "[INFO] WideSeekR1ToolWorker: Using online search (Serper API)"

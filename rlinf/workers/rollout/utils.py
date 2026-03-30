@@ -24,7 +24,10 @@ from omegaconf import DictConfig
 
 from rlinf.data.io_struct import SeqGroupInfo
 from rlinf.scheduler.worker.worker import Worker
-from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
+from rlinf.utils.placement import (
+    ModelParallelComponentPlacement,
+    RolloutSyncMode,
+)
 
 if typing.TYPE_CHECKING:
     from vllm.outputs import RequestOutput
@@ -92,7 +95,7 @@ class RankMapper:
         placement: ModelParallelComponentPlacement,
     ) -> dict[int, list[tuple[int, int]]]:
         return cls._get_rank_mapper(
-            placement.placement_mode
+            placement._rollout_sync_mode
         ).get_actor_rank_to_rollout_rank_map(
             placement.actor_tp_size,
             placement.actor_pp_size,
@@ -106,7 +109,7 @@ class RankMapper:
         cls, placement: ModelParallelComponentPlacement
     ) -> dict[tuple[int, int], int]:
         return cls._get_rank_mapper(
-            placement.placement_mode
+            placement._rollout_sync_mode
         ).get_rollout_rank_to_actor_rank_map(
             placement.actor_tp_size,
             placement.actor_pp_size,
@@ -117,17 +120,17 @@ class RankMapper:
 
     @staticmethod
     def _get_rank_mapper(
-        placement_mode: PlacementMode,
+        rollout_sync_mode: RolloutSyncMode,
     ):
         """
         Get the rank mapper class based on the mode.
         """
-        if placement_mode == PlacementMode.COLLOCATED:
+        if rollout_sync_mode == RolloutSyncMode.COLLOCATED:
             return CollocateRankMapper
-        elif placement_mode in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]:
+        elif rollout_sync_mode == RolloutSyncMode.DISAGGREGATED:
             return DisaggRankMapper
         else:
-            raise ValueError(f"Unsupported mode: {placement_mode}.")
+            raise ValueError(f"Unsupported mode: {rollout_sync_mode}.")
 
 
 class CollocateRankMapper(RankMapper):
