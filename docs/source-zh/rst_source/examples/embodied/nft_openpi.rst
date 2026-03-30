@@ -1,5 +1,5 @@
-NFT：π\ :sub:`0`\  Negative-aware FineTuning
-====================================
+NFT：π\ :sub:`0`\  正负样本对比强化学习
+=============================================
 
 本文档介绍如何在 RLinf 框架中使用 **NFT（Negative-aware FineTuning）** 对预训练的 **π₀ flow-matching 策略** 进行强化学习微调。
 NFT 是一个无需 critic 和 likelihood 的在线 RL 框架，专为 flow-based 视觉语言动作（VLA）策略设计。它在 flow-matching 去噪轨迹上直接应用步级 DPO 风格的偏好优化，每个优化步骤仅需一次前向传播，无需辅助价值网络。
