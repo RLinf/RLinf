@@ -6,7 +6,7 @@ RL with CALVIN Benchmark
    :height: 16px
    :class: inline-icon
 
-This example provides a comprehensive guide to using the **RLinf** framework for reinforcement learning fine-tuning of π\ :sub:`0`\ and π\ :sub:`0.5` algorithms in the `CALVIN <https://github.com/mees/calvin/>`_ environment. It covers the entire process—from environment setup and core algorithm design to training configuration, evaluation, and visualization—along with reproducible commands and configuration snippets.
+This example provides a comprehensive guide to using the **RLinf** framework for reinforcement learning fine-tuning of OpenVLA-OFT, π\ :sub:`0`\, and π\ :sub:`0.5` algorithms in the `CALVIN <https://github.com/mees/calvin/>`_ environment. It covers the entire process—from environment setup and core algorithm design to training configuration, evaluation, and visualization—along with reproducible commands and configuration snippets.
 
 The primary objective is to develop a model capable of performing robotic manipulation tasks:
 
@@ -94,9 +94,19 @@ Use Docker image for the experiment.
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.1-calvin
+      rlinf/rlinf:agentic-rlinf0.2-calvin
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-calvin
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-calvin
+
+Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
+
+.. code:: bash
+
+   # To train OpenPi models
+   source switch_env openpi
+
+   # To train OpenVLA-OFT models
+   source switch_env openvla-oft
 
 **Option 2: Custom Environment**
 
@@ -106,7 +116,12 @@ Install dependencies directly in your environment by running the following comma
 
    # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
 
+   # To train OpenPi models
    bash requirements/install.sh embodied --model openpi --env calvin
+
+   # To train OpenVLA-OFT models
+   # bash requirements/install.sh embodied --model openvla-oft --env calvin
+
    source .venv/bin/activate
 
 Model Download
@@ -121,6 +136,7 @@ Before starting training, you need to download the corresponding pretrained mode
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT
    git clone https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT
+   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-CALVIN-SFT
 
    # Method 2: Using huggingface-hub
    # For mainland China users, you can use the following for better download speed:
@@ -128,6 +144,7 @@ Before starting training, you need to download the corresponding pretrained mode
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT --local-dir RLinf-Pi0-CALVIN-ABC-D-SFT
    hf download RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT --local-dir RLinf-Pi05-CALVIN-ABC-D-SFT
+   hf download RLinf/RLinf-OpenVLAOFT-CALVIN-SFT --local-dir RLinf-OpenVLAOFT-CALVIN-SFT
 
 After downloading, make sure to correctly specify the model path in the configuration yaml file.
 
@@ -185,6 +202,9 @@ Training configuration files for CALVIN D task:
 - π\ :sub:`0.5`\ + PPO:
   ``examples/embodiment/config/calvin_d_d_ppo_openpi_pi05.yaml``
 
+- OpenVLA-OFT + PPO:
+  ``examples/embodiment/config/calvin_abc_d_grpo_openvlaoft.yaml``
+  
 **3. Launch Commands**
 
 To start training with a chosen configuration, run the following

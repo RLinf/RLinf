@@ -15,6 +15,19 @@
 import torch
 
 
+def update_nested_cfg(base_cfg, override_cfg):
+    for key, value in override_cfg.items():
+        if (
+            key in base_cfg
+            and isinstance(base_cfg[key], dict)
+            and isinstance(value, dict)
+        ):
+            update_nested_cfg(base_cfg[key], value)
+        else:
+            base_cfg[key] = value
+    return base_cfg
+
+
 def copy_dict_tensor(next_extracted_obs: dict):
     ret = {}
     for key, value in next_extracted_obs.items():

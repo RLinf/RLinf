@@ -81,7 +81,8 @@ Franka真机强化学习
 真实世界实验需要如下硬件组件：
 
 - **机械臂**：Franka Emika Panda 机械臂。
-- **相机**：Intel RealSense 相机，用于采集 RGB 图像。
+- **相机**：Intel RealSense 相机（默认）或 Stereolabs ZED 相机。
+- **夹爪**：Franka 夹爪（默认）或 Robotiq 2F-85/2F-140。
 - **计算节点**：一台带有 GPU 的计算机，用于训练 CNN 策略。
 - **机器人控制节点**：一台与机械臂处于同一局域网的小型计算机（不需要 GPU），用于控制 Franka 机械臂。
 - **空间鼠标（可选）**：用于远程操控数据采集或在训练过程中进行人工干预。
@@ -90,6 +91,12 @@ Franka真机强化学习
 
   请确保所有计算机均处于同一局域网络中。
   机械臂本体只需要与机器人控制节点处于同一局域网即可。
+
+.. note::
+
+   **使用 ZED 相机或 Robotiq 夹爪？** 请参考专门的指南
+   :doc:`franka_zed_robotiq`，了解 SDK 安装、串口设备配置、
+   YAML 配置字段以及数据采集。
 
 依赖安装
 -------------------------
@@ -151,9 +158,9 @@ ____________
     --network host \
     --name rlinf \
     -v .:/workspace/RLinf \
-    rlinf/rlinf:agentic-rlinf0.1-franka
+    rlinf/rlinf:agentic-rlinf0.2-franka
     # 为了提高国内下载速度，也可以使用：
-    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-franka
+    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-franka
 
 目前该 Docker 镜像包含 libfranka 版本 ``0.10.0``、``0.13.3``、``0.14.1``、``0.15.0`` 和 ``0.18.0``，以及 franka_ros 版本 ``0.10.0``。
 
@@ -239,9 +246,9 @@ b. 安装依赖
     --network host \
     --name rlinf \
     -v .:/workspace/RLinf \
-    rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
+    rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
     # 为了提高国内下载速度，也可以使用：
-    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
+    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
 **方式 2：自定义环境（Custom Environment）**
 
@@ -284,7 +291,7 @@ b. 安装依赖
 
 **获取任务的目标位姿**
 
-对于 Peg-insertion 任务，可以使用脚本 `toolkits.realworld_check.test_controller` 获取目标末端位姿。
+对于 Peg-insertion 任务，可以使用脚本 `toolkits.realworld_check.test_franka_controller` 获取目标末端位姿。
 
 首先，需要将 Franka 机器人切换到可编程模式，然后手动将机械臂移动到希望的目标位姿。
 
@@ -298,7 +305,7 @@ b. 安装依赖
 
 .. code-block:: bash
 
-   python -m toolkits.realworld_check.test_controller
+   python -m toolkits.realworld_check.test_franka_controller
 
 脚本会提示你输入命令，可以输入 `getpos_euler` 来获取当前末端执行器以欧拉角形式表示的位姿。
 
@@ -356,6 +363,12 @@ b. 安装依赖
 采集到的数据会保存在 ``logs/[running-timestamp]/data.pkl`` 路径下。
 
 5. 数据采集完成后，可以将收集到的数据上传到训练 / rollout 节点。
+
+.. note::
+
+   **使用 ZED 相机和 Robotiq 夹爪？** 我们提供了专用的数据采集脚本和配置文件。
+   请参考 :doc:`franka_zed_robotiq` 中的
+   :ref:`数据采集 <franka-zed-robotiq-data-collection-zh>` 章节。
 
 集群配置
 ~~~~~~~~~~~~~~~~~
@@ -426,11 +439,11 @@ RLinf 使用 ray 来管理分布式环境，这意味着：
 
 .. code-block:: bash
 
-   python -m toolkits.realworld_check.test_camera
+   python -m toolkits.realworld_check.test_franka_camera
 
-然后，通过运行一个 dummy 版本配置来测试基础集群配置。请参照``examples/embodiment/config/real_world_dummy_sac_cnn.yaml``文件添加`env.eval.override_cfg`。
+然后，通过运行一个 dummy 版本配置来测试基础集群配置。请参照``examples/embodiment/config/realworld_dummy_franka_sac_cnn.yaml``文件添加`env.eval.override_cfg`。
 可以在配置文件中同时将 `env.train.override_cfg` 与 `env.eval.override_cfg` 部分的 `is_dummy` 字段设置为 `True`，
-以启用 dummy 模式。请注意如果启用dummy模式，需要将上面运行 ``toolkits.realworld_check.test_camera.py`` 得到的camera序列号
+以启用 dummy 模式。请注意如果启用dummy模式，需要将上面运行 ``toolkits.realworld_check.test_franka_camera.py`` 得到的camera序列号
 填补在 `env.train.override_cfg` 与 `env.eval.override_cfg` 部分的 `camera_serials` 字段。
 
 在 head 节点上运行测试脚本：

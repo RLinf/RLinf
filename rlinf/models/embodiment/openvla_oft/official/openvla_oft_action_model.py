@@ -490,7 +490,9 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         )
         chunk_logprobs = logprobs_result["logprobs"]
 
-        chunk_actions = actions.reshape(-1, self.num_action_chunks, self.action_dim)
+        chunk_actions = torch.as_tensor(
+            actions.reshape(-1, self.num_action_chunks, self.action_dim)
+        )
 
         chunk_values = None
         if calulate_values:

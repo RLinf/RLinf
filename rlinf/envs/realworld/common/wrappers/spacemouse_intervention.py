@@ -42,9 +42,8 @@ class SpacemouseIntervention(gym.ActionWrapper):
         expert_a, buttons = self.expert.get_action()
         self.left, self.right = tuple(buttons)
 
-        if np.linalg.norm(expert_a) > 0.001:
+        if np.linalg.norm(expert_a) > 0.001 or (self.left + self.right) > 0.5:
             self.last_intervene = time.time()
-
         if self.gripper_enabled:
             if self.left:  # close gripper
                 gripper_action = np.random.uniform(-1, -0.9, size=(1,))
@@ -55,10 +54,8 @@ class SpacemouseIntervention(gym.ActionWrapper):
             else:
                 gripper_action = np.zeros((1,))
             expert_a = np.concatenate((expert_a, gripper_action), axis=0)
-
         if time.time() - self.last_intervene < 0.5:
             return expert_a, True
-
         return action, False
 
     def step(self, action):

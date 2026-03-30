@@ -111,7 +111,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/rl4vla/openvla-7b-rlvla-warmup/"
+    model_path: "/path/to/model/rl4vla/openvla-7b-rlvla-warmup/" # https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup
     precision: ${actor.model.precision}
 
 actor:
@@ -124,7 +124,7 @@ actor:
 
   # Override the default values in model/openvla
   model:
-    model_path: "/path/to/model/rl4vla/openvla-7b-rlvla-warmup/"
+    model_path: "/path/to/model/rl4vla/openvla-7b-rlvla-warmup/" # https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup
     model_type: "openvla"
     add_value_head: True
     is_lora: True

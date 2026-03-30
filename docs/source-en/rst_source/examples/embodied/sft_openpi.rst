@@ -127,9 +127,9 @@ Use Docker image for the experiment.
         --network host \
         --name rlinf \
         -v .:/workspace/RLinf \
-        rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
+        rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
         # For mainland China users, you can use the following for better download speed:
-        # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
+        # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
 Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
 
@@ -156,6 +156,6 @@ First start the Ray cluster, then run the helper script:
 .. code:: bash
 
    # return to repo root
-   bash examples/sft/train_embodiment_sft.sh --config libero_sft_openpi
+   bash examples/sft/run_vla_sft.sh --config libero_sft_openpi
 
 The same script works for generic text SFT; just swap the config file.

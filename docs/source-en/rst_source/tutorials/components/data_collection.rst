@@ -44,6 +44,8 @@ Key Features
   block the RL training loop.
 - The LeRobot writer is lazily initialized on the first episode write, with image
   shape, state dimension, and action dimension inferred automatically.
+- LeRobot export can store ``image``, ``wrist_image``, and one
+  ``extra_view_image`` channel when the observation provides them.
 - Set ``only_success=True`` to filter out failed episodes and save disk space.
 
 Constructor Arguments
@@ -218,6 +220,8 @@ Parquet column schema:
      - Main camera image (bytes + path), uint8
    * - ``wrist_image``
      - Wrist camera image (bytes + path), uint8; empty when no wrist camera
+   * - ``extra_view_image``
+     - One auxiliary camera image (bytes + path), uint8; empty when no extra view
    * - ``state``
      - Robot state vector, ``float32[state_dim]``
    * - ``actions``
@@ -249,6 +253,8 @@ Observation key lookup order (first match wins):
      - ``main_images`` → ``image`` → ``full_image``
    * - Wrist image
      - ``wrist_images`` → ``wrist_image``
+   * - Extra-view image
+     - ``extra_view_images`` (first extra view only when multiple are present) → ``extra_view_image``
    * - State
      - ``states`` → ``state``
 
@@ -298,7 +304,7 @@ Core Components
 2. Loop over steps, reading the SpaceMouse intervention action from
    ``info["intervene_action"]``.
 3. Construct a ``ChunkStepResult`` and append it to ``EmbodiedRolloutResult``.
-4. When an episode ends (``done=True``) with a positive reward, count it as a
+4. When an episode ends (``done=True``) with reward ``>= 0.5``, count it as a
    success and write the trajectory to the buffer.
 5. Stop automatically once ``num_data_episodes`` successes have been collected
    and finalise the buffer.
@@ -322,6 +328,9 @@ Configuration Parameters
    * - ``env.eval.use_spacemouse``
      - ``True``
      - Enable SpaceMouse intervention
+   * - ``env.eval.no_gripper``
+     - ``False``
+     - Whether the real-world env uses a 6-DoF action without a gripper dimension
    * - ``env.eval.override_cfg.target_ee_pose``
      - —
      - Target end-effector pose ``[x, y, z, rx, ry, rz]``
@@ -371,6 +380,30 @@ Each trajectory contains:
    demonstration. During RLPD training this flag distinguishes prior data from
    online policy rollouts.
 
+Collect Replay Buffer And LeRobot Data Together
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``examples/embodiment/collect_real_data.py`` now supports writing the real-robot
+replay buffer and the ``CollectEpisode`` export in the same run. With
+``env.data_collection.enabled=True``, successful demonstrations are saved twice:
+
+- ``logs/{timestamp}/demos/`` as ``TrajectoryReplayBuffer`` trajectories for RLPD
+- ``logs/{timestamp}/collected_data/`` as episode files in ``pickle`` or LeRobot format
+
+To collect LeRobot-format data while still building the replay buffer, keep the
+real-world collection config like this:
+
+.. code-block:: yaml
+
+   env:
+     data_collection:
+       enabled: True
+       save_dir: ${runner.logger.log_path}/collected_data
+       export_format: "lerobot"
+       only_success: True
+       robot_type: "panda"
+       fps: 10
+
 Usage Steps
 ~~~~~~~~~~~
 
@@ -380,8 +413,8 @@ Usage Steps
 
       source <path_to_your_venv>/bin/activate
 
-2. Edit ``examples/embodiment/config/realworld_collect_data.yaml`` to set
-   ``robot_ip`` and ``target_ee_pose``:
+2. Edit ``examples/embodiment/config/realworld_collect_data.yaml`` to replace
+   ``ROBOT_IP`` and ``TARGET_EE_POSE`` with your actual robot IP and target pose:
 
    .. code-block:: yaml
 
@@ -437,3 +470,35 @@ Best Practices
 - To append additional demonstrations, re-run the script pointing to the same
   ``demos`` directory. With ``auto_save=True``, the buffer writes incrementally
   without overwriting existing trajectories.
+
+Visualization Tools
+-------------------
+
+After collection, you can inspect both output formats directly from the saved
+artifacts under ``logs/{timestamp}/``.
+
+**Replay buffer trajectories**
+
+Use the existing replay-buffer visualizer to inspect trajectories in
+``logs/{timestamp}/demos/``:
+
+.. code-block:: bash
+
+   python toolkits/replay_buffer/visualize.py \
+       --replay_dir logs/{timestamp}/demos
+
+**LeRobot datasets**
+
+Use ``toolkits/replay_buffer/visualize_lerobot_dataset.py`` to expand a LeRobot
+dataset into per-episode folders containing ``.jpg`` images and ``.txt`` step
+metadata:
+
+.. code-block:: bash
+
+   python toolkits/replay_buffer/visualize_lerobot_dataset.py \
+       --dataset-path logs/{timestamp}/collected_data \
+       --output-dir logs/{timestamp}/collected_data_visualized
+
+The tool reads ``meta/info.json`` plus each ``episode_*.parquet`` file, then
+creates output like ``episode_000000/step_000003_image.jpg`` and
+``episode_000000/step_000003.txt`` for quick inspection.

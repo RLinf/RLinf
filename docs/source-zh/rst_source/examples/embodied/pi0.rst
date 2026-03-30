@@ -97,9 +97,9 @@
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
       # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
 请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
 
@@ -518,9 +518,9 @@ LIBERO 结果
 
 MetaWorld 结果
 ~~~~~~~~~~~~~~~~~
-有关 MetaWorld 结果，请查看 `MetaWorld 页面 <https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/metaworld.html>`__。
+有关 MetaWorld 结果，请查看 `MetaWorld 页面 <https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/metaworld.html>`__。
 
 
 CALVIN 结果
 ~~~~~~~~~~~
-有关 CALVIN 结果，请查看 `CALVIN 页面 <https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/calvin.html>`__。
+有关 CALVIN 结果，请查看 `CALVIN 页面 <https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/calvin.html>`__。

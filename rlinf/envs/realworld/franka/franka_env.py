@@ -24,7 +24,7 @@ import gymnasium as gym
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from rlinf.envs.realworld.common.camera import Camera, CameraInfo
+from rlinf.envs.realworld.common.camera import BaseCamera, CameraInfo, create_camera
 from rlinf.envs.realworld.common.video_player import VideoPlayer
 from rlinf.scheduler import (
     FrankaHWInfo,
@@ -33,13 +33,21 @@ from rlinf.scheduler import (
 from rlinf.utils.logging import get_logger
 
 from .franka_robot_state import FrankaRobotState
-from .utils import construct_adjoint_matrix, construct_homogeneous_matrix, quat_slerp
+from .utils import (
+    clip_euler_to_target_window,
+    construct_adjoint_matrix,
+    construct_homogeneous_matrix,
+    quat_slerp,
+)
 
 
 @dataclass
 class FrankaRobotConfig:
     robot_ip: Optional[str] = None
     camera_serials: Optional[list[str]] = None
+    camera_type: Optional[str] = None
+    gripper_type: Optional[str] = None
+    gripper_connection: Optional[str] = None
     enable_camera_player: bool = True
 
     is_dummy: bool = False
@@ -158,18 +166,38 @@ class FrankaEnv(gym.Env):
         assert isinstance(self.hardware_info, FrankaHWInfo), (
             f"hardware_info must be FrankaHWInfo, but got {type(self.hardware_info)}."
         )
-        # Only set robot_ip and camera_serials if they are not provided in config
         if self.config.robot_ip is None:
             self.config.robot_ip = self.hardware_info.config.robot_ip
         if self.config.camera_serials is None:
             self.config.camera_serials = self.hardware_info.config.camera_serials
+        if self.config.camera_type is None:
+            self.config.camera_type = getattr(
+                self.hardware_info.config, "camera_type", "realsense"
+            )
+        if self.config.gripper_type is None:
+            self.config.gripper_type = getattr(
+                self.hardware_info.config, "gripper_type", "franka"
+            )
+        if self.config.gripper_connection is None:
+            self.config.gripper_connection = getattr(
+                self.hardware_info.config, "gripper_connection", None
+            )
 
-        # Launch Franka controller
+        # Place the controller on controller_node_rank if the arm lives on a
+        # different machine (e.g. cameras on GPU server, arm on NUC).
+        # Falls back to the env worker's own node when not specified.
+        controller_node_rank = getattr(
+            self.hardware_info.config, "controller_node_rank", None
+        )
+        if controller_node_rank is None:
+            controller_node_rank = self.node_rank
         self._controller = FrankaController.launch_controller(
             robot_ip=self.config.robot_ip,
             env_idx=self.env_idx,
-            node_rank=self.node_rank,
+            node_rank=controller_node_rank,
             worker_rank=self.env_worker_rank,
+            gripper_type=self.config.gripper_type or "franka",
+            gripper_connection=self.config.gripper_connection,
         )
 
     def transform_action_ee_to_base(self, action):
@@ -203,9 +231,11 @@ class FrankaEnv(gym.Env):
             ).as_quat()
 
             gripper_action = action[6] * self.config.action_scale[2]
-
             is_gripper_action_effective = self._gripper_action(gripper_action)
-            self._move_action(self._clip_position_to_safety_box(self.next_position))
+
+            clipped_position = self._clip_position_to_safety_box(self.next_position)
+
+            self._move_action(clipped_position)
         else:
             is_gripper_action_effective = True
 
@@ -386,15 +416,20 @@ class FrankaEnv(gym.Env):
         self._base_observation_space = copy.deepcopy(self.observation_space)
 
     def _open_cameras(self):
-        self._cameras: list[Camera] = []
+        self._cameras: list[BaseCamera] = []
         if self.config.camera_serials is None:
             return
+        camera_type = self.config.camera_type or "realsense"
         camera_infos = [
-            CameraInfo(name=f"wrist_{i + 1}", serial_number=n)
+            CameraInfo(
+                name=f"wrist_{i + 1}",
+                serial_number=n,
+                camera_type=camera_type,
+            )
             for i, n in enumerate(self.config.camera_serials)
         ]
         for info in camera_infos:
-            camera = Camera(info)
+            camera = create_camera(info)
             if not self.config.is_dummy:
                 camera.open()
             self._cameras.append(camera)
@@ -458,19 +493,11 @@ class FrankaEnv(gym.Env):
             position[:3], self._xyz_safe_space.low, self._xyz_safe_space.high
         )
         euler = R.from_quat(position[3:].copy()).as_euler("xyz")
-
-        # Clip first euler angle separately due to discontinuity from pi to -pi
-        sign = np.sign(euler[0])
-        euler[0] = sign * (
-            np.clip(
-                np.abs(euler[0]),
-                self._rpy_safe_space.low[0],
-                self._rpy_safe_space.high[0],
-            )
-        )
-
-        euler[1:] = np.clip(
-            euler[1:], self._rpy_safe_space.low[1:], self._rpy_safe_space.high[1:]
+        euler = clip_euler_to_target_window(
+            euler=euler,
+            target_euler=self.config.target_ee_pose[3:],
+            lower_euler=self._rpy_safe_space.low,
+            upper_euler=self._rpy_safe_space.high,
         )
         position[3:] = R.from_euler("xyz", euler).as_quat()
 

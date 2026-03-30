@@ -18,7 +18,11 @@ from typing import Optional
 import fastapi
 from packaging.version import parse
 from sglang.srt.managers.tokenizer_manager import TokenizerManager as _TokenizerManager
-from sglang.srt.managers.tokenizer_manager import _Communicator
+
+try:
+    from sglang.srt.managers.tokenizer_manager import _Communicator
+except ImportError:
+    from sglang.srt.managers.tokenizer_communicator_mixin import _Communicator
 from sglang.srt.server_args import PortArgs, ServerArgs
 
 from .io_struct import (
@@ -118,6 +122,10 @@ class TokenizerManager(_TokenizerManager):
         import json
         import time
 
+        # for sglang 0.5.0 and later, we use the original _handle_batch_output
+        if not self.patch_return_output_ids:
+            return super()._handle_batch_output(recv_obj)
+
         from sglang.srt.managers.tokenizer_manager import (
             BatchEmbeddingOut,
             BatchMultimodalOut,
@@ -125,10 +133,6 @@ class TokenizerManager(_TokenizerManager):
             BatchTokenIDOut,
             logger,
         )
-
-        # for sglang 0.5.0 and later, we use the original _handle_batch_output
-        if not self.patch_return_output_ids:
-            return super()._handle_batch_output(recv_obj)
 
         for i, rid in enumerate(recv_obj.rids):
             state = self.rid_to_state.get(rid, None)

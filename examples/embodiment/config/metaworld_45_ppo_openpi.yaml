@@ -109,7 +109,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/openpi"
+    model_path: "/path/to/model/openpi" # https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT
     precision: ${actor.model.precision}
 
 actor:
@@ -122,7 +122,7 @@ actor:
 
   # Override the default values in model/pi0
   model:
-    model_path: "/path/to/model/openpi"
+    model_path: "/path/to/model/openpi" # https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT
     num_action_chunks: 5 # interface for the env
     action_dim: 4
     num_steps: 5

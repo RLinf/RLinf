@@ -36,7 +36,9 @@ def main(cfg) -> None:
     cfg = validate_cfg(cfg)
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
-    cluster = Cluster(cluster_cfg=cfg.cluster)
+    cluster = Cluster(
+        cluster_cfg=cfg.cluster, distributed_log_dir=cfg.runner.per_worker_log_path
+    )
     component_placement = HybridComponentPlacement(cfg, cluster)
 
     # Create actor worker group
@@ -50,6 +52,14 @@ def main(cfg) -> None:
 
         runner_cls = AsyncEmbodiedRunner
         actor_worker_cls = AsyncEmbodiedSACFSDPPolicy
+    elif cfg.algorithm.loss_type == "embodied_dagger":
+        from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
+        from rlinf.workers.actor.async_fsdp_dagger_policy_worker import (
+            AsyncEmbodiedDAGGERFSDPPolicy,
+        )
+
+        runner_cls = AsyncEmbodiedRunner
+        actor_worker_cls = AsyncEmbodiedDAGGERFSDPPolicy
     elif cfg.algorithm.loss_type == "decoupled_actor_critic":
         from rlinf.runners.async_ppo_embodied_runner import AsyncPPOEmbodiedRunner
         from rlinf.workers.actor.async_ppo_fsdp_worker import AsyncPPOEmbodiedFSDPActor

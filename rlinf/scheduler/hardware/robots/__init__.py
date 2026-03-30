@@ -13,5 +13,6 @@
 # limitations under the License.
 
 from .franka import FrankaConfig, FrankaHWInfo
+from .xsquare import Turtle2Config, Turtle2HWInfo
 
-__all__ = ["FrankaConfig", "FrankaHWInfo"]
+__all__ = ["FrankaConfig", "FrankaHWInfo", "Turtle2Config", "Turtle2HWInfo"]

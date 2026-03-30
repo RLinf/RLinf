@@ -16,6 +16,7 @@ import os
 import queue
 import threading
 import time
+from collections import defaultdict
 from typing import TYPE_CHECKING, Union
 
 from omegaconf.dictconfig import DictConfig
@@ -81,6 +82,9 @@ class EmbodiedRunner:
 
         self.logger = get_logger()
         self.metric_logger = MetricLogger(cfg)
+        self.enable_per_worker_metric_log = bool(
+            self.cfg.runner.get("per_worker_log", False)
+        )
 
         # Async logging setup
         self.stop_logging = False
@@ -154,6 +158,96 @@ class EmbodiedRunner:
         eval_metrics = compute_evaluate_metrics(eval_metrics_list)
         return eval_metrics
 
+    def _log_ranked_metrics(
+        self,
+        metrics_list: list[dict] | None,
+        step: int,
+        prefix: str,
+        worker_group_name: str,
+        add_prefix: bool = True,
+    ):
+        if not self.enable_per_worker_metric_log or not metrics_list:
+            return
+        for rank, metrics in enumerate(metrics_list):
+            if not metrics:
+                continue
+            metrics_to_log = (
+                {f"{prefix}/{k}": v for k, v in metrics.items()}
+                if add_prefix
+                else metrics
+            )
+            self.metric_logger.log(
+                data=metrics_to_log,
+                step=step,
+                worker_group_name=worker_group_name,
+                rank=rank,
+            )
+
+    def _aggregate_numeric_metrics(self, metrics_list: list[dict] | None) -> dict:
+        if not metrics_list:
+            return {}
+        merged_metrics = defaultdict(list)
+        for metrics in metrics_list:
+            if not metrics:
+                continue
+            for key, value in metrics.items():
+                merged_metrics[key].append(value)
+        return {
+            key: (sum(values) / len(values))
+            for key, values in merged_metrics.items()
+            if values
+        }
+
+    def _process_ranked_numeric_results(
+        self, results: list[dict], metric_field: str
+    ) -> tuple[dict, list[dict]]:
+        metric_list: list[dict] = []
+        per_rank_metrics: dict[int, list[dict]] = defaultdict(list)
+        for result in results:
+            metrics = result.get(metric_field, None)
+            if not metrics:
+                continue
+            metric_list.append(metrics)
+            rank = result.get("rank", None)
+            if rank is not None:
+                per_rank_metrics[int(rank)].append(metrics)
+
+        aggregated_metrics = self._aggregate_numeric_metrics(metric_list)
+        ranked_metrics_list: list[dict] = []
+        if per_rank_metrics:
+            max_rank = max(per_rank_metrics.keys())
+            ranked_metrics_list = [{} for _ in range(max_rank + 1)]
+            for rank, metrics_list in per_rank_metrics.items():
+                ranked_metrics_list[rank] = self._aggregate_numeric_metrics(
+                    metrics_list
+                )
+        return aggregated_metrics, ranked_metrics_list
+
+    def _process_ranked_eval_results(
+        self, results: list[dict], metric_field: str
+    ) -> tuple[dict, list[dict]]:
+        metric_list: list[dict] = []
+        per_rank_metrics: dict[int, list[dict]] = defaultdict(list)
+        for result in results:
+            metrics = result.get(metric_field, None)
+            if not metrics:
+                continue
+            metric_list.append(metrics)
+            rank = result.get("rank", None)
+            if rank is not None:
+                per_rank_metrics[int(rank)].append(metrics)
+
+        aggregated_metrics = (
+            compute_evaluate_metrics(metric_list) if metric_list else {}
+        )
+        ranked_metrics_list: list[dict] = []
+        if per_rank_metrics:
+            max_rank = max(per_rank_metrics.keys())
+            ranked_metrics_list = [{} for _ in range(max_rank + 1)]
+            for rank, metrics_list in per_rank_metrics.items():
+                ranked_metrics_list[rank] = compute_evaluate_metrics(metrics_list)
+        return aggregated_metrics, ranked_metrics_list
+
     def run(self):
         start_step = self.global_step
         start_time = time.time()
@@ -170,11 +264,11 @@ class EmbodiedRunner:
                     env_handle: Handle = self.env.interact(
                         input_channel=self.rollout_channel,
                         output_channel=self.env_channel,
+                        actor_channel=self.actor_channel,
                     )
                     rollout_handle: Handle = self.rollout.generate(
                         input_channel=self.env_channel,
                         output_channel=self.rollout_channel,
-                        actor_channel=self.actor_channel,
                     )
                     self.actor.recv_rollout_trajectories(
                         input_channel=self.actor_channel
@@ -216,40 +310,94 @@ class EmbodiedRunner:
 
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
-            time_metrics.update(
-                {f"time/env/{k}": v for k, v in env_handle.consume_durations().items()}
+            env_time_metrics, env_time_metrics_per_rank = env_handle.consume_durations(
+                return_per_rank=True
+            )
+            rollout_time_metrics, rollout_time_metrics_per_rank = (
+                rollout_handle.consume_durations(return_per_rank=True)
+            )
+            actor_time_metrics, actor_time_metrics_per_rank = (
+                actor_training_handle.consume_durations(return_per_rank=True)
             )
             time_metrics.update(
-                {
-                    f"time/rollout/{k}": v
-                    for k, v in rollout_handle.consume_durations().items()
-                }
+                {f"time/env/{k}": v for k, v in env_time_metrics.items()}
             )
             time_metrics.update(
-                {
-                    f"time/actor/{k}": v
-                    for k, v in actor_training_handle.consume_durations().items()
-                }
+                {f"time/rollout/{k}": v for k, v in rollout_time_metrics.items()}
+            )
+            time_metrics.update(
+                {f"time/actor/{k}": v for k, v in actor_time_metrics.items()}
             )
 
+            env_results = env_handle.wait()
             env_results_list = [
-                results for results in env_handle.wait() if results is not None
+                results for results in env_results if results is not None
             ]
             env_metrics = compute_evaluate_metrics(env_results_list)
             env_metrics = {f"env/{k}": v for k, v in env_metrics.items()}
+            ranked_env_results = [
+                {"rank": rank, "env": rank_metrics}
+                for rank, rank_metrics in enumerate(env_results)
+                if rank_metrics is not None
+            ]
+            _, env_metrics_per_rank = self._process_ranked_eval_results(
+                ranked_env_results, metric_field="env"
+            )
 
             rollout_metrics = {
-                f"rollout/{k}": v for k, v in actor_rollout_metrics[0].items()
+                f"rollout/{k}": v
+                for k, v in self._aggregate_numeric_metrics(
+                    actor_rollout_metrics
+                ).items()
             }
 
             training_metrics = {
-                f"train/{k}": v for k, v in actor_training_metrics[0].items()
+                f"train/{k}": v
+                for k, v in self._aggregate_numeric_metrics(
+                    actor_training_metrics
+                ).items()
             }
 
             self.metric_logger.log(env_metrics, _step)
             self.metric_logger.log(rollout_metrics, _step)
             self.metric_logger.log(time_metrics, _step)
             self.metric_logger.log(training_metrics, _step)
+            self._log_ranked_metrics(
+                metrics_list=actor_rollout_metrics,
+                step=_step,
+                prefix="rollout",
+                worker_group_name=self.actor.worker_group_name,
+            )
+            self._log_ranked_metrics(
+                metrics_list=actor_training_metrics,
+                step=_step,
+                prefix="train",
+                worker_group_name=self.actor.worker_group_name,
+            )
+            self._log_ranked_metrics(
+                metrics_list=actor_time_metrics_per_rank,
+                step=_step,
+                prefix="time/actor",
+                worker_group_name=self.actor.worker_group_name,
+            )
+            self._log_ranked_metrics(
+                metrics_list=rollout_time_metrics_per_rank,
+                step=_step,
+                prefix="time/rollout",
+                worker_group_name=self.rollout.worker_group_name,
+            )
+            self._log_ranked_metrics(
+                metrics_list=env_time_metrics_per_rank,
+                step=_step,
+                prefix="time/env",
+                worker_group_name=self.env.worker_group_name,
+            )
+            self._log_ranked_metrics(
+                metrics_list=env_metrics_per_rank,
+                step=_step,
+                prefix="env",
+                worker_group_name=self.env.worker_group_name,
+            )
 
             logging_metrics = time_metrics
             logging_metrics.update(eval_metrics)

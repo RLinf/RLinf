@@ -6,7 +6,7 @@ RLinf 可以将不同的 *generation backends* 接入其强化学习流水线。
 
 .. note::
 
-   RLinf 兼容 **SGLang 0.4.4 → 0.5.2**, **vLLM 0.8.5  → 0.8.5.post1**  
+   RLinf 兼容 **SGLang 0.4.4 → 0.5.4**, **vLLM 0.8.5  → 0.8.5.post1**  
    不需要手动打补丁 —— 框架会自动检测已安装的版本并加载匹配的 shim。  
 
 安装要求
@@ -34,7 +34,7 @@ RLinf 可以将不同的 *generation backends* 接入其强化学习流水线。
    pip install sglang==0.4.8
 
    # 最新支持版本
-   pip install sglang==0.5.2
+   pip install sglang==0.5.4
 
    # 安装vLLM
    pip install vllm==0.8.5

@@ -31,6 +31,7 @@ from ray.util.state import list_actors
 
 from .config import ClusterConfig
 from .node import NodeGroupInfo, NodeProbe
+from .utils import DistributedRayLogCollector, without_http_proxies
 
 ray_version = version("ray")
 assert vs.parse(ray_version) >= vs.parse("2.47.0"), (
@@ -72,6 +73,21 @@ class ClusterEnvVar(str, Enum):
         export RLINF_EXT_MODULE=workflows.scripts.rlinf_ext
     """
 
+    PATH_ENV_MERGE_MODE = "PATH_ENV_MERGE_MODE"
+    """How to merge path-like env vars when allocating workers.
+
+    Supported modes:
+        - append: keep both new and existing path entries (default)
+        - override: replace existing value with the new value
+    """
+
+
+class PathEnvMergeMode(str, Enum):
+    """Merge mode for path-like worker env vars."""
+
+    APPEND = "append"
+    OVERRIDE = "override"
+
 
 class Cluster:
     """A singleton class that manages the cluster resources for Ray workers."""
@@ -89,6 +105,16 @@ class Cluster:
         ClusterEnvVar.NODE_RANK: None,
         ClusterEnvVar.COMM_NET_DEVICES: None,
         ClusterEnvVar.EXT_MODULE: None,
+        ClusterEnvVar.PATH_ENV_MERGE_MODE: PathEnvMergeMode.APPEND.value,
+    }
+    PATH_LIKE_ENV_VARS = {
+        "PYTHONPATH",
+        "LD_LIBRARY_PATH",
+        "PATH",
+        "LIBRARY_PATH",
+        "CMAKE_PREFIX_PATH",
+        "PKG_CONFIG_PATH",
+        "CPATH",
     }
 
     class NamespaceConflictError(Exception):
@@ -116,22 +142,29 @@ class Cluster:
         return cls._instance
 
     def __init__(
-        self, num_nodes: Optional[int] = None, cluster_cfg: Optional[DictConfig] = None
+        self,
+        num_nodes: Optional[int] = None,
+        cluster_cfg: Optional[DictConfig] = None,
+        distributed_log_dir: Optional[str] = None,
     ):
         """Initialize the cluster.
 
         Args:
             num_nodes (int): The number of nodes in the cluster. When you wish to acquire the cluster instance in a processes other than the main driver process, do not pass this argument. Instead, use the `Cluster()` constructor without arguments. If num_nodes is 0, it will initialize the cluster with all ray-connected nodes.
             cluster_cfg (Optional[DictConfig]): The cluster's configuration dictionary. If set, num_nodes will be ignored and inferred from the config.
+            distributed_log_dir (Optional[str]): Output directory for split logs. This must be provided when ``distributed_logging`` is True.
         """
         if self._has_initialized:
             return
         self._setup_logger()
+        self._distributed_log_collector: Optional[DistributedRayLogCollector] = None
         if num_nodes is not None or cluster_cfg is not None:
             self._ray_instance_count = 0
             while True:
                 try:
-                    self._init_and_launch_managers(num_nodes, cluster_cfg)
+                    self._init_and_launch_managers(
+                        num_nodes, cluster_cfg, distributed_log_dir
+                    )
                     break
                 except Cluster.NamespaceConflictError:
                     # Switch the namespace when multiple ray instances are created in the same node
@@ -147,7 +180,10 @@ class Cluster:
                 self._logger.warning(
                     "Could not connect to an existing Ray cluster. Initializing a new cluster with all connected nodes."
                 )
-                return self.__init__(num_nodes=0)
+                return self.__init__(
+                    num_nodes=0,
+                    distributed_log_dir=distributed_log_dir,
+                )
 
         self._has_initialized = True
 
@@ -167,7 +203,10 @@ class Cluster:
         self._logger.addHandler(handler)
 
     def _init_and_launch_managers(
-        self, num_nodes: int, cluster_cfg: Optional[DictConfig]
+        self,
+        num_nodes: int,
+        cluster_cfg: Optional[DictConfig],
+        distributed_log_dir: Optional[str],
     ):
         if ray.is_initialized():
             if self._ray_instance_count > 0:
@@ -218,6 +257,15 @@ class Cluster:
                 logging_level=Cluster.LOGGING_LEVEL,
                 namespace=Cluster.NAMESPACE,
             )
+
+        # Ray log collector
+        if distributed_log_dir is not None:
+            self._distributed_log_collector = DistributedRayLogCollector(
+                logger=self._logger,
+                output_dir=distributed_log_dir,
+                namespace=Cluster.NAMESPACE,
+            )
+            self._distributed_log_collector.start()
 
         # If num_nodes is 0, infer the number of nodes from the connected Ray cluster
         if self._num_nodes == 0:
@@ -291,13 +339,16 @@ class Cluster:
             # Exit the main process if SIGUSR1 is received, which is sent by the worker group when an exception occurs.
             sys.stdout.flush()
             sys.stderr.flush()
+            if self._distributed_log_collector is not None:
+                self._distributed_log_collector.stop()
 
-            alive_actors = list_actors(
-                filters=[
-                    ("STATE", "=", "ALIVE"),
-                    ("RAY_NAMESPACE", "=", Cluster.NAMESPACE),
-                ]
-            )
+            with without_http_proxies():
+                alive_actors = list_actors(
+                    filters=[
+                        ("STATE", "=", "ALIVE"),
+                        ("RAY_NAMESPACE", "=", Cluster.NAMESPACE),
+                    ]
+                )
             for actor_state in alive_actors:
                 actor = ray.get_actor(actor_state.name)
                 ray.kill(actor, no_restart=True)
@@ -423,10 +474,12 @@ class Cluster:
         self,
         cls: type["Worker"],
         worker_name: str,
+        worker_rank: int,
         node_rank: int,
         max_concurrency: int,
         env_vars: dict,
         node_group_label: str,
+        disable_distributed_log: bool,
         cls_args: tuple,
         cls_kwargs: dict,
     ) -> ActorHandle:
@@ -435,10 +488,12 @@ class Cluster:
         Args:
             cls (Type[Worker]): The class to allocate.
             worker_name (str): The name of the worker.
+            worker_rank (int): The rank of the worker in the worker group.
             node_rank (int): The rank of the node to allocate on.
             max_concurrency (Optional[int]): The maximum concurrency for the worker's underlying ray actor.
             env_vars (dict): Environment variables to set for the worker.
             node_group_label (str): The label of the node group to allocate on.
+            disable_distributed_log (bool): Whether to disable distributed log for the worker.
             cls_args (tuple): Positional arguments to pass to the class constructor.
             cls_kwargs (dict): Keyword arguments to pass to the class constructor.
 
@@ -456,11 +511,20 @@ class Cluster:
         remote_cls = ray.remote(cls)
 
         merged_env_vars = node.env_vars.copy()
+        path_env_merge_mode = self.get_path_env_merge_mode(merged_env_vars)
         # Update with user-specified env vars in node group configs
         cfg_node_env_vars = node_group.get_node_env_vars(node_rank)
-        merged_env_vars.update(cfg_node_env_vars)
+        merged_env_vars = self.merge_worker_env_vars(
+            merged_env_vars,
+            cfg_node_env_vars,
+            path_env_merge_mode,
+        )
         # Finally, update with worker-specified env vars
-        merged_env_vars.update(env_vars)
+        merged_env_vars = self.merge_worker_env_vars(
+            merged_env_vars,
+            env_vars,
+            path_env_merge_mode,
+        )
 
         # Update Python interpreter path
         python_interpreter_path = node.python_interpreter_path
@@ -485,4 +549,86 @@ class Cluster:
             )
             options["max_concurrency"] = max_concurrency
 
-        return remote_cls.options(**options).remote(*cls_args, **cls_kwargs)
+        actor = remote_cls.options(**options).remote(*cls_args, **cls_kwargs)
+        if self._distributed_log_collector is not None and not disable_distributed_log:
+            self._distributed_log_collector.register_worker(
+                worker_name=worker_name,
+                rank=worker_rank,
+                actor_handle=actor,
+            )
+        return actor
+
+    @classmethod
+    def get_path_env_merge_mode(cls, env_vars: dict[str, str]) -> PathEnvMergeMode:
+        """Resolve the path-like env merge mode from environment variables."""
+        env_key = cls.get_full_env_var_name(ClusterEnvVar.PATH_ENV_MERGE_MODE)
+        mode_str = env_vars.get(
+            env_key, cls.DEFAULT_SYS_ENV_VAR[ClusterEnvVar.PATH_ENV_MERGE_MODE]
+        )
+        mode_str = str(mode_str).lower()
+        try:
+            return PathEnvMergeMode(mode_str)
+        except ValueError:
+            logging.error(
+                f"Invalid {env_key}={mode_str}. "
+                f"Expected one of {[mode.value for mode in PathEnvMergeMode]}. "
+                "Falling back to append."
+            )
+            return PathEnvMergeMode.APPEND
+
+    @classmethod
+    def merge_worker_env_vars(
+        cls,
+        base_env_vars: dict[str, str],
+        incoming_env_vars: dict[str, str],
+        mode: PathEnvMergeMode,
+    ) -> dict[str, str]:
+        """Merge worker env vars with special handling for path-like variables."""
+        merged = base_env_vars.copy()
+        for key, value in incoming_env_vars.items():
+            if (
+                key in Cluster.PATH_LIKE_ENV_VARS
+                and key in merged
+                and mode == PathEnvMergeMode.APPEND
+            ):
+                merged[key] = cls._merge_path_like_env_value(
+                    env_var_name=key,
+                    existing_value=merged[key],
+                    incoming_value=value,
+                )
+            else:
+                merged[key] = value
+        return merged
+
+    @staticmethod
+    def _split_path_entries(path_value: Optional[str]) -> list[str]:
+        if path_value is None:
+            return []
+        return [entry for entry in str(path_value).split(os.pathsep) if entry]
+
+    @staticmethod
+    def _dedupe_path_entries(entries: list[str]) -> list[str]:
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for entry in entries:
+            if entry not in seen:
+                deduped.append(entry)
+                seen.add(entry)
+        return deduped
+
+    @staticmethod
+    def _merge_path_like_env_value(
+        env_var_name: str,
+        existing_value: str,
+        incoming_value: str,
+    ) -> str:
+        """Merge path-like env values with append semantics."""
+        if env_var_name not in Cluster.PATH_LIKE_ENV_VARS:
+            # Safety guard: never apply path-like merge semantics to non-whitelisted vars.
+            return incoming_value
+        existing_entries = Cluster._split_path_entries(existing_value)
+        incoming_entries = Cluster._split_path_entries(incoming_value)
+        merged_entries = Cluster._dedupe_path_entries(
+            incoming_entries + existing_entries
+        )
+        return os.pathsep.join(merged_entries)
