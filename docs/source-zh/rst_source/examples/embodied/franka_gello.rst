@@ -47,23 +47,38 @@ GELLO 依赖两个软件包，必须 **按顺序** 安装：
 1. 安装 ``gello``（gello_software）
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-从官方仓库克隆并安装 ``gello`` 包：
+选择一个安装目录，然后克隆仓库并初始化其子模块（包含 **Dynamixel SDK**）：
 
 .. code-block:: bash
 
+   cd /path/to/install/gello
    git clone https://github.com/wuphilipp/gello_software.git
    cd gello_software
-   pip install -e .
+   git submodule init && git submodule update
 
-请参考
-`gello_software README <https://github.com/wuphilipp/gello_software#readme>`_
-中的说明配置你的 GELLO 设备（如 DynamixelRobotConfig 和端口映射）。
+安装 ``gello`` 包和 **Dynamixel SDK**（作为第三方子模块）：
+
+.. code-block:: bash
+
+   pip install -e .
+   pip install -e third_party/DynamixelSDK/python
+
+Dynamixel SDK 用于与 GELLO 设备内部的 Dynamixel 舵机通信。
+若缺少该依赖，``GelloAgent`` 将无法读取关节位置。
 
 .. note::
 
-   ``gello`` 包提供了 ``GelloAgent`` 类，通过 Dynamixel 舵机读取 GELLO
-   硬件的原始关节位置。请确保 Dynamixel SDK 已正确安装，并且可以与舵机正常通信，
-   然后再继续后续步骤。
+   如果遇到串口访问权限问题，可将当前用户添加到 ``dialout`` 组：
+
+   .. code-block:: bash
+
+      sudo usermod -aG dialout $USER
+
+   然后注销并重新登录以使更改生效。
+
+有关更多硬件配置信息（如设置唯一的电机 ID、DynamixelRobotConfig 和端口映射），
+请参考
+`gello_software README <https://github.com/wuphilipp/gello_software#readme>`_。
 
 2. 安装 ``gello-teleop``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

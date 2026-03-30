@@ -86,9 +86,16 @@ class RealWorldEnv(gym.Env):
         )
         if self.cfg.get("no_gripper", True):
             env = GripperCloseEnv(env)
-        if not env.config.is_dummy and self.cfg.get("use_spacemouse", True):
+        use_spacemouse = self.cfg.get("use_spacemouse", True)
+        use_gello = self.cfg.get("use_gello", False)
+        if use_spacemouse and use_gello:
+            raise ValueError(
+                "use_spacemouse and use_gello are mutually exclusive. "
+                "Please set only one of them to True."
+            )
+        if not env.config.is_dummy and use_spacemouse:
             env = SpacemouseIntervention(env)
-        if not env.config.is_dummy and self.cfg.get("use_gello", False):
+        if not env.config.is_dummy and use_gello:
             gello_port = self.cfg.get("gello_port", None)
             if gello_port is None:
                 raise ValueError(

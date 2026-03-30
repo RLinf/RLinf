@@ -46,6 +46,8 @@ class GelloExpert:
         self.thread.start()
 
     def _read_gello(self):
+        import time
+
         while True:
             gello_joints, gello_gripper = self.agent.get_action()
             gello_gripper = np.array([gello_gripper])
@@ -55,6 +57,8 @@ class GelloExpert:
                 self.latest_data["target_pos"] = target_pos
                 self.latest_data["target_quat"] = target_quat
                 self.latest_data["gripper"] = gello_gripper
+
+            time.sleep(0.001)
 
     def get_action(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Return ``(target_pos, target_quat, gripper)`` from the latest GELLO reading."""
