@@ -273,6 +273,7 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
 
         def pad(x):
             return x.view(-1, *([1] * (ndim - 1)))
+
         idx = step_indices.long()
         # timestep: t_cur and dt = t_cur - t_next
         t_bc = pad(schedule[idx])
