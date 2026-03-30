@@ -34,11 +34,6 @@ from rlinf.datasets.lerobot.transforms import DataTransformFn
 
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# Return discretization and normalization
-# ============================================================================
-
-
 class ReturnDiscretizer(DataTransformFn):
     """Normalize continuous return values for value model training.
 
@@ -65,7 +60,6 @@ class ReturnDiscretizer(DataTransformFn):
         self.keep_continuous = keep_continuous
         self.normalize_to_minus_one_zero = normalize_to_minus_one_zero
 
-        # Load raw stats
         if return_min is not None and return_max is not None:
             self.raw_return_min = return_min
             self.raw_return_max = return_max
@@ -79,7 +73,6 @@ class ReturnDiscretizer(DataTransformFn):
                 "Must provide either (return_min, return_max), norm_stats, or norm_stats_path"
             )
 
-        # Set normalization factor
         if self.normalize_to_minus_one_zero:
             self.norm_factor = (
                 abs(self.raw_return_min) if self.raw_return_min != 0 else 1.0

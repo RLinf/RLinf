@@ -1,10 +1,5 @@
-# PaliGemma value model training config
-#
+# Usage: bash run_value_sft.sh libero_sft_value_paligemma
 # Architecture: PaliGemma (gemma_2b VLM) + Gemma expert (100m) + Value head
-# Forward mode: vla (PI05 base)
-#
-# Usage:
-#   bash run_value_sft.sh libero_sft_value_paligemma
 
 defaults:
   - model/value_paligemma@actor.model
@@ -36,9 +31,6 @@ runner:
   val_check_interval: 500
   save_interval: 3000
 
-# =====================================================================
-# Data Configuration
-# =====================================================================
 data:
   train_data_paths:
     - dataset_path: "/path/to/sft_dataset"

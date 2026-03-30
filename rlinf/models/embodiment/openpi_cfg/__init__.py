@@ -11,8 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# openpi cfg model (CFG-RL) configs
-
 import os
 
 import torch
@@ -33,7 +31,6 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         OpenPi0ForCFGActionPrediction,
     )
 
-    # config
     config_name = getattr(cfg.openpi, "config_name", None)
     actor_train_config = get_openpi_config(config_name)
     actor_model_config = actor_train_config.model
@@ -42,11 +39,8 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     if override_config_kwargs is not None:
         for key, val in override_config_kwargs.items():
             actor_model_config.__dict__[key] = val
-    # load model
     checkpoint_dir = download.maybe_download(str(cfg.model_path))
 
-    # Check if this is a checkpoint directory (saved by FSDP)
-    # Check for model_state_dict/full_weights.pt (direct checkpoint) or actor/model_state_dict/full_weights.pt (from runner)
     full_weights_path = os.path.join(
         checkpoint_dir, "model_state_dict", "full_weights.pt"
     )
@@ -57,21 +51,16 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     model: OpenPi0ForCFGActionPrediction = OpenPi0ForCFGActionPrediction(
         actor_model_config
     )
-    # train expert only
     if actor_model_config.train_expert_only:
         model.freeze_vlm()
 
-    # Load weights from checkpoint if it's a checkpoint directory, otherwise load from safetensors
     if os.path.exists(full_weights_path):
-        # Direct checkpoint directory
         model_state_dict = torch.load(full_weights_path, map_location="cpu")
         model.load_state_dict(model_state_dict, strict=False)
     elif os.path.exists(actor_full_weights_path):
-        # Checkpoint directory from runner
         model_state_dict = torch.load(actor_full_weights_path, map_location="cpu")
         model.load_state_dict(model_state_dict, strict=False)
     else:
-        # Original model directory with safetensors files
         weight_paths = sorted(glob.glob(os.path.join(checkpoint_dir, "*.safetensors")))
         if not weight_paths:
             weight_paths = [os.path.join(checkpoint_dir, "model.safetensors")]
@@ -79,7 +68,6 @@ def get_model(cfg: DictConfig, torch_dtype=None):
             safetensors.torch.load_model(model, weight_path, strict=False)
 
     model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
-    # load data stats
     data_config = actor_train_config.data.create(
         actor_train_config.assets_dirs, actor_model_config
     )
@@ -87,7 +75,6 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         raise ValueError("Asset id is required to load norm stats.")
     norm_stats = _checkpoints.load_norm_stats(checkpoint_dir, data_config.asset_id)
 
-    # wrappers
     repack_transforms = transforms.Group()
     default_prompt = None
     model.setup_wrappers(

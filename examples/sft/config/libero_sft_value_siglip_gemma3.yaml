@@ -1,10 +1,5 @@
-# SigLIP-Gemma3 value model training config
-#
+# Usage: bash run_value_sft.sh libero_sft_value_siglip_gemma3
 # Architecture: SigLIP2-so400m (1152-dim) + Gemma3-270M (640-dim) + Gemma expert
-# Forward mode: two-stage only (no interleaved)
-#
-# Usage:
-#   bash run_value_sft.sh libero_sft_value_siglip_gemma3
 
 defaults:
   - model/value_siglip_gemma3@actor.model
@@ -36,9 +31,6 @@ runner:
   val_check_interval: 500
   save_interval: 3000
 
-# =====================================================================
-# Data Configuration
-# =====================================================================
 data:
   train_data_paths:
     - dataset_path: "/path/to/sft_dataset"

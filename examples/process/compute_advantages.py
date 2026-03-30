@@ -17,20 +17,7 @@ Compute advantages for CFG-RL training using a trained ValueCritic.
 
 Advantage formula: A = normalize(r_{t:t+N}) + gamma^N * V(o_{t+N}) - V(o_t)
 
-This script:
-1. Loads a trained ValueCritic from checkpoint (with input transforms)
-2. Loads LeRobot datasets (without delta_timestamps for ~50x faster access)
-3. Computes N-step discounted reward sum and values
-4. Creates independent output datasets with is_success = (advantage >= threshold)
-
-The ValueCritic encapsulates all input transforms (LiberoInputs, Normalize, ResizeImages, etc.)
-so inference uses the same data preprocessing as training.
-
-Supports multi-GPU parallel processing via torchrun:
-    torchrun --nproc_per_node=N compute_advantages.py --config-name compute_advantages
-
 Usage:
-    # Single GPU
     python compute_advantages.py --config-name compute_advantages \
         advantage.value_checkpoint=/path/to/checkpoint
 
@@ -69,11 +56,6 @@ from rlinf.models.embodiment.value_model.modeling_critic import ValueCritic
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Distributed Utilities
-# =============================================================================
-
-
 def setup_distributed(cfg: DictConfig) -> tuple[int, int, str]:
     """Initialize torch.distributed for torchrun-launched processes.
 
@@ -83,18 +65,15 @@ def setup_distributed(cfg: DictConfig) -> tuple[int, int, str]:
     Returns:
         Tuple of (rank, world_size, device_string)
     """
-    # Check if we're running under torchrun (or similar launcher)
     if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
         rank = int(os.environ["RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
 
-        # Get distributed config settings
         dist_cfg = cfg.get("distributed", {})
         backend = dist_cfg.get("backend", "nccl")
         timeout_seconds = dist_cfg.get("timeout", 1800)
 
-        # Initialize process group
         if not dist.is_initialized():
             from datetime import timedelta
 
@@ -103,7 +82,6 @@ def setup_distributed(cfg: DictConfig) -> tuple[int, int, str]:
                 timeout=timedelta(seconds=timeout_seconds),
             )
 
-        # Set device for this process
         torch.cuda.set_device(local_rank)
         device = f"cuda:{local_rank}"
 
@@ -118,7 +96,7 @@ def setup_distributed(cfg: DictConfig) -> tuple[int, int, str]:
 
 
 def cleanup_distributed():
-    """Clean up distributed process group."""
+    """Clean up distributed process group if initialized."""
     if dist.is_initialized():
         dist.destroy_process_group()
 
@@ -170,17 +148,14 @@ def gather_all_advantages(
     if world_size == 1:
         return local_df
 
-    # Gather DataFrames from all ranks
     all_dfs = [None] * world_size
     dist.all_gather_object(all_dfs, local_df.to_dict("records"))
 
-    # Merge all records
     all_records = []
     for df_records in all_dfs:
         if df_records:
             all_records.extend(df_records)
 
-    # Create merged DataFrame and sort
     merged_df = pd.DataFrame(all_records)
     if len(merged_df) > 0:
         merged_df = merged_df.sort_values(["episode_index", "frame_index"]).reset_index(
@@ -190,11 +165,6 @@ def gather_all_advantages(
     return merged_df
 
 
-# =============================================================================
-# Key Mappings for Different Robot Types
-# =============================================================================
-
-# Key mappings for building raw observations for ValueCritic
 # Maps LeRobot dataset keys to value model observation format
 KEY_MAPPINGS = {
     "franka": {
@@ -218,11 +188,9 @@ KEY_MAPPINGS = {
         "task": "prompt",
     },
     "libero": {
-        # Prefixed format (standard LeRobot)
         "observation.image": "observation/image",
         "observation.wrist_image": "observation/wrist_image",
         "observation.state": "observation/state",
-        # Non-prefixed format (collected_data)
         "image": "observation/image",
         "wrist_image": "observation/wrist_image",
         "state": "observation/state",
@@ -236,11 +204,6 @@ KEY_MAPPINGS = {
         "task": "prompt",
     },
 }
-
-
-# =============================================================================
-# Utility Functions
-# =============================================================================
 
 
 def to_numpy(x):
@@ -275,7 +238,7 @@ class RunningStats:
         self._max = float("-inf")
 
     def update(self, x: float):
-        """Update statistics with a single value."""
+        """Update with a single value (Welford's online algorithm)."""
         self.n += 1
         delta = x - self._mean
         self._mean += delta / self.n
@@ -376,16 +339,8 @@ def _load_returns_sidecar(
     return sidecar
 
 
-# =============================================================================
-# Model Loading
-# =============================================================================
-
-
 def load_value_model(cfg: DictConfig, device: str = "cuda"):
     """Load trained ValueCritic from checkpoint.
-
-    The ValueCritic encapsulates all input transforms (LiberoInputs, Normalize,
-    ResizeImages, etc.) so inference uses the same data preprocessing as training.
 
     Args:
         cfg: Config with checkpoint path and model settings
@@ -403,12 +358,10 @@ def load_value_model(cfg: DictConfig, device: str = "cuda"):
 
     logger.info(f"Loading value model from: {checkpoint_path}")
 
-    # Extract configuration
     adv_cfg = cfg.advantage
     data_cfg = cfg.data
     model_cfg = adv_cfg.get("model", {})
 
-    # Get robot_type (env_type)
     robot_type = data_cfg.get("robot_type", "libero")
     if "train_data_paths" in data_cfg and len(data_cfg.train_data_paths) > 0:
         robot_type = data_cfg.train_data_paths[0].get("robot_type", robot_type)
@@ -456,11 +409,6 @@ def load_value_model(cfg: DictConfig, device: str = "cuda"):
     return model
 
 
-# =============================================================================
-# Dataset Loading
-# =============================================================================
-
-
 def load_lerobot_dataset(
     dataset_path: Path,
     returns_tag: str | None = None,
@@ -483,13 +431,11 @@ def load_lerobot_dataset(
     """
     meta = LeRobotDatasetMetadata(str(dataset_path))
 
-    # Log dataset features for debugging
     logger.info(f"Dataset features: {list(meta.features.keys())}")
 
-    # Load sidecar written by compute_returns.py (if present)
     returns_sidecar = _load_returns_sidecar(dataset_path, returns_tag=returns_tag)
 
-    # Validate required columns: accept either features in parquets OR sidecar
+    # Validate: accept either features in parquets OR sidecar
     has_reward = "reward" in meta.features
     has_return = "return" in meta.features
     has_sidecar = returns_sidecar is not None
@@ -520,7 +466,6 @@ def load_lerobot_dataset(
         download_videos=False,
     )
 
-    # Load tasks
     tasks = {}
     tasks_path = dataset_path / "meta" / "tasks.jsonl"
     if tasks_path.exists():
@@ -538,21 +483,12 @@ def load_lerobot_dataset(
     return dataset, tasks, meta, returns_sidecar
 
 
-# =============================================================================
-# Observation Building for Value Policy
-# =============================================================================
-
-
 def build_obs(
     sample: dict,
     robot_type: str,
     tasks: dict,
 ) -> dict[str, Any]:
     """Build raw observation dict for ValueCritic from a single-timestep sample.
-
-    The ValueCritic internally handles all input transforms (LiberoInputs,
-    Normalize, ResizeImages, etc.), so we only need to build the raw observation
-    in the format expected by the value model's input processing.
 
     Args:
         sample: Single-timestep sample from LeRobot dataset (no delta_timestamps)
@@ -567,7 +503,6 @@ def build_obs(
 
     for src_key, dst_key in key_map.items():
         if src_key == "task":
-            # Handle prompt
             if "task" in sample:
                 obs[dst_key] = str(to_scalar(sample["task"]))
             elif "task_index" in sample and tasks:
@@ -580,11 +515,6 @@ def build_obs(
             obs[dst_key] = val
 
     return obs
-
-
-# =============================================================================
-# Advantage Computation
-# =============================================================================
 
 
 class AdvantageDataset(torch.utils.data.Dataset):
@@ -619,10 +549,8 @@ class AdvantageDataset(torch.utils.data.Dataset):
         ep_idx = int(to_scalar(sample["episode_index"]))
         frame_idx = int(to_scalar(sample["frame_index"]))
 
-        # Build current observation from single-timestep sample
         obs = build_obs(sample, self.robot_type, self.tasks)
 
-        # Apply CPU transforms in worker (input_transform + prepare_observation_cpu)
         if self.input_transform is not None:
             obs = self.input_transform(
                 {
@@ -633,7 +561,6 @@ class AdvantageDataset(torch.utils.data.Dataset):
         if self.prepare_observation_cpu is not None:
             obs = self.prepare_observation_cpu(obs)
 
-        # Look up return/reward from sidecar or fall back to sample columns
         if self.returns_sidecar is not None and ep_idx in self.returns_sidecar:
             ep_data = self.returns_sidecar[ep_idx]
             true_return = float(ep_data["return"][frame_idx])
@@ -699,13 +626,6 @@ def compute_advantages_for_dataset(
 ) -> pd.DataFrame:
     """Compute advantages for dataset (or shard in distributed mode).
 
-    Uses batch inference with ValueCritic for efficient processing.
-    The ValueCritic internally handles all input transforms
-    (LiberoInputs, Normalize, ResizeImages, etc.).
-
-    In distributed mode, each rank processes a shard of the dataset.
-    The results are local to each rank and should be gathered afterwards.
-
     Args:
         value_model: Trained ValueCritic with input transforms and batch inference
         dataset: LeRobot dataset
@@ -727,7 +647,6 @@ def compute_advantages_for_dataset(
     discount_next_value = cfg.advantage.get("discount_next_value", True)
     batch_size = cfg.advantage.get("batch_size", 64)
 
-    # Use global return range (passed from main)
     ret_min = global_return_min
     ret_max = global_return_max
 
@@ -735,7 +654,7 @@ def compute_advantages_for_dataset(
         logger.info(f"  Using global return_range: [{ret_min}, {ret_max}]")
         logger.info(f"  Using batch inference with batch_size: {batch_size}")
 
-    # Normalization function: maps [ret_min, ret_max] -> [-1, 0]
+    # Maps [ret_min, ret_max] -> [-1, 0]
     ret_range = ret_max - ret_min
 
     def normalize(x):
@@ -743,20 +662,17 @@ def compute_advantages_for_dataset(
             return -0.5
         return (x - ret_min) / ret_range - 1.0
 
-    # Gamma powers for discounted reward sum
     gamma_powers = np.array([gamma**i for i in range(action_horizon)], dtype=np.float64)
 
-    # Limit samples for testing
     max_samples = cfg.advantage.get("max_samples", None)
     total_samples = (
         len(dataset) if max_samples is None else min(len(dataset), max_samples)
     )
 
-    # Calculate shard indices for this rank
     shard_start, shard_end = get_shard_indices(total_samples, rank, world_size)
     shard_size = shard_end - shard_start
 
-    # Include an extension window so idx + lookahead can be looked up.
+    # Extend range so idx + lookahead can be looked up for V(o_{t+N})
     extended_end = (
         shard_start
         if shard_size == 0
@@ -764,7 +680,6 @@ def compute_advantages_for_dataset(
     )
     extended_size = extended_end - shard_start
 
-    # Precompute episode boundaries for fast lookup
     ep_ends = {}
     for ep_idx in range(len(dataset.episode_data_index["to"])):
         ep_ends[ep_idx] = int(dataset.episode_data_index["to"][ep_idx].item())
@@ -788,11 +703,10 @@ def compute_advantages_for_dataset(
             f"  [Rank {rank}] Extended inference range: {shard_start} to {extended_end} ({extended_size} samples)"
         )
 
-    # DataLoader configuration for multi-process data loading
     num_dataloader_workers = cfg.advantage.get("num_dataloader_workers", 8)
     prefetch_factor = cfg.advantage.get("prefetch_factor", 2)
 
-    # Results storage (periodically flushed to disk to prevent OOM)
+    # Periodically flushed to disk to prevent OOM
     results = {
         "episode_index": [],
         "frame_index": [],
@@ -805,12 +719,10 @@ def compute_advantages_for_dataset(
         "num_valid_rewards": [],
     }
 
-    # Online statistics (memory-efficient, replaces full-history lists)
     v_curr_stats = RunningStats("V(o_t)")
     v_next_stats = RunningStats("V(o_N)")
     reward_sum_raw_stats = RunningStats("R_raw")
 
-    # Temporary file management for periodic flushing
     flush_interval = max(1, int(cfg.advantage.get("flush_interval", 5)))
     flush_every_samples = max(1, flush_interval * batch_size)
     import tempfile
@@ -835,7 +747,6 @@ def compute_advantages_for_dataset(
         temp_df.to_parquet(temp_file, index=False)
         temp_files.append(temp_file)
         flushed_sample_count += chunk_size
-        # Clear results to free memory
         for k in results:
             results[k] = []
         del temp_df
@@ -846,9 +757,6 @@ def compute_advantages_for_dataset(
                 f"Total flushed: {flushed_sample_count}"
             )
 
-    # Workers run _input_transform AND _prepare_observation_cpu (image resize + tokenize).
-    # Workers only do CPU work (video decode, image resize, tokenize), so fork is safe
-    # even after CUDA init — same pattern used by VLA lib SFT training.
     from functools import partial
 
     processor = getattr(value_model, "processor", None)
@@ -892,7 +800,6 @@ def compute_advantages_for_dataset(
             f"Phase 1: inferring V(o_t) for {extended_size} samples in {len(dataloader)} batches"
         )
 
-    # Phase 1 storage: values + metadata for [shard_start, extended_end)
     v_values = np.full(extended_size, np.nan, dtype=np.float64)
     meta_ep_idx = np.full(extended_size, -1, dtype=np.int64)
     meta_frame_idx = np.full(extended_size, -1, dtype=np.int64)
@@ -901,7 +808,7 @@ def compute_advantages_for_dataset(
     filled_mask = np.zeros(extended_size, dtype=bool)
 
     def process_value_batch(obs_list: list[dict], meta_list: list[dict]):
-        """Run GPU inference for V(o_t) only and store batch results."""
+        """Run GPU inference for V(o_t) and store batch results."""
         batch_results = value_model.infer_batch(
             obs_list,
             batch_size=batch_size,
@@ -928,9 +835,7 @@ def compute_advantages_for_dataset(
             meta_reward[local_idx] = float(meta_info["reward"])
             filled_mask[local_idx] = True
 
-    # Pipeline: prefetch next batch from DataLoader while GPU processes current batch.
-    # DataLoader workers do ALL CPU work (image decode + transform + image_processor + tokenize),
-    # so the main process only needs to stack tensors -> GPU forward.
+    # Prefetch next batch while GPU processes current batch
     import time as _time
     from concurrent.futures import ThreadPoolExecutor
 
@@ -968,7 +873,6 @@ def compute_advantages_for_dataset(
             _t_fetch = _time.perf_counter() - _t0
             _t_fetch_total += _t_fetch
 
-            # Submit prefetch for next batch BEFORE processing current one
             if batch_idx + 1 < batch_count:
                 pending_future = prefetch_pool.submit(_fetch_next)
 
@@ -977,7 +881,6 @@ def compute_advantages_for_dataset(
             _t_infer = _time.perf_counter() - _t0
             _t_infer_total += _t_infer
 
-            # Progress reflects output shard only (not extended tail)
             n_samples = sum(
                 1 for item in batch[1] if int(item["global_idx"]) < shard_end
             )
@@ -1010,7 +913,7 @@ def compute_advantages_for_dataset(
                 f"Phase 1 incomplete: {missing_count}/{extended_size} entries were not filled."
             )
 
-    # Phase 2: compute advantages from precomputed V(o_t) values with table lookup.
+    # Phase 2: compute advantages using precomputed V(o_t) values
     for i in range(shard_size):
         gidx = shard_start + i
         ep_idx = int(meta_ep_idx[i])
@@ -1058,12 +961,10 @@ def compute_advantages_for_dataset(
         gamma_k = gamma**num_valid if discount_next_value else 1.0
         advantage = reward_sum + gamma_k * v_next - v_curr
 
-        # Update online statistics (memory-efficient, no list accumulation)
         v_curr_stats.update(v_curr)
         v_next_stats.update(v_next)
         reward_sum_raw_stats.update(reward_sum_raw)
 
-        # Store results
         results["episode_index"].append(ep_idx)
         results["frame_index"].append(frame_idx)
         results["advantage"].append(advantage)
@@ -1077,10 +978,8 @@ def compute_advantages_for_dataset(
         if (i + 1) % flush_every_samples == 0:
             flush_results_to_disk()
 
-    # Final flush for any remaining results
     flush_results_to_disk()
 
-    # Log statistics (using online RunningStats, no full-history arrays needed)
     if v_curr_stats.n > 0:
         rank_prefix = f"[Rank {rank}] " if world_size > 1 else ""
         logger.info(
@@ -1101,7 +1000,6 @@ def compute_advantages_for_dataset(
     else:
         logger.warning(f"[Rank {rank}] No samples processed in this shard")
 
-    # Merge all temporary chunks into final DataFrame
     if temp_files:
         if rank == 0:
             logger.info(
@@ -1110,7 +1008,6 @@ def compute_advantages_for_dataset(
         merged_df = pd.concat(
             [pd.read_parquet(f) for f in temp_files], ignore_index=True
         )
-        # Clean up temporary files
         for f in temp_files:
             f.unlink(missing_ok=True)
         try:
@@ -1120,11 +1017,6 @@ def compute_advantages_for_dataset(
         return merged_df
     else:
         return pd.DataFrame(results)
-
-
-# =============================================================================
-# Output Dataset Creation
-# =============================================================================
 
 
 def save_advantages_to_dataset(
@@ -1173,14 +1065,8 @@ def save_advantages_to_dataset(
             )
         logger.info(f"  Saved {adv_filename} to {meta_dir} ({len(save_df)} entries)")
 
-    # Synchronize after writing
     if world_size > 1:
         dist.barrier()
-
-
-# =============================================================================
-# Main
-# =============================================================================
 
 
 @hydra.main(
@@ -1198,39 +1084,29 @@ def main(cfg: DictConfig) -> None:
     3. Unified threshold is computed from combined advantages
     4. Output datasets are created in parallel
     """
-    # Setup distributed (if running under torchrun)
     rank, world_size, device = setup_distributed(cfg)
 
-    # Override device in config
     cfg.advantage.device = device
 
-    # Setup logging (only rank 0 shows full config)
     logging.basicConfig(level=logging.INFO)
     if rank == 0:
         logger.info("Starting advantage computation...")
         logger.info(f"Config:\n{OmegaConf.to_yaml(cfg)}")
     else:
-        # Reduce logging verbosity for non-rank-0 processes
         logging.getLogger().setLevel(logging.WARNING)
 
     try:
-        # Load value policy (each rank loads its own copy)
-        # ValueCritic encapsulates all input transforms (LiberoInputs, Normalize,
-        # ResizeImages, etc.) so inference uses same preprocessing as training
         value_model = load_value_model(cfg, device)
 
-        # Process all datasets and collect advantages
         all_advantages = []
         dataset_results = {}
 
-        # ---- Compute global return_min/return_max ----
         # Priority: 1) global config  2) compute from all datasets' stats.json
         data_cfg = cfg.data
         global_return_min = data_cfg.get("return_min", None)
         global_return_max = data_cfg.get("return_max", None)
 
         if global_return_min is None or global_return_max is None:
-            # Compute from all datasets' stats.json
             all_mins = []
             all_maxs = []
             for ds_cfg in cfg.data.train_data_paths:
@@ -1254,7 +1130,6 @@ def main(cfg: DictConfig) -> None:
                         f"[{global_return_min}, {global_return_max}]"
                     )
             else:
-                # Fallback to defaults
                 global_return_min = (
                     global_return_min if global_return_min is not None else -700.0
                 )
@@ -1273,7 +1148,6 @@ def main(cfg: DictConfig) -> None:
                     f"[{global_return_min}, {global_return_max}]"
                 )
 
-        # Pre-compute grand total samples across all datasets (for this rank)
         max_samples = cfg.advantage.get("max_samples", None)
         grand_total = 0
         for ds_cfg in cfg.data.train_data_paths:
@@ -1313,12 +1187,10 @@ def main(cfg: DictConfig) -> None:
                 logger.info(f"Processing dataset: {ds_path.name}")
                 logger.info(f"{'=' * 60}")
 
-            # Load dataset (each rank loads full dataset but processes shard)
             dataset, tasks, meta, returns_sidecar = load_lerobot_dataset(
                 ds_path, returns_tag=returns_tag
             )
 
-            # Compute advantages for this rank's shard
             local_df = compute_advantages_for_dataset(
                 value_model=value_model,
                 dataset=dataset,
@@ -1334,14 +1206,12 @@ def main(cfg: DictConfig) -> None:
                 returns_sidecar=returns_sidecar,
             )
 
-            # Synchronize and gather advantages from all ranks
             if world_size > 1:
                 dist.barrier()
                 df = gather_all_advantages(local_df, rank, world_size)
             else:
                 df = local_df
 
-            # Store results
             df["dataset_name"] = ds_path.name
             all_advantages.append(df["advantage"].values)
             dataset_results[ds_path] = {
@@ -1349,7 +1219,6 @@ def main(cfg: DictConfig) -> None:
                 "config": OmegaConf.to_container(ds_cfg),
             }
 
-            # Print statistics (only rank 0)
             if rank == 0 and len(df) > 0:
                 logger.info(f"\nAdvantage Statistics for {ds_path.name}:")
                 logger.info(f"  Mean: {df['advantage'].mean():.4f}")
@@ -1362,7 +1231,6 @@ def main(cfg: DictConfig) -> None:
 
         global_pbar.close()
 
-        # Compute unified threshold across all datasets
         positive_quantile = cfg.advantage.get("positive_quantile", 0.3)
         combined_advantages = np.concatenate(all_advantages)
         unified_threshold = float(
@@ -1390,7 +1258,6 @@ def main(cfg: DictConfig) -> None:
                 f"  Total samples with positive advantage: {(combined_advantages >= unified_threshold).sum()}"
             )
 
-            # Show per-dataset positive rates using unified threshold
             logger.info("\n  Per-dataset positive rates (using unified threshold):")
             for i, (ds_path, result) in enumerate(dataset_results.items()):
                 ds_advantages = all_advantages[i]
@@ -1400,7 +1267,6 @@ def main(cfg: DictConfig) -> None:
                     f"    {ds_path.name}: {positive_count}/{len(ds_advantages)} ({positive_rate:.1f}%)"
                 )
 
-        # Save advantages parquet and mixture_config.yaml to each source dataset
         if rank == 0:
             logger.info(f"\n{'=' * 60}")
             logger.info("Saving Advantages")
@@ -1408,7 +1274,6 @@ def main(cfg: DictConfig) -> None:
             if tag:
                 logger.info(f"  Tag: {tag}")
 
-        # Build mixture_config content (shared across all datasets)
         tag_stats = {
             "unified_threshold": unified_threshold,
             "positive_quantile": positive_quantile,
@@ -1429,18 +1294,15 @@ def main(cfg: DictConfig) -> None:
                 tag=tag,
             )
 
-            # Save mixture_config.yaml to each dataset root (only rank 0)
             if rank == 0:
                 mixture_config_path = ds_path / "mixture_config.yaml"
 
-                # Load existing to preserve other tags
                 if mixture_config_path.exists():
                     with open(mixture_config_path, "r") as f:
                         mixture_config = yaml.safe_load(f) or {}
                 else:
                     mixture_config = {}
 
-                # Common fields (always update)
                 mixture_config["global_return_min"] = global_return_min
                 mixture_config["global_return_max"] = global_return_max
                 mixture_config["datasets"] = [
@@ -1469,7 +1331,6 @@ def main(cfg: DictConfig) -> None:
             logger.info("\nAdvantage computation complete!")
 
     finally:
-        # Clean up distributed
         cleanup_distributed()
 
 

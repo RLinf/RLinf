@@ -50,13 +50,11 @@ def load_return_range_from_norm_stats(
     if not base_path.exists():
         return None, None
 
-    # Search paths in priority order
     candidates = []
     if asset_id:
         candidates.append(base_path / asset_id / "norm_stats.json")
     candidates.append(base_path / "norm_stats.json")
 
-    # Also try first subdirectory
     for subdir in base_path.iterdir():
         if subdir.is_dir():
             candidates.append(subdir / "norm_stats.json")
@@ -101,81 +99,32 @@ class RLDataConfig:
         - return: G_t (precomputed return at t)
     """
 
-    # =========================================================================
-    # History Configuration
-    # =========================================================================
-
-    # Number of past timesteps to include (0 = current only)
     history_length: int = 0
-
-    # Keys to include in history (e.g., ["observation.state.tcp_pose", "observation.images.front_cam"])
     # If None, uses same keys as current observation
     history_keys: Optional[Sequence[str]] = None
-
-    # Whether to include history actions (a_{t-N}, ..., a_{t-1})
     include_history_actions: bool = False
 
-    # =========================================================================
-    # Future Chunk Configuration (for n-step learning)
-    # =========================================================================
-
-    # Number of future actions/rewards to include
     action_horizon: int = 10
-
-    # Keys for action chunk
     action_keys: Sequence[str] = ("actions",)
-
-    # Keys for reward chunk (typically just "reward")
     reward_keys: Sequence[str] = ("reward",)
-
-    # Whether to include done flags for termination handling
     include_done: bool = True
     done_key: str = "done"
 
-    # =========================================================================
-    # Bootstrapping Configuration
-    # =========================================================================
-
-    # Whether to fetch next observation at t+H for bootstrapping
     include_next_obs: bool = True
-
-    # Keys for next observation (subset of observation keys for efficiency)
     # If None, uses all current observation keys
     next_obs_keys: Optional[Sequence[str]] = None
 
-    # =========================================================================
-    # Return Configuration
-    # =========================================================================
-
-    # Whether to include precomputed return from dataset
     include_return: bool = True
     return_key: str = "return"
 
-    # =========================================================================
-    # Return Discretization Configuration
-    # =========================================================================
-
-    # Whether to discretize return into bins for language model prediction
     discretize_return: bool = False
-
-    # Path to norm_stats.json for loading return min/max
     # If None, return_min and return_max must be provided
     return_norm_stats_path: Optional[str] = None
-
-    # Override return range (if not using norm_stats)
     return_min: Optional[float] = None
     return_max: Optional[float] = None
-
-    # Whether to keep the continuous return value after discretization
     keep_continuous_return: bool = True
-
-    # Whether to normalize returns to (-1, 0) range before discretization
-    # As per paper: "we normalize the values predicted to be between (-1, 0)"
     normalize_to_minus_one_zero: bool = True
 
-    # =========================================================================
-    # Discount Factor (for computing n-step returns if needed)
-    # =========================================================================
     gamma: float = 0.99
 
     def get_delta_timestamps(self, fps: int) -> dict[str, list[float]]:

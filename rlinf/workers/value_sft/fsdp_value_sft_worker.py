@@ -21,7 +21,6 @@ via supervised fine-tuning with FSDP.
 This module is self-contained and does NOT share code with fsdp_sft_worker.py.
 """
 
-# Suppress libdav1d/ffmpeg verbose logging (must be before any av/video imports)
 import json
 import logging
 import os
@@ -39,7 +38,6 @@ logger = logging.getLogger(__name__)
 import torch  # noqa: E402
 from omegaconf import DictConfig  # noqa: E402
 
-# Import dataset-related classes from rlinf.datasets
 from rlinf.datasets import (  # noqa: E402
     ValueDataLoaderImpl,
     ValueMixtureDataset,
@@ -53,14 +51,7 @@ from rlinf.utils.distributed import all_reduce_dict  # noqa: E402
 def _load_return_stats_from_dataset(
     dataset_path: str,
 ) -> tuple[float | None, float | None]:
-    """Load return min/max from dataset's stats.json.
-
-    Args:
-        dataset_path: Path to LeRobot dataset
-
-    Returns:
-        Tuple of (return_min, return_max), or (None, None) if not found
-    """
+    """Load return min/max from dataset's stats.json."""
     stats_path = Path(dataset_path) / "meta" / "stats.json"
     if not stats_path.exists():
         return None, None
@@ -89,18 +80,12 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", 0)))
         self.device = torch.cuda.current_device()
 
-        # Build data loader
         self.data_loader, self.eval_data_loaders, self.data_config = (
             self.build_dataloader()
         )
         self.data_iter = iter(self.data_loader)
 
-    # -----------------------------------------------------------------------
-    # Worker interface
-    # -----------------------------------------------------------------------
-
     def init_worker(self):
-        """Called by runner to initialize model & optimizer."""
         self.setup_model_and_optimizer()
 
         if self.cfg.actor.get("enable_offload", False):
@@ -108,7 +93,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             self.offload_optimizer()
 
     def model_provider_func(self) -> torch.nn.Module:
-        """Load the value model."""
         return get_model(self.cfg.actor.model)
 
     @staticmethod
@@ -172,19 +156,8 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             return None
         return np.concatenate(valid_arrays, axis=0)
 
-    # -----------------------------------------------------------------------
-    # DataLoader
-    # -----------------------------------------------------------------------
-
     def build_dataloader(self):
-        """Build dataloader from ``data.train_data_paths`` list.
-
-        Uses ValueDataset which includes:
-        - DataConfig transforms (repack, normalize, model-specific like LiberoInputs)
-        - Return discretization for value prediction
-        - VLM-mode sample formatting
-        """
-        # Suppress PyAV/libdav1d verbose logging
+        """Build dataloader from ``data.train_data_paths`` list."""
         try:
             import av
 
@@ -215,7 +188,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                     kwargs["prefetch_factor"] = int(prefetch_factor)
             return kwargs
 
-        # ---- processor & collator ----
         # Tokenizer resolution: explicit tokenizer_path > backbone path > error
         from rlinf.models.embodiment.value_model.checkpoint_utils import (
             has_tokenizer_files,
@@ -224,7 +196,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         backbone_variant = getattr(model_cfg, "backbone_variant", "paligemma")
         tokenizer_path = getattr(model_cfg, "tokenizer_path", None)
         if tokenizer_path is None:
-            # Infer from backbone variant
             if backbone_variant == "siglip_gemma3":
                 tokenizer_path = getattr(model_cfg, "gemma3_path", None)
             else:
@@ -245,16 +216,13 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             max_length=getattr(model_cfg, "max_token_len", 200),
             train=True,
         )
-        # Use deterministic preprocessing for eval (no image augmentation).
         eval_collator = ValueDataCollator(
             processor=processor,
             max_length=getattr(model_cfg, "max_token_len", 200),
             train=False,
         )
-        # ---- shared defaults ----
         data_root = data_cfg.get("data_root", None)
 
-        # Transform-related shared config (required parameters)
         robot_type = data_cfg.get("robot_type")
         model_type = data_cfg.get("model_type")
         if robot_type is None:
@@ -274,13 +242,11 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             "action_dim": data_cfg.get(
                 "action_dim", getattr(model_cfg, "action_dim", None)
             ),
-            # Transform-related
             "robot_type": robot_type,
             "model_type": model_type,
             "norm_stats_dir": norm_stats_dir,
         }
 
-        # ---- build datasets ----
         datasets_list = data_cfg.get("train_data_paths", [])
         if not datasets_list:
             raise ValueError(
@@ -295,13 +261,11 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                 "data.train_data_paths must contain at least one training entry with 'dataset_path'."
             )
 
-        # ---- Compute global return_min/return_max ----
         # Priority: 1) global config  2) compute from all datasets' stats.json
         global_return_min = data_cfg.get("return_min", None)
         global_return_max = data_cfg.get("return_max", None)
 
         if global_return_min is None or global_return_max is None:
-            # Compute from all datasets' stats.json
             all_mins = []
             all_maxs = []
             for entry in train_entries:
@@ -328,7 +292,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                     f"[{global_return_min}, {global_return_max}]"
                 )
             else:
-                # Fallback to default values if no stats found
                 global_return_min = (
                     global_return_min if global_return_min is not None else -700.0
                 )
@@ -345,7 +308,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                 f"[{global_return_min}, {global_return_max}]"
             )
 
-        # ---- common ValueDataset kwargs (shared by train & eval) ----
         common_ds_kwargs = {
             "robot_type": shared["robot_type"],
             "model_type": shared["model_type"],
@@ -366,7 +328,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             if data_root and not os.path.isabs(ds_path):
                 ds_path = os.path.join(data_root, ds_path)
 
-            # Dataset type: "sft" or "rollout"
             ds_type = entry.get("type", "sft")
             if ds_type not in ("sft", "rollout"):
                 raise ValueError(
@@ -375,7 +336,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
 
             weight = entry.get("weight", 1.0)
 
-            # Per-entry overrides on top of common kwargs
             entry_kwargs = {
                 **common_ds_kwargs,
                 "dataset_path": ds_path,
@@ -403,7 +363,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                 f"[ValueSFT] Loaded: {ds_path}  (type={ds_type}, {len(ds)} samples, weight={weight})"
             )
 
-        # ---- single vs mixture ----
         if len(datasets_with_weights) == 1:
             dataset = datasets_with_weights[0][0]
         else:
@@ -415,7 +374,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             )
         logger.info(f"[ValueSFT] Total samples: {len(dataset)}")
 
-        # ---- DataLoader ----
         sampler = None
         if torch.distributed.is_initialized():
             sampler = torch.utils.data.distributed.DistributedSampler(
@@ -447,10 +405,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         data_config = {"model_type": "value_model"}
         train_data_loader = ValueDataLoaderImpl(data_config, torch_loader)
 
-        # ---- optional eval DataLoader(s) ----
-        # Read from data.eval_data_paths (top-level list, same format as
-        # train_data_paths but each entry uses 'dataset_path' for the eval
-        # dataset).  This is the only supported way to configure eval datasets.
         eval_data_loaders: list[tuple[str, ValueDataLoaderImpl]] = []
 
         eval_data_paths = data_cfg.get("eval_data_paths", []) or []
@@ -472,7 +426,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             if data_root and not os.path.isabs(eval_ds_path):
                 eval_ds_path = os.path.join(data_root, eval_ds_path)
 
-            # Derive a short name for this eval dataset
             ds_name = eval_entry.get("name", Path(eval_ds_path).stem)
 
             eval_dataset = ValueDataset(
@@ -541,10 +494,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
 
         return train_data_loader, eval_data_loaders, data_config
 
-    # -----------------------------------------------------------------------
-    # Training
-    # -----------------------------------------------------------------------
-
     def run_training(self) -> dict[str, float]:
         """Execute one training step (may involve gradient accumulation)."""
         with self.worker_timer():
@@ -593,7 +542,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                     metrics["predicted_value_std"] = (
                         result.predicted_values.detach().std().item()
                     )
-                # Categorical loss metrics
                 if result.cat_acc_best is not None:
                     metrics["cat_acc_best"] = (
                         result.cat_acc_best.detach().item()
@@ -625,17 +573,14 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                     self.grad_scaler.scale(scaled_loss).backward()
 
                 metrics["loss"] = loss.detach().item()
-                # Add target value statistics for comparison
                 if target_values is not None:
                     metrics["target_value_mean"] = target_values.detach().mean().item()
                     metrics["target_value_std"] = target_values.detach().std().item()
                 all_metrics.append(metrics)
 
-            # optimizer step
             grad_norm, lr_list = self.optimizer_step()
             self.optimizer.zero_grad(set_to_none=True)
 
-            # aggregate metrics
             agg = {}
             for m in all_metrics:
                 for k, v in m.items():
@@ -755,7 +700,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                             )
                         batch_metrics.append(metrics)
 
-                    # Aggregate across batches for this dataset
                     if batch_metrics:
                         agg: dict[str, list[float]] = {}
                         for m in batch_metrics:
@@ -785,15 +729,12 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             if not all_dataset_metrics:
                 return {}
 
-            # Build final metrics dict
             final_metrics: dict[str, float] = {}
 
-            # Per-dataset metrics: "datasetA/loss", "datasetB/loss", ...
             for ds_name, ds_metrics in all_dataset_metrics.items():
                 for k, v in ds_metrics.items():
                     final_metrics[f"{ds_name}/{k}"] = v
 
-            # Aggregate metrics: average across all datasets
             all_keys: set[str] = set()
             for ds_metrics in all_dataset_metrics.values():
                 all_keys.update(ds_metrics.keys())
@@ -802,7 +743,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                 if vals:
                     final_metrics[k] = sum(vals) / len(vals)
 
-            # Distributed reduce
             final_metrics = all_reduce_dict(
                 final_metrics, op=torch.distributed.ReduceOp.AVG
             )
@@ -841,10 +781,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
 
         return observation, target_values, actions, extra
 
-    # -----------------------------------------------------------------------
-    # Utility hooks called by FSDPModelManager / runner
-    # -----------------------------------------------------------------------
-
     def set_global_step(self, step: int):
         self.global_step = step
 
@@ -852,7 +788,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         if loader_len == 0:
             return
 
-        # Calculate current epoch
         grad_accum = (
             self.cfg.actor.global_batch_size
             // self.cfg.actor.micro_batch_size
@@ -861,7 +796,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         steps_per_epoch = max(1, loader_len // grad_accum)
         new_epoch = step // steps_per_epoch
 
-        # Initialize or reset iterator only when epoch changes
         current_epoch = getattr(self, "_current_epoch", -1)
         if current_epoch != new_epoch:
             self._current_epoch = new_epoch

@@ -33,18 +33,12 @@ except ImportError:
 import dataclasses
 from typing import Any, Iterator
 
-# ============================================================================
-# Config
-# ============================================================================
 from rlinf.datasets.config import (  # noqa: E402
     RLDataConfig,
     create_rl_config,
     load_return_range_from_norm_stats,
 )
 
-# ============================================================================
-# Datasets
-# ============================================================================
 from rlinf.datasets.mixture_datasets import (  # noqa: E402
     AdvantageMixtureDataset,
     ValueMixtureDataset,
@@ -52,9 +46,6 @@ from rlinf.datasets.mixture_datasets import (  # noqa: E402
 from rlinf.datasets.rl_dataset import LeRobotRLDataset  # noqa: E402
 from rlinf.datasets.value_dataset import ValueDataset  # noqa: E402
 
-# ============================================================================
-# Value transforms & tokens
-# ============================================================================
 from rlinf.datasets.value_transforms import (  # noqa: E402
     ReturnDiscretizer,
     ReturnNormalizer,
@@ -62,9 +53,6 @@ from rlinf.datasets.value_transforms import (  # noqa: E402
 )
 
 
-# ============================================================================
-# DataLoader implementations (inlined)
-# ============================================================================
 class ValueDataLoaderImpl:
     """Lightweight wrapper that yields batches and exposes data_config().
 
@@ -91,9 +79,6 @@ class ValueDataLoaderImpl:
         yield from self._data_loader
 
 
-# ============================================================================
-# Transforms (inlined)
-# ============================================================================
 @dataclasses.dataclass(frozen=True)
 class TokenizePromptWithGuidance:
     """Tokenize both original prompt and guidance prompts for CFG models.
@@ -143,22 +128,15 @@ class TokenizePromptWithGuidance:
 
 
 __all__ = [
-    # Config
     "RLDataConfig",
     "create_rl_config",
     "load_return_range_from_norm_stats",
-    # RL Dataset
     "LeRobotRLDataset",
-    # Value Dataset
     "ValueDataset",
-    # Mixture Datasets
     "AdvantageMixtureDataset",
     "ValueMixtureDataset",
-    # DataLoaders
     "ValueDataLoaderImpl",
-    # Transforms
     "TokenizePromptWithGuidance",
-    # Value transforms
     "ReturnDiscretizer",
     "ReturnNormalizer",
     "create_return_discretizer",

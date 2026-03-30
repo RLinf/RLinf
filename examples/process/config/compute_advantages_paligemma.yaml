@@ -1,132 +1,62 @@
-# Advantage computation configuration for CFG-RL training
+# Advantage computation for CFG-RL training
 #
-# Usage (single GPU via bash):
-#   cd examples/process && bash -c 'python compute_advantages.py --config-name compute_advantages_paligemma \
-#       advantage.value_checkpoint=/path/to/checkpoint'
+# Usage:
+#   cd examples/process && python compute_advantages.py --config-name compute_advantages_paligemma \
+#       advantage.value_checkpoint=/path/to/checkpoint
 #
-# Usage (multi-GPU via torchrun):
-#   cd examples/process && bash -c 'torchrun --nproc_per_node=4 compute_advantages.py \
+# Multi-GPU:
+#   cd examples/process && torchrun --nproc_per_node=4 compute_advantages.py \
 #       --config-name compute_advantages_paligemma \
-#       advantage.value_checkpoint=/path/to/checkpoint'
-#
-# This script:
-# 1. Computes advantages: A = normalize(r_{t:t+N}) + gamma^N * V(o_{t+N}) - V(o_t)
-# 2. Creates independent output datasets with is_success = (advantage >= threshold)
-# 3. Supports multiple datasets with unified threshold across all data
-# 4. Supports multi-GPU parallel processing for faster computation
+#       advantage.value_checkpoint=/path/to/checkpoint
 
 defaults:
   - model/value_paligemma@advantage.model
 
-# =============================================================================
-# Advantage computation settings
-# =============================================================================
 advantage:
-  # Path to trained value model checkpoint (REQUIRED)
-  # Can be a directory containing .safetensors files or a single .pt file
   value_checkpoint: /path/to/value_checkpoint
-
-  # Device for inference
   device: "cuda"
-
-  # Batch size for value model inference (higher = faster but more VRAM)
   batch_size: 256
   flush_interval: 256
-  # Pipeline batch size for streaming processing
-  # Samples are collected and inferred in batches of this size
-  # Larger = more memory, potentially faster. Smaller = less memory.
-
-  # Number of DataLoader workers (per GPU) for parallel data loading
-  # Each worker is a persistent subprocess that loads and decodes data in parallel,
-  # bypassing the Python GIL for true parallelism on image decoding
-
   num_dataloader_workers: 12
-
-  # Number of batches each DataLoader worker prefetches ahead of time
-  # Total prefetch queue depth = num_dataloader_workers * prefetch_factor
-  # Higher values keep GPU fed but use more RAM
   prefetch_factor: 4
-
-  # Whether to apply gamma^N discount to V(o_{t+N})
-  # Set to true for proper TD-style advantage
   discount_next_value: true
 
-  # Positive advantage quantile: top X% of samples will have positive advantage
-  # 0.3 means top 30% are positive (threshold at 70th percentile)
+  # Top X% of samples will have positive advantage (threshold at 1-X percentile)
   positive_quantile: 0.2
 
-  # Tag for saving advantages: saves to meta/advantages_{tag}.parquet
-  # Usage: advantage.tag=my_experiment
+  # Tag for saving/reading: advantages_{tag}.parquet / returns_{returns_tag}.parquet
   tag: null
-
-  # Tag for reading returns: reads from meta/returns_{returns_tag}.parquet
-  # Independent from tag above. Must match the tag used in compute_returns.py
-  # Usage: advantage.returns_tag=my_returns_experiment
   returns_tag: null
 
-  # Model configuration (loaded from defaults, override here if needed)
   model:
     critic_expert_variant: "gemma_50m"
 
-# =============================================================================
-# Data configuration
-# =============================================================================
 data:
-  # Model type for vla_lib ValuePolicy (pi0, pi05)
   model_type: "pi05"
-
-  # Robot type / environment type for input transforms
-  # Used globally unless overridden per-dataset
   # Options: "libero", "franka", "franka_3cam", "droid", "aloha"
   robot_type: "libero"
 
-  # Datasets to process
-  # Each entry specifies:
-  #   - dataset_path: absolute path to LeRobot dataset
-  #   - robot_type: robot type for key mapping ("libero", "franka", etc.)
-  #   - dataset_type: "sft" (all success) or "rollout" (read is_success from sample)
-  #   - return_min/max: range for return normalization
-  #   - weight: sampling weight (used in mixture_config.yaml for later training)
   train_data_paths:
     - dataset_path: "/path/to/sft_dataset"
       robot_type: "libero"
-      dataset_type: "sft"  # SFT data, all episodes are successful
+      dataset_type: "sft"
       weight: 1.0
 
     # Uncomment to add rollout datasets:
     # - dataset_path: "/path/to/rollout_dataset"
     #   robot_type: "libero"
-    #   dataset_type: "rollout"  # Rollout data, is_success varies
+    #   dataset_type: "rollout"
     #   weight: 1.0
 
-
-  # Number of steps to look ahead for advantage computation
   # N in: A = normalize(r_{t:t+N}) + gamma^N * V(o_{t+N}) - V(o_t)
   advantage_lookahead_step: 10
-
-  # Discount factor
-  # Use 1.0 for undiscounted returns (common in robotics)
   gamma: 1.0
 
-# =============================================================================
-# Distributed configuration (for multi-GPU parallel processing)
-# =============================================================================
 distributed:
-  # Enable distributed mode (automatically detected from torchrun environment)
-  # Set to false to force single-GPU mode even when launched with torchrun
   enabled: true
-
-  # Communication backend for torch.distributed
-  # Options: "nccl" (recommended for GPU), "gloo" (CPU fallback)
   backend: "nccl"
-
-  # Timeout in seconds for distributed operations
-  # Increase if you see timeout errors during large data gathering
   timeout: 3600
 
-# =============================================================================
-# Hydra configuration
-# =============================================================================
 hydra:
   run:
     dir: .

@@ -37,7 +37,6 @@ Usage:
     --reapply_quantile_only
 """
 
-# Suppress video decoder (libdav1d) logging — must be before any av/video imports
 import os
 
 os.environ["AV_LOG_LEVEL"] = "panic"
@@ -63,7 +62,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 
 def _suppress_video_logging() -> None:
-    """Suppress libdav1d/av logging (call in each worker process)."""
+    """Suppress libdav1d/av logging."""
     os.environ["AV_LOG_LEVEL"] = "panic"
     os.environ["LIBDAV1D_LOG_LEVEL"] = "0"
     for name in ("libav", "av", "PIL"):
@@ -255,17 +254,14 @@ def compute_advantages_for_dataset(
     if not parquet_files:
         raise ValueError(f"No parquet files found in {data_dir}")
 
-    # Check available columns efficiently (schema only)
     sample_schema = pq.read_schema(str(parquet_files[0]))
     sample_cols = set(sample_schema.names)
 
-    # Only request columns that actually exist in episode parquets
     columns_needed = ["episode_index", "frame_index"]
     for col in ["value_current", "reward", "return"]:
         if col in sample_cols:
             columns_needed.append(col)
 
-    # Read all parquet files directly (much faster than dataset[i] which decodes video)
     if num_workers > 1 and len(parquet_files) > 1:
         read_workers = min(num_workers, len(parquet_files))
         with ThreadPoolExecutor(max_workers=read_workers) as executor:
@@ -282,7 +278,6 @@ def compute_advantages_for_dataset(
         drop=True
     )
 
-    # Load reward/return from sidecar if not in episode parquets
     sidecar_filename = (
         f"returns_{returns_tag}.parquet" if returns_tag else "returns.parquet"
     )
@@ -296,7 +291,6 @@ def compute_advantages_for_dataset(
         sidecar_df = sidecar_df.sort_values(
             ["episode_index", "frame_index"]
         ).reset_index(drop=True)
-        # Merge on (episode_index, frame_index) — only add missing columns
         merge_cols = [
             c
             for c in ["reward", "return"]
@@ -351,7 +345,6 @@ def compute_advantages_for_dataset(
         if cut > 0:
             v_next_arr[:cut] = values[advantage_lookahead_step:]
 
-        # Discounted reward sums via sliding window (vectorized)
         padded = np.concatenate(
             [rewards, np.zeros(advantage_lookahead_step - 1, dtype=np.float32)]
         )
@@ -363,7 +356,6 @@ def compute_advantages_for_dataset(
         )
         reward_sums_raw = (windowed @ gamma_powers).astype(np.float64)
 
-        # Normalize reward sums
         if ret_range <= 0:
             raise ValueError(
                 f"Invalid return range: global_return_max ({global_return_max}) - "
@@ -568,7 +560,6 @@ def add_advantages_to_parquet_files(
     advantages_df = advantages_df.copy()
     advantages_df["advantage_continuous"] = adv_continuous_col
 
-    # Build lookup using vectorized column access (much faster than iterrows)
     ep_arr = advantages_df["episode_index"].values.astype(np.int64)
     fr_arr = advantages_df["frame_index"].values.astype(np.int64)
     adv_cont_arr = advantages_df["advantage_continuous"].values

@@ -1,40 +1,25 @@
 model_type: "value_model"
 
-# Model precision
 precision: bf16
 
-# LoRA settings (not supported for this model)
+# Not supported for this model
 is_lora: false
 
-# =====================================================================
-# Backbone: SigLIP-Gemma3
-# =====================================================================
 backbone_variant: "siglip_gemma3"
 
-# Paths to SigLIP and Gemma3 pretrained weights
 siglip_path: /path/to/siglip2-so400m-patch14-224
 gemma3_path: /path/to/gemma-3-270m
 tokenizer_path: /path/to/gemma-3-270m
 
-# =====================================================================
-# Critic architecture
-# =====================================================================
-
-# critic_expert_variant: Gemma expert model size
-#   "gemma_1m" | "gemma_50m" | "gemma_100m" | "gemma_150m" | "gemma_300m" | "gemma_2b"
+# "gemma_1m" | "gemma_50m" | "gemma_100m" | "gemma_150m" | "gemma_300m" | "gemma_2b"
 critic_expert_variant: "gemma_1m"
 
-# =====================================================================
-# Value head (categorical loss)
-# =====================================================================
+# Categorical value head
 num_bins: 201           # number of discretization bins
 v_min: -1.0             # minimum value for atom support
 v_max: 0.0              # maximum value for atom support
-value_dropout: 0.0      # dropout before value projection (e.g. 0.1)
+value_dropout: 0.0
 
-# =====================================================================
-# PI05 base model params
-# =====================================================================
 action_dim: 32
 action_horizon: 50
 max_token_len: 200
@@ -46,11 +31,7 @@ forward_mode: "vla"
 max_language_len: 50
 stop_gradient_to_vlm: false
 
-# =====================================================================
-# Checkpoint
-# =====================================================================
-# For siglip_gemma3: optional. Points to a previously trained ValueCriticModel
-#   checkpoint to resume training. Backbone weights are loaded via
-#   from_pretrained() from siglip_path/gemma3_path; leave unset to train
-#   from scratch.
+# Optional. Points to a previously trained ValueCriticModel checkpoint to
+#   resume training. Backbone weights are loaded via from_pretrained() from
+#   siglip_path/gemma3_path; leave unset to train from scratch.
 # model_path: "/path/to/checkpoint"

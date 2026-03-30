@@ -14,25 +14,8 @@
 
 """FSDP CFG Worker for Classifier-Free Guidance training.
 
-This module provides FSDPCfgWorker, which extends FSDPSftWorker to support
-CFG (Classifier-Free Guidance) training with pre-computed advantage labels.
-
-Key features:
-- Uses AdvantageMixtureDataset for data loading with weighted sampling
-- Pre-computed advantages from datasets (computed by compute_advantages.py)
-- Optional positive-only conditional routing based on advantage labels
-
-Example config:
-    data:
-      balance_dataset_weights: true
-      seed: 42
-      train_data_paths:
-        - path: "/path/to/collected_data_with_advantages"
-          episodes: null
-          weight: 1.0
-        - path: "/path/to/sft_data_with_advantages"
-          episodes: null
-          weight: 0.5
+Extends FSDPSftWorker with pre-computed advantage labels and
+AdvantageMixtureDataset for weighted sampling across datasets.
 """
 
 from __future__ import annotations
@@ -69,35 +52,15 @@ except ImportError:
     pass
 
 
-# =============================================================================
-# Main Worker Class
-# =============================================================================
-
-
 class FSDPCfgWorker(FSDPSftWorker):
     """FSDP worker for CFG (Classifier-Free Guidance) training.
 
-    Extends FSDPSftWorker with:
-    1. Support for loading datasets with pre-computed advantages
-    2. Uses AdvantageMixtureDataset for data loading with weighted sampling
-    3. Passes advantage to model.forward for guidance selection
-
-    Config options:
-        data.balance_dataset_weights: Multiply weights by dataset length when True
-        data.seed: Random seed for sampling
-        data.train_data_paths: List of dataset configs with path, episodes, weight
+    Extends FSDPSftWorker to load datasets with pre-computed advantages,
+    use AdvantageMixtureDataset for weighted sampling, and pass advantage
+    labels to model.forward for guidance selection.
     """
 
     def __init__(self, cfg: DictConfig):
-        """Initialize FSDPCfgWorker.
-
-        Overrides parent __init__ to use CFG's own build_dataloader()
-        which uses AdvantageMixtureDataset instead of train_data_paths.
-
-        Args:
-            cfg: Hydra configuration dictionary.
-        """
-        # Replicate parent setup but skip train_data_paths/eval_dataset logic
         Worker.__init__(self)
         FSDPModelManager.__init__(self, cfg.actor, self._world_size, self._rank)
 
@@ -118,7 +81,6 @@ class FSDPCfgWorker(FSDPSftWorker):
             self.global_batch_size // self.micro_batch_size // self._world_size
         )
 
-        # CFG uses its own build_dataloader() with AdvantageMixtureDataset
         self.data_loader, self.data_config = self.build_dataloader()
         self.data_iter = iter(self.data_loader)
         self.eval_data_loader = None
@@ -126,10 +88,6 @@ class FSDPCfgWorker(FSDPSftWorker):
         self.global_step = 0
         self._data_epoch = 0
         self._data_iter_offset = 0
-
-    # -------------------------------------------------------------------------
-    # DataLoader Building
-    # -------------------------------------------------------------------------
 
     @staticmethod
     def _load_advantages_lookup(
@@ -172,28 +130,17 @@ class FSDPCfgWorker(FSDPSftWorker):
         return lookup
 
     def build_dataloader(self):
-        """Build CFG dataloader with advantage support.
-
-        Uses AdvantageMixtureDataset for weighted sampling across datasets.
-
-        Returns:
-            Tuple of (CFGDataLoaderImpl, data_config).
-
-        Raises:
-            ValueError: If no data path is provided.
-        """
+        """Build CFG dataloader with advantage-weighted sampling across datasets."""
         import lerobot.datasets.lerobot_dataset as lerobot_dataset
         import openpi.training.data_loader as openpi_data_loader
         import openpi.transforms as transforms
 
         from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 
-        # Parse config
         data_cfg = self.cfg.get("data", {})
         openpi_cfg = self.cfg.actor.model.openpi
         advantage_tag = data_cfg.get("tag", None)
 
-        # Parse datasets from config
         datasets_config = data_cfg.get("train_data_paths", [])
         if not datasets_config:
             raise ValueError(
@@ -201,7 +148,6 @@ class FSDPCfgWorker(FSDPSftWorker):
                 "Each dataset should have 'path' and optionally 'episodes' and 'weight' fields."
             )
 
-        # Get OpenPI config using first dataset path
         first_path = datasets_config[0]["path"]
         config = get_openpi_config(
             openpi_cfg.config_name,
@@ -211,18 +157,15 @@ class FSDPCfgWorker(FSDPSftWorker):
         )
         data_config = config.data.create(config.assets_dirs, config.model)
 
-        # Build transforms with TokenizePromptWithGuidance
         model_transforms = self._build_model_transforms(data_config)
         norm_stats = data_config.norm_stats or {}
 
-        # Load datasets sequentially
         datasets_with_weights = []
         for ds_config in datasets_config:
             data_path = ds_config["path"]
             episodes = ds_config.get("episodes")
             weight = ds_config.get("weight", 1.0)
 
-            # 1. Create LeRobotDataset
             dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(data_path)
             base_dataset = lerobot_dataset.LeRobotDataset(
                 data_path,
@@ -235,23 +178,19 @@ class FSDPCfgWorker(FSDPSftWorker):
                 },
             )
 
-            # Cast image columns from struct to Image type for proper decoding
             base_dataset.hf_dataset = cast_image_features(base_dataset.hf_dataset)
 
-            # Fix episode_data_index if using specific episodes
             if episodes is not None:
                 self._fix_episode_data_index(base_dataset, episodes)
 
-            # Apply prompt transform if needed
             if data_config.prompt_from_task:
                 base_dataset = openpi_data_loader.TransformedDataset(
                     base_dataset,
                     [transforms.PromptFromLeRobotTask(dataset_meta.tasks)],
                 )
 
-            # 2. Apply OpenPI transforms
-            # Note: RepackTransform strips all keys except OpenPI required ones,
-            # so DatasetWithAdvantage is needed to restore advantage field
+            # RepackTransform strips all keys except OpenPI required ones,
+            # so DatasetWithAdvantage is needed to restore the advantage field.
             transforms_list = [
                 *data_config.repack_transforms.inputs,
                 *data_config.data_transforms.inputs,
@@ -264,7 +203,6 @@ class FSDPCfgWorker(FSDPSftWorker):
                 base_dataset, transforms_list
             )
 
-            # 3. Load advantage lookup from meta parquet (required)
             advantages_lookup = self._load_advantages_lookup(data_path, advantage_tag)
             if self._rank == 0:
                 adv_filename = (
@@ -277,7 +215,6 @@ class FSDPCfgWorker(FSDPSftWorker):
                     f"meta/{adv_filename} ({len(advantages_lookup)} entries)"
                 )
 
-            # 4. Wrap with DatasetWithAdvantage (restores advantage after transforms)
             final_dataset = DatasetWithAdvantage(
                 base_dataset=base_dataset,
                 transformed_dataset=transformed_dataset,
@@ -292,7 +229,6 @@ class FSDPCfgWorker(FSDPSftWorker):
                     f"({len(final_dataset)} samples, weight={weight})"
                 )
 
-        # Use AdvantageMixtureDataset for weighted sampling
         combined_dataset = AdvantageMixtureDataset(
             datasets=datasets_with_weights,
             mode="train",
@@ -300,7 +236,6 @@ class FSDPCfgWorker(FSDPSftWorker):
             seed=data_cfg.get("seed", 42),
         )
 
-        # Create DataLoader with DistributedSampler
         torch_data_loader = self._create_torch_dataloader(
             combined_dataset, config, openpi_data_loader
         )
@@ -309,18 +244,7 @@ class FSDPCfgWorker(FSDPSftWorker):
         return data_loader, data_loader.data_config()
 
     def _build_model_transforms(self, data_config: Any) -> list:
-        """Build model transforms with TokenizePromptWithGuidance.
-
-        Args:
-            data_config: OpenPI data configuration.
-
-        Returns:
-            List of model transforms.
-
-        Raises:
-            ValueError: If tokenizer not found in model_transforms.
-        """
-        # Find tokenizer
+        """Replace TokenizePrompt with TokenizePromptWithGuidance in model transforms."""
         tokenizer = None
         for t in data_config.model_transforms.inputs:
             if hasattr(t, "tokenizer"):
@@ -330,7 +254,6 @@ class FSDPCfgWorker(FSDPSftWorker):
         if tokenizer is None:
             raise ValueError("Cannot find tokenizer in model_transforms")
 
-        # Replace TokenizePrompt with TokenizePromptWithGuidance
         model_transforms = []
         for t in data_config.model_transforms.inputs:
             if type(t).__name__ == "TokenizePrompt":
@@ -350,10 +273,6 @@ class FSDPCfgWorker(FSDPSftWorker):
 
         LeRobotDataset has a bug where episode_data_index doesn't match the
         original episode indices when filtering by episodes. This fixes that.
-
-        Args:
-            dataset: LeRobotDataset instance.
-            episodes: List of episode indices to use.
         """
         ep_idx_mapping = {ep: i for i, ep in enumerate(sorted(episodes))}
         max_ep_idx = max(episodes) + 1
@@ -378,17 +297,7 @@ class FSDPCfgWorker(FSDPSftWorker):
         openpi_data_loader: Any,
         shuffle: bool = True,
     ) -> Any:
-        """Create PyTorch DataLoader with distributed sampler.
-
-        Args:
-            dataset: Combined dataset.
-            config: OpenPI config.
-            openpi_data_loader: OpenPI data_loader module.
-            shuffle: Whether to shuffle the data (default: True).
-
-        Returns:
-            DataLoader instance.
-        """
+        """Create PyTorch DataLoader with distributed sampler."""
         batch_size = config.batch_size
         sampler = None
 
@@ -419,18 +328,8 @@ class FSDPCfgWorker(FSDPSftWorker):
             persistent_workers=num_workers > 0,
         )
 
-    # -------------------------------------------------------------------------
-    # Training
-    # -------------------------------------------------------------------------
-
     def run_training(self):
-        """Run one training step with advantage-based CFG guidance.
-
-        Overrides FSDPSftWorker.run_training() to:
-        1. Unpack advantage from data_iter
-        2. Pass advantage to model.forward()
-        3. Handle positive/negative guidance metrics
-        """
+        """Run one training step with advantage-based CFG guidance."""
         with self.worker_timer():
             if self.cfg.actor.get("enable_offload", False):
                 with self.device_lock:
@@ -461,7 +360,6 @@ class FSDPCfgWorker(FSDPSftWorker):
                     is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
                 )
 
-                # CFG: unpack advantage (replaces is_success)
                 try:
                     observation, actions, advantage = next(self.data_iter)
                 except StopIteration:
@@ -483,7 +381,6 @@ class FSDPCfgWorker(FSDPSftWorker):
                 advantage = advantage.to(self.device, non_blocking=True)
 
                 with self.amp_context:
-                    # CFG: pass advantage to model
                     result = self.model(
                         data={
                             "observation": observation,
@@ -532,7 +429,6 @@ class FSDPCfgWorker(FSDPSftWorker):
 
             self.lr_scheduler.step()
 
-            # CFG: handle conditional-routing metrics
             count_keys = {
                 "conditional_count",
                 "unconditional_count",

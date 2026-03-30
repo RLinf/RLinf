@@ -44,11 +44,6 @@ from .siglip_gemma3_with_multi_expert import SiglipGemma3WithMultiExpert
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Free Functions (from openpi/modeling_pi0.py)
-# =============================================================================
-
-
 def make_att_2d_masks(pad_masks, att_masks):
     """Create 2D attention masks from padding and AR masks.
 
@@ -64,11 +59,6 @@ def make_att_2d_masks(pad_masks, att_masks):
     att_2d_masks = cumsum[:, None, :] <= cumsum[:, :, None]
     pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
     return att_2d_masks & pad_2d_masks
-
-
-# =============================================================================
-# VLMPreTrainedModel (HF integration for from_pretrained)
-# =============================================================================
 
 
 class VLMPreTrainedModel(PreTrainedModel):
@@ -321,11 +311,6 @@ class CriticPreTrainedModel(VLMPreTrainedModel):
     config_class = VLMBaseConfig
 
 
-# =============================================================================
-# Output Dataclasses
-# =============================================================================
-
-
 @dataclass
 class CriticOutput(ModelOutput):
     """Output for critic models."""
@@ -340,11 +325,6 @@ class CriticOutput(ModelOutput):
     cat_acc_best: Optional[torch.FloatTensor] = None
     cat_acc_neighbor: Optional[torch.FloatTensor] = None
     cat_mae: Optional[torch.FloatTensor] = None
-
-
-# =============================================================================
-# VLMObservationEncoder (base class providing observation processing/embedding)
-# =============================================================================
 
 
 class VLMObservationEncoder(nn.Module):
@@ -466,11 +446,6 @@ class VLMObservationEncoder(nn.Module):
         )
 
 
-# =============================================================================
-# Value Head
-# =============================================================================
-
-
 class ValueHead(nn.Module):
     """Value prediction head with learnable CLS embedding and categorical projection."""
 
@@ -513,11 +488,6 @@ class ValueHead(nn.Module):
         hidden_states = hidden_states.to(self.value_proj.weight.dtype)
         hidden_states = self.dropout(hidden_states)
         return self.value_proj(hidden_states)
-
-
-# =============================================================================
-# ValueCriticModel (FSDP-enhanced, from top-level modeling_critic.py)
-# =============================================================================
 
 
 class ValueCriticModel(VLMObservationEncoder):
@@ -933,7 +903,6 @@ class ValueCriticModel(VLMObservationEncoder):
         )
         suffix_embs, suffix_pad_masks, suffix_ar_masks = self.embed_suffix(batch_size)
 
-        # Phase 1: Prefill VLM
         prefix_attn = make_att_2d_masks(prefix_pad_masks, prefix_ar_masks)
         prefix_attn_4d = self._prepare_attention_masks_4d(prefix_attn)
         prefix_pos = torch.cumsum(prefix_pad_masks, dim=1) - 1
@@ -946,7 +915,6 @@ class ValueCriticModel(VLMObservationEncoder):
             use_cache=True,
         )
 
-        # Phase 2: Expert with cache
         prefix_len, suffix_len = prefix_pad_masks.shape[1], suffix_pad_masks.shape[1]
         prefix_2d = prefix_pad_masks[:, None, :].expand(
             batch_size, suffix_len, prefix_len
@@ -980,11 +948,6 @@ class ValueCriticModel(VLMObservationEncoder):
             atoms=self.value_head.atoms,
             hidden_states=cls_hidden,
         )
-
-
-# =============================================================================
-# ValueCritic (HF wrapper for training and inference via from_pretrained)
-# =============================================================================
 
 
 class ValueCritic(CriticPreTrainedModel):
@@ -1090,10 +1053,6 @@ class ValueCritic(CriticPreTrainedModel):
         """Predict value distribution. Returns (values, probs, atoms)."""
         out = self.model.predict(observation)
         return out.predicted_values, out.probs, out.atoms
-
-    # =========================================================================
-    # Inference API (from_checkpoint / infer / infer_batch)
-    # =========================================================================
 
     @classmethod
     def from_checkpoint(
@@ -1221,7 +1180,6 @@ class ValueCritic(CriticPreTrainedModel):
                 f"unexpected={len(unexpected)})"
             )
 
-        # Attach processor
         object.__setattr__(model, "processor", processor)
 
         model = model.to(device)
@@ -1238,7 +1196,6 @@ class ValueCritic(CriticPreTrainedModel):
                     "proceeding without normalization"
                 )
 
-        # Exclude 'return' from normalization
         if norm_stats and "return" in norm_stats:
             norm_stats = {k: v for k, v in norm_stats.items() if k != "return"}
 
@@ -1254,7 +1211,6 @@ class ValueCritic(CriticPreTrainedModel):
             action_norm_skip_dims=action_norm_skip_dims,
         )
 
-        # Attach transforms and device for inference
         from rlinf.datasets.lerobot.transforms import compose
 
         object.__setattr__(model, "_input_transform", compose(transforms))
@@ -1280,7 +1236,6 @@ class ValueCritic(CriticPreTrainedModel):
         """
         import numpy as np
 
-        # Get images
         if "image" in inputs and isinstance(inputs["image"], dict):
             images_dict = inputs["image"]
         elif "images" in inputs and isinstance(inputs["images"], dict):
@@ -1301,33 +1256,26 @@ class ValueCritic(CriticPreTrainedModel):
                         img_key = img_key.replace(prefix, "")
                     images_dict[img_key] = inputs[key]
 
-        # Get prompt
         prompt = inputs.get("prompt", "perform the task")
         if isinstance(prompt, np.ndarray):
             prompt = str(prompt.item()) if prompt.size == 1 else "perform the task"
         elif not isinstance(prompt, str):
             prompt = "perform the task"
 
-        # Convert to BHWC for image_processor (handles both CHW and HWC input)
         images_bhwc = {}
         for cam_name, img in images_dict.items():
             if isinstance(img, np.ndarray):
                 img = torch.from_numpy(img)
             if img.dim() == 3:
                 if img.shape[0] == 3:
-                    # CHW (3, H, W) -> BHWC (1, H, W, 3)
-                    img = img.unsqueeze(0).permute(0, 2, 3, 1)
+                    img = img.unsqueeze(0).permute(0, 2, 3, 1)  # CHW -> BHWC
                 else:
-                    # HWC (H, W, 3) -> BHWC (1, H, W, 3)
-                    img = img.unsqueeze(0)
+                    img = img.unsqueeze(0)  # HWC -> BHWC
             elif img.dim() == 4:
                 if img.shape[1] == 3:
-                    # BCHW -> BHWC
-                    img = img.permute(0, 2, 3, 1)
-                # else: already BHWC
+                    img = img.permute(0, 2, 3, 1)  # BCHW -> BHWC
             images_bhwc[cam_name] = img
 
-        # Image masks
         input_masks = inputs.get("image_mask", inputs.get("image_masks", {}))
         image_masks_batch = {}
         for cam_name in images_bhwc:
@@ -1344,7 +1292,6 @@ class ValueCritic(CriticPreTrainedModel):
             else:
                 image_masks_batch[cam_name] = torch.tensor([True], dtype=torch.bool)
 
-        # Process images (CPU)
         processed_img = processor.image_processor(
             images=images_bhwc,
             image_masks=image_masks_batch if image_masks_batch else None,
@@ -1352,7 +1299,6 @@ class ValueCritic(CriticPreTrainedModel):
             train=False,
         )
 
-        # Tokenize prompt (CPU)
         cleaned_prompt = processor._clean_text(prompt)
         cleaned_prompt = processor._strip_trailing_punctuation(cleaned_prompt)
         prefix_text = f"Task: {cleaned_prompt}."
@@ -1394,7 +1340,6 @@ class ValueCritic(CriticPreTrainedModel):
 
         device = getattr(self, "_device", "cuda")
 
-        # Get images
         if "image" in inputs and isinstance(inputs["image"], dict):
             images_dict = inputs["image"]
         elif "images" in inputs and isinstance(inputs["images"], dict):
@@ -1415,7 +1360,6 @@ class ValueCritic(CriticPreTrainedModel):
                         img_key = img_key.replace(prefix, "")
                     images_dict[img_key] = inputs[key]
 
-        # Get prompt
         prompt = inputs.get("prompt", "perform the task")
         if isinstance(prompt, np.ndarray):
             prompt = str(prompt.item()) if prompt.size == 1 else "perform the task"
@@ -1441,7 +1385,6 @@ class ValueCritic(CriticPreTrainedModel):
                 # else: already BHWC
             images_bhwc[cam_name] = img
 
-        # Image masks
         input_masks = inputs.get("image_mask", inputs.get("image_masks", {}))
         image_masks_batch = {}
         for cam_name in images_bhwc:
@@ -1458,7 +1401,6 @@ class ValueCritic(CriticPreTrainedModel):
             else:
                 image_masks_batch[cam_name] = torch.tensor([True], dtype=torch.bool)
 
-        # Process images
         processed_img = processor.image_processor(
             images=images_bhwc,
             image_masks=image_masks_batch if image_masks_batch else None,
@@ -1466,7 +1408,6 @@ class ValueCritic(CriticPreTrainedModel):
             train=False,
         )
 
-        # Tokenize prompt
         cleaned_prompt = processor._clean_text(prompt)
         cleaned_prompt = processor._strip_trailing_punctuation(cleaned_prompt)
         prefix_text = f"Task: {cleaned_prompt}."
@@ -1485,7 +1426,6 @@ class ValueCritic(CriticPreTrainedModel):
             mask = [True] * max_length
             ar_mask = [0] * max_length
 
-        # Build observation dict
         pixel_values = processed_img["pixel_values"]
         image_masks = processed_img["image_masks"]
 

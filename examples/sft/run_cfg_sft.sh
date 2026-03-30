@@ -20,14 +20,13 @@ export LIBAV_LOG_LEVEL=quiet
 
 export PYTHONPATH=${REPO_PATH}:${LIBERO_REPO_PATH}:$PYTHONPATH
 
-# Activate the openpi environment
 source switch_env openpi 2>/dev/null || true
 
 if [ -z "$1" ]; then
     CONFIG_NAME="libero_cfg_openpi"
 else
     CONFIG_NAME=$1
-    shift  # Remove first argument so $@ contains only additional args
+    shift
 fi
 
 echo "Using Python at $(which python)"

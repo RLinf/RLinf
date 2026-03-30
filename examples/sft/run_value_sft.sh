@@ -22,7 +22,6 @@ export FFREPORT=""
 
 export PYTHONPATH=${REPO_PATH}:${LIBERO_REPO_PATH}:$PYTHONPATH
 
-# Activate the openpi environment
 source switch_env openpi 2>/dev/null || echo "Warning: switch_env not found, using current environment"
 
 if [ -z "$1" ]; then
@@ -40,5 +39,4 @@ mkdir -p "${LOG_DIR}"
 HYDRA_ARGS=("runner.logger.log_path=${LOG_DIR}")
 CMD_BASE="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ --config-name ${CONFIG_NAME}"
 echo "${CMD_BASE} ${HYDRA_ARGS[*]} ${EXTRA_ARGS}" > ${MEGA_LOG_FILE}
-# Filter out libdav1d verbose logging
 ${CMD_BASE} "${HYDRA_ARGS[@]}" ${EXTRA_ARGS} 2>&1 | grep -v "libdav1d" | tee -a ${MEGA_LOG_FILE}

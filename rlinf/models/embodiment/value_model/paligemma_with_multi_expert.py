@@ -54,7 +54,6 @@ def check_transformers_replace():
         )
 
 
-# Verify custom transformers modifications are installed
 check_transformers_replace()
 
 
@@ -126,7 +125,6 @@ class PaliGemmaWithMultiExpertModel(nn.Module):
         if use_adarms is None:
             use_adarms = [False, dict.fromkeys(self.expert_names, False)]
 
-        # Create PaliGemma VLM
         vlm_config_hf = CONFIG_MAPPING["paligemma"]()
         vlm_config_hf._vocab_size = 257152
         vlm_config_hf.image_token_index = 257152
@@ -150,7 +148,6 @@ class PaliGemmaWithMultiExpertModel(nn.Module):
 
         self.paligemma = PaliGemmaForConditionalGeneration(config=vlm_config_hf)
 
-        # Create multiple experts
         self.experts = nn.ModuleDict()
         for name, expert_config in expert_configs.items():
             expert_use_adarms = use_adarms[1].get(name, False)
@@ -240,7 +237,6 @@ class PaliGemmaWithMultiExpertModel(nn.Module):
         if adarms_cond is None:
             adarms_cond = [None, None]
 
-        # VLM-only mode
         if inputs_embeds[1] is None:
             prefix_output = self.paligemma.language_model.forward(
                 inputs_embeds=inputs_embeds[0],
@@ -255,10 +251,8 @@ class PaliGemmaWithMultiExpertModel(nn.Module):
             suffix_output = None
             return [prefix_output, suffix_output], prefix_past_key_values
 
-        # Resolve expert_name with backwards compatibility
         expert_name = self._resolve_expert_name(expert_name)
 
-        # Expert-only mode (with cached KV from VLM)
         if inputs_embeds[0] is None:
             expert = self.experts[expert_name]
             suffix_output = expert.model.forward(
@@ -274,7 +268,6 @@ class PaliGemmaWithMultiExpertModel(nn.Module):
             suffix_output = suffix_output.last_hidden_state
             return [prefix_output, suffix_output], suffix_past_key_values
 
-        # Interleaved VLM + expert mode
         expert = self.experts[expert_name]
 
         return self._forward_interleaved(
@@ -612,10 +605,6 @@ class PaliGemmaWithMultiExpertModel(nn.Module):
         raise ValueError(
             f"expert_name must be specified when multiple experts exist: {self.expert_names}"
         )
-
-    # =========================================================================
-    # Backwards Compatibility with PaliGemmaWithExpertModel
-    # =========================================================================
 
     @property
     def gemma_expert(self) -> GemmaForCausalLM | None:

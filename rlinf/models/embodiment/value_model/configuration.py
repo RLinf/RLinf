@@ -29,10 +29,6 @@ from transformers import PretrainedConfig
 ForwardMode = Literal["vla", "vlm", "vlm_vla"]
 
 
-# =============================================================================
-# Gemma Expert Variant Configs
-# =============================================================================
-#
 # Einsum axis naming convention:
 #   B: batch, T: query length, S: k/v length, N: num query heads,
 #   K: num k/v heads, G: num query heads per k/v head, H: head dim,
@@ -158,11 +154,6 @@ def get_config(variant: Variant) -> Config:
             head_dim=256,
         )
     raise ValueError(f"Unknown variant: {variant}")
-
-
-# =============================================================================
-# PI0.5 Model Configs
-# =============================================================================
 
 
 class VLMBaseConfig(PretrainedConfig):

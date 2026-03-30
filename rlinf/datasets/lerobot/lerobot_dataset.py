@@ -51,14 +51,8 @@ class TransformedDataset(Dataset):
         self._transform = compose(transforms)
 
     def __getitem__(self, index):
-        # Get sample from underlying dataset
         sample = self._dataset[index]
-
-        # Apply transforms directly to tensor data
-        # All transforms are tensor-aware and preserve device placement
-        transformed_sample = self._transform(sample)
-
-        return transformed_sample
+        return self._transform(sample)
 
     def __len__(self):
         return len(self._dataset)
@@ -114,7 +108,6 @@ class LeRobotPyTorchDataset(Dataset):
             shuffle_episodes: If True, randomly select episodes; if False, use first N episodes.
             episode_seed: Random seed for reproducible episode selection.
         """
-        # Accept either dataset_path or repo_id for flexibility
         self.repo_id = dataset_path or repo_id
         self.max_samples = max_samples
         if self.repo_id is None:
@@ -122,37 +115,30 @@ class LeRobotPyTorchDataset(Dataset):
         self.action_horizon = action_horizon
         self.split = split
 
-        # Episode-level data scaling parameters
         self.episode_percentage = episode_percentage
         self.shuffle_episodes = shuffle_episodes
         self.episode_seed = episode_seed
         self._episode_indices = None  # Selected episode indices (for reference)
-        self._sample_indices = None  # Sample indices to use (for index-based filtering)
+        self._sample_indices = None
 
-        # Check if this is a local path or remote repo ID
         self.is_local = self._is_local_path(self.repo_id)
 
-        # Load dataset metadata and create base dataset
         if self.is_local:
-            # For local datasets, use just the folder name as repo_id and set root to the full path
-            # Note: use absolute() instead of resolve() to avoid symlink resolution issues
+            # Use absolute() instead of resolve() to avoid symlink resolution issues
             local_path = Path(self.repo_id).absolute()
             folder_name = local_path.name
             self.dataset_meta = LeRobotDatasetMetadata(folder_name, root=local_path)
         else:
             self.dataset_meta = LeRobotDatasetMetadata(self.repo_id)
 
-        # Create data config - priority: data_config_factory > config dict > individual params
         if data_config_factory is not None:
             self.data_config = data_config_factory.create(action_dim=action_dim)
         elif config is not None:
-            # Create from config dict (e.g., from Hydra YAML)
             factory = create_data_config_factory_from_dict(config)
             self.data_config = factory.create(
                 action_dim=action_dim or config.get("action_dim", 32)
             )
         elif robot_type is not None or model_type is not None:
-            # Create from individual parameters
             factory = create_data_config_factory(
                 dataset_path=self.repo_id,
                 robot_type=robot_type,
@@ -166,8 +152,7 @@ class LeRobotPyTorchDataset(Dataset):
         else:
             self.data_config = None
 
-        # For delta_timestamps, we need to use the RAW dataset keys (before repack transforms)
-        # The most common key in LeRobot datasets is "action" (singular)
+        # Use raw dataset keys (before repack transforms) for delta_timestamps
         raw_action_keys = []
         if "action" in self.dataset_meta.features:
             raw_action_keys = ["action"]
@@ -178,15 +163,12 @@ class LeRobotPyTorchDataset(Dataset):
                 f"No action key found in dataset metadata: {self.dataset_meta.features}"
             )
 
-        # Calculate delta_timestamps using FPS from metadata (OpenPI pattern)
         delta_timestamps = {
             key: [t / self.dataset_meta.fps for t in range(action_horizon)]
             for key in raw_action_keys
         }
         logger.info(f"Delta timestamps: {delta_timestamps}")
 
-        # Create base LeRobot dataset (load all episodes first)
-        # We'll apply episode filtering via sample index mapping after loading
         if self.is_local:
             local_path = Path(self.repo_id).absolute()
             folder_name = local_path.name
@@ -201,21 +183,15 @@ class LeRobotPyTorchDataset(Dataset):
                 self.repo_id, delta_timestamps=delta_timestamps, download_videos=False
             )
 
-        # Compute episode filtering AFTER loading (to get episode_data_index)
-        # This creates a sample index mapping for filtered access
         self._compute_episode_filtering()
 
-        # Step 2: Add prompt from task if needed (following OpenPI pattern)
-        # This must happen BEFORE the main transform pipeline (like in OpenPI data_loader.py)
+        # Prompt injection must happen before the main transform pipeline
         if self.data_config and getattr(self.data_config, "prompt_from_task", True):
-            # Determine which tasks to use
             tasks_to_use = None
 
             if self.is_local:
-                # For local datasets, try loading from our universal task loader
                 tasks_to_use = load_task_descriptions(Path(self.repo_id).absolute())
 
-            # If no local tasks found, try using metadata tasks (for remote datasets or fallback)
             if (
                 not tasks_to_use
                 and hasattr(self.dataset_meta, "tasks")
@@ -223,15 +199,12 @@ class LeRobotPyTorchDataset(Dataset):
             ):
                 tasks_to_use = self.dataset_meta.tasks
 
-            # Apply prompt transform if we have tasks
             if tasks_to_use:
                 logger.info(f"Adding prompt transform with {len(tasks_to_use)} tasks")
                 self.base_dataset = TransformedDataset(
                     self.base_dataset, [PromptFromLeRobotTask(tasks_to_use)]
                 )
 
-        # Step 3: Apply transform pipeline (following OpenPI's transform_dataset pattern)
-        # This should wrap the dataset with TransformedDataset, not apply transforms in __getitem__
         transforms = self._create_transform_list()
         if transforms:
             self.base_dataset = TransformedDataset(self.base_dataset, transforms)
@@ -258,31 +231,23 @@ class LeRobotPyTorchDataset(Dataset):
 
     def _is_local_path(self, path_or_id: str) -> bool:
         """Check if the input is a local path or a remote repo ID."""
-        # Check multiple indicators of a local path
         path = Path(path_or_id)
         return (
-            path.exists()  # Path exists
-            or path.is_absolute()  # Absolute path
-            or path_or_id.startswith("./")  # Relative path with ./
-            or path_or_id.startswith("../")  # Relative path with ../
-            or (
-                path_or_id.startswith("data/") and "/" not in path_or_id[5:]
-            )  # data/ prefix without additional slashes
-            or (
-                "/" not in path_or_id and not path_or_id.startswith("lerobot/")
-            )  # No slashes and not a huggingface repo
+            path.exists()
+            or path.is_absolute()
+            or path_or_id.startswith("./")
+            or path_or_id.startswith("../")
+            or (path_or_id.startswith("data/") and "/" not in path_or_id[5:])
+            or ("/" not in path_or_id and not path_or_id.startswith("lerobot/"))
         )
 
     def _compute_episode_filtering(self) -> None:
-        """
-        Compute episode filtering based on episode_percentage and shuffle_episodes.
+        """Compute episode filtering based on episode_percentage and shuffle_episodes.
 
-        This creates a sample index mapping for filtered access. We use index-based
-        filtering instead of LeRobot's episodes argument because the episodes argument
-        doesn't handle non-sequential episode indices correctly when shuffling.
+        Uses index-based filtering instead of LeRobot's episodes argument because the
+        episodes argument doesn't handle non-sequential episode indices correctly when shuffling.
         """
         if self.episode_percentage is None or self.episode_percentage >= 100.0:
-            # No filtering needed
             return
 
         if self.episode_percentage <= 0:
@@ -290,34 +255,26 @@ class LeRobotPyTorchDataset(Dataset):
                 f"episode_percentage must be > 0, got {self.episode_percentage}"
             )
 
-        # Get total number of episodes
         total_episodes = self.dataset_meta.total_episodes
-
-        # Calculate number of episodes to use (must be at least 1)
         num_episodes_to_use = max(
             1, int(total_episodes * self.episode_percentage / 100.0)
         )
 
-        # Get episode indices
         all_episode_indices = list(range(total_episodes))
 
         if self.shuffle_episodes:
-            # Randomly select episodes with reproducible seed
             rng = np.random.default_rng(self.episode_seed)
             selected_episodes = rng.choice(
                 all_episode_indices, size=num_episodes_to_use, replace=False
             )
             selected_episodes = set(selected_episodes.tolist())
         else:
-            # Use first N episodes
             selected_episodes = set(all_episode_indices[:num_episodes_to_use])
 
         self._episode_indices = sorted(selected_episodes)
 
-        # Get episode_data_index from the loaded dataset to map episodes to sample indices
         episode_data_index = self.base_dataset.episode_data_index
 
-        # Compute sample indices for selected episodes
         sample_indices = []
         for ep_idx in self._episode_indices:
             start_idx = episode_data_index["from"][ep_idx].item()
@@ -338,13 +295,9 @@ class LeRobotPyTorchDataset(Dataset):
         transforms = []
 
         if self.data_config is not None:
-            # Add repack transforms (following OpenPI pattern)
             transforms.extend(self.data_config.repack_transforms.inputs)
-
-            # Add data transforms
             transforms.extend(self.data_config.data_transforms.inputs)
 
-            # Add normalization (following OpenPI pattern)
             if self.data_config.norm_stats is not None:
                 transforms.append(
                     Normalize(
@@ -354,13 +307,11 @@ class LeRobotPyTorchDataset(Dataset):
                     )
                 )
 
-            # Add model transforms
             transforms.extend(self.data_config.model_transforms.inputs)
 
         return transforms
 
     def __len__(self) -> int:
-        """Return the number of samples in the dataset."""
         if self._sample_indices is not None:
             base_len = len(self._sample_indices)
         else:
@@ -370,13 +321,11 @@ class LeRobotPyTorchDataset(Dataset):
         return base_len
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
-        """Get a single sample from the dataset."""
         if idx >= len(self):
             raise IndexError(
                 f"Index {idx} out of range for dataset of size {len(self)}"
             )
         idx = int(idx)
-        # Map through sample_indices if episode filtering is applied
         if self._sample_indices is not None:
             idx = self._sample_indices[idx]
         return self.base_dataset[idx]
@@ -400,36 +349,19 @@ class LeRobotPyTorchDataset(Dataset):
         val_len = int(total_len * validation_split)
         train_len = total_len - val_len
 
-        # Create index-based splits
         indices = np.arange(total_len)
         np.random.shuffle(indices)
 
         train_indices = indices[:train_len]
         val_indices = indices[train_len:]
 
-        # Create subset datasets
         train_ds = Subset(self, train_indices)
         val_ds = Subset(self, val_indices)
 
         return train_ds, val_ds
 
     def get_custom_tokens(self) -> Optional[list[str]]:
-        """
-        Get custom tokens that should be added to the tokenizer.
-
-        VLA datasets typically don't need custom tokens.
-
-        Returns:
-            None
-        """
         return None
 
     def get_source_name(self) -> str:
-        """
-        Get a readable source name for this dataset.
-
-        Returns:
-            Human-readable dataset source name (repo_id)
-        """
-        # Use the repo_id as the source name
         return self.repo_id.replace("/", "_").replace("-", "_").lower()

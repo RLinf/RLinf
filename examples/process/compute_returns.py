@@ -15,28 +15,16 @@
 """
 Compute returns for LeRobot datasets.
 
-This preprocessing script computes `return`, `reward`, and `prompt` for every
-frame in a LeRobot dataset and writes them as a **sidecar** parquet file at
-``meta/returns_{tag}.parquet`` (or ``meta/returns.parquet`` when no tag is set).
-The original per-episode parquet files are **not**
-modified, so the script only needs to read tiny metadata columns (episode_index,
-frame_index, is_success, task_index) — no image data is touched.
+Writes `return`, `reward`, and `prompt` as a sidecar parquet at
+``meta/returns_{tag}.parquet``. Updates meta/stats.json and meta/info.json.
+Does not modify original per-episode parquet files.
 
-Key features:
-- SFT datasets: reward=-1 per step, last step=0, all episodes successful
-- Rollout datasets: reward=-1 per step, last step=0 (success) or failure_reward (failure)
-- Returns computed via backward iteration: G_t = r_t + gamma * G_{t+1}
-- Updates meta/stats.json with return/reward statistics (mean, std, min, max)
-- Updates meta/info.json with new feature definitions
-
-Note: Normalization (target_values) is NOT done here. It's done at training time
-using global return_min/return_max computed from all datasets' stats.json.
+Return computation:
+- reward=-1 per step; last step=0 (success) or failure_reward (failure)
+- Returns via backward iteration: G_t = r_t + gamma * G_{t+1}
 
 Usage:
-    python compute_returns.py --config-name compute_returns \
-        data.dataset_path=/path/to/dataset \
-        data.dataset_type=sft \
-        data.gamma=1.0
+    python compute_returns.py --config-name compute_returns
 """
 
 import json
@@ -89,7 +77,6 @@ def compute_returns_for_episode(
     rewards = np.full(episode_length, -1.0, dtype=np.float32)
     rewards[-1] = 0.0 if is_success else failure_reward
 
-    # Compute returns via backward iteration: G_t = r_t + gamma * G_{t+1}
     returns = np.zeros(episode_length, dtype=np.float32)
     returns[-1] = rewards[-1]
     for t in range(episode_length - 2, -1, -1):
@@ -110,11 +97,9 @@ def get_episode_boundaries(episode_indices: np.ndarray) -> list[tuple[int, int, 
     if len(episode_indices) == 0:
         return []
 
-    # Find positions where episode_index changes
     change_mask = np.diff(episode_indices) != 0
     change_positions = np.where(change_mask)[0] + 1  # +1: index of new ep
 
-    # Build boundaries: [0, pos1, pos2, ..., len]
     starts = np.concatenate([[0], change_positions])
     ends = np.concatenate([change_positions, [len(episode_indices)]])
     ep_ids = episode_indices[starts]
@@ -137,7 +122,6 @@ def _process_single_parquet(
         Arrow table with (episode_index, frame_index, return, reward, prompt)
         columns, or None if the file is empty.
     """
-    # Error on empty / corrupted files — do not skip silently
     file_size = Path(pq_file).stat().st_size
     if file_size == 0:
         raise RuntimeError(
@@ -145,7 +129,6 @@ def _process_single_parquet(
             "Please fix or remove this file before running compute_returns."
         )
 
-    # Determine which columns exist in this file
     pf = pq.ParquetFile(pq_file)
     available = set(pf.schema_arrow.names)
     cols_to_read = [c for c in _READ_COLUMNS if c in available]
@@ -157,17 +140,14 @@ def _process_single_parquet(
 
     col_names = table.column_names
 
-    # ---- columnar access (zero-copy from Arrow) ----
     ep_indices = table.column("episode_index").to_numpy().astype(np.int64, copy=False)
     frame_indices = table.column("frame_index").to_numpy().astype(np.int64, copy=False)
     episodes = get_episode_boundaries(ep_indices)
 
-    # Batch-load is_success column once (if exists)
     is_success_col = None
     if "is_success" in col_names:
         is_success_col = table.column("is_success").to_pylist()
 
-    # ---- compute returns & rewards per episode ----
     returns_arr = np.empty(n, dtype=np.float32)
     rewards_arr = np.empty(n, dtype=np.float32)
 
@@ -190,7 +170,6 @@ def _process_single_parquet(
         returns_arr[ep_start:ep_end] = ep_returns
         rewards_arr[ep_start:ep_end] = ep_rewards
 
-    # ---- build prompts via columnar access ----
     if "task" in col_names:
         prompts_list = [str(t) for t in table.column("task").to_pylist()]
     elif "task_index" in col_names:
@@ -199,7 +178,6 @@ def _process_single_parquet(
     else:
         prompts_list = ["perform the task"] * n
 
-    # ---- build result table (tiny — no images) ----
     result = pa.table(
         {
             "episode_index": pa.array(ep_indices),
@@ -244,18 +222,15 @@ def process_dataset(
         f"  Type: {dataset_type}, Gamma: {gamma}, Failure reward: {failure_reward}"
     )
 
-    # Determine output location
     if output_path is None:
         output_path = dataset_path
     else:
-        # Copy dataset to output location
         if output_path.exists():
             logger.warning(f"Removing existing output: {output_path}")
             shutil.rmtree(output_path)
         shutil.copytree(dataset_path, output_path)
         logger.info(f"Copied dataset to: {output_path}")
 
-    # Find all parquet files
     data_dir = output_path / "data"
     if not data_dir.exists():
         raise FileNotFoundError(f"Data directory not found: {data_dir}")
@@ -263,7 +238,6 @@ def process_dataset(
     parquet_files = sorted(str(p) for p in data_dir.rglob("*.parquet"))
     logger.info(f"Found {len(parquet_files)} parquet files")
 
-    # Load tasks for prompt conversion
     tasks: dict[int, str] = {}
     tasks_path = output_path / "meta" / "tasks.jsonl"
     if tasks_path.exists():
@@ -274,9 +248,7 @@ def process_dataset(
                 task_desc = entry.get("task", "")
                 tasks[task_idx] = task_desc
 
-    # ---- parallel processing of parquet files ----
-    # ThreadPoolExecutor: PyArrow releases the GIL during I/O, so threads
-    # achieve true parallelism for I/O-bound work without fork/pickle overhead.
+    # PyArrow releases GIL during I/O, so threads achieve true parallelism
     result_tables: list[pa.Table] = []
 
     effective_workers = min(num_workers, len(parquet_files))
@@ -319,7 +291,6 @@ def process_dataset(
             "All parquet files are empty or missing."
         )
 
-    # ---- concatenate and write sidecar ----
     combined = pa.concat_tables(result_tables)
     sidecar_filename = f"returns_{tag}.parquet" if tag else "returns.parquet"
     sidecar_path = output_path / "meta" / sidecar_filename
@@ -330,7 +301,6 @@ def process_dataset(
         f"({combined.num_rows} rows, {sidecar_path.stat().st_size / 1024 / 1024:.1f} MB)"
     )
 
-    # ---- compute statistics ----
     returns_arr = combined.column("return").to_numpy()
     rewards_arr = combined.column("reward").to_numpy()
 
@@ -366,7 +336,6 @@ def process_dataset(
     )
     logger.info(f"  Total rows: {count}")
 
-    # Update meta/stats.json
     stats_path = output_path / "meta" / "stats.json"
     if stats_path.exists():
         with open(stats_path, "r") as f:
@@ -381,7 +350,6 @@ def process_dataset(
         json.dump(existing_stats, f, indent=2)
     logger.info("Updated stats.json")
 
-    # Update meta/info.json with new feature definitions
     info_path = output_path / "meta" / "info.json"
     if info_path.exists():
         with open(info_path, "r") as f:
@@ -421,7 +389,6 @@ def main(cfg: DictConfig) -> None:
     logger.info("Starting return computation...")
     logger.info(f"Config:\n{OmegaConf.to_yaml(cfg)}")
 
-    # Get global defaults
     data_root = cfg.data.get("data_root", None)
     default_type = cfg.data.get("dataset_type", "sft")
     default_gamma = cfg.data.get("gamma", 1.0)
@@ -435,21 +402,17 @@ def main(cfg: DictConfig) -> None:
     num_workers = cfg.data.get("num_workers", 8)
     tag = cfg.data.get("tag", None)
 
-    # Get datasets list
     datasets_list = cfg.data.get("train_data_paths", None)
 
-    # Build list of datasets to process
     datasets_to_process = []
 
     if datasets_list is not None and len(datasets_list) > 0:
-        # Process multiple datasets from list
         for entry in datasets_list:
             entry = dict(entry)
             ds_path = entry.get("dataset_path")
             if ds_path is None:
                 raise ValueError("Each dataset entry must have 'dataset_path'")
 
-            # Resolve relative path with data_root
             if data_root and not Path(ds_path).is_absolute():
                 ds_path = str(Path(data_root) / ds_path)
 
@@ -469,7 +432,6 @@ def main(cfg: DictConfig) -> None:
                 }
             )
     else:
-        # Backward compatibility: single dataset_path
         dataset_path = cfg.data.get("dataset_path", None)
         if dataset_path is None:
             raise ValueError(
@@ -495,7 +457,6 @@ def main(cfg: DictConfig) -> None:
 
     logger.info(f"Processing {len(datasets_to_process)} dataset(s)...")
 
-    # Process each dataset
     all_stats = []
     for i, ds_config in enumerate(datasets_to_process):
         logger.info(f"\n{'=' * 60}")
@@ -526,7 +487,6 @@ def main(cfg: DictConfig) -> None:
             }
         )
 
-    # Summary
     logger.info(f"\n{'=' * 60}")
     logger.info("Return computation complete!")
     logger.info(f"{'=' * 60}")

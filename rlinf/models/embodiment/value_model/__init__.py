@@ -45,7 +45,6 @@ def get_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticModel:
     Returns:
         ValueCriticModel instance.
     """
-    # Collect VLMBaseConfig kwargs
     vlm_kwargs = {}
 
     def _set(key, default=None):
@@ -68,7 +67,6 @@ def get_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticModel:
     _set("siglip_path", None)
     _set("gemma3_path", None)
 
-    # Handle precision / dtype
     precision = getattr(cfg, "precision", "bf16")
     if precision in ("bf16", "bf16-mixed"):
         vlm_kwargs["dtype"] = "bfloat16"
@@ -77,7 +75,6 @@ def get_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticModel:
     else:
         vlm_kwargs["dtype"] = "float32"
 
-    # Critic-specific kwargs
     critic_kwargs = {
         "critic_expert_variant": getattr(cfg, "critic_expert_variant", "gemma_100m"),
         "num_bins": getattr(cfg, "num_bins", 201),
@@ -88,15 +85,12 @@ def get_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticModel:
 
     config = ValueCriticConfig(**critic_kwargs, **vlm_kwargs)
 
-    # Build model
     model = ValueCriticModel(config)
     logger.info("Created ValueCriticModel (V function)")
 
-    # Load checkpoint if provided
     model_path = getattr(cfg, "model_path", None)
     backbone_variant = getattr(cfg, "backbone_variant", "paligemma")
 
-    # Resolve model_path to the best available weights file/dir
     if model_path is not None:
         full_weights_path = os.path.join(
             model_path, "model_state_dict", "full_weights.pt"

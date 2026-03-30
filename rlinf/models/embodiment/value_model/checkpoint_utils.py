@@ -50,7 +50,6 @@ def load_state_dict_from_checkpoint(checkpoint_path: pathlib.Path) -> dict:
                 str(checkpoint_path), map_location="cpu", weights_only=False
             )
 
-    # Directory
     safetensor_files = sorted(glob.glob(str(checkpoint_path / "*.safetensors")))
     if safetensor_files:
         state_dict = {}
@@ -98,7 +97,6 @@ def load_norm_stats(checkpoint_dir: pathlib.Path, asset_id: str = "libero") -> d
         checkpoint_dir / "norm_stats.json",
     ]
 
-    # Also search for any subdirectory in norm_stats/
     norm_stats_dir = checkpoint_dir / "norm_stats"
     if norm_stats_dir.exists():
         for subdir in norm_stats_dir.iterdir():

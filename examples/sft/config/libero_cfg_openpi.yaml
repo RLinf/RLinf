@@ -37,14 +37,12 @@ data:
   # Balance sampling weights by dataset length
   balance_dataset_weights: true
 
-  # Random seed for mixture sampling
   seed: 42
 
   train_data_paths:
     - path: "/path/to/sft_dataset"
       type: "sft"
-      weight: 1.0             # sampling weight
-    # Add more datasets as needed:
+      weight: 1.0
     - path: "/path/to/collected_data"
       type: "rollout"
       weight: 1.0

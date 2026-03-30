@@ -50,35 +50,24 @@ logger = logging.getLogger(__name__)
 class DataConfig:
     """Configuration for dataset preprocessing and transforms, matching OpenPI structure."""
 
-    # LeRobot repo id. If None, fake data will be created.
     repo_id: Optional[str] = None
-    # Directory within the assets directory containing the data assets.
     asset_id: Optional[str] = None
-    # Contains precomputed normalization stats. If None, normalization will not be performed.
     norm_stats: Optional[dict[str, Any]] = None
 
-    # Used to adopt the inputs from a dataset specific format to a common format
-    # which is expected by the data transforms.
+    # Transforms applied in order: repack (dataset format -> common format),
+    # data (robot-specific, pre-normalization), model (post-normalization).
     repack_transforms: Group = field(default_factory=Group)
-    # Data transforms, typically include robot specific transformations. Will be applied
-    # before the data is normalized.
     data_transforms: Group = field(default_factory=Group)
-    # Model specific transforms. Will be applied after the data is normalized.
     model_transforms: Group = field(default_factory=Group)
-    # If true, will use quantile normalization. Otherwise, normal z-score normalization will be used.
     use_quantile_norm: bool = False
 
-    # Names of keys that will be used by the data loader to generate the action sequence. The length of the
-    # sequence is defined by the `action_horizon` field in the model config. This should be adjusted if your
-    # LeRobot dataset is using different keys to represent the action.
+    # Keys used by the data loader to generate action sequences.
     action_sequence_keys: Sequence[str] = ("actions",)
 
-    # If true, will use the LeRobot dataset task to define the prompt.
     prompt_from_task: bool = True
 
-    # Action dimensions to skip normalization for (e.g., gripper). Maps key name to list of dimension indices.
-    # Example: {"actions": [9]} skips normalization for the 10th dimension (gripper) of actions.
-    # Empty dict or None means normalize all dimensions (default behavior for backward compatibility).
+    # Action dimensions to skip normalization for (e.g., gripper).
+    # Example: {"actions": [9]} skips normalization for the 10th dimension.
     action_norm_skip_dims: Optional[dict[str, list[int]]] = None
 
     def create_input_transform(self) -> DataTransformFn:
@@ -86,7 +75,6 @@ class DataConfig:
         transforms = []
         transforms.extend(self.repack_transforms.inputs)
         transforms.extend(self.data_transforms.inputs)
-        # Add normalization if stats are available
         if self.norm_stats is not None:
             transforms.append(
                 Normalize(
@@ -102,7 +90,6 @@ class DataConfig:
 
     def create_output_transform(self) -> DataTransformFn:
         """Create the output transform pipeline (for inference)."""
-        # Output transforms are applied in reverse order
         output_transforms = []
         output_transforms.extend(self.model_transforms.outputs)
         output_transforms.extend(self.data_transforms.outputs)
@@ -115,27 +102,15 @@ class DataConfig:
 class DataConfigFactory(abc.ABC):
     """Base class for dataset configuration factories, matching OpenPI structure."""
 
-    # The LeRobot repo id.
     repo_id: str
-    # Asset ID - used to locate norm_stats in norm_stats directory (defaults to repo_id if not set)
     asset_id: Optional[str] = None
-    # Norm stats location. Supports:
-    # 1. {norm_stats_dir}/{asset_id}/norm_stats.json
-    # 2. {norm_stats_dir}/norm_stats.json
-    # 3. A direct path to a norm_stats.json file
     norm_stats_dir: Optional[str] = None
-
-    # If provided, will be injected into the input data if the "prompt" key is not present.
     default_prompt: Optional[str] = None
-
-    # Model type determines normalization: PI05 uses quantile norm, PI0 uses z-score.
-    model_type: str = "pi05"  # "pi0", "pi05", or "pi0_fast"
-
-    # Some datasets (like old Pi0 checkpoints) were trained with an extra delta transform.
-    # Set to False for most cases as LIBERO/Franka actions are already delta in the dataset.
+    # PI05 uses quantile norm, PI0 uses z-score
+    model_type: str = "pi05"
+    # Set to True only for old Pi0 checkpoints trained with extra delta transform;
+    # LIBERO/Franka actions are already delta in the dataset.
     extra_delta_transform: bool = False
-
-    # Action dimensions to skip normalization for (e.g., gripper).
     action_norm_skip_dims: Optional[dict[str, list[int]]] = None
 
     @abc.abstractmethod
@@ -157,13 +132,10 @@ class DataConfigFactory(abc.ABC):
         3. {norm_stats_dir} (if it is a direct file path to norm_stats.json)
         4. {dataset_path}/meta/norm_stats.json (fallback)
 
-        This matches OpenPI where each config has its own norm_stats directory.
-
         Args:
             required: If True, raise FileNotFoundError when stats not found.
                       If False, return None (useful for stats computation).
         """
-        # Try norm_stats directory first (OpenPI pattern)
         if norm_stats_dir:
             norm_stats_path = Path(norm_stats_dir)
             candidates = []
@@ -186,7 +158,6 @@ class DataConfigFactory(abc.ABC):
                     )
                     return stats["norm_stats"]
 
-        # Fall back to dataset meta directory
         meta_dir = Path(dataset_path) / "meta"
         stats_file = meta_dir / "norm_stats.json"
         if stats_file.exists():
@@ -224,10 +195,6 @@ class LiberoDataConfig(DataConfigFactory):
             skip_norm_stats: If True, skip loading norm stats (useful for stats computation).
         """
 
-        # The repack transform is *only* applied to the data coming from the dataset,
-        # and *not* during inference. We can use it to make inputs from the dataset look
-        # as close as possible to those coming from the inference environment.
-        # Matching OpenPI's LeRobotLiberoDataConfig repack_transform
         repack_keys = {
             "observation/image": "image",
             "observation/wrist_image": "wrist_image",
@@ -239,29 +206,18 @@ class LiberoDataConfig(DataConfigFactory):
         }
         repack_transforms = Group(inputs=[RepackTransform(repack_keys)])
 
-        # The data transforms are applied to the data coming from the dataset *and* during inference.
-        # Below, we define the transforms for data going into the model (``inputs``) and the transforms
-        # for data coming out of the model (``outputs``) (the latter is only used during inference).
-        # Pass model_type to LiberoInputs for correct image mask handling (PI0_FAST vs PI0/PI05)
         data_transforms = Group(
             inputs=[LiberoInputs(mask_padding=True, model_type=self.model_type)],
             outputs=[LiberoOutputs()],
         )
 
-        # Apply delta actions transform ONLY if extra_delta_transform is True.
-        # For pi05_libero, this should be False because LIBERO actions are already delta.
-        # This matches OpenPI's pi05_libero config: extra_delta_transform=False
         if self.extra_delta_transform:
-            delta_action_mask = make_bool_mask(
-                6, -1
-            )  # First 6 dims delta, last 1 absolute
+            delta_action_mask = make_bool_mask(6, -1)
             data_transforms = data_transforms.push(
                 inputs=[DeltaActions(delta_action_mask)],
                 outputs=[AbsoluteActions(delta_action_mask)],
             )
 
-        # Model transforms include things like tokenizing the prompt and action targets
-        # You do not need to change anything here for your own dataset.
         model_transforms_list = [
             InjectDefaultPrompt(self.default_prompt),
             ResizeImages(224, 224),
@@ -270,7 +226,6 @@ class LiberoDataConfig(DataConfigFactory):
 
         model_transforms = Group(inputs=model_transforms_list)
 
-        # Load normalization stats from norm_stats_dir (OpenPI pattern) or dataset meta
         norm_stats = self._load_norm_stats(
             self.repo_id,
             self.norm_stats_dir,
@@ -278,7 +233,6 @@ class LiberoDataConfig(DataConfigFactory):
             required=not skip_norm_stats,
         )
 
-        # Determine use_quantile_norm based on model type (matching OpenPI logic)
         use_quantile_norm = self.model_type.lower() not in ["pi0"]
 
         return DataConfig(
@@ -311,7 +265,6 @@ class LiberoV2DataConfig(DataConfigFactory):
     ) -> DataConfig:
         """Create Libero v2.1 dataset configuration."""
 
-        # LeRobot v2.1 format key mapping
         repack_keys = {
             "observation/image": "observation.images.image",
             "observation/wrist_image": "observation.images.wrist_image",
@@ -383,7 +336,6 @@ class FrankaDataConfig(DataConfigFactory):
     def create(
         self, action_dim: int, skip_norm_stats: bool = False, *args, **kwargs
     ) -> DataConfig:
-        # Repack keys — Franka has no wrist_image key (unlike Libero)
         repack_keys = {
             "observation/image": "image",
             "observation/state": "state",
@@ -409,9 +361,8 @@ class FrankaDataConfig(DataConfigFactory):
             ],
         )
 
-        # Delta transform depends on action_train_with_rotation_6d:
-        # rotation_6d=True: 10-dim actions [x,y,z,rot6d(6),gripper] → mask(9, -1)
-        # rotation_6d=False: 7-dim actions [x,y,z,rx,ry,rz,gripper] → mask(6, -1)
+        # rotation_6d=True: 10-dim [x,y,z,rot6d(6),gripper] -> mask(9, -1)
+        # rotation_6d=False: 7-dim [x,y,z,rx,ry,rz,gripper] -> mask(6, -1)
         if self.extra_delta_transform:
             if self.action_train_with_rotation_6d:
                 delta_action_mask = make_bool_mask(9, -1)
@@ -452,7 +403,6 @@ class FrankaDataConfig(DataConfigFactory):
         )
 
 
-# Predefined configurations for common datasets
 DATASET_CONFIGS = {
     "libero": LiberoDataConfig,
     "libero_v2": LiberoV2DataConfig,  # LeRobot v2.1 format (no_noops, _lerobot suffix)
@@ -474,10 +424,8 @@ def detect_robot_type(dataset_path: str) -> str:
     """Auto-detect robot type from dataset path/name."""
     path_lower = dataset_path.lower()
 
-    # Check in priority order (more specific patterns first)
     if "franka" in path_lower:
         return "franka"
-    # LeRobot v2.1 format detection (no_noops or _lerobot suffix)
     if "libero" in path_lower:
         if "no_noops" in path_lower or path_lower.endswith("_lerobot"):
             return "libero_v2"

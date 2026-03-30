@@ -120,11 +120,6 @@ def resize_with_pad(
     return padded_images
 
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-
 IMAGE_KEYS = (
     "base_0_rgb",
     "left_wrist_0_rgb",
@@ -132,11 +127,6 @@ IMAGE_KEYS = (
 )
 
 IMAGE_RESOLUTION = (224, 224)
-
-
-# ---------------------------------------------------------------------------
-# Utility functions
-# ---------------------------------------------------------------------------
 
 
 def normalize_image_to_model_format(
@@ -160,7 +150,6 @@ def normalize_image_to_model_format(
     if device is not None:
         img = img.to(device)
 
-    # Detect format: CHW/BCHW vs HWC/BHWC
     if img.dim() == 3:
         is_chw = img.shape[0] == 3
     elif img.dim() == 4:
@@ -168,38 +157,27 @@ def normalize_image_to_model_format(
     else:
         raise ValueError(f"Expected 3D or 4D tensor, got {img.dim()}D")
 
-    # Add batch dimension if needed
     if img.dim() == 3:
         img = img[None, ...]
 
-    # Convert to float for normalization
     img = img.float()
 
-    # Normalize to [-1, 1] and ensure BCHW format
     if is_chw:
-        # Already BCHW, just normalize
         if img.max() > 1.0:
             img = img / 255.0 * 2.0 - 1.0
         elif img.min() >= 0.0 and img.max() <= 1.0:
             img = img * 2.0 - 1.0
     else:
-        # BHWC format, convert to BCHW
-        img = img.permute(0, 3, 1, 2)
+        img = img.permute(0, 3, 1, 2)  # BHWC -> BCHW
         if img.max() > 1.0:
             img = img / 255.0 * 2.0 - 1.0
         elif img.min() >= 0.0 and img.max() <= 1.0:
             img = img * 2.0 - 1.0
 
-    # Convert to target dtype if specified
     if dtype is not None:
         img = img.to(dtype)
 
     return img
-
-
-# ---------------------------------------------------------------------------
-# ValueImageProcessor
-# ---------------------------------------------------------------------------
 
 
 class ValueImageProcessor(ImageProcessingMixin):
@@ -253,7 +231,6 @@ class ValueImageProcessor(ImageProcessingMixin):
             crop_height = int(height * 0.95)
             crop_width = int(width * 0.95)
 
-            # Random crop
             max_h = height - crop_height
             max_w = width - crop_width
             if max_h > 0 and max_w > 0:
@@ -266,7 +243,6 @@ class ValueImageProcessor(ImageProcessingMixin):
                     :,
                 ]
 
-            # Resize back to original size
             image = F.interpolate(
                 image.permute(0, 3, 1, 2),  # [b, h, w, c] -> [b, c, h, w]
                 size=(height, width),
@@ -325,10 +301,7 @@ class ValueImageProcessor(ImageProcessingMixin):
         gray = image.mean(dim=-1, keepdim=True)
         image = gray + (image - gray) * saturation_factor
 
-        # Clamp values to [0, 1]
         image = torch.clamp(image, 0, 1)
-
-        # Back to [-1, 1]
         image = image * 2.0 - 1.0
 
         return image
@@ -358,7 +331,6 @@ class ValueImageProcessor(ImageProcessingMixin):
         out_images = {}
         out_masks = {}
 
-        # Get batch size from any available image
         batch_size = None
         template_device = None
         for key in images_dict:
@@ -370,7 +342,7 @@ class ValueImageProcessor(ImageProcessingMixin):
         for key in self.image_keys:
             image = images_dict.get(key)
 
-            # Handle missing keys by creating placeholder zero images
+            # Missing keys get placeholder zero images with mask=False
             if image is None:
                 if batch_size is not None:
                     h, w = self.image_size
@@ -385,22 +357,19 @@ class ValueImageProcessor(ImageProcessingMixin):
 
             is_wrist = "wrist" in key
 
-            # Detect input format: BCHW vs BHWC
             is_bchw = image.shape[1] == 3
 
-            # Convert to BHWC for internal processing (resize, augmentations work on HWC)
             if is_bchw:
                 image = image.permute(0, 2, 3, 1)  # BCHW -> BHWC
 
-            # Resize if needed (operates on BHWC)
-            # Note: use tuple() for comparison since self.image_size may be a list after deserialization
+            # tuple() needed because self.image_size may be a list after deserialization
             if self.do_resize and tuple(image.shape[1:3]) != tuple(self.image_size):
                 image = resize_with_pad(image, self.image_size[1], self.image_size[0])
                 # Ensure 4D output (resize_with_pad may squeeze batch dim)
                 if image.dim() == 3:
                     image = image.unsqueeze(0)
 
-            # Normalize to [-1, 1] (matching policy._prepare_observation)
+            # Normalize to [-1, 1] to match policy._prepare_observation
             image = image.float()
             if image.max() > 1.0:
                 # uint8 [0, 255] -> float32 [-1, 1]
@@ -410,20 +379,17 @@ class ValueImageProcessor(ImageProcessingMixin):
                 image = image * 2.0 - 1.0
             # else: already in [-1, 1], leave as is
 
-            # Apply augmentations if enabled (operates on [-1, 1] BHWC)
             if train and self.do_augment:
                 image = self.apply_augmentations(image, is_wrist_camera=is_wrist)
 
-            # Always output BCHW format (matching policy._prepare_observation)
+            # Output BCHW to match policy._prepare_observation
             image = image.permute(0, 3, 1, 2)  # BHWC -> BCHW
 
             out_images[key] = image
 
-            # Handle masks
             if image_masks_dict is not None and key in image_masks_dict:
                 out_masks[key] = image_masks_dict[key]
             else:
-                # Default to True for all batch elements
                 batch_size = image.shape[0]
                 out_masks[key] = torch.ones(
                     batch_size, dtype=torch.bool, device=image.device
@@ -453,23 +419,15 @@ class ValueImageProcessor(ImageProcessingMixin):
         Returns:
             BatchFeature containing processed images and image masks
         """
-        # Determine if we should apply augmentations
         apply_augmentations = train and (
             do_augment if do_augment is not None else self.do_augment
         )
 
-        # Handle different input formats
-        # Dict format with OpenPI camera keys - use batch processing
         output_images, output_masks = self.process_images(
             images, image_masks, train=apply_augmentations
         )
 
         return {"pixel_values": output_images, "image_masks": output_masks}
-
-
-# ---------------------------------------------------------------------------
-# ValueProcessor
-# ---------------------------------------------------------------------------
 
 
 class ValueProcessor(ProcessorMixin):
@@ -488,7 +446,6 @@ class ValueProcessor(ProcessorMixin):
 
     @staticmethod
     def _default_tokenizer_path() -> Optional[str]:
-        # Walk up to find the project root (where pyproject.toml lives)
         current = Path(__file__).resolve()
         for parent in current.parents:
             if (parent / "pyproject.toml").exists():
@@ -591,7 +548,6 @@ class ValueProcessor(ProcessorMixin):
 
         ar_mask = [0] * max_length  # all bidirectional
 
-        # Debug logging (first 2 examples on rank 0)
         worker_info = torch.utils.data.get_worker_info()
         is_worker_0 = worker_info is None or worker_info.id == 0
         if (

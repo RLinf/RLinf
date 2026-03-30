@@ -92,12 +92,10 @@ class SiglipGemma3WithMultiExpert(nn.Module):
             f"freeze_vision_encoder={freeze_vision_encoder}, freeze_vlm={freeze_vlm}"
         )
 
-        # Load SigLIP2 vision encoder
         logger.info(f"  Loading SigLIP2 from {siglip_path}")
         self.vision_tower = SiglipVisionModel.from_pretrained(siglip_path)
         siglip_hidden = self.vision_tower.config.hidden_size  # 1152
 
-        # Load Gemma3 270M language model
         logger.info(f"  Loading Gemma3 from {gemma3_path}")
         self.gemma3 = Gemma3ForCausalLM.from_pretrained(gemma3_path)
         gemma3_hidden = self.gemma3.config.hidden_size  # 640
@@ -120,7 +118,6 @@ class SiglipGemma3WithMultiExpert(nn.Module):
                     f"cross-attention. Use a *_hd256 expert config variant."
                 )
 
-        # Create expert models (GemmaForCausalLM, Gemma1 architecture)
         self.experts = nn.ModuleDict()
         for name, expert_config in expert_configs.items():
             expert_config_hf = CONFIG_MAPPING["gemma"](
@@ -144,10 +141,6 @@ class SiglipGemma3WithMultiExpert(nn.Module):
 
         self._apply_precision(precision)
         self._set_requires_grad()
-
-    # =========================================================================
-    # Embedding Methods (compatible with VLMObservationEncoder.embed_prefix)
-    # =========================================================================
 
     def embed_image(self, image: torch.Tensor) -> torch.Tensor:
         """Embed images: SigLIP2 → projection → [B, num_patches, 640].
@@ -173,10 +166,6 @@ class SiglipGemma3WithMultiExpert(nn.Module):
             [B, L, 640] token embeddings.
         """
         return self.gemma3.model.embed_tokens(tokens)
-
-    # =========================================================================
-    # Forward
-    # =========================================================================
 
     def forward(
         self,
@@ -250,10 +239,6 @@ class SiglipGemma3WithMultiExpert(nn.Module):
             "(always active when backbone_variant='siglip_gemma3')."
         )
 
-    # =========================================================================
-    # Train / requires_grad
-    # =========================================================================
-
     def _set_requires_grad(self):
         if self.freeze_vision_encoder:
             for param in self.vision_tower.parameters():
@@ -281,10 +266,6 @@ class SiglipGemma3WithMultiExpert(nn.Module):
             if name not in self.trainable_experts:
                 self.experts[name].eval()
         return self
-
-    # =========================================================================
-    # Precision
-    # =========================================================================
 
     def _apply_precision(self, precision: Literal["bfloat16", "float32"]):
         if precision == "float32":
@@ -315,10 +296,6 @@ class SiglipGemma3WithMultiExpert(nn.Module):
         for name, param in self.named_parameters():
             if any(sel in name for sel in params_to_keep_float32):
                 param.data = param.data.to(dtype=torch.float32)
-
-    # =========================================================================
-    # Helpers
-    # =========================================================================
 
     def _resolve_expert_name(self, expert_name: str | None) -> str:
         if expert_name is not None:
