@@ -32,15 +32,8 @@ cluster:
       hardware:
         type: Franka
         configs:
-          - robot_ip: 10.100.25.2
+          - robot_ip: ROBOT_IP
             node_rank: 1
-
-# cluster:
-#   num_nodes: 1
-#   component_placement:
-#     actor: 1
-#     env: 0
-#     rollout: 0
 
 runner:
   task_type: embodied
@@ -109,12 +102,10 @@ env:
     max_steps_per_rollout_epoch: 180
     max_episode_steps: 180
     override_cfg:
-      target_ee_pose: [0.50321888, -0.02118786, 0.00593733, 3.14, 0.0, 0.0]
+      target_ee_pose: TARGET_EE_POSE
       success_hold_steps: 1
-      camera_serials: ["233622071355", "233522071854"]
-      # robot_ip: "0.0.0.0"
+      camera_serials: ["SERIAL1", "SERIAL2"]
       use_dense_reward: False
-      # is_dummy: False
 
   eval:
     total_num_envs: 1
@@ -125,12 +116,10 @@ env:
     max_steps_per_rollout_epoch: 180
     max_episode_steps: 180
     override_cfg:
-      target_ee_pose: [0.50321888, -0.02118786, 0.00593733, 3.14, 0.0, 0.0]
+      target_ee_pose: TARGET_EE_POSE
       success_hold_steps: 1
-      camera_serials: ["233622071355", "233522071854"]
-      # robot_ip: "0.0.0.0"
+      camera_serials: ["SERIAL1", "SERIAL2"]
       use_dense_reward: False
-      # is_dummy: True
 
 rollout:
   group_name: "RolloutGroup"
@@ -141,7 +130,7 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/workspace/ckpt/pi0_base_pnp"
+    model_path: "/path/to/model"
     precision: ${actor.model.precision}
 
 actor:
@@ -154,10 +143,10 @@ actor:
 
   model:
     precision: null
-    model_path: "/workspace/ckpt/pi0_base_pnp"
+    model_path: "/path/to/model"
     num_action_chunks: 10
     action_dim: 7
-    add_value_head: True
+    add_value_head: False
     openpi:
       config_name: "pi0_franka_dagger"
       num_images_in_input: 2
