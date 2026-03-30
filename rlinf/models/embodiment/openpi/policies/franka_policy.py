@@ -49,11 +49,12 @@ class FrankaEEOutputs(transforms.DataTransformFn):
 
     For your own dataset, you can copy this class and modify the action dimension based on the comments below.
     """
-    output_action_dim: int # default output action dim is 7 (xyz + rpy + gripper)
+
+    output_action_dim: int  # default output action dim is 7 (xyz + rpy + gripper)
 
     def __call__(self, data: dict) -> dict:
         return {
-            "actions": np.asarray(data["actions"][:, :output_action_dim])
+            "actions": np.asarray(data["actions"][:, : self.output_action_dim])
         }  # use abs actions [x,y,z,rx,ry,rz,gripper] for Franka
 
 

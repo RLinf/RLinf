@@ -147,7 +147,7 @@ _CONFIGS = [
             pi05=True, action_horizon=8, discrete_state_input=False
         ),  # discrete_state_input=False: stateless policy, True: with state policy
         data=LeRobotFrankaEEDataConfig(
-            repo_id="shuangqing_real/push_button", # Not important
+            repo_id="shuangqing_real/push_button",  # Not important
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(
                 assets_dir="/home/shiliangzhi/work-space/pretrained_model/push_button/assets/shuangqing_real/push_button"

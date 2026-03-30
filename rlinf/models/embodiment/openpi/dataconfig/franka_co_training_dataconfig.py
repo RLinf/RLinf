@@ -74,9 +74,7 @@ class LeRobotFrankaEEDataConfig(DataConfigFactory):
                 )
             ],
             outputs=[
-                franka_policy.FrankaEEOutputs(
-                    output_action_dim=self.output_action_dim
-                )
+                franka_policy.FrankaEEOutputs(output_action_dim=self.output_action_dim)
             ],
         )
 
