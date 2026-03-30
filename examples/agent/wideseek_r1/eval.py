@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import logging
 
 import hydra
 import torch.multiprocessing as mp
@@ -42,7 +43,7 @@ mp.set_start_method("spawn", force=True)
 @output_redirector
 def main(cfg) -> None:
     cfg = validate_cfg(cfg)
-    print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
+    logging.info(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = MultiAgentModelParallelEvalComponentPlacement(cfg, cluster)
@@ -119,29 +120,24 @@ def main(cfg) -> None:
         subworker_rollout_group = None
 
     if cfg.agentloop.get("use_local_judge", False):
-        subworker_specs = [
-            "rollout_judge",  # component name in cfg
-        ]
-        for comp_name in subworker_specs:
-            dict_key = comp_name
-            rollout = cfg.get(comp_name, None)
-            assert rollout is not None, f"comp_name {comp_name} not found in cfg"
-            launch_name = rollout.get("group_name", comp_name)
+        comp_name = "rollout_judge"
+        dict_key = comp_name
+        rollout = cfg.get(comp_name, None)
+        assert rollout is not None, f"comp_name {comp_name} not found in cfg"
+        launch_name = rollout.get("group_name", comp_name)
 
-            strategy = component_placement.get_strategy(
-                comp_name, PackedPlacementStrategy
-            )
+        strategy = component_placement.get_strategy(comp_name, PackedPlacementStrategy)
 
-            solid_rollouts[dict_key] = rollout_worker_cls.create_group(
-                cfg,
-                component_placement,
-                weight_reload=None,
-                config_rollout=rollout,
-            ).launch(
-                cluster,
-                name=launch_name,
-                placement_strategy=strategy,
-            )
+        solid_rollouts[dict_key] = rollout_worker_cls.create_group(
+            cfg,
+            component_placement,
+            weight_reload=None,
+            config_rollout=rollout,
+        ).launch(
+            cluster,
+            name=launch_name,
+            placement_strategy=strategy,
+        )
 
     # AgentLoop group.
     agentloop_placement_strategy = NodePlacementStrategy(
