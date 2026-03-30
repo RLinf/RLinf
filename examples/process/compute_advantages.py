@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Compute advantages for CFG-RL training using a trained ValueCritic.
+Compute advantages for CFG-RL training using a trained ValueCriticModel.
 
 Advantage formula: A = normalize(r_{t:t+N}) + gamma^N * V(o_{t+N}) - V(o_t)
 
@@ -50,8 +50,11 @@ from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-# Import ValueCritic for value inference
-from rlinf.models.embodiment.value_model.modeling_critic import ValueCritic
+from rlinf.datasets.rl_dataset import (
+    load_return_stats_from_dataset,
+    load_returns_sidecar,
+)
+from rlinf.models.embodiment.value_model.modeling_critic import ValueCriticModel
 
 logger = logging.getLogger(__name__)
 
@@ -274,139 +277,36 @@ class RunningStats:
         )
 
 
-def _load_return_stats_from_dataset(
-    dataset_path: Path,
-) -> tuple[float | None, float | None]:
-    """Load return min/max from dataset's stats.json.
-
-    Args:
-        dataset_path: Path to LeRobot dataset
-
-    Returns:
-        Tuple of (return_min, return_max), or (None, None) if not found
-    """
-    stats_path = dataset_path / "meta" / "stats.json"
-    if not stats_path.exists():
-        return None, None
-
-    try:
-        with open(stats_path, "r") as f:
-            stats = json.load(f)
-        return_stats = stats.get("return", {})
-        return return_stats.get("min"), return_stats.get("max")
-    except (json.JSONDecodeError, KeyError):
-        return None, None
-
-
-def _load_returns_sidecar(
-    dataset_path: Path,
-    returns_tag: str | None = None,
-) -> dict[int, dict[str, np.ndarray]] | None:
-    """Load ``meta/returns_{tag}.parquet`` sidecar written by compute_returns.py.
-
-    Falls back to ``meta/returns.parquet`` when *returns_tag* is None.
-
-    Returns:
-        ``{episode_index: {"return": np.array, "reward": np.array}}``
-        or None if sidecar does not exist.
-    """
-    import pyarrow.parquet as pq
-
-    sidecar_filename = (
-        f"returns_{returns_tag}.parquet" if returns_tag else "returns.parquet"
-    )
-    sidecar_path = dataset_path / "meta" / sidecar_filename
-    if not sidecar_path.exists():
-        return None
-
-    table = pq.read_table(str(sidecar_path))
-    ep_col = table.column("episode_index").to_numpy()
-    frame_col = table.column("frame_index").to_numpy()
-    ret_col = table.column("return").to_numpy()
-    rew_col = table.column("reward").to_numpy()
-
-    sidecar: dict[int, dict[str, np.ndarray]] = {}
-    for ep in np.unique(ep_col):
-        mask = ep_col == ep
-        frames = frame_col[mask]
-        order = np.argsort(frames)
-        sidecar[int(ep)] = {
-            "return": ret_col[mask][order].astype(np.float32),
-            "reward": rew_col[mask][order].astype(np.float32),
-        }
-
-    logger.info(f"Loaded returns sidecar: {sidecar_path} ({len(sidecar)} episodes)")
-    return sidecar
-
-
-def load_value_model(cfg: DictConfig, device: str = "cuda"):
-    """Load trained ValueCritic from checkpoint.
-
-    Args:
-        cfg: Config with checkpoint path and model settings
-        device: Target device
-
-    Returns:
-        Configured ValueCritic instance with inference methods
-    """
+def _parse_value_model_kwargs(cfg: DictConfig) -> dict:
+    """Extract ValueCriticModel.from_checkpoint kwargs from Hydra config."""
     checkpoint_path = cfg.advantage.value_checkpoint
     if checkpoint_path is None:
         raise ValueError("advantage.value_checkpoint must be specified")
-
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    logger.info(f"Loading value model from: {checkpoint_path}")
-
-    adv_cfg = cfg.advantage
     data_cfg = cfg.data
-    model_cfg = adv_cfg.get("model", {})
+    model_cfg = cfg.advantage.get("model", {})
 
     robot_type = data_cfg.get("robot_type", "libero")
     if "train_data_paths" in data_cfg and len(data_cfg.train_data_paths) > 0:
         robot_type = data_cfg.train_data_paths[0].get("robot_type", robot_type)
 
-    model_type = data_cfg.get("model_type", "pi05")
-
-    num_return_bins = model_cfg.get("num_bins", 201)
-    return_min = model_cfg.get("v_min", -1.0)
-    return_max = model_cfg.get("v_max", 0.0)
-    critic_expert_variant = model_cfg.get("critic_expert_variant", "gemma_100m")
-    tokenizer_path = model_cfg.get("tokenizer_path", None)
-    backbone_variant = model_cfg.get("backbone_variant", "paligemma")
-    siglip_path = model_cfg.get("siglip_path", None)
-    gemma3_path = model_cfg.get("gemma3_path", None)
-
-    logger.info(f"  env_type (robot_type): {robot_type}")
-    logger.info(f"  model_type: {model_type}")
-    logger.info(f"  backbone_variant: {backbone_variant}")
-    logger.info(f"  num_return_bins: {num_return_bins}")
-    logger.info(f"  return_range: [{return_min}, {return_max}]")
-    logger.info(f"  critic_expert_variant: {critic_expert_variant}")
-    if tokenizer_path:
-        logger.info(f"  tokenizer_path: {tokenizer_path}")
-    if siglip_path:
-        logger.info(f"  siglip_path: {siglip_path}")
-    if gemma3_path:
-        logger.info(f"  gemma3_path: {gemma3_path}")
-
-    model = ValueCritic.from_checkpoint(
-        checkpoint_dir=checkpoint_path,
-        env_type=robot_type,
-        model_type=model_type,
-        device=device,
-        num_return_bins=num_return_bins,
-        return_min=return_min,
-        return_max=return_max,
-        critic_expert_variant=critic_expert_variant,
-        tokenizer_path=tokenizer_path,
-        backbone_variant=backbone_variant,
-        siglip_path=siglip_path,
-        gemma3_path=gemma3_path,
-    )
-
-    logger.info("Loaded ValueCritic for inference")
-    return model
+    return {
+        "checkpoint_dir": checkpoint_path,
+        "env_type": robot_type,
+        "model_type": data_cfg.get("model_type", "pi05"),
+        "num_return_bins": model_cfg.get("num_bins", 201),
+        "return_min": model_cfg.get("v_min", -1.0),
+        "return_max": model_cfg.get("v_max", 0.0),
+        "critic_expert_variant": model_cfg.get(
+            "critic_expert_variant", "gemma_100m"
+        ),
+        "tokenizer_path": model_cfg.get("tokenizer_path", None),
+        "backbone_variant": model_cfg.get("backbone_variant", "paligemma"),
+        "siglip_path": model_cfg.get("siglip_path", None),
+        "gemma3_path": model_cfg.get("gemma3_path", None),
+    }
 
 
 def load_lerobot_dataset(
@@ -433,7 +333,7 @@ def load_lerobot_dataset(
 
     logger.info(f"Dataset features: {list(meta.features.keys())}")
 
-    returns_sidecar = _load_returns_sidecar(dataset_path, returns_tag=returns_tag)
+    returns_sidecar = load_returns_sidecar(dataset_path, returns_tag=returns_tag)
 
     # Validate: accept either features in parquets OR sidecar
     has_reward = "reward" in meta.features
@@ -488,7 +388,7 @@ def build_obs(
     robot_type: str,
     tasks: dict,
 ) -> dict[str, Any]:
-    """Build raw observation dict for ValueCritic from a single-timestep sample.
+    """Build raw observation dict for ValueCriticModel from a single-timestep sample.
 
     Args:
         sample: Single-timestep sample from LeRobot dataset (no delta_timestamps)
@@ -496,7 +396,7 @@ def build_obs(
         tasks: Task descriptions dict
 
     Returns:
-        Raw observation dict compatible with ValueCritic.infer()
+        Raw observation dict compatible with ValueCriticModel.infer()
     """
     key_map = KEY_MAPPINGS.get(robot_type, KEY_MAPPINGS["libero"])
     obs = {}
@@ -627,7 +527,7 @@ def compute_advantages_for_dataset(
     """Compute advantages for dataset (or shard in distributed mode).
 
     Args:
-        value_model: Trained ValueCritic with input transforms and batch inference
+        value_model: Trained ValueCriticModel with input transforms and batch inference
         dataset: LeRobot dataset
         tasks: Task descriptions
         cfg: Full config
@@ -690,7 +590,7 @@ def compute_advantages_for_dataset(
         )
         logger.info(f"  gamma: {gamma}, advantage_lookahead_step: {action_horizon}")
         logger.info(f"  return_range: [{ret_min}, {ret_max}]")
-        logger.info("  Using ValueCritic with batch inference")
+        logger.info("  Using ValueCriticModel with batch inference")
         logger.info("  Using precomputed reward/return from dataset")
         if world_size > 1:
             logger.info(f"  Distributed mode: {world_size} GPUs")
@@ -1096,7 +996,9 @@ def main(cfg: DictConfig) -> None:
         logging.getLogger().setLevel(logging.WARNING)
 
     try:
-        value_model = load_value_model(cfg, device)
+        value_model = ValueCriticModel.from_checkpoint(
+            **_parse_value_model_kwargs(cfg), device=device
+        )
 
         all_advantages = []
         dataset_results = {}
@@ -1111,7 +1013,7 @@ def main(cfg: DictConfig) -> None:
             all_maxs = []
             for ds_cfg in cfg.data.train_data_paths:
                 ds_path = Path(ds_cfg.dataset_path)
-                ds_min, ds_max = _load_return_stats_from_dataset(ds_path)
+                ds_min, ds_max = load_return_stats_from_dataset(ds_path)
                 if ds_min is not None:
                     all_mins.append(ds_min)
                 if ds_max is not None:

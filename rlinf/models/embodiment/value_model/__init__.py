@@ -25,7 +25,7 @@ import torch
 from omegaconf import DictConfig
 
 from .configuration import ValueCriticConfig
-from .modeling_critic import CriticOutput, ValueCritic, ValueCriticModel
+from .modeling_critic import CriticOutput, ValueCriticModel
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +161,6 @@ def _load_state_dict(path: str) -> dict:
 __all__ = [
     "get_value_model",
     "ValueCriticModel",
-    "ValueCritic",
     "ValueCriticConfig",
     "CriticOutput",
 ]

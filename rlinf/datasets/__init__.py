@@ -38,14 +38,16 @@ from rlinf.datasets.config import (  # noqa: E402
     create_rl_config,
     load_return_range_from_norm_stats,
 )
-
 from rlinf.datasets.mixture_datasets import (  # noqa: E402
     AdvantageMixtureDataset,
     ValueMixtureDataset,
 )
-from rlinf.datasets.rl_dataset import LeRobotRLDataset  # noqa: E402
+from rlinf.datasets.rl_dataset import (  # noqa: E402
+    LeRobotRLDataset,
+    load_return_stats_from_dataset,
+    load_returns_sidecar,
+)
 from rlinf.datasets.value_dataset import ValueDataset  # noqa: E402
-
 from rlinf.datasets.value_transforms import (  # noqa: E402
     ReturnDiscretizer,
 )
@@ -129,6 +131,8 @@ __all__ = [
     "RLDataConfig",
     "create_rl_config",
     "load_return_range_from_norm_stats",
+    "load_return_stats_from_dataset",
+    "load_returns_sidecar",
     "LeRobotRLDataset",
     "ValueDataset",
     "AdvantageMixtureDataset",

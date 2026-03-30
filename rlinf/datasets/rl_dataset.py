@@ -55,6 +55,74 @@ from .value_transforms import ReturnDiscretizer
 logger = logging.getLogger(__name__)
 
 
+def load_return_stats_from_dataset(
+    dataset_path: str | Path,
+) -> tuple[float | None, float | None]:
+    """Load return min/max from dataset's stats.json.
+
+    Args:
+        dataset_path: Path to LeRobot dataset
+
+    Returns:
+        Tuple of (return_min, return_max), or (None, None) if not found
+    """
+    import json
+
+    stats_path = Path(dataset_path) / "meta" / "stats.json"
+    if not stats_path.exists():
+        return None, None
+
+    try:
+        with open(stats_path, "r") as f:
+            stats = json.load(f)
+        return_stats = stats.get("return", {})
+        return return_stats.get("min"), return_stats.get("max")
+    except (json.JSONDecodeError, KeyError):
+        return None, None
+
+
+def load_returns_sidecar(
+    dataset_path: str | Path,
+    returns_tag: str | None = None,
+) -> dict[int, dict[str, np.ndarray]] | None:
+    """Load ``meta/returns_{tag}.parquet`` sidecar written by compute_returns.py.
+
+    Falls back to ``meta/returns.parquet`` when *returns_tag* is None.
+
+    Returns:
+        ``{episode_index: {"return": np.array, "reward": np.array}}``
+        or None if sidecar does not exist.
+    """
+    import pyarrow.parquet as pq
+
+    dataset_path = Path(dataset_path)
+    sidecar_filename = (
+        f"returns_{returns_tag}.parquet" if returns_tag else "returns.parquet"
+    )
+    sidecar_path = dataset_path / "meta" / sidecar_filename
+    if not sidecar_path.exists():
+        return None
+
+    table = pq.read_table(str(sidecar_path))
+    ep_col = table.column("episode_index").to_numpy()
+    frame_col = table.column("frame_index").to_numpy()
+    ret_col = table.column("return").to_numpy()
+    rew_col = table.column("reward").to_numpy()
+
+    sidecar: dict[int, dict[str, np.ndarray]] = {}
+    for ep in np.unique(ep_col):
+        mask = ep_col == ep
+        frames = frame_col[mask]
+        order = np.argsort(frames)
+        sidecar[int(ep)] = {
+            "return": ret_col[mask][order].astype(np.float32),
+            "reward": rew_col[mask][order].astype(np.float32),
+        }
+
+    logger.info(f"Loaded returns sidecar: {sidecar_path} ({len(sidecar)} episodes)")
+    return sidecar
+
+
 class LeRobotRLDataset(LeRobotPyTorchDataset):
     """RL Dataset with temporal structure for value learning.
 
@@ -204,19 +272,13 @@ class LeRobotRLDataset(LeRobotPyTorchDataset):
         # does not try to read these (possibly absent) columns from episode parquets.
         self._returns_sidecar = None
         if self.is_local:
-            sidecar_filename = (
-                f"returns_{self.tag}.parquet" if self.tag else "returns.parquet"
+            self._returns_sidecar = load_returns_sidecar(
+                Path(self.repo_id).resolve(), self.tag
             )
-            sidecar_path = Path(self.repo_id).resolve() / "meta" / sidecar_filename
-            if sidecar_path.exists():
-                self._returns_sidecar = self._load_returns_sidecar(sidecar_path)
+            if self._returns_sidecar is not None:
                 delta_timestamps.pop(self.rl_config.return_key, None)
                 for rk in self.rl_config.reward_keys:
                     delta_timestamps.pop(rk, None)
-                logger.info(
-                    f"Loaded returns sidecar ({len(self._returns_sidecar)} episodes) "
-                    f"— return/reward will be injected from sidecar"
-                )
 
         logger.info(f"RL Delta timestamps: {delta_timestamps}")
 
@@ -388,37 +450,6 @@ class LeRobotRLDataset(LeRobotPyTorchDataset):
                 "Discretization will be skipped."
             )
             return None
-
-    @staticmethod
-    def _load_returns_sidecar(
-        sidecar_path: Path,
-    ) -> dict[int, dict[str, np.ndarray]]:
-        """Load returns sidecar parquet into per-episode numpy arrays.
-
-        Returns:
-            ``{episode_index: {"return": np.array, "reward": np.array}}``
-            where arrays are indexed by frame_index within the episode.
-        """
-        import pyarrow.parquet as pq
-
-        table = pq.read_table(str(sidecar_path))
-        ep_col = table.column("episode_index").to_numpy()
-        frame_col = table.column("frame_index").to_numpy()
-        ret_col = table.column("return").to_numpy()
-        rew_col = table.column("reward").to_numpy()
-
-        sidecar: dict[int, dict[str, np.ndarray]] = {}
-        # Group by episode (data is sorted by file, episodes are contiguous)
-        unique_eps = np.unique(ep_col)
-        for ep in unique_eps:
-            mask = ep_col == ep
-            frames = frame_col[mask]
-            order = np.argsort(frames)
-            sidecar[int(ep)] = {
-                "return": ret_col[mask][order].astype(np.float32),
-                "reward": rew_col[mask][order].astype(np.float32),
-            }
-        return sidecar
 
     def _log_dataset_info(self):
         num_episodes = (

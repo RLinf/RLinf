@@ -23,30 +23,27 @@ Uses: A = normalize(reward_sum) + gamma^N * v_next - v_curr
   advantage (bool) and advantage_continuous columns and mixture_config.
 
 Usage:
+  # Full recompute (provide --advantage_lookahead_step)
   python recompute_advantages_from_value_reward.py \
     --dataset_root /path/to/transformed_advantage_dataset \
     --advantage_lookahead_step 20 \
     --positive_quantile 0.3 \
     --num_workers 4
 
+  # Threshold-only relabeling (omit --advantage_lookahead_step)
   python recompute_advantages_from_value_reward.py \
     --dataset_paths /path/to/ds_a /path/to/ds_b \
     --source_tag old_q20 \
-    --advantage_tag new_q30 \
-    --positive_quantile 0.3 \
-    --reapply_quantile_only
+    --new_tag new_q30 \
+    --positive_quantile 0.3
 """
-
-import os
-
-os.environ["AV_LOG_LEVEL"] = "panic"
-os.environ["LIBDAV1D_LOG_LEVEL"] = "0"
 
 import argparse
 import json
 import logging
+import os
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -56,7 +53,6 @@ import yaml
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
-
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -77,119 +73,72 @@ def _suppress_video_logging() -> None:
 
 _suppress_video_logging()
 
+from rlinf.datasets.rl_dataset import load_return_stats_from_dataset  # noqa: E402
 
-def _load_return_stats_from_dataset(
-    dataset_path: Path,
+
+def _infer_return_range(
+    dataset_paths: list[Path],
+    root_mixture: dict | None = None,
 ) -> tuple[float | None, float | None]:
-    """Load return min/max from dataset's meta/stats.json."""
-    stats_path = dataset_path / "meta" / "stats.json"
-    if not stats_path.exists():
-        return None, None
-    try:
-        with open(stats_path, "r") as f:
-            stats = json.load(f)
-        return_stats = stats.get("return", {})
-        return return_stats.get("min"), return_stats.get("max")
-    except (json.JSONDecodeError, KeyError):
-        return None, None
+    """Infer global return range from root mixture_config, per-dataset configs, or stats.json."""
+    rmin = root_mixture.get("global_return_min") if root_mixture else None
+    rmax = root_mixture.get("global_return_max") if root_mixture else None
+    if rmin is not None and rmax is not None:
+        return float(rmin), float(rmax)
+
+    mins, maxs = [], []
+    for dp in dataset_paths:
+        dp_min, dp_max = None, None
+        mc_path = dp / "mixture_config.yaml"
+        if mc_path.exists():
+            try:
+                mc = yaml.safe_load(mc_path.read_text()) or {}
+                dp_min, dp_max = mc.get("global_return_min"), mc.get("global_return_max")
+            except yaml.YAMLError:
+                pass
+        if dp_min is None or dp_max is None:
+            s_min, s_max = load_return_stats_from_dataset(dp)
+            dp_min = dp_min if dp_min is not None else s_min
+            dp_max = dp_max if dp_max is not None else s_max
+        if dp_min is not None:
+            mins.append(float(dp_min))
+        if dp_max is not None:
+            maxs.append(float(dp_max))
+
+    return (
+        float(rmin) if rmin is not None else (min(mins) if mins else None),
+        float(rmax) if rmax is not None else (max(maxs) if maxs else None),
+    )
 
 
 def discover_datasets_and_return_range(
     dataset_root: Path,
-) -> tuple[list[Path], float, float]:
-    """
-    Discover sub-datasets under root and get global return range.
-
-    Returns:
-        (list of dataset paths, global_return_min, global_return_max)
-    """
+) -> tuple[list[Path], float | None, float | None]:
+    """Discover sub-datasets under root and get global return range."""
     mixture_path = dataset_root / "mixture_config.yaml"
+    mixture: dict = {}
     dataset_paths: list[Path] = []
-    global_return_min: float | None = None
-    global_return_max: float | None = None
 
     if mixture_path.exists():
         with open(mixture_path, "r") as f:
             mixture = yaml.safe_load(f) or {}
-        names = []
         for d in mixture.get("datasets", []):
-            if isinstance(d, dict) and "name" in d:
-                names.append(d["name"])
-            elif isinstance(d, str):
-                names.append(d)
-        global_return_min = mixture.get("global_return_min")
-        global_return_max = mixture.get("global_return_max")
-        for name in names:
-            path = dataset_root / name
-            if path.is_dir() and (path / "meta" / "info.json").exists():
-                dataset_paths.append(path)
-    if not dataset_paths:
-        for child in dataset_root.iterdir():
-            if child.is_dir() and (child / "meta" / "info.json").exists():
-                dataset_paths.append(child)
+            name = d["name"] if isinstance(d, dict) and "name" in d else (d if isinstance(d, str) else None)
+            if name:
+                path = dataset_root / name
+                if path.is_dir() and (path / "meta" / "info.json").exists():
+                    dataset_paths.append(path)
 
+    if not dataset_paths:
+        dataset_paths = [
+            c for c in sorted(dataset_root.iterdir())
+            if c.is_dir() and (c / "meta" / "info.json").exists()
+        ]
     if not dataset_paths:
         raise ValueError(f"No datasets found under {dataset_root}")
 
-    if global_return_min is None or global_return_max is None:
-        all_mins, all_maxs = [], []
-        for dp in dataset_paths:
-            rmin, rmax = _load_return_stats_from_dataset(dp)
-            if rmin is not None:
-                all_mins.append(rmin)
-            if rmax is not None:
-                all_maxs.append(rmax)
-        if all_mins:
-            global_return_min = (
-                min(all_mins) if global_return_min is None else global_return_min
-            )
-        if all_maxs:
-            global_return_max = (
-                max(all_maxs) if global_return_max is None else global_return_max
-            )
-    if global_return_min is None or global_return_max is None:
-        raise ValueError(
-            "Cannot determine global return range. "
-            "Either set global_return_min/global_return_max in mixture_config.yaml "
-            "or ensure all datasets have meta/stats.json with return min/max. "
-            f"Got global_return_min={global_return_min}, global_return_max={global_return_max}"
-        )
-
-    return dataset_paths, float(global_return_min), float(global_return_max)
-
-
-def infer_return_range_from_dataset_paths(
-    dataset_paths: list[Path],
-) -> tuple[float | None, float | None]:
-    """Infer global return range from per-dataset mixture_config or stats.json."""
-    mins: list[float] = []
-    maxs: list[float] = []
-
-    for dataset_path in dataset_paths:
-        mixture_path = dataset_path / "mixture_config.yaml"
-        mixture: dict | None = None
-        if mixture_path.exists():
-            try:
-                with open(mixture_path, "r") as f:
-                    mixture = yaml.safe_load(f) or {}
-            except yaml.YAMLError:
-                mixture = None
-
-        rmin = mixture.get("global_return_min") if mixture else None
-        rmax = mixture.get("global_return_max") if mixture else None
-        if rmin is None or rmax is None:
-            stats_min, stats_max = _load_return_stats_from_dataset(dataset_path)
-            if rmin is None:
-                rmin = stats_min
-            if rmax is None:
-                rmax = stats_max
-
-        if rmin is not None:
-            mins.append(float(rmin))
-        if rmax is not None:
-            maxs.append(float(rmax))
-
-    return (min(mins) if mins else None, max(maxs) if maxs else None)
+    rmin, rmax = _infer_return_range(dataset_paths, root_mixture=mixture)
+    return dataset_paths, rmin, rmax
 
 
 def load_existing_advantages(
@@ -311,15 +260,27 @@ def compute_advantages_for_dataset(
             f"Dataset {dataset_path} missing 'value_current' column in episode parquets. "
             "Run compute_advantages.py first to generate value predictions."
         )
+    if "reward" not in full_df.columns:
+        raise ValueError(
+            f"Dataset {dataset_path} missing 'reward' column and no returns sidecar found. "
+            "Run compute_returns.py first."
+        )
     full_df["reward"] = full_df["reward"].fillna(0.0)
     has_return = "return" in full_df.columns
 
     ret_range = global_return_max - global_return_min
+    if ret_range <= 0:
+        raise ValueError(
+            f"Invalid return range: [{global_return_min}, {global_return_max}] "
+            f"(range={ret_range}). Ensure global_return_max > global_return_min."
+        )
     gamma_powers = np.array(
         [gamma**i for i in range(advantage_lookahead_step)], dtype=np.float32
     )
     gamma_k = gamma**advantage_lookahead_step
 
+    adv_cols = ["episode_index", "frame_index", "advantage",
+                "reward_sum", "value_current", "value_next", "return"]
     results: list[pd.DataFrame] = []
     for ep_idx, ep_group in tqdm(
         full_df.groupby("episode_index"),
@@ -327,73 +288,40 @@ def compute_advantages_for_dataset(
         leave=False,
     ):
         ep_df = ep_group.sort_values("frame_index").reset_index(drop=True)
-        rewards = ep_df["reward"].values.astype(np.float32)
-        values = ep_df["value_current"].values.astype(np.float64)
-        frame_indices = ep_df["frame_index"].values
-        returns_col = (
-            ep_df["return"].values.astype(np.float64)
-            if has_return
-            else np.zeros(len(ep_df))
-        )
         ep_len = len(ep_df)
         if ep_len == 0:
             continue
 
-        # v_next: value at position i + advantage_lookahead_step, else 0
+        rewards = ep_df["reward"].values.astype(np.float32)
+        values = ep_df["value_current"].values.astype(np.float64)
+
         v_next_arr = np.zeros(ep_len, dtype=np.float64)
         cut = ep_len - advantage_lookahead_step
         if cut > 0:
             v_next_arr[:cut] = values[advantage_lookahead_step:]
 
-        padded = np.concatenate(
+        padded = np.ascontiguousarray(np.concatenate(
             [rewards, np.zeros(advantage_lookahead_step - 1, dtype=np.float32)]
-        )
-        padded = np.ascontiguousarray(padded)
+        ))
         windowed = np.lib.stride_tricks.as_strided(
-            padded,
-            shape=(ep_len, advantage_lookahead_step),
+            padded, shape=(ep_len, advantage_lookahead_step),
             strides=(padded.strides[0], padded.strides[0]),
         )
-        reward_sums_raw = (windowed @ gamma_powers).astype(np.float64)
+        reward_sums = (windowed @ gamma_powers).astype(np.float64)
+        reward_sums = (reward_sums - global_return_min) / ret_range - 1.0
 
-        if ret_range <= 0:
-            raise ValueError(
-                f"Invalid return range: global_return_max ({global_return_max}) - "
-                f"global_return_min ({global_return_min}) = {ret_range} <= 0. "
-                f"Ensure global_return_max > global_return_min."
-            )
-        else:
-            reward_sums = (reward_sums_raw - global_return_min) / ret_range - 1.0
-
-        # advantage = normalized_reward_sum + gamma^N * v_next - v_curr
-        # Note: when v_next=0 (near episode end), gamma_k * v_next = 0 regardless
-        advantages = reward_sums + gamma_k * v_next_arr - values
-
-        ep_result = pd.DataFrame(
-            {
-                "episode_index": np.full(ep_len, int(ep_idx), dtype=np.int64),
-                "frame_index": frame_indices.astype(np.int64),
-                "advantage": advantages,
-                "reward_sum": reward_sums,
-                "value_current": values,
-                "value_next": v_next_arr,
-                "return": returns_col,
-            }
-        )
-        results.append(ep_result)
+        results.append(pd.DataFrame({
+            "episode_index": np.full(ep_len, int(ep_idx), dtype=np.int64),
+            "frame_index": ep_df["frame_index"].values.astype(np.int64),
+            "advantage": reward_sums + gamma_k * v_next_arr - values,
+            "reward_sum": reward_sums,
+            "value_current": values,
+            "value_next": v_next_arr,
+            "return": ep_df["return"].values.astype(np.float64) if has_return else np.zeros(ep_len),
+        }))
 
     if not results:
-        return pd.DataFrame(
-            columns=[
-                "episode_index",
-                "frame_index",
-                "advantage",
-                "reward_sum",
-                "value_current",
-                "value_next",
-                "return",
-            ]
-        )
+        return pd.DataFrame(columns=adv_cols)
     return pd.concat(results, ignore_index=True)
 
 
@@ -434,61 +362,38 @@ def _update_single_parquet_file(
     pq_file: Path,
     advantage_lookup: dict[tuple[int, int], int],
     adv_cont_arr: np.ndarray,
-    vc_arr: np.ndarray,
-    vn_arr: np.ndarray,
-    rs_arr: np.ndarray,
-    ret_arr: np.ndarray,
     threshold: float,
+    vc_arr: np.ndarray | None = None,
+    vn_arr: np.ndarray | None = None,
+    rs_arr: np.ndarray | None = None,
+    ret_arr: np.ndarray | None = None,
 ) -> tuple[int, int]:
     """Update a single parquet file with advantage columns. Returns (updated, missing)."""
     from datasets import Dataset
 
     _suppress_video_logging()
-
     ds = Dataset.from_parquet(str(pq_file))
     if len(ds) == 0:
         return 0, 0
 
-    ds_ep_indices = ds["episode_index"]
-    ds_frame_indices = ds["frame_index"]
+    # Vectorized lookup
+    indices = np.array([
+        advantage_lookup.get((int(e), int(f)), -1)
+        for e, f in zip(ds["episode_index"], ds["frame_index"])
+    ])
+    found = indices >= 0
+    safe_idx = np.maximum(indices, 0)
 
-    advantages = []
-    advantage_continuous = []
-    value_current_list = []
-    value_next_list = []
-    reward_sum_list = []
-    return_list = []
-    updated = 0
-    missing = 0
-
-    for ep_idx, frame_idx in zip(ds_ep_indices, ds_frame_indices):
-        key = (int(ep_idx), int(frame_idx))
-        if key in advantage_lookup:
-            i = advantage_lookup[key]
-            advantages.append(float(adv_cont_arr[i]) >= threshold)
-            advantage_continuous.append(float(adv_cont_arr[i]))
-            value_current_list.append(float(vc_arr[i]))
-            value_next_list.append(float(vn_arr[i]))
-            reward_sum_list.append(float(rs_arr[i]))
-            return_list.append(float(ret_arr[i]))
-            updated += 1
-        else:
-            advantages.append(False)
-            advantage_continuous.append(threshold - 0.1)
-            value_current_list.append(0.0)
-            value_next_list.append(0.0)
-            reward_sum_list.append(0.0)
-            return_list.append(0.0)
-            missing += 1
-
-    columns_to_add = {
-        "advantage": advantages,
-        "advantage_continuous": advantage_continuous,
-        "value_current": value_current_list,
-        "value_next": value_next_list,
-        "reward_sum": reward_sum_list,
-        "return": return_list,
+    adv_values = np.where(found, adv_cont_arr[safe_idx], threshold - 0.1)
+    columns_to_add: dict[str, list] = {
+        "advantage": (adv_values >= threshold).tolist(),
+        "advantage_continuous": adv_values.tolist(),
     }
+    if vc_arr is not None:
+        for col, arr in [("value_current", vc_arr), ("value_next", vn_arr),
+                         ("reward_sum", rs_arr), ("return", ret_arr)]:
+            columns_to_add[col] = np.where(found, arr[safe_idx], 0.0).tolist()
+
     existing = set(ds.column_names)
     for col in columns_to_add:
         if col in existing:
@@ -496,57 +401,7 @@ def _update_single_parquet_file(
     for col, data in columns_to_add.items():
         ds = ds.add_column(col, data)
     ds.to_parquet(str(pq_file))
-    return updated, missing
-
-
-def _update_single_parquet_file_adv_only(
-    pq_file: Path,
-    advantage_lookup: dict[tuple[int, int], int],
-    adv_cont_arr: np.ndarray,
-    threshold: float,
-) -> tuple[int, int]:
-    """Update only advantage columns for threshold-only relabeling."""
-    from datasets import Dataset
-
-    _suppress_video_logging()
-
-    ds = Dataset.from_parquet(str(pq_file))
-    if len(ds) == 0:
-        return 0, 0
-
-    ds_ep_indices = ds["episode_index"]
-    ds_frame_indices = ds["frame_index"]
-
-    advantages = []
-    advantage_continuous = []
-    updated = 0
-    missing = 0
-
-    for ep_idx, frame_idx in zip(ds_ep_indices, ds_frame_indices):
-        key = (int(ep_idx), int(frame_idx))
-        if key in advantage_lookup:
-            i = advantage_lookup[key]
-            adv_value = float(adv_cont_arr[i])
-            advantages.append(adv_value >= threshold)
-            advantage_continuous.append(adv_value)
-            updated += 1
-        else:
-            advantages.append(False)
-            advantage_continuous.append(threshold - 0.1)
-            missing += 1
-
-    columns_to_add = {
-        "advantage": advantages,
-        "advantage_continuous": advantage_continuous,
-    }
-    existing = set(ds.column_names)
-    for col in columns_to_add:
-        if col in existing:
-            ds = ds.remove_columns([col])
-    for col, data in columns_to_add.items():
-        ds = ds.add_column(col, data)
-    ds.to_parquet(str(pq_file))
-    return updated, missing
+    return int(found.sum()), int((~found).sum())
 
 
 def add_advantages_to_parquet_files(
@@ -554,136 +409,49 @@ def add_advantages_to_parquet_files(
     advantages_df: pd.DataFrame,
     threshold: float,
     num_workers: int = 1,
+    adv_only: bool = False,
 ) -> tuple[int, int]:
-    """Write advantage (bool), advantage_continuous, reward_sum, value_current, value_next to parquet."""
-    adv_continuous_col = advantages_df["advantage"]
+    """Write advantage columns to parquet files.
+
+    adv_only=True writes only advantage/advantage_continuous (threshold relabeling).
+    """
     advantages_df = advantages_df.copy()
-    advantages_df["advantage_continuous"] = adv_continuous_col
+    if adv_only:
+        if "advantage_continuous" not in advantages_df.columns:
+            raise ValueError(
+                "advantages_df must contain 'advantage_continuous' for threshold-only relabeling."
+            )
+    else:
+        advantages_df["advantage_continuous"] = advantages_df["advantage"]
 
     ep_arr = advantages_df["episode_index"].values.astype(np.int64)
     fr_arr = advantages_df["frame_index"].values.astype(np.int64)
     adv_cont_arr = advantages_df["advantage_continuous"].values
-    vc_arr = advantages_df["value_current"].values
-    vn_arr = advantages_df["value_next"].values
-    rs_arr = advantages_df["reward_sum"].values
-    ret_arr = advantages_df["return"].values
+    extra = {}
+    if not adv_only:
+        extra = {k: advantages_df[v].values for k, v in {
+            "vc_arr": "value_current", "vn_arr": "value_next",
+            "rs_arr": "reward_sum", "ret_arr": "return",
+        }.items()}
 
-    advantage_lookup: dict[tuple[int, int], int] = {}
-    for i in range(len(advantages_df)):
-        advantage_lookup[(int(ep_arr[i]), int(fr_arr[i]))] = i
-
+    lookup = {(int(ep_arr[i]), int(fr_arr[i])): i for i in range(len(advantages_df))}
     parquet_files = list(data_dir.rglob("*.parquet"))
+    if not parquet_files:
+        return 0, 0
     logger.info(f"  Found {len(parquet_files)} parquet files to update")
-    total_updated = 0
-    total_missing = 0
 
-    effective_workers = min(num_workers, len(parquet_files))
+    def _process(pq_file):
+        return _update_single_parquet_file(pq_file, lookup, adv_cont_arr, threshold, **extra)
 
-    if effective_workers > 1:
-        with ThreadPoolExecutor(max_workers=effective_workers) as executor:
-            futures = {
-                executor.submit(
-                    _update_single_parquet_file,
-                    pq_file,
-                    advantage_lookup,
-                    adv_cont_arr,
-                    vc_arr,
-                    vn_arr,
-                    rs_arr,
-                    ret_arr,
-                    threshold,
-                ): pq_file
-                for pq_file in parquet_files
-            }
-            for future in tqdm(
-                as_completed(futures),
-                total=len(futures),
-                desc="  Updating parquet",
-                leave=False,
-            ):
-                updated, missing = future.result()
-                total_updated += updated
-                total_missing += missing
-    else:
-        for pq_file in tqdm(parquet_files, desc="  Updating parquet", leave=False):
-            updated, missing = _update_single_parquet_file(
-                pq_file,
-                advantage_lookup,
-                adv_cont_arr,
-                vc_arr,
-                vn_arr,
-                rs_arr,
-                ret_arr,
-                threshold,
-            )
-            total_updated += updated
-            total_missing += missing
+    workers = max(min(num_workers, len(parquet_files)), 1)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        results = list(tqdm(
+            executor.map(_process, parquet_files),
+            total=len(parquet_files), desc="  Updating parquet", leave=False,
+        ))
 
-    logger.info(f"  Updated {total_updated} samples with advantages")
-    if total_missing > 0:
-        logger.warning(f"  {total_missing} samples missing advantage (set to negative)")
-    return total_updated, total_missing
-
-
-def add_advantage_labels_to_parquet_files(
-    data_dir: Path,
-    advantages_df: pd.DataFrame,
-    threshold: float,
-    num_workers: int = 1,
-) -> tuple[int, int]:
-    """Write only advantage and advantage_continuous columns to parquet files."""
-    if "advantage_continuous" not in advantages_df.columns:
-        raise ValueError(
-            "advantages_df must contain 'advantage_continuous' for threshold-only relabeling."
-        )
-
-    ep_arr = advantages_df["episode_index"].values.astype(np.int64)
-    fr_arr = advantages_df["frame_index"].values.astype(np.int64)
-    adv_cont_arr = advantages_df["advantage_continuous"].values
-
-    advantage_lookup: dict[tuple[int, int], int] = {}
-    for i in range(len(advantages_df)):
-        advantage_lookup[(int(ep_arr[i]), int(fr_arr[i]))] = i
-
-    parquet_files = list(data_dir.rglob("*.parquet"))
-    logger.info(f"  Found {len(parquet_files)} parquet files to update")
-    total_updated = 0
-    total_missing = 0
-
-    effective_workers = min(num_workers, len(parquet_files))
-
-    if effective_workers > 1:
-        with ThreadPoolExecutor(max_workers=effective_workers) as executor:
-            futures = {
-                executor.submit(
-                    _update_single_parquet_file_adv_only,
-                    pq_file,
-                    advantage_lookup,
-                    adv_cont_arr,
-                    threshold,
-                ): pq_file
-                for pq_file in parquet_files
-            }
-            for future in tqdm(
-                as_completed(futures),
-                total=len(futures),
-                desc="  Updating parquet",
-                leave=False,
-            ):
-                updated, missing = future.result()
-                total_updated += updated
-                total_missing += missing
-    else:
-        for pq_file in tqdm(parquet_files, desc="  Updating parquet", leave=False):
-            updated, missing = _update_single_parquet_file_adv_only(
-                pq_file,
-                advantage_lookup,
-                adv_cont_arr,
-                threshold,
-            )
-            total_updated += updated
-            total_missing += missing
-
+    total_updated = sum(u for u, _ in results)
+    total_missing = sum(m for _, m in results)
     logger.info(f"  Updated {total_updated} samples with advantages")
     if total_missing > 0:
         logger.warning(f"  {total_missing} samples missing advantage (set to negative)")
@@ -774,8 +542,9 @@ def main() -> None:
         "--advantage_horizon",
         type=int,
         dest="advantage_lookahead_step",
-        default=10,
-        help="N steps for reward sum and v_next (value_current at t+N). Default 10.",
+        default=None,
+        help="N steps for reward sum and v_next (value_current at t+N). "
+        "If omitted, only reapply quantile threshold on existing advantages.",
     )
     parser.add_argument(
         "--gamma",
@@ -805,7 +574,7 @@ def main() -> None:
         "--tag",
         type=str,
         default=None,
-        help="Legacy single tag. If set, behaves like --advantage_tag for outputs and "
+        help="Legacy single tag. If set, behaves like --new_tag for outputs and "
         "like --source_tag for optional sidecar inputs.",
     )
     parser.add_argument(
@@ -816,21 +585,15 @@ def main() -> None:
         "meta/returns_{source_tag}.parquet from.",
     )
     parser.add_argument(
-        "--advantage_tag",
+        "--new_tag",
         type=str,
         default=None,
-        help="Output tag for meta/advantages_{advantage_tag}.parquet.",
+        help="Output tag for meta/advantages_{new_tag}.parquet.",
     )
     parser.add_argument(
         "--skip_embed",
         action="store_true",
         help="Skip embedding advantages into data parquet files. Only save meta parquet.",
-    )
-    parser.add_argument(
-        "--reapply_quantile_only",
-        action="store_true",
-        help="Reuse existing advantage_continuous values from an existing advantages parquet "
-        "and only recompute the unified threshold / boolean labels.",
     )
     args = parser.parse_args()
 
@@ -838,11 +601,12 @@ def main() -> None:
         parser.error("Specify exactly one of --dataset_root or --dataset_paths.")
     if not 0.0 < args.positive_quantile < 1.0:
         parser.error("--positive_quantile must be in the open interval (0, 1).")
-    if args.tag and args.advantage_tag and args.tag != args.advantage_tag:
-        parser.error("--tag and --advantage_tag disagree; pass only one output tag.")
+    if args.tag and args.new_tag and args.tag != args.new_tag:
+        parser.error("--tag and --new_tag disagree; pass only one output tag.")
 
+    recompute = args.advantage_lookahead_step is not None
     source_tag = args.source_tag or args.tag
-    output_tag = args.advantage_tag or args.tag
+    output_tag = args.new_tag or args.tag
 
     if args.dataset_root:
         dataset_root = args.dataset_root.resolve()
@@ -861,9 +625,7 @@ def main() -> None:
                 raise ValueError(
                     f"Dataset path does not look like a LeRobot dataset: {dataset_path}"
                 )
-        global_return_min, global_return_max = infer_return_range_from_dataset_paths(
-            dataset_paths
-        )
+        global_return_min, global_return_max = _infer_return_range(dataset_paths)
 
     logger.info(
         f"Found {len(dataset_paths)} datasets: {[p.name for p in dataset_paths]}"
@@ -874,9 +636,12 @@ def main() -> None:
         logger.info(
             "Global return range unavailable from metadata; threshold-only relabeling can still proceed."
         )
-    logger.info(
-        f"Advantage lookahead step: {args.advantage_lookahead_step}, gamma: {args.gamma}"
-    )
+    if recompute:
+        logger.info(
+            f"Mode: full recompute (lookahead={args.advantage_lookahead_step}, gamma={args.gamma})"
+        )
+    else:
+        logger.info("Mode: threshold-only relabeling (--advantage_lookahead_step not set)")
     logger.info(f"Positive quantile: {args.positive_quantile}")
     if source_tag:
         logger.info(f"Source tag: {source_tag}")
@@ -893,19 +658,12 @@ def main() -> None:
         f"(parallelized within each dataset for parquet read/write)"
     )
     for ds_path in tqdm(dataset_paths, desc="Processing datasets"):
-        if args.reapply_quantile_only:
-            df = load_existing_advantages(ds_path, source_tag=source_tag)
-            all_advantages.append(df["advantage_continuous"].values)
-            logger.info(
-                f"  {ds_path.name}: {len(df)} existing advantages, "
-                f"mean={df['advantage_continuous'].mean():.4f}"
-            )
-        else:
+        if recompute:
             if global_return_min is None or global_return_max is None:
                 raise ValueError(
                     "Cannot recompute from value/reward without a known global return range. "
-                    "Use --reapply_quantile_only or provide datasets with mixture_config.yaml "
-                    "or meta/stats.json return metadata."
+                    "Provide datasets with mixture_config.yaml or meta/stats.json return metadata, "
+                    "or omit --advantage_lookahead_step for threshold-only relabeling."
                 )
             df = compute_advantages_for_dataset(
                 ds_path,
@@ -919,6 +677,13 @@ def main() -> None:
             all_advantages.append(df["advantage"].values)
             logger.info(
                 f"  {ds_path.name}: {len(df)} advantages, mean={df['advantage'].mean():.4f}"
+            )
+        else:
+            df = load_existing_advantages(ds_path, source_tag=source_tag)
+            all_advantages.append(df["advantage_continuous"].values)
+            logger.info(
+                f"  {ds_path.name}: {len(df)} existing advantages, "
+                f"mean={df['advantage_continuous'].mean():.4f}"
             )
         dataset_results.append((ds_path, df))
 
@@ -972,17 +737,13 @@ def main() -> None:
                     f"  No data/ dir at {target_path}, skipping parquet update"
                 )
             else:
-                if args.reapply_quantile_only:
-                    add_advantage_labels_to_parquet_files(
-                        data_dir,
-                        build_save_advantages_df(df, unified_threshold),
-                        unified_threshold,
-                        num_workers=num_workers,
-                    )
-                else:
-                    add_advantages_to_parquet_files(
-                        data_dir, df, unified_threshold, num_workers=num_workers
-                    )
+                add_advantages_to_parquet_files(
+                    data_dir,
+                    build_save_advantages_df(df, unified_threshold) if not recompute else df,
+                    unified_threshold,
+                    num_workers=num_workers,
+                    adv_only=not recompute,
+                )
         else:
             logger.info("  Skipping data parquet embedding (--skip_embed)")
 

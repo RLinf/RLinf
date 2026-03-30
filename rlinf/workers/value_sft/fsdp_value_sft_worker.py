@@ -21,7 +21,6 @@ via supervised fine-tuning with FSDP.
 This module is self-contained and does NOT share code with fsdp_sft_worker.py.
 """
 
-import json
 import logging
 import os
 from pathlib import Path
@@ -41,28 +40,12 @@ from omegaconf import DictConfig  # noqa: E402
 from rlinf.datasets import (  # noqa: E402
     ValueDataLoaderImpl,
     ValueMixtureDataset,
+    load_return_stats_from_dataset,
 )
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager  # noqa: E402
 from rlinf.models import get_model  # noqa: E402
 from rlinf.scheduler import Worker  # noqa: E402
 from rlinf.utils.distributed import all_reduce_dict  # noqa: E402
-
-
-def _load_return_stats_from_dataset(
-    dataset_path: str,
-) -> tuple[float | None, float | None]:
-    """Load return min/max from dataset's stats.json."""
-    stats_path = Path(dataset_path) / "meta" / "stats.json"
-    if not stats_path.exists():
-        return None, None
-
-    try:
-        with open(stats_path, "r") as f:
-            stats = json.load(f)
-        return_stats = stats.get("return", {})
-        return return_stats.get("min"), return_stats.get("max")
-    except (json.JSONDecodeError, KeyError):
-        return None, None
 
 
 class FSDPValueSftWorker(FSDPModelManager, Worker):
@@ -274,7 +257,7 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                     continue
                 if data_root and not os.path.isabs(ds_path):
                     ds_path = os.path.join(data_root, ds_path)
-                ds_min, ds_max = _load_return_stats_from_dataset(ds_path)
+                ds_min, ds_max = load_return_stats_from_dataset(ds_path)
                 if ds_min is not None:
                     all_mins.append(ds_min)
                 if ds_max is not None:
