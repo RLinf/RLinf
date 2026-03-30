@@ -113,7 +113,7 @@ env:
       use_dense_reward: True
       reward_scale: 0.02
       max_num_steps: 50
-      target_ee_pose: [ 0.68450615,  0.05030787, -0.00968573,  3.1250674,  -0.05904865, -0.09369436] # Replace with your target end-effector pose
+      target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
 
   eval:
     total_num_envs: 1
@@ -126,7 +126,7 @@ rollout:
   sync_weight_nccl_max_ctas: 32 # Max CTAs (Compute Thread Array, the compute resource of GPUs) for sync weight communication. Higher values consume more GPU resources, and thus sync weight is faster but could affect rollout speed in async mode. Positive integer 1 to 32. Default 32.
 
   model:
-    model_path: "/home/shiliangzhi/work-space/pretrained_model"
+    model_path: "/path/to/model"
     precision: ${actor.model.precision}
     num_q_heads: 10
 
@@ -143,7 +143,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/home/shiliangzhi/work-space/pretrained_model"
+    model_path: "/path/to/model"
     add_value_head: True
     add_q_head: False
     state_dim: 19
