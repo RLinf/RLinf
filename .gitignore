@@ -19,33 +19,4 @@ outputs/*
 uv.lock
 rlinf/envs/maniskill/assets
 PKG-INFO
-/lerobot
-visualize_result/
-data_to_use/
-
-# Test files (local only, not for release)
-tests/
-
-# Test configs (local only)
-examples/**/config/*_test.yaml
-
-# Local dev files
-CLAUDE.md
-memory.md
-progress.md
-.cursor
-.claude
-pretrained_models/
-*test.yaml
-# Experiment-specific configs (local only, contain hardcoded paths)
-examples/embodiment/config/one_iter_debug_libero10.yaml
-examples/sft/config/libero_sft_value_siglip_gemma3_fail300_collect8192_task0.yaml
-examples/sft/config/libero_sft_value_siglip_gemma3_fail300_collect8192_task1.yaml
-install_for_use_value_model.sh
-
-# Experiment scripts (generated, local only)
-experiments/
-visualize/
-physical-intelligence
-
-tree_modified.md
+*.egg-info/

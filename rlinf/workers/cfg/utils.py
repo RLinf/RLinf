@@ -66,7 +66,7 @@ def cast_image_features(hf_dataset):
     return hf_dataset
 
 
-class DatasetWithAdvantage:
+class AdvantagePreservingDataset:
     """Wrapper to preserve advantage through OpenPI transform pipeline.
 
     OpenPI's RepackTransform removes all keys except required ones, which drops
@@ -86,7 +86,7 @@ class DatasetWithAdvantage:
         transformed_dataset: Any,
         advantages_lookup: dict[tuple[int, int], bool] | None = None,
     ):
-        """Initialize DatasetWithAdvantage.
+        """Initialize AdvantagePreservingDataset.
 
         Pre-builds index-to-advantage mapping to avoid loading each sample twice
         (once from base_dataset for advantage, once from transformed_dataset).
@@ -159,7 +159,7 @@ class DatasetWithAdvantage:
                     missing_keys.append(key)
             if missing_keys:
                 raise ValueError(
-                    f"[DatasetWithAdvantage] {len(missing_keys)} samples not found "
+                    f"[AdvantagePreservingDataset] {len(missing_keys)} samples not found "
                     f"in advantages lookup (first 5: {missing_keys[:5]}). "
                     f"The advantages parquet does not match this dataset. "
                     f"Re-run compute_advantages.py."
@@ -173,7 +173,7 @@ class DatasetWithAdvantage:
 
         else:
             raise ValueError(
-                "[DatasetWithAdvantage] No advantage data found: "
+                "[AdvantagePreservingDataset] No advantage data found: "
                 "advantages_lookup is None, and 'advantage' column not in dataset. "
                 "Run compute_advantages.py first."
             )
@@ -197,7 +197,7 @@ class DatasetWithAdvantage:
         if self._advantage_by_index is not None:
             if idx not in self._advantage_by_index:
                 raise KeyError(
-                    f"[DatasetWithAdvantage] Index {idx} not found in advantage index. "
+                    f"[AdvantagePreservingDataset] Index {idx} not found in advantage index. "
                     f"Dataset size: {len(self._transformed_dataset)}, "
                     f"advantage index size: {len(self._advantage_by_index)}."
                 )
@@ -207,7 +207,7 @@ class DatasetWithAdvantage:
             base_sample = self._base_dataset[idx]
             if "advantage" not in base_sample:
                 raise KeyError(
-                    f"[DatasetWithAdvantage] 'advantage' key not found in base_sample "
+                    f"[AdvantagePreservingDataset] 'advantage' key not found in base_sample "
                     f"at index {idx}. Run compute_advantages.py first."
                 )
             advantage = base_sample["advantage"]
@@ -253,7 +253,7 @@ class CFGDataLoaderImpl:
             self._data_loader.sampler, "set_epoch"
         ):
             self._data_loader.sampler.set_epoch(epoch)
-        # AdvantageMixtureDataset has set_epoch method
+        # CfgMixtureDataset has set_epoch method
         if hasattr(self._data_loader, "dataset") and hasattr(
             self._data_loader.dataset, "set_epoch"
         ):

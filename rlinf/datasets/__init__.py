@@ -38,7 +38,7 @@ from rlinf.datasets.config import (  # noqa: E402
     create_rl_config,
 )
 from rlinf.datasets.mixture_datasets import (  # noqa: E402
-    AdvantageMixtureDataset,
+    CfgMixtureDataset,
     ValueMixtureDataset,
 )
 from rlinf.datasets.rl_dataset import (  # noqa: E402
@@ -133,7 +133,7 @@ __all__ = [
     "load_returns_sidecar",
     "LeRobotRLDataset",
     "ValueDataset",
-    "AdvantageMixtureDataset",
+    "CfgMixtureDataset",
     "ValueMixtureDataset",
     "ValueDataLoaderImpl",
     "TokenizePromptWithGuidance",

@@ -317,7 +317,7 @@ def load_lerobot_dataset(
 
     Loading without delta_timestamps is ~50x faster (6ms vs 580ms per sample)
     because it avoids expensive multi-timestep parquet reads and image decoding.
-    The AdvantageDataset handles multi-timestep access via separate dataset[idx]
+    The ValueInferenceDataset handles multi-timestep access via separate dataset[idx]
     and dataset[idx+N] calls instead.
 
     Also loads ``meta/returns_{tag}.parquet`` sidecar if present.
@@ -417,7 +417,7 @@ def build_obs(
     return obs
 
 
-class AdvantageDataset(torch.utils.data.Dataset):
+class ValueInferenceDataset(torch.utils.data.Dataset):
     """Wrapper dataset for DataLoader-based advantage computation.
 
     Builds observation at the current timestep only. The caller can later
@@ -486,7 +486,7 @@ class AdvantageDataset(torch.utils.data.Dataset):
 def advantage_collate_fn(
     batch: list[dict],
 ) -> tuple[list[dict], list[dict]]:
-    """Custom collate function for AdvantageDataset.
+    """Custom collate function for ValueInferenceDataset.
 
     Keeps observations as lists of dicts (not batched tensors), since
     value_model.infer_batch() expects this format.
@@ -673,7 +673,7 @@ def compute_advantages_for_dataset(
             f"cpu_prep_in_workers={cpu_prep_in_workers}"
         )
 
-    advantage_dataset = AdvantageDataset(
+    advantage_dataset = ValueInferenceDataset(
         dataset,
         robot_type,
         tasks,

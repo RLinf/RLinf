@@ -16,7 +16,7 @@
 Mixture datasets for value and advantage training.
 
 This module provides:
-- AdvantageMixtureDataset: for CFG-RL training with binary advantage labels
+- CfgMixtureDataset: for CFG-RL training with binary advantage labels
 - ValueMixtureDataset: for training value models on multiple datasets
 """
 
@@ -136,7 +136,7 @@ class _MixtureBase(Dataset):
         return dataset[sample_idx]
 
 
-class AdvantageMixtureDataset(_MixtureBase):
+class CfgMixtureDataset(_MixtureBase):
     """Mixture of multiple datasets with weighted sampling for CFG-RL training."""
 
     def __init__(
@@ -148,7 +148,7 @@ class AdvantageMixtureDataset(_MixtureBase):
     ):
         super().__init__(datasets, mode, balance_dataset_weights, seed)
 
-        logger.info("AdvantageMixtureDataset initialized:")
+        logger.info("CfgMixtureDataset initialized:")
         logger.info(f"  Datasets: {len(self.datasets)}")
         logger.info(f"  Total samples: {sum(self._dataset_lengths)}")
         logger.info(f"  Dataset lengths: {self._dataset_lengths.tolist()}")

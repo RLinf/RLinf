@@ -15,7 +15,7 @@
 """FSDP CFG Worker for Classifier-Free Guidance training.
 
 Extends FSDPSftWorker with pre-computed advantage labels and
-AdvantageMixtureDataset for weighted sampling across datasets.
+CfgMixtureDataset for weighted sampling across datasets.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ import torch
 from omegaconf import DictConfig
 
 from rlinf.datasets import TokenizePromptWithGuidance
-from rlinf.datasets.mixture_datasets import AdvantageMixtureDataset
+from rlinf.datasets.mixture_datasets import CfgMixtureDataset
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.distributed import all_reduce_dict
@@ -38,7 +38,7 @@ from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.cfg.utils import (
     CFGDataLoaderImpl,
-    DatasetWithAdvantage,
+    AdvantagePreservingDataset,
     cast_image_features,
 )
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
@@ -56,7 +56,7 @@ class FSDPCfgWorker(FSDPSftWorker):
     """FSDP worker for CFG (Classifier-Free Guidance) training.
 
     Extends FSDPSftWorker to load datasets with pre-computed advantages,
-    use AdvantageMixtureDataset for weighted sampling, and pass advantage
+    use CfgMixtureDataset for weighted sampling, and pass advantage
     labels to model.forward for guidance selection.
     """
 
@@ -190,7 +190,7 @@ class FSDPCfgWorker(FSDPSftWorker):
                 )
 
             # RepackTransform strips all keys except OpenPI required ones,
-            # so DatasetWithAdvantage is needed to restore the advantage field.
+            # so AdvantagePreservingDataset is needed to restore the advantage field.
             transforms_list = [
                 *data_config.repack_transforms.inputs,
                 *data_config.data_transforms.inputs,
@@ -215,7 +215,7 @@ class FSDPCfgWorker(FSDPSftWorker):
                     f"meta/{adv_filename} ({len(advantages_lookup)} entries)"
                 )
 
-            final_dataset = DatasetWithAdvantage(
+            final_dataset = AdvantagePreservingDataset(
                 base_dataset=base_dataset,
                 transformed_dataset=transformed_dataset,
                 advantages_lookup=advantages_lookup,
@@ -229,7 +229,7 @@ class FSDPCfgWorker(FSDPSftWorker):
                     f"({len(final_dataset)} samples, weight={weight})"
                 )
 
-        combined_dataset = AdvantageMixtureDataset(
+        combined_dataset = CfgMixtureDataset(
             datasets=datasets_with_weights,
             mode="train",
             balance_dataset_weights=data_cfg.get("balance_dataset_weights", True),
