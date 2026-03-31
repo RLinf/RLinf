@@ -36,6 +36,9 @@ In most cases, `env`, `rollout`, and `actor` should enable offloading as below t
    actor:
      enable_offload: True
 
+.. note::
+   The ``pipeline_stage_num`` configuration should be adjusted to achieve the desired pipelining effect. For embodied RL training, it is recommended to set ``pipeline_stage_num`` to ``2`` for Hybrid Mode to enable pipeline overlap between rollout and env.
+  
 Refer to :doc:`../user/yaml` for compete configuration.
 
 **ComponentPlacement programming**
