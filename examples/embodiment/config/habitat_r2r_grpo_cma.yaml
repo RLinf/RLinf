@@ -100,6 +100,7 @@ env:
       save_video: False
       video_base_dir: ${runner.logger.log_path}/video/train
     metrics_cfg:
+      save_metrics: True
       metrics_base_dir: ${runner.logger.log_path}/metrics/train
   eval:
     total_num_envs: 608 # 608 8H20
@@ -116,6 +117,7 @@ env:
       save_video: False
       video_base_dir: ${runner.logger.log_path}/video/eval
     metrics_cfg:
+      save_metrics: True
       metrics_base_dir: ${runner.logger.log_path}/metrics/eval
 
 rollout:
