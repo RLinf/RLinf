@@ -30,6 +30,7 @@ from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, CollectiveGroupOptions, Worker
 from rlinf.utils.comm_mapping import CommMapper
+from rlinf.utils.nsight_profiler import NsightProfiler
 from rlinf.utils.placement import HybridComponentPlacement
 
 
@@ -84,6 +85,11 @@ class MultiStepRolloutWorker(Worker):
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self.version = 0
         self.finished_episodes = None
+        self.nsight_profiler = NsightProfiler.from_config(
+            self.cfg.get("nsight_profiler", None),
+            role="rollout",
+            rank=self._rank,
+        )
 
         weight_syncer_cfg = OmegaConf.select(cfg, "weight_syncer", default=None)
         assert weight_syncer_cfg is not None, (
@@ -248,6 +254,7 @@ class MultiStepRolloutWorker(Worker):
             dst_rank=self._rank,
         )
 
+    @NsightProfiler.annotate("rollout/predict")
     @Worker.timer("predict")
     def predict(
         self, env_obs: dict[str, Any], mode: Literal["train", "eval"] = "train"
@@ -385,6 +392,7 @@ class MultiStepRolloutWorker(Worker):
         gc.collect()
         self.torch_platform.empty_cache()
 
+    @NsightProfiler.annotate("rollout/generate_epoch")
     @Worker.timer("generate_one_epoch")
     async def generate_one_epoch(self, input_channel: Channel, output_channel: Channel):
         self.update_dagger_beta()
@@ -434,6 +442,7 @@ class MultiStepRolloutWorker(Worker):
             )
             self.send_rollout_result(output_channel, rollout_result, mode="train")
 
+    @NsightProfiler.annotate("rollout/generate")
     async def generate(
         self,
         input_channel: Channel,
@@ -483,6 +492,7 @@ class MultiStepRolloutWorker(Worker):
                 eval_batch_size=self.eval_batch_size,
             )
 
+    @NsightProfiler.annotate("rollout/recv_obs")
     async def recv_env_output(
         self, input_channel: Channel, mode: Literal["train", "eval"] = "train"
     ) -> dict[str, Any]:
@@ -583,6 +593,7 @@ class MultiStepRolloutWorker(Worker):
 
         return {"obs": merged_obs, "final_obs": merged_final_obs}
 
+    @NsightProfiler.annotate("rollout/send_actions")
     def send_chunk_actions(
         self,
         output_channel: Channel,
@@ -656,6 +667,7 @@ class MultiStepRolloutWorker(Worker):
             for idx in range(len(sizes))
         ]
 
+    @NsightProfiler.annotate("rollout/send_traj")
     def send_rollout_result(
         self,
         output_channel: Channel,

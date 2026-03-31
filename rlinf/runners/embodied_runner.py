@@ -74,10 +74,24 @@ class EmbodiedRunner:
         self.overlap_env_bootstrap = bool(
             self.cfg.runner.get("overlap_env_bootstrap", False)
         )
+        nsight_cfg = self.cfg.get("nsight_profiler", None)
+        profile_steps = nsight_cfg.get("steps", None) if nsight_cfg else None
+        self.profile_steps: set[int] | None = set(profile_steps) if profile_steps else None
+
+        from omegaconf import OmegaConf
+
+        nsight_enabled = nsight_cfg is not None and profile_steps is not None
+        self._channel_nsight_options = (
+            OmegaConf.to_container(nsight_cfg.get("nsight_options"), resolve=True)
+            if nsight_enabled and nsight_cfg.get("nsight_options")
+            else None
+        )
+        channel_nsight_options = self._channel_nsight_options
+
         # Data channels
-        self.env_channel = Channel.create("Env")
-        self.rollout_channel = Channel.create("Rollout")
-        self.actor_channel = Channel.create("Actor")
+        self.env_channel = Channel.create("Env", nsight_options=channel_nsight_options)
+        self.rollout_channel = Channel.create("Rollout", nsight_options=channel_nsight_options)
+        self.actor_channel = Channel.create("Actor", nsight_options=channel_nsight_options)
         if self.reward is not None:
             self.reward_channel = Channel.create("Reward")
         else:
@@ -268,6 +282,21 @@ class EmbodiedRunner:
                 ranked_metrics_list[rank] = compute_evaluate_metrics(metrics_list)
         return aggregated_metrics, ranked_metrics_list
 
+    def _should_profile(self, step: int) -> bool:
+        return self.profile_steps is not None and step in self.profile_steps
+
+    def _start_profiling(self, step: int) -> None:
+        self.logger.info(f"Starting Nsight profiling for step {step}")
+        self.actor.start_profile(step).wait()
+        self.rollout.start_profile(step).wait()
+        self.env.start_profile(step).wait()
+
+    def _stop_profiling(self) -> None:
+        self.actor.stop_profile().wait()
+        self.rollout.stop_profile().wait()
+        self.env.stop_profile().wait()
+        self.logger.info("Nsight profiling stopped")
+
     def run(self):
         start_step = self.global_step
         start_time = time.time()
@@ -275,6 +304,9 @@ class EmbodiedRunner:
             # set global step
             self.actor.set_global_step(self.global_step)
             self.rollout.set_global_step(self.global_step)
+            do_profile = self._should_profile(self.global_step)
+            if do_profile:
+                self._start_profiling(self.global_step)
 
             with self.timer("step"):
                 with self.timer("sync_weights"):
@@ -342,6 +374,9 @@ class EmbodiedRunner:
 
                 if save_model:
                     self._save_checkpoint()
+
+            if do_profile:
+                self._stop_profiling()
 
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}

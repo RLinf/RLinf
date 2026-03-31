@@ -41,6 +41,23 @@ def main(cfg) -> None:
         cluster_cfg=cfg.cluster, distributed_log_dir=cfg.runner.per_worker_log_path
     )
     component_placement = HybridComponentPlacement(cfg, cluster)
+    nsight_cfg = (
+        OmegaConf.to_container(cfg.nsight_profiler, resolve=True)
+        if cfg.get("nsight_profiler")
+        else None
+    )
+    nsight_enabled = nsight_cfg is not None and nsight_cfg.get("steps") is not None
+    default_nsight_options = (
+        nsight_cfg.get("nsight_options") if nsight_enabled else None
+    )
+
+    def _get_role_nsight_options(role: str):
+        if not nsight_enabled:
+            return None
+        role_cfg = nsight_cfg.get(role, {})
+        if not role_cfg.get("enable", False):
+            return None
+        return role_cfg.get("nsight_options") or default_nsight_options
 
     # Create actor worker group
     actor_placement = component_placement.get_strategy("actor")
@@ -73,18 +90,27 @@ def main(cfg) -> None:
         )
 
     actor_group = actor_worker_cls.create_group(cfg).launch(
-        cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
+        cluster,
+        name=cfg.actor.group_name,
+        placement_strategy=actor_placement,
+        nsight_options=_get_role_nsight_options("actor"),
     )
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
     rollout_group = AsyncMultiStepRolloutWorker.create_group(cfg).launch(
-        cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
+        cluster,
+        name=cfg.rollout.group_name,
+        placement_strategy=rollout_placement,
+        nsight_options=_get_role_nsight_options("rollout"),
     )
 
     # Create env worker group
     env_placement = component_placement.get_strategy("env")
     env_group = AsyncEnvWorker.create_group(cfg).launch(
-        cluster, name=cfg.env.group_name, placement_strategy=env_placement
+        cluster,
+        name=cfg.env.group_name,
+        placement_strategy=env_placement,
+        nsight_options=_get_role_nsight_options("env"),
     )
 
     reward_group = None

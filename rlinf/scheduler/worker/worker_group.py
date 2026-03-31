@@ -150,6 +150,7 @@ class WorkerGroup(Generic[WorkerClsType]):
         isolate_gpu: bool = True,
         catch_system_failure: Optional[bool] = None,
         disable_distributed_log: bool = False,
+        nsight_options: Optional[dict] = None,
     ) -> "WorkerGroup[WorkerClsType] | WorkerClsType":
         """Create a worker group with the specified cluster and options.
 
@@ -161,6 +162,8 @@ class WorkerGroup(Generic[WorkerClsType]):
             isolate_gpu (bool): Whether a worker should only see the GPUs that it's assigned via controlling CUDA_VISIBLE_DEVICES. Defaults to True.
             catch_system_failure (Optional[bool]): Whether to catch system exit and signals in the worker process. If None, the environment variable RLINF_CATCH_FAILURE will take effect, whose default value is True. If set, then it will override the environment variable.
             disable_distributed_log (bool): Whether to disable distributed log for the worker group.
+            nsight_options (Optional[dict]): Optional Ray ``runtime_env["nsight"]``
+                settings for this worker group.
 
         Returns:
             WorkerGroup: An instance of WorkerGroup with the specified configuration.
@@ -173,6 +176,7 @@ class WorkerGroup(Generic[WorkerClsType]):
         self._catch_system_failure = catch_system_failure
         self._max_concurrency = max_concurrency
         self._disable_distributed_log = disable_distributed_log
+        self._nsight_options = nsight_options
         if self._catch_system_failure is None:
             self._catch_system_failure = (
                 Cluster.get_sys_env_var(ClusterEnvVar.CATCH_FAILURE, "0") == "1"
@@ -271,6 +275,15 @@ class WorkerGroup(Generic[WorkerClsType]):
                     accelerator_type, placement.visible_accelerators
                 )
             )
+            base_nsight_options = getattr(self, "_nsight_options", None)
+            if base_nsight_options is not None:
+                per_rank_nsight_options = dict(base_nsight_options)
+                base_output = per_rank_nsight_options.get("o", self._worker_group_name)
+                per_rank_nsight_options["o"] = (
+                    f"{base_output}_rank{placement.rank}_pid%p"
+                )
+            else:
+                per_rank_nsight_options = None
 
             worker = self._cluster.allocate(
                 cls=self._worker_cls,
@@ -283,6 +296,7 @@ class WorkerGroup(Generic[WorkerClsType]):
                 disable_distributed_log=self._disable_distributed_log,
                 cls_args=self._worker_cls_args,
                 cls_kwargs=self._worker_cls_kwargs,
+                nsight_options=per_rank_nsight_options,
             )
 
             self._workers.append(

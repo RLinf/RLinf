@@ -23,6 +23,7 @@ from rlinf.utils.metric_utils import (
     append_to_dict,
     compute_split_num,
 )
+from rlinf.utils.nsight_profiler import NsightProfiler
 from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
 
 
@@ -44,13 +45,34 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
             self._recv_rollout_thread.start()
 
     def _recv_rollout_thread_main(self, input_channel):
+        try:
+            import nvtx as _nvtx_mod
+            _has_nvtx = True
+        except ImportError:
+            _has_nvtx = False
+        _profiler_enabled = (
+            self.nsight_profiler is not None and self.nsight_profiler.enable
+        )
+        if _profiler_enabled and _has_nvtx:
+            from rlinf.utils.nsight_profiler import set_channel_nvtx_enabled
+            set_channel_nvtx_enabled(True)
+
         send_num = self._component_placement.get_world_size("env") * self.stage_num
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(send_num, recv_num)
+        batch_idx = 0
         while not self.should_stop:
+            if _profiler_enabled and _has_nvtx:
+                rid = _nvtx_mod.start_range(
+                    message=f"actor/recv_traj_batch idx={batch_idx} n={split_num}",
+                    color="green",
+                )
             for _ in range(split_num):
                 trajectory = input_channel.get()
                 self._recv_queue.put(trajectory)
+            if _profiler_enabled and _has_nvtx:
+                _nvtx_mod.end_range(rid)
+            batch_idx += 1
 
     def _drain_received_trajectories(self, max_trajectories: int | None = None):
         if getattr(self, "_recv_queue", None) is None:
@@ -89,6 +111,7 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
                 return
             await asyncio.sleep(1)
 
+    @NsightProfiler.annotate("actor/run_training")
     @Worker.timer("run_training")
     async def run_training(self):
         """SAC training using replay buffer"""

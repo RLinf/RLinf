@@ -13,11 +13,16 @@
 # limitations under the License.
 
 import asyncio
+import contextlib
+import logging
+import pickle
+import time
 import uuid
 from typing import TYPE_CHECKING, Any, Optional
 
 import ray
 import ray.actor
+import torch
 
 from ..cluster import Cluster
 from ..collective import (
@@ -28,11 +33,14 @@ from ..collective import (
 )
 from ..placement import NodePlacementStrategy
 from ..worker import Worker, WorkerGroup
+from rlinf.utils.nsight_profiler import is_channel_nvtx_enabled, nvtx_range
 
 if TYPE_CHECKING:
     from .channel_worker import ChannelWorker, LocalChannel
 
 DEFAULT_KEY = "default_queue"
+_nullcontext = contextlib.nullcontext
+_logger = logging.getLogger(__name__)
 
 
 class Channel:
@@ -147,6 +155,7 @@ class Channel:
         node_rank: int = 0,
         local: bool = False,
         disable_distributed_log: bool = True,
+        nsight_options: dict | None = None,
     ) -> "Channel":
         """Create a new channel with the specified name, node ID, and accelerator ID.
 
@@ -184,6 +193,15 @@ class Channel:
             placement = NodePlacementStrategy(node_ranks=list(range(cluster.num_nodes)))
         else:
             placement = NodePlacementStrategy(node_ranks=[node_rank])
+        if nsight_options is not None:
+            channel_nsight = dict(nsight_options)
+            channel_nsight["o"] = f"Channel_{name}"
+            channel_nsight["capture-range"] = "none"
+            channel_nsight.pop("capture-range-end", None)
+            channel_nsight["t"] = "nvtx,osrt,cuda"
+        else:
+            channel_nsight = None
+
         try:
             channel_worker_group = ChannelWorker.create_group(maxsize=maxsize).launch(
                 cluster=cluster,
@@ -192,6 +210,7 @@ class Channel:
                 # Set max_concurrency to a high value to avoid large number of gets blocking puts
                 max_concurrency=2**31 - 1,
                 disable_distributed_log=disable_distributed_log,
+                nsight_options=channel_nsight,
             )
         except ValueError:
             Worker.logger.warning(f"Channel {name} already exists, connecting to it.")
@@ -310,6 +329,92 @@ class Channel:
         """Get the actor handle for a channel rank, falling back to the main actor."""
         return self._channel_actors_by_rank.get(rank, self._main_channel_worker_actor)
 
+    @staticmethod
+    def _safe_key_repr(key: Any) -> str:
+        key_repr = str(key)
+        if len(key_repr) > 120:
+            return f"{key_repr[:117]}..."
+        return key_repr
+
+    @staticmethod
+    def _collect_payload_bytes(item: Any) -> dict[str, int]:
+        stats = {
+            "total_bytes": 0,
+            "cpu_tensor_bytes": 0,
+            "gpu_tensor_bytes": 0,
+            "pickle_bytes": 0,
+        }
+
+        def _visit(obj: Any) -> None:
+            if obj is None:
+                return
+            if isinstance(obj, torch.Tensor):
+                nbytes = obj.numel() * obj.element_size()
+                stats["total_bytes"] += nbytes
+                if obj.is_cuda:
+                    stats["gpu_tensor_bytes"] += nbytes
+                else:
+                    stats["cpu_tensor_bytes"] += nbytes
+                return
+            if isinstance(obj, (list, tuple, set)):
+                for value in obj:
+                    _visit(value)
+                return
+            if isinstance(obj, dict):
+                for value in obj.values():
+                    _visit(value)
+
+        _visit(item)
+        if stats["total_bytes"] == 0:
+            try:
+                stats["pickle_bytes"] = len(pickle.dumps(item, protocol=pickle.HIGHEST_PROTOCOL))
+                stats["total_bytes"] = stats["pickle_bytes"]
+            except Exception:
+                stats["pickle_bytes"] = -1
+        return stats
+
+    def _build_put_label(
+        self,
+        key: Any,
+        target_rank: int,
+        payload_stats: dict[str, int],
+    ) -> str:
+        return (
+            f"channel/{self._channel_name}/put "
+            f"key={self._safe_key_repr(key)} dst={target_rank} "
+            f"bytes={payload_stats['total_bytes']} "
+            f"cpu={payload_stats['cpu_tensor_bytes']} "
+            f"gpu={payload_stats['gpu_tensor_bytes']} "
+            f"pickle={payload_stats['pickle_bytes']}"
+        )
+
+    def _log_channel_event(
+        self,
+        op: str,
+        key: Any,
+        target_rank: int,
+        payload_stats: dict[str, int],
+        elapsed_ms: float | None = None,
+    ) -> None:
+        if not _logger.isEnabledFor(logging.DEBUG):
+            return
+        elapsed_msg = "" if elapsed_ms is None else f" elapsed_ms={elapsed_ms:.3f}"
+        _logger.debug(
+            (
+                "[channel] name=%s op=%s key=%s peer_rank=%d bytes=%d "
+                "cpu_bytes=%d gpu_bytes=%d pickle_bytes=%d%s"
+            ),
+            self._channel_name,
+            op,
+            self._safe_key_repr(key),
+            target_rank,
+            payload_stats["total_bytes"],
+            payload_stats["cpu_tensor_bytes"],
+            payload_stats["gpu_tensor_bytes"],
+            payload_stats["pickle_bytes"],
+            elapsed_msg,
+        )
+
     def qsize(self, key: Any = DEFAULT_KEY) -> int:
         """Get the size of the channel queue.
 
@@ -376,6 +481,7 @@ class Channel:
             async_op (bool): Whether to perform the operation asynchronously.
 
         """
+        enable_nvtx = is_channel_nvtx_enabled()
         if self._local_channel is not None:
             assert async_op is False, "Local channel does not support async put."
             self._local_channel.put(item, weight, key)
@@ -383,42 +489,72 @@ class Channel:
 
         target_rank = self._get_channel_rank_by_key(key)
         target_actor = self._get_channel_actor(target_rank)
-
-        # First run async put to avoid send blocking put
-        if self._current_worker is not None:
-            # Inside a worker, use send/recv
-            put_kwargs = {
-                "src_addr": self._current_worker.worker_address,
-            }
-            async_channel_work = AsyncChannelWork(
-                channel_name=self._channel_name,
-                channel_key=key,
-                channel_actor=target_actor,
-                method="put",
-                **put_kwargs,
-            )
-            self._current_worker.send(
-                item,
-                self._channel_name,
-                target_rank,
-                async_op=True,
-                piggyback_payload=(key, weight),
-            )
-
-            if async_op:
-                return async_channel_work
-            else:
-                async_channel_work.wait()
+        payload_stats = self._collect_payload_bytes(item) if enable_nvtx else None
+        if payload_stats is not None:
+            outer_label = self._build_put_label(key, target_rank, payload_stats)
         else:
-            # Outside a worker, use ray comm
-            put_kwargs = {"item": item, "weight": weight, "key": key}
-            async_channel_work = AsyncRayWork(
-                target_actor.put_via_ray.remote(**put_kwargs)
-            )
-            if async_op:
-                return async_channel_work
+            outer_label = f"channel/{self._channel_name}/put"
+        start_time = time.perf_counter() if enable_nvtx else 0.0
+
+        with nvtx_range(outer_label) if enable_nvtx else _nullcontext():
+            # First run async put to avoid send blocking put
+            if self._current_worker is not None:
+                # Inside a worker, use send/recv
+                put_kwargs = {
+                    "src_addr": self._current_worker.worker_address,
+                }
+                async_channel_work = AsyncChannelWork(
+                    channel_name=self._channel_name,
+                    channel_key=key,
+                    channel_actor=target_actor,
+                    method="put",
+                    **put_kwargs,
+                )
+                with (
+                    nvtx_range(f"channel/{self._channel_name}/put/send")
+                    if enable_nvtx
+                    else _nullcontext()
+                ):
+                    self._current_worker.send(
+                        item,
+                        self._channel_name,
+                        target_rank,
+                        async_op=True,
+                        piggyback_payload=(key, weight),
+                    )
+
+                if async_op:
+                    return async_channel_work
+                with (
+                    nvtx_range(f"channel/{self._channel_name}/put/enqueue")
+                    if enable_nvtx
+                    else _nullcontext()
+                ):
+                    async_channel_work.wait()
             else:
-                async_channel_work.wait()
+                # Outside a worker, use ray comm
+                put_kwargs = {"item": item, "weight": weight, "key": key}
+                async_channel_work = AsyncRayWork(
+                    target_actor.put_via_ray.remote(**put_kwargs)
+                )
+                if async_op:
+                    return async_channel_work
+                with (
+                    nvtx_range(f"channel/{self._channel_name}/put/ray_wait")
+                    if enable_nvtx
+                    else _nullcontext()
+                ):
+                    async_channel_work.wait()
+
+        if enable_nvtx and payload_stats is not None:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+            self._log_channel_event(
+                op="put",
+                key=key,
+                target_rank=target_rank,
+                payload_stats=payload_stats,
+                elapsed_ms=elapsed_ms,
+            )
 
     def put_nowait(self, item: Any, weight: int = 0, key: Any = DEFAULT_KEY):
         """Put an item into the channel queue without waiting. Raises asyncio.QueueFull if the queue is full.
@@ -483,45 +619,79 @@ class Channel:
             Any: The item retrieved from the channel queue.
 
         """
+        enable_nvtx = is_channel_nvtx_enabled()
         if self._local_channel is not None:
             assert async_op is False, "Local channel does not support async get."
             return self._local_channel.get(key)
 
         target_rank = self._get_channel_rank_by_key(key)
         target_actor = self._get_channel_actor(target_rank)
+        outer_label = (
+            f"channel/{self._channel_name}/get key={self._safe_key_repr(key)} src={target_rank}"
+        )
+        start_time = time.perf_counter() if enable_nvtx else 0.0
 
-        if self._current_worker is not None:
-            # Inside a worker, use send/recv
-            query_id = uuid.uuid4().int
-            get_kwargs = {
-                "dst_addr": self._current_worker.worker_address,
-                "query_id": query_id,
-                "key": key,
-            }
-            target_actor.get.remote(**get_kwargs)
-            async_comm_work = self._current_worker.recv(
-                self._channel_name, target_rank, async_op=True
-            )
-            if async_op:
-                return AsyncChannelCommWork(
-                    async_comm_work=async_comm_work,
-                    query_id=query_id,
-                    channel_actor=target_actor,
+        with nvtx_range(outer_label) if enable_nvtx else _nullcontext():
+            if self._current_worker is not None:
+                # Inside a worker, use send/recv
+                query_id = uuid.uuid4().int
+                get_kwargs = {
+                    "dst_addr": self._current_worker.worker_address,
+                    "query_id": query_id,
+                    "key": key,
+                }
+                target_actor.get.remote(**get_kwargs)
+                async_comm_work = self._current_worker.recv(
+                    self._channel_name, target_rank, async_op=True
                 )
-            else:
-                # query_id, data
-                data, _ = async_comm_work.wait()
+                if async_op:
+                    return AsyncChannelCommWork(
+                        async_comm_work=async_comm_work,
+                        query_id=query_id,
+                        channel_actor=target_actor,
+                    )
+                with (
+                    nvtx_range(f"channel/{self._channel_name}/get/wait_recv")
+                    if enable_nvtx
+                    else _nullcontext()
+                ):
+                    data, _ = async_comm_work.wait()
+                if enable_nvtx:
+                    payload_stats = self._collect_payload_bytes(data)
+                    elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+                    self._log_channel_event(
+                        op="get",
+                        key=key,
+                        target_rank=target_rank,
+                        payload_stats=payload_stats,
+                        elapsed_ms=elapsed_ms,
+                    )
                 return data
-        else:
-            # Outside a worker, use ray comm
-            get_kwargs = {"key": key}
-            async_channel_work = AsyncRayWork(
-                target_actor.get_via_ray.remote(**get_kwargs)
-            )
-            if async_op:
-                return async_channel_work
             else:
-                return async_channel_work.wait()
+                # Outside a worker, use ray comm
+                get_kwargs = {"key": key}
+                async_channel_work = AsyncRayWork(
+                    target_actor.get_via_ray.remote(**get_kwargs)
+                )
+                if async_op:
+                    return async_channel_work
+                with (
+                    nvtx_range(f"channel/{self._channel_name}/get/ray_wait")
+                    if enable_nvtx
+                    else _nullcontext()
+                ):
+                    data = async_channel_work.wait()
+                if enable_nvtx:
+                    payload_stats = self._collect_payload_bytes(data)
+                    elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+                    self._log_channel_event(
+                        op="get",
+                        key=key,
+                        target_rank=target_rank,
+                        payload_stats=payload_stats,
+                        elapsed_ms=elapsed_ms,
+                    )
+                return data
 
     def get_nowait(self, key: Any = DEFAULT_KEY) -> Any:
         """Get an item from the channel queue without waiting. Raises asyncio.QueueEmpty if the queue is empty.

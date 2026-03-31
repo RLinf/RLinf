@@ -19,6 +19,13 @@ from typing import Any
 
 from ..worker import Worker, WorkerAddress
 from .channel import DEFAULT_KEY
+from rlinf.utils.nsight_profiler import set_channel_nvtx_enabled
+
+try:
+    import nvtx as _nvtx_mod
+    _HAS_NVTX = True
+except ImportError:
+    _HAS_NVTX = False
 
 
 @dataclass(order=True)
@@ -245,6 +252,9 @@ class ChannelWorker(Worker):
         self._queue_map[DEFAULT_KEY] = PeekQueue(maxsize=maxsize)
         self._key_to_channel_rank: dict[Any, int] = {}
 
+        if _HAS_NVTX:
+            set_channel_nvtx_enabled(True)
+
         self._mem_cleaner_task = asyncio.create_task(self._mem_cleaner())
 
     async def _mem_cleaner(self):
@@ -365,13 +375,29 @@ class ChannelWorker(Worker):
             nowait (bool): If True, directly raise asyncio.QueueFull if the queue is full. Defaults to False.
 
         """
+        if _HAS_NVTX:
+            _r1 = _nvtx_mod.start_range(
+                message=f"cw/{self._group_name}/recv_from_producer src={src_addr.get_name()}",
+                color="cyan",
+            )
         item, (key, weight) = self.recv(src_addr.root_group_name, src_addr.rank_path)
+        if _HAS_NVTX:
+            _nvtx_mod.end_range(_r1)
+
         self.create_queue(key, self.maxsize())
+        _qsize = self._queue_map[key].qsize()
+        if _HAS_NVTX:
+            _r2 = _nvtx_mod.start_range(
+                message=f"cw/{self._group_name}/enqueue key={key} qsize_before={_qsize}",
+                color="yellow",
+            )
         item = WeightedItem(weight=weight, item=item)
         if nowait:
             self._queue_map[key].put_nowait(item)
         else:
             await self._queue_map[key].put(item)
+        if _HAS_NVTX:
+            _nvtx_mod.end_range(_r2)
 
     async def put_via_ray(
         self,
@@ -415,6 +441,12 @@ class ChannelWorker(Worker):
 
         """
         self.create_queue(key, self.maxsize())
+        _qsize = self._queue_map[key].qsize()
+        if _HAS_NVTX:
+            _r1 = _nvtx_mod.start_range(
+                message=f"cw/{self._group_name}/dequeue key={key} qsize_before={_qsize}",
+                color="yellow",
+            )
         if nowait:
             try:
                 weighted_item: WeightedItem = self._queue_map[key].get_nowait()
@@ -423,6 +455,12 @@ class ChannelWorker(Worker):
                 weighted_item = WeightedItem(weight=0, item=None)
         else:
             weighted_item: WeightedItem = await self._queue_map[key].get()
+        if _HAS_NVTX:
+            _nvtx_mod.end_range(_r1)
+            _r2 = _nvtx_mod.start_range(
+                message=f"cw/{self._group_name}/send_to_consumer dst={dst_addr.get_name()}",
+                color="cyan",
+            )
         self.send(
             weighted_item.item,
             dst_addr.root_group_name,
@@ -430,6 +468,8 @@ class ChannelWorker(Worker):
             async_op=True,
             piggyback_payload=query_id,
         )
+        if _HAS_NVTX:
+            _nvtx_mod.end_range(_r2)
 
     async def get_via_ray(self, key: Any = DEFAULT_KEY, nowait: bool = False) -> Any:
         """Get an item from the channel queue via Ray's communication. Useful when there is no worker.

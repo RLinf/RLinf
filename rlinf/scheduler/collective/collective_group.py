@@ -36,6 +36,7 @@ from ..cluster.utils import (
 from ..manager import CollectiveGroupInfo, CollectiveManager, WorkerInfo
 from ..worker import Worker, WorkerAddress
 from .async_work import AsyncFuncWork, AsyncWork
+from rlinf.utils.nsight_profiler import is_channel_nvtx_enabled, nvtx_range
 
 if TYPE_CHECKING:
     from .collective import Collective
@@ -295,6 +296,9 @@ class CollectiveGroup:
             self._logger.debug(f"Sync send ID {send_comm_id} done")
             return send_work.wait()
 
+    # Object type names for NVTX labels
+    _OBJECT_TYPE_NAMES = {0: "TENSOR", 1: "TENSOR_LIST", 2: "TENSOR_DICT", 3: "OBJECT", 4: "DATACLASS_WITH_TENSORS"}
+
     def _atomic_send(
         self,
         object: torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any,
@@ -309,6 +313,17 @@ class CollectiveGroup:
         It runs in an atomic way, i.e., communications of two calls of _atomic_send are guaranteed to be in the same ordered as the send API is called.
         """
         self._init_process_group(options=options)
+        _nvtx = is_channel_nvtx_enabled()
+        _type_name = self._OBJECT_TYPE_NAMES.get(object_type, str(object_type))
+        _transport = "NCCL" if tensor_data.has_accel_tensor else "GLOO"
+        if _nvtx:
+            _ctx = nvtx_range(
+                f"collective/send type={_type_name} transport={_transport} "
+                f"peer={self._peer_rank} group={self._group_info.group_name}",
+                color="blue",
+            )
+            _ctx.__enter__()
+
         # First send object type to the destination worker
         object_type_tensor = torch.tensor(object_type, dtype=torch.int, device="cpu")
         self._send(object_type_tensor, CollectiveGroup.CPU, comm_id)
@@ -316,41 +331,44 @@ class CollectiveGroup:
             f"Sending object type {object_type} from {self._cur_worker_address.get_name()} in group {self._group_info.group_name}"
         )
 
-        if object_type == CollectiveGroup.TENSOR:
-            # Out-of-place tensor send/recv is done via tensor list send/recv with a list of one tensor
-            return self._send_tensor_list(
-                [object],
-                comm_id,
-                piggyback_payload=piggyback_payload,
-                tensor_data=tensor_data,
-            )
-        elif object_type == CollectiveGroup.TENSOR_LIST:
-            return self._send_tensor_list(
-                object,
-                comm_id,
-                piggyback_payload=piggyback_payload,
-                tensor_data=tensor_data,
-            )
-        elif object_type == CollectiveGroup.TENSOR_DICT:
-            return self._send_tensor_dict(
-                object,
-                comm_id,
-                tensor_data,
-                piggyback_payload=piggyback_payload,
-            )
-        elif object_type == CollectiveGroup.DATACLASS_WITH_TENSORS:
-            return self._send_tensor_dataclass(
-                object,
-                comm_id,
-                tensor_data=tensor_data,
-                piggyback_payload=piggyback_payload,
-            )
-        elif object_type == CollectiveGroup.OBJECT:
-            return self._send_object(
-                object, comm_id, piggyback_payload=piggyback_payload
-            )
-        else:
-            raise ValueError(f"Unsupported object type: {object_type}")
+        try:
+            if object_type == CollectiveGroup.TENSOR:
+                return self._send_tensor_list(
+                    [object],
+                    comm_id,
+                    piggyback_payload=piggyback_payload,
+                    tensor_data=tensor_data,
+                )
+            elif object_type == CollectiveGroup.TENSOR_LIST:
+                return self._send_tensor_list(
+                    object,
+                    comm_id,
+                    piggyback_payload=piggyback_payload,
+                    tensor_data=tensor_data,
+                )
+            elif object_type == CollectiveGroup.TENSOR_DICT:
+                return self._send_tensor_dict(
+                    object,
+                    comm_id,
+                    tensor_data,
+                    piggyback_payload=piggyback_payload,
+                )
+            elif object_type == CollectiveGroup.DATACLASS_WITH_TENSORS:
+                return self._send_tensor_dataclass(
+                    object,
+                    comm_id,
+                    tensor_data=tensor_data,
+                    piggyback_payload=piggyback_payload,
+                )
+            elif object_type == CollectiveGroup.OBJECT:
+                return self._send_object(
+                    object, comm_id, piggyback_payload=piggyback_payload
+                )
+            else:
+                raise ValueError(f"Unsupported object type: {object_type}")
+        finally:
+            if _nvtx:
+                _ctx.__exit__(None, None, None)
 
     def recv(
         self,
@@ -409,25 +427,39 @@ class CollectiveGroup:
         self._recv(object_type_tensor, CollectiveGroup.CPU, comm_id)
 
         object_type = object_type_tensor.item()
+        _nvtx = is_channel_nvtx_enabled()
+        _type_name = self._OBJECT_TYPE_NAMES.get(object_type, str(object_type))
+        if _nvtx:
+            _ctx = nvtx_range(
+                f"collective/recv type={_type_name} "
+                f"peer={self._peer_rank} group={self._group_info.group_name}",
+                color="green",
+            )
+            _ctx.__enter__()
+
         self._logger.debug(
             f"Receiving object type {object_type} from Rank {self._peer_rank} in group {self._group_info.group_name}"
         )
-        if object_type == CollectiveGroup.TENSOR:
-            tensor, pb_data = self._recv_tensor_list(comm_id)
-            assert len(tensor) == 1, (
-                f"Expected to receive one tensor but got {len(tensor)} tensors from Rank {self._peer_rank} in group {self._group_info.group_name}"
-            )
-            data = tensor[0]
-        elif object_type == CollectiveGroup.TENSOR_LIST:
-            data, pb_data = self._recv_tensor_list(comm_id)
-        elif object_type == CollectiveGroup.TENSOR_DICT:
-            data, pb_data = self._recv_tensor_dict(comm_id)
-        elif object_type == CollectiveGroup.DATACLASS_WITH_TENSORS:
-            data, pb_data = self._recv_tensor_dataclass(comm_id)
-        elif object_type == CollectiveGroup.OBJECT:
-            data, pb_data = self._recv_object(comm_id)
-        else:
-            raise ValueError(f"Unsupported object type: {object_type}")
+        try:
+            if object_type == CollectiveGroup.TENSOR:
+                tensor, pb_data = self._recv_tensor_list(comm_id)
+                assert len(tensor) == 1, (
+                    f"Expected to receive one tensor but got {len(tensor)} tensors from Rank {self._peer_rank} in group {self._group_info.group_name}"
+                )
+                data = tensor[0]
+            elif object_type == CollectiveGroup.TENSOR_LIST:
+                data, pb_data = self._recv_tensor_list(comm_id)
+            elif object_type == CollectiveGroup.TENSOR_DICT:
+                data, pb_data = self._recv_tensor_dict(comm_id)
+            elif object_type == CollectiveGroup.DATACLASS_WITH_TENSORS:
+                data, pb_data = self._recv_tensor_dataclass(comm_id)
+            elif object_type == CollectiveGroup.OBJECT:
+                data, pb_data = self._recv_object(comm_id)
+            else:
+                raise ValueError(f"Unsupported object type: {object_type}")
+        finally:
+            if _nvtx:
+                _ctx.__exit__(None, None, None)
         if pb_data is not None:
             return data, pb_data
         else:
@@ -1058,17 +1090,19 @@ class CollectiveGroup:
 
         This is modified version of dist.distributed_c10d._object_to_tensor that removes the group argument.
         """
-        f = io.BytesIO()
-        try:
-            Pickler(f).dump(obj)
-        except Exception:
-            CloudPickler(f).dump(obj)
-        byte_storage = torch.ByteStorage._from_buffer(f.getvalue())  # type: ignore[attr-defined]
-        # Do not replace `torch.ByteTensor` or `torch.LongTensor` with torch.tensor and specifying dtype.
-        # Otherwise, it will casue 100X slowdown.
-        # See: https://github.com/pytorch/pytorch/issues/65696
-        byte_tensor = torch.ByteTensor(byte_storage).to(device)
-        local_size = torch.LongTensor([byte_tensor.numel()]).to(device)
+        _nvtx = is_channel_nvtx_enabled()
+        with nvtx_range("collective/serialize", color="orange") if _nvtx else nullcontext():
+            f = io.BytesIO()
+            try:
+                Pickler(f).dump(obj)
+            except Exception:
+                CloudPickler(f).dump(obj)
+            byte_storage = torch.ByteStorage._from_buffer(f.getvalue())  # type: ignore[attr-defined]
+            # Do not replace `torch.ByteTensor` or `torch.LongTensor` with torch.tensor and specifying dtype.
+            # Otherwise, it will casue 100X slowdown.
+            # See: https://github.com/pytorch/pytorch/issues/65696
+            byte_tensor = torch.ByteTensor(byte_storage).to(device)
+            local_size = torch.LongTensor([byte_tensor.numel()]).to(device)
         return byte_tensor, local_size
 
     def _tensor_to_object(self, tensor: torch.Tensor, tensor_size: torch.Tensor):
@@ -1076,9 +1110,12 @@ class CollectiveGroup:
 
         This is modified version of dist.distributed_c10d._tensor_to_object that removes the group argument.
         """
-        tensor = tensor.cpu()
-        buf = tensor.numpy().tobytes()[:tensor_size]
-        return Unpickler(io.BytesIO(buf)).load()
+        _nvtx = is_channel_nvtx_enabled()
+        with nvtx_range("collective/deserialize", color="orange") if _nvtx else nullcontext():
+            tensor = tensor.cpu()
+            buf = tensor.numpy().tobytes()[:tensor_size]
+            result = Unpickler(io.BytesIO(buf)).load()
+        return result
 
     def _send_single_tensor_via_ipc(
         self, tensor: torch.Tensor, comm_id: int, async_op: bool = False
@@ -1491,49 +1528,55 @@ class CollectiveGroup:
         self._logger.debug(
             f"Sending tensor metadata {metadata} to Rank {dst_rank_in_group} in group {self._group_info.group_name}"
         )
-        metadata_tensor, metadata_tensor_size = self._object_to_tensor(metadata, "cpu")
+        _nvtx = is_channel_nvtx_enabled()
+        cpu_bytes = sum(t.numel() * t.element_size() for t in cpu_tensors)
+        accel_bytes = sum(t.numel() * t.element_size() for t in accel_tensors)
 
-        self._send(
-            metadata_tensor_size,
-            device=CollectiveGroup.CPU,
-            comm_id=comm_id,
-            async_op=False,
-        )
-        self._send(
-            metadata_tensor,
-            device=CollectiveGroup.CPU,
-            comm_id=comm_id,
-            async_op=False,
-        )
+        with nvtx_range(f"collective/send_tensor_list/metadata n_tensors={len(tensors)}") if _nvtx else nullcontext():
+            metadata_tensor, metadata_tensor_size = self._object_to_tensor(metadata, "cpu")
+            self._send(
+                metadata_tensor_size,
+                device=CollectiveGroup.CPU,
+                comm_id=comm_id,
+                async_op=False,
+            )
+            self._send(
+                metadata_tensor,
+                device=CollectiveGroup.CPU,
+                comm_id=comm_id,
+                async_op=False,
+            )
 
         self._logger.debug(
             f"Sending list of {len(tensors)} tensors to Rank {dst_rank_in_group} in group {self._group_info.group_name}"
         )
 
-        for tensor in cpu_tensors:
-            work = self._send(
-                tensor,
-                device=CollectiveGroup.CPU,
-                comm_id=comm_id,
-                async_op=async_op,
-            )
-        if accel_tensors:
-            # Handle CUDA tensor sending with IPC if the peer worker is on the same device
-            check_cuda_device_result = self._check_same_device_with_peer()
-            if check_cuda_device_result == 0:
-                work = self._send_tensor_list_to_uncertain_peer(
-                    accel_tensors, comm_id, async_op
+        with nvtx_range(f"collective/send_tensor_list/cpu_payload n={len(cpu_tensors)} bytes={cpu_bytes}") if _nvtx and cpu_tensors else nullcontext():
+            for tensor in cpu_tensors:
+                work = self._send(
+                    tensor,
+                    device=CollectiveGroup.CPU,
+                    comm_id=comm_id,
+                    async_op=async_op,
                 )
-            elif check_cuda_device_result == 1:
-                work = self._send_tensor_list_via_ipc(accel_tensors, comm_id, async_op)
-            else:
-                for tensor in accel_tensors:
-                    work = self._send(
-                        tensor,
-                        device=CollectiveGroup.ACCEL,
-                        comm_id=comm_id,
-                        async_op=async_op,
+        if accel_tensors:
+            check_cuda_device_result = self._check_same_device_with_peer()
+            _ipc_mode = {0: "uncertain_peer", 1: "IPC", -1: "NCCL"}.get(check_cuda_device_result, "NCCL")
+            with nvtx_range(f"collective/send_tensor_list/accel_payload n={len(accel_tensors)} bytes={accel_bytes} mode={_ipc_mode}") if _nvtx else nullcontext():
+                if check_cuda_device_result == 0:
+                    work = self._send_tensor_list_to_uncertain_peer(
+                        accel_tensors, comm_id, async_op
                     )
+                elif check_cuda_device_result == 1:
+                    work = self._send_tensor_list_via_ipc(accel_tensors, comm_id, async_op)
+                else:
+                    for tensor in accel_tensors:
+                        work = self._send(
+                            tensor,
+                            device=CollectiveGroup.ACCEL,
+                            comm_id=comm_id,
+                            async_op=async_op,
+                        )
 
         if async_op:
             return work
@@ -1548,17 +1591,19 @@ class CollectiveGroup:
             tuple[List[torch.Tensor], Any]: A tuple of the received list of tensors and the piggyback payload.
 
         """
+        _nvtx = is_channel_nvtx_enabled()
         # Recv metadata of the list
         self._logger.debug(
             f"Receiving tensor list metadata from Rank {self._peer_rank} in group {self._group_info.group_name}"
         )
-        metadata_size = torch.empty(1, dtype=torch.long, device="cpu")
-        self._recv(metadata_size, CollectiveGroup.CPU, comm_id)
-        metadata_tensor = torch.empty(
-            metadata_size.item(), dtype=torch.uint8, device="cpu"
-        )
-        self._recv(metadata_tensor, CollectiveGroup.CPU, comm_id)
-        metadata = self._tensor_to_object(metadata_tensor, metadata_size)
+        with nvtx_range("collective/recv_tensor_list/metadata") if _nvtx else nullcontext():
+            metadata_size = torch.empty(1, dtype=torch.long, device="cpu")
+            self._recv(metadata_size, CollectiveGroup.CPU, comm_id)
+            metadata_tensor = torch.empty(
+                metadata_size.item(), dtype=torch.uint8, device="cpu"
+            )
+            self._recv(metadata_tensor, CollectiveGroup.CPU, comm_id)
+            metadata = self._tensor_to_object(metadata_tensor, metadata_size)
         self._logger.debug(
             f"Received metadata: {metadata} from Rank {self._peer_rank} in group {self._group_info.group_name}"
         )
@@ -1600,24 +1645,29 @@ class CollectiveGroup:
             else:
                 accel_entries.append((idx, tensor, shape_dtype))
 
-        for tensor in cpu_tensors:
-            self._recv(tensor, CollectiveGroup.CPU, comm_id)
+        cpu_bytes = sum(t.numel() * t.element_size() for t in cpu_tensors)
+        with nvtx_range(f"collective/recv_tensor_list/cpu_payload n={len(cpu_tensors)} bytes={cpu_bytes}") if _nvtx and cpu_tensors else nullcontext():
+            for tensor in cpu_tensors:
+                self._recv(tensor, CollectiveGroup.CPU, comm_id)
         if has_accel_tensor:
+            accel_bytes = sum(t.numel() * t.element_size() for _, t, _ in accel_entries)
             check_cuda_device_result = self._check_same_device_with_peer()
-            if check_cuda_device_result == 0:
-                accel_shapes = [shape_dtype for _, _, shape_dtype in accel_entries]
-                received_accel_tensors = self._recv_tensor_list_to_uncertain_peer(
-                    accel_shapes, comm_id
-                )
-                for (idx, _, _), tensor in zip(accel_entries, received_accel_tensors):
-                    tensors[idx] = tensor
-            elif check_cuda_device_result == 1:
-                received_accel_tensors = self._recv_tensor_list_via_ipc(comm_id)
-                for (idx, _, _), tensor in zip(accel_entries, received_accel_tensors):
-                    tensors[idx] = tensor
-            else:
-                for _, tensor, _ in accel_entries:
-                    self._recv(tensor, CollectiveGroup.ACCEL, comm_id)
+            _ipc_mode = {0: "uncertain_peer", 1: "IPC", -1: "NCCL"}.get(check_cuda_device_result, "NCCL")
+            with nvtx_range(f"collective/recv_tensor_list/accel_payload n={len(accel_entries)} bytes={accel_bytes} mode={_ipc_mode}") if _nvtx else nullcontext():
+                if check_cuda_device_result == 0:
+                    accel_shapes = [shape_dtype for _, _, shape_dtype in accel_entries]
+                    received_accel_tensors = self._recv_tensor_list_to_uncertain_peer(
+                        accel_shapes, comm_id
+                    )
+                    for (idx, _, _), tensor in zip(accel_entries, received_accel_tensors):
+                        tensors[idx] = tensor
+                elif check_cuda_device_result == 1:
+                    received_accel_tensors = self._recv_tensor_list_via_ipc(comm_id)
+                    for (idx, _, _), tensor in zip(accel_entries, received_accel_tensors):
+                        tensors[idx] = tensor
+                else:
+                    for _, tensor, _ in accel_entries:
+                        self._recv(tensor, CollectiveGroup.ACCEL, comm_id)
         return tensors, pb_data
 
     def _send_tensor_dict(

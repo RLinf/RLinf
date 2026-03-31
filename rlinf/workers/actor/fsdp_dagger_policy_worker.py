@@ -27,6 +27,7 @@ from rlinf.utils import drq
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict, compute_split_num
 from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
+from rlinf.utils.nsight_profiler import NsightProfiler
 from rlinf.utils.utils import clear_memory
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 
@@ -70,6 +71,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             ),
         )
 
+    @NsightProfiler.annotate("actor/recv_traj")
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
         clear_memory(sync=False)
 
@@ -188,6 +190,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         return all_reduce_dict(mean_metric_dict, op=torch.distributed.ReduceOp.AVG)
 
     @Worker.timer("run_training")
+    @NsightProfiler.annotate("actor/run_training")
     def run_training(self):
         """Run DAgger updates with replay-buffer samples."""
         if self.cfg.actor.get("enable_offload", False):
@@ -225,6 +228,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         torch.cuda.empty_cache()
         return self.process_train_metrics(metrics)
 
+    @NsightProfiler.annotate("actor/compute_adv")
     def compute_advantages_and_returns(self):
         """Skip advantage computation for supervised DAgger updates."""
         return {}

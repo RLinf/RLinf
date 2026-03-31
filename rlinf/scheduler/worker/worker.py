@@ -39,6 +39,7 @@ from ..cluster import (
 )
 from ..hardware import AcceleratorType, AcceleratorUtil, HardwareInfo
 from ..manager import WorkerAddress
+from rlinf.utils.nsight_profiler import NsightProfiler
 
 if TYPE_CHECKING:
     from ..collective import CollectiveGroupOptions
@@ -371,6 +372,7 @@ class Worker(metaclass=WorkerMeta):
         self._actor = None
         self._has_initialized = False
         self._timer_metrics: dict[str, float] = {}
+        self.nsight_profiler = NsightProfiler(enable=False, rank=self._rank)
         self._set_new_omegaconf_resolvers()
 
         # Load user-provided extension modules (e.g., for registering custom envs/models)
@@ -951,6 +953,14 @@ class Worker(metaclass=WorkerMeta):
             return wrapper
 
         return decorator
+
+    def start_profile(self, step: int) -> None:
+        """Start Nsight profiling for the current training step."""
+        self.nsight_profiler.start(step=step)
+
+    def stop_profile(self) -> None:
+        """Stop Nsight profiling for the current training step."""
+        self.nsight_profiler.stop()
 
     @staticmethod
     def check_worker_alive(worker_name: str) -> bool:

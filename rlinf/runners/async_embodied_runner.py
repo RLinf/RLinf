@@ -46,9 +46,12 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
     ):
         super().__init__(cfg, actor, rollout, env, reward, critic)
 
-        # Data channels
+        # Data channels (metric channels carry tiny dicts, no nsight needed)
         self.env_metric_channel = Channel.create("EnvMetric")
         self.rollout_metric_channel = Channel.create("RolloutMetric")
+        self.replay_channel = Channel.create(
+            "ReplayBuffer", nsight_options=self._channel_nsight_options
+        )
 
         self._pending_rollout_weight_sync = None
         self._weight_sync_coalesced_total = 0
@@ -160,6 +163,9 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
 
         while self.global_step < self.max_steps:
             skip_step = False
+            do_profile = self._should_profile(self.global_step)
+            if do_profile:
+                self._start_profiling(self.global_step)
             with self.timer("step"):
                 actor_training_handle: Handle = self.actor.run_training()
                 actor_result = actor_training_handle.wait()
@@ -195,6 +201,8 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
                             eval_metrics = {
                                 f"eval/{k}": v for k, v in eval_metrics.items()
                             }
+            if do_profile:
+                self._stop_profiling()
 
             if skip_step:
                 self.timer.consume_durations()

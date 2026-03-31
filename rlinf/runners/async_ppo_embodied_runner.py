@@ -126,6 +126,9 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         )
 
         while self.global_step < self.max_steps:
+            do_profile = self._should_profile(self.global_step)
+            if do_profile:
+                self._start_profiling(self.global_step)
             with self.timer("step"):
                 with self.timer("recv_rollout_trajectories"):
                     self.actor.recv_rollout_trajectories(
@@ -150,6 +153,8 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
                 self.rollout.set_global_step(self.global_step).wait()
                 with self.timer("update_rollout_weights"):
                     self.update_rollout_weights()
+            if do_profile:
+                self._stop_profiling()
 
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}

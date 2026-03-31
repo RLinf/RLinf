@@ -513,6 +513,7 @@ class Cluster:
         disable_distributed_log: bool,
         cls_args: tuple,
         cls_kwargs: dict,
+        nsight_options: dict | None = None,
     ) -> ActorHandle:
         """Allocate a ray remote class instance on a specific node and local rank.
 
@@ -527,6 +528,8 @@ class Cluster:
             disable_distributed_log (bool): Whether to disable distributed log for the worker.
             cls_args (tuple): Positional arguments to pass to the class constructor.
             cls_kwargs (dict): Keyword arguments to pass to the class constructor.
+            nsight_options (dict | None): Optional Ray ``runtime_env["nsight"]``
+                options used to launch this worker with Nsight Systems.
 
         Returns:
             ray.ObjectRef: A reference to the allocated remote class instance.
@@ -574,6 +577,8 @@ class Cluster:
                 soft=False,
             ),
         }
+        if nsight_options is not None:
+            options["runtime_env"]["nsight"] = dict(nsight_options)
         if max_concurrency is not None:
             assert 1 <= max_concurrency <= 2**31 - 1, (
                 f"Invalid max_concurrency: {max_concurrency}. Must be between 1 and {2**31 - 1} (max int32) due to Ray's native layer limitation."
