@@ -230,11 +230,7 @@ class HabitatEnv(gym.Env):
         if dones.any() and self.auto_reset:
             if self.video_cfg.save_video:
                 self.flush_video(dones=dones)
-
-            final_infos = (
-                self.first_done_infos if self.first_done_infos is not None else infos
-            )
-            obs, infos = self._handle_auto_reset(dones, obs, final_infos)
+            obs, infos = self._handle_auto_reset(dones, obs, infos)
 
         return (
             obs,
