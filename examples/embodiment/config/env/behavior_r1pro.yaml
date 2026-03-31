@@ -106,7 +106,7 @@ omni_config:
           command_output_limits: default
 
   task:
-    type: BehaviorTask
+    type: RLinfBehaviorTask
     activity_name: turning_on_radio
     activity_definition_id: 0
     # activity_instance_id is only used when online object sampling is False.
@@ -122,3 +122,18 @@ omni_config:
       max_steps: 500
     reward_config:
       r_potential: 1.0
+
+  scene:
+    type: RLinfInteractiveTraversableScene
+    scene_model: house_double_floor_lower
+    trav_map_resolution: 0.1
+    default_erosion_radius: 0.0
+    trav_map_with_objects: true
+    num_waypoints: 1
+    waypoint_resolution: 0.2
+    not_load_object_categories: null
+    load_room_types: ["living_room", "kitchen"]
+    load_room_instances: null
+    seg_map_resolution: 1.0
+    scene_source: OG
+    include_robots: true

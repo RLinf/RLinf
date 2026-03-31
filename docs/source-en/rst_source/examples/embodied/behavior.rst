@@ -288,6 +288,26 @@ Using behavior as an example:
   RLinf first loads OmniGibson's base ``r1pro_behavior.yaml`` and then applies
   overrides from ``omni_config`` (see ``setup_omni_cfg`` in
   ``rlinf/envs/behavior/utils.py``).
+- ``omni_config.task.type: RLinfBehaviorTask`` and
+  ``omni_config.scene.type: RLinfInteractiveTraversableScene``:
+  RLinf ships a lightweight BEHAVIOR compatibility patch for
+  ``omnigibson==3.7.1``. Keep these two types in
+  ``examples/embodiment/config/env/behavior_r1pro.yaml`` when using RLinf's
+  BEHAVIOR setup. ``install_patch()`` is still called automatically by
+  ``rlinf/envs/behavior/behavior_env.py`` before ``VectorEnvironment`` is
+  created, but it only registers the RLinf classes and applies monkey patches.
+  It does not rewrite ``task.type`` or ``scene.type`` anymore, so these two
+  YAML entries must be set explicitly.
+- RLinf BEHAVIOR patch contents:
+  The patch fixes several multi-environment issues observed with
+  OmniGibson 3.7.1, including cross-scene ``BehaviorTask`` callbacks,
+  presampled robot poses being applied in world frame instead of scene frame,
+  cross-scene shared control views for the same robot type, and RLinf's
+  missing ``scene`` sub-config override in ``setup_omni_cfg``.
+- Version note:
+  The current patch is only tested and supported on ``omnigibson==3.7.1``.
+  RLinf raises an error during environment initialization if a different
+  OmniGibson version is detected.
 - ``task_idx``:
   Current task id (0-49). RLinf maps it to the concrete task name and writes it
   into ``task.activity_name`` (see ``rlinf/envs/behavior/behavior_env.py``).
