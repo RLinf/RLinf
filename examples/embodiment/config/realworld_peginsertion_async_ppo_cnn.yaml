@@ -32,7 +32,7 @@ cluster:
       hardware:
         type: Franka
         configs:
-          - robot_ip: 192.168.1.2 # Replace with your robot's IP address
+          - robot_ip: ROBOT_IP # Replace with your robot's IP address
             node_rank: 1
 
 runner:
@@ -126,7 +126,7 @@ rollout:
   sync_weight_nccl_max_ctas: 32 # Max CTAs (Compute Thread Array, the compute resource of GPUs) for sync weight communication. Higher values consume more GPU resources, and thus sync weight is faster but could affect rollout speed in async mode. Positive integer 1 to 32. Default 32.
 
   model:
-    model_path: "/path/to/model"
+    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     precision: ${actor.model.precision}
     num_q_heads: 10
 
@@ -143,7 +143,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/path/to/model"
+    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     add_value_head: True
     add_q_head: False
     state_dim: 19

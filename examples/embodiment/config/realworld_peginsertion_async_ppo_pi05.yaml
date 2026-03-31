@@ -25,7 +25,7 @@ cluster:
       hardware:
         type: Franka
         configs:
-          - robot_ip: 192.168.1.2 # Replace with your robot's IP address
+          - robot_ip: ROBOT_IP # Replace with your robot's IP address
             node_rank: 1
 
 runner:
