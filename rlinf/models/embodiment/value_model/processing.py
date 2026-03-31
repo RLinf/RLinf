@@ -24,7 +24,7 @@ Contains:
 
 Text template: ``Task: {prompt}.``
 
-All tokens are bidirectional (ar_mask=0). The value model's expert head
+All prefix tokens use bidirectional attention. The value model's expert head
 predicts the value via a [CLS] token appended at the model level, not here.
 """
 
@@ -435,7 +435,7 @@ class ValueProcessor(ProcessorMixin):
     Value model processor combining image preprocessing and text tokenization.
 
     Text template: ``Task: {prompt}.``
-    All tokens are bidirectional (ar_mask=0). The value model's expert head
+    All prefix tokens use bidirectional attention. The value model's expert head
     predicts the value via a [CLS] token appended at the model level.
     """
 
@@ -512,17 +512,17 @@ class ValueProcessor(ProcessorMixin):
         self,
         prompt: str,
         max_length: Optional[int] = None,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Tokenize a prompt into the value model's input format.
 
         Template: ``Task: {prompt}.``
 
-        All tokens are bidirectional (ar_mask=0).  The model's forward() only
-        uses (tokens, mask, ar_mask); loss_mask and kv_cache_mask are not
-        consumed, so they are no longer produced here.
+        All tokens use bidirectional attention. The model's forward() only
+        uses (tokens, mask); loss_mask and kv_cache_mask are not consumed,
+        so they are not produced here.
 
         Returns:
-            (tokens, mask, ar_mask) as numpy arrays of shape (max_length,).
+            (tokens, mask) as numpy arrays of shape (max_length,).
         """
         if max_length is None:
             max_length = self.max_token_len
@@ -546,8 +546,6 @@ class ValueProcessor(ProcessorMixin):
             tokens = tokens[:max_length]
             mask = [True] * max_length
 
-        ar_mask = [0] * max_length  # all bidirectional
-
         worker_info = torch.utils.data.get_worker_info()
         is_worker_0 = worker_info is None or worker_info.id == 0
         if (
@@ -565,7 +563,7 @@ class ValueProcessor(ProcessorMixin):
                 seq_len,
             )
 
-        return np.asarray(tokens), np.asarray(mask), np.asarray(ar_mask)
+        return np.asarray(tokens), np.asarray(mask)
 
     def process_text(
         self,
@@ -576,28 +574,25 @@ class ValueProcessor(ProcessorMixin):
         """Process a batch of prompts for the value model.
 
         Returns:
-            Dict with ``input_ids``, ``attention_mask``, ``token_ar_mask``.
+            Dict with ``input_ids``, ``attention_mask``.
         """
         if max_length is None:
             max_length = self.max_token_len
 
         batch_tokens = []
         batch_masks = []
-        batch_ar_masks = []
 
         for prompt in prompts:
-            tokens, mask, ar_mask = self._tokenize_single(
+            tokens, mask = self._tokenize_single(
                 prompt=prompt,
                 max_length=max_length,
             )
             batch_tokens.append(tokens)
             batch_masks.append(mask)
-            batch_ar_masks.append(ar_mask)
 
         result = {
             "input_ids": np.stack(batch_tokens),
             "attention_mask": np.stack(batch_masks),
-            "token_ar_mask": np.stack(batch_ar_masks),
         }
 
         if return_tensors == "pt":
@@ -677,7 +672,6 @@ class ValueProcessor(ProcessorMixin):
             "image_masks",
             "input_ids",
             "attention_mask",
-            "token_ar_mask",
         ]
 
 

@@ -115,12 +115,6 @@ class VLMObservationEncoder(nn.Module):
         batch_size, seq_len = tokenized_prompt.shape
         device = tokenized_prompt.device
 
-        token_ar_mask = observation.get("token_ar_mask")
-        if token_ar_mask is None:
-            token_ar_mask = torch.zeros(
-                (batch_size, seq_len), dtype=torch.long, device=device
-            )
-
         token_loss_mask = observation.get("token_loss_mask")
         if token_loss_mask is None:
             token_loss_mask = torch.zeros(
@@ -143,18 +137,14 @@ class VLMObservationEncoder(nn.Module):
             img_mask_list,
             tokenized_prompt,
             tokenized_prompt_mask,
-            token_ar_mask,
             token_loss_mask,
             token_kv_cache_mask,
         )
 
-    def embed_prefix(
-        self, images, img_masks, lang_tokens, lang_masks, token_ar_mask=None
-    ):
-        """Embed images and language tokens (with token_ar_mask)."""
-        embs, pad_masks, ar_masks = [], [], []
+    def embed_prefix(self, images, img_masks, lang_tokens, lang_masks):
+        """Embed images and language tokens into prefix embeddings."""
+        embs, pad_masks = [], []
         bsize = lang_tokens.shape[0]
-        device = lang_tokens.device
 
         for img, img_mask in zip(images, img_masks, strict=True):
             img_emb = self._apply_checkpoint(
@@ -163,9 +153,6 @@ class VLMObservationEncoder(nn.Module):
             num_img_embs = img_emb.shape[1]
             embs.append(img_emb)
             pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
-            ar_masks.append(
-                torch.zeros(bsize, num_img_embs, dtype=torch.long, device=device)
-            )
 
         def embed_lang(tokens):
             emb = self.paligemma_with_expert.embed_language_tokens(tokens)
@@ -175,17 +162,7 @@ class VLMObservationEncoder(nn.Module):
         embs.append(lang_emb)
         pad_masks.append(lang_masks)
 
-        if token_ar_mask is None:
-            token_ar_mask = torch.zeros(
-                bsize, lang_masks.shape[1], dtype=torch.long, device=device
-            )
-        ar_masks.append(token_ar_mask)
-
-        return (
-            torch.cat(embs, dim=1),
-            torch.cat(pad_masks, dim=1),
-            torch.cat(ar_masks, dim=1),
-        )
+        return torch.cat(embs, dim=1), torch.cat(pad_masks, dim=1)
 
 
 class ValueHead(nn.Module):
@@ -373,15 +350,14 @@ class ValueCriticModel(VLMObservationEncoder):
             img_masks,
             lang_tokens,
             lang_masks,
-            token_ar_mask,
             _,
             _,
         ) = self._preprocess_observation(observation)
 
         batch_size = lang_tokens.shape[0]
 
-        prefix_embs, prefix_pad_masks, prefix_ar_masks = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks, token_ar_mask
+        prefix_embs, prefix_pad_masks = self.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks
         )
         suffix_embs, suffix_pad_masks, suffix_ar_masks = self.embed_suffix(batch_size)
 
@@ -389,7 +365,6 @@ class ValueCriticModel(VLMObservationEncoder):
         values, hidden_states, logits, probs, backward_anchor = self._forward_expert(
             prefix_embs,
             prefix_pad_masks,
-            prefix_ar_masks,
             suffix_embs,
             suffix_pad_masks,
             suffix_ar_masks,
@@ -424,7 +399,6 @@ class ValueCriticModel(VLMObservationEncoder):
         self,
         prefix_embs,
         prefix_pad_masks,
-        prefix_ar_masks,
         suffix_embs,
         suffix_pad_masks,
         suffix_ar_masks,
@@ -446,7 +420,6 @@ class ValueCriticModel(VLMObservationEncoder):
             prefix_out, suffix_out = self._forward_expert_two_stage(
                 prefix_embs=prefix_embs,
                 prefix_pad_masks=prefix_pad_masks,
-                prefix_ar_masks=prefix_ar_masks,
                 suffix_embs=suffix_embs,
                 suffix_pad_masks=suffix_pad_masks,
                 suffix_ar_masks=suffix_ar_masks,
@@ -462,8 +435,12 @@ class ValueCriticModel(VLMObservationEncoder):
             return values, cls_hidden, logits, probs, backward_anchor
 
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
-        ar_masks = torch.cat([prefix_ar_masks, suffix_ar_masks], dim=1)
-        attn_mask = make_att_2d_masks(pad_masks, ar_masks)
+        # Prefix tokens are bidirectional (0), suffix ar_masks carry CLS causal mask.
+        att_masks = torch.cat([
+            torch.zeros_like(prefix_pad_masks, dtype=torch.long),
+            suffix_ar_masks,
+        ], dim=1)
+        attn_mask = make_att_2d_masks(pad_masks, att_masks)
         attn_mask_4d = self._prepare_attention_masks_4d(attn_mask)
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
 
@@ -518,7 +495,6 @@ class ValueCriticModel(VLMObservationEncoder):
         self,
         prefix_embs,
         prefix_pad_masks,
-        prefix_ar_masks,
         suffix_embs,
         suffix_pad_masks,
         suffix_ar_masks,
@@ -526,7 +502,8 @@ class ValueCriticModel(VLMObservationEncoder):
     ) -> tuple[Tensor, Tensor]:
         """Two-stage expert forward with KV cache (for frozen VLM under FSDP)."""
         # Phase 1: prefill frozen VLM to get KV cache.
-        prefix_attn = make_att_2d_masks(prefix_pad_masks, prefix_ar_masks)
+        # Prefix is fully bidirectional, so attention = pad_mask outer product.
+        prefix_attn = prefix_pad_masks[:, None, :] * prefix_pad_masks[:, :, None]
         prefix_attn_4d = self._prepare_attention_masks_4d(prefix_attn)
         prefix_pos = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
@@ -635,17 +612,18 @@ class ValueCriticModel(VLMObservationEncoder):
     @torch.no_grad()
     def predict(self, observation) -> CriticOutput:
         """Inference with KV cache."""
-        (images, img_masks, lang_tokens, lang_masks, token_ar_mask, _, _) = (
+        (images, img_masks, lang_tokens, lang_masks, _, _) = (
             self._preprocess_observation(observation)
         )
         batch_size = lang_tokens.shape[0]
 
-        prefix_embs, prefix_pad_masks, prefix_ar_masks = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks, token_ar_mask
+        prefix_embs, prefix_pad_masks = self.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks
         )
         suffix_embs, suffix_pad_masks, suffix_ar_masks = self.embed_suffix(batch_size)
 
-        prefix_attn = make_att_2d_masks(prefix_pad_masks, prefix_ar_masks)
+        # Prefix is fully bidirectional, so attention = pad_mask outer product.
+        prefix_attn = prefix_pad_masks[:, None, :] * prefix_pad_masks[:, :, None]
         prefix_attn_4d = self._prepare_attention_masks_4d(prefix_attn)
         prefix_pos = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
@@ -868,7 +846,7 @@ class ValueCriticModel(VLMObservationEncoder):
             processor: ValueProcessor instance.
 
         Returns:
-            Dict with CPU tensors: pixel_values, image_masks, tokens, mask, ar_mask.
+            Dict with CPU tensors: pixel_values, image_masks, tokens, mask.
         """
         import numpy as np
 
@@ -946,11 +924,9 @@ class ValueCriticModel(VLMObservationEncoder):
             padding_len = max_length - seq_len
             tok_mask = [True] * seq_len + [False] * padding_len
             tokens = tokens + [0] * padding_len
-            ar_mask = [0] * max_length
         else:
             tokens = tokens[:max_length]
             tok_mask = [True] * max_length
-            ar_mask = [0] * max_length
 
         # Return CPU tensors only (no .to(device))
         return {
@@ -958,13 +934,13 @@ class ValueCriticModel(VLMObservationEncoder):
             "image_masks": processed_img["image_masks"],
             "tokenized_prompt": torch.tensor([tokens], dtype=torch.long),
             "tokenized_prompt_mask": torch.tensor([tok_mask], dtype=torch.bool),
-            "token_ar_mask": torch.tensor([ar_mask], dtype=torch.long),
         }
 
     def _prepare_observation(self, inputs: dict) -> dict:
         """Prepare observation dict for model forward.
 
         Tokenizes "Task: {prompt}." (matching training template).
+        Returns dict with images, image_masks, tokenized_prompt, tokenized_prompt_mask.
         """
         import numpy as np
 
@@ -1056,11 +1032,9 @@ class ValueCriticModel(VLMObservationEncoder):
             padding_len = max_length - seq_len
             mask = [True] * seq_len + [False] * padding_len
             tokens = tokens + [0] * padding_len
-            ar_mask = [0] * max_length
         else:
             tokens = tokens[:max_length]
             mask = [True] * max_length
-            ar_mask = [0] * max_length
 
         pixel_values = processed_img["pixel_values"]
         image_masks = processed_img["image_masks"]
@@ -1082,7 +1056,6 @@ class ValueCriticModel(VLMObservationEncoder):
             "tokenized_prompt_mask": torch.tensor(
                 [mask], dtype=torch.bool, device=device
             ),
-            "token_ar_mask": torch.tensor([ar_mask], dtype=torch.long, device=device),
         }
 
     def _prepare_observation_batch(self, inputs_list: list[dict]) -> dict:
@@ -1091,7 +1064,6 @@ class ValueCriticModel(VLMObservationEncoder):
         all_image_masks = []
         all_tokens = []
         all_masks = []
-        all_ar_masks = []
 
         for inputs in inputs_list:
             single_obs = self._prepare_observation(inputs)
@@ -1099,7 +1071,6 @@ class ValueCriticModel(VLMObservationEncoder):
             all_image_masks.append(single_obs["image_masks"])
             all_tokens.append(single_obs["tokenized_prompt"])
             all_masks.append(single_obs["tokenized_prompt_mask"])
-            all_ar_masks.append(single_obs["token_ar_mask"])
 
         if isinstance(all_images[0], dict):
             batched_images = {
@@ -1119,7 +1090,6 @@ class ValueCriticModel(VLMObservationEncoder):
             "image_masks": batched_masks,
             "tokenized_prompt": torch.cat(all_tokens, dim=0),
             "tokenized_prompt_mask": torch.cat(all_masks, dim=0),
-            "token_ar_mask": torch.cat(all_ar_masks, dim=0),
         }
 
     @torch.no_grad()
@@ -1212,9 +1182,6 @@ class ValueCriticModel(VLMObservationEncoder):
                     ).to(device),
                     "tokenized_prompt_mask": torch.cat(
                         [obs["tokenized_prompt_mask"] for obs in batch_obs], dim=0
-                    ).to(device),
-                    "token_ar_mask": torch.cat(
-                        [obs["token_ar_mask"] for obs in batch_obs], dim=0
                     ).to(device),
                 }
             else:

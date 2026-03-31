@@ -151,7 +151,6 @@ class ValueDataCollator(DataCollatorMixin):
 
         lang_tokens = processed_txt["input_ids"]
         lang_masks = processed_txt["attention_mask"].bool()
-        ar_masks = processed_txt["token_ar_mask"]
 
         global _COLLATOR_VERIFIED
         if not _COLLATOR_VERIFIED:
@@ -169,7 +168,6 @@ class ValueDataCollator(DataCollatorMixin):
             "image_masks": processed_img["image_masks"],
             "tokenized_prompt": lang_tokens,
             "tokenized_prompt_mask": lang_masks,
-            "token_ar_mask": ar_masks,
             "action_mask": action_mask,
         }
 
