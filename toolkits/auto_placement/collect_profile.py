@@ -30,7 +30,7 @@ from toolkits.auto_placement.util import (
     has_profile_data,
     has_target_env_num,
     log_env_num_instavg_to_tensorboard,
-    log_total_env_num_to_tensorboard,
+    log_total_num_envs_to_tensorboard,
     modify_cfg_for_profiling,
     update_yaml_with_profile_data,
 )
@@ -81,7 +81,7 @@ def main(cfg) -> None:
             env_num_per_instance = env_num / component_placement.get_world_size("env")
 
             log_env_num_instavg_to_tensorboard(cfg, env_num_per_instance)
-            log_total_env_num_to_tensorboard(cfg, env_num)
+            log_total_num_envs_to_tensorboard(cfg, env_num)
 
             actor_group._close()
             rollout_group._close()

@@ -38,6 +38,8 @@ from rlinf.utils.placement import (
     ModelParallelComponentPlacement,
 )
 
+_CANDIDATE_RESULTS: list[dict] = []
+
 
 class AutoPlacementWorker:
     def __init__(
@@ -136,11 +138,12 @@ class AutoPlacementWorker:
             collocated_res = ScheduleResult.merger_schedule_results(
                 gpu_num, source_res, sink_res, is_collocated=True
             )
+            self._record_candidate(collocated_res)
 
             best_res = ScheduleResult.find_best_schedule(best_res, collocated_res)
 
             # Pipeline schedule
-            for source_gpu_num in range(1, gpu_num):
+            for source_gpu_num in range(1, gpu_num - 1):
                 sink_gpu_num = gpu_num - source_gpu_num
                 source_res: ScheduleResult = self._find_schedule(
                     source_workflow, source_gpu_num
@@ -152,6 +155,8 @@ class AutoPlacementWorker:
                 disaggregated_res = ScheduleResult.merger_schedule_results(
                     gpu_num, source_res, sink_res, is_collocated=False
                 )
+                self._record_candidate(disaggregated_res)
+
                 best_res = ScheduleResult.find_best_schedule(
                     best_res, disaggregated_res
                 )
@@ -162,6 +167,31 @@ class AutoPlacementWorker:
     def run(self) -> ScheduleResult:
         self._result_cache: dict[tuple[Workflow, int], ScheduleResult] = {}
         return self._find_schedule(self.workflow, self.config.total_gpus)
+
+    def _record_candidate(self, res: Optional[ScheduleResult]) -> None:
+        if res is None:
+            return
+        component_costs = get_component_predicted_costs(res)
+        if self.config.task_type == "embodied":
+            generate_cost = component_costs.get("env", 0.0) + component_costs.get(
+                "env_rollout", 0.0
+            )
+            actor_cost = component_costs.get("actor", 0.0)
+        else:
+            generate_cost = 0.0
+            actor_cost = component_costs.get("actor", 0.0)
+
+        stage_info = _get_embodied_stage_cost_info(res) if self.config.task_type == "embodied" else {}
+        _CANDIDATE_RESULTS.append(
+            {
+                "mode": res.effective_mode,
+                "total_cost": float(res.total_cost),
+                "generate_cost": float(generate_cost),
+                "actor_cost": float(actor_cost),
+                "placement_str": res.placement_str.strip(),
+                **stage_info,
+            }
+        )
 
 
 def get_component_predicted_costs(
@@ -176,6 +206,90 @@ def get_component_predicted_costs(
             continue
         component_costs[node.role] = cost
     return component_costs
+
+
+def _get_embodied_stage_cost_info(schedule_result: ScheduleResult) -> dict[str, float | int | None]:
+    """Return per-stage env counts and fitted costs for embodied candidates.
+
+    This mirrors the stage-aware model used in `placement.py` for env<->env_rollout cuts,
+    but is used purely for logging/debugging candidates.
+    """
+    config = get_global_config()
+    # In collocated mode (all components share the same GPUs), there is no meaningful
+    # env<->rollout pipeline separation in this cost model. Default stage_num to 1
+    # for clearer logging.
+    if getattr(schedule_result, "effective_mode", None) == "collocated":
+        stage_num = 1
+    else:
+        stage_num = int(getattr(config, "pipeline_stage_num", 2))
+        if stage_num <= 0:
+            stage_num = 2
+    total_envs = int(getattr(config, "env_num", 0))
+    if total_envs <= 0:
+        return {
+            "pipeline_stage_num": stage_num,
+            "env_num_per_gpu_per_stage": None,
+            "rollout_num_per_gpu_per_stage": None,
+            "env_stage_cost": None,
+            "rollout_stage_cost": None,
+        }
+
+    env_node = None
+    rollout_node = None
+    env_gpus = 0
+    rollout_gpus = 0
+    for node, gpu_range in schedule_result.placement.items():
+        if node.role == "env":
+            env_node = node
+            env_gpus = len(gpu_range)
+        elif node.role == "env_rollout":
+            rollout_node = node
+            rollout_gpus = len(gpu_range)
+
+    if env_node is None or rollout_node is None or env_gpus <= 0 or rollout_gpus <= 0:
+        return {
+            "pipeline_stage_num": stage_num,
+            "env_num_per_gpu_per_stage": None,
+            "rollout_num_per_gpu_per_stage": None,
+            "env_stage_cost": None,
+            "rollout_stage_cost": None,
+        }
+
+    denom_env = env_gpus * stage_num
+    denom_rollout = rollout_gpus * stage_num
+    if (total_envs % denom_env != 0) or (total_envs % denom_rollout != 0):
+        return {
+            "pipeline_stage_num": stage_num,
+            "env_num_per_gpu_per_stage": None,
+            "rollout_num_per_gpu_per_stage": None,
+            "env_stage_cost": None,
+            "rollout_stage_cost": None,
+        }
+
+    env_num_per_gpu_per_stage = total_envs // denom_env
+    rollout_num_per_gpu_per_stage = total_envs // denom_rollout
+
+    # EnvNode / EnvRolloutNode both carry an EnvProfiler instance.
+    env_prof = getattr(env_node, "profiler", None)
+    rollout_prof = getattr(rollout_node, "profiler", None)
+    env_stage_cost = (
+        float(env_prof.cost_for_envs_per_instance(env_num_per_gpu_per_stage))
+        if env_prof is not None
+        else None
+    )
+    rollout_stage_cost = (
+        float(rollout_prof.cost_for_envs_per_instance(rollout_num_per_gpu_per_stage))
+        if rollout_prof is not None
+        else None
+    )
+
+    return {
+        "pipeline_stage_num": stage_num,
+        "env_num_per_gpu_per_stage": int(env_num_per_gpu_per_stage),
+        "rollout_num_per_gpu_per_stage": int(rollout_num_per_gpu_per_stage),
+        "env_stage_cost": env_stage_cost,
+        "rollout_stage_cost": rollout_stage_cost,
+    }
 
 
 def get_workflow_graph(cfg) -> dict[str, list[str]]:
@@ -229,10 +343,7 @@ def main(cfg):
         )
         return None
 
-    if (
-        schedule_result.mode == ScheduleMode.COLLOCATED
-        and not schedule_result.is_hybrid()
-    ):
+    if schedule_result.effective_mode == "collocated":
         res = (
             ", ".join(
                 [
@@ -252,6 +363,36 @@ def main(cfg):
         "Predicted step time (from profile): %.3f s",
         schedule_result.total_cost,
     )
+
+    if _CANDIDATE_RESULTS:
+        top_k = int(cfg.get("auto_placement_top_k", 10))
+        uniq: dict[tuple[str, str], dict] = {}
+        for item in _CANDIDATE_RESULTS:
+            key = (item["mode"], item["placement_str"])
+            if key not in uniq or item["total_cost"] < uniq[key]["total_cost"]:
+                uniq[key] = item
+        rows = sorted(uniq.values(), key=lambda x: x["total_cost"])[:top_k]
+        logging.info("=" * 50)
+        logging.info("Candidate placements (top %d by predicted cost):", top_k)
+        for i, row in enumerate(rows):
+            stage_str = ""
+            if cfg.runner.task_type == "embodied":
+                stage_str = (
+                    "\n"
+                    f"stage_num={row.get('pipeline_stage_num')} "
+                    f"env_num_per_gpu_per_stage={row.get('env_num_per_gpu_per_stage')} "
+                    f"rollout_num_per_gpu_per_stage={row.get('rollout_num_per_gpu_per_stage')}\n"
+                    f"EnvNode[{row.get('env_num_per_gpu_per_stage')}]={row.get('env_stage_cost')} "
+                    f"EnvRolloutNode[{row.get('rollout_num_per_gpu_per_stage')}]={row.get('rollout_stage_cost')}"
+                )
+            logging.info(
+                "[%02d] mode=%s temp_step_time=%.3fs%s \n%s",
+                i,
+                row["mode"],
+                row["total_cost"],
+                stage_str,
+                row["placement_str"] or "(empty)",
+            )
 
 
 if __name__ == "__main__":

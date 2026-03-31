@@ -17,6 +17,7 @@ from enum import Enum
 from typing import Optional
 
 from node import ComponentNode
+from fitter import DataFitter
 from util import get_global_config
 
 
@@ -28,8 +29,45 @@ class ScheduleMode(Enum):
     DISAGGREGATED = "disaggregated"
 
 
+class PlacementTopology(Enum):
+    """Topology derived from the *final* placement GPU overlap pattern.
+
+    This is intentionally separate from ScheduleMode:
+    - ScheduleMode is the DP merge operator on the binary recursion tree.
+    - PlacementTopology describes the global GPU sharing semantics of the final result.
+    """
+
+    SINGLE_NODE = "single_node"
+    ALL_SHARED = "all_shared"
+    ALL_DISJOINT = "all_disjoint"
+    MIXED_SHARED = "mixed_shared"
+
+
 class ScheduleResult(ABC):
     """Base class for all schedule results."""
+
+    @staticmethod
+    def _ranges_overlap(a: range, b: range) -> bool:
+        # Treat ranges as half-open intervals [start, stop).
+        return max(a.start, b.start) < min(a.stop, b.stop)
+
+    @staticmethod
+    def _derive_topology_from_placement(
+        total_gpu_num: int, placement: dict[ComponentNode, range]
+    ) -> PlacementTopology:
+        if len(placement) <= 1:
+            return PlacementTopology.SINGLE_NODE
+
+        full = range(total_gpu_num)
+        if all(gpu_range == full for gpu_range in placement.values()):
+            return PlacementTopology.ALL_SHARED
+
+        ranges = list(placement.values())
+        for i in range(len(ranges)):
+            for j in range(i + 1, len(ranges)):
+                if ScheduleResult._ranges_overlap(ranges[i], ranges[j]):
+                    return PlacementTopology.MIXED_SHARED
+        return PlacementTopology.ALL_DISJOINT
 
     @staticmethod
     def merger_schedule_results(
@@ -50,8 +88,8 @@ class ScheduleResult(ABC):
 
         config = get_global_config()
 
-        # In Reasoning task, hybrid schedule is not supported.
-        if config.task_type == "reasoning" and res.is_hybrid():
+        # In Reasoning task, mixed GPU sharing is not supported.
+        if config.task_type == "reasoning" and res.topology == PlacementTopology.MIXED_SHARED:
             return None
 
         # In Embodiment task, actor should run on all GPUs.
@@ -61,6 +99,7 @@ class ScheduleResult(ABC):
                 nodes[-1].role == "actor"
                 and len(res.placement[nodes[-1]]) != res.total_gpu_num
             ):
+                print(f"actor now runs on {res.placement[nodes[-1]]} GPUs")
                 return None
         return res
 
@@ -86,21 +125,40 @@ class ScheduleResult(ABC):
         self.cost_per_group_batch = cost_per_group_batch
         self.total_cost = total_cost
 
+    @property
+    def topology(self) -> PlacementTopology:
+        return self._derive_topology_from_placement(self.total_gpu_num, self.placement)
+
+    @property
+    def effective_mode(self) -> str:
+        """Unified external mode string for display/metrics.
+
+        For embodied:
+        - disaggregated => ALL_DISJOINT (e.g., env/env_rollout/actor all separated)
+        - hybrid        => MIXED_SHARED (pipeline + GPU sharing)
+        - collocated    => ALL_SHARED
+        For reasoning:
+        - hybrid (mixed) is filtered out in merger_schedule_results.
+        """
+        config = get_global_config()
+        if config.task_type == "embodied":
+            if self.topology == PlacementTopology.ALL_SHARED:
+                return "collocated"
+            if self.topology == PlacementTopology.ALL_DISJOINT:
+                return "disaggregated"
+            if self.topology == PlacementTopology.MIXED_SHARED:
+                return "hybrid"
+            return "single_node"
+        # reasoning (and others): keep original DP mode as external name
+        return self.mode.value
+
     def get_cost_per_group_batch(self, *args, **kwargs) -> float:
         return self.cost_per_group_batch
 
     def is_hybrid(self) -> bool:
-        if self.mode == ScheduleMode.SINGLE_NODE:
-            return False
-
-        def _check_child_mode(self_model, child_mode) -> bool:
-            if child_mode != ScheduleMode.SINGLE_NODE and child_mode != self_model:
-                return True
-            return False
-
-        return _check_child_mode(self.mode, self.source_res.mode) or _check_child_mode(
-            self.mode, self.sink_res.mode
-        )
+        # Kept for backward compatibility with existing call sites.
+        # Prefer using `topology`/`effective_mode` for unified semantics.
+        return self.topology == PlacementTopology.MIXED_SHARED
 
     @property
     def placement_str(self) -> str:
@@ -110,7 +168,10 @@ class ScheduleResult(ABC):
         return placement_str
 
     def __str__(self):
-        return f"ScheduleResult : total_gpu_num={self.total_gpu_num}, total_cost={self.total_cost}, mode={self.mode.value}, placement:\n{self.placement_str}"
+        return (
+            f"ScheduleResult : total_gpu_num={self.total_gpu_num}, total_cost={self.total_cost}, "
+            f"mode={self.mode.value}, effective_mode={self.effective_mode}, placement:\n{self.placement_str}"
+        )
 
     def __repr__(self) -> str:
         return self.__str__()
@@ -149,23 +210,6 @@ class CollocatedScheduleResult(ScheduleResult):
         self.source_res = source_res
         self.sink_res = sink_res
         config = get_global_config()
-
-        def _roles(res: ScheduleResult) -> set[str]:
-            return {node.role for node in res.placement.keys()}
-
-        def _embodied_merge_total_cost(a: ScheduleResult, b: ScheduleResult) -> float:
-            """Merge two embodied sub-workflows' costs in seconds/step.
-
-            Collocated placement implies components share the same GPU(s) and thus
-            occupy devices sequentially in time. In particular, generate (env +
-            rollout) is not overlapped under collocation.
-
-            Therefore, collocated sub-workflows are summed.
-            """
-            _ = _roles(a)
-            _ = _roles(b)
-            return a.total_cost + b.total_cost
-
         super().__init__(
             mode=ScheduleMode.COLLOCATED,
             total_gpu_num=total_gpu_num,
@@ -174,11 +218,7 @@ class CollocatedScheduleResult(ScheduleResult):
                 **sink_res.placement,
             },
             cost_per_group_batch=None,
-            total_cost=(
-                _embodied_merge_total_cost(self.source_res, self.sink_res)
-                if config.task_type == "embodied"
-                else self.source_res.total_cost + self.sink_res.total_cost
-            ),
+            total_cost= self.source_res.total_cost + self.sink_res.total_cost,
         )
 
     def get_cost_per_group_batch(self, is_source: bool) -> float:
@@ -218,27 +258,97 @@ class DisaggregatedScheduleResult(ScheduleResult):
         config = get_global_config()
 
         if config.task_type == "embodied":
+            return self._get_disaggregated_time_embodied()
+        elif config.task_type == "reasoning":
+            return self._get_disaggregated_time_reasoning()
+        else:
+            raise ValueError(f"Unsupported task type: {config.task_type}")
 
-            def _roles(res: ScheduleResult) -> set[str]:
-                return {node.role for node in res.placement.keys()}
+    def _get_disaggregated_time_embodied(self) -> tuple[float, float]:
+        config = get_global_config()
 
-            source_roles = _roles(self.source_res)
-            sink_roles = _roles(self.sink_res)
-            source_has_actor = "actor" in source_roles
-            sink_has_actor = "actor" in sink_roles
+        def _roles(res: ScheduleResult) -> set[str]:
+            return {node.role for node in res.placement.keys()}
 
-            # Warmup/drain for embodied pipeline is treated as negligible in this model.
-            self.warmup_time = 0.0
+        def _has_actor_cut(source_roles: set[str], sink_roles: set[str]) -> bool:
+            return ("actor" in source_roles) ^ ("actor" in sink_roles)
 
-            # If this cut separates generate components from actor training, runner
-            # executes them sequentially => sum. Otherwise, env vs rollout are
-            # overlapped and bottleneck dominates => max.
-            if source_has_actor ^ sink_has_actor:
-                stable_cost = self.source_res.total_cost + self.sink_res.total_cost
-            else:
-                stable_cost = max(self.source_res.total_cost, self.sink_res.total_cost)
+        def _stage_num() -> int:
+            # Default to 2 stages; normalize invalid values to 1.
+            n = int(getattr(config, "pipeline_stage_num", 2))
+            return n if n > 0 else 1
 
+        def _total_envs() -> int:
+            return int(getattr(config, "env_num", 0))
+
+        def _is_env_rollout_cut(source_roles: set[str], sink_roles: set[str]) -> bool:
+            # True only when the cut separates env and env_rollout across the two sides.
+            source_has_env = "env" in source_roles
+            sink_has_env = "env" in sink_roles
+            source_has_rollout = "env_rollout" in source_roles
+            sink_has_rollout = "env_rollout" in sink_roles
+            return (source_has_env ^ sink_has_env) and (source_has_rollout ^ sink_has_rollout)
+
+        def _gpus_for_role(role: str, source_roles: set[str], sink_roles: set[str]) -> int:
+            # In this model, each side's `total_gpu_num` is the GPU allocation for
+            # that sub-workflow.
+            if role in source_roles:
+                return int(self.source_res.total_gpu_num)
+            if role in sink_roles:
+                return int(self.sink_res.total_gpu_num)
+            return 0
+
+        def _embodied_generate_pipeline_cost(
+            env_gpus: int, rollout_gpus: int, stage_num: int, total_envs: int
+        ) -> float:
+            # Stage-aware model used only for env <-> env_rollout cuts:
+            # - per-stage envs-per-gpu must be integer for both env and rollout sides
+            # - stage cost is max(env_stage, rollout_stage) * stage_num
+            if total_envs <= 0 or env_gpus <= 0 or rollout_gpus <= 0:
+                return float("inf")
+            if (total_envs % (env_gpus * stage_num) != 0) or (
+                total_envs % (rollout_gpus * stage_num) != 0
+            ):
+                return float("inf")
+
+            env_num_per_gpu_per_stage = total_envs // env_gpus // stage_num
+            rollout_num_per_gpu_per_stage = total_envs // rollout_gpus // stage_num
+
+            env_prof = DataFitter(config.profile_data.env_profile_data)
+            rollout_prof = DataFitter(config.profile_data.rollout_profile_data)
+            env_stage_cost = float(env_prof.get_value(env_num_per_gpu_per_stage))
+            rollout_stage_cost = float(rollout_prof.get_value(rollout_num_per_gpu_per_stage))
+            return max(env_stage_cost, rollout_stage_cost) * stage_num
+
+        source_roles = _roles(self.source_res)
+        sink_roles = _roles(self.sink_res)
+
+        # Warmup/drain for embodied pipeline is treated as negligible in this model.
+        self.warmup_time = 0.0
+
+        if _has_actor_cut(source_roles, sink_roles):
+            # Runner executes generate and actor sequentially.
+            stable_cost = self.source_res.total_cost + self.sink_res.total_cost
             return stable_cost, stable_cost
+
+        # Generate-internal cut: prefer the stage-aware model only for env<->env_rollout cuts.
+        if _is_env_rollout_cut(source_roles, sink_roles):
+            env_gpus = _gpus_for_role("env", source_roles, sink_roles)
+            rollout_gpus = _gpus_for_role("env_rollout", source_roles, sink_roles)
+            stable_cost = _embodied_generate_pipeline_cost(
+                env_gpus=env_gpus,
+                rollout_gpus=rollout_gpus,
+                stage_num=_stage_num(),
+                total_envs=_total_envs(),
+            )
+            return stable_cost, stable_cost
+
+        # Other generate cuts: bottleneck dominates (env vs rollout overlap).
+        stable_cost = max(self.source_res.total_cost, self.sink_res.total_cost)
+        return stable_cost, stable_cost
+
+    def _get_disaggregated_time_reasoning(self) -> tuple[float, float]:
+        config = get_global_config()
 
         source_cost_per_group_batch = self.source_res.get_cost_per_group_batch(
             is_source=True

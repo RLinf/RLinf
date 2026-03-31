@@ -84,21 +84,21 @@ def init_global_config_env(config, component_placement, cluster) -> None:
     actor_profile_data = OmegaConf.to_container(actor_profile_cfg, resolve=True)
     actor_profile_data = {int(k): float(v) for k, v in actor_profile_data.items()}
 
-    total_env_num = OmegaConf.select(config, "env.train.total_num_envs")
-    if total_env_num is None:
-        total_env_num = OmegaConf.select(config, "data.env_num")
-    if total_env_num is None:
+    total_num_envs = OmegaConf.select(config, "env.train.total_num_envs")
+    if total_num_envs is None:
+        total_num_envs = OmegaConf.select(config, "data.env_num")
+    if total_num_envs is None:
         raise ValueError(
             "Missing env.train.total_num_envs (and data.env_num fallback). "
             "Please set env.train.total_num_envs in config."
         )
-    total_env_num = int(total_env_num)
-    actor_cost_total = DataFitter(actor_profile_data).get_value(total_env_num)
+    total_num_envs = int(total_num_envs)
+    actor_cost_total = DataFitter(actor_profile_data).get_value(total_num_envs)
 
     _GLOBAL_CONFIG = Namespace(
         task_type=config.runner.task_type,
         total_gpus=cluster.num_accelerators,
-        env_num=total_env_num,
+        env_num=total_num_envs,
         pipeline_stage_num=config.rollout.pipeline_stage_num,
         profile_data=config.profile_data,
         rollout_batch_size=1,  # For actor node init
@@ -257,13 +257,13 @@ def log_env_num_instavg_to_tensorboard(cfg, env_num_per_instance: int) -> None:
     writer.close()
 
 
-def log_total_env_num_to_tensorboard(cfg, total_env_num: int) -> None:
-    """Log total_env_num (env.train.total_num_envs for this run) to TensorBoard."""
+def log_total_num_envs_to_tensorboard(cfg, total_num_envs: int) -> None:
+    """Log total_num_envs (env.train.total_num_envs for this run) to TensorBoard."""
     try:
         from torch.utils.tensorboard import SummaryWriter
     except Exception as exc:  # pragma: no cover
         raise RuntimeError(
-            "tensorboard is required for total_env_num logging. Try `pip install tensorboard`."
+            "tensorboard is required for total_num_envs logging. Try `pip install tensorboard`."
         ) from exc
 
     log_root = cfg.runner.logger.log_path
@@ -271,7 +271,7 @@ def log_total_env_num_to_tensorboard(cfg, total_env_num: int) -> None:
     tb_logdir = os.path.join(log_root, "tensorboard", log_suffix)
     os.makedirs(tb_logdir, exist_ok=True)
     writer = SummaryWriter(tb_logdir)
-    writer.add_scalar("profile/total_env_num", int(total_env_num), 0)
+    writer.add_scalar("profile/total_num_envs", int(total_num_envs), 0)
     writer.flush()
     writer.close()
 
@@ -301,11 +301,11 @@ def _load_scalars(run_dir: Path) -> dict[str, list[tuple[int, float]]]:
     available = set(ea.Tags().get("scalars", []))
     results: dict[str, list[tuple[float, float]]] = {}
     for tag in (
-        "time/env/interact",
+        "time/env/env_interact_step",
         "time/rollout/predict",
         "time/actor/run_training",
         "profile/env_num_per_instance",
-        "profile/total_env_num",
+        "profile/total_num_envs",
     ):
         if tag not in available:
             continue
@@ -347,9 +347,9 @@ def extract_from_tensorboard():
 
         env_events = sorted(data["profile/env_num_per_instance"], key=lambda x: x[0])
         total_env_events = sorted(
-            data.get("profile/total_env_num", []), key=lambda x: x[0]
+            data.get("profile/total_num_envs", []), key=lambda x: x[0]
         )
-        env_cost_events = data.get("time/env/interact", [])
+        env_cost_events = data.get("time/env/env_interact_step", [])
         rollout_cost_events = data.get("time/rollout/predict", [])
         actor_cost_events = data.get("time/actor/run_training", [])
 
@@ -362,10 +362,10 @@ def extract_from_tensorboard():
                 total_env_events, t_start, t_end, inclusive_end=True
             )
             if not total_env_vals:
-                # Older logs may miss total_env_num. Skip actor curve in that case.
-                total_env_num = None
+                # Older logs may miss total_num_envs. Skip actor curve in that case.
+                total_num_envs = None
             else:
-                total_env_num = int(total_env_vals[-1])
+                total_num_envs = int(total_env_vals[-1])
             env_vals = _vals_in_window(
                 env_cost_events, t_start, t_end, inclusive_end=True
             )
@@ -382,8 +382,8 @@ def extract_from_tensorboard():
                 rollout_profile_data[env_num_per_instance] = sum(rollout_vals) / len(
                     rollout_vals
                 )
-            if actor_vals and total_env_num is not None:
-                actor_profile_data[total_env_num] = sum(actor_vals) / len(actor_vals)
+            if actor_vals and total_num_envs is not None:
+                actor_profile_data[total_num_envs] = sum(actor_vals) / len(actor_vals)
 
     profile_data = {}
     if env_profile_data:

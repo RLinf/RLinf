@@ -25,6 +25,11 @@ class ComponentNode(ABC):
         self.role = role
         self.config = get_global_config()
 
+        # NOTE: This auto-placement toolkit uses different cost semantics across tasks.
+        # - reasoning: node.profile(gpu_num) is treated as "seconds per group-batch"
+        # - embodied:  node.profile(gpu_num) is treated as "seconds per step"
+        # The conversion is currently performed in `auto_placement_worker.py`.
+        # Keep this behavior, but make the profiling code easier to read/extend.
         self.max_world_size = self.config.components_config[role].max_world_size
         self.model_parallel_size = self.config.components_config[
             role
@@ -132,25 +137,36 @@ class EnvProfiler:
     def __init__(
         self,
         profile_data: dict[int, float],
-        total_env_num: int,
+        total_num_envs: int,
         max_env_num_per_instance: int = -1,
     ):
         self.data_fitter = DataFitter(profile_data)
-        self.total_env_num = total_env_num
+        self.total_num_envs = total_num_envs
         if max_env_num_per_instance == -1:
-            self.max_env_num_per_instance = max(profile_data.keys())
+            self.max_env_num_per_instance = max(profile_data.keys()) * 4
         else:
             self.max_env_num_per_instance = max_env_num_per_instance
 
-    def _get_env_cost_by_single_gpu(self, env_num_per_instance: int) -> float:
-        return self.data_fitter.get_value(env_num_per_instance)
+    def cost_for_envs_per_instance(self, env_num_per_instance: int) -> float:
+        """Return predicted cost for running `env_num_per_instance` envs on one instance.
+
+        The underlying `profile_data` is expected to be keyed by envs-per-instance and
+        valued in seconds (the exact "per step" semantics depend on the caller's task
+        model).
+        """
+        return float(self.data_fitter.get_value(env_num_per_instance))
 
     def profile(self, instance_num: int, require_align: bool) -> Optional[float]:
-        if require_align and self.total_env_num % instance_num != 0:
+        """Return predicted cost for placing env workloads on `instance_num` instances.
+
+        - If `require_align` is True, require exact integer env split across instances.
+        - Returns None for invalid placements (non-alignable or too many envs per instance).
+        """
+        if require_align and self.total_num_envs % instance_num != 0:
             return None
-        if self.total_env_num // instance_num > self.max_env_num_per_instance:
+        if self.total_num_envs // instance_num > self.max_env_num_per_instance:
             return None
-        return self._get_env_cost_by_single_gpu(self.total_env_num // instance_num)
+        return self.cost_for_envs_per_instance(self.total_num_envs // instance_num)
 
 
 class EnvNode(ComponentNode):
