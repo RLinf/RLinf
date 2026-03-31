@@ -33,16 +33,11 @@ except ImportError:
 import dataclasses
 from typing import Any, Iterator
 
-from rlinf.datasets.config import (  # noqa: E402
-    RLDataConfig,
-    create_rl_config,
-)
 from rlinf.datasets.mixture_datasets import (  # noqa: E402
     CfgMixtureDataset,
     ValueMixtureDataset,
 )
-from rlinf.datasets.rl_dataset import (  # noqa: E402
-    LeRobotRLDataset,
+from rlinf.datasets.return_loaders import (  # noqa: E402
     load_return_stats_from_dataset,
     load_returns_sidecar,
 )
@@ -127,11 +122,8 @@ class TokenizePromptWithGuidance:
 
 
 __all__ = [
-    "RLDataConfig",
-    "create_rl_config",
     "load_return_stats_from_dataset",
     "load_returns_sidecar",
-    "LeRobotRLDataset",
     "ValueDataset",
     "CfgMixtureDataset",
     "ValueMixtureDataset",

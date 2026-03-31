@@ -50,7 +50,7 @@ from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from rlinf.datasets.rl_dataset import (
+from rlinf.datasets.return_loaders import (
     load_return_stats_from_dataset,
     load_returns_sidecar,
 )

@@ -12,294 +12,222 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Value Dataset for return prediction.
-
-This module provides a dataset that extends LeRobotRLDataset to format samples
-for training a value model to predict normalized returns.
-
-Inheritance chain:
-    ValueDataset -> LeRobotRLDataset -> LeRobotPyTorchDataset -> Dataset
-
-Sample output format (compatible with ValueDataCollator):
-{
-    'images': Dict[str, Tensor],      # Camera images
-    'image_masks': Dict[str, Tensor], # Image validity masks
-    'prompt': str,                    # Task instruction
-    'target_values': float,           # Normalized return value
-    'actions': None,                  # Explicitly None to trigger VLM mode
-}
-"""
+"""Value Dataset: loads LeRobot data + returns sidecar for value model SFT."""
 
 import logging
+from pathlib import Path
 from typing import Any, Optional
 
+import numpy as np
 import torch
+from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+from torch.utils.data import Dataset
 
-from rlinf.datasets.lerobot.config import DataConfigFactory
+from rlinf.datasets.lerobot.config import create_data_config_factory
+from rlinf.datasets.lerobot.transforms import (
+    Normalize,
+    RepackTransform,
+    compose,
+    load_task_descriptions,
+)
 
-from .config import RLDataConfig, create_rl_config
-from .rl_dataset import LeRobotRLDataset
+from .return_loaders import load_returns_sidecar
+from .value_transforms import ReturnNormalizer
 
 logger = logging.getLogger(__name__)
 
 
-class ValueDataset(LeRobotRLDataset):
-    """Dataset for value prediction training.
+class ValueDataset(Dataset):
+    """Flat dataset for value model SFT.
 
-    Extends LeRobotRLDataset with VLM-mode sample formatting for training
-    models to predict normalized return values.
-
-    Inheritance chain:
-        ValueDataset -> LeRobotRLDataset -> LeRobotPyTorchDataset -> Dataset
-
-    The sample structure matches ValueDataCollator expectations:
-    - 'images': camera images
-    - 'prompt': task instruction
-    - 'target_values': normalized return value
-    - 'actions': None (triggers VLM-only forward)
+    Returns ``{images, prompt, target_values, actions=None}`` per sample.
     """
 
     def __init__(
         self,
-        dataset_path: str | None = None,
-        repo_id: str | None = None,
-        # RL configuration (either provide this OR the individual params below)
-        rl_config: Optional[RLDataConfig] = None,
-        # Individual RL params (used only if rl_config is None)
-        history_length: int = 0,
-        history_keys: Optional[list[str]] = None,
+        dataset_path: str,
+        robot_type: str,
+        model_type: str,
         action_horizon: int = 10,
-        gamma: float = 0.99,
-        include_next_obs: bool = False,  # Set True for distributional RL
-        return_norm_stats_path: Optional[str] = None,
+        action_dim: Optional[int] = None,
+        norm_stats_dir: Optional[str] = None,
+        asset_id: Optional[str] = None,
+        default_prompt: Optional[str] = None,
         return_min: Optional[float] = None,
         return_max: Optional[float] = None,
         normalize_to_minus_one_zero: bool = True,
-        # VLA dataset configuration (inherited)
-        split: str = "train",
-        data_config_factory: Optional[DataConfigFactory] = None,
-        action_dim: Optional[int] = None,
-        robot_type: Optional[str] = None,
-        model_type: Optional[str] = None,
-        default_prompt: Optional[str] = None,
         extra_delta_transform: bool = False,
-        norm_stats_dir: Optional[str] = None,
-        asset_id: Optional[str] = None,
-        config: Optional[dict[str, Any]] = None,
-        max_samples: Optional[int] = None,
         action_norm_skip_dims: Optional[dict[str, list[int]]] = None,
-        # Episode filtering
+        max_samples: Optional[int] = None,
+        tag: Optional[str] = None,
         episode_percentage: Optional[float] = None,
         shuffle_episodes: bool = False,
         episode_seed: int = 42,
-        # Sidecar tag (e.g. returns_{tag}.parquet)
-        tag: Optional[str] = None,
+        **kwargs,  # accept unused params (gamma, split, etc.)
     ):
-        """Initialize value dataset.
+        _known_unused = {"gamma", "split", "repo_id"}
+        unexpected = set(kwargs) - _known_unused
+        if unexpected:
+            logger.warning(f"ValueDataset ignoring unexpected kwargs: {unexpected}")
 
-        Args:
-            dataset_path: LeRobot dataset path or repo ID
-            repo_id: Alias for dataset_path
-            rl_config: Complete RL config. If provided, individual RL params are ignored.
-            history_length: Number of past observations
-            history_keys: Keys to include in history
-            action_horizon: Number of future actions/rewards
-            gamma: Discount factor
-            return_norm_stats_path: Path to norm_stats.json for min/max
-            return_min: Override minimum return value
-            return_max: Override maximum return value
-            split: Dataset split
-            data_config_factory: Factory for transforms
-            action_dim: Action dimension
-            robot_type: Robot type for auto-config
-            model_type: Model type (pi0, pi05)
-            default_prompt: Default prompt
-            extra_delta_transform: Apply extra delta transform
-            norm_stats_dir: Normalization stats directory
-            asset_id: Asset ID
-            config: Full config dict from YAML
-            max_samples: Limit dataset size
-            episode_percentage: Percentage of episodes to use
-            shuffle_episodes: Random episode selection
-            episode_seed: Seed for reproducibility
-        """
-        if rl_config is None:
-            rl_config = create_rl_config(
-                history_length=history_length,
-                history_keys=history_keys,
-                action_horizon=action_horizon,
-                include_next_obs=include_next_obs,  # True for distributional RL
-                include_return=True,  # Required for value training
-                include_done=False,  # Not needed for offline value training
-                gamma=gamma,
-                normalize_return=True,
-                return_norm_stats_path=return_norm_stats_path,
-                return_min=return_min,
-                return_max=return_max,
-                normalize_to_minus_one_zero=normalize_to_minus_one_zero,
-            )
-        elif not rl_config.normalize_return or not rl_config.include_return:
+        self.max_samples = max_samples
+        local_path = Path(dataset_path).absolute()
+
+        # Metadata + dataset
+        self.dataset_meta = LeRobotDatasetMetadata(
+            local_path.name, root=local_path
+        )
+        if "action" in self.dataset_meta.features:
+            action_key = "action"
+        elif "actions" in self.dataset_meta.features:
+            action_key = "actions"
+        else:
             raise ValueError(
-                "ValueDataset requires normalize_return=True and include_return=True."
+                f"No action key in dataset features: "
+                f"{list(self.dataset_meta.features.keys())}"
             )
-        super().__init__(
-            dataset_path=dataset_path,
-            repo_id=repo_id,
-            rl_config=rl_config,
-            split=split,
-            data_config_factory=data_config_factory,
-            action_dim=action_dim,
+        delta_timestamps = {
+            action_key: [
+                t / self.dataset_meta.fps for t in range(action_horizon)
+            ]
+        }
+        self._base = LeRobotDataset(
+            local_path.name,
+            root=local_path,
+            delta_timestamps=delta_timestamps,
+            download_videos=False,
+        )
+
+        # Returns sidecar (required for value SFT)
+        self._sidecar = load_returns_sidecar(local_path, tag)
+        if self._sidecar is None:
+            raise FileNotFoundError(
+                f"Returns sidecar not found for {dataset_path}. "
+                f"Run compute_returns.py first to generate "
+                f"meta/returns{'_' + tag if tag else ''}.parquet"
+            )
+
+        # Episode filtering
+        self._indices = None
+        if episode_percentage is not None and episode_percentage < 100:
+            if episode_percentage <= 0:
+                raise ValueError(
+                    f"episode_percentage must be > 0, got {episode_percentage}"
+                )
+            total = self.dataset_meta.total_episodes
+            num = max(1, int(total * episode_percentage / 100.0))
+            all_eps = list(range(total))
+            if shuffle_episodes:
+                rng = np.random.default_rng(episode_seed)
+                selected = set(
+                    rng.choice(all_eps, size=num, replace=False).tolist()
+                )
+            else:
+                selected = set(all_eps[:num])
+            idx = self._base.episode_data_index
+            self._indices = [
+                i
+                for ep in sorted(selected)
+                for i in range(idx["from"][ep].item(), idx["to"][ep].item())
+            ]
+
+        # Transform pipeline (repack → data → normalize → model)
+        factory = create_data_config_factory(
+            dataset_path=str(local_path),
             robot_type=robot_type,
             model_type=model_type,
             default_prompt=default_prompt,
             extra_delta_transform=extra_delta_transform,
             norm_stats_dir=norm_stats_dir,
             asset_id=asset_id,
-            config=config,
-            max_samples=max_samples,
             action_norm_skip_dims=action_norm_skip_dims,
-            episode_percentage=episode_percentage,
-            shuffle_episodes=shuffle_episodes,
-            episode_seed=episode_seed,
-            tag=tag,
+        )
+        dc = factory.create(
+            action_dim=action_dim or 32,
+            skip_norm_stats=(norm_stats_dir is None),
+        )
+        self._transform = self._make_transform(dc)
+
+        # Task descriptions for prompt injection
+        self._tasks = load_task_descriptions(local_path) or (
+            self.dataset_meta.tasks
+            if hasattr(self.dataset_meta, "tasks")
+            else None
         )
 
-        logger.info("ValueDataset initialized")
+        # Return normalizer
+        self._normalizer = (
+            ReturnNormalizer(
+                return_min=return_min,
+                return_max=return_max,
+                normalize_to_minus_one_zero=normalize_to_minus_one_zero,
+            )
+            if return_min is not None and return_max is not None
+            else None
+        )
+
+        n = len(self._indices) if self._indices else len(self._base)
+        logger.info(f"ValueDataset: {dataset_path}, {min(n, max_samples or n)} samples")
+
+    @staticmethod
+    def _make_transform(dc):
+        transforms = []
+        for t in dc.repack_transforms.inputs:
+            if isinstance(t, RepackTransform):
+                transforms.append(
+                    RepackTransform(t.structure, passthrough_unmapped=True)
+                )
+            else:
+                transforms.append(t)
+        transforms.extend(dc.data_transforms.inputs)
+        if dc.norm_stats is not None:
+            transforms.append(
+                Normalize(
+                    dc.norm_stats,
+                    dc.use_quantile_norm,
+                    skip_dims=dc.action_norm_skip_dims,
+                )
+            )
+        transforms.extend(dc.model_transforms.inputs)
+        return compose(transforms) if transforms else None
+
+    def __len__(self) -> int:
+        n = len(self._indices) if self._indices else len(self._base)
+        return min(n, self.max_samples) if self.max_samples else n
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
-        """Get a sample formatted for value prediction training.
+        real_idx = self._indices[idx] if self._indices else idx
+        sample = self._base[real_idx]
 
-        Extends parent's __getitem__ to format samples for value training.
+        # Prompt injection
+        if self._tasks and "task_index" in sample:
+            ti = sample["task_index"]
+            ti = ti.item() if isinstance(ti, torch.Tensor) else int(ti)
+            if ti in self._tasks:
+                sample = {**sample, "prompt": self._tasks[ti]}
 
-        Returns:
-            Dict with:
-                - images: Dict[str, Tensor] camera images
-                - image_masks: Dict[str, Tensor] (optional)
-                - prompt: str task instruction
-                - target_values: float continuous return
-                - actions: None (explicitly for VLM mode)
-        """
-        # Get RL sample from parent
-        rl_sample = super().__getitem__(idx)
+        if self._transform is not None:
+            sample = self._transform(sample)
 
-        if "return_normalized" in rl_sample:
-            ret_norm = rl_sample["return_normalized"]
-            target_value = (
-                ret_norm.item() if hasattr(ret_norm, "item") else float(ret_norm)
-            )
-        elif "return" in rl_sample:
-            ret_val = rl_sample["return"]
-            target_value = (
-                ret_val.item() if hasattr(ret_val, "item") else float(ret_val)
-            )
-        else:
-            target_value = 0.0
+        # Return lookup + normalize (sidecar guaranteed to exist)
+        ep = int(sample.get("episode_index", -1))
+        fr = int(sample.get("frame_index", -1))
+        raw = float(self._sidecar[ep]["return"][fr]) if ep in self._sidecar else 0.0
+        target_value = (
+            self._normalizer.normalize_value(raw) if self._normalizer else raw
+        )
 
-        sample = {
+        images = sample.get("image", sample.get("images", {}))
+        if not isinstance(images, dict):
+            images = {}
+        masks = sample.get("image_mask", sample.get("image_masks"))
+
+        result: dict[str, Any] = {
+            "images": images,
+            "prompt": sample.get("prompt", "perform the task"),
             "target_values": target_value,
-            "actions": None,  # None triggers VLM-only forward pass
+            "actions": None,
         }
-
-        if "prompt" in rl_sample:
-            sample["prompt"] = rl_sample["prompt"]
-        elif "task" in rl_sample:
-            sample["prompt"] = rl_sample["task"]
-        else:
-            sample["prompt"] = "perform the task"
-
-        images = {}
-        image_masks = {}
-
-        if "image" in rl_sample and isinstance(rl_sample["image"], dict):
-            images = rl_sample["image"]
-        elif "images" in rl_sample and isinstance(rl_sample["images"], dict):
-            images = rl_sample["images"]
-        else:
-            for key in rl_sample:
-                if "image" in key.lower() and isinstance(rl_sample[key], torch.Tensor):
-                    if rl_sample[key].dim() >= 3:
-                        cam_name = (
-                            key.replace("observation.images.", "")
-                            .replace("images.", "")
-                            .replace("images_", "")
-                        )
-                        images[cam_name] = rl_sample[key]
-
-        if "image_mask" in rl_sample:
-            image_masks = rl_sample["image_mask"]
-        elif "image_masks" in rl_sample:
-            image_masks = rl_sample["image_masks"]
-
-        sample["images"] = images
-        if image_masks:
-            sample["image_masks"] = image_masks
-
-        if "return" in rl_sample:
-            ret_val = rl_sample["return"]
-            sample["return_raw"] = (
-                ret_val.item() if isinstance(ret_val, torch.Tensor) else float(ret_val)
-            )
-        if "return_normalized" in rl_sample:
-            sample["return_normalized"] = rl_sample["return_normalized"]
-
-        next_obs = rl_sample.get("next_observation", {})
-        if next_obs:
-            if not getattr(self, "_logged_next_keys", False):
-                logger.info(f"Next observation keys: {list(next_obs.keys())}")
-                self._logged_next_keys = True
-
-            if next_obs.get("images"):
-                sample["next_images"] = next_obs["images"]
-            if next_obs.get("state") is not None:
-                sample["next_state"] = next_obs["state"]
-            sample["next_state_is_pad"] = next_obs.get("is_pad", False)
-
-        reward_key = "reward"
-        if reward_key in rl_sample:
-            reward_chunk = rl_sample[reward_key]
-            sample["rewards"] = reward_chunk
-            reward_is_pad = rl_sample.get(f"{reward_key}_is_pad")
-
-            # Compute discounted n-step reward sum
-            gamma = (
-                getattr(self.rl_config, "gamma", 0.99)
-                if hasattr(self, "rl_config")
-                else 0.99
-            )
-
-            if isinstance(reward_chunk, torch.Tensor):
-                n = reward_chunk.shape[0]
-                gamma_powers = torch.tensor(
-                    [gamma**i for i in range(n)], dtype=reward_chunk.dtype
-                )
-
-                if reward_is_pad is not None:
-                    valid_mask = ~reward_is_pad.bool()
-                    masked_rewards = reward_chunk * valid_mask.float()
-                    reward_sum_raw = (masked_rewards * gamma_powers).sum().item()
-                    sample["num_valid_rewards"] = valid_mask.sum().item()
-                else:
-                    reward_sum_raw = (reward_chunk * gamma_powers).sum().item()
-                    sample["num_valid_rewards"] = n
-
-                # Normalize reward_sum using same scale as returns
-                if self.return_normalizer is not None:
-                    sample["reward_sum"] = self.return_normalizer.normalize_value(
-                        reward_sum_raw
-                    )
-                else:
-                    sample["reward_sum"] = reward_sum_raw
-
-        # Done flag (terminal within action horizon)
-        # Use combination of explicit done flag and padding information
-        if "done" in rl_sample:
-            done = rl_sample["done"]
-            sample["dones"] = done.item() if hasattr(done, "item") else bool(done)
-        elif sample.get("next_state_is_pad", False):
-            # If next_state is padded, episode ended before t+H
-            sample["dones"] = True
-        else:
-            sample["dones"] = False
-
-        return sample
+        if isinstance(masks, dict) and masks:
+            result["image_masks"] = masks
+        return result

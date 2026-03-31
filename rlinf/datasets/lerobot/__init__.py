@@ -12,10 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LeRobot dataset utilities: config, transforms, normalization, and dataset classes."""
+"""LeRobot dataset utilities: config, transforms, and normalization."""
 
 from .config import DataConfigFactory, LiberoDataConfig
-from .lerobot_dataset import LeRobotPyTorchDataset
 from .normalize import NormStats, load_stats
 from .transforms import (
     DataTransformFn,
@@ -31,7 +30,6 @@ __all__ = [
     "DataConfigFactory",
     "DataTransformFn",
     "InjectDefaultPrompt",
-    "LeRobotPyTorchDataset",
     "LiberoDataConfig",
     "Normalize",
     "NormStats",

@@ -383,6 +383,7 @@ def get_openpi_config(
     model_path: Optional[str] = None,
     batch_size: Optional[int] = None,
     repo_id: Optional[str] = None,
+    data_kwargs: Optional[dict] = None,
 ) -> TrainConfig:
     """Get a config by name.
 
