@@ -246,6 +246,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             path_parts = name.split(".")
             setattr(module, "_fsdp_wrap_name", path_parts[-1] if path_parts else name)
 
+        self.torch_compile_enabled = False
+
     def set_global_step(self, global_step):
         self.global_step = global_step
 
@@ -1392,3 +1394,29 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         if states.dtype != torch.bfloat16:
             states = states.to(torch.bfloat16)
         return states
+
+    def enable_torch_compile(
+        self,
+        mode: str = "max-autotune",
+    ):
+        if self.torch_compile_enabled:
+            return
+
+        self.paligemma_with_expert.paligemma.model.vision_tower = torch.compile(
+            self.paligemma_with_expert.paligemma.model.vision_tower, mode=mode
+        )
+
+        # NOTE: paligemma.model.language_model and gemma_expert.model share the same LLM backbone.
+        # Enabling cuda graph on both simultaneously causes mysterious crashes (likely due to
+        # tensor aliasing in the shared computation graph). We disable cuda graph for
+        # paligemma.model.language_model since it is not CPU-bound, while gemma_expert.model
+        # benefits more from cuda graph.
+        self.paligemma_with_expert.paligemma.model.language_model = torch.compile(
+            self.paligemma_with_expert.paligemma.model.language_model,
+            mode="max-autotune-no-cudagraphs" if mode == "max-autotune" else mode,
+        )
+        self.paligemma_with_expert.gemma_expert.model = torch.compile(
+            self.paligemma_with_expert.gemma_expert.model, mode=mode, fullgraph=True
+        )
+
+        self.torch_compile_enabled = True

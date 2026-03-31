@@ -117,7 +117,8 @@ class MultiStepRolloutWorker(Worker):
         if self.expert_model is not None:
             self.expert_model.eval()
 
-        if self.cfg.rollout.get("enable_torch_compile", False):
+        self.enable_torch_compile = self.cfg.rollout.get("enable_torch_compile", False)
+        if self.enable_torch_compile:
             mode = self.cfg.rollout.get(
                 "torch_compile_mode", "max-autotune-no-cudagraphs"
             )
@@ -127,6 +128,13 @@ class MultiStepRolloutWorker(Worker):
                 train_batch_size=self.train_batch_size,
                 eval_batch_size=self.eval_batch_size,
             )
+
+        if self.enable_torch_compile:
+            self.weight_name_to_compiled_name = self.build_compile_name_mapping(
+                self.hf_model
+            )
+        else:
+            self.weight_name_to_compiled_name = None
 
         self.dst_ranks = {}
         self.src_ranks = {}
@@ -210,6 +218,35 @@ class MultiStepRolloutWorker(Worker):
             raise NotImplementedError(
                 f"Beta schedule {self._dagger_sampling_params['beta_schedule']} is not implemented"
             )
+
+    def build_compile_name_mapping(self, model: torch.nn.Module) -> dict[str, str]:
+        """
+        Analyze a torch.compile'd model and return a mapping from original weight names to new names.
+
+        torch.compile wraps some modules into OptimizedModule, where the _orig_mod attribute points to
+        the original module. This causes weight names to change from "module.submodule.weight" to
+        "module.submodule._orig_mod.weight".
+
+        Args:
+            model: The torch.compile'd model
+
+        Returns:
+            dict: Keys are original names (before compile), values are new names (after compile)
+        """
+        mapping = {}
+
+        def strip_orig_mod(param_name: str) -> str:
+            """Remove all _orig_mod segments from parameter name to reconstruct original name."""
+            parts = param_name.split(".")
+            return ".".join(part for part in parts if part != "_orig_mod")
+
+        # Iterate over all parameters in the compiled model
+        for compiled_name, _ in model.named_parameters():
+            original_name = strip_orig_mod(compiled_name)
+            if original_name != compiled_name:
+                mapping[original_name] = compiled_name
+
+        return mapping
 
     def _setup_dst_ranks(self, batch_size: int) -> list[tuple[int, int]]:
         """Compute env peer ranks for this rollout worker.
@@ -343,6 +380,23 @@ class MultiStepRolloutWorker(Worker):
             else:
                 final_values = torch.zeros_like(actions[:, :1], dtype=torch.float32)
         return final_values[:, :1].cpu().contiguous()
+
+    def _convert_compiled_weight_names(self, param_state_dict: dict) -> dict:
+        """Convert weight names from original to compiled names if torch.compile is enabled.
+
+        Args:
+            param_state_dict: State dict with original weight names
+
+        Returns:
+            State dict with weight names converted to match the compiled model
+        """
+        new_param_state_dict = {}
+        for name, weight in param_state_dict.items():
+            if name in self.weight_name_to_compiled_name:
+                new_param_state_dict[self.weight_name_to_compiled_name[name]] = weight
+            else:
+                new_param_state_dict[name] = weight
+        return new_param_state_dict
 
     async def sync_model_from_actor(self):
         """Sync model parameters from the actor worker."""
