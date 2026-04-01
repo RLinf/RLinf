@@ -43,12 +43,21 @@ class PlacementMode(Enum):
 
 class RolloutSyncMode(Enum):
     """
-    Rollout sync mode represents the way to sync rollout model weights.
+    Rollout sync mode represents the way to synchronize rollout model weights.
 
-    Rollout sync mode is only used in reasoning scenarios.
-    COLLOCATED: Sync rollout model weights to all rollout GPUs.
-    DISAGGREGATED: Sync rollout model weights to each individual rollout GPU group.
-    """
+    This mode is only used in reasoning scenarios.
+
+    COLLOCATED: Used when rollout and actor components share the same set of GPUs.
+        No inter-rank communication is required, and synchronization is typically
+        conducted via CUDA IPC for optimal performance.
+
+    DISAGGREGATED: Used when rollout and actor components use different sets of GPUs.
+        Inter-rank communication is required, and synchronization is typically
+        conducted via collective communication operations, such as NCCL.
+
+    A key difference between modes is the rank mapping data structure:
+    - COLLOCATED: rank mapping uses format `dict[int, tuple[int, int]]`
+    - DISAGGREGATED: rank mapping uses format `dict[int, list[tuple[int, int]]]`"""
 
     COLLOCATED = auto()
     DISAGGREGATED = auto()

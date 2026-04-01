@@ -121,14 +121,14 @@ def main(cfg) -> None:
 
     if cfg.agentloop.get("use_local_judge", False):
         comp_name = "rollout_judge"
-        dict_key = comp_name
+        rollout_key = "rollout_judge"
         rollout = cfg.get(comp_name, None)
         assert rollout is not None, f"comp_name {comp_name} not found in cfg"
         launch_name = rollout.get("group_name", comp_name)
 
         strategy = component_placement.get_strategy(comp_name, PackedPlacementStrategy)
 
-        solid_rollouts[dict_key] = rollout_worker_cls.create_group(
+        solid_rollouts[rollout_key] = rollout_worker_cls.create_group(
             cfg,
             component_placement,
             weight_reload=None,
