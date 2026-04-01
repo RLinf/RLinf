@@ -38,7 +38,7 @@ class OpenPi0Config(Pi0Config):
     # config for rl
     config_name: str = "pi0_libero"  # pi0_libero, pi05_libero, pi0_maniskill, pi05_maniskill, pi0_metaworld, pi05_metaworld
     num_images_in_input: int = 2  # number of images in input
-    noise_method: str = "flow_sde"  # flow_sde, flow_noise, flow_cps
+    noise_method: str = "flow_sde"  # flow_ode, flow_sde, flow_noise, flow_cps
     # noise config for flow-sde
     noise_level: float = 0.5
     noise_anneal: bool = False
@@ -77,6 +77,9 @@ class OpenPi0Config(Pi0Config):
     dsrl_hidden_dims: tuple = field(
         default_factory=lambda: (128, 128, 128)
     )  # Hidden dims for Q-head and GaussianPolicy
+
+    # ===== NFT-specific parameters =====
+    is_nft: bool = False
 
 
 class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
@@ -309,6 +312,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             return self.sft_forward(**kwargs)
         elif forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
+        elif forward_type == ForwardType.NFT:
+            return self.forward_nft(**kwargs)
         elif forward_type == ForwardType.SAC:
             return self.sac_forward(**kwargs)
         elif forward_type == ForwardType.SAC_Q:
@@ -349,26 +354,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             obs_dict["actions"] = batch["action"].reshape(
                 bsz, self.config.action_chunk, -1
             )
-            if obs_dict["actions"].shape[2] < self.config.action_dim:
-                padding_action_dim = torch.zeros(
-                    bsz,
-                    obs_dict["actions"].shape[1],
-                    self.config.action_dim - obs_dict["actions"].shape[2],
-                    device=obs_dict["actions"].device,
-                )
-                obs_dict["actions"] = torch.cat(
-                    [obs_dict["actions"], padding_action_dim], dim=2
-                )
-            if obs_dict["actions"].shape[1] < self.config.action_horizon:
-                padding_action_chunk = torch.zeros(
-                    bsz,
-                    self.config.action_horizon - obs_dict["actions"].shape[1],
-                    self.config.action_dim,
-                    device=obs_dict["actions"].device,
-                )
-                obs_dict["actions"] = torch.cat(
-                    [obs_dict["actions"], padding_action_chunk], dim=1
-                )
             obs_dict["prompt"] = ["empty" for _ in range(bsz)]
             processed_obs = self.input_transform(obs_dict, transpose=False)
             if "tokenized_prompt" in batch:
@@ -437,6 +422,56 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             "values": value_t,
             "entropy": entropy,
         }
+
+    def forward_nft(
+        self,
+        forward_inputs: dict[str, torch.Tensor],
+        **kwargs,
+    ) -> dict[str, Any]:
+        """Compute velocity v_theta at explicit (x_t, timesteps) for NFT loss."""
+        observation = self.input_transform(forward_inputs, transpose=False)
+        observation = _model.Observation.from_dict(observation)
+        images, img_masks, lang_tokens, lang_masks, state = (
+            self._preprocess_observation(observation, train=False)
+        )
+
+        device = next(self.parameters()).device
+        images = [img.to(device) for img in images]
+        img_masks = [m.to(device) for m in img_masks]
+        state = state.to(device)
+
+        # get explicit inputs
+        nft_explicit_inputs = kwargs.get("nft_explicit_inputs", None)
+        if nft_explicit_inputs is not None:
+            x_t = nft_explicit_inputs["x_t"]
+            t = nft_explicit_inputs["timesteps"]
+        else:
+            if "chains" not in forward_inputs:
+                raise ValueError(
+                    "forward_nft requires `chains` or `nft_explicit_inputs`."
+                )
+            x_0 = forward_inputs["chains"][:, -1].to(device)
+            bsize = x_0.shape[0]
+            t = torch.rand((bsize,), device=device)
+            t_expanded = t[:, None, None]
+            noise = torch.randn_like(x_0)
+            x_t = (1 - t_expanded) * x_0 + t_expanded * noise
+
+        _, prefix_pad_masks, past_key_values = self._build_prefix_cache(
+            images, img_masks, lang_tokens, lang_masks
+        )
+
+        compute_values = kwargs.get("compute_values", False)
+        v_theta, suffix_out = self.get_velocity(
+            state, x_t, t, prefix_pad_masks, past_key_values
+        )
+        v_theta = v_theta[:, : self.config.action_chunk, :]
+
+        bsize = x_t.shape[0]
+        result: dict[str, Any] = {"v_theta": v_theta, "x_t": x_t, "timesteps": t}
+        if compute_values and self.config.add_value_head:
+            result["values"] = self._compute_value_from_suffix(suffix_out)[:, None]
+        return result
 
     def obs_processor(self, env_obs):
         # base observation
@@ -554,6 +589,13 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         if forward_action is not None:
             forward_inputs["action"] = forward_action
 
+        if self.config.is_nft and "nft_x" in outputs:
+            forward_inputs["nft_x"] = outputs["nft_x"]
+            forward_inputs["nft_v"] = outputs["nft_v"]
+            forward_inputs["nft_xnext"] = outputs["nft_xnext"]
+            forward_inputs["nft_step_index"] = outputs["nft_step_index"]
+            forward_inputs["nft_noise_level"] = outputs["nft_noise_level"]
+
         # Clone observations to avoid cross-step reference issues.
         cloned_obs = copy_dict_tensor(
             {k: v for k, v in to_process_obs.items() if k != "prompt"}
@@ -590,22 +632,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             self._preprocess_observation(observation, train=False)
         )
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+        prefix_output, prefix_pad_masks, past_key_values = self._build_prefix_cache(
             images, img_masks, lang_tokens, lang_masks
-        )
-        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-
-        # Compute image and language key value cache
-        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
-        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
-
-        (prefix_output, _), past_key_values = self.paligemma_with_expert.forward(
-            attention_mask=prefix_att_2d_masks_4d,
-            position_ids=prefix_position_ids,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, None],
-            use_cache=True,
         )
 
         x_t = noise
@@ -627,8 +655,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         # In the joint logprob mode, we need to sample the logprob for each denoise step
         # In the non-joint logprob mode, only one denoise step is sampled and ode-sde mix sampling is used
         # denoise index
+        collect_nft_traces = self.config.is_nft and mode == "train"
         if mode == "train":
-            if self.config.joint_logprob:
+            if self.config.joint_logprob or collect_nft_traces:
                 denoise_inds = torch.arange(num_steps)
             else:
                 if self.config.ignore_last:
@@ -643,25 +672,49 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             denoise_inds = torch.tensor([-1] * num_steps)
         denoise_inds = denoise_inds[None].repeat(bsize, 1)
 
+        # collect nft traces — per-sample random step index
+        if collect_nft_traces:
+            flow_rand_idx = torch.randint(0, num_steps, (bsize,), device=device)
+            flow_x_snap = torch.zeros_like(x_t)
+            flow_v_snap = torch.zeros_like(x_t)
+            flow_xnext_snap = torch.zeros_like(x_t)
+            flow_noise_level = torch.zeros(bsize, device=device, dtype=x_t.dtype)
+
         # denoise step
         for idx in range(num_steps):
             # sample mean var val
             if idx == denoise_inds[0][idx]:
-                sample_mode = "train"
+                sample_method = self.config.noise_method
             else:
-                sample_mode = "eval"
-            x_t_mean, x_t_std, value_t = self.sample_mean_var_val(
+                sample_method = "flow_ode"
+            x_t_prev = x_t
+            x_t_mean, x_t_std, value_t, v_t = self.sample_mean_var_val(
                 x_t,
                 idx,
                 state,
                 prefix_pad_masks,
                 past_key_values,
-                sample_mode,
+                sample_method,
                 num_steps,
                 compute_values,
             )
             # Euler step - use new tensor assignment instead of in-place operation
             x_t = x_t_mean + self.sample_noise(x_t.shape, device) * x_t_std
+            if collect_nft_traces:
+                mask = flow_rand_idx == idx
+                mask_bc = mask[:, None, None]
+                if mask.any():
+                    flow_x_snap = torch.where(mask_bc, x_t_prev.detach(), flow_x_snap)
+                    flow_v_snap = torch.where(mask_bc, v_t.detach(), flow_v_snap)
+                    flow_xnext_snap = torch.where(
+                        mask_bc, x_t.detach(), flow_xnext_snap
+                    )
+                    nl = self._get_noise_level(
+                        device=device, dtype=x_t.dtype, sample_method=sample_method
+                    )
+                    flow_noise_level = torch.where(
+                        mask, nl.expand(bsize), flow_noise_level
+                    )
             log_prob = self.get_logprob_norm(x_t, x_t_mean, x_t_std)
             # store
             values.append(value_t)
@@ -685,13 +738,24 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             values = values_vlm[:, None]
         else:
             values = torch.stack(values, dim=1).mean(dim=-1, keepdim=True)
-        return {
+        result = {
             "actions": x_0,
             "chains": chains,
             "prev_logprobs": log_probs,
             "prev_values": values,
             "denoise_inds": denoise_inds,
         }
+        if collect_nft_traces:
+            result.update(
+                {
+                    "nft_x": flow_x_snap,
+                    "nft_v": flow_v_snap,
+                    "nft_xnext": flow_xnext_snap,
+                    "nft_step_index": flow_rand_idx,
+                    "nft_noise_level": flow_noise_level,
+                }
+            )
+        return result
 
     def sample_mean_var_val(
         self,
@@ -700,13 +764,15 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         state,
         prefix_pad_masks,
         past_key_values,
-        mode,
+        sample_method,
         denoise_steps,
         compute_values=True,
     ):
         """
         Sample the mean, variance and value of the action at a given timestep.
-        Rollout sample (idx is int) and actor get_log_prob_value (idx is tensor) will load this function.
+        Rollout sample (idx is int) and actor get_log_prob_value (idx is tensor)
+        will load this function. `sample_method` is one of flow_ode/flow_sde/
+        flow_cps/flow_noise.
         """
         # expand the shape
         bsize = state.shape[0]
@@ -714,89 +780,58 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         if isinstance(idx, int):
             idx = torch.tensor(idx).expand(bsize)
         # build parameters
-        if self.config.noise_anneal:
-            # noise annealing
-            noise_start, noise_end, anneal_steps = self.config.noise_params
-            noise_level = (
-                noise_start
-                + (noise_end - noise_start)
-                * min(self.global_step, anneal_steps)
-                / anneal_steps
-            )
-            noise_level = torch.tensor(noise_level).to(device)
-        else:
-            # fixed noise level
-            noise_level = torch.tensor(self.config.noise_level).to(device)
+        noise_level = self._get_noise_level(device=device, dtype=x_t.dtype)
         timesteps = torch.linspace(1, 1 / denoise_steps, denoise_steps, device=device)
         timesteps = torch.cat([timesteps, torch.tensor([0.0], device=device)])
         # input parameters
         t_input = timesteps[idx]
         delta = timesteps[idx] - timesteps[idx + 1]
         # velocity prediction
-        suffix_out = self.get_suffix_out(
-            state,
-            prefix_pad_masks,
-            past_key_values,
-            x_t,
-            t_input,
+        v_t, suffix_out = self.get_velocity(
+            state, x_t, t_input, prefix_pad_masks, past_key_values
         )
-        v_t = self.action_out_proj(suffix_out)  # [bs,n_action_steps,max_action_dim]
         # value prediction
         if (
             self.config.add_value_head
             and compute_values
             and not self.config.value_after_vlm
         ):
-            # use chunk critic input
-            if self.config.chunk_critic_input:
-                suffix_out_value = torch.mean(
-                    suffix_out[:, : self.config.action_chunk], dim=1, keepdim=False
-                )
-            else:
-                suffix_out_value = torch.mean(suffix_out, dim=1, keepdim=False)
-            # detach critic input
-            if self.config.detach_critic_input:
-                suffix_out_value = suffix_out_value.detach()
-            value_t = self.value_head(suffix_out_value)[:, 0]
+            value_t = self._compute_value_from_suffix(suffix_out)
         else:
             value_t = torch.zeros((bsize), device=device)
-        # ode sde mix sampling
+        # sample mean and variance
         delta = delta[:, None, None].expand_as(x_t)
         t_input = t_input[:, None, None].expand_as(x_t)
         x0_pred = x_t - v_t * t_input
         x1_pred = x_t + v_t * (1 - t_input)
-        if mode == "eval":
+
+        if sample_method == "flow_ode":
             x0_weight = 1 - (t_input - delta)
             x1_weight = t_input - delta
             x_t_std = torch.zeros_like(t_input)
-        elif mode == "train":
-            if self.config.noise_method == "flow_sde":
-                sigmas = (
-                    noise_level
-                    * torch.sqrt(
-                        timesteps
-                        / (1 - torch.where(timesteps == 1, timesteps[1], timesteps))
-                    )[:-1]
-                )
-                sigma_i = sigmas[idx][:, None, None].expand_as(x_t)
-                x0_weight = torch.ones_like(t_input) - (t_input - delta)
-                x1_weight = t_input - delta - sigma_i**2 * delta / (2 * t_input)
-                x_t_std = torch.sqrt(delta) * sigma_i
-            elif self.config.noise_method == "flow_cps":
-                pi = torch.pi
-                cos_term = torch.cos(pi * noise_level / 2).to(device)
-                sin_term = torch.sin(pi * noise_level / 2).to(device)
-                x0_weight = torch.ones_like(t_input) - (t_input - delta)
-                x1_weight = (t_input - delta) * cos_term
-                x_t_std = (t_input - delta) * sin_term
-            elif self.config.noise_method == "flow_noise":
-                x0_weight = 1 - (t_input - delta)
-                x1_weight = t_input - delta
-                x_t_std = self.noise_head(suffix_out)
-            else:
-                raise ValueError(f"Invalid noise method: {self.config.noise_method}")
+        elif sample_method == "flow_sde":
+            denom_timesteps = torch.where(timesteps == 1, timesteps[1], timesteps)
+            sigma_ratio = timesteps / (1 - denom_timesteps)
+            sigmas = noise_level * torch.sqrt(sigma_ratio)[:-1]
+            sigma_i = sigmas[idx][:, None, None].expand_as(x_t)
+            x0_weight = torch.ones_like(t_input) - (t_input - delta)
+            x1_weight = t_input - delta - sigma_i**2 * delta / (2 * t_input)
+            x_t_std = torch.sqrt(delta) * sigma_i
+        elif sample_method == "flow_cps":
+            pi = torch.pi
+            cos_term = torch.cos(pi * noise_level / 2).to(device)
+            sin_term = torch.sin(pi * noise_level / 2).to(device)
+            x0_weight = torch.ones_like(t_input) - (t_input - delta)
+            x1_weight = (t_input - delta) * cos_term
+            x_t_std = (t_input - delta) * sin_term
+        elif sample_method == "flow_noise":
+            x0_weight = 1 - (t_input - delta)
+            x1_weight = t_input - delta
+            x_t_std = self.noise_head(suffix_out)
+        else:
+            raise ValueError(f"Invalid noise method: {sample_method}")
         x_t_mean = x0_pred * x0_weight + x1_pred * x1_weight
-        return x_t_mean, x_t_std, value_t
+        return x_t_mean, x_t_std, value_t, v_t
 
     def get_suffix_out(
         self,
@@ -846,6 +881,44 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         suffix_out = suffix_out.to(dtype=torch.float32)
         return suffix_out
 
+    def get_velocity(self, state, x_t, timestep, prefix_pad_masks, past_key_values):
+        """Compute velocity prediction v_t and raw suffix_out at a given timestep."""
+        suffix_out = self.get_suffix_out(
+            state, prefix_pad_masks, past_key_values, x_t, timestep
+        )
+        v_t = self.action_out_proj(suffix_out)
+        return v_t, suffix_out
+
+    def _build_prefix_cache(self, images, img_masks, lang_tokens, lang_masks):
+        """Embed prefix tokens and compute KV cache for efficient suffix generation."""
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks
+        )
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
+        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
+        (prefix_output, _), past_key_values = self.paligemma_with_expert.forward(
+            attention_mask=prefix_att_2d_masks_4d,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,
+        )
+        return prefix_output, prefix_pad_masks, past_key_values
+
+    def _compute_value_from_suffix(self, suffix_out):
+        """Compute value from suffix output using value head."""
+        if self.config.chunk_critic_input:
+            suffix_out_value = torch.mean(
+                suffix_out[:, : self.config.action_chunk], dim=1, keepdim=False
+            )
+        else:
+            suffix_out_value = torch.mean(suffix_out, dim=1, keepdim=False)
+        if self.config.detach_critic_input:
+            suffix_out_value = suffix_out_value.detach()
+        return self.value_head(suffix_out_value)[:, 0]
+
     # TODO: to check potential nan here
     def get_logprob_norm(self, sample, mu, sigma):
         # logprob = log p(x|mu,sigma) = -log(sigma) - 0.5 * log(2 * pi) - 0.5 * ((x - mu) / sigma) ** 2
@@ -877,23 +950,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         compute_values=False,
     ):
         bsize = state.shape[0]
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+        prefix_output, prefix_pad_masks, past_key_values = self._build_prefix_cache(
             images, img_masks, lang_tokens, lang_masks
-        )
-        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-
-        # Compute image and language key value cache
-        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
-        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
-
-        # Compute image and language key value cache
-        [prefix_output, _], past_key_values = self.paligemma_with_expert.forward(
-            attention_mask=prefix_att_2d_masks_4d,
-            position_ids=prefix_position_ids,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, None],
-            use_cache=True,
         )
         chains_log_probs = []
         chains_values = []
@@ -916,13 +974,13 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             denoise_ind = denoise_inds[:, idx]
             chains_pre = chains[torch.arange(bsize), denoise_ind]
             chains_next = chains[torch.arange(bsize), denoise_ind + 1]
-            x_t_mean, x_t_std, value_t = self.sample_mean_var_val(
+            x_t_mean, x_t_std, value_t, _ = self.sample_mean_var_val(
                 chains_pre,
                 denoise_ind,
                 state,
                 prefix_pad_masks,
                 past_key_values,
-                "train",
+                self.config.noise_method,
                 self.config.num_steps,
                 compute_values,
             )
@@ -1184,6 +1242,24 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         q_values = self.q_head(state_features, image_features, actions)
 
         return q_values
+
+    def _get_noise_level(
+        self, device: torch.device, dtype: torch.dtype, sample_method: str | None = None
+    ) -> torch.Tensor:
+        method = sample_method or self.config.noise_method
+        if method == "flow_ode":
+            return torch.zeros((), device=device, dtype=dtype)
+        if self.config.noise_anneal:
+            noise_start, noise_end, anneal_steps = self.config.noise_params
+            noise_level = (
+                noise_start
+                + (noise_end - noise_start)
+                * min(self.global_step, anneal_steps)
+                / anneal_steps
+            )
+        else:
+            noise_level = self.config.noise_level
+        return torch.tensor(noise_level, device=device, dtype=dtype)
 
     def _preprocess_dsrl_images(self, images, train=False):
         """Preprocess images for DSRL: resize to 64x64, use only agentview camera.

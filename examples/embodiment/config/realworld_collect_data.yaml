@@ -37,7 +37,6 @@ runner:
 env:
   group_name: "EnvGroup"
   eval:
-    no_gripper: False
     ignore_terminations: False
     auto_reset: False
     use_spacemouse: True
@@ -48,7 +47,7 @@ env:
   data_collection:
     enabled: True
     save_dir: ${runner.logger.log_path}/collected_data
-    export_format: "lerobot"      # or "pickle"
+    export_format: "pickle"      # or "pickle"
     only_success: True
     robot_type: "panda"
     fps: 10
