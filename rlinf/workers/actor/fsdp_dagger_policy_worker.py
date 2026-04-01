@@ -14,6 +14,7 @@
 
 import logging
 import os
+from torch.utils import _pytree
 
 import numpy as np
 import torch
@@ -44,7 +45,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def _build_sft_data_loader(self):
         super()._build_sft_data_loader()
         self.data_iter = iter(self.data_loader)
-        
+
     def init_worker(self):
         super().setup_model_and_optimizer()
         self.setup_dagger_components()
@@ -118,6 +119,16 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 self.data_iter = iter(self.data_loader)
                 batch = next(self.data_iter)
                 self._data_iter_offset = 1
+
+            batch_data = _pytree.tree_map(
+                lambda x: (
+                    torch.as_tensor(x, device=self.device).contiguous().clone()
+                    if isinstance(x, torch.Tensor)
+                    else x
+                ),
+                batch,
+            )
+            return batch_data
         else:
             raise ValueError(f"Invalid data source: {self.cfg.data_source}")
 
