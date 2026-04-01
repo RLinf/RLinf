@@ -143,7 +143,6 @@ data:
   num_workers: 1
   prompt_key: problem
   image_keys: ["images"]
-  # image_keys: ["preprocessed_images"]
   answer_key: answer
   use_chat_template: True
   lazy_loading: True
