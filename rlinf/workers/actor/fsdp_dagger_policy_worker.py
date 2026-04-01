@@ -41,6 +41,10 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         if self.cfg.actor.get("data_source", "buffer") == "lerobot":
             self._build_sft_data_loader()
 
+    def _build_sft_data_loader(self):
+        super()._build_sft_data_loader()
+        self.data_iter = iter(self.data_loader)
+        
     def init_worker(self):
         super().setup_model_and_optimizer()
         self.setup_dagger_components()
