@@ -26,6 +26,7 @@ from rlinf.data.replay_buffer import TrajectoryReplayBuffer
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils import drq
+from rlinf.utils.pytree import register_pytree_dataclasses
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict, compute_split_num
 from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
@@ -120,15 +121,19 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 batch = next(self.data_iter)
                 self._data_iter_offset = 1
 
-            batch_data = _pytree.tree_map(
+            observation, actions = batch
+            register_pytree_dataclasses(observation)
+            observation = _pytree.tree_map(
                 lambda x: (
                     torch.as_tensor(x, device=self.device).contiguous().clone()
-                    if isinstance(x, torch.Tensor)
+                    if x is not None
                     else x
                 ),
-                batch,
+                observation,
             )
-            return batch_data
+            actions = actions.to(torch.float32)
+            actions = actions.to(self.device)
+            return {"observation": observation, "actions": actions}
         else:
             raise ValueError(f"Invalid data source: {self.cfg.data_source}")
 
