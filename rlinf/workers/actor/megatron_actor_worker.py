@@ -105,13 +105,7 @@ class MegatronActor(MegatronWorker):
         self._setup_rollout_weight_dst_ranks()
 
     def process_inference_output(self, rollout_result, infer_out):
-        prev_logprobs = infer_out
-        if rollout_result.rollout_logprobs is not None:
-            # Rollout has returned logprobs, store the recomputed logprobs in recompute_prev_logprobs
-            rollout_result.recompute_prev_logprobs = prev_logprobs
-        else:
-            # Otherwise, store the logprobs in prev_logprobs (the final logprobs used for training)
-            rollout_result.prev_logprobs = prev_logprobs
+        rollout_result.prev_logprobs = infer_out
 
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""
@@ -197,11 +191,11 @@ class MegatronActor(MegatronWorker):
                     ref_logprobs = batch["ref_logprobs"]
 
                 if self.cfg.algorithm.get("importance_sampling_fix", False):
-                    rollout_prev_logprobs = prev_logprobs
-                    recompute_prev_logprobs = batch["recompute_prev_logprobs"]
+                    rollout_prev_logprobs = batch["rollout_logprobs"]
+                    recompute_prev_logprobs = batch["prev_logprobs"]
                     advantages = advantages * torch.clamp(
                         (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
-                        min=self.cfg.algorithm.importance_sampling_clip,
+                        max=self.cfg.algorithm.importance_sampling_clip,
                     )
 
                 mask = batch["response_mask"][:, -response_len:]

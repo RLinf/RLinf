@@ -205,8 +205,8 @@ class MAMegatronActor(MegatronActor):
                     assert False, (
                         "importance_sampling_fix is not supported for dynamic rollout batch"
                     )
-                    rollout_prev_logprobs = prev_logprobs
-                    recompute_prev_logprobs = batch["recompute_prev_logprobs"]
+                    rollout_prev_logprobs = batch["rollout_logprobs"]
+                    recompute_prev_logprobs = batch["prev_logprobs"]
                     advantages = advantages * torch.clamp(
                         (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
                         min=self.cfg.algorithm.importance_sampling_clip,
@@ -654,10 +654,8 @@ class MAMegatronActor(MegatronActor):
         with self.worker_timer():
             # compute prev logprobs
             prev_logprobs = self.inference_step(merged_batch).cpu()
-            if rollout_result.rollout_logprobs is not None:
-                rollout_result.recompute_prev_logprobs = prev_logprobs
-            else:
-                rollout_result.prev_logprobs = prev_logprobs
+            rollout_result.prev_logprobs = prev_logprobs
+
             if compute_ref_logprobs:
                 assert self.ref_policy_state_dict is not None, (
                     "ref_policy_state_dict must be set to compute ref_logprobs"

@@ -237,8 +237,6 @@ class RolloutResult:
     # Inference
     # Logprobs returned by rollout engines
     rollout_logprobs: Optional[list[list[float]]] = None
-    # Logprobs recomputed by inference when rollout has returned logprobs
-    recompute_prev_logprobs: Optional[torch.Tensor] = None
     # The final prev_logprobs used for training
     # When rollout has returned logprobs, this is rollout_logprobs
     # Otherwise, this is the logprobs recomputed by inference
@@ -518,10 +516,6 @@ class RolloutResult:
                 merged_result.ref_logprobs = merge_tensor(
                     merged_result.ref_logprobs, res.ref_logprobs
                 )
-            if res.recompute_prev_logprobs is not None:
-                merged_result.recompute_prev_logprobs = merge_tensor(
-                    merged_result.recompute_prev_logprobs, res.recompute_prev_logprobs
-                )
 
             if res.multi_modal_inputs is not None:
                 merged_result.multi_modal_inputs = merge_list(
@@ -789,10 +783,6 @@ class RolloutResult:
                 batch["prev_logprobs"] = torch.zeros(0, dtype=torch.float32).cuda()
             if self.ref_logprobs is not None:
                 batch["ref_logprobs"] = torch.zeros(0, dtype=torch.float32).cuda()
-            if self.recompute_prev_logprobs is not None:
-                batch["recompute_prev_logprobs"] = torch.zeros(
-                    0, dtype=torch.float32
-                ).cuda()
             if self.rewards is not None:
                 batch["rewards"] = torch.zeros(0, dtype=torch.float32).cuda()
             if self.rollout_logprobs is not None:
@@ -865,6 +855,15 @@ class RolloutResult:
                 ) * advantages.to(Worker.torch_device_type)
                 batch["advantages"] = advantages.to(Worker.torch_device_type)
 
+        if self.rewards is not None:
+            batch["rewards"] = self.rewards.to(Worker.torch_device_type)
+
+        if self.values is not None:
+            batch["values"] = self.values.to(Worker.torch_device_type)
+
+        if self.returns is not None:
+            batch["returns"] = self.returns.to(Worker.torch_device_type)
+
         if self.rollout_logprobs is not None:
             logprobs = batch_pad_to_fixed_len(
                 [
@@ -885,18 +884,6 @@ class RolloutResult:
 
         if self.ref_logprobs is not None:
             batch["ref_logprobs"] = self.ref_logprobs.to(Worker.torch_device_type)
-
-        if self.recompute_prev_logprobs is not None:
-            batch["recompute_prev_logprobs"] = self.recompute_prev_logprobs.to(Worker.torch_device_type)
-
-        if self.rewards is not None:
-            batch["rewards"] = self.rewards.to(Worker.torch_device_type)
-
-        if self.values is not None:
-            batch["values"] = self.values.to(Worker.torch_device_type)
-
-        if self.returns is not None:
-            batch["returns"] = self.returns.to(Worker.torch_device_type)
 
         return batch
 
@@ -968,7 +955,6 @@ class RolloutResult:
             "prompt_texts",
             "response_texts",
             "rollout_logprobs",
-            "recompute_prev_logprobs",
             "response_mask",
         ]
         for k in list_fields:
@@ -1027,7 +1013,6 @@ class RolloutResult:
                 multi_modal_inputs=fields_split["multi_modal_inputs"][i],
                 response_mask=fields_split["response_mask"][i],
                 rollout_logprobs=fields_split["rollout_logprobs"][i],
-                recompute_prev_logprobs=fields_split["recompute_prev_logprobs"][i],
                 prev_logprobs=fields_split["prev_logprobs"][i],
                 ref_logprobs=fields_split["ref_logprobs"][i],
                 values=fields_split["values"][i],
@@ -1059,7 +1044,6 @@ class DynamicRolloutResult:
     rollout_logprobs: Optional[list[list[float]]] = None
     prev_logprobs: Optional[torch.Tensor] = None
     ref_logprobs: Optional[torch.Tensor] = None
-    recompute_prev_logprobs: Optional[torch.Tensor] = None
     prompt_lengths: list[int]
     response_lengths: list[int]
     is_end: list[bool]
@@ -1208,14 +1192,26 @@ class DynamicRolloutResult:
                     torch.as_tensor(self.rewards, dtype=torch.float).cuda().flatten()
                 )
 
+        if self.rollout_logprobs is not None:
+            logprobs = batch_pad_to_fixed_len(
+                [
+                    torch.as_tensor(logprobs, dtype=torch.float)
+                    for logprobs in self.rollout_logprobs
+                ],
+                max_batch_len=max_response_len,
+                pad_token=0,
+            )
+            batch["rollout_logprobs"] = logprobs.to(Worker.torch_device_type)
+
         if self.prev_logprobs is not None:
             batch["prev_logprobs"] = self.prev_logprobs.cuda()
+        elif "rollout_logprobs" in batch:
+            # if prev_logprobs is not computed (recompute_logprobs is False)
+            # use rollout_logprobs as prev_logprobs
+            batch["prev_logprobs"] = batch["rollout_logprobs"].clone()
 
         if self.ref_logprobs is not None:
             batch["ref_logprobs"] = self.ref_logprobs.cuda()
-
-        if self.recompute_prev_logprobs is not None:
-            batch["recompute_prev_logprobs"] = self.recompute_prev_logprobs.cuda()
 
         if self.rollout_logprobs is not None:
             prev_logprobs = batch_pad_to_fixed_len(
@@ -1551,11 +1547,6 @@ class DynamicRolloutResult:
                     merged_result.ref_logprobs, res.ref_logprobs
                 )
 
-            if res.recompute_prev_logprobs is not None:
-                merged_result.recompute_prev_logprobs = merge_tensor(
-                    merged_result.recompute_prev_logprobs, res.recompute_prev_logprobs
-                )
-
             # Merge tensor/list fields (size: num_sequence)
             if res.rewards is not None:
                 if isinstance(res.rewards, list):
@@ -1629,12 +1620,6 @@ class DynamicRolloutResult:
             if rollout_result.ref_logprobs is not None:
                 split_ref_logprobs = rollout_result.ref_logprobs[start_idx:end_idx]
 
-            split_recompute_prev_logprobs = None
-            if rollout_result.recompute_prev_logprobs is not None:
-                split_recompute_prev_logprobs = rollout_result.recompute_prev_logprobs[
-                    start_idx:end_idx
-                ]
-
             # construct the split DynamicRolloutResult
             split_result = DynamicRolloutResult(
                 num_sequence=split_size,
@@ -1644,7 +1629,6 @@ class DynamicRolloutResult:
                 rollout_logprobs=split_rollout_logprobs,
                 prev_logprobs=split_prev_logprobs,
                 ref_logprobs=split_ref_logprobs,
-                recompute_prev_logprobs=split_recompute_prev_logprobs,
                 prompt_lengths=split_prompt_lengths,
                 response_lengths=split_response_lengths,
                 is_end=split_is_end,
