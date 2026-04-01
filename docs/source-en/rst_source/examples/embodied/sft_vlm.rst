@@ -85,7 +85,7 @@ Keep other parameters unchanged for a baseline run.
      # Data paths: split train and eval files into different directories
      train_data_paths: "/path/to/Robo2VLM-1/train_data"
      # For eval-only runs, set train_data_paths to null
-     eval_data_paths: "/path/to/Robo2VLM-1/test_data"
+     val_data_paths: "/path/to/Robo2VLM-1/test_data"
 
      # Keys must match dataset columns
      prompt_key: "question"
@@ -181,7 +181,7 @@ Eval-Only Mode (No Training)
 If you only want evaluation, update config as:
 
 - ``data.train_data_paths: null``
-- ``data.eval_data_paths: "/eval_data_path"``
+- ``data.val_data_paths: "/path/to/validate_data"``
 
 Use the same launch command:
 
@@ -273,7 +273,7 @@ Field Reference
 - ``max_epochs``: number of full passes over dataset
 - ``save_interval``: checkpoint save frequency (in steps)
 - ``model_path``: local model directory (must exist)
-- ``train_data_paths/eval_data_paths``: dataset directory or file path
+- ``train_data_paths/val_data_paths``: dataset directory or file path
 
 Common Issues and Fixes
 -----------------------

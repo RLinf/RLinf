@@ -37,7 +37,7 @@ data:
   use_chat_template: True
   # if train_data_paths is not None, the sft code will just eval the model
   train_data_paths: "/path/to/Robo2VLM-1"
-  eval_data_paths: "/path/to/Robo2VLM-1"
+  val_data_paths: "/path/to/Robo2VLM-1"
   prompt_key: "question"
   choice_key: "choices"
   answer_key: "correct_answer"
