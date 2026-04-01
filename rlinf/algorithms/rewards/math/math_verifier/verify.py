@@ -398,8 +398,13 @@ def math_verify_call(
     all_jobs = []
     for solutions, gen in zip(references, responses):
         jobs = []
-        for sol in solutions:
-            job = global_executor.submit(verify_math_solution, gen, sol)
+        if isinstance(solutions, list):
+            for sol in solutions:
+                job = global_executor.submit(verify_math_solution, gen, sol)
+                jobs.append(job)
+            all_jobs.append(jobs)
+        else:
+            job = global_executor.submit(verify_math_solution, gen, solutions)
             jobs.append(job)
         all_jobs.append(jobs)
 
