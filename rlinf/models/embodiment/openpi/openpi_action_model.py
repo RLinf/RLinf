@@ -354,26 +354,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             obs_dict["actions"] = batch["action"].reshape(
                 bsz, self.config.action_chunk, -1
             )
-            if obs_dict["actions"].shape[2] < self.config.action_dim:
-                padding_action_dim = torch.zeros(
-                    bsz,
-                    obs_dict["actions"].shape[1],
-                    self.config.action_dim - obs_dict["actions"].shape[2],
-                    device=obs_dict["actions"].device,
-                )
-                obs_dict["actions"] = torch.cat(
-                    [obs_dict["actions"], padding_action_dim], dim=2
-                )
-            if obs_dict["actions"].shape[1] < self.config.action_horizon:
-                padding_action_chunk = torch.zeros(
-                    bsz,
-                    self.config.action_horizon - obs_dict["actions"].shape[1],
-                    self.config.action_dim,
-                    device=obs_dict["actions"].device,
-                )
-                obs_dict["actions"] = torch.cat(
-                    [obs_dict["actions"], padding_action_chunk], dim=1
-                )
             obs_dict["prompt"] = ["empty" for _ in range(bsz)]
             processed_obs = self.input_transform(obs_dict, transpose=False)
             if "tokenized_prompt" in batch:
