@@ -31,7 +31,7 @@ runner:
   only_eval: False
   eval_policy_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
   val_check_interval: -1
-  save_interval: 25
+  save_interval: 10
 
   resume_dir: null
 
@@ -62,6 +62,9 @@ algorithm:
   gae_lambda: 0.95
 
   reward_coef: 5.0
+  filter_rewards: True
+  rewards_lower_bound: 0.5
+  rewards_upper_bound: 4.5
 
   sampling_params:
     do_sample: True
@@ -78,43 +81,43 @@ algorithm:
     max_length: 1024
     min_length: 1
 
-  filter_rewards: True
-  rewards_lower_bound: 0.5
-  rewards_upper_bound: 4.5
-
 env:
   group_name: "EnvGroup"
   enable_offload: False
-  data_path: ""
+  data_path_dir: ""
   scenes_dir: ""
   # Override the default values in env/habitat_r2r
   train:
-    total_num_envs: 64  # Total number of parallel environments for training
-    max_steps_per_rollout_epoch: 512
-    max_episode_steps: 512 # max episode steps for truncation
-    reset_gripper_open: False
+    total_num_envs: 256  # 256 8H20
+    max_steps_per_rollout_epoch: 120
+    max_episode_steps: 120 # max episode steps for truncation
+    group_size: 8
     split: train
     data_path: ${env.data_path_dir}/${env.train.split}/${env.train.split}.json.gz
     scenes_dir: ${env.scenes_dir}
+    video_cfg:
+      fps: 5
+      save_video: False
+      video_base_dir: ${runner.logger.log_path}/video/train
+    metrics_cfg:
+      save_metrics: True
+      metrics_base_dir: ${runner.logger.log_path}/metrics/train
   eval:
-    total_num_envs: 608 # 608
-    auto_reset: True
-    ignore_terminations: True
+    total_num_envs: 608 # 608 8H20
     max_episode_steps: 120
     max_steps_per_rollout_epoch: 360
     group_size: 1
-    use_fixed_reset_state_ids: True
-    use_ordered_reset_state_ids: True
-    reset_gripper_open: False
-    is_eval: True
+    auto_reset: True
+    ignore_terminations: True
     split: val_unseen
     data_path: ${env.data_path_dir}/${env.eval.split}/${env.eval.split}.json.gz
     scenes_dir: ${env.scenes_dir}
     video_cfg:
       fps: 5
-      save_video: True
+      save_video: False
       video_base_dir: ${runner.logger.log_path}/video/eval
     metrics_cfg:
+      save_metrics: True
       metrics_base_dir: ${runner.logger.log_path}/metrics/eval
 
 rollout:
@@ -134,8 +137,8 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 32
-  global_batch_size: 16384
+  micro_batch_size: 128
+  global_batch_size: 1024
   seed: 1234
   enable_offload: True
 
@@ -149,7 +152,7 @@ actor:
       ddppo_checkpoint: ""
 
   optim:
-    lr: 2.0e-5
+    lr: 1.0e-5
     value_lr: 3.0e-3
     adam_beta1: 0.9
     adam_beta2: 0.999
@@ -160,7 +163,7 @@ actor:
   # Override the default values in training_backend/fsdp
   fsdp_config:
     strategy: "fsdp"
-    gradient_checkpointing: True
+    gradient_checkpointing: False
     mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}

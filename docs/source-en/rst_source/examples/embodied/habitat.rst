@@ -36,11 +36,10 @@ Install dependencies directly in your environment by running the following comma
 .. code:: bash
 
    # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
-
    bash requirements/install.sh embodied --env habitat
    source .venv/bin/activate
 
-   # NaVid must require transformers==4.31.0
+   # If you are running NaVid, it must require transformers==4.31.0
    uv pip install transformers==4.31.0
 
 
