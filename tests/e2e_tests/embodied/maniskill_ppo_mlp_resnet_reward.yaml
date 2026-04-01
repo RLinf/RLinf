@@ -1,7 +1,7 @@
 defaults:
   - env/maniskill_pick_cube@env.train
   - env/maniskill_pick_cube@env.eval
-  - model/mlp_policy@actor.model
+  - model/mlp_policy@actor.model  # Use MLP policy with state
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
@@ -10,7 +10,7 @@ hydra:
     dir: .
   output_subdir: null
   searchpath:
-    - file://${oc.env:EMBODIED_PATH}/config/
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
 
 cluster:
   num_nodes: 1
@@ -18,25 +18,25 @@ cluster:
     actor: 0-0
     env: 0-0
     rollout: 0-0
+    reward: 0-0  # Add reward worker placement
 
 runner:
   task_type: embodied
   logger:
-    log_path: "../results"
+    log_path: "/workspace/results/maniskill_ppo_mlp_resnet_reward"
     project_name: rlinf
-    experiment_name: "maniskill_ppo_mlp_collect"
+    experiment_name: "ci-test"
     logger_backends: ["tensorboard"]
 
-  max_epochs: 200
+  max_epochs: 3
   max_steps: -1
 
   only_eval: False
-  eval_policy_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
-  val_check_interval: 50
-  save_interval: 50
+  eval_policy_path: null
+  val_check_interval: -1
+  save_interval: -1
 
-  resume_dir: null
-  ckpt_path: null
+  resume_dir: null  # Set to checkpoint path to resume training
 
 algorithm:
   update_epoch: 8
@@ -81,68 +81,65 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
+
   train:
-    total_num_envs: 1024
+    total_num_envs: 128
     wrap_obs_mode: simple
-    use_full_state: True
     auto_reset: True
+    ignore_terminations: False
+    use_rel_reward: False
+    reward_mode: raw
+    seed: 0
+    group_size: 1
     use_fixed_reset_state_ids: False
     max_episode_steps: 50
     max_steps_per_rollout_epoch: 50
-    is_eval: False
+    use_full_state: True
+    # RGB mode: obs contains both main_images (for reward) and states (for policy)
     init_params:
-      obs_mode: "state"
+      id: "PickCube-v1"
+      obs_mode: "rgb"  # RGB mode provides main_images + states
       control_mode: "pd_joint_delta_pos"
+      sim_backend: "gpu"
+      sim_config:
+        sim_freq: 100
+        control_freq: 20
       sensor_configs:
         shader_pack: "default"
         width: 224
         height: 224
-
-    # ── pickle format ───────────────────────────────────────────────
-    data_collection:
-      enabled: False
-      save_dir: ${runner.logger.log_path}/collected_data
-      export_format: "pickle"
-      only_success: True       # set True to discard failed episodes
+      render_mode: all
 
   eval:
     total_num_envs: 32
     wrap_obs_mode: simple
-    use_full_state: True
     auto_reset: True
     ignore_terminations: True
+    use_rel_reward: False
+    reward_mode: raw
+    seed: 0
     max_episode_steps: 50
     max_steps_per_rollout_epoch: 50
     use_fixed_reset_state_ids: True
     group_size: 1
-    is_eval: True
+    use_full_state: True
     init_params:
+      id: "PickCube-v1"
       obs_mode: "rgb"
       control_mode: "pd_joint_delta_pos"
+      sim_backend: "gpu"
+      sim_config:
+        sim_freq: 100
+        control_freq: 20
       sensor_configs:
         shader_pack: "default"
         width: 224
         height: 224
+      render_mode: all
     video_cfg:
       save_video: True
+      info_on_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
-
-    # ── pickle format ───────────────────────────────────────────────
-    data_collection:
-      enabled: True
-      save_dir: ${runner.logger.log_path}/collected_data
-      export_format: "pickle"
-      only_success: True       # set True to discard failed episodes
-
-    # ── lerobot format ───────────────────────────────────────
-    # data_collection:
-    #   enabled: True
-    #   save_dir: ${runner.logger.log_path}/collected_data
-    #   export_format: "lerobot"
-    #   only_success: False       # set True to discard failed episodes
-    #   robot_type: "panda"       # written to meta/info.json
-    #   fps: 10                   # written to meta/info.json
-    #   stats_sample_ratio: 0.1   # fraction of frames used for stats computation
 
 rollout:
   group_name: "RolloutGroup"
@@ -154,9 +151,6 @@ rollout:
     model_path: ""
     precision: ${actor.model.precision}
 
-  enable_torch_compile: True
-  enable_cuda_graph: True
-
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
@@ -165,10 +159,11 @@ actor:
   seed: 1234
   enable_offload: False
 
-  # Override the default values in model/mlp_policy
+  # MLP policy uses state observation from ManiskillFullStateWrapper
   model:
     model_path: ""
     model_type: "mlp_policy"
+    obs_dim: 42  # Full state dimension
 
   optim:
     lr: 3.0e-4
@@ -179,7 +174,6 @@ actor:
     weight_decay: 0.01
     clip_grad: 0.5
 
-  # Override the default values in training_backend/fsdp
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
@@ -189,7 +183,31 @@ actor:
       buffer_dtype: ${actor.model.precision}
 
 reward:
-  use_reward_model: False
+  use_reward_model: True
+  group_name: "RewardGroup"
+  
+  # Reward mode:
+  # - "per_step": Compute reward for every frame (default, prone to reward hacking)
+  # - "terminal": Only compute reward at episode end (last frame), prevents reward hacking
+  reward_mode: "terminal"
+
+  reward_threshold: 0.5 # Probability threshold for success/fail classification
+  
+  # How to combine learned rewards with environment rewards:
+  # Weighted sum (reward = env_reward_weight * env_reward + reward_weight * reward_model_reward)
+  reward_weight: 1.0
+  env_reward_weight: 0.0
+  
+  model:
+    model_path: null
+    model_type: "resnet"
+    pretrained: False # if pretrained is set to True, rlinf will automatically download pretrained weights.
+    arch: "resnet18"
+    hidden_dim: 256
+    dropout: 0
+    image_size: [3, 128, 128]
+    normalize: true
+    precision: "bf16"
 
 critic:
   use_critic_model: False
