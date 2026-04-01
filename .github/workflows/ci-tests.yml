@@ -85,6 +85,7 @@ jobs:
               - 'rlinf/envs/**'
               - 'rlinf/workers/actor/async_fsdp_sac_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_dagger_policy_worker.py'
+              - 'rlinf/workers/actor/fsdp_nft_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_sac_policy_worker.py'
               - 'rlinf/workers/env/**'
               - 'rlinf/workers/rollout/hf/**'
