@@ -532,6 +532,7 @@ class RolloutResult:
                 merged_result.values = merge_tensor(merged_result.values, res.values)
             if res.returns is not None:
                 merged_result.returns = merge_tensor(merged_result.returns, res.returns)
+
         return merged_result
 
     @staticmethod
@@ -864,20 +865,6 @@ class RolloutResult:
                 ) * advantages.to(Worker.torch_device_type)
                 batch["advantages"] = advantages.to(Worker.torch_device_type)
 
-        if self.prev_logprobs is not None:
-            batch["prev_logprobs"] = self.prev_logprobs.to(Worker.torch_device_type)
-
-        if self.ref_logprobs is not None:
-            batch["ref_logprobs"] = self.ref_logprobs.to(Worker.torch_device_type)
-
-        if self.recompute_prev_logprobs is not None:
-            batch["recompute_prev_logprobs"] = self.recompute_prev_logprobs.to(
-                Worker.torch_device_type
-            )
-
-        if self.rewards is not None:
-            batch["rewards"] = self.rewards.to(Worker.torch_device_type)
-
         if self.rollout_logprobs is not None:
             logprobs = batch_pad_to_fixed_len(
                 [
@@ -887,13 +874,29 @@ class RolloutResult:
                 max_batch_len=max_response_len,
                 pad_token=0,
             )
-            batch["prev_logprobs"] = logprobs.to(Worker.torch_device_type)
+            batch["rollout_logprobs"] = logprobs.to(Worker.torch_device_type)
+
+        if self.prev_logprobs is not None:
+            batch["prev_logprobs"] = self.prev_logprobs.to(Worker.torch_device_type)
+        elif "rollout_logprobs" in batch:
+            # if prev_logprobs is not computed (recompute_logprobs is False)
+            # use rollout_logprobs as prev_logprobs
+            batch["prev_logprobs"] = batch["rollout_logprobs"].clone()
+
+        if self.ref_logprobs is not None:
+            batch["ref_logprobs"] = self.ref_logprobs.to(Worker.torch_device_type)
+
+        if self.recompute_prev_logprobs is not None:
+            batch["recompute_prev_logprobs"] = self.recompute_prev_logprobs.to(Worker.torch_device_type)
+
+        if self.rewards is not None:
+            batch["rewards"] = self.rewards.to(Worker.torch_device_type)
 
         if self.values is not None:
-            batch["values"] = self.values.cuda()
+            batch["values"] = self.values.to(Worker.torch_device_type)
 
         if self.returns is not None:
-            batch["returns"] = self.returns.cuda()
+            batch["returns"] = self.returns.to(Worker.torch_device_type)
 
         return batch
 
