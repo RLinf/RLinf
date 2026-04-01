@@ -195,8 +195,8 @@ class HabitatEnv(gym.Env):
         terminations[is_stop] = True
         # TODO: what if termination means failure? (e.g. robot falling down)
         infos = list_of_dict_to_dict_of_list(info_lists)
-        infos = self._record_metrics(infos)
-        step_reward = self._calc_step_reward(terminations, infos["success"])
+        infos = self._record_metrics(infos, terminations)
+        step_reward = self._calc_step_reward(terminations, infos["episode"]["success"])
 
         truncations = self.elapsed_steps >= self.max_episode_steps
         dones_for_metric_save = terminations | truncations
@@ -373,9 +373,10 @@ class HabitatEnv(gym.Env):
         else:
             return reward
 
-    def _record_metrics(self, infos):
+    def _record_metrics(self, infos, terminations):
         episode_info = {}
         dist_threshold = self.env_config.task.measurements.success.success_distance
+        terminations = np.array(terminations, dtype=bool, copy=True)
 
         episode_info["distance_to_goal"] = np.array(
             infos["distance_to_goal"], dtype=np.float32
@@ -389,8 +390,8 @@ class HabitatEnv(gym.Env):
             ][is_first_step].copy()
 
         episode_info["success"] = (
-            (np.array(infos["distance_to_goal"]) < dist_threshold).astype(float).copy()
-        )
+            terminations & (episode_info["distance_to_goal"] < dist_threshold)
+        ).astype(np.float32)
 
         episode_info["trajectory_Length"] = np.array(
             infos["trajectory_Length"], dtype=np.float32
@@ -403,11 +404,7 @@ class HabitatEnv(gym.Env):
             )
         )
 
-        episode_info["oracle_success"] = (
-            (np.array(infos["oracle_navigation_error"]) < dist_threshold)
-            .astype(float)
-            .copy()
-        )
+        episode_info["oracle_success"] = infos["oracle_success"].copy()
 
         episode_info["oracle_navigation_error"] = infos[
             "oracle_navigation_error"
