@@ -26,6 +26,7 @@ Supported formats include:
 - pi0_maniskill
 - pi0_libero
 - pi0_aloha_robotwin
+- pi0_franka_dagger
 - pi05_libero
 - pi05_maniskill
 - pi05_metaworld
@@ -75,11 +76,44 @@ You can also train with a custom dataset format. Refer to the files below:
             self.extra_delta_transform = True
             self.action_train_with_rotation_6d = False
 
+Normalization statistics for new LeRobot datasets
+-------------------------------------------------
+
+When you train OpenPI on a newly collected LeRobot dataset, compute dataset
+normalization statistics before launching SFT. This is especially important for
+a realworld collected dataset.
+
+RLinf provides ``toolkits/replay_buffer/calculate_norm_stats.py`` to calculate norm_stats for ``state`` and ``actions``. You can use it like:
+
+.. code:: bash
+
+   export HF_LEROBOT_HOME=/path/to/lerobot_root
+   python toolkits/replay_buffer/calculate_norm_stats.py \
+       --config-name pi0_franka_dagger \
+       --repo-id franka_dagger
+
+Notes:
+
+- ``HF_LEROBOT_HOME`` must be set before running the script.
+- ``config_name`` must match your custom openpi dataconfig used by training.
+- ``repo_id`` must match your lerobot-format dataset name.
+
+The script writes the generated stats under ``<assest_dir>/<exp_name>/<repo_id>/norm_stats.json``.
+
+The OpenPI loader later reads the normalization stats from the ``<model_path>/<repo_id>`` at runtime.
+
+Another practical tip for stable training is to manually check the normalization statistics for very small standard deviations or narrow q99–q01 ranges. Increasing the standard deviation or widening the q99–q01 gap can help stabilize training, especially in two-stage pipelines that transition from SFT to online training.
+
 
 Training configuration
 ----------------------
 
-A full example lives in ``examples/sft/config/libero_sft_openpi.yaml``. Key fields:
+Full examples live in:
+
+- ``examples/sft/config/libero_sft_openpi.yaml``
+- ``examples/sft/config/franka_dagger_sft_openpi.yaml``
+
+A generic OpenPI SFT example looks like this:
 
 .. code:: yaml
 
@@ -156,6 +190,6 @@ First start the Ray cluster, then run the helper script:
 .. code:: bash
 
    # return to repo root
-   bash examples/sft/run_vla_sft.sh --config libero_sft_openpi
+   bash examples/sft/run_vla_sft.sh libero_sft_openpi
 
 The same script works for generic text SFT; just swap the config file.
