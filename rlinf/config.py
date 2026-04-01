@@ -59,6 +59,7 @@ class SupportedModel(Enum):
     FLOW_POLICY = ("flow_policy", "embodied")
     CMA_POLICY = ("cma", "embodied")
     LINGBOTVLA = ("lingbotvla", "embodied")
+    RESNET_REWARD = ("resnet", "embodied")
 
     # Sft models
     QWEN2_5_VL_SFT = ("qwen2.5_vl", "sft")
@@ -894,16 +895,16 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
     with open_dict(cfg):
         if cfg.data.get("train_data_paths", None) is None:
             # if train_data_paths is None, the code will just eval the model
-            assert cfg.data.get("eval_data_paths", None) is not None, (
-                "the data.train_data_paths is None, so data.eval_data_paths is required"
+            assert cfg.data.get("val_data_paths", None) is not None, (
+                "the data.train_data_paths is None, so data.val_data_paths is required"
             )
-        elif cfg.data.get("eval_data_paths", None) is not None:
+        elif cfg.data.get("val_data_paths", None) is not None:
             # set the val_check_interval to max_epochs
             if cfg.runner.get("val_check_interval", None) is None:
                 cfg.runner.val_check_interval = cfg.runner.max_epochs
         else:
-            # set the val_check_interval to -1 if there is no eval data
-            cfg.runner.val_check_interval = -1
+            # set the val_check_interval to -1 if there is no eval data or is not set
+            cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
     return cfg
 
 
@@ -1046,8 +1047,9 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     elif cfg.runner.task_type == "sft":
         cfg = validate_sft_cfg(cfg)
 
-    if cfg.algorithm.adv_type in ("grpo", "grpo_dynamic", "reinpp_baseline"):
-        assert cfg.algorithm.group_size > 1
+    if cfg.runner.task_type != "sft":
+        if cfg.algorithm.adv_type in ("grpo", "grpo_dynamic", "reinpp_baseline"):
+            assert cfg.algorithm.group_size > 1
 
     assert cfg.actor.training_backend in SUPPORTED_TRAINING_BACKENDS, (
         f"Unsupported training_backend {cfg.actor.training_backend}. Supported training backends are {SUPPORTED_TRAINING_BACKENDS}."
@@ -1078,13 +1080,14 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         )
         cfg.actor = validate_fsdp_cfg(cfg.actor)
 
-    if cfg.critic.use_critic_model and cfg.critic.training_backend == "megatron":
-        cfg.critic = validate_megatron_cfg(cfg.critic)
-        cfg.critic = validate_model_cfg_by_hf_config(
-            cfg.critic, cfg.rollout.model.model_path
-        )
-    elif cfg.critic.use_critic_model and cfg.critic.training_backend == "fsdp":
-        cfg.critic = validate_fsdp_cfg(cfg.critic)
+    if cfg.get("critic", None) is not None:
+        if cfg.critic.use_critic_model and cfg.critic.training_backend == "megatron":
+            cfg.critic = validate_megatron_cfg(cfg.critic)
+            cfg.critic = validate_model_cfg_by_hf_config(
+                cfg.critic, cfg.rollout.model.model_path
+            )
+        elif cfg.critic.use_critic_model and cfg.critic.training_backend == "fsdp":
+            cfg.critic = validate_fsdp_cfg(cfg.critic)
 
     return cfg
 
