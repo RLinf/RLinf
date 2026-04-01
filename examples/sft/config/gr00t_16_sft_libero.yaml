@@ -30,7 +30,7 @@ runner:
   save_interval: 2000
 
 data:
-  train_data_paths: "/workspace/RLinf/rlinf/data/libero_spatial" 
+  train_data_paths: "/path/to/your/libero_spatial_dataset" 
 
 algorithm:
   adv_type: gae
@@ -45,7 +45,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/workspace/RLinf/GR00T-N1.6-3B" 
+    model_path: "/path/to/GR00T-N1.6-3B" 
     model_type: "gr00t_1_6_sft"
     precision: "bf16"
     action_dim: 128
