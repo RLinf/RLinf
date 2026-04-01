@@ -57,15 +57,17 @@ echo "🐍 Using Python at $(which python)"
 # 5. Single-GPU Overrides
 # Force the framework's placement strategy to align with a single GPU
 # ==============================================================================
-EXTRA_ARGS="env.train.total_num_envs=1 \
-env.train.group_size=1 \
+EXTRA_ARGS="actor.enable_offload=False \
+rollout.enable_offload=False \
+env.train.total_num_envs=32 \
+env.train.group_size=8 \
 env.eval.total_num_envs=1 \
 env.eval.group_size=1 \
-actor.global_batch_size=4 \
-actor.micro_batch_size=1 \
-actor.num_gpus=1 \
-cluster.num_nodes=1 \
-cluster.hardware_ranks='[[0]]'"
+actor.global_batch_size=512 \
+actor.micro_batch_size=32 \
+algorithm.rollout_epoch=1 \
+actor.model.model_type=gr00t_1_6 \
+actor.model.action_dim=128"
 
 # ==============================================================================
 # 6. Logging and Execution

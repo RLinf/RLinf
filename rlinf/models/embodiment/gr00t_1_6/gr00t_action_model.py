@@ -59,7 +59,7 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
         # self.valid_action_dim = getattr(self, "valid_action_dim", config.get("action_dim", 7))
         self.valid_action_dim = getattr(config, "max_action_dim", getattr(config, "action_dim", 7))
         self.action_chunk = output_action_chunks
-        self.hidden_size = getattr(self, "hidden_size", 1024)  # 防止后面报错
+        self.hidden_size = getattr(self, "hidden_size", 1024)
         self.action_horizon = getattr(self, "action_horizon", 16)
         self.num_timestep_buckets = getattr(self, "num_timestep_buckets", 1000)
         self.num_inference_timesteps = getattr(self, "num_inference_timesteps", 4)
@@ -267,8 +267,12 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
 
         x_0 = x_t
         chains = torch.stack(chains, dim=1)
+        # log_probs = torch.stack(log_probs, dim=1)[
+        #     :, :, : self.action_chunk, : self.valid_action_dim
+        # ]
+        env_action_dim = 7  
         log_probs = torch.stack(log_probs, dim=1)[
-            :, :, : self.action_chunk, : self.valid_action_dim
+            :, :, : self.action_chunk, : env_action_dim
         ]
         if compute_values:
             values = self.get_value(vl_embs, state_features)
@@ -544,6 +548,10 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6,BasePolicy):
                 : self.valid_action_dim,
             ]
         value_t = value_t.mean(dim=-1, keepdim=False)
+
+        env_action_dim = 7
+        log_probs = log_probs[..., :env_action_dim]
+        prev_logprobs = prev_logprobs[..., :env_action_dim]
 
         return {
             "logprobs": log_probs.float(),

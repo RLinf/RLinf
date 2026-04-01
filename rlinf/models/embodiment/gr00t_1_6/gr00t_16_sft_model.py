@@ -1,11 +1,15 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
+import types
 from typing import Any, Optional, Union, Literal
 from pathlib import Path
 import numpy as np
 from PIL import Image
+from torch.utils import _pytree
+from rlinf.utils.pytree import register_pytree_dataclasses
 
-from transformers import AutoConfig, AutoModel, AutoProcessor
+from transformers import AutoConfig, AutoModel, AutoProcessor, AutoModelForCausalLM
 from gr00t.model.gr00t_n1d6.gr00t_n1d6 import Gr00tN1d6
 from gr00t.configs.model.gr00t_n1d6 import Gr00tN1d6Config
 
@@ -18,7 +22,121 @@ except Exception as e:
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 
+def patched_sample_time(self, batch_size, device, dtype):
+    alpha = torch.tensor(self.config.noise_beta_alpha, dtype=torch.float32, device=device)
+    beta_val = torch.tensor(self.config.noise_beta_beta, dtype=torch.float32, device=device)
+    from torch.distributions import Beta
+    temp_beta_dist = Beta(alpha, beta_val)
+    
+    sample = temp_beta_dist.sample([batch_size]).to(device, dtype=dtype)
+    sample = (1 - sample) * self.config.noise_s
+    return sample
+
+def patched_process_backbone_output(self, backbone_output):
+    backbone_features = backbone_output["backbone_features"]
+    if hasattr(self, "vlln") and isinstance(self.vlln, nn.LayerNorm):
+        orig_dtype = backbone_features.dtype
+        weight = self.vlln.weight.float() if self.vlln.weight is not None else None
+        bias = self.vlln.bias.float() if self.vlln.bias is not None else None
+        
+        backbone_features = F.layer_norm(
+            backbone_features.float(),
+            self.vlln.normalized_shape,
+            weight,
+            bias,
+            self.vlln.eps
+        ).to(orig_dtype) 
+    else:
+        backbone_features = self.vlln(backbone_features)
+
+    backbone_output["backbone_features"] = backbone_features
+    return backbone_output
+
+def patched_action_head_forward(self, backbone_output, action_input):
+    self.set_frozen_modules_to_eval_mode()
+    backbone_output = self.process_backbone_output(backbone_output)
+
+    vl_embeds = backbone_output.backbone_features
+    device = vl_embeds.device
+    embodiment_id = action_input.embodiment_id
+
+    state_features = self.state_encoder(action_input.state, embodiment_id)
+
+    if self.state_dropout_prob > 0:
+        do_dropout = (torch.rand(state_features.shape[0], device=state_features.device) < self.state_dropout_prob)
+        do_dropout = do_dropout[:, None, None].to(dtype=state_features.dtype)
+        state_features = state_features * (1 - do_dropout) + self.mask_token * do_dropout
+
+    if self.training and self.state_additive_noise_scale > 0:
+        noise = torch.randn_like(state_features) * self.state_additive_noise_scale
+        state_features = state_features + noise
+
+    actions = action_input.action
+    noise = torch.randn(actions.shape, device=actions.device, dtype=actions.dtype)
+    t = self.sample_time(actions.shape[0], device=actions.device, dtype=actions.dtype)
+    t = t[:, None, None]
+
+    noisy_trajectory = (1 - t) * noise + t * actions
+    velocity = actions - noise
+
+    t_discretized = (t[:, 0, 0] * self.num_timestep_buckets).long()
+    action_features = self.action_encoder(noisy_trajectory, t_discretized, embodiment_id)
+
+    if self.config.add_pos_embed:
+        pos_ids = torch.arange(action_features.shape[1], dtype=torch.long, device=device)
+        pos_embs = self.position_embedding(pos_ids).unsqueeze(0)
+        action_features = action_features + pos_embs
+
+    sa_embs = torch.cat((state_features, action_features), dim=1)
+    vl_attn_mask = backbone_output.backbone_attention_mask
+
+    if self.config.use_alternate_vl_dit:
+        model_output, _ = self.model(
+            hidden_states=sa_embs,
+            encoder_hidden_states=vl_embeds,
+            encoder_attention_mask=vl_attn_mask,
+            timestep=t_discretized,
+            return_all_hidden_states=True,
+            image_mask=backbone_output.image_mask,
+            backbone_attention_mask=backbone_output.backbone_attention_mask,
+        )
+    else:
+        model_output, _ = self.model(
+            hidden_states=sa_embs,
+            encoder_hidden_states=vl_embeds,
+            encoder_attention_mask=vl_attn_mask,
+            timestep=t_discretized,
+            return_all_hidden_states=True,
+        )
+
+    pred = self.action_decoder(model_output, embodiment_id)
+    pred_actions = pred[:, -actions.shape[1] :]
+    action_mask = action_input.action_mask
+    
+    pred_actions = torch.nan_to_num(pred_actions, nan=0.0, posinf=1.0, neginf=-1.0)
+    velocity = torch.nan_to_num(velocity, nan=0.0)
+
+    pred_actions_fp32 = pred_actions.float()
+    velocity_fp32 = velocity.float()
+    action_mask_fp32 = action_mask.float()
+
+    action_loss_fp32 = F.mse_loss(pred_actions_fp32, velocity_fp32, reduction="none") * action_mask_fp32
+    loss_fp32 = action_loss_fp32.sum() / (action_mask_fp32.sum() + 1e-6)
+
+    loss = loss_fp32.to(pred_actions.dtype)
+    action_loss = action_loss_fp32.to(pred_actions.dtype)
+
+    return {
+        "loss": loss,
+        "action_loss": action_loss,
+        "action_mask": action_mask,
+        "backbone_features": vl_embeds,
+        "state_features": state_features,
+    }
+
 class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
+    _supports_flash_attn_2 = True
+    _supports_sdpa = True
     def __init__(
         self,
         config: Gr00tN1d6Config,
@@ -43,6 +161,12 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
         self.compute_dtype = compute_dtype
         self.model_path = Path(local_model_path)
         
+        if hasattr(self, "action_head"):
+            self.action_head.sample_time = types.MethodType(patched_sample_time, self.action_head)
+            self.action_head.process_backbone_output = types.MethodType(patched_process_backbone_output, self.action_head)
+            self.action_head.forward = types.MethodType(patched_action_head_forward, self.action_head)
+            print("providing patch for Action Head (Monkey Patch)")
+
         if modality_config is None or modality_transform is None:
             print("Loading Processor...")
             processor = AutoProcessor.from_pretrained(str(local_model_path), trust_remote_code=True)
@@ -69,13 +193,47 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
         trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
         print(f"[SFT Override] Number of parameters participating in training: {trainable_params / 1e6:.2f} M")
 
+        print("[monitor loading] registering gradient monitors...")
+        for name, param in self.named_parameters():
+            if param.requires_grad:
+                def create_check_grad_fn(layer_name):
+                    def check_grad(grad):
+                        if grad is not None:
+                            if torch.isnan(grad).any() or torch.isinf(grad).any():
+                                print(f"[gradient exposion] find NaN gradient! Layer: {layer_name}")
+                                return torch.nan_to_num(grad, nan=0.0, posinf=0.0, neginf=0.0)
+                        return grad
+                    return check_grad
+                param.register_hook(create_check_grad_fn(name))
     def forward(self, forward_type=ForwardType.SFT, **kwargs):
         return self.sft_forward(**kwargs)
 
     def sft_forward(self, data: dict, **kwargs):
+        from torch.utils import _pytree
+        
         obs = data["observation"]
         actions = data["actions"] 
-        if actions.dim() == 2: actions = actions.unsqueeze(1)
+
+        for k, v in obs.items():
+            if isinstance(v, torch.Tensor) and v.dtype == torch.uint8:
+                decoded_texts = []
+                for row in v:
+                    valid_bytes = row[row != 0].tolist()
+                    decoded_texts.append(bytes(valid_bytes).decode('utf-8'))
+                obs[k] = decoded_texts
+
+        def safe_to_tensor(x):
+            if x is None:
+                return x
+            if isinstance(x, str) or (isinstance(x, list) and len(x) > 0 and isinstance(x[0], str)):
+                return x
+            return torch.as_tensor(x, device=self.device).contiguous().clone()
+
+        obs = _pytree.tree_map(safe_to_tensor, obs)
+        
+        actions = torch.as_tensor(actions, device=self.device, dtype=torch.float32)
+        if actions.dim() == 2: 
+            actions = actions.unsqueeze(1)
             
         model_inputs = self.apply_transforms(obs)
         
@@ -83,13 +241,13 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
         actions = torch.clamp(actions, min=-1.0, max=1.0)
         
         target_dim = 128
+        
         padded_actions = torch.zeros((actions.shape[0], actions.shape[1], target_dim), 
                                      dtype=self.compute_dtype, device=actions.device)
         padded_actions[:, :, :actions.shape[-1]] = actions.to(dtype=self.compute_dtype)
         
-        action_mask = torch.zeros((actions.shape[0], actions.shape[1], target_dim), 
+        action_mask = torch.ones((actions.shape[0], actions.shape[1], target_dim), 
                                  dtype=self.compute_dtype, device=actions.device)
-        action_mask[:, :, :actions.shape[-1]] = 1.0
         
         model_inputs["action"] = padded_actions
         model_inputs["action_mask"] = action_mask
@@ -102,13 +260,15 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
                                 for k, v in model_inputs.items()}
             
             backbone_in, action_in = super().prepare_input(model_inputs_fp32)
+            
             backbone_out = self.backbone(backbone_in)
+            
             outputs = self.action_head(backbone_out, action_in)
 
         loss = outputs["loss"] if isinstance(outputs, dict) else outputs.loss
         
         if torch.isnan(loss):
-            print("[Detected NaN Loss] Forcibly zeroing to protect weights")
+            print("[detect NaN Loss] force to zero and continue training to prevent collapse.")
             loss = torch.zeros([], device=loss.device, dtype=loss.dtype, requires_grad=True)
             
         return loss
@@ -252,3 +412,11 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
 
     def predict_action_batch(self, *args, **kwargs):
         raise NotImplementedError("Pure SFT model does not support predict_action_batch")
+try:
+    AutoModel.register(Gr00tN1d6Config, GR00T_1_6_SFT_Model)
+    AutoModelForCausalLM.register(Gr00tN1d6Config, GR00T_1_6_SFT_Model)
+    AutoModelForCausalLM.register(Gr00tN1d6Config, GR00T_1_6_SFT_Model)
+    print("[register model] successfully registered GR00T_1_6_SFT_Model！")
+except Exception:
+    # pass
+    print(f"[register model] failed to register GR00T_1_6_SFT_Model: {e}")

@@ -18,6 +18,12 @@ from pathlib import Path
 
 
 def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
+    from transformers import AutoConfig, AutoModel
+    from gr00t.configs.model.gr00t_n1d6 import Gr00tN1d6Config
+    from gr00t.model.gr00t_n1d6.gr00t_n1d6 import Gr00tN1d6
+    AutoConfig.register("Gr00tN1d6", Gr00tN1d6Config)
+    AutoModel.register(Gr00tN1d6Config, Gr00tN1d6)
+    print("Successfully registered custom architecture Gr00tN1d6, authentication passed!")
     import rlinf.hybrid_engines.fsdp.strategy.fsdp as fsdp_strategy
     
     if not hasattr(fsdp_strategy, "_is_gr00t_patched"):
@@ -61,7 +67,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     )
     from rlinf.models.embodiment.gr00t_1_6.utils import replace_dropout_with_identity
 
-    if cfg.embodiment_tag in ["libero_franka", "isaaclab_franka", "maniskill_widowx", "robocasa_panda_omron"]:
+    if cfg.embodiment_tag in ["libero_franka", "isaaclab_franka", "maniskill_widowx", "robocasa_panda_omron","libero_panda"]:
         emb_tag = EmbodimentTag.ROBOCASA_PANDA_OMRON 
     elif cfg.embodiment_tag == "gr1": 
         emb_tag = EmbodimentTag.GR1
@@ -76,7 +82,14 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     model_path = Path(cfg.model_path)
     if not model_path.exists():
         raise FileNotFoundError(f"Model path does not exist: {model_path}")
-    model = GR00T_N1_6_ForRLActionPrediction.from_pretrained(
+
+    if cfg.get("model_type") == "gr00t_1_6_sft":
+        from .gr00t_16_sft_model import GR00T_1_6_SFT_Model
+        model_cls = GR00T_1_6_SFT_Model
+    else:
+        model_cls = GR00T_N1_6_ForRLActionPrediction
+
+    model = model_cls.from_pretrained(
         local_model_path=str(model_path),
         pretrained_model_name_or_path=str(model_path),
         # model_path,

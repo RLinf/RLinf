@@ -59,6 +59,7 @@ class SupportedModel(Enum):
     FLOW_POLICY = ("flow_policy", "embodied")
     CMA_POLICY = ("cma", "embodied")
     GR00T_1_6 = ("gr00t_1_6", "embodied")
+    GR00T_1_6_SFT = ("gr00t_1_6_sft", "embodied")
 
     # Sft models
     QWEN2_5_VL_SFT = ("qwen2.5_vl", "sft")
