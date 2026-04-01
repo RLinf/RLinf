@@ -66,19 +66,18 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.LINGBOTVLA
         ]:
-            batch_data = next(self.data_iter)
             batch_data = _pytree.tree_map(
                 lambda x: (
                     torch.as_tensor(x, device=self.device).contiguous().clone()
                     if isinstance(x, torch.Tensor)
                     else x
                 ),
-                batch_data,
+                batch,
             )
             with self.amp_context:
                 losses_dict = self.model(forward_type=ForwardType.SFT, data=batch_data)
             return losses_dict["loss"]
-        observation, actions = next(self.data_iter)
+        observation, actions = batch
 
         register_pytree_dataclasses(observation)
         observation = _pytree.tree_map(
