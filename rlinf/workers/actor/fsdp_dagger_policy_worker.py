@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 
 import numpy as np
@@ -37,6 +38,8 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self.replay_buffer = None
         self.update_step = 0
         self.enable_drq = bool(getattr(self.cfg.actor, "enable_drq", False))
+        if self.cfg.actor.get("data_source", "buffer") == "lerobot":
+            self._build_sft_data_loader()
 
     def init_worker(self):
         super().setup_model_and_optimizer()
@@ -93,7 +96,26 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     def _prepare_sft_batch(self, batch):
         """Prepare model-specific DAgger training inputs."""
-        return self.model.prepare_dagger_sft_batch(batch)
+        if self.cfg.data_source == "buffer":
+            return self.model.prepare_dagger_sft_batch(batch)
+        elif self.cfg.data_source == "lerobot":
+            try:
+                batch = next(self.data_iter)
+                self._data_iter_offset += 1
+            except StopIteration:
+                self._data_epoch += 1
+                logging.info(
+                    f"[INFO] data_iter exhausted, reset iterator self._data_epoch {self._data_epoch}"
+                )
+                if hasattr(self.data_loader, "sampler") and hasattr(
+                    self.data_loader.sampler, "set_epoch"
+                ):
+                    self.data_loader.sampler.set_epoch(self._data_epoch)
+                self.data_iter = iter(self.data_loader)
+                batch = next(self.data_iter)
+                self._data_iter_offset = 1
+        else:
+            raise ValueError(f"Invalid data source: {self.cfg.data_source}")
 
     def _reduce_sft_loss(self, loss):
         """Reduce model-specific SFT loss to a scalar."""
