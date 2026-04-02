@@ -1,0 +1,17 @@
+model_type: lingbotva
+model_path: ${oc.env:LINGBOT_VA_MODEL_PATH}
+precision: bf16
+num_action_chunks: 32
+action_dim: 16
+is_lora: false
+lora_rank: 4
+lora_path: null
+lingbotva:
+  repo_path: ${oc.env:LINGBOT_VA_REPO_PATH}
+  enable_offload: false
+  save_root: /tmp/rlinf_lingbotva
+  reuse_server: false
+  fixed_server_port: null
+  server_cuda_visible_devices: null
+  server_torch_num_threads: 32
+  action_per_frame: 16

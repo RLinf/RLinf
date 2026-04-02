@@ -60,6 +60,7 @@ class RoboTwinEnv(gym.Env):
         self._is_start = True
 
         self.task_name = cfg.task_config.task_name
+        self.action_type = cfg.task_config.get("action_type", "qpos")
 
         self.center_crop = cfg.get("center_crop", False)
         self._init_reset_state_ids()
@@ -82,9 +83,13 @@ class RoboTwinEnv(gym.Env):
         from robotwin.envs.vector_env import VectorEnv
 
         env_seeds = self.reset_state_ids.tolist()
+        task_config = OmegaConf.to_container(self.cfg.task_config, resolve=True)
+        if self.action_type == "ee":
+            data_type = task_config.setdefault("data_type", {})
+            data_type["endpose"] = True
 
         self.venv = VectorEnv(
-            task_config=OmegaConf.to_container(self.cfg.task_config, resolve=True),
+            task_config=task_config,
             n_envs=self.num_envs,
             env_seeds=env_seeds,
         )
@@ -236,6 +241,51 @@ class RoboTwinEnv(gym.Env):
 
         return chunk_rewards
 
+    def _get_raw_task_obs(self) -> list[dict]:
+        return [sub_env.task.get_obs() for sub_env in self.venv.envs]
+
+    def _extract_eef_poses_from_raw_obs(
+        self, raw_obs: list[dict[str, dict[str, np.ndarray | float]]]
+    ) -> torch.Tensor:
+        eef_poses = []
+        for obs in raw_obs:
+            endpose = obs["endpose"]
+            pose = np.concatenate(
+                [
+                    np.asarray(endpose["left_endpose"], dtype=np.float32),
+                    np.asarray([endpose["left_gripper"]], dtype=np.float32),
+                    np.asarray(endpose["right_endpose"], dtype=np.float32),
+                    np.asarray([endpose["right_gripper"]], dtype=np.float32),
+                ]
+            )
+            eef_poses.append(torch.from_numpy(pose))
+        return torch.stack(eef_poses)
+
+    def _attach_extra_obs(
+        self,
+        extracted_obs: dict[str, torch.Tensor | list[str] | None],
+        *,
+        raw_task_obs: list[dict],
+        chunk_observations: list[list[dict]] | None = None,
+        episode_dones: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor | list[str] | dict[str, object] | None]:
+        obs = dict(extracted_obs)
+        extra_obs = dict(obs.get("extra_obs") or {})
+        extra_obs["eef_poses"] = self._extract_eef_poses_from_raw_obs(raw_task_obs)
+        if chunk_observations is not None:
+            extra_obs["chunk_observations"] = chunk_observations
+        if episode_dones is not None:
+            extra_obs["episode_dones"] = episode_dones
+        obs["extra_obs"] = extra_obs
+        return obs
+
+    def _collect_current_obs(self) -> tuple[dict, list[dict]]:
+        raw_obs = [sub_env.get_obs() for sub_env in self.venv.envs]
+        extracted_obs = self._extract_obs_image(raw_obs)
+        raw_task_obs = self._get_raw_task_obs()
+        extracted_obs = self._attach_extra_obs(extracted_obs, raw_task_obs=raw_task_obs)
+        return extracted_obs, raw_obs
+
     def reset(
         self,
         env_idx: Optional[Union[int, list[int]]] = None,
@@ -253,6 +303,10 @@ class RoboTwinEnv(gym.Env):
         self._reset_metrics(env_idx)
 
         extracted_obs = self._extract_obs_image(raw_obs)
+        if self.action_type == "ee":
+            extracted_obs = self._attach_extra_obs(
+                extracted_obs, raw_task_obs=self._get_raw_task_obs()
+            )
 
         return extracted_obs, infos
 
@@ -271,6 +325,22 @@ class RoboTwinEnv(gym.Env):
         if len(actions.shape) == 2:
             # [n_envs, action_dim] -> [n_envs, 1, action_dim]
             actions = actions[:, None, :]
+
+        if self.action_type == "ee":
+            (
+                obs_list,
+                chunk_rewards,
+                chunk_terminations,
+                chunk_truncations,
+                infos_list,
+            ) = self.chunk_step(actions)
+            return (
+                obs_list[-1],
+                chunk_rewards[:, -1],
+                chunk_terminations[:, -1],
+                chunk_truncations[:, -1],
+                infos_list[-1],
+            )
 
         raw_obs, step_reward, terminations, truncations, info_list = self.venv.step(
             actions
@@ -320,6 +390,9 @@ class RoboTwinEnv(gym.Env):
     def chunk_step(self, chunk_actions):
         if isinstance(chunk_actions, torch.Tensor):
             chunk_actions = chunk_actions.cpu().numpy()
+
+        if self.action_type == "ee":
+            return self._ee_chunk_step(chunk_actions)
 
         # chunk_actions: [num_envs, chunk_step, action_dim]
         num_envs = chunk_actions.shape[0]
@@ -380,6 +453,99 @@ class RoboTwinEnv(gym.Env):
 
         chunk_truncations = torch.zeros((num_envs, chunk_step))
         chunk_truncations[:, -1] = truncations
+
+        return (
+            obs_list,
+            chunk_rewards,
+            chunk_terminations,
+            chunk_truncations,
+            infos_list,
+        )
+
+    def _ee_chunk_step(self, chunk_actions):
+        num_envs, chunk_step, _ = chunk_actions.shape
+        obs_list = []
+        infos_list = []
+        chunk_rewards = torch.zeros(
+            (num_envs, chunk_step), dtype=torch.float32, device=self.device
+        )
+        chunk_terminations = torch.zeros(
+            (num_envs, chunk_step), dtype=torch.bool, device=self.device
+        )
+        chunk_truncations = torch.zeros(
+            (num_envs, chunk_step), dtype=torch.bool, device=self.device
+        )
+        chunk_observations = [[] for _ in range(num_envs)]
+
+        for step_idx in range(chunk_step):
+            step_success = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
+            step_truncated = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
+
+            for env_id, sub_env in enumerate(self.venv.envs):
+                sub_env.task.take_action(
+                    chunk_actions[env_id, step_idx], action_type="ee"
+                )
+                success = bool(getattr(sub_env.task, "eval_success", False))
+                step_limit = getattr(sub_env.task, "step_lim", None)
+                take_action_cnt = getattr(sub_env.task, "take_action_cnt", 0)
+                truncated = bool(
+                    step_limit is not None
+                    and take_action_cnt >= step_limit
+                    and not success
+                )
+                step_success[env_id] = success
+                step_truncated[env_id] = truncated
+
+            extracted_obs, raw_obs = self._collect_current_obs()
+            for env_id, raw_step_obs in enumerate(raw_obs):
+                chunk_observations[env_id].append(raw_step_obs)
+
+            infos = {"success": step_success.clone()}
+            if self.record_metrics:
+                infos = self._record_metrics(
+                    step_success.to(dtype=torch.float32), infos
+                )
+
+            obs_list.append(extracted_obs)
+            infos_list.append(infos)
+            chunk_rewards[:, step_idx] = step_success.to(dtype=torch.float32)
+            chunk_terminations[:, step_idx] = step_success
+            chunk_truncations[:, step_idx] = step_truncated
+
+        self._elapsed_steps += chunk_step
+        truncated = self._elapsed_steps >= self.cfg.max_episode_steps
+        if truncated.any():
+            chunk_truncations[:, -1] = torch.logical_or(
+                truncated, chunk_truncations[:, -1]
+            )
+
+        if self.ignore_terminations:
+            chunk_terminations[:] = False
+            if self.record_metrics and infos_list:
+                infos_list[-1]["episode"]["success_at_end"] = infos_list[-1][
+                    "success"
+                ].clone()
+
+        episode_dones = torch.logical_or(
+            chunk_terminations[:, -1], chunk_truncations[:, -1]
+        )
+        obs_list[-1] = self._attach_extra_obs(
+            obs_list[-1],
+            raw_task_obs=self._get_raw_task_obs(),
+            chunk_observations=chunk_observations,
+            episode_dones=episode_dones,
+        )
+
+        if episode_dones.any() and self.auto_reset:
+            obs_list[-1], infos_list[-1] = self._handle_auto_reset(
+                episode_dones, obs_list[-1], infos_list[-1]
+            )
+            obs_list[-1] = self._attach_extra_obs(
+                obs_list[-1],
+                raw_task_obs=self._get_raw_task_obs(),
+                chunk_observations=chunk_observations,
+                episode_dones=episode_dones,
+            )
 
         return (
             obs_list,

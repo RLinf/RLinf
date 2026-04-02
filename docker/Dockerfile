@@ -132,6 +132,12 @@ if [ -d /opt/assets/.cache/openpi ]; then
     fi
     ln -s /opt/assets/.cache/openpi ~/.cache/openpi
 fi
+if [ -d /opt/assets/.cache/lingbotva ]; then
+    if [ -d ~/.cache/lingbotva ]; then
+        rm -rf ~/.cache/lingbotva
+    fi
+    ln -s /opt/assets/.cache/lingbotva ~/.cache/lingbotva
+fi
 EOF
 RUN chmod +x /usr/local/bin/link_assets
 
@@ -261,12 +267,27 @@ RUN echo "source ${UV_PATH}/franka-0.15.0/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-robotwin-image
 
-# Install openvla-oft, openpi, and lingbotvla envs
+# Install openvla-oft, openpi, lingbotvla, and lingbotva envs
 RUN bash requirements/install.sh embodied --venv openvla-oft --model openvla-oft --env robotwin && \
     bash requirements/install.sh embodied --venv openpi --model openpi --env robotwin && \
-    bash requirements/install.sh embodied --venv lingbotvla --model lingbotvla --env robotwin
+    bash requirements/install.sh embodied --venv lingbotvla --model lingbotvla --env robotwin && \
+    bash requirements/install.sh embodied --venv lingbotva --model lingbotva --env robotwin
 
+# openvla-oft stays the default shell env. LingBot-VA can be enabled explicitly
+# at runtime with `source /opt/venv/lingbotva/bin/activate`.
 RUN source switch_env openpi && download_assets --dir /opt/assets --assets openpi
+RUN source ${UV_PATH}/lingbotva/bin/activate && download_assets --dir /opt/assets --assets lingbotva
+RUN python3 - <<'PY'
+import json
+from pathlib import Path
+
+config_path = Path("/opt/assets/.cache/lingbotva/lingbot-va-posttrain-robotwin/transformer/config.json")
+if config_path.exists():
+    config = json.loads(config_path.read_text())
+    if config.get("attn_mode") not in {"torch", "flashattn"}:
+        config["attn_mode"] = "torch"
+        config_path.write_text(json.dumps(config, indent=2) + "\n")
+PY
 RUN link_assets
 
 # Set default env

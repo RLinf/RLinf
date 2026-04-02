@@ -72,6 +72,20 @@ class MultiStepRolloutWorker(Worker):
         self.enable_cuda_graph = cfg.rollout.get("enable_cuda_graph", False)
         self.enable_eval = cfg.runner.val_check_interval > 0 or cfg.runner.only_eval
 
+        if SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.LINGBOTVA:
+            if not self.cfg.runner.only_eval:
+                raise ValueError(
+                    "Official LingBot-VA websocket backend is stateful and currently "
+                    "only supports single-session evaluation per rollout worker. "
+                    "Please set runner.only_eval=True."
+                )
+            if self.eval_batch_size != 1:
+                raise ValueError(
+                    "Official LingBot-VA websocket backend is stateful and currently "
+                    "only supports single-session evaluation per rollout worker. "
+                    f"Expected eval_batch_size == 1, got {self.eval_batch_size}."
+                )
+
         self.n_train_chunk_steps = (
             cfg.env.train.max_steps_per_rollout_epoch
             // cfg.actor.model.num_action_chunks
@@ -253,6 +267,7 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.MLP_POLICY,
             SupportedModel.GR00T,
             SupportedModel.CNN_POLICY,
+            SupportedModel.LINGBOTVA,
         ]:
             if self.cfg.algorithm.loss_type == "embodied_dagger":
                 kwargs = {"mode": "eval"}

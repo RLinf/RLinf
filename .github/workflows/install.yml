@@ -96,6 +96,16 @@ jobs:
           pip install uv
           bash requirements/install.sh embodied --model dexbotic --env maniskill_libero
           rm -rf .venv
+
+      - name: Install lingbotva
+        run: |
+          pip install uv
+          if ! command -v nvcc >/dev/null 2>&1 && [ ! -x /usr/local/cuda/bin/nvcc ]; then
+            echo "nvcc not found on runner; skipping LingBot-VA RoboTwin install check."
+            exit 0
+          fi
+          bash requirements/install.sh embodied --model lingbotva --env robotwin
+          rm -rf .venv
       
       - name: Install xsquare_turtle2
         run: |

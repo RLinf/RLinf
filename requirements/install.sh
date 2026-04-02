@@ -17,7 +17,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "lingbotvla")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "lingbotvla" "lingbotva")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus")
 
 #=======================Utility Functions=======================
@@ -595,6 +595,35 @@ install_lingbot_vla_model() {
     uv pip uninstall pynvml || true
 }
 
+install_lingbot_va_model() {
+    if ! command -v uv &> /dev/null && [ -x "$HOME/.local/bin/uv" ]; then
+        export PATH="$HOME/.local/bin:$PATH"
+    fi
+    create_and_sync_venv
+    install_common_embodied_deps
+
+    local lingbotva_dir
+    lingbotva_dir=$(clone_or_reuse_repo LINGBOT_VA_REPO_PATH "$VENV_DIR/lingbot-va" ${GITHUB_PREFIX}https://github.com/robbyant/lingbot-va.git --recurse-submodules)
+    local filtered_requirements
+    filtered_requirements=$(mktemp)
+    grep -vE '^[[:space:]]*flash_attn([[:space:]]|=|>|<|!|$)' "$lingbotva_dir/requirements.txt" > "$filtered_requirements"
+    uv pip install -r "$filtered_requirements"
+    rm -f "$filtered_requirements"
+    echo "export LINGBOT_VA_REPO_PATH=$(realpath "$lingbotva_dir")" >> "$VENV_DIR/bin/activate"
+
+    case "$ENV_NAME" in
+        robotwin)
+            install_robotwin_env
+            install_flash_attn
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for LingBot-VA model." >&2
+            exit 1
+            ;;
+    esac
+    uv pip uninstall pynvml || true
+}
+
 install_env_only() {
     create_and_sync_venv
     SKIP_ROS=${SKIP_ROS:-0}
@@ -960,6 +989,9 @@ main() {
                     ;;
                 lingbotvla)                  
                     install_lingbot_vla_model 
+                    ;;
+                lingbotva)
+                    install_lingbot_va_model
                     ;;
                 "")
                     install_env_only
