@@ -44,8 +44,18 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             self._build_sft_data_loader()
 
     def _build_sft_data_loader(self):
-        super()._build_sft_data_loader()
+        from rlinf.data.rolling_lerobot_dataset import build_rolling_lerobot_dataloader
+        self.dataset, self.data_loader = build_rolling_lerobot_dataloader(
+            root_dir=self.cfg.actor.sft_data_path,
+            batch_size=self.cfg.actor.micro_batch_size * self._world_size,
+            world_size=self._world_size,
+            rank=self._rank,
+            min_datasets=self.cfg.actor.get("min_datasets", 1),
+            wait_interval_s=self.cfg.actor.get("wait_interval_s", 10.0),
+        )
         self.data_iter = iter(self.data_loader)
+        self._data_iter_offset = 0
+        self._data_epoch = 0
 
     def init_worker(self):
         super().setup_model_and_optimizer()
@@ -105,22 +115,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         if self.cfg.data_source == "buffer":
             return self.model.prepare_dagger_sft_batch(batch)
         elif self.cfg.data_source == "lerobot":
-            try:
-                batch = next(self.data_iter)
-                self._data_iter_offset += 1
-            except StopIteration:
-                self._data_epoch += 1
-                logging.info(
-                    f"[INFO] data_iter exhausted, reset iterator self._data_epoch {self._data_epoch}"
-                )
-                if hasattr(self.data_loader, "sampler") and hasattr(
-                    self.data_loader.sampler, "set_epoch"
-                ):
-                    self.data_loader.sampler.set_epoch(self._data_epoch)
-                self.data_iter = iter(self.data_loader)
-                batch = next(self.data_iter)
-                self._data_iter_offset = 1
-
             observation, actions = batch
             register_pytree_dataclasses(observation)
             observation = _pytree.tree_map(
@@ -161,6 +155,14 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     @Worker.timer("update_one_epoch")
     def update_one_epoch(self):
+        if self.cfg.data_source == "buffer":
+            return self.update_buffer_one_epoch()
+        elif self.cfg.data_source == "lerobot":
+            return self.update_lerobot_one_epoch()
+        else:
+            raise ValueError(f"Invalid data source: {self.cfg.data_source}")
+
+    def update_buffer_one_epoch(self):
         """Run one replay-buffer update epoch for DAgger."""
         global_batch_size_per_rank = (
             self.cfg.actor.global_batch_size // self._world_size
@@ -206,7 +208,54 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             "actor/lr": self.optimizer.param_groups[0]["lr"],
             "actor/grad_norm": actor_grad_norm,
         }
+        
+    def update_lerobot_one_epoch(self):
+        """Run one Lerobot update epoch for DAgger."""
+        gbs_actor_loss = []
+        for idx in range(self.gradient_accumulation):
+            # set the gradient accumulation backward_ctx
+            backward_ctx = self.before_micro_batch(
+                self.model,
+                is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
+            )
 
+            try:
+                batch = next(self.data_iter)
+                self._data_iter_offset += 1
+            except StopIteration:
+                self._data_epoch += 1
+                logging.info(
+                    f"[INFO] data_iter exhausted, reset iterator self._data_epoch {self._data_epoch}"
+                )
+                if hasattr(self.data_loader, "sampler") and hasattr(
+                    self.data_loader.sampler, "set_epoch"
+                ):
+                    self.data_loader.sampler.set_epoch(self._data_epoch)
+                self.data_iter = iter(self.data_loader)
+                batch = next(self.data_iter)
+                self._data_iter_offset = 1
+
+            with self.amp_context:
+                actor_loss = self.forward_actor(batch["forward_inputs"])
+            
+            actor_loss = actor_loss / self.gradient_accumulation
+            with backward_ctx:
+                self.grad_scaler.scale(actor_loss).backward()
+            gbs_actor_loss.append(actor_loss.item() * self.gradient_accumulation)
+
+        actor_grad_norm = self.model.clip_grad_norm_(
+            max_norm=self.cfg.actor.optim.clip_grad
+        )
+        self.optimizer.step()
+        self.lr_scheduler.step()
+
+        return {
+            "dagger/actor_loss": np.mean(gbs_actor_loss),
+            "actor/lr": self.optimizer.param_groups[0]["lr"],
+            "actor/grad_norm": actor_grad_norm,
+        }
+
+    
     def process_train_metrics(self, metrics):
         """Aggregate DAgger training and replay-buffer metrics."""
         replay_buffer_stats = self.replay_buffer.get_stats()
@@ -238,6 +287,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         if self.cfg.actor.get("enable_offload", False):
             self.load_param_and_grad(self.device)
             self.load_optimizer(self.device)
+        
+        if self.cfg.actor.get("data_source", "buffer") == "lerobot":
+            self.dataset.refresh()
 
         min_buffer_size = self.cfg.algorithm.replay_buffer.get("min_buffer_size", 100)
         if not self.replay_buffer.is_ready(min_buffer_size):
