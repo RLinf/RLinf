@@ -21,13 +21,10 @@ from rlinf.envs.realworld.common.spacemouse.spacemouse_expert import SpaceMouseE
 
 
 class SpacemouseIntervention(gym.ActionWrapper):
-    def __init__(self, env):
+    def __init__(self, env, gripper_enabled: bool = True):
         super().__init__(env)
 
-        self.gripper_enabled = True
-        if self.action_space.shape == (6,):
-            self.gripper_enabled = False
-
+        self.gripper_enabled = gripper_enabled
         self.expert = SpaceMouseExpert()
         self.last_intervene = 0
         self.left, self.right = False, False
