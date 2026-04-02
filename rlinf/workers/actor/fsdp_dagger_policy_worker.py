@@ -40,8 +40,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self.replay_buffer = None
         self.update_step = 0
         self.enable_drq = bool(getattr(self.cfg.actor, "enable_drq", False))
-        if self.cfg.actor.get("data_source", "buffer") == "lerobot":
-            self._build_sft_data_loader()
+        self.dataset = None
 
     def _build_sft_data_loader(self):
         from rlinf.data.rolling_lerobot_dataset import build_rolling_lerobot_dataloader
@@ -236,7 +235,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 self._data_iter_offset = 1
 
             with self.amp_context:
-                actor_loss = self.forward_actor(batch["forward_inputs"])
+                actor_loss = self.forward_actor(batch)
             
             actor_loss = actor_loss / self.gradient_accumulation
             with backward_ctx:
@@ -284,6 +283,11 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     @Worker.timer("run_training")
     def run_training(self):
         """Run DAgger updates with replay-buffer samples."""
+
+        if self.cfg.actor.get("data_source", "buffer") == "lerobot":
+            if self.dataset is None:
+                self._build_sft_data_loader()
+
         if self.cfg.actor.get("enable_offload", False):
             self.load_param_and_grad(self.device)
             self.load_optimizer(self.device)
