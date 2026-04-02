@@ -327,7 +327,7 @@ as well as reinforcement learning training examples on real robots.
          <a href="franka_zed_robotiq.html" style="text-decoration: underline; color: blue;">
            <b>Real-World Franka with ZED Cameras and Robotiq Gripper</b>
          </a><br>
-         Add ZED camera, Robotiq gripper, and data-collection setup for Franka
+         ZED camera, Robotiq gripper, and data-collection setup for Franka
        </p>
      </div>
    </div>
@@ -340,7 +340,7 @@ as well as reinforcement learning training examples on real robots.
          <a href="franka_gello.html" style="text-decoration: underline; color: blue;">
            <b>Real-World Franka with GELLO Teleoperation</b>
          </a><br>
-         Add GELLO teleoperation setup, configuration, and verification for Franka
+         GELLO teleoperation setup, configuration, and verification for Franka
        </p>
      </div>
 

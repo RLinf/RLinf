@@ -326,7 +326,7 @@
          <a href="franka_zed_robotiq.html" style="text-decoration: underline; color: blue;">
            <b>Franka 真机使用 ZED 相机与 Robotiq 夹爪</b>
          </a><br>
-         补充 Franka 真机中 ZED 相机、Robotiq 夹爪安装与数据采集配置
+         Franka 真机中 ZED 相机、Robotiq 夹爪安装与数据采集配置
        </p>
      </div>
    </div>
@@ -339,7 +339,7 @@
          <a href="franka_gello.html" style="text-decoration: underline; color: blue;">
            <b>Franka 真机使用 GELLO 遥操作设备</b>
          </a><br>
-         补充 Franka 真机中 GELLO 遥操作设备安装、配置与验证流程
+         Franka 真机中 GELLO 遥操作设备安装、配置与验证流程
        </p>
      </div>
 
