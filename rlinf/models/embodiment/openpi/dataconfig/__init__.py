@@ -145,6 +145,32 @@ _CONFIGS = [
         save_interval=250,
     ),
     TrainConfig(
+        name="pi05_franka",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=8, discrete_state_input=False
+        ),  # discrete_state_input=False: stateless policy, True: with state policy
+        data=LeRobotFrankaEEDataConfig(
+            repo_id="physical-intelligence/real_rl",  # Not important
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                assets_dir="checkpoints/torch/pi05_franka_pretrained/assets"
+            ),
+            output_action_dim=6,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+        seed=0,
+        batch_size=16,
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=0.999,
+        num_workers=8,
+        num_train_steps=5_000,
+        log_interval=5,
+        save_interval=250,
+    ),
+    TrainConfig(
         name="pi05_maniskill_sim_real_co_training",
         model=pi0_config.Pi0Config(
             pi05=True, action_horizon=8, discrete_state_input=False

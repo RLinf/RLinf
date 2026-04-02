@@ -52,6 +52,7 @@ class FrankaRobotConfig:
 
     is_dummy: bool = False
     use_dense_reward: bool = False
+    reward_scale: float = 1.0  # Scale dense reward to make training stable
     step_frequency: float = 10.0  # Max number of steps per second
 
     # Positions are stored in eular angles (xyz for position, rzryrx for orientation)
@@ -259,6 +260,7 @@ class FrankaEnv(gym.Env):
         )
 
         truncated = self._num_steps >= self.config.max_num_steps
+        reward *= self.config.reward_scale
         return observation, reward, terminated, truncated, {}
 
     @property
