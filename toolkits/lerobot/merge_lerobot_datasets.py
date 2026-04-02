@@ -102,6 +102,64 @@ def _write_jsonl(path: Path, records: list[dict]) -> None:
             f.write(json.dumps(r) + "\n")
 
 
+def _reindex_episode_stats(
+    stats: dict,
+    *,
+    new_ep_idx: int,
+    new_frame_start: int,
+    old_frame_start: int,
+) -> dict:
+    """Return a copy of *stats* with episode_index and index fields updated.
+
+    The per-feature statistics (min/max/mean/std) for ``episode_index`` and
+    ``index`` (global frame index) need to reflect the new global positions
+    after re-indexing.  All other feature stats are carried over unchanged.
+
+    Args:
+        stats: Original stats dict from the source ``episodes_stats.jsonl`` record.
+        new_ep_idx: New global episode index assigned to this episode.
+        new_frame_start: First global frame index in the merged dataset.
+        old_frame_start: First global frame index in the source dataset.
+
+    Returns:
+        Updated stats dict.
+    """
+    import copy
+
+    out = copy.deepcopy(stats)
+    frame_offset = new_frame_start - old_frame_start
+
+    # episode_index: all frames share the same constant new_ep_idx
+    if "episode_index" in out:
+        ep_s = out["episode_index"]
+        count = ep_s.get("count", [1])
+        out["episode_index"] = {
+            "min": [new_ep_idx],
+            "max": [new_ep_idx],
+            "mean": [float(new_ep_idx)],
+            "std": [0.0],
+            "count": count,
+        }
+
+    # index (global frame index): shift by offset; std is unchanged (contiguous range)
+    if "index" in out:
+        idx_s = out["index"]
+        out["index"] = {
+            "min": [v + frame_offset for v in _ensure_list(idx_s.get("min", [0]))],
+            "max": [v + frame_offset for v in _ensure_list(idx_s.get("max", [0]))],
+            "mean": [v + frame_offset for v in _ensure_list(idx_s.get("mean", [0.0]))],
+            "std": idx_s.get("std", [0.0]),
+            "count": idx_s.get("count", [1]),
+        }
+
+    return out
+
+
+def _ensure_list(value: object) -> list:
+    """Wrap a scalar in a list if it is not already a list."""
+    return value if isinstance(value, list) else [value]
+
+
 def merge_lerobot_datasets(
     source_dirs: list[str | Path],
     output_dir: str | Path,
@@ -145,6 +203,9 @@ def merge_lerobot_datasets(
     global_tasks: dict[str, int] = {}
     reference_info: dict[str, Any] | None = None
 
+    # episode_index (within dataset) → stats record, keyed by (ds_path, ep_idx)
+    source_episode_stats: dict[tuple[Path, int], dict] = {}
+
     for ds_path in datasets:
         info_path = ds_path / "meta" / "info.json"
         episodes_path = ds_path / "meta" / "episodes.jsonl"
@@ -160,6 +221,12 @@ def merge_lerobot_datasets(
 
         episodes = _read_jsonl(episodes_path)
         chunks_size: int = info.get("chunks_size", 1000)
+
+        # Load per-episode stats if present
+        ep_stats_path = ds_path / "meta" / "episodes_stats.jsonl"
+        if ep_stats_path.is_file():
+            for rec in _read_jsonl(ep_stats_path):
+                source_episode_stats[(ds_path, rec["episode_index"])] = rec
 
         for ep_meta in episodes:
             ep_idx: int = ep_meta["episode_index"]
@@ -204,11 +271,15 @@ def merge_lerobot_datasets(
     # ------------------------------------------------------------------
     global_frame_index = 0
     merged_episode_metas: list[dict] = []
+    merged_episode_stats: list[dict] = []
 
     for new_ep_idx, (ds_path, ep_meta, parquet_path) in enumerate(all_episodes):
         table = pq.read_table(parquet_path)
         df = table.to_pandas()
         n_frames = len(df)
+
+        old_ep_idx: int = ep_meta["episode_index"]
+        old_frame_start = int(df["index"].min()) if "index" in df.columns else 0
 
         # Update index columns
         df["episode_index"] = new_ep_idx
@@ -245,6 +316,18 @@ def merge_lerobot_datasets(
                 },
             }
         )
+
+        # Re-index episode stats if available
+        src_stats_rec = source_episode_stats.get((ds_path, old_ep_idx))
+        if src_stats_rec is not None:
+            new_stats = _reindex_episode_stats(
+                src_stats_rec["stats"],
+                new_ep_idx=new_ep_idx,
+                new_frame_start=global_frame_index,
+                old_frame_start=old_frame_start,
+            )
+            merged_episode_stats.append({"episode_index": new_ep_idx, "stats": new_stats})
+
         global_frame_index += n_frames
 
         if (new_ep_idx + 1) % 50 == 0 or (new_ep_idx + 1) == total_episodes:
@@ -282,6 +365,12 @@ def merge_lerobot_datasets(
         output_path / "meta" / "tasks.jsonl",
         [{"task_index": idx, "task": task} for task, idx in sorted_tasks],
     )
+
+    if merged_episode_stats:
+        _write_jsonl(output_path / "meta" / "episodes_stats.jsonl", merged_episode_stats)
+        print(f"[merge] Written episodes_stats.jsonl ({len(merged_episode_stats)} records)")
+    else:
+        print("[merge] No episodes_stats.jsonl found in source datasets; skipping.")
 
     print(
         f"[merge] Done: {total_episodes} episodes, {global_frame_index} frames "
