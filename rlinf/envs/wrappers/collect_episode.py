@@ -764,3 +764,7 @@ class CollectEpisode(gym.Wrapper):
                 unwrapped._hidden_objects.remove(goal_site)
         if hasattr(goal_site, "show_visual"):
             goal_site.show_visual()
+
+    def update_reset_state_ids(self):
+        if hasattr(self.env, "update_reset_state_ids"):
+            self.env.update_reset_state_ids()
