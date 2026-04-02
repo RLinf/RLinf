@@ -21,11 +21,11 @@ from typing import Any, Optional
 import numpy as np
 import torch
 
-from rlinf.datasets.lerobot.normalize import (
+from rlinf.data.datasets.cfg.lerobot.normalize import (
     NormStats,
     load_stats,
 )
-from rlinf.datasets.lerobot.transforms import DataTransformFn
+from rlinf.data.datasets.cfg.lerobot.transforms import DataTransformFn
 
 logger = logging.getLogger(__name__)
 

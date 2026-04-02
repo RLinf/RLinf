@@ -23,8 +23,8 @@ import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from torch.utils.data import Dataset
 
-from rlinf.datasets.lerobot.config import create_data_config_factory
-from rlinf.datasets.lerobot.transforms import (
+from rlinf.data.datasets.cfg.lerobot.config import create_data_config_factory
+from rlinf.data.datasets.cfg.lerobot.transforms import (
     Normalize,
     RepackTransform,
     compose,
@@ -199,6 +199,16 @@ class ValueDataset(Dataset):
         real_idx = self._indices[idx] if self._indices else idx
         sample = self._base[real_idx]
 
+        # Extract episode/frame indices BEFORE transforms (LiberoInputs drops them)
+        ep = int(sample.get("episode_index", -1))
+        fr = int(sample.get("frame_index", -1))
+        if ep < 0 or fr < 0:
+            raise KeyError(
+                f"LeRobot sample missing episode_index ({ep}) or "
+                f"frame_index ({fr}) at real_idx={real_idx}. "
+                f"Available keys: {sorted(sample.keys())}"
+            )
+
         # Prompt injection
         if self._tasks and "task_index" in sample:
             ti = sample["task_index"]
@@ -210,8 +220,6 @@ class ValueDataset(Dataset):
             sample = self._transform(sample)
 
         # Return lookup + normalize (sidecar guaranteed to exist)
-        ep = int(sample.get("episode_index", -1))
-        fr = int(sample.get("frame_index", -1))
         raw = float(self._sidecar[ep]["return"][fr]) if ep in self._sidecar else 0.0
         target_value = (
             self._normalizer.normalize_value(raw) if self._normalizer else raw

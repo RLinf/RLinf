@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 import torch  # noqa: E402
 from omegaconf import DictConfig  # noqa: E402
 
-from rlinf.datasets import (  # noqa: E402
+from rlinf.data.datasets.cfg import (  # noqa: E402
     ValueDataLoaderImpl,
     ValueMixtureDataset,
     load_return_stats_from_dataset,
@@ -148,7 +148,7 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         except (ImportError, AttributeError):
             pass
 
-        from rlinf.datasets import ValueDataset
+        from rlinf.data.datasets.cfg import ValueDataset
         from rlinf.models.embodiment.value_model.data_collator import ValueDataCollator
         from rlinf.models.embodiment.value_model.processing import ValueProcessor
 
@@ -537,11 +537,11 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                         if isinstance(result.cat_acc_neighbor, torch.Tensor)
                         else result.cat_acc_neighbor
                     )
-                if result.cat_mae is not None:
-                    metrics["cat_mae"] = (
-                        result.cat_mae.detach().item()
-                        if isinstance(result.cat_mae, torch.Tensor)
-                        else result.cat_mae
+                if result.mae is not None:
+                    metrics["mae"] = (
+                        result.mae.detach().item()
+                        if isinstance(result.mae, torch.Tensor)
+                        else result.mae
                     )
                 if result.predicted_values is not None and target_values is not None:
                     metrics.update(
@@ -647,11 +647,11 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                                 if isinstance(result.cat_acc_neighbor, torch.Tensor)
                                 else result.cat_acc_neighbor
                             )
-                        if result.cat_mae is not None:
-                            metrics["cat_mae"] = (
-                                result.cat_mae.detach().item()
-                                if isinstance(result.cat_mae, torch.Tensor)
-                                else result.cat_mae
+                        if getattr(result, "cat_bin_mae", None) is not None:
+                            metrics["mae"] = (
+                                result.cat_bin_mae.detach().item()
+                                if isinstance(result.cat_bin_mae, torch.Tensor)
+                                else result.cat_bin_mae
                             )
                         if (
                             result.predicted_values is not None

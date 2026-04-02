@@ -66,7 +66,7 @@ class CriticOutput(ModelOutput):
     hidden_states: Optional[torch.FloatTensor] = None
     cat_acc_best: Optional[torch.FloatTensor] = None
     cat_acc_neighbor: Optional[torch.FloatTensor] = None
-    cat_mae: Optional[torch.FloatTensor] = None
+    mae: Optional[torch.FloatTensor] = None
 
 
 class VLMObservationEncoder(nn.Module):
@@ -392,7 +392,7 @@ class ValueCriticModel(VLMObservationEncoder):
             hidden_states=hidden_states,
             cat_acc_best=cat_metrics["acc_best"] if cat_metrics else None,
             cat_acc_neighbor=cat_metrics["acc_neighbor"] if cat_metrics else None,
-            cat_mae=cat_metrics["mae"] if cat_metrics else None,
+            mae=cat_metrics["mae"] if cat_metrics else None,
         )
 
     def _forward_expert(
@@ -825,7 +825,7 @@ class ValueCriticModel(VLMObservationEncoder):
             action_norm_skip_dims=action_norm_skip_dims,
         )
 
-        from rlinf.datasets.lerobot.transforms import compose
+        from rlinf.data.datasets.cfg.lerobot.transforms import compose
 
         model._input_transform = compose(transforms)
         model._device = device

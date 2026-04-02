@@ -26,7 +26,7 @@ runner:
   max_epochs: 30000
   max_steps: -1
   val_check_interval: -1
-  save_interval: 5000
+  save_interval: 3000
 
 data:
   num_workers: 8

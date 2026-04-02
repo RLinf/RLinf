@@ -89,7 +89,7 @@ def load_norm_stats(checkpoint_dir: pathlib.Path, asset_id: str = "libero") -> d
     Returns:
         Dictionary mapping stat names to NormStats objects
     """
-    from rlinf.datasets.lerobot.normalize import NormStats
+    from rlinf.data.datasets.cfg.lerobot.normalize import NormStats
 
     possible_paths = [
         checkpoint_dir / "norm_stats" / asset_id / "norm_stats.json",
@@ -159,7 +159,7 @@ def build_input_transforms(
     Similar to action policy but without output transforms since we only need to
     preprocess observations, not postprocess actions.
     """
-    from rlinf.datasets.lerobot.transforms import (
+    from rlinf.data.datasets.cfg.lerobot.transforms import (
         InjectDefaultPrompt,
         Normalize,
         PadStatesAndActions,
@@ -169,13 +169,13 @@ def build_input_transforms(
     input_transforms = []
 
     if env_type == "libero":
-        from rlinf.datasets.lerobot.libero import LiberoInputs
+        from rlinf.data.datasets.cfg.lerobot.libero import LiberoInputs
 
         input_transforms.append(InjectDefaultPrompt(default_prompt))
         input_transforms.append(LiberoInputs(mask_padding=True, model_type=model_type))
 
     elif env_type == "franka":
-        from rlinf.datasets.lerobot.franka import FrankaEEInputs
+        from rlinf.data.datasets.cfg.lerobot.franka import FrankaEEInputs
 
         input_transforms.append(InjectDefaultPrompt(default_prompt))
         input_transforms.append(

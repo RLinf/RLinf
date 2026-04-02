@@ -33,16 +33,16 @@ except ImportError:
 import dataclasses
 from typing import Any, Iterator
 
-from rlinf.datasets.mixture_datasets import (  # noqa: E402
+from rlinf.data.datasets.cfg.mixture_datasets import (  # noqa: E402
     CfgMixtureDataset,
     ValueMixtureDataset,
 )
-from rlinf.datasets.return_loaders import (  # noqa: E402
+from rlinf.data.datasets.cfg.return_loaders import (  # noqa: E402
     load_return_stats_from_dataset,
     load_returns_sidecar,
 )
-from rlinf.datasets.value_dataset import ValueDataset  # noqa: E402
-from rlinf.datasets.value_transforms import (  # noqa: E402
+from rlinf.data.datasets.cfg.value_dataset import ValueDataset  # noqa: E402
+from rlinf.data.datasets.cfg.value_transforms import (  # noqa: E402
     ReturnNormalizer,
 )
 

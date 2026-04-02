@@ -9,18 +9,21 @@ Usage:
         --dataset /path/to/your/dataset \
         --output /path/to/output \
         --num-episodes 10
+        --tag <tag>
 
     # Distribution plot only (no videos)
     python visualize/visualize_advantage_dataset.py \
         --dataset /path/to/your/dataset \
         --output /path/to/output \
         --no-video
+        --tag <tag>
 
     # All episodes
     python visualize/visualize_advantage_dataset.py \
         --dataset /path/to/your/dataset \
         --output /path/to/output \
         --num-episodes 0
+        --tag <tag>
 """
 
 import argparse

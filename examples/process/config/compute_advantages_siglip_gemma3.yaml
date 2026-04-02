@@ -17,7 +17,7 @@ advantage:
   device: "cuda"
   batch_size: 1024
   flush_interval: 256
-  num_dataloader_workers: 12
+  num_dataloader_workers_per_gpu: 12
   prefetch_factor: 4
   discount_next_value: true
 

@@ -29,8 +29,8 @@ import numpy as np
 import torch
 from omegaconf import DictConfig
 
-from rlinf.datasets import TokenizePromptWithGuidance
-from rlinf.datasets.mixture_datasets import CfgMixtureDataset
+from rlinf.data.datasets.cfg import TokenizePromptWithGuidance
+from rlinf.data.datasets.cfg.mixture_datasets import CfgMixtureDataset
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.distributed import all_reduce_dict
@@ -353,6 +353,7 @@ class FSDPCfgWorker(FSDPSftWorker):
             )
 
             metrics = {}
+            avg_loss = 0.0
 
             for idx in range(self.gradient_accumulation):
                 backward_ctx = self.before_micro_batch(
@@ -402,13 +403,12 @@ class FSDPCfgWorker(FSDPSftWorker):
                     loss = losses.mean()
 
                 loss = loss / self.gradient_accumulation
+                avg_loss += loss.detach().item()
                 with backward_ctx:
                     self.grad_scaler.scale(loss).backward()
 
-                batch_metrics = {"loss": loss.detach().item()}
                 if metrics_data is not None:
-                    batch_metrics.update(metrics_data)
-                append_to_dict(metrics, batch_metrics)
+                    append_to_dict(metrics, metrics_data)
 
             grad_norm, lr_list = self.optimizer_step()
             self.optimizer.zero_grad(set_to_none=True)
@@ -422,6 +422,7 @@ class FSDPCfgWorker(FSDPSftWorker):
             append_to_dict(
                 metrics,
                 {
+                    "loss": avg_loss,
                     "learning_rate": lr_value,
                     "grad_norm": grad_norm_value,
                 },
