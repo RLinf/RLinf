@@ -99,19 +99,20 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
         self.workflow = self.cfg.agentloop.get("workflow", "mas")
         self.is_hybrid = self.cfg.data.get("is_hybrid", False)
 
-        self.use_local_judge = self.cfg.agentloop.get("use_local_judge", False)
         if self.use_llm_judge:
             llm_ip = self.cfg.agentloop.get("llm_ip", "")
             llm_port = self.cfg.agentloop.get("llm_port", "")
             llm_type = self.cfg.agentloop.get("llm_type", "")
             self.sgl_client = SGLangClient(llm_ip, llm_port, llm_type)
+            self.use_local_judge = self.cfg.agentloop.get("use_local_judge", False)
+            if self.use_local_judge:
+                self.llm_generator = self.local_judge_llm_generator
+            else:
+                self.llm_generator = self.sgl_client.call_sglang_api
+
         else:
             self.sgl_client = None
-
-        if self.use_local_judge:
-            self.llm_generator = self.local_judge_llm_generator
-        else:
-            self.llm_generator = self.sgl_client.call_sglang_api
+            self.llm_generator = None
 
         assert self.return_logprobs if not self.is_eval else True
 
