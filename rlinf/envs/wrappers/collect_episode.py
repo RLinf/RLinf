@@ -191,6 +191,7 @@ class CollectEpisode(gym.Wrapper):
         Returns:
             Tuple of (obs_list, rewards, terminations, truncations, infos_list).
         """
+        # breakpoint()
         obs_list, rewards, terminations, truncations, infos_list = self.env.chunk_step(
             chunk_actions
         )
@@ -338,6 +339,7 @@ class CollectEpisode(gym.Wrapper):
 
     def _flush_episode(self, env_idx: int, is_success: bool) -> None:
         """Dispatch a completed episode to the appropriate format writer."""
+        # breakpoint()
         buf = self._buffers[env_idx]
         if not buf["actions"]:
             return
@@ -377,131 +379,102 @@ class CollectEpisode(gym.Wrapper):
 
     def _buffer_to_lerobot_ep(
         self, buf: dict, env_idx: int, is_success: bool
-    ) -> Optional[dict[str, Any]]:
-        """Convert a raw episode buffer into a LeRobot-compatible episode dict.
-
+    ) -> Optional[list[dict[str, Any]]]:
+        """Convert a raw episode buffer into a list of per-step frame dicts.
+        Produces the format expected by ``LeRobotDatasetWriter.add_episode``:
+        a ``list[dict]`` where every dict represents one step and carries the
+        fields ``image``, ``state``, ``actions``, ``task``, ``is_success``,
+        ``done``, and optionally ``wrist_image`` / ``extra_view_image``.
         The observations list contains one extra entry prepended at reset time,
-        so it is aligned to the actions list by taking the trailing N entries.
+        so it is aligned to the actions list by taking the leading N entries.
         Steps where any required field (image, state, action) is missing are
         silently skipped.
+        Args:
+            buf: Raw episode buffer produced by ``_new_buffer``.
+            env_idx: Index of the parallel environment this buffer belongs to.
+            is_success: Whether the episode was successful.
+        Returns:
+            A list of per-step frame dicts, or ``None`` if no valid frames
+            could be extracted.
         """
         actions = buf["actions"]
         terminated = buf["terminated"]
         obs_steps = buf["observations"]
-
         if not actions:
             return None
-
         if len(obs_steps) > len(actions):
             obs_steps = obs_steps[: len(actions)]
-
         task_desc = self._extract_task_description(buf, env_idx)
-        images: list[np.ndarray] = []
-        wrist_images: list[np.ndarray] = []
-        extra_view_images: list[np.ndarray] = []
-        has_wrist_images = True
-        has_extra_view_images = True
-        states: list[np.ndarray] = []
-        np_actions: list[np.ndarray] = []
-        dones: list[bool] = []
+        steps: list[dict[str, Any]] = []
         first_term_step: Optional[int] = None
-
         for i, action in enumerate(actions):
             obs = obs_steps[i] if i < len(obs_steps) else None
-            image, wrist_image, extra_view_image, state = self._extract_obs_image_state(
-                obs
-            )
-
-            # overwrite action with intervene action
+            image, wrist_image, extra_view_image, state = self._extract_obs_image_state(obs)
+            # Overwrite action with intervene action if present.
             if "final_info" in buf["infos"][i]:
                 info_with_intervene = copy.deepcopy(buf["infos"][i]["final_info"])
             else:
                 info_with_intervene = copy.deepcopy(buf["infos"][i])
-
             np_action = self._to_numpy(action)
             if (
-                "intervene_flag" in info_with_intervene.keys()
-                and "intervene_action" in info_with_intervene.keys()
+                "intervene_flag" in info_with_intervene
+                and "intervene_action" in info_with_intervene
             ):
                 if info_with_intervene["intervene_flag"].all():
                     np_action = self._to_numpy(info_with_intervene["intervene_action"])
-
             if image is None or state is None or np_action is None:
                 continue
-
-            images.append(self._to_uint8(np.asarray(image)))
-            if wrist_image is None:
-                has_wrist_images = False
-            elif has_wrist_images:
-                wrist_images.append(self._to_uint8(np.asarray(wrist_image)))
-            if extra_view_image is None:
-                has_extra_view_images = False
-            elif has_extra_view_images:
-                extra_view_images.append(self._to_uint8(np.asarray(extra_view_image)))
-            states.append(np.asarray(state).astype(np.float32))
-            np_actions.append(np.asarray(np_action).astype(np.float32))
-            dones.append(False)
-
+            frame: dict[str, Any] = {
+                "image": self._to_uint8(np.asarray(image)),
+                "state": np.asarray(state).astype(np.float32),
+                "actions": np.asarray(np_action).astype(np.float32).flatten(),
+                "task": task_desc,
+                "is_success": np.array([is_success], dtype=bool),
+                "done": np.array([False], dtype=bool),
+            }
+            if wrist_image is not None:
+                frame["wrist_image"] = self._to_uint8(np.asarray(wrist_image))
+            if extra_view_image is not None:
+                frame["extra_view_image"] = self._to_uint8(np.asarray(extra_view_image))
+            steps.append(frame)
             if bool(terminated[i]) and first_term_step is None:
-                first_term_step = len(np_actions)
-
-        if not images:
+                first_term_step = len(steps)
+        if not steps:
             return None
-
-        end = first_term_step if first_term_step is not None else len(images)
-        dones_out = dones[:end]
-        if dones_out:
-            dones_out[-1] = True
-
-        return {
-            "images": images[:end],
-            "wrist_images": wrist_images[:end] if has_wrist_images else None,
-            "extra_view_images": (
-                extra_view_images[:end] if has_extra_view_images else None
-            ),
-            "states": states[:end],
-            "actions": np_actions[:end],
-            "dones": dones_out,
-            "task": task_desc,
-            "is_success": is_success,
-        }
+        end = first_term_step if first_term_step is not None else len(steps)
+        steps = steps[:end]
+        steps[-1]["done"] = np.array([True], dtype=bool)
+        return steps
 
     def _ensure_lerobot_writer(self, ep_data: dict) -> LeRobotDatasetWriter:
-        """Create the LeRobot writer on first use. Must be called inside the lock."""
+        """Create the LeRobot writer on first use. Must be called inside the lock.
+
+        ``create()`` is called only when there is no active underlying dataset —
+        either because the writer has never been used, or because a previous
+        batch was flushed by ``finalize()``.  Calling ``create()`` on every
+        episode was the source of a CPU-memory leak: each call spawned a new
+        pool of ``image_writer_processes`` subprocesses while the old pool was
+        silently abandoned.
+        """
         if self._lerobot_writer is None:
-            self._lerobot_writer = LeRobotDatasetWriter(
-                root_dir=self.save_dir,
+            self._lerobot_writer = LeRobotDatasetWriter()
+        if self._lerobot_writer.dataset is None:
+            self._lerobot_writer.create(
+                repo_id=os.path.join(self.save_dir, f"rank_{self.rank}", f"id_{self._episodes_written}"),
                 robot_type=self.robot_type,
                 fps=self.fps,
-                image_shape=ep_data["images"][0].shape,
-                state_dim=ep_data["states"][0].shape[-1],
-                action_dim=ep_data["actions"][0].shape[-1],
-                has_wrist_image=ep_data["wrist_images"] is not None,
-                has_extra_view_image=ep_data["extra_view_images"] is not None,
-                use_incremental_stats=True,
-                stats_sample_ratio=self.stats_sample_ratio,
+                image_shape=ep_data[0]["image"].shape,
+                state_dim=int(ep_data[0]["state"].shape[-1]),
+                action_dim=int(ep_data[0]["actions"].shape[-1]),
+                has_wrist_image="wrist_image" in ep_data[0],
+                has_extra_view_image="extra_view_image" in ep_data[0],
             )
         return self._lerobot_writer
 
     def _write_lerobot_episode(self, ep_data: dict) -> None:
         with self._lerobot_lock:
             writer = self._ensure_lerobot_writer(ep_data)
-            wrist_images = ep_data["wrist_images"]
-            extra_view_images = ep_data["extra_view_images"]
-            writer.add_episode(
-                images=np.stack(ep_data["images"]),
-                wrist_images=np.stack(wrist_images)
-                if wrist_images is not None
-                else None,
-                extra_view_images=np.stack(extra_view_images)
-                if extra_view_images is not None
-                else None,
-                states=np.stack(ep_data["states"]),
-                actions=np.stack(ep_data["actions"]),
-                task=ep_data["task"],
-                is_success=ep_data["is_success"],
-                dones=np.array(ep_data["dones"], dtype=bool),
-            )
+            writer.add_episode(ep_data)
             self._episodes_written += 1
             if (
                 self.finalize_interval > 0
