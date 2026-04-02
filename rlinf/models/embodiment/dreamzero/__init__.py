@@ -11,46 +11,49 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# dreamzero model configs
-import os
-from omegaconf import DictConfig, OmegaConf
-from hydra.utils import instantiate
-import sys
-from pathlib import Path
+
 import json
-import torch
-from rlinf.models.embodiment.dreamzero.dreamzero_policy import DreamZeroPolicy, DreamZeroConfig
-from safetensors.torch import load_file
+from pathlib import Path
+
 from groot.vla.data.schema import DatasetMetadata
 from groot.vla.data.transform import ComposedModalityTransform
+from hydra.utils import instantiate
+from omegaconf import DictConfig, OmegaConf
+from safetensors.torch import load_file
+
+from rlinf.models.embodiment.dreamzero.dreamzero_policy import (
+    DreamZeroConfig,
+    DreamZeroPolicy,
+)
 
 
-def get_model(cfg: DictConfig ,torch_dtype=None):
-    """Load DreamZero policy from checkpoint.
-    """
+def get_model(cfg: DictConfig, torch_dtype=None):
+    """Load DreamZero policy from checkpoint."""
 
     model_path = Path(cfg.get("model_path"))
     if not model_path.exists():
-      raise FileNotFoundError(f"DreamZero model_path does not exist: {model_path}")
+        raise FileNotFoundError(f"DreamZero model_path does not exist: {model_path}")
 
-    tokenizer_path = cfg.get("tokenizer_path","google/umt5-xxl")
+    tokenizer_path = cfg.get("tokenizer_path", "google/umt5-xxl")
     action_dim = cfg.get("action_dim", 7)
 
     config_path = model_path / "config.json"
     if not config_path.exists():
-      raise FileNotFoundError(f"Config not found: {config_path}")
+        raise FileNotFoundError(f"Config not found: {config_path}")
 
     with open(config_path) as f:
-      config_dict = json.load(f)
+        config_dict = json.load(f)
 
     dreamzero_config = DreamZeroConfig(**config_dict)
     # Disable defer_lora_injection for immediate loading
-    if "config" in dreamzero_config.action_head_cfg and isinstance(dreamzero_config.action_head_cfg["config"], dict):
+    if "config" in dreamzero_config.action_head_cfg and isinstance(
+        dreamzero_config.action_head_cfg["config"], dict
+    ):
         dreamzero_config.action_head_cfg["config"]["defer_lora_injection"] = False
         dreamzero_config.action_head_cfg["config"]["skip_component_loading"] = True
 
     dreamzero_config.env_action_dim = action_dim
-    
+
     exp_cfg_dir = model_path / "experiment_cfg"
     metadata_path = exp_cfg_dir / "metadata.json"
     with open(metadata_path, "r") as f:
@@ -61,18 +64,20 @@ def get_model(cfg: DictConfig ,torch_dtype=None):
 
     train_cfg = OmegaConf.load(exp_cfg_dir / "conf.yaml")
     train_cfg.transforms[embodiment_tag].transforms[-1].tokenizer_path = tokenizer_path
-    _transforms = instantiate(train_cfg.transforms[embodiment_tag])
-    assert isinstance(_transforms, ComposedModalityTransform), f"{_transforms=}"
-    _transforms.set_metadata(metadata)
-    _transforms.eval()
+    data_transforms = instantiate(train_cfg.transforms[embodiment_tag])
+    assert isinstance(data_transforms, ComposedModalityTransform), f"{data_transforms=}"
+    data_transforms.set_metadata(metadata)
+    data_transforms.eval()
 
+    dreamzero_config.data_transforms = data_transforms
     dreamzero_config.relative_action = train_cfg.get("relative_action", False)
-    dreamzero_config.relative_action_per_horizon = train_cfg.get("relative_action_per_horizon", False)
+    dreamzero_config.relative_action_per_horizon = train_cfg.get(
+        "relative_action_per_horizon", False
+    )
     dreamzero_config.relative_action_keys = train_cfg.get("relative_action_keys", [])
 
     model = DreamZeroPolicy(
         config=dreamzero_config,
-        _transforms=_transforms,
     )
     #  load safetensors (support index shard)
     state_dict = {}

@@ -117,14 +117,13 @@ actor:
   model:
     model_type: "dreamzero"
     model_path: path/to/your/model
-    policy_setup: "widowx_bridge"
 
     action_dim: 7
     num_action_chunks: 16
     embodiment_tag: "libero_sim"
 
     is_lora: False
-    #TODO：change to your tokenizer path
+
     tokenizer_path: path/to/your/tokenizer
     max_seq_len: 512
     add_value_head: True

@@ -12,21 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
-import sys
-from pathlib import Path
-from typing import Any, Dict, Optional
-from hydra.utils import instantiate
-from tqdm import tqdm
+from dataclasses import dataclass, field
+from typing import Any, Optional
+
+import cv2
 import numpy as np
 import torch
+from groot.vla.data.transform import ComposedModalityTransform
+from groot.vla.model.dreamzero.base_vla import VLA, VLAConfig
 from tianshou.data import Batch
-from omegaconf import OmegaConf, DictConfig
-import os
-from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
-from groot.vla.model.dreamzero.base_vla import VLAConfig, VLA
 from transformers.configuration_utils import PretrainedConfig
-from dataclasses import dataclass, field
+
+from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
+
 
 @dataclass
 class DreamZeroConfig(VLAConfig):
@@ -44,77 +42,90 @@ class DreamZeroConfig(VLAConfig):
     action_dim: int = field(default=None, metadata={"help": "Action dimension."})
     compute_dtype: str = field(default="float32", metadata={"help": "Compute dtype."})
 
-    env_action_dim: int = field(default=None, metadata={"help": "Environment action dimension."})
-    num_action_chunks: int = field(default=16, metadata={"help": "Number of action chunks."})
+    env_action_dim: int = field(
+        default=None, metadata={"help": "Environment action dimension."}
+    )
+    num_action_chunks: int = field(
+        default=16, metadata={"help": "Number of action chunks."}
+    )
 
     relative_action: bool = field(default=False, metadata={"help": "Relative action."})
-    relative_action_per_horizon: bool = field(default=False, metadata={"help": "Relative action per horizon."})
-    relative_action_keys: list = field(default_factory=list, metadata={"help": "Relative action keys."})
+    relative_action_per_horizon: bool = field(
+        default=False, metadata={"help": "Relative action per horizon."}
+    )
+    relative_action_keys: list = field(
+        default_factory=list, metadata={"help": "Relative action keys."}
+    )
 
+    data_transforms: ComposedModalityTransform = field(
+        default=None,
+        metadata={
+            "help": "Transforming data modalities, e.g. video frame augmentation or action normalization."
+        },
+    )
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         for key, value in kwargs.items():
             setattr(self, key, value)
-            
-class DreamZeroPolicy(VLA, BasePolicy):
-    """Lightweight DreamZero action model: IdentityBackbone + WANPolicyHead.
 
-    - predict_action_batch: for eval (inference)
-    - forward: for SFT training (returns loss)
-    """
+
+class DreamZeroPolicy(VLA, BasePolicy):
+    """Lightweight DreamZero action model: IdentityBackbone + WANPolicyHead."""
 
     def __init__(
         self,
         config: DreamZeroConfig,
-        _transforms: Any,
     ):
         super().__init__(config)
         self.config = config
-        self._transforms = _transforms
 
     def apply(self, batch: Batch, **kwargs) -> Batch:
         """Normalize inputs"""
         obs = batch.obs
-        normalized_input = self._transforms(obs)
+        normalized_input = self.config.data_transforms(obs)
         batch.normalized_obs = normalized_input
         return batch
-    
-    def unapply(self, batch: Batch, obs: dict = None, **kwargs):
+
+    def unapply(self, batch: Batch, obs: Optional[dict] = None, **kwargs):
         """Unnormalize actions and convert relative actions to absolute if needed"""
-        unnormalized_action = self._transforms.unapply(
-            dict(action=batch.normalized_action.cpu())
+        unnormalized_action = self.config.data_transforms.unapply(
+            {"action": batch.normalized_action.cpu()}
         )
-        
+
         # Check if relative_action is enabled and convert relative to absolute
         relative_action = self.config.relative_action
         relative_action_per_horizon = self.config.relative_action_per_horizon
         relative_action_keys = self.config.relative_action_keys
-        if (relative_action or relative_action_per_horizon) and relative_action_keys and obs is not None:
+        if (
+            (relative_action or relative_action_per_horizon)
+            and relative_action_keys
+            and obs is not None
+        ):
             for key in relative_action_keys:
                 action_key = f"action.{key}"
                 state_key = f"state.{key}"
-                
+
                 if action_key not in unnormalized_action:
                     continue
-                
+
                 # Try to find the state data - check multiple possible key formats
                 last_state = None
-                
+
                 # Format 1: Direct key like "state.joint_position"
                 if state_key in obs:
                     last_state = obs[state_key]
                 else:
                     # Format 2: Search for keys containing both "state" and the key name
                     for obs_key in obs.keys():
-                        if 'state' in obs_key and key in obs_key:
+                        if "state" in obs_key and key in obs_key:
                             last_state = obs[obs_key]
                             break
-                    
+
                     # Format 3: If key is "joint_position" and obs has "state" key directly
                     # This handles cases where the observation uses modality-level keys
-                    if last_state is None and 'state' in obs:
-                        state_data = obs['state']
+                    if last_state is None and "state" in obs:
+                        state_data = obs["state"]
                         # Check if the state data shape matches the action shape
                         action_dim = unnormalized_action[action_key].shape[-1]
                         if torch.is_tensor(state_data):
@@ -123,29 +134,33 @@ class DreamZeroPolicy(VLA, BasePolicy):
                             state_dim = state_data.shape[-1]
                         else:
                             state_dim = None
-                        
+
                         if state_dim == action_dim:
                             last_state = state_data
-                
+
                 if last_state is None:
                     continue
-                    
+
                 if torch.is_tensor(last_state):
                     last_state = last_state.cpu().numpy()
-                
+
                 # Shape is (B, T, D) or (T, D), we want the last timestep
                 # After indexing: (B, D) or (D,)
                 if len(last_state.shape) >= 2:
                     last_state = last_state[..., -1, :]  # Get the last timestep
-                
+
                 # Action shape is (horizon, D) or (B, horizon, D)
                 # Expand dims to broadcast: (D,) -> (1, D) or (B, D) -> (B, 1, D)
                 if len(unnormalized_action[action_key].shape) > len(last_state.shape):
-                    last_state = np.expand_dims(last_state, axis=-2)  # Add horizon dimension
-                
+                    last_state = np.expand_dims(
+                        last_state, axis=-2
+                    )  # Add horizon dimension
+
                 # Add state to relative action to get absolute action
-                unnormalized_action[action_key] = unnormalized_action[action_key] + last_state
-        
+                unnormalized_action[action_key] = (
+                    unnormalized_action[action_key] + last_state
+                )
+
         batch.act = unnormalized_action
         return batch
 
@@ -160,15 +175,18 @@ class DreamZeroPolicy(VLA, BasePolicy):
         # Do dtype cast if needed
         target_dtype = next(self.parameters()).dtype
         for k, v in normalized_input.items():
-            if torch.is_tensor(v) and v.dtype == torch.float32 and target_dtype != torch.float32:
+            if (
+                torch.is_tensor(v)
+                and v.dtype == torch.float32
+                and target_dtype != torch.float32
+            ):
                 normalized_input[k] = v.to(dtype=target_dtype)
         return normalized_input
-    
+
     def _observation_convert(self, env_obs: dict) -> dict:
         """Convert environment observation to model input for end-effector control"""
         main = env_obs["main_images"]
         wrist = env_obs.get("wrist_images", None)
-        extra_view = env_obs.get("extra_view_images", None)
         states = env_obs.get("states", None)
         prompts = env_obs.get("task_descriptions", None)
         if torch.is_tensor(main):
@@ -181,7 +199,7 @@ class DreamZeroPolicy(VLA, BasePolicy):
                 wrist = wrist.detach().cpu().numpy()
             else:
                 wrist = np.asarray(wrist)
-        import cv2
+
         def _resize_bt_hwc_uint8(x, h=256, w=256):
             # x: [B,H,W,C
             B = x.shape[0]
@@ -192,6 +210,7 @@ class DreamZeroPolicy(VLA, BasePolicy):
                     frame = frame.astype(np.uint8)
                 out[b] = cv2.resize(frame, (w, h), interpolation=cv2.INTER_AREA)
             return out
+
         main = _resize_bt_hwc_uint8(main)
         if wrist is not None:
             wrist = _resize_bt_hwc_uint8(wrist)
@@ -216,28 +235,27 @@ class DreamZeroPolicy(VLA, BasePolicy):
         if isinstance(prompts, str):
             prompts = [prompts] * B
         converted_obs = {
-            "video.image": main,                     # [B,H,W,C]
-            "video.wrist_image": wrist,                     # [B,H,W,C]
-            "state.state": state_bt,        # [B,1,8]
-            "annotation.language.action_text": list(prompts),        # list[str], len=B
+            "video.image": main,  # [B,H,W,C]
+            "video.wrist_image": wrist,  # [B,H,W,C]
+            "state.state": state_bt,  # [B,1,8]
+            "annotation.language.action_text": list(prompts),  # list[str], len=B
         }
         return converted_obs
 
-    def predict_action_batch(self, env_obs, mode,**kwargs) -> np.ndarray:
+    def predict_action_batch(self, env_obs, mode, **kwargs) -> np.ndarray:
         """
         input:
-        env_obs:
-            - main_images: [B,H,W,C] uint8
-            - extra_view_images: [B,H,W,C]
-            - states: [B,D]
-            - task_descriptions: list[str] or None
+            env_obs:
+                - main_images: [B,H,W,C] uint8
+                - extra_view_images: [B,H,W,C]
+                - states: [B,D]
+                - task_descriptions: list[str] or None
         output:
-        actions: np.ndarray [B, num_action_chunks, 8]  # 6ee + 1 gripper
-        result: dict  # compatible with rollout interface"""
+            actions: np.ndarray [B, num_action_chunks, 8]  # 6ee + 1 gripper
+            result: dict  # compatible with rollout interface"""
 
-        B = env_obs["main_images"].shape[0]
         converted_obs = self._observation_convert(env_obs)
-        batch = Batch(obs=converted_obs)        
+        batch = Batch(obs=converted_obs)
         # ---------- DreamZero inference ----------
         normalized_input = self._process_batch(batch)
         with torch.no_grad():
@@ -246,24 +264,32 @@ class DreamZeroPolicy(VLA, BasePolicy):
         normalized_action = model_pred["action_pred"].float()
 
         # Unnormalize actions (pass obs for relative action normalization)
-        unnormalized_action = self._transforms.unapply(
-            dict(action=normalized_action.cpu())
+        unnormalized_action = self.config.data_transforms.unapply(
+            {"action": normalized_action.cpu()}
         )
         batch.act = unnormalized_action
 
         actions = batch.act["action.actions"]
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
-        actions[..., -1] = np.where(actions[..., -1] > 0, 1.0, -1.0).astype(actions.dtype)
+        actions[..., -1] = np.where(actions[..., -1] > 0, 1.0, -1.0).astype(
+            actions.dtype
+        )
 
-        assert actions.shape[-1] == self.config.env_action_dim, f"Action shape mismatch: {actions.shape} != {self.config.env_action_dim}"
+        assert actions.shape[-1] == self.config.env_action_dim, (
+            f"Action shape mismatch: {actions.shape} != {self.config.env_action_dim}"
+        )
 
-        flat = torch.as_tensor(actions, dtype=torch.float32).reshape(actions.shape[0], -1).cpu()
+        flat = (
+            torch.as_tensor(actions, dtype=torch.float32)
+            .reshape(actions.shape[0], -1)
+            .cpu()
+        )
         forward_inputs = {"action": flat}
         result = {
-        "prev_logprobs": torch.zeros_like(flat, dtype=torch.float32),
-        "prev_values": torch.zeros((flat.shape[0], 1), dtype=torch.float32),
-        "forward_inputs": forward_inputs,
+            "prev_logprobs": torch.zeros_like(flat, dtype=torch.float32),
+            "prev_values": torch.zeros((flat.shape[0], 1), dtype=torch.float32),
+            "forward_inputs": forward_inputs,
         }
         return actions, result
 
@@ -278,6 +304,5 @@ class DreamZeroPolicy(VLA, BasePolicy):
         forward_inputs: dict[str, torch.Tensor],
         **kwargs,
     ) -> dict[str, Any]:
-
         """Default forward pass."""
         raise NotImplementedError
