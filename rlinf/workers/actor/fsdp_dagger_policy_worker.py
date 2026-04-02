@@ -112,9 +112,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     def _prepare_sft_batch(self, batch):
         """Prepare model-specific DAgger training inputs."""
-        if self.cfg.data_source == "buffer":
+        if self.cfg.actor.data_source == "buffer":
             return self.model.prepare_dagger_sft_batch(batch)
-        elif self.cfg.data_source == "lerobot":
+        elif self.cfg.actor.data_source == "lerobot":
             observation, actions = batch
             register_pytree_dataclasses(observation)
             observation = _pytree.tree_map(
@@ -129,7 +129,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             actions = actions.to(self.device)
             return {"observation": observation, "actions": actions}
         else:
-            raise ValueError(f"Invalid data source: {self.cfg.data_source}")
+            raise ValueError(f"Invalid data source: {self.cfg.actor.data_source}")
 
     def _reduce_sft_loss(self, loss):
         """Reduce model-specific SFT loss to a scalar."""
@@ -155,12 +155,12 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     @Worker.timer("update_one_epoch")
     def update_one_epoch(self):
-        if self.cfg.data_source == "buffer":
+        if self.cfg.actor.data_source == "buffer":
             return self.update_buffer_one_epoch()
-        elif self.cfg.data_source == "lerobot":
+        elif self.cfg.actor.data_source == "lerobot":
             return self.update_lerobot_one_epoch()
         else:
-            raise ValueError(f"Invalid data source: {self.cfg.data_source}")
+            raise ValueError(f"Invalid data source: {self.cfg.actor.data_source}")
 
     def update_buffer_one_epoch(self):
         """Run one replay-buffer update epoch for DAgger."""
