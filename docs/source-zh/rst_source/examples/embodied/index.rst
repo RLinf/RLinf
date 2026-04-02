@@ -236,7 +236,7 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <!-- TODO(agent): replace placeholder cover image URL for sft_openpi -->
+       <!-- TODO(thumbnail): replace placeholder cover image URL for sft_openpi -->
        <img src="https://github.com/RLinf/misc/raw/main/pic/pi0_icon.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -261,7 +261,7 @@
 
    <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <!-- TODO(agent): replace placeholder cover image URL for nft_openpi -->
+       <!-- TODO(thumbnail): replace placeholder cover image URL for nft_openpi -->
        <img src="https://github.com/RLinf/misc/raw/main/pic/pi0_icon.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -319,7 +319,7 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <!-- TODO(agent): replace placeholder cover image URL for franka_zed_robotiq -->
+       <!-- TODO(thumbnail): replace placeholder cover image URL for franka_zed_robotiq -->
        <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -333,6 +333,7 @@
 
    <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <!-- TODO(thumbnail): replace placeholder cover image URL for franka_gello -->
        <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
