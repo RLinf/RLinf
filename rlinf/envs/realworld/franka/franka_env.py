@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -52,6 +52,7 @@ class FrankaRobotConfig:
 
     is_dummy: bool = False
     use_dense_reward: bool = False
+    reward_scale: float = 1.0  # Scale dense reward to make training stable
     step_frequency: float = 10.0  # Max number of steps per second
 
     # Positions are stored in eular angles (xyz for position, rzryrx for orientation)
@@ -259,11 +260,21 @@ class FrankaEnv(gym.Env):
         )
 
         truncated = self._num_steps >= self.config.max_num_steps
+        reward *= self.config.reward_scale
         return observation, reward, terminated, truncated, {}
 
     @property
     def num_steps(self):
         return self._num_steps
+
+    def get_tcp_pose(self) -> np.ndarray:
+        """Return the current TCP pose ``[x, y, z, qx, qy, qz, qw]``."""
+        self._franka_state = self._controller.get_state().wait()[0]
+        return self._franka_state.tcp_pose
+
+    def get_action_scale(self) -> np.ndarray:
+        """Return the action scale ``[pos_scale, ori_scale, gripper_scale]``."""
+        return self.config.action_scale
 
     def _calc_step_reward(
         self,
