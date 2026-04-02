@@ -163,8 +163,7 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
 
         while self.global_step < self.max_steps:
             skip_step = False
-            do_profile = self._should_profile(self.global_step)
-            if do_profile:
+            if self._should_start_profiling(self.global_step):
                 self._start_profiling(self.global_step)
             with self.timer("step"):
                 actor_training_handle: Handle = self.actor.run_training()
@@ -201,7 +200,7 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
                             eval_metrics = {
                                 f"eval/{k}": v for k, v in eval_metrics.items()
                             }
-            if do_profile:
+            if self._should_stop_profiling(self.global_step):
                 self._stop_profiling()
 
             if skip_step:

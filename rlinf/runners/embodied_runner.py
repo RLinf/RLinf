@@ -29,6 +29,7 @@ from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.metric_utils import compute_evaluate_metrics, print_metrics_table
 from rlinf.utils.runner_utils import check_progress
+from rlinf.utils.nsight_profiler import NsightProfiler
 from rlinf.utils.timers import Timer
 
 logger = logging.getLogger(__name__)
@@ -171,6 +172,7 @@ class EmbodiedRunner:
         self.actor.load_checkpoint(actor_checkpoint_path).wait()
         self.global_step = int(resume_dir.split("global_step_")[-1])
 
+    @NsightProfiler.annotate("runner/update_rollout_weights")
     def update_rollout_weights(self):
         rollout_handle: Handle = self.rollout.sync_model_from_actor()
         actor_handle: Handle = self.actor.sync_model_to_rollout()
@@ -285,16 +287,26 @@ class EmbodiedRunner:
     def _should_profile(self, step: int) -> bool:
         return self.profile_steps is not None and step in self.profile_steps
 
+    def _should_start_profiling(self, step: int) -> bool:
+        return self._should_profile(step) and not getattr(self, "_profiling_active", False)
+
+    def _should_stop_profiling(self, step: int) -> bool:
+        if not getattr(self, "_profiling_active", False):
+            return False
+        return not self._should_profile(step)
+
     def _start_profiling(self, step: int) -> None:
         self.logger.info(f"Starting Nsight profiling for step {step}")
         self.actor.start_profile(step).wait()
         self.rollout.start_profile(step).wait()
         self.env.start_profile(step).wait()
+        self._profiling_active = True
 
     def _stop_profiling(self) -> None:
         self.actor.stop_profile().wait()
         self.rollout.stop_profile().wait()
         self.env.stop_profile().wait()
+        self._profiling_active = False
         self.logger.info("Nsight profiling stopped")
 
     def run(self):
@@ -304,8 +316,7 @@ class EmbodiedRunner:
             # set global step
             self.actor.set_global_step(self.global_step)
             self.rollout.set_global_step(self.global_step)
-            do_profile = self._should_profile(self.global_step)
-            if do_profile:
+            if self._should_start_profiling(self.global_step):
                 self._start_profiling(self.global_step)
 
             with self.timer("step"):
@@ -375,7 +386,7 @@ class EmbodiedRunner:
                 if save_model:
                     self._save_checkpoint()
 
-            if do_profile:
+            if self._should_stop_profiling(self.global_step):
                 self._stop_profiling()
 
             time_metrics = self.timer.consume_durations()

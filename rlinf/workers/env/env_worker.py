@@ -836,6 +836,7 @@ class EnvWorker(Worker):
         )
         return sparse_rewards
 
+    @NsightProfiler.annotate("env/bootstrap_step")
     def bootstrap_step(self) -> list[EnvOutput]:
         def get_zero_dones() -> torch.Tensor:
             return (
@@ -938,6 +939,7 @@ class EnvWorker(Worker):
             for env_output in env_output_list
         ]
 
+    @NsightProfiler.annotate("env/send_rollout_trajectories")
     async def send_rollout_trajectories(
         self, rollout_result: EmbodiedRolloutResult, channel: Channel
     ):
@@ -948,6 +950,7 @@ class EnvWorker(Worker):
             channel.put(trajectory, async_op=True)
 
     @Worker.timer("run_interact_once")
+    @NsightProfiler.annotate("env/interact_once")
     async def _run_interact_once(
         self,
         input_channel: Channel,
