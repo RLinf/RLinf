@@ -87,13 +87,11 @@ env:
 
   # Override the default values in env/libero_spatial
   train:
-    # total_num_envs: 64
-    total_num_envs: 8
+    total_num_envs: 64
     max_episode_steps: 240 # max episode steps for truncation
     max_steps_per_rollout_epoch: 240
   eval:
-    # total_num_envs: 500
-    total_num_envs: 32
+    total_num_envs: 500
     auto_reset: True
     ignore_terminations: True
     max_episode_steps: 240
@@ -111,22 +109,20 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/workspace/RLinf/RLinf-Gr00t-SFT-Spatial"
+    model_path: "/path/to/RLinf-Gr00t-SFT-Spatial" # https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
     precision: ${actor.model.precision}
 
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  # micro_batch_size: 128
-  micro_batch_size: 4
-  # global_batch_size: 1024
-  global_batch_size: 32
+  micro_batch_size: 128
+  global_batch_size: 1024
   seed: 1234
-  enable_offload: True
+  enable_offload: False
 
   # Override the default values in model/gr00t
   model:
-    model_path: "/workspace/RLinf/RLinf-Gr00t-SFT-Spatial"
+    model_path: "/path/to/RLinf-Gr00t-SFT-Spatial" # https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
     model_type: "gr00t"
     add_value_head: True
 
