@@ -114,19 +114,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         if self.cfg.actor.data_source == "buffer":
             return self.model.prepare_dagger_sft_batch(batch)
         elif self.cfg.actor.data_source == "lerobot":
-            observation, actions = batch
-            register_pytree_dataclasses(observation)
-            observation = _pytree.tree_map(
-                lambda x: (
-                    torch.as_tensor(x, device=self.device).contiguous().clone()
-                    if x is not None
-                    else x
-                ),
-                observation,
-            )
-            actions = actions.to(torch.float32)
-            actions = actions.to(self.device)
-            return {"observation": observation, "actions": actions}
+            return self.model.prepare_lerobot_sft_batch(batch)
         else:
             raise ValueError(f"Invalid data source: {self.cfg.actor.data_source}")
 

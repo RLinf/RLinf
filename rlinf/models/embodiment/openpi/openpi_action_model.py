@@ -374,6 +374,42 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             "actions": actions.to(torch.float32).to(device),
         }
 
+    def prepare_lerobot_sft_batch(self, batch):
+        """Prepare replay-buffer samples for DAgger SFT updates."""
+        device = next(self.parameters()).device
+        obs_dict = {}
+        raw_obs_keys = [
+            k for k in batch.keys() if k in [
+                "image", "wrist_image", "extra_view_image", "state"
+            ]
+        ]
+        for key in raw_obs_keys:
+            obs_dict[key] = batch[f"observation/{key}"]
+
+        bsz = batch["actions"].shape[0]
+        obs_dict["actions"] = batch["actions"].reshape(
+            bsz, self.config.action_chunk, -1
+        )
+        obs_dict["prompt"] = ["empty" for _ in range(bsz)]
+        processed_obs = self.input_transform(obs_dict, transpose=False)
+        if "tokenized_prompt" in batch:
+            processed_obs["tokenized_prompt"] = batch["tokenized_prompt"]
+        if "tokenized_prompt_mask" in batch:
+            processed_obs["tokenized_prompt_mask"] = batch["tokenized_prompt_mask"]
+        processed_obs = self.precision_processor(processed_obs)
+        observation = _model.Observation.from_dict(processed_obs)
+        actions = processed_obs["actions"].clone()
+        processed_obs.pop("actions")
+
+        observation = jax.tree.map(
+            lambda x: torch.as_tensor(x, device=device).contiguous().clone(),
+            observation,
+        )
+        return {
+            "observation": observation,
+            "actions": actions.to(torch.float32).to(device),
+        }
+
     def default_forward(
         self,
         forward_inputs: dict[str, torch.Tensor],
