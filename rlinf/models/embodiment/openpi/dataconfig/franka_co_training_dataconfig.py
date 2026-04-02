@@ -35,9 +35,9 @@ class LeRobotFrankaEEDataConfig(DataConfigFactory):
     # If provided, will be injected into the input data if the "prompt" key is not present.
     default_prompt: str | None = None
     # Finally we will use delta actions to train, but we can input abs_action(get delta for training via abs_action-state) or delta_action(no other process)
-    extra_delta_transform: bool = True  # False for additional process(abs_action - state) to get delta action for training
-    # train actions using rotation_6d
-    action_train_with_rotation_6d: bool = False
+    extra_delta_transform: bool = False  # False for additional process(abs_action - state) to get delta action for training
+    # If action dim is not 7 (e.g. without gripper control), should change this
+    output_action_dim: int = 7
 
     def generate_observations(
         image: np.ndarray, state: np.ndarray, prompt: str
@@ -71,17 +71,14 @@ class LeRobotFrankaEEDataConfig(DataConfigFactory):
                 franka_policy.FrankaEEInputs(
                     action_dim=model_config.action_dim,
                     model_type=model_config.model_type,
-                    action_train_with_rotation_6d=self.action_train_with_rotation_6d,
                 )
             ],
             outputs=[
-                franka_policy.FrankaEEOutputs(
-                    action_train_with_rotation_6d=self.action_train_with_rotation_6d
-                )
+                franka_policy.FrankaEEOutputs(output_action_dim=self.output_action_dim)
             ],
         )
 
-        if not self.extra_delta_transform:  # for abs_action
+        if self.extra_delta_transform:  # for abs_action
             delta_action_mask = _transforms.make_bool_mask(
                 9, -1
             )  # [True]x9 + [False]x1, [x,y,z,rotation_6d,gripper] for 10 dim
