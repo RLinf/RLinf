@@ -299,9 +299,7 @@ def _parse_value_model_kwargs(cfg: DictConfig) -> dict:
         "num_return_bins": model_cfg.get("num_bins", 201),
         "return_min": model_cfg.get("v_min", -1.0),
         "return_max": model_cfg.get("v_max", 0.0),
-        "critic_expert_variant": model_cfg.get(
-            "critic_expert_variant", "gemma_100m"
-        ),
+        "critic_expert_variant": model_cfg.get("critic_expert_variant", "gemma_100m"),
         "tokenizer_path": model_cfg.get("tokenizer_path", None),
         "backbone_variant": model_cfg.get("backbone_variant", "paligemma"),
         "siglip_path": model_cfg.get("siglip_path", None),

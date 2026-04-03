@@ -73,7 +73,9 @@ def _suppress_video_logging() -> None:
 
 _suppress_video_logging()
 
-from rlinf.data.datasets.cfg.return_loaders import load_return_stats_from_dataset  # noqa: E402
+from rlinf.data.datasets.cfg.return_loaders import (  # noqa: E402
+    load_return_stats_from_dataset,
+)
 
 
 def _infer_return_range(
@@ -93,7 +95,10 @@ def _infer_return_range(
         if mc_path.exists():
             try:
                 mc = yaml.safe_load(mc_path.read_text()) or {}
-                dp_min, dp_max = mc.get("global_return_min"), mc.get("global_return_max")
+                dp_min, dp_max = (
+                    mc.get("global_return_min"),
+                    mc.get("global_return_max"),
+                )
             except yaml.YAMLError:
                 pass
         if dp_min is None or dp_max is None:
@@ -123,7 +128,11 @@ def discover_datasets_and_return_range(
         with open(mixture_path, "r") as f:
             mixture = yaml.safe_load(f) or {}
         for d in mixture.get("datasets", []):
-            name = d["name"] if isinstance(d, dict) and "name" in d else (d if isinstance(d, str) else None)
+            name = (
+                d["name"]
+                if isinstance(d, dict) and "name" in d
+                else (d if isinstance(d, str) else None)
+            )
             if name:
                 path = dataset_root / name
                 if path.is_dir() and (path / "meta" / "info.json").exists():
@@ -131,7 +140,8 @@ def discover_datasets_and_return_range(
 
     if not dataset_paths:
         dataset_paths = [
-            c for c in sorted(dataset_root.iterdir())
+            c
+            for c in sorted(dataset_root.iterdir())
             if c.is_dir() and (c / "meta" / "info.json").exists()
         ]
     if not dataset_paths:
@@ -279,8 +289,15 @@ def compute_advantages_for_dataset(
     )
     gamma_k = gamma**advantage_lookahead_step
 
-    adv_cols = ["episode_index", "frame_index", "advantage",
-                "reward_sum", "value_current", "value_next", "return"]
+    adv_cols = [
+        "episode_index",
+        "frame_index",
+        "advantage",
+        "reward_sum",
+        "value_current",
+        "value_next",
+        "return",
+    ]
     results: list[pd.DataFrame] = []
     for ep_idx, ep_group in tqdm(
         full_df.groupby("episode_index"),
@@ -300,25 +317,34 @@ def compute_advantages_for_dataset(
         if cut > 0:
             v_next_arr[:cut] = values[advantage_lookahead_step:]
 
-        padded = np.ascontiguousarray(np.concatenate(
-            [rewards, np.zeros(advantage_lookahead_step - 1, dtype=np.float32)]
-        ))
+        padded = np.ascontiguousarray(
+            np.concatenate(
+                [rewards, np.zeros(advantage_lookahead_step - 1, dtype=np.float32)]
+            )
+        )
         windowed = np.lib.stride_tricks.as_strided(
-            padded, shape=(ep_len, advantage_lookahead_step),
+            padded,
+            shape=(ep_len, advantage_lookahead_step),
             strides=(padded.strides[0], padded.strides[0]),
         )
         reward_sums = (windowed @ gamma_powers).astype(np.float64)
         reward_sums = (reward_sums - global_return_min) / ret_range - 1.0
 
-        results.append(pd.DataFrame({
-            "episode_index": np.full(ep_len, int(ep_idx), dtype=np.int64),
-            "frame_index": ep_df["frame_index"].values.astype(np.int64),
-            "advantage": reward_sums + gamma_k * v_next_arr - values,
-            "reward_sum": reward_sums,
-            "value_current": values,
-            "value_next": v_next_arr,
-            "return": ep_df["return"].values.astype(np.float64) if has_return else np.zeros(ep_len),
-        }))
+        results.append(
+            pd.DataFrame(
+                {
+                    "episode_index": np.full(ep_len, int(ep_idx), dtype=np.int64),
+                    "frame_index": ep_df["frame_index"].values.astype(np.int64),
+                    "advantage": reward_sums + gamma_k * v_next_arr - values,
+                    "reward_sum": reward_sums,
+                    "value_current": values,
+                    "value_next": v_next_arr,
+                    "return": ep_df["return"].values.astype(np.float64)
+                    if has_return
+                    else np.zeros(ep_len),
+                }
+            )
+        )
 
     if not results:
         return pd.DataFrame(columns=adv_cols)
@@ -377,10 +403,12 @@ def _update_single_parquet_file(
         return 0, 0
 
     # Vectorized lookup
-    indices = np.array([
-        advantage_lookup.get((int(e), int(f)), -1)
-        for e, f in zip(ds["episode_index"], ds["frame_index"])
-    ])
+    indices = np.array(
+        [
+            advantage_lookup.get((int(e), int(f)), -1)
+            for e, f in zip(ds["episode_index"], ds["frame_index"])
+        ]
+    )
     found = indices >= 0
     safe_idx = np.maximum(indices, 0)
 
@@ -390,8 +418,12 @@ def _update_single_parquet_file(
         "advantage_continuous": adv_values.tolist(),
     }
     if vc_arr is not None:
-        for col, arr in [("value_current", vc_arr), ("value_next", vn_arr),
-                         ("reward_sum", rs_arr), ("return", ret_arr)]:
+        for col, arr in [
+            ("value_current", vc_arr),
+            ("value_next", vn_arr),
+            ("reward_sum", rs_arr),
+            ("return", ret_arr),
+        ]:
             columns_to_add[col] = np.where(found, arr[safe_idx], 0.0).tolist()
 
     existing = set(ds.column_names)
@@ -429,10 +461,15 @@ def add_advantages_to_parquet_files(
     adv_cont_arr = advantages_df["advantage_continuous"].values
     extra = {}
     if not adv_only:
-        extra = {k: advantages_df[v].values for k, v in {
-            "vc_arr": "value_current", "vn_arr": "value_next",
-            "rs_arr": "reward_sum", "ret_arr": "return",
-        }.items()}
+        extra = {
+            k: advantages_df[v].values
+            for k, v in {
+                "vc_arr": "value_current",
+                "vn_arr": "value_next",
+                "rs_arr": "reward_sum",
+                "ret_arr": "return",
+            }.items()
+        }
 
     lookup = {(int(ep_arr[i]), int(fr_arr[i])): i for i in range(len(advantages_df))}
     parquet_files = list(data_dir.rglob("*.parquet"))
@@ -441,14 +478,20 @@ def add_advantages_to_parquet_files(
     logger.info(f"  Found {len(parquet_files)} parquet files to update")
 
     def _process(pq_file):
-        return _update_single_parquet_file(pq_file, lookup, adv_cont_arr, threshold, **extra)
+        return _update_single_parquet_file(
+            pq_file, lookup, adv_cont_arr, threshold, **extra
+        )
 
     workers = max(min(num_workers, len(parquet_files)), 1)
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        results = list(tqdm(
-            executor.map(_process, parquet_files),
-            total=len(parquet_files), desc="  Updating parquet", leave=False,
-        ))
+        results = list(
+            tqdm(
+                executor.map(_process, parquet_files),
+                total=len(parquet_files),
+                desc="  Updating parquet",
+                leave=False,
+            )
+        )
 
     total_updated = sum(u for u, _ in results)
     total_missing = sum(m for _, m in results)
@@ -641,7 +684,9 @@ def main() -> None:
             f"Mode: full recompute (lookahead={args.advantage_lookahead_step}, gamma={args.gamma})"
         )
     else:
-        logger.info("Mode: threshold-only relabeling (--advantage_lookahead_step not set)")
+        logger.info(
+            "Mode: threshold-only relabeling (--advantage_lookahead_step not set)"
+        )
     logger.info(f"Positive quantile: {args.positive_quantile}")
     if source_tag:
         logger.info(f"Source tag: {source_tag}")
@@ -739,7 +784,9 @@ def main() -> None:
             else:
                 add_advantages_to_parquet_files(
                     data_dir,
-                    build_save_advantages_df(df, unified_threshold) if not recompute else df,
+                    build_save_advantages_df(df, unified_threshold)
+                    if not recompute
+                    else df,
                     unified_threshold,
                     num_workers=num_workers,
                     adv_only=not recompute,

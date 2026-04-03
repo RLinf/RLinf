@@ -138,9 +138,7 @@ def compute_cfg_routing_masks(
     negative_mask = ~positive_mask
 
     if positive_only_conditional:
-        positive_conditional_mask = positive_mask & (
-            random_values > unconditional_prob
-        )
+        positive_conditional_mask = positive_mask & (random_values > unconditional_prob)
         negative_conditional_mask = torch.zeros_like(positive_mask)
     else:
         guidance_mask = random_values > unconditional_prob

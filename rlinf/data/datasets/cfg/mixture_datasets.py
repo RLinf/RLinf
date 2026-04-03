@@ -176,4 +176,3 @@ class ValueMixtureDataset(_MixtureBase):
         logger.info(f"  Raw weights: {self._raw_weights.tolist()}")
         logger.info(f"  Sampling weights: {self._dataset_sampling_weights.tolist()}")
         logger.info(f"  Mode: {mode}")
-

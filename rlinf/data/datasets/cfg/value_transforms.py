@@ -66,8 +66,7 @@ class ReturnNormalizer(DataTransformFn):
             )
 
         logger.info(
-            "ReturnNormalizer: return_min=%.4f, return_max=%.4f, "
-            "range=%s",
+            "ReturnNormalizer: return_min=%.4f, return_max=%.4f, range=%s",
             self.return_min,
             self.return_max,
             "(-1, 0)" if self.normalize_to_minus_one_zero else "(0, 1)",
@@ -77,12 +76,8 @@ class ReturnNormalizer(DataTransformFn):
         if "return" not in norm_stats:
             raise ValueError("norm_stats must contain 'return' key")
         rs = norm_stats["return"]
-        self.return_min = float(
-            rs.min[0] if hasattr(rs.min, "__len__") else rs.min
-        )
-        self.return_max = float(
-            rs.max[0] if hasattr(rs.max, "__len__") else rs.max
-        )
+        self.return_min = float(rs.min[0] if hasattr(rs.min, "__len__") else rs.min)
+        self.return_max = float(rs.max[0] if hasattr(rs.max, "__len__") else rs.max)
 
     def normalize_value(self, value: float) -> float:
         if self.normalize_to_minus_one_zero:

@@ -62,7 +62,7 @@ class LiberoEnv(gym.Env):
         self._generator_ordered = np.random.default_rng(seed=0)
         self.start_idx = 0
 
-        self.task_suite: Benchmark = get_benchmark_overridden(cfg.task_suite_name)()
+        self.task_suite = get_benchmark_overridden(cfg.task_suite_name)()
 
         self._compute_total_num_group_envs()
         self.reset_state_ids_all = self.get_reset_state_ids_all()

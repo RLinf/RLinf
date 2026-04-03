@@ -74,9 +74,7 @@ class ValueDataset(Dataset):
         local_path = Path(dataset_path).absolute()
 
         # Metadata + dataset
-        self.dataset_meta = LeRobotDatasetMetadata(
-            local_path.name, root=local_path
-        )
+        self.dataset_meta = LeRobotDatasetMetadata(local_path.name, root=local_path)
         if "action" in self.dataset_meta.features:
             action_key = "action"
         elif "actions" in self.dataset_meta.features:
@@ -87,9 +85,7 @@ class ValueDataset(Dataset):
                 f"{list(self.dataset_meta.features.keys())}"
             )
         delta_timestamps = {
-            action_key: [
-                t / self.dataset_meta.fps for t in range(action_horizon)
-            ]
+            action_key: [t / self.dataset_meta.fps for t in range(action_horizon)]
         }
         self._base = LeRobotDataset(
             local_path.name,
@@ -119,9 +115,7 @@ class ValueDataset(Dataset):
             all_eps = list(range(total))
             if shuffle_episodes:
                 rng = np.random.default_rng(episode_seed)
-                selected = set(
-                    rng.choice(all_eps, size=num, replace=False).tolist()
-                )
+                selected = set(rng.choice(all_eps, size=num, replace=False).tolist())
             else:
                 selected = set(all_eps[:num])
             idx = self._base.episode_data_index
@@ -150,9 +144,7 @@ class ValueDataset(Dataset):
 
         # Task descriptions for prompt injection
         self._tasks = load_task_descriptions(local_path) or (
-            self.dataset_meta.tasks
-            if hasattr(self.dataset_meta, "tasks")
-            else None
+            self.dataset_meta.tasks if hasattr(self.dataset_meta, "tasks") else None
         )
 
         # Return normalizer

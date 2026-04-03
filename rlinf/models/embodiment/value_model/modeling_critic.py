@@ -52,7 +52,6 @@ def make_att_2d_masks(pad_masks, att_masks):
     return att_2d_masks & pad_2d_masks
 
 
-
 @dataclass
 class CriticOutput(ModelOutput):
     """Output for critic models."""
@@ -436,10 +435,13 @@ class ValueCriticModel(VLMObservationEncoder):
 
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         # Prefix tokens are bidirectional (0), suffix ar_masks carry CLS causal mask.
-        att_masks = torch.cat([
-            torch.zeros_like(prefix_pad_masks, dtype=torch.long),
-            suffix_ar_masks,
-        ], dim=1)
+        att_masks = torch.cat(
+            [
+                torch.zeros_like(prefix_pad_masks, dtype=torch.long),
+                suffix_ar_masks,
+            ],
+            dim=1,
+        )
         attn_mask = make_att_2d_masks(pad_masks, att_masks)
         attn_mask_4d = self._prepare_attention_masks_4d(attn_mask)
         position_ids = torch.cumsum(pad_masks, dim=1) - 1

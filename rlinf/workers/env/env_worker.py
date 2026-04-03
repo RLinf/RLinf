@@ -32,7 +32,6 @@ from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.wrappers import RecordVideo
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.comm_mapping import CommMapper
-from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.nested_dict_process import update_nested_cfg
 from rlinf.utils.placement import HybridComponentPlacement
 

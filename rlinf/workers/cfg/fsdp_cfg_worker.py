@@ -37,8 +37,8 @@ from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.cfg.utils import (
-    CFGDataLoaderImpl,
     AdvantagePreservingDataset,
+    CFGDataLoaderImpl,
     cast_image_features,
 )
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
