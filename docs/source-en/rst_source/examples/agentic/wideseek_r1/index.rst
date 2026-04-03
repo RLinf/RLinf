@@ -105,6 +105,41 @@ you can test it by:
 
    python rlinf/agents/wideseek_r1/utils/sglang_client.py --llm-ip LLM_JUDGE_IP
 
+Using RLinf Built-in Rollout Engine as Judge
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Alternatively, you can use RLinf's built-in rollout engine as the judge instead of an external server. This approach runs the judge LLM within the RLinf framework, which can be more convenient for local development and testing.
+
+To use the built-in rollout engine as judge, set the following configuration in your YAML file:
+
+.. code-block:: yaml
+
+   agentloop:
+     use_local_judge: true  # Enable local judge within RLinf framework
+
+Then configure the rollout_judge section with your desired model and settings:
+
+.. code-block:: yaml
+
+   rollout_judge:
+     group_name: "RolloutJudgeGroup"
+     gpu_memory_utilization: 0.5
+     model:
+       model_type: qwen3  
+       model_path: /PATH/TO/YOUR/JUDGE/MODEL  # Replace with actual path
+       precision: fp16
+     rollout_backend: sglang
+     tensor_parallel_size: 1
+     pipeline_parallel_size: 1
+     max_running_requests: 64
+
+Example configuration files using the built-in judge can be found in:
+
+ - ``examples/agent/wideseek_r1/config/train_qwen3_hybrid_local_judge.yaml``
+ - ``examples/agent/wideseek_r1/config/eval_qwen3_widesearch_local_judge.yaml``
+
+When using the built-in judge, you don't need to start a separate judge server. The judge model will be loaded and managed by RLinf's rollout engine.
+
 Multi-node 
 ~~~~~~~~~~~~
 

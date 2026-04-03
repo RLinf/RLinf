@@ -89,7 +89,42 @@ WideSeek-R1 支持两种工具后端：
 .. code-block:: bash
 
    python rlinf/agents/wideseek_r1/utils/sglang_client.py --llm-ip LLM_JUDGE_IP
-   
+
+使用 RLinf 内置的 Rollout Engine 作为评判器
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+另外，你也可以使用 RLinf 内置的 rollout engine 作为评判器，而不是使用外部服务器。这种方式在 RLinf 框架内部运行评判 LLM，对于本地开发和测试更加方便。
+
+要使用内置的 rollout engine 作为评判器，请在 YAML 配置文件中设置以下配置：
+
+.. code-block:: yaml
+
+   agentloop:
+     use_local_judge: true  # 在 RLinf 框架内启用本地评判器
+
+然后配置 rollout_judge 部分，设置你所需的模型和参数：
+
+.. code-block:: yaml
+
+   rollout_judge:
+     group_name: "RolloutJudgeGroup"
+     gpu_memory_utilization: 0.5
+     model:
+       model_type: qwen3
+       model_path: /PATH/TO/YOUR/JUDGE/MODEL  # 替换为实际路径
+       precision: fp16
+     rollout_backend: sglang
+     tensor_parallel_size: 1  
+     pipeline_parallel_size: 1
+     max_running_requests: 64
+
+使用内置评判器的示例配置文件可以在以下位置找到：
+
+- ``examples/agent/wideseek_r1/config/train_qwen3_hybrid_local_judge.yaml``
+- ``examples/agent/wideseek_r1/config/eval_qwen3_widesearch_local_judge.yaml``
+
+使用内置评判器时，你不需要启动单独的评判服务器。评判模型将由 RLinf 的 rollout engine 加载和管理。
+
 多节点
 ~~~~~~~~~~~~
 
