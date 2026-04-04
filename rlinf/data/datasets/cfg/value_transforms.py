@@ -20,12 +20,12 @@ from typing import Any, Optional
 
 import numpy as np
 import torch
+from openpi.transforms import DataTransformFn
 
 from rlinf.data.datasets.cfg.lerobot.normalize import (
     NormStats,
     load_stats,
 )
-from rlinf.data.datasets.cfg.lerobot.transforms import DataTransformFn
 
 logger = logging.getLogger(__name__)
 

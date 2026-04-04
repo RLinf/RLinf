@@ -212,8 +212,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             raise ValueError("data_cfg.robot_type is required but not provided")
         if model_type is None:
             raise ValueError("data_cfg.model_type is required but not provided")
-        norm_stats_dir = data_cfg.get("norm_stats_dir", None)
-
         shared = {
             "action_horizon": data_cfg.get(
                 "action_horizon", getattr(model_cfg, "action_horizon", 10)
@@ -227,7 +225,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             ),
             "robot_type": robot_type,
             "model_type": model_type,
-            "norm_stats_dir": norm_stats_dir,
         }
 
         datasets_list = data_cfg.get("train_data_paths", [])
@@ -294,7 +291,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         common_ds_kwargs = {
             "robot_type": shared["robot_type"],
             "model_type": shared["model_type"],
-            "norm_stats_dir": shared["norm_stats_dir"],
             "action_horizon": shared["action_horizon"],
             "gamma": shared["gamma"],
             "return_min": global_return_min,
@@ -324,8 +320,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                 "dataset_path": ds_path,
                 "robot_type": entry.get("robot_type", shared["robot_type"]),
                 "model_type": entry.get("model_type", shared["model_type"]),
-                "norm_stats_dir": entry.get("norm_stats_dir", shared["norm_stats_dir"]),
-                "asset_id": entry.get("asset_id", None),
                 "action_horizon": entry.get("action_horizon", shared["action_horizon"]),
                 "normalize_to_minus_one_zero": entry.get(
                     "normalize_to_minus_one_zero", shared["normalize_to_minus_one_zero"]
@@ -415,10 +409,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                 dataset_path=eval_ds_path,
                 robot_type=eval_entry.get("robot_type", shared["robot_type"]),
                 model_type=eval_entry.get("model_type", shared["model_type"]),
-                norm_stats_dir=eval_entry.get(
-                    "norm_stats_dir", shared["norm_stats_dir"]
-                ),
-                asset_id=eval_entry.get("asset_id", None),
                 action_horizon=eval_entry.get(
                     "action_horizon", shared["action_horizon"]
                 ),

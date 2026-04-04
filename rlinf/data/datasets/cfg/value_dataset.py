@@ -14,27 +14,53 @@
 
 """Value Dataset: loads LeRobot data + returns sidecar for value model SFT."""
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
+import openpi.models.model as _openpi_model
+import openpi.transforms as _openpi_transforms
 import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from torch.utils.data import Dataset
 
-from rlinf.data.datasets.cfg.lerobot.config import create_data_config_factory
-from rlinf.data.datasets.cfg.lerobot.transforms import (
-    Normalize,
-    RepackTransform,
-    compose,
-    load_task_descriptions,
-)
+from rlinf.models.embodiment.openpi.policies import franka_policy, libero_policy
 
 from .return_loaders import load_returns_sidecar
 from .value_transforms import ReturnNormalizer
 
 logger = logging.getLogger(__name__)
+
+_MODEL_TYPE_MAP = {
+    "pi0": _openpi_model.ModelType.PI0,
+    "pi05": _openpi_model.ModelType.PI05,
+    "pi0_fast": _openpi_model.ModelType.PI0_FAST,
+}
+
+_REPACK_KEYS = {
+    "libero": {
+        "observation/image": "image",
+        "observation/wrist_image": "wrist_image",
+        "observation/state": "state",
+        "actions": "actions",
+        "prompt": "prompt",
+    },
+    "libero_v2": {
+        "observation/image": "observation.images.image",
+        "observation/wrist_image": "observation.images.wrist_image",
+        "observation/state": "observation.state",
+        "actions": "action",
+        "prompt": "prompt",
+    },
+    "franka": {
+        "observation/image": "image",
+        "observation/state": "state",
+        "actions": "actions",
+        "prompt": "prompt",
+    },
+}
 
 
 class ValueDataset(Dataset):
@@ -50,14 +76,10 @@ class ValueDataset(Dataset):
         model_type: str,
         action_horizon: int = 10,
         action_dim: Optional[int] = None,
-        norm_stats_dir: Optional[str] = None,
-        asset_id: Optional[str] = None,
         default_prompt: Optional[str] = None,
         return_min: Optional[float] = None,
         return_max: Optional[float] = None,
         normalize_to_minus_one_zero: bool = True,
-        extra_delta_transform: bool = False,
-        action_norm_skip_dims: Optional[dict[str, list[int]]] = None,
         max_samples: Optional[int] = None,
         tag: Optional[str] = None,
         episode_percentage: Optional[float] = None,
@@ -65,7 +87,11 @@ class ValueDataset(Dataset):
         episode_seed: int = 42,
         **kwargs,  # accept unused params (gamma, split, etc.)
     ):
-        _known_unused = {"gamma", "split", "repo_id"}
+        _known_unused = {
+            "gamma", "split", "repo_id",
+            "norm_stats_dir", "asset_id", "extra_delta_transform",
+            "action_norm_skip_dims",
+        }
         unexpected = set(kwargs) - _known_unused
         if unexpected:
             logger.warning(f"ValueDataset ignoring unexpected kwargs: {unexpected}")
@@ -125,25 +151,16 @@ class ValueDataset(Dataset):
                 for i in range(idx["from"][ep].item(), idx["to"][ep].item())
             ]
 
-        # Transform pipeline (repack → data → normalize → model)
-        factory = create_data_config_factory(
-            dataset_path=str(local_path),
+        # Transform pipeline (repack → data → model)
+        self._transform = self._build_transform(
             robot_type=robot_type,
             model_type=model_type,
-            default_prompt=default_prompt,
-            extra_delta_transform=extra_delta_transform,
-            norm_stats_dir=norm_stats_dir,
-            asset_id=asset_id,
-            action_norm_skip_dims=action_norm_skip_dims,
-        )
-        dc = factory.create(
             action_dim=action_dim or 32,
-            skip_norm_stats=(norm_stats_dir is None),
+            default_prompt=default_prompt,
         )
-        self._transform = self._make_transform(dc)
 
         # Task descriptions for prompt injection
-        self._tasks = load_task_descriptions(local_path) or (
+        self._tasks = self._load_tasks(local_path) or (
             self.dataset_meta.tasks if hasattr(self.dataset_meta, "tasks") else None
         )
 
@@ -162,26 +179,69 @@ class ValueDataset(Dataset):
         logger.info(f"ValueDataset: {dataset_path}, {min(n, max_samples or n)} samples")
 
     @staticmethod
-    def _make_transform(dc):
-        transforms = []
-        for t in dc.repack_transforms.inputs:
-            if isinstance(t, RepackTransform):
-                transforms.append(
-                    RepackTransform(t.structure, passthrough_unmapped=True)
-                )
-            else:
-                transforms.append(t)
-        transforms.extend(dc.data_transforms.inputs)
-        if dc.norm_stats is not None:
-            transforms.append(
-                Normalize(
-                    dc.norm_stats,
-                    dc.use_quantile_norm,
-                    skip_dims=dc.action_norm_skip_dims,
+    def _build_transform(robot_type, model_type, action_dim, default_prompt):
+        """Build transform pipeline using openpi policies and transforms."""
+        model_type_lower = model_type.lower()
+        model_type_enum = _MODEL_TYPE_MAP[model_type_lower]
+        robot = robot_type.lower()
+
+        transforms_list = []
+
+        # 1. Repack (map dataset keys → standard observation keys)
+        repack_keys = _REPACK_KEYS.get(robot)
+        if repack_keys is None:
+            raise ValueError(
+                f"Unknown robot type: {robot_type}. "
+                f"Available: {list(_REPACK_KEYS.keys())}"
+            )
+        transforms_list.append(_openpi_transforms.RepackTransform(repack_keys))
+
+        # 2. Data transforms (robot-specific, from openpi policies)
+        if robot in ("libero", "libero_v2"):
+            transforms_list.append(
+                libero_policy.LiberoInputs(model_type=model_type_enum)
+            )
+        elif robot == "franka":
+            transforms_list.append(
+                franka_policy.FrankaEEInputs(
+                    action_dim=action_dim,
+                    model_type=model_type_enum,
                 )
             )
-        transforms.extend(dc.model_transforms.inputs)
-        return compose(transforms) if transforms else None
+
+        # 3. Model transforms (without TokenizePrompt and ResizeImages —
+        #    value model handles tokenization via ValueProcessor in the
+        #    collator, and image resize via ValueImageProcessor)
+        transforms_list.append(
+            _openpi_transforms.InjectDefaultPrompt(default_prompt)
+        )
+        transforms_list.append(
+            _openpi_transforms.PadStatesAndActions(action_dim)
+        )
+
+        return _openpi_transforms.compose(transforms_list)
+
+    @staticmethod
+    def _load_tasks(dataset_path) -> dict[int, str]:
+        """Load task descriptions from dataset meta (tasks.jsonl or tasks.parquet)."""
+        meta = Path(dataset_path) / "meta"
+        jsonl = meta / "tasks.jsonl"
+        if jsonl.exists():
+            tasks = {}
+            with open(jsonl, "r") as f:
+                for line in f:
+                    if line.strip():
+                        d = json.loads(line.strip())
+                        tasks[d.get("task_index", len(tasks))] = d.get("task", "")
+            return tasks
+        parquet = meta / "tasks.parquet"
+        if parquet.exists():
+            import pandas as pd
+
+            df = pd.read_parquet(parquet)
+            if "task_index" in df.columns and "task" in df.columns:
+                return {int(r["task_index"]): str(r["task"]) for _, r in df.iterrows()}
+        return {}
 
     def __len__(self) -> int:
         n = len(self._indices) if self._indices else len(self._base)

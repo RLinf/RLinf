@@ -695,7 +695,6 @@ class ValueCriticModel(VLMObservationEncoder):
         num_return_bins=201,
         return_min=-1.0,
         return_max=0.0,
-        action_norm_skip_dims=None,
         critic_expert_variant="gemma_100m",
         tokenizer_path=None,
         backbone_variant="paligemma",
@@ -715,7 +714,6 @@ class ValueCriticModel(VLMObservationEncoder):
             num_return_bins: Number of return bins.
             return_min: Minimum return value.
             return_max: Maximum return value.
-            action_norm_skip_dims: Dims to skip in normalization.
             critic_expert_variant: Gemma variant (e.g., "gemma_100m").
             tokenizer_path: Explicit path to tokenizer. If not set, loads
                 from checkpoint_dir. Raises if neither has tokenizer files.
@@ -824,10 +822,9 @@ class ValueCriticModel(VLMObservationEncoder):
             default_prompt=default_prompt,
             norm_stats=norm_stats,
             use_quantile_norm=use_quantile_norm,
-            action_norm_skip_dims=action_norm_skip_dims,
         )
 
-        from rlinf.data.datasets.cfg.lerobot.transforms import compose
+        from openpi.transforms import compose
 
         model._input_transform = compose(transforms)
         model._device = device

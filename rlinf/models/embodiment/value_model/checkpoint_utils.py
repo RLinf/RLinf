@@ -87,9 +87,9 @@ def load_norm_stats(checkpoint_dir: pathlib.Path, asset_id: str = "libero") -> d
         asset_id: Asset identifier (e.g., "libero", "droid")
 
     Returns:
-        Dictionary mapping stat names to NormStats objects
+        Dictionary mapping stat names to openpi NormStats objects
     """
-    from rlinf.data.datasets.cfg.lerobot.normalize import NormStats
+    import openpi.transforms as _openpi_transforms
 
     possible_paths = [
         checkpoint_dir / "norm_stats" / asset_id / "norm_stats.json",
@@ -116,7 +116,7 @@ def load_norm_stats(checkpoint_dir: pathlib.Path, asset_id: str = "libero") -> d
 
             result = {}
             for k, v in data.items():
-                result[k] = NormStats(
+                result[k] = _openpi_transforms.NormStats(
                     mean=np.asarray(v["mean"], dtype=np.float32),
                     std=np.asarray(v["std"], dtype=np.float32),
                     q01=(
@@ -127,16 +127,6 @@ def load_norm_stats(checkpoint_dir: pathlib.Path, asset_id: str = "libero") -> d
                     q99=(
                         np.asarray(v["q99"], dtype=np.float32)
                         if v.get("q99") is not None
-                        else None
-                    ),
-                    min=(
-                        np.asarray(v["min"], dtype=np.float32)
-                        if v.get("min") is not None
-                        else None
-                    ),
-                    max=(
-                        np.asarray(v["max"], dtype=np.float32)
-                        if v.get("max") is not None
                         else None
                     ),
                 )
@@ -152,34 +142,42 @@ def build_input_transforms(
     default_prompt: Optional[str],
     norm_stats: Optional[dict],
     use_quantile_norm: bool,
-    action_norm_skip_dims: Optional[dict[str, list[int]]] = None,
 ) -> Sequence:
     """Build input transforms for value inference.
 
-    Similar to action policy but without output transforms since we only need to
-    preprocess observations, not postprocess actions.
+    Uses openpi policies for robot-specific transforms and openpi transforms
+    for model transforms (Normalize, ResizeImages, PadStatesAndActions).
     """
-    from rlinf.data.datasets.cfg.lerobot.transforms import (
-        InjectDefaultPrompt,
-        Normalize,
-        PadStatesAndActions,
-        ResizeImages,
-    )
+    import openpi.models.model as _openpi_model
+    import openpi.transforms as _openpi_transforms
+
+    from rlinf.models.embodiment.openpi.policies import franka_policy, libero_policy
+
+    _mt_map = {
+        "pi0": _openpi_model.ModelType.PI0,
+        "pi05": _openpi_model.ModelType.PI05,
+        "pi0_fast": _openpi_model.ModelType.PI0_FAST,
+    }
+    model_type_enum = _mt_map[model_type.lower()]
 
     input_transforms = []
 
     if env_type == "libero":
-        from rlinf.data.datasets.cfg.lerobot.libero import LiberoInputs
-
-        input_transforms.append(InjectDefaultPrompt(default_prompt))
-        input_transforms.append(LiberoInputs(mask_padding=True, model_type=model_type))
+        input_transforms.append(
+            _openpi_transforms.InjectDefaultPrompt(default_prompt)
+        )
+        input_transforms.append(
+            libero_policy.LiberoInputs(model_type=model_type_enum)
+        )
 
     elif env_type == "franka":
-        from rlinf.data.datasets.cfg.lerobot.franka import FrankaEEInputs
-
-        input_transforms.append(InjectDefaultPrompt(default_prompt))
         input_transforms.append(
-            FrankaEEInputs(mask_padding=True, model_type=model_type)
+            _openpi_transforms.InjectDefaultPrompt(default_prompt)
+        )
+        input_transforms.append(
+            franka_policy.FrankaEEInputs(
+                action_dim=action_dim, model_type=model_type_enum
+            )
         )
 
     else:
@@ -187,18 +185,12 @@ def build_input_transforms(
 
     if norm_stats is not None:
         input_transforms.append(
-            Normalize(
-                norm_stats,
-                use_quantiles=use_quantile_norm,
-                skip_dims=action_norm_skip_dims,
+            _openpi_transforms.Normalize(
+                norm_stats, use_quantiles=use_quantile_norm
             )
         )
+    # image shape transform is processed in ValueCollator
 
-    input_transforms.extend(
-        [
-            ResizeImages(224, 224),
-            PadStatesAndActions(model_action_dim=action_dim),
-        ]
-    )
+    input_transforms.append(_openpi_transforms.PadStatesAndActions(action_dim))
 
     return input_transforms
