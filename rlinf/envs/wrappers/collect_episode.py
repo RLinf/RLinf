@@ -16,7 +16,6 @@ import atexit
 import copy
 import os
 import pickle
-import signal
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Lock
 from typing import Any, Optional
@@ -112,8 +111,10 @@ class CollectEpisode(gym.Wrapper):
         # Per-environment episode state.
         self._episode_ids = [0] * num_envs
         self._episode_success = [False] * num_envs
+        self._global_step = 0
         # Holds the post-reset obs for auto-reset envs to prepend to next episode.
         self._pending_obs: list[Any] = [None] * num_envs
+        self._pending_info: list[Any] = [None] * num_envs
         self._buffers: list[dict[str, list]] = [
             self._new_buffer() for _ in range(num_envs)
         ]
@@ -122,7 +123,6 @@ class CollectEpisode(gym.Wrapper):
 
         os.makedirs(self.save_dir, exist_ok=True)
         atexit.register(self._finalize_on_exit)
-        signal.signal(signal.SIGTERM, self._handle_signal)
 
     @property
     def is_start(self):
@@ -152,6 +152,7 @@ class CollectEpisode(gym.Wrapper):
         self._buffers = [self._new_buffer() for _ in range(self.num_envs)]
         self._episode_success = [False] * self.num_envs
         self._pending_obs = [None] * self.num_envs
+        self._pending_info = [None] * self.num_envs
 
         try:
             obs, info = self.env.reset(seed=seed, options=options)
@@ -261,15 +262,26 @@ class CollectEpisode(gym.Wrapper):
             self._buffers[env_idx]["observations"].append(
                 self._slice_copy(obs, env_idx)
             )
+            self._buffers[env_idx]["rewards"].append(0.0)
+            self._buffers[env_idx]["terminated"].append(False)
+            self._buffers[env_idx]["truncated"].append(False)
+            self._buffers[env_idx]["infos"].append({})
 
     def _record_step(self, action, obs, reward, terminated, truncated, info) -> None:
         """Record one transition into every env's buffer."""
+        self._global_step += 1
         for env_idx in range(self.num_envs):
             # Auto-reset envs store the pre-reset obs in info["final_observation"];
             # the current `obs` is the post-reset obs for the *next* episode.
             if isinstance(info, dict) and "final_observation" in info:
+                info_copy = copy.deepcopy(info)
+                info_copy.pop("final_observation")
+                info_copy.pop("final_info")
+
                 env_obs = self._slice_copy(info["final_observation"], env_idx)
+                info = self._slice_copy(info["final_info"], env_idx)
                 self._pending_obs[env_idx] = self._slice_copy(obs, env_idx)
+                self._pending_info[env_idx] = self._slice_copy(info_copy, env_idx)
             else:
                 env_obs = self._slice_copy(obs, env_idx)
 
@@ -294,18 +306,35 @@ class CollectEpisode(gym.Wrapper):
             self._buffers[env_idx]["observations"].append(self._pending_obs[env_idx])
             self._pending_obs[env_idx] = None
 
+            if self._pending_info[env_idx] is not None:
+                self._buffers[env_idx]["infos"].append(self._pending_info[env_idx])
+                self._pending_info[env_idx] = None
+            else:
+                self._buffers[env_idx]["infos"].append({})
+
+            self._buffers[env_idx]["rewards"].append(0.0)
+            self._buffers[env_idx]["terminated"].append(False)
+            self._buffers[env_idx]["truncated"].append(False)
+
     # ─────────────────────────────────────────── episode flushing ─────────────
 
     def _maybe_flush(self, terminated, truncated) -> None:
         """Save finished episodes and reset their buffers."""
         for env_idx in range(self.num_envs):
-            if self._scalar_flag(terminated, env_idx) or self._scalar_flag(
-                truncated, env_idx
-            ):
-                is_success = self._get_episode_success(self._buffers[env_idx], env_idx)
-                if not self.only_success or is_success:
+            is_success = self._get_episode_success(self._buffers[env_idx], env_idx)
+            done_by_term = self._scalar_flag(terminated, env_idx)
+            done_by_trunc = self._scalar_flag(truncated, env_idx)
+            if self.only_success:
+                if is_success:
                     self._flush_episode(env_idx, is_success)
-                self._reset_env_buffer(env_idx)
+                    self._reset_env_buffer(env_idx)
+                else:
+                    if done_by_term or done_by_trunc:
+                        self._reset_env_buffer(env_idx)
+            else:
+                if done_by_term or done_by_trunc:
+                    self._flush_episode(env_idx, is_success)
+                    self._reset_env_buffer(env_idx)
 
     def _flush_episode(self, env_idx: int, is_success: bool) -> None:
         """Dispatch a completed episode to the appropriate format writer."""
@@ -323,6 +352,7 @@ class CollectEpisode(gym.Wrapper):
                     "rank": self.rank,
                     "env_idx": env_idx,
                     "episode_id": self._episode_ids[env_idx],
+                    "step": self._global_step,
                     "success": is_success,
                     "observations": buf["observations"],
                     "actions": buf["actions"],
@@ -335,7 +365,9 @@ class CollectEpisode(gym.Wrapper):
             label = "success" if is_success else "fail"
             filename = (
                 f"rank_{self.rank}_env_{env_idx}_"
-                f"episode_{self._episode_ids[env_idx]}_{label}.pkl"
+                f"episode_{self._episode_ids[env_idx]}_"
+                f"step_{self._global_step}_"
+                f"{label}.pkl"
             )
             self._submit(
                 self._write_pickle, os.path.join(self.save_dir, filename), episode_data
@@ -367,6 +399,8 @@ class CollectEpisode(gym.Wrapper):
         images: list[np.ndarray] = []
         wrist_images: list[np.ndarray] = []
         extra_view_images: list[np.ndarray] = []
+        has_wrist_images = True
+        has_extra_view_images = True
         states: list[np.ndarray] = []
         np_actions: list[np.ndarray] = []
         dones: list[bool] = []
@@ -396,9 +430,13 @@ class CollectEpisode(gym.Wrapper):
                 continue
 
             images.append(self._to_uint8(np.asarray(image)))
-            if wrist_image is not None:
+            if wrist_image is None:
+                has_wrist_images = False
+            elif has_wrist_images:
                 wrist_images.append(self._to_uint8(np.asarray(wrist_image)))
-            if extra_view_image is not None:
+            if extra_view_image is None:
+                has_extra_view_images = False
+            elif has_extra_view_images:
                 extra_view_images.append(self._to_uint8(np.asarray(extra_view_image)))
             states.append(np.asarray(state).astype(np.float32))
             np_actions.append(np.asarray(np_action).astype(np.float32))
@@ -417,8 +455,10 @@ class CollectEpisode(gym.Wrapper):
 
         return {
             "images": images[:end],
-            "wrist_images": wrist_images[:end] if wrist_images else None,
-            "extra_view_images": extra_view_images[:end] if extra_view_images else None,
+            "wrist_images": wrist_images[:end] if has_wrist_images else None,
+            "extra_view_images": (
+                extra_view_images[:end] if has_extra_view_images else None
+            ),
             "states": states[:end],
             "actions": np_actions[:end],
             "dones": dones_out,
@@ -436,6 +476,8 @@ class CollectEpisode(gym.Wrapper):
                 image_shape=ep_data["images"][0].shape,
                 state_dim=ep_data["states"][0].shape[-1],
                 action_dim=ep_data["actions"][0].shape[-1],
+                has_wrist_image=ep_data["wrist_images"] is not None,
+                has_extra_view_image=ep_data["extra_view_images"] is not None,
                 use_incremental_stats=True,
                 stats_sample_ratio=self.stats_sample_ratio,
             )
@@ -505,10 +547,6 @@ class CollectEpisode(gym.Wrapper):
             f.result()
         self._futures = []
 
-    def _handle_signal(self, signum, frame) -> None:
-        self.close()
-        raise SystemExit(0)
-
     def _finalize_on_exit(self) -> None:
         self.close()
 
@@ -519,16 +557,10 @@ class CollectEpisode(gym.Wrapper):
         if not isinstance(env_info, dict):
             return
 
-        ep = env_info.get("episode") or {}
-        success = ep.get("success_once") if isinstance(ep, dict) else None
-        if success is None and isinstance(ep, dict):
-            success = ep.get("success_at_end")
-        if success is None:
-            success = env_info.get("success")
-
+        success = self._extract_success_from_info(env_info)
         if success is not None:
-            val = success.item() if isinstance(success, torch.Tensor) else success
-            self._episode_success[env_idx] = bool(val)
+            # Keep success sticky during an episode.
+            self._episode_success[env_idx] = self._episode_success[env_idx] or success
 
     def _get_episode_success(self, buf: dict, env_idx: int) -> bool:
         """Determine final episode success by scanning recorded info dicts.
@@ -538,24 +570,70 @@ class CollectEpisode(gym.Wrapper):
         ``success`` keys. Falls back to the incrementally-updated
         ``_episode_success`` flag.
         """
-        for info in reversed(buf["infos"]):
+        if self._episode_success[env_idx]:
+            return True
+
+        found_any = False
+        is_success = False
+
+        for info in buf["infos"]:
             if not isinstance(info, dict):
                 continue
-            for src in (
-                info.get("final_info", info).get("episode"),
-                info.get("final_info"),
-                info.get("episode"),
-                info,
-            ):
-                if not isinstance(src, dict):
-                    continue
-                for key in ("success_once", "success_at_end", "success"):
-                    val = src.get(key)
-                    if val is not None:
-                        return bool(
-                            val.item() if isinstance(val, torch.Tensor) else val
-                        )
+            success = self._extract_success_from_info(info)
+            if success is not None:
+                found_any = True
+                is_success = is_success or success
+
+        if found_any:
+            return is_success
         return self._episode_success[env_idx]
+
+    @staticmethod
+    def _to_bool_scalar(val) -> Optional[bool]:
+        if val is None:
+            return None
+        if isinstance(val, torch.Tensor):
+            if val.numel() != 1:
+                return None
+            return bool(val.item())
+        if isinstance(val, np.ndarray):
+            if val.size != 1:
+                return None
+            return bool(val.reshape(-1)[0])
+        return bool(val)
+
+    def _extract_success_from_source(self, src) -> Optional[bool]:
+        if not isinstance(src, dict):
+            return None
+        for key in ("success_once", "success_at_end", "success"):
+            val = self._to_bool_scalar(src.get(key))
+            if val is not None:
+                return val
+        return None
+
+    def _extract_success_from_info(self, info: dict) -> Optional[bool]:
+        """Extract success with episode-level fields taking priority."""
+        episode_values: list[bool] = []
+
+        final_info = info.get("final_info", None)
+        if isinstance(final_info, dict):
+            final_info_success = self._extract_success_from_source(final_info)
+            if final_info_success is not None:
+                episode_values.append(final_info_success)
+            final_episode_success = self._extract_success_from_source(
+                final_info.get("episode")
+            )
+            if final_episode_success is not None:
+                episode_values.append(final_episode_success)
+
+        current_episode_success = self._extract_success_from_source(info.get("episode"))
+        if current_episode_success is not None:
+            episode_values.append(current_episode_success)
+
+        if episode_values:
+            return any(episode_values)
+
+        return self._extract_success_from_source(info)
 
     # ─────────────────────────────────────────── data utilities ───────────────
 
@@ -686,3 +764,7 @@ class CollectEpisode(gym.Wrapper):
                 unwrapped._hidden_objects.remove(goal_site)
         if hasattr(goal_site, "show_visual"):
             goal_site.show_visual()
+
+    def update_reset_state_ids(self):
+        if hasattr(self.env, "update_reset_state_ids"):
+            self.env.update_reset_state_ids()

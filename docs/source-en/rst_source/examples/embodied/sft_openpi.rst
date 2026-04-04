@@ -26,6 +26,7 @@ Supported formats include:
 - pi0_maniskill
 - pi0_libero
 - pi0_aloha_robotwin
+- pi0_franka_dagger
 - pi05_libero
 - pi05_maniskill
 - pi05_metaworld
@@ -75,11 +76,44 @@ You can also train with a custom dataset format. Refer to the files below:
             self.extra_delta_transform = True
             self.action_train_with_rotation_6d = False
 
+Normalization statistics for new LeRobot datasets
+-------------------------------------------------
+
+When you train OpenPI on a newly collected LeRobot dataset, compute dataset
+normalization statistics before launching SFT. This is especially important for
+a realworld collected dataset.
+
+RLinf provides ``toolkits/replay_buffer/calculate_norm_stats.py`` to calculate norm_stats for ``state`` and ``actions``. You can use it like:
+
+.. code:: bash
+
+   export HF_LEROBOT_HOME=/path/to/lerobot_root
+   python toolkits/replay_buffer/calculate_norm_stats.py \
+       --config-name pi0_franka_dagger \
+       --repo-id franka_dagger
+
+Notes:
+
+- ``HF_LEROBOT_HOME`` must be set before running the script.
+- ``config_name`` must match your custom openpi dataconfig used by training.
+- ``repo_id`` must match your lerobot-format dataset name.
+
+The script writes the generated stats under ``<assest_dir>/<exp_name>/<repo_id>/norm_stats.json``.
+
+The OpenPI loader later reads the normalization stats from the ``<model_path>/<repo_id>`` at runtime.
+
+Another practical tip for stable training is to manually check the normalization statistics for very small standard deviations or narrow q99–q01 ranges. Increasing the standard deviation or widening the q99–q01 gap can help stabilize training, especially in two-stage pipelines that transition from SFT to online training.
+
 
 Training configuration
 ----------------------
 
-A full example lives in ``examples/sft/config/libero_sft_openpi.yaml``. Key fields:
+Full examples live in:
+
+- ``examples/sft/config/libero_sft_openpi.yaml``
+- ``examples/sft/config/franka_dagger_sft_openpi.yaml``
+
+A generic OpenPI SFT example looks like this:
 
 .. code:: yaml
 
@@ -156,6 +190,59 @@ First start the Ray cluster, then run the helper script:
 .. code:: bash
 
    # return to repo root
-   bash examples/sft/run_vla_sft.sh --config libero_sft_openpi
+   bash examples/sft/run_vla_sft.sh libero_sft_openpi
 
 The same script works for generic text SFT; just swap the config file.
+
+Real-World SFT Environment and Deployment
+------------------------------------------
+
+RLinf provides a **generic SFT environment** (``FrankaEnv-v1``) that lets you
+define new real-world tasks entirely through YAML configuration, without writing
+a custom environment class. This is useful for:
+
+- Collecting SFT demonstration data on new tasks
+- Deploying (evaluating) a trained policy on the real robot
+
+Generic SFT Environment
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The env config template lives at
+``examples/embodiment/config/env/realworld_franka_sft_env.yaml``.  Key fields
+you should customise for your task:
+
+.. code:: yaml
+
+   override_cfg:
+     task_description: "pick up the object and place it into the container"
+     target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]   # goal pose [x,y,z,rx,ry,rz]
+     reset_ee_pose:  [0.5, 0.0, 0.2, -3.14, 0.0, 0.0]    # reset pose (above goal)
+     max_num_steps: 300
+     reward_threshold: [0.01, 0.01, 0.01, 0.2, 0.2, 0.2]  # success tolerance
+     action_scale: [1.0, 1.0, 1.0]                         # [xyz, rpy, gripper]
+     ee_pose_limit_min: [0.4, -0.2, 0.05, -3.64, -0.5, -0.5]
+     ee_pose_limit_max: [0.6,  0.2, 0.35, -2.64,  0.5,  0.5]
+
+Under the hood, ``FrankaEnv`` now accepts ``override_cfg`` as a plain dict and
+uses a class-variable ``CONFIG_CLS`` to instantiate the dataclass config
+(defaults to ``FrankaRobotConfig``).  Subclasses such as ``PegInsertionEnv`` and
+``BottleEnv`` override ``CONFIG_CLS`` to their own dataclass while sharing the
+same constructor.
+
+Real-World Evaluation / Deployment
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A full evaluation config is provided at
+``examples/embodiment/config/realworld_eval.yaml``.  It pairs the generic SFT
+env with a Pi0 actor in **eval-only mode** (``runner.only_eval: True``).
+
+Before running, replace the placeholders:
+
+- ``ROBOT_IP`` — your Franka robot's IP address.
+- ``MODEL_PATH`` — path to your trained checkpoint.
+
+Then launch:
+
+.. code:: bash
+
+   bash examples/embodiment/run_realworld_eval.sh realworld_eval

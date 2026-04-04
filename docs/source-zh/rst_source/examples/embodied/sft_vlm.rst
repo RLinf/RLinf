@@ -79,7 +79,7 @@ VLM模型监督微调训练
      # 数据路径，需要将 train 数据和 evaluate 数据分开，并分别放在不同的文件夹下
      train_data_paths: "/path/to/Robo2VLM-1/train_data"
      # 如果不需要进行训练，只需要进行评估，请对将 train_data_paths 设置为 null
-     eval_data_paths: "/path/to/Robo2VLM-1/test_data"
+     val_data_paths: "/path/to/Robo2VLM-1/test_data"
 
      # 数据字段名（要和你的数据列一致）
      prompt_key: "question"
@@ -181,7 +181,7 @@ VLM模型监督微调训练
 如果你只想跑 evaluate，把配置改成：
 
 - ``data.train_data_paths: null``
-- ``data.eval_data_paths: "/eval_data_path"``
+- ``data.val_data_paths: "/path/to/validate_data"``
 
 其余启动命令不变，仍用：
 
@@ -272,7 +272,7 @@ loss 曲线：
 - ``max_epochs``：按数据集完整遍历的轮数
 - ``save_interval``：每多少 step 存一次 checkpoint
 - ``model_path``：本地模型目录（必须存在）
-- ``train_data_paths/eval_data_paths``：数据目录或文件路径
+- ``train_data_paths/val_data_paths``：数据目录或文件路径
 
 ----
 

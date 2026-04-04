@@ -24,6 +24,9 @@ cluster:
     rollout:
       node_group: "4090"
       placement: 0 # Local GPU rank in the 4090 node group (n for the n+1 th GPU)
+    reward:
+      node_group: "4090"
+      placement: 0  # Local GPU rank in the 4090 node group (n for the n+1 th GPU)
   node_groups:
     - label: "4090" # GPU node group
       node_ranks: 0 # The ranks of the nodes to be included in this group， change this if your training node is not rank 0
@@ -180,7 +183,31 @@ actor:
       buffer_dtype: ${actor.model.precision}
 
 reward:
-  use_reward_model: False
+  use_reward_model: True
+  group_name: "RewardGroup"
+  
+  # Reward mode:
+  # - "per_step": Compute reward for every frame (default, prone to reward hacking)
+  # - "terminal": Only compute reward at episode end (last frame), prevents reward hacking
+  reward_mode: "terminal"
+
+  reward_threshold: 0.5 # Probability threshold for success/fail classification
+  
+  # How to combine learned rewards with environment rewards:
+  # Weighted sum (reward = env_reward_weight * env_reward + reward_weight * reward_model_reward)
+  reward_weight: 1.0
+  env_reward_weight: 0.0
+  
+  model:
+    model_path: null
+    model_type: "resnet"
+    pretrained: False # if pretrained is set to True, rlinf will automatically download pretrained weights.
+    arch: "resnet18"
+    hidden_dim: 256
+    dropout: 0
+    image_size: [3, 128, 128]
+    normalize: true
+    precision: "fp32"
 
 critic:
   use_critic_model: False

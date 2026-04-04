@@ -53,17 +53,20 @@ class EmbodiedEvalRunner:
         self.logger = get_logger()
 
     def init_workers(self):
-        self.rollout.init_worker().wait()
-        self.env.init_worker().wait()
+        rollout_handle = self.rollout.init_worker()
+        env_handle = self.env.init_worker()
+
+        rollout_handle.wait()
+        env_handle.wait()
 
     def evaluate(self):
         env_handle: Handle = self.env.evaluate(
-            input_channel=self.rollout_channel,
-            output_channel=self.env_channel,
+            input_channel=self.env_channel,
+            rollout_channel=self.rollout_channel,
         )
         rollout_handle: Handle = self.rollout.evaluate(
-            input_channel=self.env_channel,
-            output_channel=self.rollout_channel,
+            input_channel=self.rollout_channel,
+            output_channel=self.env_channel,
         )
         env_results = env_handle.wait()
         rollout_handle.wait()

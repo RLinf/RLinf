@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import logging
 
 import hydra
 import torch.multiprocessing as mp
@@ -24,8 +25,11 @@ from rlinf.config import validate_cfg
 from rlinf.data.datasets import create_rl_dataset
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.runners.agent_runner import AgentRunner
-from rlinf.scheduler import Cluster, NodePlacementStrategy
-from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
+from rlinf.scheduler import Cluster, NodePlacementStrategy, PackedPlacementStrategy
+from rlinf.utils.placement import (
+    MultiAgentModelParallelComponentPlacement,
+    PlacementMode,
+)
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
 from rlinf.workers.agent.tool_worker import ToolWorkerInfo
@@ -39,10 +43,10 @@ mp.set_start_method("spawn", force=True)
 @output_redirector
 def main(cfg) -> None:
     cfg = validate_cfg(cfg)
-    print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
+    logging.info(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
-    component_placement = ModelParallelComponentPlacement(cfg, cluster)
+    component_placement = MultiAgentModelParallelComponentPlacement(cfg, cluster)
     assert component_placement.placement_mode == PlacementMode.COLLOCATED, (
         "multi-agent only supports collocated mode"
     )
@@ -50,15 +54,33 @@ def main(cfg) -> None:
     # Generator group
     rollout_worker_cls = get_rollout_backend_worker(cfg)
     rollout_placement_strategy = component_placement.get_strategy("rollout")
-    assert not cfg.rollout.get("use_fixed_worker", False), (
-        "Currently we only support two engine in evluation"
-    )
 
     rollout_group = rollout_worker_cls.create_group(cfg, component_placement).launch(
         cluster,
         name=cfg.rollout.group_name,
         placement_strategy=rollout_placement_strategy,
     )
+
+    solid_rollouts = {}
+
+    if cfg.agentloop.get("use_local_judge", False):
+        comp_name = "rollout_judge"
+        rollout_key = "rollout_judge"
+        rollout = cfg.get(comp_name, None)
+        assert rollout is not None, f"comp_name {comp_name} not found in cfg"
+        launch_name = rollout.get("group_name", comp_name)
+        strategy = component_placement.get_strategy(comp_name, PackedPlacementStrategy)
+
+        solid_rollouts[rollout_key] = rollout_worker_cls.create_group(
+            cfg,
+            component_placement,
+            weight_reload="cpu",
+            config_rollout=rollout,
+        ).launch(
+            cluster,
+            name=launch_name,
+            placement_strategy=strategy,
+        )
 
     # AgentLoop group.
     agentloop_placement_strategy = NodePlacementStrategy(
@@ -118,7 +140,7 @@ def main(cfg) -> None:
         actor=actor_group,
         agent_loop=agentloop_group,
         tool_workers=tool_workers,
-        solid_rollouts={},
+        solid_rollouts=solid_rollouts,
         inference=None,
         reward=None,
     )

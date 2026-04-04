@@ -57,8 +57,8 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         # if train_data_paths is not set, the code will just eval the model
         if self.cfg.data.get("train_data_paths") is None:
             logging.warning("train_data_paths is not set, will just eval the model")
-            assert self.cfg.data.get("eval_data_paths") is not None, (
-                "train_data_paths is not set, eval_data_paths must be set"
+            assert self.cfg.data.get("val_data_paths") is not None, (
+                "train_data_paths is not set, val_data_paths must be set"
             )
             self.data_loader = None
             self.data_iter = None
@@ -68,9 +68,9 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             )
             self.data_iter = iter(self.data_loader)
 
-        if self.cfg.data.get("eval_data_paths") is not None:
+        if self.cfg.data.get("val_data_paths") is not None:
             self.eval_data_loader, self.eval_data_config = self.build_dataloader(
-                self.cfg.data.eval_data_paths, eval_dataset=True
+                self.cfg.data.val_data_paths, eval_dataset=True
             )
         else:
             self.eval_data_loader = None

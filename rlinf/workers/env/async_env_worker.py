@@ -29,16 +29,21 @@ class AsyncEnvWorker(EnvWorker):
     async def interact(
         self,
         input_channel: Channel,
-        output_channel: Channel,
+        rollout_channel: Channel,
+        reward_channel: Channel | None,
+        actor_channel: Channel | None,
         metric_channel: Channel,
-        replay_channel: Channel | None = None,
     ):
         assert self._interact_task is None or self._interact_task.done(), (
             "Previous interact task is still running while a new interact call is made."
         )
         self._interact_task = asyncio.create_task(
             self._interact(
-                input_channel, output_channel, metric_channel, replay_channel
+                input_channel,
+                rollout_channel,
+                reward_channel,
+                actor_channel,
+                metric_channel,
             )
         )
         try:
@@ -49,15 +54,17 @@ class AsyncEnvWorker(EnvWorker):
     async def _interact(
         self,
         input_channel: Channel,
-        output_channel: Channel,
+        rollout_channel: Channel,
+        reward_channel: Channel | None,
+        actor_channel: Channel | None,
         metric_channel: Channel,
-        replay_channel: Channel | None,
     ):
         while True:
             env_metrics = await self._run_interact_once(
                 input_channel,
-                output_channel,
-                replay_channel,
+                rollout_channel,
+                reward_channel,
+                actor_channel,
                 cooperative_yield=True,
             )
 
