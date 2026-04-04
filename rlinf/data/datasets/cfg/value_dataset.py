@@ -239,8 +239,12 @@ class ValueDataset(Dataset):
         # 3. Model transforms (without TokenizePrompt and ResizeImages —
         #    value model handles tokenization via ValueProcessor in the
         #    collator, and image resize via ValueImageProcessor)
-        transforms_list.append(_openpi_transforms.InjectDefaultPrompt(default_prompt))
-        transforms_list.append(_openpi_transforms.PadStatesAndActions(action_dim))
+        transforms_list.append(
+            _openpi_transforms.InjectDefaultPrompt(default_prompt)
+        )
+        transforms_list.append(
+            _openpi_transforms.PadStatesAndActions(action_dim)
+        )
 
         return _openpi_transforms.compose(transforms_list)
 
