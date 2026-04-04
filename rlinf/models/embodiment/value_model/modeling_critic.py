@@ -68,13 +68,170 @@ class CriticOutput(ModelOutput):
     mae: Optional[torch.FloatTensor] = None
 
 
-class VLMObservationEncoder(nn.Module):
-    """Base class providing observation processing and embedding.
+class ValueHead(nn.Module):
+    """Value prediction head with learnable CLS embedding and categorical projection."""
 
-    Stripped to only the methods inherited by ValueCriticModel.
-    ValueCriticModel bypasses __init__ with nn.Module.__init__(self),
-    so no __init__ is defined here.
+    def __init__(
+        self,
+        hidden_size: int,
+        num_bins: int,
+        v_min: float,
+        v_max: float,
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+        self.hidden_size = hidden_size
+
+        self.cls_embedding = nn.Embedding(1, hidden_size)
+        nn.init.normal_(self.cls_embedding.weight, std=0.02)
+
+        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
+        self.value_proj = nn.Linear(hidden_size, num_bins)
+        self.register_buffer(
+            "atoms", torch.linspace(v_min, v_max, num_bins), persistent=False
+        )
+        self.num_bins = num_bins
+        self.v_min = v_min
+        self.v_max = v_max
+        self.delta_z = (v_max - v_min) / (num_bins - 1)
+
+    def get_cls_embedding(self, batch_size: int) -> Tensor:
+        """Get CLS embedding expanded to batch size. Returns [B, 1, hidden_size]."""
+        # Use embedding lookup instead of reading `.weight` directly.
+        # Under FSDP, `.weight` can be a view into a flattened parameter and may
+        # trigger autograd view/inplace conflicts during backward.
+        cls_token_ids = torch.zeros(
+            batch_size, 1, dtype=torch.long, device=self.cls_embedding.weight.device
+        )
+        return self.cls_embedding(cls_token_ids)
+
+    def forward(self, hidden_states: Tensor) -> Tensor:
+        """Project hidden states to value logits."""
+        hidden_states = hidden_states.to(self.value_proj.weight.dtype)
+        hidden_states = self.dropout(hidden_states)
+        return self.value_proj(hidden_states)
+
+
+class ValueCriticModel(nn.Module):
+    """Value function V(s) with VLM observation encoding.
+
+    Uses expert mode: Gemma expert + [CLS] -> categorical value prediction.
     """
+
+    def __init__(self, config: ValueCriticConfig):
+        super().__init__()
+        self.config = config
+        self.backbone_variant = getattr(config, "backbone_variant", "paligemma")
+
+        expert_config = get_config(config.critic_expert_variant)
+
+        logger.info(
+            f"Creating ValueCriticModel: expert={config.critic_expert_variant}, "
+            f"backbone={self.backbone_variant}"
+        )
+
+        expert_configs = {"value": expert_config}
+
+        if self.backbone_variant == "siglip_gemma3":
+            siglip_path = getattr(config, "siglip_path", "")
+            gemma3_path = getattr(config, "gemma3_path", "")
+            if not siglip_path or not gemma3_path:
+                raise ValueError(
+                    "backbone_variant='siglip_gemma3' requires both "
+                    f"siglip_path and gemma3_path. Got siglip_path='{siglip_path}', "
+                    f"gemma3_path='{gemma3_path}'"
+                )
+            self.paligemma_with_expert = SiglipGemma3WithMultiExpert(
+                expert_configs=expert_configs,
+                siglip_path=siglip_path,
+                gemma3_path=gemma3_path,
+                precision=config.precision,
+                freeze_vision_encoder=getattr(config, "freeze_vision_encoder", False),
+                freeze_vlm=getattr(config, "freeze_vlm", False),
+            )
+        else:
+            paligemma_config = get_config(config.paligemma_variant)
+            use_adarms = [False, {"value": False}]
+            self.paligemma_with_expert = PaliGemmaWithMultiExpertModel(
+                vlm_config=paligemma_config,
+                expert_configs=expert_configs,
+                use_adarms=use_adarms,
+                precision=config.precision,
+                freeze_vision_encoder=getattr(config, "freeze_vision_encoder", False),
+                freeze_vlm=getattr(config, "freeze_vlm", False),
+            )
+
+        self.gradient_checkpointing_enabled = False
+
+        self.value_head = ValueHead(
+            hidden_size=expert_config.width,
+            num_bins=config.num_bins,
+            v_min=config.v_min,
+            v_max=config.v_max,
+            dropout=getattr(config, "value_dropout", 0.0),
+        )
+        self.num_bins = config.num_bins
+        self.v_min = config.v_min
+        self.v_max = config.v_max
+        self.delta_z = (config.v_max - config.v_min) / (config.num_bins - 1)
+
+        for name, module in self.named_modules():
+            path_parts = name.split(".")
+            setattr(module, "_fsdp_wrap_name", path_parts[-1] if path_parts else name)
+
+    @property
+    def _no_split_modules(self) -> list[str]:
+        if self.paligemma_with_expert.freeze_vlm:
+            no_split_modules = [
+                "GemmaDecoderLayer",
+                "SiglipVisionEmbeddings",
+                "GemmaRMSNorm",
+                "GemmaRotaryEmbedding",
+                "ValueHead",
+            ]
+        else:
+            no_split_modules = [
+                "GemmaMLP",
+                "SiglipVisionEmbeddings",
+                "GemmaRMSNorm",
+                "GemmaRotaryEmbedding",
+                "ValueHead",
+            ]
+        if self.backbone_variant == "siglip_gemma3":
+            no_split_modules.extend(["Gemma3RMSNorm", "Gemma3DecoderLayer"])
+        return no_split_modules
+
+    @property
+    def _no_split_names(self) -> list[str]:
+        return ["lm_head", "cls_embedding"]
+
+    def gradient_checkpointing_enable(self):
+        self.gradient_checkpointing_enabled = True
+        if self.backbone_variant == "siglip_gemma3":
+            self.paligemma_with_expert.gemma3.model.gradient_checkpointing = True
+            self.paligemma_with_expert.vision_tower.gradient_checkpointing = True
+        else:
+            self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing = True
+            self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing = (
+                True
+            )
+        for expert in self.paligemma_with_expert.experts.values():
+            expert.model.gradient_checkpointing = True
+        logger.info("Enabled gradient checkpointing for ValueCriticModel")
+
+    def gradient_checkpointing_disable(self):
+        self.gradient_checkpointing_enabled = False
+        if self.backbone_variant == "siglip_gemma3":
+            self.paligemma_with_expert.gemma3.model.gradient_checkpointing = False
+            self.paligemma_with_expert.vision_tower.gradient_checkpointing = False
+        else:
+            self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing = False
+            self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing = (
+                False
+            )
+        for expert in self.paligemma_with_expert.experts.values():
+            expert.model.gradient_checkpointing = False
+        logger.info("Disabled gradient checkpointing for ValueCriticModel")
 
     def _apply_checkpoint(self, func, *args, **kwargs):
         """Apply gradient checkpointing if enabled."""
@@ -86,7 +243,7 @@ class VLMObservationEncoder(nn.Module):
 
     def _get_model_dtype(self) -> torch.dtype:
         """Get the dtype of the backbone model's attention weights."""
-        if getattr(self, "backbone_variant", "paligemma") == "siglip_gemma3":
+        if self.backbone_variant == "siglip_gemma3":
             return self.paligemma_with_expert.gemma3.model.layers[
                 0
             ].self_attn.q_proj.weight.dtype
@@ -162,175 +319,6 @@ class VLMObservationEncoder(nn.Module):
         pad_masks.append(lang_masks)
 
         return torch.cat(embs, dim=1), torch.cat(pad_masks, dim=1)
-
-
-class ValueHead(nn.Module):
-    """Value prediction head with learnable CLS embedding and categorical projection."""
-
-    def __init__(
-        self,
-        hidden_size: int,
-        num_bins: int,
-        v_min: float,
-        v_max: float,
-        dropout: float = 0.0,
-    ):
-        super().__init__()
-        self.hidden_size = hidden_size
-
-        self.cls_embedding = nn.Embedding(1, hidden_size)
-        nn.init.normal_(self.cls_embedding.weight, std=0.02)
-
-        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
-        self.value_proj = nn.Linear(hidden_size, num_bins)
-        self.register_buffer(
-            "atoms", torch.linspace(v_min, v_max, num_bins), persistent=False
-        )
-        self.num_bins = num_bins
-        self.v_min = v_min
-        self.v_max = v_max
-        self.delta_z = (v_max - v_min) / (num_bins - 1)
-
-    def get_cls_embedding(self, batch_size: int) -> Tensor:
-        """Get CLS embedding expanded to batch size. Returns [B, 1, hidden_size]."""
-        # Use embedding lookup instead of reading `.weight` directly.
-        # Under FSDP, `.weight` can be a view into a flattened parameter and may
-        # trigger autograd view/inplace conflicts during backward.
-        cls_token_ids = torch.zeros(
-            batch_size, 1, dtype=torch.long, device=self.cls_embedding.weight.device
-        )
-        return self.cls_embedding(cls_token_ids)
-
-    def forward(self, hidden_states: Tensor) -> Tensor:
-        """Project hidden states to value logits."""
-        hidden_states = hidden_states.to(self.value_proj.weight.dtype)
-        hidden_states = self.dropout(hidden_states)
-        return self.value_proj(hidden_states)
-
-
-class ValueCriticModel(VLMObservationEncoder):
-    """Value function V(s) with VLM observation encoding.
-
-    Uses expert mode: Gemma expert + [CLS] -> categorical value prediction.
-    """
-
-    def __init__(self, config: ValueCriticConfig):
-        nn.Module.__init__(self)
-        self.config = config
-        self.pi05 = True
-        self.backbone_variant = getattr(config, "backbone_variant", "paligemma")
-
-        expert_config = get_config(config.critic_expert_variant)
-
-        logger.info(
-            f"Creating ValueCriticModel: expert={config.critic_expert_variant}, "
-            f"backbone={self.backbone_variant}"
-        )
-
-        expert_configs = {"value": expert_config}
-
-        if self.backbone_variant == "siglip_gemma3":
-            siglip_path = getattr(config, "siglip_path", "")
-            gemma3_path = getattr(config, "gemma3_path", "")
-            if not siglip_path or not gemma3_path:
-                raise ValueError(
-                    "backbone_variant='siglip_gemma3' requires both "
-                    f"siglip_path and gemma3_path. Got siglip_path='{siglip_path}', "
-                    f"gemma3_path='{gemma3_path}'"
-                )
-            self.paligemma_with_expert = SiglipGemma3WithMultiExpert(
-                expert_configs=expert_configs,
-                siglip_path=siglip_path,
-                gemma3_path=gemma3_path,
-                precision=config.precision,
-                freeze_vision_encoder=getattr(config, "freeze_vision_encoder", False),
-                freeze_vlm=getattr(config, "freeze_vlm", False),
-            )
-        else:
-            paligemma_config = get_config(config.paligemma_variant)
-            use_adarms = [False, {"value": False}]
-            self.paligemma_with_expert = PaliGemmaWithMultiExpertModel(
-                vlm_config=paligemma_config,
-                expert_configs=expert_configs,
-                use_adarms=use_adarms,
-                precision=config.precision,
-                freeze_vision_encoder=getattr(config, "freeze_vision_encoder", False),
-                freeze_vlm=getattr(config, "freeze_vlm", False),
-            )
-
-        self.gradient_checkpointing_enabled = False
-        self._expert_config = expert_config
-
-        self.expert_width = expert_config.width
-        self.value_head = ValueHead(
-            hidden_size=expert_config.width,
-            num_bins=config.num_bins,
-            v_min=config.v_min,
-            v_max=config.v_max,
-            dropout=getattr(config, "value_dropout", 0.0),
-        )
-        self.num_bins = config.num_bins
-        self.v_min = config.v_min
-        self.v_max = config.v_max
-        self.delta_z = (config.v_max - config.v_min) / (config.num_bins - 1)
-
-        for name, module in self.named_modules():
-            path_parts = name.split(".")
-            setattr(module, "_fsdp_wrap_name", path_parts[-1] if path_parts else name)
-
-    @property
-    def _no_split_modules(self) -> list[str]:
-        if self.paligemma_with_expert.freeze_vlm:
-            no_split_modules = [
-                "GemmaDecoderLayer",
-                "SiglipVisionEmbeddings",
-                "GemmaRMSNorm",
-                "GemmaRotaryEmbedding",
-                "ValueHead",
-            ]
-        else:
-            no_split_modules = [
-                "GemmaMLP",
-                "SiglipVisionEmbeddings",
-                "GemmaRMSNorm",
-                "GemmaRotaryEmbedding",
-                "ValueHead",
-            ]
-        if self.backbone_variant == "siglip_gemma3":
-            no_split_modules.extend(["Gemma3RMSNorm", "Gemma3DecoderLayer"])
-        return no_split_modules
-
-    @property
-    def _no_split_names(self) -> list[str]:
-        return ["lm_head", "cls_embedding"]
-
-    def gradient_checkpointing_enable(self):
-        self.gradient_checkpointing_enabled = True
-        if self.backbone_variant == "siglip_gemma3":
-            self.paligemma_with_expert.gemma3.model.gradient_checkpointing = True
-            self.paligemma_with_expert.vision_tower.gradient_checkpointing = True
-        else:
-            self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing = True
-            self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing = (
-                True
-            )
-        for expert in self.paligemma_with_expert.experts.values():
-            expert.model.gradient_checkpointing = True
-        logger.info("Enabled gradient checkpointing for ValueCriticModel")
-
-    def gradient_checkpointing_disable(self):
-        self.gradient_checkpointing_enabled = False
-        if self.backbone_variant == "siglip_gemma3":
-            self.paligemma_with_expert.gemma3.model.gradient_checkpointing = False
-            self.paligemma_with_expert.vision_tower.gradient_checkpointing = False
-        else:
-            self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing = False
-            self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing = (
-                False
-            )
-        for expert in self.paligemma_with_expert.experts.values():
-            expert.model.gradient_checkpointing = False
-        logger.info("Disabled gradient checkpointing for ValueCriticModel")
 
     def get_cls_embedding(self, batch_size: int) -> Tensor:
         return self.value_head.get_cls_embedding(batch_size)
@@ -1206,7 +1194,6 @@ class ValueCriticModel(VLMObservationEncoder):
 
 __all__ = [
     "make_att_2d_masks",
-    "VLMObservationEncoder",
     "ValueHead",
     "CriticOutput",
     "ValueCriticModel",
