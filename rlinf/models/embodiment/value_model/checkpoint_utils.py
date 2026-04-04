@@ -163,11 +163,17 @@ def build_input_transforms(
     input_transforms = []
 
     if env_type == "libero":
-        input_transforms.append(_openpi_transforms.InjectDefaultPrompt(default_prompt))
-        input_transforms.append(libero_policy.LiberoInputs(model_type=model_type_enum))
+        input_transforms.append(
+            _openpi_transforms.InjectDefaultPrompt(default_prompt)
+        )
+        input_transforms.append(
+            libero_policy.LiberoInputs(model_type=model_type_enum)
+        )
 
     elif env_type == "franka":
-        input_transforms.append(_openpi_transforms.InjectDefaultPrompt(default_prompt))
+        input_transforms.append(
+            _openpi_transforms.InjectDefaultPrompt(default_prompt)
+        )
         input_transforms.append(
             franka_policy.FrankaEEInputs(
                 action_dim=action_dim, model_type=model_type_enum
@@ -179,7 +185,9 @@ def build_input_transforms(
 
     if norm_stats is not None:
         input_transforms.append(
-            _openpi_transforms.Normalize(norm_stats, use_quantiles=use_quantile_norm)
+            _openpi_transforms.Normalize(
+                norm_stats, use_quantiles=use_quantile_norm
+            )
         )
     # image shape transform is processed in ValueCollator
 
