@@ -1,0 +1,156 @@
+from abc import ABC, abstractmethod
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+
+from groot.vla.data.schema import DatasetMetadata
+
+
+class ModalityTransform(BaseModel, ABC):
+    """
+    Abstract class for transforming data modalities, e.g. video frame augmentation or action normalization.
+    """
+
+    apply_to: list[str] = Field(..., description="The keys to apply the transform to.")
+    training: bool = Field(
+        default=True, description="Whether to apply the transform in training mode."
+    )
+    _dataset_metadata: DatasetMetadata | None = PrivateAttr(default=None)
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    @property
+    def dataset_metadata(self) -> DatasetMetadata:
+        assert (
+            self._dataset_metadata is not None
+        ), "Dataset metadata is not set. Please call set_metadata() before calling apply()."
+        return self._dataset_metadata
+
+    @dataset_metadata.setter
+    def dataset_metadata(self, value: DatasetMetadata):
+        self._dataset_metadata = value
+
+    def set_metadata(self, dataset_metadata: DatasetMetadata):
+        """
+        Set the dataset metadata. This is useful for transforms that need to know the dataset metadata, e.g. to normalize actions.
+        Subclasses can override this method if they need to do something more complex.
+        """
+        self.dataset_metadata = dataset_metadata
+
+    def __call__(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Apply the transformation to the data corresponding to target_keys and return the processed data.
+
+        Args:
+            data (dict[str, Any]): The data to transform.
+                example: data = {
+                    "video.image_side_0": np.ndarray,
+                    "action.eef_position": np.ndarray,
+                    ...
+                }
+
+        Returns:
+            dict[str, Any]: The transformed data.
+                example: transformed_data = {
+                    "video.image_side_0": np.ndarray,
+                    "action.eef_position": torch.Tensor,  # Normalized and converted to tensor
+                    ...
+                }
+        """
+        return self.apply(data)
+
+    @abstractmethod
+    def apply(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Apply the transformation to the data corresponding to keys matching the `apply_to` regular expression and return the processed data."""
+        pass
+
+    def train(self):
+        self.training = True
+
+    def eval(self):
+        self.training = False
+
+
+class InvertibleModalityTransform(ModalityTransform):
+    @abstractmethod
+    def unapply(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Reverse the transformation to the data corresponding to keys matching the `apply_to` regular expression and return the processed data."""
+        pass
+
+
+class IdentityModalityTransform(ModalityTransform):
+    """Identity transform."""
+
+    apply_to: list[str] = Field(
+        default_factory=list, description="Will be ignored for identity transforms."
+    )
+
+    def apply(self, data: dict[str, Any]) -> dict[str, Any]:
+        return data
+
+    def unapply(self, data: dict[str, Any]) -> dict[str, Any]:
+        return data
+
+
+class ComposedModalityTransform(ModalityTransform):
+    """Compose multiple modality transforms."""
+
+    transforms: list[ModalityTransform] = Field(..., description="The transforms to compose.")
+    apply_to: list[str] = Field(
+        default_factory=list, description="Will be ignored for composed transforms."
+    )
+    training: bool = Field(
+        default=True, description="Whether to apply the transform in training mode."
+    )
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, from_attributes=True)
+
+    def set_metadata(self, dataset_metadata: DatasetMetadata):
+        for transform in self.transforms:
+            transform.set_metadata(dataset_metadata)
+            # this is used to pass the list of transforms to concat transform
+            # concat transform needs needs to know what transforms were applied
+            # because it needs to compute the correct dimension of features
+            # post transform (during unapply).
+            # this attribute can also be used by other transforms to know what
+            # transforms were applied before it in the pipeline.
+            if hasattr(transform, "set_transform_pipeline"):
+                getattr(transform, "set_transform_pipeline")(self.transforms)
+
+    def set_per_horizon_statistics(self, per_horizon_stats: dict[str, dict[str, list]]):
+        """Set per-horizon statistics for transforms that support it (e.g., PerHorizonActionTransform).
+        
+        Args:
+            per_horizon_stats: Dict from dataset.lerobot_relative_horizon_stats_meta
+                Format: {action_key: {stat_name: [[h0_vals], [h1_vals], ...]}}
+        """
+        for transform in self.transforms:
+            if hasattr(transform, "set_per_horizon_statistics"):
+                transform.set_per_horizon_statistics(per_horizon_stats)
+
+    def apply(self, data: dict[str, Any]) -> dict[str, Any]:
+        for i, transform in enumerate(self.transforms):
+            try:
+                data = transform(data)
+            except Exception as e:
+                raise ValueError(f"Error applying transform {i} to data: {e}") from e
+        return data
+
+    def unapply(self, data: dict[str, Any]) -> dict[str, Any]:
+        for i, transform in enumerate(reversed(self.transforms)):
+            if isinstance(transform, InvertibleModalityTransform):
+                try:
+                    data = transform.unapply(data)
+                except Exception as e:
+                    step = len(self.transforms) - i - 1
+                    raise ValueError(f"Error unapplying transform {step} to data: {e}") from e
+        return data
+
+    def train(self):
+        for transform in self.transforms:
+            transform.train()
+        self.training = True
+
+    def eval(self):
+        for transform in self.transforms:
+            transform.eval()
+        self.training = False

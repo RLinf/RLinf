@@ -26,6 +26,9 @@ from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 class FSDPVlaSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
+        self._is_dreamzero = (
+            SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.DREAMZERO
+        )
 
     def build_dataloader(self, data_paths: list[str], eval_dataset: bool = False):
         if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:
@@ -53,6 +56,16 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             return build_lingbot_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths
             )
+        elif SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.DREAMZERO
+        ]:
+            from rlinf.models.embodiment.dreamzero.sft_data import (
+                build_dreamzero_sft_dataloader,
+            )
+
+            return build_dreamzero_sft_dataloader(
+                self.cfg, self._world_size, self._rank, data_paths, eval_dataset
+            )
         else:
             raise KeyError(
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
@@ -77,6 +90,21 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             with self.amp_context:
                 losses_dict = self.model(forward_type=ForwardType.SFT, data=batch_data)
             return losses_dict["loss"]
+        if self._is_dreamzero:
+            batch_data = _pytree.tree_map(
+                lambda x: x.to(self.device, non_blocking=True)
+                if isinstance(x, torch.Tensor)
+                else x,
+                batch,
+            )
+            with self.amp_context:
+                losses = self.model(forward_type=ForwardType.SFT, data=batch_data)
+            self._dreamzero_extra_losses = {
+                k: v.detach().item() if isinstance(v, torch.Tensor) else float(v)
+                for k, v in losses.items()
+                if k != "loss"
+            }
+            return losses["loss"]
         observation, actions = batch
 
         register_pytree_dataclasses(observation)
@@ -99,3 +127,46 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
         # train model return the loss
         return losses
+
+    def save_checkpoint(self, save_path: str, step: int = 0):
+        if self._is_dreamzero:
+            import os
+
+            from torch.distributed.fsdp import StateDictType
+            from torch.distributed.fsdp.api import FullStateDictConfig
+
+            from rlinf.utils.utils import clear_memory
+
+            clear_memory()
+            torch.distributed.barrier()
+
+            save_policy = FullStateDictConfig(
+                offload_to_cpu=True, rank0_only=True
+            )
+            with torch.distributed.fsdp.FullyShardedDataParallel.state_dict_type(
+                self.model, StateDictType.FULL_STATE_DICT, save_policy
+            ):
+                cpu_state = self.model.state_dict()
+
+            if torch.distributed.get_rank() == 0:
+                sd_path = os.path.join(save_path, "model_state_dict")
+                os.makedirs(sd_path, exist_ok=True)
+                bf16_state = {
+                    k: v.to(torch.bfloat16) if v.is_floating_point() else v
+                    for k, v in cpu_state.items()
+                }
+                torch.save(bf16_state, os.path.join(sd_path, "full_weights.pt"))
+                del bf16_state
+
+            del cpu_state
+            clear_memory()
+            torch.distributed.barrier()
+            return
+        super().save_checkpoint(save_path, step)
+
+    def run_training(self):
+        train_metrics = super().run_training()
+        if self._is_dreamzero and hasattr(self, "_dreamzero_extra_losses"):
+            train_metrics.update(self._dreamzero_extra_losses)
+            del self._dreamzero_extra_losses
+        return train_metrics
