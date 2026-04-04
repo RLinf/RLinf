@@ -30,6 +30,26 @@ from .modeling_critic import CriticOutput, ValueCriticModel
 logger = logging.getLogger(__name__)
 
 
+def _strip_model_prefix(state_dict: dict, model) -> dict:
+    """Strip 'model.' prefix from checkpoint keys if needed.
+
+    Checkpoints saved from wrapper classes (FSDP, DDP) may prepend 'model.'
+    to all keys. If no keys match the model, try stripping the prefix.
+    """
+    model_keys = set(model.state_dict().keys())
+    ckpt_keys = set(state_dict.keys())
+    if len(model_keys & ckpt_keys) == 0:
+        stripped = {
+            k.removeprefix("model."): v
+            for k, v in state_dict.items()
+            if k.startswith("model.")
+        }
+        if len(set(stripped.keys()) & model_keys) > 0:
+            logger.info("Stripped 'model.' prefix from checkpoint keys")
+            return stripped
+    return state_dict
+
+
 def get_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticModel:
     """Build a ValueCriticModel.
 
@@ -108,6 +128,7 @@ def get_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticModel:
             raise FileNotFoundError(f"Model path does not exist: {model_path}")
         state_dict = _load_state_dict(model_path)
         if state_dict:
+            state_dict = _strip_model_prefix(state_dict, model)
             missing, unexpected = model.load_state_dict(state_dict, strict=False)
             logger.info(
                 "Loaded checkpoint from %s (missing=%d, unexpected=%d)",
@@ -121,6 +142,7 @@ def get_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticModel:
         if model_path and os.path.exists(model_path):
             state_dict = _load_state_dict(model_path)
             if state_dict:
+                state_dict = _strip_model_prefix(state_dict, model)
                 missing, unexpected = model.load_state_dict(state_dict, strict=False)
                 logger.info(
                     "Loaded fine-tuned checkpoint from %s (missing=%d, unexpected=%d)",

@@ -692,6 +692,10 @@ class ValueCriticModel(nn.Module):
     ):
         """Create a ValueCriticModel from a trained checkpoint, ready for inference.
 
+        Delegates model creation and weight loading to :func:`get_value_model`,
+        then attaches inference-specific components (processor, transforms,
+        normalization stats).
+
         Args:
             checkpoint_dir: Path to checkpoint directory.
             device: Device to run inference on.
@@ -714,18 +718,36 @@ class ValueCriticModel(nn.Module):
         """
         import pathlib
 
+        from omegaconf import OmegaConf
         from transformers import AutoTokenizer
 
+        from . import get_value_model
         from .checkpoint_utils import (
             build_input_transforms,
             has_tokenizer_files,
             load_norm_stats,
-            load_state_dict_from_checkpoint,
         )
         from .processing import ValueProcessor
 
         checkpoint_dir = pathlib.Path(checkpoint_dir)
         logger.info(f"Loading value model from {checkpoint_dir}")
+
+        # Build model via shared factory (handles config + weight loading)
+        cfg = OmegaConf.create(
+            {
+                "model_path": str(checkpoint_dir),
+                "critic_expert_variant": critic_expert_variant,
+                "num_bins": num_return_bins,
+                "v_min": return_min,
+                "v_max": return_max,
+                "backbone_variant": backbone_variant,
+                "siglip_path": siglip_path,
+                "gemma3_path": gemma3_path,
+            }
+        )
+        model = get_value_model(cfg)
+
+        # --- Inference-specific setup ---
 
         # Load processor: tokenizer_path > checkpoint tokenizer > error
         if tokenizer_path:
@@ -744,44 +766,6 @@ class ValueCriticModel(nn.Module):
                 f"contains tokenizer files. checkpoint_dir={checkpoint_dir}"
             )
         processor = ValueProcessor(tokenizer=tokenizer, max_token_len=200)
-
-        # Build config and model
-        critic_config = ValueCriticConfig(
-            critic_expert_variant=critic_expert_variant,
-            num_bins=num_return_bins,
-            v_min=return_min,
-            v_max=return_max,
-            backbone_variant=backbone_variant,
-            siglip_path=siglip_path,
-            gemma3_path=gemma3_path,
-        )
-
-        model = cls(critic_config)
-
-        # Load checkpoint weights
-        state_dict = load_state_dict_from_checkpoint(checkpoint_dir)
-
-        # Handle key prefix mismatch: checkpoints saved from a wrapper class
-        # may have a "model." prefix that doesn't exist in ValueCriticModel.
-        model_keys = set(model.state_dict().keys())
-        ckpt_keys = set(state_dict.keys())
-
-        if len(model_keys & ckpt_keys) == 0:
-            # Try stripping "model." prefix
-            stripped = {
-                k.removeprefix("model."): v
-                for k, v in state_dict.items()
-                if k.startswith("model.")
-            }
-            if len(set(stripped.keys()) & model_keys) > 0:
-                logger.info("  Stripped 'model.' prefix from checkpoint keys")
-                state_dict = stripped
-
-        missing, unexpected = model.load_state_dict(state_dict, strict=False)
-        logger.info(
-            f"  Loaded state dict (missing={len(missing)}, "
-            f"unexpected={len(unexpected)})"
-        )
 
         model.processor = processor
         model = model.to(device)
