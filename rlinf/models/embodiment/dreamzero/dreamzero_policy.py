@@ -24,18 +24,18 @@ logger = logging.getLogger(__name__)
 
 
 def _ensure_groot_importable():
-    """Add the repo root to sys.path so `import groot` works.
-
-    groot/ lives 5 levels above this file:
-        rlinf/models/embodiment/dreamzero/dreamzero_policy.py
-        ^0    ^1      ^2         ^3        ^4
-    so parents[5] is the workspace root where groot/ resides.
-    """
+    """Add the repo root (the directory containing ``groot/``) to sys.path."""
     if "groot" in sys.modules:
         return
-    dreamzero_root = Path(__file__).resolve().parents[5]
-    if str(dreamzero_root) not in sys.path:
-        sys.path.insert(0, str(dreamzero_root))
+    cur = Path(__file__).resolve().parent
+    for _ in range(10):
+        if (cur / "groot").is_dir():
+            if str(cur) not in sys.path:
+                sys.path.insert(0, str(cur))
+            return
+        if cur.parent == cur:
+            break
+        cur = cur.parent
 
 
 class DreamZeroPolicy(nn.Module, BasePolicy):
@@ -97,14 +97,12 @@ class DreamZeroPolicy(nn.Module, BasePolicy):
 
         self._patch_pretrained_paths(config_dict)
 
-        if train_architecture is not None:
-            head_cfg = config_dict.get("action_head_cfg", {}).get("config", {})
-            if isinstance(head_cfg, dict):
+        ah_cfg = config_dict.setdefault("action_head_cfg", {})
+        head_cfg = ah_cfg.setdefault("config", {})
+        if isinstance(head_cfg, dict):
+            if train_architecture is not None:
                 head_cfg["train_architecture"] = train_architecture
-
-        if action_loss_scale != 1.0:
-            head_cfg = config_dict.get("action_head_cfg", {}).get("config", {})
-            if isinstance(head_cfg, dict):
+            if action_loss_scale != 1.0:
                 head_cfg["action_loss_scale"] = action_loss_scale
 
         config = VLAConfig(**config_dict)
@@ -324,6 +322,32 @@ class DreamZeroPolicy(nn.Module, BasePolicy):
         config_dict.clear()
         config_dict.update(rewritten)
 
+    @staticmethod
+    def _load_safetensors(ckpt_dir: Path) -> dict[str, torch.Tensor] | None:
+        """Load safetensors weights from *ckpt_dir*, returning None if absent."""
+        from safetensors.torch import load_file
+
+        index_path = ckpt_dir / "model.safetensors.index.json"
+        single_path = ckpt_dir / "model.safetensors"
+
+        if not index_path.exists() and not single_path.exists():
+            return None
+
+        state_dict: dict[str, torch.Tensor] = {}
+        if index_path.exists():
+            with open(index_path) as f:
+                index = json.load(f)
+            for shard_file in sorted(set(index["weight_map"].values())):
+                state_dict.update(load_file(str(ckpt_dir / shard_file)))
+        else:
+            state_dict.update(load_file(str(single_path)))
+
+        if any(".base_layer." in k for k in state_dict):
+            state_dict = {
+                k.replace(".base_layer.", "."): v for k, v in state_dict.items()
+            }
+        return state_dict
+
     def _load_pretrained_weights(self, pretrained_path: str) -> None:
         """Load pretrained weights (e.g. DreamZero-AgiBot) with shape-mismatch tolerance.
 
@@ -331,36 +355,14 @@ class DreamZeroPolicy(nn.Module, BasePolicy):
         model (e.g. action_encoder/decoder when action_horizon differs) are
         silently skipped.  All shape-compatible parameters are loaded.
         """
-        from safetensors.torch import load_file
-
-        pretrained_dir = Path(pretrained_path)
-        index_path = pretrained_dir / "model.safetensors.index.json"
-        single_path = pretrained_dir / "model.safetensors"
-
-        if not index_path.exists() and not single_path.exists():
+        state_dict = self._load_safetensors(Path(pretrained_path))
+        if state_dict is None:
             logger.warning(
                 "pretrained_model_path=%s has no safetensors; skipping.", pretrained_path
             )
             return
 
         logger.info("Loading pretrained weights from %s ...", pretrained_path)
-        state_dict = {}
-        if index_path.exists():
-            with open(index_path) as f:
-                index = json.load(f)
-            for shard_file in sorted(set(index["weight_map"].values())):
-                shard_path = pretrained_dir / shard_file
-                logger.info("  Loading shard: %s", shard_file)
-                state_dict.update(load_file(str(shard_path)))
-        else:
-            state_dict.update(load_file(str(single_path)))
-
-        has_base_layer = any(".base_layer." in k for k in state_dict)
-        if has_base_layer:
-            state_dict = {
-                k.replace(".base_layer.", "."): v for k, v in state_dict.items()
-            }
-
         model_state = self.model.state_dict()
         filtered = {}
         skipped_shape = []
@@ -373,14 +375,12 @@ class DreamZeroPolicy(nn.Module, BasePolicy):
                         f"  {k}: ckpt {tuple(v.shape)} vs model {tuple(model_state[k].shape)}"
                     )
 
-        missing, unexpected = self.model.load_state_dict(filtered, strict=False)
+        missing, _ = self.model.load_state_dict(filtered, strict=False)
 
-        loaded = len(filtered)
-        total_model = len(model_state)
         logger.info(
             "Pretrained weights loaded: %d/%d params applied, "
             "%d shape-mismatched (skipped), %d missing in ckpt.",
-            loaded, total_model, len(skipped_shape), len(missing),
+            len(filtered), len(model_state), len(skipped_shape), len(missing),
         )
         if skipped_shape:
             logger.info(
@@ -392,35 +392,14 @@ class DreamZeroPolicy(nn.Module, BasePolicy):
         """Build VLA from config; load safetensors weights if present."""
         from groot.vla.model.dreamzero.base_vla import VLA
 
-        safetensors_path = Path(model_path) / "model.safetensors"
-        safetensors_index_path = Path(model_path) / "model.safetensors.index.json"
-        has_weights = safetensors_index_path.exists() or safetensors_path.exists()
-
         model = VLA(config)
-
-        if not has_weights:
+        state_dict = self._load_safetensors(Path(model_path))
+        if state_dict is None:
             logger.info(
                 "No model safetensors found at %s; initialized from config only.",
                 model_path,
             )
             return model
-
-        from safetensors.torch import load_file
-
-        state_dict = {}
-
-        if safetensors_index_path.exists():
-            with open(safetensors_index_path) as f:
-                index = json.load(f)
-            for shard_file in set(index["weight_map"].values()):
-                shard_path = Path(model_path) / shard_file
-                state_dict.update(load_file(str(shard_path)))
-        elif safetensors_path.exists():
-            state_dict.update(load_file(str(safetensors_path)))
-
-        has_base_layer = any(".base_layer." in k for k in state_dict)
-        if has_base_layer:
-            state_dict = {k.replace(".base_layer.", "."): v for k, v in state_dict.items()}
 
         model.load_state_dict(state_dict, strict=False)
         return model
@@ -587,7 +566,7 @@ class DreamZeroPolicy(nn.Module, BasePolicy):
         action = np.concatenate([joint_action, gripper_action], axis=-1).astype(np.float32)
         return action
 
-    def predict_action_batch(self, env_obs: dict, **kwargs) -> np.ndarray:
+    def predict_action_batch(self, env_obs: dict, **kwargs) -> tuple[np.ndarray, dict]:
         """Inference: observation -> action array (B, action_horizon, 8)."""
         from tianshou.data import Batch  # noqa: F811
 

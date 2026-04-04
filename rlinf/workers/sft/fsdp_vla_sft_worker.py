@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
 from typing import Any
 
 import torch
@@ -130,8 +131,6 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def save_checkpoint(self, save_path: str, step: int = 0):
         if self._is_dreamzero:
-            import os
-
             from torch.distributed.fsdp import StateDictType
             from torch.distributed.fsdp.api import FullStateDictConfig
 

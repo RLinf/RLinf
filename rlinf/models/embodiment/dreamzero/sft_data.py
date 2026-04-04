@@ -23,12 +23,16 @@ Data flow summary (shapes shown for default config: num_chunks=4, action_horizon
 """
 
 import json
+import logging
+import time
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
+
+logger = logging.getLogger(__name__)
 
 # Prompt template fed to the T5 tokenizer.
 # {task} is the raw task string from tasks.jsonl, e.g. "put the white mug on the left plate".
@@ -211,9 +215,6 @@ class DreamZeroLiberoDataset(Dataset):
         if not self.cfg_mode:
             return
 
-        import logging
-        import time
-
         import pandas as pd
 
         adv_path = (
@@ -258,9 +259,9 @@ class DreamZeroLiberoDataset(Dataset):
         self._advantage_map = advantage_map
         self._advantage_path = adv_path
         elapsed = time.monotonic() - t0
-        logging.info(
-            f"Loaded advantage parquet ({len(df)} rows, "
-            f"{len(advantage_map)} episodes) from {adv_path} in {elapsed:.1f}s"
+        logger.info(
+            "Loaded advantage parquet (%d rows, %d episodes) from %s in %.1fs",
+            len(df), len(advantage_map), adv_path, elapsed,
         )
 
     def _lookup_advantage(self, episode_index: int, frame_index: int) -> bool:
@@ -277,11 +278,9 @@ class DreamZeroLiberoDataset(Dataset):
         values = self._advantage_map[episode_index]
         fi = int(frame_index)
         if fi < 0 or fi >= len(values):
-            import logging
-
-            logging.warning(
-                f"frame_index={fi} out of range [0, {len(values) - 1}] for "
-                f"episode {episode_index}; clamping to boundary"
+            logger.warning(
+                "frame_index=%d out of range [0, %d] for episode %d; clamping to boundary",
+                fi, len(values) - 1, episode_index,
             )
             fi = min(max(fi, 0), len(values) - 1)
         return bool(values[fi])
