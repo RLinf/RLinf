@@ -14,7 +14,9 @@
 
 """Return normalization transform for value learning."""
 
+import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
@@ -22,12 +24,45 @@ import numpy as np
 import torch
 from openpi.transforms import DataTransformFn
 
-from rlinf.data.datasets.cfg.lerobot.normalize import (
-    NormStats,
-    load_stats,
-)
-
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class NormStats:
+    """Normalization statistics (compatible with OpenPI format)."""
+
+    mean: np.ndarray
+    std: np.ndarray
+    q01: Optional[np.ndarray] = None
+    q99: Optional[np.ndarray] = None
+    min: Optional[np.ndarray] = None
+    max: Optional[np.ndarray] = None
+
+
+def _dict_to_norm_stats(data: dict[str, Any]) -> NormStats:
+    """Convert dictionary back to NormStats object."""
+    return NormStats(
+        mean=np.array(data["mean"]),
+        std=np.array(data["std"]),
+        q01=np.array(data["q01"]) if data.get("q01") is not None else None,
+        q99=np.array(data["q99"]) if data.get("q99") is not None else None,
+        min=np.array(data["min"]) if data.get("min") is not None else None,
+        max=np.array(data["max"]) if data.get("max") is not None else None,
+    )
+
+
+def load_stats(norm_stats_path: Path) -> dict[str, NormStats]:
+    """Load normalization stats from a JSON file in OpenPI format."""
+    if not norm_stats_path.exists():
+        raise FileNotFoundError(f"Norm stats file not found at: {norm_stats_path}")
+
+    with open(norm_stats_path, "r") as f:
+        data = json.load(f)
+
+    if "norm_stats" in data:
+        data = data["norm_stats"]
+
+    return {key: _dict_to_norm_stats(stats_dict) for key, stats_dict in data.items()}
 
 
 class ReturnNormalizer(DataTransformFn):
