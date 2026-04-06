@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import logging
 import os
-from torch.utils import _pytree
 
 import numpy as np
 import torch
@@ -26,13 +26,15 @@ from rlinf.data.replay_buffer import TrajectoryReplayBuffer
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils import drq
-from rlinf.utils.pytree import register_pytree_dataclasses
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict, compute_split_num
 from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
 from rlinf.utils.utils import clear_memory
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
-
+from rlinf.data.rolling_lerobot_dataset import (
+    build_rolling_lerobot_dataset,
+    build_dataloader_from_dataset,
+)
 
 class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def __init__(self, cfg: DictConfig):
@@ -41,16 +43,20 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self.update_step = 0
         self.enable_drq = bool(getattr(self.cfg.actor, "enable_drq", False))
         self.dataset = None
+        self.data_source = cfg.actor.get("data_source", "buffer")
 
     def _build_sft_data_loader(self):
-        from rlinf.data.rolling_lerobot_dataset import build_rolling_lerobot_dataloader
-        self.dataset, self.data_loader = build_rolling_lerobot_dataloader(
+        self.dataset = build_rolling_lerobot_dataset(
             root_dir=self.cfg.actor.sft_data_path,
+            chunk_size=self.cfg.actor.model.num_action_chunks,
+            min_datasets=self.cfg.actor.get("min_datasets", 1),
+            wait_interval_s=self.cfg.actor.get("wait_interval_s", 10.0),
+        )
+        self.data_loader = build_dataloader_from_dataset(
+            dataset=self.dataset,
             batch_size=self.cfg.actor.micro_batch_size * self._world_size,
             world_size=self._world_size,
             rank=self._rank,
-            min_datasets=self.cfg.actor.get("min_datasets", 1),
-            wait_interval_s=self.cfg.actor.get("wait_interval_s", 10.0),
         )
         self.data_iter = iter(self.data_loader)
         self._data_iter_offset = 0
@@ -76,19 +82,29 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             )
         else:
             auto_save_path = os.path.join(auto_save_path, f"rank_{self._rank}")
-        self.replay_buffer = TrajectoryReplayBuffer(
-            seed=seed,
-            enable_cache=self.cfg.algorithm.replay_buffer.enable_cache,
-            cache_size=self.cfg.algorithm.replay_buffer.cache_size,
-            sample_window_size=self.cfg.algorithm.replay_buffer.sample_window_size,
-            auto_save=self.cfg.algorithm.replay_buffer.get("auto_save", False),
-            auto_save_path=auto_save_path,
-            trajectory_format=self.cfg.algorithm.replay_buffer.get(
-                "trajectory_format", "pt"
-            ),
-        )
+        if self.data_source == "buffer":
+            self.replay_buffer = TrajectoryReplayBuffer(
+                seed=seed,
+                enable_cache=self.cfg.algorithm.replay_buffer.enable_cache,
+                cache_size=self.cfg.algorithm.replay_buffer.cache_size,
+                sample_window_size=self.cfg.algorithm.replay_buffer.sample_window_size,
+                auto_save=self.cfg.algorithm.replay_buffer.get("auto_save", False),
+                auto_save_path=auto_save_path,
+                trajectory_format=self.cfg.algorithm.replay_buffer.get(
+                    "trajectory_format", "pt"
+                ),
+            )
 
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
+        if self.data_source == "buffer":
+            await self.recv_buffer_rollout_trajectories(input_channel)
+        elif self.data_source == "lerobot":
+            await asyncio.sleep(0)
+            return self.recv_lerobot_rollout_trajectories()
+        else:
+            raise ValueError(f"Invalid data source: {self.data_source}")
+
+    async def recv_buffer_rollout_trajectories(self, input_channel: Channel) -> None:
         clear_memory(sync=False)
 
         send_num = self._component_placement.get_world_size("env") * self.stage_num
@@ -108,15 +124,27 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 intervene_traj_list.extend(intervene_trajs)
         if intervene_traj_list:
             self.replay_buffer.add_trajectories(intervene_traj_list)
+    
+    def recv_lerobot_rollout_trajectories(self) -> None:
+        if self.data_source == "lerobot":
+            if self.dataset is None:
+                self._build_sft_data_loader()
+        self.dataset.refresh()
+        self.data_loader = build_dataloader_from_dataset(
+            dataset=self.dataset,
+            batch_size=self.cfg.actor.micro_batch_size * self._world_size,
+            world_size=self._world_size,
+            rank=self._rank,
+        )
 
     def _prepare_sft_batch(self, batch):
         """Prepare model-specific DAgger training inputs."""
-        if self.cfg.actor.data_source == "buffer":
+        if self.data_source == "buffer":
             return self.model.prepare_dagger_sft_batch(batch)
-        elif self.cfg.actor.data_source == "lerobot":
+        elif self.data_source == "lerobot":
             return self.model.prepare_lerobot_sft_batch(batch)
         else:
-            raise ValueError(f"Invalid data source: {self.cfg.actor.data_source}")
+            raise ValueError(f"Invalid data source: {self.data_source}")
 
     def _reduce_sft_loss(self, loss):
         """Reduce model-specific SFT loss to a scalar."""
@@ -142,12 +170,12 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     @Worker.timer("update_one_epoch")
     def update_one_epoch(self):
-        if self.cfg.actor.data_source == "buffer":
+        if self.data_source == "buffer":
             return self.update_buffer_one_epoch()
-        elif self.cfg.actor.data_source == "lerobot":
+        elif self.data_source == "lerobot":
             return self.update_lerobot_one_epoch()
         else:
-            raise ValueError(f"Invalid data source: {self.cfg.actor.data_source}")
+            raise ValueError(f"Invalid data source: {self.data_source}")
 
     def update_buffer_one_epoch(self):
         """Run one replay-buffer update epoch for DAgger."""
@@ -245,11 +273,12 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     
     def process_train_metrics(self, metrics):
         """Aggregate DAgger training and replay-buffer metrics."""
-        replay_buffer_stats = self.replay_buffer.get_stats()
-        replay_buffer_stats = {
-            f"replay_buffer/{key}": value for key, value in replay_buffer_stats.items()
-        }
-        append_to_dict(metrics, replay_buffer_stats)
+        if self.data_source == "buffer":
+            replay_buffer_stats = self.replay_buffer.get_stats()
+            replay_buffer_stats = {
+                f"replay_buffer/{key}": value for key, value in replay_buffer_stats.items()
+            }
+            append_to_dict(metrics, replay_buffer_stats)
 
         mean_metric_dict = {}
         for key, value in metrics.items():
@@ -271,24 +300,17 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     @Worker.timer("run_training")
     def run_training(self):
         """Run DAgger updates with replay-buffer samples."""
-
-        if self.cfg.actor.get("data_source", "buffer") == "lerobot":
-            if self.dataset is None:
-                self._build_sft_data_loader()
-
         if self.cfg.actor.get("enable_offload", False):
             self.load_param_and_grad(self.device)
             self.load_optimizer(self.device)
-        
-        if self.cfg.actor.get("data_source", "buffer") == "lerobot":
-            self.dataset.refresh()
 
-        min_buffer_size = self.cfg.algorithm.replay_buffer.get("min_buffer_size", 100)
-        if not self.replay_buffer.is_ready(min_buffer_size):
-            self.log_on_first_rank(
-                f"Replay buffer size {len(self.replay_buffer)} < {min_buffer_size}, skipping training"
-            )
-            return {}
+        if self.data_source == "buffer":
+            min_buffer_size = self.cfg.algorithm.replay_buffer.get("min_buffer_size", 100)
+            if not self.replay_buffer.is_ready(min_buffer_size):
+                self.log_on_first_rank(
+                    f"Replay buffer size {len(self.replay_buffer)} < {min_buffer_size}, skipping training"
+                )
+                return {}
 
         assert (
             self.cfg.actor.global_batch_size
@@ -336,10 +358,11 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             else "dcp",
         )
 
-        buffer_save_path = os.path.join(
-            save_base_path, f"dagger_components/replay_buffer/rank_{self._rank}"
-        )
-        self.replay_buffer.save_checkpoint(buffer_save_path)
+        if self.data_source == "buffer":
+            buffer_save_path = os.path.join(
+                save_base_path, f"dagger_components/replay_buffer/rank_{self._rank}"
+            )
+            self.replay_buffer.save_checkpoint(buffer_save_path)
 
     def load_checkpoint(self, load_base_path):
         self._strategy.load_checkpoint(
@@ -352,7 +375,8 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             else "dcp",
         )
 
-        buffer_load_path = os.path.join(
-            load_base_path, f"dagger_components/replay_buffer/rank_{self._rank}"
-        )
-        self.replay_buffer.load_checkpoint(buffer_load_path)
+        if self.data_source == "buffer":
+            buffer_load_path = os.path.join(
+                load_base_path, f"dagger_components/replay_buffer/rank_{self._rank}"
+            )
+            self.replay_buffer.load_checkpoint(buffer_load_path)
