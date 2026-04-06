@@ -151,7 +151,7 @@ def _discover_safe_datasets(root_dir: Path, skip_last_n: int) -> list[Path]:
     return safe
 
 
-def _build_delta_timestamps(info: dict, chunk_size: int) -> dict[str, list[float]]:
+def _build_delta_timestamps(info: dict, chunk_size: int, action_sequence_keys) -> dict[str, list[float]]:
     """Build a ``delta_timestamps`` dict for LeRobotDataset chunk sampling.
 
     All data features (i.e. keys that are not index/metadata columns) receive
@@ -166,7 +166,7 @@ def _build_delta_timestamps(info: dict, chunk_size: int) -> dict[str, list[float
     """
     fps: float = info["fps"]
     timestamps = [i / fps for i in range(chunk_size)]
-    data_keys = [k for k in info.get("features", {}) if k not in _META_KEYS]
+    data_keys = action_sequence_keys if action_sequence_keys is not None else []
     return {k: timestamps for k in data_keys}
 
 
@@ -222,6 +222,7 @@ class RollingLeRobotDataset(Dataset):
         image_transforms: Callable | None = None,
         min_datasets: int = 1,
         wait_interval_s: float = 10.0,
+        action_sequence_keys: list[str] | None = ["actions"],
     ) -> None:
         self.root_dir = Path(root_dir)
         self.skip_last_n = skip_last_n
@@ -231,6 +232,7 @@ class RollingLeRobotDataset(Dataset):
         self.image_transforms = image_transforms
         self.min_datasets = min_datasets
         self.wait_interval_s = wait_interval_s
+        self.action_sequence_keys = action_sequence_keys
 
         # Sub-datasets indexed so far.
         self._indexed_datasets: set[Path] = set()
@@ -287,7 +289,7 @@ class RollingLeRobotDataset(Dataset):
             return self._user_delta_timestamps
         with open(ds_path / "meta" / "info.json", encoding="utf-8") as f:
             info = json.load(f)
-        return _build_delta_timestamps(info, self.chunk_size)
+        return _build_delta_timestamps(info, self.chunk_size, self.action_sequence_keys)
 
     def _build_index(self, datasets: list[Path]) -> int:
         """Load *datasets* as LeRobotDataset instances and extend the index.
