@@ -96,15 +96,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             )
 
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
-        if self.data_source == "buffer":
-            await self.recv_buffer_rollout_trajectories(input_channel)
-        elif self.data_source == "lerobot":
-            await asyncio.sleep(0)
-            return self.recv_lerobot_rollout_trajectories()
-        else:
-            raise ValueError(f"Invalid data source: {self.data_source}")
-
-    async def recv_buffer_rollout_trajectories(self, input_channel: Channel) -> None:
         clear_memory(sync=False)
 
         send_num = self._component_placement.get_world_size("env") * self.stage_num
@@ -116,6 +107,15 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             trajectory: Trajectory = await input_channel.get(async_op=True).async_wait()
             recv_list.append(trajectory)
 
+        if self.data_source == "buffer":
+            await self.recv_buffer_rollout_trajectories(recv_list)
+        elif self.data_source == "lerobot":
+            await asyncio.sleep(0)
+            return self.recv_lerobot_rollout_trajectories()
+        else:
+            raise ValueError(f"Invalid data source: {self.data_source}")
+
+    async def recv_buffer_rollout_trajectories(self, recv_list: list[Trajectory]) -> None:
         intervene_traj_list = []
         for traj in recv_list:
             assert isinstance(traj, Trajectory)
