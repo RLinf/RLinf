@@ -88,8 +88,12 @@ class ValueDataset(Dataset):
         **kwargs,  # accept unused params (gamma, split, etc.)
     ):
         _known_unused = {
-            "gamma", "split", "repo_id",
-            "norm_stats_dir", "asset_id", "extra_delta_transform",
+            "gamma",
+            "split",
+            "repo_id",
+            "norm_stats_dir",
+            "asset_id",
+            "extra_delta_transform",
             "action_norm_skip_dims",
         }
         unexpected = set(kwargs) - _known_unused
@@ -212,12 +216,8 @@ class ValueDataset(Dataset):
         # 3. Model transforms (without TokenizePrompt and ResizeImages —
         #    value model handles tokenization via ValueProcessor in the
         #    collator, and image resize via ValueImageProcessor)
-        transforms_list.append(
-            _openpi_transforms.InjectDefaultPrompt(default_prompt)
-        )
-        transforms_list.append(
-            _openpi_transforms.PadStatesAndActions(action_dim)
-        )
+        transforms_list.append(_openpi_transforms.InjectDefaultPrompt(default_prompt))
+        transforms_list.append(_openpi_transforms.PadStatesAndActions(action_dim))
 
         return _openpi_transforms.compose(transforms_list)
 

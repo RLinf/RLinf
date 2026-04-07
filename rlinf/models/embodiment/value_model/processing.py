@@ -462,9 +462,8 @@ class ValueProcessor(ProcessorMixin):
             )
 
         if tokenizer is None:
-            tokenizer_path = (
-                tokenizer_name_or_path
-                or os.environ.get("VLA_TOKENIZER_PATH")
+            tokenizer_path = tokenizer_name_or_path or os.environ.get(
+                "VLA_TOKENIZER_PATH"
             )
             if not tokenizer_path or not os.path.exists(tokenizer_path):
                 raise ValueError(

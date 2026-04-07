@@ -106,7 +106,9 @@ class FrankaEEInputs(transforms.DataTransformFn):
         base_image = _parse_image(data["observation/image"])
         wrist_views = _split_camera_views(data.get("observation/wrist_image"))
         if self.use_extra_view_as_wrist:
-            wrist_views.extend(_split_camera_views(data.get("observation/extra_view_image")))
+            wrist_views.extend(
+                _split_camera_views(data.get("observation/extra_view_image"))
+            )
 
         left_wrist_image = (
             wrist_views[0] if len(wrist_views) > 0 else np.zeros_like(base_image)

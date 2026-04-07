@@ -123,9 +123,7 @@ class ValueCriticModel(nn.Module):
 
         expert_config = get_config(config.critic_expert_variant)
 
-        logger.info(
-            f"Creating ValueCriticModel: expert={config.critic_expert_variant}"
-        )
+        logger.info(f"Creating ValueCriticModel: expert={config.critic_expert_variant}")
 
         expert_configs = {"value": expert_config}
 
@@ -217,9 +215,7 @@ class ValueCriticModel(nn.Module):
 
     def _get_model_dtype(self) -> torch.dtype:
         """Get the dtype of the backbone model's attention weights."""
-        return self.value_expert.gemma3.model.layers[
-            0
-        ].self_attn.q_proj.weight.dtype
+        return self.value_expert.gemma3.model.layers[0].self_attn.q_proj.weight.dtype
 
     def _prepare_attention_masks_4d(self, att_2d_masks):
         """Prepare 4D attention masks for transformer."""
@@ -273,9 +269,7 @@ class ValueCriticModel(nn.Module):
         bsize = lang_tokens.shape[0]
 
         for img, img_mask in zip(images, img_masks, strict=True):
-            img_emb = self._apply_checkpoint(
-                self.value_expert.embed_image, img
-            )
+            img_emb = self._apply_checkpoint(self.value_expert.embed_image, img)
             num_img_embs = img_emb.shape[1]
             embs.append(img_emb)
             pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
@@ -375,9 +369,7 @@ class ValueCriticModel(nn.Module):
             suffix_ar_masks=suffix_ar_masks,
             stop_gradient_to_vlm=stop_gradient_to_vlm,
         )
-        cls_hidden = suffix_out[:, -1, :].to(
-            self.value_head.value_proj.weight.dtype
-        )
+        cls_hidden = suffix_out[:, -1, :].to(self.value_head.value_proj.weight.dtype)
         values, logits, probs = self._compute_value_from_hidden(cls_hidden)
         backward_anchor = self._build_vlm_backward_anchor(
             prefix_out=prefix_out, stop_gradient_to_vlm=stop_gradient_to_vlm
