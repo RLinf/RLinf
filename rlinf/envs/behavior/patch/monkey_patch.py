@@ -50,7 +50,10 @@ def apply() -> None:
 
     import omnigibson as og
 
-    if getattr(VisionSensor, "__rlinf_resize_setter_patched__", False) or og.__version__ != "3.7.2":
+    if (
+        getattr(VisionSensor, "__rlinf_resize_setter_patched__", False)
+        or og.__version__ != "3.7.2"
+    ):
         return
 
     original_image_height = VisionSensor.image_height
