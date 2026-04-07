@@ -1384,7 +1384,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                             SupportedModel.GR00T,
                             SupportedModel.GR00T_1_6,
                         ]:
+<<<<<<< HEAD
                             kwargs["prev_logprobs"] = prev_logprobs
+=======
+                        kwargs["prev_logprobs"] = prev_logprobs
+>>>>>>> 1183adf... fix protential conflict by Apr. 7th
 
                     compute_values = (
                         True if self.cfg.algorithm.adv_type == "gae" else False

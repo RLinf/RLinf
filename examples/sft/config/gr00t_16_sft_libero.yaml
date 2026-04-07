@@ -30,7 +30,11 @@ runner:
   save_interval: 2000
 
 data:
+<<<<<<< HEAD
   train_data_paths: "/path/to/your/libero_spatial_dataset" 
+=======
+  train_data_paths: "/workspace/RLinf/rlinf/data/libero_spatial" 
+>>>>>>> 1183adf... fix protential conflict by Apr. 7th
 
 algorithm:
   adv_type: gae
@@ -45,7 +49,11 @@ actor:
   enable_offload: False
 
   model:
+<<<<<<< HEAD
     model_path: "/path/to/GR00T-N1.6-3B" 
+=======
+    model_path: "/workspace/RLinf/GR00T-N1.6-3B" 
+>>>>>>> 1183adf... fix protential conflict by Apr. 7th
     model_type: "gr00t_1_6_sft"
     precision: "bf16"
     action_dim: 128

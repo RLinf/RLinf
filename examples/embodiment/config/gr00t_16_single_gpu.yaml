@@ -107,7 +107,11 @@ rollout:
   pipeline_stage_num: 1
 
   model:
+<<<<<<< HEAD
     model_path: "/path/to/GR00T-N1.6-libero-spatial-ppo"
+=======
+    model_path: "/workspace/RLinf/GR00T-N1.6-3B"
+>>>>>>> 1183adf... fix protential conflict by Apr. 7th
     precision: ${actor.model.precision}
 
 actor:
@@ -120,7 +124,11 @@ actor:
   enable_offload: True
 
   model:
+<<<<<<< HEAD
     model_path: "/path/to/GR00T-N1.6-libero-spatial-ppo"
+=======
+    model_path: "/workspace/RLinf/GR00T-N1.6-3B"
+>>>>>>> 1183adf... fix protential conflict by Apr. 7th
     model_type: "gr00t_1_6"   
     add_value_head: True
     num_action_chunks: 1       
