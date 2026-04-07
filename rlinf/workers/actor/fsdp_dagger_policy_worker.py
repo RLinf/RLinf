@@ -108,14 +108,13 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             recv_list.append(trajectory)
 
         if self.data_source == "buffer":
-            await self.recv_buffer_rollout_trajectories(recv_list)
+            return self.recv_buffer_rollout_trajectories(recv_list)
         elif self.data_source == "lerobot":
-            await asyncio.sleep(0)
             return self.recv_lerobot_rollout_trajectories()
         else:
             raise ValueError(f"Invalid data source: {self.data_source}")
 
-    async def recv_buffer_rollout_trajectories(self, recv_list: list[Trajectory]) -> None:
+    def recv_buffer_rollout_trajectories(self, recv_list: list[Trajectory]) -> None:
         intervene_traj_list = []
         for traj in recv_list:
             assert isinstance(traj, Trajectory)

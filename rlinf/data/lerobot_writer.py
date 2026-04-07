@@ -172,6 +172,20 @@ class LeRobotDatasetWriter:
         """Finalize the dataset."""
         if self.dataset is None:
             raise RuntimeError("Dataset not created. Call create() first.")
+        
+        if hasattr(self.dataset, 'image_writer') and self.dataset.image_writer is not None:
+            self.dataset.image_writer.wait_until_done()
+        
+        if hasattr(self.dataset, 'image_writer') and self.dataset.image_writer is not None:
+            self.dataset.image_writer.stop()
+            self.dataset.image_writer = None
+        
+        if hasattr(self.dataset, 'episode_buffer'):
+            self.dataset.episode_buffer = None
+        
+        if hasattr(self.dataset, 'hf_dataset'):
+            self.dataset.hf_dataset = None
+        
         del self.dataset
         gc.collect()
         self.dataset = None
