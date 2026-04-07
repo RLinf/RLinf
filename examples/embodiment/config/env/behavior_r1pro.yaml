@@ -42,7 +42,7 @@ omni_config:
     wrist_resolution: [480,480]
 
   macro:
-    use_gpu_dynamics: False
+    use_gpu_dynamics: True
     headless: True
     enable_flatcache: True
     enable_object_states: True

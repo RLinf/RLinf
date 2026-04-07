@@ -677,7 +677,7 @@ install_liberoplus_env() {
 install_behavior_env() {
     # Prefer an existing checkout if BEHAVIOR_PATH is provided; otherwise clone into the venv.
     local behavior_dir
-    behavior_dir=$(clone_or_reuse_repo BEHAVIOR_PATH "$VENV_DIR/BEHAVIOR-1K" https://github.com/RLinf/BEHAVIOR-1K.git -b RLinf/v3.7.1 --depth 1)
+    behavior_dir=$(clone_or_reuse_repo BEHAVIOR_PATH "$VENV_DIR/BEHAVIOR-1K" https://github.com/RLinf/BEHAVIOR-1K.git -b RLinf/v3.7.2 --depth 1)
 
     pushd "$behavior_dir" >/dev/null
     UV_LINK_MODE=hardlink ./setup.sh --omnigibson --bddl --joylo --confirm-no-conda --accept-nvidia-eula --use-uv
