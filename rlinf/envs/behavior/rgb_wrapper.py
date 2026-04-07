@@ -15,7 +15,11 @@
 from __future__ import annotations
 
 from omnigibson.envs import Environment, EnvironmentWrapper
-from omnigibson.learning.utils.eval_utils import ROBOT_CAMERA_NAMES, HEAD_RESOLUTION, WRIST_RESOLUTION
+from omnigibson.learning.utils.eval_utils import (
+    HEAD_RESOLUTION,
+    ROBOT_CAMERA_NAMES,
+    WRIST_RESOLUTION,
+)
 
 
 class RGBWrapper(EnvironmentWrapper):
