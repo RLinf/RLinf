@@ -34,7 +34,7 @@ Usage:
 
     # All episodes
     python visualize/visualize_advantage_dataset.py \
-        --dataset /path/to/your/dataset \
+        --dataset /mnt/project_rlinf_hs/liuzhihao/data_to_use/pnp_merge_processed/pnp_eval_sft_ckpt8000_0404_collect2 \
         --output /path/to/output \
         --num-episodes 10 \
         --tag <tag>
