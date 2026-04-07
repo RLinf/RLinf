@@ -366,6 +366,18 @@ as well as reinforcement learning training examples on real robots.
          SAC + CNN policy on the XSquare Turtle2 dual-arm robot
        </p>
      </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <!-- TODO(thumbnail): replace placeholder cover image URL for geniesim -->
+       <img src="https://github.com/RLinf/misc/raw/main/pic/xsquare_turtle2_arm_small.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="geniesim.html" style="text-decoration: underline; color: blue;">
+           <b>RL with GenieSim Place Workpiece</b>
+         </a><br>
+         GenieSim + SAC + SpaceMouse human-in-the-loop training
+       </p>
+     </div>
    </div>
 
 
@@ -403,3 +415,4 @@ as well as reinforcement learning training examples on real robots.
    franka_gello
    hg-dagger
    xsquare_turtle2
+   geniesim

@@ -1,0 +1,122 @@
+env_type: geniesim
+total_num_envs: null
+
+backend: mujoco
+mjx_publish_tf: false
+
+auto_reset: true
+ignore_terminations: false
+reward_coef: 1.0
+use_rel_reward: false
+enable_reward: false   # Set true to enable ADER sparse reward from geniesim side
+seed: 42
+max_episode_steps: 300
+video_cfg: {}
+
+init_params:
+  id: geniesim_place_workpiece
+  task_description: "Place the workpiece into the target slot on the workstation."
+
+  # ---- Asset paths ----
+  # Uses GENIESIM_ROOT env var so the same config works on the host and in the container.
+  mjcf_path: ${oc.env:GENIESIM_ROOT}/source/geniesim/assets/mujoco_scenes/place_workpiece.xml
+  scene_usd: ${oc.env:GENIESIM_ROOT}/source/geniesim/assets/background/place_workpiece/scenes/place_workpiece.usda
+  task_file: ${oc.env:GENIESIM_ROOT}/source/geniesim/benchmark/config/eval_tasks
+
+  # ---- Robot ----
+  robot_type: G2
+  robot_cfg: G2_place_workpiece
+  # state_dim = joint_state_dim(28) + EE_STATE_DIM(24) = 52
+  # states layout: [arm_l_pos(7), arm_r_pos(7), arm_l_vel(7), arm_r_vel(7),
+  #                 ee_l_pos(3), ee_l_rpy(3), ee_l_lin_vel(3), ee_l_ang_vel(3),
+  #                 ee_r_pos(3), ee_r_rpy(3), ee_r_lin_vel(3), ee_r_ang_vel(3)]
+  # EE poses and velocities are in base_link frame.
+  state_dim: 52
+  action_dim: 14
+  model_action_dim: 7    # right-arm only: [pos_r(3), rpy_r(3), grip_r(1)]
+  # G2 model: 5 body joints come before arm joints in non-free joint order.
+  # state_joint_offset=5 skips body joints → states start from arm_l_joint1.
+  state_joint_offset: 5
+  # G2 model: arm position actuators start at ctrl index 24 (left arm) + 31 (right arm).
+  # ctrl_offset=24 maps host actions[0:14] → data.ctrl[24:38] (both arms).
+  ctrl_offset: 24
+
+  # ---- Control mode ----
+  # ee: actions = [pos_l(3), euler_xyz_l(3), pos_r(3), euler_xyz_r(3), gripper_l, gripper_r]
+  #      IK (damped Jacobian) runs on the simulation side.
+  control_mode: ee
+  # G2 + place_workpiece hand gripper actuator ctrl indices.
+  gripper_ctrl_l: 52
+  gripper_ctrl_r: 53
+  # End-effector body names for IK.
+  ee_body_l: gripper_l_base_link
+  ee_body_r: gripper_r_base_link
+  # IK solver parameters.
+  ik_max_iter: 10       # Jacobian iterations per control step
+  ik_damp: 0.05         # damping factor λ for damped least squares
+
+  # ---- Reset joint positions ----
+  # init_qpos: initial qpos overlay (length ≤ model.nq=41), applied at every reset.
+  # Actual qpos layout (verified from MuJoCo XML):
+  #   [free(7), body(5), arm_l(7), gripper_l(2), arm_r(7), gripper_r(2), head(3), wheel(8)]
+  # Note: head joints appear AFTER gripper_r in this model, NOT after body joints.
+  # Layout: [base_xyz(3), base_quat_wxyz(4), body(5), arm_l(7), gripper_l(2), arm_r(7), gripper_r(2), head(3)]
+  # Left arm all zeros; right arm set to the target pre-grasp posture (radians).
+  init_qpos: [
+    0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0,                                   # qpos[0:7]   free joint (pos + quat)
+    -0.83423,  1.2172,  -0.30025,  0.0, 0.0,                               # qpos[7:12]  body joints 01-05
+    1.0,  -1.5,  0.0,  0.0,  0.0,  0.0,  0.0,                              # qpos[12:19] arm_l joints 1-7
+    0.0,  0.0,                                                             # qpos[19:21] gripper_l (outer, inner)
+    0.3, -1.43, 0.151, -1.27, -0.378, -0.487, 1.57,  # qpos[21:28] arm_r joints 1-7
+    0.0,  0.0,                                                             # qpos[28:30] gripper_r (outer, inner)
+    0.0,  0.0,  0.0,                                                       # qpos[30:33] head joints 1-3 (yaw, pitch, roll)
+    0.7854, 0, -0.7854, 0, 0.7854, 0, -0.7854, 0                                # qpos[33:41] wheel joints 1-8
+  ]
+
+  # ---- Reset EE pose (reference; optional for diagnostics/tests) ----
+  # Right end-effector reset pose [x, y, z, roll, pitch, yaw] in world frame.
+  # reset_ee_r: [0.4953, 0.012, 1.231, -3.12832732, 0.5282591, -3.11193856]
+
+  # ---- Ground-truth info body poses ----
+  # These body world-frame poses (7 floats each: xyz + quat wxyz) are written
+  # into ctrl SHM info_buf and exposed as info["body_poses"] for reward/logging.
+  info_body_names:
+    - workpiece_r
+    - /World/workspace01
+
+  # ---- Cameras ----
+  cameras:
+    - name: main
+      prim: /genie/gripper_r_base_link/Right_Camera
+      width: 480
+      height: 480
+
+  # ---- Sim ----
+  physics_hz:    1000
+  render_hz:     30.0
+  headless:      false
+  ros_domain_id: 0
+  shm_name:      geniesim_frames
+  task_instance_id: 0
+
+# ---- Container / process manager ----
+# mode is auto-detected: inside a GenieSim container (GENIESIM_CONTAINER env var
+# is set) → local mode (subprocess); otherwise → docker mode.
+# Set mode explicitly to "docker" or "local" to override auto-detection.
+container_cfg:
+  geniesim_root: ${oc.env:GENIESIM_ROOT}
+
+  # Docker mode settings (ignored in local mode)
+  image:    geniesim-rlinf:latest
+  name:     geniesim_rlinf_sim
+  isaac_cache_root: ~/docker/isaac-sim
+  extra_docker_args: []
+
+  # Local mode settings (ignored in docker mode)
+  ros_ws_install: /geniesim/ros_ws_build/install
+
+  # Shared settings
+  keep_alive:          true
+  reuse_running:       true
+  startup_timeout_sec: 600
+  ros_domain_id: 0

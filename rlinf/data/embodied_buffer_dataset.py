@@ -100,7 +100,13 @@ class ReplayBufferDataset(IterableDataset):
                 if self.demo_buffer is not None:
                     replay_batch = self.replay_buffer.sample(self.batch_size // 2)
                     demo_batch = self.demo_buffer.sample(self.batch_size // 2)
+                    n_replay = replay_batch["rewards"].shape[0] if "rewards" in replay_batch else 0
+                    n_demo = demo_batch["rewards"].shape[0] if "rewards" in demo_batch else 0
                     batch = concat_batch(replay_batch, demo_batch)
+                    batch["is_demo"] = torch.cat([
+                        torch.zeros(n_replay, dtype=torch.bool),
+                        torch.ones(n_demo, dtype=torch.bool),
+                    ])
                 else:
                     batch = self.replay_buffer.sample(self.batch_size)
                 yield batch
@@ -199,7 +205,13 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
                 if self.demo_buffer is not None:
                     replay_batch = self.replay_buffer.sample(self.batch_size // 2)
                     demo_batch = self.demo_buffer.sample(self.batch_size // 2)
+                    n_replay = replay_batch["rewards"].shape[0] if "rewards" in replay_batch else 0
+                    n_demo = demo_batch["rewards"].shape[0] if "rewards" in demo_batch else 0
                     batch = concat_batch(replay_batch, demo_batch)
+                    batch["is_demo"] = torch.cat([
+                        torch.zeros(n_replay, dtype=torch.bool),
+                        torch.ones(n_demo, dtype=torch.bool),
+                    ])
                 else:
                     batch = self.replay_buffer.sample(self.batch_size)
             else:

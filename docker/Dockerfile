@@ -22,6 +22,14 @@ FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-liberoplu
 # Franka depends on ros-noetic, which is not available on Ubuntu 22.04
 FROM ubuntu:20.04 AS base-image-embodied-franka
 
+# GenieSim uses a two-stage build:
+#   1st stage (main repo): genie-sim/open_source → genie-sim/open_source_rlinf
+#      Adds MuJoCo, apt tools, uv, entrypoint scripts.
+#      Built separately via main/scripts/dockerfile_open_source_rlinf.
+#   2nd stage (here): open_source_rlinf → final training image
+#      Only adds RLinf training deps via install.sh.
+FROM geniesim-rlinf:latest AS base-image-embodied-geniesim
+
 
 ##################################################################################################
 # Select base image according to BUILD_TARGET
@@ -327,6 +335,59 @@ RUN bash requirements/install.sh embodied --venv openvla-oft --model openvla-oft
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
+
+
+##################################################################################################
+# Embodied: GenieSim (independent chain — Ubuntu 24.04 base, NOT from embodied-common-image)
+#
+# Base image genie-sim/open_source_rlinf already provides:
+#   - Isaac Sim 5.1, ROS 2 Jazzy, MuJoCo (system python3)
+#   - uv package manager, apt build tools
+#   - entrypoint_geniesim_rlinf.sh, collect_entrypoint.sh, run_local.sh
+#
+# This stage only adds the RLinf training venv via install.sh.
+#
+# Build:
+#   docker build --build-arg BUILD_TARGET=embodied-geniesim -t geniesim-rlinf-train:latest .
+##################################################################################################
+FROM base-image-embodied-geniesim AS embodied-geniesim-image
+
+ARG NO_MIRROR
+SHELL ["/bin/bash", "-c"]
+USER root
+
+ENV HF_HOME=/opt/.cache/huggingface
+RUN mkdir -p $HF_HOME
+
+ENV UV_DEFAULT_INDEX=${NO_MIRROR:+"https://pypi.org/simple/"}
+ENV UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX:-"https://mirrors.ustc.edu.cn/pypi/simple"}
+ENV UV_PATH=/opt/rlinf_venv
+ENV UV_LINK_MODE=hardlink
+ENV UV_CACHE_DIR=${UV_PATH}/.cache
+ENV UV_PYTHON_INSTALL_DIR=${UV_PATH}/.python
+
+RUN mkdir -p $UV_PATH
+WORKDIR $UV_PATH
+
+COPY ./pyproject.toml $UV_PATH/pyproject.toml
+COPY ./requirements $UV_PATH/requirements
+
+RUN bash requirements/install.sh embodied \
+        --venv rlinf \
+        --model openvla-oft \
+        --env geniesim \
+        --install-rlinf \
+        --use-mirror
+
+RUN cat <<'SWITCHEOF' > /usr/local/bin/switch_env
+#!/bin/bash
+if [ -z "$1" ]; then echo "Usage: switch_env <env_name>"; exit 1; fi
+if [ ! -d "/opt/rlinf_venv/$1" ]; then echo "Environment $1 does not exist."; exit 1; fi
+source /opt/rlinf_venv/$1/bin/activate
+SWITCHEOF
+RUN chmod +x /usr/local/bin/switch_env
+
+RUN echo "source ${UV_PATH}/rlinf/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Final image selection

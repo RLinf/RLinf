@@ -254,6 +254,8 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.GENIESIM:
+        chunk_actions = raw_chunk_actions
     else:
         raise NotImplementedError
 
