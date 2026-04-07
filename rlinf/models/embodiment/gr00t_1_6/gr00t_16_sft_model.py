@@ -12,6 +12,8 @@ from rlinf.utils.pytree import register_pytree_dataclasses
 from transformers import AutoConfig, AutoModel, AutoProcessor, AutoModelForCausalLM
 from gr00t.model.gr00t_n1d6.gr00t_n1d6 import Gr00tN1d6
 from gr00t.configs.model.gr00t_n1d6 import Gr00tN1d6Config
+from torch.utils import _pytree
+
 
 try:
     AutoConfig.register("Gr00tN1d6", Gr00tN1d6Config)
@@ -209,7 +211,6 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
         return self.sft_forward(**kwargs)
 
     def sft_forward(self, data: dict, **kwargs):
-        from torch.utils import _pytree
         
         obs = data["observation"]
         actions = data["actions"] 

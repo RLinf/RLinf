@@ -69,34 +69,6 @@ def convert_maniskill_obs_to_gr00t_1_6_format(env_obs):
     groot_obs["annotation.human.action.task_description"] = env_obs["task_descriptions"]
     return groot_obs
 
-
-# def convert_to_libero_action(
-#     action_chunk: dict[str, np.array], chunk_size: int = 1
-# ) -> np.ndarray:
-#     """Convert gr00t_1_6 action chunk to Libero format.
-
-#     Args:
-#         action_chunk: Dictionary of action components from gr00t_1_6 policy
-#         chunk_size: Number of action steps to consider from the chunk
-
-#     Returns:
-#         7-dim numpy array: [dx, dy, dz, droll, dpitch, dyaw, gripper]
-#     """
-#     action_components = [
-#         action_chunk["action.x"][:, :chunk_size],
-#         action_chunk["action.y"][:, :chunk_size],
-#         action_chunk["action.z"][:, :chunk_size],
-#         action_chunk["action.roll"][:, :chunk_size],
-#         action_chunk["action.pitch"][:, :chunk_size],
-#         action_chunk["action.yaw"][:, :chunk_size],
-#         action_chunk["action.gripper"][:, :chunk_size],
-#     ]
-#     action_array = np.concatenate(action_components, axis=-1)
-#     action_array = normalize_gripper_action(action_array, binarize=True)
-#     assert action_array.shape[-1] == 7, (
-#         f"Expected 7-dim action, got {action_array.shape[-1]}"
-#     )
-#     return action_array
 def convert_to_libero_action(
     action_chunk: dict[str, np.array], chunk_size: int = 1
 ) -> np.ndarray:
