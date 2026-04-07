@@ -98,6 +98,9 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         denoising_steps=cfg.denoising_steps,
         output_action_chunks=cfg.num_action_chunks,
         obs_converter_type=cfg.obs_converter_type,
+        tune_visual=False,
+        tune_llm=False,
+        rl_head_config=cfg.rl_head_config,
     )
 
     model.to(torch_dtype)

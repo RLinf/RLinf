@@ -424,3 +424,55 @@ try:
 except Exception:
     # pass
     print(f"[register model] failed to register GR00T_1_6_SFT_Model: {e}")
+def build_gr00t_dataloader(worker_instance, eval_dataset: bool = False):
+    import torch
+    from torch.utils.data import DataLoader
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    print(f"[Lazy Load] Successfully triggered GR00T model file registration! Loading LeRobot Dataset...")
+    
+
+    dataset = LeRobotDataset(
+        repo_id=worker_instance.cfg.data.train_data_paths,
+        # local_files_only=True
+        video_backend="pyav"
+    )
+
+    def gr00t_collate_fn(batch):
+        action_key = next((k for k in batch[0].keys() if "action" in k.lower()), None)
+        if action_key is None:
+            raise KeyError("Could not find an action key!")
+
+        actions = torch.stack([item[action_key] for item in batch])
+        if actions.dim() == 2:
+            actions = actions.unsqueeze(1) 
+
+        obs = {}
+        for key in batch[0].keys():
+            if key != action_key:
+                item_val = batch[0][key]
+                if isinstance(item_val, str) or (isinstance(item_val, (list, tuple)) and len(item_val)>0 and isinstance(item_val[0], str)):
+                    byte_ts = []
+                    for item in batch:
+                        text = item[key]
+                        if isinstance(text, (list, tuple)): text = text[0]
+                        byte_ts.append(torch.tensor(list(text.encode('utf-8')), dtype=torch.uint8))
+                    obs[key] = torch.nn.utils.rnn.pad_sequence(byte_ts, batch_first=True, padding_value=0)
+                elif isinstance(item_val, torch.Tensor):
+                    obs[key] = torch.stack([item[key] for item in batch])
+                else:
+                    try: obs[key] = torch.tensor([item[key] for item in batch])
+                    except: obs[key] = [item[key] for item in batch]
+        return obs, actions
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=worker_instance.cfg.actor.micro_batch_size * worker_instance._world_size,
+        shuffle=not eval_dataset,
+        num_workers=4,
+        collate_fn=gr00t_collate_fn,
+        pin_memory=True,
+        drop_last=True
+    )
+    
+    return dataloader, None
