@@ -61,7 +61,10 @@ def apply() -> None:
             annotator.detach([render_product.path])
 
     def _reset_render_product(sensor, width: int, height: int):
-        sensor._viewport.viewport_api.set_texture_resolution((width, height))
+        if sensor._viewport is not None:
+            sensor._viewport.viewport_api.set_texture_resolution((width, height))
+        sensor._image_width = width
+        sensor._image_height = height
 
         for annotator in sensor._annotators.values():
             if annotator is None:
@@ -82,11 +85,17 @@ def apply() -> None:
             render()
 
     def _patched_image_height(self, height):
-        width, _ = self._viewport.viewport_api.get_texture_resolution()
+        if self._viewport is not None:
+            width, _ = self._viewport.viewport_api.get_texture_resolution()
+        else:
+            width = self._image_width
         _reset_render_product(self, width=width, height=height)
 
     def _patched_image_width(self, width):
-        _, height = self._viewport.viewport_api.get_texture_resolution()
+        if self._viewport is not None:
+            _, height = self._viewport.viewport_api.get_texture_resolution()
+        else:
+            height = self._image_height
         _reset_render_product(self, width=width, height=height)
 
     VisionSensor.image_height = property(
