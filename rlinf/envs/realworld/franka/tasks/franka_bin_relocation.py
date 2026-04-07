@@ -26,6 +26,7 @@ from ..franka_env import FrankaEnv, FrankaRobotConfig
 
 @dataclass
 class BinEnvConfig(FrankaRobotConfig):
+    task_description: str = "Pick up the object and put it into another bin"
     random_xy_range: float = 0.01  # for randomization
     clip_x_range: float = 0.10  # for bounding box
     clip_y_range: float = 0.15  # for bounding box
@@ -110,9 +111,10 @@ class BinEnvConfig(FrankaRobotConfig):
 
 
 class FrankaBinRelocationEnv(FrankaEnv):
+    CONFIG_CLS = BinEnvConfig
+
     def __init__(self, override_cfg, worker_info=None, hardware_info=None, env_idx=0):
-        config = BinEnvConfig(**override_cfg)
-        super().__init__(config, worker_info, hardware_info, env_idx)
+        super().__init__(override_cfg, worker_info, hardware_info, env_idx)
         self.task_id = 0  # 0 for forward task, 1 for backward task
         """
         the inner safety box is used to prevent the gripper from hitting the two walls of the bins in the center.
@@ -125,10 +127,6 @@ class FrankaBinRelocationEnv(FrankaEnv):
             self.config.target_ee_pose[:3] + np.array([0.07, 0.03, 0.04]),
             dtype=np.float64,
         )
-
-    @property
-    def task_description(self):
-        return "Pick up the object and put it into another bin"
 
     def intersect_line_bbox(self, p1, p2, bbox_min, bbox_max):
         # Define the parameterized line segment

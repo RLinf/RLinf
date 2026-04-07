@@ -193,3 +193,56 @@ First start the Ray cluster, then run the helper script:
    bash examples/sft/run_vla_sft.sh libero_sft_openpi
 
 The same script works for generic text SFT; just swap the config file.
+
+Real-World SFT Environment and Deployment
+------------------------------------------
+
+RLinf provides a **generic SFT environment** (``FrankaEnv-v1``) that lets you
+define new real-world tasks entirely through YAML configuration, without writing
+a custom environment class. This is useful for:
+
+- Collecting SFT demonstration data on new tasks
+- Deploying (evaluating) a trained policy on the real robot
+
+Generic SFT Environment
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The env config template lives at
+``examples/embodiment/config/env/realworld_franka_sft_env.yaml``.  Key fields
+you should customise for your task:
+
+.. code:: yaml
+
+   override_cfg:
+     task_description: "pick up the object and place it into the container"
+     target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]   # goal pose [x,y,z,rx,ry,rz]
+     reset_ee_pose:  [0.5, 0.0, 0.2, -3.14, 0.0, 0.0]    # reset pose (above goal)
+     max_num_steps: 300
+     reward_threshold: [0.01, 0.01, 0.01, 0.2, 0.2, 0.2]  # success tolerance
+     action_scale: [1.0, 1.0, 1.0]                         # [xyz, rpy, gripper]
+     ee_pose_limit_min: [0.4, -0.2, 0.05, -3.64, -0.5, -0.5]
+     ee_pose_limit_max: [0.6,  0.2, 0.35, -2.64,  0.5,  0.5]
+
+Under the hood, ``FrankaEnv`` now accepts ``override_cfg`` as a plain dict and
+uses a class-variable ``CONFIG_CLS`` to instantiate the dataclass config
+(defaults to ``FrankaRobotConfig``).  Subclasses such as ``PegInsertionEnv`` and
+``BottleEnv`` override ``CONFIG_CLS`` to their own dataclass while sharing the
+same constructor.
+
+Real-World Evaluation / Deployment
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A full evaluation config is provided at
+``examples/embodiment/config/realworld_eval.yaml``.  It pairs the generic SFT
+env with a Pi0 actor in **eval-only mode** (``runner.only_eval: True``).
+
+Before running, replace the placeholders:
+
+- ``ROBOT_IP`` — your Franka robot's IP address.
+- ``MODEL_PATH`` — path to your trained checkpoint.
+
+Then launch:
+
+.. code:: bash
+
+   bash examples/embodiment/run_realworld_eval.sh realworld_eval
