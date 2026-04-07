@@ -12,21 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SiglipGemma3WithMultiExpert: SigLIP2 + Gemma3 270M backbone with independent experts.
+"""Value expert backbone: SigLIP2 + Gemma3 270M with independent Gemma experts.
 
-Architecture differences from PaliGemmaWithMultiExpertModel (2B):
+Architecture:
   - VLM backbone: SigLIP2-so400m (1152-dim) + Gemma3-270M (640-dim, head_dim=256)
-  - Image projection: fresh nn.Linear(1152, 640) (not built-in like PaliGemma)
-  - KV cache format: DynamicCache (Gemma3) instead of tuple (Gemma1/PaliGemma)
-  - Gemma3 uses sliding-window attention (window=512); interleaved forward not supported
+  - Image projection: fresh nn.Linear(1152, 640)
+  - KV cache format: DynamicCache (Gemma3)
   - Expert: GemmaForCausalLM (Gemma1) with head_dim=256 to match Gemma3 KV head_dim
 
-Forward modes (two-stage only; no interleaved):
+Forward modes (two-stage only):
   Mode A — inputs_embeds=[prefix, None], use_cache=True
     → Gemma3 processes prefix, returns DynamicCache
   Mode B — inputs_embeds=[None, suffix], past_key_values=DynamicCache
     → GemmaForCausalLM expert cross-attends to Gemma3 KV cache
-  (Modes A+B together implement the "two-stage" forward used by ValueCriticModel)
 
 Gradient flow:
   freeze_vlm=True  : Gemma3 params frozen; KV cache detached in _forward_expert_two_stage
@@ -34,6 +32,7 @@ Gradient flow:
 """
 
 import logging
+import os
 from typing import Literal
 
 import torch
@@ -42,12 +41,10 @@ from transformers import Gemma3ForCausalLM, GemmaForCausalLM, SiglipVisionModel
 from transformers.cache_utils import DynamicCache
 from transformers.models.auto import CONFIG_MAPPING
 
-from .paligemma_with_multi_expert import _requires_uniform_dtype
-
 logger = logging.getLogger(__name__)
 
 
-class SiglipGemma3WithMultiExpert(nn.Module):
+class ValueExpert(nn.Module):
     """SigLIP2 + Gemma3 270M VLM backbone with independent GemmaForCausalLM experts.
 
     Loads SigLIP2 and Gemma3 from separate pretrained paths. The image projection
@@ -88,7 +85,7 @@ class SiglipGemma3WithMultiExpert(nn.Module):
         )
 
         logger.info(
-            f"Creating SiglipGemma3WithMultiExpert: experts={self.expert_names}, "
+            f"Creating ValueExpert: experts={self.expert_names}, "
             f"freeze_vision_encoder={freeze_vision_encoder}, freeze_vlm={freeze_vlm}"
         )
 
@@ -175,13 +172,12 @@ class SiglipGemma3WithMultiExpert(nn.Module):
         inputs_embeds: list | None = None,
         use_cache: bool | None = None,
         expert_name: str | None = None,
-        **kwargs,  # accept & ignore: adarms_cond, detach_prefix_for_suffix, etc.
+        **kwargs,
     ):
-        """Two-stage forward for SigLIP+Gemma3 backbone.
+        """Two-stage forward.
 
-        Unlike PaliGemmaWithMultiExpertModel, interleaved forward is NOT supported
-        because Gemma3's sliding-window attention is incompatible with layer-wise
-        interleaving. Use _forward_expert_two_stage in ValueCriticModel instead.
+        Interleaved forward is NOT supported because Gemma3's sliding-window
+        attention is incompatible with layer-wise interleaving.
 
         Args:
             attention_mask: [B, 1, Q, K] 4D attention mask.
@@ -192,7 +188,7 @@ class SiglipGemma3WithMultiExpert(nn.Module):
                 - [None, suffix]: Mode B — expert forward with past DynamicCache
             use_cache: Whether to return KV cache (only used in Mode A).
             expert_name: Which expert to run in Mode B.
-            **kwargs: Ignored keyword args (adarms_cond, etc.) for API compatibility.
+            **kwargs: Ignored keyword args for API compatibility.
 
         Returns:
             ([prefix_hidden, suffix_hidden], past_key_values)
@@ -230,13 +226,12 @@ class SiglipGemma3WithMultiExpert(nn.Module):
             )
             return [None, out.last_hidden_state], None
 
-        # Interleaved (both prefix and suffix) — not supported for Gemma3
+        # Interleaved (both prefix and suffix) — not supported
         raise ValueError(
-            "SiglipGemma3WithMultiExpert does not support interleaved forward "
+            "ValueExpert does not support interleaved forward "
             "(both prefix and suffix in a single call). Gemma3's sliding-window "
             "attention is incompatible with layer-wise interleaving. "
-            "Use two-stage forward via _forward_expert_two_stage in ValueCriticModel "
-            "(always active when backbone_variant='siglip_gemma3')."
+            "Use two-stage forward via _forward_expert_two_stage in ValueCriticModel."
         )
 
     def _set_requires_grad(self):
@@ -276,7 +271,7 @@ class SiglipGemma3WithMultiExpert(nn.Module):
 
         self.to(dtype=torch.bfloat16)
 
-        if _requires_uniform_dtype():
+        if self._requires_uniform_dtype():
             logger.info(
                 "Parameter sharding detected (FSDP/Zero-3): using uniform bfloat16"
             )
@@ -309,3 +304,19 @@ class SiglipGemma3WithMultiExpert(nn.Module):
         raise ValueError(
             f"expert_name must be specified when multiple experts exist: {self.expert_names}"
         )
+
+    @staticmethod
+    def _requires_uniform_dtype() -> bool:
+        """Check if the distributed training method requires uniform parameter dtype.
+
+        Only parameter-sharding methods (FSDP, DeepSpeed Zero-3) require uniform dtype.
+        DDP and DeepSpeed Zero-1/2 replicate parameters and can use mixed dtypes.
+        """
+        if os.environ.get("ACCELERATE_USE_FSDP", "").lower() in ("1", "true"):
+            return True
+        if os.environ.get("FSDP_USE_ORIG_PARAMS") is not None:
+            return True
+        zero_stage = os.environ.get("ACCELERATE_DEEPSPEED_ZERO_STAGE", "")
+        if zero_stage == "3":
+            return True
+        return False

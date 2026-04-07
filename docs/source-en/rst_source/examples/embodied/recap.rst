@@ -294,7 +294,7 @@ The output is a Categorical Value Distribution over 201 bins spanning :math:`[-1
 
 **Configuration**
 
-The configuration file is located at ``examples/sft/config/libero_sft_value_siglip_gemma3.yaml``. Key fields:
+The configuration file is located at ``examples/sft/config/libero_sft_value.yaml``. Key fields:
 
 .. code:: yaml
 
@@ -365,11 +365,11 @@ The training script automatically initializes the Ray cluster:
 
 .. code:: bash
 
-   bash examples/sft/run_value_sft.sh libero_sft_value_siglip_gemma3
+   bash examples/sft/run_value_sft.sh libero_sft_value
 
 **Output**
 
-- Model checkpoints saved at ``logs/value_sft/{config_name}-{timestamp}/value_sft_siglip_gemma3/checkpoints/``
+- Model checkpoints saved at ``logs/value_sft/{config_name}-{timestamp}/value_sft/checkpoints/``
 - TensorBoard logs
 
 **Key Metrics**
@@ -384,7 +384,7 @@ The training script automatically initializes the Ray cluster:
 
    .. code-block:: text
 
-      logs/value_sft/{config_name}-{timestamp}/value_sft_siglip_gemma3/checkpoints/global_step_{N}/actor/model_state_dict
+      logs/value_sft/{config_name}-{timestamp}/value_sft/checkpoints/global_step_{N}/actor/model_state_dict
 
 
 Step 3: Compute Advantages
@@ -402,7 +402,7 @@ where :math:`N` is the lookahead steps (``advantage_lookahead_step``) and :math:
 
 **Configuration**
 
-The configuration file is located at ``examples/process/config/compute_advantages_siglip_gemma3.yaml``:
+The configuration file is located at ``examples/process/config/compute_advantages.yaml``:
 
 .. code:: yaml
 
@@ -453,7 +453,7 @@ Supports multi-GPU distributed inference:
 
 .. code:: bash
 
-   bash examples/process/run_compute_advantages.sh compute_advantages_siglip_gemma3
+   bash examples/process/run_compute_advantages.sh compute_advantages
 
 **Output Files**
 
@@ -713,15 +713,15 @@ File Structure
    │   ├── run_compute_advantages.sh         # Step 3 launch script
    │   └── config/
    │       ├── compute_returns.yaml
-   │       └── compute_advantages_siglip_gemma3.yaml
+   │       └── compute_advantages.yaml
    └── sft/
        ├── train_value_sft.py                # Step 2: value model training
        ├── train_cfg_sft.py                  # Step 4: CFG policy training
        ├── run_value_sft.sh                  # Step 2 launch script
        ├── run_cfg_sft.sh                    # Step 4 launch script
        └── config/
-           ├── libero_sft_value_siglip_gemma3.yaml
+           ├── libero_sft_value.yaml
            ├── libero_cfg_openpi.yaml
            └── model/
-               ├── value_siglip_gemma3.yaml  # value model architecture
+               ├── value.yaml                # value model config
                └── pi0_5.yaml               # policy model architecture

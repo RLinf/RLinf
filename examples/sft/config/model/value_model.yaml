@@ -19,9 +19,6 @@ action_dim: 32
 action_horizon: 50
 max_token_len: 200
 
-# "gemma_2b" (default)
-paligemma_variant: "gemma_2b"
-
 action_expert_variant: "gemma_300m"
 freeze_vision_encoder: false
 train_expert_only: false
@@ -29,15 +26,10 @@ forward_mode: "vla"
 max_language_len: 50
 stop_gradient_to_vlm: false
 
-# "paligemma" (default) | "siglip_gemma3"
-backbone_variant: "paligemma"
-# Required for siglip_gemma3 only
 siglip_path: /path/to/siglip2-so400m-patch14-224
 gemma3_path: /path/to/gemma-3-270m
 
-# For paligemma: required. Points to PI05 checkpoint containing all weights.
-# For siglip_gemma3: optional. Points to a previously trained ValueCriticModel
-#   checkpoint to resume training. Backbone weights are loaded via
-#   from_pretrained() from siglip_path/gemma3_path; leave unset to train
-#   from scratch.
+# Optional. Points to a previously trained ValueCriticModel checkpoint to
+#   resume training. Backbone weights are loaded via from_pretrained() from
+#   siglip_path/gemma3_path; leave unset to train from scratch.
 # model_path: "/path/to/checkpoint"

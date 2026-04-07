@@ -1,24 +1,24 @@
 # Advantage computation for CFG-RL training
 #
 # Usage:
-#   cd examples/process && python compute_advantages.py --config-name compute_advantages_paligemma \
+#   cd examples/process && python compute_advantages.py --config-name compute_advantages \
 #       advantage.value_checkpoint=/path/to/checkpoint
 #
 # Multi-GPU:
 #   cd examples/process && torchrun --nproc_per_node=4 compute_advantages.py \
-#       --config-name compute_advantages_paligemma \
+#       --config-name compute_advantages \
 #       advantage.value_checkpoint=/path/to/checkpoint
 
 defaults:
-  - model/value_paligemma@advantage.model
+  - model/value@advantage.model
 
 advantage:
   value_checkpoint: /path/to/value_checkpoint
   device: "cuda"
-  batch_size: 256
+  batch_size: 1024
   flush_interval: 256
   num_dataloader_workers_per_gpu: 12
-  prefetch_factor: 4
+  prefetch_factor: 2
   discount_next_value: true
 
   # Top X% of samples will have positive advantage (threshold at 1-X percentile)
@@ -29,7 +29,10 @@ advantage:
   returns_tag: null
 
   model:
-    critic_expert_variant: "gemma_50m"
+    critic_expert_variant: "gemma_1m"
+    tokenizer_path: /path/to/gemma-3-270m
+    siglip_path: /path/to/siglip2-so400m-patch14-224
+    gemma3_path: /path/to/gemma-3-270m
 
 data:
   model_type: "pi05"

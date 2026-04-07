@@ -1,7 +1,0 @@
-# Value model config for inference (PaliGemma backbone)
-backbone_variant: "paligemma"
-critic_expert_variant: "gemma_100m"
-num_bins: 201
-v_min: -1.0
-v_max: 0.0
-tokenizer_path: null

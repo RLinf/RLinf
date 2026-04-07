@@ -29,6 +29,4 @@ model:
   # PI05 base params
   action_dim: 7
   action_horizon: 10
-  paligemma_variant: "gemma_2b"
-
   is_lora: False

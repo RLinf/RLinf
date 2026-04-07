@@ -38,4 +38,4 @@ mkdir -p "${LOG_DIR}"
 
 CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ --config-name ${CONFIG_NAME} runner.logger.log_path=${LOG_DIR} $@"
 echo ${CMD} > ${MEGA_LOG_FILE}
-${CMD} 2>&1 | tee -a ${MEGA_LOG_FILE}
+${CMD} 2>&1 | grep --line-buffered -v "libdav1d" | tee -a ${MEGA_LOG_FILE}

@@ -33,7 +33,7 @@ export TMPDIR="${TMPDIR:-/tmp}"
 
 mkdir -p "$HF_HOME" "$TRANSFORMERS_CACHE" "$HF_DATASETS_CACHE" "$TMPDIR"
 
-CONFIG_NAME="${1:-compute_advantages_paligemma}"
+CONFIG_NAME="${1:-compute_advantages}"
 shift 1 2>/dev/null || true
 
 NPROC_PER_NODE=$(nvidia-smi -L 2>/dev/null | wc -l || echo 1)

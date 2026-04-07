@@ -41,6 +41,17 @@ def _parse_image(image) -> np.ndarray:
     return image
 
 
+def _split_camera_views(image) -> list[np.ndarray]:
+    if image is None:
+        return []
+
+    image = np.asarray(image)
+    if image.ndim == 4:
+        return [_parse_image(image[idx]) for idx in range(image.shape[0])]
+
+    return [_parse_image(image)]
+
+
 @dataclasses.dataclass(frozen=True)
 class FrankaEEOutputs(transforms.DataTransformFn):
     """
@@ -53,10 +64,11 @@ class FrankaEEOutputs(transforms.DataTransformFn):
     # Whether to train actions using rotation_6d or not.
     action_train_with_rotation_6d: bool = False
 
+    # Number of action dimensions consumed by the environment.
+    env_action_dim: int = 7
+
     def __call__(self, data: dict) -> dict:
-        return {
-            "actions": np.asarray(data["actions"][:, :7])
-        }  # use abs actions [x,y,z,rx,ry,rz,gripper] for Franka
+        return {"actions": np.asarray(data["actions"][:, : self.env_action_dim])}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -79,10 +91,10 @@ class FrankaEEInputs(transforms.DataTransformFn):
     # Whether to train actions using rotation_6d or not.
     action_train_with_rotation_6d: bool = False
 
+    # If True, map observation/extra_view_image to wrist image slots when wrist_image is absent.
+    use_extra_view_as_wrist: bool = True
+
     def __call__(self, data: dict) -> dict:
-        assert data["observation/state"].shape == (7,), (
-            f"Expected state shape (7,), got {data['observation/state'].shape}"
-        )
         if isinstance(data["observation/state"], np.ndarray):
             data["observation/state"] = torch.from_numpy(
                 data["observation/state"]
@@ -92,23 +104,37 @@ class FrankaEEInputs(transforms.DataTransformFn):
         state = transforms.pad_to_dim(state, self.action_dim)
 
         base_image = _parse_image(data["observation/image"])
+        wrist_views = _split_camera_views(data.get("observation/wrist_image"))
+        if self.use_extra_view_as_wrist:
+            wrist_views.extend(_split_camera_views(data.get("observation/extra_view_image")))
+
+        left_wrist_image = (
+            wrist_views[0] if len(wrist_views) > 0 else np.zeros_like(base_image)
+        )
+        right_wrist_image = (
+            wrist_views[1] if len(wrist_views) > 1 else np.zeros_like(base_image)
+        )
 
         # We only mask padding for pi0 model, not pi0-FAST.
         if self.model_type in (_model.ModelType.PI0, _model.ModelType.PI05):
             names = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
             images = (
                 base_image,
-                np.zeros_like(base_image),
-                np.zeros_like(base_image),
+                left_wrist_image,
+                right_wrist_image,
             )
-            image_masks = (np.True_, np.False_, np.False_)  # with padding
+            image_masks = (
+                np.True_,
+                np.True_ if len(wrist_views) > 0 else np.False_,
+                np.True_ if len(wrist_views) > 1 else np.False_,
+            )  # with padding
         elif self.model_type == _model.ModelType.PI0_FAST:
             names = ("base_0_rgb", "base_1_rgb", "wrist_0_rgb")
             # We don't mask out padding images for FAST models.
             images = (
                 base_image,
-                np.zeros_like(base_image),
-                np.zeros_like(base_image),
+                left_wrist_image,
+                right_wrist_image,
             )
             image_masks = (np.True_, np.True_, np.True_)  # without padding
         else:
@@ -123,9 +149,6 @@ class FrankaEEInputs(transforms.DataTransformFn):
         # Pad actions to the model action dimension. Keep this for your own dataset.
         # Actions are only available during training.
         if "actions" in data:
-            assert len(data["actions"].shape) == 2 and data["actions"].shape[-1] == 7, (
-                f"Expected actions shape (N, 7), got {data['actions'].shape}"
-            )
             actions = transforms.pad_to_dim(data["actions"], self.action_dim)
             inputs["actions"] = actions
 

@@ -290,7 +290,7 @@ Step 2：训练价值模型（Value Model SFT）
 
 **配置文件**
 
-配置文件位于 ``examples/sft/config/libero_sft_value_siglip_gemma3.yaml``，核心字段如下：
+配置文件位于 ``examples/sft/config/libero_sft_value.yaml``，核心字段如下：
 
 .. code:: yaml
 
@@ -361,11 +361,11 @@ Step 2：训练价值模型（Value Model SFT）
 
 .. code:: bash
 
-   bash examples/sft/run_value_sft.sh libero_sft_value_siglip_gemma3
+   bash examples/sft/run_value_sft.sh libero_sft_value
 
 **输出**
 
-- 模型 checkpoint 保存在 ``logs/value_sft/{config_name}-{timestamp}/value_sft_siglip_gemma3/checkpoints/``
+- 模型 checkpoint 保存在 ``logs/value_sft/{config_name}-{timestamp}/value_sft/checkpoints/``
 - TensorBoard 日志
 
 **关键监控指标**
@@ -380,7 +380,7 @@ Step 2：训练价值模型（Value Model SFT）
 
    .. code-block:: text
 
-      logs/value_sft/{config_name}-{timestamp}/value_sft_siglip_gemma3/checkpoints/global_step_{N}/actor/model_state_dict
+      logs/value_sft/{config_name}-{timestamp}/value_sft/checkpoints/global_step_{N}/actor/model_state_dict
 
 
 Step 3：计算优势（Compute Advantages）
@@ -398,7 +398,7 @@ Step 3：计算优势（Compute Advantages）
 
 **配置文件**
 
-配置文件位于 ``examples/process/config/compute_advantages_siglip_gemma3.yaml``：
+配置文件位于 ``examples/process/config/compute_advantages.yaml``：
 
 .. code:: yaml
 
@@ -449,7 +449,7 @@ Step 3：计算优势（Compute Advantages）
 
 .. code:: bash
 
-   bash examples/process/run_compute_advantages.sh compute_advantages_siglip_gemma3
+   bash examples/process/run_compute_advantages.sh compute_advantages
 
 **输出文件**
 
@@ -707,15 +707,15 @@ RECAP 支持迭代优化：使用 Step 4 训练的策略模型采集新数据，
    │   ├── run_compute_advantages.sh         # Step 3 启动脚本
    │   └── config/
    │       ├── compute_returns.yaml
-   │       └── compute_advantages_siglip_gemma3.yaml
+   │       └── compute_advantages.yaml
    └── sft/
        ├── train_value_sft.py                # Step 2: 训练价值模型
        ├── train_cfg_sft.py                  # Step 4: CFG 策略训练
        ├── run_value_sft.sh                  # Step 2 启动脚本
        ├── run_cfg_sft.sh                    # Step 4 启动脚本
        └── config/
-           ├── libero_sft_value_siglip_gemma3.yaml
+           ├── libero_sft_value.yaml
            ├── libero_cfg_openpi.yaml
            └── model/
-               ├── value_siglip_gemma3.yaml  # 价值模型架构
+               ├── value.yaml                # 价值模型配置
                └── pi0_5.yaml               # 策略模型架构

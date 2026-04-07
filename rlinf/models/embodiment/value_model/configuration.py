@@ -168,7 +168,6 @@ class VLMBaseConfig(PretrainedConfig):
         action_dim: int = 32,
         action_horizon: int = 50,
         max_token_len: int = 200,
-        paligemma_variant: str = "gemma_2b",
         action_expert_variant: str = "gemma_300m",
         freeze_vision_encoder: bool = False,
         freeze_vlm: bool = False,
@@ -194,7 +193,6 @@ class VLMBaseConfig(PretrainedConfig):
         self.action_dim = action_dim
         self.action_horizon = action_horizon
         self.max_token_len = max_token_len
-        self.paligemma_variant = paligemma_variant
         self.action_expert_variant = action_expert_variant
         self.freeze_vision_encoder = freeze_vision_encoder
         self.freeze_vlm = freeze_vlm
@@ -221,7 +219,6 @@ class VLMBaseConfig(PretrainedConfig):
                 "action_dim": self.action_dim,
                 "action_horizon": self.action_horizon,
                 "max_token_len": self.max_token_len,
-                "paligemma_variant": self.paligemma_variant,
                 "action_expert_variant": self.action_expert_variant,
                 "freeze_vision_encoder": self.freeze_vision_encoder,
                 "freeze_vlm": getattr(self, "freeze_vlm", False),
@@ -248,19 +245,18 @@ class ValueCriticConfig(VLMBaseConfig):
         num_bins: int = 201,
         v_min: float = -1.0,
         v_max: float = 0.0,
-        backbone_variant: str = "paligemma",
         siglip_path: str | None = None,
         gemma3_path: str | None = None,
         value_dropout: float = 0.0,
         **kwargs,
     ):
         # Accept and ignore legacy parameters for checkpoint compatibility
+        kwargs.pop("backbone_variant", None)
         super().__init__(**kwargs)
         self.critic_expert_variant = critic_expert_variant
         self.num_bins = num_bins
         self.v_min = v_min
         self.v_max = v_max
-        self.backbone_variant = backbone_variant
         self.siglip_path = siglip_path or ""
         self.gemma3_path = gemma3_path or ""
         self.value_dropout = value_dropout

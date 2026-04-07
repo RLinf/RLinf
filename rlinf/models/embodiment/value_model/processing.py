@@ -32,7 +32,6 @@ import logging
 import os
 import string
 from collections.abc import Sequence
-from pathlib import Path
 from typing import ClassVar, Optional, Union
 
 import numpy as np
@@ -444,17 +443,6 @@ class ValueProcessor(ProcessorMixin):
     tokenizer_class = "AutoTokenizer"
     _tokenize_log_count = 0
 
-    @staticmethod
-    def _default_tokenizer_path() -> Optional[str]:
-        current = Path(__file__).resolve()
-        for parent in current.parents:
-            if (parent / "pyproject.toml").exists():
-                candidate = parent / "pretrained_models" / "paligemma-3b-mix-224"
-                if candidate.exists():
-                    return str(candidate)
-                break
-        return None
-
     def __init__(
         self,
         image_processor: Optional[ValueImageProcessor] = None,
@@ -477,7 +465,6 @@ class ValueProcessor(ProcessorMixin):
             tokenizer_path = (
                 tokenizer_name_or_path
                 or os.environ.get("VLA_TOKENIZER_PATH")
-                or ValueProcessor._default_tokenizer_path()
             )
             if not tokenizer_path or not os.path.exists(tokenizer_path):
                 raise ValueError(

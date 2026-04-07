@@ -301,7 +301,6 @@ def _parse_value_model_kwargs(cfg: DictConfig) -> dict:
         "return_max": model_cfg.get("v_max", 0.0),
         "critic_expert_variant": model_cfg.get("critic_expert_variant", "gemma_100m"),
         "tokenizer_path": model_cfg.get("tokenizer_path", None),
-        "backbone_variant": model_cfg.get("backbone_variant", "paligemma"),
         "siglip_path": model_cfg.get("siglip_path", None),
         "gemma3_path": model_cfg.get("gemma3_path", None),
     }
@@ -973,7 +972,7 @@ def save_advantages_to_dataset(
 @hydra.main(
     version_base=None,
     config_path="config",
-    config_name="compute_advantages_paligemma",
+    config_name="compute_advantages",
 )
 def main(cfg: DictConfig) -> None:
     """Main entry point for advantage computation.

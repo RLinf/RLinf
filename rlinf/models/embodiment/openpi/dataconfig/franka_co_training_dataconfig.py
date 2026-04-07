@@ -39,6 +39,12 @@ class LeRobotFrankaEEDataConfig(DataConfigFactory):
     # train actions using rotation_6d
     action_train_with_rotation_6d: bool = False
 
+    # Number of action dimensions consumed by the target environment.
+    action_output_dim: int = 7
+
+    # If True, map observation/extra_view_image to wrist image slots when needed.
+    use_extra_view_as_wrist: bool = True
+
     def generate_observations(
         image: np.ndarray, state: np.ndarray, prompt: str
     ) -> dict:
@@ -72,11 +78,13 @@ class LeRobotFrankaEEDataConfig(DataConfigFactory):
                     action_dim=model_config.action_dim,
                     model_type=model_config.model_type,
                     action_train_with_rotation_6d=self.action_train_with_rotation_6d,
+                    use_extra_view_as_wrist=self.use_extra_view_as_wrist,
                 )
             ],
             outputs=[
                 franka_policy.FrankaEEOutputs(
-                    action_train_with_rotation_6d=self.action_train_with_rotation_6d
+                    action_train_with_rotation_6d=self.action_train_with_rotation_6d,
+                    env_action_dim=self.action_output_dim,
                 )
             ],
         )

@@ -58,7 +58,8 @@ def get_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticModel:
             - critic_expert_variant: e.g. "gemma_100m", "gemma_300m"
             - num_bins, v_min, v_max
             - action_dim, action_horizon, max_token_len
-            - paligemma_variant, freeze_vision_encoder, train_expert_only
+            - siglip_path, gemma3_path
+            - freeze_vision_encoder, train_expert_only
             - model_path: checkpoint path (optional)
         torch_dtype: unused, kept for interface compat.
 
@@ -75,7 +76,6 @@ def get_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticModel:
     _set("action_dim", 32)
     _set("action_horizon", 50)
     _set("max_token_len", 200)
-    _set("paligemma_variant", "gemma_2b")
     _set("action_expert_variant", "gemma_300m")
     _set("freeze_vision_encoder", False)
     _set("freeze_vlm", False)
@@ -83,7 +83,6 @@ def get_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticModel:
     _set("forward_mode", "vla")
     _set("max_language_len", 50)
     _set("stop_gradient_to_vlm", False)
-    _set("backbone_variant", "paligemma")
     _set("siglip_path", None)
     _set("gemma3_path", None)
 
@@ -109,7 +108,6 @@ def get_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticModel:
     logger.info("Created ValueCriticModel (V function)")
 
     model_path = getattr(cfg, "model_path", None)
-    backbone_variant = getattr(cfg, "backbone_variant", "paligemma")
 
     if model_path is not None:
         full_weights_path = os.path.join(
@@ -122,40 +120,24 @@ def get_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticModel:
             model_path = full_weights_path
         elif os.path.exists(actor_full_weights_path):
             model_path = actor_full_weights_path
-    if backbone_variant == "paligemma":
-        # PaliGemma: all weights come from a single checkpoint (e.g. PI05)
-        if model_path is None or not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model path does not exist: {model_path}")
+
+    # Backbone weights already loaded via from_pretrained().
+    # model_path is only used for resuming from a fine-tuned checkpoint.
+    if model_path and os.path.exists(model_path):
         state_dict = _load_state_dict(model_path)
         if state_dict:
             state_dict = _strip_model_prefix(state_dict, model)
             missing, unexpected = model.load_state_dict(state_dict, strict=False)
             logger.info(
-                "Loaded checkpoint from %s (missing=%d, unexpected=%d)",
+                "Loaded fine-tuned checkpoint from %s (missing=%d, unexpected=%d)",
                 model_path,
                 len(missing),
                 len(unexpected),
             )
     else:
-        # SigLIP-Gemma3: backbone weights already loaded via from_pretrained().
-        # model_path is only used for resuming from a fine-tuned checkpoint.
-        if model_path and os.path.exists(model_path):
-            state_dict = _load_state_dict(model_path)
-            if state_dict:
-                state_dict = _strip_model_prefix(state_dict, model)
-                missing, unexpected = model.load_state_dict(state_dict, strict=False)
-                logger.info(
-                    "Loaded fine-tuned checkpoint from %s (missing=%d, unexpected=%d)",
-                    model_path,
-                    len(missing),
-                    len(unexpected),
-                )
-        else:
-            logger.info(
-                "No model_path provided for %s backbone; "
-                "using from_pretrained() weights.",
-                backbone_variant,
-            )
+        logger.info(
+            "No model_path provided; using from_pretrained() weights.",
+        )
 
     return model
 

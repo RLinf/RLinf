@@ -29,8 +29,7 @@ from torch import Tensor, nn
 from transformers.modeling_outputs import ModelOutput
 
 from .configuration import ValueCriticConfig, get_config
-from .paligemma_with_multi_expert import PaliGemmaWithMultiExpertModel
-from .siglip_gemma3_with_multi_expert import SiglipGemma3WithMultiExpert
+from .value_expert import ValueExpert
 
 logger = logging.getLogger(__name__)
 
@@ -121,45 +120,30 @@ class ValueCriticModel(nn.Module):
     def __init__(self, config: ValueCriticConfig):
         super().__init__()
         self.config = config
-        self.backbone_variant = getattr(config, "backbone_variant", "paligemma")
 
         expert_config = get_config(config.critic_expert_variant)
 
         logger.info(
-            f"Creating ValueCriticModel: expert={config.critic_expert_variant}, "
-            f"backbone={self.backbone_variant}"
+            f"Creating ValueCriticModel: expert={config.critic_expert_variant}"
         )
 
         expert_configs = {"value": expert_config}
 
-        if self.backbone_variant == "siglip_gemma3":
-            siglip_path = getattr(config, "siglip_path", "")
-            gemma3_path = getattr(config, "gemma3_path", "")
-            if not siglip_path or not gemma3_path:
-                raise ValueError(
-                    "backbone_variant='siglip_gemma3' requires both "
-                    f"siglip_path and gemma3_path. Got siglip_path='{siglip_path}', "
-                    f"gemma3_path='{gemma3_path}'"
-                )
-            self.paligemma_with_expert = SiglipGemma3WithMultiExpert(
-                expert_configs=expert_configs,
-                siglip_path=siglip_path,
-                gemma3_path=gemma3_path,
-                precision=config.precision,
-                freeze_vision_encoder=getattr(config, "freeze_vision_encoder", False),
-                freeze_vlm=getattr(config, "freeze_vlm", False),
+        siglip_path = getattr(config, "siglip_path", "")
+        gemma3_path = getattr(config, "gemma3_path", "")
+        if not siglip_path or not gemma3_path:
+            raise ValueError(
+                "ValueCriticModel requires both siglip_path and gemma3_path. "
+                f"Got siglip_path='{siglip_path}', gemma3_path='{gemma3_path}'"
             )
-        else:
-            paligemma_config = get_config(config.paligemma_variant)
-            use_adarms = [False, {"value": False}]
-            self.paligemma_with_expert = PaliGemmaWithMultiExpertModel(
-                vlm_config=paligemma_config,
-                expert_configs=expert_configs,
-                use_adarms=use_adarms,
-                precision=config.precision,
-                freeze_vision_encoder=getattr(config, "freeze_vision_encoder", False),
-                freeze_vlm=getattr(config, "freeze_vlm", False),
-            )
+        self.value_expert = ValueExpert(
+            expert_configs=expert_configs,
+            siglip_path=siglip_path,
+            gemma3_path=gemma3_path,
+            precision=config.precision,
+            freeze_vision_encoder=getattr(config, "freeze_vision_encoder", False),
+            freeze_vlm=getattr(config, "freeze_vlm", False),
+        )
 
         self.gradient_checkpointing_enabled = False
 
@@ -181,13 +165,15 @@ class ValueCriticModel(nn.Module):
 
     @property
     def _no_split_modules(self) -> list[str]:
-        if self.paligemma_with_expert.freeze_vlm:
+        if self.value_expert.freeze_vlm:
             no_split_modules = [
                 "GemmaDecoderLayer",
                 "SiglipVisionEmbeddings",
                 "GemmaRMSNorm",
                 "GemmaRotaryEmbedding",
                 "ValueHead",
+                "Gemma3RMSNorm",
+                "Gemma3DecoderLayer",
             ]
         else:
             no_split_modules = [
@@ -196,9 +182,9 @@ class ValueCriticModel(nn.Module):
                 "GemmaRMSNorm",
                 "GemmaRotaryEmbedding",
                 "ValueHead",
+                "Gemma3RMSNorm",
+                "Gemma3DecoderLayer",
             ]
-        if self.backbone_variant == "siglip_gemma3":
-            no_split_modules.extend(["Gemma3RMSNorm", "Gemma3DecoderLayer"])
         return no_split_modules
 
     @property
@@ -207,29 +193,17 @@ class ValueCriticModel(nn.Module):
 
     def gradient_checkpointing_enable(self):
         self.gradient_checkpointing_enabled = True
-        if self.backbone_variant == "siglip_gemma3":
-            self.paligemma_with_expert.gemma3.model.gradient_checkpointing = True
-            self.paligemma_with_expert.vision_tower.gradient_checkpointing = True
-        else:
-            self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing = True
-            self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing = (
-                True
-            )
-        for expert in self.paligemma_with_expert.experts.values():
+        self.value_expert.gemma3.model.gradient_checkpointing = True
+        self.value_expert.vision_tower.gradient_checkpointing = True
+        for expert in self.value_expert.experts.values():
             expert.model.gradient_checkpointing = True
         logger.info("Enabled gradient checkpointing for ValueCriticModel")
 
     def gradient_checkpointing_disable(self):
         self.gradient_checkpointing_enabled = False
-        if self.backbone_variant == "siglip_gemma3":
-            self.paligemma_with_expert.gemma3.model.gradient_checkpointing = False
-            self.paligemma_with_expert.vision_tower.gradient_checkpointing = False
-        else:
-            self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing = False
-            self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing = (
-                False
-            )
-        for expert in self.paligemma_with_expert.experts.values():
+        self.value_expert.gemma3.model.gradient_checkpointing = False
+        self.value_expert.vision_tower.gradient_checkpointing = False
+        for expert in self.value_expert.experts.values():
             expert.model.gradient_checkpointing = False
         logger.info("Disabled gradient checkpointing for ValueCriticModel")
 
@@ -243,11 +217,7 @@ class ValueCriticModel(nn.Module):
 
     def _get_model_dtype(self) -> torch.dtype:
         """Get the dtype of the backbone model's attention weights."""
-        if self.backbone_variant == "siglip_gemma3":
-            return self.paligemma_with_expert.gemma3.model.layers[
-                0
-            ].self_attn.q_proj.weight.dtype
-        return self.paligemma_with_expert.paligemma.language_model.layers[
+        return self.value_expert.gemma3.model.layers[
             0
         ].self_attn.q_proj.weight.dtype
 
@@ -304,14 +274,14 @@ class ValueCriticModel(nn.Module):
 
         for img, img_mask in zip(images, img_masks, strict=True):
             img_emb = self._apply_checkpoint(
-                self.paligemma_with_expert.embed_image, img
+                self.value_expert.embed_image, img
             )
             num_img_embs = img_emb.shape[1]
             embs.append(img_emb)
             pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
 
         def embed_lang(tokens):
-            emb = self.paligemma_with_expert.embed_language_tokens(tokens)
+            emb = self.value_expert.embed_language_tokens(tokens)
             return emb * math.sqrt(emb.shape[-1])
 
         lang_emb = self._apply_checkpoint(embed_lang, lang_tokens)
@@ -391,74 +361,23 @@ class ValueCriticModel(nn.Module):
         suffix_ar_masks,
         stop_gradient_to_vlm: bool = False,
     ):
-        """Forward through VLM + value expert."""
+        """Forward through VLM + value expert (two-stage)."""
         model_dtype = self._get_model_dtype()
         if model_dtype == torch.bfloat16:
             prefix_embs = prefix_embs.to(torch.bfloat16)
             suffix_embs = suffix_embs.to(torch.bfloat16)
 
-        # Use two-stage forward when VLM is frozen under FSDP to avoid
-        # view/inplace errors in interleaved attention.
-        # 800m always uses two-stage (no interleaved support for Gemma3).
-        use_two_stage = self.backbone_variant == "siglip_gemma3" or getattr(
-            self.paligemma_with_expert, "freeze_vlm", False
+        prefix_out, suffix_out = self._forward_expert_two_stage(
+            prefix_embs=prefix_embs,
+            prefix_pad_masks=prefix_pad_masks,
+            suffix_embs=suffix_embs,
+            suffix_pad_masks=suffix_pad_masks,
+            suffix_ar_masks=suffix_ar_masks,
+            stop_gradient_to_vlm=stop_gradient_to_vlm,
         )
-        if use_two_stage:
-            prefix_out, suffix_out = self._forward_expert_two_stage(
-                prefix_embs=prefix_embs,
-                prefix_pad_masks=prefix_pad_masks,
-                suffix_embs=suffix_embs,
-                suffix_pad_masks=suffix_pad_masks,
-                suffix_ar_masks=suffix_ar_masks,
-                stop_gradient_to_vlm=stop_gradient_to_vlm,
-            )
-            cls_hidden = suffix_out[:, -1, :].to(
-                self.value_head.value_proj.weight.dtype
-            )
-            values, logits, probs = self._compute_value_from_hidden(cls_hidden)
-            backward_anchor = self._build_vlm_backward_anchor(
-                prefix_out=prefix_out, stop_gradient_to_vlm=stop_gradient_to_vlm
-            )
-            return values, cls_hidden, logits, probs, backward_anchor
-
-        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
-        # Prefix tokens are bidirectional (0), suffix ar_masks carry CLS causal mask.
-        att_masks = torch.cat(
-            [
-                torch.zeros_like(prefix_pad_masks, dtype=torch.long),
-                suffix_ar_masks,
-            ],
-            dim=1,
+        cls_hidden = suffix_out[:, -1, :].to(
+            self.value_head.value_proj.weight.dtype
         )
-        attn_mask = make_att_2d_masks(pad_masks, att_masks)
-        attn_mask_4d = self._prepare_attention_masks_4d(attn_mask)
-        position_ids = torch.cumsum(pad_masks, dim=1) - 1
-
-        def forward_func(
-            prefix_embs, suffix_embs, attn_mask_4d, position_ids, detach_kv
-        ):
-            (prefix_out, suffix_out), _ = self.paligemma_with_expert.forward(
-                attention_mask=attn_mask_4d,
-                position_ids=position_ids,
-                past_key_values=None,
-                inputs_embeds=[prefix_embs, suffix_embs],
-                use_cache=False,
-                adarms_cond=[None, None],
-                expert_name="value",
-                detach_prefix_for_suffix=detach_kv,
-            )
-            return prefix_out, suffix_out
-
-        prefix_out, suffix_out = self._apply_checkpoint(
-            forward_func,
-            prefix_embs,
-            suffix_embs,
-            attn_mask_4d,
-            position_ids,
-            stop_gradient_to_vlm,
-        )
-
-        cls_hidden = suffix_out[:, -1, :].to(self.value_head.value_proj.weight.dtype)
         values, logits, probs = self._compute_value_from_hidden(cls_hidden)
         backward_anchor = self._build_vlm_backward_anchor(
             prefix_out=prefix_out, stop_gradient_to_vlm=stop_gradient_to_vlm
@@ -468,16 +387,15 @@ class ValueCriticModel(nn.Module):
     def _build_vlm_backward_anchor(
         self, prefix_out: Optional[Tensor], stop_gradient_to_vlm: bool
     ) -> Optional[Tensor]:
-        """Build a zero-weight anchor so FSDP tracks two-stage Gemma3 backward."""
+        """Build a zero-weight anchor so FSDP tracks two-stage backward."""
         if (
             not self.training
-            or self.backbone_variant != "siglip_gemma3"
             or stop_gradient_to_vlm
             or prefix_out is None
             or not prefix_out.requires_grad
         ):
             return None
-        # Gradients flow via DynamicCache in two-stage Gemma3 forward. Anchoring
+        # Gradients flow via DynamicCache in two-stage forward. Anchoring
         # an explicit output tensor keeps FSDP's forward/backward state aligned.
         return prefix_out.sum() * 0.0
 
@@ -490,37 +408,31 @@ class ValueCriticModel(nn.Module):
         suffix_ar_masks,
         stop_gradient_to_vlm: bool = False,
     ) -> tuple[Tensor, Tensor]:
-        """Two-stage expert forward with KV cache (for frozen VLM under FSDP)."""
+        """Two-stage expert forward with KV cache."""
         # Phase 1: prefill frozen VLM to get KV cache.
         # Prefix is fully bidirectional, so attention = pad_mask outer product.
         prefix_attn = prefix_pad_masks[:, None, :] * prefix_pad_masks[:, :, None]
         prefix_attn_4d = self._prepare_attention_masks_4d(prefix_attn)
         prefix_pos = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
-        (prefix_out, _), past_kv = self.paligemma_with_expert.forward(
+        (prefix_out, _), past_kv = self.value_expert.forward(
             attention_mask=prefix_attn_4d,
             position_ids=prefix_pos,
             past_key_values=None,
             inputs_embeds=[prefix_embs, None],
             use_cache=True,
-            adarms_cond=[None, None],
         )
 
         if stop_gradient_to_vlm and past_kv is not None:
             from transformers.cache_utils import DynamicCache
 
-            if isinstance(past_kv, DynamicCache):
-                for i in range(len(past_kv.key_cache)):
-                    past_kv.key_cache[i] = past_kv.key_cache[i].detach()
-                    past_kv.value_cache[i] = past_kv.value_cache[i].detach()
-            else:
-                past_kv = tuple(
-                    tuple(
-                        t.detach() if isinstance(t, torch.Tensor) else t
-                        for t in layer_kv
-                    )
-                    for layer_kv in past_kv
+            if not isinstance(past_kv, DynamicCache):
+                raise TypeError(
+                    f"Expected DynamicCache from ValueExpert, got {type(past_kv)}"
                 )
+            for i in range(len(past_kv.key_cache)):
+                past_kv.key_cache[i] = past_kv.key_cache[i].detach()
+                past_kv.value_cache[i] = past_kv.value_cache[i].detach()
 
         # Phase 2: run value expert with cached prefix keys/values.
         batch_size = prefix_pad_masks.shape[0]
@@ -538,13 +450,12 @@ class ValueCriticModel(nn.Module):
             - 1
         )
 
-        (_, suffix_out), _ = self.paligemma_with_expert.forward(
+        (_, suffix_out), _ = self.value_expert.forward(
             attention_mask=full_attn_4d,
             position_ids=suffix_pos,
             past_key_values=past_kv,
             inputs_embeds=[None, suffix_embs],
             use_cache=False,
-            adarms_cond=[None, None],
             expert_name="value",
         )
         return prefix_out, suffix_out
@@ -617,7 +528,7 @@ class ValueCriticModel(nn.Module):
         prefix_attn_4d = self._prepare_attention_masks_4d(prefix_attn)
         prefix_pos = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
-        _, past_kv = self.paligemma_with_expert.forward(
+        _, past_kv = self.value_expert.forward(
             attention_mask=prefix_attn_4d,
             position_ids=prefix_pos,
             past_key_values=None,
@@ -639,13 +550,12 @@ class ValueCriticModel(nn.Module):
             - 1
         )
 
-        (_, suffix_out), _ = self.paligemma_with_expert.forward(
+        (_, suffix_out), _ = self.value_expert.forward(
             attention_mask=full_attn_4d,
             position_ids=suffix_pos,
             past_key_values=past_kv,
             inputs_embeds=[None, suffix_embs],
             use_cache=False,
-            adarms_cond=[None, None],
             expert_name="value",
         )
 
@@ -685,7 +595,6 @@ class ValueCriticModel(nn.Module):
         return_max=0.0,
         critic_expert_variant="gemma_100m",
         tokenizer_path=None,
-        backbone_variant="paligemma",
         siglip_path=None,
         gemma3_path=None,
         **kwargs,
@@ -709,9 +618,8 @@ class ValueCriticModel(nn.Module):
             critic_expert_variant: Gemma variant (e.g., "gemma_100m").
             tokenizer_path: Explicit path to tokenizer. If not set, loads
                 from checkpoint_dir. Raises if neither has tokenizer files.
-            backbone_variant: Backbone type ("paligemma" or "siglip_gemma3").
-            siglip_path: Path to SigLIP pretrained weights (siglip_gemma3 only).
-            gemma3_path: Path to Gemma3 pretrained weights (siglip_gemma3 only).
+            siglip_path: Path to SigLIP pretrained weights.
+            gemma3_path: Path to Gemma3 pretrained weights.
 
         Returns:
             ValueCriticModel instance with transforms and processor attached.
@@ -740,7 +648,6 @@ class ValueCriticModel(nn.Module):
                 "num_bins": num_return_bins,
                 "v_min": return_min,
                 "v_max": return_max,
-                "backbone_variant": backbone_variant,
                 "siglip_path": siglip_path,
                 "gemma3_path": gemma3_path,
             }

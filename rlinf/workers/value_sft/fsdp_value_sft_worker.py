@@ -176,18 +176,14 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             has_tokenizer_files,
         )
 
-        backbone_variant = getattr(model_cfg, "backbone_variant", "paligemma")
         tokenizer_path = getattr(model_cfg, "tokenizer_path", None)
         if tokenizer_path is None:
-            if backbone_variant == "siglip_gemma3":
-                tokenizer_path = getattr(model_cfg, "gemma3_path", None)
-            else:
-                tokenizer_path = getattr(model_cfg, "model_path", None)
+            tokenizer_path = getattr(model_cfg, "gemma3_path", None)
         if tokenizer_path is None or not has_tokenizer_files(Path(tokenizer_path)):
             raise ValueError(
-                f"No tokenizer found for backbone_variant='{backbone_variant}'. "
-                f"Set model.tokenizer_path explicitly or ensure the backbone path "
-                f"contains tokenizer files. Tried: {tokenizer_path}"
+                f"No tokenizer found. "
+                f"Set model.tokenizer_path or model.gemma3_path explicitly. "
+                f"Tried: {tokenizer_path}"
             )
         processor = ValueProcessor(
             max_token_len=getattr(model_cfg, "max_token_len", 200),
@@ -637,11 +633,11 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                                 if isinstance(result.cat_acc_neighbor, torch.Tensor)
                                 else result.cat_acc_neighbor
                             )
-                        if getattr(result, "cat_bin_mae", None) is not None:
+                        if result.mae is not None:
                             metrics["mae"] = (
-                                result.cat_bin_mae.detach().item()
-                                if isinstance(result.cat_bin_mae, torch.Tensor)
-                                else result.cat_bin_mae
+                                result.mae.detach().item()
+                                if isinstance(result.mae, torch.Tensor)
+                                else result.mae
                             )
                         if (
                             result.predicted_values is not None
