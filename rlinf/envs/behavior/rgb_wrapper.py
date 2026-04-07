@@ -15,21 +15,22 @@
 from __future__ import annotations
 
 from omnigibson.envs import Environment, EnvironmentWrapper
-from omnigibson.learning.utils.eval_utils import ROBOT_CAMERA_NAMES
+from omnigibson.learning.utils.eval_utils import ROBOT_CAMERA_NAMES, HEAD_RESOLUTION, WRIST_RESOLUTION
 
 
-class RlinfWrapper(EnvironmentWrapper):
-    """Match OmniGibson DefaultWrapper but without unnecessary post-processing."""
+class RGBWrapper(EnvironmentWrapper):
+    """A RGB-only wrapper for OmniGibson."""
 
     def __init__(self, env: Environment):
         super().__init__(env=env)
-
         robot = env.robots[0]
-        # OmniGibson's default wrapper uses fixed camera intrinsics; keep the
-        # subset RLinf cares about.
         for camera_id, camera_name in ROBOT_CAMERA_NAMES["R1Pro"].items():
             sensor_name = camera_name.split("::")[1]
             if camera_id == "head":
                 robot.sensors[sensor_name].horizontal_aperture = 40.0
-
+                robot.sensors[sensor_name].image_height = HEAD_RESOLUTION[0]
+                robot.sensors[sensor_name].image_width = HEAD_RESOLUTION[1]
+            else:
+                robot.sensors[sensor_name].image_height = WRIST_RESOLUTION[0]
+                robot.sensors[sensor_name].image_width = WRIST_RESOLUTION[1]
         env.load_observation_space()

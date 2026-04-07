@@ -22,7 +22,7 @@ policy_wrapper: null
 
 omni_config:
   env:
-    env_wrapper: rlinf
+    env_wrapper: rgb
     action_frequency: 60
     physics_frequency: 120
     rendering_frequency: 60

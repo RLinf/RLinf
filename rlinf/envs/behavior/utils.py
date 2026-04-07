@@ -19,7 +19,7 @@ import torch
 import yaml
 from omegaconf import DictConfig, OmegaConf
 
-SUPPORTED_ENV_WRAPPERS = ("rlinf", "default", "rgb_lowres", "rich_obs")
+SUPPORTED_ENV_WRAPPERS = ("rgb", "default", "rgb_lowres", "rich_obs")
 
 R1PRO_PROPRIO_KEYS = [
     "joint_qpos",
@@ -100,10 +100,10 @@ def set_camera_resolution(camera_cfg: dict | None) -> None:
 
 
 def get_env_wrapper(wrapper_name: str):
-    if wrapper_name == "rlinf":
-        from .rlinf_wrapper import RlinfWrapper
+    if wrapper_name == "rgb":
+        from .rgb_wrapper import RGBWrapper
 
-        return RlinfWrapper
+        return RGBWrapper
     if wrapper_name == "default":
         from omnigibson.learning.wrappers.default_wrapper import DefaultWrapper
 
