@@ -47,7 +47,10 @@ def apply() -> None:
     # OmniGibson / Replicator can fail when detaching annotators with an explicit
     # list path during dynamic camera resize. Use the same detach style as
     # VisionSensor._remove_modality_from_backend for compatibility.
-    if getattr(VisionSensor, "__rlinf_resize_setter_patched__", False):
+
+    import omnigibson as og
+
+    if getattr(VisionSensor, "__rlinf_resize_setter_patched__", False) or og.__version__ != "3.7.2":
         return
 
     original_image_height = VisionSensor.image_height
