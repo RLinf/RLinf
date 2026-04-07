@@ -28,6 +28,8 @@ def get_model(cfg: DictConfig):
         from rlinf.models.embodiment.openpi import get_model
     elif model_type == SupportedModel.DEXBOTIC_PI:
         from rlinf.models.embodiment.dexbotic_pi import get_model
+    elif model_type == SupportedModel.DREAMZERO:
+        from rlinf.models.embodiment.dreamzero import get_model
     elif model_type == SupportedModel.MLP_POLICY:
         from rlinf.models.embodiment.mlp_policy import get_model
     elif model_type == SupportedModel.GR00T:
@@ -36,6 +38,8 @@ def get_model(cfg: DictConfig):
         from rlinf.models.embodiment.cnn_policy import get_model
     elif model_type == SupportedModel.FLOW_POLICY:
         from rlinf.models.embodiment.flow_policy import get_model
+    elif model_type == SupportedModel.LINGBOTVLA:
+        from rlinf.models.embodiment.lingbotvla import get_model
     elif model_type == SupportedModel.GR00T_1_6:
         from rlinf.models.embodiment.gr00t_1_6 import get_model
     else:
