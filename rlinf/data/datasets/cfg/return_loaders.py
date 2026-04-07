@@ -58,7 +58,10 @@ def load_returns_sidecar(
 
     Returns:
         ``{episode_index: {"return": np.array, "reward": np.array}}``
-        or None if sidecar does not exist.
+        or None if sidecar does not exist **and** no tag was explicitly requested.
+
+    Raises:
+        FileNotFoundError: If *returns_tag* is given but the file does not exist.
     """
     import pyarrow.parquet as pq
 
@@ -68,6 +71,11 @@ def load_returns_sidecar(
     )
     sidecar_path = dataset_path / "meta" / sidecar_filename
     if not sidecar_path.exists():
+        if returns_tag:
+            raise FileNotFoundError(
+                f"Returns sidecar not found: {sidecar_path}. "
+                f"Run compute_returns.py with tag='{returns_tag}' first."
+            )
         return None
 
     table = pq.read_table(str(sidecar_path))

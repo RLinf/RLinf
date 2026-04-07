@@ -147,6 +147,12 @@ def _process_single_parquet(
     is_success_col = None
     if "is_success" in col_names:
         is_success_col = table.column("is_success").to_pylist()
+    elif dataset_type != "sft":
+        raise ValueError(
+            f"Column 'is_success' not found in {pq_file}. "
+            f"Non-SFT datasets (dataset_type={dataset_type!r}) require 'is_success' "
+            "to correctly distinguish successful and failed episodes."
+        )
 
     returns_arr = np.empty(n, dtype=np.float32)
     rewards_arr = np.empty(n, dtype=np.float32)
@@ -156,10 +162,8 @@ def _process_single_parquet(
 
         if dataset_type == "sft":
             is_success = True
-        elif is_success_col is not None:
-            is_success = bool(is_success_col[ep_end - 1])
         else:
-            is_success = False
+            is_success = bool(is_success_col[ep_end - 1])
 
         ep_returns, ep_rewards = compute_returns_for_episode(
             episode_length=ep_length,

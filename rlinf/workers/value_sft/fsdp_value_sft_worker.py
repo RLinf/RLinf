@@ -268,15 +268,17 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                     f"[{global_return_min}, {global_return_max}]"
                 )
             else:
-                global_return_min = (
-                    global_return_min if global_return_min is not None else -700.0
-                )
-                global_return_max = (
-                    global_return_max if global_return_max is not None else 0.0
-                )
-                logger.warning(
-                    "[ValueSFT] No stats.json found, using default return range: "
-                    f"[{global_return_min}, {global_return_max}]"
+                missing = []
+                if global_return_min is None:
+                    missing.append("data.return_min")
+                if global_return_max is None:
+                    missing.append("data.return_max")
+                raise ValueError(
+                    "Cannot determine return range for normalization. "
+                    "No stats.json found in any dataset and the following config "
+                    f"fields are not set: {missing}. Either run compute_returns.py "
+                    "first (generates stats.json) or set data.return_min and "
+                    "data.return_max explicitly in the config."
                 )
         else:
             logger.info(

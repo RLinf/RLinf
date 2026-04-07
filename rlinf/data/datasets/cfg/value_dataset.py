@@ -14,6 +14,7 @@
 
 """Value Dataset: loads LeRobot data + returns sidecar for value model SFT."""
 
+import io
 import json
 import logging
 from pathlib import Path
@@ -24,6 +25,8 @@ import openpi.models.model as _openpi_model
 import openpi.transforms as _openpi_transforms
 import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+from lerobot.datasets.utils import hf_transform_to_torch
+from PIL import Image as PILImage
 from torch.utils.data import Dataset
 
 from rlinf.models.embodiment.openpi.policies import franka_policy, libero_policy
@@ -61,6 +64,22 @@ _REPACK_KEYS = {
         "prompt": "prompt",
     },
 }
+
+
+def _hf_transform_decode_images(batch: dict) -> dict:
+    """Wrap hf_transform_to_torch to decode Image-feature struct dicts first.
+
+    LeRobot uses ``set_transform(hf_transform_to_torch)`` which bypasses
+    HuggingFace's native Image feature decoding.  When parquet columns
+    contain Image-feature structs (``{bytes, path}``), the raw dicts reach
+    ``torch.tensor()`` and crash.  This wrapper decodes them to PIL Images
+    so the existing PIL → tensor path in ``hf_transform_to_torch`` works.
+    """
+    for key in list(batch.keys()):
+        vals = batch[key]
+        if vals and isinstance(vals[0], dict) and "bytes" in vals[0]:
+            batch[key] = [PILImage.open(io.BytesIO(v["bytes"])) for v in vals]
+    return hf_transform_to_torch(batch)
 
 
 class ValueDataset(Dataset):
@@ -123,6 +142,10 @@ class ValueDataset(Dataset):
             delta_timestamps=delta_timestamps,
             download_videos=False,
         )
+
+        # Patch HF transform to decode Image-feature struct columns that
+        # would otherwise crash hf_transform_to_torch (see docstring).
+        self._base.hf_dataset.set_transform(_hf_transform_decode_images)
 
         # Returns sidecar (required for value SFT)
         self._sidecar = load_returns_sidecar(local_path, tag)

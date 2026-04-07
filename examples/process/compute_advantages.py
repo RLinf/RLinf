@@ -54,6 +54,7 @@ from rlinf.data.datasets.cfg.return_loaders import (
     load_return_stats_from_dataset,
     load_returns_sidecar,
 )
+from rlinf.data.datasets.cfg.value_dataset import _hf_transform_decode_images
 from rlinf.models.embodiment.value_model.modeling_critic import ValueCriticModel
 
 logger = logging.getLogger(__name__)
@@ -362,6 +363,7 @@ def load_lerobot_dataset(
         str(dataset_path),
         download_videos=False,
     )
+    dataset.hf_dataset.set_transform(_hf_transform_decode_images)
 
     tasks = {}
     tasks_path = dataset_path / "meta" / "tasks.jsonl"
@@ -395,7 +397,13 @@ def build_obs(
     Returns:
         Raw observation dict compatible with ValueCriticModel.infer()
     """
-    key_map = KEY_MAPPINGS.get(robot_type, KEY_MAPPINGS["libero"])
+    if robot_type not in KEY_MAPPINGS:
+        raise ValueError(
+            f"Unknown robot_type {robot_type!r}. "
+            f"Supported types: {list(KEY_MAPPINGS.keys())}. "
+            "Add a new entry to KEY_MAPPINGS if this is a new robot type."
+        )
+    key_map = KEY_MAPPINGS[robot_type]
     obs = {}
 
     for src_key, dst_key in key_map.items():
@@ -404,9 +412,18 @@ def build_obs(
                 obs[dst_key] = str(to_scalar(sample["task"]))
             elif "task_index" in sample and tasks:
                 task_idx = int(to_scalar(sample["task_index"]))
-                obs[dst_key] = tasks.get(task_idx, "")
+                if task_idx not in tasks:
+                    raise ValueError(
+                        f"task_index {task_idx} not found in tasks dict. "
+                        f"Available task indices: {list(tasks.keys())}. "
+                        "Check that meta/tasks.jsonl is complete."
+                    )
+                obs[dst_key] = tasks[task_idx]
             else:
-                obs[dst_key] = ""
+                raise ValueError(
+                    "Sample has neither 'task' nor 'task_index' field. "
+                    "Cannot determine task prompt for value model inference."
+                )
         elif src_key in sample:
             val = to_numpy(sample[src_key])
             obs[dst_key] = val
@@ -463,12 +480,20 @@ class ValueInferenceDataset(torch.utils.data.Dataset):
             true_return = float(ep_data["return"][frame_idx])
             reward = float(ep_data["reward"][frame_idx])
         else:
+            if "return" not in sample:
+                raise ValueError(
+                    f"Sample (episode={ep_idx}, frame={frame_idx}) missing 'return' field "
+                    "and no returns sidecar available. "
+                    "Run compute_returns.py first."
+                )
             true_return = float(to_scalar(sample["return"]))
-            reward = (
-                float(to_scalar(sample["reward"]))
-                if "reward" in sample
-                else float("nan")
-            )
+            if "reward" not in sample:
+                raise ValueError(
+                    f"Sample (episode={ep_idx}, frame={frame_idx}) missing 'reward' field "
+                    "and no returns sidecar available. "
+                    "Run compute_returns.py first."
+                )
+            reward = float(to_scalar(sample["reward"]))
 
         return {
             "obs": obs,
@@ -1032,17 +1057,18 @@ def main(cfg: DictConfig) -> None:
                         f"[{global_return_min}, {global_return_max}]"
                     )
             else:
-                global_return_min = (
-                    global_return_min if global_return_min is not None else -700.0
+                missing = []
+                if global_return_min is None:
+                    missing.append("data.return_min")
+                if global_return_max is None:
+                    missing.append("data.return_max")
+                raise ValueError(
+                    "Cannot determine return range for normalization. "
+                    "No stats.json found in any dataset and the following config "
+                    f"fields are not set: {missing}. Either run compute_returns.py "
+                    "first (generates stats.json) or set data.return_min and "
+                    "data.return_max explicitly in the config."
                 )
-                global_return_max = (
-                    global_return_max if global_return_max is not None else 0.0
-                )
-                if rank == 0:
-                    logger.warning(
-                        f"No stats.json found, using default return range: "
-                        f"[{global_return_min}, {global_return_max}]"
-                    )
         else:
             if rank == 0:
                 logger.info(

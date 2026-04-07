@@ -29,18 +29,19 @@ Usage:
     python visualize/visualize_advantage_dataset.py \
         --dataset /path/to/your/dataset \
         --output /path/to/output \
-        --no-video
+        --no-video \
         --tag <tag>
 
     # All episodes
     python visualize/visualize_advantage_dataset.py \
-        --dataset /path/to/your/dataset \
+        --dataset /mnt/project_rlinf_hs/liuzhihao/data_to_use/pnp_merge_processed/pnp_eval_sft_ckpt8000_0404_collect2 \
         --output /path/to/output \
-        --num-episodes 0
+        --num-episodes 10 \
         --tag <tag>
 """
 
 import argparse
+import io
 import json
 from pathlib import Path
 from typing import Any
@@ -53,8 +54,19 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+from lerobot.datasets.utils import hf_transform_to_torch
 from matplotlib.animation import FFMpegWriter, FuncAnimation
+from PIL import Image as PILImage
 from tqdm import tqdm
+
+
+def _hf_transform_decode_images(batch: dict) -> dict:
+    """Decode HF Image-feature struct dicts to PIL before hf_transform_to_torch."""
+    for key in list(batch.keys()):
+        vals = batch[key]
+        if vals and isinstance(vals[0], dict) and "bytes" in vals[0]:
+            batch[key] = [PILImage.open(io.BytesIO(v["bytes"])) for v in vals]
+    return hf_transform_to_torch(batch)
 
 
 def to_numpy(x):
@@ -85,6 +97,7 @@ def load_dataset(
         delta_timestamps=None,
         download_videos=False,
     )
+    dataset.hf_dataset.set_transform(_hf_transform_decode_images)
 
     tasks = {}
     tasks_path = dataset_path / "meta" / "tasks.jsonl"
@@ -151,12 +164,13 @@ def create_advantage_distribution_plot(
     adv_filename = f"advantages_{tag}.parquet" if tag else "advantages.parquet"
     adv_parquet = dataset_path / "meta" / adv_filename
     if not adv_parquet.exists():
-        adv_parquet = dataset_path / "meta" / "advantages.parquet"
+        if tag:
+            raise FileNotFoundError(
+                f"Advantages file for tag '{tag}' not found: {adv_parquet}. "
+                f"Available files: {sorted(p.name for p in (dataset_path / 'meta').glob('advantages*.parquet'))}"
+            )
+        raise FileNotFoundError(f"Advantages file not found: {adv_parquet}")
     print(f"Loading advantage data from {adv_parquet}...")
-
-    if not adv_parquet.exists():
-        print(f"Warning: {adv_parquet} not found, skipping distribution plot")
-        return None
 
     df = pd.read_parquet(adv_parquet)
 
@@ -831,9 +845,12 @@ def main():
 
     adv_parquet = dataset_path / "meta" / adv_filename
     if not adv_parquet.exists():
-        print(f"Warning: {adv_parquet} not found, falling back to advantages.parquet")
-        adv_parquet = dataset_path / "meta" / "advantages.parquet"
-        tag = None  # reset tag for threshold lookup
+        if tag:
+            raise FileNotFoundError(
+                f"Advantages file for tag '{tag}' not found: {adv_parquet}. "
+                f"Available files: {sorted(p.name for p in (dataset_path / 'meta').glob('advantages*.parquet'))}"
+            )
+        raise FileNotFoundError(f"Advantages file not found: {adv_parquet}")
 
     print(f"Using advantages parquet: {adv_parquet}")
 
