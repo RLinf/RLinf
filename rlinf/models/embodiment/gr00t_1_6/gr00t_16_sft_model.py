@@ -12,11 +12,6 @@ from rlinf.utils.pytree import register_pytree_dataclasses
 from transformers import AutoConfig, AutoModel, AutoProcessor, AutoModelForCausalLM
 from gr00t.model.gr00t_n1d6.gr00t_n1d6 import Gr00tN1d6
 from gr00t.configs.model.gr00t_n1d6 import Gr00tN1d6Config
-<<<<<<< HEAD
-from torch.utils import _pytree
-
-=======
->>>>>>> 1183adf... fix protential conflict by Apr. 7th
 
 try:
     AutoConfig.register("Gr00tN1d6", Gr00tN1d6Config)
