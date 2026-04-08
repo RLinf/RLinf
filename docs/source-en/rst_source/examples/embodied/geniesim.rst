@@ -100,12 +100,18 @@ Dependency Installation
 1. Build Base Image
 ~~~~~~~~~~~~~~~~~~~~
 
-.. code:: bash
+a. Follow the instructions in Section 2.3.1 (Docker Container) of the
+   `GenieSim documentation <https://agibot-world.com/sim-evaluation/docs/#/v3>`_
+   to build the GenieSim base image.
 
-   cd workspace/
-   bash genie_sim/scripts/build_geniesim_rlinf_image.sh
+b. Build the RLinf integration image on top of the GenieSim base image:
 
-Output: ``geniesim-rlinf:latest``. The build script uses ``genie_sim/scripts/`` as the build context, avoiding large asset directories.
+   .. code:: bash
+
+      cd workspace/
+      bash genie_sim/scripts/build_geniesim_rlinf_image.sh
+
+   Output: ``geniesim-rlinf:latest``. The build script uses ``genie_sim/scripts/`` as the build context, avoiding large asset directories.
 
 2. Build Training Image
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -126,6 +132,33 @@ Output: ``geniesim-rlinf:latest``. The build script uses ``genie_sim/scripts/`` 
 
    docker run --rm --gpus all geniesim-rlinf-train:latest nvidia-smi
 
+4. SpaceMouse Dependencies
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The SpaceMouse communicates via the HID protocol. Install the required library and
+configure udev rules **on the host machine** (not inside the container):
+
+.. code:: bash
+
+   sudo apt-get install -y libhidapi-dev
+
+Create a udev rule so that the device is accessible without root:
+
+.. code:: bash
+
+   sudo tee /etc/udev/rules.d/99-spacemouse.rules > /dev/null <<'EOF'
+   SUBSYSTEM=="hidraw", ATTRS{idVendor}=="256f", ATTRS{idProduct}=="c635", MODE="0666"
+   SUBSYSTEM=="input",  ATTRS{idVendor}=="256f", ATTRS{idProduct}=="c635", MODE="0666"
+   EOF
+
+Reload the rules and verify:
+
+.. code:: bash
+
+   sudo udevadm control --reload-rules
+   sudo udevadm trigger
+   ls -l /dev/hidraw*   # should show 0666 permissions
+
 Assets Download
 ---------------
 
@@ -133,10 +166,18 @@ Download the CNN encoder pretrained weights:
 
 .. code:: bash
 
-   cd workspace/RLinf/examples/embodiment/config
-   # For mainland China users, set:
+   # Download the model (choose either method)
+   # Method 1: Using git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+
+   # Method 2: Using huggingface-hub
+   # For mainland China users, you can use the following for better download speed:
    # export HF_ENDPOINT=https://hf-mirror.com
-   hf download RLinf/RLinf-ResNet10-pretrained --local-dir .
+   pip install huggingface-hub
+   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
+
+After downloading, make sure to correctly specify the model path in the configuration YAML file.
 
 Running the Script
 ------------------
@@ -149,6 +190,12 @@ Connect the SpaceMouse via USB, then run:
 
    cd workspace/
    bash RLinf/rlinf/envs/geniesim/scripts/run.sh collect --num-demos 50
+
+You can specify a custom save directory inside the container with ``--save-dir`` (default: ``/geniesim/RLinf/sac_demo``):
+
+.. code:: bash
+
+   bash RLinf/rlinf/envs/geniesim/scripts/run.sh collect --num-demos 50 --save-dir /geniesim/RLinf/my_demos
 
 SpaceMouse controls:
 
@@ -167,7 +214,7 @@ SpaceMouse controls:
    * - Press right button
      - End trajectory → discard demo → environment resets
 
-Collected demos are saved to ``workspace/genie_sim/sac_demo/``.
+Collected demos are saved to ``workspace/RLinf/sac_demo/`` by default (mapped from ``/geniesim/RLinf/sac_demo`` inside the container).
 
 **2. Convert Demonstration Data**
 
@@ -175,9 +222,25 @@ Collected demos are saved to ``workspace/genie_sim/sac_demo/``.
 
    bash RLinf/rlinf/envs/geniesim/scripts/run.sh convert
 
-Reads from ``genie_sim/sac_demo/`` by default and outputs to ``genie_sim/sac_demo_buffer/``.
+Reads from ``/geniesim/RLinf/sac_demo`` and outputs to ``/geniesim/RLinf/sac_demo_buffer`` by default. You can customize both paths:
+
+.. code:: bash
+
+   bash RLinf/rlinf/envs/geniesim/scripts/run.sh convert --demo-dir /geniesim/RLinf/my_demos --output-dir /geniesim/RLinf/my_demos_buffer
 
 **3. Start Training**
+
+Before starting training, edit the training config file
+``examples/embodiment/config/geniesim_sac_spacemouse.yaml`` and update the following
+paths to use the container-internal paths (RLinf is mounted at ``/geniesim/RLinf``
+inside the container):
+
+- ``rollout.model.model_path`` and ``actor.model.model_path``: set to the pretrained
+  model directory, e.g. ``/geniesim/RLinf/examples/embodiment/config/RLinf-ResNet10-pretrained``
+- ``algorithm.demo_buffer.load_path``: if you have converted demo data, set to the
+  buffer directory, e.g. ``/geniesim/RLinf/sac_demo_buffer``
+
+Then start training:
 
 .. code:: bash
 
@@ -204,20 +267,31 @@ During training, you can use the SpaceMouse to intervene on env_0 in real time. 
    # Change log path
    bash RLinf/rlinf/envs/geniesim/scripts/run.sh train runner.logger.log_path=../my_results
 
-**6. Interactive Shell**
+**6. Debugging & Logs**
+
+To start a fresh interactive shell inside the container for debugging:
 
 .. code:: bash
 
    bash RLinf/rlinf/envs/geniesim/scripts/run.sh shell
+
+To inspect simulation logs of a running container (e.g. during training or data collection), attach to it via ``docker exec``. Logs are located at ``/tmp/geniesim_logs/``:
+
+.. code:: bash
+
+   docker exec -it <container_name> bash
+   ls /tmp/geniesim_logs/
 
 Visualization and Results
 -------------------------
 
 **1. TensorBoard Logging**
 
+The log directory depends on the ``runner.logger.log_path`` setting in your training config (default: ``results``):
+
 .. code:: bash
 
-   tensorboard --logdir workspace/results/
+   tensorboard --logdir <log_path>
 
 **2. Key Metrics**
 

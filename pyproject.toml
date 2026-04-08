@@ -114,6 +114,7 @@ geniesim = [
     "docker",
     "psutil",
     "pyspacemouse==1.1.5",
+    "huggingface_hub>=0.19.3,<1.0"
 ]
 franka = [
     "pyyaml",

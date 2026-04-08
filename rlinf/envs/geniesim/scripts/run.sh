@@ -28,13 +28,13 @@ Environment variables:
   IMAGE           Docker image           (default: ${IMAGE})
 
 Commands:
-  collect [--num-demos N] [--step-hz HZ] [extra args...]
-      Collect SpaceMouse demos (default: 50 demos, 10 Hz)
+  collect [--num-demos N] [--step-hz HZ] [--save-dir DIR] [extra args...]
+      Collect SpaceMouse demos (default: 50 demos, 10 Hz, save to /geniesim/RLinf/sac_demo)
 
   train [extra hydra overrides...]
       Start SAC training
 
-  convert [extra args...]
+  convert [--demo-dir DIR] [--output-dir DIR] [extra args...]
       Convert demo pkl files to replay buffer
 
   shell
@@ -45,13 +45,14 @@ Commands:
 
 Examples:
   bash $(basename "$0") collect --num-demos 50
+  bash $(basename "$0") collect --num-demos 50 --save-dir /geniesim/RLinf/my_demos
   bash $(basename "$0") train
   bash $(basename "$0") train algorithm.gamma=0.97
-  bash $(basename "$0") convert --recompute-reward
+  bash $(basename "$0") convert --demo-dir /geniesim/RLinf/my_demos --output-dir /geniesim/RLinf/my_demos_buffer
   bash $(basename "$0") shell
 EOF
 }
-
+echo "GENIESIM_REPO:" $GENIESIM_REPO
 docker_run() {
     local name="${1}"
     shift
@@ -92,18 +93,20 @@ case "$CMD" in
     collect)
         NUM_DEMOS=50
         STEP_HZ=10
+        SAVE_DIR="/geniesim/RLinf/sac_demo"
         EXTRA_ARGS=()
         while [ $# -gt 0 ]; do
             case "$1" in
                 --num-demos) NUM_DEMOS="$2"; shift 2 ;;
                 --step-hz)   STEP_HZ="$2";  shift 2 ;;
+                --save-dir)  SAVE_DIR="$2"; shift 2 ;;
                 *)           EXTRA_ARGS+=("$1"); shift ;;
             esac
         done
         docker_run geniesim_collect \
             python3 examples/embodiment/collect_sim_data.py \
                 --config examples/embodiment/config/env/geniesim_place_workpiece.yaml \
-                --save-dir /geniesim/main/sac_demo \
+                --save-dir "$SAVE_DIR" \
                 --num-demos "$NUM_DEMOS" \
                 --step-hz "$STEP_HZ" \
                 "${EXTRA_ARGS[@]}"
@@ -117,11 +120,22 @@ case "$CMD" in
         ;;
 
     convert)
+        DEMO_DIR="/geniesim/RLinf/sac_demo"
+        OUTPUT_DIR="/geniesim/RLinf/sac_demo_buffer"
+        EXTRA_ARGS=()
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --demo-dir)   DEMO_DIR="$2";   shift 2 ;;
+                --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
+                *)            EXTRA_ARGS+=("$1"); shift ;;
+            esac
+        done
         docker_run geniesim_convert \
             python3 examples/embodiment/convert_demos_to_buffer.py \
-                --demo-dir /geniesim/main/sac_demo \
-                --output-dir /geniesim/main/sac_demo_buffer \
-                "$@"
+                --include-images \
+                --demo-dir "$DEMO_DIR" \
+                --output-dir "$OUTPUT_DIR" \
+                "${EXTRA_ARGS[@]}"
         ;;
 
     shell)

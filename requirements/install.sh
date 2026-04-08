@@ -808,7 +808,7 @@ install_geniesim_env() {
     # The host-side env only needs the Python Docker SDK for SimContainerManager
     # and psutil for process monitoring.  Everything else (torch, MuJoCo, ROS)
     # is handled inside the container — no nvcc or native CUDA compilation needed.
-    uv pip install docker psutil
+    uv sync --extra geniesim --active --inexact $NO_INSTALL_RLINF_CMD
 }
 
 install_robotwin_env() {

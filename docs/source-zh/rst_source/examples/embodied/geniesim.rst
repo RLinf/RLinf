@@ -1,7 +1,7 @@
 基于 GenieSim 的 Place Workpiece 强化学习训练
 ==============================================
 
-本文档给出在 **RLinf** 框架内，基于 **GenieSim** 仿真平台运行 **Place Workpiece**（工件放置）
+本文档给出在 **RLinf** 框架内，基于 **GenieSim** 仿真平台运行 **Place Workpiece** （工件放置）
 任务的完整指南。涵盖从镜像构建、SpaceMouse 演示数据采集、到 SAC 人机协同训练的完整流程。
 
 主要特点：
@@ -97,12 +97,17 @@
 1. 构建基础镜像
 ~~~~~~~~~~~~~~~~
 
-.. code:: bash
+a. 请先参考 `GenieSim 官方文档 <https://agibot-world.com/sim-evaluation/docs/#/v3>`_
+   的 2.3.1 Docker Container 部分构建 GenieSim 基础镜像。
 
-   cd workspace/
-   bash genie_sim/scripts/build_geniesim_rlinf_image.sh
+b. 在 GenieSim 基础镜像之上构建 RLinf 集成镜像：
 
-构建产物：``geniesim-rlinf:latest``。构建脚本使用 ``genie_sim/scripts/`` 作为 build context，不会传输大型资产目录。
+   .. code:: bash
+
+      cd workspace/
+      bash genie_sim/scripts/build_geniesim_rlinf_image.sh
+
+   构建产物：``geniesim-rlinf:latest``。构建脚本使用 ``genie_sim/scripts/`` 作为 build context，不会传输大型资产目录。
 
 2. 构建训练镜像
 ~~~~~~~~~~~~~~~~
@@ -123,6 +128,32 @@
 
    docker run --rm --gpus all geniesim-rlinf-train:latest nvidia-smi
 
+4. SpaceMouse 依赖
+~~~~~~~~~~~~~~~~~~~
+
+SpaceMouse 通过 HID 协议通信。请在 **宿主机**（非容器内）上安装依赖库并配置 udev 规则：
+
+.. code:: bash
+
+   sudo apt-get install -y libhidapi-dev
+
+创建 udev 规则，使设备无需 root 权限即可访问：
+
+.. code:: bash
+
+   sudo tee /etc/udev/rules.d/99-spacemouse.rules > /dev/null <<'EOF'
+   SUBSYSTEM=="hidraw", ATTRS{idVendor}=="256f", ATTRS{idProduct}=="c635", MODE="0666"
+   SUBSYSTEM=="input",  ATTRS{idVendor}=="256f", ATTRS{idProduct}=="c635", MODE="0666"
+   EOF
+
+重新加载规则并验证：
+
+.. code:: bash
+
+   sudo udevadm control --reload-rules
+   sudo udevadm trigger
+   ls -l /dev/hidraw*   # 应显示 0666 权限
+
 资源下载
 --------
 
@@ -130,10 +161,18 @@
 
 .. code:: bash
 
-   cd workspace/RLinf/examples/embodiment/config
-   # 为提升国内下载速度，可以设置：
+   # 下载模型（两种方式二选一）
+   # 方式 1：使用 git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+
+   # 方式 2：使用 huggingface-hub
+   # 为了提高国内下载速度，可以添加以下环境变量：
    # export HF_ENDPOINT=https://hf-mirror.com
-   hf download RLinf/RLinf-ResNet10-pretrained --local-dir .
+   pip install huggingface-hub
+   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
+
+下载完成后，请在对应的配置 YAML 文件中正确填写模型路径。
 
 运行脚本
 --------
@@ -146,6 +185,12 @@
 
    cd workspace/
    bash RLinf/rlinf/envs/geniesim/scripts/run.sh collect --num-demos 50
+
+可通过 ``--save-dir`` 指定容器内的保存路径（默认：``/geniesim/RLinf/sac_demo``）：
+
+.. code:: bash
+
+   bash RLinf/rlinf/envs/geniesim/scripts/run.sh collect --num-demos 50 --save-dir /geniesim/RLinf/my_demos
 
 SpaceMouse 操作方式：
 
@@ -164,7 +209,7 @@ SpaceMouse 操作方式：
    * - 按下右键
      - 结束轨迹 → 丢弃演示 → 环境重置
 
-采集完成后，演示数据保存在 ``workspace/genie_sim/sac_demo/`` 下。
+采集完成后，演示数据默认保存在 ``workspace/RLinf/sac_demo/`` 下（对应容器内 ``/geniesim/RLinf/sac_demo``）。
 
 **2. 转换演示数据**
 
@@ -172,9 +217,24 @@ SpaceMouse 操作方式：
 
    bash RLinf/rlinf/envs/geniesim/scripts/run.sh convert
 
-默认从 ``genie_sim/sac_demo/`` 读取，输出到 ``genie_sim/sac_demo_buffer/``。
+默认从 ``/geniesim/RLinf/sac_demo`` 读取，输出到 ``/geniesim/RLinf/sac_demo_buffer``。可自定义路径：
+
+.. code:: bash
+
+   bash RLinf/rlinf/envs/geniesim/scripts/run.sh convert --demo-dir /geniesim/RLinf/my_demos --output-dir /geniesim/RLinf/my_demos_buffer
 
 **3. 启动训练**
+
+启动训练前，请先编辑训练配置文件
+``examples/embodiment/config/geniesim_sac_spacemouse.yaml``，将以下路径修改为容器内路径
+（RLinf 在容器内挂载于 ``/geniesim/RLinf``）：
+
+- ``rollout.model.model_path`` 和 ``actor.model.model_path``：设为预训练模型目录，
+  例如 ``/geniesim/RLinf/examples/embodiment/config/RLinf-ResNet10-pretrained``
+- ``algorithm.demo_buffer.load_path``：如果已转换演示数据，设为 buffer 目录，
+  例如 ``/geniesim/RLinf/sac_demo_buffer``
+
+配置完成后启动训练：
 
 .. code:: bash
 
@@ -201,20 +261,31 @@ SpaceMouse 操作方式：
    # 修改日志路径
    bash RLinf/rlinf/envs/geniesim/scripts/run.sh train runner.logger.log_path=../my_results
 
-**6. 进入容器调试**
+**6. 调试与日志**
+
+启动一个空白容器进行交互式调试：
 
 .. code:: bash
 
    bash RLinf/rlinf/envs/geniesim/scripts/run.sh shell
+
+查看正在运行的容器（如训练或数据采集中）的仿真日志，可通过 ``docker exec`` 接入容器。日志位于 ``/tmp/geniesim_logs/``：
+
+.. code:: bash
+
+   docker exec -it <container_name> bash
+   ls /tmp/geniesim_logs/
 
 可视化与结果
 ------------
 
 **1. TensorBoard 日志**
 
+日志目录取决于训练配置中 ``runner.logger.log_path`` 的设置（默认：``results``）：
+
 .. code:: bash
 
-   tensorboard --logdir workspace/results/
+   tensorboard --logdir <log_path>
 
 **2. 关键监控指标**
 
