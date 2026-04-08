@@ -39,7 +39,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: "../results"
+    log_path: "results"
     project_name: rlinf
     experiment_name: "geniesim_sac_cnn_spacemouse"
     logger_backends: ["tensorboard"]
@@ -166,7 +166,7 @@ rollout:
   collect_prev_infos: false
 
   model:
-    model_path: "${oc.env:EMBODIED_PATH}/config"
+    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     precision: ${actor.model.precision}
 
   enable_torch_compile: false
@@ -184,7 +184,7 @@ actor:
 
   model:
     model_type: cnn_policy
-    model_path: "${oc.env:EMBODIED_PATH}/config"
+    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     policy_setup: "g2-ee"
     image_size: [3, 128, 128]
     image_num: 1
