@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-SUPPORTED_OMNIGIBSON_VERSION = "3.7.1"
+SUPPORTED_OMNIGIBSON_VERSION = ["3.7.1", "3.7.2"]
 
 _INSTALLED = False
 
@@ -26,7 +26,7 @@ def install_patch() -> None:
 
     import omnigibson as og
 
-    if og.__version__ != SUPPORTED_OMNIGIBSON_VERSION:
+    if og.__version__ not in SUPPORTED_OMNIGIBSON_VERSION:
         raise RuntimeError(
             "RLinf BEHAVIOR patch only supports OmniGibson "
             f"{SUPPORTED_OMNIGIBSON_VERSION}, got {og.__version__}."
