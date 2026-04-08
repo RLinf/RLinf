@@ -131,7 +131,7 @@ b. 在 GenieSim 基础镜像之上构建 RLinf 集成镜像：
 4. SpaceMouse 依赖
 ~~~~~~~~~~~~~~~~~~~
 
-SpaceMouse 通过 HID 协议通信。请在 **宿主机**（非容器内）上安装依赖库并配置 udev 规则：
+SpaceMouse 通过 HID 协议通信。请在 **宿主机** （非容器内）上安装依赖库并配置 udev 规则：
 
 .. code:: bash
 
