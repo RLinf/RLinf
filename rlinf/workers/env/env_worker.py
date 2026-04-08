@@ -616,34 +616,19 @@ class EnvWorker(Worker):
         # reset
         if mode == "train":
             for i in range(self.stage_num):
-                record_video_env = self._get_record_video_wrapper(self.env_list[i])
-                if (
-                    self.cfg.env.train.video_cfg.save_video
-                    and record_video_env is not None
+                if self.cfg.env.train.video_cfg.save_video and isinstance(
+                    self.env_list[i], RecordVideo
                 ):
-                    record_video_env.flush_video()
-                    record_video_env.wait_for_writes()
+                    self.env_list[i].flush_video()
                 self.env_list[i].update_reset_state_ids()
         elif mode == "eval":
             for i in range(self.stage_num):
-                record_video_env = self._get_record_video_wrapper(self.eval_env_list[i])
-                if (
-                    self.cfg.env.eval.video_cfg.save_video
-                    and record_video_env is not None
+                if self.cfg.env.eval.video_cfg.save_video and isinstance(
+                    self.eval_env_list[i], RecordVideo
                 ):
-                    record_video_env.flush_video()
-                    record_video_env.wait_for_writes()
+                    self.eval_env_list[i].flush_video()
                 if not self.cfg.env.eval.auto_reset:
                     self.eval_env_list[i].update_reset_state_ids()
-
-    @staticmethod
-    def _get_record_video_wrapper(env):
-        current = env
-        while current is not None:
-            if isinstance(current, RecordVideo):
-                return current
-            current = getattr(current, "env", None)
-        return None
 
     def send_env_batch(
         self,

@@ -92,12 +92,14 @@ env:
     max_steps_per_rollout_epoch: 120
     max_episode_steps: 120 # max episode steps for truncation
     group_size: 8
+    model_type: ${actor.model.model_type}
     split: train
     data_path: ${env.data_path_dir}/${env.train.split}/${env.train.split}.json.gz
     scenes_dir: ${env.scenes_dir}
     video_cfg:
       fps: 5
       save_video: False
+      async_save: False # Habitat needs False for sync save
       video_base_dir: ${runner.logger.log_path}/video/train
     metrics_cfg:
       save_metrics: True
@@ -109,12 +111,14 @@ env:
     group_size: 1
     auto_reset: True
     ignore_terminations: True
+    model_type: ${actor.model.model_type}
     split: val_unseen
     data_path: ${env.data_path_dir}/${env.eval.split}/${env.eval.split}.json.gz
     scenes_dir: ${env.scenes_dir}
     video_cfg:
       fps: 5
       save_video: False
+      async_save: False # Habitat needs False for sync save
       video_base_dir: ${runner.logger.log_path}/video/eval
     metrics_cfg:
       save_metrics: True
