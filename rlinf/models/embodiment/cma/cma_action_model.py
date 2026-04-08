@@ -469,45 +469,21 @@ class CMAPolicy(nn.Module, BasePolicy):
         return self.cfg.num_action_chunks
 
     def preprocess_env_obs(self, env_obs):
-        """Preprocess environment observations.
-        Input env_obs:
-        - "main_images": [B, C, H, W] tensor (rgb)
-        - "extra_view_images": [B, 1, C, H, W] tensor (depth)
-        - "wrist_images": [B] tensor (instruction tokens)
-        - "task_descriptions": [B] tensor (instruction text)
-        - "states": [B] tensor (episode_ids)
-        Output processed_env_obs:
-        - "rgb": [B, C, H, W] tensor
-        - "depth": [B, 1, 1, H, W] tensor
-        - "instruction": [B] tensor
-        - "states": [B] tensor
-        We need to handle both the wrapped obs (from HabitatEnv._wrap_obs)
-        and raw obs (from HabitatRLEnv) which may contain instruction.
-        """
         device = next(self.parameters()).device
         processed_env_obs = {}
-        # Process main images to rgb
-        assert "main_images" in env_obs and env_obs["main_images"] is not None
-        processed_env_obs["rgb"] = env_obs["main_images"].clone().to(device)
-        # Process depth images
-        assert (
-            "extra_view_images" in env_obs and env_obs["extra_view_images"] is not None
-        )
+
+        processed_env_obs["rgb"] = env_obs["wrist_images"].clone().to(device)
+
+        extra_view_images = env_obs["extra_view_images"]
         processed_env_obs["depth"] = (
-            env_obs["extra_view_images"][:, 0][:, :, :, 0]
-            .unsqueeze(3)
-            .clone()
-            .to(device)
-            .float()
+            extra_view_images[:, 0][..., :1].clone().to(device).float()
         )
-        # Process instruction
-        assert "wrist_images" in env_obs and env_obs["wrist_images"] is not None
+
         processed_env_obs["instruction"] = torch.tensor(
-            env_obs["wrist_images"], device=device
+            env_obs["task_descriptions"], device=device
         )
-        # Process states (if needed)
-        if "states" in env_obs and env_obs["states"] is not None:
-            processed_env_obs["states"] = env_obs["states"].clone().to(device)
+
+        processed_env_obs["states"] = env_obs["states"].clone().to(device)
 
         return processed_env_obs
 

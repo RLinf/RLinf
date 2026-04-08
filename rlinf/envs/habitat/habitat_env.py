@@ -17,6 +17,7 @@ import json
 import os
 from typing import Optional, Union
 
+import cv2
 import gym
 import habitat
 import numpy as np
@@ -27,14 +28,10 @@ from habitat_baselines.config.default import get_config
 from hydra.core.global_hydra import GlobalHydra
 
 from rlinf.envs.habitat.extensions import measures
-from rlinf.envs.habitat.extensions.utils import (
-    observations_to_image,
-    resize_observation_images,
-)
+from rlinf.envs.habitat.extensions.utils import observations_to_image
 from rlinf.envs.habitat.venv import HabitatRLEnv, ReconfigureSubprocEnv
 from rlinf.envs.utils import (
     list_of_dict_to_dict_of_list,
-    save_rollout_video,
     to_tensor,
 )
 
@@ -77,7 +74,6 @@ class HabitatEnv(gym.Env):
 
         self.metrics_cfg = cfg.metrics_cfg
         self.video_cfg = cfg.video_cfg
-        self.render_images = {}
         self.current_raw_obs = None
 
         self.env_config = self.env.get_env_attr("config")[0]
@@ -206,29 +202,13 @@ class HabitatEnv(gym.Env):
             self._save_metrics(infos, metric_save_masks)
 
         self.current_raw_obs = raw_obs
-        obs = self._wrap_obs(raw_obs)
-
-        if self.video_cfg.save_video:
-            episode_ids = self.env.get_current_episode_ids()
-            for i in range(len(raw_obs)):
-                frame = observations_to_image(raw_obs[i], info_lists[i])
-                frame = resize_observation_images(frame, frame["rgb"].shape[0])
-                frame_concat = np.concatenate(
-                    (frame["rgb"], frame["depth"], frame["top_down_map"]), axis=1
-                )
-                key = f"episode_{episode_ids[i]}"
-                if key not in self.render_images:
-                    self.render_images[key] = []
-                self.render_images[key].append(frame_concat)
+        obs = self._wrap_obs(raw_obs, info_lists)
 
         if self.ignore_terminations:
             terminations[:] = False
         dones = terminations | truncations
 
         if dones.any() and self.auto_reset:
-            if self.video_cfg.save_video:
-                self.flush_video(dones=dones)
-
             final_infos = (
                 self.record_first_done_infos
                 if self.record_first_done_infos is not None
@@ -276,29 +256,6 @@ class HabitatEnv(gym.Env):
 
         return obs, infos
 
-    def flush_video(
-        self, video_sub_dir: Optional[str] = None, dones: Optional[np.ndarray] = None
-    ):
-        output_dir = self.video_cfg.video_base_dir
-        if video_sub_dir is not None:
-            output_dir = os.path.join(output_dir, f"{video_sub_dir}")
-
-        if dones is None:
-            dones_episode_ids = np.array(self.env.get_current_episode_ids())
-        else:
-            dones_episode_ids = np.array(self.env.get_current_episode_ids())[dones]
-
-        for episode_ids in dones_episode_ids:
-            video_name = f"episode_{episode_ids}"
-            if video_name in self.render_images:
-                save_rollout_video(
-                    self.render_images[video_name],
-                    output_dir=output_dir,
-                    video_name=video_name,
-                    fps=self.video_cfg.fps,
-                )
-                self.render_images[video_name] = []
-
     def update_reset_state_ids(self):
         pass
 
@@ -329,16 +286,32 @@ class HabitatEnv(gym.Env):
             obs["depth"] = depth
             raw_obs[env_idx] = obs
 
-    def _wrap_obs(self, obs_list):
+    def _wrap_obs(self, obs_list, info_lists=None):
         image_list = []
         task_descs = []
         token_list = []
-        for obs in obs_list:
-            image_list.append(observations_to_image(obs))
+        should_render_video = info_lists is not None and self.cfg.video_cfg.save_video
+        for i in range(len(obs_list)):
+            obs = obs_list[i]
+            info = info_lists[i] if info_lists is not None else None
+            if should_render_video:
+                images = observations_to_image(obs, info)
+                image_size = (images["rgb"].shape[1], images["rgb"].shape[0])
+                images["top_down_map"] = cv2.resize(
+                    images["top_down_map"],
+                    dsize=image_size,
+                    interpolation=cv2.INTER_LINEAR,
+                )
+                images["concat"] = np.concatenate(
+                    (images["rgb"], images["top_down_map"]), axis=1
+                )
+            else:
+                images = observations_to_image(obs)
             inst = str(obs["instruction"].get("text", ""))
             # token is used for CMA algorithm, please refer to
             # https://github.com/jacobkrantz/VLN-CE for more details.
             token = obs["instruction"].get("tokens", [])
+            image_list.append(images)
             task_descs.append(inst)
             token_list.append(token)
 
@@ -346,14 +319,19 @@ class HabitatEnv(gym.Env):
         episode_ids = self.env.get_current_episode_ids()
 
         obs = {}
-        obs["main_images"] = image_tensor["rgb"].clone()  # [N_ENV, H, W, C]
-        obs["wrist_images"] = token_list  # Temporarily use wrist_images to store tokens
-        obs["task_descriptions"] = task_descs
-        obs["states"] = torch.tensor(episode_ids, dtype=torch.int64)
-
+        if should_render_video:
+            obs["main_images"] = image_tensor["concat"].clone()  # [N_ENV, H, W, C]
+        obs["wrist_images"] = image_tensor[
+            "rgb"
+        ].clone()  # Temporarily use wrist_images to store rgb images
         if "depth" in image_tensor:
             depth_tensor = image_tensor["depth"].clone()
             obs["extra_view_images"] = depth_tensor.unsqueeze(1)  # [N_ENV, 1, H, W, C]
+        if self.cfg.model_type == "cma":
+            obs["task_descriptions"] = token_list
+        else:
+            obs["task_descriptions"] = task_descs
+        obs["states"] = torch.tensor(episode_ids, dtype=torch.int64)
 
         return obs
 
