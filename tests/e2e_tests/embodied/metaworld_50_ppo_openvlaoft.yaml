@@ -15,7 +15,9 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: all
+    actor: 0
+    env: 0
+    rollout: 1
 
 runner:
   task_type: embodied
@@ -78,7 +80,7 @@ algorithm:
 env:
   group_name: "EnvGroup"
   train:
-    total_num_envs: 8
+    total_num_envs: 4
     max_episode_steps: 1
     max_steps_per_rollout_epoch: 1
   eval:
@@ -97,7 +99,7 @@ env:
 rollout:
   group_name: "RolloutGroup"
   generation_backend: "huggingface"
-  enable_offload: False
+  enable_offload: True
   pipeline_stage_num: 1
 
   model:
@@ -109,9 +111,9 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 1
-  global_batch_size: 8
+  global_batch_size: 4
   seed: 42
-  enable_offload: False
+  enable_offload: True
 
   model:
     model_type: "openvla_oft"

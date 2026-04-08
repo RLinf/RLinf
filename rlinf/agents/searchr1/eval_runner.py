@@ -112,9 +112,10 @@ class Searchr1AgentEvalRunner(AgentEvalRunner):
         logging.info(f"Evaluation results saved to: {output_file}")
         return output_file
 
-    def log_eval(
+    def update(
         self,
         context: dict,
+        eval_pbar,
         input_channel,
         batch_idx,
         batch,
@@ -127,21 +128,15 @@ class Searchr1AgentEvalRunner(AgentEvalRunner):
         3. Accumulates results (does NOT save to file yet)
         """
         recv_batch_size = 0
-        world_size = 1
-
-        total_batch_size_per_dp = (
-            self.cfg.data.rollout_batch_size
-            * self.cfg.algorithm.get("group_size", 1)
-            // world_size
-        )
 
         # Storage for this batch's results
         batch_results = []
         correct_count = 0
         total_count = 0
 
-        while recv_batch_size < total_batch_size_per_dp:
+        while recv_batch_size < self.total_batch_size:
             rollout_result: RolloutResult = input_channel.get()
+            eval_pbar.update(rollout_result.num_sequence)
             recv_batch_size += rollout_result.num_sequence
 
             # Process each sequence in the batch
@@ -189,10 +184,6 @@ class Searchr1AgentEvalRunner(AgentEvalRunner):
                 # Add to accumulated results immediately
                 self.accumulated_results.append(result_entry)
 
-        assert recv_batch_size == total_batch_size_per_dp, (
-            f"Expected {total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
-        )
-
         # Compute batch accuracy
         accuracy = correct_count / total_count if total_count > 0 else 0.0
 
@@ -211,12 +202,11 @@ class Searchr1AgentEvalRunner(AgentEvalRunner):
         context["batch_accuracy"] = batch_accuracy
 
     def pre_process(self) -> dict:
-        # raise NotImplementedError()
         logging.info("=" * 80)
         logging.info("Starting Agent System Evaluation")
         logging.info("=" * 80)
         logging.info(f"Validation dataset size: {len(self.val_dataset)}")
-        logging.info(f"Batch size: {self.cfg.data.rollout_batch_size}")
+        logging.info(f"Batch size: {self.val_batch_size}")
         logging.info(f"Group size: {self.cfg.algorithm.get('group_size', 1)}")
         logging.info(f"Max turns: {self.cfg.agentloop.get('max_turns', 5)}")
         logging.info("=" * 80)
@@ -249,7 +239,7 @@ class Searchr1AgentEvalRunner(AgentEvalRunner):
         logging.info(f"Saving {len(self.accumulated_results)} results to JSON file...")
         self._save_eval_results(self.accumulated_results, final_accuracy, total_samples)
 
-    def update_pbar(
+    def update_batch(
         self,
         context: dict,
         eval_pbar,
@@ -268,4 +258,3 @@ class Searchr1AgentEvalRunner(AgentEvalRunner):
                 "rollout_time": f"{time_metrics.get('rollout', 0):.2f}s",
             }
         )
-        eval_pbar.update(1)

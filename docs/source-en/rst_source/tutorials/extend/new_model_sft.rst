@@ -275,7 +275,7 @@ Start with conservative settings:
 
    data:
      train_data_paths: /path/to/train_path
-     eval_data_paths: /path/to/eval_path
+     val_data_paths: /path/to/eval_path
 
 After this runs successfully, gradually increase batch size and enable eval/save intervals.
 

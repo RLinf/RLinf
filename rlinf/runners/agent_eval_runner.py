@@ -75,6 +75,7 @@ class AgentEvalRunner(ReasoningEvalRunner):
             f"AgentRunner: tool_calls must be unique. all tool_calls are {all_tool_calls}"
         )
         self.agent_loop = agent_loop
+        self.batch_split_num = len(agent_loop._workers)
         self.tool_workers = tool_workers
         self.solid_rollouts = solid_rollouts
         self.generate_input_channel = Channel.create("GenerateInput")
@@ -136,7 +137,7 @@ class AgentEvalRunner(ReasoningEvalRunner):
 
         # Initialize progress bar
         eval_pbar = tqdm(
-            total=len(self.val_dataloader),
+            total=len(self.val_dataloader) * self.total_batch_size,
             desc="Evaluation",
             ncols=100,
         )
@@ -163,7 +164,7 @@ class AgentEvalRunner(ReasoningEvalRunner):
 
                 with self.timer("step"):
                     with self.timer("prepare_data"):
-                        self._put_batch(batch)
+                        self._put_batch(batch, self.batch_split_num)
 
                     # Rollout
                     rollout_handle: Handle = self.agent_loop.run_agentloop_rollout(
@@ -176,14 +177,16 @@ class AgentEvalRunner(ReasoningEvalRunner):
                         reward_handle: Handle = self.reward.compute_rewards(
                             input_channel=self.rollout_channel,
                             output_channel=self.reward_channel,
+                            total_batch_size=self.total_batch_size,
                         )
                         eval_input_channel = self.reward_channel
                     else:
                         eval_input_channel = self.rollout_channel
 
                     # Accumulate and log results
-                    self.log_eval(
+                    self.update(
                         context,
+                        eval_pbar=eval_pbar,
                         input_channel=eval_input_channel,
                         batch_idx=batch_idx,
                         batch=batch,
@@ -199,7 +202,7 @@ class AgentEvalRunner(ReasoningEvalRunner):
                 if self.reward is not None:
                     time_metrics["reward"] = reward_handle.consume_duration()
 
-                self.update_pbar(context, eval_pbar, time_metrics)
+                self.update_batch(context, eval_pbar, time_metrics)
 
                 self.global_steps += 1
 
@@ -215,9 +218,10 @@ class AgentEvalRunner(ReasoningEvalRunner):
     def pre_process(self) -> dict:
         raise NotImplementedError()
 
-    def log_eval(
+    def update(
         self,
         context: dict,
+        eval_pbar,
         input_channel,
         batch_idx,
         batch,
@@ -230,7 +234,7 @@ class AgentEvalRunner(ReasoningEvalRunner):
     ) -> dict:
         raise NotImplementedError()
 
-    def update_pbar(
+    def update_batch(
         self,
         context: dict,
         eval_pbar,
@@ -242,4 +246,3 @@ class AgentEvalRunner(ReasoningEvalRunner):
                 "rollout_time": f"{time_metrics.get('rollout', 0):.2f}s",
             }
         )
-        eval_pbar.update(1)

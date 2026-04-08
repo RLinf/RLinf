@@ -32,13 +32,13 @@ WideSeek-R1: Exploring Width Scaling for Broad Information Seeking via Multi-Age
 
 **论文：** `arXiv:2602.04634 <https://arxiv.org/abs/2602.04634>`__  
 
-**代码：** `WideSeek-R1目录 <https://github.com/RLinf/RLinf/tree/main/examples/wideseek_r1>`__ 
+**代码：** `WideSeek-R1目录 <https://github.com/RLinf/RLinf/tree/main/examples/agent/wideseek_r1>`__ 
 
 **数据集：** `WideSeek-R1-train-data <https://huggingface.co/datasets/RLinf/WideSeek-R1-train-data>`__  
 
 **模型：** `WideSeek-R1-4B <https://huggingface.co/RLinf/WideSeek-R1-4b>`__ 
 
-
+**快速开始：** :doc:`快速入门指南 <../examples/agentic/wideseek_r1/index>`
 
 
 摘要
@@ -46,9 +46,9 @@ WideSeek-R1: Exploring Width Scaling for Broad Information Seeking via Multi-Age
 
 近年来，大语言模型（LLM）的进展主要聚焦于深度扩展，即由单个智能体通过多轮推理与工具使用来解决长时程问题。
 然而，随着任务的广度不断增加，关键瓶颈正从个体能力转向组织能力。
-在这项工作中，我们探索了一个互补维度，即利用多智能体系统进行**宽度扩展**，以解决广域信息检索问题。
+在这项工作中，我们探索了一个互补维度，即利用多智能体系统进行 **宽度扩展**，以解决广域信息检索问题。
 现有多智能体系统通常依赖手工设计的工作流和轮流交互机制，无法有效实现并行化。
-为弥合这一差距，我们提出了 **WideSeek-R1**，这是一个通过**多智能体强化学习（MARL）**训练得到的主智能体-子智能体框架，用于协同实现可扩展的编排与并行执行。
+为弥合这一差距，我们提出了 **WideSeek-R1**，这是一个通过 **多智能体强化学习（MARL）** 训练得到的主智能体-子智能体框架，用于协同实现可扩展的编排与并行执行。
 WideSeek-R1 采用共享的 LLM、隔离的上下文以及专用工具，在一个精心构建的 2 万条广域信息检索任务数据集上，对主智能体和并行子智能体进行联合优化。
 大量实验表明，WideSeek-R1-4B 在 WideSearch 基准上取得了 40.0% 的 item F1 分数，可与单智能体 DeepSeek-R1-671B 的表现相当。
 此外，随着并行子智能体数量的增加，WideSeek-R1-4B 持续获得性能提升，凸显了宽度扩展的有效性。

@@ -15,11 +15,11 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-      env: 0-3
+      env: 0-1
       rollout:
         node_group: "rollout"
-        placement: 0-3
-      actor: 0-3
+        placement: 0-1
+      actor: 0-1
 
   node_groups:
     - label: "rollout"

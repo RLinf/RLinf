@@ -38,6 +38,8 @@ Episode 数据采集
   将重置后的初始观测带入下一 episode。
 - 写入操作在独立后台线程异步执行，不阻塞 RL 训练主循环。
 - LeRobot writer 在第一条 episode 写入时懒初始化，自动推断图像尺寸、状态维度、动作维度。
+- LeRobot 导出支持保存 ``image``、``wrist_image``，以及在观测中存在时的
+  单路 ``extra_view_image``。
 - ``only_success=True`` 可过滤失败 episode，节省磁盘空间。
 
 构造参数
@@ -210,6 +212,8 @@ Episode 数据采集
      - 主摄像头图像（bytes + path），uint8
    * - ``wrist_image``
      - 腕部摄像头图像（bytes + path），uint8；无腕部摄像头时列为空
+   * - ``extra_view_image``
+     - 一路额外视角图像（bytes + path），uint8；无额外视角时列为空
    * - ``state``
      - 机器人状态向量，``float32[state_dim]``
    * - ``actions``
@@ -241,6 +245,8 @@ Episode 数据采集
      - ``main_images`` → ``image`` → ``full_image``
    * - 腕部图像
      - ``wrist_images`` → ``wrist_image``
+   * - 额外视角图像
+     - ``extra_view_images``（若有多路，仅取第一路）→ ``extra_view_image``
    * - 状态
      - ``states`` → ``state``
 
@@ -266,7 +272,7 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 ----------------------------
 
 真机采集用于 RLPD（Reinforcement Learning from Prior Data）或策略初始化。
-操作员通过 SpaceMouse 等人工干预设备完成任务，数据以 ``Trajectory``
+操作员通过 SpaceMouse 或 GELLO 等人工干预设备完成任务，数据以 ``Trajectory``
 格式保存，可直接供后续真机训练使用。
 
 与仿真的大规模并行采集不同，真机采集在单控制节点运行，按目标成功次数自动停止。
@@ -283,7 +289,7 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 1. 初始化 ``RealWorldEnv`` 和 ``TrajectoryReplayBuffer``。
 2. 循环执行 step，从 ``info["intervene_action"]`` 读取 SpaceMouse 干预动作。
 3. 构造 ``ChunkStepResult``，追加到 ``EmbodiedRolloutResult``。
-4. episode 结束（``done=True``）且奖励为正时，记为一次成功，将轨迹写入 buffer。
+4. episode 结束（``done=True``）且奖励 ``>= 0.5`` 时，记为一次成功，将轨迹写入 buffer。
 5. 成功次数达到 ``num_data_episodes`` 后自动停止并 finalize buffer。
 
 核心配置参数
@@ -305,6 +311,15 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
    * - ``env.eval.use_spacemouse``
      - ``True``
      - 是否启用 SpaceMouse 干预
+   * - ``env.eval.no_gripper``
+     - ``False``
+     - 是否使用不带夹爪维度的 6 维真机动作
+   * - ``env.eval.use_gello``
+     - ``False``
+     - 是否启用 GELLO 遥操作（与 SpaceMouse 互斥）
+   * - ``env.eval.gello_port``
+     - —
+     - GELLO 设备串口路径（``use_gello`` 为 ``True`` 时必填）
    * - ``env.eval.override_cfg.target_ee_pose``
      - —
      - 任务目标末端位姿 ``[x, y, z, rx, ry, rz]``
@@ -352,6 +367,29 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
    ``intervene_flags`` 全部设置为 1，标记该轨迹为专家演示数据，
    在 RLPD 训练中用于区分在线策略数据与先验数据。
 
+同时采集 Replay Buffer 与 LeRobot 数据
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``examples/embodiment/collect_real_data.py`` 现在支持在同一次真机采集中，
+同时写出 replay buffer 和 ``CollectEpisode`` 导出的 episode 数据。只要启用
+``env.data_collection.enabled=True``，成功轨迹就会同时保存到：
+
+- ``logs/{timestamp}/demos/``：``TrajectoryReplayBuffer`` 轨迹，用于 RLPD
+- ``logs/{timestamp}/collected_data/``：``pickle`` 或 LeRobot 格式的 episode 数据
+
+若希望在收集真机 replay buffer 的同时额外导出 LeRobot 数据集，可保留如下配置：
+
+.. code-block:: yaml
+
+   env:
+     data_collection:
+       enabled: True
+       save_dir: ${runner.logger.log_path}/collected_data
+       export_format: "lerobot"
+       only_success: True
+       robot_type: "panda"
+       fps: 10
+
 使用步骤
 ~~~~~~~~
 
@@ -362,7 +400,7 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
       source <path_to_your_venv>/bin/activate
 
 2. 编辑配置文件 ``examples/embodiment/config/realworld_collect_data.yaml``，
-   设置 ``robot_ip`` 和 ``target_ee_pose``：
+   将 ``ROBOT_IP`` 和 ``TARGET_EE_POSE`` 替换为真实机器人 IP 与目标位姿：
 
    .. code-block:: yaml
 
@@ -390,8 +428,17 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
       # 或使用自定义配置：
       bash examples/embodiment/collect_data.sh my_custom_config
 
-4. 用 SpaceMouse 操作机器人完成任务。成功次数达到 ``num_data_episodes`` 后，
-   脚本自动保存并退出，日志和数据存放在 ``logs/{timestamp}/`` 目录下。
+4. 用 SpaceMouse（或 GELLO）操作机器人完成任务。成功次数达到
+   ``num_data_episodes`` 后，脚本自动保存并退出，日志和数据存放在
+   ``logs/{timestamp}/`` 目录下。
+
+   如需使用 GELLO 替代 SpaceMouse，可使用专用配置：
+
+   .. code-block:: bash
+
+      bash examples/embodiment/collect_data.sh realworld_collect_data_gello
+
+   GELLO 的安装与设置请参考 :doc:`../../examples/embodied/franka`。
 
 ----
 
@@ -413,3 +460,40 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
   确认达到预期数量后再启动训练。
 - 如需追加数据，只需重新运行脚本并指向同一 ``demos`` 目录，
   buffer 的 ``auto_save=True`` 会增量写入而不覆盖已有轨迹。
+
+可视化工具
+----------
+
+采集结束后，可以直接基于 ``logs/{timestamp}/`` 下的产物查看两种数据格式。
+
+**Replay buffer 轨迹**
+
+使用已有的 replay buffer 可视化脚本检查 ``logs/{timestamp}/demos/``：
+
+.. code-block:: bash
+
+   python toolkits/replay_buffer/visualize.py \
+       --replay_dir logs/{timestamp}/demos
+
+无显示环境可使用：
+
+.. code-block:: bash
+
+   python toolkits/replay_buffer/visualize_headless.py \
+       --replay_dir logs/{timestamp}/demos \
+       --output viz.png
+
+**LeRobot 数据集**
+
+使用 ``toolkits/replay_buffer/visualize_lerobot_dataset.py`` 将 LeRobot 数据集
+展开为按 episode 分目录的 ``.jpg`` 图像和 ``.txt`` step 元数据：
+
+.. code-block:: bash
+
+   python toolkits/replay_buffer/visualize_lerobot_dataset.py \
+       --dataset-path logs/{timestamp}/collected_data \
+       --output-dir logs/{timestamp}/collected_data_visualized
+
+该工具会读取 ``meta/info.json`` 和各个 ``episode_*.parquet`` 文件，输出类似
+``episode_000000/step_000003_image.jpg`` 与
+``episode_000000/step_000003.txt`` 的结构，便于快速人工检查。

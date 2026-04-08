@@ -364,11 +364,10 @@ class FlowPolicy(nn.Module, BasePolicy):
         # Use flow actor
         action, log_prob = self.flow_actor(mix_feature, train=False, log_grad=False)
 
-        # chunk_actions is always numpy array
+        # chunk_actions is always torch tensor
         chunk_actions = action.reshape(
             -1, self.cfg.num_action_chunks, self.cfg.action_dim
         )
-        chunk_actions = chunk_actions.cpu().numpy()
 
         if hasattr(self, "value_head") and calculate_values:
             chunk_values = self.value_head(mix_feature)
@@ -613,11 +612,10 @@ class FlowStatePolicy(nn.Module, BasePolicy):
         # Use flow actor
         action, log_prob = self.flow_actor(feat, train=False, log_grad=False)
 
-        # chunk_actions is always numpy array
+        # chunk_actions is always torch tensor
         chunk_actions = action.reshape(
             -1, self.cfg.num_action_chunks, self.cfg.action_dim
         )
-        chunk_actions = chunk_actions.cpu().numpy()
 
         chunk_values = torch.zeros_like(log_prob[..., :1])
 

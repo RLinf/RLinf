@@ -16,7 +16,7 @@ cluster:
   num_nodes: 1
   component_placement:
     actor: 0-1
-    env: 0-3
+    env: 0-1
     rollout: 0-1
 
 runner:

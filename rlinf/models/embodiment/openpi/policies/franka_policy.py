@@ -50,12 +50,11 @@ class FrankaEEOutputs(transforms.DataTransformFn):
     For your own dataset, you can copy this class and modify the action dimension based on the comments below.
     """
 
-    # Whether to train actions using rotation_6d or not.
-    action_train_with_rotation_6d: bool = False
+    output_action_dim: int  # default output action dim is 7 (xyz + rpy + gripper)
 
     def __call__(self, data: dict) -> dict:
         return {
-            "actions": np.asarray(data["actions"][:, :7])
+            "actions": np.asarray(data["actions"][:, : self.output_action_dim])
         }  # use abs actions [x,y,z,rx,ry,rz,gripper] for Franka
 
 
@@ -76,13 +75,7 @@ class FrankaEEInputs(transforms.DataTransformFn):
     # Do not change this for your own dataset.
     model_type: _model.ModelType = _model.ModelType.PI0
 
-    # Whether to train actions using rotation_6d or not.
-    action_train_with_rotation_6d: bool = False
-
     def __call__(self, data: dict) -> dict:
-        assert data["observation/state"].shape == (7,), (
-            f"Expected state shape (7,), got {data['observation/state'].shape}"
-        )
         if isinstance(data["observation/state"], np.ndarray):
             data["observation/state"] = torch.from_numpy(
                 data["observation/state"]
@@ -123,9 +116,6 @@ class FrankaEEInputs(transforms.DataTransformFn):
         # Pad actions to the model action dimension. Keep this for your own dataset.
         # Actions are only available during training.
         if "actions" in data:
-            assert len(data["actions"].shape) == 2 and data["actions"].shape[-1] == 7, (
-                f"Expected actions shape (N, 7), got {data['actions'].shape}"
-            )
             actions = transforms.pad_to_dim(data["actions"], self.action_dim)
             inputs["actions"] = actions
 

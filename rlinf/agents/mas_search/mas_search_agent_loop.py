@@ -38,7 +38,7 @@ from rlinf.workers.agent.agent_loop import (
 class MasSearchAgentLoopWorker(MultiAgentLoopWorker):
     """
     Agent loop worker that combines search-r1's <search>keyword</search> extraction
-    logic with multiturn_demo's component structure.
+    logic with multi agent system's component structure.
     """
 
     def __init__(

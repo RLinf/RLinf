@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numbers
 import os
 import warnings
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -83,6 +84,14 @@ class RecordVideo(gym.Wrapper):
         else:
             self._fps = self._get_fps_from_env(env)
 
+    @property
+    def is_start(self):
+        return getattr(self.env, "is_start")
+
+    @is_start.setter
+    def is_start(self, value):
+        setattr(self.env, "is_start", value)
+
     def _get_fps_from_env(self, env: gym.Env) -> int:
         """Resolve FPS from config/env metadata with fallback."""
         if hasattr(self.video_cfg, "fps") and self.video_cfg.fps is not None:
@@ -106,6 +115,8 @@ class RecordVideo(gym.Wrapper):
 
     def _get_image_from_dict(self, obs: dict) -> Optional[Any]:
         """Pick the best image field from an observation dict."""
+        if hasattr(self.env, "capture_image"):
+            return self.env.capture_image()
         for key in ("main_images", "images", "rgb", "full_image", "main_image"):
             if key in obs and obs[key] is not None:
                 return obs[key]
@@ -283,7 +294,10 @@ class RecordVideo(gym.Wrapper):
                         value = value.item()
                     elif value.size == 1:
                         value = value.reshape(-1)[0].item()
+                elif isinstance(value, numbers.Number):
+                    pass
                 else:
+                    warnings.warn(f"Unsupported value type {type(value)} for key {key}")
                     continue
                 info_item[key] = value
 

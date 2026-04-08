@@ -25,17 +25,19 @@ VLM模型监督微调训练
 
 配置模板：``examples/sft/config/qwen2_5_sft_vlm.yaml``
 
+如果需要训练 **qwen3_vl** 或 **qwen3_vl_moe** 等模型，请确保当前环境中的 `transformers` 版本 **高于或等于 4.57.1**。
+
  VLM 配置与 RLinf 中的其他 RL 训练文件结构基本一样，其中 ``data`` 和 ``actor.model`` 的具体值改为 VLM 场景。
 
 具体的运行流程开始前准备
 ------------------------
 
-1. 准备好环境，下载 RLinf 官方镜像 ``rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1``
+1. 准备好环境，下载 RLinf 官方镜像 ``rlinf/rlinf:math-rlinf0.2-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1``
 2. 准备好模型权重目录，下载网址 ``https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct``
 3. 准备好 Robo2VLM 数据集目录 ``https://huggingface.co/datasets/keplerccc/Robo2VLM-1``
 4. 修改 ``examples/sft/config/qwen2_5_sft_vlm.yaml`` 文件，运行脚本 ``examples/sft/run_vlm_sft.sh``
 
-下面是 Qwen2.5-Vl-4B sft 的例子
+下面是 Qwen2.5-Vl-3B sft 的例子
 --------------------------------
 
 请注意，Robo2VLM数据集下载后由于它将 train 数据和 evaluate 数据放在一起，命名方式为 ``train-00000-of-00262.parquet`` 和 ``test-0000X-of-00003.parquet``，所以需要将它们分开，并分别放在不同的文件夹下，否则 RLinf 会直接读取整个数据集。
@@ -77,7 +79,7 @@ VLM模型监督微调训练
      # 数据路径，需要将 train 数据和 evaluate 数据分开，并分别放在不同的文件夹下
      train_data_paths: "/path/to/Robo2VLM-1/train_data"
      # 如果不需要进行训练，只需要进行评估，请对将 train_data_paths 设置为 null
-     eval_data_paths: "/path/to/Robo2VLM-1/test_data"
+     val_data_paths: "/path/to/Robo2VLM-1/test_data"
 
      # 数据字段名（要和你的数据列一致）
      prompt_key: "question"
@@ -179,7 +181,7 @@ VLM模型监督微调训练
 如果你只想跑 evaluate，把配置改成：
 
 - ``data.train_data_paths: null``
-- ``data.eval_data_paths: "/eval_data_path"``
+- ``data.val_data_paths: "/path/to/validate_data"``
 
 其余启动命令不变，仍用：
 
@@ -270,7 +272,7 @@ loss 曲线：
 - ``max_epochs``：按数据集完整遍历的轮数
 - ``save_interval``：每多少 step 存一次 checkpoint
 - ``model_path``：本地模型目录（必须存在）
-- ``train_data_paths/eval_data_paths``：数据目录或文件路径
+- ``train_data_paths/val_data_paths``：数据目录或文件路径
 
 ----
 

@@ -39,7 +39,7 @@ algorithm:
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   
-  rollout_epoch: 4 # number of rollout epochs per rollout step
+  rollout_epoch: 16 # number of rollout epochs per rollout step
   eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
   group_size: 8  # number of groups per rollout step
   
@@ -90,6 +90,8 @@ env:
     total_num_envs: 64  # Total number of parallel environments for training
     max_steps_per_rollout_epoch: 512
     max_episode_steps: 512 # max episode steps for truncation
+    use_fixed_reset_state_ids: True
+    use_ordered_reset_state_ids: True
     reset_gripper_open: False
   eval:
     total_num_envs: 500

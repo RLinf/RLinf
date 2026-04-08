@@ -153,7 +153,7 @@ rollout:
   model:
     action_dim: 7
     image_num: 2
-    model_path: "/path/to/model"
+    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     precision: ${actor.model.precision}
     num_q_heads: 10
 
@@ -168,7 +168,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/path/to/model"
+    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     state_dim: 19
     action_dim: 7
     image_num: 2

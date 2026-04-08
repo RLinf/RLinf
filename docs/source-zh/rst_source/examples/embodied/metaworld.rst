@@ -85,9 +85,9 @@
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.1-metaworld
+      rlinf/rlinf:agentic-rlinf0.2-metaworld
       # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-metaworld
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-metaworld
 
 请使用内置的 `switch_env` 工具切换到相应的虚拟环境：
 

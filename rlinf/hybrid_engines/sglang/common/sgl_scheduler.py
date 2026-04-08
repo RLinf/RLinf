@@ -30,7 +30,10 @@ from sglang.srt.managers.scheduler import (
 )
 
 from rlinf.scheduler import Worker, WorkerAddress
-from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
+from rlinf.utils.placement import (
+    ModelParallelComponentPlacement,
+    RolloutSyncMode,
+)
 from rlinf.workers.rollout.utils import (
     RankMapper,
 )
@@ -111,9 +114,11 @@ class Scheduler(_Scheduler):
             "only sglang with 'sync' can run 'batch_load_hf_weight'"
         )
         model = self.tp_worker.worker.model_runner.model
-        colocate = self.placement_mode == PlacementMode.COLLOCATED
+        rollout_sync_mode_collocated = (
+            self.rollout_sync_mode == RolloutSyncMode.COLLOCATED
+        )
         batch_weight = []
-        if colocate:
+        if rollout_sync_mode_collocated:
             for name, handle in state_dict.items():
                 func, args = handle
                 list_args = list(args)
@@ -240,6 +245,7 @@ class Scheduler(_Scheduler):
             self.cfg = config
             self._actor_group_name = self.cfg.actor.group_name
             self.placement_mode = placement.placement_mode
+            self.rollout_sync_mode = placement._rollout_sync_mode
             self.actor_weight_rank = RankMapper.get_rollout_rank_to_actor_rank_map(
                 placement
             )[(self._rlinf_worker.get_parent_rank(), self._rlinf_worker._rank)]
@@ -253,7 +259,14 @@ class Scheduler(_Scheduler):
                 if hasattr(module, "use_presharded_weights"):
                     module.use_presharded_weights = use_presharded_weights
 
-            if self.cfg.rollout.get("validate_weight_first_sync", False):
+            validate_weight_first_sync = self.cfg.rollout.get(
+                "validate_weight_first_sync", False
+            )
+            if self.cfg.runner.resume_dir is not None:
+                # validate_weight_first_sync compare hf weights with megatron weights,
+                # and if resume_dir is enabled, hf weights can't equal to megatron's.
+                validate_weight_first_sync = False
+            if validate_weight_first_sync:
                 self.weight_norm_dict = validate_weight_init(model)
 
             self._rlinf_worker.log_info(

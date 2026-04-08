@@ -94,15 +94,26 @@ class ReasoningEvalRunner:
 
         num_workers = self.cfg.data.num_workers
 
-        val_batch_size = (
+        self.val_batch_size = (
             self.cfg.data.val_rollout_batch_size
         )  # Prefer config value if set
-        if val_batch_size is None:
-            val_batch_size = len(self.val_dataset)
+        if self.val_batch_size is None:
+            self.val_batch_size = len(self.val_dataset)
+        else:
+            assert len(self.val_dataset) % self.val_batch_size == 0, (
+                f"Validation dataset size {len(self.val_dataset)} is not divisible by val_batch_size {self.val_batch_size}"
+            )
+        self.total_batch_size = self.val_batch_size * self.cfg.algorithm.get(
+            "group_size", 1
+        )
+        if self.reward is not None:
+            assert self.total_batch_size % len(self.reward._workers) == 0, (
+                f"Total batch size {self.total_batch_size} is not divisible by number of reward workers {len(self.reward._workers)}"
+            )
 
         self.val_dataloader = StatefulDataLoader(
             dataset=self.val_dataset,
-            batch_size=val_batch_size,
+            batch_size=self.val_batch_size,
             num_workers=num_workers,
             shuffle=self.cfg.data.get("validation_shuffle", True),
             drop_last=False,
@@ -148,6 +159,9 @@ class ReasoningEvalRunner:
         prompt_ids = [ids[-pmp_len:] for ids, pmp_len in zip(prompt_ids, lengths)]
         if split_size is None:
             split_size = self.component_placement.rollout_dp_size
+        assert self.total_batch_size % split_size == 0, (
+            f"Total batch size {self.total_batch_size} is not divisible by number of splits {split_size}"
+        )
 
         for input_ids, answers, image_data, multi_modal_inputs in zip(
             split_list(prompt_ids, split_size, enforce_divisible_batch=False),
