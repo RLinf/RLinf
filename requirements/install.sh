@@ -18,7 +18,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "lingbotvla" "dreamzero")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "geniesim")
 
 #=======================Utility Functions=======================
 
@@ -409,6 +409,13 @@ install_openvla_oft_model() {
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openvla-oft.git@RLinf/v0.1  --no-build-isolation
             install_robotwin_env
             ;;
+        geniesim)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_flash_attn
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openvla-oft.git@RLinf/v0.1  --no-build-isolation
+            install_geniesim_env
+            ;;
         opensora)
             create_and_sync_venv
             install_common_embodied_deps
@@ -585,6 +592,10 @@ install_lingbot_vla_model() {
     case "$ENV_NAME" in
         robotwin)
             install_robotwin_env
+            install_flash_attn
+            ;;
+        geniesim)
+            install_geniesim_env
             install_flash_attn
             ;;
         *)
@@ -790,6 +801,14 @@ install_franka_env() {
 
 install_xsquare_turtle2_env() {
     uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/xsquare_turtle_basics.git
+}
+
+install_geniesim_env() {
+    # GenieSim sim runs entirely inside its own Docker container.
+    # The host-side env only needs the Python Docker SDK for SimContainerManager
+    # and psutil for process monitoring.  Everything else (torch, MuJoCo, ROS)
+    # is handled inside the container — no nvcc or native CUDA compilation needed.
+    uv sync --extra geniesim --active --inexact $NO_INSTALL_RLINF_CMD
 }
 
 install_robotwin_env() {

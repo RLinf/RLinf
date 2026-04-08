@@ -94,6 +94,8 @@ class TrajectoryCache:
 
     def _insert_into_buffer(self, trajectory: dict, buffer: dict, start: int) -> None:
         for key, value in trajectory.items():
+            if key not in buffer:
+                continue
             if isinstance(value, torch.Tensor):
                 end = start + value.shape[0]
                 buffer[key][start:end] = value

@@ -207,13 +207,25 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 trajectory_format="pt",
             )
             min_demo_buffer_size = self.cfg.algorithm.demo_buffer.min_buffer_size
-            if self.cfg.algorithm.demo_buffer.get("load_path", None) is not None:
-                self.demo_buffer.load_checkpoint(
-                    self.cfg.algorithm.demo_buffer.load_path,
-                    is_distributed=True,
-                    local_rank=self._rank,
-                    world_size=self._world_size,
-                )
+            _demo_load_path = self.cfg.algorithm.demo_buffer.get("load_path", None)
+            if _demo_load_path is not None:
+                if os.path.isdir(_demo_load_path):
+                    self.demo_buffer.load_checkpoint(
+                        _demo_load_path,
+                        is_distributed=True,
+                        local_rank=self._rank,
+                        world_size=self._world_size,
+                    )
+                else:
+                    import logging
+
+                    logging.getLogger(__name__).warning(
+                        "demo_buffer.load_path=%r does not exist — "
+                        "skipping pre-load (buffer will fill online via SpaceMouse). "
+                        "Run convert_demos_to_buffer.py first to pre-load demos.",
+                        _demo_load_path,
+                    )
+                    min_demo_buffer_size = 0
 
         if self.cfg.algorithm.replay_buffer.get("enable_preload", False):
             buffer_dataset_cls = PreloadReplayBufferDataset
@@ -518,6 +530,20 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             qf_pi = torch.mean(all_qf_pi, dim=1, keepdim=True)
         metrics["q_pi"] = qf_pi.mean().item()
         actor_loss = ((self.entropy_temp.alpha * log_pi) - qf_pi).mean()
+
+        bc_coef = self.cfg.algorithm.get("bc_coef", 0.0)
+        if bc_coef > 0.0 and "is_demo" in batch:
+            is_demo = batch["is_demo"].to(self.device)
+            if is_demo.any():
+                demo_actions = batch["actions"][is_demo].to(self.device)
+                demo_pi = pi[is_demo]
+                if demo_pi.ndim > demo_actions.ndim:
+                    demo_actions = demo_actions.unsqueeze(1)
+                elif demo_actions.ndim > demo_pi.ndim:
+                    demo_pi = demo_pi.unsqueeze(1)
+                bc_loss = F.mse_loss(demo_pi, demo_actions)
+                actor_loss = actor_loss + bc_coef * bc_loss
+                metrics["bc_loss"] = bc_loss.item()
 
         entropy = -log_pi.mean()
         return actor_loss, entropy, metrics

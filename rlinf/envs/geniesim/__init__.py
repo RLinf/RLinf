@@ -12,14 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from rlinf.envs.wrappers.collect_episode import CollectEpisode
-from rlinf.envs.wrappers.record_video import RecordVideo
-from rlinf.envs.wrappers.spacemouse_sim_intervention import (
-    SpacemouseSimIntervention,
-)
+REGISTER_GENIESIM_ENVS = {}
 
-__all__ = [
-    "CollectEpisode",
-    "RecordVideo",
-    "SpacemouseSimIntervention",
-]
+
+def register_geniesim_env(task_id: str):
+    """Decorator to register a GenieSimEnv subclass under a task ID."""
+
+    def _register(cls):
+        REGISTER_GENIESIM_ENVS[task_id] = cls
+        return cls
+
+    return _register
+
+
+def _import_all_tasks():
+    """Import all task modules to trigger @register_geniesim_env decorators."""
+    from rlinf.envs.geniesim.tasks import (  # noqa: F401
+        PlaceWorkpieceEnv,
+    )
+
+
+_import_all_tasks()

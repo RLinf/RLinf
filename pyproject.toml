@@ -110,6 +110,12 @@ embodied = [
     "gymnasium",
     "gym",
 ]
+geniesim = [
+    "docker",
+    "psutil",
+    "pyspacemouse==1.1.5",
+    "huggingface_hub>=0.19.3,<1.0"
+]
 franka = [
     "pyyaml",
     "rospkg",
@@ -148,6 +154,7 @@ conflicts = [
       { extra = "agentic-sglang" },
       { extra = "agentic-vllm" },
       { extra = "embodied" },
+      { extra = "geniesim" },
       { extra = "franka" },
       { extra = "xsquare_turtle2" }
     ],

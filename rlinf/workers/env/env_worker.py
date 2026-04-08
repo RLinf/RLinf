@@ -173,6 +173,30 @@ class EnvWorker(Worker):
                 total_num_processes=self._world_size * self.stage_num,
                 worker_info=self.worker_info,
             )
+            if env_cfg.get("use_spacemouse", False):
+                from rlinf.envs.wrappers.spacemouse_sim_intervention import (
+                    SpacemouseSimIntervention,
+                )
+
+                sm_kwargs = getattr(env_cls, "spacemouse_wrapper_kwargs", {})
+                sm_cfg = env_cfg.get("spacemouse_cfg", {})
+
+                from rlinf.envs.realworld.common.spacemouse.spacemouse_expert import (
+                    SpaceMouseExpert,
+                )
+
+                expert = SpaceMouseExpert()
+
+                env = SpacemouseSimIntervention(
+                    env,
+                    expert=expert,
+                    action_scale=sm_cfg.get("action_scale", 0.01),
+                    rotation_scale=sm_cfg.get("rotation_scale", 0.05),
+                    intervention_env_id=sm_cfg.get("intervention_env_id", 0),
+                    button_mode=sm_cfg.get("button_mode", "training"),
+                    **sm_kwargs,
+                )
+
             if env_cfg.video_cfg.save_video:
                 env = RecordVideo(env, env_cfg.video_cfg)
             if env_cfg.get("data_collection", None) and getattr(
@@ -353,14 +377,21 @@ class EnvWorker(Worker):
         elif chunk_dones.any():
             if "final_info" in infos:
                 final_info = infos["final_info"]
-                for key in final_info["episode"]:
-                    env_info[key] = final_info["episode"][key][chunk_dones[:, -1]].cpu()
+                if "episode" in final_info:
+                    for key in final_info["episode"]:
+                        env_info[key] = final_info["episode"][key][
+                            chunk_dones[:, -1]
+                        ].cpu()
 
         intervene_actions = (
             infos["intervene_action"] if "intervene_action" in infos else None
         )
         intervene_flags = infos["intervene_flag"] if "intervene_flag" in infos else None
-        if self.cfg.env.train.auto_reset and chunk_dones.any():
+        if (
+            self.cfg.env.train.auto_reset
+            and chunk_dones.any()
+            and "final_info" in infos
+        ):
             if "intervene_action" in infos["final_info"]:
                 intervene_actions = infos["final_info"]["intervene_action"]
                 intervene_flags = infos["final_info"]["intervene_flag"]

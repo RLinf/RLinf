@@ -29,6 +29,7 @@ class SupportedEnvType(Enum):
     HABITAT = "habitat"
     OPENSORAWM = "opensora_wm"
     WANWM = "wan_wm"
+    GENIESIM = "geniesim"
 
 
 def get_env_cls(env_type: str, env_cfg=None):
@@ -113,5 +114,20 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.world_model.world_model_wan_env import WanEnv
 
         return WanEnv
+    elif env_type == SupportedEnvType.GENIESIM:
+        from rlinf.envs.geniesim import REGISTER_GENIESIM_ENVS
+
+        if env_cfg is None:
+            raise ValueError(
+                "env_cfg is required for geniesim environment type. "
+                "Please provide env_cfg.init_params.id to select the task."
+            )
+
+        task_id = env_cfg.init_params.id
+        assert task_id in REGISTER_GENIESIM_ENVS, (
+            f"Task type {task_id} has not been registered! "
+            f"Available tasks: {list(REGISTER_GENIESIM_ENVS.keys())}"
+        )
+        return REGISTER_GENIESIM_ENVS[task_id]
     else:
         raise NotImplementedError(f"Environment type {env_type} not implemented")

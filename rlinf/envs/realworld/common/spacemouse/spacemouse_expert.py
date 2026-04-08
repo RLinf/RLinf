@@ -48,6 +48,9 @@ class SpaceMouseExpert:
         with self.state_lock:
             return self.latest_data["action"], self.latest_data["buttons"]
 
+    def on_episode_reset(self):
+        """Called when the environment resets. No-op for the real SpaceMouse."""
+
 
 if __name__ == "__main__":
     import time
