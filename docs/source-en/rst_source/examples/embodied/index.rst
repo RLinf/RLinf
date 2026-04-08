@@ -187,7 +187,9 @@ as well as reinforcement learning training examples on real robots.
          Significant improvement in RL training on π₀ and π₀.₅
        </p>
      </div>
+   </div>
 
+   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/gr00t.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -198,9 +200,7 @@ as well as reinforcement learning training examples on real robots.
          Support GR00T-N1.5 RL fine-tuning.
        </p>
      </div>
-   </div>
 
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/lingbotvla.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -222,7 +222,9 @@ as well as reinforcement learning training examples on real robots.
          Dexbotic (π₀.₅-based) + LIBERO + PPO training
        </p>
      </div>
+   </div>
 
+   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/3_layer_mlp.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
@@ -234,9 +236,7 @@ as well as reinforcement learning training examples on real robots.
          Train an MLP Policy with PPO/SAC/GRPO
        </p>
      </div>
-   </div>
 
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/sac-flow-overview.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -259,7 +259,9 @@ as well as reinforcement learning training examples on real robots.
          Run full-parameter and LoRA SFT for OpenPI before RL fine-tuning
        </p>
      </div>
+   </div>
 
+   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/release_0.2/qwen2_5_sft_vlm.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -270,9 +272,7 @@ as well as reinforcement learning training examples on real robots.
          Run full-parameter SFT and evaluation for VLM models such as Qwen
        </p>
      </div>
-   </div>
 
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <!-- TODO(thumbnail): replace placeholder cover image URL for nft_openpi -->
        <img src="https://github.com/RLinf/misc/raw/main/pic/pi0_icon.jpg"
@@ -295,7 +295,9 @@ as well as reinforcement learning training examples on real robots.
          Steer a frozen Pi0 diffusion policy with lightweight SAC in noise space
        </p>
      </div>
+   </div>
 
+   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/dagger.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -306,9 +308,7 @@ as well as reinforcement learning training examples on real robots.
          Guide online imitation learning with expert relabeling and replay-buffer updates
        </p>
      </div>
-   </div>
 
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -330,7 +330,9 @@ as well as reinforcement learning training examples on real robots.
          RLinf worker seamlessly integrates with the Franka robotic arm
        </p>
      </div>
+   </div>
 
+   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <!-- TODO(thumbnail): replace placeholder cover image URL for franka_zed_robotiq -->
        <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
@@ -342,9 +344,7 @@ as well as reinforcement learning training examples on real robots.
          ZED camera, Robotiq gripper, and data-collection setup for Franka
        </p>
      </div>
-   </div>
 
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <!-- TODO(thumbnail): replace placeholder cover image URL for franka_gello -->
        <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
@@ -367,7 +367,9 @@ as well as reinforcement learning training examples on real robots.
          Human-Gated real-world DAgger pipeline: collection, SFT, and online intervention training
        </p>
      </div>
+   </div>
 
+   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/xsquare_turtle2_arm_small.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
