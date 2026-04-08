@@ -26,7 +26,9 @@ NUM_CAMS: int = 2
 SHM_HEADER_BYTES: int = 4
 
 
-def shm_total_bytes(num_envs: int, height: int, width: int, num_cams: int = NUM_CAMS) -> int:
+def shm_total_bytes(
+    num_envs: int, height: int, width: int, num_cams: int = NUM_CAMS
+) -> int:
     return SHM_HEADER_BYTES + num_envs * num_cams * height * width * 3
 
 
@@ -52,12 +54,12 @@ BODY_POSE_DIM: int = 7
 
 EE_STATE_DIM: int = 12
 
-RESET_IDLE:      int = 0
+RESET_IDLE: int = 0
 RESET_REQUESTED: int = 1
-RESET_DONE:      int = 2
+RESET_DONE: int = 2
 
 MUJOCO_PHASE_WAIT: int = 0
-MUJOCO_PHASE_GO:   int = 1
+MUJOCO_PHASE_GO: int = 1
 MUJOCO_PHASE_DONE: int = 2
 
 
@@ -91,12 +93,12 @@ STEP_HEADER_BYTES: int = 4
 
 STEP_OUTPUT_SCALARS: int = 6
 
-STEP_PHASE_IDLE:           int = 0
-STEP_PHASE_STEP_REQUEST:   int = 1
-STEP_PHASE_STEP_DONE:      int = 2
-STEP_PHASE_RESET_REQUEST:  int = 3
-STEP_PHASE_RESET_DONE:     int = 4
-STEP_PHASE_CLOSE:          int = 5
+STEP_PHASE_IDLE: int = 0
+STEP_PHASE_STEP_REQUEST: int = 1
+STEP_PHASE_STEP_DONE: int = 2
+STEP_PHASE_RESET_REQUEST: int = 3
+STEP_PHASE_RESET_DONE: int = 4
+STEP_PHASE_CLOSE: int = 5
 
 
 def step_shm_name(shm_name: str) -> str:

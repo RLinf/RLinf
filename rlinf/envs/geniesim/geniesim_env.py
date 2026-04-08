@@ -25,18 +25,17 @@ from __future__ import annotations
 
 import copy
 import os
-from typing import Dict, Optional, Tuple
+from typing import Optional
 
+import gymnasium as gym
 import numpy as np
 import torch
-import gymnasium as gym
 
 from rlinf.envs.geniesim import REGISTER_GENIESIM_ENVS  # noqa: F401
 from rlinf.envs.geniesim.container_manager import SimContainerManager
 from rlinf.envs.geniesim.process_manager import SimProcessManager
-from rlinf.envs.geniesim.sim_manager_base import BaseSimManager
 from rlinf.envs.geniesim.shm_client import GenieSimShmClient, GenieSimVectorEnvConfig
-
+from rlinf.envs.geniesim.sim_manager_base import BaseSimManager
 
 
 class GenieSimBaseEnv(gym.Env):
@@ -104,22 +103,36 @@ class GenieSimBaseEnv(gym.Env):
 
     def _make_vec_env_config(self):
         import json as _json
+
         _rand_cfg = getattr(self.cfg, "randomization", None)
         _object_map = getattr(self.cfg, "object_map", None)
         _rand_json = ""
         if _rand_cfg is not None or _object_map is not None:
             try:
                 from omegaconf import OmegaConf
-                _rand_dict = OmegaConf.to_container(_rand_cfg, resolve=True) if _rand_cfg is not None else {}
+
+                _rand_dict = (
+                    OmegaConf.to_container(_rand_cfg, resolve=True)
+                    if _rand_cfg is not None
+                    else {}
+                )
                 if _object_map is not None:
-                    _rand_dict["_object_map"] = OmegaConf.to_container(_object_map, resolve=True)
+                    _rand_dict["_object_map"] = OmegaConf.to_container(
+                        _object_map, resolve=True
+                    )
                 _rand_json = _json.dumps(_rand_dict)
             except Exception:
                 pass
         _init_qpos = getattr(self.cfg.init_params, "init_qpos", None)
-        _init_qpos_json = _json.dumps([float(v) for v in _init_qpos]) if _init_qpos is not None else ""
+        _init_qpos_json = (
+            _json.dumps([float(v) for v in _init_qpos])
+            if _init_qpos is not None
+            else ""
+        )
         _reset_ee_r = getattr(self.cfg.init_params, "reset_ee_r", None)
-        _reset_ee_r_json = _json.dumps(list(_reset_ee_r)) if _reset_ee_r is not None else ""
+        _reset_ee_r_json = (
+            _json.dumps(list(_reset_ee_r)) if _reset_ee_r is not None else ""
+        )
         p = self.cfg.init_params
         resolved_cameras = self._resolve_cameras(p)
         return GenieSimVectorEnvConfig(
@@ -136,8 +149,12 @@ class GenieSimBaseEnv(gym.Env):
             num_envs=self.num_envs,
             max_episode_steps=self.cfg.max_episode_steps,
             cameras=resolved_cameras,
-            cam_width=resolved_cameras[0].get("width", 640) if resolved_cameras else getattr(p, "cam_width", 640),
-            cam_height=resolved_cameras[0].get("height", 480) if resolved_cameras else getattr(p, "cam_height", 480),
+            cam_width=resolved_cameras[0].get("width", 640)
+            if resolved_cameras
+            else getattr(p, "cam_width", 640),
+            cam_height=resolved_cameras[0].get("height", 480)
+            if resolved_cameras
+            else getattr(p, "cam_height", 480),
             main_cam_prim=getattr(p, "main_cam_prim", "/camera_main"),
             wrist_cam_prim=getattr(p, "wrist_cam_prim", ""),
             enable_reward=getattr(self.cfg, "enable_reward", True),
@@ -176,6 +193,7 @@ class GenieSimBaseEnv(gym.Env):
         if raw is not None:
             try:
                 from omegaconf import OmegaConf
+
                 return [dict(c) for c in OmegaConf.to_container(raw, resolve=True)]
             except Exception:
                 return list(raw)
@@ -188,14 +206,16 @@ class GenieSimBaseEnv(gym.Env):
         wrist_prim = getattr(params, "wrist_cam_prim", "")
         if wrist_prim:
             cams.append({"name": "wrist", "prim": wrist_prim, "width": w, "height": h})
-        return cams or [{"name": "main", "prim": "/camera_main", "width": 640, "height": 480}]
+        return cams or [
+            {"name": "main", "prim": "/camera_main", "width": 640, "height": 480}
+        ]
 
-    def _wrap_obs(self, obs_dict: Dict) -> Dict:
+    def _wrap_obs(self, obs_dict: dict) -> dict:
         states = obs_dict["states"]
         task_descriptions = obs_dict["task_descriptions"]
         states = self._extract_states(states)
 
-        result: Dict = {
+        result: dict = {
             "states": torch.from_numpy(states),
             "task_descriptions": task_descriptions,
         }
@@ -226,7 +246,7 @@ class GenieSimBaseEnv(gym.Env):
         result = self._extract_images(result)
         return result
 
-    def _extract_images(self, obs_dict: Dict) -> Dict:
+    def _extract_images(self, obs_dict: dict) -> dict:
         return obs_dict
 
     def _extract_states(self, states: np.ndarray) -> np.ndarray:
@@ -244,7 +264,7 @@ class GenieSimBaseEnv(gym.Env):
         seed: Optional[int] = None,
         env_ids: Optional[np.ndarray] = None,
         **kwargs,
-    ) -> Tuple[Dict, Dict]:
+    ) -> tuple[dict, dict]:
         env_idx = env_ids.tolist() if env_ids is not None else None
         raw_obs, raw_infos = self.env.reset(env_idx=env_idx)
         obs = self._wrap_obs(raw_obs)
@@ -255,7 +275,7 @@ class GenieSimBaseEnv(gym.Env):
         self,
         actions,
         auto_reset: bool = True,
-    ) -> Tuple[Dict, torch.Tensor, torch.Tensor, torch.Tensor, Dict]:
+    ) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         """Execute one environment step.
 
         Subclass reward-computation pitfall
@@ -314,16 +334,14 @@ class GenieSimBaseEnv(gym.Env):
 
         _do_auto_reset = auto_reset and self.auto_reset
         if dones.any() and _do_auto_reset:
-            obs, infos = self._handle_auto_reset(
-                torch.from_numpy(dones), obs, infos
-            )
+            obs, infos = self._handle_auto_reset(torch.from_numpy(dones), obs, infos)
 
         return obs, rewards_t, terminated_t, truncated_t, infos
 
     def _compute_task_reward(
         self,
-        obs: Dict,
-        infos: Dict,
+        obs: dict,
+        infos: dict,
         sim_rewards: torch.Tensor,
         terminated: torch.Tensor,
         truncated: torch.Tensor,
@@ -342,11 +360,9 @@ class GenieSimBaseEnv(gym.Env):
         """
         return None
 
-    def chunk_step(self, chunk_actions) -> Tuple:
+    def chunk_step(self, chunk_actions) -> tuple:
         if not isinstance(chunk_actions, torch.Tensor):
-            chunk_actions = torch.as_tensor(
-                np.asarray(chunk_actions, dtype=np.float32)
-            )
+            chunk_actions = torch.as_tensor(np.asarray(chunk_actions, dtype=np.float32))
 
         if chunk_actions.ndim == 2:
             chunk_actions = chunk_actions.unsqueeze(1)
@@ -374,7 +390,13 @@ class GenieSimBaseEnv(gym.Env):
         chunk_terminations_t = torch.stack(terminated_list, dim=1)
         chunk_truncations_t = torch.stack(truncated_list, dim=1)
 
-        return obs_list, chunk_rewards_t, chunk_terminations_t, chunk_truncations_t, infos_list
+        return (
+            obs_list,
+            chunk_rewards_t,
+            chunk_terminations_t,
+            chunk_truncations_t,
+            infos_list,
+        )
 
     def close(self):
         self.env.close()
@@ -391,7 +413,7 @@ class GenieSimBaseEnv(gym.Env):
 
     def _reset_metrics(self, env_idx=None):
         if env_idx is not None:
-            for i in (env_idx if hasattr(env_idx, "__iter__") else [env_idx]):
+            for i in env_idx if hasattr(env_idx, "__iter__") else [env_idx]:
                 self._prev_step_reward[i] = 0.0
                 self.success_once[i] = False
                 self.fail_once[i] = False
@@ -405,10 +427,10 @@ class GenieSimBaseEnv(gym.Env):
             self._elapsed_steps[:] = 0
 
     def _record_metrics(
-        self, step_reward: torch.Tensor, terminations: torch.Tensor, infos: Dict
-    ) -> Dict:
+        self, step_reward: torch.Tensor, terminations: torch.Tensor, infos: dict
+    ) -> dict:
         self.returns += step_reward.numpy()
-        self.success_once |= (step_reward.numpy() > 0)
+        self.success_once |= step_reward.numpy() > 0
         episode_info = {
             "success_once": torch.from_numpy(self.success_once.copy()),
             "return": torch.from_numpy(self.returns.copy()),
@@ -425,8 +447,8 @@ class GenieSimBaseEnv(gym.Env):
         return infos
 
     def _handle_auto_reset(
-        self, dones: torch.Tensor, final_obs: Dict, infos: Dict
-    ) -> Tuple[Dict, Dict]:
+        self, dones: torch.Tensor, final_obs: dict, infos: dict
+    ) -> tuple[dict, dict]:
         _final_obs = copy.deepcopy(final_obs)
         _final_info = copy.deepcopy(infos)
         env_idx = torch.where(dones)[0].numpy().tolist()

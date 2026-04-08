@@ -14,11 +14,14 @@
 
 REGISTER_GENIESIM_ENVS = {}
 
+
 def register_geniesim_env(task_id: str):
     """Decorator to register a GenieSimEnv subclass under a task ID."""
+
     def _register(cls):
         REGISTER_GENIESIM_ENVS[task_id] = cls
         return cls
+
     return _register
 
 

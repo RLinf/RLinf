@@ -30,15 +30,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 
-import logging
-
-from rlinf.envs.geniesim.sim_manager_base import BaseSimManager, SimStartupError
+from rlinf.envs.geniesim.sim_manager_base import BaseSimManager
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +71,9 @@ class SimProcessManager(BaseSimManager):
             ros_domain_id=int(getattr(container_cfg, "ros_domain_id", 0)),
         )
         _rws = getattr(container_cfg, "ros_ws_install", None)
-        self.ros_ws_install: str = str(_rws) if _rws else "/geniesim/ros_ws_build/install"
+        self.ros_ws_install: str = (
+            str(_rws) if _rws else "/geniesim/ros_ws_build/install"
+        )
 
         self._local_proc: Optional[subprocess.Popen] = None
         self._log_path = geniesim_root / "sim_server_local.log"
@@ -81,7 +82,7 @@ class SimProcessManager(BaseSimManager):
     # Public API
     # ---------------------------------------------------------------------- #
 
-    def ensure_running(self, pm_kwargs: Dict) -> None:
+    def ensure_running(self, pm_kwargs: dict) -> None:
         """
         Ensure sim_server.py is running and ready.
 
@@ -104,7 +105,9 @@ class SimProcessManager(BaseSimManager):
                 )
             elif self._idle_file.exists():
                 if self._local_proc is not None and self._local_proc.poll() is None:
-                    logger.info("Local sim_server is idle — restarting sim processes...")
+                    logger.info(
+                        "Local sim_server is idle — restarting sim processes..."
+                    )
                     self._cleanup_stale_shm(shm_name)
                     self._cleanup_stale_ctrl_shms(shm_name)
                     self._cleanup_stale_step_shm(shm_name)
@@ -162,7 +165,9 @@ class SimProcessManager(BaseSimManager):
         If keep_alive=False: terminate the subprocess and clean up.
         """
         if self.keep_alive:
-            proc_alive = self._local_proc is not None and self._local_proc.poll() is None
+            proc_alive = (
+                self._local_proc is not None and self._local_proc.poll() is None
+            )
             sim_active = self._ready_file.exists() or proc_alive
             if not sim_active or self._idle_file.exists():
                 return
@@ -176,7 +181,9 @@ class SimProcessManager(BaseSimManager):
                     logger.info("Local sim processes stopped.")
                     return
                 time.sleep(0.5)
-            logger.warning("Local sim processes may not have stopped cleanly (60 s timeout).")
+            logger.warning(
+                "Local sim processes may not have stopped cleanly (60 s timeout)."
+            )
             return
 
         logger.info("Shutting down local sim_server.py...")
@@ -202,7 +209,7 @@ class SimProcessManager(BaseSimManager):
         except OSError:
             return ""
 
-    def _check_alive(self) -> Tuple[bool, str]:
+    def _check_alive(self) -> tuple[bool, str]:
         if self._local_proc is not None and self._local_proc.poll() is not None:
             return (
                 False,
@@ -213,22 +220,24 @@ class SimProcessManager(BaseSimManager):
 
     def _classify_failure(self) -> str:
         logs = self._get_log_tail(tail=200)
-        return self._scan_logs_for_failure(logs, f"Last sim_server_local.log")
+        return self._scan_logs_for_failure(logs, "Last sim_server_local.log")
 
     def _error_hint(self) -> str:
-        return (
-            f"Check sim_server_local.log:\n"
-            f"  cat {self._log_path} | tail -50"
-        )
+        return f"Check sim_server_local.log:\n  cat {self._log_path} | tail -50"
 
     # ---------------------------------------------------------------------- #
     # Internal helpers
     # ---------------------------------------------------------------------- #
 
-    def _launch(self, pm_kwargs: Dict) -> None:
+    def _launch(self, pm_kwargs: dict) -> None:
         """Spawn sim_server.py as a subprocess with the correct environment."""
         sim_server_path = (
-            self.geniesim_root / "source" / "geniesim" / "rl" / "scripts" / "sim_server.py"
+            self.geniesim_root
+            / "source"
+            / "geniesim"
+            / "rl"
+            / "scripts"
+            / "sim_server.py"
         )
 
         # Source ROS + colcon workspace, then exec sim_server.py.
@@ -249,15 +258,16 @@ class SimProcessManager(BaseSimManager):
         env.pop("VIRTUAL_ENV_PROMPT", None)
         if _venv:
             env["PATH"] = ":".join(
-                p for p in env.get("PATH", "").split(":")
-                if not p.startswith(_venv)
+                p for p in env.get("PATH", "").split(":") if not p.startswith(_venv)
             )
-        env.update({
-            "SIM_REPO_ROOT":           str(self.geniesim_root),
-            "ROS_DOMAIN_ID":           str(self.ros_domain_id),
-            "ROS_LOCALHOST_ONLY":      "1",
-            "GENIESIM_ROS_WS_INSTALL": self.ros_ws_install,
-        })
+        env.update(
+            {
+                "SIM_REPO_ROOT": str(self.geniesim_root),
+                "ROS_DOMAIN_ID": str(self.ros_domain_id),
+                "ROS_LOCALHOST_ONLY": "1",
+                "GENIESIM_ROS_WS_INSTALL": self.ros_ws_install,
+            }
+        )
 
         logger.info(
             "Starting local sim_server.py\n"
@@ -265,7 +275,10 @@ class SimProcessManager(BaseSimManager):
             "  geniesim_root : %s\n"
             "  ros_ws_install: %s\n"
             "  log           : %s",
-            sim_server_path, self.geniesim_root, self.ros_ws_install, self._log_path,
+            sim_server_path,
+            self.geniesim_root,
+            self.ros_ws_install,
+            self._log_path,
         )
 
         # pylint: disable=consider-using-with
@@ -289,7 +302,7 @@ class SimProcessManager(BaseSimManager):
         if self._idle_file.exists() or self._ready_file.exists():
             return
 
-        killed: List[int] = []
+        killed: list[int] = []
         for entry in Path("/proc").iterdir():
             if not entry.name.isdigit():
                 continue
@@ -297,8 +310,11 @@ class SimProcessManager(BaseSimManager):
             if pid <= 1 or pid == os.getpid():
                 continue
             try:
-                cmdline = (entry / "cmdline").read_bytes().replace(b"\x00", b" ").decode(
-                    errors="replace"
+                cmdline = (
+                    (entry / "cmdline")
+                    .read_bytes()
+                    .replace(b"\x00", b" ")
+                    .decode(errors="replace")
                 )
             except OSError:
                 continue
@@ -312,11 +328,13 @@ class SimProcessManager(BaseSimManager):
                     logger.warning(
                         "Cannot kill orphan sim_server pid=%d (permission denied) "
                         "— run `sudo kill -9 %d`",
-                        pid, pid,
+                        pid,
+                        pid,
                     )
         if killed:
             logger.info(
                 "Killed %d orphan sim_server.py process(es): %s",
-                len(killed), killed,
+                len(killed),
+                killed,
             )
             time.sleep(0.5)

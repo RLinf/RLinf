@@ -41,10 +41,8 @@ import os
 import sys
 import time
 
-import numpy as np
 import torch
 from omegaconf import OmegaConf, open_dict
-
 
 # ---------------------------------------------------------------------------
 # Resolve the RLinf repo root so that `rlinf.*` is importable when the script
@@ -65,6 +63,7 @@ if "GENIESIM_ROOT" not in os.environ:
 # ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
+
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -123,6 +122,7 @@ def _build_parser() -> argparse.ArgumentParser:
 # Main collection loop
 # ---------------------------------------------------------------------------
 
+
 def main():
     args = _build_parser().parse_args()
 
@@ -154,8 +154,10 @@ def main():
         )
 
     EnvCls = REGISTER_GENIESIM_ENVS[task_id]
-    print(f"[collect_sim_data] Creating {EnvCls.__name__} "
-          f"(num_envs={args.num_envs}, task={task_id})")
+    print(
+        f"[collect_sim_data] Creating {EnvCls.__name__} "
+        f"(num_envs={args.num_envs}, task={task_id})"
+    )
 
     base_env = EnvCls(
         cfg,
@@ -212,7 +214,7 @@ def main():
         rank=0,
         num_envs=args.num_envs,
         export_format=args.export_format,
-        only_success=True,   # only save episodes ended via left-button (place_workpiece)
+        only_success=True,  # only save episodes ended via left-button (place_workpiece)
     )
     atexit.register(env.close)
 

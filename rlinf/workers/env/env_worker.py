@@ -184,6 +184,7 @@ class EnvWorker(Worker):
                 from rlinf.envs.realworld.common.spacemouse.spacemouse_expert import (
                     SpaceMouseExpert,
                 )
+
                 expert = SpaceMouseExpert()
 
                 env = SpacemouseSimIntervention(
@@ -378,13 +379,19 @@ class EnvWorker(Worker):
                 final_info = infos["final_info"]
                 if "episode" in final_info:
                     for key in final_info["episode"]:
-                        env_info[key] = final_info["episode"][key][chunk_dones[:, -1]].cpu()
+                        env_info[key] = final_info["episode"][key][
+                            chunk_dones[:, -1]
+                        ].cpu()
 
         intervene_actions = (
             infos["intervene_action"] if "intervene_action" in infos else None
         )
         intervene_flags = infos["intervene_flag"] if "intervene_flag" in infos else None
-        if self.cfg.env.train.auto_reset and chunk_dones.any() and "final_info" in infos:
+        if (
+            self.cfg.env.train.auto_reset
+            and chunk_dones.any()
+            and "final_info" in infos
+        ):
             if "intervene_action" in infos["final_info"]:
                 intervene_actions = infos["final_info"]["intervene_action"]
                 intervene_flags = infos["final_info"]["intervene_flag"]

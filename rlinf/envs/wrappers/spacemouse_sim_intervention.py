@@ -55,20 +55,20 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import torch
-
 
 # ---------------------------------------------------------------------------
 # SpaceMouse expert interfaces
 # ---------------------------------------------------------------------------
 
+
 class SpaceMouseExpertBase:
     """Abstract base for SpaceMouse-like experts."""
 
-    def get_action(self) -> Tuple[np.ndarray, list]:
+    def get_action(self) -> tuple[np.ndarray, list]:
         """Return (action[6], buttons[2]).
 
         action: [dx, dy, dz, droll, dpitch, dyaw] — unit-ish values in
@@ -84,6 +84,7 @@ class SpaceMouseExpertBase:
 # ---------------------------------------------------------------------------
 # Main wrapper
 # ---------------------------------------------------------------------------
+
 
 class SpacemouseSimIntervention:
     """Wraps a vectorized GenieSimEnv to inject SpaceMouse teleoperation.
@@ -121,8 +122,8 @@ class SpacemouseSimIntervention:
     When the SpaceMouse is active (non-zero motion or relevant buttons), the
     wrapper writes::
 
-        info["intervene_action"] = actions[intervention_env_id]   # tensor
-        info["intervene_flag"]   = torch.ones(1, dtype=torch.bool)
+        info["intervene_action"] = actions[intervention_env_id]  # tensor
+        info["intervene_flag"] = torch.ones(1, dtype=torch.bool)
 
     CollectEpisode's LeRobot writer uses these fields to replace the
     policy action with the expert action when saving demos.
@@ -162,14 +163,14 @@ class SpacemouseSimIntervention:
         button_mode: str = "legacy",
         *,
         action_dim: int = 14,
-        r_pos_action: slice = None,
-        r_rot_action: slice = None,
-        r_grip_action: int = None,
-        s_r_ee_pos: slice = None,
-        s_r_ee_rot: slice = None,
-        s_l_ee_pos: slice = None,
-        s_l_ee_rot: slice = None,
-        action_rescale: tuple = None,
+        r_pos_action: slice | None = None,
+        r_rot_action: slice | None = None,
+        r_grip_action: int | None = None,
+        s_r_ee_pos: slice | None = None,
+        s_r_ee_rot: slice | None = None,
+        s_l_ee_pos: slice | None = None,
+        s_l_ee_rot: slice | None = None,
+        action_rescale: tuple | None = None,
     ):
         self.env = env
         self.expert = expert
@@ -208,14 +209,14 @@ class SpacemouseSimIntervention:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _init_target_from_obs(self, obs: Dict[str, Any]) -> None:
+    def _init_target_from_obs(self, obs: dict[str, Any]) -> None:
         self._gripper_state = 0.0
 
     # ------------------------------------------------------------------
     # gym-compatible interface
     # ------------------------------------------------------------------
 
-    def reset(self, **kwargs) -> Tuple[Dict, Dict]:
+    def reset(self, **kwargs) -> tuple[dict, dict]:
         obs, info = self.env.reset(**kwargs)
         self._init_target_from_obs(obs)
         self._last_intervene_time = 0.0
@@ -228,7 +229,7 @@ class SpacemouseSimIntervention:
         self,
         actions,
         **kwargs,
-    ) -> Tuple[Dict, Any, Any, Any, Dict]:
+    ) -> tuple[dict, Any, Any, Any, dict]:
         """Inject SpaceMouse action for env_0, pass others through unchanged."""
         if isinstance(actions, torch.Tensor):
             actions = actions.clone().float()
@@ -265,13 +266,19 @@ class SpacemouseSimIntervention:
         if has_motion:
             sm_delta[3], sm_delta[4] = sm_delta[4], -sm_delta[3]
             from rlinf.envs.geniesim.tasks.place_workpiece import (
-                _POS_SCALE, _RPY_SCALE,
+                _POS_SCALE,
+                _RPY_SCALE,
             )
+
             delta_action[self._R_POS] = np.clip(
-                sm_delta[:3] * self.action_scale / _POS_SCALE, -1.0, 1.0,
+                sm_delta[:3] * self.action_scale / _POS_SCALE,
+                -1.0,
+                1.0,
             )
             delta_action[self._R_ROT] = np.clip(
-                sm_delta[3:] * self.rotation_scale / _RPY_SCALE, -1.0, 1.0,
+                sm_delta[3:] * self.rotation_scale / _RPY_SCALE,
+                -1.0,
+                1.0,
             )
 
         if self.button_mode == "legacy" and left_btn:
@@ -294,9 +301,7 @@ class SpacemouseSimIntervention:
                 actions[eid, i] = float(delta_action[i])
 
         if self.button_mode == "training":
-            obs, reward, terminated, truncated, info = self.env.step(
-                actions, **kwargs
-            )
+            obs, reward, terminated, truncated, info = self.env.step(actions, **kwargs)
         else:
             obs, reward, terminated, truncated, info = self.env.step(
                 actions, auto_reset=False, **kwargs
@@ -304,8 +309,11 @@ class SpacemouseSimIntervention:
 
         if self.button_mode == "place_workpiece":
             if left_btn or right_btn:
-                terminated = terminated.clone() if isinstance(terminated, torch.Tensor) \
+                terminated = (
+                    terminated.clone()
+                    if isinstance(terminated, torch.Tensor)
                     else torch.tensor(np.array(terminated))
+                )
                 terminated[eid] = True
                 success = bool(left_btn)
                 info["success"] = success
@@ -316,8 +324,11 @@ class SpacemouseSimIntervention:
                         sc[eid] = True
                         info["episode"]["success_once"] = sc
         elif self.button_mode == "legacy" and right_btn:
-            terminated = terminated.clone() if isinstance(terminated, torch.Tensor) \
+            terminated = (
+                terminated.clone()
+                if isinstance(terminated, torch.Tensor)
                 else torch.tensor(np.array(terminated))
+            )
             terminated[eid] = True
             info["success"] = True
             if "episode" in info and isinstance(info["episode"], dict):
@@ -341,8 +352,12 @@ class SpacemouseSimIntervention:
                 info["intervene_flag"] = torch.ones(1, dtype=torch.bool)
 
         if self.button_mode == "training":
-            dones = (terminated | truncated) if isinstance(terminated, torch.Tensor) \
-                else torch.tensor(np.array(terminated)) | torch.tensor(np.array(truncated))
+            dones = (
+                (terminated | truncated)
+                if isinstance(terminated, torch.Tensor)
+                else torch.tensor(np.array(terminated))
+                | torch.tensor(np.array(truncated))
+            )
             if dones[eid]:
                 self._init_target_from_obs(obs)
                 self.expert.on_episode_reset()
@@ -352,11 +367,9 @@ class SpacemouseSimIntervention:
 
         return obs, reward, terminated, truncated, info
 
-    def chunk_step(self, chunk_actions) -> Tuple:
+    def chunk_step(self, chunk_actions) -> tuple:
         if not isinstance(chunk_actions, torch.Tensor):
-            chunk_actions = torch.as_tensor(
-                np.asarray(chunk_actions, dtype=np.float32)
-            )
+            chunk_actions = torch.as_tensor(np.asarray(chunk_actions, dtype=np.float32))
 
         if chunk_actions.ndim == 2:
             chunk_actions = chunk_actions.unsqueeze(1)
@@ -372,7 +385,7 @@ class SpacemouseSimIntervention:
         for i in range(num_action_chunks):
             act = chunk_actions[:, i, :]
             obs, rewards, terminated, truncated, infos = self.step(
-                act, auto_reset=getattr(self.env, 'auto_reset', True)
+                act, auto_reset=getattr(self.env, "auto_reset", True)
             )
             obs_list.append(obs)
             rewards_list.append(rewards)
@@ -384,7 +397,13 @@ class SpacemouseSimIntervention:
         chunk_terminations_t = torch.stack(terminated_list, dim=1)
         chunk_truncations_t = torch.stack(truncated_list, dim=1)
 
-        return obs_list, chunk_rewards_t, chunk_terminations_t, chunk_truncations_t, infos_list
+        return (
+            obs_list,
+            chunk_rewards_t,
+            chunk_terminations_t,
+            chunk_truncations_t,
+            infos_list,
+        )
 
     def close(self):
         return self.env.close()

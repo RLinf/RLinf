@@ -36,10 +36,10 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-logger = logging.getLogger(__name__)
-
 from rlinf.envs.geniesim import register_geniesim_env
 from rlinf.envs.geniesim.geniesim_env import GenieSimBaseEnv
+
+logger = logging.getLogger(__name__)
 
 _EE_L_RESET_POS = np.array([0.3407, 0.2927, 0.5810], dtype=np.float32)
 _EE_L_RESET_RPY = np.array([3.0708, 0.4881, 3.1416], dtype=np.float32)
@@ -52,15 +52,19 @@ _RPY_SCALE = np.float32(0.05)
 _POS_HALF_RANGE = 0.15
 _RPY_HALF_RANGE = 0.2
 
-_SAFETY_LOW = np.concatenate([
-    _EE_R_RESET_POS - _POS_HALF_RANGE,
-    _EE_R_RESET_RPY - _RPY_HALF_RANGE,
-]).astype(np.float32)
+_SAFETY_LOW = np.concatenate(
+    [
+        _EE_R_RESET_POS - _POS_HALF_RANGE,
+        _EE_R_RESET_RPY - _RPY_HALF_RANGE,
+    ]
+).astype(np.float32)
 
-_SAFETY_HIGH = np.concatenate([
-    _EE_R_RESET_POS + _POS_HALF_RANGE,
-    _EE_R_RESET_RPY + _RPY_HALF_RANGE,
-]).astype(np.float32)
+_SAFETY_HIGH = np.concatenate(
+    [
+        _EE_R_RESET_POS + _POS_HALF_RANGE,
+        _EE_R_RESET_RPY + _RPY_HALF_RANGE,
+    ]
+).astype(np.float32)
 
 # Full-SHM state layout (52-dim):
 #   [0:7]   arm_l joint pos      [7:14]  arm_r joint pos
@@ -121,14 +125,14 @@ class PlaceWorkpieceEnv(GenieSimBaseEnv):
     Safety box: ±0.15 m (xyz), ±0.2 rad (rpy) around reset EE pose.
     """
 
-    spacemouse_wrapper_kwargs = dict(
-        action_dim=7,
-        r_pos_action=slice(0, 3),
-        r_rot_action=slice(3, 6),
-        r_grip_action=6,
-        s_r_ee_pos=slice(0, 3),
-        s_r_ee_rot=slice(3, 6),
-    )
+    spacemouse_wrapper_kwargs = {
+        "action_dim": 7,
+        "r_pos_action": slice(0, 3),
+        "r_rot_action": slice(3, 6),
+        "r_grip_action": 6,
+        "s_r_ee_pos": slice(0, 3),
+        "s_r_ee_rot": slice(3, 6),
+    }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -139,7 +143,8 @@ class PlaceWorkpieceEnv(GenieSimBaseEnv):
         self._prev_ee_pos = None
         self._custom_returns = np.zeros(self.num_envs, dtype=np.float32)
         self._last_extracted_states = np.zeros(
-            (self.num_envs, len(_STATE_INDICES)), dtype=np.float32,
+            (self.num_envs, len(_STATE_INDICES)),
+            dtype=np.float32,
         )
         self._ee_target = np.tile(
             np.concatenate([_EE_R_RESET_POS, _EE_R_RESET_RPY]),
@@ -154,7 +159,7 @@ class PlaceWorkpieceEnv(GenieSimBaseEnv):
         _, _, H, W = img.shape
         y0 = (H - crop_h) // 2
         x0 = (W - crop_w) // 2
-        return img[:, :, y0:y0 + crop_h, x0:x0 + crop_w]
+        return img[:, :, y0 : y0 + crop_h, x0 : x0 + crop_w]
 
     def _extract_images(self, obs_dict: dict) -> dict:
         main = obs_dict.get("main_images")
@@ -163,7 +168,12 @@ class PlaceWorkpieceEnv(GenieSimBaseEnv):
                 main = main[:, 0]
             main = main.permute(0, 3, 1, 2).float()
             main = self._center_crop(main, self._CROP_SIZE, self._CROP_SIZE)
-            main = F.interpolate(main, size=(self._OUT_SIZE, self._OUT_SIZE), mode="bilinear", align_corners=False)
+            main = F.interpolate(
+                main,
+                size=(self._OUT_SIZE, self._OUT_SIZE),
+                mode="bilinear",
+                align_corners=False,
+            )
             main = main.permute(0, 2, 3, 1).to(torch.uint8)
             obs_dict["main_images"] = main
         extra = obs_dict.get("extra_view_images")
@@ -171,9 +181,16 @@ class PlaceWorkpieceEnv(GenieSimBaseEnv):
             B, N, H, W, C = extra.shape
             flat = extra.reshape(B * N, H, W, C).permute(0, 3, 1, 2).float()
             flat = self._center_crop(flat, self._CROP_SIZE, self._CROP_SIZE)
-            flat = F.interpolate(flat, size=(self._OUT_SIZE, self._OUT_SIZE), mode="bilinear", align_corners=False)
+            flat = F.interpolate(
+                flat,
+                size=(self._OUT_SIZE, self._OUT_SIZE),
+                mode="bilinear",
+                align_corners=False,
+            )
             flat = flat.permute(0, 2, 3, 1).to(torch.uint8)
-            obs_dict["extra_view_images"] = flat.reshape(B, N, self._OUT_SIZE, self._OUT_SIZE, C)
+            obs_dict["extra_view_images"] = flat.reshape(
+                B, N, self._OUT_SIZE, self._OUT_SIZE, C
+            )
         return obs_dict
 
     def _extract_states(self, states: np.ndarray) -> np.ndarray:
@@ -255,9 +272,7 @@ class PlaceWorkpieceEnv(GenieSimBaseEnv):
         self._custom_returns += rewards.numpy()
 
         if "episode" in infos:
-            infos["episode"]["return"] = torch.from_numpy(
-                self._custom_returns.copy()
-            )
+            infos["episode"]["return"] = torch.from_numpy(self._custom_returns.copy())
             infos["episode"]["reward"] = torch.from_numpy(
                 np.where(
                     self._elapsed_steps > 0,
@@ -300,7 +315,9 @@ class PlaceWorkpieceEnv(GenieSimBaseEnv):
         ee_pos_np = ee_pos_t.detach().cpu().numpy()
         if self._prev_ee_pos is not None:
             ee_displacement = np.linalg.norm(ee_pos_np - self._prev_ee_pos, axis=-1)
-            not_near_target = (self._last_dist_xy > _XY_TOLERANCE).numpy() | (self._last_dist_z.abs() > _Z_TOLERANCE).numpy()
+            not_near_target = (self._last_dist_xy > _XY_TOLERANCE).numpy() | (
+                self._last_dist_z.abs() > _Z_TOLERANCE
+            ).numpy()
             idle_inc = (ee_displacement < _IDLE_DIST_THRESH) & not_near_target
             self._idle_counter[idle_inc] += 1
             self._idle_counter[~idle_inc] = 0
@@ -337,20 +354,28 @@ class PlaceWorkpieceEnv(GenieSimBaseEnv):
                     "[TERM] env_%d (step %d): %s | "
                     "r_alive=%.4f r_below=%.4f r_success=%.4f "
                     "d3d=%.4f dxy=%.4f dz=%.4f odiff=%.4f",
-                    i, self._step_counter[i], ", ".join(reasons),
-                    rd["r_alive"][i], rd["r_below"][i], rd["r_success"][i],
-                    rd["dist_3d"][i], rd["dist_xy"][i],
-                    rd["diff_z"][i], rd["orient_diff"][i],
+                    i,
+                    self._step_counter[i],
+                    ", ".join(reasons),
+                    rd["r_alive"][i],
+                    rd["r_below"][i],
+                    rd["r_success"][i],
+                    rd["dist_3d"][i],
+                    rd["dist_xy"][i],
+                    rd["diff_z"][i],
+                    rd["orient_diff"][i],
                 )
 
         terminated = terminated | term
 
-        fail_term = term & ~success_mask
+        fail_term = term & ~success_mask  # noqa: F841
         rewards[success_mask & term] = 5.0
 
         done = terminated | truncated
         if done.any():
-            done_np = done.numpy() if isinstance(done, torch.Tensor) else np.asarray(done)
+            done_np = (
+                done.numpy() if isinstance(done, torch.Tensor) else np.asarray(done)
+            )
             self._step_counter[done_np] = 0
             self._still_counter[done_np] = 0
             self._idle_counter[done_np] = 0
@@ -393,7 +418,7 @@ class PlaceWorkpieceEnv(GenieSimBaseEnv):
 
         dist_xy = torch.linalg.norm(rel_pos[:, :2] - target_xy, dim=-1)
         diff_z = rel_pos[:, 2] - target_z
-        dist_3d = torch.sqrt(dist_xy ** 2 + diff_z ** 2)
+        dist_3d = torch.sqrt(dist_xy**2 + diff_z**2)
 
         orient_diff = _quat_angle_diff(wp_quat, target_quat)
 
@@ -419,7 +444,7 @@ class PlaceWorkpieceEnv(GenieSimBaseEnv):
             else:
                 self._still_counter[i] = 0
 
-        success = torch.from_numpy(self._still_counter >= _STILL_STEPS_REQUIRED)
+        success = torch.from_numpy(self._still_counter >= _STILL_STEPS_REQUIRED)  # noqa: F841
         just_succeeded = torch.from_numpy(self._still_counter == _STILL_STEPS_REQUIRED)
         r_success = torch.where(just_succeeded, 10.0, 0.0)
 

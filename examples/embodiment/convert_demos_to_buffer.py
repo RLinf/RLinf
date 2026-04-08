@@ -46,7 +46,6 @@ import json
 import os
 import pickle
 import sys
-import uuid
 
 import numpy as np
 import torch
@@ -58,7 +57,6 @@ if _RLINF_ROOT not in sys.path:
     sys.path.insert(0, _RLINF_ROOT)
 
 from rlinf.data.embodied_io_struct import Trajectory  # noqa: E402
-
 
 # ──────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -117,19 +115,21 @@ def _recompute_rewards(ep: dict) -> torch.Tensor:
         rel = wp_pos - ws_pos
         dxy = np.linalg.norm(rel[:2] - tgt[:2])
         dz = rel[2] - tgt[2]
-        d3d = np.sqrt(dxy ** 2 + dz ** 2)
+        d3d = np.sqrt(dxy**2 + dz**2)
         odiff = _quat_angle_diff_scalar(wp_q, tgt_q)
         r_alive = 5.0 * float(np.exp(-10.0 * d3d) * np.exp(-5.0 * odiff))
         r_approach = 0.0
         r_orient_approach = 0.0
-        prev_d3d = d3d
-        prev_odiff = odiff
+        prev_d3d = d3d  # noqa: F841
+        prev_odiff = odiff  # noqa: F841
         st = obs_list[t]["states"]
         if isinstance(st, torch.Tensor):
             st = st.numpy()
         st = np.asarray(st, dtype=np.float32)
-        ee_vel = st[46:49] if len(st) >= 52 else (st[6:9] if len(st) >= 12 else np.zeros(3))
-        excess = max(0.0, float(np.linalg.norm(ee_vel)) - _REWARD_EE_SPEED_THRESH)
+        ee_vel = (
+            st[46:49] if len(st) >= 52 else (st[6:9] if len(st) >= 12 else np.zeros(3))
+        )
+        excess = max(0.0, float(np.linalg.norm(ee_vel)) - _REWARD_EE_SPEED_THRESH)  # noqa: F841
         r_speed = 0.0
         overshoot = max(0.0, -dz - 0.01)
         r_below = -20.0 * overshoot
@@ -138,7 +138,11 @@ def _recompute_rewards(ep: dict) -> torch.Tensor:
         else:
             wp_spd = 0.0
         prev_wp = wp_pos.copy()
-        near = dxy < _REWARD_XY_TOL and abs(dz) < _REWARD_Z_TOL and odiff < _REWARD_ORIENT_TOL
+        near = (
+            dxy < _REWARD_XY_TOL
+            and abs(dz) < _REWARD_Z_TOL
+            and odiff < _REWARD_ORIENT_TOL
+        )
         still = wp_spd < _REWARD_STILL_SPEED
         if near and still:
             still_cnt += 1
@@ -148,7 +152,9 @@ def _recompute_rewards(ep: dict) -> torch.Tensor:
             r_succ = 10.0
         else:
             r_succ = 0.0
-        rewards.append(r_alive + r_approach + r_orient_approach + r_speed + r_below + r_succ)
+        rewards.append(
+            r_alive + r_approach + r_orient_approach + r_speed + r_below + r_succ
+        )
     return torch.tensor(rewards, dtype=torch.float32)
 
 
@@ -158,20 +164,25 @@ def _to_bool_tensor(x) -> torch.Tensor:
     return torch.tensor(bool(x))
 
 
-def _demo_to_trajectory(ep: dict, include_images: bool,
-                         placeholder_reward: float | None,
-                         recompute_reward: bool = False) -> Trajectory:
+def _demo_to_trajectory(
+    ep: dict,
+    include_images: bool,
+    placeholder_reward: float | None,
+    recompute_reward: bool = False,
+) -> Trajectory:
     """Convert a single demo episode dict to a Trajectory object.
 
     Shape convention used by TrajectoryReplayBuffer: [T, B, ...] where B=1.
     curr_obs[t] is the obs before step t; next_obs[t] is the obs after step t.
     """
-    obs_list = ep["observations"]   # length T+1 if final obs present, else T
-    act_list = ep["actions"]        # length T
+    obs_list = ep["observations"]  # length T+1 if final obs present, else T
+    act_list = ep["actions"]  # length T
     rew_list = ep["rewards"]
     term_list = ep["terminated"]
     trunc_list = ep["truncated"]
-    infos_list = ep.get("infos", [])  # per-step info dicts (may contain intervene_action)
+    infos_list = ep.get(
+        "infos", []
+    )  # per-step info dicts (may contain intervene_action)
 
     T = len(act_list)
 
@@ -184,18 +195,23 @@ def _demo_to_trajectory(ep: dict, include_images: bool,
         info_t = infos_list[t] if t < len(infos_list) else {}
         if isinstance(info_t, dict) and "intervene_action" in info_t:
             ia = info_t["intervene_action"]
-            return ia.float().cpu() if isinstance(ia, torch.Tensor) else torch.tensor(
-                np.asarray(ia, dtype=np.float32)
+            return (
+                ia.float().cpu()
+                if isinstance(ia, torch.Tensor)
+                else torch.tensor(np.asarray(ia, dtype=np.float32))
             )
         return _to_float_tensor(act_list[t])
 
     actions = torch.stack([_effective_action(t) for t in range(T)], dim=0)  # [T, 7]
     if actions.shape[-1] == 14:
-        right_arm = torch.cat([
-            actions[:, 6:9],
-            actions[:, 9:12],
-            actions[:, 13:14],
-        ], dim=-1)
+        right_arm = torch.cat(
+            [
+                actions[:, 6:9],
+                actions[:, 9:12],
+                actions[:, 13:14],
+            ],
+            dim=-1,
+        )
         actions = right_arm
 
     actions = actions.clamp(-1.0, 1.0)
@@ -223,24 +239,22 @@ def _demo_to_trajectory(ep: dict, include_images: bool,
         [_to_bool_tensor(t).reshape(1) for t in trunc_list], dim=0
     ).unsqueeze(1)  # [T, 1, 1]
 
-    dones = (terminations | truncations)  # [T, 1, 1]
+    dones = terminations | truncations  # [T, 1, 1]
 
     # ---- observations ----
     # curr_obs[t] = obs_list[t], next_obs[t] = obs_list[t+1]
     # If obs_list has exactly T entries (no final obs), duplicate the last one.
     if len(obs_list) >= T + 1:
         curr_obs_raw = obs_list[:T]
-        next_obs_raw = obs_list[1:T + 1]
+        next_obs_raw = obs_list[1 : T + 1]
     else:
         curr_obs_raw = obs_list[:T]
-        next_obs_raw = obs_list[:T]   # fallback: same as curr
+        next_obs_raw = obs_list[:T]  # fallback: same as curr
         if T > 1:
             next_obs_raw = obs_list[1:T] + [obs_list[-1]]
 
     def _build_obs_dict(obs_seq):
-        states = torch.stack(
-            [_to_float_tensor(o["states"]) for o in obs_seq], dim=0
-        )
+        states = torch.stack([_to_float_tensor(o["states"]) for o in obs_seq], dim=0)
         raw_dim = states.shape[-1]
         if raw_dim > len(_STATE_INDICES):
             valid_idx = _STATE_INDICES[_STATE_INDICES < raw_dim]
@@ -248,7 +262,11 @@ def _demo_to_trajectory(ep: dict, include_images: bool,
         states = states.unsqueeze(1)
         d = {"states": states}
         if include_images:
-            img_keys = [k for k in obs_seq[0].keys() if k.endswith("_images") and obs_seq[0][k] is not None]
+            img_keys = [
+                k
+                for k in obs_seq[0].keys()
+                if k.endswith("_images") and obs_seq[0][k] is not None
+            ]
             if not img_keys:
                 img_keys = ["main_images"]
             first_key = img_keys[0]
@@ -333,34 +351,43 @@ def _save_trajectory(traj: Trajectory, traj_id: int, save_dir: str) -> dict:
 # Main
 # ──────────────────────────────────────────────────────────────────────────
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Convert GeneSim demo .pkl files to TrajectoryReplayBuffer checkpoint."
     )
     parser.add_argument(
-        "--demo-dir", default="my_demos",
+        "--demo-dir",
+        default="my_demos",
         help="Directory containing recorded .pkl demo files.",
     )
     parser.add_argument(
-        "--output-dir", default="/tmp/geniesim_demo_buffer",
+        "--output-dir",
+        default="/tmp/geniesim_demo_buffer",
         help="Output directory for the buffer checkpoint.",
     )
     parser.add_argument(
-        "--include-images", action="store_true",
+        "--include-images",
+        action="store_true",
         help="Include main_images in the buffer (warning: large files).",
     )
     parser.add_argument(
-        "--placeholder-reward", type=float, default=None,
+        "--placeholder-reward",
+        type=float,
+        default=None,
         help="Override all rewards with this constant value. "
-             "If omitted, recorded rewards are used.",
+        "If omitted, recorded rewards are used.",
     )
     parser.add_argument(
-        "--recompute-reward", action="store_true",
+        "--recompute-reward",
+        action="store_true",
         help="Recompute rewards using the current reward function "
-             "(requires body_poses in infos).",
+        "(requires body_poses in infos).",
     )
     parser.add_argument(
-        "--seed", type=int, default=42,
+        "--seed",
+        type=int,
+        default=42,
         help="Seed recorded in metadata.json.",
     )
     args = parser.parse_args()
@@ -374,9 +401,11 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     print(f"[convert] Found {len(paths)} demo(s) in {args.demo_dir!r}")
     print(f"[convert] Output → {args.output_dir!r}")
-    print(f"[convert] include_images={args.include_images}, "
-          f"placeholder_reward={args.placeholder_reward}, "
-          f"recompute_reward={args.recompute_reward}")
+    print(
+        f"[convert] include_images={args.include_images}, "
+        f"placeholder_reward={args.placeholder_reward}, "
+        f"recompute_reward={args.recompute_reward}"
+    )
 
     trajectory_index = {}
     trajectory_id_list = []
@@ -387,19 +416,25 @@ def main():
             ep = pickle.load(f)
 
         T = len(ep["actions"])
-        ep_id = ep.get("episode_id", traj_id)
+        ep_id = ep.get("episode_id", traj_id)  # noqa: F841
         success = ep.get("success", "?")
 
-        traj = _demo_to_trajectory(ep, args.include_images, args.placeholder_reward,
-                                    recompute_reward=args.recompute_reward)
+        traj = _demo_to_trajectory(
+            ep,
+            args.include_images,
+            args.placeholder_reward,
+            recompute_reward=args.recompute_reward,
+        )
         info = _save_trajectory(traj, traj_id, args.output_dir)
 
         trajectory_index[traj_id] = info
         trajectory_id_list.append(traj_id)
         total_samples += info["num_samples"]
 
-        print(f"[convert]   [{traj_id:3d}] {os.path.basename(pkl_path)}: "
-              f"T={T} steps, success={success}")
+        print(
+            f"[convert]   [{traj_id:3d}] {os.path.basename(pkl_path)}: "
+            f"T={T} steps, success={success}"
+        )
 
     # ── write metadata.json ────────────────────────────────────────────────
     metadata = {
@@ -420,12 +455,16 @@ def main():
     with open(os.path.join(args.output_dir, "trajectory_index.json"), "w") as f:
         json.dump(index_data, f, indent=2)
 
-    print(f"\n[convert] Done. {len(paths)} trajectories, "
-          f"{total_samples} total samples → {args.output_dir!r}")
+    print(
+        f"\n[convert] Done. {len(paths)} trajectories, "
+        f"{total_samples} total samples → {args.output_dir!r}"
+    )
     print("[convert] Verify with:")
-    print(f"  python rlinf/data/replay_buffer.py "
-          f"--load-path {args.output_dir} "
-          f"--num-chunks 32 --cache-size 20 --enable-cache")
+    print(
+        f"  python rlinf/data/replay_buffer.py "
+        f"--load-path {args.output_dir} "
+        f"--num-chunks 32 --cache-size 20 --enable-cache"
+    )
 
 
 if __name__ == "__main__":

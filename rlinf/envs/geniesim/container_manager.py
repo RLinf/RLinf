@@ -34,16 +34,16 @@ import os
 import subprocess
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-from rlinf.envs.geniesim.sim_manager_base import (
-    BaseSimManager,
-    ContainerStartupError,   # backward-compat re-export
-    SimStartupError,
-    _SIM_CFG_FILE,
+from rlinf.envs.geniesim.sim_manager_base import (  # noqa: E402
     _READY_FILE,
+    _SIM_CFG_FILE,
+    BaseSimManager,
+    ContainerStartupError,  # backward-compat re-export
+    SimStartupError,
 )
 
 __all__ = ["SimContainerManager", "ContainerStartupError"]
@@ -96,16 +96,17 @@ class SimContainerManager(BaseSimManager):
             ros_domain_id=int(getattr(container_cfg, "ros_domain_id", 0)),
         )
         self.image = str(getattr(container_cfg, "image", ""))
-        self.name  = str(getattr(container_cfg, "name", "geniesim_local"))
-        self.extra_docker_args: List[str] = list(
+        self.name = str(getattr(container_cfg, "name", "geniesim_local"))
+        self.extra_docker_args: list[str] = list(
             getattr(container_cfg, "extra_docker_args", []) or []
         )
-        self.container_paths: Dict[str, str] = dict(
+        self.container_paths: dict[str, str] = dict(
             getattr(container_cfg, "container_paths", {}) or {}
         )
         _icr = getattr(container_cfg, "isaac_cache_root", None)
         self.isaac_cache_root: Path = (
-            Path(_icr).expanduser().resolve() if _icr
+            Path(_icr).expanduser().resolve()
+            if _icr
             else Path.home() / "docker" / "isaac-sim"
         )
         self._container_geniesim_root: str = str(
@@ -117,7 +118,7 @@ class SimContainerManager(BaseSimManager):
     # Public API
     # ---------------------------------------------------------------------- #
 
-    def ensure_running(self, pm_kwargs: Dict) -> None:
+    def ensure_running(self, pm_kwargs: dict) -> None:
         """
         Ensure the simulation container is running and ready.
 
@@ -139,11 +140,13 @@ class SimContainerManager(BaseSimManager):
                     return
                 logger.warning(
                     "Ready file exists but SHM '%s' is not accessible — "
-                    "restarting container (stale ready file)...", shm_name,
+                    "restarting container (stale ready file)...",
+                    shm_name,
                 )
             elif self._idle_file.exists():
                 logger.info(
-                    "Container '%s' is idle — restarting sim processes...", self.name,
+                    "Container '%s' is idle — restarting sim processes...",
+                    self.name,
                 )
                 shm_name = pm_kwargs.get("shm_name", "geniesim_frames")
                 self._cleanup_stale_shm(shm_name)
@@ -161,7 +164,8 @@ class SimContainerManager(BaseSimManager):
             else:
                 logger.warning(
                     "Container '%s' is running but has no ready file — "
-                    "stopping for a fresh start with sim_server.py...", self.name,
+                    "stopping for a fresh start with sim_server.py...",
+                    self.name,
                 )
             self._run_docker(["stop", "--time", "10", self.name], check=False)
             self._run_docker(["rm", "-f", self.name], check=False)
@@ -215,7 +219,9 @@ class SimContainerManager(BaseSimManager):
             deadline = time.time() + 60
             while time.time() < deadline:
                 if self._idle_file.exists():
-                    logger.info("Sim processes stopped. Container '%s' is idle.", self.name)
+                    logger.info(
+                        "Sim processes stopped. Container '%s' is idle.", self.name
+                    )
                     return
                 time.sleep(0.5)
             logger.warning(
@@ -238,7 +244,7 @@ class SimContainerManager(BaseSimManager):
     def _get_log_tail(self, tail: int = 40) -> str:
         return self._get_logs(tail=tail)
 
-    def _check_alive(self) -> Tuple[bool, str]:
+    def _check_alive(self) -> tuple[bool, str]:
         status = self._get_status()
         if status != "running":
             return (
@@ -261,7 +267,7 @@ class SimContainerManager(BaseSimManager):
     # Override: _write_sim_config applies container path translation
     # ---------------------------------------------------------------------- #
 
-    def _write_sim_config(self, pm_kwargs: Dict) -> None:
+    def _write_sim_config(self, pm_kwargs: dict) -> None:
         cfg = dict(pm_kwargs)
         host_root = str(self.geniesim_root)
         container_root = self._container_geniesim_root
@@ -300,18 +306,25 @@ class SimContainerManager(BaseSimManager):
         owner_uid = shm_path.stat().st_uid
         logger.info(
             "Stale SHM '%s' owned by uid %d — removing via temporary container...",
-            shm_name, owner_uid,
+            shm_name,
+            owner_uid,
         )
         result = subprocess.run(
             [
-                "docker", "run", "--rm",
-                "--ipc", "host",
-                "--user", str(owner_uid),
-                "--entrypoint", "/bin/rm",
+                "docker",
+                "run",
+                "--rm",
+                "--ipc",
+                "host",
+                "--user",
+                str(owner_uid),
+                "--entrypoint",
+                "/bin/rm",
                 self.image,
                 f"/dev/shm/{shm_name}",
             ],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if result.returncode == 0:
             logger.info("Stale SHM '%s' removed via container", shm_name)
@@ -319,7 +332,9 @@ class SimContainerManager(BaseSimManager):
             logger.warning(
                 "Could not remove stale SHM '%s': %s — "
                 "run `sudo rm /dev/shm/%s` if startup fails",
-                shm_name, result.stderr.strip(), shm_name,
+                shm_name,
+                result.stderr.strip(),
+                shm_name,
             )
 
     def _cleanup_stale_ctrl_shms(self, shm_name: str) -> None:
@@ -342,21 +357,28 @@ class SimContainerManager(BaseSimManager):
             owner_uid = entry.stat().st_uid
             result = subprocess.run(
                 [
-                    "docker", "run", "--rm",
-                    "--ipc", "host",
-                    "--user", str(owner_uid),
-                    "--entrypoint", "/bin/rm",
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--ipc",
+                    "host",
+                    "--user",
+                    str(owner_uid),
+                    "--entrypoint",
+                    "/bin/rm",
                     self.image,
                     f"/dev/shm/{entry.name}",
                 ],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
             if result.returncode == 0:
                 logger.info("Removed stale ctrl SHM '%s' via container", entry.name)
             else:
                 logger.warning(
                     "Could not remove ctrl SHM '%s': %s",
-                    entry.name, result.stderr.strip(),
+                    entry.name,
+                    result.stderr.strip(),
                 )
 
     # ---------------------------------------------------------------------- #
@@ -388,8 +410,10 @@ class SimContainerManager(BaseSimManager):
             return
 
         import re as _re
+
         missing = [
-            p for p in _re.findall(r"hostPath:\s*(\S+nvidia_icd[^\s]*)", spec_text)
+            p
+            for p in _re.findall(r"hostPath:\s*(\S+nvidia_icd[^\s]*)", spec_text)
             if not Path(p).exists()
         ]
         if not missing:
@@ -399,7 +423,8 @@ class SimContainerManager(BaseSimManager):
         if valid_icd is None:
             logger.warning(
                 "Vulkan ICD paths in CDI spec are missing (%s) and no valid ICD found "
-                "in standard locations. GPU rendering may fail.", missing,
+                "in standard locations. GPU rendering may fail.",
+                missing,
             )
             return
 
@@ -407,11 +432,13 @@ class SimContainerManager(BaseSimManager):
             "CDI spec references missing Vulkan ICD path(s): %s\n"
             "Valid ICD found at: %s\n"
             "Regenerating CDI spec via: sudo nvidia-ctk cdi generate --output /var/run/cdi/nvidia.yaml",
-            missing, valid_icd,
+            missing,
+            valid_icd,
         )
         result = subprocess.run(
             ["sudo", "nvidia-ctk", "cdi", "generate", "--output", str(_CDI_SPEC)],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if result.returncode == 0:
             logger.info("CDI spec regenerated successfully.")
@@ -419,15 +446,19 @@ class SimContainerManager(BaseSimManager):
 
         logger.warning(
             "CDI spec regeneration failed (rc=%d): %s — falling back to symlink creation...",
-            result.returncode, result.stderr.strip(),
+            result.returncode,
+            result.stderr.strip(),
         )
         icd_dir = Path("/etc/vulkan/icd.d")
         icd_link = icd_dir / "nvidia_icd.json"
-        r2 = subprocess.run(["sudo", "mkdir", "-p", str(icd_dir)], capture_output=True, text=True)
+        r2 = subprocess.run(
+            ["sudo", "mkdir", "-p", str(icd_dir)], capture_output=True, text=True
+        )
         if r2.returncode == 0:
             r3 = subprocess.run(
                 ["sudo", "ln", "-s", str(valid_icd), str(icd_link)],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
             if r3.returncode == 0:
                 logger.info("Symlink created: %s -> %s", icd_link, valid_icd)
@@ -446,24 +477,24 @@ class SimContainerManager(BaseSimManager):
         self._run_docker_start()
 
     def _run_docker_start(self) -> None:
-        mounts: List[str] = [
+        mounts: list[str] = [
             f"{self.geniesim_root}:/geniesim/main:rw",
         ]
 
         _isaac_cache_map = {
-            "pkg":                "/isaac-sim/.local/share/ov/pkg",
-            "cache/main":         "/isaac-sim/.cache",
+            "pkg": "/isaac-sim/.local/share/ov/pkg",
+            "cache/main": "/isaac-sim/.cache",
             "cache/computecache": "/isaac-sim/.nv/ComputeCache",
-            "logs":               "/isaac-sim/.nvidia-omniverse/logs",
-            "config":             "/isaac-sim/.nvidia-omniverse/config",
-            "data":               "/isaac-sim/.local/share/ov/data",
+            "logs": "/isaac-sim/.nvidia-omniverse/logs",
+            "config": "/isaac-sim/.nvidia-omniverse/config",
+            "data": "/isaac-sim/.local/share/ov/data",
         }
         for rel, container_dst in _isaac_cache_map.items():
             host_path = self.isaac_cache_root / rel
             if host_path.exists():
                 mounts.append(f"{host_path}:{container_dst}:rw")
 
-        env_vars: List[str] = [
+        env_vars: list[str] = [
             "SIM_REPO_ROOT=/geniesim/main",
             f"ROS_DOMAIN_ID={self.ros_domain_id}",
             "ROS_LOCALHOST_ONLY=1",
@@ -476,21 +507,33 @@ class SimContainerManager(BaseSimManager):
             f" --ready-file /geniesim/main/{_READY_FILE}"
         )
 
-        cmd: List[str] = [
-            "run", "--detach",
-            "--name", self.name,
-            "--network", "host",
-            "--ipc",     "host",
-            "--gpus",    "all",
-            "--device",  "/dev/input:/dev/input",
+        cmd: list[str] = [
+            "run",
+            "--detach",
+            "--name",
+            self.name,
+            "--network",
+            "host",
+            "--ipc",
+            "host",
+            "--gpus",
+            "all",
+            "--device",
+            "/dev/input:/dev/input",
         ]
 
         _display = os.environ.get("DISPLAY", "")
         if not self._headless:
             if _display:
-                cmd += ["-e", f"DISPLAY={_display}",
-                        "-v", "/tmp/.X11-unix:/tmp/.X11-unix"]
-                subprocess.run(["xhost", "+local:docker"], capture_output=True, check=False)
+                cmd += [
+                    "-e",
+                    f"DISPLAY={_display}",
+                    "-v",
+                    "/tmp/.X11-unix:/tmp/.X11-unix",
+                ]
+                subprocess.run(
+                    ["xhost", "+local:docker"], capture_output=True, check=False
+                )
             else:
                 logger.warning(
                     "headless=false but $DISPLAY is not set. "
@@ -506,13 +549,19 @@ class SimContainerManager(BaseSimManager):
         cmd += [
             self.image,
             "/entrypoint_geniesim_rlinf.sh",
-            "bash", "-c", sim_server_cmd,
+            "bash",
+            "-c",
+            sim_server_cmd,
         ]
 
-        _vis = "headless" if self._headless else f"display={_display or '(no $DISPLAY)'}"
+        _vis = (
+            "headless" if self._headless else f"display={_display or '(no $DISPLAY)'}"
+        )
         logger.info(
             "Starting '%s' from image '%s'  network=host  ipc=host  gpus=all  mode=%s",
-            self.name, self.image, _vis,
+            self.name,
+            self.image,
+            _vis,
         )
         self._run_docker(cmd)
 
@@ -520,7 +569,7 @@ class SimContainerManager(BaseSimManager):
     # Docker helpers
     # ---------------------------------------------------------------------- #
 
-    def _run_docker(self, args: List[str], check: bool = True) -> str:
+    def _run_docker(self, args: list[str], check: bool = True) -> str:
         result = subprocess.run(
             ["docker"] + args,
             capture_output=True,
