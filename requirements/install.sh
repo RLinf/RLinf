@@ -17,7 +17,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "lingbotvla")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "lingbotvla" "dreamzero")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus")
 
 #=======================Utility Functions=======================
@@ -595,6 +595,20 @@ install_lingbot_vla_model() {
     uv pip uninstall pynvml || true
 }
 
+install_dreamzero_model() {
+    case "$ENV_NAME" in
+        maniskill_libero)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_maniskill_libero_env
+            uv pip install -r $SCRIPT_DIR/embodied/models/dreamzero.txt
+            install_flash_attn
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for DreamZero model." >&2
+    esac
+}
+
 install_env_only() {
     create_and_sync_venv
     SKIP_ROS=${SKIP_ROS:-0}
@@ -663,7 +677,7 @@ install_liberoplus_env() {
 install_behavior_env() {
     # Prefer an existing checkout if BEHAVIOR_PATH is provided; otherwise clone into the venv.
     local behavior_dir
-    behavior_dir=$(clone_or_reuse_repo BEHAVIOR_PATH "$VENV_DIR/BEHAVIOR-1K" https://github.com/RLinf/BEHAVIOR-1K.git -b RLinf/v3.7.1 --depth 1)
+    behavior_dir=$(clone_or_reuse_repo BEHAVIOR_PATH "$VENV_DIR/BEHAVIOR-1K" https://github.com/RLinf/BEHAVIOR-1K.git -b RLinf/v3.7.2 --depth 1)
 
     pushd "$behavior_dir" >/dev/null
     UV_LINK_MODE=hardlink ./setup.sh --omnigibson --bddl --joylo --confirm-no-conda --accept-nvidia-eula --use-uv
@@ -960,6 +974,9 @@ main() {
                     ;;
                 lingbotvla)                  
                     install_lingbot_vla_model 
+                    ;;
+                dreamzero)
+                    install_dreamzero_model
                     ;;
                 "")
                     install_env_only

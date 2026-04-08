@@ -20,6 +20,8 @@ from omnigibson.tasks.behavior_task import BehaviorTask
 from omnigibson.tasks.task_base import BaseTask
 from omnigibson.utils.ui_utils import create_module_logger
 
+from rlinf.envs.behavior.utils import sync_robot_after_pose_override
+
 log = create_module_logger(module_name=__name__)
 
 
@@ -31,6 +33,8 @@ class RLinfBehaviorTask(BehaviorTask):
             self._callback_scene = None
         if not hasattr(self, "_ignored_cross_scene_callbacks"):
             self._ignored_cross_scene_callbacks = set()
+        if not hasattr(self, "_missing_presampled_pose_warned"):
+            self._missing_presampled_pose_warned = False
 
     def _load(self, env):
         self._ensure_callback_state()
@@ -73,23 +77,35 @@ class RLinfBehaviorTask(BehaviorTask):
 
     def reset(self, env):
         BaseTask.reset(self, env)
+        if not hasattr(self, "_missing_presampled_pose_warned"):
+            self._missing_presampled_pose_warned = False
 
         if self.use_presampled_robot_pose:
             robot = self.get_agent(env)
             presampled_poses = env.scene.get_task_metadata(key="robot_poses")
-            assert robot.model_name in presampled_poses, (
-                f"{robot.model_name} presampled pose is not found in task metadata; "
-                "please set use_presampled_robot_pose to False in task config"
-            )
-            poses = presampled_poses[robot.model_name]
-            robot_pose = (
-                random.choice(poses) if self.randomize_presampled_pose else poses[0]
-            )
-            robot.set_position_orientation(
-                robot_pose["position"],
-                robot_pose["orientation"],
-                frame="scene",
-            )
+            if not presampled_poses or robot.model_name not in presampled_poses:
+                if not self._missing_presampled_pose_warned:
+                    log.warning(
+                        "%s presampled pose is not found in task metadata for task %s; "
+                        "falling back to the default reset pose.",
+                        robot.model_name,
+                        self.activity_name,
+                    )
+                    self._missing_presampled_pose_warned = True
+                presampled_poses = None
+            else:
+                self._missing_presampled_pose_warned = False
+            if presampled_poses is not None:
+                poses = presampled_poses[robot.model_name]
+                robot_pose = (
+                    random.choice(poses) if self.randomize_presampled_pose else poses[0]
+                )
+                robot.set_position_orientation(
+                    robot_pose["position"],
+                    robot_pose["orientation"],
+                    frame="scene",
+                )
+                sync_robot_after_pose_override(robot)
 
         for obj in self.object_scope.values():
             if obj.exists and isinstance(obj, DatasetObject):

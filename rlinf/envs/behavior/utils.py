@@ -19,7 +19,7 @@ import torch
 import yaml
 from omegaconf import DictConfig, OmegaConf
 
-SUPPORTED_ENV_WRAPPERS = ("default", "rgb_lowres", "rich_obs")
+SUPPORTED_ENV_WRAPPERS = ("rgb", "default", "rgb_lowres", "rich_obs")
 
 R1PRO_PROPRIO_KEYS = [
     "joint_qpos",
@@ -60,6 +60,31 @@ R1PRO_PROPRIO_KEYS = [
 ]
 
 
+def sync_robot_after_pose_override(robot) -> None:
+    """Synchronize robot state after a direct pose override.
+
+    Offline BEHAVIOR instance loading often teleports the robot base via
+    ``set_position_orientation`` without restoring the robot articulation /
+    controller state. Reset controller goals to the robot's current joint state so
+    the next control step starts from a consistent no-op target instead of stale
+    goals carried over from a previous episode / instance.
+
+    Args:
+        robot: OmniGibson robot instance whose pose was overridden.
+    """
+    robot.keep_still()
+
+    if getattr(robot, "n_joints", 0) > 0:
+        current_joint_positions = robot.get_joint_positions()
+        robot.set_joint_positions(positions=current_joint_positions, drive=False)
+        robot.set_joint_velocities(
+            velocities=torch.zeros_like(current_joint_positions),
+            drive=False,
+        )
+
+    robot.keep_still()
+
+
 def set_camera_resolution(camera_cfg: dict | None) -> None:
     if camera_cfg is None:
         return
@@ -75,6 +100,10 @@ def set_camera_resolution(camera_cfg: dict | None) -> None:
 
 
 def get_env_wrapper(wrapper_name: str):
+    if wrapper_name == "rgb":
+        from .rgb_wrapper import RGBWrapper
+
+        return RGBWrapper
     if wrapper_name == "default":
         from omnigibson.learning.wrappers.default_wrapper import DefaultWrapper
 
@@ -219,17 +248,3 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
     )
 
     return omni_cfg
-
-
-def resample_task(vec_env, omni_task_cfg: DictConfig, num_envs: int):
-    online_object_sampling = OmegaConf.select(omni_task_cfg, "online_object_sampling")
-    use_presampled_robot_pose = OmegaConf.select(
-        omni_task_cfg, "use_presampled_robot_pose"
-    )
-
-    assert online_object_sampling and not use_presampled_robot_pose, (
-        f"online_object_sampling should be True and use_presampled_robot_pose should be False, but got {online_object_sampling} and  {use_presampled_robot_pose}"
-    )
-
-    for i in range(num_envs):
-        vec_env.envs[i].update_task(task_config=omni_task_cfg)
