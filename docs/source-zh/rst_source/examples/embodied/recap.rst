@@ -652,6 +652,37 @@ RECAP 流程会在 ``logs/`` 目录下生成两个子目录：
        experiment_name: "recap_experiment"
        logger_backends: ["tensorboard"]   # 也支持 wandb, swanlab
 
+数据集
+---------
+
+我们在 `LIBERO-10 <https://github.com/Lifelong-Robot-Learning/LIBERO>`_ 基准（Task 0）上提供了可复现的实验，演示完整的 RECAP 流程。
+
+- **SFT 数据**：LIBERO-10 的专家演示数据（成功轨迹）
+- **Rollout 数据**：few-shot π\ :sub:`0.5` 策略在 Task 0 上采集的 4,096 条轨迹，包含成功和失败的 episode
+- **Eval 数据**：同样由 few-shot π\ :sub:`0.5` 策略采集的验证集，用于 Step 2 监控价值模型是否过拟合
+
+数据集可从 `此处 <https://DATASET_HF_LINK_PLACEHOLDER>`_ 下载。
+
+.. warning::
+
+   发布前请将上方 ``DATASET_HF_LINK_PLACEHOLDER`` 替换为实际的 HuggingFace 数据集链接。
+
+
+
+RECAP 实验结果
+-----------------
+
+在 LIBERO-10 Task 0 上执行一轮 RECAP 迭代后，成功率从 **48.8%**\ （SFT 基线）提升至 **66.5%**\ （RECAP），绝对提升 **17.7%**。
+
+.. raw:: html
+
+   <div style="display: flex; justify-content: center; margin: 20px 0;">
+     <div style="flex: 0.5; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/recap_libero10_task0.png" style="width: 100%;"/>
+       <p><em>LIBERO-10 Task 0 上的 RECAP 实验结果</em></p>
+     </div>
+   </div>
+
 高级用法
 -----------
 

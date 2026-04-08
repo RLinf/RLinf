@@ -658,6 +658,37 @@ The RECAP pipeline generates two subdirectories under ``logs/``:
        logger_backends: ["tensorboard"]   # also supports wandb, swanlab
 
 
+Dataset
+---------
+
+We provide a reproduced experiment on the `LIBERO-10 <https://github.com/Lifelong-Robot-Learning/LIBERO>`_ benchmark (Task 0) to demonstrate the RECAP pipeline.
+
+- **SFT data**: Expert demonstration data from LIBERO-10 (successful trajectories)
+- **Rollout data**: 4,096 trajectories collected by a few-shot π\ :sub:`0.5` policy on Task 0, containing both successful and failed episodes
+- **Eval data**: A held-out set collected by the same few-shot π\ :sub:`0.5` policy, used in Step 2 to monitor value model overfitting
+
+The dataset is available `here <https://DATASET_HF_LINK_PLACEHOLDER>`_.
+
+.. warning::
+
+   Replace ``DATASET_HF_LINK_PLACEHOLDER`` above with the actual HuggingFace dataset URL before publishing.
+
+
+
+RECAP Results
+--------------
+
+After one iteration of the RECAP pipeline on LIBERO-10 Task 0, the success rate improves from **48.8%** (SFT baseline) to **66.5%** (RECAP), an absolute improvement of **17.7%**.
+
+.. raw:: html
+
+   <div style="display: flex; justify-content: center; margin: 20px 0;">
+     <div style="flex: 0.5; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/recap_libero10_task0.png" style="width: 100%;"/>
+       <p><em>RECAP results on LIBERO-10 Task 0</em></p>
+     </div>
+   </div>
+
 Advanced Usage
 -----------------
 
