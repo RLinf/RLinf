@@ -103,11 +103,10 @@ class EnvWorker(Worker):
     def init_worker(self):
         self.dst_rank_map = self._setup_dst_rank_map()
         self.src_rank_map = self._setup_src_rank_map()
+
         self.log_info(f"Env worker initialized with dst_rank_map: {self.dst_rank_map}")
         self.log_info(f"Env worker initialized with src_rank_map: {self.src_rank_map}")
-        train_env_cls = get_env_cls(self.cfg.env.train.env_type, self.cfg.env.train)
-        eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
-
+        
         # This is a barrier to ensure all envs' initial setup upon import is done
         # Essential for RealWorld env to ensure initial ROS node setup is done
         self.broadcast(
@@ -117,16 +116,15 @@ class EnvWorker(Worker):
 
         self.update_env_cfg()
 
-        train_env_cls = get_env_cls(self.cfg.env.train.env_type, self.cfg.env.train)
-        eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
-
         if not self.only_eval:
+            train_env_cls = get_env_cls(self.cfg.env.train.env_type, self.cfg.env.train)
             self.env_list = self._setup_env_and_wrappers(
                 env_cls=train_env_cls,
                 env_cfg=self.cfg.env.train,
                 num_envs_per_stage=self.train_num_envs_per_stage,
             )
         if self.enable_eval:
+            eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
             self.eval_env_list = self._setup_env_and_wrappers(
                 env_cls=eval_env_cls,
                 env_cfg=self.cfg.env.eval,
@@ -137,24 +135,25 @@ class EnvWorker(Worker):
             self._init_env()
 
     def update_env_cfg(self):
-        # train env
-        train_override_cfgs = self.cfg.env.train.get("override_cfgs", None)
-        if train_override_cfgs is not None:
-            assert len(train_override_cfgs) > self._rank, (
-                f"{len(train_override_cfgs)=} > {self._rank=}"
-            )
+        if not self.only_eval:
+            # train env
+            train_override_cfgs = self.cfg.env.train.get("override_cfgs", None)
+            if train_override_cfgs is not None:
+                assert len(train_override_cfgs) > self._rank, (
+                    f"{len(train_override_cfgs)=} > {self._rank=}"
+                )
 
-            general_train_override_cfg = OmegaConf.to_container(
-                self.cfg.env.train.get("override_cfg", {}), resolve=True
-            )
-            override_cfg = OmegaConf.to_container(
-                train_override_cfgs[self._rank], resolve=True
-            ).copy()
+                general_train_override_cfg = OmegaConf.to_container(
+                    self.cfg.env.train.get("override_cfg", {}), resolve=True
+                )
+                override_cfg = OmegaConf.to_container(
+                    train_override_cfgs[self._rank], resolve=True
+                ).copy()
 
-            base_cfg = {}
-            base_cfg = update_nested_cfg(base_cfg, general_train_override_cfg)
-            base_cfg = update_nested_cfg(base_cfg, override_cfg)
-            setattr(self.cfg.env.train, "override_cfg", OmegaConf.create(base_cfg))
+                base_cfg = {}
+                base_cfg = update_nested_cfg(base_cfg, general_train_override_cfg)
+                base_cfg = update_nested_cfg(base_cfg, override_cfg)
+                setattr(self.cfg.env.train, "override_cfg", OmegaConf.create(base_cfg))
 
         eval_override_cfgs = self.cfg.env.eval.get("override_cfgs", None)
         if eval_override_cfgs is not None:
@@ -225,27 +224,29 @@ class EnvWorker(Worker):
             Destination rank map for this env worker.
             The key is the channel name (e.g. "rollout_train", "reward_train", "rollout_eval"), and the value is a ordered list of tuples of (dst_rank, batch_size).
         """
-        dst_rank_map = {
-            "rollout_train": CommMapper.get_dst_ranks(
-                batch_size=self.cfg.env.train.total_num_envs // self.stage_num,
-                src_world_size=self._component_placement.get_world_size("env"),
-                dst_world_size=self._component_placement.get_world_size("rollout"),
-                src_rank=self._rank,
-            ),
-        }
-        if self.cfg.get("reward", {}).get("use_reward_model", False):
-            dst_rank_map.update(
-                {
-                    "reward_train": CommMapper.get_dst_ranks(
-                        batch_size=self.cfg.env.train.total_num_envs // self.stage_num,
-                        src_world_size=self._component_placement.get_world_size("env"),
-                        dst_world_size=self._component_placement.get_world_size(
-                            "reward"
+        dst_rank_map = {}
+        if not self.only_eval:
+            dst_rank_map = {
+                "rollout_train": CommMapper.get_dst_ranks(
+                    batch_size=self.cfg.env.train.total_num_envs // self.stage_num,
+                    src_world_size=self._component_placement.get_world_size("env"),
+                    dst_world_size=self._component_placement.get_world_size("rollout"),
+                    src_rank=self._rank,
+                ),
+            }
+            if self.cfg.get("reward", {}).get("use_reward_model", False):
+                dst_rank_map.update(
+                    {
+                        "reward_train": CommMapper.get_dst_ranks(
+                            batch_size=self.cfg.env.train.total_num_envs // self.stage_num,
+                            src_world_size=self._component_placement.get_world_size("env"),
+                            dst_world_size=self._component_placement.get_world_size(
+                                "reward"
+                            ),
+                            src_rank=self._rank,
                         ),
-                        src_rank=self._rank,
-                    ),
-                }
-            )
+                    }
+                )
 
         if self.enable_eval:
             dst_rank_map.update(
@@ -272,27 +273,29 @@ class EnvWorker(Worker):
             Source rank map for this env worker.
             The key is the channel name (e.g. "rollout_train", "reward_train", "rollout_eval"), and the value is a ordered list of tuples of (src_rank, batch_size).
         """
-        src_rank_map = {
-            "rollout_train": CommMapper.get_src_ranks(
-                batch_size=self.cfg.env.train.total_num_envs // self.stage_num,
-                src_world_size=self._component_placement.get_world_size("rollout"),
-                dst_world_size=self._component_placement.get_world_size("env"),
-                dst_rank=self._rank,
-            ),
-        }
-        if self.cfg.get("reward", {}).get("use_reward_model", False):
-            src_rank_map.update(
-                {
-                    "reward_train": CommMapper.get_src_ranks(
-                        batch_size=self.cfg.env.train.total_num_envs // self.stage_num,
-                        src_world_size=self._component_placement.get_world_size(
-                            "reward"
+        src_rank_map = {}
+        if not self.only_eval:
+            src_rank_map = {
+                "rollout_train": CommMapper.get_src_ranks(
+                    batch_size=self.cfg.env.train.total_num_envs // self.stage_num,
+                    src_world_size=self._component_placement.get_world_size("rollout"),
+                    dst_world_size=self._component_placement.get_world_size("env"),
+                    dst_rank=self._rank,
+                ),
+            }
+            if self.cfg.get("reward", {}).get("use_reward_model", False):
+                src_rank_map.update(
+                    {
+                        "reward_train": CommMapper.get_src_ranks(
+                            batch_size=self.cfg.env.train.total_num_envs // self.stage_num,
+                            src_world_size=self._component_placement.get_world_size(
+                                "reward"
+                            ),
+                            dst_world_size=self._component_placement.get_world_size("env"),
+                            dst_rank=self._rank,
                         ),
-                        dst_world_size=self._component_placement.get_world_size("env"),
-                        dst_rank=self._rank,
-                    ),
-                }
-            )
+                    }
+                )
         if self.enable_eval:
             src_rank_map.update(
                 {
