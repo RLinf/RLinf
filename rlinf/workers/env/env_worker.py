@@ -163,7 +163,7 @@ class EnvWorker(Worker):
                 base_cfg = update_nested_cfg(base_cfg, general_train_override_cfg)
                 base_cfg = update_nested_cfg(base_cfg, override_cfg)
                 setattr(self.cfg.env.train, "override_cfg", OmegaConf.create(base_cfg))
-
+        self._inject_realworld_reward_cfg(self.cfg.env.train)
         eval_override_cfgs = self.cfg.env.eval.get("override_cfgs", None)
         if eval_override_cfgs is not None:
             assert len(eval_override_cfgs) > self._rank, (
