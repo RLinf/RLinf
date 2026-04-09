@@ -68,6 +68,7 @@ def _make_env(
     initial_q=None,
     joint_limit_low=None,
     joint_limit_high=None,
+    camera_serials=None,
     **kwargs,
 ):
     """Create a GimArmEnv with a mocked controller (no hardware needed)."""
@@ -75,11 +76,13 @@ def _make_env(
         joint_limit_low = np.full(6, -np.pi)
     if joint_limit_high is None:
         joint_limit_high = np.full(6, np.pi)
+    if camera_serials is None:
+        camera_serials = ["fake_serial"]
 
     config = GimArmRobotConfig(
         can_interface="can0",
         arm_variant="gim_arm_xl",
-        camera_serials=["fake_serial"],
+        camera_serials=camera_serials,
         camera_type="realsense",
         is_dummy=False,
         joint_limit_low=joint_limit_low,
@@ -120,8 +123,8 @@ class TestActionSpace:
         high = np.full(6, np.pi)
         env, _, _ = _make_env(joint_limit_low=low, joint_limit_high=high)
         # First 6 dims match joint limits; 7th (gripper) is [-1, 1].
-        np.testing.assert_array_equal(env.action_space.low[:6], low)
-        np.testing.assert_array_equal(env.action_space.high[:6], high)
+        np.testing.assert_allclose(env.action_space.low[:6], low, atol=1e-6)
+        np.testing.assert_allclose(env.action_space.high[:6], high, atol=1e-6)
         assert env.action_space.low[6] == -1.0
         assert env.action_space.high[6] == 1.0
 
@@ -150,6 +153,10 @@ class TestActionSpace:
     def test_arm_joint_position_shape(self):
         env, _, _ = _make_env()
         assert env.observation_space["state"]["arm_joint_position"].shape == (6,)
+
+    def test_no_cameras_creates_empty_frames_space(self):
+        env, _, _ = _make_env(camera_serials=[])
+        assert env.observation_space["frames"].spaces == {}
 
 
 # ── Tests: Joint-Space Step ─────────────────────────────────────────────────
@@ -336,34 +343,44 @@ class TestPegInsertionEnv:
 
         # Should call reset_joint with safe_retract_qpos, then reset_joint_qpos.
         reset_calls = controller.reset_joint.call_args_list
-        assert len(reset_calls) >= 2
+        assert len(reset_calls) == 2
 
         # First call: safe_retract_qpos.
         np.testing.assert_array_equal(
             reset_calls[0][0][0], [0.0, -1.5, 1.5, 0.0, 0.0, 0.0]
         )
-        # Second call: reset_joint_qpos (default zeros).
+        # Second call: reset_joint_qpos (default zeros, no perturbation set).
         np.testing.assert_array_equal(reset_calls[1][0][0], [0.0] * 6)
 
     def test_random_reset_perturbs_joints(self):
         env, _, _ = self._make_peg_env(
             enable_random_reset=True, random_joint_noise=0.1
         )
-        original_qpos = list(env.config.reset_joint_qpos)
 
         np.random.seed(42)
         env.reset()
 
-        # After reset, reset_joint_qpos should have been perturbed.
-        # It's probabilistically near-impossible for all 6 joints to stay exactly 0.
-        assert env.config.reset_joint_qpos != original_qpos or True  # Always passes.
-        # Better check: all values are within joint limits.
+        # Perturbed qpos should be within joint limits.
+        assert env._perturbed_reset_qpos is not None
         for q, lo, hi in zip(
-            env.config.reset_joint_qpos,
+            env._perturbed_reset_qpos,
             env._joint_limit_low,
             env._joint_limit_high,
         ):
             assert lo <= q <= hi
+
+    def test_random_reset_does_not_mutate_config(self):
+        env, _, _ = self._make_peg_env(
+            enable_random_reset=True, random_joint_noise=0.1
+        )
+        original_qpos = list(env.config.reset_joint_qpos)
+
+        env.reset()
+        env.reset()
+        env.reset()
+
+        # Config must remain unchanged after multiple resets.
+        assert env.config.reset_joint_qpos == original_qpos
 
     def test_config_has_no_impedance_params(self):
         env, _, _ = self._make_peg_env()

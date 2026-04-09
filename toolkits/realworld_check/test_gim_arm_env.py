@@ -25,6 +25,7 @@ Usage::
 
     python toolkits/realworld_check/test_gim_arm_env.py --can can0
     python toolkits/realworld_check/test_gim_arm_env.py --can can0 --variant gim_arm --no-gripper
+    python toolkits/realworld_check/test_gim_arm_env.py --can can0 --gripper-type single_side
 
 Requires ``gim_arm_control`` SDK and ``pinocchio`` to be installed.
 """
@@ -51,6 +52,11 @@ def main():
     parser.add_argument(
         "--no-gripper", action="store_true", help="Disable gripper",
     )
+    parser.add_argument(
+        "--gripper-type", type=str, default="parallel",
+        choices=["parallel", "single_side"],
+        help="Gripper type (default: parallel)",
+    )
     args = parser.parse_args()
 
     from rlinf.envs.realworld.gim_arm.gim_arm_controller import GimArmController
@@ -73,7 +79,7 @@ def main():
         can_interface=args.can,
         arm_variant=args.variant,
         enable_gripper=not args.no_gripper,
-        gripper_type="parallel",
+        gripper_type=args.gripper_type,
     )
     print("  Controller launched (SDK + feedforward thread started)")
 
@@ -111,17 +117,34 @@ def main():
     print(f"  Gripper open:    {state.gripper_open}")
 
     # ── 4. move_joints — feedforward thread test ─────────────────────────────
-    print("\n[4] Testing move_joints() — moving J1 to 0.3 rad ...")
-    target = np.zeros(6)
-    target[0] = 0.3
-    controller.move_joints(target).wait()
-    time.sleep(2.0)
+    num_steps = 200
+    step_dt = 0.01  # 100 Hz
 
-    state_after_move = controller.get_state().wait()[0]
-    j1_error = abs(state_after_move.arm_joint_position[0] - 0.3)
-    check(f"J1 reached 0.3 rad (error={j1_error:.4f})", j1_error < 0.1,
-          f"actual={state_after_move.arm_joint_position[0]:.4f}")
-    print(f"  Joint positions: {np.round(state_after_move.arm_joint_position, 4)}")
+    def ramp_to(label, target_q):
+        """Linearly interpolate from current position to target_q at 100 Hz."""
+        current_q = controller.get_state().wait()[0].arm_joint_position.copy()
+        target_q = np.array(target_q, dtype=np.float64)
+        for i in range(1, num_steps + 1):
+            alpha = i / num_steps
+            interp = current_q + alpha * (target_q - current_q)
+            controller.move_joints(interp).wait()
+            time.sleep(step_dt)
+        state_after = controller.get_state().wait()[0]
+        max_err = np.max(np.abs(state_after.arm_joint_position - target_q))
+        check(f"{label} (max_err={max_err:.4f})", max_err < 0.1,
+              f"actual={np.round(state_after.arm_joint_position, 4)}")
+        print(f"  Joint positions: {np.round(state_after.arm_joint_position, 4)}")
+
+    # Small motion on joints 1 and 3 individually, holding previous positions.
+    target = np.zeros(6)
+    for j in [0, 2]:
+        target[j] = 0.3
+        print(f"\n[4.{j+1}] Moving J{j+1} to 0.3 rad ...")
+        ramp_to(f"J{j+1} reached 0.3 rad", target.copy())
+
+    # Return to zero.
+    print("\n[4.3] Moving all joints back to zero ...")
+    ramp_to("All joints at zero", np.zeros(6))
 
     # ── 5. reset_joint — smooth interpolation test ───────────────────────────
     print("\n[5] Testing reset_joint() — smooth return to zero (3s) ...")
@@ -151,6 +174,12 @@ def main():
         check("Gripper reports closed after close_gripper()",
               not state_closed.gripper_open)
         print(f"  Gripper position: {state_closed.gripper_position:.4f} rad")
+
+        controller.open_gripper().wait()
+        time.sleep(1.5)
+        state_reopen = controller.get_state().wait()[0]
+        check("Gripper reports open after re-open", state_reopen.gripper_open)
+        print(f"  Gripper position: {state_reopen.gripper_position:.4f} rad")
     else:
         print("\n[6] Gripper test skipped (--no-gripper)")
 

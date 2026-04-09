@@ -1,16 +1,8 @@
 Real-World RL with GimArm
 ============================
 
-This document provides a comprehensive guide to launching and managing
-a CNN policy training task within the RLinf framework,
-focusing on training a ResNet-based CNN policy from scratch for robotic manipulation
-with the GimArm 6-DOF robotic arm.
-
-The primary objective is to develop a model capable of performing robotic manipulation by:
-
-1. **Visual Understanding**: Processing RGB images from the robot's camera.
-2. **Action Generation**: Producing absolute joint-space actions with gripper control.
-3. **Reinforcement Learning**: Optimizing the policy via SAC with environment feedback.
+This document covers the hardware setup, dependency installation, and experiment
+configuration for the GimArm 6-DOF robotic arm within the RLinf framework.
 
 Environment
 -----------
@@ -36,57 +28,26 @@ Environment
   - 6 absolute joint positions in radians, bounded by the configured joint limits.
   - 1 binary gripper command in ``[-1, 1]`` (open/close).
 
-**Data Structure**
+- **Reward**: Computed in Cartesian space by comparing FK-based TCP pose to ``target_ee_pose``. Sparse (0/1) by default with optional dense exponential falloff.
 
-- **Images**: RGB tensors ``[batch_size, 128, 128, 3]``
-- **Actions**: First 6 dimensions are absolute joint angles in radians; 7th dimension is gripper command in ``[-1, 1]``
-- **Rewards**: Step-level rewards based on task completion
+Peg Insertion Task
+~~~~~~~~~~~~~~~~~~~~
 
+The peg-insertion task (``GimArmPegInsertionEnv``, registered as ``GimArmPegInsertionEnv-v1``) is implemented
+in ``rlinf/envs/realworld/gim_arm/tasks/peg_insertion.py``. It extends ``GimArmEnv`` with task-specific
+reset and reward logic:
 
-Algorithm
------------------------------------------
+- **Reset**: The gripper closes on the peg, the arm retracts to ``safe_retract_qpos`` to clear the hole,
+  then moves to ``reset_joint_qpos``. When ``enable_random_reset`` is enabled (default), small
+  joint-space perturbations (controlled by ``random_joint_noise``, default 0.02 rad) are applied
+  to the reset configuration for diversity.
 
-**Core Algorithm Components**
-
-1. **SAC (Soft Actor-Critic)**
-
-   - Learning Q-values by Bellman backups and entropy regularization.
-
-   - Learning policy to maximize entropy-regularized Q.
-
-   - Learning temperature parameter for exploration-exploitation trade-off.
-
-2. **Cross-Q**
-
-   - A variant of SAC that removes the target Q network.
-
-   - Concating curr-obs and next-obs in one batch, incorporating BatchNorm for stable training for Q.
-
-3. **RLPD (Reinforcement Learning with Prior Data)**
-
-   - A variant of SAC that incorporates prior data for improved learning efficiency.
-
-   - High update-to-data ratio to leverage collected data effectively.
-
-4. **CNN Policy Network**
-
-   - ResNet-based architecture for processing visual inputs.
-
-   - MLP layers for fusing images and states to output actions.
-
-   - Q heads for critic functions.
+- **Reward**: Computed in Cartesian space by comparing the FK-derived TCP pose against
+  ``target_ee_pose``. Success is determined per-axis using ``reward_threshold``
+  (default: 1 cm position, 0.2 rad orientation).
 
 Hardware Setup
 ----------------
-
-The real-world setup requires the following hardware components:
-
-- **Robotic Arm**: GimArm 6-DOF arm (``gim_arm`` or ``gim_arm_xl`` variant) with Damiao servo motors
-- **CAN Adapter**: CAN-USB adapter (SocketCAN-compatible), connected to the controller computer
-- **Cameras**: Intel RealSense cameras (default) or Stereolabs ZED cameras
-- **Gripper (Optional)**: Parallel or single-side gripper with built-in Damiao motor
-- **Computing Unit**: A computer with GPU support for training the CNN policy
-- **Robot Controller**: A computer connected to the GimArm via CAN bus (no GPU required)
 
 .. warning::
 
@@ -179,7 +140,7 @@ ________________________________
 
    # For mainland China users, you can add the `--use-mirror` flag for better download speed.
 
-   bash requirements/install.sh embodied --env maniskill_libero
+   bash requirements/install.sh embodied --env gim_arm
    source .venv/bin/activate
 
 c. Install gim_arm_control SDK
@@ -203,7 +164,7 @@ This builds the C++ core via CMake and installs Python bindings using nanobind.
 
    ``pinocchio`` is required for forward kinematics and Jacobian computation used by the controller.
    It is automatically installed as a dependency of the SDK.
-   For older systems requiring NumPy 1.x compatibility, install with:
+   For systems requiring NumPy 1.x compatibility, install with:
 
    .. code:: bash
 
@@ -212,17 +173,9 @@ This builds the C++ core via CMake and installs Python bindings using nanobind.
 Training/Rollout Nodes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-a. Clone RLinf Repository
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Clone the RLinf repository (same as above), then install dependencies.
 
-.. code:: bash
-
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-b. Install Dependencies
+Install Dependencies
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 **Option 1: Docker Image**
@@ -248,12 +201,12 @@ Install dependencies directly in your environment by running the following comma
 
    # For mainland China users, you can add the `--use-mirror` flag for better download speed.
 
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
+   bash requirements/install.sh embodied --env gim_arm
    source .venv/bin/activate
 
-.. note::
+   # To install model-specific dependencies (e.g. OpenVLA), add the --model flag:
+   # bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
-   Training/rollout nodes do **not** need the ``gim_arm_control`` SDK or ``pinocchio``.
 
 Running the Experiment
 -----------------------
@@ -279,9 +232,7 @@ Convert the quaternion to Euler XYZ angles for use in the ``target_ee_pose`` con
 Data Collection
 ~~~~~~~~~~~~~~~~~
 
-For RLPD experiments, you need to first collect some initial demonstration data.
-
-Follow the VR teleoperation instructions in `XRoboToolkit <https://github.com/NVlabs/XRoboToolkit>`_ for data collection with the GimArm robot.
+Follow the provided VR teleoperation code, which are adapted from `XRoboToolkit <https://github.com/XR-Robotics>`_ for data collection with the GimArm robot.
 
 Configuration File
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -313,7 +264,7 @@ The key section is the cluster hardware configuration, which specifies the GimAr
           configs:
             - can_interface: can0
               arm_variant: gim_arm_xl
-              camera_serials: ["YOUR_CAMERA_SERIAL"]
+              camera_serials: ["YOUR_CAMERA_SERIAL"]  # Use [] if no cameras are available
               camera_type: realsense
               enable_gripper: true
               gripper_type: parallel
@@ -342,6 +293,13 @@ Key configuration fields:
 - ``safe_retract_qpos``: Joint configuration for safe retraction during peg-insertion reset.
 - ``is_dummy``: Set to ``true`` for testing without hardware.
 
+.. note::
+
+   Camera support is optional. If ``camera_serials`` is set to an empty list
+   ``[]`` or omitted, the environment will run without camera observations.
+   The ``frames`` key in the observation space will be an empty dictionary.
+   This is useful for state-only policies or when cameras are not yet set up.
+
 Testing the Setup (Optional)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -361,23 +319,8 @@ We provide several test scripts to verify that the setup is correct before start
 
 This script tests: controller launch, ``is_robot_up()``, ``get_state()`` output shapes, ``move_joints()``, ``reset_joint()``, and gripper open/close.
 
-3. Test the camera connection:
+.. note::
 
-.. code-block:: bash
-
-   python -m toolkits.realworld_check.test_franka_camera
-
-4. Test with dummy mode by setting ``is_dummy: true`` in the configuration and running:
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_realworld_async.sh <your_gim_arm_config_name>
-
-Running the Experiment
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-After verifying the setup, you can start the real-world training experiment by running the following command on the head node:
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_realworld_async.sh <your_gim_arm_config_name>
+   Camera setup has not been fully tested yet. To run the peg-insertion
+   experiment, cameras should be available and configured via
+   ``camera_serials`` in the hardware config.

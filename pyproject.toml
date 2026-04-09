@@ -145,6 +145,7 @@ gim_arm = [
     #   pip install -e ~/code/gim_arm_control/python
     "numpy",
     "scipy",
+    "gymnasium",
     "opencv-python",
     "pyrealsense2",
     "imageio[ffmpeg]",

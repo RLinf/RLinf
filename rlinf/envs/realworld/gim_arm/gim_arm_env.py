@@ -31,11 +31,12 @@ from rlinf.utils.logging import get_logger
 
 from .gim_arm_robot_state import GimArmRobotState
 
-# GIM_ARM_XL joint limits (rad) from hardware documentation.
+# GIM_ARM_XL joint limits (rad) from gim_arm_control SDK
+# (arm_config.hpp position_min_limits_ / position_max_limits_).
 # Users targeting the standard GIM_ARM variant should override
 # joint_limit_low / joint_limit_high in their config.
-_DEFAULT_JOINT_LIMIT_LOW = np.array([-1.4, -3.0, 0.0, -1.5, -1.88, -1.9])
-_DEFAULT_JOINT_LIMIT_HIGH = np.array([1.4, 0.0, 3.0, 1.5, 1.88, 1.90])
+_DEFAULT_JOINT_LIMIT_LOW = np.array([-1.4, -3.0, 0.0, -1.5, -1.5, -1.88])
+_DEFAULT_JOINT_LIMIT_HIGH = np.array([1.4, 0.0, 3.0, 1.5, 1.5, 1.90])
 
 
 @dataclass
@@ -63,6 +64,9 @@ class GimArmRobotConfig:
 
     gripper_type: str = "parallel"
     """Gripper mechanical type: ``"parallel"`` or ``"single_side"``."""
+
+    control_mode: str = "momentum_observer"
+    """Arm control mode: ``"idle"``, ``"gravity_comp"``, ``"momentum_observer"``, ``"position"``, or ``"torque"``."""
 
     enable_camera_player: bool = True
     """Display a live camera window during episodes."""
@@ -170,10 +174,15 @@ class GimArmEnv(gym.Env):
         if not self.config.is_dummy:
             self._setup_hardware()
 
-        assert (
-            self.config.camera_serials is not None
-            and len(self.config.camera_serials) > 0
-        ), "At least one camera serial must be provided for GimArmEnv."
+        # NOTE: Camera integration is not yet available for all test setups.
+        # When no cameras are configured, "frames" will be an empty dict.
+        if self.config.camera_serials is None:
+            self.config.camera_serials = []
+        if not self.config.camera_serials:
+            self._logger.info(
+                "No camera serials configured. "
+                "Observations will not contain camera frames."
+            )
 
         self._init_action_obs_spaces()
 
@@ -229,6 +238,7 @@ class GimArmEnv(gym.Env):
             arm_variant=self.config.arm_variant,
             enable_gripper=self.config.enable_gripper,
             gripper_type=self.config.gripper_type,
+            control_mode=self.config.control_mode,
             env_idx=self.env_idx,
             node_rank=controller_node_rank,
             worker_rank=self.env_worker_rank,

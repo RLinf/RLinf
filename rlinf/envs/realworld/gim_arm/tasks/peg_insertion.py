@@ -88,13 +88,15 @@ class GimArmPegInsertionEnv(GimArmEnv):
     def __init__(self, override_cfg, worker_info=None, hardware_info=None, env_idx=0):
         config = GimArmPegInsertionConfig(**override_cfg)
         super().__init__(config, worker_info, hardware_info, env_idx)
+        self._base_reset_joint_qpos = list(self.config.reset_joint_qpos)
+        self._perturbed_reset_qpos = None
 
     @property
     def task_description(self):
         return "peg and insertion"
 
     def go_to_rest(self, joint_reset: bool = False):
-        """Close gripper on peg, retract to safe config, then parent reset."""
+        """Close gripper on peg, retract to safe config, then move to reset pose."""
         if not self.config.is_dummy:
             # Close gripper to hold the peg during retraction.
             self._controller.close_gripper().wait()
@@ -104,21 +106,33 @@ class GimArmPegInsertionEnv(GimArmEnv):
             self._controller.reset_joint(self.config.safe_retract_qpos).wait()
             time.sleep(0.5)
 
-        super().go_to_rest(joint_reset)
+        if not self.config.is_dummy:
+            if joint_reset:
+                self._controller.reset_joint(self.config.joint_reset_qpos).wait()
+                time.sleep(0.5)
+
+            # Use per-episode perturbed qpos if available, otherwise config default.
+            reset_qpos = (
+                self._perturbed_reset_qpos
+                if self._perturbed_reset_qpos is not None
+                else self.config.reset_joint_qpos
+            )
+            self._controller.reset_joint(reset_qpos).wait()
 
     def reset(self, joint_reset=False, **kwargs):
         """Reset with optional random perturbation on joint positions."""
         if self.config.enable_random_reset and not self.config.is_dummy:
-            base_qpos = np.array(self.config.reset_joint_qpos)
+            base_qpos = np.array(self._base_reset_joint_qpos)
             noise = np.random.uniform(
                 -self.config.random_joint_noise,
                 self.config.random_joint_noise,
                 size=6,
             )
-            perturbed = np.clip(
+            self._perturbed_reset_qpos = np.clip(
                 base_qpos + noise,
                 self._joint_limit_low,
                 self._joint_limit_high,
-            )
-            self.config.reset_joint_qpos = perturbed.tolist()
+            ).tolist()
+        else:
+            self._perturbed_reset_qpos = None
         return super().reset(joint_reset, **kwargs)

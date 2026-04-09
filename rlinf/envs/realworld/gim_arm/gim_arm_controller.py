@@ -61,6 +61,7 @@ class GimArmController(Worker):
         arm_variant: str,
         enable_gripper: bool,
         gripper_type: str,
+        control_mode: str = "momentum_observer",
         env_idx: int = 0,
         node_rank: int = 0,
         worker_rank: int = 0,
@@ -73,7 +74,7 @@ class GimArmController(Worker):
         cluster = Cluster()
         placement = NodePlacementStrategy(node_ranks=[node_rank])
         return GimArmController.create_group(
-            can_interface, arm_variant, enable_gripper, gripper_type
+            can_interface, arm_variant, enable_gripper, gripper_type, control_mode
         ).launch(
             cluster=cluster,
             placement_strategy=placement,
@@ -86,6 +87,7 @@ class GimArmController(Worker):
         arm_variant: str,
         enable_gripper: bool,
         gripper_type: str,
+        control_mode: str = "momentum_observer",
     ):
         super().__init__()
         self._logger = get_logger()
@@ -119,13 +121,14 @@ class GimArmController(Worker):
                 f"Failed to start GimArmController on CAN interface '{can_interface}'."
             )
 
-        # Run in MOMENTUM_OBSERVER mode for external torque estimation and
-        # dynamics-based feedforward control.
-        self._sdk.set_mode(ControlMode.MOMENTUM_OBSERVER)
+        self._sdk.set_mode(ControlMode[control_mode.upper()])
 
         # Pinocchio model for FK and Jacobian computation.
         urdf_path = get_urdf_path(arm_variant)
         self._pin_model, self._pin_data = load_arm6_model(urdf_path)
+        assert self._pin_model.nv >= 6, (
+            f"Pinocchio model nv={self._pin_model.nv}, expected >= 6 for GimArm."
+        )
         self._pin_ee_frame_id = self._pin_model.getFrameId(_EEF_FRAME)
         if self._pin_ee_frame_id >= self._pin_model.nframes:
             raise RuntimeError(
@@ -218,7 +221,12 @@ class GimArmController(Worker):
             pin.LOCAL_WORLD_ALIGNED,
         )
 
-        tcp_vel = J @ dq
+        # Slice to the 6 actuated arm joints. The full Jacobian has shape
+        # (6, model.nv) which may be wider than (6, 6) if the URDF includes
+        # additional joints (e.g. gripper DOFs).
+        J_arm = J[:, :6]
+
+        tcp_vel = J_arm @ dq
 
         # Map external joint torques to Cartesian wrench via J^{-T}.
         tau_ext = reading.external_torque
@@ -226,7 +234,7 @@ class GimArmController(Worker):
         tcp_torque = np.zeros(3)
         if tau_ext is not None:
             try:
-                wrench = np.linalg.pinv(J.T) @ np.array(tau_ext)
+                wrench = np.linalg.pinv(J_arm.T) @ np.array(tau_ext)
                 tcp_force = wrench[:3]
                 tcp_torque = wrench[3:]
             except Exception as e:
@@ -252,7 +260,7 @@ class GimArmController(Worker):
             arm_joint_velocity=dq,
             tcp_force=tcp_force,
             tcp_torque=tcp_torque,
-            arm_jacobian=J,
+            arm_jacobian=J_arm,
             gripper_position=gripper_pos,
             gripper_open=gripper_open,
         )
