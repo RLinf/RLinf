@@ -185,10 +185,10 @@ actor:
       buffer_dtype: ${actor.model.precision}
 
 reward:
-  use_reward_model: False
+  use_reward_model: True
   group_name: "RewardGroup"
   
-  standalone_realworld: False
+  standalone_realworld: True
   # Reward mode:
   # - "per_step": Compute reward for every frame (default, prone to reward hacking)
   # - "terminal": Only compute reward at episode end (last frame), prevents reward hacking

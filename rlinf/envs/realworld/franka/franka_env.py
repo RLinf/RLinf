@@ -55,6 +55,13 @@ class FrankaRobotConfig:
     reward_scale: float = 1.0  # Scale dense reward to make training stable
     step_frequency: float = 10.0  # Max number of steps per second
 
+    use_reward_model: bool = False
+    reward_worker_cfg: Optional[dict] = None
+    reward_worker_hardware_rank: Optional[int] = None
+    reward_worker_node_rank: Optional[int] = None
+    reward_worker_node_group: Optional[str] = None
+    reward_image_key: Optional[str] = None
+
     # Positions are stored in eular angles (xyz for position, rzryrx for orientation)
     # It will be converted to quaternions internally
     target_ee_pose: np.ndarray = field(
@@ -139,9 +146,11 @@ class FrankaEnv(gym.Env):
         next(self._joint_reset_cycle)  # Initialize the cycle
 
         self._success_hold_counter = 0  # Initialize the success hold counter
+        self._reward_worker = None
 
         if not self.config.is_dummy:
             self._setup_hardware()
+            self._setup_reward_worker()
 
         # Init action and observation spaces
         assert (
@@ -217,6 +226,30 @@ class FrankaEnv(gym.Env):
             gripper_type=self.config.gripper_type or "franka",
             gripper_connection=self.config.gripper_connection,
         )
+
+    def _setup_reward_worker(self):
+        if not self.config.use_reward_model:
+            return
+        if self.config.reward_worker_cfg is None:
+            raise ValueError(
+                "use_reward_model=True but reward_worker_cfg is not provided in env override_cfg."
+            )
+
+        from rlinf.workers.reward.reward_worker import EmbodiedRewardWorker
+
+        reward_node_rank = self.config.reward_worker_node_rank
+        if reward_node_rank is None:
+            reward_node_rank = self.node_rank
+
+        self._reward_worker = EmbodiedRewardWorker.launch_for_realworld(
+            reward_cfg=self.config.reward_worker_cfg,
+            node_rank=reward_node_rank,
+            node_group_label=self.config.reward_worker_node_group,
+            hardware_rank=self.config.reward_worker_hardware_rank,
+            env_idx=self.env_idx,
+            worker_rank=self.env_worker_rank,
+        )
+        self._reward_worker.init_worker().wait()
 
     def transform_action_ee_to_base(self, action):
         action[:6] = np.linalg.inv(self.adjoint_matrix) @ action[:6]
@@ -305,6 +338,16 @@ class FrankaEnv(gym.Env):
             observation (Dict[str, np.ndarray]): The current observation from the environment.
             is_gripper_action_effective (bool): Whether the gripper action was effective (i.e., the gripper state changed).
         """
+        if self.config.use_reward_model:
+            reward = self._compute_reward_model(observation)
+            if reward >= 1.0:
+                self._success_hold_counter += 1
+            else:
+                self._success_hold_counter = 0
+            if self.config.enable_gripper_penalty and is_gripper_action_effective:
+                reward -= self.config.gripper_penalty
+            return reward
+
         if not self.config.is_dummy:
             # Convert orientation to euler angles
             euler_angles = np.abs(
@@ -341,6 +384,32 @@ class FrankaEnv(gym.Env):
             return reward
         else:
             return 0.0
+
+    def _compute_reward_model(
+        self, observation: dict[str, np.ndarray | FrankaRobotState]
+    ) -> float:
+        if self._reward_worker is None:
+            raise RuntimeError("Reward worker is not initialized.")
+
+        frames = observation.get("frames", {})
+        if not frames:
+            raise ValueError("No frames available for reward model inference.")
+
+        image_key = self.config.reward_image_key
+        if image_key is None:
+            image_key = sorted(frames.keys())[0]
+        if image_key not in frames:
+            raise KeyError(
+                f"reward_image_key '{image_key}' not found in frames. "
+                f"Available keys: {list(frames.keys())}"
+            )
+
+        image_batch = np.expand_dims(frames[image_key], axis=0)
+        reward_output = self._reward_worker.compute_image_rewards(image_batch).wait()[0]
+        if hasattr(reward_output, "detach"):
+            reward_output = reward_output.detach().cpu().numpy()
+        reward_array = np.asarray(reward_output).reshape(-1)
+        return float(reward_array[0])
 
     def reset(self, joint_reset=False, seed=None, options=None):
         if self.config.is_dummy:
