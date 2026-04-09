@@ -8,16 +8,16 @@ export RANK=${RANK:-0}
 
 # 定义要跑的任务列表：格式为 "YAML名称"
 TASKS=(
-    "openvla-envnum96-env01-rollout27-actor07-pipelinestage2"
-    "openvla-envnum96-env03-rollout47-actor07-pipelinestage2"
-    "openvla-envnum96-env07-rollout07-actor07-pipelinestage1"
+    # "openvla-envnum96-env01-rollout27-actor07-pipelinestage2"
+    # "openvla-envnum96-env03-rollout47-actor07-pipelinestage2"
+    # "openvla-envnum96-env07-rollout07-actor07-pipelinestage1"
 
-    "openvla-envnum144-env01-rollout27-actor07-pipelinestage2"
-    "openvla-envnum144-env03-rollout47-actor07-pipelinestage2"
-    "openvla-envnum144-env07-rollout07-actor07-pipelinestage1"
+    # "openvla-envnum144-env01-rollout27-actor07-pipelinestage2"
+    # "openvla-envnum144-env03-rollout47-actor07-pipelinestage2"
+    # "openvla-envnum144-env07-rollout07-actor07-pipelinestage1"
 
-    "openvla-envnum160-env03-rollout47-actor07-pipelinestage2"
-    "openvla-envnum160-env07-rollout07-actor07-pipelinestage1"
+    # "openvla-envnum160-env03-rollout47-actor07-pipelinestage2"
+    # "openvla-envnum160-env07-rollout07-actor07-pipelinestage1"
 
     "openvla-envnum192-env01-rollout27-actor07-pipelinestage2"
     "openvla-envnum192-env03-rollout47-actor07-pipelinestage2"
