@@ -318,7 +318,8 @@ class DisaggregatedScheduleResult(ScheduleResult):
             rollout_prof = DataFitter(config.profile_data.rollout_profile_data)
             env_stage_cost = float(env_prof.get_value(env_num_per_gpu_per_stage))
             rollout_stage_cost = float(rollout_prof.get_value(rollout_num_per_gpu_per_stage))
-            return max(env_stage_cost, rollout_stage_cost) * stage_num
+            self.warmup_time = env_stage_cost + rollout_stage_cost
+            return max(env_stage_cost, rollout_stage_cost) * (stage_num - self.warmup_group_num) + self.warmup_time
 
         source_roles = _roles(self.source_res)
         sink_roles = _roles(self.sink_res)
