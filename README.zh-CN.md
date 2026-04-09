@@ -25,7 +25,7 @@
 RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能体而设计。名称中的 “inf” 既代表 `Infrastructure`，强调其作为新一代训练坚实基础的作用；也代表 `Infinite`，寓意其支持开放式学习、持续泛化以及智能发展的无限可能。
 
 <div align="center">
-  <img src="https://github.com/RLinf/misc/raw/main/pic/overview.svg" alt="RLinf-overview"/>
+  <img src="https://github.com/RLinf/misc/raw/main/pic/overview_zh.svg" alt="RLinf-overview"/>
 </div>
 
 ## 最新动态
