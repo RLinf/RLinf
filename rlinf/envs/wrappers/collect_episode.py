@@ -203,7 +203,10 @@ class CollectEpisode(gym.Wrapper):
         actions = chunk_actions["actions"]
         if isinstance(actions, np.ndarray):
             actions = torch.from_numpy(actions)
-        model_actions = chunk_actions["model_actions"].reshape_as(actions)
+        if "expert_actions" in chunk_actions:
+            expert_actions = chunk_actions["expert_actions"].reshape_as(actions)
+        else:
+            expert_actions = None
         raw_actions = chunk_actions["raw_actions"].reshape_as(actions)
         for step_idx in range(chunk_size):
             step_action = (
@@ -233,8 +236,8 @@ class CollectEpisode(gym.Wrapper):
                 if isinstance(infos_list, (list, tuple))
                 else infos_list
             )
-            if "model_actions" in chunk_actions:
-                step_action = model_actions[:, step_idx]
+            if expert_actions is not None:
+                step_action = expert_actions[:, step_idx]
             else:
                 step_action = raw_actions[:, step_idx]
             self._record_step(

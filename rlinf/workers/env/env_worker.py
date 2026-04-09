@@ -915,10 +915,10 @@ class EnvWorker(Worker):
                     if self.cfg.env.train.get("data_collection", None) and getattr(
                         self.cfg.env.train.data_collection, "enabled", False
                     ):
-                        expert_actions = rollout_result.forward_inputs.get("model_action", None)
+                        expert_actions = rollout_result.forward_inputs.get("action", None)
                         actions = {
                             "raw_actions": rollout_result.actions,
-                            "model_actions": expert_actions,
+                            "expert_actions": expert_actions,
                         }
                     else:
                         actions = {"raw_actions": rollout_result.actions}
