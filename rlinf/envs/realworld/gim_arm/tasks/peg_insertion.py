@@ -73,7 +73,6 @@ class GimArmPegInsertionConfig(GimArmRobotConfig):
     def __post_init__(self):
         self.target_ee_pose = np.array(self.target_ee_pose)
         self.reward_threshold = np.array(self.reward_threshold)
-        self.action_scale = 0.05
         if self.add_gripper_penalty:
             self.enable_gripper_penalty = True
 

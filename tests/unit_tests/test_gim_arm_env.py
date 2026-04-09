@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for GimArmEnv joint-space control logic.
+"""Unit tests for GimArmEnv absolute joint-space control logic.
 
 These tests use a mock controller so no hardware or SDK is required.
 """
@@ -66,7 +66,6 @@ def _make_mock_controller(initial_q=None):
 
 def _make_env(
     initial_q=None,
-    action_scale=0.05,
     joint_limit_low=None,
     joint_limit_high=None,
     **kwargs,
@@ -83,7 +82,6 @@ def _make_env(
         camera_serials=["fake_serial"],
         camera_type="realsense",
         is_dummy=False,
-        action_scale=action_scale,
         joint_limit_low=joint_limit_low,
         joint_limit_high=joint_limit_high,
         step_frequency=1000.0,  # Fast for tests.
@@ -118,9 +116,14 @@ class TestActionSpace:
         assert env.action_space.shape == (7,)
 
     def test_action_space_bounds(self):
-        env, _, _ = _make_env()
-        np.testing.assert_array_equal(env.action_space.low, -np.ones(7))
-        np.testing.assert_array_equal(env.action_space.high, np.ones(7))
+        low = np.full(6, -np.pi)
+        high = np.full(6, np.pi)
+        env, _, _ = _make_env(joint_limit_low=low, joint_limit_high=high)
+        # First 6 dims match joint limits; 7th (gripper) is [-1, 1].
+        np.testing.assert_array_equal(env.action_space.low[:6], low)
+        np.testing.assert_array_equal(env.action_space.high[:6], high)
+        assert env.action_space.low[6] == -1.0
+        assert env.action_space.high[6] == 1.0
 
     def test_observation_space_keys(self):
         env, _, _ = _make_env()
@@ -153,49 +156,46 @@ class TestActionSpace:
 
 
 class TestJointSpaceStep:
-    def test_joint_delta_applied(self):
-        """Verify q_target = q + action[:6] * action_scale."""
+    def test_absolute_position_applied(self):
+        """Verify move_joints receives the absolute joint position from the action."""
         initial_q = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
-        env, controller, state = _make_env(initial_q=initial_q, action_scale=0.1)
+        env, controller, state = _make_env(initial_q=initial_q)
 
-        action = np.array([1.0, 0.0, -1.0, 0.5, -0.5, 0.0, 0.0])
+        target_q = np.array([0.5, -0.3, 1.0, 0.0, -0.5, 0.8])
+        action = np.append(target_q, 0.0)
         env.step(action)
 
         call_args = controller.move_joints.call_args[0][0]
-        expected = initial_q + action[:6] * 0.1
-        np.testing.assert_allclose(call_args, expected, atol=1e-10)
+        np.testing.assert_allclose(call_args, target_q, atol=1e-10)
 
     def test_clamping_to_joint_limits(self):
-        """Joint targets must be clamped to configured limits."""
+        """Joint targets outside limits are clamped."""
         low = np.array([-0.5, -0.5, -0.5, -0.5, -0.5, -0.5])
         high = np.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
-        initial_q = np.array([0.45, 0.0, 0.0, 0.0, 0.0, 0.0])
 
         env, controller, _ = _make_env(
-            initial_q=initial_q,
-            action_scale=0.1,
             joint_limit_low=low,
             joint_limit_high=high,
         )
 
-        action = np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        action = np.array([0.8, -0.8, 0.0, 0.0, 0.0, 0.0, 0.0])
         env.step(action)
 
         call_args = controller.move_joints.call_args[0][0]
-        # 0.45 + 0.1 = 0.55 -> clamped to 0.5
         assert call_args[0] == pytest.approx(0.5)
+        assert call_args[1] == pytest.approx(-0.5)
 
-    def test_action_clipped_to_bounds(self):
-        """Actions outside [-1, 1] are clipped before applying."""
-        initial_q = np.zeros(6)
-        env, controller, _ = _make_env(initial_q=initial_q, action_scale=0.1)
+    def test_action_clipped_to_action_space_bounds(self):
+        """Actions outside action space bounds are clipped to joint limits."""
+        low = np.array([-1.0, -1.0, -1.0, -1.0, -1.0, -1.0])
+        high = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+        env, controller, _ = _make_env(joint_limit_low=low, joint_limit_high=high)
 
-        action = np.array([2.0, -2.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        action = np.array([5.0, -5.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         env.step(action)
 
         call_args = controller.move_joints.call_args[0][0]
-        # Clipped to 1.0 and -1.0 first, then scaled.
-        np.testing.assert_allclose(call_args[:2], [0.1, -0.1], atol=1e-10)
+        np.testing.assert_allclose(call_args[:2], [1.0, -1.0], atol=1e-10)
 
     def test_step_increments_counter(self):
         env, _, _ = _make_env()

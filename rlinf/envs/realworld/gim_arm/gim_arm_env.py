@@ -132,13 +132,13 @@ class GimArmRobotConfig:
 class GimArmEnv(gym.Env):
     """GimArm 6-DOF robot environment with joint-space actions.
 
-    Action space:  ``Box(-1, 1, (7,))`` — ``[dq1, ..., dq6, gripper]``
+    Action space:  ``Box((7,))`` — ``[q1, ..., q6, gripper]``
     Observation:   ``Dict{state: Dict{...}, frames: Dict{wrist_i: ...}}``
 
-    The gripper element is treated as a binary open/close command using
-    ``binary_gripper_threshold``.  The joint deltas are multiplied by
-    ``action_scale`` (radians) before being added to the current joint
-    positions and clamped to joint limits.
+    The first six action dimensions are **absolute joint positions** in
+    radians.  The action-space bounds for these dimensions match the
+    configured joint limits.  The seventh element is a binary open/close
+    gripper command (in ``[-1, 1]``) using ``binary_gripper_threshold``.
 
     Reward is computed in Cartesian space by comparing the FK-computed TCP
     pose to ``target_ee_pose``, identical to :class:`FrankaEnv`.
@@ -241,11 +241,12 @@ class GimArmEnv(gym.Env):
             self.config.joint_limit_high, dtype=np.float64
         )
 
-        # Action: [dq1, dq2, dq3, dq4, dq5, dq6, gripper]
-        self.action_space = gym.spaces.Box(
-            np.ones(7, dtype=np.float32) * -1,
-            np.ones(7, dtype=np.float32),
-        )
+        # Action: [q1, q2, q3, q4, q5, q6, gripper]
+        # First 6 dims: absolute joint positions (rad) bounded by joint limits.
+        # 7th dim: gripper command in [-1, 1].
+        action_low = np.append(self._joint_limit_low, -1.0).astype(np.float32)
+        action_high = np.append(self._joint_limit_high, 1.0).astype(np.float32)
+        self.action_space = gym.spaces.Box(action_low, action_high)
 
         self.observation_space = gym.spaces.Dict(
             {
@@ -279,8 +280,9 @@ class GimArmEnv(gym.Env):
         """Execute one environment step.
 
         Args:
-            action: ``(7,)`` float array in ``[-1, 1]``.
-                ``action[:6]`` are joint deltas scaled by ``action_scale``.
+            action: ``(7,)`` float array.
+                ``action[:6]`` are absolute joint positions in radians,
+                bounded by the configured joint limits.
                 ``action[6]`` is the gripper command (binary open/close).
 
         Returns:
@@ -291,9 +293,7 @@ class GimArmEnv(gym.Env):
         action = np.clip(action, self.action_space.low, self.action_space.high)
 
         if not self.config.is_dummy:
-            q = self._state.arm_joint_position.copy()
-            q_target = q + action[:6] * self.config.action_scale
-            q_target = np.clip(q_target, self._joint_limit_low, self._joint_limit_high)
+            q_target = np.clip(action[:6], self._joint_limit_low, self._joint_limit_high)
             self._controller.move_joints(q_target).wait()
 
             gripper_action = float(action[6])
