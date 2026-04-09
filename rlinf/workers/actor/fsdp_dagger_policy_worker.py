@@ -34,8 +34,8 @@ from rlinf.utils.utils import clear_memory
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 from rlinf.data.rolling_lerobot_dataset import (
     build_rolling_lerobot_dataset,
-    build_dataloader_from_dataset,
 )
+from rlinf.data.utils import build_dataloader_from_dataset
 
 class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def __init__(self, cfg: DictConfig):
@@ -45,15 +45,17 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self.enable_drq = bool(getattr(self.cfg.actor, "enable_drq", False))
         self.dataset = None
         self.data_source = cfg.actor.get("data_source", "buffer")
+        self._data_epoch = 0
 
-    def _build_sft_data_loader(self):
+    def _build_lerobot_dataset(self):
         self.dataset = build_rolling_lerobot_dataset(
             root_dir=self.cfg.actor.sft_data_path,
             chunk_size=self.cfg.actor.model.num_action_chunks,
-            min_datasets=self.cfg.actor.get("min_datasets", 1),
+            min_frames=self.cfg.actor.get("min_frames", 1),
             wait_interval_s=self.cfg.actor.get("wait_interval_s", 10.0),
         )
         
+    def _build_lerobot_data_loader(self):
         # Calculate num_samples_per_epoch for random replacement sampling
         # Set to global_batch_size * update_epoch to get 'update_epoch' batches per epoch
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
@@ -69,9 +71,15 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             num_samples_per_epoch=num_samples_per_epoch,
             seed=self.cfg.actor.get("seed", 42),
         )
-        self.data_iter = iter(self.data_loader)
-        self._data_iter_offset = 0
-        self._data_epoch = 0
+        if hasattr(self.data_loader, "sampler") and hasattr(
+            self.data_loader.sampler, "set_epoch"
+        ):
+            self.data_loader.sampler.set_epoch(self._data_epoch)
+        self._logger.info(
+            f"in _build_lerobot_data_loader: "
+            f"{len(self.data_loader)=}, {len(self.dataset)=}, "
+            f"{num_samples_per_epoch=}"
+        )
 
     def init_worker(self):
         super().setup_model_and_optimizer()
@@ -105,6 +113,8 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                     "trajectory_format", "pt"
                 ),
             )
+        elif self.data_source == "lerobot":
+            self._build_lerobot_dataset()
 
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
         clear_memory(sync=False)
@@ -136,35 +146,11 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             self.replay_buffer.add_trajectories(intervene_traj_list)
     
     def recv_lerobot_rollout_trajectories(self) -> None:
-        if self.data_source == "lerobot":
-            if self.dataset is None:
-                self._build_sft_data_loader()
-
         self.dataset.refresh()
         while not self.dataset.is_ready():
             time.sleep(1)
             self.dataset.refresh()
-        
-        # Rebuild dataloader with updated dataset
-        update_epoch = self.cfg.algorithm.get("update_epoch", 1)
-        global_batch_size = self.cfg.actor.global_batch_size
-        num_samples_per_epoch = global_batch_size * update_epoch
-        
-        self.data_loader = build_dataloader_from_dataset(
-            dataset=self.dataset,
-            batch_size=self.cfg.actor.micro_batch_size * self._world_size,
-            world_size=self._world_size,
-            rank=self._rank,
-            use_random_replacement=True,
-            num_samples_per_epoch=num_samples_per_epoch,
-            seed=self.cfg.actor.get("seed", 42),
-        )
-        self.data_iter = iter(self.data_loader)
-        self._logger.info(
-            f"in recv_lerobot_rollout_trajectories: "
-            f"{len(self.data_loader)=}, {len(self.dataset)=}, "
-            f"{num_samples_per_epoch=}"
-        )
+        self._build_lerobot_data_loader()
 
     def _prepare_sft_batch(self, batch):
         """Prepare model-specific DAgger training inputs."""
@@ -289,7 +275,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             self.data_loader.sampler, "set_epoch"
         ):
             self.data_loader.sampler.set_epoch(self._data_epoch)
-        self.data_iter = iter(self.data_loader)
 
         return {
             "dagger/actor_loss": np.mean(gbs_actor_loss),

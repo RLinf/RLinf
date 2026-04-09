@@ -72,29 +72,6 @@ Typical usage (recommended pattern with separate functions)::
                 world_size=1,
                 rank=0,
             )
-
-Alternative usage (convenience function)::
-
-    dataset, loader = build_rolling_lerobot_dataloader(
-        root_dir="logs/20260402/maniskill",
-        batch_size=32,
-        chunk_size=16,
-        skip_last_n=1,
-    )
-
-    for epoch in range(num_epochs):
-        loader.sampler.set_epoch(epoch)
-        for batch in loader:
-            train_step(batch)
-
-        n_new = dataset.refresh()
-        if n_new:
-            loader = build_dataloader_from_dataset(
-                dataset,
-                batch_size=32,
-                world_size=1,
-                rank=0,
-            )
 """
 
 from __future__ import annotations
@@ -120,148 +97,6 @@ logger = get_logger()
 _META_KEYS: frozenset[str] = frozenset(
     {"timestamp", "frame_index", "episode_index", "index", "task_index"}
 )
-
-
-# ---------------------------------------------------------------------------
-# Random Replacement Samplers
-# ---------------------------------------------------------------------------
-
-
-class RandomReplacementSampler(Sampler):
-    """Sampler that randomly samples indices with replacement.
-
-    Unlike DistributedSampler which iterates through the dataset without
-    replacement, this sampler can sample the same index multiple times,
-    making it suitable for small datasets with large batch sizes.
-
-    This sampler is useful when you want to sample more data points than
-    exist in the dataset (e.g., batch_size > dataset_size), which is common
-    when using replay buffers or rolling datasets in RL training.
-
-    Args:
-        dataset: Dataset to sample from.
-        num_samples: Number of samples to draw per epoch. If None, defaults
-            to len(dataset). Can be set larger than len(dataset).
-        seed: Random seed for reproducibility. If None, uses random state.
-    """
-
-    def __init__(
-        self,
-        dataset: Dataset,
-        num_samples: int | None = None,
-        seed: int | None = None,
-    ) -> None:
-        self.dataset = dataset
-        self.num_samples = num_samples if num_samples is not None else len(dataset)
-        self.seed = seed
-        self.epoch = 0
-
-    def __iter__(self):
-        # Create generator with seed for reproducibility
-        g = torch.Generator()
-        if self.seed is not None:
-            g.manual_seed(self.seed + self.epoch)
-
-        # Sample indices with replacement
-        indices = torch.randint(
-            low=0,
-            high=len(self.dataset),
-            size=(self.num_samples,),
-            generator=g,
-            dtype=torch.int64,
-        )
-
-        return iter(indices.tolist())
-
-    def __len__(self) -> int:
-        return self.num_samples
-
-    def set_epoch(self, epoch: int) -> None:
-        """Set epoch for deterministic shuffling across epochs."""
-        self.epoch = epoch
-
-
-class DistributedRandomReplacementSampler(Sampler):
-    """Distributed version of RandomReplacementSampler.
-
-    Each rank samples from the full dataset with replacement, but uses
-    a different random seed to ensure different samples across ranks.
-
-    This is useful for distributed training where each process needs to
-    sample different data, but all processes sample from the same dataset
-    with replacement.
-
-    Args:
-        dataset: Dataset to sample from.
-        num_samples: Total number of samples across all ranks. Each rank
-            will sample num_samples // num_replicas samples. If None,
-            defaults to len(dataset).
-        num_replicas: Number of distributed processes. If None, uses
-            torch.distributed.get_world_size().
-        rank: Rank of current process. If None, uses
-            torch.distributed.get_rank().
-        seed: Base random seed. Each rank uses seed + epoch * num_replicas + rank.
-        shuffle: Unused, kept for API compatibility with DistributedSampler.
-    """
-
-    def __init__(
-        self,
-        dataset: Dataset,
-        num_samples: int | None = None,
-        num_replicas: int | None = None,
-        rank: int | None = None,
-        seed: int = 0,
-        shuffle: bool = True,
-    ) -> None:
-        if num_replicas is None:
-            if not torch.distributed.is_available():
-                raise RuntimeError("Requires distributed package to be available")
-            num_replicas = torch.distributed.get_world_size()
-        if rank is None:
-            if not torch.distributed.is_available():
-                raise RuntimeError("Requires distributed package to be available")
-            rank = torch.distributed.get_rank()
-
-        if rank >= num_replicas or rank < 0:
-            raise ValueError(
-                f"Invalid rank {rank}, rank should be in the interval [0, {num_replicas - 1}]"
-            )
-
-        self.dataset = dataset
-        self.num_replicas = num_replicas
-        self.rank = rank
-        self.epoch = 0
-        self.seed = seed
-
-        # Total samples across all ranks
-        total_samples = num_samples if num_samples is not None else len(dataset)
-
-        # Samples per rank (divide evenly)
-        self.num_samples = total_samples // self.num_replicas
-        self.total_size = self.num_samples * self.num_replicas
-
-    def __iter__(self):
-        # Create generator with rank-specific seed
-        g = torch.Generator()
-        g.manual_seed(self.seed + self.epoch * self.num_replicas + self.rank)
-
-        # Sample indices with replacement
-        indices = torch.randint(
-            low=0,
-            high=len(self.dataset),
-            size=(self.num_samples,),
-            generator=g,
-            dtype=torch.int64,
-        )
-
-        return iter(indices.tolist())
-
-    def __len__(self) -> int:
-        return self.num_samples
-
-    def set_epoch(self, epoch: int) -> None:
-        """Set epoch for deterministic shuffling across epochs."""
-        self.epoch = epoch
 
 
 # ---------------------------------------------------------------------------
@@ -378,11 +213,11 @@ class RollingLeRobotDataset(Dataset):
             these keys.  ``None`` returns every key from LeRobotDataset.
         image_transforms: Optional callable passed directly to each
             :class:`LeRobotDataset` as ``image_transforms``.
-        min_datasets: Minimum number of safe sub-datasets required before the
-            dataset is considered ready.  Construction blocks until this
-            threshold is met.  Defaults to ``1``.
+        min_frames: Minimum total number of frames required before the dataset
+            is considered ready.  Construction blocks until this threshold is
+            met.  Defaults to ``1``.
         wait_interval_s: Seconds to sleep between readiness polls when fewer
-            than ``min_datasets`` sub-datasets are available.  Defaults to
+            than ``min_frames`` total frames are available.  Defaults to
             ``10.0``.
     """
 
@@ -394,7 +229,7 @@ class RollingLeRobotDataset(Dataset):
         delta_timestamps: dict[str, list[float]] | None = None,
         keys: list[str] | None = None,
         image_transforms: Callable | None = None,
-        min_datasets: int = 1,
+        min_frames: int = 10,
         wait_interval_s: float = 10.0,
         action_sequence_keys: list[str] | None = ["actions"],
     ) -> None:
@@ -404,7 +239,7 @@ class RollingLeRobotDataset(Dataset):
         self._user_delta_timestamps = delta_timestamps
         self.keys = keys
         self.image_transforms = image_transforms
-        self.min_datasets = min_datasets
+        self.min_frames = min_frames
         self.wait_interval_s = wait_interval_s
         self.action_sequence_keys = action_sequence_keys
 
@@ -421,37 +256,8 @@ class RollingLeRobotDataset(Dataset):
     # ------------------------------------------------------------------
     # Readiness gate
     # ------------------------------------------------------------------
-
-    async def wait_until_ready(self) -> None:
-        """Block until at least ``min_datasets`` safe sub-datasets are loaded.
-
-        Polls ``root_dir`` every ``wait_interval_s`` seconds, indexing any
-        newly completed sub-datasets on each iteration, until the threshold is
-        reached.  Logs progress at each poll so the operator can see that the
-        process is intentionally waiting for data to accumulate.
-        """
-        while len(self._sub_datasets) < self.min_datasets:
-            logger.info(
-                "[RollingLeRobotDataset] waiting for data: %d/%d sub-dataset(s) "
-                "available, sleeping %.1fs ...",
-                len(self._sub_datasets),
-                self.min_datasets,
-                self.wait_interval_s,
-            )
-            await asyncio.sleep(self.wait_interval_s)
-            safe = _discover_safe_datasets(self.root_dir, self.skip_last_n)
-            new_paths = [p for p in safe if p not in self._indexed_datasets]
-            if new_paths:
-                self._build_index(new_paths)
-
-        logger.info(
-            "[RollingLeRobotDataset] ready: %d sub-dataset(s), %d total frame(s)",
-            len(self._sub_datasets),
-            len(self),
-        )
-    
     def is_ready(self) -> bool:
-        return len(self._sub_datasets) >= self.min_datasets
+        return len(self) >= self.min_frames
 
     # ------------------------------------------------------------------
     # Index construction
@@ -564,7 +370,7 @@ def build_rolling_lerobot_dataset(
     delta_timestamps: dict[str, list[float]] | None = None,
     keys: list[str] | None = None,
     image_transforms: Callable | None = None,
-    min_datasets: int = 1,
+    min_frames: int = 1,
     wait_interval_s: float = 10.0,
     action_sequence_keys: list[str] | None = ["actions"],
 ) -> RollingLeRobotDataset:
@@ -584,7 +390,7 @@ def build_rolling_lerobot_dataset(
             keys returned by LeRobotDataset.
         image_transforms: Optional transform passed to each LeRobotDataset's
             ``image_transforms`` argument.
-        min_datasets: Minimum number of safe sub-datasets required before the
+        min_frames: Minimum number of safe sub-datasets required before the
             dataset returns.  Construction sleeps until the threshold is met.
             Defaults to ``1``.
         wait_interval_s: Seconds between readiness polls.  Defaults to ``10.0``.
@@ -601,7 +407,7 @@ def build_rolling_lerobot_dataset(
         delta_timestamps=delta_timestamps,
         keys=keys,
         image_transforms=image_transforms,
-        min_datasets=min_datasets,
+        min_frames=min_frames,
         wait_interval_s=wait_interval_s,
         action_sequence_keys=action_sequence_keys,
     )
@@ -617,238 +423,3 @@ def build_rolling_lerobot_dataset(
     )
 
     return dataset
-
-
-def build_dataloader_from_dataset(
-    dataset: RollingLeRobotDataset,
-    batch_size: int,
-    world_size: int = 1,
-    rank: int = 0,
-    num_workers: int = 4,
-    drop_last: bool = True,
-    pin_memory: bool = True,
-    use_random_replacement: bool = False,
-    num_samples_per_epoch: int | None = None,
-    seed: int = 42,
-    **kwargs: Any,
-) -> DataLoader:
-    """Build a :class:`DataLoader` from a :class:`RollingLeRobotDataset`.
-
-    By default, uses :class:`~torch.utils.data.distributed.DistributedSampler`
-    which samples without replacement. Set ``use_random_replacement=True`` to
-    use :class:`RandomReplacementSampler` which samples with replacement,
-    allowing batch sizes larger than the dataset size.
-
-    Args:
-        dataset: The :class:`RollingLeRobotDataset` to wrap.
-        batch_size: Number of samples per batch **per replica**.
-        world_size: Total number of distributed replicas.  Defaults to ``1``.
-        rank: Global rank of the current process.  Defaults to ``0``.
-        num_workers: Number of DataLoader worker processes.
-        drop_last: Drop the last incomplete batch.  Defaults to ``True``
-            (recommended for distributed training).
-        pin_memory: Pin CPU memory for faster GPU transfers.  Defaults to
-            ``True``.
-        use_random_replacement: If ``True``, use
-            :class:`RandomReplacementSampler` which samples with replacement.
-            If ``False`` (default), use :class:`DistributedSampler` which
-            samples without replacement. Set to ``True`` when batch_size may
-            exceed dataset size.
-        num_samples_per_epoch: Number of samples per epoch when using random
-            replacement sampling. If ``None``, defaults to ``len(dataset)``.
-            Only used when ``use_random_replacement=True``.
-        seed: Random seed for sampling. Only used when
-            ``use_random_replacement=True``.
-        **kwargs: Additional keyword arguments forwarded to
-            :class:`~torch.utils.data.DataLoader`.
-
-    Returns:
-        A :class:`DataLoader` instance.  The sampler is accessible via
-        ``loader.sampler``.  Typical training loop after refresh::
-
-            dataset = build_rolling_lerobot_dataset(
-                root_dir="logs/run/maniskill",
-                chunk_size=16,
-            )
-            loader = build_dataloader_from_dataset(
-                dataset,
-                batch_size=64,
-                world_size=world_size,
-                rank=rank,
-                use_random_replacement=True,
-                num_samples_per_epoch=6400,
-            )
-            for epoch in range(100):
-                loader.sampler.set_epoch(epoch)
-                for batch in loader:
-                    train(batch)
-                n_new = dataset.refresh()
-                if n_new:
-                    loader = build_dataloader_from_dataset(
-                        dataset,
-                        batch_size=64,
-                        world_size=world_size,
-                        rank=rank,
-                        use_random_replacement=True,
-                        num_samples_per_epoch=6400,
-                    )
-    """
-    if use_random_replacement:
-        # Use random sampling with replacement
-        if world_size > 1:
-            sampler = DistributedRandomReplacementSampler(
-                dataset,
-                num_samples=num_samples_per_epoch,
-                num_replicas=world_size,
-                rank=rank,
-                seed=seed,
-            )
-        else:
-            sampler = RandomReplacementSampler(
-                dataset,
-                num_samples=num_samples_per_epoch,
-                seed=seed,
-            )
-    else:
-        # Use standard distributed sampler (without replacement)
-        sampler = DistributedSampler(
-            dataset,
-            num_replicas=world_size,
-            rank=rank,
-            shuffle=True,
-        )
-
-    logger.info(
-        "[build_dataloader_from_dataset] batch_size=%d, world_size=%d, "
-        "rank=%d, sub_datasets=%d, total_frames=%d, sampler=%s, "
-        "sampler_length=%d",
-        batch_size,
-        world_size,
-        rank,
-        len(dataset._sub_datasets),
-        len(dataset),
-        sampler.__class__.__name__,
-        len(sampler),
-    )
-
-    loader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        sampler=sampler,
-        num_workers=num_workers,
-        drop_last=drop_last,
-        pin_memory=pin_memory,
-        **kwargs,
-    )
-
-    return loader
-
-
-def build_rolling_lerobot_dataloader(
-    root_dir: str | Path,
-    batch_size: int,
-    world_size: int = 1,
-    rank: int = 0,
-    skip_last_n: int = 1,
-    chunk_size: int = 1,
-    delta_timestamps: dict[str, list[float]] | None = None,
-    keys: list[str] | None = None,
-    image_transforms: Callable | None = None,
-    min_datasets: int = 1,
-    wait_interval_s: float = 10.0,
-    num_workers: int = 4,
-    drop_last: bool = True,
-    pin_memory: bool = True,
-    action_sequence_keys: list[str] | None = ["actions"],
-    **kwargs: Any,
-) -> tuple[RollingLeRobotDataset, DataLoader]:
-    """Build a :class:`RollingLeRobotDataset` and a :class:`DataLoader` over it.
-
-    A :class:`~torch.utils.data.distributed.DistributedSampler` is always
-    created (``num_replicas=world_size``, ``rank=rank``), so set
-    ``world_size=1`` / ``rank=0`` for single-process training.  Call
-    ``loader.sampler.set_epoch(epoch)`` at the start of every epoch to reseed
-    the sampler's shuffle.
-
-    Returns both objects so the caller can invoke ``dataset.refresh()`` to
-    pick up newly completed sub-datasets and then rebuild the loader.
-
-    Args:
-        root_dir: Root directory containing ``rank_N/id_M/`` sub-datasets.
-        batch_size: Number of samples per batch **per replica**.
-        world_size: Total number of distributed replicas.  Defaults to ``1``.
-        rank: Global rank of the current process.  Defaults to ``0``.
-        skip_last_n: Latest sub-datasets to exclude per rank.  Defaults to
-            ``1`` to avoid reading the sub-dataset currently being written.
-        chunk_size: Consecutive frames per sample.  Defaults to ``1``
-            (single-frame).  Set to the model's action-chunk horizon for
-            OpenPI / DAgger training.
-        delta_timestamps: Explicit ``delta_timestamps`` passed to each
-            :class:`~lerobot.common.datasets.lerobot_dataset.LeRobotDataset`.
-            Auto-generated from ``chunk_size`` and fps when ``None``.
-        keys: Parquet column names to keep in each sample.  ``None`` keeps all
-            keys returned by LeRobotDataset.
-        image_transforms: Optional transform passed to each LeRobotDataset's
-            ``image_transforms`` argument.
-        min_datasets: Minimum number of safe sub-datasets required before the
-            dataset (and therefore this function) returns.  Construction sleeps
-            until the threshold is met.  Defaults to ``1``.
-        wait_interval_s: Seconds between readiness polls.  Defaults to ``10.0``.
-        num_workers: Number of DataLoader worker processes.
-        drop_last: Drop the last incomplete batch.  Defaults to ``True``
-            (recommended for distributed training).
-        pin_memory: Pin CPU memory for faster GPU transfers.  Defaults to
-            ``True``.
-        action_sequence_keys: List of keys to apply chunking to.  Defaults to
-            ``["actions"]``.
-        **kwargs: Additional keyword arguments forwarded to
-            :class:`~torch.utils.data.DataLoader`.
-
-    Returns:
-        A ``(dataset, dataloader)`` tuple.  The sampler is accessible via
-        ``loader.sampler``.  Typical training loop::
-
-            dataset, loader = build_rolling_lerobot_dataloader(
-                root_dir="logs/run/maniskill",
-                batch_size=64,
-                world_size=world_size,
-                rank=rank,
-                chunk_size=16,
-            )
-            for epoch in range(100):
-                loader.sampler.set_epoch(epoch)
-                for batch in loader:
-                    train(batch)
-                n_new = dataset.refresh()
-                if n_new:
-                    loader = build_dataloader_from_dataset(
-                        dataset,
-                        batch_size=64,
-                        world_size=world_size,
-                        rank=rank,
-                    )
-    """
-    dataset = build_rolling_lerobot_dataset(
-        root_dir=root_dir,
-        skip_last_n=skip_last_n,
-        chunk_size=chunk_size,
-        delta_timestamps=delta_timestamps,
-        keys=keys,
-        image_transforms=image_transforms,
-        min_datasets=min_datasets,
-        wait_interval_s=wait_interval_s,
-        action_sequence_keys=action_sequence_keys,
-    )
-
-    loader = build_dataloader_from_dataset(
-        dataset=dataset,
-        batch_size=batch_size,
-        world_size=world_size,
-        rank=rank,
-        num_workers=num_workers,
-        drop_last=drop_last,
-        pin_memory=pin_memory,
-        **kwargs,
-    )
-
-    return dataset, loader

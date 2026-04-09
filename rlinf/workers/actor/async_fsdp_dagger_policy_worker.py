@@ -87,6 +87,7 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
         while True:
             self.dataset.refresh()
             if self.dataset.is_ready():
+                self._build_lerobot_data_loader()
                 return
             await asyncio.sleep(1)
 
