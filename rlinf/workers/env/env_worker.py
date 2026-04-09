@@ -473,7 +473,7 @@ class EnvWorker(Worker):
 
         current_dones = chunk_dones[:, -1]  # [num_envs] bool
         prev = self.eval_prev_done[stage_id]
-        newly_done = current_dones & ~prev
+        newly_done = current_dones & ~prev.to(current_dones.device)
         self.eval_prev_done[stage_id] = current_dones.clone()
 
         if newly_done.any():
