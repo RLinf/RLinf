@@ -82,6 +82,13 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             if await self.replay_buffer.is_ready_async(min_buffer_size):
                 return
             await asyncio.sleep(1)
+    
+    async def _wait_for_lerobot_dataset_ready(self):
+        while True:
+            self.dataset.refresh()
+            if self.dataset.is_ready():
+                return
+            await asyncio.sleep(1)
 
     @Worker.timer("run_training")
     async def run_training(self):
@@ -90,8 +97,11 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             self.load_param_and_grad(self.device)
             self.load_optimizer(self.device)
 
-        min_buffer_size = self.cfg.algorithm.replay_buffer.get("min_buffer_size", 100)
-        await self._wait_for_replay_buffer_ready(min_buffer_size)
+        if self.data_source == "buffer":
+            min_buffer_size = self.cfg.algorithm.replay_buffer.get("min_buffer_size", 100)
+            await self._wait_for_replay_buffer_ready(min_buffer_size)
+        elif self.data_source == "lerobot":
+            await self._wait_for_lerobot_dataset_ready()
 
         torch.distributed.barrier()
         assert (

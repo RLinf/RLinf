@@ -15,6 +15,7 @@
 import asyncio
 import logging
 import os
+import time
 
 import numpy as np
 import torch
@@ -52,11 +53,21 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             min_datasets=self.cfg.actor.get("min_datasets", 1),
             wait_interval_s=self.cfg.actor.get("wait_interval_s", 10.0),
         )
+        
+        # Calculate num_samples_per_epoch for random replacement sampling
+        # Set to global_batch_size * update_epoch to get 'update_epoch' batches per epoch
+        update_epoch = self.cfg.algorithm.get("update_epoch", 1)
+        global_batch_size = self.cfg.actor.global_batch_size
+        num_samples_per_epoch = global_batch_size * update_epoch
+        
         self.data_loader = build_dataloader_from_dataset(
             dataset=self.dataset,
             batch_size=self.cfg.actor.micro_batch_size * self._world_size,
             world_size=self._world_size,
             rank=self._rank,
+            use_random_replacement=True,
+            num_samples_per_epoch=num_samples_per_epoch,
+            seed=self.cfg.actor.get("seed", 42),
         )
         self.data_iter = iter(self.data_loader)
         self._data_iter_offset = 0
@@ -128,12 +139,31 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         if self.data_source == "lerobot":
             if self.dataset is None:
                 self._build_sft_data_loader()
+
         self.dataset.refresh()
+        while not self.dataset.is_ready():
+            time.sleep(1)
+            self.dataset.refresh()
+        
+        # Rebuild dataloader with updated dataset
+        update_epoch = self.cfg.algorithm.get("update_epoch", 1)
+        global_batch_size = self.cfg.actor.global_batch_size
+        num_samples_per_epoch = global_batch_size * update_epoch
+        
         self.data_loader = build_dataloader_from_dataset(
             dataset=self.dataset,
             batch_size=self.cfg.actor.micro_batch_size * self._world_size,
             world_size=self._world_size,
             rank=self._rank,
+            use_random_replacement=True,
+            num_samples_per_epoch=num_samples_per_epoch,
+            seed=self.cfg.actor.get("seed", 42),
+        )
+        self.data_iter = iter(self.data_loader)
+        self._logger.info(
+            f"in recv_lerobot_rollout_trajectories: "
+            f"{len(self.data_loader)=}, {len(self.dataset)=}, "
+            f"{num_samples_per_epoch=}"
         )
 
     def _prepare_sft_batch(self, batch):
@@ -225,43 +255,41 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         
     def update_lerobot_one_epoch(self):
         """Run one Lerobot update epoch for DAgger."""
+        self.optimizer.zero_grad()
         gbs_actor_loss = []
-        for idx in range(self.gradient_accumulation):
+        
+        # With RandomReplacementSampler, we can simply iterate through the dataloader
+        # The dataloader length is controlled by num_samples_per_epoch
+        num_batches = len(self.data_loader)
+        
+        for idx, batch in enumerate(self.data_loader):
             # set the gradient accumulation backward_ctx
             backward_ctx = self.before_micro_batch(
                 self.model,
-                is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
+                is_last_micro_batch=(idx + 1) == num_batches,
             )
-
-            try:
-                batch = next(self.data_iter)
-                self._data_iter_offset += 1
-            except StopIteration:
-                self._data_epoch += 1
-                logging.info(
-                    f"[INFO] data_iter exhausted, reset iterator self._data_epoch {self._data_epoch}"
-                )
-                if hasattr(self.data_loader, "sampler") and hasattr(
-                    self.data_loader.sampler, "set_epoch"
-                ):
-                    self.data_loader.sampler.set_epoch(self._data_epoch)
-                self.data_iter = iter(self.data_loader)
-                batch = next(self.data_iter)
-                self._data_iter_offset = 1
 
             with self.amp_context:
                 actor_loss = self.forward_actor(batch)
             
-            actor_loss = actor_loss / self.gradient_accumulation
+            actor_loss = actor_loss / num_batches
             with backward_ctx:
                 self.grad_scaler.scale(actor_loss).backward()
-            gbs_actor_loss.append(actor_loss.item() * self.gradient_accumulation)
+            gbs_actor_loss.append(actor_loss.item() * num_batches)
 
         actor_grad_norm = self.model.clip_grad_norm_(
             max_norm=self.cfg.actor.optim.clip_grad
         )
         self.optimizer.step()
         self.lr_scheduler.step()
+        
+        # Reset iterator for next epoch
+        self._data_epoch += 1
+        if hasattr(self.data_loader, "sampler") and hasattr(
+            self.data_loader.sampler, "set_epoch"
+        ):
+            self.data_loader.sampler.set_epoch(self._data_epoch)
+        self.data_iter = iter(self.data_loader)
 
         return {
             "dagger/actor_loss": np.mean(gbs_actor_loss),

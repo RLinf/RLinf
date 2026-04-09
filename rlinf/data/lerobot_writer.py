@@ -67,6 +67,7 @@ class LeRobotDatasetWriter:
         image_shape: tuple[int, int, int] = (256, 256, 3),
         state_dim: int = 8,
         action_dim: int = 7,
+        has_image: bool = True, 
         has_wrist_image: bool = True,
         has_extra_view_image: bool = True,
     ) -> None:
@@ -89,11 +90,6 @@ class LeRobotDatasetWriter:
         """
         if features is None:
             features = {
-                "image": {
-                    "dtype": "image",
-                    "shape": list(image_shape),
-                    "names": ["height", "width", "channel"],
-                },
                 "state": {
                     "dtype": "float32",
                     "shape": (state_dim, ),
@@ -115,6 +111,12 @@ class LeRobotDatasetWriter:
                     "names": ["is_success"],
                 },
             }
+            if has_image:
+                features["image"] = {
+                    "dtype": "image",
+                    "shape": list(image_shape),
+                    "names": ["height", "width", "channel"],
+                }
             if has_wrist_image:
                 features["wrist_image"] = {
                     "dtype": "image",
@@ -169,7 +171,7 @@ class LeRobotDatasetWriter:
         self.logger.info(f"Saved episode with {len(episode_data)} frames, task: '{episode_data[0].get('task', 'N/A')}'")
 
     def finalize(self) -> None:
-        """Finalize the dataset."""
+        """Finalize the dataset and properly clean up all resources."""
         if self.dataset is None:
             raise RuntimeError("Dataset not created. Call create() first.")
         
@@ -187,8 +189,8 @@ class LeRobotDatasetWriter:
             self.dataset.hf_dataset = None
         
         del self.dataset
-        gc.collect()
         self.dataset = None
+        gc.collect()
         self.logger.info("Dataset finalized.")
 
 def merge_distributed_datasets(

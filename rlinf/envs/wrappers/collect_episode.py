@@ -25,6 +25,7 @@ import numpy as np
 import torch
 
 from rlinf.data.lerobot_writer import LeRobotDatasetWriter
+from rlinf.utils.logging import get_logger
 
 _VALID_FORMATS = ("pickle", "lerobot")
 
@@ -120,6 +121,7 @@ class CollectEpisode(gym.Wrapper):
         ]
 
         self._closed = False
+        self.logger = get_logger()
 
         os.makedirs(self.save_dir, exist_ok=True)
         atexit.register(self._finalize_on_exit)
@@ -197,6 +199,12 @@ class CollectEpisode(gym.Wrapper):
         )
 
         chunk_size = len(obs_list) if isinstance(obs_list, (list, tuple)) else 1
+
+        actions = chunk_actions["actions"]
+        if isinstance(actions, np.ndarray):
+            actions = torch.from_numpy(actions)
+        model_actions = chunk_actions["model_actions"].reshape_as(actions)
+        raw_actions = chunk_actions["raw_actions"].reshape_as(actions)
         for step_idx in range(chunk_size):
             step_action = (
                 chunk_actions[:, step_idx]
@@ -225,6 +233,10 @@ class CollectEpisode(gym.Wrapper):
                 if isinstance(infos_list, (list, tuple))
                 else infos_list
             )
+            if "model_actions" in chunk_actions:
+                step_action = model_actions[:, step_idx]
+            else:
+                step_action = raw_actions[:, step_idx]
             self._record_step(
                 step_action, step_obs, step_reward, step_term, step_trunc, step_info
             )
@@ -271,20 +283,31 @@ class CollectEpisode(gym.Wrapper):
     def _record_step(self, action, obs, reward, terminated, truncated, info) -> None:
         """Record one transition into every env's buffer."""
         self._global_step += 1
+        # Extract auto-reset fields once, before the per-env loop, so that
+        # processing env 0 never overwrites ``info`` and silently breaks env 1+.
+        has_final_obs = isinstance(info, dict) and "final_observation" in info
+        if has_final_obs:
+            final_observation = info["final_observation"]
+            final_info_batch = info["final_info"]
+            info_no_reset = copy.deepcopy(info)
+            info_no_reset.pop("final_observation")
+            info_no_reset.pop("final_info")
+
         for env_idx in range(self.num_envs):
             # Auto-reset envs store the pre-reset obs in info["final_observation"];
             # the current `obs` is the post-reset obs for the *next* episode.
-            if isinstance(info, dict) and "final_observation" in info:
-                info_copy = copy.deepcopy(info)
-                info_copy.pop("final_observation")
-                info_copy.pop("final_info")
-
-                env_obs = self._slice_copy(info["final_observation"], env_idx)
-                info = self._slice_copy(info["final_info"], env_idx)
+            # Only use final_observation for envs that are actually done this step.
+            env_done = self._scalar_flag(terminated, env_idx) or self._scalar_flag(
+                truncated, env_idx
+            )
+            if has_final_obs and env_done:
+                env_obs = self._slice_copy(final_observation, env_idx)
+                env_info = self._slice_copy(final_info_batch, env_idx)
                 self._pending_obs[env_idx] = self._slice_copy(obs, env_idx)
-                self._pending_info[env_idx] = self._slice_copy(info_copy, env_idx)
+                self._pending_info[env_idx] = self._slice_copy(info_no_reset, env_idx)
             else:
                 env_obs = self._slice_copy(obs, env_idx)
+                env_info = self._slice_copy(info, env_idx)
 
             buf = self._buffers[env_idx]
             buf["observations"].append(env_obs)
@@ -292,10 +315,10 @@ class CollectEpisode(gym.Wrapper):
             buf["rewards"].append(self._slice_copy(reward, env_idx))
             buf["terminated"].append(self._slice_copy(terminated, env_idx))
             buf["truncated"].append(self._slice_copy(truncated, env_idx))
-            buf["infos"].append(self._slice_copy(info, env_idx))
+            buf["infos"].append(env_info)
 
             # Update per-env success using already-sliced info (no extra copy).
-            self._update_success(env_idx, self._slice_data(info, env_idx))
+            self._update_success(env_idx, self._slice_data(env_info, env_idx))
 
     def _reset_env_buffer(self, env_idx: int) -> None:
         """Advance episode counter, clear the buffer, and carry over pending obs."""
@@ -339,6 +362,7 @@ class CollectEpisode(gym.Wrapper):
 
     def _flush_episode(self, env_idx: int, is_success: bool) -> None:
         """Dispatch a completed episode to the appropriate format writer."""
+        self.logger.info(f"Flush env {env_idx}")
         # breakpoint()
         buf = self._buffers[env_idx]
         if not buf["actions"]:
@@ -422,16 +446,17 @@ class CollectEpisode(gym.Wrapper):
             ):
                 if info_with_intervene["intervene_flag"].all():
                     np_action = self._to_numpy(info_with_intervene["intervene_action"])
-            if image is None or state is None or np_action is None:
+            if state is None or np_action is None:
                 continue
             frame: dict[str, Any] = {
-                "image": self._to_uint8(np.asarray(image)),
                 "state": np.asarray(state).astype(np.float32),
                 "actions": np.asarray(np_action).astype(np.float32).flatten(),
                 "task": task_desc,
                 "is_success": np.array([is_success], dtype=bool),
                 "done": np.array([False], dtype=bool),
             }
+            if image is not None:
+                frame["image"] = self._to_uint8(np.asarray(image))
             if wrist_image is not None:
                 frame["wrist_image"] = self._to_uint8(np.asarray(wrist_image))
             if extra_view_image is not None:
@@ -463,9 +488,10 @@ class CollectEpisode(gym.Wrapper):
                 repo_id=os.path.join(self.save_dir, f"rank_{self.rank}", f"id_{self._episodes_written}"),
                 robot_type=self.robot_type,
                 fps=self.fps,
-                image_shape=ep_data[0]["image"].shape,
+                image_shape=ep_data[0]["image"].shape if "image" in ep_data[0] else None,
                 state_dim=int(ep_data[0]["state"].shape[-1]),
                 action_dim=int(ep_data[0]["actions"].shape[-1]),
+                has_image="image" in ep_data[0],
                 has_wrist_image="wrist_image" in ep_data[0],
                 has_extra_view_image="extra_view_image" in ep_data[0],
             )
@@ -504,6 +530,7 @@ class CollectEpisode(gym.Wrapper):
         if self._executor is None:
             return
         self._futures.append(self._executor.submit(fn, *args))
+        self.logger.info(f"Futures queue length: {len(self._futures)}")
         self._drain_futures()
 
     def _drain_futures(self) -> None:
