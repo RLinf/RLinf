@@ -392,9 +392,12 @@ class MultiStepRolloutWorker(Worker):
     async def generate_one_epoch(self, input_channel: Channel, output_channel: Channel):
         self.update_dagger_beta()
         for _ in range(self.n_train_chunk_steps):
-            for _ in range(self.num_pipeline_stages):
-                env_output = await self.recv_env_output(input_channel)
-                actions, result = self.predict(env_output["obs"])
+            for stage_id in range(self.num_pipeline_stages):
+                with self.worker_timer(f"recv_env_output_stage_{stage_id}"):
+                    env_output = await self.recv_env_output(input_channel)
+
+                with self.worker_timer(f"predict_stage_{stage_id}"):
+                    actions, result = self.predict(env_output["obs"])
 
                 save_flags = None
                 if result.get("expert_label_flag", False):
@@ -424,7 +427,7 @@ class MultiStepRolloutWorker(Worker):
                     ),
                 )
                 self.send_rollout_result(output_channel, rollout_result, mode="train")
-        for _ in range(self.num_pipeline_stages):
+        for stage_id in range(self.num_pipeline_stages):
             env_output = await self.recv_env_output(input_channel)
             actions, result = self.predict(env_output["obs"])
 
@@ -435,8 +438,9 @@ class MultiStepRolloutWorker(Worker):
                     env_output.get("final_obs", None)
                 ),
             )
-            self.send_rollout_result(output_channel, rollout_result, mode="train")
-
+            with self.worker_timer(f"send_rollout_result_stage_{stage_id}"):
+                self.send_rollout_result(output_channel, rollout_result, mode="train")
+    
     async def generate(
         self,
         input_channel: Channel,
@@ -486,6 +490,7 @@ class MultiStepRolloutWorker(Worker):
                 eval_batch_size=self.eval_batch_size,
             )
 
+    @Worker.timer("recv_env_output")
     async def recv_env_output(
         self, input_channel: Channel, mode: Literal["train", "eval"] = "train"
     ) -> dict[str, Any]:
@@ -586,6 +591,7 @@ class MultiStepRolloutWorker(Worker):
 
         return {"obs": merged_obs, "final_obs": merged_final_obs}
 
+    @Worker.timer("send_chunk_actions")
     def send_chunk_actions(
         self,
         output_channel: Channel,
@@ -618,6 +624,7 @@ class MultiStepRolloutWorker(Worker):
                 async_op=True,
             )
 
+    @Worker.timer("split_rollout_result")
     def _split_rollout_result(
         self, rollout_result: RolloutResult, sizes: list[int]
     ) -> list[RolloutResult]:
@@ -659,6 +666,7 @@ class MultiStepRolloutWorker(Worker):
             for idx in range(len(sizes))
         ]
 
+    @Worker.timer("send_rollout_result")
     def send_rollout_result(
         self,
         output_channel: Channel,

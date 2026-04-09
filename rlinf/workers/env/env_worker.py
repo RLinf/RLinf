@@ -394,9 +394,10 @@ class EnvWorker(Worker):
         )
         env_info = {}
 
-        obs_list, chunk_rewards, chunk_terminations, chunk_truncations, infos_list = (
-            self.env_list[stage_id].chunk_step(chunk_actions)
-        )
+        with self.worker_timer(f"chunk_step_{stage_id}"):
+            obs_list, chunk_rewards, chunk_terminations, chunk_truncations, infos_list = (
+                self.env_list[stage_id].chunk_step(chunk_actions)
+            )
         if isinstance(obs_list, (list, tuple)):
             extracted_obs = obs_list[-1] if obs_list else None
         if isinstance(infos_list, (list, tuple)):
