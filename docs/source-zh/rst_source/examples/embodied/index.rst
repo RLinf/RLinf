@@ -211,6 +211,17 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/starvla.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="starvla.html" style="text-decoration: underline; color: blue;">
+          <b>StarVLA 模型强化学习训练</b>
+        </a><br>
+        StarVLA + LIBERO + GRPO 具身强化学习训练
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/3_layer_mlp.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
             data-target="animated-image.originalImage">
@@ -246,7 +257,7 @@
          支持 OpenPI 全量 SFT 与 LoRA 微调，作为强化学习前置阶段
        </p>
      </div>
-
+   
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/release_0.2/qwen2_5_sft_vlm.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -389,6 +400,7 @@
    gr00t
    lingbotvla
    dexbotic
+   starvla
    mlp
    sac_flow
    sft_openpi
