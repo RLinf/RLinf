@@ -115,7 +115,7 @@ class EnvWorker(Worker):
 
         self.log_info(f"Env worker initialized with dst_rank_map: {self.dst_rank_map}")
         self.log_info(f"Env worker initialized with src_rank_map: {self.src_rank_map}")
-        
+
         # This is a barrier to ensure all envs' initial setup upon import is done
         # Essential for RealWorld env to ensure initial ROS node setup is done
         self.broadcast(
@@ -279,8 +279,11 @@ class EnvWorker(Worker):
                 dst_rank_map.update(
                     {
                         "reward_train": CommMapper.get_dst_ranks(
-                            batch_size=self.cfg.env.train.total_num_envs // self.stage_num,
-                            src_world_size=self._component_placement.get_world_size("env"),
+                            batch_size=self.cfg.env.train.total_num_envs
+                            // self.stage_num,
+                            src_world_size=self._component_placement.get_world_size(
+                                "env"
+                            ),
                             dst_world_size=self._component_placement.get_world_size(
                                 "reward"
                             ),
@@ -328,11 +331,14 @@ class EnvWorker(Worker):
                 src_rank_map.update(
                     {
                         "reward_train": CommMapper.get_src_ranks(
-                            batch_size=self.cfg.env.train.total_num_envs // self.stage_num,
+                            batch_size=self.cfg.env.train.total_num_envs
+                            // self.stage_num,
                             src_world_size=self._component_placement.get_world_size(
                                 "reward"
                             ),
-                            dst_world_size=self._component_placement.get_world_size("env"),
+                            dst_world_size=self._component_placement.get_world_size(
+                                "env"
+                            ),
                             dst_rank=self._rank,
                         ),
                     }
