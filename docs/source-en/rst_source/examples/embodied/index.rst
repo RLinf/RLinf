@@ -211,6 +211,17 @@ as well as reinforcement learning training examples on real robots.
        </p>
      </div>
 
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/starvla.png"
+          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="starvla.html" style="text-decoration: underline; color: blue;">
+          <b>RL on StarVLA Models</b>
+        </a><br>
+        StarVLA + LIBERO + GRPO embodied RL training
+      </p>
+    </div>
+
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/3_layer_mlp.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
@@ -222,7 +233,8 @@ as well as reinforcement learning training examples on real robots.
          Train an MLP Policy with PPO/SAC/GRPO
        </p>
      </div>
-   </div>
+  </div>
+
 
    <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
@@ -390,6 +402,7 @@ as well as reinforcement learning training examples on real robots.
    gr00t
    lingbotvla
    dexbotic
+   starvla
    mlp
    sac_flow
    sft_openpi
