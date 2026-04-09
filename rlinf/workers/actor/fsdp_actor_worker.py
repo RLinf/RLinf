@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gc
 import os
 import time
 from functools import partial
@@ -1085,6 +1086,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             await handle.async_wait()
         if self.enable_offload and not self.is_weight_offloaded:
             self.offload_param_and_grad()
+        gc.collect()
+        torch.cuda.empty_cache()
 
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
         """
