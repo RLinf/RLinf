@@ -111,6 +111,10 @@ rollout:
   enable_offload: False
   pipeline_stage_num: 1
 
+  # you can enable torch compile by uncomment the following 2 lines:
+  # enable_torch_compile: True
+  # torch_compile_mode: "max-autotune"
+
   model:
     model_path: "/path/to/model/RLinf-Pi05-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-SFT
     precision: ${actor.model.precision}
