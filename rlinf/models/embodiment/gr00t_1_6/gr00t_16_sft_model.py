@@ -1,3 +1,17 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -353,7 +367,7 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
             except Exception:
                 req_img_keys = ["res256_image_side_0", "res256_image_wrist_0", "res256_image_front_0"]
             
-            self.image_nums = len(req_img_keys)
+            # self.image_nums = len(req_img_keys)
 
             for idx, r_key in enumerate(req_img_keys):
                 if idx < len(raw_images_list):
@@ -416,7 +430,7 @@ try:
     AutoModelForCausalLM.register(Gr00tN1d6Config, GR00T_1_6_SFT_Model)
     AutoModelForCausalLM.register(Gr00tN1d6Config, GR00T_1_6_SFT_Model)
     print("[register model] successfully registered GR00T_1_6_SFT_Model！")
-except Exception:
+except Exception as e:
     # pass
     print(f"[register model] failed to register GR00T_1_6_SFT_Model: {e}")
 def build_gr00t_dataloader(worker_instance, eval_dataset: bool = False):
@@ -450,14 +464,17 @@ def build_gr00t_dataloader(worker_instance, eval_dataset: bool = False):
                     byte_ts = []
                     for item in batch:
                         text = item[key]
-                        if isinstance(text, (list, tuple)): text = text[0]
+                        if isinstance(text, (list, tuple)): 
+                            text = text[0]
                         byte_ts.append(torch.tensor(list(text.encode('utf-8')), dtype=torch.uint8))
                     obs[key] = torch.nn.utils.rnn.pad_sequence(byte_ts, batch_first=True, padding_value=0)
                 elif isinstance(item_val, torch.Tensor):
                     obs[key] = torch.stack([item[key] for item in batch])
                 else:
-                    try: obs[key] = torch.tensor([item[key] for item in batch])
-                    except: obs[key] = [item[key] for item in batch]
+                    try: 
+                        obs[key] = torch.tensor([item[key] for item in batch])
+                    except Exception: 
+                        obs[key] = [item[key] for item in batch]
         return obs, actions
 
     dataloader = DataLoader(

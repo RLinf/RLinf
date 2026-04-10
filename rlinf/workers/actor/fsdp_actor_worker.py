@@ -1384,7 +1384,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                             SupportedModel.GR00T,
                             SupportedModel.GR00T_1_6,
                         ]:
-                            kwargs["prev_logprobs"] = prev_logprobs
+                        kwargs["prev_logprobs"] = prev_logprobs
 
                     compute_values = (
                         True if self.cfg.algorithm.adv_type == "gae" else False
@@ -1404,7 +1404,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         SupportedModel.GR00T,
                         SupportedModel.GR00T_1_6,
                     ]:
-                        prev_logprobs = output_dict["prev_logprobs"]
+                    prev_logprobs = output_dict["prev_logprobs"]
 
                     kwargs = {
                         "loss_type": self.cfg.algorithm.loss_type,

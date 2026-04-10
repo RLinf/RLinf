@@ -866,12 +866,12 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6,BasePolicy):
             
             tag_value = self.embodiment_tag.value
             if self._modality_config is None or tag_value not in self._modality_config:
-                    print(f"⚠️ Modality config is missing or does not contain tag {self.embodiment_tag.value}. Attempting to infer valid_action_dim and image_nums from config attributes.")
-                    self.valid_action_dim = getattr(self.config, "max_action_dim", getattr(self.config, "action_dim", 7))
-                    self.image_nums = getattr(self.config, "image_nums", 1)
-                    
-                    print(f"✅ Inferred fallback: valid_action_dim={self.valid_action_dim}, image_nums={self.image_nums}")
-                    return
+                print(f"⚠️ Modality config is missing or does not contain tag {self.embodiment_tag.value}. Attempting to infer valid_action_dim and image_nums from config attributes.")
+                self.valid_action_dim = getattr(self.config, "max_action_dim", getattr(self.config, "action_dim", 7))
+                self.image_nums = getattr(self.config, "image_nums", 1)
+                
+                print(f"✅ Inferred fallback: valid_action_dim={self.valid_action_dim}, image_nums={self.image_nums}")
+                return
                 
             current_modality = self._modality_config[tag_value]
             
@@ -885,7 +885,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6,BasePolicy):
                     valid_action_dim = getattr(self.config, "max_action_dim", 29) 
                 elif isinstance(action_modality_cfg, dict): 
                     if 'dim_map' in action_modality_cfg and action_modality_cfg['dim_map']:
-                         for dim_val in action_modality_cfg['dim_map'].values():
+                        for dim_val in action_modality_cfg['dim_map'].values():
                             valid_action_dim += dim_val
                     elif 'dim' in action_modality_cfg: 
                         valid_action_dim = action_modality_cfg['dim']
@@ -908,8 +908,8 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6,BasePolicy):
             else:
                 image_nums = 1
 
-            # self.image_nums = image_nums
-            self.image_nums = len(req_img_keys)
+            self.image_nums = image_nums
+            # self.image_nums = len(req_img_keys)
                 
             print(f"✅ Inferred from modality_config: valid_action_dim={self.valid_action_dim}, image_nums={self.image_nums}")
             return
