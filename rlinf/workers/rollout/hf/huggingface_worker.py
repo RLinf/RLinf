@@ -124,16 +124,19 @@ class MultiStepRolloutWorker(Worker):
                 eval_batch_size=self.eval_batch_size,
             )
 
-        self.dst_ranks = {
-            "train": self._setup_dst_ranks(
-                self.total_num_train_envs // self.num_pipeline_stages
-            ),
-        }
-        self.src_ranks = {
-            "train": self._setup_src_ranks(
-                self.total_num_train_envs // self.num_pipeline_stages
-            ),
-        }
+        self.dst_ranks = {}
+        self.src_ranks = {}
+        if not self.cfg.runner.only_eval:
+            self.dst_ranks = {
+                "train": self._setup_dst_ranks(
+                    self.total_num_train_envs // self.num_pipeline_stages
+                ),
+            }
+            self.src_ranks = {
+                "train": self._setup_src_ranks(
+                    self.total_num_train_envs // self.num_pipeline_stages
+                ),
+            }
         if self.enable_eval:
             self.dst_ranks["eval"] = self._setup_dst_ranks(
                 self.total_num_eval_envs // self.num_pipeline_stages

@@ -40,6 +40,7 @@ env:
     ignore_terminations: False
     auto_reset: False
     use_spacemouse: True
+    max_episode_steps: 10000
     override_cfg:
       target_ee_pose: TARGET_EE_POSE
       success_hold_steps: 1  # define how many consecutive steps the robot must hold the position to succeed

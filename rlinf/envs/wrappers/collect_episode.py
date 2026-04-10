@@ -325,11 +325,11 @@ class CollectEpisode(gym.Wrapper):
             done_by_term = self._scalar_flag(terminated, env_idx)
             done_by_trunc = self._scalar_flag(truncated, env_idx)
             if self.only_success:
-                if is_success:
+                if is_success and done_by_term:
                     self._flush_episode(env_idx, is_success)
                     self._reset_env_buffer(env_idx)
                 else:
-                    if done_by_term or done_by_trunc:
+                    if done_by_trunc:
                         self._reset_env_buffer(env_idx)
             else:
                 if done_by_term or done_by_trunc:
