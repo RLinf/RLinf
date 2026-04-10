@@ -25,7 +25,7 @@ from openpi.models_pytorch import pi0_pytorch
 from openpi.training import checkpoints as _checkpoints
 from openpi.training import config as _config
 
-from rlinf.models.embodiment.openpi import _CONFIGS_DICT
+from rlinf.models.embodiment.openpi.dataconfig import _CONFIGS_DICT
 
 
 def setup_logger(exp_name, log_dir):

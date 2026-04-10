@@ -9,13 +9,146 @@ use_fixed_reset_state_ids: False
 max_steps_per_rollout_epoch: 2000
 max_episode_steps: 2000 # max episode steps for truncation
 
-image_size: [224, 224]
-
 video_cfg:
   save_video: False
   info_on_video: True
   video_base_dir: ${runner.logger.log_path}/video/train
 
 base_config_name: r1pro_behavior
+use_eval_utils_cfg: False
 
-task_idx: 0 # 0-49, for now, we only support single task training
+policy_wrapper: null
+
+
+omni_config:
+  env:
+    env_wrapper: rgb
+    action_frequency: 60
+    physics_frequency: 120
+    rendering_frequency: 60
+    device: null
+    automatic_reset: False
+    flatten_obs_space: False
+    flatten_action_space: False
+    use_external_obs: False
+    external_sensors: null
+
+  render:
+    viewer_width: 1280
+    viewer_height: 720
+
+  camera:
+    head_resolution: [720,720]
+    wrist_resolution: [480,480]
+
+  macro:
+    use_gpu_dynamics: False
+    headless: True
+    enable_flatcache: True
+    enable_object_states: True
+    enable_transition_rules: True
+    render_viewer_camera: False
+    use_numpy_controller_backend: True
+
+  robots:
+    - type: R1Pro
+      name: robot_r1
+      action_normalize: False
+      grasping_mode: assisted
+      include_sensor_names: null
+      exclude_sensor_names: null
+      self_collisions: False
+      action_type: continuous
+      obs_modalities: ['rgb', 'proprio']
+      reset_joint_pos:
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.025, -1.45, -0.47, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.05, 0.05, 0.05, 0.05]
+      controller_config:
+        base:
+          name: HolonomicBaseJointController
+          motor_type: velocity
+          vel_kp: 150
+          command_input_limits: [[-1.0, -1.0, -1.0], [1.0, 1.0, 1.0]]
+          command_output_limits: [[-0.75, -0.75, -1.0], [0.75, 0.75, 1.0]]
+          use_impedances: False
+        trunk:
+          name: JointController
+          motor_type: position
+          pos_kp: 150
+          command_input_limits: null
+          command_output_limits: null
+          use_impedances: False
+          use_delta_commands: False
+        arm_left:
+          name: JointController
+          motor_type: position
+          pos_kp: 150
+          command_input_limits: null
+          command_output_limits: null
+          use_impedances: False
+          use_delta_commands: False
+        arm_right:
+          name: JointController
+          motor_type: position
+          pos_kp: 150
+          command_input_limits: null
+          command_output_limits: null
+          use_impedances: False
+          use_delta_commands: False
+        gripper_left:
+          name: MultiFingerGripperController
+          mode: smooth
+          command_input_limits: default
+          command_output_limits: default
+        gripper_right:
+          name: MultiFingerGripperController
+          mode: smooth
+          command_input_limits: default
+          command_output_limits: default
+
+  task:
+    type: RLinfBehaviorTask
+    activity_name: turning_on_radio
+    activity_definition_id: 0
+    # activity_instance_id is only used when online object sampling is False.
+    activity_instance_id: 0
+    predefined_problem: null
+    # activity_instance_dir should point to a directory of cached task instance JSON files.
+    # RLinf scans filenames directly and supports official *_template.json and
+    # *_template-tro_state.json instances.
+    # Use rlinf/envs/behavior/instance_generator.py to generate compatible files.
+    # If set and instance_resample_mode is disabled, RLinf loads activity_instance_id from this directory.
+    # This directory must match scene.scene_model.
+    activity_instance_dir: null
+    # Cached instance file format: template | tro_state.
+    # template reloads the full cached template; tro_state applies task-relevant object states and,
+    # when present, cached robot poses. Official tro_state files without robot_poses are supported;
+    # RLinf clears stale robot_poses metadata in that case so reset falls back to the default pose.
+    instance_file_format: tro_state
+    # Reset-time instance resampling mode: disabled | offline | online.
+    # offline: sample cached instances from activity_instance_dir before each reset.
+    # template files are reloaded as full scene templates; tro_state files are applied in-place.
+    # online: use BDDL online object sampling during reset.
+    instance_resample_mode: disabled
+    online_object_sampling: False
+    debug_object_sampling: null
+    highlight_task_relevant_objects: False
+    use_presampled_robot_pose: True
+    termination_config:
+      max_steps: 500
+    reward_config:
+      r_potential: 1.0
+
+  scene:
+    type: RLinfInteractiveTraversableScene
+    scene_model: house_double_floor_lower
+    trav_map_resolution: 0.1
+    default_erosion_radius: 0.0
+    trav_map_with_objects: true
+    num_waypoints: 1
+    waypoint_resolution: 0.2
+    not_load_object_categories: null
+    load_room_types: ["living_room", "kitchen"]
+    load_room_instances: null
+    seg_map_resolution: 1.0
+    scene_source: OG
+    include_robots: true

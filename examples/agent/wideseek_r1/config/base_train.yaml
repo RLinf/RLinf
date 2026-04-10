@@ -11,7 +11,8 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,rollout,reward: all
+    actor,reward: all
+    rollout: all
 
 
 runner:
@@ -129,6 +130,7 @@ agentloop:
   llm_ip: xx.xx.xx.xx
   llm_port: xx
   llm_type: Qwen3-30b-a3b
+  use_local_judge: False
 
 
 # Tools configuration for AgentLoop

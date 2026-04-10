@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,19 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Union
+"""Action-head handlers for the RLinf starVLA wrapper.
 
-import torch
-
-from rlinf.utils.nested_dict_process import copy_dict_tensor
-
-
-def init_real_obs(next_extracted_obs: Union[torch.Tensor, dict]):
-    # Copy the next-extracted-obs
-    if isinstance(next_extracted_obs, torch.Tensor):
-        real_next_extracted_obs = next_extracted_obs.clone()
-    elif isinstance(next_extracted_obs, dict):
-        real_next_extracted_obs = copy_dict_tensor(next_extracted_obs)
-    else:
-        raise NotImplementedError
-    return real_next_extracted_obs
+This package contains action-head specific rollout/default_forward handlers,
+including OFT, FAST, adapter, and flowmatching implementations.
+"""

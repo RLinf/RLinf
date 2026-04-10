@@ -88,7 +88,7 @@ Use Docker image for the experiment.
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:embodied-liberopro
+      rlinf/rlinf:agentic-rlinf0.2-liberopro
 
    # LIBERO-Plus
    docker run -it --rm --gpus all \
@@ -96,7 +96,7 @@ Use Docker image for the experiment.
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:embodied-liberoplus
+      rlinf/rlinf:agentic-rlinf0.2-liberoplus
 
 **Option 2: Custom Environment**
 

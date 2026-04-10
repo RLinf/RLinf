@@ -149,7 +149,8 @@ RUN bash requirements/install.sh embodied --venv openvla --model openvla --env m
     bash requirements/install.sh embodied --venv openvla-oft --model openvla-oft --env maniskill_libero && \
     bash requirements/install.sh embodied --venv openpi --model openpi --env maniskill_libero && \
     bash requirements/install.sh embodied --venv gr00t --model gr00t --env maniskill_libero && \
-    bash requirements/install.sh embodied --venv dexbotic --model dexbotic --env maniskill_libero
+    bash requirements/install.sh embodied --venv dexbotic --model dexbotic --env maniskill_libero && \
+    bash requirements/install.sh embodied --venv starvla --model starvla --env maniskill_libero
 
 RUN source switch_env openvla && download_assets --dir /opt/assets --assets maniskill,openpi
 RUN link_assets
@@ -234,8 +235,9 @@ RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-isaaclab-image
 
-# Install gr00t env
-RUN bash requirements/install.sh embodied --venv gr00t --model gr00t --env isaaclab
+# Install gr00t env, and openpi env
+RUN bash requirements/install.sh embodied --venv gr00t --model gr00t --env isaaclab && \
+    bash requirements/install.sh embodied --venv openpi --model openpi --env isaaclab
 
 # Set default env
 RUN echo "source ${UV_PATH}/gr00t/bin/activate" >> ~/.bashrc

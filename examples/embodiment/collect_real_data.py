@@ -119,7 +119,10 @@ class DataCollector(Worker):
         current_obs_processed = self._process_obs(obs)
 
         while success_cnt < self.num_data_episodes:
-            action = np.zeros((1, 6))
+            if self.cfg.env.eval.get("no_gripper", True):
+                action = np.zeros((1, 6))
+            else:
+                action = np.zeros((1, 7))
             next_obs, reward, done, _, info = self.env.step(action)
 
             if "intervene_action" in info:
@@ -178,16 +181,23 @@ class DataCollector(Worker):
                 if isinstance(r_val, torch.Tensor):
                     r_val = r_val.item()
 
-                success_cnt += int(r_val)
                 self.total_cnt += 1
-                self.log_info(
-                    f"Success: {r_val}. Total: {success_cnt}/{self.num_data_episodes}"
-                )
 
-                # Save Trajectory to the 'demos' directory
-                trajectory = current_rollout.to_trajectory()
-                trajectory.intervene_flags = torch.ones_like(trajectory.intervene_flags)
-                self.buffer.add_trajectories([trajectory])
+                if r_val >= 0.5:
+                    success_cnt += 1
+
+                    self.log_info(
+                        f"Success: {r_val}. Total: {success_cnt}/{self.num_data_episodes}"
+                    )
+
+                    # Save Trajectory to the 'demos' directory
+                    trajectory = current_rollout.to_trajectory()
+                    trajectory.intervene_flags = torch.ones_like(
+                        trajectory.intervene_flags
+                    )
+                    self.buffer.add_trajectories([trajectory])
+
+                    progress_bar.update(1)
 
                 # Reset for next episode
                 obs, _ = self.env.reset()
@@ -195,7 +205,6 @@ class DataCollector(Worker):
                 current_rollout = EmbodiedRolloutResult(
                     max_episode_length=self.cfg.env.eval.max_episode_steps,
                 )
-                progress_bar.update(1)
 
         self.buffer.close()
         self.log_info(

@@ -17,7 +17,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "lingbotvla")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "dreamzero")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus")
 
 #=======================Utility Functions=======================
@@ -492,6 +492,15 @@ install_openpi_model() {
             install_flash_attn
             install_robotwin_env
             ;;
+        isaaclab)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_isaaclab_env
+            # Torch is modified in Isaac Lab, install flash-attn afterwards
+            install_flash_attn
+            uv pip install numpydantic==1.7.0 pydantic==2.11.7 numpy==1.26.0
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
             exit 1
@@ -509,6 +518,44 @@ EOF
         "$VENV_DIR/lib/python${py_major_minor}/site-packages/transformers/"
     
     bash $SCRIPT_DIR/embodied/download_assets.sh --assets openpi
+    uv pip uninstall pynvml || true
+}
+
+install_starvla_model() {
+    case "$ENV_NAME" in
+        maniskill_libero)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_maniskill_libero_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for StarVLA model." >&2
+            exit 1
+            ;;
+    esac
+
+    local starvla_path
+    starvla_path=$(clone_or_reuse_repo STARVLA_PATH "$VENV_DIR/starVLA" https://github.com/starVLA/starVLA.git -b "${STARVLA_GIT_REF:-starVLA-1.2}" --depth 1)
+
+    # Prefer upstream StarVLA requirements first when available.
+    if [ -f "$starvla_path/requirements.txt" ]; then
+        uv pip install -r "$starvla_path/requirements.txt"
+    fi
+
+    # Enforce RLinf-compatible runtime pins to avoid known breakages.
+    uv pip install -r "$SCRIPT_DIR/embodied/models/starvla.txt"
+    uv pip install -e "$starvla_path" --no-deps
+
+    # Some StarVLA revisions call logger.log() on an overwatch logger that only
+    # provides warning/info/error. Keep this patch guarded and optional.
+    local framework_init="$starvla_path/starVLA/model/framework/__init__.py"
+    if [ "${STARVLA_SKIP_LOGGER_PATCH:-0}" != "1" ] && [ -f "$framework_init" ]; then
+        if grep "logger\\.log\\(" "$framework_init" >/dev/null 2>&1; then
+            sed -i 's/logger\.log(/logger.warning(/g' "$framework_init"
+        fi
+    fi
+
+    install_flash_attn
     uv pip uninstall pynvml || true
 }
 
@@ -586,6 +633,20 @@ install_lingbot_vla_model() {
     uv pip uninstall pynvml || true
 }
 
+install_dreamzero_model() {
+    case "$ENV_NAME" in
+        maniskill_libero)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_maniskill_libero_env
+            uv pip install -r $SCRIPT_DIR/embodied/models/dreamzero.txt
+            install_flash_attn
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for DreamZero model." >&2
+    esac
+}
+
 install_env_only() {
     create_and_sync_venv
     SKIP_ROS=${SKIP_ROS:-0}
@@ -654,10 +715,13 @@ install_liberoplus_env() {
 install_behavior_env() {
     # Prefer an existing checkout if BEHAVIOR_PATH is provided; otherwise clone into the venv.
     local behavior_dir
-    behavior_dir=$(clone_or_reuse_repo BEHAVIOR_PATH "$VENV_DIR/BEHAVIOR-1K" https://github.com/RLinf/BEHAVIOR-1K.git -b RLinf/v3.7.1 --depth 1)
+    behavior_dir=$(clone_or_reuse_repo BEHAVIOR_PATH "$VENV_DIR/BEHAVIOR-1K" https://github.com/RLinf/BEHAVIOR-1K.git -b RLinf/v3.7.2 --depth 1)
 
     pushd "$behavior_dir" >/dev/null
     UV_LINK_MODE=hardlink ./setup.sh --omnigibson --bddl --joylo --confirm-no-conda --accept-nvidia-eula --use-uv
+    # OmniGibson's eval deps need another commit of lerobot, which is in conflict with which rlinf needs.
+    # We actually does not use OmniGibson's lerobot deps, so just install other deps in OmniGibson's eval deps. 
+    uv pip install "dm_tree>=0.1.9" "hydra-core>=1.3.2" "websockets>=15.0.1" "msgpack>=1.1.0" "gspread>=6.2.1" "open3d>=0.19.0" av "numpy<2"
     popd >/dev/null
     uv pip uninstall flash-attn || true
     uv pip install ml_dtypes==0.5.3 protobuf==3.20.3
@@ -676,7 +740,7 @@ install_calvin_env() {
     local calvin_dir
     calvin_dir=$(clone_or_reuse_repo CALVIN_PATH "$VENV_DIR/calvin" https://github.com/mees/calvin.git --recurse-submodules)
 
-    uv pip install wheel cmake==3.18.4 setuptools==57.5.0 wheel==0.45.1
+    uv pip install wheel cmake==3.18.4.post1 setuptools==57.5.0 wheel==0.45.1
     # NOTE: Use a fork version of pyfasthash that fixes install on Python 3.11
     uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/pyfasthash.git --no-build-isolation
     uv pip install -e ${calvin_dir}/calvin_env/tacto
@@ -692,6 +756,11 @@ install_isaaclab_env() {
     pushd ~ >/dev/null
     uv pip install "flatdict==4.0.1" --no-build-isolation
     uv pip install "cuda-toolkit[nvcc]==12.8.0"
+
+    # Force CMake < 4 for egl-probe / robomimic native build compatibility
+    uv pip uninstall -y cmake || true
+    uv pip install "cmake<4"
+
     $isaaclab_dir/isaaclab.sh --install
     popd >/dev/null
 }
@@ -935,6 +1004,9 @@ main() {
                 openpi)
                     install_openpi_model
                     ;;
+                starvla)
+                    install_starvla_model
+                    ;;
                 gr00t)
                     install_gr00t_model
                     ;;
@@ -943,6 +1015,9 @@ main() {
                     ;;
                 lingbotvla)                  
                     install_lingbot_vla_model 
+                    ;;
+                dreamzero)
+                    install_dreamzero_model
                     ;;
                 "")
                     install_env_only

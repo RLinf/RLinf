@@ -233,15 +233,27 @@ class LiberoEnv(gym.Env):
             if variant == "pro":
                 pro_suffix = raw_suffix.replace(".bddl", "") if raw_suffix else None
 
+                valid_perts = ["_lan", "_object", "_swap", "_task"]
                 if pro_suffix == "all":
-                    valid_perts = ["_lan", "_object", "_swap", "_task"]
+                    filter_perts = valid_perts
+                elif pro_suffix is not None:
+                    # Map bare name (e.g. "task") to directory suffix (e.g. "_task")
+                    normalized = (
+                        f"_{pro_suffix}"
+                        if not pro_suffix.startswith("_")
+                        else pro_suffix
+                    )
+                    filter_perts = [normalized] if normalized in valid_perts else []
+                else:
+                    filter_perts = []
 
+                if filter_perts:
                     all_sub_dirs = [
                         d
                         for d in os.listdir(bddl_root)
                         if os.path.isdir(os.path.join(bddl_root, d))
                         and suite_keyword in d
-                        and any(d.endswith(pert) for pert in valid_perts)
+                        and any(d.endswith(pert) for pert in filter_perts)
                     ]
 
                     core_task_name = file_name.replace(".bddl", "")

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 import queue
 import threading
@@ -28,15 +29,20 @@ from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.metric_utils import compute_evaluate_metrics, print_metrics_table
 from rlinf.utils.runner_utils import check_progress
+from rlinf.utils.timers import Timer
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from rlinf.workers.actor.async_fsdp_sac_policy_worker import (
         AsyncEmbodiedSACFSDPPolicy,
     )
     from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
+    from rlinf.workers.actor.fsdp_nft_policy_worker import EmbodiedNFTFSDPPolicy
     from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
     from rlinf.workers.env.async_env_worker import AsyncEnvWorker
     from rlinf.workers.env.env_worker import EnvWorker
+    from rlinf.workers.reward.reward_worker import EmbodiedRewardWorker
     from rlinf.workers.rollout.hf.async_huggingface_worker import (
         AsyncMultiStepRolloutWorker,
     )
@@ -48,13 +54,15 @@ class EmbodiedRunner:
         self,
         cfg: DictConfig,
         actor: Union[
-            "EmbodiedFSDPActor", "EmbodiedSACFSDPPolicy", "AsyncEmbodiedSACFSDPPolicy"
+            "EmbodiedFSDPActor",
+            "EmbodiedNFTFSDPPolicy",
+            "EmbodiedSACFSDPPolicy",
+            "AsyncEmbodiedSACFSDPPolicy",
         ],
         rollout: Union["MultiStepRolloutWorker", "AsyncMultiStepRolloutWorker"],
         env: Union["EnvWorker", "AsyncEnvWorker"],
+        reward: Union["EmbodiedRewardWorker"] = None,
         critic=None,
-        reward=None,
-        run_timer=None,
     ):
         self.cfg = cfg
         self.actor = actor
@@ -67,9 +75,13 @@ class EmbodiedRunner:
         self.env_channel = Channel.create("Env")
         self.rollout_channel = Channel.create("Rollout")
         self.actor_channel = Channel.create("Actor")
+        if self.reward is not None:
+            self.reward_channel = Channel.create("Reward")
+        else:
+            self.reward_channel = None
 
         # this timer checks if we should stop training
-        self.run_timer = run_timer
+        self.run_timer = Timer(None)  # Timer that checks if we should stop training
 
         self.consumed_samples = 0
         # the step here is GRPO step
@@ -121,9 +133,14 @@ class EmbodiedRunner:
 
     def init_workers(self):
         # create worker in order to decrease the maximum memory usage
+        rollout_handle = self.rollout.init_worker()
+        env_handle = self.env.init_worker()
+        if self.reward is not None:
+            self.reward.init_worker().wait()
+
+        rollout_handle.wait()
+        env_handle.wait()
         self.actor.init_worker().wait()
-        self.rollout.init_worker().wait()
-        self.env.init_worker().wait()
 
         resume_dir = self.cfg.runner.get("resume_dir", None)
         if resume_dir is None:
@@ -145,12 +162,12 @@ class EmbodiedRunner:
 
     def evaluate(self):
         env_handle: Handle = self.env.evaluate(
-            input_channel=self.rollout_channel,
-            output_channel=self.env_channel,
+            input_channel=self.env_channel,
+            rollout_channel=self.rollout_channel,
         )
         rollout_handle: Handle = self.rollout.evaluate(
-            input_channel=self.env_channel,
-            output_channel=self.rollout_channel,
+            input_channel=self.rollout_channel,
+            output_channel=self.env_channel,
         )
         env_results = env_handle.wait()
         rollout_handle.wait()
@@ -262,18 +279,26 @@ class EmbodiedRunner:
                         self.update_rollout_weights()
                 with self.timer("generate_rollouts"):
                     env_handle: Handle = self.env.interact(
-                        input_channel=self.rollout_channel,
-                        output_channel=self.env_channel,
+                        input_channel=self.env_channel,
+                        rollout_channel=self.rollout_channel,
+                        reward_channel=self.reward_channel,
                         actor_channel=self.actor_channel,
                     )
                     rollout_handle: Handle = self.rollout.generate(
-                        input_channel=self.env_channel,
-                        output_channel=self.rollout_channel,
+                        input_channel=self.rollout_channel,
+                        output_channel=self.env_channel,
                     )
+                    if self.reward is not None:
+                        reward_handle: Handle = self.reward.compute_rewards(
+                            input_channel=self.reward_channel,
+                            output_channel=self.env_channel,
+                        )
                     self.actor.recv_rollout_trajectories(
                         input_channel=self.actor_channel
                     ).wait()
                     rollout_handle.wait()
+                    if self.reward is not None:
+                        reward_handle.wait()
 
                 # compute advantages and returns.
                 with self.timer("cal_adv_and_returns"):
@@ -328,6 +353,13 @@ class EmbodiedRunner:
             time_metrics.update(
                 {f"time/actor/{k}": v for k, v in actor_time_metrics.items()}
             )
+            if self.reward is not None:
+                reward_time_metrics, reward_time_metrics_per_rank = (
+                    reward_handle.consume_durations(return_per_rank=True)
+                )
+                time_metrics.update(
+                    {f"time/reward/{k}": v for k, v in reward_time_metrics.items()}
+                )
 
             env_results = env_handle.wait()
             env_results_list = [
@@ -350,7 +382,6 @@ class EmbodiedRunner:
                     actor_rollout_metrics
                 ).items()
             }
-
             training_metrics = {
                 f"train/{k}": v
                 for k, v in self._aggregate_numeric_metrics(
@@ -398,6 +429,13 @@ class EmbodiedRunner:
                 prefix="env",
                 worker_group_name=self.env.worker_group_name,
             )
+            if self.reward is not None:
+                self._log_ranked_metrics(
+                    metrics_list=reward_time_metrics_per_rank,
+                    step=_step,
+                    prefix="time/reward",
+                    worker_group_name=self.reward.worker_group_name,
+                )
 
             logging_metrics = time_metrics
             logging_metrics.update(eval_metrics)

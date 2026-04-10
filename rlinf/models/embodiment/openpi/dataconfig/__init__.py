@@ -35,11 +35,17 @@ from rlinf.models.embodiment.openpi.dataconfig.calvin_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.franka_co_training_dataconfig import (
     LeRobotFrankaEEDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.franka_dagger_dataconfig import (
+    LeRobotFrankaDaggerDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.franka_dataconfig import (
     CustomDataConfig,
 )
 from rlinf.models.embodiment.openpi.dataconfig.gsenv_dataconfig import (
     LeRobotGSEnvDataConfig,
+)
+from rlinf.models.embodiment.openpi.dataconfig.isaaclab_dataconfig import (
+    LeRobotIsaacLabStackCubeDataConfig,
 )
 from rlinf.models.embodiment.openpi.dataconfig.libero_dataconfig import (
     LeRobotLiberoDataConfig,
@@ -131,6 +137,32 @@ _CONFIGS = [
         pytorch_weight_path="checkpoints/torch/pi05_base",
         seed=0,
         batch_size=256,
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=0.999,
+        num_workers=8,
+        num_train_steps=5_000,
+        log_interval=5,
+        save_interval=250,
+    ),
+    TrainConfig(
+        name="pi05_franka",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=8, discrete_state_input=False
+        ),  # discrete_state_input=False: stateless policy, True: with state policy
+        data=LeRobotFrankaEEDataConfig(
+            repo_id="physical-intelligence/real_rl",  # Not important
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                assets_dir="checkpoints/torch/pi05_franka_pretrained/assets"
+            ),
+            output_action_dim=6,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+        seed=0,
+        batch_size=16,
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
         ema_decay=0.999,
         num_workers=8,
@@ -262,6 +294,20 @@ _CONFIGS = [
         num_train_steps=30_000,
     ),
     TrainConfig(
+        name="pi05_aloha_robotwin",
+        model=pi0_config.Pi0Config(pi05=True, discrete_state_input=True),
+        data=LeRobotAlohaDataConfig(
+            repo_id="physical-intelligence/robotwin",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                assets_dir="checkpoints/torch/pi05_aloha_robotwin/assets"
+            ),
+            extra_delta_transform=True,  # True for delta action, False for abs_action
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+        num_train_steps=20_000,
+    ),
+    TrainConfig(
         name="pi0_behavior",
         model=pi0_config.Pi0Config(),
         data=LeRobotBehaviorDataConfig(
@@ -269,6 +315,24 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_behavior/assets"),
             extra_delta_transform=True,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi0_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_base",
+        num_train_steps=30_000,
+    ),
+    TrainConfig(
+        name="pi05_behavior",
+        model=pi0_config.Pi0Config(pi05=True, action_horizon=32),
+        data=LeRobotBehaviorDataConfig(
+            repo_id="physical-intelligence/behavior",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_behavior/assets"),
+            extra_delta_transform=False,
+            extract_state_from_proprio=True,
+            use_all_wrist_images=True,
+            use_quantile_norm=True,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
             "checkpoints/jax/pi0_base/params"
@@ -294,6 +358,17 @@ _CONFIGS = [
         num_train_steps=30_000,
     ),
     TrainConfig(
+        name="pi0_franka_dagger",
+        model=pi0_config.Pi0Config(action_horizon=10),
+        data=LeRobotFrankaDaggerDataConfig(
+            repo_id="franka_dagger",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base/assets"),
+            extra_delta_transform=False,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_base",
+    ),
+    TrainConfig(
         name="pi0_custom",
         model=pi0_config.Pi0Config(),
         data=CustomDataConfig(
@@ -306,6 +381,21 @@ _CONFIGS = [
             action_train_with_rotation_6d=False,  # User can add extra config in custom dataset
         ),
         pytorch_weight_path="checkpoints/torch/pi0_base",
+    ),
+    TrainConfig(
+        name="pi05_isaaclab_stack_cube",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=False
+        ),
+        data=LeRobotIsaacLabStackCubeDataConfig(
+            repo_id="RLinf/IsaacLab-Stack-Cube-Data",
+            base_config=DataConfig(prompt_from_task=False),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_isaaclab/assets"),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
     ),
 ]
 

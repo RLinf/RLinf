@@ -142,9 +142,9 @@ In current stage, we support four libero tasks: Spatial, Object, Goal, and Long.
    hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
 
 Models for other tasks:
-- `Libero-Object <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Object>`_
-- `Libero-Goal <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Goal>`_
-- `Libero-Long <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-10>`_
+- `Libero-Object <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Object>`_
+- `Libero-Goal <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Goal>`_
+- `Libero-Long <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-10>`_
 
 --------------
 
@@ -178,12 +178,12 @@ Embodiment Tag is a enum determining which DataConfig to use during training. Th
 ---------------
 
 After the fine-tuning,  GR00T-N1.5 generates a ``experiment_cfg/metadata.json`` file concluding all the modality config and statistics of fine-tuning dataset.
-This file is necessary for the inference and RL post-training of GR00T-N1.5. For more details refering to `getting_started/4_deeper_understanding.md <https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/4_deeper_understanding.md>`__ in GR00T-N1.5 official repository.
+This file is necessary for the inference and RL post-training of GR00T-N1.5. For more details refering to `getting_started/GR00T_inference.ipynb <https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/GR00T_inference.ipynb>`__ in GR00T-N1.5 official repository.
 
 **2. Finetuning Guide**
 
 Based on above designs, users should fine-tune GR00T-N1.5 before deploying it in new environments except LIBERO.
-The fine-tuning guide can be found in `getting_started/2_finetuning.ipynb <https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/2_finetuning.ipynb>`__ in GR00T-N1.5 official repository.
+The fine-tuning guide can be found in `getting_started/finetune_new_embodiment.md <https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/finetune_new_embodiment.md>`__ in GR00T-N1.5 official repository.
 
 ---------------
 

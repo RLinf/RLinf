@@ -136,7 +136,7 @@ actor:
     adam_eps: 1.0e-08
     weight_decay: 0.01
     clip_grad: 1.0
-    critic_warmup_steps: 20
+    critic_warmup_steps: 0
   
   fsdp_config:
     strategy: "fsdp"

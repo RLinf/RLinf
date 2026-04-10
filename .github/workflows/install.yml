@@ -80,7 +80,9 @@ jobs:
           rm -rf .venv
           bash requirements/install.sh embodied --model openpi --env calvin
           rm -rf .venv
-
+          bash requirements/install.sh embodied --model openpi --env isaaclab
+          rm -rf .venv
+          
       - name: Install gr00t
         run: |
           pip install uv
@@ -114,6 +116,12 @@ jobs:
           sudo apt-get install -y libexpat1 libfontconfig1-dev libpython3-stdlib libmagickwand-dev
           pip install uv
           bash requirements/install.sh embodied --model openvla-oft --env liberoplus
+          rm -rf .venv
+
+      - name: Install starvla
+        run: |
+          pip install uv
+          bash requirements/install.sh embodied --model starvla --env maniskill_libero
           rm -rf .venv
 
       - name: Install behavior-openvla-oft
