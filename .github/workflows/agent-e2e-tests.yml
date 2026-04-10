@@ -377,7 +377,7 @@ jobs:
         run: |
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/agent/searchr1/run-eval.sh
+          bash tests/e2e_tests/agent/searchr1/run-eval.sh qwen2.5-1.5b-eval
 
       - name: Clean up
         run: |
