@@ -239,7 +239,9 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
     set_camera_resolution(camera_cfg)
 
     # override behavior's termination config `max_steps` field
-    max_episode_steps = OmegaConf.select(cfg, "max_episode_steps")
+    max_episode_steps = (
+        OmegaConf.select(cfg, "max_episode_steps") - 1
+    )  # BEHAVIOR env will off-by-one
     assert max_episode_steps is not None, "must set max_episode_steps in config."
     OmegaConf.update(
         omni_cfg,

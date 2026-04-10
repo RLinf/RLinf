@@ -323,7 +323,7 @@ class BehaviorEnv(gym.Env):
         for i in range(chunk_size):
             step_infos = raw_infos_list[i]
             step_done = [
-                bool(info.get("done", {})) if isinstance(info, dict) else False
+                self._extract_info_done(info) if isinstance(info, dict) else False
                 for info in step_infos
             ]
             info_done_flags.append(torch.tensor(step_done, dtype=torch.bool))
@@ -375,9 +375,6 @@ class BehaviorEnv(gym.Env):
         self.success_once = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.bool
         )
-        self.fail_once = torch.zeros(
-            self.num_envs, device=self.device, dtype=torch.bool
-        )
         self.returns = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.float32
         )
@@ -394,25 +391,22 @@ class BehaviorEnv(gym.Env):
         self.prev_step_reward[mask] = 0.0
         if self.record_metrics:
             self.success_once[mask] = False
-            self.fail_once[mask] = False
             self.returns[mask] = 0
 
     def _record_metrics(self, rewards, infos):
         info_lists = []
         for env_idx, (reward, info) in enumerate(zip(rewards, infos)):
+            done_dict = info.get("done", {})
             episode_info = {
-                "success": info.get("done", {}).get("success", False),
+                "success": done_dict.get("success", False),
                 "episode_length": info.get("episode_length", 0),
             }
             self.returns[env_idx] += reward
-            if "success" in info:
-                self.success_once[env_idx] = (
-                    self.success_once[env_idx] | info["success"]
-                )
-                episode_info["success_once"] = self.success_once[env_idx].clone()
-            if "fail" in info:
-                self.fail_once[env_idx] = self.fail_once[env_idx] | info["fail"]
-                episode_info["fail_once"] = self.fail_once[env_idx].clone()
+            self.success_once[env_idx] = self.success_once[env_idx] | done_dict.get(
+                "success", False
+            )
+            episode_info["success_once"] = self.success_once[env_idx].clone()
+
             episode_info["return"] = self.returns[env_idx].clone()
             episode_info["episode_len"] = self.elapsed_steps.clone()
             episode_info["reward"] = (
@@ -425,6 +419,11 @@ class BehaviorEnv(gym.Env):
 
         infos = {"episode": to_tensor(list_of_dict_to_dict_of_list(info_lists))}
         return infos
+
+    @staticmethod
+    def _extract_info_done(info: dict) -> bool:
+        tc = info["done"]["termination_conditions"]
+        return any(v["done"] for v in tc.values())
 
     def _handle_auto_reset(self, dones, extracted_obs, infos):
         final_obs = extracted_obs.copy()
