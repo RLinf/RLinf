@@ -78,16 +78,18 @@ from __future__ import annotations
 
 import bisect
 import json
+import queue
 import re
+import threading
 import time
 import asyncio
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 import torch
-from torch.utils.data import DataLoader, Dataset, Sampler
-from torch.utils.data.distributed import DistributedSampler
+from torch.utils.data import DataLoader, Dataset
 
+from rlinf.data.utils import build_dataloader_from_dataset
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -251,6 +253,9 @@ class RollingLeRobotDataset(Dataset):
         # _cumulative_lengths[i] = sum of lengths of sub_datasets[0..i-1].
         self._cumulative_lengths: list[int] = [0]
 
+        # Running total of episodes across all loaded sub-datasets.
+        self._total_episodes: int = 0
+
         self._build_index(_discover_safe_datasets(self.root_dir, self.skip_last_n))
 
     # ------------------------------------------------------------------
@@ -312,6 +317,7 @@ class RollingLeRobotDataset(Dataset):
                 self._cumulative_lengths[-1] + len(sub_ds)
             )
             self._indexed_datasets.add(ds_path)
+            self._total_episodes += getattr(sub_ds, "num_episodes", 0)
             n_new += 1
 
         return n_new
@@ -342,6 +348,13 @@ class RollingLeRobotDataset(Dataset):
         )
         return n_new
 
+    def get_stats(self) -> dict[str, Any]:
+        return {
+            "num_sub_datasets": len(self._sub_datasets),
+            "total_frames": len(self),
+            "total_episodes": self._total_episodes,
+        }
+
     def __len__(self) -> int:
         return self._cumulative_lengths[-1]
 
@@ -356,6 +369,224 @@ class RollingLeRobotDataset(Dataset):
             item = {k: v for k, v in item.items() if k in self.keys}
 
         return item
+
+
+# ---------------------------------------------------------------------------
+# Preload wrapper
+# ---------------------------------------------------------------------------
+
+
+class PreloadRollingLeRobotDataset:
+    """Prefetches batches from a DataLoader-backed :class:`RollingLeRobotDataset`.
+
+    Uses exactly the same :func:`build_dataloader_from_dataset` call
+    (``DistributedSampler`` or ``DistributedRandomReplacementSampler``) as the
+    non-preload path, then adds a daemon thread that iterates through DataLoader
+    epochs in the background and stores ready batches in a bounded queue.
+
+    This means both paths share the same sampler semantics (distributed
+    sharding, epoch-seeded shuffling, with/without replacement) and differ
+    only in whether batches are fetched synchronously or pre-fetched.
+
+    :meth:`__len__` mirrors ``len(data_loader)`` so the consumer can drive
+    the same gradient-accumulation logic regardless of which path is active.
+
+    When new sub-datasets arrive, :meth:`refresh` rebuilds the DataLoader
+    with the updated dataset length.  The background thread detects the swap
+    at the start of the next batch and seamlessly continues from the new
+    loader.
+
+    Args:
+        dataset: The :class:`RollingLeRobotDataset` to prefetch from.
+        batch_size: Forwarded to :func:`build_dataloader_from_dataset`.
+        world_size: Number of distributed replicas.  Defaults to ``1``.
+        rank: Rank of the current process.  Defaults to ``0``.
+        prefetch_size: Maximum number of batches buffered in the queue.
+            Defaults to ``5``.
+        use_random_replacement: Passed to :func:`build_dataloader_from_dataset`.
+            Defaults to ``True``.
+        num_samples_per_epoch: Samples per epoch for the internal sampler.
+        seed: Random seed forwarded to the sampler.
+        num_workers: DataLoader worker processes.  Defaults to ``4``.
+        **dataloader_kwargs: Extra kwargs forwarded to
+            :func:`build_dataloader_from_dataset`.
+    """
+
+    def __init__(
+        self,
+        dataset: RollingLeRobotDataset,
+        batch_size: int,
+        world_size: int = 1,
+        rank: int = 0,
+        prefetch_size: int = 5,
+        use_random_replacement: bool = True,
+        num_samples_per_epoch: int | None = None,
+        seed: int = 42,
+        num_workers: int = 4,
+        **dataloader_kwargs: Any,
+    ) -> None:
+        assert prefetch_size > 0, f"{prefetch_size=} must be greater than 0"
+
+        self.dataset = dataset
+        # Cache all DataLoader construction kwargs for rebuild on refresh().
+        self._dl_kwargs: dict[str, Any] = dict(
+            batch_size=batch_size,
+            world_size=world_size,
+            rank=rank,
+            use_random_replacement=use_random_replacement,
+            num_samples_per_epoch=num_samples_per_epoch,
+            seed=seed,
+            num_workers=num_workers,
+            **dataloader_kwargs,
+        )
+        self.prefetch_size = prefetch_size
+
+        self._stop_event = threading.Event()
+        # Guards swaps of self._loader so the background thread sees a
+        # consistent reference when refresh() installs a new DataLoader.
+        self._loader_lock = threading.Lock()
+        self._bg_epoch: int = 0
+        self.preload_queue: queue.Queue[dict[str, Any]] = queue.Queue(
+            maxsize=prefetch_size
+        )
+        self.sample_thread: threading.Thread | None = None
+        self._exception: Exception | None = None
+
+        self._loader: DataLoader = self._build_loader()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _build_loader(self) -> DataLoader:
+        """Build a fresh DataLoader using the cached construction kwargs."""
+        return build_dataloader_from_dataset(dataset=self.dataset, **self._dl_kwargs)
+
+    def _sample_worker(self) -> None:
+        """Background thread: iterate DataLoader epochs and enqueue batches.
+
+        Holds a local reference to the current DataLoader.  When
+        :meth:`refresh` installs a new one (under ``_loader_lock``), the
+        thread detects the swap at the top of the loop and resets its
+        iterator.  Epoch counter and sampler ``set_epoch`` calls are managed
+        here so the background stream is always correctly shuffled.
+        """
+        current_loader: DataLoader | None = None
+        loader_iter = None
+
+        while not self._stop_event.is_set():
+            if self.preload_queue.full():
+                time.sleep(0.1)
+                continue
+
+            if not self.dataset.is_ready():
+                time.sleep(3)
+                continue
+
+            # Pick up a rebuilt loader installed by refresh(), if any.
+            with self._loader_lock:
+                if self._loader is not current_loader:
+                    current_loader = self._loader
+                    loader_iter = None  # reset iterator for the new loader
+
+            if loader_iter is None:
+                if hasattr(current_loader.sampler, "set_epoch"):
+                    current_loader.sampler.set_epoch(self._bg_epoch)
+                loader_iter = iter(current_loader)
+
+            try:
+                batch = next(loader_iter)
+            except StopIteration:
+                # One DataLoader epoch exhausted: advance and restart.
+                self._bg_epoch += 1
+                if hasattr(current_loader.sampler, "set_epoch"):
+                    current_loader.sampler.set_epoch(self._bg_epoch)
+                loader_iter = iter(current_loader)
+                try:
+                    batch = next(loader_iter)
+                except StopIteration:
+                    time.sleep(1)
+                    continue
+            except Exception as e:  # noqa: BLE001
+                logger.error("[PreloadRollingLeRobotDataset] sampling error: %s", e)
+                self._exception = e
+                self._stop_event.set()
+                break
+
+            try:
+                self.preload_queue.put(batch, timeout=1)
+            except queue.Full:
+                time.sleep(0.1)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def __len__(self) -> int:
+        """Number of batches per epoch — mirrors the internal DataLoader."""
+        return len(self._loader)
+
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        """Return an infinite iterator of prefetched batches.
+
+        Starts the background sampling thread on the first call.
+
+        Yields:
+            Collated batch dict produced by the internal DataLoader.
+        """
+        if self.sample_thread is None:
+            self.sample_thread = threading.Thread(
+                target=self._sample_worker, daemon=True
+            )
+            self.sample_thread.start()
+
+        while not self._stop_event.is_set():
+            try:
+                batch = self.preload_queue.get(timeout=1)
+                yield batch
+            except queue.Empty:
+                if self._stop_event.is_set():
+                    if self._exception is not None:
+                        raise RuntimeError(
+                            "Sampling thread failed"
+                        ) from self._exception
+                    break
+                continue
+
+    def refresh(self) -> int:
+        """Refresh the dataset and rebuild the DataLoader if new data arrived.
+
+        Calls :meth:`RollingLeRobotDataset.refresh`.  When new sub-datasets
+        are discovered, rebuilds the internal :class:`~torch.utils.data.DataLoader`
+        (updating sampler length to reflect the larger dataset) and stores it
+        under ``_loader_lock`` so the background thread picks it up cleanly.
+
+        Returns:
+            Number of new sub-datasets added (0 if nothing changed).
+        """
+        n_new = self.dataset.refresh()
+        if n_new > 0:
+            with self._loader_lock:
+                self._loader = self._build_loader()
+        return n_new
+
+    def close(self) -> None:
+        """Stop the background thread and release resources."""
+        self._stop_event.set()
+        thread_timeout = 10
+        if self.sample_thread is not None and self.sample_thread.is_alive():
+            self.sample_thread.join(timeout=thread_timeout)
+            if self.sample_thread.is_alive():
+                logger.warning(
+                    "[PreloadRollingLeRobotDataset] sample thread still alive "
+                    "after %d seconds, force killing",
+                    thread_timeout,
+                )
+
+    def __del__(self) -> None:
+        """Destructor that ensures the sampling thread is stopped."""
+        if not self._stop_event.is_set():
+            self.close()
 
 
 # ---------------------------------------------------------------------------

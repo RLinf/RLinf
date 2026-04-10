@@ -84,10 +84,14 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             await asyncio.sleep(1)
     
     async def _wait_for_lerobot_dataset_ready(self):
+        refresher = (
+            self.preload_dataset if self.preload_dataset is not None else self.dataset
+        )
         while True:
-            self.dataset.refresh()
+            refresher.refresh()
             if self.dataset.is_ready():
-                self._build_lerobot_data_loader()
+                if self.preload_dataset is None:
+                    self._build_lerobot_data_loader()
                 return
             await asyncio.sleep(1)
 

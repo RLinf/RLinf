@@ -33,6 +33,7 @@ from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chu
 from rlinf.utils.utils import clear_memory
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 from rlinf.data.rolling_lerobot_dataset import (
+    PreloadRollingLeRobotDataset,
     build_rolling_lerobot_dataset,
 )
 from rlinf.data.utils import build_dataloader_from_dataset
@@ -44,6 +45,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self.update_step = 0
         self.enable_drq = bool(getattr(self.cfg.actor, "enable_drq", False))
         self.dataset = None
+        self.preload_dataset: PreloadRollingLeRobotDataset | None = None
+        self._lerobot_loader = None  # PreloadRollingLeRobotDataset | DataLoader
+        self._lerobot_iter = None
         self.data_source = cfg.actor.get("data_source", "buffer")
         self._data_epoch = 0
 
@@ -56,30 +60,52 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         )
         
     def _build_lerobot_data_loader(self):
-        # Calculate num_samples_per_epoch for random replacement sampling
-        # Set to global_batch_size * update_epoch to get 'update_epoch' batches per epoch
-        update_epoch = self.cfg.algorithm.get("update_epoch", 1)
-        global_batch_size = self.cfg.actor.global_batch_size
-        num_samples_per_epoch = global_batch_size * update_epoch
-        
+
         self.data_loader = build_dataloader_from_dataset(
             dataset=self.dataset,
             batch_size=self.cfg.actor.micro_batch_size * self._world_size,
             world_size=self._world_size,
             rank=self._rank,
             use_random_replacement=True,
-            num_samples_per_epoch=num_samples_per_epoch,
+            num_samples_per_epoch=self.cfg.actor.global_batch_size,
             seed=self.cfg.actor.get("seed", 42),
         )
-        if hasattr(self.data_loader, "sampler") and hasattr(
-            self.data_loader.sampler, "set_epoch"
-        ):
+        if hasattr(self.data_loader.sampler, "set_epoch"):
             self.data_loader.sampler.set_epoch(self._data_epoch)
         self._logger.info(
-            f"in _build_lerobot_data_loader: "
-            f"{len(self.data_loader)=}, {len(self.dataset)=}, "
-            f"{num_samples_per_epoch=}"
+            "in _build_lerobot_data_loader: len(data_loader)=%d, "
+            "len(dataset)=%d, num_samples_per_epoch=%d",
+            len(self.data_loader),
+            len(self.dataset),
+            self.cfg.actor.global_batch_size,
         )
+        # Point the unified loader/iter at the new DataLoader.
+        self._lerobot_loader = self.data_loader
+        self._lerobot_iter = iter(self.data_loader)
+
+    def _build_lerobot_preload_dataset(self):
+        """Wrap the base dataset in a background-prefetch DataLoader."""
+
+        self.preload_dataset = PreloadRollingLeRobotDataset(
+            dataset=self.dataset,
+            batch_size=self.cfg.actor.micro_batch_size * self._world_size,
+            world_size=self._world_size,
+            rank=self._rank,
+            prefetch_size=self.cfg.actor.get("prefetch_size", 5),
+            use_random_replacement=True,
+            num_samples_per_epoch= self.cfg.actor.global_batch_size,
+            seed=self.cfg.actor.get("seed", 42),
+        )
+        self._logger.info(
+            "[EmbodiedDAGGERFSDPPolicy] preload dataset built: "
+            "len=%d, num_samples_per_epoch=%d, prefetch_size=%d",
+            len(self.preload_dataset),
+            self.cfg.actor.global_batch_size,
+            self.cfg.actor.get("prefetch_size", 5),
+        )
+        # Point the unified loader/iter at the preload wrapper.
+        self._lerobot_loader = self.preload_dataset
+        self._lerobot_iter = iter(self.preload_dataset)
 
     def init_worker(self):
         super().setup_model_and_optimizer()
@@ -115,6 +141,8 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             )
         elif self.data_source == "lerobot":
             self._build_lerobot_dataset()
+            if self.cfg.actor.get("enable_preload", False):
+                self._build_lerobot_preload_dataset()
 
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
         clear_memory(sync=False)
@@ -144,13 +172,16 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 intervene_traj_list.extend(intervene_trajs)
         if intervene_traj_list:
             self.replay_buffer.add_trajectories(intervene_traj_list)
-    
+
     def recv_lerobot_rollout_trajectories(self) -> None:
-        self.dataset.refresh()
+        refresher = self.preload_dataset if self.preload_dataset is not None else self.dataset
+        refresher.refresh()
         while not self.dataset.is_ready():
             time.sleep(1)
-            self.dataset.refresh()
-        self._build_lerobot_data_loader()
+            print("waiting for dataset to be ready")
+            refresher.refresh()
+        if self.preload_dataset is None:
+            self._build_lerobot_data_loader()
 
     def _prepare_sft_batch(self, batch):
         """Prepare model-specific DAgger training inputs."""
@@ -238,17 +269,21 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             "actor/lr": self.optimizer.param_groups[0]["lr"],
             "actor/grad_norm": actor_grad_norm,
         }
-        
+
     def update_lerobot_one_epoch(self):
-        """Run one Lerobot update epoch for DAgger."""
+        """Run one lerobot update epoch — unified for both preload and non-preload."""
+
+        num_batches = len(self._lerobot_loader)
+        train_micro_batch_list = [next(self._lerobot_iter) for _ in range(num_batches)]
+        for idx, batch in enumerate(train_micro_batch_list):
+            batch = put_tensor_device(batch, device=self.device)
+            if self.enable_drq:
+                drq.apply_drq(batch["curr_obs"], pad=4)
+            train_micro_batch_list[idx] = batch
+
         self.optimizer.zero_grad()
         gbs_actor_loss = []
-        
-        # With RandomReplacementSampler, we can simply iterate through the dataloader
-        # The dataloader length is controlled by num_samples_per_epoch
-        num_batches = len(self.data_loader)
-        
-        for idx, batch in enumerate(self.data_loader):
+        for idx, batch in enumerate(train_micro_batch_list):
             # set the gradient accumulation backward_ctx
             backward_ctx = self.before_micro_batch(
                 self.model,
@@ -268,21 +303,19 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         )
         self.optimizer.step()
         self.lr_scheduler.step()
-        
-        # Reset iterator for next epoch
-        self._data_epoch += 1
-        if hasattr(self.data_loader, "sampler") and hasattr(
-            self.data_loader.sampler, "set_epoch"
-        ):
-            self.data_loader.sampler.set_epoch(self._data_epoch)
 
+        if self.preload_dataset is None:
+            # Non-preload: advance sampler epoch and rebuild iter for the next call.
+            self._data_epoch += 1
+            if hasattr(self._lerobot_loader.sampler, "set_epoch"):
+                self._lerobot_loader.sampler.set_epoch(self._data_epoch)
+            self._lerobot_iter = iter(self._lerobot_loader)
+        # Preload: background thread owns epoch advancement — nothing to do here.
         return {
             "dagger/actor_loss": np.mean(gbs_actor_loss),
             "actor/lr": self.optimizer.param_groups[0]["lr"],
             "actor/grad_norm": actor_grad_norm,
         }
-
-    
     def process_train_metrics(self, metrics):
         """Aggregate DAgger training and replay-buffer metrics."""
         if self.data_source == "buffer":
@@ -291,6 +324,12 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 f"replay_buffer/{key}": value for key, value in replay_buffer_stats.items()
             }
             append_to_dict(metrics, replay_buffer_stats)
+        elif self.data_source == "lerobot":
+            lerobot_dataset_stats = self.dataset.get_stats()
+            lerobot_dataset_stats = {
+                f"lerobot_dataset/{key}": value for key, value in lerobot_dataset_stats.items()
+            }
+            append_to_dict(metrics, lerobot_dataset_stats)
 
         mean_metric_dict = {}
         for key, value in metrics.items():
