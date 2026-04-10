@@ -415,6 +415,7 @@ class CMAPolicy(nn.Module, BasePolicy):
         self.rnn_states = None
         self.prev_actions = None
         self.prev_episode_id = None
+        self.prev_mode = None
         self.action_map = {
             0: "stop",
             1: "move_forward",
@@ -524,7 +525,7 @@ class CMAPolicy(nn.Module, BasePolicy):
         current_episode_ids = env_obs["states"]
 
         is_first_step = self.prev_episode_id is None
-        if is_first_step:
+        if is_first_step or self.prev_mode != mode:
             self.prev_episode_id = current_episode_ids.clone()
             self.rnn_states = torch.zeros(
                 batch_size,
@@ -551,6 +552,7 @@ class CMAPolicy(nn.Module, BasePolicy):
                 step_masks[reset_mask] = 0
                 self.prev_episode_id[reset_mask] = current_episode_ids[reset_mask]
 
+        self.prev_mode = mode
         pre_rnn_states = self.rnn_states.clone()
         prev_actions = self.prev_actions.clone()
         step_masks = step_masks.clone()

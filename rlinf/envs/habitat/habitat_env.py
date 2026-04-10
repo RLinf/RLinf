@@ -409,6 +409,7 @@ class HabitatEnv(gym.Env):
         episode_info["oracle_navigation_error"] = infos[
             "oracle_navigation_error"
         ].copy()
+        episode_info["done_steps"] = self.elapsed_steps.copy()
 
         infos["episode"] = to_tensor(episode_info)
 
