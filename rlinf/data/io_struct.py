@@ -1479,6 +1479,8 @@ class DynamicRolloutResult:
                 continue
 
             for k in tensor_keys:
+                if k not in pack_params:
+                    continue
                 pack_params[k].append(split_params[k][i])
             new_idx_to_traj.append(batch["idx_to_traj"][i])
 
