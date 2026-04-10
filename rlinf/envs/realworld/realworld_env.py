@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ from filelock import FileLock
 from omegaconf import OmegaConf
 
 from rlinf.envs.realworld.common.wrappers import (
+    GelloIntervention,
     GripperCloseEnv,
     KeyboardRewardDoneMultiStageWrapper,
     KeyboardRewardDoneWrapper,
@@ -85,15 +86,36 @@ class RealWorldEnv(gym.Env):
         )
         if self.cfg.get("no_gripper", True):
             env = GripperCloseEnv(env)
-        if not env.config.is_dummy and self.cfg.get("use_spacemouse", True):
-            env = SpacemouseIntervention(env)
+        use_spacemouse = self.cfg.get("use_spacemouse", True)
+        use_gello = self.cfg.get("use_gello", False)
+        if use_spacemouse and use_gello:
+            raise ValueError(
+                "use_spacemouse and use_gello are mutually exclusive. "
+                "Please set only one of them to True."
+            )
+        no_gripper = self.cfg.get("no_gripper", True)
+        gripper_enabled = not no_gripper
+        if not env.config.is_dummy and use_spacemouse:
+            env = SpacemouseIntervention(env, gripper_enabled=gripper_enabled)
+        if not env.config.is_dummy and use_gello:
+            gello_port = self.cfg.get("gello_port", None)
+            if gello_port is None:
+                raise ValueError(
+                    "use_gello is True but gello_port is not set in the env config. "
+                    "Please set env.eval.gello_port (or env.train.gello_port) to the "
+                    "serial port of your GELLO device."
+                )
+            env = GelloIntervention(
+                env, port=gello_port, gripper_enabled=gripper_enabled
+            )
         if not env.config.is_dummy and self.cfg.get("keyboard_reward_wrapper", None):
             if self.cfg.keyboard_reward_wrapper == "multi_stage":
                 env = KeyboardRewardDoneMultiStageWrapper(env)
             elif self.cfg.keyboard_reward_wrapper == "single_stage":
                 env = KeyboardRewardDoneWrapper(env)
 
-        env = RelativeFrame(env)
+        if self.cfg.get("use_relative_frame", True):
+            env = RelativeFrame(env)
         env = Quat2EulerWrapper(env)
         return env
 
@@ -128,6 +150,14 @@ class RealWorldEnv(gym.Env):
         ]
         self.env = NoAutoResetSyncVectorEnv(env_fns)
         self.task_descriptions = list(self.env.call("task_description"))
+
+    @property
+    def action_space(self):
+        return self.env.action_space
+
+    @property
+    def observation_space(self):
+        return self.env.observation_space
 
     @property
     def total_num_group_envs(self):
@@ -174,10 +204,17 @@ class RealWorldEnv(gym.Env):
             self.intervened_once[:] = False
             self.intervened_steps[:] = 0
 
-    def _record_metrics(self, step_reward, terminations, intervene_current_step, infos):
+    def _record_metrics(
+        self,
+        step_reward,
+        terminations,
+        success_current_step,
+        intervene_current_step,
+        infos,
+    ):
         episode_info = {}
         self.returns += step_reward
-        self.success_once = self.success_once | terminations
+        self.success_once = self.success_once | success_current_step
         self.intervened_once = self.intervened_once | intervene_current_step
         self.intervened_steps += intervene_current_step.astype(int)
 
@@ -247,13 +284,20 @@ class RealWorldEnv(gym.Env):
 
         obs = self._wrap_obs(raw_obs)
         step_reward = self._calc_step_reward(_reward)
+        success_current_step = np.isclose(step_reward, 1.0)
         intervene_flag = np.zeros(self.num_envs, dtype=bool)
         if "intervene_action" in infos:
             for env_id in range(self.num_envs):
                 if infos["intervene_action"][env_id] is not None:
                     intervene_flag[env_id] = True
 
-        infos = self._record_metrics(step_reward, terminations, intervene_flag, infos)
+        infos = self._record_metrics(
+            step_reward,
+            terminations,
+            success_current_step,
+            intervene_flag,
+            infos,
+        )
         if self.ignore_terminations:
             infos["episode"]["success_at_end"] = to_tensor(terminations)
             terminations[:] = False

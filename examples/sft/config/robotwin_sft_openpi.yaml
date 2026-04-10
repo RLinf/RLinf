@@ -47,7 +47,7 @@ actor:
     model_path: "/path/to/pi0-model"
     num_action_chunks: 50 # interface for the env
     action_dim: 14
-    add_value_head: True
+    add_value_head: False
     openpi:
       config_name: "pi0_aloha_robotwin"
       detach_critic_input: True

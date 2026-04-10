@@ -24,7 +24,7 @@ def register_reward(name: str, reward_class: type):
     reward_registry[name] = reward_class
 
 
-def get_reward_class(name: str):
+def get_rule_based_reward_class(name: str):
     assert name in reward_registry, f"Reward {name} not found"
     return reward_registry[name]
 

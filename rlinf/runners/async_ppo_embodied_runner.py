@@ -44,9 +44,8 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         env: "AsyncEnvWorker",
         critic=None,
         reward=None,
-        run_timer=None,
     ):
-        super().__init__(cfg, actor, rollout, env, critic, reward, run_timer)
+        super().__init__(cfg, actor, rollout, env, critic, reward)
         self.env_metric_channel = Channel.create("EnvMetric")
         self.rollout_metric_channel = Channel.create("RolloutMetric")
         self.recompute_logprobs = bool(self.cfg.rollout.get("recompute_logprobs", True))
@@ -114,14 +113,15 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         self.update_rollout_weights()
 
         env_handle: Handle = self.env.interact(
-            input_channel=self.rollout_channel,
-            output_channel=self.env_channel,
+            input_channel=self.env_channel,
+            rollout_channel=self.rollout_channel,
+            reward_channel=self.reward_channel,
+            actor_channel=self.actor_channel,
             metric_channel=self.env_metric_channel,
-            replay_channel=self.actor_channel,
         )
         rollout_handle: Handle = self.rollout.generate(
-            input_channel=self.env_channel,
-            output_channel=self.rollout_channel,
+            input_channel=self.rollout_channel,
+            output_channel=self.env_channel,
             metric_channel=self.rollout_metric_channel,
         )
 

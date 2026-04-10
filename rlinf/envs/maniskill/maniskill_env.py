@@ -79,6 +79,7 @@ class ManiskillEnv(gym.Env):
         self._is_start = True
         self._init_reset_state_ids()
         self.info_logging_keys = ["is_src_obj_grasped", "consecutive_grasp", "success"]
+        self._show_goal_site_visual()
         if self.record_metrics:
             self._init_metrics()
 
@@ -130,6 +131,18 @@ class ManiskillEnv(gym.Env):
             repeats=self.group_size
         ).to(self.device)
 
+    def _show_goal_site_visual(self):
+        """Keep ManiSkill goal-site visualization visible for reward-model RGB input."""
+        if not hasattr(self.env.unwrapped, "goal_site"):
+            return
+
+        goal_site = self.env.unwrapped.goal_site
+        if hasattr(self.env.unwrapped, "_hidden_objects"):
+            while goal_site in self.env.unwrapped._hidden_objects:
+                self.env.unwrapped._hidden_objects.remove(goal_site)
+        if hasattr(goal_site, "show_visual"):
+            goal_site.show_visual()
+
     def _wrap_obs(self, raw_obs, infos=None):
         wrap_obs_mode = getattr(self.cfg, "wrap_obs_mode", "default")
         if wrap_obs_mode == "raw":
@@ -149,19 +162,19 @@ class ManiskillEnv(gym.Env):
                         raw_obs, use_torch=True, device=self.device
                     )
 
-            main_images = sensor_data["base_camera"]["rgb"]
-            sorted_images = OrderedDict(sorted(sensor_data.items()))
-            sorted_images.pop("base_camera")
-            extra_view_images = (
-                torch.stack([v["rgb"] for v in sorted_images.values()], dim=1)
-                if sorted_images
-                else None
-            )
-            return {
-                "main_images": main_images,
-                "extra_view_images": extra_view_images,
-                "states": state,
-            }
+                main_images = sensor_data["base_camera"]["rgb"]
+                sorted_images = OrderedDict(sorted(sensor_data.items()))
+                sorted_images.pop("base_camera")
+                extra_view_images = (
+                    torch.stack([v["rgb"] for v in sorted_images.values()], dim=1)
+                    if sorted_images
+                    else None
+                )
+                return {
+                    "main_images": main_images,
+                    "extra_view_images": extra_view_images,
+                    "states": state,
+                }
 
         # Default
         obs_image = raw_obs["sensor_data"]["3rd_view_camera"]["rgb"].to(
@@ -269,6 +282,7 @@ class ManiskillEnv(gym.Env):
                 else {}
             )
         raw_obs, infos = self.env.reset(seed=seed, options=options)
+        self._show_goal_site_visual()
         extracted_obs = self._wrap_obs(raw_obs, infos=infos)
         if "env_idx" in options:
             env_idx = options["env_idx"]

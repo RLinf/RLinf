@@ -85,6 +85,8 @@ class LeRobotDatasetWriter:
         image_shape: tuple[int, int, int] = (256, 256, 3),
         state_dim: int = 8,
         action_dim: int = 7,
+        has_wrist_image: bool = True,
+        has_extra_view_image: bool = True,
         chunks_size: int = 1000,
         codebase_version: str = "v2.0",
         use_incremental_stats: bool = False,
@@ -100,6 +102,8 @@ class LeRobotDatasetWriter:
             image_shape: Image shape (H, W, C)
             state_dim: State dimension
             action_dim: Action dimension
+            has_wrist_image: Whether to include wrist_image in the dataset schema
+            has_extra_view_image: Whether to include extra_view_image in the dataset schema
             chunks_size: Maximum number of episodes per chunk
             codebase_version: LeRobot version string
             use_incremental_stats: Whether to use incremental statistics (Welford's algorithm) to avoid storing all raw data
@@ -111,6 +115,8 @@ class LeRobotDatasetWriter:
         self.image_shape = image_shape
         self.state_dim = state_dim
         self.action_dim = action_dim
+        self.has_wrist_image = has_wrist_image
+        self.has_extra_view_image = has_extra_view_image
         self.chunks_size = chunks_size
         self.codebase_version = codebase_version
         self.use_incremental_stats = use_incremental_stats
@@ -327,8 +333,6 @@ class LeRobotDatasetWriter:
         # Build parquet data
         data = {
             "image": [],
-            "wrist_image": [],
-            "extra_view_image": [],
             "state": [],
             "actions": [],
             "timestamp": [],
@@ -339,26 +343,24 @@ class LeRobotDatasetWriter:
             "done": [],  # Per-step done flag
             "is_success": [],
         }
+        if self.has_wrist_image:
+            data["wrist_image"] = []
+        if self.has_extra_view_image:
+            data["extra_view_image"] = []
 
         for t in range(T):
             # Image struct
             data["image"].append(self._create_image_struct(images[t], t))
 
-            # Wrist image struct
-            if wrist_images is not None:
+            if self.has_wrist_image and wrist_images is not None:
                 data["wrist_image"].append(
                     self._create_image_struct(wrist_images[t], t)
                 )
-            else:
-                # Create an empty wrist image
-                data["wrist_image"].append({"bytes": b"", "path": ""})
 
-            if extra_view_images is not None:
+            if self.has_extra_view_image and extra_view_images is not None:
                 data["extra_view_image"].append(
                     self._create_image_struct(extra_view_images[t], t)
                 )
-            else:
-                data["extra_view_image"].append({"bytes": b"", "path": ""})
 
             # State and actions as lists (for fixed_size_list)
             data["state"].append(states[t].astype(np.float32).tolist())
@@ -412,11 +414,13 @@ class LeRobotDatasetWriter:
         # Image struct type
         image_struct = pa.struct([("bytes", pa.binary()), ("path", pa.string())])
 
-        schema = pa.schema(
+        fields = [("image", image_struct)]
+        if self.has_wrist_image:
+            fields.append(("wrist_image", image_struct))
+        if self.has_extra_view_image:
+            fields.append(("extra_view_image", image_struct))
+        fields.extend(
             [
-                ("image", image_struct),
-                ("wrist_image", image_struct),
-                ("extra_view_image", image_struct),
                 ("state", pa.list_(pa.float32(), self.state_dim)),
                 ("actions", pa.list_(pa.float32(), self.action_dim)),
                 ("timestamp", pa.float32()),
@@ -428,34 +432,36 @@ class LeRobotDatasetWriter:
                 ("is_success", pa.bool_()),
             ]
         )
+        schema = pa.schema(fields)
 
         # Add HuggingFace features metadata so HuggingFace datasets can correctly parse image fields
-        hf_features = {
-            "info": {
-                "features": {
-                    "image": {"_type": "Image"},
-                    "wrist_image": {"_type": "Image"},
-                    "extra_view_image": {"_type": "Image"},
-                    "state": {
-                        "feature": {"dtype": "float32", "_type": "Value"},
-                        "length": self.state_dim,
-                        "_type": "Sequence",
-                    },
-                    "actions": {
-                        "feature": {"dtype": "float32", "_type": "Value"},
-                        "length": self.action_dim,
-                        "_type": "Sequence",
-                    },
-                    "timestamp": {"dtype": "float32", "_type": "Value"},
-                    "frame_index": {"dtype": "int64", "_type": "Value"},
-                    "episode_index": {"dtype": "int64", "_type": "Value"},
-                    "index": {"dtype": "int64", "_type": "Value"},
-                    "task_index": {"dtype": "int64", "_type": "Value"},
-                    "done": {"dtype": "bool", "_type": "Value"},
-                    "is_success": {"dtype": "bool", "_type": "Value"},
-                }
+        features = {"image": {"_type": "Image"}}
+        if self.has_wrist_image:
+            features["wrist_image"] = {"_type": "Image"}
+        if self.has_extra_view_image:
+            features["extra_view_image"] = {"_type": "Image"}
+        features.update(
+            {
+                "state": {
+                    "feature": {"dtype": "float32", "_type": "Value"},
+                    "length": self.state_dim,
+                    "_type": "Sequence",
+                },
+                "actions": {
+                    "feature": {"dtype": "float32", "_type": "Value"},
+                    "length": self.action_dim,
+                    "_type": "Sequence",
+                },
+                "timestamp": {"dtype": "float32", "_type": "Value"},
+                "frame_index": {"dtype": "int64", "_type": "Value"},
+                "episode_index": {"dtype": "int64", "_type": "Value"},
+                "index": {"dtype": "int64", "_type": "Value"},
+                "task_index": {"dtype": "int64", "_type": "Value"},
+                "done": {"dtype": "bool", "_type": "Value"},
+                "is_success": {"dtype": "bool", "_type": "Value"},
             }
-        }
+        )
+        hf_features = {"info": {"features": features}}
         schema = schema.with_metadata({"huggingface": json.dumps(hf_features)})
         return schema
 
@@ -465,12 +471,6 @@ class LeRobotDatasetWriter:
         """Create a PyArrow table."""
         arrays = {
             "image": pa.array(data["image"], type=schema.field("image").type),
-            "wrist_image": pa.array(
-                data["wrist_image"], type=schema.field("wrist_image").type
-            ),
-            "extra_view_image": pa.array(
-                data["extra_view_image"], type=schema.field("extra_view_image").type
-            ),
             "state": pa.array(data["state"], type=schema.field("state").type),
             "actions": pa.array(data["actions"], type=schema.field("actions").type),
             "timestamp": pa.array(data["timestamp"], type=pa.float32()),
@@ -481,6 +481,14 @@ class LeRobotDatasetWriter:
             "done": pa.array(data["done"], type=pa.bool_()),
             "is_success": pa.array(data["is_success"], type=pa.bool_()),
         }
+        if self.has_wrist_image:
+            arrays["wrist_image"] = pa.array(
+                data["wrist_image"], type=schema.field("wrist_image").type
+            )
+        if self.has_extra_view_image:
+            arrays["extra_view_image"] = pa.array(
+                data["extra_view_image"], type=schema.field("extra_view_image").type
+            )
         return pa.table(arrays, schema=schema)
 
     def _update_stats_accumulators(
@@ -782,41 +790,44 @@ class LeRobotDatasetWriter:
             "fps": self.fps,
             "splits": {"train": f"0:{total_episodes}"},
             "data_path": "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet",
-            "features": {
-                "image": {
-                    "dtype": "image",
-                    "shape": list(self.image_shape),
-                    "names": ["height", "width", "channel"],
-                },
-                "wrist_image": {
-                    "dtype": "image",
-                    "shape": list(self.image_shape),
-                    "names": ["height", "width", "channel"],
-                },
-                "extra_view_image": {
-                    "dtype": "image",
-                    "shape": list(self.image_shape),
-                    "names": ["height", "width", "channel"],
-                },
-                "state": {
-                    "dtype": "float32",
-                    "shape": [self.state_dim],
-                    "names": ["state"],
-                },
-                "actions": {
-                    "dtype": "float32",
-                    "shape": [self.action_dim],
-                    "names": ["actions"],
-                },
-                "timestamp": {"dtype": "float32", "shape": [1], "names": None},
-                "frame_index": {"dtype": "int64", "shape": [1], "names": None},
-                "episode_index": {"dtype": "int64", "shape": [1], "names": None},
-                "index": {"dtype": "int64", "shape": [1], "names": None},
-                "task_index": {"dtype": "int64", "shape": [1], "names": None},
-                "done": {"dtype": "bool", "shape": [1], "names": None},
-                "is_success": {"dtype": "bool", "shape": [1], "names": None},
-            },
         }
+        features = {
+            "image": {
+                "dtype": "image",
+                "shape": list(self.image_shape),
+                "names": ["height", "width", "channel"],
+            },
+            "state": {
+                "dtype": "float32",
+                "shape": [self.state_dim],
+                "names": ["state"],
+            },
+            "actions": {
+                "dtype": "float32",
+                "shape": [self.action_dim],
+                "names": ["actions"],
+            },
+            "timestamp": {"dtype": "float32", "shape": [1], "names": None},
+            "frame_index": {"dtype": "int64", "shape": [1], "names": None},
+            "episode_index": {"dtype": "int64", "shape": [1], "names": None},
+            "index": {"dtype": "int64", "shape": [1], "names": None},
+            "task_index": {"dtype": "int64", "shape": [1], "names": None},
+            "done": {"dtype": "bool", "shape": [1], "names": None},
+            "is_success": {"dtype": "bool", "shape": [1], "names": None},
+        }
+        if self.has_wrist_image:
+            features["wrist_image"] = {
+                "dtype": "image",
+                "shape": list(self.image_shape),
+                "names": ["height", "width", "channel"],
+            }
+        if self.has_extra_view_image:
+            features["extra_view_image"] = {
+                "dtype": "image",
+                "shape": list(self.image_shape),
+                "names": ["height", "width", "channel"],
+            }
+        info["features"] = features
 
         with open(os.path.join(meta_dir, "info.json"), "w") as f:
             json.dump(info, f, indent=4)

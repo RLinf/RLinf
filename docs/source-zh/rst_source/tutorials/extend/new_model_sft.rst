@@ -277,7 +277,7 @@ YAML 配置
 
    data:
      train_data_paths: /path/to/train_path
-     eval_data_paths: /path/to/eval_path
+     val_data_paths: /path/to/eval_path
 
 跑通后再逐步加大 batch、打开 eval/save。
 
