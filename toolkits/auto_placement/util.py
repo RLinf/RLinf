@@ -353,19 +353,22 @@ def extract_from_tensorboard():
         rollout_cost_events = data.get("time/rollout/predict", [])
         actor_cost_events = data.get("time/actor/run_training", [])
 
-        # Profile events are logged AFTER each run. So for event i at t_i, run i's metrics
-        # have timestamps in (t_{i-1}, t_i]. Use inclusive_end to capture the last run.
+        # Profile markers: each run logs env_num_per_instance then total_num_envs
+        # with consecutive wall times, so the total is always strictly after the
+        # env marker. Segment i uses t_end = env marker i; a time window would
+        # exclude that run's total and shift keys — pair by index instead.
         for i, (t_end, env_num_val) in enumerate(env_events):
             t_start = env_events[i - 1][0] if i > 0 else 0.0
             env_num_per_instance = int(env_num_val)
-            total_env_vals = _vals_in_window(
-                total_env_events, t_start, t_end, inclusive_end=True
-            )
-            if not total_env_vals:
-                # Older logs may miss total_num_envs. Skip actor curve in that case.
-                total_num_envs = None
+            if i < len(total_env_events):
+                total_num_envs = int(total_env_events[i][1])
             else:
-                total_num_envs = int(total_env_vals[-1])
+                total_env_vals = _vals_in_window(
+                    total_env_events, t_start, t_end, inclusive_end=True
+                )
+                total_num_envs = (
+                    int(total_env_vals[-1]) if total_env_vals else None
+                )
             env_vals = _vals_in_window(
                 env_cost_events, t_start, t_end, inclusive_end=True
             )

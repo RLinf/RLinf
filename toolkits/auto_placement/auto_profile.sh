@@ -252,10 +252,21 @@ def extract_from_tensorboard(log_dir: str) -> dict:
             t_start = env_events[i - 1][0] if i > 0 else 0.0
             env_num_per_instance = int(env_num_val)
 
-            total_env_vals = _vals_in_window(
-                total_env_events, t_start, t_end, inclusive_end=True
-            )
-            total_num_envs = int(total_env_vals[-1]) if total_env_vals else None
+            # Pair by index, not by wall_time window: each run writes
+            # profile/env_num_per_instance then profile/total_num_envs, so the
+            # total marker always has a strictly later timestamp than the env
+            # marker. Using (t_{i-1}, t_i] then misses that run's total (drops
+            # the first actor segment) and attributes totals to the next
+            # segment (off-by-one keys).
+            if i < len(total_env_events):
+                total_num_envs = int(total_env_events[i][1])
+            else:
+                total_env_vals = _vals_in_window(
+                    total_env_events, t_start, t_end, inclusive_end=True
+                )
+                total_num_envs = (
+                    int(total_env_vals[-1]) if total_env_vals else None
+                )
 
             env_vals = _vals_in_window(env_cost_events, t_start, t_end, inclusive_end=True)
             rollout_vals = _vals_in_window(
