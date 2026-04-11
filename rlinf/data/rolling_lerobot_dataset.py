@@ -77,14 +77,15 @@ Typical usage (recommended pattern with separate functions)::
 from __future__ import annotations
 
 import bisect
+import copy
 import json
 import queue
 import re
 import threading
 import time
-import asyncio
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, Literal
 
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -99,6 +100,80 @@ logger = get_logger()
 _META_KEYS: frozenset[str] = frozenset(
     {"timestamp", "frame_index", "episode_index", "index", "task_index"}
 )
+
+CacheIngestMode = Literal["new_shards", "last_n", "both"]
+
+
+def _deep_clone_sample(obj: Any) -> Any:
+    """Clone a LeRobot sample for storage or hand-out (tensors detached/cloned)."""
+    if isinstance(obj, torch.Tensor):
+        return obj.clone()
+    if isinstance(obj, dict):
+        return {k: _deep_clone_sample(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        seq = [_deep_clone_sample(x) for x in obj]
+        return type(obj)(seq)
+    if isinstance(obj, (str, int, float, bool, type(None))):
+        return obj
+    return copy.deepcopy(obj)
+
+
+class DecodedTensorFifoCache:
+    """FIFO ring storing decoded training samples keyed by global frame index.
+
+    Each slot holds a full sample dict (tensors cloned; scalars / strings copied).
+    When the ring wraps, the oldest slot is overwritten and its global index
+    dropped from the lookup map.
+    """
+
+    def __init__(self, capacity: int) -> None:
+        self.capacity = max(int(capacity), 1)
+        self._lock = threading.Lock()
+        self._slot_global: list[int | None] = [None] * self.capacity
+        self._slot_payload: list[dict[str, Any] | None] = [None] * self.capacity
+        self._global_to_slot: dict[int, int] = {}
+        self._next_slot: int = 0
+        self._hits: int = 0
+        self._misses: int = 0
+
+    def try_get(self, global_idx: int) -> dict[str, Any] | None:
+        with self._lock:
+            slot = self._global_to_slot.get(global_idx)
+            if slot is None:
+                return None
+            self._hits += 1
+            payload = self._slot_payload[slot]
+            assert payload is not None
+            return _deep_clone_sample(payload)
+
+    def notify_miss(self) -> None:
+        with self._lock:
+            self._misses += 1
+
+    def put(self, global_idx: int, item: dict[str, Any]) -> None:
+        stored = _deep_clone_sample(item)
+        with self._lock:
+            if global_idx in self._global_to_slot:
+                slot = self._global_to_slot[global_idx]
+                self._slot_payload[slot] = stored
+                return
+            slot = self._next_slot
+            old_g = self._slot_global[slot]
+            if old_g is not None:
+                del self._global_to_slot[old_g]
+            self._slot_global[slot] = global_idx
+            self._slot_payload[slot] = stored
+            self._global_to_slot[global_idx] = slot
+            self._next_slot = (slot + 1) % self.capacity
+
+    def stats(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "decoded_cache_capacity": self.capacity,
+                "decoded_cache_entries": len(self._global_to_slot),
+                "decoded_cache_hits": self._hits,
+                "decoded_cache_misses": self._misses,
+            }
 
 
 # ---------------------------------------------------------------------------
@@ -193,8 +268,10 @@ class RollingLeRobotDataset(Dataset):
     Each sub-dataset (``rank_N/id_M/``) is loaded via
     :class:`lerobot.common.datasets.lerobot_dataset.LeRobotDataset`.  Chunk
     sampling is implemented through LeRobot's ``delta_timestamps`` mechanism:
-    each ``__getitem__`` call returns ``chunk_size`` consecutive frames, with
-    boundary clamping and ``*_is_pad`` masks handled by LeRobot automatically.
+    each sample is ``chunk_size`` consecutive frames, with boundary clamping
+    and ``*_is_pad`` masks handled by LeRobot automatically.  When the decoded
+    FIFO cache is enabled, each cached entry is that full window (identical to
+    a single ``__getitem__`` result), not a single raw frame.
 
     When ``chunk_size=1`` (default) no ``delta_timestamps`` are set and each
     sample is a single frame, backward-compatible with single-step RL training.
@@ -221,6 +298,18 @@ class RollingLeRobotDataset(Dataset):
         wait_interval_s: Seconds to sleep between readiness polls when fewer
             than ``min_frames`` total frames are available.  Defaults to
             ``10.0``.
+        enable_decoded_cache: If ``True``, maintain a FIFO in-memory cache of
+            fully decoded samples (see :class:`DecodedTensorFifoCache`).
+            Use ``num_workers=0`` on the DataLoader so workers see the same
+            cache (forked workers do not share updates).
+        decoded_cache_capacity: Number of samples in the FIFO ring.
+        cache_ingest_mode: ``new_shards`` — on refresh, ingest only global
+            indices from newly added sub-datasets; ``last_n`` — each refresh,
+            ingest the last ``cache_last_n_frames`` indices; ``both`` —
+            combine both.
+        cache_last_n_frames: Tail length for ``last_n`` / ``both`` modes.
+        cache_ingest_max_frames: Optional cap on how many frames to ingest per
+            ``refresh()`` call (``None`` = no cap).
     """
 
     def __init__(
@@ -234,6 +323,11 @@ class RollingLeRobotDataset(Dataset):
         min_frames: int = 10,
         wait_interval_s: float = 10.0,
         action_sequence_keys: list[str] | None = ["actions"],
+        enable_decoded_cache: bool = False,
+        decoded_cache_capacity: int = 8192,
+        cache_ingest_mode: CacheIngestMode = "new_shards",
+        cache_last_n_frames: int = 10_000,
+        cache_ingest_max_frames: int | None = None,
     ) -> None:
         self.root_dir = Path(root_dir)
         self.skip_last_n = skip_last_n
@@ -244,6 +338,14 @@ class RollingLeRobotDataset(Dataset):
         self.min_frames = min_frames
         self.wait_interval_s = wait_interval_s
         self.action_sequence_keys = action_sequence_keys
+        self.cache_ingest_mode: CacheIngestMode = cache_ingest_mode
+        self.cache_last_n_frames = int(cache_last_n_frames)
+        self.cache_ingest_max_frames = cache_ingest_max_frames
+        self._decoded_cache: DecodedTensorFifoCache | None = None
+        if enable_decoded_cache:
+            self._decoded_cache = DecodedTensorFifoCache(decoded_cache_capacity)
+        # Serializes refresh (index growth + cache ingest) vs __getitem__/__getitems__.
+        self._rolling_access_lock = threading.RLock()
 
         # Sub-datasets indexed so far.
         self._indexed_datasets: set[Path] = set()
@@ -257,6 +359,12 @@ class RollingLeRobotDataset(Dataset):
         self._total_episodes: int = 0
 
         self._build_index(_discover_safe_datasets(self.root_dir, self.skip_last_n))
+        if self._decoded_cache is not None and self.cache_ingest_mode in (
+            "last_n",
+            "both",
+        ):
+            n = len(self)
+            self._ingest_decoded_cache(n, n, 0)
 
     # ------------------------------------------------------------------
     # Readiness gate
@@ -322,6 +430,51 @@ class RollingLeRobotDataset(Dataset):
 
         return n_new
 
+    def _load_item_from_lerobot(self, idx: int) -> dict[str, Any]:
+        """Fetch one sample (including chunk windows) from the backing LeRobot datasets."""
+        ds_idx = bisect.bisect_right(self._cumulative_lengths, idx) - 1
+        local_idx = idx - self._cumulative_lengths[ds_idx]
+        item: dict[str, Any] = self._sub_datasets[ds_idx][local_idx]
+        if self.keys is not None:
+            item = {k: v for k, v in item.items() if k in self.keys}
+        return item
+
+    def _ingest_decoded_cache(
+        self, total_before: int, total_after: int, n_new: int
+    ) -> None:
+        """Populate FIFO cache according to ``cache_ingest_mode``."""
+        cache = self._decoded_cache
+        if cache is None:
+            return
+        indices: list[int] = []
+        mode = self.cache_ingest_mode
+        if mode in ("new_shards", "both") and n_new > 0:
+            indices.extend(range(total_before, total_after))
+        if mode in ("last_n", "both"):
+            n = len(self)
+            tail = self.cache_last_n_frames
+            start = max(0, n - tail)
+            indices.extend(range(start, n))
+        seen: set[int] = set()
+        uniq: list[int] = []
+        for i in indices:
+            if i not in seen:
+                seen.add(i)
+                uniq.append(i)
+        lim = self.cache_ingest_max_frames
+        if lim is not None:
+            uniq = uniq[: int(lim)]
+        for gidx in uniq:
+            try:
+                item = self._load_item_from_lerobot(gidx)
+                cache.put(gidx, item)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[RollingLeRobotDataset] cache ingest failed at idx=%s: %s",
+                    gidx,
+                    exc,
+                )
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -333,42 +486,72 @@ class RollingLeRobotDataset(Dataset):
         sub-datasets written since the last call.  The method is additive:
         existing sub-datasets are never removed or reloaded.
 
+        When ``enable_decoded_cache`` is set, also ingests frames into the FIFO
+        decoded cache according to ``cache_ingest_mode``.
+
         Returns:
             Number of new sub-datasets added (0 if nothing changed).
         """
+        total_before = len(self)
         safe = _discover_safe_datasets(self.root_dir, self.skip_last_n)
         new_paths = [p for p in safe if p not in self._indexed_datasets]
-        if not new_paths:
-            return 0
-        n_new = self._build_index(new_paths)
-        logger.info(
-            "[RollingLeRobotDataset] refresh: +%d sub-dataset(s), total_frames=%d",
-            n_new,
-            len(self),
-        )
+        n_new = 0
+        total_after = total_before
+        with self._rolling_access_lock:
+            if new_paths:
+                n_new = self._build_index(new_paths)
+                total_after = len(self)
+                logger.info(
+                    "[RollingLeRobotDataset] refresh: +%d sub-dataset(s), "
+                    "total_frames=%d",
+                    n_new,
+                    total_after,
+                )
+            if self._decoded_cache is not None:
+                self._ingest_decoded_cache(total_before, total_after, n_new)
         return n_new
 
     def get_stats(self) -> dict[str, Any]:
-        return {
+        stats: dict[str, Any] = {
             "num_sub_datasets": len(self._sub_datasets),
             "total_frames": len(self),
             "total_episodes": self._total_episodes,
         }
+        if self._decoded_cache is not None:
+            stats.update(self._decoded_cache.stats())
+        return stats
 
     def __len__(self) -> int:
         return self._cumulative_lengths[-1]
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
-        # Binary search into prefix-sum to find the right sub-dataset.
-        ds_idx = bisect.bisect_right(self._cumulative_lengths, idx) - 1
-        local_idx = idx - self._cumulative_lengths[ds_idx]
+        with self._rolling_access_lock:
+            cache = self._decoded_cache
+            if cache is not None:
+                hit = cache.try_get(idx)
+                if hit is not None:
+                    return hit
+                cache.notify_miss()
+            return self._load_item_from_lerobot(idx)
 
-        item: dict[str, Any] = self._sub_datasets[ds_idx][local_idx]
-
-        if self.keys is not None:
-            item = {k: v for k, v in item.items() if k in self.keys}
-
-        return item
+    def __getitems__(self, indices: Sequence[int]) -> list[dict[str, Any]]:
+        """Batch fetch for DataLoader (one call per batch when supported)."""
+        if not indices:
+            return []
+        with self._rolling_access_lock:
+            cache = self._decoded_cache
+            if cache is None:
+                return [self._load_item_from_lerobot(int(i)) for i in indices]
+            out: list[dict[str, Any]] = []
+            for i in indices:
+                gidx = int(i)
+                hit = cache.try_get(gidx)
+                if hit is not None:
+                    out.append(hit)
+                else:
+                    cache.notify_miss()
+                    out.append(self._load_item_from_lerobot(gidx))
+            return out
 
 
 # ---------------------------------------------------------------------------
@@ -604,6 +787,11 @@ def build_rolling_lerobot_dataset(
     min_frames: int = 1,
     wait_interval_s: float = 10.0,
     action_sequence_keys: list[str] | None = ["actions"],
+    enable_decoded_cache: bool = False,
+    decoded_cache_capacity: int = 8192,
+    cache_ingest_mode: CacheIngestMode = "new_shards",
+    cache_last_n_frames: int = 10_000,
+    cache_ingest_max_frames: int | None = None,
 ) -> RollingLeRobotDataset:
     """Build a :class:`RollingLeRobotDataset` for rolling data collection.
 
@@ -627,6 +815,11 @@ def build_rolling_lerobot_dataset(
         wait_interval_s: Seconds between readiness polls.  Defaults to ``10.0``.
         action_sequence_keys: List of keys to apply chunking to.  Defaults to
             ``["actions"]``.
+        enable_decoded_cache: Enable in-memory decoded FIFO cache.
+        decoded_cache_capacity: Ring capacity for decoded samples.
+        cache_ingest_mode: ``new_shards``, ``last_n``, or ``both``.
+        cache_last_n_frames: Tail size for ``last_n`` / ``both``.
+        cache_ingest_max_frames: Max ingests per ``refresh()`` (``None`` = unlimited).
 
     Returns:
         A :class:`RollingLeRobotDataset` instance.
@@ -641,16 +834,22 @@ def build_rolling_lerobot_dataset(
         min_frames=min_frames,
         wait_interval_s=wait_interval_s,
         action_sequence_keys=action_sequence_keys,
+        enable_decoded_cache=enable_decoded_cache,
+        decoded_cache_capacity=decoded_cache_capacity,
+        cache_ingest_mode=cache_ingest_mode,
+        cache_last_n_frames=cache_last_n_frames,
+        cache_ingest_max_frames=cache_ingest_max_frames,
     )
 
     logger.info(
         "[build_rolling_lerobot_dataset] root_dir=%s, chunk_size=%d, "
-        "skip_last_n=%d, sub_datasets=%d, total_frames=%d",
+        "skip_last_n=%d, sub_datasets=%d, total_frames=%d, decoded_cache=%s",
         root_dir,
         chunk_size,
         skip_last_n,
         len(dataset._sub_datasets),
         len(dataset),
+        enable_decoded_cache,
     )
 
     return dataset

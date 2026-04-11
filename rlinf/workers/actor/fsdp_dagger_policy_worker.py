@@ -52,13 +52,30 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self._data_epoch = 0
 
     def _build_lerobot_dataset(self):
+        enable_cache = self.cfg.actor.get("enable_decoded_cache", False)
+        lerobot_num_workers = self.cfg.actor.get("lerobot_num_workers")
+        if lerobot_num_workers is None:
+            lerobot_num_workers = 0 if enable_cache else 4
+        elif enable_cache and int(lerobot_num_workers) != 0:
+            self._logger.warning(
+                "enable_decoded_cache=True but lerobot_num_workers=%s; forked "
+                "DataLoader workers do not share the in-process decoded cache. "
+                "Prefer lerobot_num_workers=0.",
+                lerobot_num_workers,
+            )
+        self._lerobot_num_workers = int(lerobot_num_workers)
         self.dataset = build_rolling_lerobot_dataset(
             root_dir=self.cfg.actor.sft_data_path,
             chunk_size=self.cfg.actor.model.num_action_chunks,
             min_frames=self.cfg.actor.get("min_frames", 1),
             wait_interval_s=self.cfg.actor.get("wait_interval_s", 10.0),
+            enable_decoded_cache=enable_cache,
+            decoded_cache_capacity=self.cfg.actor.get("decoded_cache_capacity", 8192),
+            cache_ingest_mode=self.cfg.actor.get("cache_ingest_mode", "new_shards"),
+            cache_last_n_frames=self.cfg.actor.get("cache_last_n_frames", 10_000),
+            cache_ingest_max_frames=self.cfg.actor.get("cache_ingest_max_frames", None),
         )
-        
+
     def _build_lerobot_data_loader(self):
 
         self.data_loader = build_dataloader_from_dataset(
@@ -69,6 +86,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             use_random_replacement=True,
             num_samples_per_epoch=self.cfg.actor.global_batch_size,
             seed=self.cfg.actor.get("seed", 42),
+            num_workers=self._lerobot_num_workers,
         )
         if hasattr(self.data_loader.sampler, "set_epoch"):
             self.data_loader.sampler.set_epoch(self._data_epoch)
@@ -93,8 +111,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             rank=self._rank,
             prefetch_size=self.cfg.actor.get("prefetch_size", 5),
             use_random_replacement=True,
-            num_samples_per_epoch= self.cfg.actor.global_batch_size,
+            num_samples_per_epoch=self.cfg.actor.global_batch_size,
             seed=self.cfg.actor.get("seed", 42),
+            num_workers=self._lerobot_num_workers,
         )
         self._logger.info(
             "[EmbodiedDAGGERFSDPPolicy] preload dataset built: "
@@ -273,13 +292,14 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def update_lerobot_one_epoch(self):
         """Run one lerobot update epoch — unified for both preload and non-preload."""
 
-        num_batches = len(self._lerobot_loader)
-        train_micro_batch_list = [next(self._lerobot_iter) for _ in range(num_batches)]
-        for idx, batch in enumerate(train_micro_batch_list):
-            batch = put_tensor_device(batch, device=self.device)
-            if self.enable_drq:
-                drq.apply_drq(batch["curr_obs"], pad=4)
-            train_micro_batch_list[idx] = batch
+        with self.worker_timer("prepare_micro_batches"):
+            num_batches = len(self._lerobot_loader)
+            train_micro_batch_list = [next(self._lerobot_iter) for _ in range(num_batches)]
+            for idx, batch in enumerate(train_micro_batch_list):
+                batch = put_tensor_device(batch, device=self.device)
+                if self.enable_drq:
+                    drq.apply_drq(batch["curr_obs"], pad=4)
+                train_micro_batch_list[idx] = batch
 
         self.optimizer.zero_grad()
         gbs_actor_loss = []
