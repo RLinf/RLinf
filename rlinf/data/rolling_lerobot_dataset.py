@@ -36,9 +36,11 @@ Sub-datasets are sorted numerically by the integer in their ``id_N`` folder
 name.  The last ``skip_last_n`` sub-datasets **per rank** are excluded to avoid
 reading files that the environment worker is still writing.
 
-Each sub-dataset is loaded via :class:`lerobot.common.datasets.lerobot_dataset.LeRobotDataset`
-with ``root=<sub_dataset_path>``.  Chunk (multi-frame) sampling for OpenPI /
-DAgger is implemented through LeRobot's ``delta_timestamps`` mechanism.
+Shard roots (``rank_N/id_M/``) are recorded in ``RollingLeRobotDataset._sub_datasets``
+as :class:`~pathlib.Path` objects only.  A :class:`lerobot.common.datasets.lerobot_dataset.LeRobotDataset`
+is opened on demand when serving a cache miss (or whenever the decoded cache is
+disabled).  Chunk (multi-frame) sampling for OpenPI / DAgger uses LeRobot's
+``delta_timestamps`` mechanism.
 Optionally, ``require_all_intervene=True`` restricts the dataset to chunk
 starts whose non-padded frames all have ``intervene_flag`` set (see
 :class:`RollingLeRobotDataset`).
@@ -351,8 +353,9 @@ class RollingLeRobotDataset(Dataset):
     """PyTorch Dataset that loads frames from a rolling collection of LeRobot
     sub-datasets written incrementally during RL training.
 
-    Each sub-dataset (``rank_N/id_M/``) is loaded via
-    :class:`lerobot.common.datasets.lerobot_dataset.LeRobotDataset`.  Chunk
+    Each sub-dataset path (``rank_N/id_M/``) is stored in ``_sub_datasets``; a
+    :class:`lerobot.common.datasets.lerobot_dataset.LeRobotDataset` is opened
+    lazily when a sample is read (decoded-cache hit avoids opening).  Chunk
     sampling is implemented through LeRobot's ``delta_timestamps`` mechanism:
     each sample is ``chunk_size`` consecutive frames, with boundary clamping
     and ``*_is_pad`` masks handled by LeRobot automatically.  When the decoded
@@ -455,9 +458,12 @@ class RollingLeRobotDataset(Dataset):
         # Serializes refresh (index growth + cache ingest) vs __getitem__/__getitems__.
         self._rolling_access_lock = threading.RLock()
 
-        # Sub-datasets indexed so far.
+        # Sub-dataset **roots** indexed so far (paths only; no live LeRobot handles).
         self._indexed_datasets: set[Path] = set()
-        self._sub_datasets: list[Any] = []  # list[LeRobotDataset]
+        self._sub_datasets: list[Path] = []
+        # At most one open LeRobotDataset — reopened when ``__getitem__`` crosses shards.
+        self._lerobot_open: Any | None = None
+        self._lerobot_open_idx: int | None = None
 
         # Prefix-sum of lengths for O(log n) index dispatch.
         # _cumulative_lengths[i] = sum of lengths of sub_datasets[0..i-1].
@@ -493,7 +499,13 @@ class RollingLeRobotDataset(Dataset):
     # ------------------------------------------------------------------
 
     def _get_delta_timestamps(self, ds_path: Path) -> dict[str, list[float]] | None:
-        """Return delta_timestamps for *ds_path*, or None for single-frame."""
+        """Return delta_timestamps for *ds_path*, or None for single-frame.
+
+        When ``delta_timestamps`` was not passed to the constructor, auto values
+        are derived from each shard's ``meta/info.json`` (typically identical
+        fps across a rolling run).  Not stored per shard — recomputed on each
+        lazy :class:`LeRobotDataset` open.
+        """
         if self.chunk_size <= 1:
             return None
         if self._user_delta_timestamps is not None:
@@ -503,7 +515,7 @@ class RollingLeRobotDataset(Dataset):
         return _build_delta_timestamps(info, self.chunk_size, self.action_sequence_keys)
 
     def _build_index(self, datasets: list[Path]) -> int:
-        """Load *datasets* as LeRobotDataset instances and extend the index.
+        """Index *datasets*: open each briefly to measure length / intervene mask, then store paths only.
 
         Args:
             datasets: Sub-dataset root paths to load.
@@ -537,8 +549,9 @@ class RollingLeRobotDataset(Dataset):
                 continue
 
             physical_base = self._cumulative_lengths[-1]
-            self._sub_datasets.append(sub_ds)
-            self._cumulative_lengths.append(physical_base + len(sub_ds))
+            n_frames = len(sub_ds)
+            self._sub_datasets.append(ds_path)
+            self._cumulative_lengths.append(physical_base + n_frames)
             if self.require_all_intervene and self._valid_physical_indices is not None:
                 assert self._valid_physical_set is not None
                 for local_i in _compute_intervene_valid_local_indices(
@@ -553,11 +566,30 @@ class RollingLeRobotDataset(Dataset):
 
         return n_new
 
+    def _ensure_lerobot_open(self, ds_idx: int) -> Any:
+        """Return a :class:`LeRobotDataset` for shard *ds_idx*, (re)opening if needed."""
+        if self._lerobot_open_idx == ds_idx and self._lerobot_open is not None:
+            return self._lerobot_open
+        from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+
+        root = self._sub_datasets[ds_idx]
+        delta_timestamps = self._get_delta_timestamps(root)
+        self._lerobot_open = LeRobotDataset(
+            repo_id=root.name,
+            root=root,
+            delta_timestamps=delta_timestamps,
+            image_transforms=self.image_transforms,
+            download_videos=False,
+        )
+        self._lerobot_open_idx = ds_idx
+        return self._lerobot_open
+
     def _load_item_from_lerobot(self, idx: int) -> dict[str, Any]:
         """Fetch one sample (including chunk windows) from the backing LeRobot datasets."""
         ds_idx = bisect.bisect_right(self._cumulative_lengths, idx) - 1
         local_idx = idx - self._cumulative_lengths[ds_idx]
-        item: dict[str, Any] = self._sub_datasets[ds_idx][local_idx]
+        lerobot_ds = self._ensure_lerobot_open(ds_idx)
+        item: dict[str, Any] = lerobot_ds[local_idx]
         if self.keys is not None:
             item = {k: v for k, v in item.items() if k in self.keys}
         return item
