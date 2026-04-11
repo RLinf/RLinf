@@ -12,10 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .accelerator import Accelerator, AcceleratorType
 from .channel import Channel, ChannelWorker, WeightedItem
-from .cluster import Cluster
+from .cluster import Cluster, ClusterConfig
+from .collective import CollectiveGroupOptions
+from .hardware import (
+    AcceleratorType,
+    AcceleratorUtil,
+    FrankaHWInfo,
+    HardwareInfo,
+    Turtle2HWInfo,
+)
+from .manager import WorkerInfo
 from .placement import (
+    ComponentPlacement,
     FlexiblePlacementStrategy,
     NodePlacementStrategy,
     PackedPlacementStrategy,
@@ -24,9 +33,15 @@ from .placement import (
 from .worker import Worker, WorkerAddress, WorkerGroupFuncResult
 
 __all__ = [
-    "Accelerator",
+    "AcceleratorUtil",
     "AcceleratorType",
+    "HardwareInfo",
+    "FrankaHWInfo",
+    "Turtle2HWInfo",
+    "CollectiveGroupOptions",
     "Cluster",
+    "ClusterConfig",
+    "ComponentPlacement",
     "PlacementStrategy",
     "FlexiblePlacementStrategy",
     "NodePlacementStrategy",
@@ -34,6 +49,7 @@ __all__ = [
     "Worker",
     "WorkerAddress",
     "WorkerGroupFuncResult",
+    "WorkerInfo",
     "Channel",
     "ChannelWorker",
     "WeightedItem",

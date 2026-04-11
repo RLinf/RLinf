@@ -84,7 +84,7 @@ Edit the sample YAML:
 
 .. code-block:: yaml
 
-   # examples/math/config/qwen2.5-1.5b-grpo-megatron.yaml
+   # examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml
    cluster:
      num_nodes: 4          # adapt to your cluster
      component_placement:
@@ -94,7 +94,7 @@ Launch from the head node:
 
 .. code-block:: bash
 
-   bash examples/math/run_main_math_grpo_megatron.sh \
+   bash examples/reasoning/run_main_grpo_math.sh \
         qwen2.5-1.5b-grpo-megatron
 
 
@@ -102,11 +102,11 @@ Disaggregated
 ^^^^^^^^^^^^^^^^^^
 
 Different stages receive disjoint GPU ranges,
-allowing fine-grained pipeliningng. Edit the pipeline YAML:
+allowing fine-grained pipelining. Edit the pipeline YAML:
 
 .. code-block:: yaml
 
-   # examples/math/config/qwen2.5-1.5b-grpo-megatron-pipeline.yaml
+   # examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron-pipeline.yaml
    cluster:
      num_nodes: 4
      component_placement:
@@ -122,5 +122,5 @@ Start the job:
 
 .. code-block:: bash
 
-   bash examples/math/run_main_math_pipeline_grpo_megatron.sh \
+   bash examples/reasoning/run_main_grpo_math.sh \
         qwen2.5-1.5b-grpo-megatron-pipeline

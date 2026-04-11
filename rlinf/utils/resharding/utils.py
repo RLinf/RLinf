@@ -16,35 +16,44 @@
 import torch
 from megatron.core import parallel_state
 
+from rlinf.config import SupportedModel, get_supported_model
 
-def get_tp_reshard_fn(model_arch: str):
-    if model_arch == "qwen2.5":
+
+def get_tp_reshard_fn(model_type: str):
+    model_type = get_supported_model(model_type)
+    if model_type == SupportedModel.QWEN2_5:
         return tp_reshard_fn_qwen2_5
-    elif model_arch == "qwen3_moe":
+    elif model_type == SupportedModel.QWEN3:
+        return tp_reshard_fn_qwen3_dense
+    elif model_type == SupportedModel.QWEN3_MOE:
         return tp_reshard_fn_qwen3_moe
     else:
         raise NotImplementedError(
-            f"get_tp_reshard_fn for model_arch {model_arch} is not implemented"
+            f"get_tp_reshard_fn for model_type {model_type} is not implemented"
         )
 
 
-def get_tpe_reshard_fn(model_arch: str):
-    if model_arch == "qwen3_moe":
+def get_tpe_reshard_fn(model_type: str):
+    model_type = get_supported_model(model_type)
+    if model_type == SupportedModel.QWEN3_MOE:
         return tpe_reshard_fn_qwen3_moe
     else:
         raise NotImplementedError(
-            f"get_tpe_reshard_fn for model_arch {model_arch} is not implemented"
+            f"get_tpe_reshard_fn for model_type {model_type} is not implemented"
         )
 
 
-def get_pp_reshard_fn(model_arch: str):
-    if model_arch == "qwen2.5":
+def get_pp_reshard_fn(model_type: str):
+    model_type = get_supported_model(model_type)
+    if model_type == SupportedModel.QWEN2_5:
         return pp_reshard_fn_qwen2_5
-    elif model_arch == "qwen3_moe":
+    elif model_type == SupportedModel.QWEN3:
+        return pp_reshard_fn_qwen3_dense
+    elif model_type == SupportedModel.QWEN3_MOE:
         return pp_reshard_fn_qwen3_moe
     else:
         raise NotImplementedError(
-            f"get_pp_reshard_fn for model_arch {model_arch} is not implemented"
+            f"get_pp_reshard_fn for model_type {model_type} is not implemented"
         )
 
 
@@ -77,6 +86,51 @@ def tp_reshard_fn_qwen2_5(model_state_dict, merge_factor, tp_group):
         "output_layer.weight",
         "self_attention.linear_qkv.weight",
         "self_attention.linear_qkv.bias",
+        "mlp.linear_fc1.weight",
+    ]
+
+    # Parameters that need to be gathered on dim=1
+    param_reshard_row_parallel_linear = [
+        "self_attention.linear_proj.weight",
+        "mlp.linear_fc2.weight",
+    ]
+
+    for k, v in model_state_dict.items():
+        if any(param in k for param in param_skip_tp_reshard):
+            model_state_dict[k] = v.clone()
+            continue
+
+        if any(param in k for param in param_reshard_column_parallel_linear):
+            dim = 0
+        elif any(param in k for param in param_reshard_row_parallel_linear):
+            dim = 1
+        else:
+            assert False, f"Unknown parameter: {k}"
+
+        model_state_dict[k] = _gather_tp_group_tensor_and_reshard(
+            v, dim, merge_factor, tp_group
+        )
+
+    return model_state_dict
+
+
+def tp_reshard_fn_qwen3_dense(model_state_dict, merge_factor, tp_group):
+    # Parameters that should skip TP resharding (just clone)
+    param_skip_tp_reshard = [
+        "linear_qkv.layer_norm_weight",
+        "linear_fc1.layer_norm_weight",
+        "final_layernorm.weight",
+        "q_layernorm.weight",
+        "k_layernorm.weight",
+        "pre_mlp_layernorm.weight",
+        "router.weight",
+    ]
+
+    # Parameters that need to be gathered on dim=0
+    param_reshard_column_parallel_linear = [
+        "word_embeddings.weight",
+        "output_layer.weight",
+        "self_attention.linear_qkv.weight",
         "mlp.linear_fc1.weight",
     ]
 
@@ -163,10 +217,8 @@ def tp_reshard_fn_qwen3_moe(model_state_dict, merge_factor, tp_group):
 
 
 def tpe_reshard_fn_qwen3_moe(
-    model_state_dict, tpe_size, tpe_group, rollout_tp_size, dst_rank
+    model_state_dict, tpe_size, tpe_group, rollout_tp_size, dst_tp_rank
 ):
-    rollout_dp_rank, rollout_tp_rank = dst_rank
-
     for key, value in model_state_dict.items():
         if "linear_fc1.weight" in key:
             dim = 0
@@ -197,14 +249,14 @@ def tpe_reshard_fn_qwen3_moe(
             up_value_slice = torch.split(up_weight, rollout_split_size, dim=dim)
 
             model_state_dict[key] = torch.cat(
-                [gate_value_slice[rollout_tp_rank], up_value_slice[rollout_tp_rank]],
+                [gate_value_slice[dst_tp_rank], up_value_slice[dst_tp_rank]],
                 dim=0,
             ).contiguous()
             del gate_weight, up_weight, gate_value_slice, up_value_slice, value
         else:
             rollout_split_size = value.shape[dim] // rollout_tp_size
             value_slice = torch.split(value, rollout_split_size, dim=dim)
-            model_state_dict[key] = value_slice[rollout_tp_rank].contiguous()
+            model_state_dict[key] = value_slice[dst_tp_rank].contiguous()
             del value
 
     return model_state_dict
@@ -267,6 +319,11 @@ def _pp_reshard_fn_Qwen_model(model_state_dict, pp_group, dtype):
 
 def pp_reshard_fn_qwen2_5(model_state_dict, pp_group, dtype):
     """Reshard pipeline parallel weights for Qwen2.5 models."""
+    return _pp_reshard_fn_Qwen_model(model_state_dict, pp_group, dtype)
+
+
+def pp_reshard_fn_qwen3_dense(model_state_dict, pp_group, dtype):
+    """Reshard pipeline parallel weights for Qwen3 dense models."""
     return _pp_reshard_fn_Qwen_model(model_state_dict, pp_group, dtype)
 
 

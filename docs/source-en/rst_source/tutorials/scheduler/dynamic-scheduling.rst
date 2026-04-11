@@ -4,7 +4,7 @@ Dynamic Scheduling
 
 Dynamic scheduling adjusts and migrates resources among components (actor / rollout / inference)
 in real time during training to improve overall throughput and resource utilization.
-It relies on Megatron-LM's online scaling (second-level elasticity) and SGLang's migrate capability
+It relies on Megatron-LM's online scaling (second-level elasticity) and SGLang/vLLM's migrate capability
 to reallocate GPU resources without stopping training.
 
 What is Dynamic Scheduling?

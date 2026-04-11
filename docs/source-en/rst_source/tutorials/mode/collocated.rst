@@ -59,4 +59,4 @@ Given the above placement configuration, users can use proper `ComponentPlacemen
     )
 
 `ModelParallelComponentPlacement` supports two types of placement: collocated and disaggregated. More importantly, it deals with rank arrangement that allows efficient model weight update from training to rollout. It parses the configuration and generates placements for different components. The generated placement is then enforced during worker launching.
-Refer to `Math RL training python script <https://github.com/RLinf/RLinf/blob/main/examples/math/main_math.py>`_ for the complete code.
+Refer to `Math RL training python script <https://github.com/RLinf/RLinf/blob/main/examples/reasoning/main_grpo.py>`_ for the complete code.

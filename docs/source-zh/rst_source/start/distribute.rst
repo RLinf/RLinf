@@ -79,7 +79,7 @@
 
 .. code-block:: yaml
 
-   # examples/math/config/qwen2.5-1.5b-grpo-megatron.yaml
+   # examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml
    cluster:
      num_nodes: 4          # 根据你的集群情况修改
      component_placement:
@@ -89,7 +89,7 @@
 
 .. code-block:: bash
 
-   bash examples/math/run_main_math_grpo_megatron.sh \
+   bash examples/reasoning/run_main_grpo_math.sh \
         qwen2.5-1.5b-grpo-megatron
 
 分离式模式
@@ -100,7 +100,7 @@
 
 .. code-block:: yaml
 
-   # examples/math/config/qwen2.5-1.5b-grpo-megatron-pipeline.yaml
+   # examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron-pipeline.yaml
    cluster:
      num_nodes: 4
      component_placement:
@@ -115,5 +115,5 @@
 
 .. code-block:: bash
 
-   bash examples/math/run_main_math_pipeline_grpo_megatron.sh \
+   bash examples/reasoning/run_main_grpo_math.sh \
         qwen2.5-1.5b-grpo-megatron-pipeline

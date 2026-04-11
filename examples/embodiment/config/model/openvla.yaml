@@ -1,0 +1,32 @@
+model_type: "openvla"
+
+# Model path - should be set in specific config files
+model_path: "/path/to/model"
+
+precision: "bf16"
+
+# Action and policy settings
+action_dim: 7
+num_action_chunks: 1
+use_proprio: False
+unnorm_key: bridge_orig
+center_crop: True
+
+# Model architecture settings
+add_bias_linear: False
+add_qkv_bias: True
+vocab_size: 32000
+hidden_size: 4096
+policy_setup: "widowx_bridge"
+add_value_head: False
+image_size: [224, 224]
+max_prompt_length: 30
+
+# LoRA settings
+is_lora: False
+lora_rank: 32
+
+# Attention and loading settings
+attn_implementation: "flash_attention_2"
+low_cpu_mem_usage: True
+trust_remote_code: True

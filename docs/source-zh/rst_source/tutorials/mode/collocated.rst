@@ -64,4 +64,4 @@
 `ModelParallelComponentPlacement` 支持两种放置方式：共享式和分离式。
 更重要的是，它会处理 rank 的排列，从而实现从训练到 rollout 的高效模型权重更新。
 它会解析配置并为不同组件生成放置策略。生成的放置策略会在 Worker 启动时生效。
-完整代码请参考 `Math RL 训练代码 <https://github.com/RLinf/RLinf/blob/main/examples/math/main_math.py>`_。
+完整代码请参考 `Math RL 训练代码 <https://github.com/RLinf/RLinf/blob/main/examples/reasoning/main_grpo.py>`_。

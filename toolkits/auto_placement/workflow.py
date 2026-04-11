@@ -12,63 +12,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import itertools
-import math
+
 from collections import defaultdict, deque
+from typing import Optional
 
-
-class Node:
-    def __init__(self, name: str):
-        self.name = name
-        self.neighbors = []
-
-    def add_neighbor(self, neighbor: "Node"):
-        self.neighbors.append(neighbor)
-
-    def set_single_batch_instance_cost(self, single_batch_instance_cost: float):
-        self.single_batch_instance_cost = single_batch_instance_cost
-
-    def set_instance_num(self, instance_num: int):
-        self.instance_num = instance_num
-
-    def get_single_batch_cost(self) -> float:
-        return self.single_batch_instance_cost / self.instance_num
-
-    def __repr__(self):
-        return self.name
-
-
-class ComponentNode(Node):
-    def __init__(self, name: str):
-        super().__init__(name)
-
-
-class SccComponentNode(Node):
-    """The SccComponentNode denotes a strongly connected component (SCC) and is comprised of multiple constituent ComponentNodes."""
-
-    def __init__(self, Components: list[ComponentNode]):
-        super().__init__(" - ".join([component.name for component in Components]))
-        self.components = Components
-
-    def get_single_batch_cost(self) -> float:
-        return sum(component.get_single_batch_cost() for component in self.components)
+from node import ComponentNode, SccNode
 
 
 class Workflow:
-    def __init__(self, workflow: dict[Node, list[Node]]):
-        self.nodes = list(set(workflow.keys()))
-        for neighbors in workflow.values():
+    """The Workflow class represents a directed acyclic graph (DAG) of nodes.
+
+    Args:
+        workflow: A dictionary of nodes and their neighbors.
+
+    Methods:
+        _topological_sort: Perform topological sort on the workflow(graph).
+        _find_sccs: Find strongly connected components (SCCs) using Tarjan's algorithm.
+        compress_sccs: Compress strongly connected components (SCCs) into single nodes to build a directed acyclic graph (DAG).
+
+    """
+
+    def __init__(self, graph: dict[ComponentNode, list[ComponentNode]]):
+        node_set: set[ComponentNode] = set()
+        for node, neighbors in graph.items():
+            node_set.add(node)
             for neighbor in neighbors:
-                if neighbor not in self.nodes:
-                    self.nodes.add(neighbor)
-                    workflow[neighbor] = []
-        self.workflow = workflow
+                node_set.add(neighbor)
 
-        self.sccs = self.find_sccs()
+        self.nodes: list[ComponentNode] = list(node_set)
+        self.graph: dict[ComponentNode, list[ComponentNode]] = graph
+        self.topological_order: list[ComponentNode] = self._topological_sort()
 
-        self.topological_order = None
+        # gpu_num -> time
+        self._profile_cache: dict[int, float] = {}
 
-    def find_sccs(self) -> list[list[Node]]:
+    def _find_sccs(self) -> list[list[ComponentNode]]:
         """Find strongly connected components (SCCs) using Tarjan's algorithm."""
 
         def tarjan_dfs(node, disc, low, stack, in_stack, time):
@@ -77,7 +55,7 @@ class Workflow:
             stack.append(node)
             in_stack.add(node)
 
-            for neighbor in self.workflow.get(node, []):
+            for neighbor in self.get_neighbors(node):
                 if neighbor not in disc:
                     tarjan_dfs(neighbor, disc, low, stack, in_stack, time)
                     low[node] = min(low[node], low[neighbor])
@@ -109,41 +87,40 @@ class Workflow:
 
     def compress_sccs(self) -> "Workflow":
         """Compress strongly connected components (SCCs) into single nodes to build a directed acyclic graph (DAG)"""
-
-        node_to_scc = {}
-        for scc_idx, scc in enumerate(self.sccs):
+        sccs: list[list[ComponentNode]] = self._find_sccs()
+        node_to_scc: dict[ComponentNode, int] = {}
+        for scc_idx, scc in enumerate(sccs):
             for node in scc:
                 node_to_scc[node] = scc_idx
 
         # Build compressed graph using Workflow format
-        compressed_workflow = {}
+        compressed_workflow: dict[ComponentNode, list[ComponentNode]] = {}
 
         # Create compressed node for each SCC
-        for scc_idx, scc in enumerate(self.sccs):
+        for scc_idx, scc in enumerate(sccs):
             if len(scc) == 1:
                 compressed_node = scc[0]
             else:
-                compressed_node = SccComponentNode(scc)
+                compressed_node = SccNode(scc)
 
             compressed_workflow[compressed_node] = []
 
             for node in scc:
-                for neighbor in self.workflow.get(node, []):
+                for neighbor in self.get_neighbors(node):
                     neighbor_scc = node_to_scc[neighbor]
                     if neighbor_scc != scc_idx:
                         # Find corresponding compressed node
                         target_compressed_node = None
                         for existing_node in compressed_workflow.keys():
                             if existing_node in compressed_workflow:
-                                if len(self.sccs[neighbor_scc]) == 1:
-                                    if existing_node == self.sccs[neighbor_scc][0]:
+                                if len(sccs[neighbor_scc]) == 1:
+                                    if existing_node == sccs[neighbor_scc][0]:
                                         target_compressed_node = existing_node
                                         break
                                 else:
                                     if (
-                                        isinstance(existing_node, SccComponentNode)
-                                        and existing_node.components
-                                        == self.sccs[neighbor_scc]
+                                        isinstance(existing_node, SccNode)
+                                        and existing_node.nodes == sccs[neighbor_scc]
                                     ):
                                         target_compressed_node = existing_node
                                         break
@@ -159,248 +136,99 @@ class Workflow:
 
         return Workflow(compressed_workflow)
 
-    def topological_sort(self) -> list[Node]:
+    def _topological_sort(self) -> list[ComponentNode]:
         """Perform topological sort on the workflow(graph)"""
-        if self.topological_order is not None:
-            return self.topological_order
-
         in_degree = defaultdict(int)
-        for node in self.workflow:
-            for neighbor in self.workflow[node]:
+        for node in self.nodes:
+            for neighbor in self.get_neighbors(node):
                 in_degree[neighbor] += 1
 
-        queue = deque([node for node in self.workflow if in_degree[node] == 0])
-        self.topological_order = []
+        queue = deque([node for node in self.nodes if in_degree[node] == 0])
+        topological_order = []
 
         while queue:
             node = queue.popleft()
-            self.topological_order.append(node)
+            topological_order.append(node)
 
-            for neighbor in self.workflow[node]:
+            for neighbor in self.get_neighbors(node):
                 in_degree[neighbor] -= 1
                 if in_degree[neighbor] == 0:
                     queue.append(neighbor)
 
-        return self.topological_order
+        return topological_order
 
+    def get_neighbors(self, node: ComponentNode) -> list[ComponentNode]:
+        return self.graph.get(node, [])
 
-class WorkflowPartitioner:
-    def __init__(self, workflow: Workflow):
-        self.workflow = workflow.compress_sccs()
+    def is_node(self) -> bool:
+        return len(self.nodes) == 1
 
-    def partition(self) -> list[dict[str, Workflow]]:
-        """Enumerate possible partitioning ways
+    def profile(self, gpu_num: int) -> Optional[float]:
+        assert self.is_node()
+        return self.nodes[0].profile(gpu_num)
 
-        Returns:
-            List of all possible partitioning ways, each is a dictionary with subgraph names as keys and Workflow objects as values
-        """
-        if self.workflow.topological_order is None:
-            self.workflow.topological_sort()
-
-        partitions: list[dict[str, Workflow]] = []
-
-        # Try different numbers of partitions
-        for num_partitions in range(1, len(self.workflow.sccs) + 1):
-            # Generate all possible cut point combinations
-            if num_partitions == 1:
-                subgraph_nodes = self._extract_nodes_from_compressed_workflow()
-                subgraph_workflow = self._create_subgraph_workflow(subgraph_nodes)
-                partition_graph = {"SUBGRAPH_0": subgraph_workflow}
-                partitions.append(partition_graph)
-            else:
-                # Insert cut points between SCCs in topological order
-                for cut_points in itertools.combinations(
-                    range(len(self.workflow.topological_order) - 1), num_partitions - 1
-                ):
-                    partition_graph = {}
-                    start_idx = 0
-                    subgraph_id = 0
-                    for cut_point in cut_points:
-                        sccs_in_partition = []
-                        for i in range(start_idx, cut_point + 1):
-                            compressed_node = self.workflow.topological_order[i]
-                            if isinstance(compressed_node, SccComponentNode):
-                                sccs_in_partition.extend(compressed_node.components)
-                            else:
-                                sccs_in_partition.append(compressed_node)
-
-                        # Create subgraph
-                        subgraph_workflow = self._create_subgraph_workflow(
-                            sccs_in_partition
-                        )
-                        partition_graph[f"SUBGRAPH_{subgraph_id}"] = subgraph_workflow
-                        subgraph_id += 1
-                        start_idx = cut_point + 1
-
-                    # Add the last subgraph
-                    sccs_in_partition = []
-                    for i in range(start_idx, len(self.workflow.topological_order)):
-                        compressed_node = self.workflow.topological_order[i]
-                        if isinstance(compressed_node, SccComponentNode):
-                            sccs_in_partition.extend(compressed_node.components)
-                        else:
-                            sccs_in_partition.append(compressed_node)
-
-                    subgraph_workflow = self._create_subgraph_workflow(
-                        sccs_in_partition
-                    )
-                    partition_graph[f"SUBGRAPH_{subgraph_id}"] = subgraph_workflow
-
-                    partitions.append(partition_graph)
-
-        return partitions
-
-    def _extract_nodes_from_compressed_workflow(self) -> list[Node]:
-        """Extract all original nodes from the compressed workflow"""
-        nodes = []
-        for compressed_node in self.workflow.topological_order:
-            if isinstance(compressed_node, SccComponentNode):
-                nodes.extend(compressed_node.components)
-            else:
-                nodes.append(compressed_node)
-        return nodes
-
-    def _create_subgraph_workflow(self, nodes: list[Node]) -> Workflow:
-        """
-        Create subgraph Workflow from node list
-
-        Args:
-            nodes: List of nodes in the subgraph
-
-        Returns:
-            Subgraph Workflow object
-        """
-        subgraph_dict = {}
-        for node in nodes:
-            neighbors = []
-            for neighbor in self.workflow.workflow.get(node, []):
-                if neighbor in nodes:
-                    neighbors.append(neighbor)
-            subgraph_dict[node] = neighbors
-        return Workflow(subgraph_dict)
-
-
-class PipelineCostCacl:
-    def __init__(
-        self,
-        workflow: Workflow,
-    ):
-        self.workflow = workflow
-
-        # Check if contains strongly connected component compressed nodes
-        has_scc_compressed = any(
-            isinstance(node, SccComponentNode) for node in self.workflow.nodes
+    def __hash__(self):
+        # Include both nodes and graph structure in hash for consistency with __eq__
+        # Create a frozenset of (node, tuple of neighbors) pairs to represent the graph
+        graph_edges = frozenset(
+            (node, tuple(sorted(neighbors, key=lambda n: n.role)))
+            for node, neighbors in self.graph.items()
         )
+        return hash((tuple(sorted(self.nodes, key=lambda n: n.role)), graph_edges))
 
-        if has_scc_compressed:
-            raise NotImplementedError(
-                "SCC compressed nodes are not yet supported in PipelineCostCacl"
-            )
+    def __eq__(self, other):
+        if not isinstance(other, Workflow):
+            return False
+        if set(self.nodes) != set(other.nodes):
+            return False
+        if set(self.graph.keys()) != set(other.graph.keys()):
+            return False
+        for node in self.graph:
+            if set(self.graph[node]) != set(other.graph.get(node, [])):
+                return False
+        return True
 
-        self.topological_order = self.workflow.topological_sort()
-        self.critical_path = self._find_critical_path()
+    def __str__(self):
+        return ", ".join([f"{node} -> {self.graph[node]}" for node in self.graph])
 
-    def _find_critical_path(self):
-        """Find critical path (longest path)"""
-        dp = dict.fromkeys(self.workflow.nodes, 0)
-        parent = {}
-
-        for node in self.topological_order:
-            for neighbor in self.workflow.workflow.get(node, []):
-                # For SCC compressed nodes, calculate total time of all internal components
-                node_time = node.get_single_batch_cost()
-
-                new_cost = dp[node] + node_time
-                if new_cost > dp[neighbor]:
-                    dp[neighbor] = new_cost
-                    parent[neighbor] = node
-
-        # Find end nodes
-        end_nodes = [
-            node
-            for node in self.workflow.nodes
-            if not self.workflow.workflow.get(node, [])
-        ]
-        if not end_nodes:
-            end_node = max(dp.keys(), key=lambda x: dp[x])
-        else:
-            end_node = max(end_nodes, key=lambda x: dp[x])
-
-        # Reconstruct path
-        path = []
-        current = end_node
-        while current in parent:
-            path.append(current)
-            current = parent[current]
-        path.append(current)
-
-        return list(reversed(path))
-
-    def calculate_total_time(self, total_data_size: int, batch_size: int):
-        """Calculate total time to process N data items"""
-        num_batches = math.ceil(total_data_size / batch_size)
-
-        # Pipeline startup time (critical path length)
-        startup_time = 0
-        for node in self.critical_path:
-            startup_time += node.get_single_batch_cost()
-
-        # Pipeline steady state running time
-        max_node_time = 0
-        for node in self.workflow.nodes:
-            node_time = node.get_single_batch_cost()
-            max_node_time = max(max_node_time, node_time)
-
-        steady_time = (num_batches - 1) * max_node_time
-
-        # Total time
-        total_time = startup_time + steady_time
-
-        return {
-            "total_time": total_time,
-            "startup_time": startup_time,
-            "steady_time": steady_time,
-            "num_batches": num_batches,
-            "critical_path": self.critical_path,
-            "throughput": total_data_size / total_time if total_time > 0 else 0,
-        }
-
-    def print_analysis(self, total_data_size: int, batch_size: int):
-        """Print time analysis"""
-        result = self.calculate_total_time(total_data_size, batch_size)
-
-        print(f"Subgraph: {self.workflow.nodes}")
-        print(
-            f"Data size: {total_data_size}, Number of batches: {result['num_batches']}"
-        )
-        critical_path_str = ""
-        for path in result["critical_path"]:
-            if isinstance(path, SccComponentNode):
-                critical_path_str += f"{path}"
-            else:
-                critical_path_str += f"{path}"
-            if path != self.critical_path[-1]:
-                critical_path_str += " -> "
-        print(f"Critical path: {critical_path_str}")
-        print(
-            f"Startup time: {result['startup_time']:.2f}, Steady time: {result['steady_time']:.2f}"
-        )
-        print(
-            f"Total time: {result['total_time']:.2f}, Throughput: {result['throughput']:.2f}"
-        )
+    def __repr__(self):
+        return self.__str__()
 
 
-def get_workflow_cost(
-    workflow: Workflow,
-    batch_size: int,
-    total_data_size: int,
-) -> float:
-    """Calculate total cost of workflow"""
-    return PipelineCostCacl(workflow).calculate_total_time(total_data_size, batch_size)[
-        "total_time"
-    ]
+def traverse_st_cuts(workflow: Workflow) -> list[tuple[Workflow, Workflow]]:
+    cuts: list[tuple[Workflow, Workflow]] = []
+    topological_order = workflow.topological_order
+    if len(topological_order) <= 1:
+        return []
 
+    def get_sub_workflow(sub_nodes: set[ComponentNode]) -> Workflow:
+        sub_graph: dict[ComponentNode, list[ComponentNode]] = {}
+        for node in sub_nodes:
+            sub_node_neighbors = []
+            for neighbor in workflow.get_neighbors(node):
+                if neighbor in sub_nodes:
+                    sub_node_neighbors.append(neighbor)
+            sub_graph[node] = sub_node_neighbors
+        return Workflow(sub_graph)
 
-def get_workflow_partition(workflow: Workflow) -> list[dict[str, Workflow]]:
-    """Get workflow partitions"""
-    return WorkflowPartitioner(workflow).partition()
+    def has_edge(
+        source_nodes: set[ComponentNode], sink_nodes: set[ComponentNode]
+    ) -> bool:
+        for node in source_nodes:
+            for neighbor in workflow.get_neighbors(node):
+                if neighbor in sink_nodes:
+                    return True
+        return False
+
+    for cut_idx in range(len(topological_order) - 1):
+        source_nodes = set(topological_order[: cut_idx + 1])
+        sink_nodes = set(topological_order[cut_idx + 1 :])
+
+        if not source_nodes or not sink_nodes:
+            continue
+
+        if not has_edge(source_nodes, sink_nodes):
+            continue
+
+        cuts.append((get_sub_workflow(source_nodes), get_sub_workflow(sink_nodes)))
+    return cuts

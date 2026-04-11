@@ -1,0 +1,295 @@
+defaults:
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  auto_scheduler : True
+  use_pre_process_policy : True
+  use_wait_before_last_iter_policy : False
+  recreate_nccl_groups : False
+  component_placement:
+    actor: 0
+    rollout: 1-2
+    inference: 3
+    reward: all
+
+runner:
+  task_type: reasoning
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: ci-test
+    experiment_name: ${runner.experiment_name}
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: 1
+  max_steps: 3
+
+  val_check_interval: 1
+  save_interval: -1
+
+  seq_length: 8192
+
+  enable_dynamic_batch_size: False
+  max_tokens_per_mbs: 28672
+
+  resume_dir: null
+  experiment_name: grpo-1.5b-dynamic-mg-sgl
+  output_dir: /workspace/results
+
+algorithm:
+  group_size: 2
+
+  n_minibatches: 4
+  training_batch_size_per_gpu: 1 # micro batch size
+  rollout_batch_size_per_gpu: null # If set to null, rollout_batch_size will be evenly divided across all inference instances. You can reduce this parameter if inference consumes too much GPU memory.
+
+  # mbs to do log prob inference, can be set to
+  # lower than rollout_batch_size_per_gpu to reduce
+  # memory usage
+  logprob_forward_micro_batch_size: 1 # ${.rollout_batch_size_per_gpu}
+
+  # val rollout mbs
+  val_rollout_batch_size_per_gpu: 4 # ${.rollout_batch_size_per_gpu}
+
+  recompute_logprobs: True
+  shuffle_rollout: False
+
+  max_num_gen_batches: 1
+
+  # GRPO loss params
+  loss_type: actor
+  loss_agg_func: "token-mean"
+  kl_beta: 0.0 # 0.001
+  kl_penalty_type: low_var_kl
+  ratio_clip_eps: 0.2
+  entropy_bonus: 0.0
+  calculate_entropy: True
+  clip_ratio_c: null # 3.0
+  clip_ratio_low: null # if null or not set, will use ratio_clip_eps
+  clip_ratio_high: null # if null or not set, will use ratio_clip_eps
+
+  adv_type: grpo
+  normalize_advantages: False
+  early_stop_imp_ratio: 5.0
+  use_valid_token_scale: True
+
+  # params for rollout
+  sampling_params:
+    do_sample: True
+    temperature: 1.0
+    top_k: 1000000
+    top_p: 1.0
+    repetition_penalty: 1.0
+    max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
+    min_new_tokens: 1
+
+inference:
+  model_type: ${rollout.model.model_type}
+  group_name: "InferenceGroup"
+  load_from_actor: True
+  model:
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: False
+
+rollout:
+  group_name: "RolloutGroup"
+
+  gpu_memory_utilization: 0.55
+
+  model:
+    model_path: /workspace/dataset/DeepSeek-R1-Distill-Qwen-1.5B
+    model_type: qwen2.5
+    precision: ${actor.model.precision}              # precision for rollout model, support [fp16, bf16, fp32]
+  enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
+  distributed_executor_backend: mp   # ray or mp
+  disable_log_stats: False
+  detokenize: False            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
+  padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
+  eos: null                   # will be tokenizer.eos_token_id if null.
+
+  rollout_backend: vllm     # here choose which backend to rollout,support [sglang, vllm] 
+
+  sglang:
+    attention_backend: triton # [flashinfer, triton] for more, see sglang's doc
+    decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
+    use_torch_compile: False # enable torch_compile in SGLang for rollout.
+    torch_compile_max_bs: 128 # the maximum batch size for torch compile. If the batch size is larger than this, torch compile will not be used.
+
+  vllm:
+    attention_backend: FLASH_ATTN #[FLASH_ATTN,XFORMERS] for more, see vllm's doc
+    enable_chunked_prefill: True  # enable vllm to use chunked_prefill.
+    enable_prefix_caching: True   # enable vllm to use prefix_caching.
+    enable_flash_infer_sampler: True # if True, vllm will use flashinfer to do sampling.
+    max_num_batched_tokens: null # the maximum number of tokens to be batched together in vllm. If set to null, vllm will use its default value.
+    torch_profiler_dir: null # if not null, vllm will enable torch profiler and save the result to the specified directory.
+
+  return_logprobs: ${not:${algorithm.recompute_logprobs}}
+
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+  
+  validate_weight: False # whether to send all weights at first for weight comparison.
+  validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
+  print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
+
+  max_running_requests: 64 # the maximum number of running requests in rollout engine.
+  cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
+
+data:
+  type: math
+  dataset_name: boba
+  max_prompt_length: 1024
+  filter_prompt_by_length: True
+  rollout_batch_size: 16
+  val_rollout_batch_size: null
+  num_workers: 2
+  prompt_key: prompt
+  answer_key: solutions
+  apply_chat_template: False
+  shuffle: True
+  validation_shuffle: True
+  seed: 1234
+  train_data_paths: ["/workspace/dataset/boba_106k_0319_prompt_1024.jsonl"]
+  val_data_paths: ["/workspace/dataset/boba_106k_0319_prompt_1024.jsonl"]
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: megatron
+  mcore_gpt: True
+  spec_name: decoder_gpt
+
+  offload_optimizer: True
+  offload_weight: True
+  offload_grad: True
+
+  enable_dp_load_balance: False
+
+  calculate_flops: False
+
+  seed: 1234
+
+  model:
+    megatron_checkpoint: /workspace/dataset/DeepSeek-R1-Distill-Qwen-1.5B-tp1-pp1
+    precision: fp16
+    add_bias_linear: False
+
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+
+    activation: swiglu
+    sequence_parallel: False
+    # recompute_method: block
+    # recompute_granularity: selective
+
+    recompute_method: block
+    recompute_granularity: full
+    recompute_num_layers: 20
+
+    seq_length: ${runner.seq_length}
+    encoder_seq_length: ${runner.seq_length}
+
+    normalization: rmsnorm
+
+    position_embedding_type: rope
+
+    apply_rope_fusion: True
+    bias_dropout_fusion: False
+    persist_layer_norm: False
+    bias_activation_fusion: False
+    attention_softmax_in_fp32: True
+    batch_p2p_comm: False
+    variable_seq_lengths: True
+    gradient_accumulation_fusion: False
+    moe_token_dispatcher_type: alltoall
+    use_cpu_initialization: False
+
+  optim:
+    optimizer: adam
+    bf16: False
+    fp16: True
+    lr: 2e-05
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-05
+    min_lr: 2.0e-6
+    weight_decay: 0.05
+    use_distributed_optimizer: True
+    overlap_grad_reduce: False
+    overlap_param_gather: False
+    optimizer_enable_pin: false
+    overlap_param_gather_with_optimizer_step: False
+    clip_grad: 0.8
+    loss_scale: 65536
+
+  lr_sched:
+    lr_warmup_fraction: 0.01
+    lr_warmup_init: 0.0
+    lr_warmup_iters: 0
+    max_lr: 2.0e-5
+    min_lr: 0.0
+    lr_decay_style: constant
+    lr_decay_iters: 10
+
+  tokenizer:
+    tokenizer_model: /workspace/dataset/DeepSeek-R1-Distill-Qwen-1.5B
+    use_fast: False
+    trust_remote_code: True
+    padding_side: 'right'
+
+  megatron:
+    ddp_bucket_size: null
+    distributed_backend: nccl # Support 'nccl' and 'gloo'
+    distributed_timeout_minutes: 30
+    ckpt_format: torch
+    use_dist_ckpt: False
+    tp_comm_bootstrap_backend: nccl
+    tp_comm_overlap_cfg: null # tp_comm_overlap_cfg.yaml
+    use_hf_ckpt: False # if true, will transfer hf model to generate megatron checkpoint and use it for training.
+    use_profiler: False # if true, will enable torch profiler when training, pay attention it has influence on performance
+
+    ckpt_convertor: # config for ckpt convertor
+      model: DeepSeek-R1-Distill-Qwen-1.5B
+      hf_model_path: ${rollout.model.model_path} # path to the hf model
+      save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
+      use_gpu_num : 0
+      use_gpu_index: null
+      process_num: 16 # number of processes to use for checkpointing
+      tensor_model_parallel_size: ${actor.model.tensor_model_parallel_size}
+      pipeline_model_parallel_size: ${actor.model.pipeline_model_parallel_size}
+      
+    profiler: # profile megatron when inference and traning
+      output_dir: ${runner.output_dir}/${runner.experiment_name}/profiler
+      activities: ["cpu", "cuda"]
+      record_shapes: False
+      profile_memory: False
+      with_stack: False
+      with_flops: False
+      with_modules: True
+      export_tensorboard: True
+      export_chrome_trace: False
+      chrome_filename_prefix: "chrome_trace"
+      schedule_warmup: 2
+      schedule_active: 1
+      schedule_repeat: 1 # inference and training will repeat such times
+      # schedule_wait: it will be set at runtime
+
+
+reward:
+  group_name: "RewardGroup"
+  use_reward_model: false
+  reward_type: 'math'
+  reward_scale: 5.0
+  tokenizer:
+    tokenizer_model: ${actor.tokenizer.tokenizer_model}
+    use_fast: ${actor.tokenizer.use_fast}
+    trust_remote_code: ${actor.tokenizer.trust_remote_code}
+    padding_side: ${actor.tokenizer.padding_side}
+
+critic:
+  use_critic_model: false

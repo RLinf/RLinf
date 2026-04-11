@@ -32,7 +32,6 @@ from rlinf.hybrid_engines.fsdp.utils import (
     FSDPVersion,
     apply_fsdp2_to_model,
     clip_grad_by_total_norm_,
-    get_fsdp2_full_state_dict_all_ranks,
     get_grad_norm,
 )
 from rlinf.utils.utils import clear_memory
@@ -80,18 +79,6 @@ class FSDP2Strategy(FSDPStrategyBase):
     @classmethod
     def get_fsdp_version(cls) -> FSDPVersion:
         return FSDPVersion.FSDP2
-
-    def get_model_state_dict(self, model: FSDPModule) -> dict:
-        """
-        Get the full model state dict of FSDP2 from all ranks.
-
-        Args:
-            - model (FSDPModule): The FSDP2 wrapped model.
-
-        Returns:
-            - dict: The full model state dict.
-        """
-        return get_fsdp2_full_state_dict_all_ranks(model, False)
 
     @torch.no_grad()
     def onload_param_and_grad(

@@ -27,7 +27,7 @@ ManagerClsType = TypeVar("ManagerClsType")
 class ManagerProxy:
     """Singleton proxy for the Manager class to handle remote calls."""
 
-    def __init__(self, manager_cls: "type[Manager]"):
+    def __init__(self, manager_cls: "type[Manager]", no_wait: bool):
         """Launch the Manager class as a remote actor if not already running."""
         from ..worker import Worker
 
@@ -45,7 +45,9 @@ class ManagerProxy:
                     name=manager_cls.MANAGER_NAME, namespace=Cluster.NAMESPACE
                 )
                 break
-            except ValueError:
+            except ValueError as e:
+                if no_wait:
+                    raise e
                 count += 1
                 time.sleep(0.001)
                 if count % Cluster.TIMEOUT_WARN_TIME == 0:
@@ -87,10 +89,14 @@ class Manager:
     MANAGER_NAME = ""
     proxy: ManagerProxy = None
     PID = None
+    ENV_LIST = ["RAY_ADDRESS"]
 
     @classmethod
-    def get_proxy(cls: type[ManagerClsType]) -> type[ManagerClsType]:
+    def get_proxy(cls: type[ManagerClsType], no_wait: bool = False) -> ManagerClsType:
         """Get the singleton proxy for the Manager class.
+
+        Args:
+            no_wait (bool): If True, do not wait for the manager to be ready.
 
         Returns:
             ManagerProxy: The singleton proxy instance for the Manager class.
@@ -100,5 +106,18 @@ class Manager:
             cls.proxy is None or os.getpid() != cls.PID
         ):  # Reinitialize if PID has changed
             cls.PID = os.getpid()
-            cls.proxy = ManagerProxy(cls)
+            cls.proxy = ManagerProxy(cls, no_wait)
         return cls.proxy
+
+    @classmethod
+    def get_runtime_env_vars(cls) -> dict:
+        """Get the runtime environment variables required for the manager.
+
+        Returns:
+            dict: A dictionary of environment variables.
+        """
+        runtime_env = {}
+        for var in cls.ENV_LIST:
+            if var in os.environ:
+                runtime_env[var] = os.environ[var]
+        return runtime_env

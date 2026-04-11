@@ -28,7 +28,7 @@
    ------
    [ "\\boxed{e}" ]
 
-开始训练
+启动训练
 --------------------
 
 **步骤 1：下载模型和数据集**
@@ -43,38 +43,30 @@
    hf download inclusionAI/AReaL-boba-Data --repo-type=dataset \
    --local-dir /path/to/dataset/boba
 
-**步骤 2：运行官方提供的训练脚本**
+**步骤 2：修改配置文件**
 
-为方便用户，我们提供的配置文件默认支持单卡训练。  
-如果你拥有多张 GPU 并希望加快训练过程，  
-我们推荐你修改配置文件  
-``./examples/math/config/qwen2.5-1.5b-single-gpu.yaml`` 中的参数 ``cluster.component_placement``。
-
-你可以根据实际资源将该项设置为 **0-1**， **0-3** 或 **0-7**来使用 2/4/8 张 GPU。
-查看 :doc:`../tutorials/user/yaml` 以获取有关 Placement 配置的更详细说明。
-
-.. code-block:: yaml
-
-   cluster:
-     num_nodes: 1
-     component_placement:
-        actor,rollout: 0
 
 在运行脚本之前，请根据你的模型和数据集下载路径，  
-在 YAML 配置文件中修改以下字段：
+修改 ``./examples/reasoning/config/math/qwen2.5-1.5b-single-gpu.yaml`` 文件。
 
-- ``rollout.model_dir``  
+具体而言，将model配置设置为 ``DeepSeek-R1-Distill-Qwen-1.5B`` 检查点所在路径，数据配置设置为 ``AReaL-boba-106k.jsonl`` 数据集所在路径。
+
+- ``rollout.model.model_path``  
 - ``data.train_data_paths``  
 - ``data.val_data_paths``  
 - ``actor.tokenizer.tokenizer_model``
+
+**步骤 3：启动训练**
 
 完成以上修改后，运行以下脚本即可启动训练：
 
 .. code-block:: bash
 
-   bash examples/math/run_main_math_grpo_megatron.sh qwen2.5-1.5b-single-gpu
+   bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-single-gpu
 
-**步骤 3：查看训练结果**
+
+查看训练结果
+--------------------
 
 - 最终模型与指标文件位于：``../results``  
 - TensorBoard 日志位于：``../results/grpo-1.5b/tensorboard/``  
@@ -93,3 +85,18 @@
 .. raw:: html
 
    <img src="https://github.com/RLinf/misc/raw/main/pic/math-quickstart-metric.jpg" width="800"/>
+
+.. note::
+   为方便用户，我们提供的配置文件默认支持单卡训练。  
+   如果你拥有多张 GPU 并希望加快训练过程，  
+   我们推荐你修改配置文件中的参数 ``cluster.component_placement``。
+
+   你可以根据实际资源将该项设置为 **0-1**， **0-3** 或 **0-7** 来使用 2/4/8 张 GPU。
+   查看 :doc:`../tutorials/user/yaml` 以获取有关 Placement 配置的更详细说明。
+
+   .. code-block:: yaml
+
+      cluster:
+      num_nodes: 1
+      component_placement:
+         actor,rollout,reward: 0-3

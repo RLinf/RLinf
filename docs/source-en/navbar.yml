@@ -6,6 +6,8 @@
   title: "Example Gallery"
 - file: rst_source/blog/index
   title: "Blog"
+- file: rst_source/publications/index
+  title: "Publications"
 - file: rst_source/apis/index
   title: "APIs"
 - file: rst_source/faq

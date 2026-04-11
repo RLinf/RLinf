@@ -25,23 +25,22 @@ from torch.profiler import (
 )
 from torch.profiler.profiler import ProfilerAction
 
+from rlinf.scheduler import Worker
+
 
 class PyTorchProfilerFunc:
     """
     Helper Class to create record_function and start/stop gracefully.
     """
 
-    def __init__(self, name: str, enabled: bool):
-        self.context = torch.profiler.record_function(name) if enabled else False
-        self.enabled = enabled
+    def __init__(self, name: str):
+        self.context = torch.profiler.record_function(name)
 
     def start(self):
-        if self.enabled:
-            self.context.__enter__()
+        self.context.__enter__()
 
     def stop(self):
-        if self.enabled:
-            self.context.__exit__(None, None, None)
+        self.context.__exit__(None, None, None)
 
 
 class PyTorchProfiler:
@@ -138,8 +137,8 @@ class PyTorchProfiler:
         if export_chrome:
 
             def chrome_handler(p):
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
+                if Worker.torch_platform.is_available():
+                    Worker.torch_platform.synchronize()
                 trace_path = self.output_dir / self._get_chrome_trace_filename(
                     chrome_prefix
                 )

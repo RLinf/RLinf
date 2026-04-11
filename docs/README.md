@@ -21,10 +21,10 @@ These ensure proper character encoding with the `C.UTF-8` locale.
 
 ### Step 2: Install Dependencies
 
-Install the required packages, including Sphinx, from the `requirements.txt` file:
-
 ```bash
-uv pip install -r requirements.txt
+cd <path_to_RLinf_project_root>  # Navigate to the RLinf project root directory
+bash requirements/install.sh docs --venv .docs-venv
+source .docs-venv/bin/activate
 ```
 
 ---

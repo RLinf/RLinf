@@ -1,0 +1,358 @@
+cameras:
+  static:
+    _target_: calvin_env.camera.static_camera.StaticCamera
+    name: static
+    fov: 10
+    aspect: 1
+    nearval: 0.01
+    farval: 10
+    width: 200
+    height: 200
+    look_at:
+    - -0.026242351159453392
+    - -0.0302329882979393
+    - 0.3920000493526459
+    look_from:
+    - 2.871459009488717
+    - -2.166602199425597
+    - 2.555159848480571
+    up_vector:
+    - 0.4041403970338857
+    - 0.22629790978217404
+    - 0.8862616969685161
+  gripper:
+    _target_: calvin_env.camera.gripper_camera.GripperCamera
+    name: gripper
+    fov: 75
+    aspect: 1
+    nearval: 0.01
+    farval: 2
+    width: 84
+    height: 84
+env:
+  _target_: calvin_env.envs.play_table_env.PlayTableSimEnv
+  _recursive_: false
+  cameras: ${cameras}
+  seed: 0
+  bullet_time_step: 240.0
+  use_vr: false
+  show_gui: ${show_gui}
+  robot_cfg: ${robot}
+  scene_cfg: ${scene}
+  use_scene_info: false
+  use_egl: true
+  control_freq: 30
+scene:
+  _target_: calvin_env.scene.play_table_scene.PlayTableScene
+  _recursive_: false
+  data_path: ${data_path}
+  global_scaling: 0.8
+  euler_obs: ${robot.euler_obs}
+  robot_base_position:
+  - -0.34
+  - -0.46
+  - 0.24
+  robot_base_orientation:
+  - 0
+  - 0
+  - 0
+  robot_initial_joint_positions:
+  - -1.21779206
+  - 1.03987646
+  - 2.11978261
+  - -2.34205014
+  - -0.87015947
+  - 1.64119353
+  - 0.55344866
+  surfaces:
+    table:
+    - - 0.0
+      - -0.15
+      - 0.46
+    - - 0.35
+      - -0.03
+      - 0.46
+    slider_left:
+    - - -0.32
+      - 0.05
+      - 0.46
+    - - -0.16
+      - 0.12
+      - 0.46
+    slider_right:
+    - - -0.05
+      - 0.05
+      - 0.46
+    - - 0.13
+      - 0.12
+      - 0.46
+  objects:
+    fixed_objects:
+      table:
+        file: calvin_table_D/urdf/calvin_table_D.urdf
+        initial_pos:
+        - 0
+        - 0
+        - 0
+        initial_orn:
+        - 0
+        - 0
+        - 0
+        joints:
+          base__slide:
+            initial_state: 0
+          base__drawer:
+            initial_state: 0
+        buttons:
+          base__button:
+            initial_state: 0
+            effect: led
+        switches:
+          base__switch:
+            initial_state: 0
+            effect: lightbulb
+        lights:
+          lightbulb:
+            link: light_link
+            color:
+            - 1
+            - 1
+            - 0
+            - 1
+          led:
+            link: led_link
+            color:
+            - 0
+            - 1
+            - 0
+            - 1
+    movable_objects:
+      block_red:
+        file: blocks/block_red_middle.urdf
+        initial_pos: any
+        initial_orn: any
+      block_blue:
+        file: blocks/block_blue_small.urdf
+        initial_pos: any
+        initial_orn: any
+      block_pink:
+        file: blocks/block_pink_big.urdf
+        initial_pos: any
+        initial_orn: any
+  name: calvin_scene_D
+robot:
+  _target_: calvin_env.robot.robot.Robot
+  filename: franka_panda/panda_longer_finger.urdf
+  base_position: ${scene.robot_base_position}
+  base_orientation: ${scene.robot_base_orientation}
+  initial_joint_positions: ${scene.robot_initial_joint_positions}
+  max_joint_force: 200.0
+  gripper_force: 200
+  arm_joint_ids:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  gripper_joint_ids:
+  - 9
+  - 11
+  gripper_joint_limits:
+  - 0
+  - 0.04
+  tcp_link_id: 15
+  end_effector_link_id: 7
+  gripper_cam_link: 12
+  use_nullspace: true
+  max_velocity: 2
+  use_ik_fast: false
+  magic_scaling_factor_pos: 1
+  magic_scaling_factor_orn: 1
+  use_target_pose: true
+  euler_obs: true
+tasks:
+  _target_: calvin_env.envs.tasks.Tasks
+  tasks:
+    rotate_red_block_right:
+    - rotate_object
+    - block_red
+    - -60
+    rotate_red_block_left:
+    - rotate_object
+    - block_red
+    - 60
+    rotate_blue_block_right:
+    - rotate_object
+    - block_blue
+    - -60
+    rotate_blue_block_left:
+    - rotate_object
+    - block_blue
+    - 60
+    rotate_pink_block_right:
+    - rotate_object
+    - block_pink
+    - -60
+    rotate_pink_block_left:
+    - rotate_object
+    - block_pink
+    - 60
+    push_red_block_right:
+    - push_object
+    - block_red
+    - 0.1
+    - 0
+    push_red_block_left:
+    - push_object
+    - block_red
+    - -0.1
+    - 0
+    push_blue_block_right:
+    - push_object
+    - block_blue
+    - 0.1
+    - 0
+    push_blue_block_left:
+    - push_object
+    - block_blue
+    - -0.1
+    - 0
+    push_pink_block_right:
+    - push_object
+    - block_pink
+    - 0.1
+    - 0
+    push_pink_block_left:
+    - push_object
+    - block_pink
+    - -0.1
+    - 0
+    move_slider_left:
+    - move_door_rel
+    - base__slide
+    - 0.15
+    move_slider_right:
+    - move_door_rel
+    - base__slide
+    - -0.15
+    open_drawer:
+    - move_door_rel
+    - base__drawer
+    - 0.12
+    close_drawer:
+    - move_door_rel
+    - base__drawer
+    - -0.12
+    lift_red_block_table:
+    - lift_object
+    - block_red
+    - 0.05
+    - table
+    - base_link
+    lift_red_block_slider:
+    - lift_object
+    - block_red
+    - 0.03
+    - table
+    - plank_link
+    lift_red_block_drawer:
+    - lift_object
+    - block_red
+    - 0.05
+    - table
+    - drawer_link
+    lift_blue_block_table:
+    - lift_object
+    - block_blue
+    - 0.05
+    - table
+    - base_link
+    lift_blue_block_slider:
+    - lift_object
+    - block_blue
+    - 0.03
+    - table
+    - plank_link
+    lift_blue_block_drawer:
+    - lift_object
+    - block_blue
+    - 0.05
+    - table
+    - drawer_link
+    lift_pink_block_table:
+    - lift_object
+    - block_pink
+    - 0.05
+    - table
+    - base_link
+    lift_pink_block_slider:
+    - lift_object
+    - block_pink
+    - 0.03
+    - table
+    - plank_link
+    lift_pink_block_drawer:
+    - lift_object
+    - block_pink
+    - 0.05
+    - table
+    - drawer_link
+    place_in_slider:
+    - place_object
+    - table
+    - plank_link
+    place_in_drawer:
+    - place_object
+    - table
+    - drawer_link
+    stack_block:
+    - stack_objects
+    unstack_block:
+    - unstack_objects
+    turn_on_lightbulb:
+    - toggle_light
+    - lightbulb
+    - 0
+    - 1
+    turn_off_lightbulb:
+    - toggle_light
+    - lightbulb
+    - 1
+    - 0
+    turn_on_led:
+    - toggle_light
+    - led
+    - 0
+    - 1
+    turn_off_led:
+    - toggle_light
+    - led
+    - 1
+    - 0
+    push_into_drawer:
+    - push_object_into
+    - - block_red
+      - block_blue
+      - block_pink
+    - table
+    - base_link
+    - table
+    - drawer_link
+recorder:
+  record: ${record}
+  record_fps: 30.0
+  show_fps: false
+  enable_tts: true
+seed: 0
+use_vr: true
+data_path: data
+save_dir: /home/meeso/recordings
+record: true
+load_dir: /work/dlclarge2/meeso-lfp/calvin_recordings/play_env_A/2021-09-12/11-36-05/
+show_gui: false
+processes: 16
+max_episode_frames: 1
+save_body_infos: true
+set_static_cam: false

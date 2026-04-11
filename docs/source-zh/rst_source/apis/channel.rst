@@ -9,5 +9,6 @@ Channel
 
 .. autoclass:: rlinf.scheduler.Channel
    :members:
+   :no-index:
    :member-order: bysource
    :class-doc-from: class  

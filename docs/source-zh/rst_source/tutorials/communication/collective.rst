@@ -61,7 +61,7 @@
 
 - ``AsyncWork``：抽象基类，包含 ``wait()``、``async_wait()``、``then(func, *args, **kwargs)``、``done()``，以及链式操作辅助函数（``get_next_work()``、``get_last_work()``）。  
 - ``AsyncFuncWork``：在前序任务完成时执行 Python 回调，记录一个 CUDA 事件，并可通过 ``then`` 进行链式调用。若回调返回另一个 ``AsyncWork``，则完成会延迟到链中**最后**的任务完成。  
-- ``AsyncCollWork``：将一个 ``torch.distributed`` 的工作（如 broadcast）封装为可等待接口。它也支持 ``then``（单一底层任务）。  
+- ``AsyncCollWork``：将一个 ``torch.distributed`` 的工作（如 broadcast）封装为可等待接口。它也支持 ``then`` （单一底层任务）。  
 - ``AsyncChannelWork``：将 ``ray.ObjectRef`` 封装为可等待对象（用于 channel RPC）。  
 
 关键特性：

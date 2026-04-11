@@ -1,0 +1,37 @@
+env_type: maniskill
+
+total_num_envs: null
+
+auto_reset: False
+ignore_terminations: True
+use_rel_reward: False
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: True
+max_steps_per_rollout_epoch: 80
+max_episode_steps: 80 # max episode steps for truncation
+reward_mode: raw
+wrap_obs_mode: raw
+
+enable_offload: False
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+init_params:
+  id: PandaPutOnPlateInScene25DigitalTwin-v1
+  num_envs: null # will be set in ManiSkillEnv init
+  obs_mode: "rgb+segmentation"
+  control_mode: pd_ee_body_target_delta_pose_real_root_frame
+  sim_backend: "gpu"
+  sim_config:
+    sim_freq: 500
+    control_freq: 5
+  max_episode_steps: ${env.train.max_episode_steps} # max episode steps for truncation
+  sensor_configs:
+    shader_pack: "default"
+  render_mode: rgb_array
+  reward_mode: normalized_dense
+  use_sparse_reward: true

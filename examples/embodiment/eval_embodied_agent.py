@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+
 import hydra
 import torch.multiprocessing as mp
+from omegaconf.omegaconf import OmegaConf
 
 from rlinf.config import validate_cfg
 from rlinf.runners.embodied_eval_runner import EmbodiedEvalRunner
@@ -29,10 +32,11 @@ mp.set_start_method("spawn", force=True)
     version_base="1.1", config_path="config", config_name="maniskill_ppo_openvlaoft"
 )
 def main(cfg) -> None:
-    cfg = validate_cfg(cfg)
     cfg.runner.only_eval = True
+    cfg = validate_cfg(cfg)
+    print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
-    cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
+    cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = HybridComponentPlacement(cfg, cluster)
 
     # Create rollout worker group
@@ -46,15 +50,13 @@ def main(cfg) -> None:
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 
-    rollout_group.init_worker().wait()
-    env_group.init_worker().wait()
-
     runner = EmbodiedEvalRunner(
         cfg=cfg,
         rollout=rollout_group,
         env=env_group,
     )
 
+    runner.init_workers()
     runner.run()
 
 

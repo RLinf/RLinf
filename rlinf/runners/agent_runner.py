@@ -47,13 +47,14 @@ class AgentRunner(ReasoningRunner):
         cfg: DictConfig,
         placement: ModelParallelComponentPlacement,
         train_dataset: Dataset,
-        val_dataset: Dataset,
+        val_dataset: Optional[Dataset],
         rollout: Union["SGLangWorker", "VLLMWorker"],
         inference: Optional[MegatronInference],
         actor: MegatronActor,
-        reward: RewardWorker,
+        reward: Optional[RewardWorker],
         agent_loop: AgentLoopWorker,
         tool_workers: dict[ToolWorker, ToolWorkerInfo] = {},
+        solid_rollouts: dict[str, Union["SGLangWorker", "VLLMWorker"]] = {},
     ):
         super().__init__(
             cfg,
@@ -82,9 +83,16 @@ class AgentRunner(ReasoningRunner):
             f"AgentRunner: tool_calls must be unique. all tool_calls are {all_tool_calls}"
         )
         self.agent_loop = agent_loop
+        self.batch_split_num = len(agent_loop._workers)
         self.tool_workers = tool_workers
+        self.solid_rollouts = solid_rollouts
         self.generate_input_channel = Channel.create("GenerateInput")
         self.generate_output_channel = Channel.create("GenerateOutput")
+        self.solid_generate_input_channels = {}
+        for solid_rollout_name in self.solid_rollouts:
+            self.solid_generate_input_channels[solid_rollout_name] = Channel.create(
+                f"SolidRolloutInput-{solid_rollout_name}"
+            )
         # tool worker name to tool channel info.
         self.tool_channel_info_map = {}
         # tool name to tool worker. a tool worker may have multiple tools.
@@ -99,14 +107,43 @@ class AgentRunner(ReasoningRunner):
                 self.tool_name_map[tool_name] = worker.worker_group_name
 
         self.tool_output_channel = Channel.create("ToolOutput")
+        if self.recompute_logprobs:
+            self.inference_channel = Channel.create("Inference", local=True)
 
-    def init_workers(self):
-        """init tool workers and agent loop worker."""
+    def init_rollout_workers(self):
+        """init rollout workers, tool workers and agent loop worker."""
+        rollout_handles = [self.rollout.init_worker()]
+        for solid_rollout in self.solid_rollouts.values():
+            rollout_handle = solid_rollout.init_worker()
+            rollout_handles.append(rollout_handle)
+
         for worker in self.tool_workers:
             input_channel = self.tool_channel_info_map[
                 worker.worker_group_name
             ].input_channel
-            worker.init_worker(input_channel, self.tool_output_channel).wait()
+            tool_handle = worker.init_worker(input_channel, self.tool_output_channel)
+            rollout_handles.append(tool_handle)
+
+        # Must be done before actor init
+        if self.cfg.runner.resume_dir is None:
+            logging.info("Training from scratch")
+            if (
+                self.cfg.actor.training_backend == "megatron"
+                and self.cfg.actor.megatron.use_hf_ckpt
+            ):
+                from rlinf.utils.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
+                    convert_hf_to_mg,
+                )
+
+                convert_hf_to_mg(
+                    self.cfg.actor.megatron.ckpt_convertor.hf_model_path,
+                    self.cfg.actor.megatron.ckpt_convertor,
+                )
+
+        for rollout_handle in rollout_handles:
+            rollout_handle.wait()
+        if self.use_pre_process_policy:
+            self.rollout.offload_engine().wait()
 
         self.agent_loop.init_worker(
             self.generate_input_channel,
@@ -114,9 +151,17 @@ class AgentRunner(ReasoningRunner):
             self.tool_channel_info_map,
             self.tool_name_map,
             self.tool_output_channel,
+            self.solid_generate_input_channels,
         ).wait()
 
-        super().init_workers()
+    def _sync_weights(self):
+        super()._sync_weights()
+        if not self.is_pipeline:
+            onload_handles = []
+            for solid_rollout in self.solid_rollouts.values():
+                onload_handles.append(solid_rollout.onload_engine())
+            for handle in onload_handles:
+                handle.wait()
 
     def run(self):
         epoch_iter = range(self.epoch, self.cfg.runner.max_epochs)
@@ -135,6 +180,11 @@ class AgentRunner(ReasoningRunner):
         self.rollout.rollout_serverless(
             self.generate_input_channel, self.generate_output_channel
         )
+        for solid_rollout_name, solid_rollout in self.solid_rollouts.items():
+            solid_rollout.rollout_serverless(
+                self.solid_generate_input_channels[solid_rollout_name],
+                self.generate_output_channel,
+            )
         for tool_worker in self.tool_workers:
             tool_worker.start_server()
         try:
@@ -142,7 +192,7 @@ class AgentRunner(ReasoningRunner):
                 for batch in self.train_dataloader:
                     with self.timer("step"):
                         with self.timer("prepare_data"):
-                            self._put_batch(batch)
+                            self._put_batch(batch, self.batch_split_num)
 
                         with self.timer("sync_weights"):
                             self._sync_weights()
@@ -153,25 +203,39 @@ class AgentRunner(ReasoningRunner):
                             output_channel=self.rollout_channel,
                         )
 
+                        if not self.is_pipeline:
+                            agent_metrics = rollout_handle.wait()[0]
+                            offload_handles = [self.rollout.offload_engine()]
+                            for solid_rollout in self.solid_rollouts.values():
+                                offload_handles.append(solid_rollout.offload_engine())
+                            for handle in offload_handles:
+                                handle.wait()
+
                         # Rewards
-                        reward_handle: Handle = self.reward.compute_rewards(
-                            input_channel=self.rollout_channel,
-                            output_channel=self.reward_channel,
-                        )
+                        if self.reward is not None:
+                            reward_handle: Handle = self.reward.compute_rewards(
+                                input_channel=self.rollout_channel,
+                                output_channel=self.reward_channel,
+                            )
+                            inference_input_channel = self.reward_channel
+                        else:
+                            inference_input_channel = self.rollout_channel
 
                         if self.recompute_logprobs:
                             # Inference prev/ref logprobs
                             infer_handle: Handle = self.inference.run_inference(
-                                input_channel=self.reward_channel,
+                                input_channel=inference_input_channel,
                                 output_channel=self.inference_channel,
                                 compute_ref_logprobs=self.compute_ref_logprobs,
                             )
                             inference_channel = self.inference_channel
                         else:
                             infer_handle = None
-                            inference_channel = self.reward_channel
+                            inference_channel = inference_input_channel
 
                         # Actor training, Advantages and returns
+                        if self.is_pipeline:
+                            agent_metrics = rollout_handle.wait()[0]
                         actor_handle: Handle = self.actor.run_training(
                             input_channel=inference_channel,
                         )
@@ -209,7 +273,8 @@ class AgentRunner(ReasoningRunner):
                     time_metrics = self.timer.consume_durations()
                     time_metrics["training"] = actor_handle.consume_duration()
                     time_metrics["rollout"] = rollout_handle.consume_duration()
-                    time_metrics["reward"] = reward_handle.consume_duration()
+                    if self.reward is not None:
+                        time_metrics["reward"] = reward_handle.consume_duration()
                     if infer_handle is not None:
                         # Inference time should be the min time across ranks, because different DP receive the rollout results differently
                         # But at the begin of the pp schedule, there is a timer barrier
@@ -223,12 +288,14 @@ class AgentRunner(ReasoningRunner):
                     ) * self.cfg.algorithm.n_minibatches
                     # add prefix to the metrics
                     log_time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
-                    rollout_metrics = {
-                        f"rollout/{k}": v for k, v in actor_rollout_metrics.items()
-                    }
 
+                    self.metric_logger.log(agent_metrics, logging_steps)
                     self.metric_logger.log(log_time_metrics, logging_steps)
-                    self.metric_logger.log(rollout_metrics, logging_steps)
+                    if actor_rollout_metrics is not None:
+                        rollout_metrics = {
+                            f"rollout/{k}": v for k, v in actor_rollout_metrics.items()
+                        }
+                        self.metric_logger.log(rollout_metrics, logging_steps)
                     for i in range(self.cfg.algorithm.n_minibatches):
                         training_metrics = {
                             f"train/{k}": v
@@ -238,20 +305,12 @@ class AgentRunner(ReasoningRunner):
 
                     logging_metrics = {f"{k}_time": v for k, v in time_metrics.items()}
 
-                    if self.cfg.actor.get("calculate_flops", False):
-                        flops_metrics = self._compute_flops_metrics(
-                            time_metrics, actor_rollout_metrics
-                        )
-                        flops_metrics = {
-                            f"flops/{k}": v for k, v in flops_metrics.items()
-                        }
-                        self.metric_logger.log(flops_metrics, logging_steps)
-                        logging_metrics.update(flops_metrics)
-
-                    logging_metrics.update(actor_rollout_metrics)
+                    logging_metrics.update(agent_metrics)
+                    if actor_rollout_metrics is not None:
+                        logging_metrics.update(actor_rollout_metrics)
                     logging_metrics.update(actor_training_metrics[-1])
 
-                    global_pbar.set_postfix(logging_metrics)
+                    global_pbar.set_postfix(logging_metrics, refresh=False)
                     global_pbar.update(1)
         finally:
             for tool_worker in self.tool_workers:

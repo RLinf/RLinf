@@ -47,7 +47,7 @@ RL 训练前的自动放置
 
 .. code-block:: bash
 
-   cd examples/math
+   cd examples/reasoning
    ./run_placement_autotune.sh [config_name]
 
 其中 ``config_name`` 是你的配置文件名称。

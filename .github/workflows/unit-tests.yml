@@ -10,18 +10,30 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Create environment and install dependencies
+        run: |
+          uv venv
+          source .venv/bin/activate
+          UV_TORCH_BACKEND=auto uv sync
+          uv pip install transformers
+
       - name: Run pytest
         timeout-minutes: 20
         run: |
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
-          source switch_env reason
+          source .venv/bin/activate
           pytest tests/unit_tests
 
       - name: Run doctest
         timeout-minutes: 20
         run: |
-          source switch_env reason
+          source .venv/bin/activate
           pytest --doctest-modules rlinf/scheduler
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
 
   unit-tests-cpu:
     runs-on: ubuntu-latest
@@ -29,13 +41,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Install dependencies
+      - name: Create environment and install dependencies
         run: |
           pip install uv
           uv venv
           source .venv/bin/activate
           UV_TORCH_BACKEND=auto uv sync
-          uv pip install pytest
+          uv pip install transformers
 
       - name: Run pytest
         timeout-minutes: 20
@@ -43,3 +55,52 @@ jobs:
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests 
           source .venv/bin/activate
           pytest tests/unit_tests
+
+  package-build-test:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create environment and install dependencies
+        shell: bash
+        run: |
+          uv venv
+          source .venv/bin/activate
+          uv build
+          export WHL_FILE=$(ls $(pwd)/dist/rlinf-*.whl)
+          cd
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          uv pip install $WHL_FILE[embodied]
+          uv pip install $WHL_FILE[agentic-sglang]
+          uv pip install $WHL_FILE[agentic-vllm]
+          cd -
+
+      - name: Check package import
+        shell: bash
+        timeout-minutes: 20
+        run: |
+          source .venv/bin/activate
+          export PACKAGE_PATH=$(pwd)
+          export PYTHONPATH=/workspace/dataset/Megatron-LM:$PYTHONPATH
+          cd
+          python $PACKAGE_PATH/tests/unit_tests/test_import_rlinf_package.py
+          cd -
+      
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  package-structure-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check missing __init__.py under rlinf
+        run: python tests/unit_tests/check_missing_init.py

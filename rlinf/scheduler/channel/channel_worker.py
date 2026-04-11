@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import gc
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -212,7 +213,7 @@ class LocalChannel:
 
         return batch
 
-    def get_all(self, key: str = DEFAULT_KEY) -> list[Any]:
+    def peek_all(self, key: str = DEFAULT_KEY) -> list[Any]:
         """Get all items from the channel queue without removing them.
 
         Args:
@@ -229,6 +230,9 @@ class LocalChannel:
 class ChannelWorker(Worker):
     """The actual worker that holds the channel."""
 
+    MEM_CLEAN_THRESHOLD = 0.4
+    MEM_CLEAN_PERIOD_SECONDS = 5
+
     def __init__(self, maxsize: int = 0):
         """Initialize the ChannelWorker with a maximum size for the queue.
 
@@ -239,6 +243,58 @@ class ChannelWorker(Worker):
         super().__init__()
         self._queue_map: dict[str, PeekQueue] = {}
         self._queue_map[DEFAULT_KEY] = PeekQueue(maxsize=maxsize)
+        self._key_to_channel_rank: dict[Any, int] = {}
+
+        self._mem_cleaner_task = asyncio.create_task(self._mem_cleaner())
+
+    async def _mem_cleaner(self):
+        """A background task that cleans up memory when triggered."""
+        mem_util_after_clean = 1.0
+        current_mem_util = 1.0
+        mem_clean_threshold = ChannelWorker.MEM_CLEAN_THRESHOLD
+        while True:
+            await asyncio.sleep(ChannelWorker.MEM_CLEAN_PERIOD_SECONDS)
+            if self.has_accelerator and Worker.torch_platform.is_initialized():
+                memory_reserved = Worker.torch_platform.memory_reserved()
+                memory_allocated = Worker.torch_platform.memory_allocated()
+                current_mem_util = (
+                    memory_allocated / memory_reserved if memory_reserved > 0 else 1.0
+                )
+                if current_mem_util < mem_clean_threshold:
+                    gc.collect()
+                    Worker.torch_platform.synchronize()
+                    Worker.torch_platform.empty_cache()
+                    memory_reserved = Worker.torch_platform.memory_reserved()
+                    memory_allocated = Worker.torch_platform.memory_allocated()
+                    mem_util_after_clean = (
+                        memory_allocated / memory_reserved
+                        if memory_reserved > 0
+                        else 1.0
+                    )
+                    if mem_util_after_clean < mem_clean_threshold:
+                        mem_clean_threshold = mem_util_after_clean
+                        self.log_debug(
+                            f"ChannelWorker memory cleaned but still below threshold. Updated MEM_CLEAN_THRESHOLD to {mem_clean_threshold:.2f}"
+                        )
+                    else:
+                        mem_clean_threshold = ChannelWorker.MEM_CLEAN_THRESHOLD
+
+                    self.log_debug(
+                        f"ChannelWorker memory after cleanup {Worker.torch_platform.memory_allocated()}, {Worker.torch_platform.memory_reserved()}"
+                    )
+
+    def get_memory_usage(self) -> tuple[int, int]:
+        """Get the current device memory usage of the ChannelWorker.
+
+        Returns:
+            Tuple[int, int]: A tuple containing the allocated and reserved memory in bytes.
+
+        """
+        if self.has_accelerator and Worker.torch_platform.is_initialized():
+            allocated = Worker.torch_platform.memory_allocated()
+            reserved = Worker.torch_platform.memory_reserved()
+            return allocated, reserved
+        return 0, 0
 
     def create_queue(self, key: Any, maxsize: int = 0):
         """Create a new queue in the channel. No effect if a queue with the same name already exists.
@@ -305,13 +361,11 @@ class ChannelWorker(Worker):
 
         Args:
             src_addr (WorkerAddress): The address of the source worker.
-            weight (int): The weight of the item to be put into the queue.
-            key (Any): The key to get the item from. A unique identifier for a specific set of items.
             When a key is given, the channel will put the item in the queue associated with that key.
             nowait (bool): If True, directly raise asyncio.QueueFull if the queue is full. Defaults to False.
 
         """
-        key, item, weight = self.recv(src_addr.root_group_name, src_addr.rank_path)
+        item, (key, weight) = self.recv(src_addr.root_group_name, src_addr.rank_path)
         self.create_queue(key, self.maxsize())
         item = WeightedItem(weight=weight, item=item)
         if nowait:
@@ -370,10 +424,11 @@ class ChannelWorker(Worker):
         else:
             weighted_item: WeightedItem = await self._queue_map[key].get()
         self.send(
-            (query_id, weighted_item.item),
+            weighted_item.item,
             dst_addr.root_group_name,
             dst_addr.rank_path,
             async_op=True,
+            piggyback_payload=query_id,
         )
 
     async def get_via_ray(self, key: Any = DEFAULT_KEY, nowait: bool = False) -> Any:
@@ -423,10 +478,11 @@ class ChannelWorker(Worker):
                 break
 
         self.send(
-            (query_id, batch),
+            batch,
             dst_addr.root_group_name,
             dst_addr.rank_path,
             async_op=True,
+            piggyback_payload=query_id,
         )
 
     async def get_batch_via_ray(
@@ -454,7 +510,7 @@ class ChannelWorker(Worker):
                 break
         return batch
 
-    def get_all(self, key: Any = DEFAULT_KEY) -> list[Any]:
+    def peek_all(self, key: Any = DEFAULT_KEY) -> list[Any]:
         """Get all items from the channel queue without removing them.
 
         Args:
@@ -467,3 +523,14 @@ class ChannelWorker(Worker):
         """
         self.create_queue(key, self.maxsize())
         return self._queue_map[key].peek_all()
+
+    async def ensure_key_replica(self, key: Any, src_node_rank: int = -1) -> int:
+        """Assign (or fetch) the replica rank that should host the given key.
+
+        If the key is new, choose the replica whose rank matches the source node rank
+        (given NodePlacementStrategy launches workers in node order). If out of range,
+        fall back to rank 0.
+        """
+        # Fallback to rank 0 if out of range
+        default_rank = src_node_rank if 0 <= src_node_rank < self._world_size else 0
+        return self._key_to_channel_rank.setdefault(key, default_rank)

@@ -15,7 +15,7 @@
 
 from contextlib import AbstractContextManager
 
-from ..manager import DeviceLockManager
+from ..manager import DeviceLockManager, PortLockManager
 from .worker import Worker
 
 
@@ -37,22 +37,31 @@ class DeviceLock(AbstractContextManager):
         """Lock accelerator devices for the current worker.
 
         This is useful for resource isolation, e.g., accelerator memory and computation resources, when multiple workers run on the same accelerators.
+
+        Raises:
+            RuntimeError: If the worker is not running in a worker context.
         """
         if self._worker is not None:
             self._lock_manager.acquire_devices(
                 self._worker.worker_address, self._worker.global_accelerator_ids
             )
         else:
-            raise ValueError("Cannot lock accelerators when not running in a worker.")
+            raise RuntimeError("Cannot lock accelerators when not running in a worker.")
 
     def release(self):
-        """Unlock accelerators for the current worker."""
+        """Unlock accelerators for the current worker.
+
+        Raises:
+            RuntimeError: If the worker is not running in a worker context.
+        """
         if self._worker is not None:
             self._lock_manager.release_devices(
                 self._worker.worker_address, self._worker.global_accelerator_ids
             )
         else:
-            raise ValueError("Cannot unlock accelerators when not running in a worker.")
+            raise RuntimeError(
+                "Cannot unlock accelerators when not running in a worker."
+            )
 
     def __enter__(self):
         """Enter the runtime context related to this object."""
@@ -62,3 +71,33 @@ class DeviceLock(AbstractContextManager):
     def __exit__(self, exc_type, exc_value, traceback):
         """Exit the runtime context related to this object."""
         self.release()
+
+
+class PortLock:
+    """A global lock to manage network port resources."""
+
+    def __init__(self, worker: Worker):
+        """Initialize the port lock."""
+        self._worker = worker
+        self._lock_manager = PortLockManager.get_proxy()
+
+    def acquire(self, port: int) -> bool:
+        """Lock a network port for the current worker.
+
+        This is useful for preventing port conflicts when multiple workers run on the same node.
+
+        Args:
+            port (int): The network port to lock.
+
+        Returns:
+            bool: True if the port is successfully locked, False otherwise.
+
+        Raises:
+            RuntimeError: If the worker is not running in a worker context.
+        """
+        if self._worker is not None:
+            return self._lock_manager.acquire(
+                self._worker._cluster_node_rank, self._worker._worker_name, port
+            )
+        else:
+            raise RuntimeError("Cannot lock ports when not running in a worker.")

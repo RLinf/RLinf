@@ -14,6 +14,9 @@
 
 import copy
 import os
+
+# Ensure MW envs only register once
+import warnings
 from typing import Optional, Union
 
 import gymnasium as gym
@@ -21,34 +24,30 @@ import metaworld
 import numpy as np
 import torch
 
-from rlinf.envs.libero.utils import (
-    put_info_on_image,
-    save_rollout_video,
-    tile_images,
-)
-from rlinf.envs.metaworld.utils import load_prompt_from_json
+from rlinf.envs.metaworld import MetaWorldBenchmark
 from rlinf.envs.metaworld.venv import ReconfigureSubprocEnv
-from rlinf.envs.utils import (
-    list_of_dict_to_dict_of_list,
-    to_tensor,
-)
+from rlinf.envs.utils import list_of_dict_to_dict_of_list, to_tensor
 
-# Ensure MW envs only register once
 if not getattr(metaworld, "_has_registered_mw_envs", False):
-    metaworld.register_mw_envs()
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", message=".*Overriding environment.*already in registry.*"
+        )
+        metaworld.register_mw_envs()
     metaworld._has_registered_mw_envs = True
 
 
 class MetaWorldEnv(gym.Env):
-    def __init__(self, cfg, seed_offset, total_num_processes):
+    def __init__(self, cfg, num_envs, seed_offset, total_num_processes, worker_info):
         self.seed_offset = seed_offset
         self.cfg = cfg
         self.total_num_processes = total_num_processes
+        self.worker_info = worker_info
         self.seed = self.cfg.seed + seed_offset
         self._is_start = True
-        self.num_envs = self.cfg.num_envs
+        self.num_envs = num_envs
         self.group_size = self.cfg.group_size
-        self.num_group = self.cfg.num_group
+        self.num_group = self.num_envs // self.group_size
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
 
         self.ignore_terminations = cfg.ignore_terminations
@@ -57,9 +56,12 @@ class MetaWorldEnv(gym.Env):
         self._generator = np.random.default_rng(seed=self.seed)
         self._generator_ordered = np.random.default_rng(seed=0)
 
-        self.num_tasks = 50
-        self.task_num_trials = 10
         self.RESET_STEP = 15
+        self.task_suite: MetaWorldBenchmark = MetaWorldBenchmark(
+            self.cfg.task_suite_name
+        )
+        self.num_tasks = self.task_suite.get_num_tasks()
+        self.task_num_trials = self.task_suite.get_task_num_trials()
         self._compute_total_num_group_envs()
         self.reset_state_ids_all = self.get_reset_state_ids_all()
         self.update_reset_state_ids()
@@ -73,17 +75,11 @@ class MetaWorldEnv(gym.Env):
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
 
         self.video_cfg = cfg.video_cfg
-        self.video_cnt = 0
-        self.render_images = []
 
     def _init_env(self):
         # metaworld task and prompt description
-        config_path = os.path.join(os.path.dirname(__file__), "metaworld_config.json")
-        self.task_description_dict = load_prompt_from_json(
-            config_path, "TASK_DESCRIPTIONS"
-        )
-        self.env_all_names = list(self.task_description_dict.keys())
-        self.task_all_names = list(self.task_description_dict.values())
+        self.env_names_all = self.task_suite.get_env_names()
+        self.task_descriptions_all = self.task_suite.get_task_description()
         env_fns = self.get_env_fns()
         self.use_async_vector_env = False
         if self.use_async_vector_env:
@@ -118,13 +114,13 @@ class MetaWorldEnv(gym.Env):
         env_fn_params = []
         task_descriptions = []
         if env_idx is None:
-            env_idx = np.arange(self.cfg.num_envs)
-        for env_id in range(self.cfg.num_envs):
+            env_idx = np.arange(self.num_envs)
+        for env_id in range(self.num_envs):
             if env_id not in env_idx:
                 task_descriptions.append(self.task_descriptions[env_id])
                 continue
-            env_name = self.env_all_names[self.task_ids[env_id]]
-            task_description = self.task_all_names[self.task_ids[env_id]]
+            env_name = self.env_names_all[self.task_ids[env_id]]
+            task_description = self.task_descriptions_all[self.task_ids[env_id]]
 
             env_fn_params.append(
                 {
@@ -144,7 +140,7 @@ class MetaWorldEnv(gym.Env):
         self.cumsum_trial_id_bins = np.cumsum(self.trial_id_bins)
 
     def update_reset_state_ids(self):
-        if self.cfg.only_eval or self.cfg.use_ordered_reset_state_ids:
+        if self.cfg.is_eval or self.cfg.use_ordered_reset_state_ids:
             reset_state_ids = self._get_ordered_reset_state_ids(self.num_group)
         else:
             reset_state_ids = self._get_random_reset_state_ids(self.num_group)
@@ -166,7 +162,6 @@ class MetaWorldEnv(gym.Env):
         valid_size = len(reset_state_ids) - (
             len(reset_state_ids) % self.total_num_processes
         )
-        # self._generator_ordered.shuffle(reset_state_ids) # TODO: eval env shuffle ?
         reset_state_ids = reset_state_ids[:valid_size]
         reset_state_ids = reset_state_ids.reshape(self.total_num_processes, -1)
         return reset_state_ids
@@ -259,10 +254,18 @@ class MetaWorldEnv(gym.Env):
             }
             images_and_states_list.append(images_and_states)
 
+        images_and_states = to_tensor(
+            list_of_dict_to_dict_of_list(images_and_states_list)
+        )
+
+        full_image_tensor = torch.stack(
+            [value.clone() for value in images_and_states["full_image"]]
+        )
+        states = images_and_states["state"]
+
         obs = {
-            "images_and_states": to_tensor(
-                list_of_dict_to_dict_of_list(images_and_states_list)
-            ),
+            "main_images": full_image_tensor,
+            "states": states,
             "task_descriptions": self.task_descriptions,
         }
         return obs
@@ -291,7 +294,6 @@ class MetaWorldEnv(gym.Env):
         self,
         env_idx: Optional[Union[int, list[int], np.ndarray]] = None,
         reset_state_ids=None,
-        options: Optional[dict] = {},
     ):
         if env_idx is None:
             env_idx = np.arange(self.num_envs)
@@ -322,20 +324,6 @@ class MetaWorldEnv(gym.Env):
         return obs, infos
 
     def step(self, actions=None, auto_reset=True):
-        if actions is None:
-            assert self._is_start, "Actions must be provided after the first reset."
-        if self.is_start:
-            obs, infos = self.reset(
-                reset_state_ids=self.reset_state_ids
-                if self.use_fixed_reset_state_ids
-                else None
-            )
-            self._is_start = False
-            terminations = np.zeros(self.num_envs, dtype=bool)
-            truncations = np.zeros(self.num_envs, dtype=bool)
-
-            return obs, None, to_tensor(terminations), to_tensor(truncations), infos
-
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
 
@@ -351,14 +339,6 @@ class MetaWorldEnv(gym.Env):
         obs = self._wrap_obs(raw_obs)
 
         step_reward = self._calc_step_reward(terminations)
-
-        if self.video_cfg.save_video:
-            plot_infos = {
-                "rewards": step_reward,
-                "terminations": terminations,
-                "task": self.task_descriptions,
-            }
-            self.add_new_frames(obs, plot_infos)
 
         infos = self._record_metrics(step_reward, terminations, infos)
         if self.ignore_terminations:
@@ -380,6 +360,8 @@ class MetaWorldEnv(gym.Env):
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
+        obs_list = []
+        infos_list = []
 
         chunk_rewards = []
 
@@ -390,6 +372,8 @@ class MetaWorldEnv(gym.Env):
             extracted_obs, step_reward, terminations, truncations, infos = self.step(
                 actions, auto_reset=False
             )
+            obs_list.append(extracted_obs)
+            infos_list.append(infos)
 
             chunk_rewards.append(step_reward)
             raw_chunk_terminations.append(terminations)
@@ -408,8 +392,8 @@ class MetaWorldEnv(gym.Env):
         past_dones = torch.logical_or(past_terminations, past_truncations)
 
         if past_dones.any() and self.auto_reset:
-            extracted_obs, infos = self._handle_auto_reset(
-                past_dones.cpu().numpy(), extracted_obs, infos
+            obs_list[-1], infos_list[-1] = self._handle_auto_reset(
+                past_dones.cpu().numpy(), obs_list[-1], infos_list[-1]
             )
 
         if self.auto_reset or self.ignore_terminations:
@@ -422,11 +406,11 @@ class MetaWorldEnv(gym.Env):
             chunk_terminations = raw_chunk_terminations.clone()
             chunk_truncations = raw_chunk_truncations.clone()
         return (
-            extracted_obs,
+            obs_list,
             chunk_rewards,
             chunk_terminations,
             chunk_truncations,
-            infos,
+            infos_list,
         )
 
     def _handle_auto_reset(self, dones, _final_obs, infos):
@@ -456,28 +440,3 @@ class MetaWorldEnv(gym.Env):
             return reward_diff
         else:
             return reward
-
-    def add_new_frames(self, obs, plot_infos):
-        images = []
-        obs_batch = obs["images_and_states"]["full_image"]
-        for env_id in range(obs_batch.shape[0]):
-            info_item = {
-                k: v if np.size(v) == 1 else v[env_id] for k, v in plot_infos.items()
-            }
-            img = obs_batch[env_id].numpy()
-            img = put_info_on_image(img, info_item)
-            images.append(img)
-        full_image = tile_images(images, nrows=int(np.sqrt(self.num_envs)))
-        self.render_images.append(full_image)
-
-    def flush_video(self, video_sub_dir: Optional[str] = None):
-        output_dir = os.path.join(self.video_cfg.video_base_dir, f"seed_{self.seed}")
-        if video_sub_dir is not None:
-            output_dir = os.path.join(output_dir, f"{video_sub_dir}")
-        save_rollout_video(
-            self.render_images,
-            output_dir=output_dir,
-            video_name=f"{self.video_cnt}",
-        )
-        self.video_cnt += 1
-        self.render_images = []

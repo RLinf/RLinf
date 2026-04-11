@@ -13,8 +13,8 @@ These components lay the groundwork for configuring and launching scalable RL wo
    Multiple similar Workers form a *WorkerGroup*, simplifying distributed execution and promoting scalability.
 
 - :doc:`placement`  
-   Explains how RLinf strategically assigns GPU resources across different tasks and workers  
-   to ensure efficient hardware utilization and balanced execution.
+   Explains how RLinf strategically assigns hardware resources across different tasks and workers  
+   to ensure efficient hardware utilization and balanced execution, including not only accelerator hardware (e.g., GPUs, NPUs) but also robotic hardware and CPU-only nodes.
 
 - :doc:`cluster`  
    Describes the globally unique *Cluster* object, responsible for coordinating all roles, processes,  

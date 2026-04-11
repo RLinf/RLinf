@@ -17,6 +17,8 @@ API手册
 - :doc:`rollout` — 基于 Huggingface 与 SGLang 的 Rollout 封装。  
 - :doc:`env` — 面向具身智能场景的环境封装。  
 - :doc:`data` — 不同 Worker 间数据传输的数据结构封装。  
+- :doc:`embodied_data` — 具身场景的 Env/Rollout 数据结构。
+- :doc:`replay_buffer` — 轨迹级 Replay Buffer 的设计与采样机制。  
 
 .. toctree::
    :hidden:
@@ -31,3 +33,5 @@ API手册
    rollout
    env
    data
+   embodied_data
+   replay_buffer

@@ -18,6 +18,8 @@ from typing import Callable, Optional
 
 import torch
 
+from rlinf.config import SupportedModel, get_supported_model
+
 
 class TransformType(Enum):
     SPLIT_QKV = "split_qkv"
@@ -208,7 +210,7 @@ class BaseConvertor:
         raise NotImplementedError
 
 
-class Qwen2_5Convertor(BaseConvertor):
+class Qwen25Convertor(BaseConvertor):
     def build_rules(self) -> list[ConvertorRule]:
         LID = r"(?P<i>\d+)"
         WB = r"(?P<wb>weight|bias)"
@@ -286,7 +288,7 @@ class Qwen2_5Convertor(BaseConvertor):
         ]
 
 
-class Qwen2_5VLConvertor(BaseConvertor):
+class Qwen25VLConvertor(BaseConvertor):
     def _build_vision_rules(self) -> list[ConvertorRule]:
         B = r"(?P<i>\d+)"
         WB = r"(?P<wb>weight|bias)"
@@ -467,10 +469,9 @@ class Qwen2_5VLConvertor(BaseConvertor):
         return rules
 
 
-class Qwen3_MoEConvertor(BaseConvertor):
+class Qwen3BaseConvertor(BaseConvertor):
     def build_rules(self) -> list[ConvertorRule]:
         LID = r"(?P<i>\d+)"
-        EID = r"(?P<ei>\d+)"
         WB = r"(?P<wb>weight|bias)"
 
         return [
@@ -540,6 +541,50 @@ class Qwen3_MoEConvertor(BaseConvertor):
                 TransformType.SPLIT_NONE,
                 [r"model.layers.\g<i>.self_attn.o_proj.\g<wb>"],
             ),
+        ]
+
+
+class Qwen3DenseConvertor(Qwen3BaseConvertor):
+    def build_rules(self) -> list[ConvertorRule]:
+        LID = r"(?P<i>\d+)"
+        WB = r"(?P<wb>weight|bias)"
+
+        return [
+            *super().build_rules(),
+            # mlp fc1
+            ConvertorRule(
+                re.compile(rf"decoder\.layers\.{LID}\.mlp\.linear_fc1\.{WB}$"),
+                TransformType.SPLIT_FC1,
+                [
+                    r"model.layers.\g<i>.mlp.gate_proj.\g<wb>",
+                    r"model.layers.\g<i>.mlp.up_proj.\g<wb>",
+                ],
+            ),
+            # mlp fc2
+            ConvertorRule(
+                re.compile(rf"decoder\.layers\.{LID}\.mlp\.linear_fc2\.{WB}$"),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.mlp.down_proj.\g<wb>"],
+            ),
+            # mlp norms
+            ConvertorRule(
+                re.compile(
+                    rf"decoder\.layers\.{LID}\.mlp\.linear_fc1\.layer_norm_weight$"
+                ),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.post_attention_layernorm.weight"],
+            ),
+        ]
+
+
+class Qwen3MoEConvertor(Qwen3BaseConvertor):
+    def build_rules(self) -> list[ConvertorRule]:
+        LID = r"(?P<i>\d+)"
+        EID = r"(?P<ei>\d+)"
+        WB = r"(?P<wb>weight|bias)"
+
+        return [
+            *super().build_rules(),
             # mlp expert fc1
             ConvertorRule(
                 re.compile(
@@ -576,22 +621,17 @@ class Qwen3_MoEConvertor(BaseConvertor):
         ]
 
 
-_MG2HF_CONVERTOR_REGISTRY = {}
+_MG2HF_CONVERTOR_REGISTRY = {
+    SupportedModel.QWEN2_5: Qwen25Convertor,
+    SupportedModel.QWEN2_5_VL: Qwen25VLConvertor,
+    SupportedModel.QWEN3: Qwen3DenseConvertor,
+    SupportedModel.QWEN3_MOE: Qwen3MoEConvertor,
+}
 
 
-def register_mg2hf_convertor(model_arch: str, convertor_cls: Callable) -> None:
-    if model_arch in _MG2HF_CONVERTOR_REGISTRY:
-        raise ValueError(f"Convertor for {model_arch} already registered")
-    _MG2HF_CONVERTOR_REGISTRY[model_arch] = convertor_cls
-
-
-register_mg2hf_convertor("qwen2.5", Qwen2_5Convertor)
-register_mg2hf_convertor("qwen2.5-vl", Qwen2_5VLConvertor)
-register_mg2hf_convertor("qwen3_moe", Qwen3_MoEConvertor)
-
-
-def get_mg2hf_convertor(model_arch: str, config, strict: bool = False) -> BaseConvertor:
-    if model_arch not in _MG2HF_CONVERTOR_REGISTRY:
-        raise ValueError(f"No convertor registered for {model_arch}")
-    convertor_cls = _MG2HF_CONVERTOR_REGISTRY[model_arch]
+def get_mg2hf_convertor(model_type: str, config, strict: bool = False) -> BaseConvertor:
+    model_type = get_supported_model(model_type)
+    if model_type not in _MG2HF_CONVERTOR_REGISTRY:
+        raise ValueError(f"No convertor registered for {model_type.value}")
+    convertor_cls = _MG2HF_CONVERTOR_REGISTRY[model_type]
     return convertor_cls(config=config, strict=strict)

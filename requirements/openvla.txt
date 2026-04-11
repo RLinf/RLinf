@@ -1,2 +1,0 @@
-openvla @ git+https://github.com/openvla/openvla.git
-flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp311-cp311-linux_x86_64.whl

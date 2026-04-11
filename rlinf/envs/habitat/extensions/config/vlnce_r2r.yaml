@@ -1,0 +1,68 @@
+# @package _global_
+
+defaults:
+  - /habitat: habitat_config_base
+  - /habitat/task: vln_r2r
+  - /habitat/simulator/agents@habitat.simulator.agents.main_agent: agent_base
+  # - /habitat/simulator/sensor_setups@habitat.simulator.agents.main_agent: rgbd_agent
+  - /habitat/dataset/vln: mp3d_r2r
+  - /habitat/task/lab_sensors:
+    - gps_sensor
+    - compass_sensor
+  - /habitat/task/measurements:
+    - top_down_map
+  - _self_
+
+habitat:
+  seed: 12
+  environment:
+    max_episode_steps: 500
+    iterator_options:
+      max_scene_repeat_steps: 50000
+      shuffle: True
+  simulator:
+    agents:
+      main_agent:
+        sim_sensors:
+          rgb_sensor:
+            type: HabitatSimRGBSensor
+            width: 640
+            height: 480
+            hfov: 79
+          depth_sensor:
+            type: HabitatSimDepthSensor
+            width: 640
+            height: 480
+            hfov: 79
+            min_depth: 0.0
+            max_depth: 10.0
+            normalize_depth: True
+    forward_step_size: 0.25
+    turn_angle: 15
+    habitat_sim_v0:
+      gpu_device_id: 0
+  task:
+    actions:
+      no_op:
+        type: "NoOpAction"
+    measurements:
+      top_down_map:
+        type: TopDownMap
+      distance_to_goal:
+        type: DistanceToGoal
+        distance_to: POINT
+      success:
+        type: Success
+        success_distance: 3.0
+      spl:
+        type: SPL
+      # oracle_success:
+      #   type: OracleSuccess
+      #   # success_distance: 3.0
+      # oracle_navigation_error:
+      #   type: OracleNavigationError
+  dataset:
+    type: R2RVLN-v1
+    split: val_seen
+    scenes_dir: VLN-CE/scene_dataset
+    data_path: VLN-CE/datasets/r2r/val_unseen/val_unseen.json.gz

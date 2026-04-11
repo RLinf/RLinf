@@ -1,17 +1,18 @@
 /.github @andylin-hao
 /docker @andylin-hao
+/docs @andylin-hao
 
-/examples/embodiment @guozhen1997
-/examples/math @guozhen1997 @andylin-hao @Lin-xs
+/examples/embodiment @guozhen1997 @andylin-hao
+/examples/reasoning @guozhen1997 @andylin-hao @Lin-xs
 
-/ray_utils @Lin-xs
+/ray_utils @Lin-xs @andylin-hao
 /requirements @andylin-hao
 
 /rlinf/algorithms @guozhen1997
 
 /rlinf/data @guozhen1997 @Lin-xs @andylin-hao
 
-/rlinf/envs @guozhen1997 @XuS1994
+/rlinf/envs @guozhen1997 @XuS1994 @andylin-hao
 
 /rlinf/hybrid_engines/fsdp @guozhen1997
 /rlinf/hybrid_engines/megatron @guozhen1997
@@ -26,19 +27,20 @@
 
 /rlinf/utils @guozhen1997 @Lin-xs @andylin-hao
 
-/rlinf/workers/actor/fsdp_actor_worker.py @guozhen1997
-/rlinf/workers/actor/megatron_actor_worker.py @guozhen1997 @andylin-hao
-/rlinf/workers/env @guozhen1997 @XuS1994
+/rlinf/workers/actor @guozhen1997 @andylin-hao
+/rlinf/workers/env @guozhen1997 @XuS1994 @andylin-hao
 /rlinf/workers/inference @andylin-hao
-/rlinf/workers/rollout/hf @guozhen1997
+/rlinf/workers/rollout/hf @guozhen1997 @andylin-hao
 /rlinf/workers/rollout/sglang @Lin-xs @andylin-hao
 /rlinf/workers/rollout/vllm @Lin-xs @andylin-hao
 /rlinf/workers/rollout/utils.py @Lin-xs @andylin-hao
 /rlinf/config.py @guozhen1997 @andylin-hao @Lin-xs
 
 /tests @andylin-hao
-/toolkits/auto_placement @i-Taozi
-/toolkits/ckpt_convertor @qurakchin
+/toolkits/auto_placement @Lin-xs
+/rlinf/utils/ckpt_convertor @qurakchin @guozhen1997
+/toolkits/realworld_check @andylin-hao @zanghz21
 
+/.cursor @andylin-hao
 /.pre-commit-config.yaml @andylin-hao
 /pyproject.toml @andylin-hao

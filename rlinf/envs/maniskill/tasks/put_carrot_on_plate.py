@@ -31,7 +31,7 @@ Also, removing the _settle function make the partial reset behavior correct.
 
 @register_env(
     "PutCarrotOnPlateInScene-v2",
-    max_episode_steps=60,
+    max_episode_steps=80,
     asset_download_ids=["bridge_v2_real2sim"],
 )
 class PutCarrotOnPlateInSceneV2(PutCarrotOnPlateInScene):

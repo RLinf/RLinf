@@ -24,7 +24,10 @@ from omegaconf import DictConfig
 
 from rlinf.data.io_struct import SeqGroupInfo
 from rlinf.scheduler.worker.worker import Worker
-from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
+from rlinf.utils.placement import (
+    ModelParallelComponentPlacement,
+    RolloutSyncMode,
+)
 
 if typing.TYPE_CHECKING:
     from vllm.outputs import RequestOutput
@@ -92,7 +95,7 @@ class RankMapper:
         placement: ModelParallelComponentPlacement,
     ) -> dict[int, list[tuple[int, int]]]:
         return cls._get_rank_mapper(
-            placement.placement_mode
+            placement._rollout_sync_mode
         ).get_actor_rank_to_rollout_rank_map(
             placement.actor_tp_size,
             placement.actor_pp_size,
@@ -106,7 +109,7 @@ class RankMapper:
         cls, placement: ModelParallelComponentPlacement
     ) -> dict[tuple[int, int], int]:
         return cls._get_rank_mapper(
-            placement.placement_mode
+            placement._rollout_sync_mode
         ).get_rollout_rank_to_actor_rank_map(
             placement.actor_tp_size,
             placement.actor_pp_size,
@@ -117,17 +120,17 @@ class RankMapper:
 
     @staticmethod
     def _get_rank_mapper(
-        placement_mode: PlacementMode,
+        rollout_sync_mode: RolloutSyncMode,
     ):
         """
         Get the rank mapper class based on the mode.
         """
-        if placement_mode == PlacementMode.COLLOCATED:
+        if rollout_sync_mode == RolloutSyncMode.COLLOCATED:
             return CollocateRankMapper
-        elif placement_mode in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]:
+        elif rollout_sync_mode == RolloutSyncMode.DISAGGREGATED:
             return DisaggRankMapper
         else:
-            raise ValueError(f"Unsupported mode: {placement_mode}.")
+            raise ValueError(f"Unsupported mode: {rollout_sync_mode}.")
 
 
 class CollocateRankMapper(RankMapper):
@@ -229,23 +232,21 @@ class DisaggRankMapper(RankMapper):
         """
         Only ranks in dp=0 actor dp group will send weights to rollout LLM.
         """
-        actor_model_parallel_size = actor_tp_size * actor_pp_size
-        assert (
-            rollout_world_size >= actor_model_parallel_size
-            and rollout_world_size % actor_model_parallel_size == 0
-        ), (
+        actor_model_parallel_size = actor_tp_size
+        assert rollout_world_size >= actor_model_parallel_size, (
+            f"rollout_world_size ({rollout_world_size}) should more than actor_model_parallel_size ({actor_model_parallel_size})"
+        )
+
+        assert rollout_world_size % actor_model_parallel_size == 0, (
             f"rollout_world_size ({rollout_world_size}) should be a multiple of actor_model_parallel_size ({actor_model_parallel_size})"
         )
 
-        num_dp_ranks_per_actor_dp_group = (
-            rollout_world_size // actor_model_parallel_size
-        )
+        actor_dp = actor_world_size // actor_tp_size
         stride = actor_model_parallel_size // rollout_tp_size
 
         rank_map = {}
         for actor_rank in range(actor_world_size):
-            if actor_rank >= actor_model_parallel_size:
-                # dp_rank > 0 will not send weight to any rollout rank
+            if actor_rank > rollout_world_size:
                 rank_map[actor_rank] = []
                 continue
             gen_dp, gen_tp = cls._get_actor_rank_to_rollout_rank(
@@ -253,10 +254,15 @@ class DisaggRankMapper(RankMapper):
                 actor_tp_size,
                 rollout_tp_size,
             )
-            rank_map[actor_rank] = [
-                (gen_dp + i * stride, gen_tp)
-                for i in range(num_dp_ranks_per_actor_dp_group)
-            ]
+            if actor_world_size <= rollout_world_size:
+                rank_map[actor_rank] = [
+                    (gen_dp + i * stride * actor_dp, gen_tp)
+                    for i in range(rollout_world_size // actor_world_size)
+                ]
+            elif actor_rank < rollout_world_size:
+                rank_map[actor_rank] = [(gen_dp, gen_tp)]
+            else:
+                rank_map[actor_rank] = []
 
         return rank_map
 
@@ -294,22 +300,25 @@ class DisaggRankMapper(RankMapper):
 
         num_rollout_dp_ranks_per_actor_tp_group = actor_tp_size // rollout_tp_size
         actor_tp_rank = actor_rank % actor_tp_size
-        corresponding_rollout_dp_rank = (
-            actor_tp_rank % num_rollout_dp_ranks_per_actor_tp_group
+        actor_tp_group_id = actor_rank // actor_tp_size
+        rollout_start_dp_rank = (
+            actor_tp_group_id * num_rollout_dp_ranks_per_actor_tp_group
         )
-        corresponding_rollout_tp_rank = (
+        weight_dst_dp_rank_in_rollout = (
+            rollout_start_dp_rank
+            + actor_tp_rank % num_rollout_dp_ranks_per_actor_tp_group
+        )
+        weight_dst_tp_rank_in_rollout = (
             actor_tp_rank // num_rollout_dp_ranks_per_actor_tp_group
         )
 
-        return (corresponding_rollout_dp_rank, corresponding_rollout_tp_rank)
+        return (weight_dst_dp_rank_in_rollout, weight_dst_tp_rank_in_rollout)
 
 
 SUPPORTED_LLM_ROLLOUT_BACKENDS = ["vllm", "sglang"]
 
 
-def get_rollout_backend_worker(
-    cfg: DictConfig, placement: ModelParallelComponentPlacement
-) -> Worker:
+def get_rollout_backend_worker(cfg: DictConfig) -> Worker:
     rollout_backend = cfg.rollout.get("rollout_backend", None)
     if rollout_backend is None:
         raise ValueError(
@@ -323,13 +332,7 @@ def get_rollout_backend_worker(
     if rollout_backend == "vllm":
         from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
 
-        if (
-            placement.placement_mode == PlacementMode.COLLOCATED
-            or placement.placement_mode == PlacementMode.DISAGGREGATED
-        ):
-            return VLLMWorker
-        else:
-            raise ValueError(f"Unsupported placement mode: {placement.placement_mode}")
+        return VLLMWorker
     elif rollout_backend == "sglang":
         from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
 

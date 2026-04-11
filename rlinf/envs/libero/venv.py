@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import multiprocessing
 import warnings
-from multiprocessing import Pipe, connection
-from multiprocessing.context import Process
+from multiprocessing import connection
 from typing import Any, Callable, Optional, Union
 
 import gym
 import numpy as np
-from libero.libero.envs import OffScreenRenderEnv
-from libero.libero.envs.venv import (
+
+from rlinf.envs.libero.utils import get_libero_type
+from rlinf.envs.venv import (
     BaseVectorEnv,
     CloudpickleWrapper,
     EnvWorker,
@@ -29,6 +30,44 @@ from libero.libero.envs.venv import (
     SubprocVectorEnv,
     _setup_buf,
 )
+
+# ---------------------------------------------------------------------------
+# Dynamic Module Import Logic for Libero Pro / Plus
+# ---------------------------------------------------------------------------
+libero_type = get_libero_type()
+
+if libero_type == "pro":
+    try:
+        from liberopro.liberopro.envs import OffScreenRenderEnv
+    except ImportError as e:
+        print(
+            f"[Venv] Warning: LIBERO_TYPE=pro but import failed ({e}). Falling back to standard libero..."
+        )
+        from libero.libero.envs import OffScreenRenderEnv
+
+elif libero_type == "plus":
+    try:
+        from liberoplus.liberoplus.envs import OffScreenRenderEnv
+    except ImportError as e:
+        print(
+            f"[Venv] Warning: LIBERO_TYPE=plus but import failed ({e}). Falling back to standard libero..."
+        )
+        from libero.libero.envs import OffScreenRenderEnv
+
+else:
+    try:
+        from libero.libero.envs import OffScreenRenderEnv
+    except ImportError:
+        try:
+            from liberopro.liberopro.envs import OffScreenRenderEnv
+        except ImportError:
+            try:
+                from liberoplus.liberoplus.envs import OffScreenRenderEnv
+            except ImportError:
+                raise ImportError(
+                    "Could not import OffScreenRenderEnv from libero, liberopro, or liberoplus."
+                )
+
 
 gym_old_venv_step_type = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 gym_new_venv_step_type = tuple[
@@ -129,7 +168,8 @@ def _worker(
 
 class ReconfigureSubprocEnvWorker(SubprocEnvWorker):
     def __init__(self, env_fn: Callable[[], gym.Env], share_memory: bool = False):
-        self.parent_remote, self.child_remote = Pipe()
+        ctx = multiprocessing.get_context("spawn")
+        self.parent_remote, self.child_remote = ctx.Pipe()
         self.share_memory = share_memory
         self.buffer: Optional[Union[dict, tuple, ShArray]] = None
         if self.share_memory:
@@ -144,7 +184,7 @@ class ReconfigureSubprocEnvWorker(SubprocEnvWorker):
             CloudpickleWrapper(env_fn),
             self.buffer,
         )
-        self.process = Process(target=_worker, args=args, daemon=True)
+        self.process = ctx.Process(target=_worker, args=args, daemon=True)
         self.process.start()
         self.child_remote.close()
         EnvWorker.__init__(self, env_fn)

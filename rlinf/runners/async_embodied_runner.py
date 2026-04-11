@@ -1,0 +1,280 @@
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import asyncio
+import time
+from typing import TYPE_CHECKING
+
+from omegaconf.dictconfig import DictConfig
+
+from rlinf.runners.embodied_runner import EmbodiedRunner
+from rlinf.scheduler import Channel
+from rlinf.scheduler import WorkerGroupFuncResult as Handle
+from rlinf.utils.runner_utils import check_progress
+
+if TYPE_CHECKING:
+    from rlinf.workers.actor.async_fsdp_sac_policy_worker import (
+        AsyncEmbodiedSACFSDPPolicy,
+    )
+    from rlinf.workers.env.async_env_worker import AsyncEnvWorker
+    from rlinf.workers.reward.reward_worker import EmbodiedRewardWorker
+    from rlinf.workers.rollout.hf.async_huggingface_worker import (
+        AsyncMultiStepRolloutWorker,
+    )
+
+
+class AsyncEmbodiedRunner(EmbodiedRunner):
+    def __init__(
+        self,
+        cfg: DictConfig,
+        actor: "AsyncEmbodiedSACFSDPPolicy",
+        rollout: "AsyncMultiStepRolloutWorker",
+        env: "AsyncEnvWorker",
+        reward: "EmbodiedRewardWorker",
+        critic=None,
+    ):
+        super().__init__(cfg, actor, rollout, env, reward, critic)
+
+        # Data channels
+        self.env_metric_channel = Channel.create("EnvMetric")
+        self.rollout_metric_channel = Channel.create("RolloutMetric")
+
+        self._pending_rollout_weight_sync = None
+        self._weight_sync_coalesced_total = 0
+        self._weight_sync_request_total = 0
+        self.sync_weight_no_wait = self.cfg.actor.get("sync_weight_no_wait", False)
+
+    def get_env_metrics(self) -> tuple[dict, list[dict], list[dict]]:
+        results: list[dict] = []
+        while True:
+            try:
+                result = self.env_metric_channel.get_nowait()
+                results.append(result)
+            except asyncio.QueueEmpty:
+                break
+
+        if not results:
+            return {}, [], []
+
+        time_metrics, ranked_time_metrics_list = self._process_ranked_numeric_results(
+            results, metric_field="time"
+        )
+        env_metrics, ranked_env_metrics_list = self._process_ranked_eval_results(
+            results, metric_field="env"
+        )
+        if not env_metrics:
+            return {**time_metrics}, ranked_time_metrics_list, ranked_env_metrics_list
+
+        return (
+            {**env_metrics, **time_metrics},
+            ranked_time_metrics_list,
+            ranked_env_metrics_list,
+        )
+
+    def get_rollout_metrics(self) -> tuple[dict, list[dict]]:
+        results: list[dict] = []
+        while True:
+            try:
+                result = self.rollout_metric_channel.get_nowait()
+                results.append(result)
+            except asyncio.QueueEmpty:
+                break
+
+        if not results:
+            return {}, []
+
+        time_metrics, ranked_time_metrics_list = self._process_ranked_numeric_results(
+            results, metric_field="time"
+        )
+        return time_metrics, ranked_time_metrics_list
+
+    def _cleanup_pending_rollout_weight_sync(self, no_wait):
+        if self._pending_rollout_weight_sync is None:
+            return True
+
+        rollout_handle, actor_handle = self._pending_rollout_weight_sync
+        self.logger.info(
+            f"Rollout handle done: {rollout_handle.done()}, actor handle done: {actor_handle.done()}"
+        )
+        if no_wait and (not rollout_handle.done() or not actor_handle.done()):
+            return False
+
+        rollout_handle.wait()
+        actor_handle.wait()
+        self._pending_rollout_weight_sync = None
+        return True
+
+    def update_rollout_weights(self, no_wait=False):
+        if not no_wait:
+            return super().update_rollout_weights()
+
+        self._weight_sync_request_total += 1
+        if not self._cleanup_pending_rollout_weight_sync(no_wait):
+            self._weight_sync_coalesced_total += 1
+            self.logger.info(
+                f"Weight sync coalesced {self._weight_sync_coalesced_total} times.\n"
+                f"Request total {self._weight_sync_request_total} times."
+            )
+            return
+
+        rollout_handle: Handle = self.rollout.request_actor_sync_model()
+        actor_handle: Handle = self.actor.sync_model_to_rollout()
+        self._pending_rollout_weight_sync = (rollout_handle, actor_handle)
+
+    def run(self):
+        start_step = self.global_step
+        start_time = time.time()
+        self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
+
+        env_handle: Handle = self.env.interact(
+            input_channel=self.env_channel,
+            rollout_channel=self.rollout_channel,
+            reward_channel=self.reward_channel,
+            actor_channel=self.actor_channel,
+            metric_channel=self.env_metric_channel,
+        )
+        rollout_handle: Handle = self.rollout.generate(
+            input_channel=self.rollout_channel,
+            output_channel=self.env_channel,
+            metric_channel=self.rollout_metric_channel,
+        )
+        if self.reward is not None:
+            reward_handle: Handle = self.reward.compute_rewards_async(
+                input_channel=self.reward_channel,
+                output_channel=self.env_channel,
+            )
+        actor_handle: Handle = self.actor.recv_rollout_trajectories(
+            input_channel=self.actor_channel
+        )
+
+        while self.global_step < self.max_steps:
+            skip_step = False
+            with self.timer("step"):
+                actor_training_handle: Handle = self.actor.run_training()
+                actor_result = actor_training_handle.wait()
+                if not actor_result[0]:
+                    skip_step = True
+
+                if not skip_step:
+                    self.global_step += 1
+                    if self.global_step % self.weight_sync_interval == 0:
+                        self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
+
+                    training_metrics = {
+                        f"train/{k}": v
+                        for k, v in self._aggregate_numeric_metrics(
+                            actor_result
+                        ).items()
+                    }
+
+                    run_val, save_model, _ = check_progress(
+                        self.global_step,
+                        self.max_steps,
+                        self.cfg.runner.val_check_interval,
+                        self.cfg.runner.save_interval,
+                        1.0,
+                        run_time_exceeded=False,
+                    )
+                    if save_model:
+                        self._save_checkpoint()
+                    eval_metrics = {}
+                    if run_val:
+                        with self.timer("eval"):
+                            eval_metrics = self.evaluate()
+                            eval_metrics = {
+                                f"eval/{k}": v for k, v in eval_metrics.items()
+                            }
+
+            if skip_step:
+                self.timer.consume_durations()
+                time.sleep(1.0)
+                continue
+
+            time_metrics = self.timer.consume_durations()
+            time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
+            training_metrics["train/replay_channel_qsize"] = self.actor_channel.qsize()
+            actor_training_time_metrics, actor_time_metrics_per_rank = (
+                actor_training_handle.consume_durations(return_per_rank=True)
+            )
+            actor_training_time_metrics = {
+                f"time/actor/{k}": v for k, v in actor_training_time_metrics.items()
+            }
+            time_metrics.update(actor_training_time_metrics)
+            env_metrics, env_time_metrics_per_rank, env_metrics_per_rank = (
+                self.get_env_metrics()
+            )
+            rollout_metrics, rollout_time_metrics_per_rank = self.get_rollout_metrics()
+
+            self.metric_logger.log(time_metrics, self.global_step)
+            self.metric_logger.log(env_metrics, self.global_step)
+            self.metric_logger.log(rollout_metrics, self.global_step)
+            self.metric_logger.log(training_metrics, self.global_step)
+            self.metric_logger.log(eval_metrics, self.global_step)
+            self._log_ranked_metrics(
+                metrics_list=actor_result,
+                step=self.global_step,
+                prefix="train",
+                worker_group_name=self.actor.worker_group_name,
+            )
+            self._log_ranked_metrics(
+                metrics_list=actor_time_metrics_per_rank,
+                step=self.global_step,
+                prefix="time/actor",
+                worker_group_name=self.actor.worker_group_name,
+            )
+            self._log_ranked_metrics(
+                metrics_list=env_time_metrics_per_rank,
+                step=self.global_step,
+                prefix="time/env",
+                worker_group_name=self.env.worker_group_name,
+                add_prefix=False,
+            )
+            self._log_ranked_metrics(
+                metrics_list=env_metrics_per_rank,
+                step=self.global_step,
+                prefix="env",
+                worker_group_name=self.env.worker_group_name,
+                add_prefix=False,
+            )
+            self._log_ranked_metrics(
+                metrics_list=rollout_time_metrics_per_rank,
+                step=self.global_step,
+                prefix="time/rollout",
+                worker_group_name=self.rollout.worker_group_name,
+                add_prefix=False,
+            )
+
+            logging_metrics = time_metrics
+            logging_metrics.update(eval_metrics)
+            logging_metrics.update(env_metrics)
+            logging_metrics.update(rollout_metrics)
+            logging_metrics.update(training_metrics)
+
+            self.print_metrics_table_async(
+                self.global_step - 1,
+                self.max_steps,
+                start_time,
+                logging_metrics,
+                start_step,
+            )
+
+        self.env.stop().wait()
+        self.rollout.stop().wait()
+        self.actor.stop().wait()
+        if self.reward is not None:
+            self.reward.stop().wait()
+            reward_handle.wait()
+        env_handle.wait()
+        rollout_handle.wait()
+        actor_handle.wait()

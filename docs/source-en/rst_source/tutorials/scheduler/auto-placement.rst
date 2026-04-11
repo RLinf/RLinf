@@ -45,7 +45,7 @@ Use the provided shell script to run the auto placement tool:
 
 .. code-block:: bash
 
-   cd examples/math
+   cd examples/reasoning
    ./run_placement_autotune.sh [config_name]
 
 Where ``config_name`` is the name of your configuration file.

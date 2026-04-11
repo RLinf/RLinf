@@ -3,7 +3,7 @@
 
 Thanks for taking the time to contribute to RLinf! ❤️
 
-All types of contributions are encouraged and valued. See the [Table of Contents](#table-of-contents) for different ways to help and details about how this project handles them. Please make sure to read the relevant section before making your contribution. It will make it a lot easier for us maintainers and smooth out the experience for all involved. The community looks forward to your contributions. 🎉
+All types of contributions are encouraged and valued. Please make sure to read the relevant section before making your contribution. It will make it a lot easier for us maintainers and smooth out the experience for all involved. The community looks forward to your contributions. 🎉
 
 > And if you like the project, but just don't have time to contribute, that's fine. There are other easy ways to support the project and show your appreciation, which we would also be very happy about:
 > - Star the project
@@ -14,13 +14,17 @@ All types of contributions are encouraged and valued. See the [Table of Contents
 <!-- omit in toc -->
 ## Table of Contents
 
-- [I Want To Contribute](#i-want-to-contribute)
-- [I Have a Question](#i-have-a-question)
-  - [Reporting Bugs](#reporting-bugs)
-  - [Suggesting Enhancements](#suggesting-enhancements)
+- [Contribution Procedure](#contribution-procedure)
+- [Pull Request Guidelines](#pull-request-guidelines)
+  - [Code Style and Formatting](#code-style-and-formatting)
+  - [Commit Messages and Signed-off-by](#commit-messages-and-signed-off-by)
+  - [PR Title and Description](#pr-title-and-description)
+  - [Review Process](#review-process)
 
 
-## I Want To Contribute
+
+## Contribution Procedure
+
 All contributions (including the project team's contribution) takes the form of [GitHub Pull Requests](https://github.com/RLinf/RLinf/pulls).
 To contribute, first you need to [fork the repository](https://github.com/RLinf/RLinf/fork) and clone it to your local machine.
 Then, create a new development branch from `main` for your contribution:
@@ -29,12 +33,79 @@ git checkout main
 git pull origin main
 git checkout -b feature/your-feature-name
 ```
-After you have made your changes, commit them with a clear and descriptive commit message. The `-s` flag is necessary, which adds a "Signed-off-by" line at the end of the commit message:
+
+Then, make sure you read and follow the [Pull Request Guidelines](#pull-request-guidelines) below before committing and pushing your changes.
+
+If you have done that, push your changes to your forked repository:
+
+```bash
+git push origin feature/your-feature-name
+```
+
+Then, open a [Pull Request](https://github.com/RLinf/RLinf/compare) against the `main` branch of the original repository. 
+We will review your changes and run CI tests before merging them.
+
+## Pull Request Guidelines
+
+Here documents the general guidelines that all contributors should follow to ensure the quality and consistency of the project.
+
+### THE PRIME DIRECTIVE
+
+**All user-facing changes must be accompanied by tests and most importantly, documentation, which must be followed and validated by at least one reviewer to ensure its reproducibility.**
+
+### Code Style and Formatting
+
+* We adhere to the [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html). It's highly recommended to familiarize yourself with the last section of the guide:
+
+  > BE CONSISTENT.
+  >
+  > If you’re editing code, take a few minutes to look at the code around you and determine its style. If they use _idx suffixes in index variable names, you should too. If their comments have little boxes of hash marks around them, make your comments have little boxes of hash marks around them too.
+
+* **Lint**: The code should pass linter checks. You can run them locally using `pre-commit`.
+  ```bash
+  pip install pre-commit
+  pre-commit install --hook-type commit-msg
+  pre-commit run --all-files
+  ```
+
+  If any issues are found, the `pre-commit` tool will try fix them if possible. Otherwise, it will provide instructions on how to fix them.
+  If your commit message fails the check, you can amend it with: `git commit --amend -s` after fixing the issues.
+
+* **Comments & Docstrings**: All code should include sufficient comments and docstrings to ensure future contributors can easily understand the code. In particular, all public classes and methods must have docstrings that follow the [Google Python Style Guide for Docstrings](https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings).
+
+* **Type Hints**: All functions and methods should include type hints for their parameters to improve code readability and facilitate static analysis. If the return type cannot be statically deduced by static analysis tools like Pylance, it should also be included.
+
+* **Error Handling**: All assertions and exceptions should be accompanied with a clear and meaningful error messages. Empty messages and messages that reiterate the assertion itself like `xxx != yyy` is unacceptable. Add assertion to check for invalid inputs and states as early as possible, e.g., before performing division or array indexing.
+
+* **Logging**: Use logging instead of print statements for logging information, warnings, and errors. When you are in `Worker`, use `self.log_info`, `self.log_warning`, and `self.log_error` methods for logging. Outside of `Worker`, you can use the following pattern:
+  ```python
+  from rlinf.utils.logging import get_logger
+
+  logger = get_logger()
+  logger.info("This is an info message.")
+  logger.warning("This is a warning message.")
+  logger.error("This is an error message.")
+  ```
+
+* **Configuration YAML**: If your contribution involves changes to configuration YAML files, please ensure that:
+  - Copy existing configuration files as templates for new configurations instead of creating them from scratch if possible. Make sure you are copying from the latest version of the configuration files in the `main` branch.
+  - DO NOT perform any calculation or set dynamic values in the YAML files. All values should be static. If you need to compute a value, do it in the code (likely in `config.py`) instead of the YAML file.
+  - DO NOT modify configuration fields in code that can be set by users in any circumstances. All fields should be treated as read-only.
+  - Avoid referencing other fields as much as possible. Assign values in code if necessary.
+
+* **Tests**: Include CI tests for all new features. You can refer to existing tests in the `tests/` directory for examples. If your tests require new docker images, models, datasets, or other large dependencies, please ping the maintainers in your pull request for assistance.
+
+### Commit Messages and Signed-off-by
+
+All Commits must include a `Signed-off-by:` line at the end of the commit message.
+Using the `-s` flag will automatically achieve this:
 ```bash
 git add .
-git commit -m "feat(embodied): add a clear and descriptive commit message" -s
+git commit -s
 ```
-Note that we use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) to structure commit messages, which looks like this:
+You can enable automatic sign-off in your IDE. In VSCode, you can open the [settings editor](https://code.visualstudio.com/docs/configure/settings) and enable the option `Git: Always Sign Off`.
+
+The commit message should follow the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) standard, which looks like this:
 ```
 <type>(<scope>): <description>
 ```
@@ -47,86 +118,28 @@ Where `<type>` commonly includes the following (others can be found in the [Conv
 - `test`: adding missing tests, refactoring tests; no production code change
 - `chore`: updating build tasks, package manager configs, etc; no production code change.
 
-Finally, before pushing your changes to your fork, please run the pre-commit checks to ensure that your code adheres to the project's coding standards:
-```bash
-pip install pre-commit
-pre-commit install --hook-type commit-msg
-pre-commit run --all-files
+### PR Title and Description
+
+All PR titles should follow the same format as commit messages, i.e.:
 ```
-If any issues are found, please fix them and re-run the checks until they pass.
-Particularly, if your commit message fails the check, you can amend it with: `git commit --amend -s`.
-
-Once all checks pass, push your changes to your fork:
-```bash
-git push origin feature/your-feature-name
+<type>(<scope>): <description>
 ```
-Then, open a [Pull Request](https://github.com/RLinf/RLinf/compare) against the `main` branch of the original repository. 
-We will review your changes and run CI tests before merging them.
+The PR description should fill in at least the `Description` and `Checklist` sections of the provided PR template, otherwise it will be marked as draft and not reviewed until completed.
 
-## I Have a Question
+If your PR addresses an existing issue, please link to the issue in the `Motivation and Context` section of the PR description.
 
-> If you want to ask a question, we assume that you have read the available [Documentation](https://rlinf.readthedocs.io/en/latest/).
+If your PR has potential impact on training performance and stability (e.g., breaking the RL reward curve), please provide the testing results in the `How has this been tested?` section of the PR description.
 
-Before you ask a question, it is best to search for existing [Issues](https://github.com/RLinf/RLinf/issues) that might help you. In case you have found a suitable issue and still need clarification, you can write your question in this issue. It is also advisable to search the internet for answers first.
+### Review Process
 
-If you then still feel the need to ask a question and need clarification, we recommend the following:
+* After you have submitted your PR, it will be assigned to at least two maintainers, and possibly other code owners depending on the scope of the changes.
 
-- Open an [Issue](https://github.com/RLinf/RLinf/issues/new).
-- Provide as much context as you can about what you're running into.
-- Provide project and platform versions (nodejs, npm, etc), depending on what seems relevant.
+* After the reviewers are assigned, the reviewers will provide feedback every 1-2 business days. If the PR is not reviewed within 3 business days, please feel free to ping the maintainers in the PR thread.
 
-We will then take care of the issue as soon as possible.
+* After the review, the reviewer will put an `action-required` label on the PR if there are changes required. The contributor should address the comments and ping the reviewer to re-review the PR.
 
-### Reporting Bugs
+* Please respond to all comments within a reasonable time frame. If a comment isn't clear or you disagree with a suggestion, feel free to ask for clarification or discuss the suggestion.
 
-<!-- omit in toc -->
-#### Before Submitting a Bug Report
+* If you cannot respond to any comment within 7 days, the PR will be considered inactive and will be closed. You can always reopen the PR later when you are ready to address the comments.
 
-A good bug report shouldn't leave others needing to chase you up for more information. Therefore, we ask you to investigate carefully, collect information and describe the issue in detail in your report. Please complete the following steps in advance to help us fix any potential bug as fast as possible.
-
-- Make sure that you are using the latest version.
-- Determine if your bug is really a bug and not an error on your side e.g. using incompatible environment components/versions (Make sure that you have read the [documentation](https://rlinf.readthedocs.io/en/latest/). If you are looking for support, you might want to check [this section](#i-have-a-question)).
-- To see if other users have experienced (and potentially already solved) the same issue you are having, check if there is not already a bug report existing for your bug or error in the [bug tracker](https://github.com/RLinf/RLinf/issues?q=label%3Abug).
-- Also make sure to search the internet (including Stack Overflow) to see if users outside of the GitHub community have discussed the issue.
-- Collect information about the bug:
-  - Stack trace (Traceback)
-  - OS, Platform and Version (Windows, Linux, macOS, x86, ARM)
-  - Version of the interpreter, compiler, SDK, runtime environment, package manager, depending on what seems relevant.
-  - Possibly your input and the output
-  - Can you reliably reproduce the issue? And can you also reproduce it with older versions?
-
-<!-- omit in toc -->
-#### How Do I Submit a Good Bug Report?
-
-We use GitHub issues to track bugs and errors. If you run into an issue with the project:
-
-- Open an [Issue](https://github.com/RLinf/RLinf/issues/new).
-- Explain the behavior you would expect and the actual behavior.
-- Please provide as much context as possible and describe the *reproduction steps* that someone else can follow to recreate the issue on their own. This usually includes your code. For good bug reports you should isolate the problem and create a reduced test case.
-- Provide the information you collected in the previous section.
-
-Once it's filed, a team member will try to reproduce the issue with your provided steps. If there are no reproduction steps or no obvious way to reproduce the issue, the team will ask you for those steps and mark the issue as `needs-repro`. Bugs with the `needs-repro` tag will not be addressed until they are reproduced.
-
-
-### Suggesting Enhancements
-
-This section guides you through submitting an enhancement suggestion for RLinf, **including completely new features and minor improvements to existing functionality**. Following these guidelines will help maintainers and the community to understand your suggestion and find related suggestions.
-
-<!-- omit in toc -->
-#### Before Submitting an Enhancement
-
-- Make sure that you are using the latest version.
-- Read the [documentation](https://rlinf.readthedocs.io/en/latest/) carefully and find out if the functionality is already covered, maybe by an individual configuration.
-- Perform a [search](https://github.com/RLinf/RLinf/issues) to see if the enhancement has already been suggested. If it has, add a comment to the existing issue instead of opening a new one.
-- Find out whether your idea fits with the scope and aims of the project. It's up to you to make a strong case to convince the project's developers of the merits of this feature. Keep in mind that we want features that will be useful to the majority of our users and not just a small subset. If you're just targeting a minority of users, consider writing an add-on/plugin library.
-
-<!-- omit in toc -->
-#### How Do I Submit a Good Enhancement Suggestion?
-
-Enhancement suggestions are tracked as [GitHub issues](https://github.com/RLinf/RLinf/issues).
-
-- Use a **clear and descriptive title** for the issue to identify the suggestion.
-- Provide a **step-by-step description of the suggested enhancement** in as many details as possible.
-- **Describe the current behavior** and **explain which behavior you expected to see instead** and why. At this point you can also tell which alternatives do not work for you.
-- You may want to **include screenshots or plots** which help you demonstrate the steps or point out the part which the suggestion is related to.
-- **Explain why this enhancement would be useful** to most RLinf users. You may also want to point out the other projects that solved it better and which could serve as inspiration.
+* Note that not all CI checks will be executed immediately due to limited computational resources. The reviewer will add `run-ci` label to the PR when the PR is ready to merge or a full CI run is needed. For PRs from existing RLinf team members, please make sure to remove the `run-ci` label if you only wish to make minor changes that do not require a full CI run (e.g., fixing typos in documentation).

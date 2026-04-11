@@ -31,8 +31,11 @@ The workers are assigned to separate GPUs. The set of GPUs is specified using gl
        inference: 10-11
        actor: 12-15
 
-Currently, whether the execution is pipelined is decided by the underlying code implementation. We have not exposed the configuration option yet. If pipelining is implemented underlying, the disaggregated mode uses pipelining by default.
+.. note::
+   The ``pipeline_stage_num`` configuration should be adjusted to achieve the desired pipelining effect. 
+
+Refer to :doc:`../user/yaml` for compete configuration.
 
 **ComponentPlacement programming**
 
-As described in :doc:`collocated`, the placement configuration in the yaml file can be parsed by `ComponentPlacement` and enforced on workers. Refer to `Math RL training with pipelining <https://github.com/RLinf/RLinf/blob/main/examples/math/main_math_pipeline.py>`_ for the complete code.
+As described in :doc:`collocated`, the placement configuration in the yaml file can be parsed by `ComponentPlacement` and enforced on workers. Refer to `Math RL training with pipelining <https://github.com/RLinf/RLinf/blob/main/examples/reasoning/main_grpo.py>`_ for the complete code.

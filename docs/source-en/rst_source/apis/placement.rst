@@ -10,20 +10,22 @@ The generated **placement metadata** is later used for remote launching with Ray
 Component Placement
 -----------------------------------
 
+The ``ComponentPlacement`` interface is responsible for parsing the ``cluster.component_placement`` field in the configuration file and generating precise placements for different component workers.
+
+Notably, ``ComponentPlacement`` also supports configuration of heterogeneous clusters through the ``node_group`` field in ``cluster.node_groups``.
+
+The detailed explanation of the syntax can be found in the docs below.
+
+.. autoclass:: rlinf.utils.placement.ComponentPlacement
+   :show-inheritance:
+   :members:
+   :member-order: bysource
+   :class-doc-from: class
 
 In the **embodied intelligence** and **MATH reasoning** settings, 
 ``HybridComponentPlacement`` and ``ModelParallelComponentPlacement`` are used to generate the worker placements, respectively.
-Both placements accepts the ``DictConfig`` parsed by OmegaConf and translate the ``cluster.component_placement`` field to precise GPU and node allocations.
+``HybridComponentPlacement`` is a direct inheritance of ``ComponentPlacement``, while ``ModelParallelComponentPlacement`` extends the placement logic to support model parallelism of inference engines across multiple GPUs.
 
-The component placement accepts dictionary syntax of ``cluster.component_placement``:
-
-- The key is the names of components, e.g., ``rollout``, or ``rollout,inference,actor``
-- The value is the global GPU IDs allocated to the components, which can be:
-   - "all": use all GPUs in the cluster
-   - A single integer, e.g., "3": use GPU 3
-   - A list of integers separated by comma, e.g., "0,2,3": use GPU 0, 2, and 3
-   - A range of integers separated by hyphen, e.g., "0-3": use GPU 0, 1, 2, and 3
-   - A combination of the above two, e.g., "0-3,5,7": use GPU 0, 1, 2, 3, 5, and 7
 
 HybridComponentPlacement
 ^^^^^^^^^^^^^^^^^^^^^^^^^
