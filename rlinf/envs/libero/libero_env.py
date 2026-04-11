@@ -363,8 +363,25 @@ class LiberoEnv(gym.Env):
         self.cumsum_trial_id_bins = np.cumsum(self.trial_id_bins)
 
         if self.task_id_filter is not None:
-            self._valid_reset_state_ids = []
+            num_tasks = len(self.trial_id_bins)
+            validated_tids = []
             for tid in self.task_id_filter:
+                if not isinstance(tid, (int, np.integer)):
+                    raise ValueError(
+                        f"task_id_filter must contain ints, got "
+                        f"{type(tid).__name__}: {tid}"
+                    )
+                tid_int = int(tid)
+                if tid_int < 0 or tid_int >= num_tasks:
+                    raise ValueError(
+                        f"task_id {tid_int} in task_id_filter is out of range "
+                        f"[0, {num_tasks - 1}]"
+                    )
+                validated_tids.append(tid_int)
+            validated_tids = sorted(set(validated_tids))
+
+            self._valid_reset_state_ids = []
+            for tid in validated_tids:
                 start = self.cumsum_trial_id_bins[tid - 1] if tid > 0 else 0
                 end = self.cumsum_trial_id_bins[tid]
                 self._valid_reset_state_ids.extend(range(start, end))

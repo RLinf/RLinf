@@ -65,7 +65,7 @@ class FSDPCfgWorker(FSDPSftWorker):
         FSDPModelManager.__init__(self, cfg.actor, self._world_size, self._rank)
 
         self.cfg = cfg
-        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+        torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", 0)))
         self.device = torch.cuda.current_device()
 
         self._component_placement = HybridComponentPlacement(cfg, Cluster())

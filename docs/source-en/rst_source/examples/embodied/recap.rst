@@ -695,11 +695,7 @@ We provide a reproduced experiment on the `LIBERO-10 <https://github.com/Lifelon
 - **Rollout data**: 4,096 trajectories collected by a few-shot π\ :sub:`0.5` policy on Task 0, containing both successful and failed episodes
 - **Eval data**: A held-out set collected by the same few-shot π\ :sub:`0.5` policy, used in Step 2 to monitor value model overfitting
 
-The dataset is available `here <https://DATASET_HF_LINK_PLACEHOLDER>`_.
-
-.. warning::
-
-   Replace ``DATASET_HF_LINK_PLACEHOLDER`` above with the actual HuggingFace dataset URL before publishing.
+The dataset is available `here <https://huggingface.co/datasets/RLinf/RECAP-Libero10-Task0-48succ-Data/tree/main>`_.
 
 
 

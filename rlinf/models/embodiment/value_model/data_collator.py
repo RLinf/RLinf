@@ -129,7 +129,7 @@ class ValueDataCollator(DataCollatorMixin):
             target_values_list.append(ex.get("target_values"))
 
             next_images_list.append(ex.get("next_images"))
-            next_states_list.append(ex.get("next_state"))
+            next_states_list.append(ex.get("next_states"))
             reward_sum_list.append(ex.get("reward_sum"))
             dones_list.append(ex.get("dones"))
 

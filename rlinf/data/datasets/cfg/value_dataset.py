@@ -295,7 +295,13 @@ class ValueDataset(Dataset):
             sample = self._transform(sample)
 
         # Return lookup + normalize (sidecar guaranteed to exist)
-        raw = float(self._sidecar[ep]["return"][fr]) if ep in self._sidecar else 0.0
+        if ep not in self._sidecar:
+            raise KeyError(
+                f"Episode {ep} not found in returns sidecar at "
+                f"real_idx={real_idx}. The sidecar/tag may not match the "
+                f"dataset; re-run compute_returns.py with the correct tag."
+            )
+        raw = float(self._sidecar[ep]["return"][fr])
         target_value = (
             self._normalizer.normalize_value(raw) if self._normalizer else raw
         )
