@@ -39,6 +39,9 @@ reading files that the environment worker is still writing.
 Each sub-dataset is loaded via :class:`lerobot.common.datasets.lerobot_dataset.LeRobotDataset`
 with ``root=<sub_dataset_path>``.  Chunk (multi-frame) sampling for OpenPI /
 DAgger is implemented through LeRobot's ``delta_timestamps`` mechanism.
+Optionally, ``require_all_intervene=True`` restricts the dataset to chunk
+starts whose non-padded frames all have ``intervene_flag`` set (see
+:class:`RollingLeRobotDataset`).
 
 Typical usage (recommended pattern with separate functions)::
 
@@ -87,6 +90,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Callable, Iterator, Literal
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 
@@ -237,6 +241,88 @@ def _discover_safe_datasets(root_dir: Path, skip_last_n: int) -> list[Path]:
     return safe
 
 
+def _delta_offsets_for_sub_dataset(sub_ds: Any) -> list[int]:
+    """Temporal offsets (in frames) for one LeRobot chunk sample.
+
+    Mirrors :meth:`lerobot.common.datasets.lerobot_dataset.LeRobotDataset._get_query_indices`.
+    """
+    if getattr(sub_ds, "delta_indices", None) is None:
+        return [0]
+    first_key = next(iter(sub_ds.delta_indices))
+    return [int(x) for x in sub_ds.delta_indices[first_key]]
+
+
+def _hf_column_to_numpy_bool_1d(hf_dataset: Any, col: str) -> np.ndarray:
+    """Load a per-row boolean column as ``(num_rows,)`` bool numpy array."""
+    raw = hf_dataset[col]
+    if isinstance(raw, torch.Tensor):
+        t = raw
+    else:
+        t = torch.stack(list(raw))
+    return t.reshape(-1).bool().numpy()
+
+
+def _hf_column_to_numpy_int64_1d(hf_dataset: Any, col: str) -> np.ndarray:
+    raw = hf_dataset[col]
+    if isinstance(raw, torch.Tensor):
+        t = raw
+    else:
+        t = torch.stack(list(raw))
+    return t.reshape(-1).to(torch.int64).numpy()
+
+
+def _compute_intervene_valid_local_indices(
+    sub_ds: Any,
+    intervene_flag_key: str,
+) -> list[int]:
+    """Return local frame indices whose chunk has ``intervene_flag=True`` on every non-padded step.
+
+    Padding follows LeRobot's episode-local clamping: padded timesteps are ignored
+    (no ``intervene_flag`` requirement on padded slots).
+
+    If *intervene_flag_key* is absent from the HF dataset, logs a warning and
+    treats every frame index as valid (same as no filtering for that shard).
+    """
+    hf = sub_ds.hf_dataset
+    n = len(hf)
+    if n == 0:
+        return []
+
+    if intervene_flag_key not in hf.column_names:
+        logger.warning(
+            "[RollingLeRobotDataset] require_all_intervene=True but column %r "
+            "missing in %s; keeping all %d chunk starts for this shard.",
+            intervene_flag_key,
+            getattr(sub_ds, "root", "?"),
+            n,
+        )
+        return list(range(n))
+
+    flags = _hf_column_to_numpy_bool_1d(hf, intervene_flag_key)
+    ep_idx = _hf_column_to_numpy_int64_1d(hf, "episode_index")
+    ep_from = sub_ds.episode_data_index["from"].detach().cpu().numpy().astype(np.int64)
+    ep_to = sub_ds.episode_data_index["to"].detach().cpu().numpy().astype(np.int64)
+    deltas = np.array(_delta_offsets_for_sub_dataset(sub_ds), dtype=np.int64)
+
+    idx_range = np.arange(n, dtype=np.int64)[:, None]
+    raw = idx_range + deltas[None, :]
+    ep_start = ep_from[ep_idx][:, None]
+    ep_end = ep_to[ep_idx][:, None]
+    is_pad = (raw < ep_start) | (raw >= ep_end)
+    chunk_ok = np.ones(n, dtype=np.bool_)
+    for j in range(deltas.shape[0]):
+        padded = is_pad[:, j]
+        rj = raw[:, j]
+        # Padded slots are ignored; only index ``flags`` for in-range rows (``np.where`` is not lazy).
+        step_ok = np.zeros(n, dtype=np.bool_)
+        step_ok[padded] = True
+        m = ~padded
+        if m.any():
+            step_ok[m] = flags[rj[m]]
+        chunk_ok &= step_ok
+    return np.nonzero(chunk_ok)[0].tolist()
+
+
 def _build_delta_timestamps(info: dict, chunk_size: int, action_sequence_keys) -> dict[str, list[float]]:
     """Build a ``delta_timestamps`` dict for LeRobotDataset chunk sampling.
 
@@ -253,7 +339,7 @@ def _build_delta_timestamps(info: dict, chunk_size: int, action_sequence_keys) -
     fps: float = info["fps"]
     timestamps = [i / fps for i in range(chunk_size)]
     data_keys = action_sequence_keys if action_sequence_keys is not None else []
-    return {k: timestamps for k in data_keys}
+    return dict.fromkeys(data_keys, timestamps)
 
 
 # ---------------------------------------------------------------------------
@@ -298,6 +384,8 @@ class RollingLeRobotDataset(Dataset):
         wait_interval_s: Seconds to sleep between readiness polls when fewer
             than ``min_frames`` total frames are available.  Defaults to
             ``10.0``.
+        action_sequence_keys: Keys to apply ``delta_timestamps`` chunking to.
+            Defaults to ``["actions"]``.
         enable_decoded_cache: If ``True``, maintain a FIFO in-memory cache of
             fully decoded samples (see :class:`DecodedTensorFifoCache`).
             Use ``num_workers=0`` on the DataLoader so workers see the same
@@ -310,6 +398,15 @@ class RollingLeRobotDataset(Dataset):
         cache_last_n_frames: Tail length for ``last_n`` / ``both`` modes.
         cache_ingest_max_frames: Optional cap on how many frames to ingest per
             ``refresh()`` call (``None`` = no cap).
+        require_all_intervene: When ``True``, only chunk starts where every
+            **non-padded** frame in the temporal window has
+            ``intervene_flag_key=True`` are exposed to the sampler (dataset
+            length and indices are restricted accordingly).  For
+            ``chunk_size=1`` this reduces to single-frame filtering.  When the
+            flag column is missing from a shard, that shard falls back to all
+            starts (with a warning).
+        intervene_flag_key: Parquet / HF column name for the per-frame bool
+            flag (default ``"intervene_flag"``).
     """
 
     def __init__(
@@ -323,11 +420,15 @@ class RollingLeRobotDataset(Dataset):
         min_frames: int = 10,
         wait_interval_s: float = 10.0,
         action_sequence_keys: list[str] | None = ["actions"],
+        # cache
         enable_decoded_cache: bool = False,
         decoded_cache_capacity: int = 8192,
         cache_ingest_mode: CacheIngestMode = "new_shards",
         cache_last_n_frames: int = 10_000,
         cache_ingest_max_frames: int | None = None,
+        # check intervene
+        require_all_intervene: bool = False,
+        intervene_flag_key: str = "intervene_flag",
     ) -> None:
         self.root_dir = Path(root_dir)
         self.skip_last_n = skip_last_n
@@ -341,6 +442,13 @@ class RollingLeRobotDataset(Dataset):
         self.cache_ingest_mode: CacheIngestMode = cache_ingest_mode
         self.cache_last_n_frames = int(cache_last_n_frames)
         self.cache_ingest_max_frames = cache_ingest_max_frames
+        self.require_all_intervene = bool(require_all_intervene)
+        self.intervene_flag_key = intervene_flag_key
+        self._valid_physical_indices: list[int] | None = None
+        self._valid_physical_set: set[int] | None = None
+        if self.require_all_intervene:
+            self._valid_physical_indices = []
+            self._valid_physical_set = set()
         self._decoded_cache: DecodedTensorFifoCache | None = None
         if enable_decoded_cache:
             self._decoded_cache = DecodedTensorFifoCache(decoded_cache_capacity)
@@ -363,14 +471,22 @@ class RollingLeRobotDataset(Dataset):
             "last_n",
             "both",
         ):
-            n = len(self)
-            self._ingest_decoded_cache(n, n, 0)
+            self._ingest_decoded_cache(0, 0, 0)
 
     # ------------------------------------------------------------------
     # Readiness gate
     # ------------------------------------------------------------------
     def is_ready(self) -> bool:
         return len(self) >= self.min_frames
+
+    def _num_physical_frames(self) -> int:
+        """Total indexed frames across all LeRobot shards (ignores intervene filter)."""
+        return int(self._cumulative_lengths[-1])
+
+    def _logical_to_physical(self, logical_idx: int) -> int:
+        if self._valid_physical_indices is None:
+            return int(logical_idx)
+        return int(self._valid_physical_indices[logical_idx])
 
     # ------------------------------------------------------------------
     # Index construction
@@ -420,10 +536,17 @@ class RollingLeRobotDataset(Dataset):
                 )
                 continue
 
+            physical_base = self._cumulative_lengths[-1]
             self._sub_datasets.append(sub_ds)
-            self._cumulative_lengths.append(
-                self._cumulative_lengths[-1] + len(sub_ds)
-            )
+            self._cumulative_lengths.append(physical_base + len(sub_ds))
+            if self.require_all_intervene and self._valid_physical_indices is not None:
+                assert self._valid_physical_set is not None
+                for local_i in _compute_intervene_valid_local_indices(
+                    sub_ds, self.intervene_flag_key
+                ):
+                    gidx = physical_base + int(local_i)
+                    self._valid_physical_indices.append(gidx)
+                    self._valid_physical_set.add(gidx)
             self._indexed_datasets.add(ds_path)
             self._total_episodes += getattr(sub_ds, "num_episodes", 0)
             n_new += 1
@@ -440,27 +563,35 @@ class RollingLeRobotDataset(Dataset):
         return item
 
     def _ingest_decoded_cache(
-        self, total_before: int, total_after: int, n_new: int
+        self, physical_before: int, physical_after: int, n_new: int
     ) -> None:
-        """Populate FIFO cache according to ``cache_ingest_mode``."""
+        """Populate FIFO cache according to ``cache_ingest_mode``.
+
+        ``physical_before`` / ``physical_after`` are cumulative **physical**
+        frame counts (unfiltered) immediately before vs. after a refresh that
+        appended new shards; they define the half-open index range for the
+        ``new_shards`` ingest path.
+        """
         cache = self._decoded_cache
         if cache is None:
             return
         indices: list[int] = []
         mode = self.cache_ingest_mode
         if mode in ("new_shards", "both") and n_new > 0:
-            indices.extend(range(total_before, total_after))
+            indices.extend(range(int(physical_before), int(physical_after)))
         if mode in ("last_n", "both"):
-            n = len(self)
+            n_phys = self._num_physical_frames()
             tail = self.cache_last_n_frames
-            start = max(0, n - tail)
-            indices.extend(range(start, n))
+            start = max(0, n_phys - tail)
+            indices.extend(range(start, n_phys))
         seen: set[int] = set()
         uniq: list[int] = []
         for i in indices:
             if i not in seen:
                 seen.add(i)
                 uniq.append(i)
+        if self._valid_physical_set is not None:
+            uniq = [i for i in uniq if i in self._valid_physical_set]
         lim = self.cache_ingest_max_frames
         if lim is not None:
             uniq = uniq[: int(lim)]
@@ -492,65 +623,74 @@ class RollingLeRobotDataset(Dataset):
         Returns:
             Number of new sub-datasets added (0 if nothing changed).
         """
-        total_before = len(self)
+        physical_before = self._num_physical_frames()
         safe = _discover_safe_datasets(self.root_dir, self.skip_last_n)
         new_paths = [p for p in safe if p not in self._indexed_datasets]
         n_new = 0
-        total_after = total_before
         with self._rolling_access_lock:
             if new_paths:
                 n_new = self._build_index(new_paths)
-                total_after = len(self)
+                physical_after = self._num_physical_frames()
+                logical = len(self)
                 logger.info(
                     "[RollingLeRobotDataset] refresh: +%d sub-dataset(s), "
-                    "total_frames=%d",
+                    "physical_frames=%d logical_samples=%d",
                     n_new,
-                    total_after,
+                    physical_after,
+                    logical,
                 )
+            else:
+                physical_after = physical_before
             if self._decoded_cache is not None:
-                self._ingest_decoded_cache(total_before, total_after, n_new)
+                self._ingest_decoded_cache(physical_before, physical_after, n_new)
         return n_new
 
     def get_stats(self) -> dict[str, Any]:
         stats: dict[str, Any] = {
             "num_sub_datasets": len(self._sub_datasets),
+            "physical_frames": self._num_physical_frames(),
+            "logical_samples": len(self),
             "total_frames": len(self),
             "total_episodes": self._total_episodes,
+            "require_all_intervene": self.require_all_intervene,
         }
         if self._decoded_cache is not None:
             stats.update(self._decoded_cache.stats())
         return stats
 
     def __len__(self) -> int:
+        if self._valid_physical_indices is not None:
+            return len(self._valid_physical_indices)
         return self._cumulative_lengths[-1]
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         with self._rolling_access_lock:
+            physical = self._logical_to_physical(int(idx))
             cache = self._decoded_cache
             if cache is not None:
-                hit = cache.try_get(idx)
+                hit = cache.try_get(physical)
                 if hit is not None:
                     return hit
                 cache.notify_miss()
-            return self._load_item_from_lerobot(idx)
+            return self._load_item_from_lerobot(physical)
 
     def __getitems__(self, indices: Sequence[int]) -> list[dict[str, Any]]:
         """Batch fetch for DataLoader (one call per batch when supported)."""
         if not indices:
             return []
         with self._rolling_access_lock:
+            physicals = [self._logical_to_physical(int(i)) for i in indices]
             cache = self._decoded_cache
             if cache is None:
-                return [self._load_item_from_lerobot(int(i)) for i in indices]
+                return [self._load_item_from_lerobot(p) for p in physicals]
             out: list[dict[str, Any]] = []
-            for i in indices:
-                gidx = int(i)
-                hit = cache.try_get(gidx)
+            for physical in physicals:
+                hit = cache.try_get(physical)
                 if hit is not None:
                     out.append(hit)
                 else:
                     cache.notify_miss()
-                    out.append(self._load_item_from_lerobot(gidx))
+                    out.append(self._load_item_from_lerobot(physical))
             return out
 
 
@@ -792,6 +932,8 @@ def build_rolling_lerobot_dataset(
     cache_ingest_mode: CacheIngestMode = "new_shards",
     cache_last_n_frames: int = 10_000,
     cache_ingest_max_frames: int | None = None,
+    require_all_intervene: bool = False,
+    intervene_flag_key: str = "intervene_flag",
 ) -> RollingLeRobotDataset:
     """Build a :class:`RollingLeRobotDataset` for rolling data collection.
 
@@ -820,6 +962,8 @@ def build_rolling_lerobot_dataset(
         cache_ingest_mode: ``new_shards``, ``last_n``, or ``both``.
         cache_last_n_frames: Tail size for ``last_n`` / ``both``.
         cache_ingest_max_frames: Max ingests per ``refresh()`` (``None`` = unlimited).
+        require_all_intervene: See :class:`RollingLeRobotDataset`.
+        intervene_flag_key: Column name for the per-frame intervention flag.
 
     Returns:
         A :class:`RollingLeRobotDataset` instance.
@@ -839,17 +983,22 @@ def build_rolling_lerobot_dataset(
         cache_ingest_mode=cache_ingest_mode,
         cache_last_n_frames=cache_last_n_frames,
         cache_ingest_max_frames=cache_ingest_max_frames,
+        require_all_intervene=require_all_intervene,
+        intervene_flag_key=intervene_flag_key,
     )
 
     logger.info(
         "[build_rolling_lerobot_dataset] root_dir=%s, chunk_size=%d, "
-        "skip_last_n=%d, sub_datasets=%d, total_frames=%d, decoded_cache=%s",
+        "skip_last_n=%d, sub_datasets=%d, logical_samples=%d, "
+        "physical_frames=%d, decoded_cache=%s, require_all_intervene=%s",
         root_dir,
         chunk_size,
         skip_last_n,
         len(dataset._sub_datasets),
         len(dataset),
+        dataset._num_physical_frames(),
         enable_decoded_cache,
+        require_all_intervene,
     )
 
     return dataset

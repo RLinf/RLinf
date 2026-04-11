@@ -207,7 +207,6 @@ class CollectEpisode(gym.Wrapper):
             expert_actions = chunk_actions["expert_actions"].reshape_as(actions)
         else:
             expert_actions = None
-        raw_actions = chunk_actions["raw_actions"].reshape_as(actions)
         for step_idx in range(chunk_size):
             step_action = (
                 chunk_actions[:, step_idx]
@@ -236,10 +235,14 @@ class CollectEpisode(gym.Wrapper):
                 if isinstance(infos_list, (list, tuple))
                 else infos_list
             )
-            if expert_actions is not None:
+            if expert_actions is not None and "intervene_action" not in step_info:
                 step_action = expert_actions[:, step_idx]
-            else:
-                step_action = raw_actions[:, step_idx]
+                if "final_info" in step_info:
+                    step_info["final_info"]["intervene_action"] = step_action
+                    step_info["final_info"]["intervene_flag"] = torch.ones(step_action.shape[0], dtype=torch.bool)
+                else:
+                    step_info["intervene_action"] = step_action
+                    step_info["intervene_flag"] = torch.ones(step_action.shape[0], dtype=torch.bool)
             self._record_step(
                 step_action, step_obs, step_reward, step_term, step_trunc, step_info
             )
@@ -411,7 +414,8 @@ class CollectEpisode(gym.Wrapper):
         Produces the format expected by ``LeRobotDatasetWriter.add_episode``:
         a ``list[dict]`` where every dict represents one step and carries the
         fields ``image``, ``state``, ``actions``, ``task``, ``is_success``,
-        ``done``, and optionally ``wrist_image`` / ``extra_view_image``.
+        ``done``, ``intervene_flag``, and optionally ``wrist_image`` /
+        ``extra_view_image``.
         The observations list contains one extra entry prepended at reset time,
         so it is aligned to the actions list by taking the leading N entries.
         Steps where any required field (image, state, action) is missing are
@@ -451,12 +455,14 @@ class CollectEpisode(gym.Wrapper):
                     np_action = self._to_numpy(info_with_intervene["intervene_action"])
             if state is None or np_action is None:
                 continue
+            intervene_flag = self._intervene_flag_from_info(info_with_intervene)
             frame: dict[str, Any] = {
                 "state": np.asarray(state).astype(np.float32),
                 "actions": np.asarray(np_action).astype(np.float32).flatten(),
                 "task": task_desc,
                 "is_success": np.array([is_success], dtype=bool),
                 "done": np.array([False], dtype=bool),
+                "intervene_flag": np.array([intervene_flag], dtype=bool),
             }
             if image is not None:
                 frame["image"] = self._to_uint8(np.asarray(image))
@@ -497,6 +503,7 @@ class CollectEpisode(gym.Wrapper):
                 has_image="image" in ep_data[0],
                 has_wrist_image="wrist_image" in ep_data[0],
                 has_extra_view_image="extra_view_image" in ep_data[0],
+                has_intervene_flag="intervene_flag" in ep_data[0],
             )
         return self._lerobot_writer
 
@@ -590,6 +597,19 @@ class CollectEpisode(gym.Wrapper):
         if found_any:
             return is_success
         return self._episode_success[env_idx]
+
+    @staticmethod
+    def _intervene_flag_from_info(info: Any) -> bool:
+        """Whether this timestep used human / expert intervention (per-env info)."""
+        if not isinstance(info, dict):
+            return False
+        val = info.get("intervene_flag")
+        if val is None:
+            return False
+        arr = CollectEpisode._to_numpy(val)
+        if arr is None:
+            return False
+        return bool(np.asarray(arr, dtype=bool).reshape(-1).any())
 
     @staticmethod
     def _to_bool_scalar(val) -> Optional[bool]:
