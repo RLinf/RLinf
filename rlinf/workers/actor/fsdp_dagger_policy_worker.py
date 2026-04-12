@@ -166,17 +166,14 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
         clear_memory(sync=False)
-
-        send_num = self._component_placement.get_world_size("env") * self.stage_num
-        recv_num = self._component_placement.get_world_size("actor")
-        split_num = compute_split_num(send_num, recv_num)
-
-        recv_list = []
-        for _ in range(split_num):
-            trajectory: Trajectory = await input_channel.get(async_op=True).async_wait()
-            recv_list.append(trajectory)
-
         if self.data_source == "buffer":
+            send_num = self._component_placement.get_world_size("env") * self.stage_num
+            recv_num = self._component_placement.get_world_size("actor")
+            split_num = compute_split_num(send_num, recv_num)
+            recv_list = []
+            for _ in range(split_num):
+                trajectory: Trajectory = await input_channel.get(async_op=True).async_wait()
+                recv_list.append(trajectory)
             return self.recv_buffer_rollout_trajectories(recv_list)
         elif self.data_source == "lerobot":
             return self.recv_lerobot_rollout_trajectories()

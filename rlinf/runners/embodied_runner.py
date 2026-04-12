@@ -74,7 +74,10 @@ class EmbodiedRunner:
         # Data channels
         self.env_channel = Channel.create("Env")
         self.rollout_channel = Channel.create("Rollout")
-        self.actor_channel = Channel.create("Actor")
+        if self.cfg.actor.get("data_source", "buffer") == "buffer":
+            self.actor_channel = Channel.create("Actor")
+        else:
+            self.actor_channel = None
         if self.reward is not None:
             self.reward_channel = Channel.create("Reward")
         else:

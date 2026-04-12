@@ -27,6 +27,8 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
     should_stop = False
 
     async def recv_rollout_trajectories(self, input_channel):
+        if self.data_source == "lerobot":
+            return
         if getattr(self, "_recv_queue", None) is None:
             self._recv_queue = queue.Queue()
         if (

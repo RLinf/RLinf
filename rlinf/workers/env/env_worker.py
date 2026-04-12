@@ -904,14 +904,13 @@ class EnvWorker(Worker):
                         terminations=env_output.terminations,
                         rewards=rewards,
                     )
-                    self.rollout_results[stage_id].append_step_result(chunk_step_result)
-                    if rollout_result.save_flags is not None:
-                        self.rollout_results[stage_id].mark_last_step_with_flags(
-                            rollout_result.save_flags
-                        )
+                    if self.cfg.actor.get("data_source", "buffer") == "buffer":
+                        self.rollout_results[stage_id].append_step_result(chunk_step_result)
+                        if rollout_result.save_flags is not None:
+                            self.rollout_results[stage_id].mark_last_step_with_flags(
+                                rollout_result.save_flags
+                            )
 
-
-                    
                     if self.cfg.env.train.get("data_collection", None) and getattr(
                         self.cfg.env.train.data_collection, "enabled", False
                     ):
@@ -949,10 +948,11 @@ class EnvWorker(Worker):
             for stage_id in range(self.stage_num):
                 env_output = env_outputs[stage_id]
                 if env_output.intervene_actions is not None:
-                    self.rollout_results[stage_id].update_last_actions(
-                        env_output.intervene_actions,
-                        env_output.intervene_flags,
-                    )
+                    if self.cfg.actor.get("data_source", "buffer") == "buffer":
+                        self.rollout_results[stage_id].update_last_actions(
+                            env_output.intervene_actions,
+                            env_output.intervene_flags,
+                        )
 
                 reward_model_output = None
                 if reward_channel is not None:
@@ -980,7 +980,8 @@ class EnvWorker(Worker):
                     terminations=env_output.terminations,
                     rewards=rewards,
                 )
-                self.rollout_results[stage_id].append_step_result(chunk_step_result)
+                if self.cfg.actor.get("data_source", "buffer") == "buffer":
+                    self.rollout_results[stage_id].append_step_result(chunk_step_result)
 
             self.store_last_obs_and_intervened_info(env_outputs)
             self.finish_rollout()
