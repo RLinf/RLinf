@@ -180,7 +180,7 @@ class CollectEpisode(gym.Wrapper):
         self._maybe_flush(terminated, truncated)
         return obs, reward, terminated, truncated, info
 
-    def chunk_step(self, chunk_actions):
+    def chunk_step(self, input_actions):
         """Execute a chunk of actions, recording each sub-step individually.
 
         Both pickle and lerobot formats receive step-level records for maximum
@@ -195,16 +195,16 @@ class CollectEpisode(gym.Wrapper):
         """
         # breakpoint()
         obs_list, rewards, terminations, truncations, infos_list = self.env.chunk_step(
-            chunk_actions
+            input_actions
         )
 
         chunk_size = len(obs_list) if isinstance(obs_list, (list, tuple)) else 1
 
-        actions = chunk_actions["actions"]
-        if isinstance(actions, np.ndarray):
-            actions = torch.from_numpy(actions)
-        if "expert_actions" in chunk_actions:
-            expert_actions = chunk_actions["expert_actions"].reshape_as(actions)
+        chunk_actions = input_actions["actions"]
+        if isinstance(chunk_actions, np.ndarray):
+            chunk_actions = torch.from_numpy(chunk_actions)
+        if "expert_actions" in input_actions:
+            expert_actions = input_actions["expert_actions"].reshape_as(chunk_actions)
         else:
             expert_actions = None
         for step_idx in range(chunk_size):
@@ -231,18 +231,21 @@ class CollectEpisode(gym.Wrapper):
                 else truncations
             )
             step_info = (
-                infos_list[step_idx]
+                copy.deepcopy(infos_list[step_idx]) 
                 if isinstance(infos_list, (list, tuple))
                 else infos_list
             )
+
             if expert_actions is not None and "intervene_action" not in step_info:
-                step_action = expert_actions[:, step_idx]
                 if "final_info" in step_info:
-                    step_info["final_info"]["intervene_action"] = step_action
-                    step_info["final_info"]["intervene_flag"] = torch.ones(step_action.shape[0], dtype=torch.bool)
+                    step_info["final_info"]["intervene_action"] = expert_actions
+                    step_info["final_info"]["intervene_flag"] = torch.ones(expert_actions.shape[0], expert_actions.shape[1], dtype=torch.bool)
+
+                    step_info["intervene_action"] = expert_actions[:, step_idx]
+                    step_info["intervene_flag"] = ~(step_trunc | step_term)
                 else:
-                    step_info["intervene_action"] = step_action
-                    step_info["intervene_flag"] = torch.ones(step_action.shape[0], dtype=torch.bool)
+                    step_info["intervene_action"] = expert_actions[:, step_idx]
+                    step_info["intervene_flag"] = torch.ones(expert_actions.shape[0], dtype=torch.bool)
             self._record_step(
                 step_action, step_obs, step_reward, step_term, step_trunc, step_info
             )
@@ -311,9 +314,15 @@ class CollectEpisode(gym.Wrapper):
                 env_info = self._slice_copy(final_info_batch, env_idx)
                 self._pending_obs[env_idx] = self._slice_copy(obs, env_idx)
                 self._pending_info[env_idx] = self._slice_copy(info_no_reset, env_idx)
+                if "intervene_action" in env_info:
+                    env_info["intervene_action"] = env_info["intervene_action"][-1]
+                    env_info["intervene_flag"] = env_info["intervene_flag"][-1]
             else:
                 env_obs = self._slice_copy(obs, env_idx)
                 env_info = self._slice_copy(info, env_idx)
+                if "final_observation" in env_info:
+                    env_info.pop("final_observation")
+                    env_info.pop("final_info")
 
             buf = self._buffers[env_idx]
             buf["observations"].append(env_obs)
@@ -369,7 +378,6 @@ class CollectEpisode(gym.Wrapper):
     def _flush_episode(self, env_idx: int, is_success: bool) -> None:
         """Dispatch a completed episode to the appropriate format writer."""
         self.logger.info(f"Flush env {env_idx}")
-        # breakpoint()
         buf = self._buffers[env_idx]
         if not buf["actions"]:
             return
@@ -442,11 +450,10 @@ class CollectEpisode(gym.Wrapper):
             obs = obs_steps[i] if i < len(obs_steps) else None
             image, wrist_image, extra_view_image, state = self._extract_obs_image_state(obs)
             # Overwrite action with intervene action if present.
-            if "final_info" in buf["infos"][i]:
-                info_with_intervene = copy.deepcopy(buf["infos"][i]["final_info"])
-            else:
-                info_with_intervene = copy.deepcopy(buf["infos"][i])
             np_action = self._to_numpy(action)
+            assert "final_info" not in buf["infos"][i+1]
+            info_with_intervene = copy.deepcopy(buf["infos"][i+1])
+
             if (
                 "intervene_flag" in info_with_intervene
                 and "intervene_action" in info_with_intervene
