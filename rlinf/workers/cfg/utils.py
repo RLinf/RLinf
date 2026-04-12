@@ -58,7 +58,7 @@ def cast_image_features(hf_dataset):
             needs_cast = True
 
     if needs_cast:
-        from lerobot.datasets.utils import hf_transform_to_torch
+        from lerobot.common.datasets.utils import hf_transform_to_torch
 
         hf_dataset = hf_dataset.cast(new_features)
         hf_dataset.set_transform(hf_transform_to_torch)

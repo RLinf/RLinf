@@ -131,7 +131,7 @@ class FSDPCfgWorker(FSDPSftWorker):
 
     def build_dataloader(self):
         """Build CFG dataloader with advantage-weighted sampling across datasets."""
-        import lerobot.datasets.lerobot_dataset as lerobot_dataset
+        import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
         import openpi.training.data_loader as openpi_data_loader
         import openpi.transforms as transforms
 

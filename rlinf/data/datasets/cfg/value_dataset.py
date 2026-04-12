@@ -24,8 +24,8 @@ import numpy as np
 import openpi.models.model as _openpi_model
 import openpi.transforms as _openpi_transforms
 import torch
-from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
-from lerobot.datasets.utils import hf_transform_to_torch
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+from lerobot.common.datasets.utils import hf_transform_to_torch
 from PIL import Image as PILImage
 from torch.utils.data import Dataset
 
@@ -59,6 +59,13 @@ _REPACK_KEYS = {
     },
     "franka": {
         "observation/image": "image",
+        "observation/state": "state",
+        "actions": "actions",
+        "prompt": "prompt",
+    },
+    "franka_co_train": {
+        "observation/image": "image",
+        "observation/wrist_image": "wrist_image",
         "observation/state": "state",
         "actions": "actions",
         "prompt": "prompt",
@@ -228,7 +235,7 @@ class ValueDataset(Dataset):
             transforms_list.append(
                 libero_policy.LiberoInputs(model_type=model_type_enum)
             )
-        elif robot == "franka":
+        elif robot in ("franka", "franka_co_train"):
             transforms_list.append(
                 franka_policy.FrankaEEInputs(
                     action_dim=action_dim,

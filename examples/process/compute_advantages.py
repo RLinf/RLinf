@@ -44,7 +44,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.distributed as dist
-from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
@@ -177,9 +177,16 @@ KEY_MAPPINGS = {
         "observation.images.wrist_cam": "observation/images/wrist_cam",
         "observation.state.tcp_pose": "observation/state/tcp_pose",
         "observation.state.gripper_pose": "observation/state/gripper_pose",
-        # Single-cam format (push_button style: image + state)
+        # Single-cam format (image + state)
         "observation.images.image": "observation/image",
         "image": "observation/image",
+        "state": "observation/state",
+        "task": "prompt",
+    },
+    "franka_co_train": {
+        # Single-cam + wrist format (image + wrist_image + state)
+        "image": "observation/image",
+        "wrist_image": "observation/wrist_image",
         "state": "observation/state",
         "task": "prompt",
     },
