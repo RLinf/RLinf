@@ -44,7 +44,10 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.distributed as dist
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+from lerobot.common.datasets.lerobot_dataset import (
+    LeRobotDataset,
+    LeRobotDatasetMetadata,
+)
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 

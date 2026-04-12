@@ -24,7 +24,10 @@ import numpy as np
 import openpi.models.model as _openpi_model
 import openpi.transforms as _openpi_transforms
 import torch
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+from lerobot.common.datasets.lerobot_dataset import (
+    LeRobotDataset,
+    LeRobotDatasetMetadata,
+)
 from lerobot.common.datasets.utils import hf_transform_to_torch
 from PIL import Image as PILImage
 from torch.utils.data import Dataset
