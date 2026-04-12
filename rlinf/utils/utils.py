@@ -155,7 +155,10 @@ def masked_mean_ratio(
     values: torch.Tensor, mask: torch.Tensor, loss_mask_ratio: torch.Tensor
 ):
     # for embodied tasks
-    return (values / loss_mask_ratio * mask).mean()
+    safe_loss_mask_ratio = torch.where(
+        mask, loss_mask_ratio, torch.ones_like(loss_mask_ratio)
+    )
+    return (values / safe_loss_mask_ratio * mask).mean()
 
 
 def get_loss_agg_func(

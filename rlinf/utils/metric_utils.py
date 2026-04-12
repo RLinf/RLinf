@@ -181,6 +181,30 @@ def compute_loss_mask(dones):
     return loss_mask, loss_mask_sum
 
 
+def apply_step_learning_exclusion_mask(
+    loss_mask: torch.Tensor | None,
+    learning_exclusion_mask: torch.Tensor | None,
+) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+    """Compose the effective loss mask with per-step learning exclusion."""
+    if learning_exclusion_mask is None:
+        if loss_mask is None:
+            return None, None
+        loss_mask_sum = loss_mask.sum(dim=(0, 2), keepdim=True).expand_as(loss_mask)
+        return loss_mask, loss_mask_sum
+
+    learning_exclusion_mask = learning_exclusion_mask.to(dtype=torch.bool)
+    if loss_mask is None:
+        loss_mask = torch.ones_like(learning_exclusion_mask, dtype=torch.bool)
+    else:
+        learning_exclusion_mask = learning_exclusion_mask.expand_as(loss_mask)
+
+    effective_loss_mask = loss_mask & (~learning_exclusion_mask)
+    effective_loss_mask_sum = effective_loss_mask.sum(dim=(0, 2), keepdim=True)
+    effective_loss_mask_sum = effective_loss_mask_sum.expand_as(effective_loss_mask)
+
+    return effective_loss_mask, effective_loss_mask_sum
+
+
 def print_metrics_table(
     step: int, total_steps: int, start_time: float, metrics: dict, start_step: int = 0
 ):
