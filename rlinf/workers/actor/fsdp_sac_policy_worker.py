@@ -243,7 +243,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
 
         self.target_update_type = self.cfg.algorithm.get("target_update_type", "all")
         assert self.target_update_type in ["all", "q_head_only"], (
-            f"{self.target_update_type=} is not suppported!"
+            f"{self.target_update_type=} is not supported!"
         )
 
     def _init_target_shadow(self):

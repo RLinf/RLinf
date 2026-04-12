@@ -1,6 +1,6 @@
 # Use PyTorch Profiler in Megatron when inference and training
 
-`rlinf/utils/profiler.py` defines utils to profile megatron when inference and training. 
+`rlinf/utils/profiler.py` defines utils to profile megatron when inference and training.
 
 This document provides an overview of the two main classes in this file: `PyTorchProfiler` and `PyTorchProfilerFunc`.
 
@@ -25,7 +25,7 @@ megatron:
   # ...
   use_profiler: False # If true, enables the torch profiler. Be aware of the performance overhead.
   # ...
-      
+
   profiler: # Configuration for Megatron profiling during inference and training
     output_dir: ${runner.output_dir}/${runner.experiment_name}/profiler
     activities: ["cpu", "cuda"]
@@ -86,6 +86,5 @@ There are three exposed functions in `PyTorchProfiler`:
 
 ### Results Usage
 
-`Parameter Descriptions` section tells profile results will be put into selected `output_dir`, more detaily, it will generate `fwd` and `fwd_bwd` folder in `output_dir`, the former is for inference,  the latter is for training. If you set `export_tensorboard` True, plase see 
+`Parameter Descriptions` section tells profile results will be put into selected `output_dir`, more detaily, it will generate `fwd` and `fwd_bwd` folder in `output_dir`, the former is for inference,  the latter is for training. If you set `export_tensorboard` True, please see
 [Pytorch Profiler Tutorial](https://docs.pytorch.org/tutorials/intermediate/tensorboard_profiler_tutorial.html) for detailed usage.
-
