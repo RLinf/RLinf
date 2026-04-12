@@ -23,6 +23,12 @@ import torch.nn.functional as F
 from gym import spaces
 from torch import Tensor
 
+from rlinf.data.embodied_io_struct import GT_PREFIX_LEARNING_EXCLUDED_KEY
+from rlinf.envs.habitat.gt_prefix import (
+    HABITAT_CURRENT_STEP_KEY,
+    HABITAT_GT_ACTION_VALID_KEY,
+    HABITAT_GT_CURRENT_ACTION_KEY,
+)
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.models.embodiment.cma.modules import (
     CMABasePolicy,
@@ -76,6 +82,10 @@ class CMAConfig:
     # Progress monitor
     use_progress_monitor: bool = False
     progress_monitor_alpha: float = 1.0
+
+    # GT prefix feature (teacher forcing for CMA)
+    use_gt_prefix: bool = False
+    gt_prefix_length: int = 0
 
     def update_from_dict(self, config_dict):
         for key, value in config_dict.items():
@@ -512,6 +522,42 @@ class CMAPolicy(nn.Module, BasePolicy):
 
         return processed_env_obs
 
+    def _resolve_current_action_execution(
+        self,
+        raw_env_obs: dict[str, Any],
+        model_actions: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Resolve the executed action and whether GT-prefix produced it."""
+        if not self.cfg.use_gt_prefix or self.cfg.gt_prefix_length <= 0:
+            return model_actions, torch.zeros_like(model_actions, dtype=torch.bool)
+
+        gt_action_valid = raw_env_obs.get(HABITAT_GT_ACTION_VALID_KEY)
+        gt_current_action = raw_env_obs.get(HABITAT_GT_CURRENT_ACTION_KEY)
+        current_step = raw_env_obs.get(HABITAT_CURRENT_STEP_KEY)
+        if gt_action_valid is None or gt_current_action is None or current_step is None:
+            return model_actions, torch.zeros_like(model_actions, dtype=torch.bool)
+
+        valid_mask = torch.as_tensor(
+            gt_action_valid,
+            device=model_actions.device,
+            dtype=torch.bool,
+        ).reshape_as(model_actions)
+        within_prefix_mask = torch.as_tensor(
+            current_step,
+            device=model_actions.device,
+            dtype=torch.long,
+        ).reshape_as(model_actions) <= int(self.cfg.gt_prefix_length)
+        gt_actions = torch.as_tensor(
+            gt_current_action,
+            device=model_actions.device,
+            dtype=torch.long,
+        ).reshape_as(model_actions)
+        execute_gt_mask = valid_mask & within_prefix_mask
+        executed_actions = torch.where(
+            execute_gt_mask, gt_actions, model_actions.long()
+        )
+        return executed_actions, execute_gt_mask
+
     def predict_action_batch(
         self,
         env_obs,
@@ -519,7 +565,8 @@ class CMAPolicy(nn.Module, BasePolicy):
         **kwargs,
     ):
         """Predict actions for a batch of observations."""
-        env_obs = self.preprocess_env_obs(env_obs=env_obs)
+        raw_env_obs = env_obs
+        env_obs = self.preprocess_env_obs(env_obs=raw_env_obs)
         batch_size = env_obs["rgb"].shape[0]
         device = env_obs["rgb"].device
         current_episode_ids = env_obs["states"]
@@ -567,8 +614,12 @@ class CMAPolicy(nn.Module, BasePolicy):
             action = distribution.mode()
         else:
             raise NotImplementedError(f"{mode=}")
-        prev_logprobs = distribution.log_probs(action)
-        self.rnn_states, self.prev_actions = rnn_states, action
+        executed_action, gt_prefix_learning_excluded = (
+            self._resolve_current_action_execution(raw_env_obs, action)
+        )
+        prev_logprobs = distribution.log_probs(executed_action)
+
+        self.rnn_states, self.prev_actions = rnn_states, executed_action
 
         if hasattr(self, "value_head"):
             chunk_values = self.value_head(features)
@@ -576,7 +627,8 @@ class CMAPolicy(nn.Module, BasePolicy):
             chunk_values = torch.zeros_like(prev_logprobs[..., :1])
 
         forward_inputs = {
-            "action": action.clone(),
+            "action": executed_action.clone(),
+            GT_PREFIX_LEARNING_EXCLUDED_KEY: gt_prefix_learning_excluded.clone(),
             "pre_rnn_states": pre_rnn_states,
             "prev_actions": prev_actions,
             "masks": step_masks,
@@ -591,7 +643,7 @@ class CMAPolicy(nn.Module, BasePolicy):
             "prev_values": chunk_values,
             "forward_inputs": forward_inputs,
         }
-        return action, result
+        return executed_action, result
 
     def forward(self, forward_type="default_forward", **kwargs):
         """Forward pass dispatcher."""

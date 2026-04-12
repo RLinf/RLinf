@@ -71,4 +71,8 @@ ablate_rgb: False
 use_progress_monitor: False
 progress_monitor_alpha: 1.0
 
+# GT prefix feature (teacher forcing for CMA)
+use_gt_prefix: False
+gt_prefix_length: 0
+
 is_lora: False
