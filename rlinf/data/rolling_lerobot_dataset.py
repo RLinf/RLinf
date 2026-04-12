@@ -410,6 +410,12 @@ class RollingLeRobotDataset(Dataset):
             starts (with a warning).
         intervene_flag_key: Parquet / HF column name for the per-frame bool
             flag (default ``"intervene_flag"``).
+        window_size: If set to a positive integer, the dataset length and
+            sampling only cover the last ``window_size`` **physical** frame
+            indices (concatenated shard order), analogous to
+            ``TrajectoryReplayBuffer.sample_window_size`` in
+            :mod:`rlinf.data.replay_buffer` but counted in frames instead of
+            trajectories. ``None`` or ``0`` disables windowing (full history).
     """
 
     def __init__(
@@ -432,6 +438,7 @@ class RollingLeRobotDataset(Dataset):
         # check intervene
         require_all_intervene: bool = False,
         intervene_flag_key: str = "intervene_flag",
+        window_size: int | None = None,
     ) -> None:
         self.root_dir = Path(root_dir)
         self.skip_last_n = skip_last_n
@@ -447,6 +454,9 @@ class RollingLeRobotDataset(Dataset):
         self.cache_ingest_max_frames = cache_ingest_max_frames
         self.require_all_intervene = bool(require_all_intervene)
         self.intervene_flag_key = intervene_flag_key
+        self.window_size = window_size
+        self._window_physical_start: int = 0
+        self._window_valid_slice_lo: int = 0
         self._valid_physical_indices: list[int] | None = None
         self._valid_physical_set: set[int] | None = None
         if self.require_all_intervene:
@@ -491,8 +501,32 @@ class RollingLeRobotDataset(Dataset):
 
     def _logical_to_physical(self, logical_idx: int) -> int:
         if self._valid_physical_indices is None:
+            if self._window_enabled():
+                return self._window_physical_start + int(logical_idx)
             return int(logical_idx)
+        if self._window_enabled():
+            lo = self._window_valid_slice_lo
+            return int(self._valid_physical_indices[lo + int(logical_idx)])
         return int(self._valid_physical_indices[logical_idx])
+
+    def _window_enabled(self) -> bool:
+        return self.window_size is not None and int(self.window_size) > 0
+
+    def _update_window_sampling_bounds(self) -> None:
+        """Recompute first physical index in the tail window and intervene slice offset."""
+        n = self._num_physical_frames()
+        if not self._window_enabled():
+            self._window_physical_start = 0
+            self._window_valid_slice_lo = 0
+            return
+        w = max(0, int(self.window_size))
+        self._window_physical_start = max(0, n - w)
+        if self._valid_physical_indices is not None:
+            self._window_valid_slice_lo = bisect.bisect_left(
+                self._valid_physical_indices, self._window_physical_start
+            )
+        else:
+            self._window_valid_slice_lo = 0
 
     # ------------------------------------------------------------------
     # Index construction
@@ -564,6 +598,7 @@ class RollingLeRobotDataset(Dataset):
             self._total_episodes += getattr(sub_ds, "num_episodes", 0)
             n_new += 1
 
+        self._update_window_sampling_bounds()
         return n_new
 
     def _ensure_lerobot_open(self, ds_idx: int) -> Any:
@@ -685,6 +720,8 @@ class RollingLeRobotDataset(Dataset):
             "total_frames": len(self),
             "total_episodes": self._total_episodes,
             "require_all_intervene": self.require_all_intervene,
+            "window_size": self.window_size,
+            "window_physical_start": self._window_physical_start,
         }
         if self._decoded_cache is not None:
             stats.update(self._decoded_cache.stats())
@@ -692,8 +729,13 @@ class RollingLeRobotDataset(Dataset):
 
     def __len__(self) -> int:
         if self._valid_physical_indices is not None:
+            if self._window_enabled():
+                return len(self._valid_physical_indices) - self._window_valid_slice_lo
             return len(self._valid_physical_indices)
-        return self._cumulative_lengths[-1]
+        n = int(self._cumulative_lengths[-1])
+        if self._window_enabled():
+            return max(0, n - self._window_physical_start)
+        return n
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         with self._rolling_access_lock:
@@ -966,6 +1008,7 @@ def build_rolling_lerobot_dataset(
     cache_ingest_max_frames: int | None = None,
     require_all_intervene: bool = False,
     intervene_flag_key: str = "intervene_flag",
+    window_size: int | None = None,
 ) -> RollingLeRobotDataset:
     """Build a :class:`RollingLeRobotDataset` for rolling data collection.
 
@@ -996,6 +1039,7 @@ def build_rolling_lerobot_dataset(
         cache_ingest_max_frames: Max ingests per ``refresh()`` (``None`` = unlimited).
         require_all_intervene: See :class:`RollingLeRobotDataset`.
         intervene_flag_key: Column name for the per-frame intervention flag.
+        window_size: See :class:`RollingLeRobotDataset`.
 
     Returns:
         A :class:`RollingLeRobotDataset` instance.
@@ -1017,12 +1061,14 @@ def build_rolling_lerobot_dataset(
         cache_ingest_max_frames=cache_ingest_max_frames,
         require_all_intervene=require_all_intervene,
         intervene_flag_key=intervene_flag_key,
+        window_size=window_size,
     )
 
     logger.info(
         "[build_rolling_lerobot_dataset] root_dir=%s, chunk_size=%d, "
         "skip_last_n=%d, sub_datasets=%d, logical_samples=%d, "
-        "physical_frames=%d, decoded_cache=%s, require_all_intervene=%s",
+        "physical_frames=%d, decoded_cache=%s, require_all_intervene=%s, "
+        "window_size=%s",
         root_dir,
         chunk_size,
         skip_last_n,
@@ -1031,6 +1077,7 @@ def build_rolling_lerobot_dataset(
         dataset._num_physical_frames(),
         enable_decoded_cache,
         require_all_intervene,
+        window_size,
     )
 
     return dataset
