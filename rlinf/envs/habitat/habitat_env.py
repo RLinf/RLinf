@@ -31,6 +31,10 @@ from rlinf.envs.habitat.extensions.utils import (
     observations_to_image,
     resize_observation_images,
 )
+from rlinf.envs.habitat.gt_prefix import (
+    build_gt_prefix_metadata,
+    encode_episode_state_ids,
+)
 from rlinf.envs.habitat.venv import HabitatRLEnv, ReconfigureSubprocEnv
 from rlinf.envs.utils import (
     list_of_dict_to_dict_of_list,
@@ -336,13 +340,23 @@ class HabitatEnv(gym.Env):
             token_list.append(token)
 
         image_tensor = to_tensor(list_of_dict_to_dict_of_list(image_list))
-        episode_ids = self.env.get_current_episode_ids()
+        episode_metadata = self.env.get_current_episode_metadata()
+        episode_ids = [metadata["episode_id"] for metadata in episode_metadata]
+        gt_prefix_metadata = build_gt_prefix_metadata(
+            episode_ids=episode_ids,
+            elapsed_steps=self.elapsed_steps.tolist(),
+            episode_gt_action_sequences=[
+                metadata.get("gt_action_sequence") for metadata in episode_metadata
+            ],
+            valid_action_ids=self.action_map.keys(),
+        )
 
         obs = {}
         obs["main_images"] = image_tensor["rgb"].clone()  # [N_ENV, H, W, C]
         obs["wrist_images"] = token_list  # Temporarily use wrist_images to store tokens
         obs["task_descriptions"] = task_descs
-        obs["states"] = torch.tensor(episode_ids, dtype=torch.int64)
+        obs["states"] = encode_episode_state_ids(episode_ids)
+        obs.update(gt_prefix_metadata)
 
         if "depth" in image_tensor:
             depth_tensor = image_tensor["depth"].clone()

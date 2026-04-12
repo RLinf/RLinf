@@ -28,6 +28,8 @@ from rlinf.utils.nested_dict_process import (
     stack_list_of_dict_tensor,
 )
 
+GT_PREFIX_LEARNING_EXCLUDED_KEY = "gt_prefix_learning_excluded"
+
 
 def get_model_weights_id(versions: torch.Tensor) -> str:
     """
@@ -103,13 +105,18 @@ class EnvOutput:
             else None
         )
 
-        return {
+        prepared_obs = {
             "main_images": image_tensor,  # [N_ENV, H, W, C]
             "wrist_images": wrist_image_tensor,  # [N_ENV, H, W, C] or [N_ENV, N_IMG, H, W, C]
             "extra_view_images": extra_view_image_tensor,  # [N_ENV, N_IMG, H, W, C]
             "states": states,
             "task_descriptions": task_descriptions,
         }
+        for key, value in obs.items():
+            if key not in prepared_obs:
+                prepared_obs[key] = value
+
+        return prepared_obs
 
     @staticmethod
     def merge_env_outputs(env_outputs: list[dict]) -> dict[str, Any]:
