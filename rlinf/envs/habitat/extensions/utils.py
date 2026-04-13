@@ -72,11 +72,6 @@ def observations_to_image(
             observation_size = observation["depth"].shape[0]
         depth_map = (observation["depth"].squeeze() * 255).astype(np.uint8)
         depth_map = np.stack([depth_map for _ in range(3)], axis=2)
-        depth_map = cv2.resize(
-            depth_map,
-            dsize=(observation_size, observation_size),
-            interpolation=cv2.INTER_CUBIC,
-        )
         egocentric_view["depth"] = depth_map
 
     assert len(egocentric_view) > 0, "Expected at least one visual sensor enabled."
@@ -110,16 +105,6 @@ def observations_to_image(
         if td_map.shape[0] > td_map.shape[1]:
             td_map = np.rot90(td_map, 1)
 
-        # scale top down map to align with rgb view
-        old_h, old_w, _ = td_map.shape
-        top_down_height = observation_size
-        top_down_width = int(float(top_down_height) / old_h * old_w)
-        # cv2 resize (dsize is width first)
-        td_map = cv2.resize(
-            td_map,
-            (top_down_width, top_down_height),
-            interpolation=cv2.INTER_CUBIC,
-        )
         egocentric_view["top_down_map"] = td_map
 
     return egocentric_view
