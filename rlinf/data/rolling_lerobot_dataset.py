@@ -439,6 +439,15 @@ class RollingLeRobotDataset(Dataset):
             cannot return live :class:`~lerobot.common.datasets.lerobot_dataset.LeRobotDataset`
             handles to the parent for ``out_open_handles`` / decoded-cache
             ingest without reopening every shard.
+        cache_ingest_rank: Rank of the current process for sharding cache
+            ingest across distributed workers.  When ``cache_ingest_world_size
+            > 1``, only every ``cache_ingest_world_size``-th index (offset
+            by ``cache_ingest_rank``) is ingested, so each rank pre-fills a
+            disjoint slice of the frame space — reducing total CPU memory by
+            roughly ``cache_ingest_world_size`` x.  Defaults to ``0``.
+        cache_ingest_world_size: Total number of distributed replicas
+            participating in cache ingest sharding.  ``1`` (default) disables
+            sharding and ingests all indices (original behavior).
     """
 
     def __init__(
@@ -463,6 +472,8 @@ class RollingLeRobotDataset(Dataset):
         intervene_flag_key: str = "intervene_flag",
         window_size: int | None = None,
         index_load_workers: int = 1,
+        cache_ingest_rank: int = 0,
+        cache_ingest_world_size: int = 1,
     ) -> None:
         self.root_dir = Path(root_dir)
         self.skip_last_n = skip_last_n
@@ -480,6 +491,8 @@ class RollingLeRobotDataset(Dataset):
         self.intervene_flag_key = intervene_flag_key
         self.window_size = window_size
         self._index_load_workers = max(1, int(index_load_workers))
+        self._cache_ingest_rank = int(cache_ingest_rank)
+        self._cache_ingest_world_size = max(1, int(cache_ingest_world_size))
         self._window_physical_start: int = 0
         self._window_valid_slice_lo: int = 0
         self._valid_physical_indices: list[int] | None = None
@@ -797,6 +810,8 @@ class RollingLeRobotDataset(Dataset):
                 uniq.append(i)
         if self._valid_physical_set is not None:
             uniq = [i for i in uniq if i in self._valid_physical_set]
+        if self._cache_ingest_world_size > 1:
+            uniq = uniq[self._cache_ingest_rank :: self._cache_ingest_world_size]
         lim = self.cache_ingest_max_frames
         if lim is not None:
             uniq = uniq[: int(lim)]
@@ -1161,6 +1176,8 @@ def build_rolling_lerobot_dataset(
     intervene_flag_key: str = "intervene_flag",
     window_size: int | None = None,
     index_load_workers: int = 1,
+    cache_ingest_rank: int = 0,
+    cache_ingest_world_size: int = 1,
 ) -> RollingLeRobotDataset:
     """Build a :class:`RollingLeRobotDataset` for rolling data collection.
 
@@ -1195,6 +1212,8 @@ def build_rolling_lerobot_dataset(
         index_load_workers: Parallel thread count for opening sub-datasets
             during index build (``1`` = sequential).  See
             :class:`RollingLeRobotDataset`.
+        cache_ingest_rank: See :class:`RollingLeRobotDataset`.
+        cache_ingest_world_size: See :class:`RollingLeRobotDataset`.
 
     Returns:
         A :class:`RollingLeRobotDataset` instance.
@@ -1218,6 +1237,8 @@ def build_rolling_lerobot_dataset(
         intervene_flag_key=intervene_flag_key,
         window_size=window_size,
         index_load_workers=index_load_workers,
+        cache_ingest_rank=cache_ingest_rank,
+        cache_ingest_world_size=cache_ingest_world_size,
     )
 
     logger.info(
