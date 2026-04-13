@@ -131,6 +131,13 @@ jobs:
           bash requirements/install.sh embodied --model openvla-oft --env behavior
           rm -rf .venv
 
+      - name: Install roboverse
+        run: |
+          pip install uv
+          uv cache prune --ci
+          bash requirements/install.sh embodied --model openpi --env roboverse
+          rm -rf .venv
+
       - name: Install docs
         run: |
           pip install uv

@@ -20,6 +20,7 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
+from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForVision2Seq
@@ -93,6 +94,9 @@ class FSDPModelManager:
 
         self.is_weight_offloaded = False
         self.is_optimizer_offloaded = False
+
+        # Bucket capacity for weight sync (in bytes), default 128MB
+        self.bucket_capacity = cfg.get("sync_bucket_capacity", 128 * 1024 * 1024)
 
     def _create_amp_context(self) -> ContextManager:
         """
@@ -623,3 +627,36 @@ class FSDPModelManager:
         return self._strategy.before_micro_batch(
             model=model, is_last_micro_batch=is_last_micro_batch
         )
+
+    def divide_model_to_bucket(self, state_dict, agent_and_has_visual=False):
+        bucket_capacity = self.bucket_capacity
+        model_bucket_list = []
+        current_capacity = 0
+        model_bucket = {}
+        for key, val in state_dict.items():
+            name = key
+            if "_extra_state" in name:
+                continue
+            if agent_and_has_visual:
+                # for agent, we use sglang backend so the name mapping is needed
+                if name.startswith("model.language_model."):
+                    name = "model." + name[21:]
+
+            model_bucket[name] = val
+            if isinstance(val, DTensor):
+                current_capacity += (
+                    val.numel()
+                    * val.element_size()
+                    * torch.distributed.get_world_size()
+                )
+            else:
+                current_capacity += val.numel() * val.element_size()
+
+            if current_capacity >= bucket_capacity:
+                model_bucket_list.append(model_bucket)
+                current_capacity = 0
+                model_bucket = {}
+
+        if len(model_bucket) > 0:
+            model_bucket_list.append(model_bucket)
+        return model_bucket_list

@@ -183,6 +183,16 @@ def prepare_actions_for_mujoco(raw_chunk_actions, model_type):
     return chunk_actions
 
 
+def prepare_actions_for_roboverse(
+    raw_chunk_actions,
+    model_type,
+) -> np.ndarray:
+    chunk_actions = raw_chunk_actions
+    if SupportedModel(model_type) == SupportedModel.OPENPI:
+        chunk_actions[..., -1] = np.where(chunk_actions[..., -1] < 0.0, 1.0, 0.0)
+    return chunk_actions
+
+
 def prepare_actions(
     raw_chunk_actions,
     env_type: str,
@@ -251,6 +261,11 @@ def prepare_actions(
         chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.FRANKASIM:
         chunk_actions = prepare_actions_for_mujoco(
+            raw_chunk_actions=raw_chunk_actions,
+            model_type=model_type,
+        )
+    elif env_type == SupportedEnvType.ROBOVERSE:
+        chunk_actions = prepare_actions_for_roboverse(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
