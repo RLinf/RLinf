@@ -1057,17 +1057,17 @@ class EnvWorker(Worker):
         reward_channel: Channel | None,
         actor_channel: Channel | None = None,
     ):
-        env_metrics = await self._run_interact_once(
-            input_channel,
-            rollout_channel,
-            reward_channel,
-            actor_channel,
-            cooperative_yield=False,
-        )
-
-        for env in self.env_list:
-            if self.enable_offload and hasattr(env, "offload"):
-                env.offload()
+        with self.device_lock:
+            env_metrics = await self._run_interact_once(
+                input_channel,
+                rollout_channel,
+                reward_channel,
+                actor_channel,
+                cooperative_yield=False,
+            )
+            for env in self.env_list:
+                if self.enable_offload and hasattr(env, "offload"):
+                    env.offload()
 
         return env_metrics
 
