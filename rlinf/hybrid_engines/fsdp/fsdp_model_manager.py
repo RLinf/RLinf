@@ -62,6 +62,13 @@ class FSDPModelManager:
         self._cfg = cfg
         self._logger = get_logger()
         self.torch_dtype = torch_dtype_from_precision(self._cfg.model.precision)
+        if self.torch_dtype != torch.float32:
+            self._logger.warning("Provided there is sufficient GPU memory, "
+                                 "set the actor.model.precision parameter to fp32 "
+                                 "to allow the optimizer to run in fp32 for better convergence. "
+                                 "Meanwhile, setting mixed_precision.param_dtype to 16-bit dtype "
+                                 "can help maximize speed, as it will automatically "
+                                 "convert fp32 to fp16 during operator execution.")
 
         self.optimizer_steps = 0
         self.critic_warmup_steps = 0
@@ -250,7 +257,9 @@ class FSDPModelManager:
         # Enable gradient checkpointing if configured
         if self._cfg.fsdp_config.get("gradient_checkpointing", False):
             self._logger.info("[FSDP] Enabling gradient checkpointing")
-            module.gradient_checkpointing_enable()
+            use_reentrant = self._cfg.fsdp_config.get("gradient_checkpointing_use_reentrant", True)
+            module.gradient_checkpointing_enable(
+                gradient_checkpointing_kwargs={"use_reentrant": use_reentrant})
         else:
             self._logger.info("[FSDP] Gradient checkpointing is disabled")
 

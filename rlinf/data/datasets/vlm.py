@@ -16,11 +16,13 @@ import ast
 import json
 import logging
 import os
+import re
 from io import BytesIO
 from typing import Any, Callable, Optional, Union
 
 import pandas as pd
 import torch
+import numpy as np
 from omegaconf import DictConfig
 from PIL import Image
 from torch.utils.data import Dataset
@@ -30,7 +32,33 @@ from transformers import AutoProcessor, AutoTokenizer
 from rlinf.data.datasets.item import DatasetItem, SftDatasetItem
 from rlinf.data.utils import batch_pad_to_fixed_len
 
+class VLMDatasetRegistry:
+    registry: dict[str, Callable[..., "VLMBaseDataset"]] = {}
 
+    @classmethod
+    def register(
+        cls, name: str
+    ) -> Callable[[Callable[..., "VLMBaseDataset"]], Callable[..., "VLMBaseDataset"]]:
+        def decorator(klass: Callable[..., "VLMBaseDataset"]):
+            cls.registry[name] = klass
+            return klass
+
+        return decorator
+
+    @classmethod
+    def create(
+        cls,
+        dataset_name: Optional[str],
+        *,
+        data_paths: Union[list[str], str],
+        config: DictConfig,
+        tokenizer: AutoTokenizer,
+    ) -> "VLMBaseDataset":
+        key = dataset_name.lower()
+        dataset_class = cls.registry.get(key)
+        return dataset_class(data_paths=data_paths, config=config, tokenizer=tokenizer)
+
+@VLMDatasetRegistry.register("base")
 class VLMBaseDataset(Dataset):
     def __init__(
         self,
@@ -47,7 +75,9 @@ class VLMBaseDataset(Dataset):
         # Delay processor creation; only needed when use_chat_template is True
         self._processor = None
 
+        # The system_prompt has role="system", but prepend_prompt is simply concatenated before the dataset prompt with role="user".
         self.system_prompt = config.data.get("system_prompt", None)
+        self.prepend_prompt = config.data.get("prepend_prompt", None)
         self.use_chat_template = bool(config.data.use_chat_template)
         self.image_keys = list(config.data.image_keys or [])
         self.prompt_key = config.data.prompt_key
@@ -106,6 +136,9 @@ class VLMBaseDataset(Dataset):
                 images.append(v)
             elif isinstance(v, dict) and "bytes" in v:
                 images.append(v["bytes"])
+            elif isinstance(v, np.ndarray) and 'bytes' in v[0]: # TODO check if necessary
+                for p in v:
+                    images.append(p['bytes'])
             else:
                 images.append(v)  # path or url
         if not images:
@@ -144,9 +177,26 @@ class VLMBaseDataset(Dataset):
                 )
 
             content: list[dict[str, Any]] = []
-            for _ in range(max(0, len(images))):
-                content.append({"type": "image"})
-            content.append({"type": "text", "text": prompt_text})
+
+            if self.prepend_prompt is not None:
+                content.append({"type": "text", "text": self.prepend_prompt})
+
+            # Parse prompt_text for image placeholders and interleave text segments with images
+            parts = re.split(r"<image>", prompt_text)
+            if len(parts) == 1:
+                # No placeholder found, fall back to original logic
+                for _ in range(max(0, len(images))):
+                    content.append({"type": "image"})
+                content.append({"type": "text", "text": prompt_text})
+            else:
+                for i, part in enumerate(parts):
+                    if part:
+                        content.append({"type": "text", "text": part})
+                    if i < len(parts) - 1:
+                        content.append({"type": "image"})
+            # TODO: verify this
+            print(f'VLMData: contents are {content}')
+
             messages.append({"role": "user", "content": content})
             rendered = self._processor.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
@@ -159,6 +209,12 @@ class VLMBaseDataset(Dataset):
                     image_obj = image.convert("RGB")
                 if isinstance(image, (bytes, bytearray)):
                     image_obj = Image.open(BytesIO(image)).convert("RGB")
+                if image_obj is None:
+                    raise ValueError(
+                        f"Unsupported image type: {type(image).__name__}. "
+                        f"Expected PIL.Image.Image, bytes, or bytearray."
+                    )
+
                 images_inputs.append(image_obj)
 
             inputs = self._processor(
@@ -356,37 +412,6 @@ class VLMBaseDataset(Dataset):
             multi_modal_inputs=multi_modal_inputs,
         )
         return self.postprocess_dataset_item(item, raw)
-
-
-class VLMDatasetRegistry:
-    registry: dict[str, Callable[..., VLMBaseDataset]] = {}
-
-    @classmethod
-    def register(
-        cls, name: str
-    ) -> Callable[[Callable[..., VLMBaseDataset]], Callable[..., VLMBaseDataset]]:
-        def decorator(klass: Callable[..., VLMBaseDataset]):
-            cls.registry[name] = klass
-            return klass
-
-        return decorator
-
-    @classmethod
-    def create(
-        cls,
-        dataset_name: Optional[str],
-        *,
-        data_paths: Union[list[str], str],
-        config: DictConfig,
-        tokenizer: AutoTokenizer,
-        **kwargs,
-    ) -> VLMBaseDataset:
-        key = dataset_name.lower()
-        dataset_class = cls.registry.get(key)
-        return dataset_class(
-            data_paths=data_paths, config=config, tokenizer=tokenizer, **kwargs
-        )
-
 
 @VLMDatasetRegistry.register("robo2vlm")
 class Robo2VLMDataset(VLMBaseDataset):

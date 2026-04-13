@@ -372,7 +372,7 @@ def choice_answer_clean(pred: str):
     return pred
 
 
-def extract_answer(pred_str, data_name, use_last_number=True):
+def extract_answer(pred_str, data_name, use_last_number=True, must_match_pattern=True):
     pred_str = pred_str.replace("\u043a\u0438", "")
     if data_name in ["mmlu_stem", "sat_math", "aqua", "gaokao2023"]:
         return choice_answer_clean(pred_str)
@@ -418,7 +418,10 @@ def extract_answer(pred_str, data_name, use_last_number=True):
             else:
                 pred = ""
         else:
-            pred = ""
+            if must_match_pattern:
+                pred = ""
+            else:
+                pred = pred_str
 
     # choice answer
     if data_name in ["sat_math", "aqua"] or "mmlu" in data_name:
