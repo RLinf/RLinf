@@ -174,6 +174,11 @@ class DecodedTensorFifoCache:
             self._global_to_slot[global_idx] = slot
             self._next_slot = (slot + 1) % self.capacity
 
+    def cached_indices(self) -> frozenset[int]:
+        """Return the global frame indices currently stored in the cache."""
+        with self._lock:
+            return frozenset(self._global_to_slot.keys())
+
     def stats(self) -> dict[str, Any]:
         with self._lock:
             return {
@@ -934,6 +939,31 @@ class RollingLeRobotDataset(Dataset):
             return max(0, n - self._window_physical_start)
         return n
 
+    def get_cache_aligned_logical_indices(self) -> list[int] | None:
+        """Return logical indices whose physical counterparts are in this rank's decoded cache.
+
+        When ``cache_ingest_world_size > 1``, each rank only ingests a strided
+        shard of physical frame indices.  The
+        :class:`~rlinf.data.utils.DistributedRandomReplacementSampler`, however,
+        draws logical indices uniformly — which can land on physical indices not
+        present in this rank's cache, causing misses.
+
+        This method returns the subset of logical indices ``[0, len(self))``
+        whose physical counterparts are currently cached, so a cache-aligned
+        sampler can restrict drawing to those indices only.
+
+        Returns ``None`` when alignment is unnecessary (no decoded cache, or
+        ``cache_ingest_world_size <= 1``).
+        """
+        if self._decoded_cache is None or self._cache_ingest_world_size <= 1:
+            return None
+        cached = self._decoded_cache.cached_indices()
+        if not cached:
+            return None
+        n = len(self)
+        aligned = [l for l in range(n) if self._logical_to_physical(l) in cached]
+        return aligned if aligned else None
+
     def __getitem__(self, idx: int) -> dict[str, Any]:
         with self._rolling_access_lock:
             physical = self._logical_to_physical(int(idx))
@@ -1053,8 +1083,18 @@ class PreloadRollingLeRobotDataset:
     # ------------------------------------------------------------------
 
     def _build_loader(self) -> DataLoader:
-        """Build a fresh DataLoader using the cached construction kwargs."""
-        return build_dataloader_from_dataset(dataset=self.dataset, **self._dl_kwargs)
+        """Build a fresh DataLoader using the cached construction kwargs.
+
+        Recomputes cache-aligned indices from the dataset's current cache
+        state so that each rebuilt loader (after a refresh) only draws from
+        logical indices backed by this rank's decoded cache shard.
+        """
+        aligned = self.dataset.get_cache_aligned_logical_indices()
+        return build_dataloader_from_dataset(
+            dataset=self.dataset,
+            cache_aligned_indices=aligned,
+            **self._dl_kwargs,
+        )
 
     def _sample_worker(self) -> None:
         """Background thread: iterate DataLoader epochs and enqueue batches.

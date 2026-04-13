@@ -82,7 +82,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         )
 
     def _build_lerobot_data_loader(self):
-
+        aligned = self.dataset.get_cache_aligned_logical_indices()
         self.data_loader = build_dataloader_from_dataset(
             dataset=self.dataset,
             batch_size=self.cfg.actor.micro_batch_size * self._world_size,
@@ -92,6 +92,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             num_samples_per_epoch=self.cfg.actor.global_batch_size,
             seed=self.cfg.actor.get("seed", 42),
             num_workers=self._lerobot_num_workers,
+            cache_aligned_indices=aligned,
         )
         if hasattr(self.data_loader.sampler, "set_epoch"):
             self.data_loader.sampler.set_epoch(self._data_epoch)
