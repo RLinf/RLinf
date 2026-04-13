@@ -90,7 +90,7 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             self.preload_dataset if self.preload_dataset is not None else self.dataset
         )
         while True:
-            refresher.refresh()
+            refresher.refresh_one()
             if self.dataset.is_ready():
                 if self.preload_dataset is None:
                     self._build_lerobot_data_loader()

@@ -821,6 +821,51 @@ class RollingLeRobotDataset(Dataset):
     # Public API
     # ------------------------------------------------------------------
 
+    def _refresh_impl(self, new_paths: list[Path]) -> int:
+        """Shared implementation for :meth:`refresh` and :meth:`refresh_one`.
+
+        Indexes *new_paths*, optionally ingests them into the decoded cache,
+        and cleans up transient open handles.
+
+        Returns:
+            Number of new sub-datasets successfully added.
+        """
+        if not new_paths:
+            return 0
+        physical_before = self._num_physical_frames()
+        n_new = 0
+        reuse_handles: dict[Path, Any] = {}
+        with self._rolling_access_lock:
+            try:
+                n_new = self._build_index(
+                    new_paths,
+                    out_open_handles=(
+                        reuse_handles if self._decoded_cache is not None else None
+                    ),
+                )
+                physical_after = self._num_physical_frames()
+                if n_new > 0:
+                    logger.info(
+                        "[RollingLeRobotDataset] refresh: +%d sub-dataset(s), "
+                        "physical_frames=%d logical_samples=%d",
+                        n_new,
+                        physical_after,
+                        len(self),
+                    )
+                if self._decoded_cache is not None:
+                    self._ingest_decoded_cache(
+                        physical_before,
+                        physical_after,
+                        n_new,
+                        reuse_open_by_path=reuse_handles or None,
+                    )
+            finally:
+                reuse_handles.clear()
+                if self._decoded_cache is not None:
+                    self._lerobot_open = None
+                    self._lerobot_open_idx = None
+        return n_new
+
     def refresh(self) -> int:
         """Re-scan ``root_dir`` and load any newly completed sub-datasets.
 
@@ -839,44 +884,30 @@ class RollingLeRobotDataset(Dataset):
         Returns:
             Number of new sub-datasets added (0 if nothing changed).
         """
-        physical_before = self._num_physical_frames()
         safe = _discover_safe_datasets(self.root_dir, self.skip_last_n)
         new_paths = [p for p in safe if p not in self._indexed_datasets]
-        n_new = 0
-        reuse_handles: dict[Path, Any] = {}
-        with self._rolling_access_lock:
-            try:
-                if new_paths:
-                    n_new = self._build_index(
-                        new_paths,
-                        out_open_handles=(
-                            reuse_handles if self._decoded_cache is not None else None
-                        ),
-                    )
-                    physical_after = self._num_physical_frames()
-                    logical = len(self)
-                    logger.info(
-                        "[RollingLeRobotDataset] refresh: +%d sub-dataset(s), "
-                        "physical_frames=%d logical_samples=%d",
-                        n_new,
-                        physical_after,
-                        logical,
-                    )
-                else:
-                    physical_after = physical_before
-                if self._decoded_cache is not None:
-                    self._ingest_decoded_cache(
-                        physical_before,
-                        physical_after,
-                        n_new,
-                        reuse_open_by_path=reuse_handles or None,
-                    )
-            finally:
-                reuse_handles.clear()
-                if self._decoded_cache is not None:
-                    self._lerobot_open = None
-                    self._lerobot_open_idx = None
-        return n_new
+        return self._refresh_impl(new_paths)
+
+    def refresh_one(self) -> int:
+        """Re-scan ``root_dir`` and load at most **one** new sub-dataset.
+
+        Designed to be called repeatedly in a polling loop (e.g. every
+        training step or via ``await asyncio.sleep``) so that each
+        invocation performs bounded I/O — at most one shard is opened,
+        indexed, and optionally ingested into the decoded cache.
+
+        The discovery order is deterministic (rank ascending, then id
+        ascending), so successive calls pick up shards in the order they
+        were produced.
+
+        Returns:
+            ``1`` if a new sub-dataset was added, ``0`` otherwise.
+        """
+        safe = _discover_safe_datasets(self.root_dir, self.skip_last_n)
+        new_paths = [p for p in safe if p not in self._indexed_datasets]
+        if not new_paths:
+            return 0
+        return self._refresh_impl(new_paths[:1])
 
     def get_stats(self) -> dict[str, Any]:
         stats: dict[str, Any] = {
@@ -1128,6 +1159,22 @@ class PreloadRollingLeRobotDataset:
             Number of new sub-datasets added (0 if nothing changed).
         """
         n_new = self.dataset.refresh()
+        if n_new > 0:
+            with self._loader_lock:
+                self._loader = self._build_loader()
+        return n_new
+
+    def refresh_one(self) -> int:
+        """Like :meth:`refresh`, but loads at most one new sub-dataset.
+
+        Delegates to :meth:`RollingLeRobotDataset.refresh_one` and rebuilds
+        the DataLoader when a new shard is picked up.  Call repeatedly in a
+        polling loop for incremental, bounded-cost refreshes.
+
+        Returns:
+            ``1`` if a new sub-dataset was added, ``0`` otherwise.
+        """
+        n_new = self.dataset.refresh_one()
         if n_new > 0:
             with self._loader_lock:
                 self._loader = self._build_loader()
