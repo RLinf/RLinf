@@ -430,11 +430,16 @@ class RollingLeRobotDataset(Dataset):
         intervene_flag_key: Parquet / HF column name for the per-frame bool
             flag (default ``"intervene_flag"``).
         window_size: If set to a positive integer, the dataset length and
-            sampling only cover the last ``window_size`` **physical** frame
-            indices (concatenated shard order), analogous to
+            sampling only cover the last ``window_size`` **logical** frames
+            (i.e. frames actually exposed to the sampler).  When
+            ``require_all_intervene`` is active, logical frames are the
+            intervene-valid subset, so ``window_size=1000`` always means
+            "the last 1000 usable samples" regardless of intervene density.
+            Without intervene filtering logical == physical, so the behavior
+            is equivalent to a physical-frame window.  Analogous to
             ``TrajectoryReplayBuffer.sample_window_size`` in
             :mod:`rlinf.data.replay_buffer` but counted in frames instead of
-            trajectories. ``None`` or ``0`` disables windowing (full history).
+            trajectories.  ``None`` or ``0`` disables windowing (full history).
         index_load_workers: How many threads may open distinct sub-dataset
             paths in parallel during :meth:`refresh` / initial index build.
             ``1`` keeps the original sequential behavior.  Values ``> 1``
@@ -556,19 +561,38 @@ class RollingLeRobotDataset(Dataset):
         return self.window_size is not None and int(self.window_size) > 0
 
     def _update_window_sampling_bounds(self) -> None:
-        """Recompute first physical index in the tail window and intervene slice offset."""
+        """Recompute window slice offsets so ``window_size`` caps **logical** frames.
+
+        *Logical frames* are the frames actually exposed by ``__len__`` /
+        ``__getitem__``: when ``require_all_intervene`` is active they are the
+        intervene-valid subset; otherwise every physical frame is logical.
+
+        Without intervene filtering (``_valid_physical_indices is None``),
+        physical == logical, so ``_window_physical_start`` is set to
+        ``max(0, total_physical - window_size)`` exactly as before.
+
+        With intervene filtering, the last ``window_size`` entries of
+        ``_valid_physical_indices`` are kept, making the user-facing dataset
+        length deterministic (``min(num_valid, window_size)``).
+        """
         n = self._num_physical_frames()
         if not self._window_enabled():
             self._window_physical_start = 0
             self._window_valid_slice_lo = 0
             return
         w = max(0, int(self.window_size))
-        self._window_physical_start = max(0, n - w)
         if self._valid_physical_indices is not None:
-            self._window_valid_slice_lo = bisect.bisect_left(
-                self._valid_physical_indices, self._window_physical_start
+            self._window_valid_slice_lo = max(
+                0, len(self._valid_physical_indices) - w
             )
+            if self._window_valid_slice_lo < len(self._valid_physical_indices):
+                self._window_physical_start = self._valid_physical_indices[
+                    self._window_valid_slice_lo
+                ]
+            else:
+                self._window_physical_start = n
         else:
+            self._window_physical_start = max(0, n - w)
             self._window_valid_slice_lo = 0
 
     # ------------------------------------------------------------------
@@ -1295,7 +1319,8 @@ def build_rolling_lerobot_dataset(
         cache_ingest_max_frames: Max ingests per ``refresh()`` (``None`` = unlimited).
         require_all_intervene: See :class:`RollingLeRobotDataset`.
         intervene_flag_key: Column name for the per-frame intervention flag.
-        window_size: See :class:`RollingLeRobotDataset`.
+        window_size: Caps the dataset to the last ``window_size`` **logical**
+            frames.  See :class:`RollingLeRobotDataset`.
         index_load_workers: Parallel thread count for opening sub-datasets
             during index build (``1`` = sequential).  See
             :class:`RollingLeRobotDataset`.
