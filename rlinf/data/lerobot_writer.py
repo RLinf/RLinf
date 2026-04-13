@@ -17,9 +17,9 @@
 import gc
 from typing import Any
 
-from rlinf.utils.logging import get_logger
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
+from rlinf.utils.logging import get_logger
 
 
 class LeRobotDatasetWriter:
@@ -34,10 +34,10 @@ class LeRobotDatasetWriter:
             fps=5,
             features={...}
         )
-        
+
         for episode_data in episodes:
             writer.add_episode(episode_data)
-        
+
         writer.finalize(push_to_hub=False)
     """
 
@@ -46,8 +46,6 @@ class LeRobotDatasetWriter:
         self.dataset: LeRobotDataset | None = None
         self.logger = get_logger()
 
-
-    
     def create(
         self,
         repo_id: str,
@@ -87,22 +85,22 @@ class LeRobotDatasetWriter:
             features = {
                 "state": {
                     "dtype": "float32",
-                    "shape": (state_dim, ),
+                    "shape": (state_dim,),
                     "names": ["state"],
                 },
                 "actions": {
                     "dtype": "float32",
-                    "shape": (action_dim, ),
+                    "shape": (action_dim,),
                     "names": ["actions"],
                 },
                 "done": {
                     "dtype": "bool",
-                    "shape": (1, ),
+                    "shape": (1,),
                     "names": ["done"],
                 },
                 "is_success": {
                     "dtype": "bool",
-                    "shape": (1, ),
+                    "shape": (1,),
                     "names": ["is_success"],
                 },
             }
@@ -131,7 +129,9 @@ class LeRobotDatasetWriter:
                     "names": ["height", "width", "channel"],
                 }
 
-        self.logger.info(f"Creating LeRobot dataset: repo_id={repo_id}, robot_type={robot_type}, fps={fps}")
+        self.logger.info(
+            f"Creating LeRobot dataset: repo_id={repo_id}, robot_type={robot_type}, fps={fps}"
+        )
         self.dataset = LeRobotDataset.create(
             repo_id=repo_id,
             robot_type=robot_type,
@@ -165,30 +165,37 @@ class LeRobotDatasetWriter:
             self.logger.warning("Empty episode_data provided, skipping.")
             return
         for frame_data in episode_data:
-
             self.dataset.add_frame(frame_data)
 
         self.dataset.save_episode()
-        self.logger.info(f"Saved episode with {len(episode_data)} frames, task: '{episode_data[0].get('task', 'N/A')}'")
+        self.logger.info(
+            f"Saved episode with {len(episode_data)} frames, task: '{episode_data[0].get('task', 'N/A')}'"
+        )
 
     def finalize(self) -> None:
         """Finalize the dataset and properly clean up all resources."""
         if self.dataset is None:
             raise RuntimeError("Dataset not created. Call create() first.")
-        
-        if hasattr(self.dataset, 'image_writer') and self.dataset.image_writer is not None:
+
+        if (
+            hasattr(self.dataset, "image_writer")
+            and self.dataset.image_writer is not None
+        ):
             self.dataset.image_writer.wait_until_done()
-        
-        if hasattr(self.dataset, 'image_writer') and self.dataset.image_writer is not None:
+
+        if (
+            hasattr(self.dataset, "image_writer")
+            and self.dataset.image_writer is not None
+        ):
             self.dataset.image_writer.stop()
             self.dataset.image_writer = None
-        
-        if hasattr(self.dataset, 'episode_buffer'):
+
+        if hasattr(self.dataset, "episode_buffer"):
             self.dataset.episode_buffer = None
-        
-        if hasattr(self.dataset, 'hf_dataset'):
+
+        if hasattr(self.dataset, "hf_dataset"):
             self.dataset.hf_dataset = None
-        
+
         del self.dataset
         self.dataset = None
         gc.collect()

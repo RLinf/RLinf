@@ -218,7 +218,7 @@ class CollectEpisode(gym.Wrapper):
                 else truncations
             )
             step_info = (
-                copy.deepcopy(infos_list[step_idx]) 
+                copy.deepcopy(infos_list[step_idx])
                 if isinstance(infos_list, (list, tuple))
                 else infos_list
             )
@@ -424,11 +424,13 @@ class CollectEpisode(gym.Wrapper):
         first_term_step: Optional[int] = None
         for i, action in enumerate(actions):
             obs = obs_steps[i] if i < len(obs_steps) else None
-            image, wrist_image, extra_view_image, state = self._extract_obs_image_state(obs)
+            image, wrist_image, extra_view_image, state = self._extract_obs_image_state(
+                obs
+            )
             # Overwrite action with intervene action if present.
             np_action = self._to_numpy(action)
-            assert "final_info" not in buf["infos"][i+1]
-            info_with_intervene = copy.deepcopy(buf["infos"][i+1])
+            assert "final_info" not in buf["infos"][i + 1]
+            info_with_intervene = copy.deepcopy(buf["infos"][i + 1])
 
             if (
                 "intervene_flag" in info_with_intervene
@@ -477,10 +479,14 @@ class CollectEpisode(gym.Wrapper):
             self._lerobot_writer = LeRobotDatasetWriter()
         if self._lerobot_writer.dataset is None:
             self._lerobot_writer.create(
-                repo_id=os.path.join(self.save_dir, f"rank_{self.rank}", f"id_{self._episodes_written}"),
+                repo_id=os.path.join(
+                    self.save_dir, f"rank_{self.rank}", f"id_{self._episodes_written}"
+                ),
                 robot_type=self.robot_type,
                 fps=self.fps,
-                image_shape=ep_data[0]["image"].shape if "image" in ep_data[0] else None,
+                image_shape=ep_data[0]["image"].shape
+                if "image" in ep_data[0]
+                else None,
                 state_dim=int(ep_data[0]["state"].shape[-1]),
                 action_dim=int(ep_data[0]["actions"].shape[-1]),
                 has_image="image" in ep_data[0],
