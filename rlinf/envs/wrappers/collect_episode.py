@@ -451,10 +451,14 @@ class CollectEpisode(gym.Wrapper):
             }
             if image is not None:
                 frame["image"] = self._to_uint8(np.asarray(image))
-            if wrist_image is not None:
-                frame["wrist_image"] = self._to_uint8(np.asarray(wrist_image))
-            if extra_view_image is not None:
-                frame["extra_view_image"] = self._to_uint8(np.asarray(extra_view_image))
+            for key, img in self._expand_multi_view_images(
+                "wrist_image", wrist_image
+            ).items():
+                frame[key] = self._to_uint8(np.asarray(img))
+            for key, img in self._expand_multi_view_images(
+                "extra_view_image", extra_view_image
+            ).items():
+                frame[key] = self._to_uint8(np.asarray(img))
             steps.append(frame)
             if bool(terminated[i]) and first_term_step is None:
                 first_term_step = len(steps)
@@ -478,23 +482,42 @@ class CollectEpisode(gym.Wrapper):
         if self._lerobot_writer is None:
             self._lerobot_writer = LeRobotDatasetWriter()
         if self._lerobot_writer.dataset is None:
+            first = ep_data[0]
+            wrist_image_keys = self._collect_image_keys(first, "wrist_image")
+            extra_view_image_keys = self._collect_image_keys(first, "extra_view_image")
             self._lerobot_writer.create(
                 repo_id=os.path.join(
                     self.save_dir, f"rank_{self.rank}", f"id_{self._episodes_written}"
                 ),
                 robot_type=self.robot_type,
                 fps=self.fps,
-                image_shape=ep_data[0]["image"].shape
-                if "image" in ep_data[0]
-                else None,
-                state_dim=int(ep_data[0]["state"].shape[-1]),
-                action_dim=int(ep_data[0]["actions"].shape[-1]),
-                has_image="image" in ep_data[0],
-                has_wrist_image="wrist_image" in ep_data[0],
-                has_extra_view_image="extra_view_image" in ep_data[0],
-                has_intervene_flag="intervene_flag" in ep_data[0],
+                image_shape=first["image"].shape if "image" in first else None,
+                state_dim=int(first["state"].shape[-1]),
+                action_dim=int(first["actions"].shape[-1]),
+                has_image="image" in first,
+                wrist_image_keys=wrist_image_keys,
+                extra_view_image_keys=extra_view_image_keys,
+                has_intervene_flag="intervene_flag" in first,
             )
         return self._lerobot_writer
+
+    @staticmethod
+    def _collect_image_keys(
+        frame: dict[str, Any],
+        prefix: str,
+    ) -> dict[str, tuple[int, ...]]:
+        """Return ``{key: (H, W, C)}`` for all frame keys matching *prefix*.
+
+        Matches both the bare ``prefix`` (e.g. ``wrist_image``) and indexed
+        variants (``wrist_image/0``, ``wrist_image/1``, …).
+        """
+        return {
+            k: tuple(frame[k].shape)
+            for k in frame
+            if (k == prefix or k.startswith(f"{prefix}-"))
+            and isinstance(frame[k], np.ndarray)
+            and frame[k].ndim == 3
+        }
 
     def _write_lerobot_episode(self, ep_data: dict) -> None:
         with self._lerobot_lock:
@@ -660,30 +683,46 @@ class CollectEpisode(gym.Wrapper):
         return "unknown task"
 
     def _extract_obs_image_state(self, obs):
-        """Return ``(image, wrist_image, extra_view_image, state)`` from an obs dict."""
+        """Return ``(image, wrist_image, extra_view_image, state)`` from an obs dict.
+
+        ``wrist_image`` and ``extra_view_image`` are returned as raw numpy
+        arrays and may have shape ``[H, W, C]`` *or* ``[N, H, W, C]``.
+        Use :meth:`_expand_multi_view_images` to fan them out into
+        individually-keyed views before writing.
+        """
         if not isinstance(obs, dict):
             return None, None, None, None
         image = obs.get("main_images", obs.get("image", obs.get("full_image")))
         wrist_image = obs.get("wrist_images", obs.get("wrist_image"))
-        extra_view_image = self._extract_extra_view_image(
-            obs.get("extra_view_images", obs.get("extra_view_image"))
-        )
+        extra_view_image = obs.get("extra_view_images", obs.get("extra_view_image"))
         state = obs.get("states", obs.get("state"))
         return (
             self._to_numpy(image),
             self._to_numpy(wrist_image),
-            extra_view_image,
+            self._to_numpy(extra_view_image),
             self._to_numpy(state),
         )
 
-    def _extract_extra_view_image(self, extra_view_image):
-        """Return the first extra-view image when observations carry multiple views."""
-        extra_view_np = self._to_numpy(extra_view_image)
-        if extra_view_np is None:
-            return None
-        if extra_view_np.ndim == 4:
-            return extra_view_np[0]
-        return extra_view_np
+    @staticmethod
+    def _expand_multi_view_images(
+        base_key: str,
+        arr: Optional[np.ndarray],
+    ) -> dict[str, np.ndarray]:
+        """Expand a potentially batched image array into per-view entries.
+
+        * ``[H, W, C]``           → ``{base_key: img}``
+        * ``[1, H, W, C]``        → ``{base_key: img[0]}``
+        * ``[N, H, W, C]`` (N>1)  → ``{base_key/0: img[0], …, base_key/N-1: img[N-1]}``
+        """
+        if arr is None:
+            return {}
+        if arr.ndim == 3:
+            return {base_key: arr}
+        if arr.ndim == 4:
+            if arr.shape[0] == 1:
+                return {base_key: arr[0]}
+            return {f"{base_key}-{i}": arr[i] for i in range(arr.shape[0])}
+        return {base_key: arr}
 
     def _slice_data(self, data, env_idx: int):
         """Slice batched data for a single env without copying."""

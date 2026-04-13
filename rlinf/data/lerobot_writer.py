@@ -58,8 +58,8 @@ class LeRobotDatasetWriter:
         state_dim: int = 8,
         action_dim: int = 7,
         has_image: bool = True,
-        has_wrist_image: bool = True,
-        has_extra_view_image: bool = True,
+        wrist_image_keys: dict[str, tuple[int, ...]] | None = None,
+        extra_view_image_keys: dict[str, tuple[int, ...]] | None = None,
         has_intervene_flag: bool = True,
     ) -> None:
         """
@@ -69,16 +69,22 @@ class LeRobotDatasetWriter:
             repo_id: The identifier for the new LeRobot dataset
             robot_type: Robot type (default "franka_panda")
             fps: Frame rate (default 5)
-            features: Feature schema dictionary defining the dataset structure. If None, auto-generated from dimensions.
+            features: Feature schema dictionary defining the dataset structure.
+                If None, auto-generated from dimensions.
             image_writer_threads: Number of threads for image writing
             image_writer_processes: Number of processes for image writing
-            image_shape: Image shape (H, W, C) for auto-generated features
+            image_shape: Image shape (H, W, C) for the main ``image`` feature.
             state_dim: State dimension for auto-generated features
             action_dim: Action dimension for auto-generated features
-            has_wrist_image: Whether to include wrist_image in auto-generated features
-            has_extra_view_image: Whether to include extra_view_image in auto-generated features
-            has_intervene_flag: Whether to include per-frame human-intervention flag
-                (bool, shape ``(1,)``) in auto-generated features.
+            has_image: Whether to include the main ``image`` feature.
+            wrist_image_keys: Mapping of wrist-camera image key names to their
+                ``(H, W, C)`` shapes.  A single view produces
+                ``{"wrist_image": (H, W, C)}``; multiple views produce
+                ``{"wrist_image/0": …, "wrist_image/1": …, …}``.
+            extra_view_image_keys: Same as *wrist_image_keys* but for the
+                extra-view camera(s).
+            has_intervene_flag: Whether to include per-frame human-intervention
+                flag (bool, shape ``(1,)``) in auto-generated features.
 
         """
         if features is None:
@@ -116,18 +122,14 @@ class LeRobotDatasetWriter:
                     "shape": list(image_shape),
                     "names": ["height", "width", "channel"],
                 }
-            if has_wrist_image:
-                features["wrist_image"] = {
-                    "dtype": "image",
-                    "shape": list(image_shape),
-                    "names": ["height", "width", "channel"],
-                }
-            if has_extra_view_image:
-                features["extra_view_image"] = {
-                    "dtype": "image",
-                    "shape": list(image_shape),
-                    "names": ["height", "width", "channel"],
-                }
+            for keys in (wrist_image_keys, extra_view_image_keys):
+                if keys:
+                    for key, shape in keys.items():
+                        features[key] = {
+                            "dtype": "image",
+                            "shape": list(shape),
+                            "names": ["height", "width", "channel"],
+                        }
 
         self.logger.info(
             f"Creating LeRobot dataset: repo_id={repo_id}, robot_type={robot_type}, fps={fps}"
