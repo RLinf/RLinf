@@ -548,11 +548,19 @@ class RollingLeRobotDataset(Dataset):
             info = json.load(f)
         return _build_delta_timestamps(info, self.chunk_size, self.action_sequence_keys)
 
-    def _build_index(self, datasets: list[Path]) -> int:
+    def _build_index(
+        self,
+        datasets: list[Path],
+        out_open_handles: dict[Path, Any] | None = None,
+    ) -> int:
         """Index *datasets*: open each briefly to measure length / intervene mask, then store paths only.
 
         Args:
             datasets: Sub-dataset root paths to load.
+            out_open_handles: When not ``None``, each successfully opened
+                :class:`LeRobotDataset` is stored under its root path so a
+                matching :meth:`_ingest_decoded_cache` call can reuse it instead
+                of opening the same shard twice in one :meth:`refresh`.
 
         Returns:
             Number of new sub-datasets successfully added.
@@ -597,6 +605,8 @@ class RollingLeRobotDataset(Dataset):
             self._indexed_datasets.add(ds_path)
             self._total_episodes += getattr(sub_ds, "num_episodes", 0)
             n_new += 1
+            if out_open_handles is not None:
+                out_open_handles[ds_path] = sub_ds
 
         self._update_window_sampling_bounds()
         return n_new
@@ -619,18 +629,77 @@ class RollingLeRobotDataset(Dataset):
         self._lerobot_open_idx = ds_idx
         return self._lerobot_open
 
-    def _load_item_from_lerobot(self, idx: int) -> dict[str, Any]:
-        """Fetch one sample (including chunk windows) from the backing LeRobot datasets."""
-        ds_idx = bisect.bisect_right(self._cumulative_lengths, idx) - 1
-        local_idx = idx - self._cumulative_lengths[ds_idx]
-        lerobot_ds = self._ensure_lerobot_open(ds_idx)
+    def _load_item_from_open_lerobot(
+        self, lerobot_ds: Any, local_idx: int
+    ) -> dict[str, Any]:
+        """Decode one sample from an already-open :class:`LeRobotDataset`."""
         item: dict[str, Any] = lerobot_ds[local_idx]
         if self.keys is not None:
             item = {k: v for k, v in item.items() if k in self.keys}
         return item
 
+    def _load_item_from_lerobot(self, idx: int) -> dict[str, Any]:
+        """Fetch one sample (including chunk windows) from the backing LeRobot datasets."""
+        ds_idx = bisect.bisect_right(self._cumulative_lengths, idx) - 1
+        local_idx = idx - self._cumulative_lengths[ds_idx]
+        lerobot_ds = self._ensure_lerobot_open(ds_idx)
+        return self._load_item_from_open_lerobot(lerobot_ds, local_idx)
+
+    def _ingest_physical_indices_sharded(
+        self,
+        physical_indices: list[int],
+        reuse_open_by_path: dict[Path, Any] | None,
+    ) -> None:
+        """Fill the decoded cache for *physical_indices* with at most one open per shard.
+
+        Indices are grouped by backing sub-dataset.  Each shard is opened once
+        (or taken from *reuse_open_by_path* for paths just indexed in the same
+        ``refresh()``), samples are read in sorted global order, then the lazy
+        handle :attr:`_lerobot_open` is cleared so ingest does not retain
+        extra LeRobot handles.
+        """
+        cache = self._decoded_cache
+        if cache is None or not physical_indices:
+            return
+        by_shard: dict[int, list[int]] = {}
+        for g in physical_indices:
+            ds_idx = bisect.bisect_right(self._cumulative_lengths, g) - 1
+            by_shard.setdefault(ds_idx, []).append(int(g))
+        try:
+            for ds_idx in sorted(by_shard.keys()):
+                idxs = sorted(by_shard[ds_idx])
+                path = self._sub_datasets[ds_idx]
+                base = self._cumulative_lengths[ds_idx]
+                reused = (
+                    reuse_open_by_path is not None
+                    and path in reuse_open_by_path
+                    and reuse_open_by_path[path] is not None
+                )
+                if reused:
+                    lerobot_ds = reuse_open_by_path[path]
+                else:
+                    lerobot_ds = self._ensure_lerobot_open(ds_idx)
+                for gidx in idxs:
+                    try:
+                        local_idx = gidx - base
+                        item = self._load_item_from_open_lerobot(lerobot_ds, local_idx)
+                        cache.put(gidx, item)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "[RollingLeRobotDataset] cache ingest failed at idx=%s: %s",
+                            gidx,
+                            exc,
+                        )
+        finally:
+            self._lerobot_open = None
+            self._lerobot_open_idx = None
+
     def _ingest_decoded_cache(
-        self, physical_before: int, physical_after: int, n_new: int
+        self,
+        physical_before: int,
+        physical_after: int,
+        n_new: int,
+        reuse_open_by_path: dict[Path, Any] | None = None,
     ) -> None:
         """Populate FIFO cache according to ``cache_ingest_mode``.
 
@@ -638,6 +707,11 @@ class RollingLeRobotDataset(Dataset):
         frame counts (unfiltered) immediately before vs. after a refresh that
         appended new shards; they define the half-open index range for the
         ``new_shards`` ingest path.
+
+        Args:
+            reuse_open_by_path: Optional map of sub-dataset root → already-open
+                :class:`LeRobotDataset` built during :meth:`_build_index` in the
+                same operation, so ingest does not open those paths a second time.
         """
         cache = self._decoded_cache
         if cache is None:
@@ -662,16 +736,7 @@ class RollingLeRobotDataset(Dataset):
         lim = self.cache_ingest_max_frames
         if lim is not None:
             uniq = uniq[: int(lim)]
-        for gidx in uniq:
-            try:
-                item = self._load_item_from_lerobot(gidx)
-                cache.put(gidx, item)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "[RollingLeRobotDataset] cache ingest failed at idx=%s: %s",
-                    gidx,
-                    exc,
-                )
+        self._ingest_physical_indices_sharded(uniq, reuse_open_by_path)
 
     # ------------------------------------------------------------------
     # Public API
@@ -687,6 +752,11 @@ class RollingLeRobotDataset(Dataset):
         When ``enable_decoded_cache`` is set, also ingests frames into the FIFO
         decoded cache according to ``cache_ingest_mode``.
 
+        New shards opened during index construction are passed through to cache
+        ingest and dropped before returning so each new path is loaded at most
+        once per refresh; the lazy :attr:`_lerobot_open` handle is cleared at
+        the end of ingest.
+
         Returns:
             Number of new sub-datasets added (0 if nothing changed).
         """
@@ -694,22 +764,39 @@ class RollingLeRobotDataset(Dataset):
         safe = _discover_safe_datasets(self.root_dir, self.skip_last_n)
         new_paths = [p for p in safe if p not in self._indexed_datasets]
         n_new = 0
+        reuse_handles: dict[Path, Any] = {}
         with self._rolling_access_lock:
-            if new_paths:
-                n_new = self._build_index(new_paths)
-                physical_after = self._num_physical_frames()
-                logical = len(self)
-                logger.info(
-                    "[RollingLeRobotDataset] refresh: +%d sub-dataset(s), "
-                    "physical_frames=%d logical_samples=%d",
-                    n_new,
-                    physical_after,
-                    logical,
-                )
-            else:
-                physical_after = physical_before
-            if self._decoded_cache is not None:
-                self._ingest_decoded_cache(physical_before, physical_after, n_new)
+            try:
+                if new_paths:
+                    n_new = self._build_index(
+                        new_paths,
+                        out_open_handles=(
+                            reuse_handles if self._decoded_cache is not None else None
+                        ),
+                    )
+                    physical_after = self._num_physical_frames()
+                    logical = len(self)
+                    logger.info(
+                        "[RollingLeRobotDataset] refresh: +%d sub-dataset(s), "
+                        "physical_frames=%d logical_samples=%d",
+                        n_new,
+                        physical_after,
+                        logical,
+                    )
+                else:
+                    physical_after = physical_before
+                if self._decoded_cache is not None:
+                    self._ingest_decoded_cache(
+                        physical_before,
+                        physical_after,
+                        n_new,
+                        reuse_open_by_path=reuse_handles or None,
+                    )
+            finally:
+                reuse_handles.clear()
+                if self._decoded_cache is not None:
+                    self._lerobot_open = None
+                    self._lerobot_open_idx = None
         return n_new
 
     def get_stats(self) -> dict[str, Any]:
@@ -720,7 +807,7 @@ class RollingLeRobotDataset(Dataset):
             "total_frames": len(self),
             "total_episodes": self._total_episodes,
             "require_all_intervene": self.require_all_intervene,
-            "window_size": self.window_size,
+            "window_size": self.window_size if self.window_size is not None else 0,
             "window_physical_start": self._window_physical_start,
         }
         if self._decoded_cache is not None:
