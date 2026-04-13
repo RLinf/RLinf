@@ -918,6 +918,7 @@ class EnvWorker(Worker):
                         actions = {
                             "raw_actions": rollout_result.actions,
                             "expert_actions": expert_actions,
+                            "save_flags": rollout_result.save_flags,
                         }
                     else:
                         actions = {"raw_actions": rollout_result.actions}

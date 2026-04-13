@@ -203,6 +203,8 @@ class CollectEpisode(gym.Wrapper):
         chunk_actions = input_actions["actions"]
         if isinstance(chunk_actions, np.ndarray):
             chunk_actions = torch.from_numpy(chunk_actions)
+
+        save_flags = input_actions["save_flags"]
         if "expert_actions" in input_actions:
             expert_actions = input_actions["expert_actions"].reshape_as(chunk_actions)
         else:
@@ -236,16 +238,26 @@ class CollectEpisode(gym.Wrapper):
                 else infos_list
             )
 
+            
             if expert_actions is not None and "intervene_action" not in step_info:
                 if "final_info" in step_info:
                     step_info["final_info"]["intervene_action"] = expert_actions
-                    step_info["final_info"]["intervene_flag"] = torch.ones(expert_actions.shape[0], expert_actions.shape[1], dtype=torch.bool)
+                    if save_flags is not None:
+                        step_info["final_info"]["intervene_flag"] = torch.ones(expert_actions.shape[0], expert_actions.shape[1], dtype=torch.bool)
+                    else:
+                        step_info["final_info"]["intervene_flag"] = torch.zeros(expert_actions.shape[0], expert_actions.shape[1], dtype=torch.bool)
 
                     step_info["intervene_action"] = expert_actions[:, step_idx]
-                    step_info["intervene_flag"] = ~(step_trunc | step_term)
+                    if save_flags is not None:
+                        step_info["intervene_flag"] = ~(step_trunc | step_term)
+                    else:
+                        step_info["intervene_flag"] = torch.zeros(expert_actions.shape[0], dtype=torch.bool)
                 else:
                     step_info["intervene_action"] = expert_actions[:, step_idx]
-                    step_info["intervene_flag"] = torch.ones(expert_actions.shape[0], dtype=torch.bool)
+                    if save_flags is not None:
+                        step_info["intervene_flag"] = torch.ones(expert_actions.shape[0], dtype=torch.bool)
+                    else:
+                        step_info["intervene_flag"] = torch.zeros(expert_actions.shape[0], dtype=torch.bool)
             self._record_step(
                 step_action, step_obs, step_reward, step_term, step_trunc, step_info
             )
