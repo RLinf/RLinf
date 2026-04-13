@@ -73,6 +73,14 @@ progress_monitor_alpha: 1.0
 
 # GT prefix feature (teacher forcing for CMA)
 use_gt_prefix: False
-gt_prefix_length: 0
+gt_prefix_length_ratio: 0.0
+
+# GT prefix dynamic schedule (CMA-only)
+# schedule_type: "static" | "log" | "linear"
+gt_prefix_schedule_type: "static"  # backward-compatible constant length
+gt_prefix_final_length: 0  # target length after decay (can be 0 to shrink to no prefix)
+gt_prefix_warmup_steps_ratio: 0.0  # ratio of effective total training steps
+gt_prefix_schedule_alpha: 1.0  # exponent for decay curve (1.0 = linear)
+gt_prefix_train_only: True  # bypass dynamic schedule in non-training mode
 
 is_lora: False

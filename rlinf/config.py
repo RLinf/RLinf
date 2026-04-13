@@ -833,6 +833,11 @@ def validate_embodied_cfg(cfg):
         weight_sync_interval = cfg.runner.get("weight_sync_interval", 1)
         assert weight_sync_interval > 0, "weight_sync_interval must be greater than 0"
         cfg.runner.weight_sync_interval = weight_sync_interval
+        if cfg.actor.model.model_type == SupportedModel.CMA.value:
+            total_training_steps = cfg.runner.max_epochs
+            if (max_steps := cfg.runner.get("max_steps", -1)) >= 0:
+                total_training_steps = min(total_training_steps, max_steps)
+            cfg.actor.model.gt_prefix_total_training_steps = total_training_steps
         if (
             SupportedEnvType(cfg.env.train.env_type) == SupportedEnvType.MANISKILL
             or SupportedEnvType(cfg.env.eval.env_type) == SupportedEnvType.MANISKILL

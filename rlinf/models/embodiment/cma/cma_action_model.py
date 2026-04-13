@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import os
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -28,6 +29,7 @@ from rlinf.envs.habitat.gt_prefix import (
     HABITAT_CURRENT_STEP_KEY,
     HABITAT_GT_ACTION_VALID_KEY,
     HABITAT_GT_CURRENT_ACTION_KEY,
+    HABITAT_GT_SEQUENCE_LENGTH_KEY,
 )
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.models.embodiment.cma.modules import (
@@ -85,10 +87,38 @@ class CMAConfig:
 
     # GT prefix feature (teacher forcing for CMA)
     use_gt_prefix: bool = False
-    gt_prefix_length: int = 0
+    gt_prefix_length_ratio: float = 0.0
+
+    # GT prefix dynamic schedule (CMA-only)
+    # schedule_type: "static" keeps the resolved ratio-based prefix length constant;
+    # "log"/"linear" enable curriculum from the ratio-resolved prefix length to
+    # gt_prefix_final_length over the remaining effective training horizon.
+    gt_prefix_schedule_type: str = "static"
+    gt_prefix_final_length: int = (
+        0  # target length after decay (can be 0 to shrink to no prefix)
+    )
+    gt_prefix_warmup_steps_ratio: float = 0.0
+    gt_prefix_schedule_alpha: float = 1.0  # exponent for decay curve (1.0 = linear)
+    gt_prefix_train_only: bool = True  # bypass dynamic schedule in non-training mode
+    gt_prefix_total_training_steps: int = (
+        -1
+    )  # internal runtime field injected by config
+
+    _LEGACY_GT_PREFIX_KEYS = frozenset(
+        {
+            "gt_prefix_length",
+            "gt_prefix_warmup_steps",
+            "gt_prefix_decay_steps",
+        }
+    )
 
     def update_from_dict(self, config_dict):
         for key, value in config_dict.items():
+            if key in self._LEGACY_GT_PREFIX_KEYS:
+                raise ValueError(
+                    f"Legacy CMA config key '{key}' is no longer supported. "
+                    "Use gt_prefix_length_ratio and gt_prefix_warmup_steps_ratio instead."
+                )
             if hasattr(self, key):
                 self.__setattr__(key, value)
 
@@ -106,6 +136,49 @@ class CMAConfig:
         if self.model_path:
             assert os.path.exists(self.model_path), (
                 f"Model path does not exist: {self.model_path}"
+            )
+
+        # Validate GT prefix schedule config
+        self._validate_gt_prefix_schedule()
+
+    def _validate_gt_prefix_schedule(self):
+        """Validate GT prefix schedule configuration."""
+        valid_schedule_types = ("static", "log", "linear")
+        if self.gt_prefix_schedule_type not in valid_schedule_types:
+            raise ValueError(
+                f"Invalid gt_prefix_schedule_type: '{self.gt_prefix_schedule_type}'. "
+                f"Must be one of: {valid_schedule_types}"
+            )
+
+        # Static schedule should have minimal extra config
+        if self.gt_prefix_schedule_type == "static":
+            if self.gt_prefix_warmup_steps_ratio != 0:
+                raise ValueError(
+                    "gt_prefix_warmup_steps_ratio must be 0 for static schedule type. "
+                    f"Got {self.gt_prefix_warmup_steps_ratio}."
+                )
+
+        if not 0.0 <= self.gt_prefix_length_ratio <= 1.0:
+            raise ValueError(
+                "gt_prefix_length_ratio must be between 0 and 1 inclusive. "
+                f"Got {self.gt_prefix_length_ratio}."
+            )
+        if not 0.0 <= self.gt_prefix_warmup_steps_ratio <= 1.0:
+            raise ValueError(
+                "gt_prefix_warmup_steps_ratio must be between 0 and 1 inclusive. "
+                f"Got {self.gt_prefix_warmup_steps_ratio}."
+            )
+
+        # Validate alpha is positive
+        if self.gt_prefix_schedule_alpha <= 0:
+            raise ValueError(
+                f"gt_prefix_schedule_alpha must be positive. Got {self.gt_prefix_schedule_alpha}."
+            )
+
+        # Validate final_length constraints
+        if self.gt_prefix_final_length < 0:
+            raise ValueError(
+                f"gt_prefix_final_length must be non-negative. Got {self.gt_prefix_final_length}."
             )
 
     def build_observation_space(self) -> spaces.Space:
@@ -418,10 +491,13 @@ class CMANet(nn.Module):
 class CMAPolicy(nn.Module, BasePolicy):
     """CMA Policy for embodied navigation."""
 
-    def __init__(self, cfg: CMAConfig, observation_space: spaces.Space = None):
+    def __init__(
+        self, cfg: CMAConfig, observation_space: Optional[spaces.Space] = None
+    ):
         super(CMAPolicy, self).__init__()
         self.cfg = cfg
 
+        self.global_step = 0
         self.rnn_states = None
         self.prev_actions = None
         self.prev_episode_id = None
@@ -447,6 +523,100 @@ class CMAPolicy(nn.Module, BasePolicy):
                 hidden_sizes=(256, 256, 256),
                 activation="relu",
             )
+
+    def set_global_step(self, global_step):
+        self.global_step = int(global_step)
+
+    def _get_gt_prefix_warmup_steps(self) -> int:
+        """Resolve warmup steps from the effective training horizon."""
+        total_training_steps = int(self.cfg.gt_prefix_total_training_steps)
+        if total_training_steps <= 0:
+            return 0
+
+        return int(float(self.cfg.gt_prefix_warmup_steps_ratio) * total_training_steps)
+
+    def _resolve_initial_gt_prefix_lengths(
+        self,
+        raw_env_obs: dict[str, Any],
+        reference_actions: torch.Tensor,
+    ) -> torch.Tensor:
+        """Resolve per-sample initial GT prefix lengths from Habitat metadata."""
+        sequence_lengths = raw_env_obs.get(HABITAT_GT_SEQUENCE_LENGTH_KEY)
+        if sequence_lengths is None:
+            return torch.zeros_like(reference_actions, dtype=torch.long)
+
+        sequence_lengths = torch.as_tensor(
+            sequence_lengths,
+            device=reference_actions.device,
+            dtype=torch.long,
+        ).reshape_as(reference_actions)
+        sequence_lengths = torch.clamp(sequence_lengths, min=0)
+
+        initial_lengths = torch.ceil(
+            sequence_lengths.to(torch.float32) * float(self.cfg.gt_prefix_length_ratio)
+        ).to(torch.long)
+        return torch.minimum(initial_lengths, sequence_lengths)
+
+    def _get_effective_gt_prefix_lengths(
+        self,
+        raw_env_obs: dict[str, Any],
+        reference_actions: torch.Tensor,
+        mode: str,
+    ) -> torch.Tensor:
+        """Compute per-sample GT prefix lengths for the current runtime state."""
+        if self.cfg.gt_prefix_train_only and mode != "train":
+            return torch.zeros_like(reference_actions, dtype=torch.long)
+
+        initial_lengths = self._resolve_initial_gt_prefix_lengths(
+            raw_env_obs,
+            reference_actions,
+        )
+        schedule_type = self.cfg.gt_prefix_schedule_type
+
+        if schedule_type == "static":
+            return initial_lengths
+
+        total_training_steps = int(self.cfg.gt_prefix_total_training_steps)
+        if total_training_steps <= 0:
+            return initial_lengths
+
+        warmup_steps = self._get_gt_prefix_warmup_steps()
+        decay_steps = total_training_steps - warmup_steps
+        if decay_steps <= 0:
+            return initial_lengths
+
+        current_step = int(self.global_step)
+        if current_step < warmup_steps:
+            return initial_lengths
+
+        step_after_warmup = current_step - warmup_steps + 1
+
+        final_lengths = torch.full_like(
+            initial_lengths,
+            int(self.cfg.gt_prefix_final_length),
+        )
+        final_lengths = torch.minimum(final_lengths, initial_lengths)
+        if step_after_warmup >= decay_steps:
+            return final_lengths
+
+        if schedule_type == "linear":
+            progress = step_after_warmup / decay_steps
+        elif schedule_type == "log":
+            log_denominator = math.log(decay_steps + 1)
+            progress = (math.log(max(step_after_warmup, 1)) / log_denominator) ** float(
+                self.cfg.gt_prefix_schedule_alpha
+            )
+        else:
+            raise ValueError(f"Unsupported gt_prefix_schedule_type: {schedule_type}")
+
+        effective_lengths = torch.ceil(
+            final_lengths.to(torch.float32)
+            + (initial_lengths.to(torch.float32) - final_lengths.to(torch.float32))
+            * (1 - progress)
+        ).to(torch.long)
+        return torch.minimum(
+            torch.maximum(effective_lengths, final_lengths), initial_lengths
+        )
 
     def load_state_dict(self, state_dict, strict=True, assign=False):
         if isinstance(state_dict, dict):
@@ -526,9 +696,18 @@ class CMAPolicy(nn.Module, BasePolicy):
         self,
         raw_env_obs: dict[str, Any],
         model_actions: torch.Tensor,
+        mode: str = "train",
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Resolve the executed action and whether GT-prefix produced it."""
-        if not self.cfg.use_gt_prefix or self.cfg.gt_prefix_length <= 0:
+        if not self.cfg.use_gt_prefix:
+            return model_actions, torch.zeros_like(model_actions, dtype=torch.bool)
+
+        effective_prefix_lengths = self._get_effective_gt_prefix_lengths(
+            raw_env_obs,
+            model_actions,
+            mode,
+        )
+        if torch.all(effective_prefix_lengths <= 0):
             return model_actions, torch.zeros_like(model_actions, dtype=torch.bool)
 
         gt_action_valid = raw_env_obs.get(HABITAT_GT_ACTION_VALID_KEY)
@@ -542,11 +721,14 @@ class CMAPolicy(nn.Module, BasePolicy):
             device=model_actions.device,
             dtype=torch.bool,
         ).reshape_as(model_actions)
-        within_prefix_mask = torch.as_tensor(
-            current_step,
-            device=model_actions.device,
-            dtype=torch.long,
-        ).reshape_as(model_actions) <= int(self.cfg.gt_prefix_length)
+        within_prefix_mask = (
+            torch.as_tensor(
+                current_step,
+                device=model_actions.device,
+                dtype=torch.long,
+            ).reshape_as(model_actions)
+            <= effective_prefix_lengths
+        )
         gt_actions = torch.as_tensor(
             gt_current_action,
             device=model_actions.device,
@@ -614,8 +796,10 @@ class CMAPolicy(nn.Module, BasePolicy):
             action = distribution.mode()
         else:
             raise NotImplementedError(f"{mode=}")
-        executed_action, gt_prefix_learning_excluded = (
-            self._resolve_current_action_execution(raw_env_obs, action)
+        executed_action, execute_gt_mask = self._resolve_current_action_execution(
+            raw_env_obs,
+            action,
+            mode=mode,
         )
         prev_logprobs = distribution.log_probs(executed_action)
 
@@ -628,7 +812,7 @@ class CMAPolicy(nn.Module, BasePolicy):
 
         forward_inputs = {
             "action": executed_action.clone(),
-            GT_PREFIX_LEARNING_EXCLUDED_KEY: gt_prefix_learning_excluded.clone(),
+            GT_PREFIX_LEARNING_EXCLUDED_KEY: execute_gt_mask.clone(),
             "pre_rnn_states": pre_rnn_states,
             "prev_actions": prev_actions,
             "masks": step_masks,
