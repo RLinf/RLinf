@@ -76,6 +76,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             cache_ingest_max_frames=self.cfg.actor.get("cache_ingest_max_frames", None),
             require_all_intervene=self.cfg.algorithm.dagger.get("only_save_expert", False),
             window_size=self.cfg.actor.get("rolling_lerobot_window_size", None),
+            index_load_workers=self.cfg.actor.get("rolling_lerobot_index_workers", 4),
         )
 
     def _build_lerobot_data_loader(self):

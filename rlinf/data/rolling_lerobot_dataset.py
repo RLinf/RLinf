@@ -88,6 +88,8 @@ import queue
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Callable, Iterator, Literal
@@ -325,6 +327,18 @@ def _compute_intervene_valid_local_indices(
     return np.nonzero(chunk_ok)[0].tolist()
 
 
+@dataclass(frozen=True)
+class _ShardIndexProbe:
+    """Result of probing one LeRobot shard during :meth:`RollingLeRobotDataset._build_index`."""
+
+    ds_path: Path
+    ok: bool
+    sub_ds: Any | None = None
+    n_frames: int = 0
+    num_episodes: int = 0
+    intervene_locals: list[int] | None = None
+
+
 def _build_delta_timestamps(info: dict, chunk_size: int, action_sequence_keys) -> dict[str, list[float]]:
     """Build a ``delta_timestamps`` dict for LeRobotDataset chunk sampling.
 
@@ -416,6 +430,15 @@ class RollingLeRobotDataset(Dataset):
             ``TrajectoryReplayBuffer.sample_window_size`` in
             :mod:`rlinf.data.replay_buffer` but counted in frames instead of
             trajectories. ``None`` or ``0`` disables windowing (full history).
+        index_load_workers: How many threads may open distinct sub-dataset
+            paths in parallel during :meth:`refresh` / initial index build.
+            ``1`` keeps the original sequential behavior.  Values ``> 1``
+            use :class:`~concurrent.futures.ThreadPoolExecutor` so metadata
+            and parquet-backed HuggingFace dataset construction can overlap
+            across shards.  Multiprocessing is not used: child processes
+            cannot return live :class:`~lerobot.common.datasets.lerobot_dataset.LeRobotDataset`
+            handles to the parent for ``out_open_handles`` / decoded-cache
+            ingest without reopening every shard.
     """
 
     def __init__(
@@ -439,6 +462,7 @@ class RollingLeRobotDataset(Dataset):
         require_all_intervene: bool = False,
         intervene_flag_key: str = "intervene_flag",
         window_size: int | None = None,
+        index_load_workers: int = 1,
     ) -> None:
         self.root_dir = Path(root_dir)
         self.skip_last_n = skip_last_n
@@ -455,6 +479,7 @@ class RollingLeRobotDataset(Dataset):
         self.require_all_intervene = bool(require_all_intervene)
         self.intervene_flag_key = intervene_flag_key
         self.window_size = window_size
+        self._index_load_workers = max(1, int(index_load_workers))
         self._window_physical_start: int = 0
         self._window_valid_slice_lo: int = 0
         self._valid_physical_indices: list[int] | None = None
@@ -548,12 +573,53 @@ class RollingLeRobotDataset(Dataset):
             info = json.load(f)
         return _build_delta_timestamps(info, self.chunk_size, self.action_sequence_keys)
 
+    def _probe_shard_for_index(self, ds_path: Path) -> _ShardIndexProbe:
+        """Open *ds_path* once and return length / optional intervene mask (thread-safe per path)."""
+        from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+
+        delta_timestamps = self._get_delta_timestamps(ds_path)
+        try:
+            sub_ds = LeRobotDataset(
+                repo_id=ds_path.name,
+                root=ds_path,
+                delta_timestamps=delta_timestamps,
+                image_transforms=self.image_transforms,
+                download_videos=False,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[RollingLeRobotDataset] failed to load sub-dataset %s: %s",
+                ds_path,
+                exc,
+            )
+            return _ShardIndexProbe(ds_path=ds_path, ok=False)
+        n_frames = len(sub_ds)
+        num_episodes = int(getattr(sub_ds, "num_episodes", 0))
+        intervene_locals: list[int] | None = None
+        if self.require_all_intervene:
+            intervene_locals = _compute_intervene_valid_local_indices(
+                sub_ds, self.intervene_flag_key
+            )
+        return _ShardIndexProbe(
+            ds_path=ds_path,
+            ok=True,
+            sub_ds=sub_ds,
+            n_frames=n_frames,
+            num_episodes=num_episodes,
+            intervene_locals=intervene_locals,
+        )
+
     def _build_index(
         self,
         datasets: list[Path],
         out_open_handles: dict[Path, Any] | None = None,
     ) -> int:
         """Index *datasets*: open each briefly to measure length / intervene mask, then store paths only.
+
+        When :attr:`_index_load_workers` is greater than ``1`` and there are
+        multiple pending shards, openings run in a thread pool (I/O overlap).
+        Merge into :attr:`_cumulative_lengths` stays sequential so global
+        frame order matches *datasets* order.
 
         Args:
             datasets: Sub-dataset root paths to load.
@@ -565,45 +631,43 @@ class RollingLeRobotDataset(Dataset):
         Returns:
             Number of new sub-datasets successfully added.
         """
-        from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-
+        pending = [p for p in datasets if p not in self._indexed_datasets]
         n_new = 0
-        for ds_path in datasets:
-            if ds_path in self._indexed_datasets:
-                continue
+        if not pending:
+            self._update_window_sampling_bounds()
+            return 0
 
-            delta_timestamps = self._get_delta_timestamps(ds_path)
-
-            try:
-                sub_ds = LeRobotDataset(
-                    repo_id=ds_path.name,
-                    root=ds_path,
-                    delta_timestamps=delta_timestamps,
-                    image_transforms=self.image_transforms,
-                    download_videos=False,
+        workers = self._index_load_workers
+        if workers > 1 and len(pending) > 1:
+            max_w = min(workers, len(pending))
+            with ThreadPoolExecutor(max_workers=max_w) as ex:
+                probes: list[_ShardIndexProbe] = list(
+                    ex.map(self._probe_shard_for_index, pending)
                 )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "[RollingLeRobotDataset] failed to load sub-dataset %s: %s",
-                    ds_path,
-                    exc,
-                )
-                continue
+        else:
+            probes = [self._probe_shard_for_index(p) for p in pending]
 
+        for probe in probes:
+            if not probe.ok or probe.sub_ds is None:
+                continue
+            ds_path = probe.ds_path
+            sub_ds = probe.sub_ds
             physical_base = self._cumulative_lengths[-1]
-            n_frames = len(sub_ds)
+            n_frames = probe.n_frames
             self._sub_datasets.append(ds_path)
             self._cumulative_lengths.append(physical_base + n_frames)
-            if self.require_all_intervene and self._valid_physical_indices is not None:
+            if (
+                self.require_all_intervene
+                and self._valid_physical_indices is not None
+                and probe.intervene_locals is not None
+            ):
                 assert self._valid_physical_set is not None
-                for local_i in _compute_intervene_valid_local_indices(
-                    sub_ds, self.intervene_flag_key
-                ):
+                for local_i in probe.intervene_locals:
                     gidx = physical_base + int(local_i)
                     self._valid_physical_indices.append(gidx)
                     self._valid_physical_set.add(gidx)
             self._indexed_datasets.add(ds_path)
-            self._total_episodes += getattr(sub_ds, "num_episodes", 0)
+            self._total_episodes += probe.num_episodes
             n_new += 1
             if out_open_handles is not None:
                 out_open_handles[ds_path] = sub_ds
@@ -1096,6 +1160,7 @@ def build_rolling_lerobot_dataset(
     require_all_intervene: bool = False,
     intervene_flag_key: str = "intervene_flag",
     window_size: int | None = None,
+    index_load_workers: int = 1,
 ) -> RollingLeRobotDataset:
     """Build a :class:`RollingLeRobotDataset` for rolling data collection.
 
@@ -1127,6 +1192,9 @@ def build_rolling_lerobot_dataset(
         require_all_intervene: See :class:`RollingLeRobotDataset`.
         intervene_flag_key: Column name for the per-frame intervention flag.
         window_size: See :class:`RollingLeRobotDataset`.
+        index_load_workers: Parallel thread count for opening sub-datasets
+            during index build (``1`` = sequential).  See
+            :class:`RollingLeRobotDataset`.
 
     Returns:
         A :class:`RollingLeRobotDataset` instance.
@@ -1149,6 +1217,7 @@ def build_rolling_lerobot_dataset(
         require_all_intervene=require_all_intervene,
         intervene_flag_key=intervene_flag_key,
         window_size=window_size,
+        index_load_workers=index_load_workers,
     )
 
     logger.info(
