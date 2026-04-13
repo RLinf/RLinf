@@ -59,7 +59,7 @@ class SupportedModel(Enum):
     DREAMZERO = ("dreamzero", "embodied")
     CNN_POLICY = ("cnn_policy", "embodied")
     FLOW_POLICY = ("flow_policy", "embodied")
-    CMA_POLICY = ("cma", "embodied")
+    NAVID = ("navid", "embodied")
     LINGBOTVLA = ("lingbotvla", "embodied")
     RESNET_REWARD = ("resnet", "embodied")
 
