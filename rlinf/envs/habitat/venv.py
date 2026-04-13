@@ -38,8 +38,26 @@ gym_new_venv_step_type = tuple[
 warnings.simplefilter("once", DeprecationWarning)
 
 
+def _get_current_episode_metadata(env: gym.Env) -> dict[str, Any]:
+    """Return Habitat-specific metadata for the active episode."""
+    if not hasattr(env, "habitat_env") or not hasattr(
+        env.habitat_env, "current_episode"
+    ):
+        return {"episode_id": None, "gt_action_sequence": None}
+
+    episode = env.habitat_env.current_episode
+    return {
+        "episode_id": getattr(episode, "episode_id", None),
+        "gt_action_sequence": getattr(episode, "gt_actions", None),
+    }
+
+
 class HabitatRLEnv(RLEnv):
     def __init__(self, config, dataset):
+        # Import the Habitat env module in the spawned process so custom task
+        # actions such as NoOpAction are registered before task construction.
+        from rlinf.envs.habitat.habitat_env import NoOpAction  # noqa: F401
+
         super().__init__(config, dataset)
 
     def reset(self):
@@ -166,13 +184,9 @@ def _worker(
                     p.send(None)
             elif cmd == "get_current_episode_id":
                 # Habitat-specific: get current episode_id from habitat_env.current_episode
-                if hasattr(env, "habitat_env") and hasattr(
-                    env.habitat_env, "current_episode"
-                ):
-                    episode_id = env.habitat_env.current_episode.episode_id
-                    p.send(episode_id)
-                else:
-                    p.send(None)
+                p.send(_get_current_episode_metadata(env)["episode_id"])
+            elif cmd == "get_current_episode_metadata":
+                p.send(_get_current_episode_metadata(env))
             elif cmd == "reconfigure":
                 env.close()
                 config = data.pop("config")
@@ -244,3 +258,16 @@ class ReconfigureSubprocEnv(SubprocVectorEnv):
             episode_ids.append(episode_id)
 
         return episode_ids
+
+    def get_current_episode_metadata(self, id=None):
+        self._assert_is_not_closed()
+        id = self._wrap_id(id)
+        if self.is_async:
+            self._assert_id(id)
+
+        episode_metadata = []
+        for i in id:
+            self.workers[i].parent_remote.send(["get_current_episode_metadata", None])
+            episode_metadata.append(self.workers[i].parent_remote.recv())
+
+        return episode_metadata

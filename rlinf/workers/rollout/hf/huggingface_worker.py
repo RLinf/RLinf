@@ -257,6 +257,7 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.GR00T,
             SupportedModel.DREAMZERO,
             SupportedModel.CNN_POLICY,
+            SupportedModel.CMA,
         ]:
             if self.cfg.algorithm.loss_type == "embodied_dagger":
                 kwargs = {"mode": "eval"}
