@@ -244,9 +244,6 @@ class EnvWorker(Worker):
                     only_success=getattr(
                         env_cfg.data_collection, "only_success", False
                     ),
-                    stats_sample_ratio=getattr(
-                        env_cfg.data_collection, "stats_sample_ratio", 0.1
-                    ),
                     finalize_interval=getattr(
                         env_cfg.data_collection, "finalize_interval", 100
                     ),
