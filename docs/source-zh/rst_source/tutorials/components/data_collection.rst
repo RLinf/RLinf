@@ -89,10 +89,6 @@ Episode 数据采集
      - ``bool``
      - ``False``
      - 仅保存成功的 episode
-   * - ``stats_sample_ratio``
-     - ``float``
-     - ``0.1``
-     - LeRobot 增量统计的图像采样比例（仅 lerobot 格式有效）
    * - ``finalize_interval``
      - ``int``
      - ``100``
@@ -129,17 +125,17 @@ Episode 数据采集
 
 .. code-block:: yaml
 
-   env:
-     group_name: "EnvGroup"
-     enable_offload: False
-
-     data_collection:
-       enabled: True
-       save_dir: ${runner.logger.log_path}/collected_data
-       export_format: "lerobot"      # 或 "pickle"
-       only_success: True
-       robot_type: "panda"
-       fps: 10
+  env:
+    group_name: "EnvGroup"
+    enable_offload: False
+    eval:
+      data_collection:
+        enabled: True
+        save_dir: ${runner.logger.log_path}/collected_data
+        export_format: "lerobot"      # 或 "pickle"
+        only_success: True
+        robot_type: "panda"
+        fps: 10
 
 然后正常启动训练脚本，数据会在训练过程中自动采集：
 
@@ -448,8 +444,6 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 **Episode 采集（CollectEpisode）**
 
 - 图像数据体积大，若磁盘有限，可配合 ``only_success=True`` 过滤失败 episode。
-- 使用 LeRobot 格式时，``stats_sample_ratio`` 控制用于计算统计量的图像比例，
-  降低该值可减少内存占用，但统计精度略降。
 - 分布式训练时，每个 Worker 设置不同 ``rank``，避免文件名冲突。
 
 **真机 Replay Buffer 采集**

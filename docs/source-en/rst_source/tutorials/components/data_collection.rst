@@ -95,10 +95,6 @@ Constructor Arguments
      - ``bool``
      - ``False``
      - Save only successful episodes
-   * - ``stats_sample_ratio``
-     - ``float``
-     - ``0.1``
-     - Image sampling ratio for incremental statistics (lerobot format only)
    * - ``finalize_interval``
      - ``int``
      - ``100``
@@ -402,6 +398,7 @@ real-world collection config like this:
 .. code-block:: yaml
 
    env:
+    eval:
      data_collection:
        enabled: True
        save_dir: ${runner.logger.log_path}/collected_data
@@ -469,9 +466,6 @@ Best Practices
 
 - Image data is large. If disk space is limited, use ``only_success=True`` to
   discard failed episodes.
-- When using the LeRobot format, ``stats_sample_ratio`` controls the fraction of
-  frames used to compute per-channel statistics. Lowering it reduces memory usage
-  at the cost of slightly less accurate statistics.
 - In distributed training, assign each worker a unique ``rank`` to prevent
   filename collisions.
 
