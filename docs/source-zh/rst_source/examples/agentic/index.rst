@@ -92,3 +92,4 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
    reasoning
    reasoning_ppo
    rstar2
+   android_world_evaluation

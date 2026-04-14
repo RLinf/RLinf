@@ -18,12 +18,13 @@ import dataclasses
 from typing import Any, Literal, Optional
 
 from omegaconf import DictConfig
+from qwen_vl_utils import process_vision_info
 from sglang.srt.managers.io_struct import (
     ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
 )
 from sglang.srt.server_args import ServerArgs
-from transformers import AutoTokenizer
+from transformers import AutoProcessor, AutoTokenizer
 
 from rlinf.config import torch_dtype_from_precision
 from rlinf.data.io_struct import (
@@ -86,6 +87,12 @@ class SGLangWorker(Worker):
             "The capital of France is",
             "The future of AI is",
         ]
+        self._processor = AutoProcessor.from_pretrained(
+            self._cfg_rollout.model.model_path
+        )
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            self._cfg_rollout.model.model_path
+        )
 
         self.status_manager = RunningStatusManager()
 
@@ -465,6 +472,54 @@ class SGLangWorker(Worker):
                 await self.offload_engine()
                 if self._use_auto_scheduler:
                     await self._scheduler.report_offloaded()
+
+    async def qwne3vl_generation_and_send(
+        self,
+        output_channel: Channel,
+        channel_key: str,
+        messages: list[int],
+        sampling_params: Optional[dict] = None,
+    ):
+        """process vision info and generate text, and send the result to the output channel"""
+        image_info, _ = process_vision_info(
+            messages, image_patch_size=self._processor.image_processor.patch_size
+        )
+        input_text = self._processor.apply_chat_template(
+            messages, tokenizer=False, add_generation_prompt=True, enable_thinking=False
+        )
+        final_sampling_params = self._sampling_params
+        if sampling_params is not None and len(sampling_params) > 0:
+            final_sampling_params = copy.deepcopy(self._sampling_params)
+            for key, value in sampling_params.items():
+                final_sampling_params[key] = value
+
+        result, _ = await self.async_generate(
+            prompt=input_text,
+            sampling_params=final_sampling_params,
+            image_data=image_info,
+            return_logprob=self._return_logprobs,
+        )
+
+        await output_channel.put(result, key=channel_key, async_op=True).async_wait()
+
+    async def vl_generate_serverless(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+    ):
+        """Serverless VL generation that supports concurrent multi-turn conversations."""
+        while True:
+            request = await input_channel.get(async_op=True).async_wait()
+            if request is None:
+                break
+            asyncio.create_task(
+                self.qwne3vl_generation_and_send(
+                    output_channel=output_channel,
+                    channel_key=request["channel_key"],
+                    messages=request["messages"],
+                    sampling_params=request.get("sampling_params", None),
+                )
+            )
 
     async def generate_and_send(
         self,
