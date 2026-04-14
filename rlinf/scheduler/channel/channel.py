@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import asyncio
-import contextlib
+
 import logging
 import pickle
 import time
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from .channel_worker import ChannelWorker, LocalChannel
 
 DEFAULT_KEY = "default_queue"
-_nullcontext = contextlib.nullcontext
+
 _logger = logging.getLogger(__name__)
 
 
@@ -481,7 +481,7 @@ class Channel:
             async_op (bool): Whether to perform the operation asynchronously.
 
         """
-        enable_nvtx = is_channel_nvtx_enabled()
+        _nvtx = is_channel_nvtx_enabled()
         if self._local_channel is not None:
             assert async_op is False, "Local channel does not support async put."
             self._local_channel.put(item, weight, key)
@@ -489,17 +489,16 @@ class Channel:
 
         target_rank = self._get_channel_rank_by_key(key)
         target_actor = self._get_channel_actor(target_rank)
-        payload_stats = self._collect_payload_bytes(item) if enable_nvtx else None
-        if payload_stats is not None:
-            outer_label = self._build_put_label(key, target_rank, payload_stats)
-        else:
-            outer_label = f"channel/{self._channel_name}/put"
-        start_time = time.perf_counter() if enable_nvtx else 0.0
+        payload_stats = self._collect_payload_bytes(item) if _nvtx else None
+        outer_label = (
+            self._build_put_label(key, target_rank, payload_stats)
+            if payload_stats is not None
+            else f"channel/{self._channel_name}/put"
+        )
+        start_time = time.perf_counter() if _nvtx else 0.0
 
-        with nvtx_range(outer_label) if enable_nvtx else _nullcontext():
-            # First run async put to avoid send blocking put
+        with nvtx_range(outer_label, enabled=_nvtx):
             if self._current_worker is not None:
-                # Inside a worker, use send/recv
                 put_kwargs = {
                     "src_addr": self._current_worker.worker_address,
                 }
@@ -510,11 +509,7 @@ class Channel:
                     method="put",
                     **put_kwargs,
                 )
-                with (
-                    nvtx_range(f"channel/{self._channel_name}/put/send")
-                    if enable_nvtx
-                    else _nullcontext()
-                ):
+                with nvtx_range(f"channel/{self._channel_name}/put/send", enabled=_nvtx):
                     self._current_worker.send(
                         item,
                         self._channel_name,
@@ -525,28 +520,19 @@ class Channel:
 
                 if async_op:
                     return async_channel_work
-                with (
-                    nvtx_range(f"channel/{self._channel_name}/put/enqueue")
-                    if enable_nvtx
-                    else _nullcontext()
-                ):
+                with nvtx_range(f"channel/{self._channel_name}/put/enqueue", enabled=_nvtx):
                     async_channel_work.wait()
             else:
-                # Outside a worker, use ray comm
                 put_kwargs = {"item": item, "weight": weight, "key": key}
                 async_channel_work = AsyncRayWork(
                     target_actor.put_via_ray.remote(**put_kwargs)
                 )
                 if async_op:
                     return async_channel_work
-                with (
-                    nvtx_range(f"channel/{self._channel_name}/put/ray_wait")
-                    if enable_nvtx
-                    else _nullcontext()
-                ):
+                with nvtx_range(f"channel/{self._channel_name}/put/ray_wait", enabled=_nvtx):
                     async_channel_work.wait()
 
-        if enable_nvtx and payload_stats is not None:
+        if _nvtx and payload_stats is not None:
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
             self._log_channel_event(
                 op="put",
@@ -619,7 +605,7 @@ class Channel:
             Any: The item retrieved from the channel queue.
 
         """
-        enable_nvtx = is_channel_nvtx_enabled()
+        _nvtx = is_channel_nvtx_enabled()
         if self._local_channel is not None:
             assert async_op is False, "Local channel does not support async get."
             return self._local_channel.get(key)
@@ -629,11 +615,10 @@ class Channel:
         outer_label = (
             f"channel/{self._channel_name}/get key={self._safe_key_repr(key)} src={target_rank}"
         )
-        start_time = time.perf_counter() if enable_nvtx else 0.0
+        start_time = time.perf_counter() if _nvtx else 0.0
 
-        with nvtx_range(outer_label) if enable_nvtx else _nullcontext():
+        with nvtx_range(outer_label, enabled=_nvtx):
             if self._current_worker is not None:
-                # Inside a worker, use send/recv
                 query_id = uuid.uuid4().int
                 get_kwargs = {
                     "dst_addr": self._current_worker.worker_address,
@@ -650,13 +635,9 @@ class Channel:
                         query_id=query_id,
                         channel_actor=target_actor,
                     )
-                with (
-                    nvtx_range(f"channel/{self._channel_name}/get/wait_recv")
-                    if enable_nvtx
-                    else _nullcontext()
-                ):
+                with nvtx_range(f"channel/{self._channel_name}/get/wait_recv", enabled=_nvtx):
                     data, _ = async_comm_work.wait()
-                if enable_nvtx:
+                if _nvtx:
                     payload_stats = self._collect_payload_bytes(data)
                     elapsed_ms = (time.perf_counter() - start_time) * 1000.0
                     self._log_channel_event(
@@ -668,20 +649,15 @@ class Channel:
                     )
                 return data
             else:
-                # Outside a worker, use ray comm
                 get_kwargs = {"key": key}
                 async_channel_work = AsyncRayWork(
                     target_actor.get_via_ray.remote(**get_kwargs)
                 )
                 if async_op:
                     return async_channel_work
-                with (
-                    nvtx_range(f"channel/{self._channel_name}/get/ray_wait")
-                    if enable_nvtx
-                    else _nullcontext()
-                ):
+                with nvtx_range(f"channel/{self._channel_name}/get/ray_wait", enabled=_nvtx):
                     data = async_channel_work.wait()
-                if enable_nvtx:
+                if _nvtx:
                     payload_stats = self._collect_payload_bytes(data)
                     elapsed_ms = (time.perf_counter() - start_time) * 1000.0
                     self._log_channel_event(

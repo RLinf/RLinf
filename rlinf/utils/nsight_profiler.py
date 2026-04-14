@@ -61,12 +61,18 @@ def set_channel_nvtx_enabled(enabled: bool) -> None:
 
 
 @contextmanager
-def nvtx_range(name: str, color: Optional[str] = None, domain: Optional[str] = None):
+def nvtx_range(
+    name: str,
+    color: Optional[str] = None,
+    domain: Optional[str] = None,
+    *,
+    enabled: bool = True,
+):
     """Lightweight NVTX range context manager.
 
-    No-op when the ``nvtx`` package is not installed.
+    No-op when ``enabled`` is False or the ``nvtx`` package is not installed.
     """
-    if not _NVTX_AVAILABLE:
+    if not enabled or not _NVTX_AVAILABLE:
         yield
         return
     range_id = nvtx.start_range(message=name, color=color, domain=domain)

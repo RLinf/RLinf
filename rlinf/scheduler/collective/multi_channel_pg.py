@@ -19,7 +19,7 @@ from typing import Optional
 import torch
 import torch.distributed as dist
 
-from contextlib import nullcontext
+
 
 from ..hardware import AcceleratorType, AcceleratorUtil
 from .async_work import AsyncCollWork, AsyncWork
@@ -315,7 +315,7 @@ class MultiChannelProcessGroup:
         _nbytes = tensor.numel() * tensor.element_size()
         if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
             _backend = "GLOO(D2H_fallback)"
-            with nvtx_range(f"pg/D2H_copy bytes={_nbytes} dtype={tensor.dtype}") if _nvtx else nullcontext():
+            with nvtx_range(f"pg/D2H_copy bytes={_nbytes} dtype={tensor.dtype}", enabled=_nvtx):
                 tensor = tensor.to("cpu")
         elif device == CollectiveGroup.ACCEL:
             _backend = "NCCL"
@@ -326,7 +326,7 @@ class MultiChannelProcessGroup:
             if device == CollectiveGroup.ACCEL and not self._no_accel_ccl
             else self._send_gloo_process_groups[channel_id]
         )
-        with nvtx_range(f"pg/send backend={_backend} bytes={_nbytes} dtype={tensor.dtype}") if _nvtx else nullcontext():
+        with nvtx_range(f"pg/send backend={_backend} bytes={_nbytes} dtype={tensor.dtype}", enabled=_nvtx):
             work = self._broadcast(
                 tensor,
                 src=self._cur_rank,
@@ -371,7 +371,7 @@ class MultiChannelProcessGroup:
             if device == CollectiveGroup.ACCEL and not self._no_accel_ccl
             else self._recv_gloo_process_groups[channel_id]
         )
-        with nvtx_range(f"pg/recv backend={_backend} bytes={_nbytes} dtype={tensor.dtype}") if _nvtx else nullcontext():
+        with nvtx_range(f"pg/recv backend={_backend} bytes={_nbytes} dtype={tensor.dtype}", enabled=_nvtx):
             work = self._broadcast(
                 recv_tensor,
                 src=self._peer_rank,
@@ -403,9 +403,8 @@ class MultiChannelProcessGroup:
         broadcast_tensor = tensor
         if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
             if self._cur_rank == src:
-                _nvtx_bc = is_channel_nvtx_enabled()
                 _nb = tensor.numel() * tensor.element_size()
-                with nvtx_range(f"pg/D2H_copy bytes={_nb} dtype={tensor.dtype}") if _nvtx_bc else nullcontext():
+                with nvtx_range(f"pg/D2H_copy bytes={_nb} dtype={tensor.dtype}", enabled=is_channel_nvtx_enabled()):
                     broadcast_tensor = broadcast_tensor.to("cpu")
             else:
                 # Create a new tensor on CPU if accel CCL is not available for non-src ranks
@@ -432,7 +431,7 @@ class MultiChannelProcessGroup:
     ):
         if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
             _nbytes = cpu_tensor.numel() * cpu_tensor.element_size()
-            with nvtx_range(f"pg/H2D_copy bytes={_nbytes} dtype={cpu_tensor.dtype}") if is_channel_nvtx_enabled() else nullcontext():
+            with nvtx_range(f"pg/H2D_copy bytes={_nbytes} dtype={cpu_tensor.dtype}", enabled=is_channel_nvtx_enabled()):
                 accel_tensor.copy_(cpu_tensor, non_blocking=True)
         else:
             return accel_tensor
