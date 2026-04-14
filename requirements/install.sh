@@ -813,7 +813,7 @@ install_franka_env() {
     if [ ! -f "$ROS_CATKIN_PATH/libfranka/build/libfranka.so" ]; then
         mkdir -p "$ROS_CATKIN_PATH/libfranka/build"
         pushd "$ROS_CATKIN_PATH/libfranka/build" >/dev/null
-        cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/openrobots/lib/cmake -DBUILD_TESTS=OFF ..
+        cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_PREFIX_PATH=/opt/openrobots/lib/cmake -DBUILD_TESTS=OFF ..
         make -j$(nproc)
         popd >/dev/null
     fi
