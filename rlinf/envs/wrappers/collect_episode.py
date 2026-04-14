@@ -270,8 +270,7 @@ class CollectEpisode(gym.Wrapper):
     def _record_step(self, action, obs, reward, terminated, truncated, info) -> None:
         """Record one transition into every env's buffer."""
         self._global_step += 1
-        # Extract auto-reset fields once, before the per-env loop, so that
-        # processing env 0 never overwrites ``info`` and silently breaks env 1+.
+
         has_final_obs = isinstance(info, dict) and "final_observation" in info
         if has_final_obs:
             final_observation = info["final_observation"]
@@ -310,7 +309,6 @@ class CollectEpisode(gym.Wrapper):
             buf["truncated"].append(self._slice_copy(truncated, env_idx))
             buf["infos"].append(env_info)
 
-            # Update per-env success using already-sliced info (no extra copy).
             self._update_success(env_idx, self._slice_data(env_info, env_idx))
 
     def _reset_env_buffer(self, env_idx: int) -> None:
@@ -431,7 +429,9 @@ class CollectEpisode(gym.Wrapper):
             )
             # Overwrite action with intervene action if present.
             np_action = self._to_numpy(action)
-            assert "final_info" not in buf["infos"][i + 1]
+            assert "final_info" not in buf["infos"][i + 1], (
+                "final_info should not be present in the info"
+            )
             info_with_intervene = copy.deepcopy(buf["infos"][i + 1])
 
             if (
@@ -476,10 +476,7 @@ class CollectEpisode(gym.Wrapper):
 
         ``create()`` is called only when there is no active underlying dataset —
         either because the writer has never been used, or because a previous
-        batch was flushed by ``finalize()``.  Calling ``create()`` on every
-        episode was the source of a CPU-memory leak: each call spawned a new
-        pool of ``image_writer_processes`` subprocesses while the old pool was
-        silently abandoned.
+        batch was flushed by ``finalize()``.
         """
         if self._lerobot_writer is None:
             from rlinf.data.lerobot_writer import LeRobotDatasetWriter
@@ -716,7 +713,7 @@ class CollectEpisode(gym.Wrapper):
 
         * ``[H, W, C]``           → ``{base_key: img}``
         * ``[1, H, W, C]``        → ``{base_key: img[0]}``
-        * ``[N, H, W, C]`` (N>1)  → ``{base_key/0: img[0], …, base_key/N-1: img[N-1]}``
+        * ``[N, H, W, C]`` (N>1)  → ``{base_key-0: img[0], …, base_key-N-1: img[N-1]}``
         """
         if arr is None:
             return {}

@@ -82,13 +82,13 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
 当你在新采集的 LeRobot 数据集上训练 OpenPI 时，需要在启动 SFT 之前先计算
 归一化统计。这对真实机器人采集的数据集尤其重要。
 
-RLinf 提供了 ``toolkits/replay_buffer/calculate_norm_stats.py``，用于为
+RLinf 提供了 ``toolkits/lerobot/calculate_norm_stats.py``，用于为
 ``state`` 和 ``actions`` 计算 ``norm_stats``。使用方式如下：
 
 .. code:: bash
 
    export HF_LEROBOT_HOME=/path/to/lerobot_root
-   python toolkits/replay_buffer/calculate_norm_stats.py \
+   python toolkits/lerobot/calculate_norm_stats.py \
        --config-name pi0_franka_dagger \
        --repo-id franka_dagger
 

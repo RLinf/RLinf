@@ -485,12 +485,12 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 
 **LeRobot 数据集**
 
-使用 ``toolkits/replay_buffer/visualize_lerobot_dataset.py`` 将 LeRobot 数据集
+使用 ``toolkits/lerobot/visualize_lerobot_dataset.py`` 将 LeRobot 数据集
 展开为按 episode 分目录的 ``.jpg`` 图像和 ``.txt`` step 元数据：
 
 .. code-block:: bash
 
-   python toolkits/replay_buffer/visualize_lerobot_dataset.py \
+   python toolkits/lerobot/visualize_lerobot_dataset.py \
        --dataset-path logs/{timestamp}/collected_data \
        --output-dir logs/{timestamp}/collected_data_visualized
 

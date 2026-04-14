@@ -503,13 +503,13 @@ Use the existing replay-buffer visualizer to inspect trajectories in
 
 **LeRobot datasets**
 
-Use ``toolkits/replay_buffer/visualize_lerobot_dataset.py`` to expand a LeRobot
+Use ``toolkits/lerobot/visualize_lerobot_dataset.py`` to expand a LeRobot
 dataset into per-episode folders containing ``.jpg`` images and ``.txt`` step
 metadata:
 
 .. code-block:: bash
 
-   python toolkits/replay_buffer/visualize_lerobot_dataset.py \
+   python toolkits/lerobot/visualize_lerobot_dataset.py \
        --dataset-path logs/{timestamp}/collected_data \
        --output-dir logs/{timestamp}/collected_data_visualized
 

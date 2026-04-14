@@ -205,7 +205,7 @@ LeRobot dataset:
 .. code-block:: bash
 
    export HF_LEROBOT_HOME=/path/to/lerobot_root
-   python toolkits/replay_buffer/calculate_norm_stats.py \
+   python toolkits/lerobot/calculate_norm_stats.py \
        --config-name pi0_franka_dagger \
        --repo-id franka_dagger
 
