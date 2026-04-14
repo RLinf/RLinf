@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
 import atexit
 import copy
 import os
@@ -24,7 +25,6 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-from rlinf.data.lerobot_writer import LeRobotDatasetWriter
 from rlinf.utils.logging import get_logger
 
 _VALID_FORMATS = ("pickle", "lerobot")
@@ -94,9 +94,10 @@ class CollectEpisode(gym.Wrapper):
         self.finalize_interval = finalize_interval
 
         # LeRobot writer is created lazily on the first completed episode.
-        self._lerobot_writer: Optional[LeRobotDatasetWriter] = None
-        self._lerobot_lock = Lock()
-        self._episodes_written = 0  # guarded by _lerobot_lock
+        if export_format == "lerobot":
+            self._lerobot_writer: Optional[Any] = None
+            self._lerobot_lock = Lock()
+            self._episodes_written = 0  # guarded by _lerobot_lock
 
         # Single-worker executor keeps write ordering deterministic.
         self._executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(
@@ -469,7 +470,7 @@ class CollectEpisode(gym.Wrapper):
         steps[-1]["done"] = np.array([True], dtype=bool)
         return steps
 
-    def _ensure_lerobot_writer(self, ep_data: dict) -> LeRobotDatasetWriter:
+    def _ensure_lerobot_writer(self, ep_data: dict):
         """Create the LeRobot writer on first use. Must be called inside the lock.
 
         ``create()`` is called only when there is no active underlying dataset —
@@ -480,6 +481,8 @@ class CollectEpisode(gym.Wrapper):
         silently abandoned.
         """
         if self._lerobot_writer is None:
+            from rlinf.data.lerobot_writer import LeRobotDatasetWriter
+
             self._lerobot_writer = LeRobotDatasetWriter()
         if self._lerobot_writer.dataset is None:
             first = ep_data[0]

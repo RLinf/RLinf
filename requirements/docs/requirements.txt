@@ -51,3 +51,4 @@ uvicorn==0.35.0
 watchfiles==1.1.0
 websockets==15.0.1
 sphinxcontrib-video==0.4.1
+lerobot @ git+https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5
