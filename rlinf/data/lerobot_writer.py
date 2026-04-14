@@ -86,6 +86,7 @@ class LeRobotDatasetWriter:
 
         """
         from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+
         if features is None:
             features = {
                 "state": {
