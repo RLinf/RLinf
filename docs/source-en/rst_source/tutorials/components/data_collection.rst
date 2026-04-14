@@ -131,17 +131,18 @@ Add a ``data_collection`` block under ``env`` in your YAML config:
 
 .. code-block:: yaml
 
-   env:
-     group_name: "EnvGroup"
-     enable_offload: False
+  env:
+    group_name: "EnvGroup"
+    enable_offload: False
 
-     data_collection:
-       enabled: True
-       save_dir: ${runner.logger.log_path}/collected_data
-       export_format: "lerobot"      # or "pickle"
-       only_success: True
-       robot_type: "panda"
-       fps: 10
+    eval:
+      data_collection:
+        enabled: True
+        save_dir: ${runner.logger.log_path}/collected_data
+        export_format: "lerobot"      # or "pickle"
+        only_success: True
+        robot_type: "panda"
+        fps: 10
 
 Then run the training script as usual; data is collected automatically:
 
@@ -387,7 +388,7 @@ Collect Replay Buffer And LeRobot Data Together
 
 ``examples/embodiment/collect_real_data.py`` now supports writing the real-robot
 replay buffer and the ``CollectEpisode`` export in the same run. With
-``env.data_collection.enabled=True``, successful demonstrations are saved twice:
+``env.eval.data_collection.enabled=True``, successful demonstrations are saved twice:
 
 - ``logs/{timestamp}/demos/`` as ``TrajectoryReplayBuffer`` trajectories for RLPD
 - ``logs/{timestamp}/collected_data/`` as episode files in ``pickle`` or LeRobot format

@@ -368,7 +368,7 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 
 ``examples/embodiment/collect_real_data.py`` 现在支持在同一次真机采集中，
 同时写出 replay buffer 和 ``CollectEpisode`` 导出的 episode 数据。只要启用
-``env.data_collection.enabled=True``，成功轨迹就会同时保存到：
+``env.eval.data_collection.enabled=True``，成功轨迹就会同时保存到：
 
 - ``logs/{timestamp}/demos/``：``TrajectoryReplayBuffer`` 轨迹，用于 RLPD
 - ``logs/{timestamp}/collected_data/``：``pickle`` 或 LeRobot 格式的 episode 数据
@@ -378,13 +378,14 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 .. code-block:: yaml
 
    env:
-     data_collection:
-       enabled: True
-       save_dir: ${runner.logger.log_path}/collected_data
-       export_format: "lerobot"
-       only_success: True
-       robot_type: "panda"
-       fps: 10
+     eval:
+       data_collection:
+        enabled: True
+        save_dir: ${runner.logger.log_path}/collected_data
+        export_format: "lerobot"
+        only_success: True
+        robot_type: "panda"
+        fps: 10
 
 使用步骤
 ~~~~~~~~
