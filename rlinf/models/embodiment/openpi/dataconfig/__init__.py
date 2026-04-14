@@ -177,7 +177,7 @@ _CONFIGS = [
         ),  # discrete_state_input=False: stateless policy, True: with state policy
         data=LeRobotFrankaEEDataConfig(
             repo_id="physical-intelligence/pick_and_place_real",
-            default_prompt="defalut prompt",
+            default_prompt="default prompt",
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(
                 assets_dir="checkpoints/torch/pi05_maniskill_sim_real_co_training/assets"
