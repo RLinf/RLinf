@@ -876,9 +876,11 @@ class RollingLeRobotDataset(Dataset):
                 if n_new > 0:
                     logger.info(
                         "[RollingLeRobotDataset] refresh: +%d sub-dataset(s), "
-                        "physical_frames=%d logical_samples=%d",
+                        "physical_frames=%d total_logical=%d "
+                        "windowed_logical=%d",
                         n_new,
                         physical_after,
+                        self._total_logical_samples(),
                         len(self),
                     )
                 if self._decoded_cache is not None:
@@ -938,10 +940,17 @@ class RollingLeRobotDataset(Dataset):
             return 0
         return self._refresh_impl(new_paths[:1])
 
+    def _total_logical_samples(self) -> int:
+        """Total logical samples across all shards, ignoring ``window_size``."""
+        if self._valid_physical_indices is not None:
+            return len(self._valid_physical_indices)
+        return self._num_physical_frames()
+
     def get_stats(self) -> dict[str, Any]:
         stats: dict[str, Any] = {
             "num_sub_datasets": len(self._sub_datasets),
             "physical_frames": self._num_physical_frames(),
+            "total_logical_samples": self._total_logical_samples(),
             "logical_samples": len(self),
             "total_frames": len(self),
             "total_episodes": self._total_episodes,
