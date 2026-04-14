@@ -41,7 +41,7 @@ class LeRobotDatasetWriter:
 
     def __init__(self):
         """Initialize the writer."""
-        self.dataset: LeRobotDataset | None = None
+        self.dataset = None
         self.logger = get_logger()
 
     def create(
