@@ -57,7 +57,9 @@ class DataCollector(Worker):
                 export_format=getattr(
                     self.cfg.env.eval.data_collection, "export_format", "pickle"
                 ),
-                robot_type=getattr(self.cfg.env.eval.data_collection, "robot_type", "panda"),
+                robot_type=getattr(
+                    self.cfg.env.eval.data_collection, "robot_type", "panda"
+                ),
                 fps=getattr(self.cfg.env.eval.data_collection, "fps", 10),
                 only_success=getattr(
                     self.cfg.env.eval.data_collection, "only_success", False
