@@ -72,6 +72,7 @@ class CollectEpisode(gym.Wrapper):
         robot_type: str = "panda",
         fps: int = 10,
         only_success: bool = False,
+        allow_partial_chunk: bool = False, 
         stats_sample_ratio: float = 0.1,
         finalize_interval: int = 100,
     ):
@@ -125,6 +126,8 @@ class CollectEpisode(gym.Wrapper):
 
         os.makedirs(self.save_dir, exist_ok=True)
         atexit.register(self._finalize_on_exit)
+
+        self.allow_partial_chunk = allow_partial_chunk
 
     @property
     def is_start(self):
@@ -261,7 +264,11 @@ class CollectEpisode(gym.Wrapper):
             self._record_step(
                 step_action, step_obs, step_reward, step_term, step_trunc, step_info
             )
-            self._maybe_flush(step_term, step_trunc)
+            if self.allow_partial_chunk:
+                self._maybe_flush(step_term, step_trunc)
+        
+        if not self.allow_partial_chunk:
+            self._maybe_flush(terminations, truncations)
 
         return obs_list, rewards, terminations, truncations, infos_list
 
@@ -376,14 +383,14 @@ class CollectEpisode(gym.Wrapper):
             done_by_term = self._scalar_flag(terminated, env_idx)
             done_by_trunc = self._scalar_flag(truncated, env_idx)
             if self.only_success:
-                if is_success:
+                if is_success and done_by_term:
                     self._flush_episode(env_idx, is_success)
                     self._reset_env_buffer(env_idx)
                 else:
                     if done_by_term or done_by_trunc:
                         self._reset_env_buffer(env_idx)
             else:
-                if done_by_term or done_by_trunc:
+                if done_by_trunc:
                     self._flush_episode(env_idx, is_success)
                     self._reset_env_buffer(env_idx)
 
