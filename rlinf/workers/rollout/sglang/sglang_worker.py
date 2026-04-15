@@ -42,6 +42,7 @@ from rlinf.workers.rollout.utils import (
     print_sglang_outputs,
 )
 
+TOOL_CALL_INFO_KEY = "tool"
 
 class SGLangWorker(Worker):
     def __init__(self, config: DictConfig, placement: ModelParallelComponentPlacement):
@@ -150,6 +151,9 @@ class SGLangWorker(Worker):
             log_level="info",
             max_running_requests=self._cfg.rollout.max_running_requests,
             dist_init_addr=f"127.0.0.1:{str(Cluster.find_free_port())}",
+            # test for agent w/o scheduling
+            # disable_radix_cache=True,
+            # schedule_policy="lpm",
         )
 
         self.log_on_first_rank(f"{server_args=}")
@@ -227,6 +231,52 @@ class SGLangWorker(Worker):
         )
         return result, request_info
 
+    async def async_generate_agent(
+        self,
+        prompt: list[str] | str | None = None,
+        sampling_params: list[dict] | dict | None = None,
+        input_ids: list[list[int]] | list[int] | None = None,
+        image_data: list | None = None,
+        return_logprob: list[bool] | bool | None = False,
+        request_info: Any | None = None,
+    ):
+        result = await self._engine.async_generate(
+            prompt=prompt,
+            sampling_params=sampling_params,
+            input_ids=input_ids,
+            image_data=image_data if any(image_data) else None,
+            return_logprob=return_logprob,
+        )
+
+        raw_result = result
+
+        if raw_result["meta_info"]["finish_reason"]["type"] == "abort":
+            # aborted
+            raw_result[TOOL_CALL_INFO_KEY] = {
+                "total_call": 3,
+                "completed_call": 0,
+            }
+            return raw_result, request_info
+
+        now_input = input_ids
+        for i in range(3):
+            # toolcall
+            await asyncio.sleep(0.1)
+
+            now_input = now_input + result["output_ids"]
+            new_sampling_params = copy.deepcopy(sampling_params)
+            new_sampling_params["max_new_tokens"] = 100
+            new_sampling_params["ignore_eos"] = True
+            result = await self._engine.async_generate(
+                prompt=prompt,
+                sampling_params=new_sampling_params,
+                input_ids=now_input,
+                image_data=image_data if any(image_data) else None,
+                return_logprob=return_logprob,
+            )
+
+        return raw_result, request_info
+
     async def init_worker(self):
         self._init_engine()
         await self._engine.tokenizer_manager.run_task_method(
@@ -240,8 +290,8 @@ class SGLangWorker(Worker):
             )
         )
         self.log_info(f"SGLang worker {self._rank} initialized.")
-        if self._cfg.rollout.validate_weight:
-            await self._validate_weight_at_first()
+        # if self._cfg.rollout.validate_weight:
+        #     await self._validate_weight_at_first()
         if self._placement.is_collocated:
             await self.offload_engine()
         if self._use_auto_scheduler:
@@ -351,7 +401,7 @@ class SGLangWorker(Worker):
             if self._placement.is_pipeline
             else asyncio.ALL_COMPLETED
         )
-        with self.device_lock, self.worker_timer():
+        with self.device_lock:
             num_residual = self.status_manager.num_seq_group
             assert num_residual == 0, (
                 f"There are {num_residual} "
@@ -364,23 +414,24 @@ class SGLangWorker(Worker):
 
             all_rollout_results = []
             while pending := self.status_manager.get_running_tasks():
-                done, pending = await asyncio.wait(pending, return_when=async_wait_type)
-                returned_seq_groups: list[SeqGroupInfo] = [
-                    task.result() for task in done
-                ]
-                for group in returned_seq_groups:
-                    if group.all_completed:
-                        rollout_result = RolloutResult.from_sglang_seq_group(
-                            group,
-                            self._return_logprobs,
-                        )
-                        all_rollout_results.append(rollout_result)
-                        await output_channel.put(
-                            item=rollout_result, async_op=True
-                        ).async_wait()
-                        self.status_manager.mark_done(group)
-                    else:
-                        self.status_manager.mark_aborted(group)
+                with self.worker_timer():
+                    done, pending = await asyncio.wait(pending, return_when=async_wait_type)
+                    returned_seq_groups: list[SeqGroupInfo] = [
+                        task.result() for task in done
+                    ]
+                    for group in returned_seq_groups:
+                        if group.all_completed:
+                            rollout_result = RolloutResult.from_sglang_seq_group(
+                                group,
+                                self._return_logprobs,
+                            )
+                            all_rollout_results.append(rollout_result)
+                            await output_channel.put(
+                                item=rollout_result, async_op=True
+                            ).async_wait()
+                            self.status_manager.mark_done(group)
+                        else:
+                            self.status_manager.mark_aborted(group)
 
                 if (
                     self._use_auto_scheduler

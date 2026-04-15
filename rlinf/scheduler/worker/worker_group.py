@@ -188,6 +188,8 @@ class WorkerGroup(Generic[WorkerClsType]):
                 "ACCELERATOR_TYPE": str(accelerator_type.value),
                 "ISOLATE_ACCELERATOR": "1" if placement.isolate_accelerator else "0",
             }
+            # if "actor" in self._worker_group_name.lower():
+            #     env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
             env_vars.update(
                 Accelerator.get_accelerator_env_var(
                     accelerator_type, placement.visible_accelerators

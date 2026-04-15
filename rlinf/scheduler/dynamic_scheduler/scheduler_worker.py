@@ -25,6 +25,7 @@ from rlinf.scheduler.dynamic_scheduler.utils import (
     set_global_scheduer_state,
 )
 from rlinf.utils.placement import ComponentPlacement
+import asyncio
 
 
 class SchedulerWorker(Worker):
@@ -84,6 +85,8 @@ class SchedulerWorker(Worker):
         )
         self.scheduler_state = get_global_scheduer_state()
 
+        self.iter_counter = 0
+
     async def schedule(self):
         """Run the scheduler."""
         await self.pre_process()
@@ -101,6 +104,8 @@ class SchedulerWorker(Worker):
 
     async def main_loop(self):
         """Main loop. Trying to release or allocate gpu resource for each components by workflow after actor ready to update."""
+        start_time = asyncio.get_running_loop().time()
+        time_stats = {component: [] for component in self.workflow}
         for train_iter in range(self.cfg.algorithm.n_minibatches):
             # Wait for actor ready to update
             await self.component_managers["actor"].wait_for_actor_update()
@@ -111,7 +116,8 @@ class SchedulerWorker(Worker):
                 if component not in self.component_managers:
                     self.log_warning(f"can't find ComponentManager for {component}")
                     continue
-
+                
+                t1 = asyncio.get_running_loop().time()
                 released_gpu_num, incremental_gpu_num = await self.component_managers[
                     component
                 ].release_or_allocate(train_iter)
@@ -120,10 +126,35 @@ class SchedulerWorker(Worker):
                     component, released_gpu_num, incremental_gpu_num
                 )
 
+                t2 = asyncio.get_running_loop().time()
+                time_stats[component].append(t2-t1)
+
                 resource_info += (
                     f"{component} : released_gpu_num = {released_gpu_num}, "
                     f"incremental_gpu_num={incremental_gpu_num} => "
-                    f"available_gpu_num={self.scheduler_state.available_gpu_num}\n"
+                    f"available_gpu_num={self.scheduler_state.available_gpu_num}, schedule time: {t2-t1:.2f}s\n"
                 )
 
             self.log_info(resource_info)
+
+        end_time = asyncio.get_running_loop().time()
+        time_stats["total_time"] = end_time - start_time
+
+        import os
+        import json
+
+        save_dir = os.path.join(
+            "/mnt/project_rlinf/yuanqwang/schedule-paper/pipe-eval",
+            self.cfg.runner.logger.log_path,
+            "schedule_time",
+        )
+        os.makedirs(save_dir, exist_ok=True)
+        with open(os.path.join(save_dir, f"status_{self.iter_counter}.jsonl"), "a") as f:
+            f.write(
+                json.dumps(
+                    time_stats
+                )
+                + "\n"
+            )
+
+        self.iter_counter += 1

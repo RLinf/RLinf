@@ -41,6 +41,13 @@ from .io_struct import (
     TaskMethodOutput,
 )
 
+try:
+    from sglang.srt.constants import GPU_MEMORY_TYPE_KV_CACHE, GPU_MEMORY_TYPE_WEIGHTS
+
+    SEPARATE_LOADING = True
+except ImportError:
+    SEPARATE_LOADING = False
+
 logger.setLevel(logging.WARNING)
 
 
@@ -77,8 +84,9 @@ class Scheduler(_Scheduler):
 
         self._rlinf_worker.log_info(
             f"[dp {self._rlinf_worker.get_parent_rank()}-tp {self.tp_rank}] {text} "
-            f"{memory_allocated=:.2f} GiB, {memory_reserved=:.2f} GiB, "
-            f"{free_gpu_memory=:.2f} GiB, {total_gpu_memory=:.2f} GiB"
+            f"allocated {memory_allocated:.2f} GiB, reserved {memory_reserved:.2f} GiB, "
+            f"free {free_gpu_memory:.2f} GiB, used: {total_gpu_memory - free_gpu_memory:.2f} GiB, "
+            f"used by cuAPI or other processes: {total_gpu_memory - free_gpu_memory - memory_reserved:.2f} GiB"
         )
 
     def release_memory_occupation(self, recv_req: ReleaseMemoryOccupationReqInput):
@@ -92,16 +100,29 @@ class Scheduler(_Scheduler):
 
         assert use_cudagraph, "use_cudagraph must be True now."
 
+        # self.cuda_info("before recv weight")
+        recv_group_name = self._inference_group_name or self._actor_group_name
+        if self._rlinf_worker.get_parent_rank() == 0 and self._rlinf_worker._rank == 0:
+            self._rlinf_worker.log_info(f"get weight from {recv_group_name}")
+
         state_dict = self._rlinf_worker.recv(
-            src_group_name=self._actor_group_name,
+            src_group_name=recv_group_name,
             src_rank=self.actor_weight_rank,
         )
 
         model = self.tp_worker.worker.model_runner.model
 
         if self.is_weight_offloaded:
-            self.resume_memory_occupation(ResumeMemoryOccupationReqInput())
-            self.is_weight_offloaded = False
+            if (self._rlinf_worker.get_parent_rank() * self.tp_size) % 8 == 0 and self.tp_rank == 0:
+                self.cuda_info("before onload weight")
+            if SEPARATE_LOADING:
+                self.resume_memory_occupation(
+                    ResumeMemoryOccupationReqInput(tags=[GPU_MEMORY_TYPE_WEIGHTS])
+                )
+            else:
+                # self.cuda_info("before onload weight and kv cache")
+                self.resume_memory_occupation(ResumeMemoryOccupationReqInput())
+                self.is_weight_offloaded = False
 
         if colocate:
             for name, handle in state_dict.items():
@@ -118,6 +139,56 @@ class Scheduler(_Scheduler):
             # disaggregate mode, recv tensor directly
             for name, tensor in state_dict.items():
                 model.load_weights([(name, tensor)])
+
+        if self.weight_norm_dict is not None:
+            # validate the weight norm dict between load model and first sync.
+            weight_norm_dict_sync = {}
+            model = self.tp_worker.worker.model_runner.model
+            for name, value in model.state_dict().items():
+                weight_norm_dict_sync[name] = posi_norm(value)
+            diff_keys = []
+            for k in weight_norm_dict_sync.keys():
+                if not torch.allclose(
+                    weight_norm_dict_sync[k],
+                    self.weight_norm_dict[k],
+                    rtol=1e-3,
+                    atol=1e-4,
+                ):
+                    diff_keys.append(k)
+
+            if len(diff_keys) != 0:
+                self._rlinf_worker.log_info(
+                    f"sglang: validate_weight failed in first sync. diff_keys = {diff_keys}"
+                )
+            else:
+                self._rlinf_worker.log_info(
+                    f"sglang: validate_weight success at rank ({self._rlinf_worker.get_parent_rank()}, {self._rlinf_worker._rank})"
+                )
+            self.weight_norm_dict = None
+
+            import os
+
+            save_dir = os.path.join(
+                "/mnt/project_rlinf/yuanqwang/schedule-paper/pipe-eval",
+                self.cfg.runner.logger.log_path,
+                "saved_weight",
+            )
+            os.makedirs(save_dir, exist_ok=True)
+            torch.save(
+                model.state_dict(),
+                os.path.join(
+                    save_dir,
+                    f"sync_from_actor_dp{self._rlinf_worker.get_parent_rank()}-tp{self._rlinf_worker._rank}.pt",
+                ),
+            )
+
+        if self.is_weight_offloaded:
+            if SEPARATE_LOADING:
+                self.cuda_info("before onload kv cache")
+                self.resume_memory_occupation(
+                    ResumeMemoryOccupationReqInput(tags=[GPU_MEMORY_TYPE_KV_CACHE])
+                )
+                self.is_weight_offloaded = False
         self.flush_cache()
         return SyncHFWeightOutput()
 
@@ -160,6 +231,9 @@ class Scheduler(_Scheduler):
         )
         self.cfg = config
         self._actor_group_name = self.cfg.actor.group_name
+        self._inference_group_name = None
+        if placement.has_dedicated_inference:
+            self._inference_group_name = self.cfg.inference.group_name
         self.placement_mode = placement.placement_mode
         self.actor_weight_rank = RankMapper.get_rollout_rank_to_actor_rank_map(
             placement
@@ -172,6 +246,32 @@ class Scheduler(_Scheduler):
         for _, module in self.tp_worker.worker.model_runner.model.named_modules():
             if hasattr(module, "use_presharded_weights"):
                 module.use_presharded_weights = use_presharded_weights
+
+        self.weight_norm_dict = None
+        if self.cfg.rollout.validate_weight:
+            # save weight norm when init. used for validate when sync from megatron at the first time.
+            model = self.tp_worker.worker.model_runner.model
+            weight_norm_dict = {}
+            for key, value in model.state_dict().items():
+                weight_norm_dict[key] = posi_norm(value)
+            self.weight_norm_dict = weight_norm_dict
+
+            if self._rlinf_worker.get_parent_rank() == 0:
+                import os
+
+                save_dir = os.path.join(
+                    "/mnt/project_rlinf/yuanqwang/schedule-paper/pipe-eval",
+                    self.cfg.runner.logger.log_path,
+                    "saved_weight",
+                )
+                os.makedirs(save_dir, exist_ok=True)
+                torch.save(
+                    model.state_dict(),
+                    os.path.join(
+                        save_dir,
+                        f"loaded_dp{self._rlinf_worker.get_parent_rank()}-tp{self._rlinf_worker._rank}.pt",
+                    ),
+                )
 
         self._rlinf_worker.log_info(
             f"Running Scheduler dp rank {self._rlinf_worker.get_parent_rank()}, tp rank {self.tp_rank}, corresponding actor weight rank = {self.actor_weight_rank}"
@@ -191,6 +291,18 @@ class Scheduler(_Scheduler):
             "token_usage": num_used / self.max_total_num_tokens,
             "num_queue_reqs": len(self.waiting_queue),
         }
+
+
+def posi_norm(tensor: torch.Tensor):
+    # use a position-aware norm to do validate. otherwise the misalignment cannot be detect.
+    posi_tensor = (
+        torch.arange(tensor.numel(), dtype=tensor.dtype, device=tensor.device).view_as(
+            tensor
+        )
+        / tensor.numel()
+        - 0.5
+    )
+    return (tensor - posi_tensor).norm()
 
 
 def run_scheduler_process(*args, **kwargs):

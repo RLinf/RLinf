@@ -24,11 +24,14 @@ import torch.nn.functional as F
 from omegaconf import DictConfig
 
 
-def clear_memory(sync=True):
+def clear_memory(sync=True, ipc=True):
     if sync:
         torch.cuda.synchronize()
+    if ipc:
+        torch.cuda.ipc_collect()
     gc.collect()
     torch.cuda.empty_cache()
+    torch.cuda.synchronize()
 
 
 def apply_func_to_dict(func, dictionary):

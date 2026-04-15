@@ -106,6 +106,7 @@ class MegatronActor(MegatronModelManager, Worker):
             cfg (DictConfig): The configuration for the actor.
         """
         Worker.__init__(self)
+        self.role = role
         role_cfg = getattr(cfg, role, None)
         self.role_cfg = role_cfg
         if role_cfg is None:
@@ -663,6 +664,7 @@ class MegatronActor(MegatronModelManager, Worker):
             * self.cfg.actor.micro_batch_size
             * parallel_state.get_data_parallel_world_size()
         )
+        increment = self.cfg.actor.global_batch_size
         success, grad_norm, num_zeros_in_grad, lr = self.optimizer_step(increment)
 
         # Training metrics
@@ -942,15 +944,22 @@ class MegatronActor(MegatronModelManager, Worker):
             gbs=self.cfg.actor.global_batch_size,
             dp=parallel_state.get_data_parallel_world_size(),
         )
+        # hetero-dp : global_batch_size may changed.
+        from megatron.core.num_microbatches_calculator import (
+            get_current_global_batch_size,
+        )  # noqa: I001
+
+        global_batch_size = get_current_global_batch_size()
+        data_parallel_world_size = parallel_state.get_data_parallel_world_size()
         self.total_batch_size_per_dp = (
-            self.cfg.data.rollout_batch_size
-            * self.cfg.algorithm.group_size
-            // parallel_state.get_data_parallel_world_size()
+            global_batch_size * self.num_train_steps // data_parallel_world_size
         )
-        if self._rank == 0:
-            self.log_info(
-                f"run_training_pipeline: mbs={self.cfg.actor.micro_batch_size}, gbs={self.cfg.actor.global_batch_size}, dp={parallel_state.get_data_parallel_world_size()}, self.total_batch_size_per_dp={self.total_batch_size_per_dp}"
-            )
+        # if self.is_data_io_rank:
+        #     self.log_info(
+        #         f"run_training_pipeline: dp={parallel_state.get_data_parallel_world_size()} "
+        #         f"{self.total_batch_size_per_dp=}. "
+        #         f"{global_batch_size=}"
+        #     )
 
     def init_trainer_resharding(self, first_world_size: int = -1):
         """Init resharding func."""
@@ -1001,6 +1010,9 @@ class MegatronActor(MegatronModelManager, Worker):
             world_size = default_model_parallel_size_with_cp * valid_dp_size
             assert world_size <= self.component_placement._cluster_num_gpus
 
+            if world_size < self.component_placement.actor_world_size:
+                break
+
             resharding_strategies.append(
                 {
                     "world_size": world_size,
@@ -1010,7 +1022,9 @@ class MegatronActor(MegatronModelManager, Worker):
                 }
             )
 
-        assert resharding_strategies[0]["world_size"] == args.world_size
+        assert resharding_strategies[0]["world_size"] == args.world_size, (
+            f"{resharding_strategies[0]['world_size']=}, {args.world_size=}"
+        )
 
         self.trainer_resharding_func: Callable = resharding_init(
             model=self.model,
@@ -1027,6 +1041,109 @@ class MegatronActor(MegatronModelManager, Worker):
 
         self.is_running = True
         self.apply_parallel_strategy({"world_size": first_world_size})
+
+        # Note. This may affect early stopping.
+        apply_hetero_dp(
+            self._process_fwd_bwd_outputs_for_hetero_dp,
+            alignment=self.cfg.algorithm.group_size,
+        )
+
+    def _pad_forward_backward_outputs_for_hetero_dp(
+        self, forward_backward_outputs: list, max_forward_backward_outputs_len: int
+    ) -> list:
+        """Pad forward_backward_outputs to max length."""
+        forward_backward_outputs_len = len(forward_backward_outputs)
+        if forward_backward_outputs_len == max_forward_backward_outputs_len:
+            return forward_backward_outputs
+
+        default_item = {}
+        for k, v in forward_backward_outputs[0].items():
+            if isinstance(v, torch.Tensor):
+                default_item[k] = torch.tensor(0, dtype=v.dtype, device=v.device)
+            else:
+                assert isinstance(v, (int, float)), (
+                    f"v={v} is not a tensor or int or float"
+                )
+                default_item[k] = type(v)(0)
+
+        forward_backward_outputs += [
+            copy.deepcopy(default_item)
+            for _ in range(
+                max_forward_backward_outputs_len - forward_backward_outputs_len
+            )
+        ]
+
+        return forward_backward_outputs
+
+    def _process_fwd_bwd_outputs_for_hetero_dp(
+        self, forward_backward_outputs: list
+    ) -> list:
+        """Execute data-parallel-group sync after foward_backward_func is done if hetero-dp is applied.
+
+        If hetero-dp is applied, the data-parallel-group sync will be disabled during forward_step().
+        So we need to execute data-parallel-group sync after foward_backward_func is done.
+
+        Note. This may affect early stopping.
+        """
+        assert isinstance(forward_backward_outputs, list), (
+            f"forward_backward_func should return a list, but got {type(forward_backward_outputs)}"
+        )
+        assert len(forward_backward_outputs) > 0, (
+            f"forward_backward_func should return a non-empty list, but got {len(forward_backward_outputs)}"
+        )
+
+        max_forward_backward_outputs_len = torch.tensor(
+            len(forward_backward_outputs), dtype=torch.int
+        ).cuda()
+        torch.distributed.all_reduce(
+            max_forward_backward_outputs_len,
+            group=parallel_state.get_data_parallel_group(),
+            op=torch.distributed.ReduceOp.MAX,
+        )
+
+        padded_forward_backward_outputs = (
+            self._pad_forward_backward_outputs_for_hetero_dp(
+                forward_backward_outputs, max_forward_backward_outputs_len
+            )
+        )
+
+        for forward_backward_output in padded_forward_backward_outputs:
+            for k, v in forward_backward_output.items():
+                if v is not None:
+                    forward_backward_output[k] = (
+                        average_losses_across_data_parallel_group([v])
+                    )
+
+        return forward_backward_outputs
+
+    def get_parallel_strategy(
+        self, parallel_strategy: dict[str, int]
+    ) -> dict[str, int]:
+        parallel_keys = [
+            "world_size",
+            "tensor_model_parallel_size",
+            "pipeline_model_parallel_size",
+            "context_parallel_size",
+        ]
+        assert parallel_strategy.get("world_size") is not None, (
+            "can't find world_size in parallel_strategy"
+        )
+        if parallel_strategy.get("context_parallel_size") is not None:
+            assert (
+                parallel_strategy["context_parallel_size"]
+                == self.default_parallel_strategy["context_parallel_size"]
+            ), "change context_parallel_size is not supported"
+
+        new_parallel_strategy = {}
+        for parallel_key in parallel_keys:
+            if parallel_strategy.get(parallel_key) is not None:
+                new_parallel_strategy[parallel_key] = parallel_strategy[parallel_key]
+            else:
+                new_parallel_strategy[parallel_key] = self.default_parallel_strategy[
+                    parallel_key
+                ]
+
+        return new_parallel_strategy
 
     def apply_parallel_strategy(self, parallel_strategy):
         """Apply specified training parallel strategy"""
@@ -1111,7 +1228,8 @@ class MegatronActor(MegatronModelManager, Worker):
         model_parallel_size = inference_tp * inference_pp
         # After resharding, the number of GPUs in a complete model parallel group = new TP × new PP
         # The first complete model parallel group consists of consecutive ranks starting from 0
-        return list(range(model_parallel_size))
+        self.log_on_first_rank(f"inference world size: {self.component_placement.inference_world_size}")
+        return list(range(self.component_placement.inference_world_size))
 
     def _get_inference_model_state_dict(self):
         """Get the state dictionary of the model for inference."""
@@ -1128,6 +1246,28 @@ class MegatronActor(MegatronModelManager, Worker):
         for rank in self._weight_dst_rank_in_inference:
             if self._rank == rank:
                 self.send(inference_state_dict, self.cfg.inference.group_name, rank)
+
+        if self.offload_optimizer:
+            self.offload_megatron_optimizer()
+            self.is_optimizer_offloaded = True
+        self.offload_model_weights_and_grad(
+            offload_grad=self.offload_grad, offload_weight=False
+        )
+
+        # original get state_dict
+
+        self.offload_model_weights_and_grad(
+            offload_grad=False, offload_weight=self.offload_weight
+        )
+        self.is_weight_offloaded = self.offload_weight
+
+        # done
+
+        del inference_state_dict
+        if self.recreate_nccl_groups:
+            nccl_group_recreate()
+        clear_memory()
+        # self.cuda_info("after send weight to inference and delete")
 
         self.log_debug(
             f"{self.__class__.__name__}: sync_model_to_inference resharding done."
@@ -1152,10 +1292,16 @@ class MegatronActor(MegatronModelManager, Worker):
             output_channel: The output channel to send results to.
             compute_ref_logprobs: Whether to compute reference logprobs.
         """
+        # self.log_on_first_rank("start_inference")
         recv_batch_size = 0
+        recv_resp_lengths = []
         while recv_batch_size < self.total_batch_size_per_dp:
             batch, rollout_result = self.get_batch(input_channel)
             recv_batch_size += rollout_result.num_sequence
+            # self.log_on_first_rank(
+            #     f"recv: {recv_batch_size} / {self.total_batch_size_per_dp} ({recv_batch_size / self.total_batch_size_per_dp * 100:.2f} %)"
+            # )
+            recv_resp_lengths.extend(rollout_result.response_lengths)
             # Must be called after batch is retrieved, suggesting that rollout has stopped
             # Otherwise, loading model might cause OOM in the collocated mode
             self._load_weight_and_optimizer()
@@ -1182,6 +1328,11 @@ class MegatronActor(MegatronModelManager, Worker):
         assert recv_batch_size == self.total_batch_size_per_dp, (
             f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
         )
+        len_tensor = torch.tensor(recv_resp_lengths, dtype=torch.float32)
+        if self.is_data_io_rank:
+            self.log_info(
+                f"get {len(recv_resp_lengths)} response, mean = {len_tensor.mean().item():.2f} (min, max) = ({len_tensor.min().item():.2f}, {len_tensor.max().item():.2f})"
+            )
 
         self.scheduler_offload_sync()
 
@@ -1220,6 +1371,27 @@ class MegatronActor(MegatronModelManager, Worker):
     # Rollout
     def _get_rollout_model_state_dict(self):
         """Get the state dictionary of the model for rollout."""
+        # if not hasattr(self, "first_weights"):
+        #     self.first_weights = {}
+        #     for key, param in unwrap_model(self.model)[0].state_dict().items():
+        #         if "mlp.linear_fc1.layer_norm_weight" in key:
+        #             self.first_weights[key] = param.clone()
+
+        #     import os
+
+        #     save_dir = os.path.join(
+        #         "/mnt/project_rlinf/yuanqwang/schedule-paper/pipe-eval",
+        #         self.cfg.runner.logger.log_path,
+        #         "saved_weight",
+        #     )
+        #     os.makedirs(save_dir, exist_ok=True)
+        #     torch.save(
+        #         self.first_weights,
+        #         os.path.join(
+        #             save_dir,
+        #             f"actor_model_weight_dp{parallel_state.get_data_parallel_rank()}-tp{parallel_state.get_tensor_model_parallel_rank()}.pt",
+        #         ),
+        #     )
         return self.rollout_weights_reshard.gather_and_reshard_model(
             unwrap_model(self.model)
         )
@@ -1231,7 +1403,7 @@ class MegatronActor(MegatronModelManager, Worker):
         )
         self._weight_dst_rank_in_rollout = rank_map[self._rank]
         self.log_info(
-            f"Actor rank {self._rank} will send weights to {self._weight_dst_rank_in_rollout}"
+            f"{self.role} rank {self._rank} will send weights to {self._weight_dst_rank_in_rollout}"
         )
 
     def del_reshard_state_dict(self):
@@ -1291,6 +1463,33 @@ class MegatronActor(MegatronModelManager, Worker):
             )
             self.reshard_state_dict = self._get_rollout_model_state_dict()
 
+        # torch.cuda.synchronize()
+        # torch.cuda.empty_cache()
+        # torch.cuda.synchronize()
+        # self.cuda_info("after gather rollout weight")
+
+        # if not hasattr(self, "save"):
+        #     self.save = True
+        #     for key, param in self.reshard_state_dict.items():
+        #         if "post_attention_layernorm" in key:
+        #             self.first_weights[key] = param.clone()
+
+        #     import os
+
+        #     save_dir = os.path.join(
+        #         "/mnt/project_rlinf/yuanqwang/schedule-paper/pipe-eval",
+        #         self.cfg.runner.logger.log_path,
+        #         "saved_weight",
+        #     )
+        #     os.makedirs(save_dir, exist_ok=True)
+        #     torch.save(
+        #         self.first_weights,
+        #         os.path.join(
+        #             save_dir,
+        #             f"actor_before_send_dp{parallel_state.get_data_parallel_rank()}-tp{parallel_state.get_tensor_model_parallel_rank()}.pt",
+        #         ),
+        #     )
+
     def _compute_rollout_metrics(self, batch):
         rollout_metrics_compute_data_group = self.get_rollout_metrics_group(batch)
         if rollout_metrics_compute_data_group is None:
@@ -1324,3 +1523,245 @@ class MegatronActor(MegatronModelManager, Worker):
                 }
             )
         return rollout_metrics
+
+    def cuda_info(self, text: str = ""):
+        free_gpu_memory, total_gpu_memory = torch.cuda.mem_get_info()
+        free_gpu_memory /= 2**30
+        total_gpu_memory /= 2**30
+
+        memory_allocated = torch.cuda.memory_allocated() / 2**30
+        memory_reserved = torch.cuda.memory_reserved() / 2**30
+
+        self.log_info(
+            f"{text} "
+            f"allocated {memory_allocated:.2f} GiB, reserved {memory_reserved:.2f} GiB, "
+            f"free {free_gpu_memory:.2f} GiB, used: {total_gpu_memory - free_gpu_memory:.2f} GiB, "
+            f"used by cuAPI or other processes: {total_gpu_memory - free_gpu_memory - memory_reserved:.2f} GiB"
+        )
+
+
+from contextlib import contextmanager
+from megatron.core import num_microbatches_calculator
+from megatron.core.num_microbatches_calculator import ConstantNumMicroBatchesCalculator
+from megatron.core.pipeline_parallel import schedules
+from megatron.core import parallel_state
+import torch
+from functools import wraps, partial
+from typing import Callable, Any
+from copy import deepcopy
+
+
+@contextmanager
+def disable_data_parallel_sync():
+    """Disable data parallel sync.
+
+    1. This context should be used with `model.config.no_sync_func` in forward-backward pass.
+    2. Only support `forward_backward_no_pipelining` schedule now.
+    """
+    origin_get_data_parallel_group = parallel_state.get_data_parallel_group
+    global_rank = torch.distributed.get_rank()
+    self_group = parallel_state.create_group(ranks=[global_rank])
+
+    def _get_data_parallel_group(
+        with_context_parallel=False, partial_data_parallel=False
+    ):
+        if with_context_parallel is False and partial_data_parallel is False:
+            return self_group
+        return origin_get_data_parallel_group(
+            with_context_parallel, partial_data_parallel
+        )
+
+    parallel_state.get_data_parallel_group = _get_data_parallel_group
+    try:
+        yield
+    finally:
+        parallel_state.get_data_parallel_group = origin_get_data_parallel_group
+
+
+def wrap_forward_step(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        with disable_data_parallel_sync():
+            return fn(*args, **kwargs)
+
+    return wrapper
+
+
+def wrap_forward_backward_no_pipelining(
+    forward_backward_no_pipelining: Callable, _process_fwd_bwd_outputs: Callable
+):
+    @wraps(forward_backward_no_pipelining)
+    def wrapper(*args, **kwargs):
+        return _process_fwd_bwd_outputs(forward_backward_no_pipelining(*args, **kwargs))
+
+    return wrapper
+
+
+def process_fwd_bwd_outputs_for_pretrain_gpt(forward_data_store: list):
+    assert isinstance(forward_data_store, list), (
+        f"forward_backward_func should return a list, but got {type(forward_data_store)}"
+    )
+
+    forward_data_store_len = len(forward_data_store)
+    assert forward_data_store_len > 0, (
+        f"forward_backward_func should return a non-empty list, but got {forward_data_store_len}"
+    )
+
+    max_forward_data_store_len = torch.tensor(
+        forward_data_store_len, dtype=torch.int
+    ).cuda()
+
+    torch.distributed.all_reduce(
+        max_forward_data_store_len,
+        group=parallel_state.get_data_parallel_group(),
+        op=torch.distributed.ReduceOp.MAX,
+    )
+
+    default_forward_data = {
+        "lm loss": (
+            torch.tensor(0, dtype=torch.float32).cuda(),
+            torch.tensor(0, dtype=torch.int).cuda(),
+        )
+    }
+
+    padded_len = max_forward_data_store_len - forward_data_store_len
+    assert padded_len >= 0, (
+        f"max_forward_data_store_len={max_forward_data_store_len} < len(forward_data_store)={forward_data_store_len}"
+    )
+    forward_data_store += [deepcopy(default_forward_data) for _ in range(padded_len)]
+
+    for i in range(len(forward_data_store)):
+        loss_reduced = forward_data_store[i]["lm loss"]
+        loss_reduced_tensor = torch.tensor(
+            loss_reduced, dtype=loss_reduced[0].dtype
+        ).cuda()
+        torch.distributed.all_reduce(
+            loss_reduced_tensor, group=parallel_state.get_data_parallel_group()
+        )
+        forward_data_store[i] = {
+            "lm loss": (loss_reduced_tensor[0], loss_reduced_tensor[1])
+        }
+    return forward_data_store
+
+
+class ConstantNumMicroBatchesCalculatorForHeteroDP(ConstantNumMicroBatchesCalculator):
+    """Patch of megatron.core.num_microbatches_calculator.ConstantNumMicroBatchesCalculator.
+
+    When the global batch size is not divisible by the micro batch size * data parallel size, set different num_microbatches for each data parallel group.
+    """
+
+    _alignment: int = 1
+
+    @classmethod
+    def set_alignment(cls, alignment: int):
+        cls._alignment = alignment
+
+    def __init__(
+        self,
+        global_batch_size: int,
+        micro_batch_size: int,
+        data_parallel_size: int,
+        decrease_batch_size_if_needed: bool,
+        rank: int,
+    ) -> None:
+        if global_batch_size % (micro_batch_size * data_parallel_size) == 0:
+            super().__init__(
+                global_batch_size,
+                micro_batch_size,
+                data_parallel_size,
+                decrease_batch_size_if_needed,
+                rank,
+            )
+            return
+
+        assert global_batch_size % (micro_batch_size * self._alignment) == 0
+
+        num_microbatches_with_alignment_sum = (
+            global_batch_size // micro_batch_size // self._alignment
+        )
+        assert num_microbatches_with_alignment_sum >= data_parallel_size
+        num_microbatches_with_alignment_per_dp = (
+            num_microbatches_with_alignment_sum // data_parallel_size
+        )
+
+        if (
+            parallel_state.get_data_parallel_rank()
+            < num_microbatches_with_alignment_sum % data_parallel_size
+        ):
+            num_microbatches_with_alignment_per_dp += 1
+
+        hetero_num_microbatches = (
+            num_microbatches_with_alignment_per_dp * self._alignment
+        )
+
+        hetero_global_batch_size = (
+            hetero_num_microbatches * micro_batch_size * data_parallel_size
+        )
+        super().__init__(
+            hetero_global_batch_size,
+            micro_batch_size,
+            data_parallel_size,
+            decrease_batch_size_if_needed,
+            rank,
+        )
+
+    def update(self, consumed_samples, consistency_check, verbose=False) -> None:
+        pass
+
+
+def apply_hetero_dp(process_fwd_bwd_outputs: Callable = None, alignment: int = 1):
+    """Apply hetero-dp for megatron training.
+
+    Args:
+        process_fwd_bwd_outputs (Callable): the func to execute dp-group sync after foward_backward_func is done. It accepts only one argument, which is the list of forward_backward_func outputs.
+        alignment (int): the alignment of each batch size.
+
+    Example:
+        >>> apply_hetero_dp(process_fwd_bwd_outputs)
+        def process_fwd_bwd_outputs(forward_backward_outputs):
+
+            # Step-1 : get the max length of forward_backward_outputs across all data parallel groups.
+
+            forward_data_store_len = len(forward_data_store)
+            max_forward_data_store_len = torch.tensor(forward_data_store_len).cuda()
+            torch.distributed.all_reduce(
+                max_forward_data_store_len,
+                group=parallel_state.get_data_parallel_group(),
+                op=torch.distributed.ReduceOp.MAX,
+            )
+
+            # Step-2 : padding the forward_backward_outputs to the max length.
+
+            default_forward_data = {
+                "lm loss" : torch.tensor(0.0).cuda()
+            }
+            forward_data_store += [deepcopy(default_forward_data) for _ in range(int(max_forward_data_store_len.item()) - forward_data_store_len)]
+
+            # Step-3 : execute dp-group sync for each forward_backward_output.
+
+            for forward_backward_output in forward_backward_outputs:
+                torch.distributed.all_reduce(
+                    forward_backward_output['lm loss'], group=parallel_state.get_data_parallel_group()
+                )
+
+            return forward_backward_outputs
+    """
+    # Patch num_microbatches_calculator
+    ConstantNumMicroBatchesCalculatorForHeteroDP.set_alignment(alignment)
+    num_microbatches_calculator.ConstantNumMicroBatchesCalculator = (
+        ConstantNumMicroBatchesCalculatorForHeteroDP
+    )
+
+    # Disable data-parallel-group sync in loss_func.
+    origin_forward_step = schedules.forward_step
+    schedules.forward_step = wrap_forward_step(origin_forward_step)
+
+    # Process for forward_backward_func outputs.
+
+    if process_fwd_bwd_outputs is None:
+        process_fwd_bwd_outputs = process_fwd_bwd_outputs_for_pretrain_gpt
+
+    origin_forward_backward_no_pipelining = schedules.forward_backward_no_pipelining
+    schedules.forward_backward_no_pipelining = wrap_forward_backward_no_pipelining(
+        origin_forward_backward_no_pipelining, process_fwd_bwd_outputs
+    )

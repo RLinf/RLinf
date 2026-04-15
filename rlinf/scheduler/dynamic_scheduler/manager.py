@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import heapq
 import math
 import time
 from abc import ABC, abstractmethod
@@ -222,10 +223,15 @@ class RolloutManager(ComponentManager):
         )
         self.create_channels(self.init_instance_num)
 
-        self.max_running_requests = self.cfg.rollout.max_running_requests
+        self.max_running_requests = min(
+            self.cfg.rollout.max_running_requests,
+            self.cfg.cluster.get("migrate_out_max_bs", int(2**31)),
+        )
         self.rollout_total_tasks = (
             self.cfg.algorithm.group_size * self.cfg.data.rollout_batch_size
         )
+
+        self.iter_counter = 0
 
     # ------------------------------------------------- override start -------------------------------------------------
 
@@ -248,7 +254,9 @@ class RolloutManager(ComponentManager):
         assert migrate_out_instance_num > 0
 
         if running_tasks_threshold == -1:
-            running_tasks_threshold = self.rollout_total_tasks // 2
+            running_tasks_threshold = int(
+                self.rollout_total_tasks * self.cfg.cluster.preprocess_threshold
+            ) + 1
         assert (
             running_tasks_threshold > 0
             and running_tasks_threshold < self.rollout_total_tasks
@@ -259,11 +267,14 @@ class RolloutManager(ComponentManager):
             if (
                 self.total_tasks == self.rollout_total_tasks
                 and self.running_tasks <= running_tasks_threshold
+                and (self.completed_requests / self.total_requests) > 0.1
             ):
                 self._logger.info("\npre_process condition satisfied:\n" + report_str)
                 await self.migrate(migrate_out_instance_num)
                 break
             await asyncio.sleep(1)
+
+        self.iter_counter += 1
 
     async def main_loop_finalize(self):
         """Processing after the last training iteration in main_loop. Perform RolloutAction.Finish on all surviving instances."""
@@ -303,7 +314,26 @@ class RolloutManager(ComponentManager):
             return await self.finish(action=RolloutAction.Wait_For_Finish)
 
         # Migrate Action
+        t1 = asyncio.get_running_loop().time()
         released_instance_num = self.migrate_policy(train_iter)
+        t2 = asyncio.get_running_loop().time()
+
+        import os
+        import json
+
+        save_dir = os.path.join(
+            "/mnt/project_rlinf/yuanqwang/schedule-paper/pipe-eval",
+            self.cfg.runner.logger.log_path,
+            "schedule_time",
+        )
+        os.makedirs(save_dir, exist_ok=True)
+        with open(os.path.join(save_dir, f"get_resource_time.jsonl"), "a") as f:
+            f.write(
+                json.dumps(
+                    str(t2-t1)
+                )
+                + "\n"
+            )
         released_gpu_num = await self.migrate(released_instance_num)
         return released_gpu_num
 
@@ -395,9 +425,45 @@ class RolloutManager(ComponentManager):
             report.running_tasks for report in self.reports.values()
         )
 
-        report_str = f"Rollout Report:\ncurrent_total_tasks={self.total_tasks}, current_running_tasks={self.running_tasks}\n"
+        self.total_requests = sum(
+            report.total_requests for report in self.reports.values()
+        )
+        self.completed_requests = sum(
+            report.completed_requests for report in self.reports.values()
+        )
+
+        report_str = f"Rollout Report:\ncurrent_total_tasks={self.total_tasks}, current_running_tasks={self.running_tasks}, completed group: {self.completed_requests}\n"
+        # self._logger.info(
+        #     f"Rollout Report: Req: total {self.total_tasks:>5}, running {self.running_tasks:>5}, group: total {self.total_requests:>5}, completed {self.completed_requests:>5}"
+        # )
+
+        running_tasks = [
+            report.running_tasks for instance_id, report in self.reports.items()
+        ]
+        running_groups = [
+            (report.total_requests - report.completed_tasks)
+            for instance_id, report in self.reports.items()
+        ]
+
+        import os
+        import json
+
+        save_dir = os.path.join(
+            "/mnt/project_rlinf/yuanqwang/schedule-paper/pipe-eval",
+            self.cfg.runner.logger.log_path,
+            "running_status",
+        )
+        os.makedirs(save_dir, exist_ok=True)
+        with open(os.path.join(save_dir, f"status_{self.iter_counter}.jsonl"), "a") as f:
+            f.write(
+                json.dumps(
+                    {"running_tasks": running_tasks, "running_groups": running_groups}
+                )
+                + "\n"
+            )
+
         for instance_id, report in self.reports.items():
-            report_str += f"rollout{instance_id} : total_tasks={report.total_tasks}, running_tasks={report.running_tasks}, completed_tasks={report.completed_tasks}\n"
+            report_str += f"rollout{instance_id:>4} : total_tasks={report.total_tasks:>4}, running_tasks={report.running_tasks:>4}, completed_tasks={report.completed_tasks:>4}, Group completed: {report.completed_requests:>4}, total: {report.total_requests:>4}\n"
         return report_str
 
     async def finish(
@@ -426,15 +492,39 @@ class RolloutManager(ComponentManager):
         self.update(released_instance_num=len(finished_instance_ids))
         return len(finished_instance_ids) * self.model_parallel_size
 
+    def _assign_sequences_greedy(
+        self,
+        migrate_in_instance_ids: list[int],
+        migrate_in_instance_reports: list[RolloutReport],
+        migrate_out_batches: list["SeqGroupInfo"],
+    ) -> list[list["SeqGroupInfo"]]:
+        heap = []
+        batches_assigned = [[] for _ in range(len(migrate_in_instance_ids))]
+
+        for i, (instance_id, report) in enumerate(
+            zip(migrate_in_instance_ids, migrate_in_instance_reports)
+        ):
+            running_tasks = report.running_tasks
+            # select instace with least running_tasks and larger instance id.
+            heapq.heappush(heap, (running_tasks, -instance_id, i))
+
+        # larger batch assigned first
+        sorted_batches = sorted(
+            migrate_out_batches, key=lambda x: x.num_aborted, reverse=True
+        )
+        for group in sorted_batches:
+            current_tasks, instance_id, i = heapq.heappop(heap)
+            batches_assigned[i].append(group)
+            heapq.heappush(heap, (current_tasks + group.num_aborted, instance_id, i))
+
+        return batches_assigned
+
     def _assign_sequences_sequential(
         self,
         migrate_in_instance_ids: list[int],
         migrate_in_instance_reports: list[RolloutReport],
         migrate_out_batches: list["SeqGroupInfo"],
     ) -> list[list["SeqGroupInfo"]]:
-        assert len(migrate_in_instance_ids) == len(migrate_in_instance_reports), (
-            f"Get {len(migrate_in_instance_ids)} instance ids != {len(migrate_in_instance_reports)} reports."
-        )
         instance_running_tasks_expected = max(
             0, self.running_tasks // len(migrate_in_instance_ids)
         )
@@ -504,8 +594,17 @@ class RolloutManager(ComponentManager):
             If an instance is not assigned any batches, the corresponding entry is an
             empty list.
         """
+        assert len(migrate_in_instance_ids) == len(migrate_in_instance_reports), (
+            f"Get {len(migrate_in_instance_ids)} instance ids != {len(migrate_in_instance_reports)} reports."
+        )
         if algo == "sequential":
             return self._assign_sequences_sequential(
+                migrate_in_instance_ids,
+                migrate_in_instance_reports,
+                migrate_out_batches,
+            )
+        elif algo == "greedy":
+            return self._assign_sequences_greedy(
                 migrate_in_instance_ids,
                 migrate_in_instance_reports,
                 migrate_out_batches,
@@ -563,7 +662,7 @@ class RolloutManager(ComponentManager):
             migrate_in_instance_ids,
             migrate_in_instance_reports,
             migrate_out_batches,
-            algo="sequential",
+            algo=self.cfg.cluster.get("assign_policy", "sequential"),
         )
 
         migrate_in_ids: list[int] = []

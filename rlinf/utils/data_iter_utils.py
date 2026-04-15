@@ -74,10 +74,12 @@ def split_list(
         return [inputs[i : i + chunk_size] for i in range(0, len(inputs), chunk_size)]
     else:
         k, m = divmod(len(inputs), num_chunks)
-        return [
+        result = [
             inputs[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)]
             for i in range(num_chunks)
         ]
+        result.reverse()
+        return result
 
 
 def get_iterator_k_split(

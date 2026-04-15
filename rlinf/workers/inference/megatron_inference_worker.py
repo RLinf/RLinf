@@ -16,7 +16,12 @@ import copy
 
 from omegaconf import DictConfig, open_dict
 
-from rlinf.utils.placement import ComponentPlacement
+from rlinf.utils.placement import (
+    ComponentPlacement,
+    PlacementMode,
+)
+from rlinf.utils.resharding.mcore_weight_reshard import MegatronCoreWeightReshard
+from rlinf.utils.resharding.reshard_config import ReshardConfig
 from rlinf.utils.utils import retrieve_model_state_dict_in_cpu
 
 from ..actor.megatron_actor_worker import MegatronActor
@@ -67,6 +72,15 @@ class MegatronInference(MegatronActor):
             self.cfg.inference.model.pipeline_model_parallel_size,
         )
 
+        rollout_reshard_config = ReshardConfig(
+            model_arch=self.cfg.rollout.model_arch,
+            model_config=self.transformer_config,
+            reshard_tp_size=self.cfg.rollout.tensor_parallel_size,
+            reshard_pp_size=self.cfg.rollout.pipeline_parallel_size,
+        )
+        self.rollout_weights_reshard = MegatronCoreWeightReshard(rollout_reshard_config)
+        self._setup_rollout_weight_dst_ranks()
+
     def _build_inference_cfg(self):
         """Build the configuration for inference based on the actor config."""
         inference_cfg = self.cfg.inference
@@ -89,6 +103,7 @@ class MegatronInference(MegatronActor):
 
     def sync_model_from_actor(self):
         if self.is_weight_offloaded:
+            self.log_on_first_rank("before sync from actor, onload weight...")
             self.onload_model_weights_and_grad(load_grad=False)
             self.is_weight_offloaded = False
         for rank in self._weight_dst_rank_in_inference:
@@ -99,7 +114,46 @@ class MegatronInference(MegatronActor):
                 )
                 self.load_state_dict(state_dict, strict=False)
 
-        for ddp_model in self.model:
-            ddp_model.broadcast_params()
+        if len(self._weight_dst_rank_in_inference) < self.component_placement.inference_world_size:
+            self.log_info("boradcast parameters among inference dp...")
+            for ddp_model in self.model:
+                ddp_model.broadcast_params()
 
         self.log_debug("Inference sync_model_from_actor: resharding done")
+
+    def get_model_state_and_offload(self):
+        """Send the model weights to the destination ranks in the rollout task.
+
+        When in COLLOCATED mode or when `use_pre_process_policy` is True, first offload the optimizer and gradients.
+        Then call `_get_rollout_model_state_dict()`, and finally offload the model weights.
+        """
+        if not self.is_running:
+            return
+
+        assert self.component_placement._placement_mode in [
+            PlacementMode.DISAGGREGATED,
+            PlacementMode.AUTO,
+        ], "Unsupported placement mode for sending weights."
+        assert isinstance(self._weight_dst_rank_in_rollout, list), (
+            f"In disaggregated mode, weight_dst_rank_in_rollout should be a list of ranks, got {type(self._weight_dst_rank_in_rollout)}"
+        )
+        self.reshard_state_dict = self._get_rollout_model_state_dict()
+
+    def sync_model_to_rollout(self):
+        """Send the model weights to the destination ranks in the rollout task."""
+        # if self.recreate_nccl_groups:
+        #     nccl_group_recreate()
+        if not self.is_running:
+            return
+        self.get_model_state_and_offload()
+        assert (
+            not self.component_placement._placement_mode == PlacementMode.COLLOCATED
+        ), (
+            "Inference Worker's sync_model_to_rollout() should not be called under collocated mode."
+        )
+        for weight_dst_rank in self._weight_dst_rank_in_rollout:
+            self.send(
+                self.reshard_state_dict,
+                self.rollout_group_name,
+                weight_dst_rank,
+            )

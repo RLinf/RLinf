@@ -306,12 +306,24 @@ class ReasoningRunner:
 
     def _sync_weights(self):
         if self.has_dedicated_inference:
-            self.actor.sync_model_to_inference()
-            self.inference.sync_model_from_actor().wait()
+            with self.timer("sync_to_inference"):
+                sync_model_to_inference_handle = self.actor.sync_model_to_inference()
+                self.inference.sync_model_from_actor().wait()
 
-        self.actor.sync_model_to_rollout()
-        self.rollout.sync_model_from_actor().wait()
-        self.actor.del_reshard_state_dict().wait()
+            with self.timer("sync_to_rollout"):
+                self.inference.sync_model_to_rollout()
+                # sync_model_to_inference will first send to inference, then offload opt, grad & weight
+                # inference handle will return after it finish receiving weight from actor
+                # so the actor offload might be unfinished now.
+                # call wait() here to ensure that rollout has sufficient VRAM to receive weight from inference and onload its weight & kv cache.
+                sync_model_to_inference_handle.wait()
+                self.rollout.sync_model_from_actor().wait()
+                self.inference.del_reshard_state_dict().wait()
+
+        else:
+            self.actor.sync_model_to_rollout()
+            self.rollout.sync_model_from_actor().wait()
+            self.actor.del_reshard_state_dict().wait()
 
     def run(self):
         epoch_iter = range(self.epoch, self.cfg.runner.max_epochs)
@@ -323,7 +335,7 @@ class ReasoningRunner:
             initial=self.global_steps,
             total=self.max_steps,
             desc="Global Step",
-            ncols=620,
+            ncols=750,
         )
 
         self.run_timer.start_time()
