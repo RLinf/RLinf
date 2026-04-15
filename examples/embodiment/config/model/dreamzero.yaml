@@ -1,0 +1,9 @@
+model_type: "dreamzero"
+# Model path - should be set in specific config files
+model_path: "/path/to/model/dreamzero"
+
+action_dim: 7
+num_action_chunks: 16  # Action chunk size (libero_sim typically uses 16-32)
+
+embodiment_tag: "libero_sim"
+precision: "bf16"

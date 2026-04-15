@@ -44,29 +44,28 @@ class DataCollector(Worker):
             worker_info=self.worker_info,
         )
 
-        if self.cfg.env.get("data_collection", None) and getattr(
-            self.cfg.env.data_collection, "enabled", False
+        if self.cfg.env.eval.get("data_collection", None) and getattr(
+            self.cfg.env.eval.data_collection, "enabled", False
         ):
             from rlinf.envs.wrappers import CollectEpisode
 
             self.env = CollectEpisode(
                 self.env,
-                save_dir=self.cfg.env.data_collection.save_dir,
+                save_dir=self.cfg.env.eval.data_collection.save_dir,
                 # rank=self._rank,
                 # num_envs=1,
                 export_format=getattr(
-                    self.cfg.env.data_collection, "export_format", "pickle"
+                    self.cfg.env.eval.data_collection, "export_format", "pickle"
                 ),
-                robot_type=getattr(self.cfg.env.data_collection, "robot_type", "panda"),
-                fps=getattr(self.cfg.env.data_collection, "fps", 10),
+                robot_type=getattr(
+                    self.cfg.env.eval.data_collection, "robot_type", "panda"
+                ),
+                fps=getattr(self.cfg.env.eval.data_collection, "fps", 10),
                 only_success=getattr(
-                    self.cfg.env.data_collection, "only_success", False
-                ),
-                stats_sample_ratio=getattr(
-                    self.cfg.env.data_collection, "stats_sample_ratio", 0.1
+                    self.cfg.env.eval.data_collection, "only_success", False
                 ),
                 finalize_interval=getattr(
-                    self.cfg.env.data_collection, "finalize_interval", 100
+                    self.cfg.env.eval.data_collection, "finalize_interval", 100
                 ),
             )
 

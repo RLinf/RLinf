@@ -198,8 +198,6 @@ class FSDPActor(FSDPModelManager, Worker):
             )
         self.max_tokens_per_mbs = cfg.runner.get("max_tokens_per_mbs", 2048)
 
-        self.bucket_capacity = 128 * 1024 * 1024
-
     def init_worker(self) -> None:
         """
         Initialize the actor worker. build the model and use corresponding training backend
@@ -232,9 +230,7 @@ class FSDPActor(FSDPModelManager, Worker):
 
     def del_reshard_state_dict(self) -> None:
         """Just for interface compatibility with MegatronActor."""
-        if hasattr(self, "rollout_state_dict"):
-            del self.rollout_state_dict
-        clear_memory(sync=False)
+        pass
 
     def sync_model_to_inference(self) -> None:
         """
@@ -279,91 +275,74 @@ class FSDPActor(FSDPModelManager, Worker):
 
         torch.distributed.barrier()
 
-    def divide_model_to_bucket(self, state_dict, has_visual):
-        bucket_capacity = self.bucket_capacity
-        model_bucket_list = []
-        current_capacity = 0
-        model_bucket = {}
-        for key, val in state_dict.items():
-            name = key
-            if "_extra_state" in name:
-                continue
-            if has_visual:
-                if name.startswith("model.language_model."):
-                    name = "model." + name[21:]
-                # NOTE:
-                # if transformers version is 4.56.1 or older(not tested),
-                # the following line should be uncommented
-
-                # elif name.startswith("model."):
-                #     name = name[6:]
-
-            model_bucket[name] = val
-            current_capacity += (
-                val.numel() * val.element_size() * torch.distributed.get_world_size()
-            )
-
-            if current_capacity >= bucket_capacity:
-                model_bucket_list.append(model_bucket)
-                current_capacity = 0
-                model_bucket = {}
-
-        if len(model_bucket) > 0:
-            model_bucket_list.append(model_bucket)
-        return model_bucket_list
-
-    def sync_model_to_rollout(self) -> None:
+    def sync_model_to_rollout(self):
         """
         Sync the model's full state dict to the rollout worker.
         """
-        if self.enable_offload and not self.is_optimizer_offloaded:
-            self.offload_optimizer()
+        if self.enable_offload:
+            if not self.is_optimizer_offloaded:
+                self.offload_optimizer()
 
-        if self.enable_offload and self.is_weight_offloaded:
-            self.load_param_and_grad(self.device, False)
+            if self.is_weight_offloaded:
+                self.load_param_and_grad(self.device, False)
 
-        self.rollout_state_dict = self.get_model_state_dict(
+        rollout_dtype = None
+        if self._cfg.get("sync_precision", None) is not None:
+            rollout_dtype = torch_dtype_from_precision(self._cfg.sync_precision)
+
+        rollout_state_dict = self.get_model_state_dict(
             cpu_offload=False, full_state_dict=False
         )
-
-        has_visual = any("visual." in k for k in self.rollout_state_dict.keys())
-        if self._weight_dst_rank_in_rollout is not None:
-            rollout_dtype = None
-            if self._cfg.get("sync_precision", None) is not None:
-                rollout_dtype = torch_dtype_from_precision(self._cfg.sync_precision)
-            model_bucket_list = self.divide_model_to_bucket(
-                self.rollout_state_dict, has_visual
-            )
-            self.log_debug(
-                f"[sync_model_to_rollout rank-{self._rank}] length of model_bucket_list: {len(model_bucket_list)}"
-            )
-            for bucket_idx, model_bucket in enumerate(model_bucket_list):
-                buffer = {}
-                for k, v in model_bucket.items():
-                    if isinstance(v, DTensor):
-                        v = v.full_tensor()
-                    if rollout_dtype is not None:
-                        v = v.to(rollout_dtype)
-                    if not self.is_pipeline:
-                        v = reduce_tensor(v)
-                    buffer[k] = v
-                if bucket_idx == 0:
-                    buffer["bucket_length"] = len(model_bucket_list)
+        has_visual = any("visual." in k for k in rollout_state_dict.keys())
+        model_bucket_list = self.divide_model_to_bucket(rollout_state_dict, has_visual)
+        del rollout_state_dict
+        send_handles = []
+        buffer = {}
+        for bucket_idx, model_bucket in enumerate(model_bucket_list):
+            for k, v in model_bucket.items():
+                if isinstance(v, DTensor):
+                    v = v.full_tensor()
+                if rollout_dtype is not None:
+                    v = v.to(rollout_dtype)
                 if not self.is_pipeline:
-                    self.send(
+                    v = reduce_tensor(v)
+                buffer[k] = v
+            if bucket_idx == 0:
+                buffer["bucket_length"] = len(model_bucket_list)
+
+            for send_handle in send_handles:
+                send_handle.wait()
+            send_handles = []
+
+            if not self.is_pipeline:
+                send_handle = self.send(
+                    buffer,
+                    self._rollout_group_name,
+                    self._weight_dst_rank_in_rollout,
+                    async_op=True,
+                )
+                send_handles.append(send_handle)
+            else:
+                for rank in self._weight_dst_rank_in_rollout:
+                    send_handle = self.send(
                         buffer,
                         self._rollout_group_name,
-                        self._weight_dst_rank_in_rollout,
+                        rank,
+                        async_op=True,
                     )
-                else:
-                    for weight_dst_rank in self._weight_dst_rank_in_rollout:
-                        self.send(
-                            buffer,
-                            self._rollout_group_name,
-                            weight_dst_rank,
-                        )
-        if self.enable_offload and not self.is_weight_offloaded:
+                    send_handles.append(send_handle)
+            buffer = {}
+
+        for send_handle in send_handles:
+            send_handle.wait()
+
+        if self.enable_offload:
+            assert not self.is_weight_offloaded, (
+                "weight should be offloaded in sync_model_to_rollout"
+            )
             self.offload_param_and_grad()
+
+        clear_memory(sync=False)
 
     def get_batch(
         self, channel: Channel
@@ -1061,30 +1040,72 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
     async def sync_model_to_rollout(self) -> None:
         """
-        Sync the model's full state dict to the rollout worker.
+        Sync the model's full state dict to the rollout worker using bucket-based sending.
+        This reduces peak memory usage by sending weights in smaller chunks instead of
+        all at once, preventing OOM on GPUs with limited memory.
         """
-        if self.enable_offload and not self.is_optimizer_offloaded:
-            self.offload_optimizer()
+        if self.enable_offload:
+            if not self.is_optimizer_offloaded:
+                self.offload_optimizer()
 
-        if self.enable_offload and self.is_weight_offloaded:
-            self.load_param_and_grad(self.device)
+            if self.is_weight_offloaded:
+                self.load_param_and_grad(self.device, False)
 
-        state_dict = self.get_model_state_dict(cpu_offload=False, full_state_dict=True)
+        rollout_dtype = None
+        if self._cfg.get("sync_precision", None) is not None:
+            rollout_dtype = torch_dtype_from_precision(self._cfg.sync_precision)
+
+        rollout_state_dict = self.get_model_state_dict(
+            cpu_offload=False, full_state_dict=False
+        )
+        model_bucket_list = self.divide_model_to_bucket(rollout_state_dict)
+        del rollout_state_dict
+
         handles = []
+        # Send weights bucket by bucket to reduce peak memory usage
         for rank in self._weight_dst_rank_in_rollout:
             handles.append(
                 self.send(
-                    state_dict,
+                    len(model_bucket_list),
                     self._rollout_group_name,
                     rank,
                     async_op=True,
                     options=self._sync_weight_comm_options,
                 )
             )
+        for bucket in model_bucket_list:
+            # Add bucket_length to first bucket for receiver to know total count
+            buffer = {}
+            for k, v in bucket.items():
+                if isinstance(v, DTensor):
+                    v = v.full_tensor()
+                if rollout_dtype is not None:
+                    v = v.to(rollout_dtype)
+                buffer[k] = v
+
+            for handle in handles:
+                await handle.async_wait()
+            handles = []
+
+            for rank in self._weight_dst_rank_in_rollout:
+                handles.append(
+                    self.send(
+                        buffer,
+                        self._rollout_group_name,
+                        rank,
+                        async_op=True,
+                        options=self._sync_weight_comm_options,
+                    )
+                )
         for handle in handles:
             await handle.async_wait()
-        if self.enable_offload and not self.is_weight_offloaded:
-            self.offload_param_and_grad()
+        del buffer
+
+        if self.enable_offload:
+            assert not self.is_weight_offloaded, (
+                "weight should be offloaded in sync_model_to_rollout"
+            )
+            self.offload_param_and_grad(True)
 
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
         """

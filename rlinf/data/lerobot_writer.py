@@ -15,15 +15,7 @@
 """LeRobot dataset writer for saving rollout data."""
 
 import gc
-import io
-import json
-import os
 from typing import Any
-
-import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
-from PIL import Image
 
 from rlinf.utils.logging import get_logger
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -42,20 +34,18 @@ class LeRobotDatasetWriter:
             fps=5,
             features={...}
         )
-        
+
         for episode_data in episodes:
             writer.add_episode(episode_data)
-        
+
         writer.finalize(push_to_hub=False)
     """
 
     def __init__(self):
         """Initialize the writer."""
-        self.dataset: LeRobotDataset | None = None
+        self.dataset = None
         self.logger = get_logger()
 
-
-    
     def create(
         self,
         repo_id: str,
@@ -68,8 +58,8 @@ class LeRobotDatasetWriter:
         state_dim: int = 8,
         action_dim: int = 7,
         has_image: bool = True,
-        has_wrist_image: bool = True,
-        has_extra_view_image: bool = True,
+        wrist_image_keys: dict[str, tuple[int, ...]] | None = None,
+        extra_view_image_keys: dict[str, tuple[int, ...]] | None = None,
         has_intervene_flag: bool = True,
     ) -> None:
         """
@@ -79,38 +69,46 @@ class LeRobotDatasetWriter:
             repo_id: The identifier for the new LeRobot dataset
             robot_type: Robot type (default "franka_panda")
             fps: Frame rate (default 5)
-            features: Feature schema dictionary defining the dataset structure. If None, auto-generated from dimensions.
+            features: Feature schema dictionary defining the dataset structure.
+                If None, auto-generated from dimensions.
             image_writer_threads: Number of threads for image writing
             image_writer_processes: Number of processes for image writing
-            image_shape: Image shape (H, W, C) for auto-generated features
+            image_shape: Image shape (H, W, C) for the main ``image`` feature.
             state_dim: State dimension for auto-generated features
             action_dim: Action dimension for auto-generated features
-            has_wrist_image: Whether to include wrist_image in auto-generated features
-            has_extra_view_image: Whether to include extra_view_image in auto-generated features
-            has_intervene_flag: Whether to include per-frame human-intervention flag
-                (bool, shape ``(1,)``) in auto-generated features.
+            has_image: Whether to include the main ``image`` feature.
+            wrist_image_keys: Mapping of wrist-camera image key names to their
+                ``(H, W, C)`` shapes.  A single view produces
+                ``{"wrist_image": (H, W, C)}``; multiple views produce
+                ``{"wrist_image/0": …, "wrist_image/1": …, …}``.
+            extra_view_image_keys: Same as *wrist_image_keys* but for the
+                extra-view camera(s).
+            has_intervene_flag: Whether to include per-frame human-intervention
+                flag (bool, shape ``(1,)``) in auto-generated features.
 
         """
+        from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+
         if features is None:
             features = {
                 "state": {
                     "dtype": "float32",
-                    "shape": (state_dim, ),
+                    "shape": (state_dim,),
                     "names": ["state"],
                 },
                 "actions": {
                     "dtype": "float32",
-                    "shape": (action_dim, ),
+                    "shape": (action_dim,),
                     "names": ["actions"],
                 },
                 "done": {
                     "dtype": "bool",
-                    "shape": (1, ),
+                    "shape": (1,),
                     "names": ["done"],
                 },
                 "is_success": {
                     "dtype": "bool",
-                    "shape": (1, ),
+                    "shape": (1,),
                     "names": ["is_success"],
                 },
             }
@@ -126,20 +124,18 @@ class LeRobotDatasetWriter:
                     "shape": list(image_shape),
                     "names": ["height", "width", "channel"],
                 }
-            if has_wrist_image:
-                features["wrist_image"] = {
-                    "dtype": "image",
-                    "shape": list(image_shape),
-                    "names": ["height", "width", "channel"],
-                }
-            if has_extra_view_image:
-                features["extra_view_image"] = {
-                    "dtype": "image",
-                    "shape": list(image_shape),
-                    "names": ["height", "width", "channel"],
-                }
+            for keys in (wrist_image_keys, extra_view_image_keys):
+                if keys:
+                    for key, shape in keys.items():
+                        features[key] = {
+                            "dtype": "image",
+                            "shape": list(shape),
+                            "names": ["height", "width", "channel"],
+                        }
 
-        self.logger.info(f"Creating LeRobot dataset: repo_id={repo_id}, robot_type={robot_type}, fps={fps}")
+        self.logger.info(
+            f"Creating LeRobot dataset: repo_id={repo_id}, robot_type={robot_type}, fps={fps}"
+        )
         self.dataset = LeRobotDataset.create(
             repo_id=repo_id,
             robot_type=robot_type,
@@ -172,32 +168,38 @@ class LeRobotDatasetWriter:
         if not episode_data:
             self.logger.warning("Empty episode_data provided, skipping.")
             return
-        # breakpoint()
         for frame_data in episode_data:
-
             self.dataset.add_frame(frame_data)
 
         self.dataset.save_episode()
-        self.logger.info(f"Saved episode with {len(episode_data)} frames, task: '{episode_data[0].get('task', 'N/A')}'")
+        self.logger.info(
+            f"Saved episode with {len(episode_data)} frames, task: '{episode_data[0].get('task', 'N/A')}'"
+        )
 
     def finalize(self) -> None:
         """Finalize the dataset and properly clean up all resources."""
         if self.dataset is None:
             raise RuntimeError("Dataset not created. Call create() first.")
-        
-        if hasattr(self.dataset, 'image_writer') and self.dataset.image_writer is not None:
+
+        if (
+            hasattr(self.dataset, "image_writer")
+            and self.dataset.image_writer is not None
+        ):
             self.dataset.image_writer.wait_until_done()
-        
-        if hasattr(self.dataset, 'image_writer') and self.dataset.image_writer is not None:
+
+        if (
+            hasattr(self.dataset, "image_writer")
+            and self.dataset.image_writer is not None
+        ):
             self.dataset.image_writer.stop()
             self.dataset.image_writer = None
-        
-        if hasattr(self.dataset, 'episode_buffer'):
+
+        if hasattr(self.dataset, "episode_buffer"):
             self.dataset.episode_buffer = None
-        
-        if hasattr(self.dataset, 'hf_dataset'):
+
+        if hasattr(self.dataset, "hf_dataset"):
             self.dataset.hf_dataset = None
-        
+
         del self.dataset
         self.dataset = None
         gc.collect()

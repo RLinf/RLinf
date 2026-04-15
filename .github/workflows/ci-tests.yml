@@ -101,6 +101,7 @@ jobs:
               - 'toolkits/eval_scripts_dexbotic/**'
               - 'toolkits/realworld_check/**'
               - 'toolkits/replay_buffer/**'
+              - 'toolkits/lerobot/**'
               - '.github/workflows/embodied-e2e-tests.yml'
             agent_reason_filter: &agent
               - *shared

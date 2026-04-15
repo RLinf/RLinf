@@ -183,6 +183,16 @@ def prepare_actions_for_mujoco(raw_chunk_actions, model_type):
     return chunk_actions
 
 
+def prepare_actions_for_roboverse(
+    raw_chunk_actions,
+    model_type,
+) -> np.ndarray:
+    chunk_actions = raw_chunk_actions
+    if SupportedModel(model_type) == SupportedModel.OPENPI:
+        chunk_actions[..., -1] = np.where(chunk_actions[..., -1] < 0.0, 1.0, 0.0)
+    return chunk_actions
+
+
 def prepare_actions(
     raw_chunk_actions,
     env_type: str,
@@ -224,6 +234,8 @@ def prepare_actions(
         )
     elif env_type == SupportedEnvType.ROBOTWIN:
         chunk_actions = raw_chunk_actions
+    elif env_type == SupportedEnvType.EMBODICHAIN:
+        chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.METAWORLD:
         chunk_actions = prepare_actions_for_metaworld(
             raw_chunk_actions=raw_chunk_actions,
@@ -254,7 +266,12 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.ROBOVERSE:
+        chunk_actions = prepare_actions_for_roboverse(
+            raw_chunk_actions=raw_chunk_actions,
+            model_type=model_type,
+        )
     else:
-        raise NotImplementedError
+        chunk_actions = raw_chunk_actions
 
     return chunk_actions

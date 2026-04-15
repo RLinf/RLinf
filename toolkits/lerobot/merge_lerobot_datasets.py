@@ -41,7 +41,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -187,7 +186,10 @@ def merge_lerobot_datasets(
     # ------------------------------------------------------------------
     datasets = _discover_datasets(roots)
     if not datasets:
-        print(f"[merge] No LeRobot datasets found under: {[str(r) for r in roots]}", file=sys.stderr)
+        print(
+            f"[merge] No LeRobot datasets found under: {[str(r) for r in roots]}",
+            file=sys.stderr,
+        )
         return 0
 
     print(f"[merge] Found {len(datasets)} dataset(s):")
@@ -238,7 +240,9 @@ def merge_lerobot_datasets(
                 / f"episode_{ep_idx:06d}.parquet"
             )
             if not parquet_path.is_file():
-                print(f"[merge] WARNING: parquet not found: {parquet_path}, skipping episode")
+                print(
+                    f"[merge] WARNING: parquet not found: {parquet_path}, skipping episode"
+                )
                 continue
 
             all_episodes.append((ds_path, ep_meta, parquet_path))
@@ -249,7 +253,9 @@ def merge_lerobot_datasets(
 
     total_episodes = len(all_episodes)
     print(f"[merge] Total episodes to merge: {total_episodes}")
-    print(f"[merge] Unique tasks: {len(global_tasks)} → {list(global_tasks.keys())[:5]}")
+    print(
+        f"[merge] Unique tasks: {len(global_tasks)} → {list(global_tasks.keys())[:5]}"
+    )
 
     if total_episodes == 0:
         print("[merge] Nothing to merge.", file=sys.stderr)
@@ -326,7 +332,9 @@ def merge_lerobot_datasets(
                 new_frame_start=global_frame_index,
                 old_frame_start=old_frame_start,
             )
-            merged_episode_stats.append({"episode_index": new_ep_idx, "stats": new_stats})
+            merged_episode_stats.append(
+                {"episode_index": new_ep_idx, "stats": new_stats}
+            )
 
         global_frame_index += n_frames
 
@@ -367,8 +375,12 @@ def merge_lerobot_datasets(
     )
 
     if merged_episode_stats:
-        _write_jsonl(output_path / "meta" / "episodes_stats.jsonl", merged_episode_stats)
-        print(f"[merge] Written episodes_stats.jsonl ({len(merged_episode_stats)} records)")
+        _write_jsonl(
+            output_path / "meta" / "episodes_stats.jsonl", merged_episode_stats
+        )
+        print(
+            f"[merge] Written episodes_stats.jsonl ({len(merged_episode_stats)} records)"
+        )
     else:
         print("[merge] No episodes_stats.jsonl found in source datasets; skipping.")
 

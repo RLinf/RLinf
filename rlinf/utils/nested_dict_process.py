@@ -63,9 +63,9 @@ def split_dict_to_chunk(data: dict, split_size, dim=0):
     splited_list = [{} for _ in range(split_size)]
     for key, value in data.items():
         if isinstance(value, torch.Tensor):
-            split_vs = torch.chunk(value, split_size, dim=dim)
-        elif isinstance(value, list):
-            split_vs = [value[i*split_size:(i+1)*split_size] for i in range(split_size)]
+            split_vs = [
+                chunk.contiguous() for chunk in torch.chunk(value, split_size, dim=dim)
+            ]
         elif value is None:
             split_vs = [None for _ in range(split_size)]
         elif isinstance(value, dict):
@@ -73,7 +73,11 @@ def split_dict_to_chunk(data: dict, split_size, dim=0):
         else:
             raise ValueError(f"{key=}, {type(value)} is not supported.")
         for split_id in range(split_size):
-            splited_list[split_id][key] = split_vs[split_id]
+            splited_list[split_id][key] = (
+                split_vs[split_id].contiguous()
+                if isinstance(split_vs[split_id], torch.Tensor)
+                else split_vs[split_id]
+            )
     return splited_list
 
 

@@ -80,18 +80,19 @@
 
 让 RLinf 配置文件识别你的模型类型
 
-RLinf 通过 ``SupportedModel`` 识别模型类型。你需要：
+RLinf 通过 ``SupportedModel`` 识别模型类型。对于自定义 SFT 模型，
+你已经不需要再直接修改 ``SupportedModel`` 源码。
 
-1. 在 ``SupportedModel`` 加入你的新类型（sft 类别）
-2. 在配置 YAML 里设置 ``actor.model.model_type`` 为这个值
+推荐做法是在 ``build_config(...)`` 或训练启动前先注册模型类型，
+然后在 YAML 中把 ``actor.model.model_type`` 设为注册后的值。
 
 示例：
 
 .. code:: python
 
-   class SupportedModel(Enum):
-       ...
-       MY_NEW_MODEL_SFT = ("my_new_model", "sft")
+   from rlinf.config import SupportedModel
+
+   SupportedModel.register("my_new_model")
 
 示例 YAML：
 

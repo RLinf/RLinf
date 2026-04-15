@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import atexit
 import copy
 import os
@@ -24,7 +26,6 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-from rlinf.data.lerobot_writer import LeRobotDatasetWriter
 from rlinf.utils.logging import get_logger
 
 _VALID_FORMATS = ("pickle", "lerobot")
@@ -54,8 +55,6 @@ class CollectEpisode(gym.Wrapper):
         robot_type: Robot type for LeRobot metadata. Defaults to ``"panda"``.
         fps: FPS for LeRobot metadata. Defaults to 10.
         only_success: Whether to save only successful episodes. Defaults to False.
-        stats_sample_ratio: Sampling ratio for incremental image statistics
-            (lerobot only). Defaults to 0.1.
         finalize_interval: Call ``writer.finalize()`` every this many completed
             episodes to flush ``info.json`` and ``stats.json`` as a checkpoint.
             ``0`` disables periodic flushing (lerobot only). Defaults to 100.
@@ -95,13 +94,13 @@ class CollectEpisode(gym.Wrapper):
         self.robot_type = robot_type
         self.fps = fps
         self.only_success = only_success
-        self.stats_sample_ratio = stats_sample_ratio
         self.finalize_interval = finalize_interval
 
         # LeRobot writer is created lazily on the first completed episode.
-        self._lerobot_writer: Optional[LeRobotDatasetWriter] = None
-        self._lerobot_lock = Lock()
-        self._episodes_written = 0  # guarded by _lerobot_lock
+        if export_format == "lerobot":
+            self._lerobot_writer: Optional[Any] = None
+            self._lerobot_lock = Lock()
+            self._episodes_written = 0  # guarded by _lerobot_lock
 
         # Single-worker executor keeps write ordering deterministic.
         self._executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(
@@ -236,7 +235,7 @@ class CollectEpisode(gym.Wrapper):
                 else truncations
             )
             step_info = (
-                copy.deepcopy(infos_list[step_idx]) 
+                copy.deepcopy(infos_list[step_idx])
                 if isinstance(infos_list, (list, tuple))
                 else infos_list
             )
@@ -311,8 +310,7 @@ class CollectEpisode(gym.Wrapper):
     def _record_step(self, action, obs, reward, terminated, truncated, info) -> None:
         """Record one transition into every env's buffer."""
         self._global_step += 1
-        # Extract auto-reset fields once, before the per-env loop, so that
-        # processing env 0 never overwrites ``info`` and silently breaks env 1+.
+
         has_final_obs = isinstance(info, dict) and "final_observation" in info
         if has_final_obs:
             final_observation = info["final_observation"]
@@ -351,7 +349,6 @@ class CollectEpisode(gym.Wrapper):
             buf["truncated"].append(self._slice_copy(truncated, env_idx))
             buf["infos"].append(env_info)
 
-            # Update per-env success using already-sliced info (no extra copy).
             self._update_success(env_idx, self._slice_data(env_info, env_idx))
 
     def _reset_env_buffer(self, env_idx: int) -> None:
@@ -387,7 +384,7 @@ class CollectEpisode(gym.Wrapper):
                     self._flush_episode(env_idx, is_success)
                     self._reset_env_buffer(env_idx)
                 else:
-                    if done_by_term or done_by_trunc:
+                    if done_by_trunc:
                         self._reset_env_buffer(env_idx)
             else:
                 if done_by_trunc:
@@ -467,11 +464,15 @@ class CollectEpisode(gym.Wrapper):
         first_term_step: Optional[int] = None
         for i, action in enumerate(actions):
             obs = obs_steps[i] if i < len(obs_steps) else None
-            image, wrist_image, extra_view_image, state = self._extract_obs_image_state(obs)
+            image, wrist_image, extra_view_image, state = self._extract_obs_image_state(
+                obs
+            )
             # Overwrite action with intervene action if present.
             np_action = self._to_numpy(action)
-            assert "final_info" not in buf["infos"][i+1]
-            info_with_intervene = copy.deepcopy(buf["infos"][i+1])
+            assert "final_info" not in buf["infos"][i + 1], (
+                "final_info should not be present in the info"
+            )
+            info_with_intervene = copy.deepcopy(buf["infos"][i + 1])
 
             if (
                 "intervene_flag" in info_with_intervene
@@ -492,10 +493,14 @@ class CollectEpisode(gym.Wrapper):
             }
             if image is not None:
                 frame["image"] = self._to_uint8(np.asarray(image))
-            if wrist_image is not None:
-                frame["wrist_image"] = self._to_uint8(np.asarray(wrist_image))
-            if extra_view_image is not None:
-                frame["extra_view_image"] = self._to_uint8(np.asarray(extra_view_image))
+            for key, img in self._expand_multi_view_images(
+                "wrist_image", wrist_image
+            ).items():
+                frame[key] = self._to_uint8(np.asarray(img))
+            for key, img in self._expand_multi_view_images(
+                "extra_view_image", extra_view_image
+            ).items():
+                frame[key] = self._to_uint8(np.asarray(img))
             steps.append(frame)
             if bool(terminated[i]) and first_term_step is None:
                 first_term_step = len(steps)
@@ -506,32 +511,54 @@ class CollectEpisode(gym.Wrapper):
         steps[-1]["done"] = np.array([True], dtype=bool)
         return steps
 
-    def _ensure_lerobot_writer(self, ep_data: dict) -> LeRobotDatasetWriter:
+    def _ensure_lerobot_writer(self, ep_data: dict):
         """Create the LeRobot writer on first use. Must be called inside the lock.
 
         ``create()`` is called only when there is no active underlying dataset —
         either because the writer has never been used, or because a previous
-        batch was flushed by ``finalize()``.  Calling ``create()`` on every
-        episode was the source of a CPU-memory leak: each call spawned a new
-        pool of ``image_writer_processes`` subprocesses while the old pool was
-        silently abandoned.
+        batch was flushed by ``finalize()``.
         """
         if self._lerobot_writer is None:
+            from rlinf.data.lerobot_writer import LeRobotDatasetWriter
+
             self._lerobot_writer = LeRobotDatasetWriter()
         if self._lerobot_writer.dataset is None:
+            first = ep_data[0]
+            wrist_image_keys = self._collect_image_keys(first, "wrist_image")
+            extra_view_image_keys = self._collect_image_keys(first, "extra_view_image")
             self._lerobot_writer.create(
-                repo_id=os.path.join(self.save_dir, f"rank_{self.rank}", f"id_{self._episodes_written}"),
+                repo_id=os.path.join(
+                    self.save_dir, f"rank_{self.rank}", f"id_{self._episodes_written}"
+                ),
                 robot_type=self.robot_type,
                 fps=self.fps,
-                image_shape=ep_data[0]["image"].shape if "image" in ep_data[0] else None,
-                state_dim=int(ep_data[0]["state"].shape[-1]),
-                action_dim=int(ep_data[0]["actions"].shape[-1]),
-                has_image="image" in ep_data[0],
-                has_wrist_image="wrist_image" in ep_data[0],
-                has_extra_view_image="extra_view_image" in ep_data[0],
-                has_intervene_flag="intervene_flag" in ep_data[0],
+                image_shape=first["image"].shape if "image" in first else None,
+                state_dim=int(first["state"].shape[-1]),
+                action_dim=int(first["actions"].shape[-1]),
+                has_image="image" in first,
+                wrist_image_keys=wrist_image_keys,
+                extra_view_image_keys=extra_view_image_keys,
+                has_intervene_flag="intervene_flag" in first,
             )
         return self._lerobot_writer
+
+    @staticmethod
+    def _collect_image_keys(
+        frame: dict[str, Any],
+        prefix: str,
+    ) -> dict[str, tuple[int, ...]]:
+        """Return ``{key: (H, W, C)}`` for all frame keys matching *prefix*.
+
+        Matches both the bare ``prefix`` (e.g. ``wrist_image``) and indexed
+        variants (``wrist_image/0``, ``wrist_image/1``, …).
+        """
+        return {
+            k: tuple(frame[k].shape)
+            for k in frame
+            if (k == prefix or k.startswith(f"{prefix}-"))
+            and isinstance(frame[k], np.ndarray)
+            and frame[k].ndim == 3
+        }
 
     def _write_lerobot_episode(self, ep_data: dict) -> None:
         with self._lerobot_lock:
@@ -697,30 +724,46 @@ class CollectEpisode(gym.Wrapper):
         return "unknown task"
 
     def _extract_obs_image_state(self, obs):
-        """Return ``(image, wrist_image, extra_view_image, state)`` from an obs dict."""
+        """Return ``(image, wrist_image, extra_view_image, state)`` from an obs dict.
+
+        ``wrist_image`` and ``extra_view_image`` are returned as raw numpy
+        arrays and may have shape ``[H, W, C]`` *or* ``[N, H, W, C]``.
+        Use :meth:`_expand_multi_view_images` to fan them out into
+        individually-keyed views before writing.
+        """
         if not isinstance(obs, dict):
             return None, None, None, None
         image = obs.get("main_images", obs.get("image", obs.get("full_image")))
         wrist_image = obs.get("wrist_images", obs.get("wrist_image"))
-        extra_view_image = self._extract_extra_view_image(
-            obs.get("extra_view_images", obs.get("extra_view_image"))
-        )
+        extra_view_image = obs.get("extra_view_images", obs.get("extra_view_image"))
         state = obs.get("states", obs.get("state"))
         return (
             self._to_numpy(image),
             self._to_numpy(wrist_image),
-            extra_view_image,
+            self._to_numpy(extra_view_image),
             self._to_numpy(state),
         )
 
-    def _extract_extra_view_image(self, extra_view_image):
-        """Return the first extra-view image when observations carry multiple views."""
-        extra_view_np = self._to_numpy(extra_view_image)
-        if extra_view_np is None:
-            return None
-        if extra_view_np.ndim == 4:
-            return extra_view_np[0]
-        return extra_view_np
+    @staticmethod
+    def _expand_multi_view_images(
+        base_key: str,
+        arr: Optional[np.ndarray],
+    ) -> dict[str, np.ndarray]:
+        """Expand a potentially batched image array into per-view entries.
+
+        * ``[H, W, C]``           → ``{base_key: img}``
+        * ``[1, H, W, C]``        → ``{base_key: img[0]}``
+        * ``[N, H, W, C]`` (N>1)  → ``{base_key-0: img[0], …, base_key-N-1: img[N-1]}``
+        """
+        if arr is None:
+            return {}
+        if arr.ndim == 3:
+            return {base_key: arr}
+        if arr.ndim == 4:
+            if arr.shape[0] == 1:
+                return {base_key: arr[0]}
+            return {f"{base_key}-{i}": arr[i] for i in range(arr.shape[0])}
+        return {base_key: arr}
 
     def _slice_data(self, data, env_idx: int):
         """Slice batched data for a single env without copying."""
