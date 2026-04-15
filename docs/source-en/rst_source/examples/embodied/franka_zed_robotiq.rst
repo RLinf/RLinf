@@ -285,13 +285,13 @@ Key data-collection settings in the same file:
    * - ``env.eval.use_spacemouse``
      - ``True``
      - Enable SpaceMouse teleoperation during collection.
-   * - ``env.data_collection.save_dir``
+   * - ``env.eval.data_collection.save_dir``
      - ``${runner.logger.log_path}/collected_data``
      - Directory where collected trajectories are saved.
-   * - ``env.data_collection.export_format``
+   * - ``env.eval.data_collection.export_format``
      - ``"lerobot"``
      - Export format for the collected data.
-   * - ``env.data_collection.only_success``
+   * - ``env.eval.data_collection.only_success``
      - ``True``
      - Only save successful episodes.
 

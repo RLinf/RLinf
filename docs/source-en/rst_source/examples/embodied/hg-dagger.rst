@@ -175,13 +175,13 @@ Then fill in the robot configuration and keep LeRobot export enabled:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
          success_hold_steps: 1
          camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
-     data_collection:
-       enabled: True
-       save_dir: ${runner.logger.log_path}/collected_data
-       export_format: "lerobot"
-       only_success: True
-       robot_type: "panda"
-       fps: 10
+      data_collection:
+        enabled: True
+        save_dir: ${runner.logger.log_path}/collected_data
+        export_format: "lerobot"
+        only_success: True
+        robot_type: "panda"
+        fps: 10
 
 Launch collection with your copied config:
 
@@ -205,7 +205,7 @@ LeRobot dataset:
 .. code-block:: bash
 
    export HF_LEROBOT_HOME=/path/to/lerobot_root
-   python toolkits/replay_buffer/calculate_norm_stats.py \
+   python toolkits/lerobot/calculate_norm_stats.py \
        --config-name pi0_franka_dagger \
        --repo-id franka_dagger
 

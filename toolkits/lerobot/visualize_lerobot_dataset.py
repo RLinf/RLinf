@@ -24,10 +24,10 @@ This script expands a LeRobot dataset into easy-to-read files:
 Normal usage:
     1. Edit ``DATASET_PATH`` and ``OUTPUT_DIR`` below.
     2. Run:
-       python3 toolkits/replay_buffer/visualize_lerobot_dataset.py
+       python3 toolkits/lerobot/visualize_lerobot_dataset.py
 
 Optional:
-    python3 toolkits/replay_buffer/visualize_lerobot_dataset.py \
+    python3 toolkits/lerobot/visualize_lerobot_dataset.py \
         --dataset-path /path/to/collected_data \
         --output-dir /path/to/output
 """

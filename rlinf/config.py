@@ -17,8 +17,7 @@ import importlib.util
 import logging
 import os
 from dataclasses import asdict
-from enum import Enum
-from typing import TYPE_CHECKING, Callable, Optional, Union
+from typing import TYPE_CHECKING, Callable, ClassVar, Optional, Union
 
 import torch
 import torch.nn.functional as F
@@ -41,48 +40,83 @@ if TYPE_CHECKING:
 logging.getLogger().setLevel(logging.INFO)
 
 
-class SupportedModel(Enum):
-    # Reasoning models
-    QWEN2_5 = ("qwen2.5", "reasoning")
-    QWEN2_5_VL = ("qwen2.5_vl", "reasoning")
-    QWEN3 = ("qwen3", "reasoning")
-    QWEN3_MOE = ("qwen3_moe", "reasoning")
+@dataclasses.dataclass(frozen=True)
+class SupportedModel:
+    value: str
 
-    # Embodied models
-    OPENVLA = ("openvla", "embodied")
-    OPENVLA_OFT = ("openvla_oft", "embodied")
-    OPENPI = ("openpi", "embodied")
-    STARVLA = ("starvla", "embodied")
-    MLP_POLICY = ("mlp_policy", "embodied")
-    GR00T = ("gr00t", "embodied")
-    DEXBOTIC_PI = ("dexbotic_pi", "embodied")
-    DREAMZERO = ("dreamzero", "embodied")
-    CNN_POLICY = ("cnn_policy", "embodied")
-    FLOW_POLICY = ("flow_policy", "embodied")
-    CMA_POLICY = ("cma", "embodied")
-    LINGBOTVLA = ("lingbotvla", "embodied")
-    RESNET_REWARD = ("resnet", "embodied")
+    models: ClassVar[dict[str, "SupportedModel"]] = {}
 
-    # Sft models
-    QWEN2_5_VL_SFT = ("qwen2.5_vl", "sft")
-    QWEN3_VL_SFT = ("qwen3_vl", "sft")
-    QWEN3_VL_MOE_SFT = ("qwen3_vl_moe", "sft")
+    @classmethod
+    def register(cls, value: str, force: bool = False) -> "SupportedModel":
+        if not value:
+            raise ValueError("model_type must be a non-empty string.")
+        if value in cls.models:
+            if not force:
+                raise ValueError(
+                    f"Model type `{value}` is already registered. "
+                    "Set force=True to override it."
+                )
+        else:
+            cls.models[value] = cls.__private_create__(value)
+        return cls.models[value]
 
-    def __new__(cls, value, category):
+    @classmethod
+    def get(cls, value: str) -> "SupportedModel":
+        if value not in cls.models:
+            supported_models = sorted(cls.models)
+            raise NotImplementedError(
+                f"Model Type: {value} not supported. Supported models: {supported_models}"
+            )
+        return cls.models[value]
+
+    def __new__(cls, value: str):
+        return cls.get(value)
+
+    @classmethod
+    def __private_create__(cls, value: str) -> "SupportedModel":
         obj = object.__new__(cls)
-        obj._value_ = value
-        obj.category = category
+        object.__setattr__(obj, "value", value)
         return obj
 
 
-def get_supported_model(model_type: str) -> SupportedModel:
-    try:
-        return SupportedModel(model_type)
-    except ValueError as err:
-        supported_models = [e.value for e in SupportedModel]
-        raise NotImplementedError(
-            f"Model Type: {model_type} not supported. Supported models: {supported_models}"
-        ) from err
+SupportedModel.QWEN2_5 = SupportedModel.register("qwen2.5", force=True)
+SupportedModel.QWEN2_5_VL = SupportedModel.register("qwen2.5_vl", force=True)
+SupportedModel.QWEN3 = SupportedModel.register("qwen3", force=True)
+SupportedModel.QWEN3_MOE = SupportedModel.register("qwen3_moe", force=True)
+SupportedModel.OPENVLA = SupportedModel.register("openvla", force=True)
+SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
+SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
+SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
+SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
+SupportedModel.GR00T = SupportedModel.register("gr00t", force=True)
+SupportedModel.DEXBOTIC_PI = SupportedModel.register("dexbotic_pi", force=True)
+SupportedModel.DREAMZERO = SupportedModel.register("dreamzero", force=True)
+SupportedModel.CNN_POLICY = SupportedModel.register("cnn_policy", force=True)
+SupportedModel.FLOW_POLICY = SupportedModel.register("flow_policy", force=True)
+SupportedModel.CMA_POLICY = SupportedModel.register("cma", force=True)
+SupportedModel.LINGBOTVLA = SupportedModel.register("lingbotvla", force=True)
+SupportedModel.RESNET_REWARD = SupportedModel.register("resnet", force=True)
+SupportedModel.QWEN2_5_VL_SFT = SupportedModel.register("qwen2.5_vl", force=True)
+SupportedModel.QWEN3_VL_SFT = SupportedModel.register("qwen3_vl", force=True)
+SupportedModel.QWEN3_VL_MOE_SFT = SupportedModel.register("qwen3_vl_moe", force=True)
+
+EMBODIED_MODEL = set(
+    {
+        SupportedModel.OPENVLA,
+        SupportedModel.OPENVLA_OFT,
+        SupportedModel.OPENPI,
+        SupportedModel.STARVLA,
+        SupportedModel.MLP_POLICY,
+        SupportedModel.GR00T,
+        SupportedModel.DEXBOTIC_PI,
+        SupportedModel.DREAMZERO,
+        SupportedModel.CNN_POLICY,
+        SupportedModel.FLOW_POLICY,
+        SupportedModel.CMA_POLICY,
+        SupportedModel.LINGBOTVLA,
+        SupportedModel.RESNET_REWARD,
+    }
+)
 
 
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
@@ -204,7 +238,7 @@ def activation_to_func(
 
 
 def validate_rollout_cfg(cfg, algorithm_cfg):
-    assert get_supported_model(cfg.model.model_type)
+    SupportedModel(cfg.model.model_type)  # To validate model_type is supported
 
     def validate_sglang_cfg(cfg):
         assert cfg is not None, (
@@ -747,9 +781,10 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
 
 
 def validate_embodied_cfg(cfg):
-    assert get_supported_model(cfg.actor.model.model_type).category == "embodied", (
+    model_type = SupportedModel(cfg.actor.model.model_type)
+    assert model_type in EMBODIED_MODEL, (
         f"Model type: '{cfg.actor.model.model_type}' is not an embodied model. "
-        f"Supported embodied models: {[e.value for e in SupportedModel if e.category == 'embodied']}."
+        f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}."
     )
 
     # NOTE: Currently we only support actor_critic as PPO algorithm loss, and only support value_head as critic model.
@@ -965,9 +1000,9 @@ def validate_reasoning_eval_cfg(cfg: DictConfig) -> DictConfig:
 
 
 def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
-    assert (
-        get_supported_model(cfg.rollout.model.model_type) == SupportedModel.QWEN2_5
-    ), f"Model type {cfg.rollout.model.model_type} is not supported"
+    assert SupportedModel(cfg.rollout.model.model_type) == SupportedModel.QWEN2_5, (
+        f"Model type {cfg.rollout.model.model_type} is not supported"
+    )
 
     assert cfg.algorithm.recompute_logprobs or cfg.rollout.return_logprobs, (
         "One of `algorithm.recompute_logprobs` or `rollout.return_logprobs` must be True to compute `prev_logprobs`."

@@ -927,3 +927,34 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
+
+  embodied-embodichain-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --env embodichain
+
+      - name: EmbodiChain CartPole PPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export EMBODICHAIN_DATA_ROOT=/workspace/dataset/embodichain_data
+          python -m embodichain.data download --name CartPole
+          python -m embodichain.data download --name SimResources
+          bash tests/e2e_tests/embodied/run.sh embodichain_ppo_cart_pole
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune

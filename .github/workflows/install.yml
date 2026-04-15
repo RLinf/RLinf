@@ -104,6 +104,13 @@ jobs:
           bash requirements/install.sh embodied --env xsquare_turtle2
           rm -rf .venv
 
+      - name: Install embodichain
+        run: |
+          pip install uv
+          uv cache prune --ci
+          bash requirements/install.sh embodied --env embodichain
+          rm -rf .venv
+
       - name: Install liberopro
         run: |
           pip install uv

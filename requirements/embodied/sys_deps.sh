@@ -118,7 +118,10 @@ install_deps_apt() {
         libfontconfig1-dev \
         libpython3-stdlib \
         imagemagick \
-        libmagickwand-dev || {
+        libmagickwand-dev \
+        libvulkan1 \
+        vulkan-tools \
+        mesa-vulkan-drivers || {
             echo "apt-get install failed. Please check your repositories or install dependencies manually." >&2
             exit 1
         }

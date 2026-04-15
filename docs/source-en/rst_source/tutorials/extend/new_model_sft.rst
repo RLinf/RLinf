@@ -84,18 +84,19 @@ Before adaptation, make sure you have:
 Make RLinf Config Recognize Your Model Type
 -------------------------------------------
 
-RLinf uses ``SupportedModel`` to identify model types. You need to:
+RLinf uses ``SupportedModel`` to identify model types. For a custom SFT model,
+you no longer need to edit ``SupportedModel`` source directly.
 
-1. Add your new model type to ``SupportedModel`` (SFT category)
-2. Set ``actor.model.model_type`` to that value in YAML
+Instead, register the model type before ``build_config(...)`` or training starts,
+and set ``actor.model.model_type`` to the registered value in YAML.
 
 Example:
 
 .. code:: python
 
-   class SupportedModel(Enum):
-       ...
-       MY_NEW_MODEL_SFT = ("my_new_model", "sft")
+   from rlinf.config import SupportedModel
+
+   SupportedModel.register("my_new_model")
 
 YAML example:
 
