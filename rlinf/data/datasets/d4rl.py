@@ -54,7 +54,7 @@ class D4RLDataset(Dataset):
     def __init__(
         self,
         env: GymEnv,
-        env_name: str,
+        task_name: str,
         clip_to_eps: bool = True,
         eps: float = 1e-5,
     ):
@@ -86,7 +86,7 @@ class D4RLDataset(Dataset):
         self.next_observations = raw["next_observations"].astype(np.float32)
         self.size = len(self.observations)
 
-        self._apply_reward_postprocess(env_name)
+        self._apply_reward_postprocess(task_name)
         self._init_tensor_cache()
 
     def _init_tensor_cache(self) -> None:
@@ -143,38 +143,38 @@ class D4RLDataset(Dataset):
             dones_float[-1] = 1.0
         return dones_float
 
-    def _apply_reward_postprocess(self, env_name: str) -> None:
-        if "antmaze" in env_name:
+    def _apply_reward_postprocess(self, task_name: str) -> None:
+        if "antmaze" in task_name:
             self.rewards -= 1.0
-        elif any(name in env_name for name in ("halfcheetah", "walker2d", "hopper")):
+        elif any(name in task_name for name in ("halfcheetah", "walker2d", "hopper")):
             self._normalize_rewards_for_mujoco()
 
     @staticmethod
-    def _default_dataset_path(env_name: str) -> str:
+    def _default_dataset_path(task_name: str) -> str:
         if gym is None:  # pragma: no cover
             raise ImportError(
                 "D4RLDataset.from_path requires 'gym' (or install the embodied env deps)."
             )
         try:
-            canonical_env_id = gym.spec(env_name).id
+            canonical_env_id = gym.spec(task_name).id
         except Exception:
-            canonical_env_id = env_name
+            canonical_env_id = task_name
         return str(Path.home() / ".d4rl" / "datasets" / f"{canonical_env_id}.hdf5")
 
     @staticmethod
-    def infer_obs_action_dims_from_env(env_name: str) -> tuple[int, int]:
+    def infer_obs_action_dims_from_env(task_name: str) -> tuple[int, int]:
         """Infer flat obs/action dims from a gym env's spaces."""
         if gym is None:  # pragma: no cover
             raise RuntimeError(
                 "Failed to infer D4RL obs/action dims: missing 'gym' dependency."
             )
-        env = gym.make(env_name)
+        env = gym.make(task_name)
         try:
             obs_shape = getattr(env.observation_space, "shape", None)
             act_shape = getattr(env.action_space, "shape", None)
             if obs_shape is None or act_shape is None:
                 raise RuntimeError(
-                    f"Env {env_name!r} does not expose Box-like observation/action shape."
+                    f"Env {task_name!r} does not expose Box-like observation/action shape."
                 )
             return int(np.prod(obs_shape)), int(np.prod(act_shape))
         finally:
@@ -184,7 +184,7 @@ class D4RLDataset(Dataset):
     def from_path(
         cls,
         dataset_path: str | os.PathLike[str] | None,
-        env_name: str,
+        task_name: str,
         *,
         clip_to_eps: bool = True,
         eps: float = 1e-5,
@@ -192,7 +192,7 @@ class D4RLDataset(Dataset):
         path = (
             str(dataset_path)
             if dataset_path is not None
-            else cls._default_dataset_path(env_name)
+            else cls._default_dataset_path(task_name)
         )
 
         if d4rl is None or gym is None:  # pragma: no cover
@@ -216,9 +216,11 @@ class D4RLDataset(Dataset):
             ) from exc
 
         if not os.path.exists(path):
-            env = gym.make(env_name)
+            env = gym.make(task_name)
             try:
-                return cls(env=env, env_name=env_name, clip_to_eps=clip_to_eps, eps=eps)
+                return cls(
+                    env=env, task_name=task_name, clip_to_eps=clip_to_eps, eps=eps
+                )
             finally:
                 try:
                     env.close()
@@ -246,7 +248,7 @@ class D4RLDataset(Dataset):
             ),
             next_observations=next_observations,
         )
-        ds._apply_reward_postprocess(env_name)
+        ds._apply_reward_postprocess(task_name)
         return ds
 
     @classmethod
@@ -323,25 +325,18 @@ class D4RLDataset(Dataset):
 
 
 def build_d4rl_dataset_from_cfg(cfg: Any) -> D4RLDataset:
-    """Resolve ``cfg.dataset`` / ``cfg.env`` and return a ``D4RLDataset`` instance."""
-    dataset_cfg = cfg.get("dataset", {})
-    dataset_type = str(
-        dataset_cfg.get("dataset_type", cfg.env.get("dataset_type", "d4rl"))
-    ).lower()
+    """Resolve ``cfg.data`` and return a ``D4RLDataset`` instance."""
+    dataset_type = str(cfg.data.get("dataset_type", "d4rl")).lower()
     if dataset_type != "d4rl":
         raise NotImplementedError(
             f"Offline IQL currently only supports dataset_type='d4rl', got {dataset_type!r}."
         )
+    dataset_task_name = cfg.data.get("task_name")
+    if not dataset_task_name:
+        raise ValueError("Offline dataset requires data.task_name.")
+    dataset_path = cfg.data.get("dataset_path", None)
 
-    fallback_env = OmegaConf.select(cfg, "env.eval.env_name", default=None)
-    if fallback_env is None:
-        fallback_env = OmegaConf.select(cfg, "env.env_name", default=None)
-    dataset_env_name = dataset_cfg.get("env_name", fallback_env)
-    if not dataset_env_name:
-        raise ValueError("Offline dataset requires dataset.env_name.")
-    dataset_path = dataset_cfg.get("dataset_path", cfg.env.get("dataset_path", None))
-
-    dataset_init_kwargs_cfg = dataset_cfg.get("dataset_init_kwargs", {})
+    dataset_init_kwargs_cfg = cfg.data.get("dataset_init_kwargs", {})
     if OmegaConf.is_config(dataset_init_kwargs_cfg):
         dataset_init_kwargs = OmegaConf.to_container(
             dataset_init_kwargs_cfg, resolve=True
@@ -349,6 +344,6 @@ def build_d4rl_dataset_from_cfg(cfg: Any) -> D4RLDataset:
     else:
         dataset_init_kwargs = dict(dataset_init_kwargs_cfg)
     dataset_init_kwargs.setdefault("dataset_path", dataset_path)
-    dataset_init_kwargs.setdefault("env_name", str(dataset_env_name))
+    dataset_init_kwargs.setdefault("task_name", str(dataset_task_name))
 
     return D4RLDataset.from_path(**dataset_init_kwargs)

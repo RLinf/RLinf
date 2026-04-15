@@ -20,7 +20,7 @@ RLinf uses the D4RL benchmark suite. Configs are provided for:
 - **AntMaze**: e.g. ``antmaze-large-play-v0`` — goal-conditioned navigation, sparse rewards.
 - **Kitchen / Adroit**: manipulation and dexterous hand tasks — high-dimensional state and action.
 
-Observation and action spaces are defined per task in D4RL; the same pipeline runs across all with ``env.dataset_type: "d4rl"`` and the appropriate ``env.train.env_name`` / ``env.eval.env_name``.
+Observation and action spaces are defined per task in D4RL.
 
 Algorithm
 ---------
@@ -87,7 +87,6 @@ RLinf provides default IQL configs for different D4RL task families:
 .. code-block:: yaml
 
    actor:
-     worker_cls: "iql"
      model:
        iql_config:
          type: "actor"
@@ -96,25 +95,34 @@ RLinf provides default IQL configs for different D4RL task families:
          log_std_min: -5.0
          log_std_max: 2.0
 
-**2.3 Environment**
+**2.3 Data**
+
+.. code-block:: yaml
+
+   data:
+     dataset_type: "d4rl"
+     task_name: "antmaze-large-play-v0"
+     dataset_path: null
+
+**2.4 Environment**
 
 .. code-block:: yaml
 
    env:
-     dataset_type: "d4rl"
+     task_name: "antmaze-large-play-v0"
 
-Set ``env.train.env_name`` and ``env.eval.env_name`` to the desired D4RL task (e.g. ``antmaze-large-play-v0``).
+Set ``data.dataset_type`` to ``d4rl`` , ``data.task_name`` and ``env.eval.task_name`` to the desired D4RL task (e.g. ``antmaze-large-play-v0``).
 
 **3. Launch Script**
 
-- Script: ``examples/embodiment/run_offlinerl.sh``
+- Script: ``examples/embodiment/run_offline_rl.sh``
 - Default config (no argument): ``d4rl_iql_mujoco``
 - Logs: ``<repo>/logs/<timestamp>-<config_name>/``
 - Actual command:
 
 .. code-block:: bash
 
-   python examples/embodiment/train_offlinerl.py \
+   python examples/embodiment/train_offline_rl.py \
      --config-path examples/embodiment/config/ \
      --config-name <config_name> \
      runner.logger.log_path=<log_dir> runner.logger.experiment_name=<config_name>
@@ -127,19 +135,19 @@ From the repository root:
 
 ::
 
-   ./examples/embodiment/run_offlinerl.sh d4rl_iql_mujoco
+   ./examples/embodiment/run_offline_rl.sh d4rl_iql_mujoco
 
 **AntMaze**
 
 ::
 
-   ./examples/embodiment/run_offlinerl.sh d4rl_iql_antmaze
+   ./examples/embodiment/run_offline_rl.sh d4rl_iql_antmaze
 
 **Kitchen / Adroit**
 
 ::
 
-   ./examples/embodiment/run_offlinerl.sh d4rl_iql_kitchen_adroit
+   ./examples/embodiment/run_offline_rl.sh d4rl_iql_kitchen_adroit
 
 Resume Training
 ---------------

@@ -57,9 +57,9 @@ algorithm:
   temperature: 10.0
   dropout_rate: null
 
-dataset:
+data:
   dataset_type: "d4rl"
-  env_name: ${env.eval.env_name}
+  task_name: "antmaze-large-play-v0"
   dataset_path: null
   shuffle: true
   seed: 42
@@ -68,7 +68,7 @@ dataset:
 env:
   group_name: "EnvGroup"
   eval:
-    env_name: "antmaze-large-play-v0"
+    task_name: ${data.task_name}
     total_num_envs: 1
     use_ordered_reset_state_ids: true
     is_eval: true

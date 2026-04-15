@@ -74,9 +74,9 @@ class D4RLEnv(gym.Env):
         self.seed_offset = int(seed_offset)
         self.cfg = cfg
         self.num_envs = int(num_envs)
-        self.env_name = _cfg_get(cfg, "env_name", None)
-        if self.env_name is None:
-            raise ValueError("D4RLEnv requires cfg.env_name.")
+        self.task_name = _cfg_get(cfg, "task_name", None)
+        if self.task_name is None:
+            raise ValueError("D4RLEnv requires cfg.task_name.")
         env_seed = _cfg_get(cfg, "seed", None)
         if env_seed is None:
             raise ValueError("D4RLEnv requires cfg.seed (int).")
@@ -112,16 +112,16 @@ class D4RLEnv(gym.Env):
                 _save_video = True
         _render_mode = "rgb_array" if _save_video else None
         self._save_video = _save_video
-        _env_name = self.env_name
+        _task_name = self.task_name
 
         def _make_env() -> gym.Env:
             if _render_mode is not None:
                 try:
-                    return gym.make(_env_name, render_mode=_render_mode)
+                    return gym.make(_task_name, render_mode=_render_mode)
                 except TypeError:
                     # Older gym may not accept render_mode in make().
-                    return gym.make(_env_name)
-            return gym.make(_env_name)
+                    return gym.make(_task_name)
+            return gym.make(_task_name)
 
         env_fns = [_make_env for _ in range(self.num_envs)]
         if self.use_subproc_vector_env:
@@ -132,7 +132,7 @@ class D4RLEnv(gym.Env):
         self.env.seed(self._seed_list)
         self._generator = np.random.default_rng(seed=self.seed)
         self.start_idx = 0
-        self._score_env = self._build_score_env(self.env_name)
+        self._score_env = self._build_score_env(self.task_name)
 
         self._is_start = True
         self._last_obs: np.ndarray | None = None
@@ -146,10 +146,10 @@ class D4RLEnv(gym.Env):
         self._init_reset_state_ids()
 
     @staticmethod
-    def _build_score_env(env_name: str) -> gym.Env | None:
+    def _build_score_env(task_name: str) -> gym.Env | None:
         """Build a lightweight env handle for D4RL score normalization."""
         try:
-            score_env = gym.make(env_name)
+            score_env = gym.make(task_name)
         except Exception:
             return None
         if not hasattr(score_env, "get_normalized_score"):

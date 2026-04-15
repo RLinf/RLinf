@@ -20,7 +20,7 @@ RLinf 使用 D4RL 基准套件，并为不同任务族提供配置：
 - **AntMaze**：如 ``antmaze-large-play-v0``，目标条件导航、稀疏奖励。
 - **Kitchen / Adroit**：机械臂与灵巧手任务，高维状态与动作。
 
-观测与动作空间由各 D4RL 任务定义；同一套流程通过 ``env.dataset_type: "d4rl"`` 及对应的 ``env.train.env_name`` / ``env.eval.env_name`` 在所有任务上运行。
+观测与动作空间由各 D4RL 任务定义。
 
 算法
 -----------
@@ -87,7 +87,6 @@ RLinf 为不同 D4RL 任务族提供默认 IQL 配置：
 .. code-block:: yaml
 
    actor:
-     worker_cls: "iql"
      model:
        iql_config:
          type: "actor"
@@ -96,25 +95,34 @@ RLinf 为不同 D4RL 任务族提供默认 IQL 配置：
          log_std_min: -5.0
          log_std_max: 2.0
 
-**2.3 环境**
+**2.3 数据**
+
+.. code-block:: yaml
+
+   data:
+     dataset_type: "d4rl"
+     task_name: "antmaze-large-play-v0"
+     dataset_path: null
+
+**2.4 环境**
 
 .. code-block:: yaml
 
    env:
-     dataset_type: "d4rl"
+     task_name: "antmaze-large-play-v0"
 
-将 ``env.train.env_name`` 与 ``env.eval.env_name`` 设为所需 D4RL 任务（如 ``antmaze-large-play-v0``）。
+将 ``data.dataset_type`` 设为 ``d4rl``，并将 ``data.task_name`` 和 ``env.eval.task_name`` 设为所需的 D4RL 任务（如 ``antmaze-large-play-v0``）。
 
 **3. 启动脚本**
 
-- 脚本：``examples/embodiment/run_offlinerl.sh``
+- 脚本：``examples/embodiment/run_offline_rl.sh``
 - 默认配置（不传参数）：``d4rl_iql_mujoco``
 - 日志目录：``<repo>/logs/<timestamp>-<config_name>/``
 - 实际命令：
 
 .. code-block:: bash
 
-   python examples/embodiment/train_offlinerl.py \
+   python examples/embodiment/train_offline_rl.py \
      --config-path examples/embodiment/config/ \
      --config-name <config_name> \
      runner.logger.log_path=<log_dir> runner.logger.experiment_name=<config_name>
@@ -127,19 +135,19 @@ RLinf 为不同 D4RL 任务族提供默认 IQL 配置：
 
 ::
 
-   ./examples/embodiment/run_offlinerl.sh d4rl_iql_mujoco
+   ./examples/embodiment/run_offline_rl.sh d4rl_iql_mujoco
 
 **AntMaze**
 
 ::
 
-   ./examples/embodiment/run_offlinerl.sh d4rl_iql_antmaze
+   ./examples/embodiment/run_offline_rl.sh d4rl_iql_antmaze
 
 **Kitchen / Adroit**
 
 ::
 
-   ./examples/embodiment/run_offlinerl.sh d4rl_iql_kitchen_adroit
+   ./examples/embodiment/run_offline_rl.sh d4rl_iql_kitchen_adroit
 
 断点续训
 ----------------------------

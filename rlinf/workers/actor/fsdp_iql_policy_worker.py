@@ -90,8 +90,8 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
         if dist.is_available() and dist.is_initialized():
             sampler = DistributedSampler(
                 self._offline_dataset,
-                num_replicas=dist.get_world_size(),
-                rank=dist.get_rank(),
+                num_replicas=self._world_size,
+                rank=self._rank,
                 shuffle=bool(dataset_cfg.get("shuffle", True)),
                 seed=int(dataset_cfg.get("seed", 42)),
                 drop_last=True,

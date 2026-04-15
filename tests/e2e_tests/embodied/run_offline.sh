@@ -15,4 +15,4 @@ export MUJOCO_GL=${BACKEND}
 export PYOPENGL_PLATFORM=${BACKEND}
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 
-python ${REPO_PATH}/examples/embodiment/train_offlinerl.py --config-path ${REPO_PATH}/tests/e2e_tests/embodied --config-name ${CONFIG} "$@"
+python ${REPO_PATH}/examples/embodiment/train_offline_rl.py --config-path ${REPO_PATH}/tests/e2e_tests/embodied --config-name ${CONFIG} "$@"

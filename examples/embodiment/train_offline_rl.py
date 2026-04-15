@@ -33,12 +33,12 @@ def main(cfg) -> None:
         cfg.algorithm.loss_type == "offline_iql"
         and cfg.actor.model.model_type == "mlp_policy"
     ):
-        dataset_type = str(cfg.dataset.get("dataset_type", "")).lower()
+        dataset_type = str(cfg.data.get("dataset_type", "")).lower()
         if dataset_type == "d4rl":
             from rlinf.data.datasets.d4rl import D4RLDataset
 
-            env_name = str(cfg.dataset.env_name)
-            obs_dim, action_dim = D4RLDataset.infer_obs_action_dims_from_env(env_name)
+            task_name = str(cfg.data.task_name)
+            obs_dim, action_dim = D4RLDataset.infer_obs_action_dims_from_env(task_name)
             with open_dict(cfg):
                 cfg.actor.model.obs_dim = int(obs_dim)
                 cfg.actor.model.action_dim = int(action_dim)
@@ -56,7 +56,7 @@ def main(cfg) -> None:
     else:
         raise NotImplementedError(
             f"Unsupported offline algorithm.loss_type={cfg.algorithm.loss_type!r}. "
-            "Current train_offlinerl entry only supports 'offline_iql'."
+            "Current train_offline_rl entry only supports 'offline_iql'."
         )
     actor_group = actor_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement

@@ -1,5 +1,5 @@
 env_type: d4rl
-env_name: null
+task_name: null
 
 total_num_envs: null
 group_size: 1
