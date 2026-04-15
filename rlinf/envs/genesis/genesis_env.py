@@ -14,17 +14,30 @@
 
 from __future__ import annotations
 
-import copy
 from typing import Any, Optional, Union
-
-import genesis as gs
 import gymnasium as gym
 import numpy as np
 import torch
-from omegaconf import OmegaConf
-
 from rlinf.envs.genesis.tasks import get_task_cls
 from rlinf.envs.utils import to_tensor
+
+import copy
+import genesis as gs
+from omegaconf import OmegaConf
+
+
+def extract_termination_from_info(info, num_envs, device):
+    if "success" in info:
+        if "fail" in info:
+            terminated = torch.logical_or(info["success"], info["fail"])
+        else:
+            terminated = info["success"].clone()
+    else:
+        if "fail" in info:
+            terminated = info["fail"].clone()
+        else:
+            terminated = torch.zeros(num_envs, dtype=bool, device=device)
+    return terminated
 
 # Number of physics steps executed during reset so the scene can settle.
 _RESET_SETTLE_STEPS = 5
@@ -32,9 +45,6 @@ _RESET_SETTLE_STEPS = 5
 
 class GenesisEnv(gym.Env):
     """RLinf-compatible wrapper around a Genesis GPU-batched scene.
-
-    The constructor signature follows the standard RLinf env contract so
-    that it can be instantiated by ``EnvWorker`` without any special-casing.
 
     Args:
         cfg: Hydra ``DictConfig`` for this env (e.g. ``cfg.env.train``).
@@ -97,7 +107,9 @@ class GenesisEnv(gym.Env):
         self._elapsed_steps = torch.zeros(
             num_envs, dtype=torch.int32, device=self.device
         )
-        self._init_metrics()
+        self.record_metrics = record_metrics
+        if self.record_metrics:
+            self._init_metrics()
 
     def _build_genesis_scene(self, cfg, init_params: dict) -> None:
         """Initialize Genesis, create a scene, and build it."""
@@ -150,40 +162,45 @@ class GenesisEnv(gym.Env):
 
     def _init_metrics(self) -> None:
         self.success_once = torch.zeros(
-            self.num_envs, dtype=torch.bool, device=self.device
+            self.num_envs, device=self.device, dtype=torch.bool
         )
         self.fail_once = torch.zeros(
-            self.num_envs, dtype=torch.bool, device=self.device
+            self.num_envs, device=self.device, dtype=torch.bool
         )
         self.returns = torch.zeros(
-            self.num_envs, dtype=torch.float32, device=self.device
+            self.num_envs, device=self.device, dtype=torch.float32
         )
 
     def _reset_metrics(self, env_idx: Optional[torch.Tensor] = None) -> None:
         if env_idx is not None:
             idx = env_idx.to(self.device)
             self.prev_step_reward[idx] = 0.0
-            self.success_once[idx] = False
-            self.fail_once[idx] = False
-            self.returns[idx] = 0.0
-            self._elapsed_steps[idx] = 0
+            if self.record_metrics:
+                self.success_once[idx] = False
+                self.fail_once[idx] = False
+                self.returns[idx] = 0.0
+                self._elapsed_steps[idx] = 0
         else:
             self.prev_step_reward[:] = 0.0
-            self.success_once[:] = False
-            self.fail_once[:] = False
-            self.returns[:] = 0.0
-            self._elapsed_steps[:] = 0
+            if self.record_metrics:
+                self.success_once[:] = False
+                self.fail_once[:] = False
+                self.returns[:] = 0.0
+                self._elapsed_steps[:] = 0
 
     def _record_metrics(
         self,
         step_reward: torch.Tensor,
-        success: torch.Tensor,
         infos: dict[str, Any],
     ) -> dict[str, Any]:
         self.returns += step_reward
-        self.success_once = self.success_once | success
         episode_info: dict[str, Any] = {}
-        episode_info["success_once"] = self.success_once.clone()
+        if "success" in infos:
+            self.success_once = self.success_once | infos["success"]
+            episode_info["success_once"] = self.success_once.clone()
+        if "fail" in infos:
+            self.fail_once = self.fail_once | infos["fail"]
+            episode_info["fail_once"] = self.fail_once.clone()
         episode_info["return"] = self.returns.clone()
         episode_info["episode_len"] = self._elapsed_steps.clone()
         safe_len = self._elapsed_steps.clamp(min=1).float()
@@ -323,10 +340,14 @@ class GenesisEnv(gym.Env):
         truncations = self._elapsed_steps >= self.max_episode_steps
 
         infos: dict[str, Any] = {"success": success}
-        infos = self._record_metrics(step_reward, success, infos)
+        infos = self._record_metrics(step_reward, infos)
 
         if self.ignore_terminations:
-            infos["episode"]["success_at_end"] = terminations.clone()
+            if self.record_metrics:
+                if "success" in infos:
+                    infos["episode"]["success_at_end"] = terminations.clone()
+                if "fail" in infos:
+                    infos["episode"]["fail_at_end"] = infos["fail"].clone()
             terminations = torch.zeros_like(terminations)
 
         dones = terminations | truncations
@@ -425,15 +446,11 @@ class GenesisEnv(gym.Env):
         infos["_elapsed_steps"] = dones
         return obs, infos
 
-    def update_reset_state_ids(self) -> None:
-        """Advance the internal RNG so the next epoch samples fresh states.
-
-        Called by the env worker at the end of each rollout epoch.
-        """
-        # Genesis tasks are stateless w.r.t. reset-state IDs; the task's
-        # internal RNG is automatically advanced each time ``reset`` is
-        # called.  This method exists to satisfy the RLinf worker interface.
+    def _init_reset_state_ids(self):
         pass
+
+    def update_reset_state_ids(self) -> None:
+       pass
 
     def close(self) -> None:
         """Destroy the Genesis scene and free GPU resources."""
