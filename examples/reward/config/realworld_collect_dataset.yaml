@@ -1,0 +1,50 @@
+defaults:
+  - env/realworld_bin_relocation@env.eval
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REWARD_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env:
+      node_group: franka
+      placement: 0
+  node_groups:
+    - label: franka
+      node_ranks: 0
+      hardware:
+        type: Franka
+        configs:
+          - robot_ip: ROBOT_IP
+            node_rank: 0
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: null
+    project_name: rlinf
+    experiment_name: "collect-dataset"
+    logger_backends: ["tensorboard"]
+  num_success_frames: 50
+  num_fail_frames: 150
+  val_split: 0.2
+  fail_success_ratio: 2.0
+  random_seed: 42
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    no_gripper: False
+    ignore_terminations: False
+    auto_reset: False
+    use_spacemouse: True
+    max_episode_steps: 10000
+    keyboard_reward_wrapper: single_stage
+    override_cfg:
+      target_ee_pose: TARGET_EE_POSE
