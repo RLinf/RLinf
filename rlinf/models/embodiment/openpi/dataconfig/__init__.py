@@ -56,6 +56,9 @@ from rlinf.models.embodiment.openpi.dataconfig.maniskill_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.metaworld_dataconfig import (
     LeRobotMetaworldDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.realworld_dataconfig import (
+    LeRobotRealworldDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
     LeRobotRobocasaDataConfig,
 )
@@ -396,6 +399,17 @@ _CONFIGS = [
             "checkpoints/jax/pi05_base/params"
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        name="pi0_realworld",
+        model=pi0_config.Pi0Config(action_horizon=10),
+        data=LeRobotRealworldDataConfig(
+            repo_id="realworld_franka_pnp",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base/assets"),
+            extra_delta_transform=False,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_base",
     ),
 ]
 
