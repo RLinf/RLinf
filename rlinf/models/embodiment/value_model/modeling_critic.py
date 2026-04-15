@@ -51,6 +51,23 @@ def make_att_2d_masks(pad_masks, att_masks):
     return att_2d_masks & pad_2d_masks
 
 
+def prepare_target_values(
+    target_values: torch.Tensor,
+    *,
+    v_min: float,
+    v_max: float,
+    expected_batch_size: int,
+) -> torch.Tensor:
+    """Flatten, validate, and clamp target values for categorical value loss."""
+    target_values = target_values.float().view(-1)
+    if expected_batch_size != target_values.shape[0]:
+        raise ValueError(
+            "ValueCriticModel target_values batch size does not match logits: "
+            f"logits_batch={expected_batch_size}, targets_batch={target_values.shape[0]}"
+        )
+    return target_values.clamp(v_min, v_max)
+
+
 @dataclass
 class CriticOutput(ModelOutput):
     """Output for critic models."""
@@ -60,7 +77,6 @@ class CriticOutput(ModelOutput):
     logits: Optional[torch.FloatTensor] = None
     probs: Optional[torch.FloatTensor] = None
     atoms: Optional[torch.FloatTensor] = None
-    expert_loss: Optional[torch.FloatTensor] = None
     hidden_states: Optional[torch.FloatTensor] = None
     cat_acc_best: Optional[torch.FloatTensor] = None
     cat_acc_neighbor: Optional[torch.FloatTensor] = None
@@ -322,24 +338,21 @@ class ValueCriticModel(nn.Module):
             stop_gradient_to_vlm=stop_gradient,
         )
 
-        expert_loss = None
+        loss = None
         cat_metrics = None
         if target_values is not None:
-            expert_loss, cat_metrics = self._compute_categorical_loss(
-                logits, target_values
-            )
+            loss, cat_metrics = self._compute_categorical_loss(logits, target_values)
             if backward_anchor is not None:
-                expert_loss = expert_loss + backward_anchor
+                loss = loss + backward_anchor
 
-        expert_loss_mean = expert_loss.mean() if expert_loss is not None else None
+        loss_mean = loss.mean() if loss is not None else None
 
         return CriticOutput(
-            loss=expert_loss_mean,
+            loss=loss_mean,
             predicted_values=values,
             logits=logits,
             probs=probs,
             atoms=self.value_head.atoms,
-            expert_loss=expert_loss_mean,
             hidden_states=hidden_states,
             cat_acc_best=cat_metrics["acc_best"] if cat_metrics else None,
             cat_acc_neighbor=cat_metrics["acc_neighbor"] if cat_metrics else None,
@@ -465,7 +478,12 @@ class ValueCriticModel(nn.Module):
         Returns:
             Tuple of (loss, metrics_dict).
         """
-        target_values = target_values.clamp(self.v_min, self.v_max)
+        target_values = prepare_target_values(
+            target_values,
+            v_min=self.v_min,
+            v_max=self.v_max,
+            expected_batch_size=logits.shape[0],
+        )
         b = (target_values - self.v_min) / self.delta_z
         l = b.floor().long().clamp(0, self.num_bins - 1)
         u = b.ceil().long().clamp(0, self.num_bins - 1)
@@ -593,7 +611,7 @@ class ValueCriticModel(nn.Module):
     ):
         """Create a ValueCriticModel from a trained checkpoint, ready for inference.
 
-        Delegates model creation and weight loading to :func:`get_value_model`,
+        Delegates model creation and weight loading to :func:`get_model`,
         then attaches inference-specific components (processor, transforms,
         normalization stats).
 
@@ -621,7 +639,7 @@ class ValueCriticModel(nn.Module):
         from omegaconf import OmegaConf
         from transformers import AutoTokenizer
 
-        from . import get_value_model
+        from . import get_model
         from .checkpoint_utils import (
             build_input_transforms,
             has_tokenizer_files,
@@ -644,7 +662,7 @@ class ValueCriticModel(nn.Module):
                 "gemma3_path": gemma3_path,
             }
         )
-        model = get_value_model(cfg)
+        model = get_model(cfg)
 
         # --- Inference-specific setup ---
 

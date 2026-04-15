@@ -382,25 +382,14 @@ class FSDPCfgWorker(FSDPSftWorker):
                 advantage = advantage.to(self.device, non_blocking=True)
 
                 with self.amp_context:
-                    result = self.model(
+                    loss, metrics_data = self.model(
                         data={
                             "observation": observation,
                             "actions": actions,
                             "advantage": advantage,
                         },
                     )
-                    if isinstance(result, tuple) and len(result) == 2:
-                        losses, metrics_data = result
-                    else:
-                        losses = result
-                        metrics_data = None
-                    if isinstance(losses, (list, tuple)):
-                        losses = torch.stack(losses)
-                    elif not isinstance(losses, torch.Tensor):
-                        losses = torch.tensor(
-                            losses, device=self.device, dtype=torch.float32
-                        )
-                    loss = losses.mean()
+                    loss = loss.mean()
 
                 loss = loss / self.gradient_accumulation
                 avg_loss += loss.detach().item()

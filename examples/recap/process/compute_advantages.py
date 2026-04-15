@@ -1021,8 +1021,6 @@ def main(cfg: DictConfig) -> None:
     """
     rank, world_size, device = setup_distributed(cfg)
 
-    cfg.advantage.device = device
-
     logging.basicConfig(level=logging.INFO)
     if rank == 0:
         logger.info("Starting advantage computation...")

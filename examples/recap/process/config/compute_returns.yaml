@@ -1,7 +1,7 @@
 # Compute returns for LeRobot datasets
 #
 # Usage:
-#   cd examples/process && python compute_returns.py --config-name compute_returns
+#   cd examples/recap/process && python compute_returns.py --config-name compute_returns
 #
 # Writes return, reward, prompt to meta/returns_{tag}.parquet
 

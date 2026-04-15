@@ -16,7 +16,7 @@ set -e
 source switch_env openpi 2>/dev/null || true
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export REPO_PATH=$(dirname $(dirname "$SCRIPT_DIR"))
+export REPO_PATH=$(dirname $(dirname $(dirname "$SCRIPT_DIR")))
 export PYTHONPATH=${REPO_PATH}:${LIBERO_REPO_PATH}:$PYTHONPATH
 cd "$SCRIPT_DIR"
 

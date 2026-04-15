@@ -1,11 +1,11 @@
 # Advantage computation for CFG-RL training
 #
 # Usage:
-#   cd examples/process && python compute_advantages.py --config-name compute_advantages \
+#   cd examples/recap/process && python compute_advantages.py --config-name compute_advantages \
 #       advantage.value_checkpoint=/path/to/checkpoint
 #
 # Multi-GPU:
-#   cd examples/process && torchrun --nproc_per_node=4 compute_advantages.py \
+#   cd examples/recap/process && torchrun --nproc_per_node=4 compute_advantages.py \
 #       --config-name compute_advantages \
 #       advantage.value_checkpoint=/path/to/checkpoint
 
@@ -14,7 +14,6 @@ defaults:
 
 advantage:
   value_checkpoint: /path/to/value_checkpoint
-  device: "cuda"
   batch_size: 1024
   flush_interval: 256
   num_dataloader_workers_per_gpu: 12

@@ -454,7 +454,7 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
         self,
         data: dict[str, torch.Tensor],
         **kwargs,
-    ) -> dict[str, Any]:
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
         """CFGRL forward - unified for both SFT and CFGRL training.
 
         Supports two data formats:

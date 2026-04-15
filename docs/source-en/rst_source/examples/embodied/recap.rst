@@ -214,7 +214,7 @@ This step computes discounted cumulative returns for each trajectory in reverse 
 
 **Configuration**
 
-The configuration file is located at ``examples/process/config/compute_returns.yaml``:
+The configuration file is located at ``examples/recap/process/config/compute_returns.yaml``:
 
 .. code:: yaml
 
@@ -256,7 +256,7 @@ The configuration file is located at ``examples/process/config/compute_returns.y
 
 .. code:: bash
 
-   bash examples/process/run_compute_returns.sh compute_returns
+   bash examples/recap/process/run_compute_returns.sh compute_returns
 
 **Output Files**
 
@@ -292,7 +292,7 @@ The output is a Categorical Value Distribution over 201 bins spanning :math:`[-1
 
 **Configuration**
 
-The configuration file is located at ``examples/sft/config/libero_sft_value.yaml``. Key fields:
+The configuration file is located at ``examples/recap/value/config/libero_sft_value.yaml``. Key fields:
 
 .. code:: yaml
 
@@ -363,7 +363,7 @@ The training script automatically initializes the Ray cluster:
 
 .. code:: bash
 
-   bash examples/sft/run_value_sft.sh libero_sft_value
+   bash examples/recap/value/run_value_sft.sh libero_sft_value
 
 **Output**
 
@@ -400,7 +400,7 @@ where :math:`N` is the lookahead steps (``advantage_lookahead_step``) and :math:
 
 **Configuration**
 
-The configuration file is located at ``examples/process/config/compute_advantages.yaml``:
+The configuration file is located at ``examples/recap/process/config/compute_advantages.yaml``:
 
 .. code:: yaml
 
@@ -451,7 +451,7 @@ Supports multi-GPU distributed inference:
 
 .. code:: bash
 
-   bash examples/process/run_compute_advantages.sh compute_advantages
+   bash examples/recap/process/run_compute_advantages.sh compute_advantages
 
 **Output Files**
 
@@ -484,7 +484,7 @@ Using the advantage labels from Step 3, train the OpenPI policy model with class
 
 **Configuration**
 
-The configuration file is located at ``examples/sft/config/libero_cfg_openpi.yaml``:
+The configuration file is located at ``examples/recap/cfg/config/libero_cfg_openpi.yaml``:
 
 .. code:: yaml
 
@@ -547,7 +547,7 @@ The configuration file is located at ``examples/sft/config/libero_cfg_openpi.yam
 
 .. code:: bash
 
-   bash examples/sft/run_cfg_sft.sh libero_cfg_openpi
+   bash examples/recap/cfg/run_cfg_sft.sh libero_cfg_openpi
 
 **Key Metrics**
 
@@ -558,7 +558,7 @@ The configuration file is located at ``examples/sft/config/libero_cfg_openpi.yam
 Visualize Advantages
 -------------------------
 
-After Step 3, use ``examples/process/visualize_advantage_dataset.py`` to analyze the advantage distribution,
+After Step 3, use ``examples/recap/process/visualize_advantage_dataset.py`` to analyze the advantage distribution,
 including advantage histograms, value prediction distributions, per-episode positive rates, and episode replay videos with advantage annotations.
 
 **Basic Usage**
@@ -567,7 +567,7 @@ Generate distribution plots and episode videos:
 
 .. code:: bash
 
-   python examples/process/visualize_advantage_dataset.py \
+   python examples/recap/process/visualize_advantage_dataset.py \
        --dataset /path/to/your/dataset \
        --output outputs/advantage_viz \
        --tag "fail300_N10_ckpt18000_q30" \
@@ -577,7 +577,7 @@ Distribution plot only (no videos):
 
 .. code:: bash
 
-   python examples/process/visualize_advantage_dataset.py \
+   python examples/recap/process/visualize_advantage_dataset.py \
        --dataset /path/to/your/dataset \
        --output outputs/advantage_viz \
        --tag "fail300_N10_ckpt18000_q30" \
@@ -587,7 +587,7 @@ Visualize specific episodes:
 
 .. code:: bash
 
-   python examples/process/visualize_advantage_dataset.py \
+   python examples/recap/process/visualize_advantage_dataset.py \
        --dataset /path/to/your/dataset \
        --output outputs/advantage_viz \
        --tag "fail300_N10_ckpt18000_q30" \
@@ -694,7 +694,7 @@ use ``recompute_advantages_from_value_reward.py`` for threshold-only relabeling:
 
 .. code:: bash
 
-   cd examples/process
+   cd examples/recap/process
    python recompute_advantages_from_value_reward.py \
        --dataset_paths /path/to/sft_dataset /path/to/rollout_dataset \
        --source_tag "fail300_N10_ckpt18000_q30" \
@@ -729,24 +729,26 @@ File Structure
 .. code-block:: text
 
    examples/
-   ├── process/
-   │   ├── compute_returns.py               # Step 1: compute returns
-   │   ├── compute_advantages.py            # Step 3: compute advantages
-   │   ├── recompute_advantages_from_value_reward.py  # threshold relabeling
-   │   ├── visualize_advantage_dataset.py    # advantage visualization
-   │   ├── run_compute_returns.sh            # Step 1 launch script
-   │   ├── run_compute_advantages.sh         # Step 3 launch script
-   │   └── config/
-   │       ├── compute_returns.yaml
-   │       └── compute_advantages.yaml
-   └── sft/
-       ├── train_value_sft.py                # Step 2: value model training
-       ├── train_cfg_sft.py                  # Step 4: CFG policy training
-       ├── run_value_sft.sh                  # Step 2 launch script
-       ├── run_cfg_sft.sh                    # Step 4 launch script
-       └── config/
-           ├── libero_sft_value.yaml
-           ├── libero_cfg_openpi.yaml
-           └── model/
-               ├── value.yaml                # value model config
-               └── pi0_5.yaml               # policy model architecture
+   └── recap/
+       ├── process/
+       │   ├── compute_returns.py               # Step 1: compute returns
+       │   ├── compute_advantages.py            # Step 3: compute advantages
+       │   ├── recompute_advantages_from_value_reward.py  # threshold relabeling
+       │   ├── visualize_advantage_dataset.py    # advantage visualization
+       │   ├── run_compute_returns.sh            # Step 1 launch script
+       │   ├── run_compute_advantages.sh         # Step 3 launch script
+       │   └── config/
+       │       ├── compute_returns.yaml
+       │       └── compute_advantages.yaml
+       ├── value/
+       │   ├── train_value.py                # Step 2: value model training
+       │   ├── run_value_sft.sh              # Step 2 launch script
+       │   └── config/
+       │       ├── libero_sft_value.yaml
+       │       └── model/
+       │           └── value.yaml            # value model config
+       └── cfg/
+           ├── train_cfg.py                  # Step 4: CFG policy training
+           ├── run_cfg_sft.sh                # Step 4 launch script
+           └── config/
+               └── libero_cfg_openpi.yaml

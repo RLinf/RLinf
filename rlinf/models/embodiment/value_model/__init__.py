@@ -50,7 +50,7 @@ def _strip_model_prefix(state_dict: dict, model) -> dict:
     return state_dict
 
 
-def get_value_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticModel:
+def get_model(cfg: DictConfig, torch_dtype=None) -> ValueCriticModel:
     """Build a ValueCriticModel.
 
     Args:
@@ -163,7 +163,7 @@ def _load_state_dict(path: str) -> dict:
 
 
 __all__ = [
-    "get_value_model",
+    "get_model",
     "ValueCriticModel",
     "ValueCriticConfig",
     "CriticOutput",

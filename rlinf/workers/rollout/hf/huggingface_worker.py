@@ -14,7 +14,7 @@
 
 import copy
 import gc
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 import numpy as np
 import torch
@@ -88,9 +88,14 @@ class MultiStepRolloutWorker(Worker):
         self.version = 0
         self.finished_episodes = None
 
-    def _seed_worker_process(self) -> int:
-        """Seed RNG state for this rollout worker process."""
-        base_seed = int(self.cfg.rollout.get("seed", self.cfg.actor.get("seed", 42)))
+    def _seed_worker_process(self) -> Optional[int]:
+        """Seed RNG state when a seed is explicitly configured; otherwise no-op."""
+        seed_val = self.cfg.rollout.get("seed", None)
+        if seed_val is None:
+            seed_val = self.cfg.actor.get("seed", None)
+        if seed_val is None:
+            return None
+        base_seed = int(seed_val)
         worker_seed = base_seed + int(self._rank)
         seed_everything(worker_seed)
         self.log_info(

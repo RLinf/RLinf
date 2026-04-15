@@ -16,7 +16,7 @@
 Entry point for Value Model SFT training.
 
 Usage:
-    python train_value_sft.py --config-path config --config-name libero_sft_value
+    python train_value.py --config-path config --config-name libero_sft_value
 """
 
 import json

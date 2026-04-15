@@ -490,22 +490,13 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                 )
 
                 batch = next(self.data_iter)
-                obs, target_values, actions, extra = self._prepare_input(batch)
+                obs, target_values, extra = self._prepare_input(batch)
 
                 with self.amp_context:
-                    fwd_kwargs = {"observation": obs, "target_values": target_values}
-                    if actions is not None:
-                        fwd_kwargs["actions"] = actions
-                    result = self.model(**fwd_kwargs)
+                    result = self.model(observation=obs, target_values=target_values)
                     loss = result.loss
 
                 metrics = {}
-                if result.expert_loss is not None:
-                    metrics["expert_loss"] = (
-                        result.expert_loss.detach().item()
-                        if isinstance(result.expert_loss, torch.Tensor)
-                        else result.expert_loss
-                    )
                 if result.predicted_values is not None:
                     metrics["predicted_value_mean"] = (
                         result.predicted_values.detach().mean().item()
@@ -597,25 +588,15 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                     pred_batches: list[np.ndarray] = []
                     target_batches: list[np.ndarray] = []
                     for batch in loader:
-                        obs, target_values, actions, _ = self._prepare_input(batch)
+                        obs, target_values, _ = self._prepare_input(batch)
 
                         with self.amp_context:
-                            fwd_kwargs = {
-                                "observation": obs,
-                                "target_values": target_values,
-                            }
-                            if actions is not None:
-                                fwd_kwargs["actions"] = actions
-                            result = self.model(**fwd_kwargs)
+                            result = self.model(
+                                observation=obs, target_values=target_values
+                            )
                             loss = result.loss
 
                         metrics: dict[str, float] = {}
-                        if result.expert_loss is not None:
-                            metrics["expert_loss"] = (
-                                result.expert_loss.detach().item()
-                                if isinstance(result.expert_loss, torch.Tensor)
-                                else result.expert_loss
-                            )
                         if result.predicted_values is not None:
                             metrics["predicted_value_mean"] = (
                                 result.predicted_values.detach().mean().item()
@@ -725,7 +706,7 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             return final_metrics
 
     def _prepare_input(self, batch: dict):
-        """Move batch to device and return (observation, target_values, actions, extra)."""
+        """Move batch to device and return (observation, target_values, extra)."""
 
         def _to_device(x):
             if isinstance(x, torch.Tensor):
@@ -736,7 +717,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
 
         observation = _to_device(batch["observation"])
         target_values = _to_device(batch.get("target_values"))
-        actions = _to_device(batch.get("actions"))
 
         extra = {}
         for key in (
@@ -750,7 +730,7 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             if val is not None:
                 extra[key] = _to_device(val)
 
-        return observation, target_values, actions, extra
+        return observation, target_values, extra
 
     def set_global_step(self, step: int):
         self.global_step = step

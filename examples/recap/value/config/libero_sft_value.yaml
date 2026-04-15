@@ -1,8 +1,9 @@
-# Usage: bash run_value_sft.sh libero_sft_value
+# Usage: bash examples/recap/value/run_value_sft.sh libero_sft_value
 
 defaults:
   - model/value@actor.model
   - training_backend/fsdp@actor.fsdp_config
+  - _self_
   - override hydra/job_logging: stdout
 
 hydra:
@@ -10,7 +11,7 @@ hydra:
     dir: .
   output_subdir: null
   searchpath:
-    - file://${oc.env:EMBODIED_PATH}/config/
+    - file://${oc.env:REPO_PATH}/examples/sft/config/
 
 cluster:
   num_nodes: 1
@@ -31,6 +32,9 @@ runner:
   save_interval: 3000
 
 data:
+  # Must match Step 1's data.tag; loads meta/returns_{tag}.parquet (null = legacy meta/returns.parquet)
+  tag: null
+
   train_data_paths:
     - dataset_path: "/path/to/sft_dataset"
       type: "sft"
