@@ -13,10 +13,11 @@
 # limitations under the License.
 
 
-import torch
-
-from torch.utils.data import Sampler, Dataset, DataLoader, DistributedSampler
 from typing import Any
+
+import torch
+from torch.utils.data import DataLoader, Dataset, DistributedSampler, Sampler
+
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -214,6 +215,7 @@ def batch_pad_to_fixed_len(
             ]
         )
     return batch_pad
+
 
 def build_dataloader_from_dataset(
     dataset: Dataset,

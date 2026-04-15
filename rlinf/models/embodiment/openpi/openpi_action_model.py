@@ -379,9 +379,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         device = next(self.parameters()).device
         obs_dict = {}
         raw_obs_keys = [
-            k for k in batch.keys() if k in [
-                "image", "wrist_image", "extra_view_image", "state"
-            ]
+            k
+            for k in batch.keys()
+            if k in ["image", "wrist_image", "extra_view_image", "state"]
         ]
         for key in raw_obs_keys:
             obs_dict[key] = batch[f"observation/{key}"]

@@ -49,7 +49,7 @@ Typical usage (recommended pattern with separate functions)::
 
     dataset = build_rolling_lerobot_dataset(
         root_dir="logs/20260402/maniskill",
-        chunk_size=16,      # action-chunk window for OpenPI / DAgger
+        chunk_size=16,  # action-chunk window for OpenPI / DAgger
         skip_last_n=1,
     )
     loader = build_dataloader_from_dataset(
@@ -88,9 +88,9 @@ import queue
 import re
 import threading
 import time
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Callable, Iterator, Literal
 
@@ -344,7 +344,9 @@ class _ShardIndexProbe:
     intervene_locals: list[int] | None = None
 
 
-def _build_delta_timestamps(info: dict, chunk_size: int, action_sequence_keys) -> dict[str, list[float]]:
+def _build_delta_timestamps(
+    info: dict, chunk_size: int, action_sequence_keys
+) -> dict[str, list[float]]:
     """Build a ``delta_timestamps`` dict for LeRobotDataset chunk sampling.
 
     All data features (i.e. keys that are not index/metadata columns) receive
@@ -582,9 +584,7 @@ class RollingLeRobotDataset(Dataset):
             return
         w = max(0, int(self.window_size))
         if self._valid_physical_indices is not None:
-            self._window_valid_slice_lo = max(
-                0, len(self._valid_physical_indices) - w
-            )
+            self._window_valid_slice_lo = max(0, len(self._valid_physical_indices) - w)
             if self._window_valid_slice_lo < len(self._valid_physical_indices):
                 self._window_physical_start = self._valid_physical_indices[
                     self._window_valid_slice_lo

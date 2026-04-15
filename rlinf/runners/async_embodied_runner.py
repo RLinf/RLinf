@@ -204,7 +204,9 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
             if self.actor_channel is not None:
-                training_metrics["train/replay_channel_qsize"] = self.actor_channel.qsize()
+                training_metrics["train/replay_channel_qsize"] = (
+                    self.actor_channel.qsize()
+                )
             actor_training_time_metrics, actor_time_metrics_per_rank = (
                 actor_training_handle.consume_durations(return_per_rank=True)
             )

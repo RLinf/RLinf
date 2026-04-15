@@ -968,7 +968,9 @@ class EnvWorker(Worker):
                         rewards=rewards,
                     )
                     if self.cfg.actor.get("data_source", "buffer") == "buffer":
-                        self.rollout_results[stage_id].append_step_result(chunk_step_result)
+                        self.rollout_results[stage_id].append_step_result(
+                            chunk_step_result
+                        )
                         if rollout_result.save_flags is not None:
                             self.rollout_results[stage_id].mark_last_step_with_flags(
                                 rollout_result.save_flags
@@ -977,7 +979,9 @@ class EnvWorker(Worker):
                     if self.cfg.env.train.get("data_collection", None) and getattr(
                         self.cfg.env.train.data_collection, "enabled", False
                     ):
-                        expert_actions = rollout_result.forward_inputs.get("action", None)
+                        expert_actions = rollout_result.forward_inputs.get(
+                            "action", None
+                        )
                         actions = {
                             "raw_actions": rollout_result.actions,
                             "expert_actions": expert_actions,
@@ -985,9 +989,7 @@ class EnvWorker(Worker):
                         }
                     else:
                         actions = {"raw_actions": rollout_result.actions}
-                    env_output, env_info = self.env_interact_step(
-                        actions, stage_id
-                    )
+                    env_output, env_info = self.env_interact_step(actions, stage_id)
                     env_batch = env_output.to_dict()
                     self.send_env_batch(
                         rollout_channel,

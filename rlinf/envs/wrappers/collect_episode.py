@@ -71,7 +71,7 @@ class CollectEpisode(gym.Wrapper):
         robot_type: str = "panda",
         fps: int = 10,
         only_success: bool = False,
-        allow_partial_chunk: bool = False, 
+        allow_partial_chunk: bool = False,
         stats_sample_ratio: float = 0.1,
         finalize_interval: int = 100,
     ):
@@ -189,8 +189,8 @@ class CollectEpisode(gym.Wrapper):
         data fidelity.
 
         Args:
-            chunk_actions: Action chunk, typically a tensor of shape
-                ``[num_envs, chunk_size, action_dim]``.
+            input_actions: dict of actions, containing raw_actions, actions, 
+            expert_actions, and save_flags
 
         Returns:
             Tuple of (obs_list, rewards, terminations, truncations, infos_list).
@@ -240,32 +240,45 @@ class CollectEpisode(gym.Wrapper):
                 else infos_list
             )
 
-            
             if expert_actions is not None and "intervene_action" not in step_info:
                 if "final_info" in step_info:
                     step_info["final_info"]["intervene_action"] = expert_actions
                     if save_flags is not None:
-                        step_info["final_info"]["intervene_flag"] = torch.ones(expert_actions.shape[0], expert_actions.shape[1], dtype=torch.bool)
+                        step_info["final_info"]["intervene_flag"] = torch.ones(
+                            expert_actions.shape[0],
+                            expert_actions.shape[1],
+                            dtype=torch.bool,
+                        )
                     else:
-                        step_info["final_info"]["intervene_flag"] = torch.zeros(expert_actions.shape[0], expert_actions.shape[1], dtype=torch.bool)
+                        step_info["final_info"]["intervene_flag"] = torch.zeros(
+                            expert_actions.shape[0],
+                            expert_actions.shape[1],
+                            dtype=torch.bool,
+                        )
 
                     step_info["intervene_action"] = expert_actions[:, step_idx]
                     if save_flags is not None:
                         step_info["intervene_flag"] = ~(step_trunc | step_term)
                     else:
-                        step_info["intervene_flag"] = torch.zeros(expert_actions.shape[0], dtype=torch.bool)
+                        step_info["intervene_flag"] = torch.zeros(
+                            expert_actions.shape[0], dtype=torch.bool
+                        )
                 else:
                     step_info["intervene_action"] = expert_actions[:, step_idx]
                     if save_flags is not None:
-                        step_info["intervene_flag"] = torch.ones(expert_actions.shape[0], dtype=torch.bool)
+                        step_info["intervene_flag"] = torch.ones(
+                            expert_actions.shape[0], dtype=torch.bool
+                        )
                     else:
-                        step_info["intervene_flag"] = torch.zeros(expert_actions.shape[0], dtype=torch.bool)
+                        step_info["intervene_flag"] = torch.zeros(
+                            expert_actions.shape[0], dtype=torch.bool
+                        )
             self._record_step(
                 step_action, step_obs, step_reward, step_term, step_trunc, step_info
             )
             if self.allow_partial_chunk:
                 self._maybe_flush(step_term, step_trunc)
-        
+
         if not self.allow_partial_chunk:
             self._maybe_flush(terminations, truncations)
 

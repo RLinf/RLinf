@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
-import logging
 import os
 import time
 
@@ -24,6 +22,11 @@ from omegaconf import DictConfig
 from rlinf.config import SupportedModel
 from rlinf.data.embodied_io_struct import Trajectory
 from rlinf.data.replay_buffer import TrajectoryReplayBuffer
+from rlinf.data.rolling_lerobot_dataset import (
+    PreloadRollingLeRobotDataset,
+    build_rolling_lerobot_dataset,
+)
+from rlinf.data.utils import build_dataloader_from_dataset
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils import drq
@@ -32,11 +35,7 @@ from rlinf.utils.metric_utils import append_to_dict, compute_split_num
 from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
 from rlinf.utils.utils import clear_memory
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
-from rlinf.data.rolling_lerobot_dataset import (
-    PreloadRollingLeRobotDataset,
-    build_rolling_lerobot_dataset,
-)
-from rlinf.data.utils import build_dataloader_from_dataset
+
 
 class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def __init__(self, cfg: DictConfig):
@@ -74,7 +73,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             cache_ingest_mode=self.cfg.actor.get("cache_ingest_mode", "new_shards"),
             cache_last_n_frames=self.cfg.actor.get("cache_last_n_frames", 10_000),
             cache_ingest_max_frames=self.cfg.actor.get("cache_ingest_max_frames", None),
-            require_all_intervene=self.cfg.algorithm.dagger.get("only_save_expert", False),
+            require_all_intervene=self.cfg.algorithm.dagger.get(
+                "only_save_expert", False
+            ),
             window_size=self.cfg.actor.get("rolling_lerobot_window_size", None),
             index_load_workers=self.cfg.actor.get("rolling_lerobot_index_workers", 4),
             cache_ingest_rank=self._rank,
@@ -177,7 +178,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             split_num = compute_split_num(send_num, recv_num)
             recv_list = []
             for _ in range(split_num):
-                trajectory: Trajectory = await input_channel.get(async_op=True).async_wait()
+                trajectory: Trajectory = await input_channel.get(
+                    async_op=True
+                ).async_wait()
                 recv_list.append(trajectory)
             return self.recv_buffer_rollout_trajectories(recv_list)
         elif self.data_source == "lerobot":
@@ -196,7 +199,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             self.replay_buffer.add_trajectories(intervene_traj_list)
 
     def recv_lerobot_rollout_trajectories(self) -> None:
-        refresher = self.preload_dataset if self.preload_dataset is not None else self.dataset
+        refresher = (
+            self.preload_dataset if self.preload_dataset is not None else self.dataset
+        )
         refresher.refresh()
         while not self.dataset.is_ready():
             time.sleep(1)
@@ -294,7 +299,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
         with self.worker_timer("prepare_micro_batches"):
             num_batches = len(self._lerobot_loader)
-            train_micro_batch_list = [next(self._lerobot_iter) for _ in range(num_batches)]
+            train_micro_batch_list = [
+                next(self._lerobot_iter) for _ in range(num_batches)
+            ]
             for idx, batch in enumerate(train_micro_batch_list):
                 batch = put_tensor_device(batch, device=self.device)
                 if self.enable_drq:
@@ -312,7 +319,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
             with self.amp_context:
                 actor_loss = self.forward_actor(batch)
-            
+
             actor_loss = actor_loss / num_batches
             with backward_ctx:
                 self.grad_scaler.scale(actor_loss).backward()
@@ -336,18 +343,21 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             "actor/lr": self.optimizer.param_groups[0]["lr"],
             "actor/grad_norm": actor_grad_norm,
         }
+
     def process_train_metrics(self, metrics):
         """Aggregate DAgger training and replay-buffer metrics."""
         if self.data_source == "buffer":
             replay_buffer_stats = self.replay_buffer.get_stats()
             replay_buffer_stats = {
-                f"replay_buffer/{key}": value for key, value in replay_buffer_stats.items()
+                f"replay_buffer/{key}": value
+                for key, value in replay_buffer_stats.items()
             }
             append_to_dict(metrics, replay_buffer_stats)
         elif self.data_source == "lerobot":
             lerobot_dataset_stats = self.dataset.get_stats()
             lerobot_dataset_stats = {
-                f"lerobot_dataset/{key}": value for key, value in lerobot_dataset_stats.items()
+                f"lerobot_dataset/{key}": value
+                for key, value in lerobot_dataset_stats.items()
             }
             append_to_dict(metrics, lerobot_dataset_stats)
 
@@ -376,7 +386,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             self.load_optimizer(self.device)
 
         if self.data_source == "buffer":
-            min_buffer_size = self.cfg.algorithm.replay_buffer.get("min_buffer_size", 100)
+            min_buffer_size = self.cfg.algorithm.replay_buffer.get(
+                "min_buffer_size", 100
+            )
             if not self.replay_buffer.is_ready(min_buffer_size):
                 self.log_on_first_rank(
                     f"Replay buffer size {len(self.replay_buffer)} < {min_buffer_size}, skipping training"

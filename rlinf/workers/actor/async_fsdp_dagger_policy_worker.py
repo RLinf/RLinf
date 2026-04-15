@@ -84,7 +84,7 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             if await self.replay_buffer.is_ready_async(min_buffer_size):
                 return
             await asyncio.sleep(1)
-    
+
     async def _wait_for_lerobot_dataset_ready(self):
         refresher = (
             self.preload_dataset if self.preload_dataset is not None else self.dataset
@@ -105,7 +105,9 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             self.load_optimizer(self.device)
 
         if self.data_source == "buffer":
-            min_buffer_size = self.cfg.algorithm.replay_buffer.get("min_buffer_size", 100)
+            min_buffer_size = self.cfg.algorithm.replay_buffer.get(
+                "min_buffer_size", 100
+            )
             await self._wait_for_replay_buffer_ready(min_buffer_size)
         elif self.data_source == "lerobot":
             await self._wait_for_lerobot_dataset_ready()

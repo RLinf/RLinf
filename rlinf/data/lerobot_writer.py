@@ -17,9 +17,9 @@
 import gc
 from typing import Any
 
-from rlinf.utils.logging import get_logger
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
+from rlinf.utils.logging import get_logger
 
 
 class LeRobotDatasetWriter:
@@ -87,7 +87,6 @@ class LeRobotDatasetWriter:
                 flag (bool, shape ``(1,)``) in auto-generated features.
 
         """
-        from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
         if features is None:
             features = {
