@@ -91,7 +91,8 @@ env:
     total_num_envs: 256  # 256 8H20
     max_steps_per_rollout_epoch: 120
     max_episode_steps: 120 # max episode steps for truncation
-    group_size: 8
+    group_size: 4
+    model_type: ${actor.model.model_type}
     split: train
     data_path: ${env.data_path_dir}/${env.train.split}/${env.train.split}.json.gz
     scenes_dir: ${env.scenes_dir}
@@ -109,6 +110,7 @@ env:
     group_size: 1
     auto_reset: True
     ignore_terminations: True
+    model_type: ${actor.model.model_type}
     split: val_unseen
     data_path: ${env.data_path_dir}/${env.eval.split}/${env.eval.split}.json.gz
     scenes_dir: ${env.scenes_dir}

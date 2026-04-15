@@ -17,6 +17,7 @@ import json
 import os
 from typing import Optional, Union
 
+import cv2
 import gym
 import habitat
 import numpy as np
@@ -27,14 +28,10 @@ from habitat_baselines.config.default import get_config
 from hydra.core.global_hydra import GlobalHydra
 
 from rlinf.envs.habitat.extensions import measures
-from rlinf.envs.habitat.extensions.utils import (
-    observations_to_image,
-    resize_observation_images,
-)
+from rlinf.envs.habitat.extensions.utils import observations_to_image
 from rlinf.envs.habitat.venv import HabitatRLEnv, ReconfigureSubprocEnv
 from rlinf.envs.utils import (
     list_of_dict_to_dict_of_list,
-    save_rollout_video,
     to_tensor,
 )
 
@@ -68,7 +65,7 @@ class HabitatEnv(gym.Env):
         self.max_episode_steps = cfg.max_episode_steps
         self.ignore_terminations = cfg.ignore_terminations
         self.dones_once = np.zeros(self.num_envs, dtype=bool)
-        self.first_done_infos = None
+        self.record_first_done_infos = None
 
         self._generator = np.random.default_rng(seed=self.seed)
         self._generator_ordered = np.random.default_rng(seed=0)
@@ -77,7 +74,6 @@ class HabitatEnv(gym.Env):
 
         self.metrics_cfg = cfg.metrics_cfg
         self.video_cfg = cfg.video_cfg
-        self.render_images = {}
         self.current_raw_obs = None
 
         self.env_config = self.env.get_env_attr("config")[0]
@@ -195,8 +191,8 @@ class HabitatEnv(gym.Env):
         terminations[is_stop] = True
         # TODO: what if termination means failure? (e.g. robot falling down)
         infos = list_of_dict_to_dict_of_list(info_lists)
-        infos = self._record_metrics(infos, terminations)
-        step_reward = self._calc_step_reward(infos["episode"]["success"])
+        infos = self._record_metrics(infos)
+        step_reward = self._calc_step_reward(terminations, infos["success"])
 
         truncations = self.elapsed_steps >= self.max_episode_steps
         dones_for_metric_save = terminations | truncations
@@ -205,32 +201,20 @@ class HabitatEnv(gym.Env):
         if metric_save_masks.any():
             self._save_metrics(infos, metric_save_masks)
 
-        self._overlay_first_done_episode_metrics(infos)
-
         self.current_raw_obs = raw_obs
-        obs = self._wrap_obs(raw_obs)
-
-        if self.video_cfg.save_video:
-            episode_ids = self.env.get_current_episode_ids()
-            for i in range(len(raw_obs)):
-                frame = observations_to_image(raw_obs[i], info_lists[i])
-                frame = resize_observation_images(frame, frame["rgb"].shape[0])
-                frame_concat = np.concatenate(
-                    (frame["rgb"], frame["depth"], frame["top_down_map"]), axis=1
-                )
-                key = f"episode_{episode_ids[i]}"
-                if key not in self.render_images:
-                    self.render_images[key] = []
-                self.render_images[key].append(frame_concat)
+        obs = self._wrap_obs(raw_obs, info_lists)
 
         if self.ignore_terminations:
             terminations[:] = False
         dones = terminations | truncations
 
         if dones.any() and self.auto_reset:
-            if self.video_cfg.save_video:
-                self.flush_video(dones=dones)
-            obs, infos = self._handle_auto_reset(dones, obs, infos)
+            final_infos = (
+                self.record_first_done_infos
+                if self.record_first_done_infos is not None
+                else infos
+            )
+            obs, infos = self._handle_auto_reset(dones, obs, final_infos)
 
         return (
             obs,
@@ -251,8 +235,11 @@ class HabitatEnv(gym.Env):
         self._elapsed_steps[env_idx] = 0
         self.prev_step_reward[env_idx] = 0.0
         self.dones_once[env_idx] = False
-        if self.first_done_infos is not None and "episode" in self.first_done_infos:
-            episode = self.first_done_infos["episode"]
+        if (
+            self.record_first_done_infos is not None
+            and "episode" in self.record_first_done_infos
+        ):
+            episode = self.record_first_done_infos["episode"]
             device = next(iter(episode.values())).device
             mask = torch.zeros(self.num_envs, dtype=torch.bool, device=device)
             mask[env_idx] = True
@@ -268,29 +255,6 @@ class HabitatEnv(gym.Env):
         obs = self._wrap_obs(self.current_raw_obs)
 
         return obs, infos
-
-    def flush_video(
-        self, video_sub_dir: Optional[str] = None, dones: Optional[np.ndarray] = None
-    ):
-        output_dir = self.video_cfg.video_base_dir
-        if video_sub_dir is not None:
-            output_dir = os.path.join(output_dir, f"{video_sub_dir}")
-
-        if dones is None:
-            dones_episode_ids = np.array(self.env.get_current_episode_ids())
-        else:
-            dones_episode_ids = np.array(self.env.get_current_episode_ids())[dones]
-
-        for episode_ids in dones_episode_ids:
-            video_name = f"episode_{episode_ids}"
-            if video_name in self.render_images:
-                save_rollout_video(
-                    self.render_images[video_name],
-                    output_dir=output_dir,
-                    video_name=video_name,
-                    fps=self.video_cfg.fps,
-                )
-                self.render_images[video_name] = []
 
     def update_reset_state_ids(self):
         pass
@@ -322,16 +286,32 @@ class HabitatEnv(gym.Env):
             obs["depth"] = depth
             raw_obs[env_idx] = obs
 
-    def _wrap_obs(self, obs_list):
+    def _wrap_obs(self, obs_list, info_lists=None):
         image_list = []
         task_descs = []
         token_list = []
-        for obs in obs_list:
-            image_list.append(observations_to_image(obs))
+        should_render_video = info_lists is not None and self.cfg.video_cfg.save_video
+        for i in range(len(obs_list)):
+            obs = obs_list[i]
+            info = info_lists[i] if info_lists is not None else None
+            if should_render_video:
+                images = observations_to_image(obs, info)
+                image_size = (images["rgb"].shape[1], images["rgb"].shape[0])
+                images["top_down_map"] = cv2.resize(
+                    images["top_down_map"],
+                    dsize=image_size,
+                    interpolation=cv2.INTER_LINEAR,
+                )
+                images["concat"] = np.concatenate(
+                    (images["rgb"], images["top_down_map"]), axis=1
+                )
+            else:
+                images = observations_to_image(obs)
             inst = str(obs["instruction"].get("text", ""))
             # token is used for CMA algorithm, please refer to
             # https://github.com/jacobkrantz/VLN-CE for more details.
             token = obs["instruction"].get("tokens", [])
+            image_list.append(images)
             task_descs.append(inst)
             token_list.append(token)
 
@@ -339,14 +319,19 @@ class HabitatEnv(gym.Env):
         episode_ids = self.env.get_current_episode_ids()
 
         obs = {}
-        obs["main_images"] = image_tensor["rgb"].clone()  # [N_ENV, H, W, C]
-        obs["wrist_images"] = token_list  # Temporarily use wrist_images to store tokens
-        obs["task_descriptions"] = task_descs
-        obs["states"] = torch.tensor(episode_ids, dtype=torch.int64)
-
+        if should_render_video:
+            obs["main_images"] = image_tensor["concat"].clone()  # [N_ENV, H, W, C]
+        obs["wrist_images"] = image_tensor[
+            "rgb"
+        ].clone()  # Temporarily use wrist_images to store rgb images
         if "depth" in image_tensor:
             depth_tensor = image_tensor["depth"].clone()
             obs["extra_view_images"] = depth_tensor.unsqueeze(1)  # [N_ENV, 1, H, W, C]
+        if self.cfg.model_type == "cma":
+            obs["task_descriptions"] = token_list
+        else:
+            obs["task_descriptions"] = task_descs
+        obs["states"] = torch.tensor(episode_ids, dtype=torch.int64)
 
         return obs
 
@@ -363,8 +348,8 @@ class HabitatEnv(gym.Env):
         infos["_elapsed_steps"] = dones
         return obs, infos
 
-    def _calc_step_reward(self, success):
-        reward = self.cfg.reward_coef * success
+    def _calc_step_reward(self, terminations, success):
+        reward = self.cfg.reward_coef * terminations * success
         reward_diff = reward - self.prev_step_reward
         self.prev_step_reward = reward
 
@@ -373,10 +358,9 @@ class HabitatEnv(gym.Env):
         else:
             return reward
 
-    def _record_metrics(self, infos, terminations):
+    def _record_metrics(self, infos):
         episode_info = {}
         dist_threshold = self.env_config.task.measurements.success.success_distance
-        terminations = np.array(terminations, dtype=bool, copy=True)
 
         episode_info["distance_to_goal"] = np.array(
             infos["distance_to_goal"], dtype=np.float32
@@ -390,8 +374,8 @@ class HabitatEnv(gym.Env):
             ][is_first_step].copy()
 
         episode_info["success"] = (
-            terminations & (episode_info["distance_to_goal"] < dist_threshold)
-        ).astype(np.float32)
+            (np.array(infos["distance_to_goal"]) < dist_threshold).astype(float).copy()
+        )
 
         episode_info["trajectory_Length"] = np.array(
             infos["trajectory_Length"], dtype=np.float32
@@ -404,12 +388,15 @@ class HabitatEnv(gym.Env):
             )
         )
 
-        episode_info["oracle_success"] = infos["oracle_success"].copy()
+        episode_info["oracle_success"] = (
+            (np.array(infos["oracle_navigation_error"]) < dist_threshold)
+            .astype(float)
+            .copy()
+        )
 
         episode_info["oracle_navigation_error"] = infos[
             "oracle_navigation_error"
         ].copy()
-        episode_info["done_steps"] = self.elapsed_steps.copy()
 
         infos["episode"] = to_tensor(episode_info)
 
@@ -421,68 +408,39 @@ class HabitatEnv(gym.Env):
         self.dones_once[metric_save_masks] = True
         episode = infos["episode"]
 
-        if self.first_done_infos is None:
-            self.first_done_infos = {
+        if self.record_first_done_infos is None:
+            self.record_first_done_infos = {
                 "episode": {k: torch.zeros_like(v) for k, v in episode.items()}
             }
 
         # Update the envs that become done in this step
         for k, v in episode.items():
-            cached_v = self.first_done_infos["episode"][k]
+            cached_v = self.record_first_done_infos["episode"][k]
             m = mask.to(v.device)
             cached_v[m] = v[m]
 
         # Save metrics by episode_id when env first done
-        if self.metrics_cfg.save_metrics:
-            episode_ids = self.env.get_current_episode_ids()
-            for i in range(len(metric_save_masks)):
-                if metric_save_masks[i]:
-                    episode_id = episode_ids[i]
-                    metrics_dict = {}
-                    for k, v in episode.items():
-                        if torch.is_tensor(v):
-                            if v.dim() == 1:
-                                metrics_dict[k] = v[i].item()
-                            else:
-                                metrics_dict[k] = v[i].cpu().numpy().tolist()
-                        elif isinstance(v, (list, np.ndarray)):
-                            metrics_dict[k] = v[i]
+        episode_ids = self.env.get_current_episode_ids()
+        for i in range(len(metric_save_masks)):
+            if metric_save_masks[i]:
+                episode_id = episode_ids[i]
+                metrics_dict = {}
+                for k, v in episode.items():
+                    if torch.is_tensor(v):
+                        if v.dim() == 1:
+                            metrics_dict[k] = v[i].item()
                         else:
-                            metrics_dict[k] = v
-                    metrics_file = os.path.join(
-                        self.metrics_cfg.metrics_base_dir, f"episode_{episode_id}.json"
-                    )
-                    os.makedirs(self.metrics_cfg.metrics_base_dir, exist_ok=True)
-                    with open(metrics_file, "w") as f:
-                        json.dump(metrics_dict, f, indent=2, ensure_ascii=False)
-
-    def _overlay_first_done_episode_metrics(self, infos):
-        """Overlay cached first-done values onto live episode metrics"""
-        if (
-            not self.dones_once.any()
-            or not isinstance(infos, dict)
-            or not isinstance(self.first_done_infos, dict)
-        ):
-            return
-
-        live_episode = infos.get("episode")
-        cached_episode = self.first_done_infos.get("episode")
-        if not isinstance(live_episode, dict) or not isinstance(cached_episode, dict):
-            return
-
-        done_once_mask = torch.from_numpy(self.dones_once)
-        shared_keys = set(live_episode.keys()) & set(cached_episode.keys())
-        for key in shared_keys:
-            live_v = live_episode[key]
-            cached_v = cached_episode[key]
-            if not (torch.is_tensor(live_v) and torch.is_tensor(cached_v)):
-                continue
-            if live_v.shape[0] != self.num_envs or cached_v.shape[0] != self.num_envs:
-                continue
-
-            mask = done_once_mask.to(device=live_v.device)
-            cached_v = cached_v.to(device=live_v.device, dtype=live_v.dtype)
-            live_v[mask] = cached_v[mask]
+                            metrics_dict[k] = v[i].cpu().numpy().tolist()
+                    elif isinstance(v, (list, np.ndarray)):
+                        metrics_dict[k] = v[i]
+                    else:
+                        metrics_dict[k] = v
+                metrics_file = os.path.join(
+                    self.metrics_cfg.metrics_base_dir, f"episode_{episode_id}.json"
+                )
+                os.makedirs(self.metrics_cfg.metrics_base_dir, exist_ok=True)
+                with open(metrics_file, "w") as f:
+                    json.dump(metrics_dict, f, indent=2, ensure_ascii=False)
 
     def _init_env(self):
         env_fns = self._get_env_fns()

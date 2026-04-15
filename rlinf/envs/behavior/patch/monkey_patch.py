@@ -12,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
-import os
-
-import omnigibson as og
+import omnigibson.lazy as lazy
 from omnigibson.learning.eval import Evaluator
-from omnigibson.utils.asset_utils import get_task_instance_path
-from omnigibson.utils.python_utils import recursively_convert_to_torch
+from omnigibson.sensors.vision_sensor import VisionSensor, render
 from omnigibson.utils.usd_utils import ControllableObjectViewAPI
+
+from rlinf.envs.behavior.instance_loader import load_cached_activity_instance
 
 
 def apply() -> None:
@@ -34,39 +32,88 @@ def apply() -> None:
         return prim_path.replace(f"/{robot_name}", f"/{prefix}__{robot_type}__*")
 
     def _load_task_instance(self, instance_id: int) -> None:
-        scene_model = self.env.task.scene_name
-        tro_filename = self.env.task.get_cached_activity_scene_filename(
-            scene_model=scene_model,
-            activity_name=self.env.task.activity_name,
-            activity_definition_id=self.env.task.activity_definition_id,
-            activity_instance_id=instance_id,
+        load_cached_activity_instance(
+            self.env,
+            instance_id=instance_id,
+            reset_scene=True,
         )
-        tro_file_path = os.path.join(
-            get_task_instance_path(scene_model),
-            f"json/{scene_model}_task_{self.env.task.activity_name}_instances/{tro_filename}-tro_state.json",
-        )
-        with open(tro_file_path, "r") as f:
-            tro_state = recursively_convert_to_torch(json.load(f))
-        for tro_key, state in tro_state.items():
-            if tro_key == "robot_poses":
-                robot_pose = state[self.robot.model_name][0]
-                self.robot.set_position_orientation(
-                    robot_pose["position"],
-                    robot_pose["orientation"],
-                    frame="scene",
-                )
-                self.env.scene.write_task_metadata(key=tro_key, data=state)
-            else:
-                self.env.task.object_scope[tro_key].load_state(state, serialized=False)
-
-        for _ in range(25):
-            og.sim.step_physics()
-            for entity in self.env.task.object_scope.values():
-                if entity.exists and not entity.is_system:
-                    entity.keep_still()
 
     ControllableObjectViewAPI._get_pattern_from_prim_path = classmethod(
         _get_pattern_from_prim_path
     )
     ControllableObjectViewAPI.__rlinf_patched__ = True
     Evaluator.load_task_instance = _load_task_instance
+
+    # OmniGibson / Replicator can fail when detaching annotators with an explicit
+    # list path during dynamic camera resize. Use the same detach style as
+    # VisionSensor._remove_modality_from_backend for compatibility.
+
+    import omnigibson as og
+
+    if (
+        getattr(VisionSensor, "__rlinf_resize_setter_patched__", False)
+        or og.__version__ != "3.7.2"
+    ):
+        return
+
+    original_image_height = VisionSensor.image_height
+    original_image_width = VisionSensor.image_width
+
+    def _detach_annotator_safe(annotator, render_product):
+        try:
+            annotator.detach(render_product)
+        except Exception:
+            # Fallback for older backends that still expect explicit path lists.
+            annotator.detach([render_product.path])
+
+    def _reset_render_product(sensor, width: int, height: int):
+        if sensor._viewport is not None:
+            sensor._viewport.viewport_api.set_texture_resolution((width, height))
+        sensor._image_width = width
+        sensor._image_height = height
+
+        for annotator in sensor._annotators.values():
+            if annotator is None:
+                continue
+            _detach_annotator_safe(annotator, sensor._render_product)
+
+        sensor._render_product.destroy()
+        sensor._render_product = lazy.omni.replicator.core.create.render_product(
+            sensor.prim_path, (width, height), force_new=True
+        )
+
+        for annotator in sensor._annotators.values():
+            if annotator is None:
+                continue
+            annotator.attach([sensor._render_product])
+
+        for _ in range(3):
+            render()
+
+    def _patched_image_height(self, height):
+        if self._viewport is not None:
+            width, _ = self._viewport.viewport_api.get_texture_resolution()
+        else:
+            width = self._image_width
+        _reset_render_product(self, width=width, height=height)
+
+    def _patched_image_width(self, width):
+        if self._viewport is not None:
+            _, height = self._viewport.viewport_api.get_texture_resolution()
+        else:
+            height = self._image_height
+        _reset_render_product(self, width=width, height=height)
+
+    VisionSensor.image_height = property(
+        original_image_height.fget,
+        _patched_image_height,
+        original_image_height.fdel,
+        original_image_height.__doc__,
+    )
+    VisionSensor.image_width = property(
+        original_image_width.fget,
+        _patched_image_width,
+        original_image_width.fdel,
+        original_image_width.__doc__,
+    )
+    VisionSensor.__rlinf_resize_setter_patched__ = True

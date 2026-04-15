@@ -71,7 +71,11 @@ def split_dict_to_chunk(data: dict, split_size, dim=0):
         else:
             raise ValueError(f"{key=}, {type(value)} is not supported.")
         for split_id in range(split_size):
-            splited_list[split_id][key] = split_vs[split_id]
+            splited_list[split_id][key] = (
+                split_vs[split_id].contiguous()
+                if isinstance(split_vs[split_id], torch.Tensor)
+                else split_vs[split_id]
+            )
     return splited_list
 
 

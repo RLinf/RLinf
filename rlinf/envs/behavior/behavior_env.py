@@ -21,10 +21,10 @@ import gymnasium as gym
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from rlinf.envs.behavior.instance_loader import ActivityInstanceLoader
 from rlinf.envs.behavior.utils import (
     apply_env_wrapper,
     convert_uint8_rgb,
-    resample_task,
     setup_omni_cfg,
 )
 from rlinf.envs.utils import list_of_dict_to_dict_of_list, to_tensor
@@ -42,12 +42,7 @@ def _behavior_env_worker(cfg: DictConfig, conn, num_envs: int):
         from omnigibson.envs import VectorEnvironment
 
         omni_cfg = setup_omni_cfg(cfg)
-
-        #
-        omni_task_cfg = OmegaConf.select(omni_cfg, "task")
-        resample_task_when_reset = OmegaConf.select(
-            omni_cfg, "task.resample_task_when_reset"
-        )
+        instance_loader = ActivityInstanceLoader.from_omni_cfg(omni_cfg)
 
         # create env and apply env wrapper if enabled
         omni_cfg_dict = OmegaConf.to_container(
@@ -62,7 +57,7 @@ def _behavior_env_worker(cfg: DictConfig, conn, num_envs: int):
         conn.send(
             {
                 "type": "ready",
-                "activity_name": OmegaConf.select(omni_cfg, "task.activity_name"),
+                "activity_name": instance_loader.activity_name,
             }
         )
 
@@ -70,8 +65,7 @@ def _behavior_env_worker(cfg: DictConfig, conn, num_envs: int):
             cmd, payload = conn.recv()
 
             if cmd == "reset":
-                if resample_task_when_reset:
-                    resample_task(env, omni_task_cfg, num_envs)
+                instance_loader.prepare_reset(env)
                 raw_obs, infos = env.reset()
                 conn.send({"type": "ok", "result": (raw_obs, infos)})
 
