@@ -85,7 +85,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         aligned = self.dataset.get_cache_aligned_logical_indices()
         self.data_loader = build_dataloader_from_dataset(
             dataset=self.dataset,
-            batch_size=self.cfg.actor.micro_batch_size * self._world_size,
+            batch_size=self.cfg.actor.micro_batch_size,
             world_size=self._world_size,
             rank=self._rank,
             use_random_replacement=True,
@@ -112,7 +112,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
         self.preload_dataset = PreloadRollingLeRobotDataset(
             dataset=self.dataset,
-            batch_size=self.cfg.actor.micro_batch_size * self._world_size,
+            batch_size=self.cfg.actor.micro_batch_size,
             world_size=self._world_size,
             rank=self._rank,
             prefetch_size=self.cfg.actor.get("prefetch_size", 5),
