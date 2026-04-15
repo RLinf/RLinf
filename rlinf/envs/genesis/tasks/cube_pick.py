@@ -30,15 +30,32 @@ from genesis.utils.geom import transform_by_quat
 _FRANKA_MJCF = "xml/franka_emika_panda/panda.xml"
 _NUM_MOTOR_DOFS = 7
 _NUM_FINGER_DOFS = 2
-_HOME_QPOS = [0.0, -0.4, 0.0, -2.2, 0.0, 2.0, 0.8, 0.04, 0.04]
+_HOME_QPOS = [
+    0.0,
+    -0.4,
+    0.0,
+    -2.2,
+    0.0,
+    2.0,
+    0.8,
+    0.04,
+    0.04]
 
-_CUBE_SIZE = (0.04, 0.04, 0.04)
-_CUBE_DEFAULT_POS = (0.65, 0.0, 0.02)
+_CUBE_SIZE = (0.04,
+              0.04,
+              0.04)
+_CUBE_DEFAULT_POS = (0.65,
+                     0.0,
+                     0.02)
 
 _DEFAULT_SUCCESS_HEIGHT = 0.20
 
-_CAMERA_POS = (3.5, 0.0, 2.5)
-_CAMERA_LOOKAT = (0.0, 0.0, 0.5)
+_CAMERA_POS = (3.5,
+               0.0,
+               2.5)
+_CAMERA_LOOKAT = (0.0,
+                  0.0,
+                  0.5)
 _CAMERA_FOV = 30
 
 

@@ -32,13 +32,15 @@ dependencies = [
     # Core System
     # These are the dependencies of the core scheduler
     "ray[default]>=2.47.0",
-    "torch>=2.8.0,<=2.9.0",
+    "torch>=2.5.0,<=2.9.0",
     "hydra-core",
     "numpy",
+
     # Data processing
     "datasets",
     "torchdata",
     "scipy",
+
     # Utilities
     "accelerate",
     "debugpy",
@@ -57,13 +59,11 @@ dependencies = [
     "huggingface_hub",
     "icmplib",
     "pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+
     # Logging
     "wandb",
     "swanlab>=0.6.11",
     "tensorboard",
-    "transformers<5.0",
-    "torchvision>=0.23.0",
-    "cuda-python>=12.0,<13.0",
 ]
 
 [project.urls]
@@ -135,10 +135,10 @@ conflicts = [
     ],
 ]
 override-dependencies = [
-    "torch==2.8.0",
-    "torchvision==0.23.0",
-    "torchaudio==2.8.0",
-    "torchcodec==0.6",
+    "torch==2.6.0",
+    "torchvision==0.21.0",
+    "torchaudio==2.6.0",
+    "torchcodec==0.2",
     "xgrammar==0.1.19",
     "uvloop==0.21.0",
     "tensorflow-addons==0.23.0",
