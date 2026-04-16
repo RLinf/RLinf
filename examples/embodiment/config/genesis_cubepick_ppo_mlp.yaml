@@ -25,8 +25,8 @@ runner:
     experiment_name: "genesis_cubepick_ppo_mlp"
     logger_backends: ["tensorboard"]
 
-  # max_epochs: 200
-  max_epochs: 500
+  # max_epochs: 100
+  max_epochs: 400
   max_steps: -1
 
   only_eval: False

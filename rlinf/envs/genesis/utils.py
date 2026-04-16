@@ -39,7 +39,9 @@ def extract_robot_state(
     """
     eef_pos = eef_link.get_pos()  # (B, 3)
     eef_quat = eef_link.get_quat()  # (B, 4)
-    gripper = robot.get_dofs_position()[..., num_motor_dofs : num_motor_dofs + num_finger_dofs]  # (B, F)
+    gripper = robot.get_dofs_position()[
+        ..., num_motor_dofs : num_motor_dofs + num_finger_dofs
+    ]  # (B, F)
     state = torch.cat([eef_pos, eef_quat, gripper], dim=-1).float()
     if state.device != torch.device(device):
         state = state.to(device)

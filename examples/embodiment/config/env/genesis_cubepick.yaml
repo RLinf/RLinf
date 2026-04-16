@@ -44,6 +44,8 @@ init_params:
   camera_fov: 30
   # Task
   success_height: 0.10
+  success_hold_steps: 3
+  grasp_dist_threshold: 0.08
   cube_x_range:
     - 0.45
     - 0.80

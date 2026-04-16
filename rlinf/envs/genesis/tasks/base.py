@@ -19,6 +19,7 @@ from __future__ import annotations
 import abc
 from typing import Any
 
+import numpy as np
 import torch
 
 
@@ -50,6 +51,19 @@ class GenesisTaskBase(abc.ABC):
     finger_dofs: Any = None
     task_description: str = ""
 
+    def seed(self, seed: int) -> None:
+        """Set task-level random seed.
+
+        Subclasses can override when they maintain their own RNG.
+        """
+
+    def total_num_reset_states(self) -> int:
+        """Return the number of available reset states.
+
+        Tasks without a discrete reset-state table can keep the default.
+        """
+        return int(np.iinfo(np.uint32).max // 2)
+
     @abc.abstractmethod
     def build_scene(self, scene, cfg) -> None:
         """Add entities (robot, objects, cameras) to *scene*.
@@ -68,6 +82,7 @@ class GenesisTaskBase(abc.ABC):
         scene,
         num_envs: int,
         envs_idx: torch.Tensor | None = None,
+        reset_state_ids: torch.Tensor | None = None,
     ) -> None:
         """Reset the task state (robot + objects) for the given env indices.
 
@@ -79,12 +94,57 @@ class GenesisTaskBase(abc.ABC):
             num_envs: Total number of parallel environments.
             envs_idx: Optional tensor of environment indices to reset.
                 ``None`` means reset all environments.
+            reset_state_ids: Optional tensor of reset-state IDs aligned
+                with ``envs_idx`` (or all envs when ``envs_idx`` is None).
         """
 
+    def apply_action(self, actions: torch.Tensor) -> None:
+        """Apply policy actions to the task robot.
+
+        The default implementation controls arm and gripper position DOFs.
+        Subclasses can override for custom control spaces.
+        """
+        if self.robot is None:
+            raise RuntimeError("Task robot is not initialized.")
+
+        if self.motor_dofs is not None:
+            self.robot.control_dofs_position(
+                actions[:, : len(self.motor_dofs)],
+                self.motor_dofs,
+            )
+        if self.finger_dofs is not None:
+            self.robot.control_dofs_position(
+                actions[
+                    :,
+                    len(self.motor_dofs) : len(self.motor_dofs) + len(self.finger_dofs),
+                ],
+                self.finger_dofs,
+            )
+
+    def compute_step_outcomes(
+        self,
+        scene,
+        num_envs: int,
+        elapsed_steps: torch.Tensor,
+        max_episode_steps: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]]:
+        """Compute reward, done signals and infos for one step.
+
+        Default behavior preserves current GenesisEnv semantics:
+        termination by task success, truncation by max episode steps.
+        """
+        reward, success = self.compute_reward(scene, num_envs)
+        terminations = success.bool()
+        truncations = elapsed_steps >= max_episode_steps
+        infos: dict[str, Any] = {"success": success}
+        return reward, terminations, truncations, infos
+
+    def get_task_descriptions(self, num_envs: int) -> list[str]:
+        """Return per-env language descriptions."""
+        return [self.task_description] * num_envs
+
     @abc.abstractmethod
-    def compute_reward(
-        self, scene, num_envs: int
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def compute_reward(self, scene, num_envs: int) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute rewards and success flags for the current state.
 
         Args:

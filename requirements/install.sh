@@ -18,7 +18,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis")
 
 #=======================Utility Functions=======================
 
@@ -550,6 +550,10 @@ install_env_only() {
             install_common_embodied_deps
             install_habitat_env
             ;;
+        genesis)
+            install_common_embodied_deps
+            install_genesis_env
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for env-only installation." >&2
             exit 1
@@ -762,6 +766,19 @@ install_habitat_env() {
     habitat_lab_dir=$(clone_or_reuse_repo HABITAT_LAB_PATH "$VENV_DIR/habitat-lab" https://github.com/RLinf/habitat-lab.git -b v0.3.3 --recurse-submodules)
     uv pip install -e $habitat_lab_dir/habitat-lab
     uv pip install -e $habitat_lab_dir/habitat-baselines
+}
+
+install_genesis_env() {
+    echo "Installing Genesis environment dependencies..."
+    uv pip install "transformers==4.57.6"
+    uv pip install "cuda-python==12.9.6"
+    uv pip install "genesis-world==0.4.5"
+    uv pip install "pyglet==2.1.14"
+
+    uv pip install "torch==2.8.0"
+    uv pip install "torchvision==0.23.0"
+    uv pip install "torchaudio==2.8.0"
+    uv pip install "torchcodec==0.6"
 }
 
 install_opensora_world_model() {
