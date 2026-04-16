@@ -100,12 +100,12 @@ def _register_builtin_models():
         from rlinf.models.embodiment.dreamzero import get_model
 
         return get_model(cfg, torch_dtype)
-    
+
     def _build_openpi_cfg(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.openpi_cfg import get_model
 
         return get_model(cfg, torch_dtype)
-    
+
     def _build_value_model(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.value_model import get_model
 
@@ -234,7 +234,10 @@ def get_model(cfg: DictConfig):
                 ],
                 init_lora_weights="gaussian",
             )
-            if SupportedModel(model_type) in (SupportedModel.OPENPI, SupportedModel.CFG_MODEL):
+            if SupportedModel(model_type) in (
+                SupportedModel.OPENPI,
+                SupportedModel.CFG_MODEL,
+            ):
                 module_to_lora = model.paligemma_with_expert.paligemma
                 module_to_lora = get_peft_model(module_to_lora, lora_config)
                 tag_vlm_subtree(model, False)
