@@ -30,6 +30,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 
 ## What's NEW!
+- [2026/04] 🔥 RLinf now supports offline IQL training on D4RL benchmarks. Doc: [IQL on D4RL](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/iql_d4rl.html), paper: [Offline Reinforcement Learning with Implicit Q-Learning](https://arxiv.org/abs/2110.06169).
 - [2026/04] 🔥 RLinf supports EmbodiChain as an embodied environment for RL, with a reference MLP + PPO CartPole recipe. Doc: [EmbodiChain](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/embodichain.html).
 - [2026/04] 🔥 RLinf supports reinforcement learning fine-tuning for [RoboVerse](https://github.com/RoboVerseOrg/RoboVerse). Doc: [RL on RoboVerse](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/roboverse.html).
 - [2026/04] 🔥 RLinf supports reinforcement learning fine-tuning for [StarVLA](https://github.com/starVLA/starVLA). Doc: [StarVLA](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/starvla.html).
@@ -169,6 +170,7 @@ Multiple Backend Integrations
         <ul style="margin-left: 0; padding-left: 16px;">
           <li><b>RL Algos</b></li>
           <ul>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/iql.html">IQL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/grpo.html">GRPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/ppo.html">PPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/dapo.html">DAPO</a> ✅</li>
