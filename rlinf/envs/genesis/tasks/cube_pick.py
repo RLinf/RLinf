@@ -19,43 +19,24 @@ from typing import Any
 import genesis as gs
 import numpy as np
 import torch
+from genesis.utils.geom import transform_by_quat
 
 from rlinf.envs.genesis.tasks import register_task
 from rlinf.envs.genesis.tasks.base import GenesisTaskBase
 from rlinf.envs.genesis.utils import camera_render_rgb, extract_robot_state
 
-from genesis.utils.geom import transform_by_quat
-
-
 _FRANKA_MJCF = "xml/franka_emika_panda/panda.xml"
 _NUM_MOTOR_DOFS = 7
 _NUM_FINGER_DOFS = 2
-_HOME_QPOS = [
-    0.0,
-    -0.4,
-    0.0,
-    -2.2,
-    0.0,
-    2.0,
-    0.8,
-    0.04,
-    0.04]
+_HOME_QPOS = [0.0, -0.4, 0.0, -2.2, 0.0, 2.0, 0.8, 0.04, 0.04]
 
-_CUBE_SIZE = (0.04,
-              0.04,
-              0.04)
-_CUBE_DEFAULT_POS = (0.65,
-                     0.0,
-                     0.02)
+_CUBE_SIZE = (0.04, 0.04, 0.04)
+_CUBE_DEFAULT_POS = (0.65, 0.0, 0.02)
 
 _DEFAULT_SUCCESS_HEIGHT = 0.20
 
-_CAMERA_POS = (3.5,
-               0.0,
-               2.5)
-_CAMERA_LOOKAT = (0.0,
-                  0.0,
-                  0.5)
+_CAMERA_POS = (3.5, 0.0, 2.5)
+_CAMERA_LOOKAT = (0.0, 0.0, 0.5)
 _CAMERA_FOV = 30
 
 
@@ -91,26 +72,36 @@ class CubePickTask(GenesisTaskBase):
 
         scene.add_entity(gs.morphs.Plane())
 
-        scene.add_light(pos=(2, 2, 2),
-                        dir=(-1, -1, -1),
-                        color=(1, 1, 1,),
-                        intensity=1.0,
-                        directional=False,
-                        castshadow=True,
-                        cutoff=80.0)
+        scene.add_light(
+            pos=(2, 2, 2),
+            dir=(-1, -1, -1),
+            color=(
+                1,
+                1,
+                1,
+            ),
+            intensity=1.0,
+            directional=False,
+            castshadow=True,
+            cutoff=80.0,
+        )
 
         robot_file = init_params.get("robot_file", _FRANKA_MJCF)
         self.robot = scene.add_entity(gs.morphs.MJCF(file=robot_file))
-        self.lf_sensor = scene.add_sensor(gs.sensors.Contact(
-            entity_idx=self.robot.idx,
-            draw_debug=True,
-            link_idx_local=self.robot.get_link("left_finger").idx_local
-        ))
-        self.rf_sensor = scene.add_sensor(gs.sensors.Contact(
-            entity_idx=self.robot.idx,
-            draw_debug=True,
-            link_idx_local=self.robot.get_link("right_finger").idx_local
-        ))
+        self.lf_sensor = scene.add_sensor(
+            gs.sensors.Contact(
+                entity_idx=self.robot.idx,
+                draw_debug=True,
+                link_idx_local=self.robot.get_link("left_finger").idx_local,
+            )
+        )
+        self.rf_sensor = scene.add_sensor(
+            gs.sensors.Contact(
+                entity_idx=self.robot.idx,
+                draw_debug=True,
+                link_idx_local=self.robot.get_link("right_finger").idx_local,
+            )
+        )
 
         cube_size = tuple(init_params.get("cube_size", _CUBE_SIZE))
         self.cube = scene.add_entity(
@@ -133,9 +124,13 @@ class CubePickTask(GenesisTaskBase):
         self._camera_base_lookat = cam_lookat
 
         self.motor_dofs = np.arange(_NUM_MOTOR_DOFS)
-        self.finger_dofs = np.arange(_NUM_MOTOR_DOFS, _NUM_MOTOR_DOFS + _NUM_FINGER_DOFS)
+        self.finger_dofs = np.arange(
+            _NUM_MOTOR_DOFS, _NUM_MOTOR_DOFS + _NUM_FINGER_DOFS
+        )
 
-        self._success_height = float(init_params.get("success_height", _DEFAULT_SUCCESS_HEIGHT))
+        self._success_height = float(
+            init_params.get("success_height", _DEFAULT_SUCCESS_HEIGHT)
+        )
         self._cube_x_range = tuple(init_params.get("cube_x_range", self._cube_x_range))
         self._cube_y_range = tuple(init_params.get("cube_y_range", self._cube_y_range))
 
@@ -146,7 +141,9 @@ class CubePickTask(GenesisTaskBase):
         """Called right after ``scene.build()`` to resolve link references."""
         self.eef_link = self.robot.get_link(self._eef_link_name)
 
-        self.robot.set_dofs_kp(np.array([4500, 4500, 3500, 3500, 2000, 2000, 2000, 100, 100]))
+        self.robot.set_dofs_kp(
+            np.array([4500, 4500, 3500, 3500, 2000, 2000, 2000, 100, 100])
+        )
         self.robot.set_dofs_kv(np.array([450, 450, 350, 350, 200, 200, 200, 10, 10]))
         self.robot.set_dofs_force_range(
             np.array([-87, -87, -87, -87, -12, -12, -12, -100, -100]),
@@ -177,26 +174,32 @@ class CubePickTask(GenesisTaskBase):
         )
 
         # Robot home qpos
-        qpos = torch.tensor(
-            _HOME_QPOS, dtype=torch.float32, device=gs.device
-        ).unsqueeze(0).repeat(B, 1)
+        qpos = (
+            torch.tensor(_HOME_QPOS, dtype=torch.float32, device=gs.device)
+            .unsqueeze(0)
+            .repeat(B, 1)
+        )
 
         if envs_idx is not None:
             self.cube.set_pos(cube_pos, envs_idx=envs_idx)
             self.cube.set_quat(cube_quat, envs_idx=envs_idx)
             self.robot.set_qpos(qpos, envs_idx=envs_idx, zero_velocity=True)
-            self.robot.control_dofs_position(qpos[:, :_NUM_MOTOR_DOFS], self.motor_dofs, envs_idx=envs_idx)
-            self.robot.control_dofs_position(qpos[:, _NUM_MOTOR_DOFS:], self.finger_dofs, envs_idx=envs_idx)
+            self.robot.control_dofs_position(
+                qpos[:, :_NUM_MOTOR_DOFS], self.motor_dofs, envs_idx=envs_idx
+            )
+            self.robot.control_dofs_position(
+                qpos[:, _NUM_MOTOR_DOFS:], self.finger_dofs, envs_idx=envs_idx
+            )
         else:
             self.cube.set_pos(cube_pos)
             self.cube.set_quat(cube_quat)
             self.robot.set_qpos(qpos, zero_velocity=True)
             self.robot.control_dofs_position(qpos[:, :_NUM_MOTOR_DOFS], self.motor_dofs)
-            self.robot.control_dofs_position(qpos[:, _NUM_MOTOR_DOFS:], self.finger_dofs)
+            self.robot.control_dofs_position(
+                qpos[:, _NUM_MOTOR_DOFS:], self.finger_dofs
+            )
 
-    def compute_reward(
-        self, scene, num_envs: int
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def compute_reward(self, scene, num_envs: int) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute dense shaped rewards for reaching, grasping, and lifting."""
         cube_pos = self.cube.get_pos()
 
@@ -204,13 +207,15 @@ class CubePickTask(GenesisTaskBase):
         eef_quat = self.eef_link.get_quat()
         eef_pos += transform_by_quat((self._eef_offset).repeat((num_envs, 1)), eef_quat)
 
-        gripper = self.robot.get_dofs_position()[..., _NUM_MOTOR_DOFS : _NUM_MOTOR_DOFS + _NUM_FINGER_DOFS]
+        gripper = self.robot.get_dofs_position()[
+            ..., _NUM_MOTOR_DOFS : _NUM_MOTOR_DOFS + _NUM_FINGER_DOFS
+        ]
 
         dist = torch.norm(eef_pos - cube_pos, p=2, dim=-1)
         reaching_reward = 1.0 - torch.tanh(2.0 * dist)
 
-        lf_contact = self.lf_sensor.read().squeeze() == True
-        rf_contact = self.rf_sensor.read().squeeze() == True
+        lf_contact = self.lf_sensor.read().squeeze()
+        rf_contact = self.rf_sensor.read().squeeze()
 
         grippers_active = (gripper[:, 0] > 0.01) & (gripper[:, 1] > 0.01)
 
@@ -221,7 +226,9 @@ class CubePickTask(GenesisTaskBase):
         initial_z = 0.02
         z_height = cube_pos[:, 2]
         is_close = dist < 0.05
-        lifting_reward = torch.clamp(z_height - initial_z, min=0.0) * 10.0 * is_close.float()
+        lifting_reward = (
+            torch.clamp(z_height - initial_z, min=0.0) * 10.0 * is_close.float()
+        )
 
         success = z_height > self._success_height
         success_bonus = success.float() * 20.0

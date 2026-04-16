@@ -14,16 +14,16 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Any, Optional, Union
+
+import genesis as gs
 import gymnasium as gym
 import numpy as np
 import torch
-from rlinf.envs.genesis.tasks import get_task_cls
-from rlinf.envs.utils import to_tensor
-
-import copy
-import genesis as gs
 from omegaconf import OmegaConf
+
+from rlinf.envs.genesis.tasks import get_task_cls
 
 
 def extract_termination_from_info(info, num_envs, device):
@@ -38,6 +38,7 @@ def extract_termination_from_info(info, num_envs, device):
         else:
             terminated = torch.zeros(num_envs, dtype=bool, device=device)
     return terminated
+
 
 # Number of physics steps executed during reset so the scene can settle.
 _RESET_SETTLE_STEPS = 5
@@ -132,7 +133,9 @@ class GenesisEnv(gym.Env):
         gravity = tuple(init_params.get("gravity", (0.0, 0.0, -9.81)))
 
         self.scene = gs.Scene(
-            sim_options=gs.options.SimOptions(dt=dt, substeps=substeps, gravity=gravity),
+            sim_options=gs.options.SimOptions(
+                dt=dt, substeps=substeps, gravity=gravity
+            ),
             rigid_options=gs.options.RigidOptions(
                 box_box_detection=True,
             ),
@@ -235,9 +238,7 @@ class GenesisEnv(gym.Env):
 
         return obs
 
-    def _calc_step_reward(
-        self, reward_input: torch.Tensor
-    ) -> torch.Tensor:
+    def _calc_step_reward(self, reward_input: torch.Tensor) -> torch.Tensor:
         """Compute per-step reward from reward signal.
 
         Supports ``use_rel_reward`` (differential reward) mode.
@@ -274,11 +275,15 @@ class GenesisEnv(gym.Env):
         envs_idx_tensor: torch.Tensor | None = None
         if env_idx is not None:
             if isinstance(env_idx, np.ndarray):
-                envs_idx_tensor = torch.from_numpy(env_idx).to(dtype=torch.int64, device=gs.device)
+                envs_idx_tensor = torch.from_numpy(env_idx).to(
+                    dtype=torch.int64, device=gs.device
+                )
             elif isinstance(env_idx, torch.Tensor):
                 envs_idx_tensor = env_idx.to(dtype=torch.int64, device=gs.device)
             else:
-                envs_idx_tensor = torch.tensor(env_idx, dtype=torch.int64, device=gs.device)
+                envs_idx_tensor = torch.tensor(
+                    env_idx, dtype=torch.int64, device=gs.device
+                )
 
         self.task.reset(self.scene, self.num_envs, envs_idx=envs_idx_tensor)
 
@@ -300,7 +305,9 @@ class GenesisEnv(gym.Env):
         self,
         actions: torch.Tensor | np.ndarray,
         auto_reset: bool = True,
-    ) -> tuple[dict[str, Any], torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]]:
+    ) -> tuple[
+        dict[str, Any], torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]
+    ]:
         """Execute one environment step.
 
         Args:
@@ -325,7 +332,10 @@ class GenesisEnv(gym.Env):
             )
         if task.finger_dofs is not None:
             task.robot.control_dofs_position(
-                actions[:, len(task.motor_dofs) : len(task.motor_dofs) + len(task.finger_dofs)],
+                actions[
+                    :,
+                    len(task.motor_dofs) : len(task.motor_dofs) + len(task.finger_dofs),
+                ],
                 task.finger_dofs,
             )
 
@@ -450,7 +460,7 @@ class GenesisEnv(gym.Env):
         pass
 
     def update_reset_state_ids(self) -> None:
-       pass
+        pass
 
     def close(self) -> None:
         """Destroy the Genesis scene and free GPU resources."""

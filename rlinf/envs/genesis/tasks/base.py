@@ -82,9 +82,7 @@ class GenesisTaskBase(abc.ABC):
         """
 
     @abc.abstractmethod
-    def compute_reward(
-        self, scene, num_envs: int
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def compute_reward(self, scene, num_envs: int) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute rewards and success flags for the current state.
 
         Args:
