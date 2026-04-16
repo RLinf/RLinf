@@ -44,6 +44,7 @@ from rlinf.workers.rollout.utils import (
     RunningStatusManager,
     print_sglang_outputs,
 )
+from rlinf.scheduler.hardware.accelerators import AcceleratorUtil, AcceleratorType
 
 
 class SGLangWorker(Worker):
@@ -146,6 +147,9 @@ class SGLangWorker(Worker):
 
     def _init_engine(self):
         use_cudagraph = not self._cfg_rollout.enforce_eager
+        # NOTE: disable npu graph for ascend
+        if AcceleratorUtil.get_accelerator_type() == AcceleratorType.NPU:
+            use_cudagraph = False
 
         load_format = "dummy"  # dummy means randomize init weight
         if self.weight_reload == "sync":

@@ -32,6 +32,7 @@ from rlinf.utils.data_iter_utils import (
     merge_tensor,
     split_list,
 )
+from rlinf.scheduler.hardware.accelerators import AcceleratorUtil
 
 
 def get_batch_size(
@@ -765,29 +766,30 @@ class RolloutResult:
 
         max_response_len = training_seq_length - data_seq_length
 
+        target_device = AcceleratorUtil.get_device_type(AcceleratorUtil.get_accelerator_type())
         # when do_down_sample is enabled, there might be no valid rewards
         if self.rewards is not None and self.rewards.numel() == 0:
             batch = {
-                "input_ids": torch.zeros(0, dtype=torch.long).cuda(),
-                "attention_mask": torch.zeros(0, dtype=torch.bool).cuda(),
-                "response_mask": torch.zeros(0, dtype=torch.bool).cuda(),
-                "is_end": torch.zeros(0, dtype=torch.bool).cuda(),
-                "position_ids": torch.zeros(0, dtype=torch.long).cuda(),
-                "prompt_lengths": torch.zeros(0, dtype=torch.long).cuda(),
-                "response_lengths": torch.zeros(0, dtype=torch.long).cuda(),
+                "input_ids": torch.zeros(0, dtype=torch.long, device=target_device),
+                "attention_mask": torch.zeros(0, dtype=torch.bool, device=target_device),
+                "response_mask": torch.zeros(0, dtype=torch.bool, device=target_device),
+                "is_end": torch.zeros(0, dtype=torch.bool, device=target_device),
+                "position_ids": torch.zeros(0, dtype=torch.long, device=target_device),
+                "prompt_lengths": torch.zeros(0, dtype=torch.long, device=target_device),
+                "response_lengths": torch.zeros(0, dtype=torch.long, device=target_device),
             }
             if self.advantages is not None:
-                batch["advantages"] = torch.zeros(0, dtype=torch.float32).cuda()
+                batch["advantages"] = torch.zeros(0, dtype=torch.float32, device=target_device)
             if self.recomputed_logprobs is not None:
                 batch["recomputed_logprobs"] = torch.zeros(
-                    0, dtype=torch.float32
-                ).cuda()
+                    0, dtype=torch.float32, device=target_device
+                )
             if self.ref_logprobs is not None:
-                batch["ref_logprobs"] = torch.zeros(0, dtype=torch.float32).cuda()
+                batch["ref_logprobs"] = torch.zeros(0, dtype=torch.float32, device=target_device)
             if self.rewards is not None:
-                batch["rewards"] = torch.zeros(0, dtype=torch.float32).cuda()
+                batch["rewards"] = torch.zeros(0, dtype=torch.float32, device=target_device)
             if self.rollout_logprobs is not None:
-                batch["rollout_logprobs"] = torch.zeros(0, dtype=torch.float32).cuda()
+                batch["rollout_logprobs"] = torch.zeros(0, dtype=torch.float32, device=target_device)
             return batch
 
         prompt_lengths = torch.tensor(self.prompt_lengths)
@@ -1165,30 +1167,31 @@ class DynamicRolloutResult:
             pad_token=pad_token,
         )
 
+        target_device = AcceleratorUtil.get_device_type(AcceleratorUtil.get_accelerator_type())
         batch = {
             "idx_to_traj": self.idx_to_traj,
-            "input_ids": input_ids.cuda(),
-            "attention_mask": attention_mask.cuda(),
-            "response_mask": response_mask.cuda(),
-            "position_ids": position_ids.cuda(),
-            "is_end": is_end.cuda(),
-            "prompt_lengths": prompt_lengths.cuda(),
-            "response_lengths": response_lengths.cuda(),
+            "input_ids": input_ids.to(target_device),
+            "attention_mask": attention_mask.to(target_device),
+            "response_mask": response_mask.to(target_device),
+            "position_ids": position_ids.to(target_device),
+            "is_end": is_end.to(target_device),
+            "prompt_lengths": prompt_lengths.to(target_device),
+            "response_lengths": response_lengths.to(target_device),
             **{
-                f"extra:{k}": torch.as_tensor(v).cuda()
+                f"extra:{k}": torch.as_tensor(v).to(target_device)
                 for k, v in self.extra_fields_train.items()
             },
         }
 
         if self.advantages is not None:
-            batch["advantages"] = self.advantages.cuda()
+            batch["advantages"] = self.advantages.to(target_device)
 
         if self.rewards is not None:
             if isinstance(self.rewards, torch.Tensor):
-                batch["rewards"] = self.rewards.cuda()
+                batch["rewards"] = self.rewards.to(target_device)
             else:
                 batch["rewards"] = (
-                    torch.as_tensor(self.rewards, dtype=torch.float).cuda().flatten()
+                    torch.as_tensor(self.rewards, dtype=torch.float).to(target_device).flatten()
                 )
 
         if self.rollout_logprobs is not None:
@@ -1205,10 +1208,10 @@ class DynamicRolloutResult:
             batch["rollout_logprobs"] = logprobs.to(Worker.torch_device_type)
 
         if self.recomputed_logprobs is not None:
-            batch["recomputed_logprobs"] = self.recomputed_logprobs.cuda()
+            batch["recomputed_logprobs"] = self.recomputed_logprobs.to(Worker.torch_device_type)
 
         if self.ref_logprobs is not None:
-            batch["ref_logprobs"] = self.ref_logprobs.cuda()
+            batch["ref_logprobs"] = self.ref_logprobs.to(Worker.torch_device_type)
 
         return batch
 

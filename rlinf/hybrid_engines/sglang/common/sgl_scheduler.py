@@ -37,6 +37,7 @@ from rlinf.utils.placement import (
 from rlinf.workers.rollout.utils import (
     RankMapper,
 )
+from rlinf.scheduler.hardware.accelerators import AcceleratorUtil
 
 from .io_struct import (
     AbortGenerationInput,
@@ -108,6 +109,47 @@ class Scheduler(_Scheduler):
             model.load_state_dict(self.cpu_state_dict)
 
         return result
+    
+    def _execute_with_device_injection(self, func, args, device_param_names=None, device_arg_positions=None, inject_as_object=True):
+        import inspect
+        import torch
+
+        accel_type = AcceleratorUtil.get_accelerator_type()
+        device_type = AcceleratorUtil.get_device_type(accel_type)  # "cuda", "npu", "cpu"
+        platform = AcceleratorUtil.get_torch_platform(accel_type)  # torch.cuda, torch.npu
+
+        device_id = platform.current_device()
+        if device_type == "cpu":
+            target_device = torch.device("cpu")
+        else:
+            target_device = torch.device(f"{device_type}:{device_id}")
+
+        inject_value = target_device if inject_as_object else device_id
+
+        if device_param_names:
+            try:
+                sig = inspect.signature(func)
+                param_names = list(sig.parameters.keys())
+                args_list = list(args)
+                
+                for param_name in device_param_names:
+                    if param_name in param_names:
+                        param_idx = param_names.index(param_name)
+                        while len(args_list) <= param_idx:
+                            args_list.append(None)
+                        args_list[param_idx] = inject_value
+                        return func(*args_list)
+            except (ValueError, TypeError, AttributeError):
+                pass
+
+        if device_arg_positions:
+            args_list = list(args)
+            for pos in device_arg_positions:
+                if 0 <= pos < len(args_list):
+                    args_list[pos] = inject_value
+            return func(*args_list)
+
+        return func(*args)
 
     def batch_load_hf_weight(self, state_dict: dict[str, Any]) -> Any:
         assert self.weight_reload == "sync", (
@@ -121,11 +163,13 @@ class Scheduler(_Scheduler):
         if rollout_sync_mode_collocated:
             for name, handle in state_dict.items():
                 func, args = handle
-                list_args = list(args)
-                # NOTE: the key is to change device id to the current device id
-                # in case two processes have different CUDA_VISIBLE_DEVICES
-                list_args[6] = torch.cuda.current_device()
-                new_weight = func(*list_args)
+                new_weight = self._execute_with_device_injection(
+                    func=func,
+                    args=args,
+                    device_param_names=['storage_device', 'map_location', 'device'],
+                    device_arg_positions=[6], 
+                    inject_as_object=True
+                )
                 batch_weight.append((name, new_weight))
         else:
             # disaggregate mode, recv tensor directly

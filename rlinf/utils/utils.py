@@ -36,7 +36,10 @@ def clear_memory(sync=True):
     if sync:
         Worker.torch_platform.synchronize()
     gc.collect()
-    Worker.torch_platform.ipc_collect()
+    try:
+        Worker.torch_platform.ipc_collect()
+    except:
+        pass
     Worker.torch_platform.empty_cache()
 
 

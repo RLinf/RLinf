@@ -17,6 +17,7 @@ import torch
 
 from rlinf.config import SupportedModel
 from rlinf.envs import SupportedEnvType
+from rlinf.scheduler.hardware.accelerators import AcceleratorUtil
 
 
 def prepare_actions_for_maniskill(
@@ -54,9 +55,10 @@ def prepare_actions_for_maniskill(
     actions["terminate_episode"] = np.array([0.0] * batch_size).reshape(-1, 1)  # [B, 1]
 
     actions = {k: torch.tensor(v, dtype=torch.float32) for k, v in actions.items()}
+    target_device = AcceleratorUtil.get_device_type(AcceleratorUtil.get_accelerator_type())
     actions = torch.cat(
         [actions["world_vector"], actions["rot_axangle"], actions["gripper"]], dim=1
-    ).cuda()
+    ).to(target_device)
 
     chunk_actions = actions.reshape(-1, num_action_chunks, action_dim)
 
