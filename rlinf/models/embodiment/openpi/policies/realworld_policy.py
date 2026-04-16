@@ -53,7 +53,7 @@ class RealworldInputs(transforms.DataTransformFn):
 
     def __call__(self, data: dict) -> dict:
         base_image = _parse_image(data["observation/image"])
-        wrist_image = _parse_image(data["observation/extra_view_images"])
+        wrist_image = _parse_image(data["observation/extra_view_image"])
 
         # Realworld env concatenates state dict alphabetically (19-dim):
         # gripper_position (1), tcp_force (3), tcp_pose (6), tcp_torque (3), tcp_vel (6).
