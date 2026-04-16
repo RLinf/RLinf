@@ -142,14 +142,14 @@ xsquare_turtle2 = [
 ]
 gim_arm = [
     # gim_arm_control SDK: install separately via
-    #   pip install -e ~/code/gim_arm_control/python
+    #   pip install -e /path/to/gim_arm_control/python
+    # (brings in pinocchio as a transitive runtime dependency)
     "numpy",
     "scipy",
     "gymnasium",
     "opencv-python",
     "pyrealsense2",
     "imageio[ffmpeg]",
-    "pynput",
 ]
 
 [tool.uv]

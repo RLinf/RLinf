@@ -44,7 +44,10 @@ reset and reward logic:
 
 - **Reward**: Computed in Cartesian space by comparing the FK-derived TCP pose against
   ``target_ee_pose``. Success is determined per-axis using ``reward_threshold``
-  (default: 1 cm position, 0.2 rad orientation).
+  (default: 1 cm on XYZ position). The ``reward_threshold`` config accepts a
+  6-element ``[x, y, z, rx, ry, rz]`` array for Franka-API parity, but only
+  the XYZ entries are currently consulted; orientation entries are reserved
+  for future use.
 
 Hardware Setup
 ----------------
@@ -151,7 +154,10 @@ for controlling the GimArm robot.
 
 .. code:: bash
 
-   cd /path/to/gim_arm_control/python
+   # Clone the SDK alongside RLinf (the example below assumes ~/gim_arm_control).
+   cd ~
+   git clone https://github.com/RLinf/gim_arm_control.git
+   cd ~/gim_arm_control/python
    pip install -e .
 
 This builds the C++ core via CMake and installs Python bindings using nanobind.

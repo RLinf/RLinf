@@ -42,7 +42,8 @@ class GimArmPegInsertionConfig(GimArmRobotConfig):
     reward_threshold: np.ndarray = field(
         default_factory=lambda: np.array([0.01, 0.01, 0.01, 0.2, 0.2, 0.2])
     )
-    """Per-axis success tolerances."""
+    """Per-axis success tolerances ``[x, y, z, rx, ry, rz]``.
+    Only XYZ entries are currently consulted (see ``GimArmRobotConfig.reward_threshold``)."""
 
     clip_x_range: float = 0.05
     clip_y_range: float = 0.05
@@ -80,7 +81,7 @@ class GimArmPegInsertionConfig(GimArmRobotConfig):
 class GimArmPegInsertionEnv(GimArmEnv):
     """GimArm peg insertion task: insert a peg into a hole.
 
-    Actions are 6-DOF joint-space deltas plus a binary gripper command.
+    Actions are 6-DOF absolute joint-position targets plus a binary gripper command.
     Reward is computed in Cartesian space by comparing FK-based TCP pose
     to the target pose.
     """
@@ -98,9 +99,10 @@ class GimArmPegInsertionEnv(GimArmEnv):
     def go_to_rest(self, joint_reset: bool = False):
         """Close gripper on peg, retract to safe config, then move to reset pose."""
         if not self.config.is_dummy:
-            # Close gripper to hold the peg during retraction.
-            self._controller.close_gripper().wait()
-            time.sleep(0.3)
+            if self.config.enable_gripper:
+                # Close gripper to hold the peg during retraction.
+                self._controller.close_gripper().wait()
+                time.sleep(0.3)
 
             # Move to safe retracted position (clears the insertion hole).
             self._controller.reset_joint(self.config.safe_retract_qpos).wait()

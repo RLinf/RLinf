@@ -109,10 +109,11 @@ class GimArmRobotConfig:
     """Episode truncation horizon."""
 
     reward_threshold: np.ndarray = field(default_factory=lambda: np.zeros(6))
-    """Per-axis tolerances ``[x, y, z, rx, ry, rz]`` for the success check."""
+    """Per-axis tolerances ``[x, y, z, rx, ry, rz]`` for the success check.
 
-    action_scale: float = 0.05
-    """Joint delta scale (radians per unit action in ``[-1, 1]``)."""
+    Only the XYZ entries are currently consulted; the orientation entries
+    are accepted for Franka-API parity and reserved for future use.
+    """
 
     binary_gripper_threshold: float = 0.5
     """Action magnitude threshold for open/close gripper transitions."""
@@ -494,6 +495,8 @@ class GimArmEnv(gym.Env):
         Returns:
             ``True`` if a gripper state transition occurred (penalty applies).
         """
+        if not self.config.enable_gripper:
+            return False
         if (
             position <= -self.config.binary_gripper_threshold
             and self._state.gripper_open

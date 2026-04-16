@@ -102,7 +102,9 @@ class GimArmConfig(HardwareConfig):
     """Arm variant: ``"gim_arm"`` or ``"gim_arm_xl"``."""
 
     camera_serials: Optional[list[str]] = None
-    """List of camera serial numbers. Auto-detected if ``None``."""
+    """Optional list of camera serial numbers.
+    Pass ``[]`` or leave ``None`` to run without cameras.
+    Camera auto-detection is not currently implemented for GimArm."""
 
     camera_type: str = "realsense"
     """Camera backend: ``"realsense"`` or ``"zed"``."""

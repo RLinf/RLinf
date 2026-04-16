@@ -426,4 +426,5 @@
    franka_zed_robotiq
    franka_gello
    hg-dagger
+   gim_arm
    xsquare_turtle2

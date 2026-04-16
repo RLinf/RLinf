@@ -178,9 +178,12 @@ class GimArmController(Worker):
             self._sdk.set_feedforward_target(target, dq, ddq)
 
             next_time += _CONTROL_DT
-            sleep_duration = next_time - time.monotonic()
+            now = time.monotonic()
+            sleep_duration = next_time - now
             if sleep_duration > 0:
                 time.sleep(sleep_duration)
+            else:
+                next_time = now
 
     # ── Public API ───────────────────────────────────────────────────────
 
@@ -197,6 +200,10 @@ class GimArmController(Worker):
         mapped to a Cartesian wrench via ``J^{-T}``.
         """
         reading = self._sdk.get_reading()
+        if reading is None:
+            raise RuntimeError(
+                "get_state: SDK returned no reading (CAN bus disconnected or not yet initialized)."
+            )
         q = np.array(reading.position)
         dq = np.array(reading.velocity)
         pin = self._pin
