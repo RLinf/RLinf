@@ -25,7 +25,7 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForVision2Seq
 
-from rlinf.config import SupportedModel, get_supported_model, torch_dtype_from_precision
+from rlinf.config import SupportedModel, torch_dtype_from_precision
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.hybrid_engines.fsdp import (
     FSDP,
@@ -225,9 +225,7 @@ class FSDPModelManager:
                 for model_type, apply_fn in _liger_func_by_model.items()
             }
 
-            model_type = get_supported_model(
-                self._cfg.model.get("model_type", "").lower()
-            )
+            model_type = SupportedModel(self._cfg.model.get("model_type", "").lower())
             if model_type in MODEL_LIGER_KERNEL_APPLY_FUNC:
                 apply_func, apply_kwargs = MODEL_LIGER_KERNEL_APPLY_FUNC[model_type]
                 apply_func(
