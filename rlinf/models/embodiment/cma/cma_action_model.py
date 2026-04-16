@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import os
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -77,6 +78,20 @@ class CMAConfig:
     use_progress_monitor: bool = False
     progress_monitor_alpha: float = 1.0
 
+    # GT prefix feature (teacher forcing for CMA)
+    use_gt_prefix: bool = False
+    gt_prefix_length_ratio: float = 0.0
+    gt_prefix_warmup_steps_ratio: float = 0.0
+    # internal runtime field injected by config
+    gt_prefix_total_training_steps: int = -1
+
+    # GT prefix dynamic schedule
+    # schedule_type: "static" keeps the resolved ratio-based prefix length constant;
+    # "log"/"linear" decay the ratio-resolved prefix length to zero over the
+    # remaining training horizon.
+    gt_prefix_schedule_type: str = "log"
+    gt_prefix_schedule_alpha: float = 1.0  # exponent for decay curve (1.0 = linear)
+
     def update_from_dict(self, config_dict):
         for key, value in config_dict.items():
             if hasattr(self, key):
@@ -96,6 +111,43 @@ class CMAConfig:
         if self.model_path:
             assert os.path.exists(self.model_path), (
                 f"Model path does not exist: {self.model_path}"
+            )
+
+        # Validate GT prefix schedule config
+        self._validate_gt_prefix_schedule()
+
+    def _validate_gt_prefix_schedule(self):
+        """Validate GT prefix schedule configuration."""
+        valid_schedule_types = ("static", "log", "linear")
+        if self.gt_prefix_schedule_type not in valid_schedule_types:
+            raise ValueError(
+                f"Invalid gt_prefix_schedule_type: '{self.gt_prefix_schedule_type}'. "
+                f"Must be one of: {valid_schedule_types}"
+            )
+
+        # Static schedule should have minimal extra config
+        if self.gt_prefix_schedule_type == "static":
+            if self.gt_prefix_warmup_steps_ratio != 0:
+                raise ValueError(
+                    "gt_prefix_warmup_steps_ratio must be 0 for static schedule type. "
+                    f"Got {self.gt_prefix_warmup_steps_ratio}."
+                )
+
+        if not 0.0 <= self.gt_prefix_length_ratio < 1.0:
+            raise ValueError(
+                "gt_prefix_length_ratio must be between 0 and 1 (exclusive). "
+                f"Got {self.gt_prefix_length_ratio}."
+            )
+        if not 0.0 <= self.gt_prefix_warmup_steps_ratio < 1.0:
+            raise ValueError(
+                "gt_prefix_warmup_steps_ratio must be between 0 and 1 (exclusive). "
+                f"Got {self.gt_prefix_warmup_steps_ratio}."
+            )
+
+        # Validate alpha is positive
+        if self.gt_prefix_schedule_alpha <= 0:
+            raise ValueError(
+                f"gt_prefix_schedule_alpha must be positive. Got {self.gt_prefix_schedule_alpha}."
             )
 
     def build_observation_space(self) -> spaces.Space:
@@ -408,10 +460,13 @@ class CMANet(nn.Module):
 class CMAPolicy(nn.Module, BasePolicy):
     """CMA Policy for embodied navigation."""
 
-    def __init__(self, cfg: CMAConfig, observation_space: spaces.Space = None):
+    def __init__(
+        self, cfg: CMAConfig, observation_space: Optional[spaces.Space] = None
+    ):
         super(CMAPolicy, self).__init__()
         self.cfg = cfg
 
+        self.global_step = 0
         self.rnn_states = None
         self.prev_actions = None
         self.prev_episode_id = None
@@ -469,6 +524,12 @@ class CMAPolicy(nn.Module, BasePolicy):
     def num_action_chunks(self):
         return self.cfg.num_action_chunks
 
+    def set_global_step(self, global_step):
+        self.global_step = int(global_step)
+
+    def set_total_training_steps(self, total_training_steps: int):
+        self.cfg.gt_prefix_total_training_steps = int(total_training_steps)
+
     def preprocess_env_obs(self, env_obs):
         device = next(self.parameters()).device
         processed_env_obs = {}
@@ -495,7 +556,8 @@ class CMAPolicy(nn.Module, BasePolicy):
         **kwargs,
     ):
         """Predict actions for a batch of observations."""
-        env_obs = self.preprocess_env_obs(env_obs=env_obs)
+        raw_env_obs = env_obs
+        env_obs = self.preprocess_env_obs(env_obs=raw_env_obs)
         batch_size = env_obs["rgb"].shape[0]
         device = env_obs["rgb"].device
         current_episode_ids = env_obs["states"]
@@ -543,8 +605,14 @@ class CMAPolicy(nn.Module, BasePolicy):
             action = distribution.mode()
         else:
             raise NotImplementedError(f"{mode=}")
-        prev_logprobs = distribution.log_probs(action)
-        self.rnn_states, self.prev_actions = rnn_states, action
+        executed_action, gt_action_mask = self._resolve_current_action_execution(
+            raw_env_obs,
+            action,
+            mode=mode,
+        )
+        prev_logprobs = distribution.log_probs(executed_action)
+
+        self.rnn_states, self.prev_actions = rnn_states, executed_action
 
         if hasattr(self, "value_head"):
             chunk_values = self.value_head(features)
@@ -552,10 +620,11 @@ class CMAPolicy(nn.Module, BasePolicy):
             chunk_values = torch.zeros_like(prev_logprobs[..., :1])
 
         forward_inputs = {
-            "action": action.clone(),
+            "action": executed_action.clone(),
             "pre_rnn_states": pre_rnn_states,
             "prev_actions": prev_actions,
             "masks": step_masks,
+            "gt_action_mask": gt_action_mask.clone(),
             "env_obs_rgb": env_obs["rgb"].clone(),
             "env_obs_depth": env_obs["depth"].clone(),
             "env_obs_instruction": env_obs["instruction"].clone(),
@@ -567,7 +636,95 @@ class CMAPolicy(nn.Module, BasePolicy):
             "prev_values": chunk_values,
             "forward_inputs": forward_inputs,
         }
-        return action, result
+        return executed_action, result
+
+    def _resolve_current_action_execution(
+        self,
+        raw_env_obs: dict[str, Any],
+        model_actions: torch.Tensor,
+        mode: str = "train",
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Resolve the executed action and whether GT-prefix produced it."""
+        if not self.cfg.use_gt_prefix:
+            return model_actions, torch.zeros_like(model_actions, dtype=torch.bool)
+
+        effective_prefix_lengths = self._get_effective_gt_prefix_lengths(
+            raw_env_obs,
+            model_actions,
+            mode,
+        ).reshape_as(model_actions)
+
+        current_step = torch.as_tensor(
+            raw_env_obs.get("habitat_current_step"),
+            device=model_actions.device,
+            dtype=torch.long,
+        ).reshape_as(model_actions)
+        within_prefix_mask = current_step <= effective_prefix_lengths
+        gt_actions = torch.as_tensor(
+            raw_env_obs.get("habitat_gt_current_action"),
+            device=model_actions.device,
+            dtype=torch.long,
+        ).reshape_as(model_actions)
+        execute_gt_mask = within_prefix_mask
+        executed_actions = torch.where(
+            execute_gt_mask, gt_actions, model_actions.long()
+        )
+
+        return executed_actions, execute_gt_mask
+
+    def _get_effective_gt_prefix_lengths(
+        self,
+        raw_env_obs: dict[str, Any],
+        reference_actions: torch.Tensor,
+        mode: str,
+    ) -> torch.Tensor:
+        """Compute per-sample GT prefix lengths for the current runtime state."""
+        if mode != "train":
+            return torch.zeros_like(reference_actions, dtype=torch.long)
+
+        sequence_lengths = torch.as_tensor(
+            raw_env_obs.get("habitat_gt_sequence_length"),
+            device=reference_actions.device,
+            dtype=torch.long,
+        )
+        initial_lengths = torch.floor(
+            sequence_lengths.to(torch.float32) * float(self.cfg.gt_prefix_length_ratio)
+        ).to(torch.long)
+
+        schedule_type = self.cfg.gt_prefix_schedule_type
+        if schedule_type == "static":
+            return initial_lengths
+
+        total_training_steps = int(self.cfg.gt_prefix_total_training_steps)
+        warmup_steps = int(
+            float(self.cfg.gt_prefix_warmup_steps_ratio) * total_training_steps
+        )
+        decay_steps = total_training_steps - warmup_steps
+
+        current_step = int(self.global_step)
+        if current_step < warmup_steps:
+            return initial_lengths
+
+        step_after_warmup = current_step - warmup_steps + 1
+        final_lengths = torch.zeros_like(sequence_lengths)
+        if step_after_warmup >= decay_steps:
+            return final_lengths
+
+        if schedule_type == "linear":
+            progress = step_after_warmup / decay_steps
+        elif schedule_type == "log":
+            log_denominator = math.log(decay_steps + 1)
+            progress = (math.log(max(step_after_warmup, 1)) / log_denominator) ** float(
+                self.cfg.gt_prefix_schedule_alpha
+            )
+        else:
+            raise ValueError(f"Unsupported gt_prefix_schedule_type: {schedule_type}")
+
+        effective_lengths = torch.ceil(
+            initial_lengths.to(torch.float32) * (1 - progress)
+        ).to(torch.long)
+
+        return effective_lengths
 
     def forward(self, forward_type="default_forward", **kwargs):
         """Forward pass dispatcher."""

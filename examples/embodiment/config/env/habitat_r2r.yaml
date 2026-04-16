@@ -15,6 +15,7 @@ use_ordered_reset_state_ids: False
 
 split: None
 data_path: "/path/to/data_path_out"
+gt_data_path: "/path/to/gt_data_path_out"
 scenes_dir: "/path/to/scene_dir_out"
 
 init_params:

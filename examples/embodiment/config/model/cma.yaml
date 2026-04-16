@@ -71,4 +71,14 @@ ablate_rgb: False
 use_progress_monitor: False
 progress_monitor_alpha: 1.0
 
+# GT prefix feature (teacher forcing for CMA)
+use_gt_prefix: False
+gt_prefix_length_ratio: 0.0
+gt_prefix_warmup_steps_ratio: 0.0  # ratio of effective total training steps
+
+# GT prefix dynamic schedule
+# schedule_type: "static" | "log" | "linear"
+gt_prefix_schedule_type: "log"  # backward-compatible constant length
+gt_prefix_schedule_alpha: 1.0  # exponent for decay curve (1.0 = linear)
+
 is_lora: False

@@ -95,6 +95,7 @@ env:
     model_type: ${actor.model.model_type}
     split: train
     data_path: ${env.data_path_dir}/${env.train.split}/${env.train.split}.json.gz
+    gt_data_path: ${env.data_path_dir}/${env.train.split}/${env.train.split}_gt.json.gz
     scenes_dir: ${env.scenes_dir}
     video_cfg:
       fps: 5
@@ -113,6 +114,7 @@ env:
     model_type: ${actor.model.model_type}
     split: val_unseen
     data_path: ${env.data_path_dir}/${env.eval.split}/${env.eval.split}.json.gz
+    gt_data_path: ${env.data_path_dir}/${env.eval.split}/${env.eval.split}_gt.json.gz
     scenes_dir: ${env.scenes_dir}
     video_cfg:
       fps: 5
@@ -147,7 +149,12 @@ actor:
   # Override only the paths that need to be customized
   # All other CMA configs are inherited from model/cma.yaml
   model:
-    model_path: ""
+    model_path: "VLN-CE/models/cma_weights/ckpt/best_ckpt_r2r.pth"
+    use_gt_prefix: True
+    gt_prefix_schedule_type: "log"
+    gt_prefix_schedule_alpha: 1.0
+    gt_prefix_warmup_steps_ratio: 0.2
+    gt_prefix_length_ratio: 0.8
     instruction_encoder_config:
       embedding_file: ""
     depth_encoder_config:

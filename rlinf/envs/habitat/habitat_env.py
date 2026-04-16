@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import copy
+import gzip
 import json
 import os
 from typing import Optional, Union
@@ -314,9 +315,37 @@ class HabitatEnv(gym.Env):
             image_list.append(images)
             task_descs.append(inst)
             token_list.append(token)
-
         image_tensor = to_tensor(list_of_dict_to_dict_of_list(image_list))
-        episode_ids = self.env.get_current_episode_ids()
+
+        episode_metadata = self.env.get_current_episode_metadata()
+        episode_ids = episode_metadata["episode_id"]
+        gt_action_sequence = episode_metadata["gt_action_sequence"]
+
+        current_steps = []
+        current_gt_actions = []
+        sequence_lengths = []
+        for elapsed_step, gt_action_sequence in zip(
+            self.elapsed_steps.tolist(), gt_action_sequence
+        ):
+            normalized_actions = []
+            for action_id in gt_action_sequence:
+                action_id = int(action_id)
+                normalized_actions.append(action_id)
+
+            step = elapsed_step + 1
+            seq_len = len(normalized_actions)
+            effective_step = min(step, seq_len)
+            current_gt_action = normalized_actions[effective_step - 1]
+
+            current_steps.append(step)
+            current_gt_actions.append(current_gt_action)
+            sequence_lengths.append(seq_len)
+
+        gt_prefix_metadata = {
+            "habitat_current_step": torch.tensor(current_steps),
+            "habitat_gt_current_action": torch.tensor(current_gt_actions),
+            "habitat_gt_sequence_length": torch.tensor(sequence_lengths),
+        }
 
         obs = {}
         if should_render_video:
@@ -331,7 +360,8 @@ class HabitatEnv(gym.Env):
             obs["task_descriptions"] = token_list
         else:
             obs["task_descriptions"] = task_descs
-        obs["states"] = torch.tensor(episode_ids, dtype=torch.int64)
+        obs["states"] = torch.tensor([int(episode_id) for episode_id in episode_ids])
+        obs.update(gt_prefix_metadata)
 
         return obs
 
@@ -420,27 +450,28 @@ class HabitatEnv(gym.Env):
             cached_v[m] = v[m]
 
         # Save metrics by episode_id when env first done
-        episode_ids = self.env.get_current_episode_ids()
-        for i in range(len(metric_save_masks)):
-            if metric_save_masks[i]:
-                episode_id = episode_ids[i]
-                metrics_dict = {}
-                for k, v in episode.items():
-                    if torch.is_tensor(v):
-                        if v.dim() == 1:
-                            metrics_dict[k] = v[i].item()
+        if self.metrics_cfg.save_metrics:
+            episode_ids = self.env.get_current_episode_metadata()["episode_id"]
+            for i in range(len(metric_save_masks)):
+                if metric_save_masks[i]:
+                    episode_id = episode_ids[i]
+                    metrics_dict = {}
+                    for k, v in episode.items():
+                        if torch.is_tensor(v):
+                            if v.dim() == 1:
+                                metrics_dict[k] = v[i].item()
+                            else:
+                                metrics_dict[k] = v[i].cpu().numpy().tolist()
+                        elif isinstance(v, (list, np.ndarray)):
+                            metrics_dict[k] = v[i]
                         else:
-                            metrics_dict[k] = v[i].cpu().numpy().tolist()
-                    elif isinstance(v, (list, np.ndarray)):
-                        metrics_dict[k] = v[i]
-                    else:
-                        metrics_dict[k] = v
-                metrics_file = os.path.join(
-                    self.metrics_cfg.metrics_base_dir, f"episode_{episode_id}.json"
-                )
-                os.makedirs(self.metrics_cfg.metrics_base_dir, exist_ok=True)
-                with open(metrics_file, "w") as f:
-                    json.dump(metrics_dict, f, indent=2, ensure_ascii=False)
+                            metrics_dict[k] = v
+                    metrics_file = os.path.join(
+                        self.metrics_cfg.metrics_base_dir, f"episode_{episode_id}.json"
+                    )
+                    os.makedirs(self.metrics_cfg.metrics_base_dir, exist_ok=True)
+                    with open(metrics_file, "w") as f:
+                        json.dump(metrics_dict, f, indent=2, ensure_ascii=False)
 
     def _init_env(self):
         env_fns = self._get_env_fns()
@@ -457,6 +488,7 @@ class HabitatEnv(gym.Env):
                 overrides = p["overrides"]
                 episode_ids = p["episode_ids"]
                 seed = p["seed"]
+                gt_data_path = p["gt_data_path"]
 
                 config = get_config(config_path, overrides=overrides)
 
@@ -468,6 +500,18 @@ class HabitatEnv(gym.Env):
                 dataset.episodes = [
                     ep for ep in dataset.episodes if ep.episode_id in episode_ids
                 ]
+                if gt_data_path is not None:
+                    with gzip.open(gt_data_path, "rt", encoding="utf-8") as f:
+                        gt_data = json.load(f)
+                    gt_actions_by_episode_id = {}
+                    for episode_id, episode_data in gt_data.items():
+                        gt_actions_by_episode_id[str(episode_id)] = episode_data.get(
+                            "gt_actions", episode_data.get("actions")
+                        )
+                    for episode in dataset.episodes:
+                        episode.gt_actions = gt_actions_by_episode_id[
+                            str(episode.episode_id)
+                        ]
 
                 env = HabitatRLEnv(config=config, dataset=dataset)
                 env.seed(seed)
@@ -529,6 +573,7 @@ class HabitatEnv(gym.Env):
                     "overrides": overrides,
                     "episode_ids": assigned_ids,
                     "seed": self.seed + env_id,
+                    "gt_data_path": getattr(self.cfg, "gt_data_path", None),
                 }
             )
 

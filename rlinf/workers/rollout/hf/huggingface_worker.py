@@ -649,3 +649,7 @@ class MultiStepRolloutWorker(Worker):
             )
         if hasattr(self.hf_model, "set_global_step"):
             self.hf_model.set_global_step(global_step)
+
+    def set_total_training_steps(self, total_training_steps: int):
+        if hasattr(self.hf_model, "set_total_training_steps"):
+            self.hf_model.set_total_training_steps(total_training_steps)

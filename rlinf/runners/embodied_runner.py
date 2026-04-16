@@ -472,6 +472,9 @@ class EmbodiedRunner:
         if (max_steps := self.cfg.runner.get("max_steps", -1)) >= 0:
             self.max_steps = min(self.max_steps, max_steps)
 
+        self.actor.set_total_training_steps(self.max_steps)
+        self.rollout.set_total_training_steps(self.max_steps)
+
     @property
     def epoch(self):
         return self.global_step // self.num_steps_per_epoch

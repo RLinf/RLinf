@@ -15,7 +15,7 @@
 import os
 import time
 from functools import partial
-from typing import Optional
+from typing import Any, Mapping, Optional
 
 import numpy as np
 import torch
@@ -31,7 +31,10 @@ from rlinf.algorithms.utils import (
     kl_penalty,
 )
 from rlinf.config import SupportedModel, torch_dtype_from_precision
-from rlinf.data.embodied_io_struct import Trajectory, convert_trajectories_to_batch
+from rlinf.data.embodied_io_struct import (
+    Trajectory,
+    convert_trajectories_to_batch,
+)
 from rlinf.data.io_struct import BatchResizingIterator, RolloutResult
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
@@ -62,6 +65,7 @@ from rlinf.utils.distributed import (
 )
 from rlinf.utils.metric_utils import (
     append_to_dict,
+    apply_step_learning_exclusion_mask,
     compute_loss_mask,
     compute_rollout_metrics,
     compute_split_num,
@@ -1109,14 +1113,14 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
 
     def _process_received_rollout_batch(
-        self, rollout_batch: dict[str, torch.Tensor]
-    ) -> dict[str, torch.Tensor]:
+        self, rollout_batch: Mapping[str, Any]
+    ) -> dict[str, Any]:
         """
         original shape: [rollout_epoch x n_chunk_steps, bsz, num_action_chunks, ...]
         target shape: [n_chunk_steps, rollout_epoch x bsz, num_action_chunks, ...]
         """
         rollout_epoch = self.cfg.algorithm.rollout_epoch
-        rollout_batch = process_nested_dict_for_adv(rollout_batch, rollout_epoch)
+        rollout_batch = process_nested_dict_for_adv(dict(rollout_batch), rollout_epoch)
 
         if (
             not self.cfg.env.train.auto_reset
@@ -1133,6 +1137,19 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
             rollout_batch["loss_mask"] = loss_mask
             rollout_batch["loss_mask_sum"] = loss_mask_sum
+
+        gt_action_mask = rollout_batch.get("forward_inputs", {}).get(
+            "gt_action_mask", None
+        )
+        if gt_action_mask is not None:
+            loss_mask, loss_mask_sum = apply_step_learning_exclusion_mask(
+                rollout_batch.get("loss_mask", None),
+                gt_action_mask,
+            )
+            if loss_mask is not None:
+                rollout_batch["loss_mask"] = loss_mask
+            if loss_mask_sum is not None:
+                rollout_batch["loss_mask_sum"] = loss_mask_sum
 
         # filter data by rewards
         if self.cfg.algorithm.get("filter_rewards", False):
@@ -1502,3 +1519,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.version = global_step
         if hasattr(self.model, "set_global_step"):
             self.model.set_global_step(global_step)
+
+    def set_total_training_steps(self, total_training_steps: int) -> None:
+        if hasattr(self.model, "set_total_training_steps"):
+            self.model.set_total_training_steps(total_training_steps)

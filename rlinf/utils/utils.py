@@ -154,7 +154,6 @@ def seq_mean_token_mean(values: torch.Tensor, mask: torch.Tensor, dim: int = -1)
 def masked_mean_ratio(
     values: torch.Tensor, mask: torch.Tensor, loss_mask_ratio: torch.Tensor
 ):
-    # for embodied tasks
     return (values / loss_mask_ratio * mask).mean()
 
 
