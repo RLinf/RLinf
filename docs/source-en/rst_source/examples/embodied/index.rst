@@ -336,7 +336,6 @@ as well as reinforcement learning training examples on real robots.
          Offline policy optimization via advantage-guided classifier-free guidance
        </p>
      </div>
-   </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
