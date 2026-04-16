@@ -194,6 +194,7 @@ def prepare_actions_for_d4rl(
     # OPENPI: clip last dim to match continuous action space
     if SupportedModel(model_type) == SupportedModel.OPENPI:
         chunk_actions[..., -1] = np.clip(chunk_actions[..., -1], -1.0, 1.0)
+    return chunk_actions
 
 
 def prepare_actions_for_roboverse(
@@ -283,6 +284,7 @@ def prepare_actions(
         chunk_actions = prepare_actions_for_d4rl(
             raw_chunk_actions=raw_chunk_actions,
             action_dim=action_dim,
+            model_type=model_type,
         )
     elif env_type == SupportedEnvType.ROBOVERSE:
         chunk_actions = prepare_actions_for_roboverse(

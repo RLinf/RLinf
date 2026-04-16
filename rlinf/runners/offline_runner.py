@@ -132,13 +132,16 @@ class OfflineRunner:
         """Run embodied-style evaluation and return aggregated metrics."""
         if self.env is None or self.rollout is None:
             raise RuntimeError("Env/Rollout worker groups are not initialized.")
+        # Same wiring as EmbodiedRunner: env reads actions on env_channel and
+        # posts observations on rollout_channel; rollout reads obs from
+        # rollout_channel and writes actions to env_channel.
         env_handle: Handle = self.env.evaluate(
-            input_channel=self.rollout_channel,
-            output_channel=self.env_channel,
+            input_channel=self.env_channel,
+            rollout_channel=self.rollout_channel,
         )
         rollout_handle: Handle = self.rollout.evaluate(
-            input_channel=self.env_channel,
-            output_channel=self.rollout_channel,
+            input_channel=self.rollout_channel,
+            output_channel=self.env_channel,
         )
         env_results = env_handle.wait()
         rollout_handle.wait()

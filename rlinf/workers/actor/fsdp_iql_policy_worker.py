@@ -22,6 +22,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
+from rlinf.config import torch_dtype_from_precision
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.mlp_policy.iql_mlp_policy import IQLMLPPolicy
 from rlinf.scheduler import Worker
@@ -75,10 +76,12 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
         """Build per-rank ``DataLoader`` + ``DistributedSampler`` (SFT worker pattern)."""
         from rlinf.data.datasets.d4rl import build_d4rl_dataset_from_cfg
 
-        dataset_cfg = self.cfg.get("dataset", {})
+        dataset_cfg = self.cfg.get("data", {})
         dataset_type = dataset_cfg.get("dataset_type", None)
         if dataset_type is None:
-            raise ValueError("dataset.dataset_type is required for offline IQL.")
+            raise ValueError(
+                "data.dataset_type is required for offline IQL (e.g. data.dataset_type: d4rl)."
+            )
         if str(dataset_type).lower() != "d4rl":
             raise AssertionError(
                 f"offline IQL only supports dataset_type='d4rl', got {dataset_type!r}."
@@ -755,22 +758,59 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
             state = self.model.state_dict()
         return {k: v.detach().cpu() for k, v in state.items()}
 
-    def sync_model_to_rollout(self, dst_rank: Optional[int] = None) -> None:
-        """Sync current policy weights to rollout group via Worker.send()."""
-        # Keep the FSDP path aligned with the base actor implementation.
-        if self._use_fsdp_wrap and dst_rank is None:
-            super().sync_model_to_rollout()
+    async def _send_policy_state_dict_buckets(
+        self, state: dict[str, torch.Tensor], dst_ranks: list[int]
+    ) -> None:
+        """Send policy weights using the same bucketLength-first protocol as rollout recv."""
+        rollout_dtype = None
+        if self._cfg.get("sync_precision", None) is not None:
+            rollout_dtype = torch_dtype_from_precision(self._cfg.sync_precision)
+
+        model_bucket_list = self.divide_model_to_bucket(state)
+        handles: list[Any] = []
+        for rank in dst_ranks:
+            handles.append(
+                self.send(
+                    len(model_bucket_list),
+                    self._rollout_group_name,
+                    rank,
+                    async_op=True,
+                    options=self._sync_weight_comm_options,
+                )
+            )
+        for bucket in model_bucket_list:
+            buffer: dict[str, torch.Tensor] = {}
+            for k, v in bucket.items():
+                if rollout_dtype is not None:
+                    v = v.to(rollout_dtype)
+                buffer[k] = v
+
+            for handle in handles:
+                await handle.async_wait()
+            handles = []
+
+            for rank in dst_ranks:
+                handles.append(
+                    self.send(
+                        buffer,
+                        self._rollout_group_name,
+                        rank,
+                        async_op=True,
+                        options=self._sync_weight_comm_options,
+                    )
+                )
+        for handle in handles:
+            await handle.async_wait()
+
+    async def sync_model_to_rollout(self, dst_rank: Optional[int] = None) -> None:
+        """Sync policy weights to rollout workers (bucketLength int, then N state dicts)."""
+        if dst_rank is not None:
+            state = self.get_policy_state_dict()
+            await self._send_policy_state_dict_buckets(state, [dst_rank])
             return
 
-        state = self.get_policy_state_dict()
-        if dst_rank is not None:
-            self.send(
-                state,
-                dst_group_name=self._rollout_group_name,
-                dst_rank=dst_rank,
-                async_op=False,
-                options=self._sync_weight_comm_options,
-            )
+        if self._use_fsdp_wrap:
+            await super().sync_model_to_rollout()
             return
 
         dst_ranks = self._weight_dst_rank_in_rollout
@@ -778,14 +818,11 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
             return
         if not isinstance(dst_ranks, list):
             dst_ranks = [dst_ranks]
-        for rank in dst_ranks:
-            self.send(
-                state,
-                dst_group_name=self._rollout_group_name,
-                dst_rank=rank,
-                async_op=False,
-                options=self._sync_weight_comm_options,
-            )
+        if not dst_ranks:
+            return
+
+        state = self.get_policy_state_dict()
+        await self._send_policy_state_dict_buckets(state, dst_ranks)
 
     def soft_update_target_model(self):
         assert self.target_model_initialized
