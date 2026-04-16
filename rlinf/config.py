@@ -126,6 +126,7 @@ SUPPORTED_TASK_TYPE = [
     "reasoning_eval",
     "coding_online_rl",
     "sft",
+    "offline",
 ]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 __all__ = ["build_config"]
@@ -921,6 +922,109 @@ def validate_embodied_cfg(cfg):
     return cfg
 
 
+def validate_offline_cfg(cfg: DictConfig) -> DictConfig:
+    """Validation for offline tasks (e.g. IQL).
+
+    Requires explicit offline IQL runtime fields and validates their ranges.
+    """
+    actor_global = cfg.actor.get("global_batch_size", None)
+    actor_micro = cfg.actor.get("micro_batch_size", None)
+    runner_local_update_steps = cfg.runner.get("local_update_steps", None)
+    runner_max_steps = cfg.runner.get("max_steps", None)
+    runner_only_eval = cfg.runner.get("only_eval", None)
+    algorithm_gamma = cfg.algorithm.get("gamma", None)
+    actor_seed = cfg.actor.get("seed", None)
+    if actor_global is None:
+        raise AssertionError("offline training requires actor.global_batch_size")
+    if actor_micro is None:
+        raise AssertionError("offline training requires actor.micro_batch_size")
+    if runner_local_update_steps is None:
+        raise AssertionError("offline training requires runner.local_update_steps")
+    if runner_max_steps is None:
+        raise AssertionError("offline training requires runner.max_steps")
+    if runner_only_eval is None:
+        raise AssertionError("offline training requires runner.only_eval")
+    if algorithm_gamma is None:
+        raise AssertionError("offline training requires algorithm.gamma")
+    if actor_seed is None:
+        raise AssertionError("offline training requires actor.seed")
+
+    actor_global_int = int(actor_global)
+    actor_micro_int = int(actor_micro)
+    runner_local_update_steps_int = int(runner_local_update_steps)
+    runner_max_steps_int = int(runner_max_steps)
+    try:
+        float(algorithm_gamma)
+    except (TypeError, ValueError) as exc:
+        raise AssertionError(
+            f"algorithm.gamma must be numeric, got {algorithm_gamma!r}"
+        ) from exc
+    try:
+        int(actor_seed)
+    except (TypeError, ValueError) as exc:
+        raise AssertionError(
+            f"actor.seed must be int-castable, got {actor_seed!r}"
+        ) from exc
+
+    assert actor_global_int > 0, (
+        f"actor.global_batch_size must be > 0, got {actor_global_int}"
+    )
+    assert actor_micro_int > 0, (
+        f"actor.micro_batch_size must be > 0, got {actor_micro_int}"
+    )
+    assert runner_local_update_steps_int > 0, (
+        "runner.local_update_steps must be > 0 for offline training"
+    )
+    assert runner_max_steps_int >= 0, (
+        f"runner.max_steps must be >= 0, got {runner_max_steps_int}"
+    )
+    assert actor_global_int >= actor_micro_int, (
+        "actor.global_batch_size must be >= actor.micro_batch_size for offline training"
+    )
+
+    with open_dict(cfg):
+        cfg.runner.only_eval = bool(runner_only_eval)
+
+        # Offline RL only needs env.eval for evaluation interaction.
+        if cfg.env.get("train", None) is None:
+            cfg.env.train = OmegaConf.create(
+                OmegaConf.to_container(cfg.env.eval, resolve=True)
+            )
+
+    if cfg.runner.val_check_interval > 0 or cfg.runner.only_eval:
+        component_placement = HybridComponentPlacement(cfg, Cluster())
+        stage_num = cfg.rollout.pipeline_stage_num
+        env_world_size = component_placement.get_world_size("env")
+        assert cfg.env.eval.total_num_envs > 0, (
+            "Total number of parallel environments for evaluation must be greater than 0"
+        )
+        assert cfg.env.eval.total_num_envs % env_world_size == 0, (
+            "Total number of parallel environments for evaluation must be divisible by the number of environment processes"
+        )
+        assert cfg.env.eval.total_num_envs % env_world_size % stage_num == 0, (
+            "Total number of parallel environments for evaluation must be divisible by the number of environment processes and the number of pipeline stages"
+        )
+        assert cfg.env.eval.total_num_envs // env_world_size // stage_num > 0, (
+            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
+        )
+        assert (
+            cfg.env.eval.total_num_envs
+            // env_world_size
+            // stage_num
+            % cfg.env.eval.group_size
+            == 0
+        ), (
+            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
+        )
+        assert (
+            cfg.env.eval.max_steps_per_rollout_epoch % cfg.actor.model.num_action_chunks
+            == 0
+        ), (
+            "env.eval.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
+        )
+    return cfg
+
+
 def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
     assert cfg.actor.get("global_batch_size", None) is not None, (
         "the actor.global_batch_size is not set"
@@ -1083,6 +1187,8 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         return cfg
     elif cfg.runner.task_type == "sft":
         cfg = validate_sft_cfg(cfg)
+    elif cfg.runner.task_type == "offline":
+        cfg = validate_offline_cfg(cfg)
 
     if cfg.runner.task_type != "sft":
         if cfg.algorithm.adv_type in ("grpo", "grpo_dynamic", "reinpp_baseline"):

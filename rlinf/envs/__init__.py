@@ -31,6 +31,7 @@ class SupportedEnvType(Enum):
     WANWM = "wan_wm"
     EMBODICHAIN = "embodichain"
     ROBOVERSE = "roboverse"
+    D4RL = "d4rl"
 
 
 def get_env_cls(env_type: str, env_cfg=None):
@@ -123,5 +124,9 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.roboverse.roboverse_env import RoboVerseEnv
 
         return RoboVerseEnv
+    elif env_type == SupportedEnvType.D4RL:
+        from rlinf.envs.d4rl.d4rl_env import D4RLEnv
+
+        return D4RLEnv
     else:
         raise NotImplementedError(f"Environment type {env_type} not implemented")
