@@ -141,6 +141,8 @@ class EmbodiedRunner:
         rollout_handle.wait()
         env_handle.wait()
         self.actor.init_worker().wait()
+        self.actor.set_total_training_steps(self.max_steps)
+        self.rollout.set_total_training_steps(self.max_steps)
 
         resume_dir = self.cfg.runner.get("resume_dir", None)
         if resume_dir is None:
@@ -471,9 +473,6 @@ class EmbodiedRunner:
 
         if (max_steps := self.cfg.runner.get("max_steps", -1)) >= 0:
             self.max_steps = min(self.max_steps, max_steps)
-
-        self.actor.set_total_training_steps(self.max_steps)
-        self.rollout.set_total_training_steps(self.max_steps)
 
     @property
     def epoch(self):
