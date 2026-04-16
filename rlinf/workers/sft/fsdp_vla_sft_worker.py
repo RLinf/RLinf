@@ -119,7 +119,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def run_training(self):
         train_metrics = super().run_training()
-        if self._dreamzero_loss is not None:
+        if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.DREAMZERO] and self._dreamzero_loss is not None:
             train_metrics.update(
                 {
                     "dynamics_loss": self._dreamzero_loss["dynamics_loss"],

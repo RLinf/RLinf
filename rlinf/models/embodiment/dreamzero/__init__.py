@@ -117,9 +117,6 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     model.load_state_dict(state_dict, strict=False)
 
     _promote_scalar_params_to_1d(model)
-    # if hasattr(model, "post_initialize"):
-    #     model.post_initialize()
-
     model = model.to(dtype=torch_dtype)
 
     return model
