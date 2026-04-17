@@ -4,8 +4,7 @@ strategy: "fsdp"            # FSDP strategy: ["fsdp", "fsdp2"]
 # "shard_grad_op" (shard gradients and optimizer states only), 
 # "hybrid_shard" (combines data parallelism and model parallelism - sharding within FSDP groups, replicate across DDP groups),
 # "no_shard" (no sharding)
-# sharding_strategy: "full_shard"
-sharding_strategy: "shard_grad_op" 
+sharding_strategy: "full_shard"
 
 gradient_checkpointing: False # if True, gradient checkpointing will be used for FSDP/FSDP2 training, which will save memory but increase computation time.
 cpu_offload: False            # whether to offload parameters and gradients to CPU when not in use，if True, actor's enable_offload should be True too.
