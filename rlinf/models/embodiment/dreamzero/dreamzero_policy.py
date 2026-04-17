@@ -73,12 +73,12 @@ class DreamZeroConfig(VLAConfig):
 class DreamZeroPolicy(VLA, BasePolicy):
     """Lightweight DreamZero action model: IdentityBackbone + WANPolicyHead."""
 
-
     _no_split_modules = [
-        "T5SelfAttention", # text encoder
-        "AttentionBlock", # image encoder
-        "CausalWanAttentionBlock", # action head
+        "T5SelfAttention",  # text encoder
+        "AttentionBlock",  # image encoder
+        "CausalWanAttentionBlock",  # action head
     ]
+
     def __init__(
         self,
         config: DreamZeroConfig,
