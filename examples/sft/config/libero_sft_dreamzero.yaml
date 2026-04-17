@@ -1,0 +1,100 @@
+defaults:
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_sft_dreamzero"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 2000
+  max_steps: -1
+  val_check_interval: -1
+  save_interval: 2000
+  log_interval: 100
+
+data:
+  train_data_paths: "path/to/datasets/libero"
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 1
+  global_batch_size: 16
+  seed: 42
+  dataloader_num_workers: 1
+  enable_offload: False
+
+  model:
+    model_type: "dreamzero"
+    precision: bf16 # fp32 when fsdp cpu offload is enabled
+    model_path: "path/to/models/DreamZero-DROID"
+    tokenizer_path: "path/to/models/umt5-xxl"
+    max_seq_len: 512
+    dreamzero_action_horizon: 16
+    dreamzero_num_chunks: 4
+    dreamzero_max_action_dim: 32
+    dreamzero_max_state_dim: 64
+    cfg_mode: false
+    advantage_parquet: 
+    unconditional_prob: 0.3
+    action_loss_scale: 1.0
+    pretrained_model_path: null
+    add_value_head: false
+    is_lora: False
+
+  optim:
+    lr: 1.0e-5
+    value_lr: 1.55e-4
+    adam_beta1: 0.95
+    adam_beta2: 0.999
+    adam_eps: 1.0e-08
+    weight_decay: 1.0e-5
+    clip_grad: 1.0
+    lr_scheduler: "cosine"
+    lr_warmup_steps: -1
+    lr_warmup_steps_ratio: 0.05
+    total_training_steps: 50000
+
+  fsdp_config:
+    strategy: "fsdp2"
+    sharding_strategy: "full_shard"
+    use_orig_params: True
+    gradient_checkpointing: True
+    limit_all_gathers: True
+    reshard_after_forward: True
+    # cpu_offload: True
+    # offload_pin_memory: True
+    grad_scaler:
+      enabled: False
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: bf16
+      buffer_dtype: bf16
+    amp_autocast:
+      enabled: false
+      precision: "bf16"
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false

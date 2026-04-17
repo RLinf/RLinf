@@ -649,8 +649,16 @@ install_dreamzero_model() {
             uv pip install -r $SCRIPT_DIR/embodied/models/dreamzero.txt
             install_flash_attn
             ;;
+        "")
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install -r $SCRIPT_DIR/embodied/models/dreamzero.txt
+            install_flash_attn
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for DreamZero model." >&2
+            exit 1
+            ;;
     esac
 }
 
@@ -1083,7 +1091,7 @@ main() {
                     echo "Unknown environment: $ENV_NAME. Supported environments: ${SUPPORTED_ENVS[*]}" >&2
                     exit 1
                 fi
-            else
+            elif [ "$MODEL" != "dreamzero" ]; then
                 echo "--env must be specified when target=embodied." >&2
                 exit 1
             fi
