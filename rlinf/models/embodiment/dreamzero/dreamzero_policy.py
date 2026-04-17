@@ -18,12 +18,12 @@ from typing import Any, Optional
 import cv2
 import numpy as np
 import torch
-from groot.vla.data.transform import ComposedModalityTransform
 from groot.vla.model.dreamzero.base_vla import VLA, VLAConfig
 from tianshou.data import Batch
 from transformers.configuration_utils import PretrainedConfig
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
+from rlinf.models.embodiment.dreamzero.transform import ComposedModalityTransform
 
 
 @dataclass

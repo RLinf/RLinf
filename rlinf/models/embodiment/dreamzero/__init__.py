@@ -16,15 +16,18 @@ import json
 from pathlib import Path
 
 import torch.nn as nn
-from groot.vla.data.schema import DatasetMetadata
-from groot.vla.data.transform import ComposedModalityTransform
-from hydra.utils import instantiate
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 from safetensors.torch import load_file
 
 from rlinf.models.embodiment.dreamzero.dreamzero_policy import (
     DreamZeroConfig,
     DreamZeroPolicy,
+)
+from rlinf.models.embodiment.dreamzero.transform_runtime import (
+    resolve_dreamzero_transforms,
+)
+from rlinf.models.embodiment.dreamzero.wan_flow_matching_patch import (
+    apply_wan_refactor_patch,
 )
 
 
@@ -49,6 +52,7 @@ def _promote_scalar_params_to_1d(model):
 
 def get_model(cfg: DictConfig, torch_dtype=None):
     """Load DreamZero policy from checkpoint."""
+    apply_wan_refactor_patch()
 
     model_path = Path(cfg.get("model_path"))
     if not model_path.exists():
@@ -74,27 +78,20 @@ def get_model(cfg: DictConfig, torch_dtype=None):
 
     dreamzero_config.env_action_dim = action_dim
 
-    exp_cfg_dir = model_path / "experiment_cfg"
-    metadata_path = exp_cfg_dir / "metadata.json"
-    with open(metadata_path, "r") as f:
-        metadatas = json.load(f)
-
-    embodiment_tag = cfg.get("embodiment_tag", "libero_sim")
-    metadata = DatasetMetadata.model_validate(metadatas[embodiment_tag])
-
-    train_cfg = OmegaConf.load(exp_cfg_dir / "conf.yaml")
-    train_cfg.transforms[embodiment_tag].transforms[-1].tokenizer_path = tokenizer_path
-    data_transforms = instantiate(train_cfg.transforms[embodiment_tag])
-    assert isinstance(data_transforms, ComposedModalityTransform), f"{data_transforms=}"
-    data_transforms.set_metadata(metadata)
-    data_transforms.eval()
-
-    dreamzero_config.data_transforms = data_transforms
-    dreamzero_config.relative_action = train_cfg.get("relative_action", False)
-    dreamzero_config.relative_action_per_horizon = train_cfg.get(
-        "relative_action_per_horizon", False
+    (
+        data_transforms,
+        relative_action,
+        relative_action_per_horizon,
+        relative_action_keys,
+    ) = resolve_dreamzero_transforms(
+        cfg=cfg,
+        model_path=model_path,
+        tokenizer_path=tokenizer_path,
     )
-    dreamzero_config.relative_action_keys = train_cfg.get("relative_action_keys", [])
+    dreamzero_config.data_transforms = data_transforms
+    dreamzero_config.relative_action = relative_action
+    dreamzero_config.relative_action_per_horizon = relative_action_per_horizon
+    dreamzero_config.relative_action_keys = relative_action_keys
 
     model = DreamZeroPolicy(
         config=dreamzero_config,
@@ -117,6 +114,14 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     model.load_state_dict(state_dict, strict=False)
 
     _promote_scalar_params_to_1d(model)
+    if hasattr(model, "action_head"):
+        ah = model.action_head
+        if not hasattr(ah, "trt_engine"):
+            ah.trt_engine = None
+        if not hasattr(ah, "trt_context"):
+            ah.trt_context = None
+    # if hasattr(model, "post_initialize"):
+    #     model.post_initialize()
     model = model.to(dtype=torch_dtype)
 
     return model
