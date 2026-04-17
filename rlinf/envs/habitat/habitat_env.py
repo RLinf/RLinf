@@ -333,7 +333,7 @@ class HabitatEnv(gym.Env):
 
             current_steps.append(step)
             current_gt_actions.append(current_gt_action)
-            sequence_lengths.append(seq_len)
+            sequence_lengths.append(min(seq_len, self.max_episode_steps))
 
         gt_prefix_metadata = {
             "habitat_current_step": torch.tensor(current_steps),
