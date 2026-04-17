@@ -43,9 +43,6 @@ runner:
     experiment_name: "realworld-eval"
     logger_backends: ["tensorboard"]
 
-  max_epochs: 1
-  max_steps: 1
-
   only_eval: True
   val_check_interval: -1
 
@@ -60,7 +57,7 @@ algorithm:
 
   backup_entropy: False
   critic_subsample_size: 2
-  eval_rollout_epoch: 1
+  eval_rollout_epoch: 20
 
   adv_type: embodied_sac
   loss_type: embodied_sac
@@ -96,8 +93,10 @@ env:
     ignore_terminations: False
     no_gripper: False
     total_num_envs: 1
-    keyboard_reward_wrapper: single_stage
     use_spacemouse: False
+
+    max_steps_per_rollout_epoch: 200
+    max_episode_steps: 200
 
     override_cfg:
       target_ee_pose: TARGET_EE_POSE
@@ -134,6 +133,7 @@ actor:
   model:
     model_path: ${rollout.model.model_path}
     num_action_chunks: 10
+    state_dim: 19
     action_dim: 7
     add_value_head: False
 
