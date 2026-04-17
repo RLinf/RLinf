@@ -170,6 +170,7 @@ RECAP 流程使用 LeRobot 格式的数据集。数据集分为两类：
 
 .. note::
 
+   ``train_data_paths`` 是一个列表。如果需要混合多个数据集，可以继续新增 item；如果只想使用单个数据集训练，也可以只保留一个 item。
    所有 step 中的 ``train_data_paths`` 应保持一致，确保回报、价值和优势的计算基于同一批数据。
 
 Pipeline Tag 机制

@@ -41,17 +41,6 @@ def _parse_image(image) -> np.ndarray:
     return image
 
 
-def _split_camera_views(image) -> list[np.ndarray]:
-    if image is None:
-        return []
-
-    image = np.asarray(image)
-    if image.ndim == 4:
-        return [_parse_image(image[idx]) for idx in range(image.shape[0])]
-
-    return [_parse_image(image)]
-
-
 @dataclasses.dataclass(frozen=True)
 class FrankaEEOutputs(transforms.DataTransformFn):
     """
@@ -96,39 +85,23 @@ class FrankaEEInputs(transforms.DataTransformFn):
         state = transforms.pad_to_dim(state, self.action_dim)
 
         base_image = _parse_image(data["observation/image"])
-        wrist_views = _split_camera_views(data.get("observation/wrist_image"))
-        if self.use_extra_view_as_wrist:
-            wrist_views.extend(
-                _split_camera_views(data.get("observation/extra_view_image"))
-            )
-
-        left_wrist_image = (
-            wrist_views[0] if len(wrist_views) > 0 else np.zeros_like(base_image)
-        )
-        right_wrist_image = (
-            wrist_views[1] if len(wrist_views) > 1 else np.zeros_like(base_image)
-        )
 
         # We only mask padding for pi0 model, not pi0-FAST.
         if self.model_type in (_model.ModelType.PI0, _model.ModelType.PI05):
             names = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
             images = (
                 base_image,
-                left_wrist_image,
-                right_wrist_image,
+                np.zeros_like(base_image),
+                np.zeros_like(base_image),
             )
-            image_masks = (
-                np.True_,
-                np.True_ if len(wrist_views) > 0 else np.False_,
-                np.True_ if len(wrist_views) > 1 else np.False_,
-            )  # with padding
+            image_masks = (np.True_, np.False_, np.False_)  # with padding
         elif self.model_type == _model.ModelType.PI0_FAST:
             names = ("base_0_rgb", "base_1_rgb", "wrist_0_rgb")
             # We don't mask out padding images for FAST models.
             images = (
                 base_image,
-                left_wrist_image,
-                right_wrist_image,
+                np.zeros_like(base_image),
+                np.zeros_like(base_image),
             )
             image_masks = (np.True_, np.True_, np.True_)  # without padding
         else:

@@ -174,6 +174,7 @@ Example dataset configuration:
 
 .. note::
 
+   ``train_data_paths`` is a list. If you want to mix multiple datasets, you can add more items; if you want to train with only one dataset, you can also keep just a single item.
    The ``train_data_paths`` should remain consistent across all steps to ensure returns, values, and advantages are computed on the same data.
 
 Pipeline Tag System
