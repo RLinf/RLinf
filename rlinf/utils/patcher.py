@@ -189,7 +189,7 @@ class _Patcher:
         assert isinstance(new, str)
         if old in self._mappings_dict:
             raise RuntimeError(
-                f"do not support re_patch! old object is [{old}], new objets are [{self._mappings_dict[old]}] and [{new}]"
+                f"do not support re_patch! old object is [{old}], new objects are [{self._mappings_dict[old]}] and [{new}]"
             )
         self._mappings_dict[old] = new
 

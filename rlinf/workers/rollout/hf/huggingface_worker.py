@@ -44,6 +44,9 @@ class MultiStepRolloutWorker(Worker):
 
         self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
         self.enable_offload = self.cfg.rollout.get("enable_offload", False)
+        self.sync_weight_load_instant = self.cfg.rollout.get(
+            "sync_weight_load_instant", True
+        )
 
         self.placement = HybridComponentPlacement(cfg, Cluster())
 
@@ -338,16 +341,49 @@ class MultiStepRolloutWorker(Worker):
         return final_values[:, :1].cpu().contiguous()
 
     async def sync_model_from_actor(self):
-        """Sync model parameters from the actor worker."""
-        param_state_dict = await self.recv(
+        """Sync model parameters from the actor worker using bucket-based receiving.
+
+        This method receives weights in buckets to reduce peak memory usage,
+        preventing OOM on GPUs with limited memory.
+        """
+
+        # Receive first bucket to get bucket_length
+        bucket_length = await self.recv(
             self.actor_group_name,
             src_rank=self.actor_weight_src_rank,
             async_op=True,
             options=self._sync_weight_comm_options,
         ).async_wait()
-        self.hf_model.load_state_dict(param_state_dict)
 
-        del param_state_dict
+        if self.sync_weight_load_instant:
+            if self.enable_offload:
+                self.reload_model()
+        else:
+            cpu_buffer = {}
+
+        for _ in range(bucket_length):
+            bucket: dict[str, torch.Tensor] = await self.recv(
+                self.actor_group_name,
+                src_rank=self.actor_weight_src_rank,
+                async_op=True,
+                options=self._sync_weight_comm_options,
+            ).async_wait()
+            if self.sync_weight_load_instant:
+                # load state dict instantly
+                self.hf_model.load_state_dict(bucket, strict=False)
+            else:
+                # save state dict to cpu buffer
+                for k, v in bucket.items():
+                    cpu_buffer[k] = v.to("cpu")
+            del bucket
+
+        if not self.sync_weight_load_instant:
+            # load state dict after actor offload
+            if self.enable_offload:
+                self.reload_model()
+            self.hf_model.load_state_dict(cpu_buffer, strict=True)
+            del cpu_buffer
+
         gc.collect()
         self.torch_platform.empty_cache()
 

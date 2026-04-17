@@ -81,10 +81,11 @@ data:
 agentloop:
   group_name: "AgentLoopGroup"
   toolcall_parser: "searchr1-qwen"
-  maxturn: 2
+  max_turns: 2
   max_tool_response_length: 500
   tool_response_truncate_side: "right"
   print_outputs: False
+  is_dynamic_rollout_batch: True
 
 
 # Tools configuration for AgentLoop
@@ -131,16 +132,3 @@ rollout:
   validate_weight: False        # whether to send all weights at first for weight comparison.
   validate_save_dir: null       # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
   print_outputs: False          # whether to print the outputs (token ids, texts, etc.) of rollout engine.
-
-
-reward:
-  group_name: "RewardGroup"
-  use_reward_model: False
-  reward_type: 'searchr1'
-  reward_scale: 1.0
-
-  tokenizer:
-    tokenizer_model: ${rollout.model.model_path}
-    use_fast: False
-    trust_remote_code: True
-    padding_side: 'right'

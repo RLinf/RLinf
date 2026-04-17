@@ -15,6 +15,7 @@
 import math
 import time
 
+import numpy as np
 import torch
 import torch.distributed
 
@@ -23,6 +24,19 @@ from rlinf.scheduler import Worker
 
 def compute_split_num(num, split_num):
     return math.lcm(num, split_num) // split_num
+
+
+def _normalize_metric_shard(shard: object) -> torch.Tensor:
+    """One rank's metric -> 1D float tensor on CPU."""
+    if shard is None:
+        return torch.tensor([], dtype=torch.float32)
+    if isinstance(shard, torch.Tensor):
+        return shard.detach().cpu().reshape(-1).float()
+    if isinstance(shard, list):
+        if not shard:
+            return torch.tensor([], dtype=torch.float32)
+        return torch.cat([x.detach().cpu().reshape(-1).float() for x in shard], dim=0)
+    return torch.as_tensor(shard, dtype=torch.float32).cpu().reshape(-1)
 
 
 def count_trajectories(metrics_dict):
@@ -62,6 +76,9 @@ def compute_evaluate_metrics(eval_metrics_list):
     Returns:
         dict: Aggregated metrics with mean values and trajectory count
     """
+    if not eval_metrics_list:
+        return {}
+
     all_eval_metrics = {}
     env_info_keys: set[str] = set()
     for eval_metrics in eval_metrics_list:
@@ -83,8 +100,12 @@ def compute_evaluate_metrics(eval_metrics_list):
             all_eval_metrics[env_info_key] = metric
 
     for key in all_eval_metrics:
+        shards = [_normalize_metric_shard(s) for s in all_eval_metrics[key]]
+        stacked = torch.concat(shards).float()
         all_eval_metrics[key] = (
-            torch.concat(all_eval_metrics[key]).float().mean().numpy()
+            stacked.mean().detach().cpu().numpy()
+            if stacked.numel() > 0
+            else np.asarray(0.0, dtype=np.float64)
         )
 
     # Add total trajectory count to metrics

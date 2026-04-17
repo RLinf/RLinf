@@ -30,7 +30,7 @@ from ray.actor import ActorHandle
 from ray.util.state import list_actors
 
 from .config import ClusterConfig
-from .node import NodeGroupInfo, NodeProbe
+from .node import NodeGroupInfo, NodeInfo, NodeProbe
 from .utils import DistributedRayLogCollector, without_http_proxies
 
 ray_version = version("ray")
@@ -39,6 +39,7 @@ assert vs.parse(ray_version) >= vs.parse("2.47.0"), (
 )
 
 if TYPE_CHECKING:
+    from ..manager import Manager
     from ..worker import Worker
 
 
@@ -202,6 +203,40 @@ class Cluster:
         handler.setFormatter(formatter)
         self._logger.addHandler(handler)
 
+    @staticmethod
+    def _get_manager_node(nodes: list[NodeInfo]) -> NodeInfo:
+        """Return the alive node that hosts all global manager actors."""
+        manager_node = next(
+            (node for node in nodes if node.node_rank == 0),
+            None,
+        )
+        assert manager_node is not None, (
+            "All managers must be launched on node rank 0, "
+            "but node rank 0 is unavailable."
+        )
+        return manager_node
+
+    def _launch_manager_actor(
+        self,
+        manager_cls: type["Manager"],
+        manager_node: NodeInfo,
+        runtime_env: dict[str, dict[str, str]],
+        *args,
+    ) -> ActorHandle:
+        """Launch a global manager actor pinned to cluster node rank 0."""
+        return (
+            ray.remote(manager_cls)
+            .options(
+                name=manager_cls.MANAGER_NAME,
+                runtime_env=runtime_env,
+                scheduling_strategy=ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
+                    node_id=manager_node.ray_id,
+                    soft=False,
+                ),
+            )
+            .remote(*args)
+        )
+
     def _init_and_launch_managers(
         self,
         num_nodes: int,
@@ -307,30 +342,26 @@ class Cluster:
 
         try:
             runtime_env = {"env_vars": Manager.get_runtime_env_vars()}
-            self._worker_manager = (
-                ray.remote(WorkerManager)
-                .options(name=WorkerManager.MANAGER_NAME, runtime_env=runtime_env)
-                .remote()
+            manager_node = self._get_manager_node(self._nodes)
+            self._worker_manager = self._launch_manager_actor(
+                WorkerManager, manager_node, runtime_env
             )
-            self._coll_manager = (
-                ray.remote(CollectiveManager)
-                .options(name=CollectiveManager.MANAGER_NAME, runtime_env=runtime_env)
-                .remote()
+            self._coll_manager = self._launch_manager_actor(
+                CollectiveManager, manager_node, runtime_env
             )
-            self._node_manager = (
-                ray.remote(NodeManager)
-                .options(name=NodeManager.MANAGER_NAME, runtime_env=runtime_env)
-                .remote(self._nodes, self._node_groups, self._cluster_cfg)
+            self._node_manager = self._launch_manager_actor(
+                NodeManager,
+                manager_node,
+                runtime_env,
+                self._nodes,
+                self._node_groups,
+                self._cluster_cfg,
             )
-            self._device_lock_manager = (
-                ray.remote(DeviceLockManager)
-                .options(name=DeviceLockManager.MANAGER_NAME, runtime_env=runtime_env)
-                .remote()
+            self._device_lock_manager = self._launch_manager_actor(
+                DeviceLockManager, manager_node, runtime_env
             )
-            self._port_lock_manager = (
-                ray.remote(PortLockManager)
-                .options(name=PortLockManager.MANAGER_NAME, runtime_env=runtime_env)
-                .remote()
+            self._port_lock_manager = self._launch_manager_actor(
+                PortLockManager, manager_node, runtime_env
             )
         except ValueError:
             raise Cluster.NamespaceConflictError
