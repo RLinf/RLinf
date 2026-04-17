@@ -56,6 +56,17 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         elif SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.GR00T_1_6_SFT]:
             from rlinf.models.embodiment.gr00t_1_6.gr00t_16_sft_model import build_gr00t_dataloader
             return build_gr00t_dataloader(self, eval_dataset)
+        elif SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.DREAMZERO
+        ]:
+            self._dreamzero_loss = None
+            from rlinf.data.datasets.dreamzero import (
+                build_dreamzero_sft_dataloader,
+            )
+
+            return build_dreamzero_sft_dataloader(
+                self.cfg, self._world_size, self._rank, data_paths, eval_dataset
+            )
         else:
             raise KeyError(
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
@@ -67,7 +78,8 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def get_train_model_output(self, batch: dict[str, Any]):
         if SupportedModel(self.cfg.actor.model.model_type) in [
-            SupportedModel.LINGBOTVLA
+            SupportedModel.LINGBOTVLA,
+            SupportedModel.DREAMZERO,
         ]:
             batch_data = _pytree.tree_map(
                 lambda x: (
@@ -79,6 +91,11 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             )
             with self.amp_context:
                 losses_dict = self.model(forward_type=ForwardType.SFT, data=batch_data)
+            if losses_dict.get("dynamics_loss", None) is not None:
+                self._dreamzero_loss = {
+                    "dynamics_loss": losses_dict["dynamics_loss"],
+                    "action_loss": losses_dict["action_loss"],
+                }
             return losses_dict["loss"]
         observation, actions = batch
 
@@ -102,3 +119,19 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
         # train model return the loss
         return losses
+
+    def run_training(self):
+        train_metrics = super().run_training()
+        if (
+            SupportedModel(self.cfg.actor.model.model_type)
+            in [SupportedModel.DREAMZERO]
+            and self._dreamzero_loss is not None
+        ):
+            train_metrics.update(
+                {
+                    "dynamics_loss": self._dreamzero_loss["dynamics_loss"],
+                    "action_loss": self._dreamzero_loss["action_loss"],
+                }
+            )
+            self._dreamzero_loss = None
+        return train_metrics
