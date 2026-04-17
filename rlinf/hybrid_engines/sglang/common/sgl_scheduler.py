@@ -112,7 +112,6 @@ class Scheduler(_Scheduler):
     
     def _execute_with_device_injection(self, func, args, device_param_names=None, device_arg_positions=None, inject_as_object=True):
         import inspect
-        import torch
 
         accel_type = AcceleratorUtil.get_accelerator_type()
         device_type = AcceleratorUtil.get_device_type(accel_type)  # "cuda", "npu", "cpu"
@@ -130,15 +129,21 @@ class Scheduler(_Scheduler):
             try:
                 sig = inspect.signature(func)
                 param_names = list(sig.parameters.keys())
+                kwargs = {}
                 args_list = list(args)
-                
+                for i, param_name in enumerate(param_names):
+                    if i < len(args_list):
+                        kwargs[param_name] = args_list[i]
+                    else:
+                        break
                 for param_name in device_param_names:
-                    if param_name in param_names:
-                        param_idx = param_names.index(param_name)
-                        while len(args_list) <= param_idx:
-                            args_list.append(None)
-                        args_list[param_idx] = inject_value
-                        return func(*args_list)
+                    if param_name in kwargs:
+                        kwargs[param_name] = inject_value
+                with torch.npu.device(inject_value):
+                    new_weight = func(**kwargs)
+                if hasattr(new_weight, 'device') and new_weight.device != inject_value:
+                    new_weight = new_weight.to(target_device)
+                return new_weight
             except (ValueError, TypeError, AttributeError):
                 pass
 
@@ -168,7 +173,7 @@ class Scheduler(_Scheduler):
                     args=args,
                     device_param_names=['storage_device', 'map_location', 'device'],
                     device_arg_positions=[6], 
-                    inject_as_object=True
+                    inject_as_object=False
                 )
                 batch_weight.append((name, new_weight))
         else:
