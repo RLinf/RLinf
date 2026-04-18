@@ -1,0 +1,750 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+FSDP Value Model SFT Worker.
+
+Standalone worker for training ValueCriticModel
+via supervised fine-tuning with FSDP.
+
+This module is self-contained and does NOT share code with fsdp_sft_worker.py.
+"""
+
+import os
+from pathlib import Path
+
+import numpy as np
+import torch
+from omegaconf import DictConfig
+
+from rlinf.data.datasets.recap.utils import (
+    load_return_stats_from_dataset,
+)
+from rlinf.data.datasets.recap.value_model import (
+    ValueDataLoaderImpl,
+    ValueMixtureDataset,
+)
+from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
+from rlinf.models import get_model
+from rlinf.scheduler import Worker
+from rlinf.utils.distributed import all_reduce_dict
+
+
+class FSDPValueSftWorker(FSDPModelManager, Worker):
+    """FSDP worker for value model SFT training.
+
+    Reads ``data.train_data_paths`` list from config (single dataset = list of one).
+    Uses global return_min/return_max for normalization across all datasets.
+    """
+
+    def __init__(self, cfg: DictConfig):
+        Worker.__init__(self)
+        super().__init__(cfg.actor, self._world_size, self._rank)
+
+        self.cfg = cfg
+        torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", 0)))
+        self.device = torch.cuda.current_device()
+
+        self.data_loader, self.eval_data_loaders, self.data_config = (
+            self.build_dataloader()
+        )
+        self.data_iter = iter(self.data_loader)
+
+    def init_worker(self):
+        self.setup_model_and_optimizer()
+
+        if self.cfg.actor.get("enable_offload", False):
+            self.offload_param_and_grad()
+            self.offload_optimizer()
+
+    def model_provider_func(self) -> torch.nn.Module:
+        return get_model(self.cfg.actor.model)
+
+    @staticmethod
+    def _compute_spearman(values_a: np.ndarray, values_b: np.ndarray) -> float:
+        """Compute Spearman correlation with simple rank-based Pearson."""
+        if len(values_a) < 2 or len(values_b) < 2:
+            return 0.0
+
+        rank_a = np.empty_like(values_a, dtype=np.float64)
+        rank_b = np.empty_like(values_b, dtype=np.float64)
+        order_a = np.argsort(values_a, kind="mergesort")
+        order_b = np.argsort(values_b, kind="mergesort")
+        rank_a[order_a] = np.arange(len(values_a), dtype=np.float64)
+        rank_b[order_b] = np.arange(len(values_b), dtype=np.float64)
+
+        rank_a -= rank_a.mean()
+        rank_b -= rank_b.mean()
+        denom = np.linalg.norm(rank_a) * np.linalg.norm(rank_b)
+        if denom == 0.0:
+            return 0.0
+        return float(np.dot(rank_a, rank_b) / denom)
+
+    @classmethod
+    def _compute_value_spearman(
+        cls,
+        predicted_values: torch.Tensor,
+        target_values: torch.Tensor,
+    ) -> dict[str, float]:
+        """Compute Spearman rank correlation for predicted values."""
+        preds = predicted_values.detach().float().view(-1).cpu().numpy()
+        targets = target_values.detach().float().view(-1).cpu().numpy()
+        return {"value_spearman": cls._compute_spearman(preds, targets)}
+
+    @classmethod
+    def _compute_value_spearman_from_arrays(
+        cls,
+        predicted_values: np.ndarray,
+        target_values: np.ndarray,
+    ) -> dict[str, float]:
+        """Compute Spearman rank correlation for full eval arrays."""
+        if len(predicted_values) == 0 or len(target_values) == 0:
+            return {}
+        return {
+            "value_spearman": cls._compute_spearman(
+                predicted_values,
+                target_values,
+            )
+        }
+
+    def _gather_eval_array(self, values: np.ndarray | None) -> np.ndarray | None:
+        """Gather eval arrays across ranks for dataset-level diagnostics."""
+        if values is None:
+            return None
+        if not torch.distributed.is_initialized():
+            return values
+
+        gathered: list[np.ndarray | None] = [None for _ in range(self._world_size)]
+        torch.distributed.all_gather_object(gathered, values)
+        valid_arrays = [arr for arr in gathered if arr is not None and len(arr) > 0]
+        if not valid_arrays:
+            return None
+        return np.concatenate(valid_arrays, axis=0)
+
+    def build_dataloader(self):
+        """Build dataloader from ``data.train_data_paths`` list."""
+        try:
+            import av
+
+            av.logging.set_level(av.logging.ERROR)
+        except (ImportError, AttributeError):
+            pass
+
+        from rlinf.data.datasets.recap.value_model import ValueDataset
+        from rlinf.models.embodiment.value_model.data_collator import ValueDataCollator
+        from rlinf.models.embodiment.value_model.processing import ValueProcessor
+
+        data_cfg = self.cfg.get("data", {})
+        model_cfg = self.cfg.actor.model
+        pin_memory = data_cfg.get("pin_memory", True)
+        train_num_workers = int(data_cfg.get("train_num_workers", 0))
+        eval_num_workers = int(data_cfg.get("eval_num_workers", train_num_workers))
+        prefetch_factor = data_cfg.get("prefetch_factor", 2)
+        persistent_workers = bool(data_cfg.get("persistent_workers", True))
+
+        def _loader_worker_kwargs(num_workers: int) -> dict:
+            kwargs = {
+                "num_workers": num_workers,
+                "pin_memory": pin_memory,
+            }
+            if num_workers > 0:
+                kwargs["persistent_workers"] = persistent_workers
+                if prefetch_factor is not None:
+                    kwargs["prefetch_factor"] = int(prefetch_factor)
+            return kwargs
+
+        # Tokenizer resolution: explicit tokenizer_path > backbone path > error
+        from rlinf.models.embodiment.value_model.checkpoint_utils import (
+            has_tokenizer_files,
+        )
+
+        tokenizer_path = getattr(model_cfg, "tokenizer_path", None)
+        if tokenizer_path is None:
+            tokenizer_path = getattr(model_cfg, "gemma3_path", None)
+        if tokenizer_path is None or not has_tokenizer_files(Path(tokenizer_path)):
+            raise ValueError(
+                f"No tokenizer found. "
+                f"Set model.tokenizer_path or model.gemma3_path explicitly. "
+                f"Tried: {tokenizer_path}"
+            )
+        processor = ValueProcessor(
+            max_token_len=getattr(model_cfg, "max_token_len", 200),
+            tokenizer_name_or_path=tokenizer_path,
+            do_augment=bool(data_cfg.get("do_augment", True)),
+        )
+        train_collator = ValueDataCollator(
+            processor=processor,
+            max_length=getattr(model_cfg, "max_token_len", 200),
+            train=True,
+        )
+        eval_collator = ValueDataCollator(
+            processor=processor,
+            max_length=getattr(model_cfg, "max_token_len", 200),
+            train=False,
+        )
+        data_root = data_cfg.get("data_root", None)
+
+        robot_type = data_cfg.get("robot_type")
+        model_type = data_cfg.get("model_type")
+        if robot_type is None:
+            raise ValueError("data_cfg.robot_type is required but not provided")
+        if model_type is None:
+            raise ValueError("data_cfg.model_type is required but not provided")
+        shared = {
+            "action_horizon": data_cfg.get(
+                "action_horizon", getattr(model_cfg, "action_horizon", 10)
+            ),
+            "gamma": data_cfg.get("gamma", 0.99),
+            "normalize_to_minus_one_zero": data_cfg.get(
+                "normalize_to_minus_one_zero", True
+            ),
+            "action_dim": data_cfg.get(
+                "action_dim", getattr(model_cfg, "action_dim", None)
+            ),
+            "robot_type": robot_type,
+            "model_type": model_type,
+        }
+
+        datasets_list = data_cfg.get("train_data_paths", [])
+        if not datasets_list:
+            raise ValueError(
+                "data.train_data_paths must be a non-empty list. "
+                "Each entry needs: dataset_path."
+            )
+        train_entries = [
+            dict(entry) for entry in datasets_list if entry.get("dataset_path", None)
+        ]
+        if not train_entries:
+            raise ValueError(
+                "data.train_data_paths must contain at least one training entry with 'dataset_path'."
+            )
+
+        # Priority: 1) global config  2) compute from all datasets' stats.json
+        global_return_min = data_cfg.get("return_min", None)
+        global_return_max = data_cfg.get("return_max", None)
+
+        if global_return_min is None or global_return_max is None:
+            all_mins = []
+            all_maxs = []
+            for entry in train_entries:
+                ds_path = entry.get("dataset_path")
+                if ds_path is None:
+                    continue
+                if data_root and not os.path.isabs(ds_path):
+                    ds_path = os.path.join(data_root, ds_path)
+                ds_min, ds_max = load_return_stats_from_dataset(ds_path)
+                if ds_min is not None:
+                    all_mins.append(ds_min)
+                if ds_max is not None:
+                    all_maxs.append(ds_max)
+
+            if all_mins and all_maxs:
+                global_return_min = (
+                    min(all_mins) if global_return_min is None else global_return_min
+                )
+                global_return_max = (
+                    max(all_maxs) if global_return_max is None else global_return_max
+                )
+                self.logger.info(
+                    "[ValueSFT] Computed global return range from stats.json: "
+                    f"[{global_return_min}, {global_return_max}]"
+                )
+            else:
+                missing = []
+                if global_return_min is None:
+                    missing.append("data.return_min")
+                if global_return_max is None:
+                    missing.append("data.return_max")
+                raise ValueError(
+                    "Cannot determine return range for normalization. "
+                    "No stats.json found in any dataset and the following config "
+                    f"fields are not set: {missing}. Either run compute_returns.py "
+                    "first (generates stats.json) or set data.return_min and "
+                    "data.return_max explicitly in the config."
+                )
+        else:
+            self.logger.info(
+                "[ValueSFT] Using global return range from config: "
+                f"[{global_return_min}, {global_return_max}]"
+            )
+
+        common_ds_kwargs = {
+            "robot_type": shared["robot_type"],
+            "model_type": shared["model_type"],
+            "action_horizon": shared["action_horizon"],
+            "gamma": shared["gamma"],
+            "return_min": global_return_min,
+            "return_max": global_return_max,
+            "normalize_to_minus_one_zero": shared["normalize_to_minus_one_zero"],
+            "action_dim": shared["action_dim"],
+        }
+
+        datasets_with_weights = []
+        for entry in train_entries:
+            ds_path = entry.get("dataset_path")
+            if ds_path is None:
+                raise ValueError("Each dataset entry must have 'dataset_path'")
+            if data_root and not os.path.isabs(ds_path):
+                ds_path = os.path.join(data_root, ds_path)
+
+            ds_type = entry.get("type", "sft")
+            if ds_type not in ("sft", "rollout"):
+                raise ValueError(
+                    f"Dataset type must be 'sft' or 'rollout', got '{ds_type}'"
+                )
+
+            weight = entry.get("weight", 1.0)
+
+            entry_kwargs = {
+                **common_ds_kwargs,
+                "dataset_path": ds_path,
+                "robot_type": entry.get("robot_type", shared["robot_type"]),
+                "model_type": entry.get("model_type", shared["model_type"]),
+                "action_horizon": entry.get("action_horizon", shared["action_horizon"]),
+                "normalize_to_minus_one_zero": entry.get(
+                    "normalize_to_minus_one_zero", shared["normalize_to_minus_one_zero"]
+                ),
+                "action_dim": entry.get("action_dim", shared["action_dim"]),
+                "split": "train",
+                "default_prompt": entry.get("default_prompt", None),
+                "max_samples": entry.get("max_samples", None),
+                "episode_percentage": entry.get("episode_percentage", None),
+                "shuffle_episodes": entry.get("shuffle_episodes", False),
+                "episode_seed": entry.get("episode_seed", 42),
+                "tag": data_cfg.get("tag", None),
+            }
+
+            ds = ValueDataset(**entry_kwargs)
+            datasets_with_weights.append((ds, weight))
+            self.logger.info(
+                f"[ValueSFT] Loaded: {ds_path}  (type={ds_type}, {len(ds)} samples, weight={weight})"
+            )
+
+        if len(datasets_with_weights) == 1:
+            dataset = datasets_with_weights[0][0]
+        else:
+            dataset = ValueMixtureDataset(
+                datasets=datasets_with_weights,
+                mode="train",
+                balance_dataset_weights=data_cfg.get("balance_weights", True),
+                seed=data_cfg.get("seed", 42),
+            )
+        self.logger.info(f"[ValueSFT] Total samples: {len(dataset)}")
+
+        sampler = None
+        if torch.distributed.is_initialized():
+            sampler = torch.utils.data.distributed.DistributedSampler(
+                dataset,
+                num_replicas=self._world_size,
+                rank=self._rank,
+                shuffle=True,
+                drop_last=True,
+            )
+
+        train_loader_worker_kwargs = _loader_worker_kwargs(train_num_workers)
+        torch_loader = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=self.cfg.actor.micro_batch_size,
+            shuffle=(sampler is None),
+            sampler=sampler,
+            drop_last=True,
+            collate_fn=train_collator,
+            **train_loader_worker_kwargs,
+        )
+        self.logger.info(
+            "[ValueSFT] Train DataLoader workers: "
+            f"num_workers={train_num_workers}, "
+            f"prefetch_factor={prefetch_factor if train_num_workers > 0 else 'N/A'}, "
+            f"persistent_workers={persistent_workers if train_num_workers > 0 else 'N/A'}, "
+            f"pin_memory={pin_memory}"
+        )
+
+        data_config = {"model_type": "value_model"}
+        train_data_loader = ValueDataLoaderImpl(data_config, torch_loader)
+
+        eval_data_loaders: list[tuple[str, ValueDataLoaderImpl]] = []
+
+        eval_data_paths = data_cfg.get("eval_data_paths", []) or []
+
+        for eval_entry in eval_data_paths:
+            eval_entry = dict(eval_entry)
+            eval_dataset_path = eval_entry.get("dataset_path")
+            eval_max_samples = eval_entry.get("max_samples", None)
+            if not eval_dataset_path:
+                continue
+
+            if "return_min" in eval_entry or "return_max" in eval_entry:
+                self.logger.warning(
+                    "[ValueSFT] eval entry return_min/return_max are ignored. "
+                    "Eval reward/return normalization always uses train global "
+                    f"range [{global_return_min}, {global_return_max}]."
+                )
+            eval_ds_path = eval_dataset_path
+            if data_root and not os.path.isabs(eval_ds_path):
+                eval_ds_path = os.path.join(data_root, eval_ds_path)
+
+            ds_name = eval_entry.get("name", Path(eval_ds_path).stem)
+
+            eval_dataset = ValueDataset(
+                dataset_path=eval_ds_path,
+                robot_type=eval_entry.get("robot_type", shared["robot_type"]),
+                model_type=eval_entry.get("model_type", shared["model_type"]),
+                action_horizon=eval_entry.get(
+                    "action_horizon", shared["action_horizon"]
+                ),
+                gamma=eval_entry.get("gamma", shared["gamma"]),
+                return_min=global_return_min,
+                return_max=global_return_max,
+                normalize_to_minus_one_zero=eval_entry.get(
+                    "normalize_to_minus_one_zero", shared["normalize_to_minus_one_zero"]
+                ),
+                split="val",
+                action_dim=eval_entry.get("action_dim", shared["action_dim"]),
+                default_prompt=eval_entry.get("default_prompt", None),
+                max_samples=eval_max_samples,
+                tag=data_cfg.get("tag", None),
+            )
+            eval_sampler = None
+            if torch.distributed.is_initialized():
+                eval_sampler = torch.utils.data.distributed.DistributedSampler(
+                    eval_dataset,
+                    num_replicas=self._world_size,
+                    rank=self._rank,
+                    shuffle=False,
+                    drop_last=False,
+                )
+            eval_loader_worker_kwargs = _loader_worker_kwargs(eval_num_workers)
+            eval_torch_loader = torch.utils.data.DataLoader(
+                dataset=eval_dataset,
+                batch_size=self.cfg.actor.micro_batch_size,
+                shuffle=False,
+                sampler=eval_sampler,
+                drop_last=False,
+                collate_fn=eval_collator,
+                **eval_loader_worker_kwargs,
+            )
+            eval_data_loader = ValueDataLoaderImpl(data_config, eval_torch_loader)
+            eval_data_loaders.append((ds_name, eval_data_loader))
+            self.logger.info(
+                f"[ValueSFT] Eval dataset '{ds_name}' loaded: {eval_ds_path} "
+                f"({len(eval_dataset)} samples, max_samples={eval_max_samples}, "
+                "norm_range=train_global:"
+                f"[{global_return_min}, {global_return_max}])"
+            )
+
+        if eval_data_loaders:
+            self.logger.info(
+                f"[ValueSFT] {len(eval_data_loaders)} eval dataset(s) registered: "
+                f"{[name for name, _ in eval_data_loaders]}"
+            )
+            self.logger.info(
+                "[ValueSFT] Eval DataLoader workers: "
+                f"num_workers={eval_num_workers}, "
+                f"prefetch_factor={prefetch_factor if eval_num_workers > 0 else 'N/A'}, "
+                f"persistent_workers={persistent_workers if eval_num_workers > 0 else 'N/A'}, "
+                f"pin_memory={pin_memory}"
+            )
+
+        return train_data_loader, eval_data_loaders, data_config
+
+    def run_training(self) -> dict[str, float]:
+        """Execute one training step (may involve gradient accumulation)."""
+        with self.worker_timer():
+            if self.cfg.actor.get("enable_offload", False):
+                with self.device_lock:
+                    self.load_param_and_grad(self.device)
+                    self.load_optimizer(self.device)
+
+            self.model.train()
+            if hasattr(self.model, "gradient_checkpointing_disable"):
+                self.model.gradient_checkpointing_disable()
+
+            micro_bs = self.cfg.actor.micro_batch_size
+            global_bs = self.cfg.actor.global_batch_size
+            assert global_bs % (micro_bs * self._world_size) == 0
+            grad_accum = global_bs // micro_bs // self._world_size
+
+            all_metrics = []
+
+            for idx in range(grad_accum):
+                backward_ctx = self.before_micro_batch(
+                    self.model, is_last_micro_batch=(idx + 1) == grad_accum
+                )
+
+                batch = next(self.data_iter)
+                obs, target_values, extra = self._prepare_input(batch)
+
+                with self.amp_context:
+                    result = self.model(observation=obs, target_values=target_values)
+                    loss = result.loss
+
+                metrics = {}
+                if result.predicted_values is not None:
+                    metrics["predicted_value_mean"] = (
+                        result.predicted_values.detach().mean().item()
+                    )
+                    metrics["predicted_value_std"] = (
+                        result.predicted_values.detach().std().item()
+                    )
+                if result.cat_acc_best is not None:
+                    metrics["cat_acc_best"] = (
+                        result.cat_acc_best.detach().item()
+                        if isinstance(result.cat_acc_best, torch.Tensor)
+                        else result.cat_acc_best
+                    )
+                if result.cat_acc_neighbor is not None:
+                    metrics["cat_acc_neighbor"] = (
+                        result.cat_acc_neighbor.detach().item()
+                        if isinstance(result.cat_acc_neighbor, torch.Tensor)
+                        else result.cat_acc_neighbor
+                    )
+                if result.mae is not None:
+                    metrics["mae"] = (
+                        result.mae.detach().item()
+                        if isinstance(result.mae, torch.Tensor)
+                        else result.mae
+                    )
+                if result.predicted_values is not None and target_values is not None:
+                    metrics.update(
+                        self._compute_value_spearman(
+                            result.predicted_values,
+                            target_values,
+                        )
+                    )
+
+                scaled_loss = loss / grad_accum
+                with backward_ctx:
+                    self.grad_scaler.scale(scaled_loss).backward()
+
+                metrics["loss"] = loss.detach().item()
+                if target_values is not None:
+                    metrics["target_value_mean"] = target_values.detach().mean().item()
+                    metrics["target_value_std"] = target_values.detach().std().item()
+                all_metrics.append(metrics)
+
+            grad_norm, lr_list = self.optimizer_step()
+            self.optimizer.zero_grad(set_to_none=True)
+
+            agg = {}
+            for m in all_metrics:
+                for k, v in m.items():
+                    agg.setdefault(k, []).append(v)
+            train_metrics = {k: sum(v) / len(v) for k, v in agg.items()}
+            train_metrics["grad_norm"] = grad_norm
+            train_metrics["lr"] = lr_list[0] if lr_list else 0.0
+
+            train_metrics = all_reduce_dict(
+                train_metrics, op=torch.distributed.ReduceOp.AVG
+            )
+
+            self.lr_scheduler.step()
+
+            if self.cfg.actor.get("enable_offload", False):
+                with self.device_lock:
+                    self.offload_param_and_grad()
+                    self.offload_optimizer()
+
+            return train_metrics
+
+    def run_eval(self) -> dict[str, float]:
+        """Run periodic evaluation on all eval datasets.
+
+        Returns metrics keyed as:
+        - ``"<dataset_name>/<metric>"`` for per-dataset metrics
+        - ``"<metric>"`` for aggregate (mean across datasets)
+        """
+        if not self.eval_data_loaders:
+            return {}
+
+        with self.worker_timer():
+            if self.cfg.actor.get("enable_offload", False):
+                with self.device_lock:
+                    self.load_param_and_grad(self.device)
+
+            self.model.eval()
+            all_dataset_metrics: dict[str, dict[str, float]] = {}
+
+            with torch.no_grad():
+                for ds_name, loader in self.eval_data_loaders:
+                    batch_metrics: list[dict[str, float]] = []
+                    pred_batches: list[np.ndarray] = []
+                    target_batches: list[np.ndarray] = []
+                    for batch in loader:
+                        obs, target_values, _ = self._prepare_input(batch)
+
+                        with self.amp_context:
+                            result = self.model(
+                                observation=obs, target_values=target_values
+                            )
+                            loss = result.loss
+
+                        metrics: dict[str, float] = {}
+                        if result.predicted_values is not None:
+                            metrics["predicted_value_mean"] = (
+                                result.predicted_values.detach().mean().item()
+                            )
+                            metrics["predicted_value_std"] = (
+                                result.predicted_values.detach().std().item()
+                            )
+                        if result.cat_acc_best is not None:
+                            metrics["cat_acc_best"] = (
+                                result.cat_acc_best.detach().item()
+                                if isinstance(result.cat_acc_best, torch.Tensor)
+                                else result.cat_acc_best
+                            )
+                        if result.cat_acc_neighbor is not None:
+                            metrics["cat_acc_neighbor"] = (
+                                result.cat_acc_neighbor.detach().item()
+                                if isinstance(result.cat_acc_neighbor, torch.Tensor)
+                                else result.cat_acc_neighbor
+                            )
+                        if result.mae is not None:
+                            metrics["mae"] = (
+                                result.mae.detach().item()
+                                if isinstance(result.mae, torch.Tensor)
+                                else result.mae
+                            )
+                        if (
+                            result.predicted_values is not None
+                            and target_values is not None
+                        ):
+                            metrics.update(
+                                self._compute_value_spearman(
+                                    result.predicted_values,
+                                    target_values,
+                                )
+                            )
+                            pred_batches.append(
+                                result.predicted_values.detach()
+                                .float()
+                                .view(-1)
+                                .cpu()
+                                .numpy()
+                            )
+                            target_batches.append(
+                                target_values.detach().float().view(-1).cpu().numpy()
+                            )
+                        metrics["loss"] = loss.detach().item()
+                        if target_values is not None:
+                            metrics["target_value_mean"] = (
+                                target_values.detach().mean().item()
+                            )
+                            metrics["target_value_std"] = (
+                                target_values.detach().std().item()
+                            )
+                        batch_metrics.append(metrics)
+
+                    if batch_metrics:
+                        agg: dict[str, list[float]] = {}
+                        for m in batch_metrics:
+                            for k, v in m.items():
+                                agg.setdefault(k, []).append(v)
+                        all_dataset_metrics[ds_name] = {
+                            k: sum(v) / len(v) for k, v in agg.items()
+                        }
+                        if pred_batches and target_batches:
+                            gathered_pred = self._gather_eval_array(
+                                np.concatenate(pred_batches, axis=0)
+                            )
+                            gathered_target = self._gather_eval_array(
+                                np.concatenate(target_batches, axis=0)
+                            )
+                            if (
+                                gathered_pred is not None
+                                and gathered_target is not None
+                            ):
+                                all_dataset_metrics[ds_name].update(
+                                    self._compute_value_spearman_from_arrays(
+                                        gathered_pred,
+                                        gathered_target,
+                                    )
+                                )
+
+            if not all_dataset_metrics:
+                return {}
+
+            final_metrics: dict[str, float] = {}
+
+            for ds_name, ds_metrics in all_dataset_metrics.items():
+                for k, v in ds_metrics.items():
+                    final_metrics[f"{ds_name}/{k}"] = v
+
+            all_keys: set[str] = set()
+            for ds_metrics in all_dataset_metrics.values():
+                all_keys.update(ds_metrics.keys())
+            for k in sorted(all_keys):
+                vals = [m[k] for m in all_dataset_metrics.values() if k in m]
+                if vals:
+                    final_metrics[k] = sum(vals) / len(vals)
+
+            final_metrics = all_reduce_dict(
+                final_metrics, op=torch.distributed.ReduceOp.AVG
+            )
+
+            if self.cfg.actor.get("enable_offload", False):
+                with self.device_lock:
+                    self.offload_param_and_grad()
+
+            return final_metrics
+
+    def _prepare_input(self, batch: dict):
+        """Move batch to device and return (observation, target_values, extra)."""
+
+        def _to_device(x):
+            if isinstance(x, torch.Tensor):
+                return x.to(self.device)
+            elif isinstance(x, dict):
+                return {k: _to_device(v) for k, v in x.items()}
+            return x
+
+        observation = _to_device(batch["observation"])
+        target_values = _to_device(batch.get("target_values"))
+
+        extra = {}
+        for key in (
+            "next_images",
+            "next_states",
+            "reward_sum",
+            "num_valid_rewards",
+            "dones",
+        ):
+            val = batch.get(key)
+            if val is not None:
+                extra[key] = _to_device(val)
+
+        return observation, target_values, extra
+
+    def set_global_step(self, step: int):
+        self.global_step = step
+
+        loader_len = len(self.data_loader)
+        if loader_len == 0:
+            return
+
+        grad_accum = (
+            self.cfg.actor.global_batch_size
+            // self.cfg.actor.micro_batch_size
+            // self._world_size
+        )
+        steps_per_epoch = max(1, loader_len // grad_accum)
+        new_epoch = step // steps_per_epoch
+
+        current_epoch = getattr(self, "_current_epoch", -1)
+        if current_epoch != new_epoch:
+            self._current_epoch = new_epoch
+            self.data_loader.set_epoch(new_epoch)
+            self.data_iter = iter(self.data_loader)
+
+
+__all__ = ["FSDPValueSftWorker"]

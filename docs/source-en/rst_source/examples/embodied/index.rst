@@ -327,6 +327,17 @@ as well as reinforcement learning training examples on real robots.
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/recap.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="recap.html" style="text-decoration: underline; color: blue;">
+           <b>RECAP: Offline Advantage-Based Policy Optimization</b>
+         </a><br>
+         Offline policy optimization via advantage-guided classifier-free guidance
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -439,6 +450,7 @@ as well as reinforcement learning training examples on real robots.
    nft_openpi
    dsrl
    dagger
+   recap
    co_training
    franka
    franka_reward_model
