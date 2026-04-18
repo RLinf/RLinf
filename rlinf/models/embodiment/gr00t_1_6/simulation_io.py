@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -69,17 +69,17 @@ def convert_maniskill_obs_to_gr00t_1_6_format(env_obs):
     groot_obs["annotation.human.action.task_description"] = env_obs["task_descriptions"]
     return groot_obs
 
+
 def convert_to_libero_action(
     action_chunk: dict[str, np.array], chunk_size: int = 1
 ) -> np.ndarray:
-    
     try:
-        pos = action_chunk["end_effector_position"][:, :chunk_size] # (B, chunk, 3)
-        rot = action_chunk["end_effector_rotation"][:, :chunk_size] # (B, chunk, 3)
-        gripper = action_chunk["gripper_close"][:, :chunk_size]     # (B, chunk, 1)
-        
+        pos = action_chunk["end_effector_position"][:, :chunk_size]  # (B, chunk, 3)
+        rot = action_chunk["end_effector_rotation"][:, :chunk_size]  # (B, chunk, 3)
+        gripper = action_chunk["gripper_close"][:, :chunk_size]  # (B, chunk, 1)
+
         action_array = np.concatenate([pos, rot, gripper], axis=-1)
-        
+
     except KeyError:
         if "rel_arm_action" in action_chunk:
             arm = action_chunk["rel_arm_action"][:, :chunk_size]
@@ -89,7 +89,7 @@ def convert_to_libero_action(
             raise KeyError(f"can not find Action Keys: {list(action_chunk.keys())}")
 
     action_array = normalize_gripper_action(action_array, binarize=True)
-    
+
     return action_array
 
 

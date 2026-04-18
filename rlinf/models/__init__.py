@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -100,7 +100,7 @@ def _register_builtin_models():
         from rlinf.models.embodiment.dreamzero import get_model
 
         return get_model(cfg, torch_dtype)
-      
+
     def _build_gr00t_1_6(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.gr00t_1_6 import get_model
 

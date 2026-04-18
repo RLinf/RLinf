@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -1418,10 +1418,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         )
                         kwargs["top_k"] = self.cfg.algorithm.sampling_params.top_k
                     elif SupportedModel(self.cfg.actor.model.model_type) in [
-                            SupportedModel.GR00T,
-                            SupportedModel.GR00T_1_6,
-                        ]:
-                            kwargs["prev_logprobs"] = prev_logprobs
+                        SupportedModel.GR00T,
+                        SupportedModel.GR00T_1_6,
+                    ]:
+                        kwargs["prev_logprobs"] = prev_logprobs
 
                     compute_values = (
                         True if self.cfg.algorithm.adv_type == "gae" else False
