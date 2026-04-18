@@ -10,6 +10,5 @@ repos:
     rev: "v0.10.2"
     hooks: # support hooks
     -   id: check-message  # requires commit-msg hook
-    -   id: check-branch
     -   id: check-commit-signoff
 

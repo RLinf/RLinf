@@ -89,10 +89,6 @@ Episode 数据采集
      - ``bool``
      - ``False``
      - 仅保存成功的 episode
-   * - ``stats_sample_ratio``
-     - ``float``
-     - ``0.1``
-     - LeRobot 增量统计的图像采样比例（仅 lerobot 格式有效）
    * - ``finalize_interval``
      - ``int``
      - ``100``
@@ -129,17 +125,17 @@ Episode 数据采集
 
 .. code-block:: yaml
 
-   env:
-     group_name: "EnvGroup"
-     enable_offload: False
-
-     data_collection:
-       enabled: True
-       save_dir: ${runner.logger.log_path}/collected_data
-       export_format: "lerobot"      # 或 "pickle"
-       only_success: True
-       robot_type: "panda"
-       fps: 10
+  env:
+    group_name: "EnvGroup"
+    enable_offload: False
+    eval:
+      data_collection:
+        enabled: True
+        save_dir: ${runner.logger.log_path}/collected_data
+        export_format: "lerobot"      # 或 "pickle"
+        only_success: True
+        robot_type: "panda"
+        fps: 10
 
 然后正常启动训练脚本，数据会在训练过程中自动采集：
 
@@ -372,7 +368,7 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 
 ``examples/embodiment/collect_real_data.py`` 现在支持在同一次真机采集中，
 同时写出 replay buffer 和 ``CollectEpisode`` 导出的 episode 数据。只要启用
-``env.data_collection.enabled=True``，成功轨迹就会同时保存到：
+``env.eval.data_collection.enabled=True``，成功轨迹就会同时保存到：
 
 - ``logs/{timestamp}/demos/``：``TrajectoryReplayBuffer`` 轨迹，用于 RLPD
 - ``logs/{timestamp}/collected_data/``：``pickle`` 或 LeRobot 格式的 episode 数据
@@ -382,13 +378,14 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 .. code-block:: yaml
 
    env:
-     data_collection:
-       enabled: True
-       save_dir: ${runner.logger.log_path}/collected_data
-       export_format: "lerobot"
-       only_success: True
-       robot_type: "panda"
-       fps: 10
+     eval:
+       data_collection:
+        enabled: True
+        save_dir: ${runner.logger.log_path}/collected_data
+        export_format: "lerobot"
+        only_success: True
+        robot_type: "panda"
+        fps: 10
 
 使用步骤
 ~~~~~~~~
@@ -448,8 +445,6 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 **Episode 采集（CollectEpisode）**
 
 - 图像数据体积大，若磁盘有限，可配合 ``only_success=True`` 过滤失败 episode。
-- 使用 LeRobot 格式时，``stats_sample_ratio`` 控制用于计算统计量的图像比例，
-  降低该值可减少内存占用，但统计精度略降。
 - 分布式训练时，每个 Worker 设置不同 ``rank``，避免文件名冲突。
 
 **真机 Replay Buffer 采集**
@@ -485,12 +480,12 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 
 **LeRobot 数据集**
 
-使用 ``toolkits/replay_buffer/visualize_lerobot_dataset.py`` 将 LeRobot 数据集
+使用 ``toolkits/lerobot/visualize_lerobot_dataset.py`` 将 LeRobot 数据集
 展开为按 episode 分目录的 ``.jpg`` 图像和 ``.txt`` step 元数据：
 
 .. code-block:: bash
 
-   python toolkits/replay_buffer/visualize_lerobot_dataset.py \
+   python toolkits/lerobot/visualize_lerobot_dataset.py \
        --dataset-path logs/{timestamp}/collected_data \
        --output-dir logs/{timestamp}/collected_data_visualized
 
