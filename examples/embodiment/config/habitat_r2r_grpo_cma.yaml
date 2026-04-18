@@ -92,6 +92,7 @@ env:
     max_steps_per_rollout_epoch: 120
     max_episode_steps: 120 # max episode steps for truncation
     group_size: 4
+    reward_coef: ${algorithm.reward_coef}
     model_type: ${actor.model.model_type}
     split: train
     data_path: ${env.data_path_dir}/${env.train.split}/${env.train.split}.json.gz
@@ -111,6 +112,7 @@ env:
     group_size: 1
     auto_reset: True
     ignore_terminations: True
+    reward_coef: ${algorithm.reward_coef}
     model_type: ${actor.model.model_type}
     split: val_unseen
     data_path: ${env.data_path_dir}/${env.eval.split}/${env.eval.split}.json.gz
