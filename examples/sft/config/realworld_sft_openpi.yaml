@@ -23,13 +23,13 @@ runner:
     experiment_name: "realworld_sft_openpi"
     logger_backends: ["tensorboard"]
 
-  max_epochs: 30000
+  max_epochs: 2000
   max_steps: -1
   val_check_interval: -1
-  save_interval: 2000
+  save_interval: 100
 
 data:
-  train_data_paths: "/path/to/realworld-franka-bin-relocation-dataset"
+  train_data_paths: "/path/to/realworld-franka-bin-relocation-dataset" # path to lerobot data
 
 algorithm:
   adv_type: gae
