@@ -26,7 +26,7 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
 - pi0_maniskill
 - pi0_libero
 - pi0_aloha_robotwin
-- pi0_franka_dagger
+- pi0_realworld
 - pi05_libero
 - pi05_maniskill
 - pi05_metaworld
@@ -89,8 +89,8 @@ RLinf 提供了 ``toolkits/lerobot/calculate_norm_stats.py``，用于为
 
    export HF_LEROBOT_HOME=/path/to/lerobot_root
    python toolkits/lerobot/calculate_norm_stats.py \
-       --config-name pi0_franka_dagger \
-       --repo-id franka_dagger
+       --config-name pi0_realworld \
+       --repo-id realworld_franka_bin_relocation
 
 注意事项：
 
@@ -114,7 +114,7 @@ OpenPI 加载器会在运行时从 ``<model_path>/<repo_id>`` 读取归一化统
 完整示例配置位于：
 
 - ``examples/sft/config/libero_sft_openpi.yaml``
-- ``examples/sft/config/franka_dagger_sft_openpi.yaml``
+- ``examples/sft/config/realworld_sft_openpi.yaml``
 
 通用的 OpenPI SFT 配置示例如下：
 

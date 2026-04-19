@@ -26,7 +26,7 @@ Supported formats include:
 - pi0_maniskill
 - pi0_libero
 - pi0_aloha_robotwin
-- pi0_franka_dagger
+- pi0_realworld
 - pi05_libero
 - pi05_maniskill
 - pi05_metaworld
@@ -89,8 +89,8 @@ RLinf provides ``toolkits/lerobot/calculate_norm_stats.py`` to calculate norm_st
 
    export HF_LEROBOT_HOME=/path/to/lerobot_root
    python toolkits/lerobot/calculate_norm_stats.py \
-       --config-name pi0_franka_dagger \
-       --repo-id franka_dagger
+       --config-name pi0_realworld \
+       --repo-id realworld_franka_bin_relocation
 
 Notes:
 
@@ -111,7 +111,7 @@ Training configuration
 Full examples live in:
 
 - ``examples/sft/config/libero_sft_openpi.yaml``
-- ``examples/sft/config/franka_dagger_sft_openpi.yaml``
+- ``examples/sft/config/realworld_sft_openpi.yaml``
 
 A generic OpenPI SFT example looks like this:
 
