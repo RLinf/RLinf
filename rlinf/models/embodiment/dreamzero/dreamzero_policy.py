@@ -73,6 +73,12 @@ class DreamZeroConfig(VLAConfig):
 class DreamZeroPolicy(VLA, BasePolicy):
     """Lightweight DreamZero action model: IdentityBackbone + WANPolicyHead."""
 
+    _no_split_modules = [
+        "T5SelfAttention",  # text encoder
+        "AttentionBlock",  # image encoder
+        "CausalWanAttentionBlock",  # action head
+    ]
+
     def __init__(
         self,
         config: DreamZeroConfig,
@@ -296,8 +302,20 @@ class DreamZeroPolicy(VLA, BasePolicy):
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
         if forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
+        elif forward_type == ForwardType.SFT:
+            return self.sft_forward(**kwargs)
         else:
             raise NotImplementedError
+
+    def sft_forward(self, data=None, **kwargs):
+        if data is None:
+            data = kwargs.get("data")
+        if data is None:
+            raise ValueError("sft_forward requires `data` from the SFT dataloader.")
+        outputs = super().forward(data)
+        if "loss" not in outputs:
+            raise ValueError("sft_forward requires `loss` in the outputs.")
+        return outputs
 
     def default_forward(
         self,

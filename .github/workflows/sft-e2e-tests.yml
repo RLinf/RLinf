@@ -33,6 +33,43 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  recap-sft-cfg-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create RECAP test environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          bash requirements/install.sh embodied --model openpi --env maniskill_libero
+
+      - name: RECAP value model SFT test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/sft/run_value_sft.sh libero_sft_value
+
+      - name: RECAP CFG OpenPI 0.5 test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/sft/run_cfg_sft.sh recap_cfg_openpi
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   sft-robo2vlm-test:
     runs-on: reason
     steps:

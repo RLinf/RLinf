@@ -439,10 +439,20 @@ def _override_with_data_kwargs(config: TrainConfig, data_kwargs: dict) -> TrainC
 def get_openpi_config(
     config_name: str,
     model_path: Optional[str] = None,
-    data_kwargs: Optional[dict] = None,
     batch_size: Optional[int] = None,
+    repo_id: Optional[str] = None,
+    data_kwargs: Optional[dict] = None,
 ) -> TrainConfig:
-    """Get a config by name."""
+    """Get a config by name.
+
+    Args:
+        config_name: Name of the config to load.
+        model_path: Optional path to override model weights and assets.
+        batch_size: Optional batch size override.
+        repo_id: Optional LeRobot repo_id or local data path to override.
+            When using a local path, the original asset_id is preserved so
+            that norm_stats can still be loaded from the model checkpoint.
+    """
     if config_name not in _CONFIGS_DICT:
         closest = difflib.get_close_matches(
             config_name, _CONFIGS_DICT.keys(), n=1, cutoff=0.0
@@ -457,5 +467,11 @@ def get_openpi_config(
         config = _override_with_data_kwargs(config, data_kwargs)
     if batch_size is not None:
         config = dataclasses.replace(config, batch_size=batch_size)
+
+    if repo_id is not None:
+        original_repo_id = config.data.repo_id
+        new_assets = dataclasses.replace(config.data.assets, asset_id=original_repo_id)
+        new_data = dataclasses.replace(config.data, repo_id=repo_id, assets=new_assets)
+        config = dataclasses.replace(config, data=new_data)
 
     return config

@@ -47,10 +47,10 @@ env:
       target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]   # Replace with your task pose
       success_hold_steps: 1
 
-  data_collection:
-    enabled: True
-    save_dir: ${runner.logger.log_path}/collected_data
-    export_format: "lerobot"      # or "pickle"
-    only_success: True
-    robot_type: "panda"
-    fps: 10
+    data_collection:
+      enabled: True
+      save_dir: ${runner.logger.log_path}/collected_data
+      export_format: "lerobot"      # or "pickle"
+      only_success: True
+      robot_type: "panda"
+      fps: 10

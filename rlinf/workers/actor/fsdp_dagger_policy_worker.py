@@ -18,7 +18,7 @@ import numpy as np
 import torch
 from omegaconf import DictConfig
 
-from rlinf.config import SupportedModel, get_supported_model
+from rlinf.config import SupportedModel
 from rlinf.data.embodied_io_struct import Trajectory
 from rlinf.data.replay_buffer import TrajectoryReplayBuffer
 from rlinf.models.embodiment.base_policy import ForwardType
@@ -100,10 +100,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         if not isinstance(loss, torch.Tensor):
             loss = torch.as_tensor(loss, device=self.device)
 
-        if (
-            get_supported_model(self.cfg.actor.model.model_type)
-            == SupportedModel.OPENPI
-        ):
+        if SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.OPENPI:
             action_chunk = self.model.config.action_chunk
             action_dim = self.model.config.action_env_dim
             loss = loss[:, :action_chunk, :action_dim]
