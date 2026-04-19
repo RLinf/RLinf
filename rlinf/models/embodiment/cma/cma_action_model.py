@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
 import os
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -713,10 +712,8 @@ class CMAPolicy(nn.Module, BasePolicy):
         if schedule_type == "linear":
             progress = step_after_warmup / decay_steps
         elif schedule_type == "log":
-            log_denominator = math.log(decay_steps + 1)
-            progress = (math.log(max(step_after_warmup, 1)) / log_denominator) ** float(
-                self.cfg.gt_prefix_schedule_alpha
-            )
+            normalized_step = step_after_warmup / decay_steps
+            progress = normalized_step ** float(self.cfg.gt_prefix_schedule_alpha)
         else:
             raise ValueError(f"Unsupported gt_prefix_schedule_type: {schedule_type}")
 
