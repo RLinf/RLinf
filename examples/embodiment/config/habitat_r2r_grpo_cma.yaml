@@ -25,7 +25,7 @@ runner:
     experiment_name: "habitat_r2r_grpo_cma"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 1000
+  max_epochs: 500
   max_steps: -1
 
   only_eval: False
@@ -36,12 +36,13 @@ runner:
   resume_dir: null
 
 algorithm:
+  update_epoch: 2
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   
-  rollout_epoch: 4 # number of rollout epochs per rollout step
+  rollout_epoch: 2 # number of rollout epochs per rollout step
   eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
-  group_size: 8  # number of groups per rollout step
+  group_size: 16  # number of groups per rollout step
   
   reward_type: action_level  # action_level or chunk_level
   logprob_type: token_level
@@ -61,15 +62,15 @@ algorithm:
   gamma: 0.99
   gae_lambda: 0.95
 
-  reward_coef: 5.0
+  reward_coef: 10.0
   filter_rewards: True
-  rewards_lower_bound: 0.5
-  rewards_upper_bound: 4.5
+  rewards_lower_bound: 1.0
+  rewards_upper_bound: 9.0
 
   sampling_params:
     do_sample: True
-    temperature_train: 1.6
-    temperature_eval: 1.6
+    temperature_train: 1.0
+    temperature_eval: 0.2
     top_k: -1
     top_p: 1.0
     repetition_penalty: 1.0
@@ -84,14 +85,14 @@ algorithm:
 env:
   group_name: "EnvGroup"
   enable_offload: False
-  data_path_dir: ""
-  scenes_dir: ""
+  data_path_dir: "VLN-CE/datasets/r2r"
+  scenes_dir: "VLN-CE/scene_dataset"
   # Override the default values in env/habitat_r2r
   train:
     total_num_envs: 256  # 256 8H20
     max_steps_per_rollout_epoch: 120
     max_episode_steps: 120 # max episode steps for truncation
-    group_size: 4
+    group_size: 16
     reward_coef: ${algorithm.reward_coef}
     model_type: ${actor.model.model_type}
     split: train
@@ -100,7 +101,8 @@ env:
     scenes_dir: ${env.scenes_dir}
     video_cfg:
       fps: 5
-      save_video: False
+      save_video: False # Save video will dramasticlly slow down the training
+      async_save: False # Habitat needs False for sync save
       video_base_dir: ${runner.logger.log_path}/video/train
     metrics_cfg:
       save_metrics: True
@@ -120,7 +122,8 @@ env:
     scenes_dir: ${env.scenes_dir}
     video_cfg:
       fps: 5
-      save_video: False
+      save_video: False # Save video will dramasticlly slow down the evaluation
+      async_save: False # Habitat needs False for sync save
       video_base_dir: ${runner.logger.log_path}/video/eval
     metrics_cfg:
       save_metrics: True
@@ -133,11 +136,11 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: ""
+    model_path: "VLN-CE/models/cma_weights/ckpt/best_ckpt_r2r.pth"
     instruction_encoder_config:
-      embedding_file: ""
+      embedding_file: "VLN-CE/models/cma_weights/instruction_encoder_embedding/embeddings.json.gz"
     depth_encoder_config:
-      ddppo_checkpoint: ""
+      ddppo_checkpoint: "VLN-CE/models/cma_weights/ddppo-models/gibson-2plus-resnet50.pth"
     precision: ${actor.model.precision}
 
 actor:
@@ -158,9 +161,9 @@ actor:
     gt_prefix_warmup_steps_ratio: 0.2
     gt_prefix_length_ratio: 0.8
     instruction_encoder_config:
-      embedding_file: ""
+      embedding_file: "VLN-CE/models/cma_weights/instruction_encoder_embedding/embeddings.json.gz"
     depth_encoder_config:
-      ddppo_checkpoint: ""
+      ddppo_checkpoint: "VLN-CE/models/cma_weights/ddppo-models/gibson-2plus-resnet50.pth"
 
   optim:
     lr: 1.0e-5
