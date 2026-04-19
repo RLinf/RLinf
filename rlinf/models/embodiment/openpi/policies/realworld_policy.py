@@ -20,8 +20,8 @@ from openpi import transforms
 from openpi.models import model as _model
 
 
-def make_franka_dagger_example() -> dict:
-    """Creates a random input example for the Franka dagger policy."""
+def make_realworld_example() -> dict:
+    """Creates a random input example for the realworld policy."""
     return {
         "observation/image": np.random.randint(256, size=(128, 128, 3), dtype=np.uint8),
         "observation/extra_view_image": np.random.randint(
@@ -43,7 +43,7 @@ def _parse_image(image) -> np.ndarray:
 
 
 @dataclasses.dataclass(frozen=True)
-class FrankaDaggerOutputs(transforms.DataTransformFn):
+class RealworldOutputs(transforms.DataTransformFn):
     """Converts model outputs back to the dataset action format."""
 
     def __call__(self, data: dict) -> dict:
@@ -51,8 +51,8 @@ class FrankaDaggerOutputs(transforms.DataTransformFn):
 
 
 @dataclasses.dataclass(frozen=True)
-class FrankaDaggerInputs(transforms.DataTransformFn):
-    """Converts Franka dagger dataset samples to OpenPI inputs."""
+class RealworldInputs(transforms.DataTransformFn):
+    """Converts realworld dataset samples to OpenPI inputs."""
 
     action_dim: int
     model_type: _model.ModelType = _model.ModelType.PI0
