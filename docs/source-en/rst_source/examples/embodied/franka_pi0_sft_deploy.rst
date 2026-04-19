@@ -158,6 +158,10 @@ dataset format, defined in:
 1. ``rlinf/models/embodiment/openpi/__init__.py``
 2. ``rlinf/models/embodiment/openpi/dataconfig/realworld_dataconfig.py``
 
+To unify the policy call interface between real-world and simulated
+environments, RLinf provides
+3. ``rlinf/models/embodiment/openpi/policies/realworld_policy.py``.
+
 Compute Normalization Statistics
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -245,12 +249,6 @@ See :doc:`sft_openpi` for more details on OpenPI datasets and SFT training.
 
 Step 5: Real-World Deployment
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-To unify the policy call interface between real-world and simulated
-environments, RLinf provides
-``rlinf/models/embodiment/openpi/policies/realworld_policy.py``,
-which defines the real-world policy interface and implements an interface
-consistent with simulated environments.
 
 Modify ``examples/embodiment/config/realworld_pnp_sft_openpi_deploy.yaml``
 to match your cluster, camera, and target pose:

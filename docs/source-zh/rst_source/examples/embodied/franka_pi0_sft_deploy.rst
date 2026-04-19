@@ -142,6 +142,9 @@ Franka真机Pi0监督微调与部署全流程
 1. ``rlinf/models/embodiment/openpi/__init__.py``
 2. ``rlinf/models/embodiment/openpi/dataconfig/realworld_dataconfig.py``
 
+为了统一真机和各仿真环境对策略的调用接口，创建 
+3. ``rlinf/models/embodiment/openpi/policies/realworld_policy.py``。
+
 计算归一化统计
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -226,10 +229,6 @@ SFT 导出的 checkpoint 会在后续章节中部署使用。
 
 第五步：真机部署
 ----------------------
-
-为了统一真机和各仿真环境对策略的调用接口，
-创建了 ``rlinf/models/embodiment/openpi/policies/realworld_policy.py``，
-该文件定义了真机策略的接口，并实现了与仿真环境一致的接口。
 
 修改 ``examples/embodiment/config/realworld_pnp_sft_openpi_deploy.yaml``，
 使其与你的集群、相机、目标位姿一致：
