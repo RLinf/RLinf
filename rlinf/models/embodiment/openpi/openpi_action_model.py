@@ -492,12 +492,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             processed_obs["observation/wrist_image"] = env_obs["wrist_images"]
         # extra view image observation
         if env_obs["extra_view_images"] is not None:
-            extra = env_obs.get("extra_view_images")
-            # extra_view_images: [N_ENV, N_IMG, H, W, C] -> take first view [N, H, W, C]
-            if extra.dim() == 5:
-                processed_obs["observation/extra_view_image"] = extra[:, 0]
-            else:
-                processed_obs["observation/extra_view_image"] = extra
+            processed_obs["observation/extra_view_image"] = env_obs["extra_view_images"]
         # store used keys
         return processed_obs
 

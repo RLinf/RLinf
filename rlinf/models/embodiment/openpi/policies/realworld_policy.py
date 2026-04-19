@@ -40,6 +40,26 @@ def _parse_image(image) -> np.ndarray:
     return image
 
 
+def _parse_wrist_images(images):
+    """Parse wrist/extra_view images that may have shape [N_IMG, H, W, C] or [H, W, C].
+
+    - [H, W, C]: left_wrist = image, right_wrist = zeros.
+    - [1, H, W, C]: left_wrist = image[0], right_wrist = zeros.
+    - [2, H, W, C]: left_wrist = image[0], right_wrist = image[1].
+    """
+    images = np.asarray(images)
+    if images.ndim == 4 and images.shape[0] >= 1:
+        first = _parse_image(images[0])
+        if images.shape[0] == 2:
+            second = _parse_image(images[1])
+        else:
+            second = np.zeros_like(first)
+        return first, second
+    else:
+        img = _parse_image(images) if images.ndim == 3 else _parse_image(images[0])
+        return img, np.zeros_like(img)
+
+
 @dataclasses.dataclass(frozen=True)
 class RealworldInputs(transforms.DataTransformFn):
     """Converts inputs to the format expected by the model for real-world Franka.
@@ -53,7 +73,9 @@ class RealworldInputs(transforms.DataTransformFn):
 
     def __call__(self, data: dict) -> dict:
         base_image = _parse_image(data["observation/image"])
-        wrist_image = _parse_image(data["observation/extra_view_image"])
+        left_wrist_image, right_wrist_image = _parse_wrist_images(
+            data["observation/extra_view_image"]
+        )
 
         # Realworld env concatenates state dict alphabetically (19-dim):
         # gripper_position (1), tcp_force (3), tcp_pose (6), tcp_torque (3), tcp_vel (6).
@@ -73,8 +95,8 @@ class RealworldInputs(transforms.DataTransformFn):
             "state": states,
             "image": {
                 "base_0_rgb": base_image,
-                "left_wrist_0_rgb": wrist_image,
-                "right_wrist_0_rgb": np.zeros_like(base_image),
+                "left_wrist_0_rgb": left_wrist_image,
+                "right_wrist_0_rgb": right_wrist_image,
             },
             "image_mask": {
                 "base_0_rgb": np.True_,
