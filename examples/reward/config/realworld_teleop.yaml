@@ -26,7 +26,7 @@ cluster:
       hardware:
         type: Franka
         configs:
-          - robot_ip: 172.16.0.2
+          - robot_ip: ROBOT_IP
             node_rank: 1
 
 runner:
@@ -46,8 +46,8 @@ env:
     use_spacemouse: True
     max_episode_steps: 10000
     override_cfg:
-      target_ee_pose: [ 0.5736798,   0.18078293,  0.0747996,  -3.13894918, -0.01111204, -0.03900672]
-      camera_serials: ["233622071437"]
+      target_ee_pose: TARGET_EE_POSE
+      camera_serials: ["0123456789"]
 
 reward:
   use_reward_model: True
@@ -59,7 +59,7 @@ reward:
   reward_weight: 1.0
   env_reward_weight: 0.0
   model:
-    model_path: /home/liuyiwei/projects/RLinf/logs/20260419-20:30:57-reward_training/reward_training/checkpoints/global_step_350/actor/model_state_dict/full_weights.pt
+    model_path: path/to/model
     model_type: "resnet"
     pretrained: False
     arch: "resnet18"

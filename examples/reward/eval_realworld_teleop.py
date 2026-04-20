@@ -56,9 +56,10 @@ def build_reward_injection(cfg, component_placement) -> RewardInjectionCfg:
     """Build the configuration needed to launch the reward worker alongside TeleopWorker."""
     injection = RewardInjectionCfg()
 
-    if not (cfg.reward.get("use_reward_model", False) and cfg.reward.get(
-        "standalone_realworld", False
-    )):
+    if not (
+        cfg.reward.get("use_reward_model", False)
+        and cfg.reward.get("standalone_realworld", False)
+    ):
         return injection
 
     injection.use_reward_model = True
@@ -189,9 +190,9 @@ class TeleopWorker(Worker):
                     )
                     if image_np.ndim == 3:
                         image_np = np.expand_dims(image_np, axis=0)
-                    result = self._reward_worker.compute_image_rewards(
-                        image_np
-                    ).wait()[0]
+                    result = self._reward_worker.compute_image_rewards(image_np).wait()[
+                        0
+                    ]
                     if hasattr(result, "numpy"):
                         result = result.numpy()
                     rm_reward = int(np.asarray(result).reshape(-1)[0])
