@@ -276,7 +276,9 @@ class FrameCollector(Worker):
 
         logger.info("=" * 60)
         logger.info("Reward dataset preprocessing complete")
-        logger.info(f"Train split: {train_path} ({metadata['num_train_samples']} samples)")
+        logger.info(
+            f"Train split: {train_path} ({metadata['num_train_samples']} samples)"
+        )
         logger.info(f"Val split:   {val_path} ({metadata['num_val_samples']} samples)")
         logger.info("Metadata:")
         logger.info(json.dumps(metadata, indent=2))
