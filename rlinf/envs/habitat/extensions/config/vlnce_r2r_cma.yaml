@@ -14,11 +14,11 @@ defaults:
   - _self_
 
 habitat:
-  seed: 12
+  seed: 1234
   environment:
-    max_episode_steps: 500
+    max_episode_steps: 512
     iterator_options:
-      max_scene_repeat_steps: 50000
+      max_scene_repeat_steps: -1
       shuffle: True
   simulator:
     agents:

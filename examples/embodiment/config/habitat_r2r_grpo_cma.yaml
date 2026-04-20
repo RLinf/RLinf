@@ -15,7 +15,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: 0-7
+    actor,env,rollout: all
 
 runner:
   task_type: embodied
@@ -63,7 +63,7 @@ algorithm:
   gae_lambda: 0.95
 
   reward_coef: 10.0
-  filter_rewards: True
+  filter_rewards: False
   rewards_lower_bound: 1.0
   rewards_upper_bound: 9.0
 
@@ -89,10 +89,10 @@ env:
   scenes_dir: "VLN-CE/scene_dataset"
   # Override the default values in env/habitat_r2r
   train:
-    total_num_envs: 256  # 256 8H20
-    max_steps_per_rollout_epoch: 120
+    total_num_envs: 128
     max_episode_steps: 120 # max episode steps for truncation
-    group_size: 16
+    max_steps_per_rollout_epoch: 120
+    group_size: ${algorithm.group_size}
     reward_coef: ${algorithm.reward_coef}
     model_type: ${actor.model.model_type}
     split: train
@@ -108,9 +108,9 @@ env:
       save_metrics: True
       metrics_base_dir: ${runner.logger.log_path}/metrics/train
   eval:
-    total_num_envs: 608 # 608 8H20
-    max_episode_steps: 120
-    max_steps_per_rollout_epoch: 360
+    total_num_envs: 228
+    max_episode_steps: 120 # max episode steps for truncation
+    max_steps_per_rollout_epoch: 960
     group_size: 1
     auto_reset: True
     ignore_terminations: True
@@ -146,8 +146,8 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 128
-  global_batch_size: 1024
+  micro_batch_size: 120
+  global_batch_size: 3840
   seed: 1234
   enable_offload: True
 
@@ -155,10 +155,10 @@ actor:
   # All other CMA configs are inherited from model/cma.yaml
   model:
     model_path: "VLN-CE/models/cma_weights/ckpt/best_ckpt_r2r.pth"
-    use_gt_prefix: True
+    use_gt_prefix: False
     gt_prefix_schedule_type: "log"
     gt_prefix_schedule_alpha: 1.0
-    gt_prefix_warmup_steps_ratio: 0.2
+    gt_prefix_warmup_steps_ratio: 0.0
     gt_prefix_length_ratio: 0.8
     instruction_encoder_config:
       embedding_file: "VLN-CE/models/cma_weights/instruction_encoder_embedding/embeddings.json.gz"
@@ -166,11 +166,11 @@ actor:
       ddppo_checkpoint: "VLN-CE/models/cma_weights/ddppo-models/gibson-2plus-resnet50.pth"
 
   optim:
-    lr: 1.0e-5
+    lr: 1.0e-6
     value_lr: 3.0e-3
     adam_beta1: 0.9
     adam_beta2: 0.999
-    adam_eps: 1.0e-05
+    adam_eps: 1.0e-08
     weight_decay: 0.01
     clip_grad: 1.0
 
