@@ -36,13 +36,13 @@ runner:
   resume_dir: null
 
 algorithm:
-  update_epoch: 2
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   
-  rollout_epoch: 2 # number of rollout epochs per rollout step
+  update_epoch: 1 # number of epochs to update the actor and critic models
+  rollout_epoch: 1 # number of rollout epochs per rollout step
   eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
-  group_size: 16  # number of groups per rollout step
+  group_size: 8  # number of groups per rollout step
   
   reward_type: action_level  # action_level or chunk_level
   logprob_type: token_level
@@ -92,6 +92,7 @@ env:
     total_num_envs: 128
     max_episode_steps: 120 # max episode steps for truncation
     max_steps_per_rollout_epoch: 120
+    sample_num_scenes: 20
     group_size: ${algorithm.group_size}
     reward_coef: ${algorithm.reward_coef}
     model_type: ${actor.model.model_type}

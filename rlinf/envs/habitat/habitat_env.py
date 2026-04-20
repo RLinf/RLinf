@@ -16,6 +16,7 @@ import copy
 import gzip
 import json
 import os
+import logging
 from typing import Optional, Union
 
 import cv2
@@ -37,6 +38,8 @@ from rlinf.envs.utils import (
 )
 
 measures.pass_format_check()
+
+logger = logging.getLogger(__name__)
 
 
 @registry.register_task_action
@@ -563,6 +566,12 @@ class HabitatEnv(gym.Env):
             config=habitat_config.habitat.dataset,
         )
 
+        self._sample_habitat_dataset_scenes(
+            habitat_dataset,
+            getattr(self.cfg, "sample_num_scenes", None),
+            self.seed,
+        )
+
         episode_ids = self._build_ordered_episodes(habitat_dataset)
 
         num_episodes = len(episode_ids)
@@ -597,6 +606,34 @@ class HabitatEnv(gym.Env):
             )
 
         return env_fn_params
+
+    def _sample_habitat_dataset_scenes(
+        self,
+        habitat_dataset,
+        sample_num_scenes: Optional[int],
+        seed: int,
+    ) -> None:
+        """Subsample episodes to those belonging to a random subset of scenes."""
+        if sample_num_scenes is None:
+            return
+        scene_ids = list(
+            dict.fromkeys(ep.scene_id for ep in habitat_dataset.episodes)
+        )
+        if sample_num_scenes > len(scene_ids):
+            raise ValueError(
+                f"sample_num_scenes={sample_num_scenes} exceeds available scenes={len(scene_ids)}"
+            )
+        scene_rng = np.random.default_rng(seed)
+        sampled_scene_ids = set(
+            scene_rng.choice(scene_ids, size=sample_num_scenes, replace=False).tolist()
+        )
+        habitat_dataset.episodes = [
+            ep for ep in habitat_dataset.episodes if ep.scene_id in sampled_scene_ids
+        ]
+        logger.info(
+            f"[HabitatEnv] sampled {sample_num_scenes}/{len(scene_ids)} scenes "
+            f"with seed={seed}, kept {len(habitat_dataset.episodes)} episodes"
+        )
 
     def _build_ordered_episodes(self, dataset):
         """
