@@ -1,0 +1,20 @@
+env_type: d4rl
+task_name: null
+
+total_num_envs: null
+group_size: 1
+max_steps_per_rollout_epoch: 1000
+
+seed: 42
+auto_reset: true
+ignore_terminations: false
+use_rel_reward: false
+use_subproc_vector_env: false
+use_fixed_reset_state_ids: false
+use_ordered_reset_state_ids: false
+specific_reset_id: null
+is_eval: false
+
+video_cfg:
+  save_video: false
+  video_base_dir: ${runner.logger.log_path}/video/train

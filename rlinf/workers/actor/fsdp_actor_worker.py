@@ -241,7 +241,7 @@ class FSDPActor(FSDPModelManager, Worker):
         if not self._inference_dst_map:
             self._strategy.setup_actor_sync_inference_ranks(self)
 
-        if self.is_optimizer_offloaded:
+        if self.enable_offload and not self.is_optimizer_offloaded:
             self.offload_optimizer()
 
         if self.is_weight_offloaded:

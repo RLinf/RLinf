@@ -48,4 +48,3 @@ env:
     keyboard_reward_wrapper: single_stage
     override_cfg:
       target_ee_pose: TARGET_EE_POSE
-      success_hold_steps: 1

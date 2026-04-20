@@ -222,6 +222,7 @@ class EmbodiedRewardWorker(Worker):
         self._interact_task = None
 
         self.reward_threshold = self.cfg.reward.get("reward_threshold", 0.6)
+        self._use_reward_prob = self.cfg.reward.get("use_reward_prob", False)
 
     def model_provider_func(self):
         from rlinf.models.embodiment.reward import get_reward_model_class
@@ -341,6 +342,10 @@ class EmbodiedRewardWorker(Worker):
         with torch.no_grad():
             outputs = self.model(images)
             probs = outputs["probabilities"]
+            if self._use_reward_prob:
+                self.log_info(
+                    f"[reward_model/probs] shape={probs.shape} values={probs.cpu().tolist()}"
+                )
             rewards = (probs > self.reward_threshold).to(probs.dtype)
 
         if rewards.dim() == 1:

@@ -53,10 +53,10 @@ env:
       gripper_type: robotiq
       gripper_connection: "/dev/ttyUSB0"
 
-  data_collection:
-    enabled: True
-    save_dir: ${runner.logger.log_path}/collected_data
-    export_format: "lerobot"
-    only_success: True
-    robot_type: "panda"
-    fps: 10
+    data_collection:
+      enabled: True
+      save_dir: ${runner.logger.log_path}/collected_data
+      export_format: "lerobot"
+      only_success: True
+      robot_type: "panda"
+      fps: 10
