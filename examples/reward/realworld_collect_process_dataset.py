@@ -274,13 +274,13 @@ class FrameCollector(Worker):
             f"Val: {len(val_images)} frames ({sum(val_labels)} success)"
         )
 
-        print("=" * 80)
-        print("Reward dataset preprocessing complete")
-        print(f"Train split: {train_path} ({metadata['num_train_samples']} samples)")
-        print(f"Val split:   {val_path} ({metadata['num_val_samples']} samples)")
-        print("Metadata:")
-        print(json.dumps(metadata, indent=2))
-        print("=" * 80)
+        logger.info("=" * 60)
+        logger.info("Reward dataset preprocessing complete")
+        logger.info(f"Train split: {train_path} ({metadata['num_train_samples']} samples)")
+        logger.info(f"Val split:   {val_path} ({metadata['num_val_samples']} samples)")
+        logger.info("Metadata:")
+        logger.info(json.dumps(metadata, indent=2))
+        logger.info("=" * 60)
 
 
 @hydra.main(
