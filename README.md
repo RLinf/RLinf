@@ -173,7 +173,6 @@ Multiple Backend Integrations
             <li><a href="https://arxiv.org/abs/2506.15799">DSRL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/recap.html">RECAP (CFG)</a> ✅</li>
           </ul>
-          </ul>
           <li><b>SFT</b></li>
           <ul>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi.html">Full-parameter SFT</a> ✅</li>
@@ -216,7 +215,7 @@ Multiple Backend Integrations
         <ul style="margin-left: 0; padding-left: 16px;">
           <li>
             <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_gello.html">
-              Gello
+              GELLO
             </a> ✅
           </li>
           <li>

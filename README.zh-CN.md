@@ -169,7 +169,6 @@ RLinf具有高度灵活性，可支持多种强化学习训练工作流（PPO、
             <li><a href="https://arxiv.org/abs/2506.15799">DSRL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/recap.html">RECAP (CFG)</a> ✅</li>
           </ul>
-          </ul>
           <li><b>SFT</b></li>
           <ul>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html">Full-parameter SFT</a> ✅</li>
@@ -189,7 +188,7 @@ RLinf具有高度灵活性，可支持多种强化学习训练工作流（PPO、
   <thead align="center" valign="bottom">
     <tr>
       <th style="min-width: 120px;">机器人</th>
-      <th style="min-width: 120px;"></th>
+      <th style="min-width: 120px;">数据采集</th>
     </tr>
   </thead>
   <tbody valign="top">
@@ -212,7 +211,7 @@ RLinf具有高度灵活性，可支持多种强化学习训练工作流（PPO、
         <ul style="margin-left: 0; padding-left: 16px;">
           <li>
             <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/franka_gello.html">
-              Gello
+              GELLO
             </a> ✅
           </li>
           <li>
