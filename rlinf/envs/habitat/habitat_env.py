@@ -569,7 +569,7 @@ class HabitatEnv(gym.Env):
         self._sample_habitat_dataset_scenes(
             habitat_dataset,
             getattr(self.cfg, "sample_num_scenes", None),
-            self.seed,
+            self.cfg.seed,
         )
 
         episode_ids = self._build_ordered_episodes(habitat_dataset)
