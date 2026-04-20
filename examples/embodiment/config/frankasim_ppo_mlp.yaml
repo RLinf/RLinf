@@ -170,10 +170,12 @@ actor:
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
 
-    amp:
+    amp_autocast:  
       enabled: false
-      precision: bf16
-      use_grad_scaler: false
+      precision: "bf16"
+    
+    grad_scaler:
+      enabled: false
 
 reward:
   use_reward_model: false

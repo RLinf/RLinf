@@ -16,7 +16,7 @@ cluster:
   num_nodes: 1
   component_placement:
     actor: 0-1
-    env: 0-3
+    env: 0-1
     rollout: 0-1
 
 runner:
@@ -108,7 +108,7 @@ rollout:
   gpu_memory_utilization: 0.5
   enforce_eager: True
   enable_offload: True
-  pipeline_stage_num: 2
+  pipeline_stage_num: 1
 
   model:
     model_path: "/workspace/dataset/openvla-7b"

@@ -24,3 +24,10 @@ RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训
        </p>
      </div>
    </div>
+
+
+.. toctree::
+   :hidden:
+   :maxdepth: 2
+
+   fusco

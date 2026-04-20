@@ -115,9 +115,9 @@ Run experiments using the official Docker image:
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.1-frankasim
+      rlinf/rlinf:agentic-rlinf0.2-frankasim
       # For faster Docker pulls in mainland China (optional):
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-frankasim
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-frankasim
 
 Option 2: Custom environment
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^

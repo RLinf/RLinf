@@ -18,7 +18,7 @@ from typing import Callable, Optional
 
 import torch
 
-from rlinf.config import SupportedModel, get_supported_model
+from rlinf.config import SupportedModel
 
 
 class TransformType(Enum):
@@ -630,8 +630,8 @@ _MG2HF_CONVERTOR_REGISTRY = {
 
 
 def get_mg2hf_convertor(model_type: str, config, strict: bool = False) -> BaseConvertor:
-    model_type = get_supported_model(model_type)
+    model_type = SupportedModel(model_type)
     if model_type not in _MG2HF_CONVERTOR_REGISTRY:
-        raise ValueError(f"No convertor registered for {model_type.value}")
+        raise ValueError(f"No converter registered for {model_type.value}")
     convertor_cls = _MG2HF_CONVERTOR_REGISTRY[model_type]
     return convertor_cls(config=config, strict=strict)

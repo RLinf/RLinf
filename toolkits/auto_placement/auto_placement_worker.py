@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from typing import Optional
 
 import hydra
@@ -32,7 +33,10 @@ from util import get_global_config, get_valid_gpu_num_list, init_global_config
 from workflow import Workflow, traverse_st_cuts
 
 from rlinf.scheduler import Cluster
-from rlinf.utils.placement import ModelParallelComponentPlacement
+from rlinf.utils.placement import (
+    HybridComponentPlacement,
+    ModelParallelComponentPlacement,
+)
 
 
 class AutoPlacementWorker:
@@ -42,7 +46,7 @@ class AutoPlacementWorker:
         component_placement,
         graph: Optional[dict[str, list[str]]] = None,
     ):
-        init_global_config(cfg, component_placement)
+        """Initialize the AutoPlacementWorker."""
         self.config = get_global_config()
         self.components_config = self.config.components_config
         self._name_to_node_dict: dict[str, ComponentNode] = {}
@@ -174,7 +178,7 @@ def get_workflow_graph(cfg) -> dict[str, list[str]]:
                 "rollout": ["actor"],
                 "actor": [],
             }
-    elif cfg.runner.task_type == "embodiment":
+    elif cfg.runner.task_type == "embodied":
         return {
             "env": ["env_rollout"],
             "env_rollout": ["actor"],
@@ -187,7 +191,11 @@ def get_workflow_graph(cfg) -> dict[str, list[str]]:
 @hydra.main(version_base="1.1")
 def main(cfg):
     cluster = Cluster(cfg.cluster.num_nodes)
-    component_placement = ModelParallelComponentPlacement(cfg, cluster)
+    if cfg.runner.task_type == "reasoning":
+        component_placement = ModelParallelComponentPlacement(cfg, cluster)
+    else:  # embodiment task
+        component_placement = HybridComponentPlacement(cfg, cluster)
+    init_global_config(cfg, component_placement, cluster)
 
     workflow_graph: dict[str, list[str]] = get_workflow_graph(cfg)
     auto_placement_worker = AutoPlacementWorker(
@@ -195,6 +203,18 @@ def main(cfg):
     )
 
     schedule_result: ScheduleResult = auto_placement_worker.run()
+
+    if schedule_result is None:
+        logging.error("=" * 50)
+        logging.error(
+            "Error: Auto scheduler could not find any valid placement strategy."
+        )
+        logging.error("Possible reasons:")
+        logging.error("1. Missing profile data for certain GPU scales.")
+        logging.error(
+            "2. The hardware rank provided by component_placement configure is not compatible with that ray cluster detect."
+        )
+        return
 
     if (
         schedule_result.mode == ScheduleMode.COLLOCATED
@@ -213,9 +233,8 @@ def main(cfg):
     else:
         res = schedule_result.placement_str
 
-    print("=" * 50)
-    print("Best placement for this task is:\n")
-    print(res)
+    logging.info("=" * 50)
+    logging.info("Best placement for this task is:\n%s", res)
 
 
 if __name__ == "__main__":

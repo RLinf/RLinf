@@ -20,8 +20,14 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
+from torch.utils.data import DataLoader
 
 from rlinf.config import SupportedModel
+from rlinf.data.embodied_buffer_dataset import (
+    PreloadReplayBufferDataset,
+    ReplayBufferDataset,
+    replay_buffer_collate_fn,
+)
 from rlinf.data.embodied_io_struct import Trajectory
 from rlinf.data.replay_buffer import TrajectoryReplayBuffer
 from rlinf.models.embodiment.base_policy import ForwardType
@@ -34,10 +40,10 @@ from rlinf.utils.metric_utils import (
     compute_split_num,
 )
 from rlinf.utils.nested_dict_process import (
-    concat_batch,
     put_tensor_device,
     split_dict_to_chunk,
 )
+from rlinf.utils.utils import clear_memory
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -144,7 +150,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         self.build_lr_schedulers()
 
         self.grad_scaler = self.build_grad_scaler(
-            self.cfg.actor.fsdp_config.amp.use_grad_scaler
+            self.cfg.actor.fsdp_config.grad_scaler
         )
 
     def build_lr_schedulers(self):
@@ -182,6 +188,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             ),
         )
 
+        min_demo_buffer_size = 0
         if self.cfg.algorithm.get("demo_buffer", None) is not None:
             auto_save_path = self.cfg.algorithm.demo_buffer.get("auto_save_path", None)
             if auto_save_path is None:
@@ -199,6 +206,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 auto_save_path=auto_save_path,
                 trajectory_format="pt",
             )
+            min_demo_buffer_size = self.cfg.algorithm.demo_buffer.min_buffer_size
             if self.cfg.algorithm.demo_buffer.get("load_path", None) is not None:
                 self.demo_buffer.load_checkpoint(
                     self.cfg.algorithm.demo_buffer.load_path,
@@ -206,6 +214,27 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                     local_rank=self._rank,
                     world_size=self._world_size,
                 )
+
+        if self.cfg.algorithm.replay_buffer.get("enable_preload", False):
+            buffer_dataset_cls = PreloadReplayBufferDataset
+        else:
+            buffer_dataset_cls = ReplayBufferDataset
+        self.buffer_dataset = buffer_dataset_cls(
+            replay_buffer=self.replay_buffer,
+            demo_buffer=self.demo_buffer,
+            batch_size=self.cfg.actor.global_batch_size // self._world_size,
+            min_replay_buffer_size=self.cfg.algorithm.replay_buffer.min_buffer_size,
+            min_demo_buffer_size=min_demo_buffer_size,
+            prefetch_size=self.cfg.algorithm.replay_buffer.get("prefetch_size", 10),
+        )
+        self.buffer_dataloader = DataLoader(
+            self.buffer_dataset,
+            batch_size=1,
+            num_workers=0,
+            drop_last=True,
+            collate_fn=replay_buffer_collate_fn,
+        )
+        self.buffer_dataloader_iter = iter(self.buffer_dataloader)
 
         self.critic_actor_ratio = self.cfg.algorithm.get("critic_actor_ratio", 1)
         self.critic_subsample_size = self.cfg.algorithm.get("critic_subsample_size", -1)
@@ -285,7 +314,9 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         Args:
             input_channel: The input channel to read from.
         """
-        send_num = self._component_placement.get_world_size("rollout") * self.stage_num
+        clear_memory(sync=False)
+
+        send_num = self._component_placement.get_world_size("env") * self.stage_num
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(send_num, recv_num)
 
@@ -301,9 +332,9 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             intervene_traj_list = []
             for traj in recv_list:
                 assert isinstance(traj, Trajectory)
-                intervene_traj = traj.extract_intervene_traj()
-                if intervene_traj is not None:
-                    intervene_traj_list.append(intervene_traj)
+                intervene_trajs = traj.extract_intervene_traj()
+                if intervene_trajs is not None:
+                    intervene_traj_list.extend(intervene_trajs)
 
             if len(intervene_traj_list) > 0:
                 self.demo_buffer.add_trajectories(intervene_traj_list)
@@ -520,21 +551,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         )
 
         with self.worker_timer("sample"):
-            if self.demo_buffer is not None and self.demo_buffer.is_ready(
-                self.cfg.algorithm.demo_buffer.min_buffer_size
-            ):
-                replay_batch = self.replay_buffer.sample(
-                    num_chunks=global_batch_size_per_rank // 2
-                )
-                demo_batch = self.demo_buffer.sample(
-                    num_chunks=global_batch_size_per_rank // 2
-                )
-                global_batch = concat_batch(replay_batch, demo_batch)
-            else:
-                # Sample batch from replay buffer
-                global_batch = self.replay_buffer.sample(
-                    num_chunks=global_batch_size_per_rank
-                )
+            global_batch = next(self.buffer_dataloader_iter)
 
         train_micro_batch_list = split_dict_to_chunk(
             global_batch,

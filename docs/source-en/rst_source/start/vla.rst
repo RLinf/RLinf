@@ -42,13 +42,19 @@ If using the **OpenVLA-OFT** model, run the following command:
    hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora \
    --local-dir /path/to/model/oft-sft/lora_004000
 
-   # Download assets
-   hf download --repo-type dataset RLinf/maniskill_assets \
-   --local-dir ./rlinf/envs/maniskill/assets
+**Step 2: Download ManiSkill assets**
+
+This step is required for both **OpenVLA** and **OpenVLA-OFT** on ManiSkill3.
+
+.. code-block:: bash
+
+   cd <path_to_RLinf>/rlinf/envs/maniskill
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
+   hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets
 
 
-
-**Step 2: Modify the configuration file**
+**Step 3: Modify the configuration file**
 
 Before running the script, you need to modify the ``./examples/embodiment/config/maniskill_ppo_openvla_quickstart.yaml`` file according to the download paths of the model and dataset. Specifically, update the following configurations to the path where the `gen-robot/openvla-7b-rlvla-warmup` checkpoint is located.
 
@@ -64,7 +70,7 @@ For **OpenVLA-OFT**, modify the ``maniskill_ppo_openvlaoft_quickstart.yaml`` fil
 - ``actor.model.lora_path``
 - ``actor.model.is_lora: True``
 
-**Step 3: Launch training**
+**Step 4: Launch training**
 
 After completing the above configuration file modifications, run the following command to launch training:
 

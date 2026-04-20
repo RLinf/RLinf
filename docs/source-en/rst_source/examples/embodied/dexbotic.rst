@@ -95,7 +95,7 @@ Use the Docker image for LIBERO-based embodied training:
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
 Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
 

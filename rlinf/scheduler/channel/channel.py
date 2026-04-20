@@ -146,6 +146,7 @@ class Channel:
         distributed: bool = False,
         node_rank: int = 0,
         local: bool = False,
+        disable_distributed_log: bool = True,
     ) -> "Channel":
         """Create a new channel with the specified name, node ID, and accelerator ID.
 
@@ -155,6 +156,7 @@ class Channel:
             distributed (bool): Whether the channel should be distributed. A distributed channel creates distributed workers on each node, and routes communications to the channel worker on the same node as the current worker, benefiting from the locality of the data. The routing is based on the key of the put/get APIs. So if you expect the key to be randomly distributed, you should set this to False to avoid unnecessary routing overhead.
             node_rank (int): The node rank of the current worker. Only valid when distributed is False.
             local (bool): Create the channel for intra-process communication. A local channel cannot be connected by other workers, and its data cannot be shared among different processes.
+            disable_distributed_log (bool): Whether to disable distributed log for the channel.
 
         Returns:
             Channel: A new instance of the Channel class.
@@ -189,6 +191,7 @@ class Channel:
                 placement_strategy=placement,
                 # Set max_concurrency to a high value to avoid large number of gets blocking puts
                 max_concurrency=2**31 - 1,
+                disable_distributed_log=disable_distributed_log,
             )
         except ValueError:
             Worker.logger.warning(f"Channel {name} already exists, connecting to it.")

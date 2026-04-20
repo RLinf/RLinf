@@ -22,6 +22,7 @@ import torch
 from omegaconf import DictConfig
 
 from rlinf.config import SupportedModel
+from rlinf.hybrid_engines.fsdp.utils import generate_with_kv_cache
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
 
@@ -213,7 +214,10 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             r"<think>.*?</think>", "", body, flags=re.DOTALL | re.IGNORECASE
         ).strip()
 
-        # 3) Try explicit "final answer" markers.
+        # 3) Remove chat special tokens (e.g., <|im_end|>, <|endoftext|>)
+        body = re.sub(r"<\|[^>]+?\|>", " ", body).strip()
+
+        # 4) Try explicit "final answer" markers.
         marker_patterns = [
             r"(?:final answer is|the answer is)\s*[:：]?\s*(.+)$",
             r"(?:answer)\s*[:：]\s*(.+)$",
@@ -227,12 +231,12 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                     body = cand
                     break
 
-        # 4) Math-style boxed fallback.
+        # 5) Math-style boxed fallback.
         boxed = self._extract_boxed(body)
         if boxed:
             body = boxed
 
-        # 5) Last non-empty line fallback.
+        # 6) Last non-empty line fallback.
         lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
         if lines:
             body = lines[-1]
@@ -252,18 +256,31 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         for k, v in multi_modal_inputs.items():
             multi_modal_inputs[k] = v.to(device=self.device)
 
+        eos_token_id = self.tokenizer.eos_token_id
+        pad_token_id = (
+            self.tokenizer.pad_token_id
+            if self.tokenizer.pad_token_id is not None
+            else (eos_token_id if eos_token_id is not None else 0)
+        )
+
         with torch.no_grad():
-            with self.amp_context:
-                generate_ids = self.model.generate(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    **multi_modal_inputs,
-                )
+            # use kv cache to generate the text
+            # the generate_with_kv_cache() is more efficient than the generate() in utils.py
+            generate_ids = generate_with_kv_cache(
+                model=self.model,
+                eos_token_id=eos_token_id,
+                pad_token_id=pad_token_id,
+                amp_context=self.amp_context,
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                multi_modal_inputs=multi_modal_inputs,
+            )
 
         # encode the generated text
         for i in range(len(answers)):
+            new_token_ids = generate_ids[i, input_ids.shape[1] :]
             full_pred_text = self.tokenizer.decode(
-                generate_ids[i].tolist(), skip_special_tokens=False
+                new_token_ids.tolist(), skip_special_tokens=False
             )
 
             pred_text = self._extract_answer(full_pred_text)

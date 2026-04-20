@@ -28,7 +28,7 @@
 
 import functools
 from enum import Enum
-from typing import Iterable, Optional, Union
+from typing import ContextManager, Iterable, Optional, Union
 
 import torch
 from accelerate import init_empty_weights
@@ -42,9 +42,11 @@ from transformers.trainer_pt_utils import get_module_class_from_name
 
 from rlinf.config import SupportedModel
 from rlinf.hybrid_engines.fsdp import (
+    FSDP,
     BackwardPrefetch,
     CPUOffloadPolicy,
     DTensor,
+    FSDPModule,
     MixedPrecisionPolicy,
     ShardingStrategy,
     fully_shard,
@@ -73,8 +75,8 @@ def create_device_mesh(world_size, fsdp_size):
 
 def init_fn(x: torch.nn.Module):
     if not torch.distributed.get_rank() == 0:
-        x = x.to_empty(device=torch.cuda.current_device(), recurse=False)
-        torch.cuda.empty_cache()
+        x = x.to_empty(device=Worker.torch_platform.current_device(), recurse=False)
+        Worker.torch_platform.empty_cache()
     return x
 
 
@@ -91,6 +93,32 @@ def get_init_weight_context_manager(use_meta_tensor=True):
     else:
         init_context = cpu_init_weights
     return init_context
+
+
+def _normalize_wrap_targets(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, Iterable):
+        return list(value)
+    return [value]
+
+
+def _resolve_module_classes_to_wrap(module, module_classes_to_wrap):
+    resolved_module_classes = set()
+    for module_class in _normalize_wrap_targets(module_classes_to_wrap) or []:
+        if isinstance(module_class, str):
+            resolved_class = get_module_class_from_name(module, module_class)
+            if resolved_class is None:
+                raise Exception("Could not find the module class to wrap in the model.")
+            resolved_module_classes.add(resolved_class)
+        else:
+            raise TypeError(
+                "module_classes_to_wrap entries must be class name strings; "
+                f"got {type(module_class).__name__!r}"
+            )
+    return resolved_module_classes
 
 
 def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
@@ -110,30 +138,55 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
 
     if config.get("disable", False):
         return None
+    wrap_policy_config = config.get("wrap_policy", {}) or {}
+    use_custom_wrap_policy = any(
+        key in wrap_policy_config
+        for key in (
+            "transformer_layer_cls_to_wrap",
+            "module_classes_to_wrap",
+            "no_split_names",
+        )
+    )
 
-    # Get transformer layer classes to wrap
-    if hasattr(module, "language_model"):
-        # For VLA models, get transformer classes from language_model submodule
-        default_transformer_cls_names_to_wrap = getattr(
-            module.language_model, "_no_split_modules", None
+    if use_custom_wrap_policy:
+        fsdp_transformer_layer_cls_to_wrap = _normalize_wrap_targets(
+            wrap_policy_config.get("transformer_layer_cls_to_wrap")
+        )
+        module_classes_to_wrap = wrap_policy_config.get("module_classes_to_wrap")
+        no_split_names = _normalize_wrap_targets(
+            wrap_policy_config.get("no_split_names")
         )
     else:
-        # For standard models, get transformer classes directly from module
-        default_transformer_cls_names_to_wrap = getattr(
-            module, "_no_split_modules", None
-        )
+        if hasattr(module, "language_model"):
+            # For VLA models, get transformer classes from language_model submodule
+            default_transformer_cls_names_to_wrap = getattr(
+                module.language_model, "_no_split_modules", None
+            )
+        else:
+            # For standard models, get transformer classes directly from module
+            default_transformer_cls_names_to_wrap = getattr(
+                module, "_no_split_modules", None
+            )
 
-    fsdp_transformer_layer_cls_to_wrap = config.get("wrap_policy", {}).get(
-        "transformer_layer_cls_to_wrap", default_transformer_cls_names_to_wrap
-    )
+        fsdp_transformer_layer_cls_to_wrap = _normalize_wrap_targets(
+            default_transformer_cls_names_to_wrap
+        )
+        module_classes_to_wrap = None
+        no_split_names = getattr(module, "_no_split_names", None)
 
     # Build policies list
     policies = []
 
-    from rlinf.models.embodiment.modules.resnet_utils import ResNet10
+    if SupportedModel(model_type) in [
+        SupportedModel.CNN_POLICY,
+        SupportedModel.FLOW_POLICY,
+    ]:
+        from rlinf.models.embodiment.modules.resnet_utils import ResNet10
 
-    resnet_policy = functools.partial(_module_wrap_policy, module_classes={ResNet10})
-    policies.append(resnet_policy)
+        resnet_policy = functools.partial(
+            _module_wrap_policy, module_classes={ResNet10}
+        )
+        policies.append(resnet_policy)
 
     # Add vision transformer policies for OpenVLA models
     if SupportedModel(model_type) in [
@@ -202,6 +255,15 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
             )
         policies.append(q_head_policy)
 
+    if module_classes_to_wrap:
+        module_classes_to_wrap = _resolve_module_classes_to_wrap(
+            module, module_classes_to_wrap
+        )
+        custom_module_policy = functools.partial(
+            _module_wrap_policy, module_classes=module_classes_to_wrap
+        )
+        policies.append(custom_module_policy)
+
     # Add transformer layer policies
     if fsdp_transformer_layer_cls_to_wrap is not None:
         transformer_cls_to_wrap = set()
@@ -221,21 +283,21 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
         )
         policies.append(llm_wrap_policy)
 
-    if hasattr(module, "_no_split_names"):
-        no_split_names = getattr(module, "_no_split_names", None)
-        if no_split_names is not None:
-            from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
+    if no_split_names is not None:
+        from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 
-            def lambda_policy_fn(module):
-                return (
-                    hasattr(module, "_fsdp_wrap_name")
-                    and module._fsdp_wrap_name in no_split_names
-                )
+        no_split_names = set(_normalize_wrap_targets(no_split_names))
 
-            lambda_policy = functools.partial(
-                lambda_auto_wrap_policy, lambda_fn=lambda_policy_fn
+        def lambda_policy_fn(module):
+            return (
+                hasattr(module, "_fsdp_wrap_name")
+                and module._fsdp_wrap_name in no_split_names
             )
-            policies.append(lambda_policy)
+
+        lambda_policy = functools.partial(
+            lambda_auto_wrap_policy, lambda_fn=lambda_policy_fn
+        )
+        policies.append(lambda_policy)
 
     # Add LoRA lambda policy if enabled
     if is_lora:
@@ -290,34 +352,63 @@ def apply_fsdp2_to_model(
     """
     if config is None:
         config = {}
-
-    if hasattr(module, "language_model"):
-        default_transformer_cls_names_to_wrap = getattr(
-            module.language_model, "_no_split_modules", None
+    wrap_policy_config = config.get("wrap_policy", {}) or {}
+    use_custom_wrap_policy = any(
+        key in wrap_policy_config
+        for key in (
+            "transformer_layer_cls_to_wrap",
+            "module_classes_to_wrap",
+            "no_split_names",
         )
-    else:
-        default_transformer_cls_names_to_wrap = getattr(
-            module, "_no_split_modules", None
-        )
-
-    fsdp_transformer_layer_cls_to_wrap = config.get("wrap_policy", {}).get(
-        "transformer_layer_cls_to_wrap", default_transformer_cls_names_to_wrap
     )
 
-    if isinstance(fsdp_transformer_layer_cls_to_wrap, str):
-        fsdp_transformer_layer_cls_to_wrap = [fsdp_transformer_layer_cls_to_wrap]
+    if use_custom_wrap_policy:
+        fsdp_transformer_layer_cls_to_wrap = _normalize_wrap_targets(
+            wrap_policy_config.get("transformer_layer_cls_to_wrap")
+        )
+        module_classes_to_wrap = wrap_policy_config.get("module_classes_to_wrap")
+        no_split_names = _normalize_wrap_targets(
+            wrap_policy_config.get("no_split_names")
+        )
+    else:
+        if hasattr(module, "language_model"):
+            default_transformer_cls_names_to_wrap = getattr(
+                module.language_model, "_no_split_modules", None
+            )
+        else:
+            default_transformer_cls_names_to_wrap = getattr(
+                module, "_no_split_modules", None
+            )
+        fsdp_transformer_layer_cls_to_wrap = _normalize_wrap_targets(
+            default_transformer_cls_names_to_wrap
+        )
+        module_classes_to_wrap = None
+        no_split_names = None
+        assert (
+            len(fsdp_transformer_layer_cls_to_wrap) > 0
+            and fsdp_transformer_layer_cls_to_wrap[0] is not None
+        )
 
-    assert (
-        len(fsdp_transformer_layer_cls_to_wrap) > 0
-        and fsdp_transformer_layer_cls_to_wrap[0] is not None
+    transformer_cls_names = set(fsdp_transformer_layer_cls_to_wrap or [])
+    custom_module_classes = tuple(
+        _resolve_module_classes_to_wrap(module, module_classes_to_wrap)
+    )
+    no_split_name_set = set(no_split_names or [])
+    tie_word_embeddings = getattr(
+        getattr(module, "config", None), "tie_word_embeddings", False
     )
 
     modules_to_shard = []
 
     for name, submodule in module.named_modules():
-        if submodule.__class__.__name__ in fsdp_transformer_layer_cls_to_wrap or (
-            isinstance(submodule, torch.nn.Embedding)
-            and not getattr(module.config, "tie_word_embeddings", False)
+        if (
+            submodule.__class__.__name__ in transformer_cls_names
+            or (custom_module_classes and isinstance(submodule, custom_module_classes))
+            or (
+                no_split_name_set
+                and getattr(submodule, "_fsdp_wrap_name", None) in no_split_name_set
+            )
+            or (isinstance(submodule, torch.nn.Embedding) and not tie_word_embeddings)
         ):
             modules_to_shard.append((name, submodule, "transformer_or_embedding"))
 
@@ -827,3 +918,186 @@ def unpack_fsdp_logprobs(
         logprobs, idx_starts, idx_ends, max_seq_len_unpack, pad_val=0
     )
     return logprobs
+
+
+def generate_with_kv_cache(
+    model: Union[FSDP, FSDPModule],
+    eos_token_id: int,
+    pad_token_id: int,
+    amp_context: ContextManager,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    multi_modal_inputs: dict[str, torch.Tensor],
+    max_new_tokens: int = 128,
+) -> torch.Tensor:
+    """generate with use_cache/past_key_values, without calling model.generate()."""
+    # ------------------------------------------------------------------------------
+    # NOTE:
+    # This implementation serves as a replacement for `model.generate()`.
+    #
+    # When FSDP is configured with `full_shard`, the default `generate()` method
+    # does not perform the required all-gather operations, which can lead to
+    # runtime errors during inference. To avoid this issue, we explicitly perform
+    # iterative forward passes and manually compute the next token prediction.
+    #
+    # The `generate_with_kv_cache` variant further improves generation efficiency
+    # by utilizing KV cache to reduce redundant computation across decoding steps.
+    # However, this optimization may increase memory consumption and potentially
+    # cause out-of-memory (OOM) issues in certain environments.
+    #
+    # For debugging or in memory-constrained scenarios, it is recommended to fall
+    # back to the standard `generate()` implementation.
+    # ------------------------------------------------------------------------------
+
+    batch_size = input_ids.size(0)
+    generated_ids = input_ids
+    generated_attention_mask = attention_mask.to(dtype=torch.long)
+    finished = torch.zeros(batch_size, dtype=torch.bool, device=input_ids.device)
+
+    past_key_values = None
+
+    for step in range(max_new_tokens):
+        if step == 0:
+            # prefill: full prompt + multimodal
+            cache_position = torch.arange(
+                0,
+                generated_ids.size(1),
+                device=generated_ids.device,
+                dtype=torch.long,
+            )
+            model_inputs = model.prepare_inputs_for_generation(
+                input_ids=generated_ids,
+                attention_mask=generated_attention_mask,
+                use_cache=True,
+                cache_position=cache_position,
+                past_key_values=past_key_values,
+                **multi_modal_inputs,
+            )
+        else:
+            # decode: only last token + cache
+            new_generated_ids = generated_ids[:, -1:].contiguous()
+            start_pos = generated_attention_mask.size(1) - new_generated_ids.size(1)
+            cache_position = torch.arange(
+                start_pos,
+                generated_attention_mask.size(1),
+                device=generated_ids.device,
+                dtype=torch.long,
+            )
+
+            model_inputs = model.prepare_inputs_for_generation(
+                input_ids=new_generated_ids,
+                attention_mask=generated_attention_mask,
+                use_cache=True,
+                cache_position=cache_position,
+                past_key_values=past_key_values,
+            )
+
+        with amp_context:
+            outputs = model(**model_inputs)
+
+        logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
+        past_key_values = (
+            outputs.past_key_values
+            if hasattr(outputs, "past_key_values")
+            else outputs[1]
+        )
+
+        next_token = torch.argmax(logits[:, -1, :], dim=-1)
+
+        # finished sample keeps appending PAD
+        next_token = torch.where(
+            finished,
+            torch.full_like(next_token, pad_token_id),
+            next_token,
+        )
+
+        generated_ids = torch.cat([generated_ids, next_token.unsqueeze(-1)], dim=-1)
+
+        # unfinished -> 1, finished -> 0
+        append_mask = (~finished).to(dtype=generated_attention_mask.dtype).unsqueeze(-1)
+        generated_attention_mask = torch.cat(
+            [generated_attention_mask, append_mask], dim=-1
+        )
+
+        if eos_token_id is not None:
+            finished = finished | (next_token == eos_token_id)
+            local_all_finished = torch.tensor(
+                [int(torch.all(finished))],
+                device=generated_ids.device,
+                dtype=torch.int32,
+            )
+            torch.distributed.all_reduce(
+                local_all_finished, op=torch.distributed.ReduceOp.MIN
+            )
+
+            if local_all_finished.item() == 1:
+                break
+
+    return generated_ids
+
+
+def generate(
+    model: Union[FSDP, FSDPModule],
+    eos_token_id: int,
+    pad_token_id: int,
+    amp_context: ContextManager,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    multi_modal_inputs: dict[str, torch.Tensor],
+    max_new_tokens: int = 128,
+) -> torch.Tensor:
+    """Greedy decode without calling HF generate(), compatible with FSDP full_shard."""
+    # ------------------------------------------------------------------------------
+    # NOTE:
+    # This implementation serves as a replacement for `model.generate()`.
+    #
+    # When FSDP is configured with `full_shard`, the default `generate()` method
+    # does not perform the required all-gather operations, which can lead to
+    # runtime errors during inference. To avoid this issue, we explicitly perform
+    # iterative forward passes and manually compute the next token prediction.
+    # ------------------------------------------------------------------------------
+
+    generated_ids = input_ids
+    generated_attention_mask = attention_mask.to(dtype=torch.long)
+    batch_size = generated_ids.size(0)
+    finished = torch.zeros(batch_size, dtype=torch.bool, device=generated_ids.device)
+
+    for _ in range(max_new_tokens):
+        with amp_context:
+            outputs = model(
+                input_ids=generated_ids,
+                attention_mask=generated_attention_mask,
+                **multi_modal_inputs,
+            )
+
+        next_token = torch.argmax(outputs.logits[:, -1, :], dim=-1)
+
+        # Keep finished samples stable.
+        if eos_token_id is not None:
+            next_token = torch.where(
+                finished,
+                torch.full_like(next_token, pad_token_id),
+                next_token,
+            )
+
+        generated_ids = torch.cat([generated_ids, next_token.unsqueeze(-1)], dim=-1)
+        append_mask = (~finished).to(dtype=generated_attention_mask.dtype).unsqueeze(-1)
+        generated_attention_mask = torch.cat(
+            [generated_attention_mask, append_mask], dim=-1
+        )
+
+        if eos_token_id is not None:
+            finished = finished | (next_token == eos_token_id)
+            local_all_finished = torch.tensor(
+                [int(torch.all(finished))],
+                device=generated_ids.device,
+                dtype=torch.int32,
+            )
+            torch.distributed.all_reduce(
+                local_all_finished, op=torch.distributed.ReduceOp.MIN
+            )
+
+            if local_all_finished.item() == 1:
+                break
+
+    return generated_ids

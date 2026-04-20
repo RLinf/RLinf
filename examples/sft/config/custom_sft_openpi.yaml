@@ -46,7 +46,7 @@ actor:
     precision: null
     model_path: "/path/to/pi0-model"
     num_action_chunks: 4 # interface for the env
-    add_value_head: True
+    add_value_head: False
     openpi:
       config_name: "pi0_custom"
       detach_critic_input: True
@@ -63,7 +63,7 @@ actor:
   # Override the default values in training_backend/fsdp
   fsdp_config:
     strategy: "fsdp"
-    sharding_strategy: "no_shard"
+    sharding_strategy: "full_shard"
     use_orig_params: False
     gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
     mixed_precision:

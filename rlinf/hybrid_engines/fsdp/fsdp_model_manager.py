@@ -20,11 +20,12 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
+from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForVision2Seq
 
-from rlinf.config import SupportedModel, get_supported_model, torch_dtype_from_precision
+from rlinf.config import SupportedModel, torch_dtype_from_precision
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.hybrid_engines.fsdp import (
     FSDP,
@@ -35,6 +36,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
     create_device_mesh,
     get_lr_scheduler,
 )
+from rlinf.scheduler import Worker
 from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import warmup_optimizer_state
 
@@ -87,11 +89,14 @@ class FSDPModelManager:
         )
         self.amp_context = self._create_amp_context()
 
-        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-        self.device = torch.cuda.current_device()
+        Worker.torch_platform.set_device(int(os.environ["LOCAL_RANK"]))
+        self.device = Worker.torch_platform.current_device()
 
         self.is_weight_offloaded = False
         self.is_optimizer_offloaded = False
+
+        # Bucket capacity for weight sync (in bytes), default 128MB
+        self.bucket_capacity = cfg.get("sync_bucket_capacity", 128 * 1024 * 1024)
 
     def _create_amp_context(self) -> ContextManager:
         """
@@ -103,11 +108,13 @@ class FSDPModelManager:
         """
         from contextlib import nullcontext
 
-        if not self._cfg.fsdp_config.amp.enabled:
+        if not self._cfg.fsdp_config.amp_autocast.enabled:
             self._logger.info("[FSDP] AMP is disabled.")
             return nullcontext()
 
-        precision = torch_dtype_from_precision(self._cfg.fsdp_config.amp.precision)
+        precision = torch_dtype_from_precision(
+            self._cfg.fsdp_config.amp_autocast.precision
+        )
 
         self._logger.info(f"[FSDP] AMP is enabled with precision: {precision}.")
 
@@ -126,9 +133,11 @@ class FSDPModelManager:
 
         use_triton = cfg.get("use_triton", True)
 
-        assert torch.cuda.is_available(), "CUDA is not available."
+        assert Worker.torch_platform.is_available(), (
+            f"Accelerator type {Worker.torch_device_type} is not available."
+        )
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
-        device = torch.device(f"cuda:{local_rank}")
+        device = torch.device(f"{Worker.torch_device_type}:{local_rank}")
 
         model_config = AutoConfig.from_pretrained(
             cfg.model.model_path,
@@ -190,31 +199,33 @@ class FSDPModelManager:
             from liger_kernel.transformers import (
                 apply_liger_kernel_to_qwen2,
                 apply_liger_kernel_to_qwen2_5_vl,
+                apply_liger_kernel_to_qwen3_moe,
+                apply_liger_kernel_to_qwen3_vl,
+                apply_liger_kernel_to_qwen3_vl_moe,
             )
 
-            MODEL_LIGER_KERNEL_APPLY_FUNC = {
-                SupportedModel.QWEN2_5: (
-                    apply_liger_kernel_to_qwen2,
-                    {
-                        "rope": True,
-                        "rms_norm": True,
-                        "swiglu": True,
-                        "fused_linear_cross_entropy": True,
-                    },
-                ),
-                SupportedModel.QWEN2_5_VL: (
-                    apply_liger_kernel_to_qwen2_5_vl,
-                    {
-                        "rope": True,
-                        "rms_norm": True,
-                        "swiglu": True,
-                        "fused_linear_cross_entropy": True,
-                    },
-                ),
+            LIGER_COMMON_KWARGS = {
+                "rope": True,
+                "rms_norm": True,
+                "swiglu": True,
+                "fused_linear_cross_entropy": True,
             }
-            model_type = get_supported_model(
-                self._cfg.model.get("model_type", "").lower()
-            )
+
+            _liger_func_by_model = {
+                SupportedModel.QWEN2_5: apply_liger_kernel_to_qwen2,
+                SupportedModel.QWEN2_5_VL: apply_liger_kernel_to_qwen2_5_vl,
+                SupportedModel.QWEN2_5_VL_SFT: apply_liger_kernel_to_qwen2_5_vl,
+                SupportedModel.QWEN3_VL_SFT: apply_liger_kernel_to_qwen3_vl,
+                SupportedModel.QWEN3_MOE: apply_liger_kernel_to_qwen3_moe,
+                SupportedModel.QWEN3_VL_MOE_SFT: apply_liger_kernel_to_qwen3_vl_moe,
+            }
+
+            MODEL_LIGER_KERNEL_APPLY_FUNC = {
+                model_type: (apply_fn, dict(LIGER_COMMON_KWARGS))
+                for model_type, apply_fn in _liger_func_by_model.items()
+            }
+
+            model_type = SupportedModel(self._cfg.model.get("model_type", "").lower())
             if model_type in MODEL_LIGER_KERNEL_APPLY_FUNC:
                 apply_func, apply_kwargs = MODEL_LIGER_KERNEL_APPLY_FUNC[model_type]
                 apply_func(
@@ -256,8 +267,18 @@ class FSDPModelManager:
         self.lr_scheduler = self.build_lr_scheduler(
             optimizer=self.optimizer, optim_config=self._cfg.optim
         )
+
+        assert self._cfg.fsdp_config.get("grad_scaler") is not None, (
+            "fsdp_config.grad_scaler must be initialized before this step."
+        )
+
+        kwargs = {}
+        for key in ["init_scale", "growth_interval"]:
+            value = self._cfg.fsdp_config.grad_scaler.get(key, None)
+            if value is not None:
+                kwargs[key] = value
         self.grad_scaler = self.build_grad_scaler(
-            self._cfg.fsdp_config.amp.use_grad_scaler
+            self._cfg.fsdp_config.grad_scaler.get("enabled", False), **kwargs
         )
 
     def get_model_state_dict(self, cpu_offload: bool, full_state_dict: bool) -> dict:
@@ -284,6 +305,13 @@ class FSDPModelManager:
         Args:
             load_path: the directory to load checkpoint.
         """
+        if self.is_weight_offloaded:
+            self.load_param_and_grad(self.device)
+            self.is_weight_offloaded = False
+        if self.is_optimizer_offloaded:
+            self.load_optimizer(self.device)
+            self.is_optimizer_offloaded = False
+
         self._strategy.load_checkpoint(
             self.model, self.optimizer, self.lr_scheduler, load_path
         )
@@ -296,12 +324,13 @@ class FSDPModelManager:
         Args:
             save_path: the directory to save checkpoint.
         """
-        if self.is_weight_offloaded:
+        restore_weight_offload = self.is_weight_offloaded
+        restore_optimizer_offload = self.is_optimizer_offloaded
+
+        if restore_weight_offload:
             self.load_param_and_grad(self.device)
-            self.is_weight_offloaded = False
-        if self.is_optimizer_offloaded:
+        if restore_optimizer_offload:
             self.load_optimizer(self.device)
-            self.is_optimizer_offloaded = False
 
         self._strategy.save_checkpoint(
             self.model,
@@ -309,6 +338,11 @@ class FSDPModelManager:
             self.lr_scheduler,
             save_path,
         )
+
+        if restore_weight_offload:
+            self.offload_param_and_grad()
+        if restore_optimizer_offload:
+            self.offload_optimizer()
 
     def offload_param_and_grad(self, offload_grad: bool = False) -> None:
         """
@@ -551,7 +585,7 @@ class FSDPModelManager:
 
         for key, params in filtered_params_dict.items():
             assert len(params) > 0, (
-                f"optimer {key=} is not match any params, with {param_filters(key)=}"
+                f"optimer {key=} is not match any params, with {param_filters[key]=}"
             )
         for key, params in filtered_params_dict.items():
             optimizers.append(
@@ -568,17 +602,18 @@ class FSDPModelManager:
             )
         return optimizers
 
-    def build_grad_scaler(self, enabled: bool) -> ShardedGradScaler:
+    def build_grad_scaler(self, enabled: bool, **kwargs) -> ShardedGradScaler:
         """
         Build the gradient scaler based on the configuration.
 
         Args:
             enabled (bool): Whether to enable gradient scaling.
+            kwargs: Optional parameters for ShardedGradScaler.
 
         Returns:
             ShardedGradScaler: The gradient scaler.
         """
-        return ShardedGradScaler(enabled=enabled)
+        return ShardedGradScaler(enabled=enabled, **kwargs)
 
     def before_micro_batch(
         self, model: Union[FSDP, FSDPModule], is_last_micro_batch: bool
@@ -603,3 +638,36 @@ class FSDPModelManager:
         return self._strategy.before_micro_batch(
             model=model, is_last_micro_batch=is_last_micro_batch
         )
+
+    def divide_model_to_bucket(self, state_dict, agent_and_has_visual=False):
+        bucket_capacity = self.bucket_capacity
+        model_bucket_list = []
+        current_capacity = 0
+        model_bucket = {}
+        for key, val in state_dict.items():
+            name = key
+            if "_extra_state" in name:
+                continue
+            if agent_and_has_visual:
+                # for agent, we use sglang backend so the name mapping is needed
+                if name.startswith("model.language_model."):
+                    name = "model." + name[21:]
+
+            model_bucket[name] = val
+            if isinstance(val, DTensor):
+                current_capacity += (
+                    val.numel()
+                    * val.element_size()
+                    * torch.distributed.get_world_size()
+                )
+            else:
+                current_capacity += val.numel() * val.element_size()
+
+            if current_capacity >= bucket_capacity:
+                model_bucket_list.append(model_bucket)
+                current_capacity = 0
+                model_bucket = {}
+
+        if len(model_bucket) > 0:
+            model_bucket_list.append(model_bucket)
+        return model_bucket_list

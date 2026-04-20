@@ -102,6 +102,7 @@ algorithm:
   demo_buffer:
     enable_cache: True
     cache_size: 200 # number of trajectories cached in memory
+    min_buffer_size: 1
     sample_window_size: 200 # number of latest trajectories to sample from for demo buffer
     load_path: "/path/to/demo_data"
     auto_save: False
@@ -134,6 +135,9 @@ env:
       is_dummy: False
       use_dense_reward: False
       target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
+  
+  eval:
+    total_num_envs: 1
 
 
 rollout:
@@ -146,7 +150,7 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/path/to/model"
+    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     precision: ${actor.model.precision}
     num_q_heads: 10
 
@@ -165,7 +169,7 @@ actor:
     
     # Actually used as directory/
     # In policy, there is: ckpt_path = os.path.join(self.model_path, self.encoder_config["ckpt_name"])
-    model_path: "/path/to/model"
+    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
 
     state_dim: 19 # 29 -> 19 for real world
     action_dim: 6 # 4 -> 6 for real world

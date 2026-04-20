@@ -56,7 +56,7 @@ templates_path = ["_templates"]
 exclude_patterns = []
 default_role = "code"
 autosummary_generate = True
-autodoc_mock_imports = ["sglang", "megatron", "prismatic", "libero"]
+autodoc_mock_imports = ["sglang", "megatron", "prismatic", "libero", "lerobot"]
 autodoc_class_signature = "separated"
 autodoc_typehints = "description"
 # autoclass_content = "both"
@@ -190,7 +190,7 @@ def setup(app):
     app.add_css_file("css/custom.css")
 
     return {
-        "version": "0.1",
+        "version": "0.2",
         "parallel_read_safe": True,
         "parallel_write_safe": True,
     }

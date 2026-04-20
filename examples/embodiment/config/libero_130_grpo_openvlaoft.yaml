@@ -113,7 +113,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora/"
+    model_path: "/path/to/model/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora/"  # https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
     precision: ${actor.model.precision}
 
 actor:
@@ -126,7 +126,7 @@ actor:
 
   # Override the default values in model/openvla_oft
   model:
-    model_path: "/path/to/model/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora/"
+    model_path: "/path/to/model/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora/" # https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
     model_type: "openvla_oft"
 
     unnorm_key: libero_130_no_noops_trajall

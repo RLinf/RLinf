@@ -110,7 +110,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/RLinf-Gr00t-SFT-Object"
+    model_path: "/path/to/RLinf-Gr00t-SFT-Object" # https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Object
     precision: ${actor.model.precision}
 
 actor:
@@ -122,7 +122,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/path/to/RLinf-Gr00t-SFT-Object"
+    model_path: "/path/to/RLinf-Gr00t-SFT-Object" # https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Object
     model_type: "gr00t"
     add_value_head: True
 
