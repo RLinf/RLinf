@@ -171,9 +171,9 @@ RLinf具有高度灵活性，可支持多种强化学习训练工作流（PPO、
           </ul>
           <li><b>SFT</b></li>
           <ul>
-            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html">Full-parameter SFT</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html">LoRA SFT</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html">VLM SFT</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html">全量微调</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html">LoRA 微调</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html">VLM 模型微调</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dagger.html">DAgger</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/hg-dagger.html">HG-DAgger</a> ✅</li>
           </ul>
