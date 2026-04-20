@@ -26,15 +26,6 @@ import torch
 from filelock import FileLock
 from omegaconf import OmegaConf
 
-from rlinf.envs.realworld.common.wrappers import (
-    GelloIntervention,
-    GripperCloseEnv,
-    KeyboardRewardDoneMultiStageWrapper,
-    KeyboardRewardDoneWrapper,
-    Quat2EulerWrapper,
-    RelativeFrame,
-    SpacemouseIntervention,
-)
 from rlinf.envs.realworld.venv import NoAutoResetSyncVectorEnv
 from rlinf.envs.utils import to_tensor
 from rlinf.scheduler import WorkerInfo
@@ -83,40 +74,8 @@ class RealWorldEnv(gym.Env):
             worker_info=worker_info,
             hardware_info=hardware_info,
             env_idx=env_idx,
+            env_cfg=self.cfg,
         )
-        if self.cfg.get("no_gripper", True):
-            env = GripperCloseEnv(env)
-        use_spacemouse = self.cfg.get("use_spacemouse", True)
-        use_gello = self.cfg.get("use_gello", False)
-        if use_spacemouse and use_gello:
-            raise ValueError(
-                "use_spacemouse and use_gello are mutually exclusive. "
-                "Please set only one of them to True."
-            )
-        no_gripper = self.cfg.get("no_gripper", True)
-        gripper_enabled = not no_gripper
-        if not env.config.is_dummy and use_spacemouse:
-            env = SpacemouseIntervention(env, gripper_enabled=gripper_enabled)
-        if not env.config.is_dummy and use_gello:
-            gello_port = self.cfg.get("gello_port", None)
-            if gello_port is None:
-                raise ValueError(
-                    "use_gello is True but gello_port is not set in the env config. "
-                    "Please set env.eval.gello_port (or env.train.gello_port) to the "
-                    "serial port of your GELLO device."
-                )
-            env = GelloIntervention(
-                env, port=gello_port, gripper_enabled=gripper_enabled
-            )
-        if not env.config.is_dummy and self.cfg.get("keyboard_reward_wrapper", None):
-            if self.cfg.keyboard_reward_wrapper == "multi_stage":
-                env = KeyboardRewardDoneMultiStageWrapper(env)
-            elif self.cfg.keyboard_reward_wrapper == "single_stage":
-                env = KeyboardRewardDoneWrapper(env)
-
-        if self.cfg.get("use_relative_frame", True):
-            env = RelativeFrame(env)
-        env = Quat2EulerWrapper(env)
         return env
 
     @staticmethod
@@ -255,16 +214,13 @@ class RealWorldEnv(gym.Env):
         full_states = np.concatenate(full_states, axis=-1)
         obs["states"] = full_states
 
-        # Process images
-        if self.main_image_key not in raw_obs["frames"]:
-            available_keys = list(raw_obs["frames"].keys())
+        frames = raw_obs["frames"]
+        if self.main_image_key not in frames:
             raise KeyError(
-                f"main_image_key '{self.main_image_key}' not found in raw_obs['frames']. "
-                f"Available keys: {available_keys}. "
-                f"Please set 'main_image_key' in your env config to one of the available keys."
+                f"main_image_key {self.main_image_key!r} not in {list(frames)}"
             )
-        obs["main_images"] = raw_obs["frames"][self.main_image_key]
-        raw_images = OrderedDict(sorted(raw_obs["frames"].items()))
+        obs["main_images"] = frames[self.main_image_key]
+        raw_images = OrderedDict(sorted(frames.items()))
         raw_images.pop(self.main_image_key)
 
         if raw_images:

@@ -1,0 +1,133 @@
+defaults:
+  - model/mlp_policy@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - env/d4rl@env.eval
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0-0
+    env: 0-0
+    rollout: 0-0
+
+runner:
+  task_type: "offline"
+  only_eval: true
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "d4rl_iql_kitchen_adroit"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1000000
+  max_steps: 1000000
+
+  local_update_steps: 1000
+
+  val_check_interval: 100000
+  save_interval: 100000
+
+  log_interval: 1000
+  eval_episodes: 10
+
+  resume_dir: null
+
+algorithm:
+  loss_type: "offline_iql"
+  adv_type: null
+  eval_rollout_epoch: 1
+  sampling_params:
+    do_sample: false
+    temperature_train: 1.0
+    temperature_eval: -1
+    top_k: 0
+    top_p: 1.0
+  length_params:
+    max_new_token: 1
+  hidden_dims: [256, 256]
+  gamma: 0.99
+  tau: 0.005
+  expectile: 0.7
+  temperature: 0.5
+  dropout_rate: 0.1
+
+data:
+  dataset_type: "d4rl"
+  task_name: "pen-human-v0"
+  dataset_path: null
+  shuffle: true
+  seed: 42
+  num_workers: 0
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    task_name: ${data.task_name}
+    total_num_envs: 1
+    use_ordered_reset_state_ids: true
+    is_eval: true
+    video_cfg:
+      save_video: false
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  pipeline_stage_num: 1
+  model:
+    precision: "32"
+    model_path: ""
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  use_fsdp_wrap: false
+  seed: 42
+  micro_batch_size: 256
+  global_batch_size: 256
+  offline_torch_compile: true
+
+  optim:
+    lr: 3.0e-4
+    lr_scheduler: torch_cosine
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-8
+    lr_warmup_steps: -1
+
+  critic_optim:
+    lr: 3.0e-4
+    lr_scheduler: torch_constant
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-8
+    lr_warmup_steps: -1
+
+  value_optim:
+    lr: 3.0e-4
+    lr_scheduler: torch_constant
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-8
+    lr_warmup_steps: -1
+
+  model:
+    num_action_chunks: 1
+    iql_config:
+      type: "actor"
+      hidden_dims: ${algorithm.hidden_dims}
+      dropout_rate: ${algorithm.dropout_rate}
+      state_dependent_std: false
+      log_std_min: -5.0
+      log_std_max: 2.0
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false
