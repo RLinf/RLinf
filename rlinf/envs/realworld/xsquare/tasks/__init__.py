@@ -12,13 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
+from typing import Any, Mapping
+
+import gymnasium as gym
 from gymnasium.envs.registration import register
 
+from rlinf.envs.realworld.common.wrappers import apply_single_arm_wrappers
 from rlinf.envs.realworld.xsquare.tasks.button_env import (
     ButtonEnv as ButtonEnv,
 )
 
+
+def create_button_env(
+    override_cfg: dict[str, Any],
+    worker_info: Any,
+    hardware_info: Any,
+    env_idx: int,
+    env_cfg: Mapping[str, Any],
+) -> gym.Env:
+    env = ButtonEnv(
+        override_cfg=override_cfg,
+        worker_info=worker_info,
+        hardware_info=hardware_info,
+        env_idx=env_idx,
+    )
+    return apply_single_arm_wrappers(env, env_cfg)
+
+
 register(
     id="ButtonEnv-v1",
-    entry_point="rlinf.envs.realworld.xsquare.tasks:ButtonEnv",
+    entry_point="rlinf.envs.realworld.xsquare.tasks:create_button_env",
 )
