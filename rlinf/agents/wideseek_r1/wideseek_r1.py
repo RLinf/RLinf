@@ -90,6 +90,7 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
         self.use_access_summary = self.cfg.tools.get("use_access_summary", False)
         self.use_llm_judge = self.cfg.agentloop.get("use_llm_judge", True)
 
+        self.placement = placement
         self.use_fixed_rollout = cfg.rollout.get("use_fixed_worker", False)
         self.fixed_role = self.cfg.agentloop.get("fixed_role", None)
         if self.use_fixed_rollout:
@@ -103,8 +104,16 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
             llm_port = self.cfg.agentloop.get("llm_port", "")
             llm_type = self.cfg.agentloop.get("llm_type", "")
             self.sgl_client = SGLangClient(llm_ip, llm_port, llm_type)
+            self.use_local_judge = self.cfg.agentloop.get("use_local_judge", False)
+            if self.use_local_judge:
+                self.llm_generator = self.local_judge_llm_generator
+            else:
+                self.llm_generator = self.sgl_client.call_sglang_api
+
         else:
             self.sgl_client = None
+            self.llm_generator = None
+
         assert self.return_logprobs if not self.is_eval else True
 
         assert self.toolcall_parser is not None, (
@@ -134,6 +143,21 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
             "access": access_count,
             "role": role,
         }
+
+    async def local_judge_llm_generator(self, messages: list) -> str:
+        prompt_ids = self.tokenizer.apply_chat_template(
+            messages, tokenize=True, add_generation_prompt=True
+        )
+
+        # invocate generate method
+        generate_result = await self.generate(
+            prompt_ids,
+            rollout_name="rollout_judge",
+        )
+
+        # decode generate_result["output_ids"] to judge_response_text
+        judge_response_text = self.tokenizer.decode(generate_result["output_ids"])
+        return judge_response_text
 
     async def extract_tool_calls(
         self, response_text: str, role: str
@@ -179,7 +203,7 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
             return "No useful Information is Found under this URL."
 
         messages = get_access_summary_messages(info_to_extract, page_content)
-        result_text = await self.sgl_client.call_sglang_api(messages)
+        result_text = await self.llm_generator(messages)
         return result_text
 
     async def worker_call(
@@ -666,7 +690,7 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
             answer,
             is_markdown,
             norm_column,
-            self.sgl_client,
+            self.llm_generator,
         )
 
         output_buffer, train_buffer, final_answer_format, reward_score = (

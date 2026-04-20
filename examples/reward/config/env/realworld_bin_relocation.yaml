@@ -1,0 +1,25 @@
+env_type: realworld
+
+total_num_envs: null
+
+auto_reset: False
+ignore_terminations: False
+reward_mode: raw
+wrap_obs_mode: simple
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+max_steps_per_rollout_epoch: 240
+max_episode_steps: 10000
+keyboard_reward_wrapper: single_stage
+use_spacemouse: True
+main_image_key: wrist_1
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+init_params:
+  id: "FrankaBinRelocationEnv-v1"
+  num_envs: null

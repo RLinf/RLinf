@@ -1,10 +1,12 @@
 具身策略的 DAgger 训练
 ======================
 
-**DAgger** （Dataset Aggregation）是一种模仿学习算法：它让学生策略与环境交互，
+**DAgger**（Dataset Aggregation）是一种模仿学习算法：它让学生策略与环境交互，
 再让专家策略对访问到的状态进行重标注，并持续聚合这些带专家标签的轨迹用于后续
-训练。本文档介绍 RLinf 中的具身 DAgger 工作流。目前 DAgger 支持 MLP 和 Pi0
-模型，以及 **同步** 和 **异步** 两种训练流程。
+训练。本文档介绍 RLinf 中面向模拟器场景的具身 DAgger 工作流。目前 DAgger 支持
+MLP 和 Pi0 模型，以及 **同步** 和 **异步** 两种训练流程。
+
+真实世界中 Franka 的 HG-DAgger 全流程请参考 :doc:`hg-dagger`。
 
 环境
 ----
@@ -142,7 +144,7 @@ Pi0 DAgger 配置使用单独的学生模型与专家模型路径：
 
    algorithm:
      dagger:
-       only_save_expert: False   # 专家以 beta 概率执行，同时也为学生 step 打标签
+       only_save_expert: False   # 经典 DAgger：全部样本都由专家重标注后保存
        init_beta: 1.0
        beta_schedule: "exponential"
        beta_decay: 0.99

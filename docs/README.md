@@ -90,4 +90,4 @@ This deletes the `build` directory and its contents.
 
 Sphinx uses reStructuredText (RST), a simple yet powerful markup language for documentation.
 
-[RST grammer](https://zh-sphinx-doc.readthedocs.io/en/latest/rest.html)
+[RST grammar](https://zh-sphinx-doc.readthedocs.io/en/latest/rest.html)

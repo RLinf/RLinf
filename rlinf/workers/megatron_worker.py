@@ -148,6 +148,7 @@ class MegatronWorker(MegatronModelManager, Worker):
         self.ref_policy_state_dict = None
         self.is_pipeline = placement.is_pipeline
         self.placement_mode = placement._placement_mode
+        self.rollout_sync_mode = placement._rollout_sync_mode
         self.enable_dp_load_balance = self.role_cfg.get("enable_dp_load_balance", False)
         self.variable_seq_lengths = self.cfg.actor.model.variable_seq_lengths
         self.encoder_seq_length = self.cfg.actor.model.encoder_seq_length

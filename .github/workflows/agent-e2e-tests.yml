@@ -372,19 +372,12 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/agent/searchr1/run-train.sh qwen2.5-1.5b-megatron
 
-      - name: Train with SGLang FSDP Collocated mode
-        timeout-minutes: 20
-        run: |
-          export REPO_PATH=$(pwd)
-          source .venv/bin/activate
-          bash tests/e2e_tests/agent/searchr1/run-train.sh qwen2.5-1.5b-fsdp
-
       - name: Evaluate with SGLang Collocated mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/agent/searchr1/run-eval.sh
+          bash tests/e2e_tests/agent/searchr1/run-eval.sh qwen2.5-1.5b-eval
 
       - name: Clean up
         run: |

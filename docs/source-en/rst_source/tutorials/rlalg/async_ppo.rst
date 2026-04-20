@@ -323,7 +323,7 @@ If these conditions are violated, training will fail with assertions.
 
 
 10. Launching Async PPO
------------------------
+--------------------------
 
 The recommended launch path is:
 
@@ -344,6 +344,20 @@ Before running:
 - in multi-node mode, Ray must already be started and the training script should run only on the head node,
 - ``run_async.sh`` sets ``MUJOCO_GL=egl`` and ``PYOPENGL_PLATFORM=egl``,
 - ``ROBOT_PLATFORM`` must match the actual robot platform, otherwise action dimensions and normalization may not align.
+
+All Async PPO configs under ``examples/embodiment/config/`` have been tested and can be used directly for embodied tasks.
+Below are the model download links used by each yaml:
+
+- ``libero_goal_async_ppo_gr00t.yaml``: https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Goal
+- ``libero_object_async_ppo_openpi_pi05.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
+- ``libero_spatial_async_ppo_openpi.yaml``: https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
+- ``libero_spatial_async_ppo_openpi_pi05.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
+- ``maniskill_async_ppo_openpi.yaml``: https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT
+- ``maniskill_async_ppo_openpi_pi05.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT
+- ``maniskill_async_ppo_openvla.yaml``: https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup
+- ``maniskill_async_ppo_openvlaoft.yaml``: https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-trajall
+
+The LoRA HF repository used by ``maniskill_async_ppo_openvlaoft.yaml`` is: https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
 
 11. Monitoring

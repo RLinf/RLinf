@@ -721,7 +721,7 @@ class EmbodiedRolloutResult:
             elif isinstance(value, torch.Tensor):
                 chunks = torch.chunk(value, split_size, dim=1)
                 for i in range(split_size):
-                    setattr(splited_trajectories[i], field_name, chunks[i])
+                    setattr(splited_trajectories[i], field_name, chunks[i].contiguous())
             else:
                 raise ValueError(
                     f"Unsupported value type: {type(value)} for field_name: {field_name}"

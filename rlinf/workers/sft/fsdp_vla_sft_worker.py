@@ -53,6 +53,17 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             return build_lingbot_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths
             )
+        elif SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.DREAMZERO
+        ]:
+            self._dreamzero_loss = None
+            from rlinf.data.datasets.dreamzero import (
+                build_dreamzero_sft_dataloader,
+            )
+
+            return build_dreamzero_sft_dataloader(
+                self.cfg, self._world_size, self._rank, data_paths, eval_dataset
+            )
         else:
             raise KeyError(
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
@@ -64,25 +75,34 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def get_train_model_output(self, batch: dict[str, Any]):
         if SupportedModel(self.cfg.actor.model.model_type) in [
-            SupportedModel.LINGBOTVLA
+            SupportedModel.LINGBOTVLA,
+            SupportedModel.DREAMZERO,
         ]:
-            batch_data = next(self.data_iter)
             batch_data = _pytree.tree_map(
-                lambda x: torch.as_tensor(x, device=self.device).contiguous().clone()
-                if isinstance(x, torch.Tensor)
-                else x,
-                batch_data,
+                lambda x: (
+                    torch.as_tensor(x, device=self.device).contiguous().clone()
+                    if isinstance(x, torch.Tensor)
+                    else x
+                ),
+                batch,
             )
             with self.amp_context:
                 losses_dict = self.model(forward_type=ForwardType.SFT, data=batch_data)
+            if losses_dict.get("dynamics_loss", None) is not None:
+                self._dreamzero_loss = {
+                    "dynamics_loss": losses_dict["dynamics_loss"],
+                    "action_loss": losses_dict["action_loss"],
+                }
             return losses_dict["loss"]
-        observation, actions = next(self.data_iter)
+        observation, actions = batch
 
         register_pytree_dataclasses(observation)
         observation = _pytree.tree_map(
-            lambda x: torch.as_tensor(x, device=self.device).contiguous().clone()
-            if x is not None
-            else x,
+            lambda x: (
+                torch.as_tensor(x, device=self.device).contiguous().clone()
+                if x is not None
+                else x
+            ),
             observation,
         )
         actions = actions.to(torch.float32)
@@ -96,3 +116,19 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
         # train model return the loss
         return losses
+
+    def run_training(self):
+        train_metrics = super().run_training()
+        if (
+            SupportedModel(self.cfg.actor.model.model_type)
+            in [SupportedModel.DREAMZERO]
+            and self._dreamzero_loss is not None
+        ):
+            train_metrics.update(
+                {
+                    "dynamics_loss": self._dreamzero_loss["dynamics_loss"],
+                    "action_loss": self._dreamzero_loss["action_loss"],
+                }
+            )
+            self._dreamzero_loss = None
+        return train_metrics

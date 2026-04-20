@@ -31,6 +31,9 @@ class LeRobotBehaviorDataConfig(DataConfigFactory):
     """
 
     extra_delta_transform: bool = False
+    extract_state_from_proprio: bool = False
+    use_all_wrist_images: bool = False
+    use_quantile_norm: bool = False
 
     @override
     def create(
@@ -65,7 +68,13 @@ class LeRobotBehaviorDataConfig(DataConfigFactory):
         # how to modify the transforms to match your dataset. Once you created your own transforms, you can
         # replace the transforms below with your own.
         data_transforms = _transforms.Group(
-            inputs=[behavior_policy.BehaviorInputs(model_type=model_config.model_type)],
+            inputs=[
+                behavior_policy.BehaviorInputs(
+                    model_type=model_config.model_type,
+                    extract_state_from_proprio=self.extract_state_from_proprio,
+                    use_all_wrist_images=self.use_all_wrist_images,
+                )
+            ],
             outputs=[behavior_policy.BehaviorOutputs()],
         )
 
@@ -99,4 +108,5 @@ class LeRobotBehaviorDataConfig(DataConfigFactory):
             repack_transforms=repack_transform,
             data_transforms=data_transforms,
             model_transforms=model_transforms,
+            use_quantile_norm=self.use_quantile_norm,
         )
