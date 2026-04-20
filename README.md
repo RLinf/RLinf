@@ -187,11 +187,10 @@ Multiple Backend Integrations
   </tbody>
 </table>
 
-### Real-world Robotics
 <table style="width: 100%; table-layout: auto; border-collapse: collapse;">
   <thead align="center" valign="bottom">
     <tr>
-      <th style="min-width: 120px;">Robotics</th>
+      <th style="min-width: 120px;">Real-world Robotics</th>
       <th style="min-width: 120px;">Data Collection</th>
     </tr>
   </thead>

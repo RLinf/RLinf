@@ -183,11 +183,10 @@ RLinf具有高度灵活性，可支持多种强化学习训练工作流（PPO、
   </tbody>
 </table>
 
-### 真机
 <table style="width: 100%; table-layout: auto; border-collapse: collapse;">
   <thead align="center" valign="bottom">
     <tr>
-      <th style="min-width: 120px;">机器人</th>
+      <th style="min-width: 120px;">真机</th>
       <th style="min-width: 120px;">数据采集</th>
     </tr>
   </thead>
