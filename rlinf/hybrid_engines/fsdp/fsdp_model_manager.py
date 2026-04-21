@@ -305,6 +305,13 @@ class FSDPModelManager:
         Args:
             load_path: the directory to load checkpoint.
         """
+        if self.is_weight_offloaded:
+            self.load_param_and_grad(self.device)
+            self.is_weight_offloaded = False
+        if self.is_optimizer_offloaded:
+            self.load_optimizer(self.device)
+            self.is_optimizer_offloaded = False
+
         self._strategy.load_checkpoint(
             self.model, self.optimizer, self.lr_scheduler, load_path
         )
@@ -578,7 +585,7 @@ class FSDPModelManager:
 
         for key, params in filtered_params_dict.items():
             assert len(params) > 0, (
-                f"optimer {key=} is not match any params, with {param_filters(key)=}"
+                f"optimer {key=} is not match any params, with {param_filters[key]=}"
             )
         for key, params in filtered_params_dict.items():
             optimizers.append(

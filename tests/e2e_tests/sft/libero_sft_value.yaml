@@ -1,0 +1,114 @@
+defaults:
+  - model/value@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/sft/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: 0-1
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "/workspace/results/libero_sft_value"
+    project_name: rlinf
+    experiment_name: "libero_sft_value"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1
+  max_steps: -1
+  val_check_interval: -1
+  save_interval: -1
+
+data:
+  # Must match Step 1's data.tag; loads meta/returns_{tag}.parquet (null = legacy meta/returns.parquet)
+  tag: fail300
+
+  train_data_paths:
+    - dataset_path: "/workspace/dataset/data/sft-ci-data/recap/libero_10_3shot"
+      type: "sft"
+      weight: 1.0
+      robot_type: "libero"
+      model_type: "pi05"
+
+  eval_data_paths:
+    # Reuse the same small recap dataset for CI smoke testing.
+    - dataset_path: "/workspace/dataset/data/sft-ci-data/recap/libero_10_3shot"
+      max_samples: 10000
+      robot_type: "libero"
+      model_type: "pi05"
+
+  # ----- dataloader performance -----
+  train_num_workers: 1
+  eval_num_workers: 1
+  prefetch_factor: 1
+  persistent_workers: false
+  pin_memory: false
+  # ----- shared dataset params -----
+  include_state: true
+  gamma: 1.0
+  action_horizon: 10
+  normalize_to_minus_one_zero: true
+  include_next_obs: false
+  action_dim: 7
+  robot_type: "libero"
+  model_type: "pi05"
+
+  # ----- mixture settings -----
+  balance_weights: true
+  seed: 42
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 32
+  global_batch_size: 256
+  seed: 0
+
+  model:
+    precision: bf16
+    siglip_path: "/workspace/dataset/siglip2-so400m-patch14-224"
+    gemma3_path: "/workspace/dataset/gemma-3-270m"
+    tokenizer_path: "/workspace/dataset/gemma-3-270m"
+    freeze_vlm: false
+    action_dim: 7
+    action_horizon: 10
+
+  optim:
+    lr: 5.0e-5
+    value_lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1e-10
+    clip_grad: 1.0
+    lr_scheduler: "constant"
+    lr_warmup_steps: 500
+    total_training_steps: 8000
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: False
+    gradient_checkpointing: False
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

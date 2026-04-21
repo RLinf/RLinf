@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,16 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-from .dual_franka import DualFrankaConfig, DualFrankaHWInfo
-from .franka import FrankaConfig, FrankaHWInfo
-from .xsquare import Turtle2Config, Turtle2HWInfo
-
-__all__ = [
-    "DualFrankaConfig",
-    "DualFrankaHWInfo",
-    "FrankaConfig",
-    "FrankaHWInfo",
-    "Turtle2Config",
-    "Turtle2HWInfo",
-]
