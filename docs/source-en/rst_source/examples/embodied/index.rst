@@ -246,6 +246,9 @@ as well as reinforcement learning training examples on real robots.
        </p>
      </div>
 
+  </div>
+
+   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/3_layer_mlp.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
@@ -281,6 +284,9 @@ as well as reinforcement learning training examples on real robots.
        </p>
      </div>
 
+   </div>
+
+   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/release_0.2/qwen2_5_sft_vlm.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -338,7 +344,7 @@ as well as reinforcement learning training examples on real robots.
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
+       <img src="https://github.com/RLinf/misc/raw/main/pic/co_training.jpeg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="co_training.html" style="text-decoration: underline; color: blue;">
@@ -360,8 +366,7 @@ as well as reinforcement learning training examples on real robots.
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <!-- TODO(thumbnail): replace placeholder cover image URL for franka_reward_model -->
-       <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
+       <img src="https://github.com/RLinf/misc/raw/main/pic/franka_reward_model.jpeg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="franka_reward_model.html" style="text-decoration: underline; color: blue;">
@@ -372,8 +377,7 @@ as well as reinforcement learning training examples on real robots.
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <!-- TODO(thumbnail): replace placeholder cover image URL for franka_zed_robotiq -->
-       <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
+       <img src="https://github.com/RLinf/misc/raw/main/pic/robotiq_zed.jpeg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="franka_zed_robotiq.html" style="text-decoration: underline; color: blue;">
@@ -384,8 +388,7 @@ as well as reinforcement learning training examples on real robots.
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <!-- TODO(thumbnail): replace placeholder cover image URL for franka_gello -->
-       <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
+       <img src="https://github.com/RLinf/misc/raw/main/pic/gello.jpeg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="franka_gello.html" style="text-decoration: underline; color: blue;">

@@ -44,8 +44,9 @@ Key Features
   block the RL training loop.
 - The LeRobot writer is lazily initialized on the first episode write, with image
   shape, state dimension, and action dimension inferred automatically.
-- LeRobot export can store ``image``, ``wrist_image``, and one
-  ``extra_view_image`` channel when the observation provides them.
+- LeRobot export can store ``image`` and ``extra_view_image``. When
+  ``extra_view_images`` is a stacked ``[N, H, W, C]`` tensor, the columns are
+  fanned out by index (``extra_view_image-0``, ``extra_view_image-1``, …).
 - Set ``only_success=True`` to filter out failed episodes and save disk space.
 
 Constructor Arguments
@@ -215,10 +216,10 @@ Parquet column schema:
      - Description
    * - ``image``
      - Main camera image (bytes + path), uint8
-   * - ``wrist_image``
-     - Wrist camera image (bytes + path), uint8; empty when no wrist camera
-   * - ``extra_view_image``
-     - One auxiliary camera image (bytes + path), uint8; empty when no extra view
+   * - ``extra_view_image`` / ``extra_view_image-N``
+     - Auxiliary camera image (bytes + path), uint8. Multi-view stacks are
+       fanned out into ``extra_view_image-0``, ``extra_view_image-1``, …;
+       empty when no extra view is present.
    * - ``state``
      - Robot state vector, ``float32[state_dim]``
    * - ``actions``
@@ -248,10 +249,9 @@ Observation key lookup order (first match wins):
      - Keys checked (in priority order)
    * - Main image
      - ``main_images`` → ``image`` → ``full_image``
-   * - Wrist image
-     - ``wrist_images`` → ``wrist_image``
    * - Extra-view image
-     - ``extra_view_images`` (first extra view only when multiple are present) → ``extra_view_image``
+     - ``extra_view_images`` → ``extra_view_image`` (``[N, H, W, C]`` stacks
+       fan out to ``extra_view_image-0``, ``extra_view_image-1``, …)
    * - State
      - ``states`` → ``state``
 

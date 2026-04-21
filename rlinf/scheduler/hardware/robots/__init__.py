@@ -12,7 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .dual_franka import DualFrankaConfig, DualFrankaHWInfo
 from .franka import FrankaConfig, FrankaHWInfo
 from .xsquare import Turtle2Config, Turtle2HWInfo
 
-__all__ = ["FrankaConfig", "FrankaHWInfo", "Turtle2Config", "Turtle2HWInfo"]
+__all__ = [
+    "DualFrankaConfig",
+    "DualFrankaHWInfo",
+    "FrankaConfig",
+    "FrankaHWInfo",
+    "Turtle2Config",
+    "Turtle2HWInfo",
+]
