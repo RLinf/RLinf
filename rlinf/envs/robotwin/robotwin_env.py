@@ -61,7 +61,7 @@ class RoboTwinEnv(gym.Env):
 
         self.task_name = cfg.task_config.task_name
 
-        self.center_crop = cfg.center_crop
+        self.center_crop = cfg.get("center_crop", False)
         self._init_reset_state_ids()
 
         self._init_env()

@@ -119,7 +119,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-Pi0-ManiSkill-25Main-SFT"
+    model_path: "/path/to/model/RLinf-Pi0-ManiSkill-25Main-SFT" # https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT
     precision: ${actor.model.precision}
 
 actor:
@@ -131,7 +131,7 @@ actor:
   enable_offload: False
   # Override the default values in model/pi0
   model:
-    model_path: "/path/to/model/RLinf-Pi0-ManiSkill-25Main-SFT"
+    model_path: "/path/to/model/RLinf-Pi0-ManiSkill-25Main-SFT" # https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT
     model_name: "openpi"
     precision: null    # bf16
     num_action_chunks: 5 # interface for the env

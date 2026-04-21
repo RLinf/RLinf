@@ -91,17 +91,18 @@ env:
     max_episode_steps: 256 # max episode steps for truncation
     max_steps_per_rollout_epoch: 256
     reward_coef: ${algorithm.reward_coef}
-    reset_gripper_open: False
+    reset_gripper_open: True
     wan_wm_hf_ckpt_path: "/path/to/RLinf-Wan-Libero-Object" # https://huggingface.co/RLinf/RLinf-Wan-Libero-Object
     enable_offload: True # otherwise, may OOM
+    num_inference_steps: 5 # default 5, can be set to 3 or 1 for faster inference, but lower quality
   eval:
-    total_num_envs: 500
+    total_num_envs: 496 # must be divisible by env_world_size
     auto_reset: True
     ignore_terminations: True
     max_episode_steps: 512
     max_steps_per_rollout_epoch: 512
     group_size: 1
-    reset_gripper_open: False
+    reset_gripper_open: True
     is_eval: True
     video_cfg:
       save_video: True

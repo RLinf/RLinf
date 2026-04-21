@@ -43,6 +43,7 @@ from rlinf.utils.nested_dict_process import (
     put_tensor_device,
     split_dict_to_chunk,
 )
+from rlinf.utils.utils import clear_memory
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -313,7 +314,9 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         Args:
             input_channel: The input channel to read from.
         """
-        send_num = self._component_placement.get_world_size("rollout") * self.stage_num
+        clear_memory(sync=False)
+
+        send_num = self._component_placement.get_world_size("env") * self.stage_num
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(send_num, recv_num)
 
@@ -329,9 +332,9 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             intervene_traj_list = []
             for traj in recv_list:
                 assert isinstance(traj, Trajectory)
-                intervene_traj = traj.extract_intervene_traj()
-                if intervene_traj is not None:
-                    intervene_traj_list.append(intervene_traj)
+                intervene_trajs = traj.extract_intervene_traj()
+                if intervene_trajs is not None:
+                    intervene_traj_list.extend(intervene_trajs)
 
             if len(intervene_traj_list) > 0:
                 self.demo_buffer.add_trajectories(intervene_traj_list)

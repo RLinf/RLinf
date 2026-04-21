@@ -1,0 +1,92 @@
+defaults:
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0-0
+
+runner:
+  task_type: sft  # Use SFT runner for reward training
+  logger:
+    log_path: "logs/reward_model"
+    project_name: rlinf
+    experiment_name: "reward_training"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 800
+  max_steps: -1
+  val_check_interval: 50
+  save_interval: 50
+
+  # Early stopping
+  early_stop:
+    enabled: true
+    patience: 5           # Stop after N val checks without improvement
+    min_delta: 0.001      # Minimum improvement to count as progress
+    monitor: "val_loss"   # Metric to monitor
+
+data:
+  # Paths to preprocessed split datasets.
+  # Generate them first with:
+  #   python examples/reward/preprocess_reward_dataset.py \
+  #       --raw-data-path /path/to/collected_data \
+  #       --output-dir /path/to/processed_reward_data
+  train_data_paths: "logs/processed_reward_data/train.pt"
+  val_data_paths: "logs/processed_reward_data/val.pt"
+  num_workers: 4
+
+actor:
+  group_name: "RewardActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 32
+  global_batch_size: 64
+  seed: 42
+  enable_offload: false
+
+  # Model configuration
+  model:
+    model_type: "resnet"
+    model_path: null
+    arch: "resnet18"
+    pretrained: True
+    hidden_dim: 256
+    dropout: 0.1
+    image_size: [3, 224, 224]
+    normalize: true
+    precision: "fp32"
+
+    add_value_head: false
+    is_lora: false
+    freeze_vit: false
+    use_flash_attention: false
+
+  # Optimizer
+  optim:
+    lr: 1.0e-4
+    value_lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-5
+    clip_grad: 1.0
+    lr_warmup_steps: 100
+    warmup_style: "constant"
+    total_training_steps: 10000
+
+  # FSDP configuration
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: true
+    gradient_checkpointing: false
+
+    mixed_precision:            # mixed precision settings for fsdp/fsdp2
+      param_dtype: null
+      reduce_dtype: null
+      buffer_dtype: null

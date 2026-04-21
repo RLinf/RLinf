@@ -418,13 +418,15 @@ class CNNPolicy(nn.Module, BasePolicy):
                 calculate_values=calculate_values,
             )
         )
-        chunk_actions = chunk_actions.cpu().numpy()
         forward_inputs = {"action": action}
 
         if return_obs:
             forward_inputs["main_images"] = env_obs["main_images"]
             forward_inputs["states"] = env_obs["states"]
-            if "extra_view_images" in env_obs:
+            if (
+                "extra_view_images" in env_obs
+                and env_obs["extra_view_images"] is not None
+            ):
                 forward_inputs["extra_view_images"] = env_obs["extra_view_images"]
 
         result = {

@@ -95,9 +95,9 @@
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.1-calvin
+      rlinf/rlinf:agentic-rlinf0.2-calvin
       # 为了提高国内下载速度，也可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-calvin
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-calvin
 
 请使用内置的 `switch_env` 工具切换到相应的虚拟环境：
 

@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,14 +17,14 @@ import queue
 import time
 from dataclasses import dataclass, field
 from itertools import cycle
-from typing import Optional
+from typing import Any, Optional
 
 import cv2
 import gymnasium as gym
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from rlinf.envs.realworld.common.camera import Camera, CameraInfo
+from rlinf.envs.realworld.common.camera import BaseCamera, CameraInfo, create_camera
 from rlinf.envs.realworld.common.video_player import VideoPlayer
 from rlinf.scheduler import (
     FrankaHWInfo,
@@ -33,18 +33,34 @@ from rlinf.scheduler import (
 from rlinf.utils.logging import get_logger
 
 from .franka_robot_state import FrankaRobotState
-from .utils import construct_adjoint_matrix, construct_homogeneous_matrix, quat_slerp
+from .utils import (
+    clip_euler_to_target_window,
+    construct_adjoint_matrix,
+    construct_homogeneous_matrix,
+    quat_slerp,
+)
 
 
 @dataclass
 class FrankaRobotConfig:
     robot_ip: Optional[str] = None
     camera_serials: Optional[list[str]] = None
+    camera_type: Optional[str] = None
+    gripper_type: Optional[str] = None
+    gripper_connection: Optional[str] = None
     enable_camera_player: bool = True
 
     is_dummy: bool = False
     use_dense_reward: bool = False
+    reward_scale: float = 1.0  # Scale dense reward to make training stable
     step_frequency: float = 10.0  # Max number of steps per second
+
+    use_reward_model: bool = False
+    reward_worker_cfg: Optional[dict] = None
+    reward_worker_hardware_rank: Optional[int] = None
+    reward_worker_node_rank: Optional[int] = None
+    reward_worker_node_group: Optional[str] = None
+    reward_image_key: Optional[str] = None
 
     # Positions are stored in eular angles (xyz for position, rzryrx for orientation)
     # It will be converted to quaternions internally
@@ -76,23 +92,37 @@ class FrankaRobotConfig:
     gripper_penalty: float = 0.1
     save_video_path: Optional[str] = None
     joint_reset_cycle: int = 20000  # Number of resets before resetting joints
+    task_description: str = ""
     success_hold_steps: int = (
         1  # Default to 1 to maintain backward compatibility (immediate success)
     )
+
+    def __post_init__(self):
+        """Convert list fields from YAML/Hydra to numpy arrays."""
+        self.target_ee_pose = np.array(self.target_ee_pose)
+        self.reset_ee_pose = np.array(self.reset_ee_pose)
+        self.reward_threshold = np.array(self.reward_threshold)
+        self.action_scale = np.array(self.action_scale)
+        self.ee_pose_limit_min = np.array(self.ee_pose_limit_min)
+        self.ee_pose_limit_max = np.array(self.ee_pose_limit_max)
 
 
 class FrankaEnv(gym.Env):
     """Franka robot arm environment."""
 
+    CONFIG_CLS: type[FrankaRobotConfig] = FrankaRobotConfig
+
     def __init__(
         self,
-        config: FrankaRobotConfig,
+        override_cfg: dict[str, Any],
         worker_info: Optional[WorkerInfo],
         hardware_info: Optional[FrankaHWInfo],
         env_idx: int,
     ):
+        config = self.CONFIG_CLS(**override_cfg)
         self._logger = get_logger()
         self.config = config
+        self._task_description = config.task_description
         self.hardware_info = hardware_info
         self.env_idx = env_idx
         self.node_rank = 0
@@ -116,9 +146,11 @@ class FrankaEnv(gym.Env):
         next(self._joint_reset_cycle)  # Initialize the cycle
 
         self._success_hold_counter = 0  # Initialize the success hold counter
+        self._reward_worker = None
 
         if not self.config.is_dummy:
             self._setup_hardware()
+            self._setup_reward_worker()
 
         # Init action and observation spaces
         assert (
@@ -148,6 +180,10 @@ class FrankaEnv(gym.Env):
         # Video player for displaying camera frames
         self.camera_player = VideoPlayer(self.config.enable_camera_player)
 
+    @property
+    def task_description(self):
+        return self._task_description
+
     def _setup_hardware(self):
         from .franka_controller import FrankaController
 
@@ -157,19 +193,63 @@ class FrankaEnv(gym.Env):
         assert isinstance(self.hardware_info, FrankaHWInfo), (
             f"hardware_info must be FrankaHWInfo, but got {type(self.hardware_info)}."
         )
-        # Only set robot_ip and camera_serials if they are not provided in config
         if self.config.robot_ip is None:
             self.config.robot_ip = self.hardware_info.config.robot_ip
         if self.config.camera_serials is None:
             self.config.camera_serials = self.hardware_info.config.camera_serials
+        if self.config.camera_type is None:
+            self.config.camera_type = getattr(
+                self.hardware_info.config, "camera_type", "realsense"
+            )
+        if self.config.gripper_type is None:
+            self.config.gripper_type = getattr(
+                self.hardware_info.config, "gripper_type", "franka"
+            )
+        if self.config.gripper_connection is None:
+            self.config.gripper_connection = getattr(
+                self.hardware_info.config, "gripper_connection", None
+            )
 
-        # Launch Franka controller
+        # Place the controller on controller_node_rank if the arm lives on a
+        # different machine (e.g. cameras on GPU server, arm on NUC).
+        # Falls back to the env worker's own node when not specified.
+        controller_node_rank = getattr(
+            self.hardware_info.config, "controller_node_rank", None
+        )
+        if controller_node_rank is None:
+            controller_node_rank = self.node_rank
         self._controller = FrankaController.launch_controller(
             robot_ip=self.config.robot_ip,
             env_idx=self.env_idx,
-            node_rank=self.node_rank,
+            node_rank=controller_node_rank,
+            worker_rank=self.env_worker_rank,
+            gripper_type=self.config.gripper_type or "franka",
+            gripper_connection=self.config.gripper_connection,
+        )
+
+    def _setup_reward_worker(self):
+        if not self.config.use_reward_model:
+            return
+        if self.config.reward_worker_cfg is None:
+            raise ValueError(
+                "use_reward_model=True but reward_worker_cfg is not provided in env override_cfg."
+            )
+
+        from rlinf.workers.reward.reward_worker import EmbodiedRewardWorker
+
+        reward_node_rank = self.config.reward_worker_node_rank
+        if reward_node_rank is None:
+            reward_node_rank = self.node_rank
+
+        self._reward_worker = EmbodiedRewardWorker.launch_for_realworld(
+            reward_cfg=self.config.reward_worker_cfg,
+            node_rank=reward_node_rank,
+            node_group_label=self.config.reward_worker_node_group,
+            hardware_rank=self.config.reward_worker_hardware_rank,
+            env_idx=self.env_idx,
             worker_rank=self.env_worker_rank,
         )
+        self._reward_worker.init_worker().wait()
 
     def transform_action_ee_to_base(self, action):
         action[:6] = np.linalg.inv(self.adjoint_matrix) @ action[:6]
@@ -202,9 +282,11 @@ class FrankaEnv(gym.Env):
             ).as_quat()
 
             gripper_action = action[6] * self.config.action_scale[2]
-
             is_gripper_action_effective = self._gripper_action(gripper_action)
-            self._move_action(self._clip_position_to_safety_box(self.next_position))
+
+            clipped_position = self._clip_position_to_safety_box(self.next_position)
+
+            self._move_action(clipped_position)
         else:
             is_gripper_action_effective = True
 
@@ -229,11 +311,21 @@ class FrankaEnv(gym.Env):
         )
 
         truncated = self._num_steps >= self.config.max_num_steps
+        reward *= self.config.reward_scale
         return observation, reward, terminated, truncated, {}
 
     @property
     def num_steps(self):
         return self._num_steps
+
+    def get_tcp_pose(self) -> np.ndarray:
+        """Return the current TCP pose ``[x, y, z, qx, qy, qz, qw]``."""
+        self._franka_state = self._controller.get_state().wait()[0]
+        return self._franka_state.tcp_pose
+
+    def get_action_scale(self) -> np.ndarray:
+        """Return the action scale ``[pos_scale, ori_scale, gripper_scale]``."""
+        return self.config.action_scale
 
     def _calc_step_reward(
         self,
@@ -246,6 +338,16 @@ class FrankaEnv(gym.Env):
             observation (Dict[str, np.ndarray]): The current observation from the environment.
             is_gripper_action_effective (bool): Whether the gripper action was effective (i.e., the gripper state changed).
         """
+        if self.config.use_reward_model:
+            reward = self._compute_reward_model(observation)
+            if reward >= 1.0:
+                self._success_hold_counter += 1
+            else:
+                self._success_hold_counter = 0
+            if self.config.enable_gripper_penalty and is_gripper_action_effective:
+                reward -= self.config.gripper_penalty
+            return reward
+
         if not self.config.is_dummy:
             # Convert orientation to euler angles
             euler_angles = np.abs(
@@ -282,6 +384,32 @@ class FrankaEnv(gym.Env):
             return reward
         else:
             return 0.0
+
+    def _compute_reward_model(
+        self, observation: dict[str, np.ndarray | FrankaRobotState]
+    ) -> float:
+        if self._reward_worker is None:
+            raise RuntimeError("Reward worker is not initialized.")
+
+        frames = observation.get("frames", {})
+        if not frames:
+            raise ValueError("No frames available for reward model inference.")
+
+        image_key = self.config.reward_image_key
+        if image_key is None:
+            image_key = sorted(frames.keys())[0]
+        if image_key not in frames:
+            raise KeyError(
+                f"reward_image_key '{image_key}' not found in frames. "
+                f"Available keys: {list(frames.keys())}"
+            )
+
+        image_batch = np.expand_dims(frames[image_key], axis=0)
+        reward_output = self._reward_worker.compute_image_rewards(image_batch).wait()[0]
+        if hasattr(reward_output, "detach"):
+            reward_output = reward_output.detach().cpu().numpy()
+        reward_array = np.asarray(reward_output).reshape(-1)
+        return float(reward_array[0])
 
     def reset(self, joint_reset=False, seed=None, options=None):
         if self.config.is_dummy:
@@ -384,15 +512,20 @@ class FrankaEnv(gym.Env):
         self._base_observation_space = copy.deepcopy(self.observation_space)
 
     def _open_cameras(self):
-        self._cameras: list[Camera] = []
+        self._cameras: list[BaseCamera] = []
         if self.config.camera_serials is None:
             return
+        camera_type = self.config.camera_type or "realsense"
         camera_infos = [
-            CameraInfo(name=f"wrist_{i + 1}", serial_number=n)
+            CameraInfo(
+                name=f"wrist_{i + 1}",
+                serial_number=n,
+                camera_type=camera_type,
+            )
             for i, n in enumerate(self.config.camera_serials)
         ]
         for info in camera_infos:
-            camera = Camera(info)
+            camera = create_camera(info)
             if not self.config.is_dummy:
                 camera.open()
             self._cameras.append(camera)
@@ -456,19 +589,11 @@ class FrankaEnv(gym.Env):
             position[:3], self._xyz_safe_space.low, self._xyz_safe_space.high
         )
         euler = R.from_quat(position[3:].copy()).as_euler("xyz")
-
-        # Clip first euler angle separately due to discontinuity from pi to -pi
-        sign = np.sign(euler[0])
-        euler[0] = sign * (
-            np.clip(
-                np.abs(euler[0]),
-                self._rpy_safe_space.low[0],
-                self._rpy_safe_space.high[0],
-            )
-        )
-
-        euler[1:] = np.clip(
-            euler[1:], self._rpy_safe_space.low[1:], self._rpy_safe_space.high[1:]
+        euler = clip_euler_to_target_window(
+            euler=euler,
+            target_euler=self.config.target_ee_pose[3:],
+            lower_euler=self._rpy_safe_space.low,
+            upper_euler=self._rpy_safe_space.high,
         )
         position[3:] = R.from_euler("xyz", euler).as_quat()
 

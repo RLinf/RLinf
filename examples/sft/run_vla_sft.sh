@@ -9,6 +9,9 @@ export PYOPENGL_PLATFORM="egl"
 
 export PYTHONPATH=${REPO_PATH}:${LIBERO_REPO_PATH}:$PYTHONPATH
 
+export DREAMZERO_PATH=${DREAMZERO_PATH:-"/path/to/DreamZero"}
+export PYTHONPATH=${DREAMZERO_PATH}:$PYTHONPATH
+
 if [ -z "$1" ]; then
     CONFIG_NAME="maniskill_ppo_openvlaoft"
 else

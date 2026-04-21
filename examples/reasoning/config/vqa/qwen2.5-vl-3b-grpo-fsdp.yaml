@@ -87,7 +87,7 @@ rollout:
   gpu_memory_utilization: 0.55
 
   model:
-    model_path: /path/to/model/Qwen2.5-VL-3B-Instruct
+    model_path: /path/to/model/Qwen2.5-VL-3B-Instruct # https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
     model_type: qwen2.5_vl #qwen2.5
     precision: ${actor.model.precision}              # precision for rollout model, support [fp16, bf16, fp32]
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
@@ -163,7 +163,7 @@ actor:
 
   model:
     model_type: ${rollout.model.model_type}
-    model_path: /path/to/model/Qwen2.5-VL-3B-Instruct/
+    model_path: /path/to/model/Qwen2.5-VL-3B-Instruct/ # https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
     precision: bf16
     sharding_strategy: full_shard
     is_lora: False

@@ -1258,6 +1258,8 @@ class PandaPutOnPlateInScene25DigitalTwin(PandaPutOnPlateInScene25):
         else:
             if isinstance(action, np.ndarray):
                 action = torch.from_numpy(action).to(self.device)
+            else:
+                action = action.to(self.device)
 
             pose_tcp_in_world = self.agent.tcp.pose.raw_pose  # (7,) or (N,7)
             pose_tcp_in_world_mat = pose2matrix_batch_torch(

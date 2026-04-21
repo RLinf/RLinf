@@ -22,4 +22,16 @@ export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
 export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
 export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 
+# Libero variant: standard, pro, plus
+export LIBERO_TYPE=${LIBERO_TYPE:-"standard"}
+if [ "$LIBERO_TYPE" == "pro" ]; then
+    export LIBERO_PERTURBATION="all"  # all,swap,object,lan
+    echo "Evaluation Mode: LIBERO-PRO | Perturbation: $LIBERO_PERTURBATION"
+elif [ "$LIBERO_TYPE" == "plus" ]; then
+    export LIBERO_SUFFIX="all"
+    echo "Evaluation Mode: LIBERO-PLUS | Suffix: $LIBERO_SUFFIX"
+else
+    echo "Evaluation Mode: Standard LIBERO"
+fi
+
 python ${REPO_PATH}/examples/embodiment/train_embodied_agent.py --config-path ${REPO_PATH}/tests/e2e_tests/embodied --config-name ${CONFIG}

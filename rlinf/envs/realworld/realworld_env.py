@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,14 +26,6 @@ import torch
 from filelock import FileLock
 from omegaconf import OmegaConf
 
-from rlinf.envs.realworld.common.wrappers import (
-    GripperCloseEnv,
-    KeyboardRewardDoneMultiStageWrapper,
-    KeyboardRewardDoneWrapper,
-    Quat2EulerWrapper,
-    RelativeFrame,
-    SpacemouseIntervention,
-)
 from rlinf.envs.realworld.venv import NoAutoResetSyncVectorEnv
 from rlinf.envs.utils import to_tensor
 from rlinf.scheduler import WorkerInfo
@@ -82,19 +74,8 @@ class RealWorldEnv(gym.Env):
             worker_info=worker_info,
             hardware_info=hardware_info,
             env_idx=env_idx,
+            env_cfg=self.cfg,
         )
-        if self.cfg.get("no_gripper", True):
-            env = GripperCloseEnv(env)
-        if not env.config.is_dummy and self.cfg.get("use_spacemouse", True):
-            env = SpacemouseIntervention(env)
-        if not env.config.is_dummy and self.cfg.get("keyboard_reward_wrapper", None):
-            if self.cfg.keyboard_reward_wrapper == "multi_stage":
-                env = KeyboardRewardDoneMultiStageWrapper(env)
-            elif self.cfg.keyboard_reward_wrapper == "single_stage":
-                env = KeyboardRewardDoneWrapper(env)
-
-        env = RelativeFrame(env)
-        env = Quat2EulerWrapper(env)
         return env
 
     @staticmethod
@@ -128,6 +109,14 @@ class RealWorldEnv(gym.Env):
         ]
         self.env = NoAutoResetSyncVectorEnv(env_fns)
         self.task_descriptions = list(self.env.call("task_description"))
+
+    @property
+    def action_space(self):
+        return self.env.action_space
+
+    @property
+    def observation_space(self):
+        return self.env.observation_space
 
     @property
     def total_num_group_envs(self):
@@ -174,10 +163,17 @@ class RealWorldEnv(gym.Env):
             self.intervened_once[:] = False
             self.intervened_steps[:] = 0
 
-    def _record_metrics(self, step_reward, terminations, intervene_current_step, infos):
+    def _record_metrics(
+        self,
+        step_reward,
+        terminations,
+        success_current_step,
+        intervene_current_step,
+        infos,
+    ):
         episode_info = {}
         self.returns += step_reward
-        self.success_once = self.success_once | terminations
+        self.success_once = self.success_once | success_current_step
         self.intervened_once = self.intervened_once | intervene_current_step
         self.intervened_steps += intervene_current_step.astype(int)
 
@@ -218,16 +214,13 @@ class RealWorldEnv(gym.Env):
         full_states = np.concatenate(full_states, axis=-1)
         obs["states"] = full_states
 
-        # Process images
-        if self.main_image_key not in raw_obs["frames"]:
-            available_keys = list(raw_obs["frames"].keys())
+        frames = raw_obs["frames"]
+        if self.main_image_key not in frames:
             raise KeyError(
-                f"main_image_key '{self.main_image_key}' not found in raw_obs['frames']. "
-                f"Available keys: {available_keys}. "
-                f"Please set 'main_image_key' in your env config to one of the available keys."
+                f"main_image_key {self.main_image_key!r} not in {list(frames)}"
             )
-        obs["main_images"] = raw_obs["frames"][self.main_image_key]
-        raw_images = OrderedDict(sorted(raw_obs["frames"].items()))
+        obs["main_images"] = frames[self.main_image_key]
+        raw_images = OrderedDict(sorted(frames.items()))
         raw_images.pop(self.main_image_key)
 
         if raw_images:
@@ -246,16 +239,21 @@ class RealWorldEnv(gym.Env):
         truncations = self.elapsed_steps >= self.cfg.max_episode_steps
 
         obs = self._wrap_obs(raw_obs)
-
         step_reward = self._calc_step_reward(_reward)
-
+        success_current_step = np.isclose(step_reward, 1.0)
         intervene_flag = np.zeros(self.num_envs, dtype=bool)
         if "intervene_action" in infos:
             for env_id in range(self.num_envs):
                 if infos["intervene_action"][env_id] is not None:
                     intervene_flag[env_id] = True
 
-        infos = self._record_metrics(step_reward, terminations, intervene_flag, infos)
+        infos = self._record_metrics(
+            step_reward,
+            terminations,
+            success_current_step,
+            intervene_flag,
+            infos,
+        )
         if self.ignore_terminations:
             infos["episode"]["success_at_end"] = to_tensor(terminations)
             terminations[:] = False

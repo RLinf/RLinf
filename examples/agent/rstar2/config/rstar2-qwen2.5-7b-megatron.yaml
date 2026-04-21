@@ -139,7 +139,7 @@ rollout:
   group_name: "RolloutGroup"
   gpu_memory_utilization: 0.5
   model:
-    model_path: /path/to/model/Qwen2.5-7B-Instruct
+    model_path: /path/to/model/Qwen2.5-7B-Instruct  # https://huggingface.co/Qwen/Qwen2.5-7B-Instruct
     model_type: qwen2.5
     precision: ${actor.model.precision} # precision for rollout model, support [fp16, bf16, fp32]
   enforce_eager: False          # if False, rollout engine will capture cuda graph, which will take more time to initialize.

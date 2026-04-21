@@ -109,7 +109,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/RLinf-Gr00t-SFT-Spatial"
+    model_path: "/path/to/RLinf-Gr00t-SFT-Spatial" # https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
     precision: ${actor.model.precision}
 
 actor:
@@ -122,7 +122,7 @@ actor:
 
   # Override the default values in model/gr00t
   model:
-    model_path: "/path/to/RLinf-Gr00t-SFT-Spatial"
+    model_path: "/path/to/RLinf-Gr00t-SFT-Spatial" # https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
     model_type: "gr00t"
     add_value_head: True
 

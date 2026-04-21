@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import datetime
 import json
 import logging
 import os
@@ -22,11 +23,11 @@ from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from torch.utils.data import Dataset
 
-from rlinf.data.io_struct import RolloutResult
+from rlinf.data.io_struct import DynamicRolloutResult
 from rlinf.runners.agent_eval_runner import AgentEvalRunner
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.runner_utils import local_mkdir_safe
-from rlinf.workers.agent.agent_loop import AgentLoopWorker
+from rlinf.workers.agent.agent_loop import MultiAgentLoopWorker
 from rlinf.workers.agent.tool_worker import ToolWorker, ToolWorkerInfo
 from rlinf.workers.reward.reward_worker import RewardWorker
 
@@ -38,7 +39,7 @@ logging.getLogger().setLevel(logging.INFO)
 
 
 class Searchr1AgentEvalRunner(AgentEvalRunner):
-    """Runner for search r1 task RL evaluation."""
+    """Runner for Search-R1 evaluation."""
 
     def __init__(
         self,
@@ -47,7 +48,7 @@ class Searchr1AgentEvalRunner(AgentEvalRunner):
         val_dataset: Dataset,
         rollout: Union["SGLangWorker", "VLLMWorker"],
         reward: Optional[RewardWorker],
-        agent_loop: AgentLoopWorker,
+        agent_loop: MultiAgentLoopWorker,
         tool_workers: dict[ToolWorker, ToolWorkerInfo] = {},
         solid_rollouts: dict[str, Union["SGLangWorker", "VLLMWorker"]] = {},
     ):
@@ -81,9 +82,6 @@ class Searchr1AgentEvalRunner(AgentEvalRunner):
         # Fixed filename (no timestamp)
         output_file = os.path.join(output_dir, "eval_results.json")
 
-        # Prepare timestamp
-        import datetime
-
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
         # Prepare complete results structure
@@ -95,8 +93,6 @@ class Searchr1AgentEvalRunner(AgentEvalRunner):
                 "experiment_name": self.cfg.runner.experiment_name,
                 "timestamp": timestamp,
                 "config": {
-                    "group_size": self.cfg.algorithm.get("group_size", 1),
-                    "max_turns": self.cfg.agentloop.get("max_turns", 5),
                     "data_paths": OmegaConf.to_container(
                         self.cfg.data.val_data_paths, resolve=True
                     ),
@@ -128,61 +124,54 @@ class Searchr1AgentEvalRunner(AgentEvalRunner):
         3. Accumulates results (does NOT save to file yet)
         """
         recv_batch_size = 0
+        group_size = self.cfg.algorithm.get("group_size", 1)
+        assert group_size == 1, f"searchr1 eval requires group_size=1, got {group_size}"
 
-        # Storage for this batch's results
         batch_results = []
         correct_count = 0
         total_count = 0
 
         while recv_batch_size < self.total_batch_size:
-            rollout_result: RolloutResult = input_channel.get()
-            eval_pbar.update(rollout_result.num_sequence)
-            recv_batch_size += rollout_result.num_sequence
+            rollout_result: DynamicRolloutResult = input_channel.get()
+            eval_pbar.update(group_size)
+            recv_batch_size += group_size
 
-            # Process each sequence in the batch
-            # Since group_size=1 for evaluation, num_sequence equals batch_size
-            for i in range(rollout_result.num_sequence):
-                # Extract information for this sequence
-                answer = rollout_result.answers[i] if rollout_result.answers else None
-                reward = (
-                    rollout_result.rewards[i].item()
-                    if rollout_result.rewards is not None
-                    else None
-                )
+            # Extract per-trajectory results from DynamicRolloutResult
+            extra_fields_traj = rollout_result.extra_fields_traj or {}
+            extra_fields_group = rollout_result.extra_fields_group or {}
 
-                # Decode texts
-                prompt_text = (
-                    rollout_result.prompt_texts[i]
-                    if rollout_result.prompt_texts
-                    else None
-                )
-                response_text = (
-                    rollout_result.response_texts[i]
-                    if rollout_result.response_texts
-                    else None
-                )
+            answer = extra_fields_group.get("answer", None)
+            llm_rewards = extra_fields_traj.get("llm_reward", [0.0])
+            response_texts = extra_fields_traj.get("response_text", [None])
+            prompt_texts = extra_fields_traj.get("prompt_text", [None])
+            turns_list = extra_fields_traj.get("turns", [[]])
 
-                # Determine if the answer is correct based on reward
-                # Assuming reward > 0 means correct
-                is_correct = reward > 0 if reward is not None else False
+            # group_size=1, so only one trajectory per question
+            reward = llm_rewards[0]
+            if hasattr(reward, "item"):
+                reward = reward.item()
+            reward = float(reward)
 
-                if is_correct:
-                    correct_count += 1
-                total_count += 1
+            is_correct = reward > 0
+            if is_correct:
+                correct_count += 1
+            total_count += 1
 
-                # Create result entry (index will be updated later)
-                result_entry = {
-                    "index": len(self.accumulated_results),  # Use global index
-                    "prompt_text": prompt_text,
-                    "response_text": response_text,
-                    "answer": answer,
-                    "reward": reward,
-                    "is_correct": is_correct,
-                }
+            # Create result entry with per-turn details
+            result_entry = {
+                "index": len(self.accumulated_results),
+                "prompt_text": prompt_texts[0],
+                "turns": turns_list[
+                    0
+                ],  # list of {"input": ..., "output": ...} per turn
+                "response_text": response_texts[0],
+                "answer": answer,
+                "reward": reward,
+                "is_correct": is_correct,
+            }
 
-                batch_results.append(result_entry)
-                # Add to accumulated results immediately
-                self.accumulated_results.append(result_entry)
+            batch_results.append(result_entry)
+            self.accumulated_results.append(result_entry)
 
         # Compute batch accuracy
         accuracy = correct_count / total_count if total_count > 0 else 0.0
@@ -194,16 +183,14 @@ class Searchr1AgentEvalRunner(AgentEvalRunner):
         logging.info(f"  Batch accuracy: {accuracy:.4f}")
         logging.info(f"  Total accumulated samples: {len(self.accumulated_results)}")
 
-        # Update aggregated statistics
-        batch_accuracy, batch_count = accuracy, total_count
-        batch_correct = int(batch_accuracy * batch_count)
+        batch_correct = int(accuracy * total_count)
         context["total_correct"] += batch_correct
-        context["total_samples"] += batch_count
-        context["batch_accuracy"] = batch_accuracy
+        context["total_samples"] += total_count
+        context["batch_accuracy"] = accuracy
 
     def pre_process(self) -> dict:
         logging.info("=" * 80)
-        logging.info("Starting Agent System Evaluation")
+        logging.info("Starting Search-R1 Evaluation")
         logging.info("=" * 80)
         logging.info(f"Validation dataset size: {len(self.val_dataset)}")
         logging.info(f"Batch size: {self.val_batch_size}")
