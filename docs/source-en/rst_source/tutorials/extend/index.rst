@@ -19,6 +19,37 @@ This guide provides step-by-step instructions on how to:
 - Extend backend-specific code if your model type is not yet supported  
 - Adapt environment wrappers and interfaces to integrate new simulators or APIs
 
+Adding a Custom Model from Another Repo
+---------------------------------------
+
+If your project depends on RLinf as a library, you can now register a custom model
+without modifying RLinf source code directly.
+
+The recommended pattern is:
+
+- Implement your model builder in your own repo
+- Call ``register_model(...)`` before ``build_config(...)`` or training starts
+- Reference the registered ``model_type`` in your YAML config
+
+.. code-block:: python
+
+  from rlinf.models import register_model
+
+  def build_my_model(cfg, torch_dtype):
+      from my_repo.models.custom_policy import CustomPolicy
+
+      return CustomPolicy(cfg, torch_dtype)
+
+  register_model("my_custom_model", build_my_model, category="embodied")
+
+After registration, RLinf will:
+
+- accept ``model.model_type: my_custom_model`` during config validation
+- route ``get_model(cfg)`` to your registered builder
+
+This is the preferred extension path for custom embodied models maintained outside
+the main RLinf repository.
+
 Whether you're training a novel model architecture or experimenting with a custom RL environment,  
 this section gives you the tools to plug directly into RLinf’s modular design.
 

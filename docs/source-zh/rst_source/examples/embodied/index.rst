@@ -5,7 +5,7 @@
 
 .. raw:: html
 
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 980px; margin: 0 auto;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <video controls autoplay loop muted playsinline preload="metadata" style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
          <source src="https://github.com/RLinf/misc/raw/main/pic/embody.mp4" type="video/mp4">
@@ -30,7 +30,7 @@
        </p>
      </div>
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+   <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://raw.githubusercontent.com/RLinf/misc/378920588652fff0a2a0b163b392c94694993345/pic/libero-plus.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -40,9 +40,7 @@
          支持 LIBERO-Pro / LIBERO-Plus + OpenVLA-OFT / π₀ / π₀.₅ + PPO/GRPO 训练
        </p>
      </div>
-   </div>
 
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/behavior.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -75,9 +73,6 @@
          支持IsaacLab+gr00t+PPO训练
        </p>
      </div>
-   </div>
-
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/calvin.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
@@ -112,9 +107,6 @@
          支持RoboTwin + OpenVLA-OFT/π₀/π₀.₅ + PPO/GRPO训练
        </p>
      </div>
-   </div>
-
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://raw.githubusercontent.com/RLinf/serl/refs/heads/RLinf/franka-sim/franka_sim/franka_sim/envs/xmls/robotiq_2f85/2f85.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
@@ -127,7 +119,17 @@
        </p>
      </div>
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/embodichain.gif"
+           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="embodichain.html" style="text-decoration: underline; color: blue;">
+          <b>基于 EmbodiChain 的强化学习</b>
+        </a><br>
+        使用 EmbodiChain gym 任务进行 MLP + PPO 训练
+      </p>
+    </div>
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/hpcaitech/Open-Sora-Demo/raw/main/readme/icon.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
             data-target="animated-image.originalImage">
@@ -150,9 +152,6 @@
          支持 Wan 世界模型 + OpenVLA-OFT + GRPO 训练
        </p>
      </div>
-   </div>
-
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/gsenv.gif"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -161,6 +160,17 @@
            <b>基于 GSEnv 的 Real2Sim2Real 强化学习</b>
          </a><br>
          支持 GSEnv + π₀.₅ + PPO 训练
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/d4rl.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="iql_d4rl.html" style="text-decoration: underline; color: blue;">
+          <b>基于 D4RL 基准的离线强化学习</b>
+         </a><br>
+         支持 D4RL 场景的 IQL 离线训练
        </p>
      </div>
 
@@ -185,9 +195,6 @@
          支持GR00T-N1.5强化学习微调
        </p>
      </div>
-   </div>
-
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/lingbotvla.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -220,7 +227,21 @@
         StarVLA + LIBERO + GRPO 具身强化学习训练
        </p>
      </div>
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://raw.githubusercontent.com/RoboVerseOrg/RoboVerse/main/docs/source/metasim/images/tea.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
+            data-target="animated-image.originalImage">
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="roboverse.html" style="text-decoration: underline; color: blue;">
+           <b>基于RoboVerse的强化学习</b>
+         </a><br>
+         支持RoboVerse + π₀.₅ + PPO训练
+       </p>
+     </div>
 
+   </div>
+
+   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/3_layer_mlp.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
@@ -232,9 +253,7 @@
          使用 PPO/SAC/GRPO 训练 PPO 策略
        </p>
      </div>
-   </div>
 
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/sac-flow-overview.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -258,6 +277,9 @@
        </p>
      </div>
    
+   </div>
+
+   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/release_0.2/qwen2_5_sft_vlm.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -268,9 +290,7 @@
          支持 Qwen 系列等 VLM 的全量监督微调与结果评估
        </p>
      </div>
-   </div>
 
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <!-- TODO(thumbnail): replace placeholder cover image URL for nft_openpi -->
        <img src="https://github.com/RLinf/misc/raw/main/pic/pi0_icon.jpg"
@@ -282,7 +302,6 @@
          对预训练 π₀ flow-matching 策略进行无需 critic 的在线强化学习微调
        </p>
      </div>
-
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/dsrl.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -304,11 +323,20 @@
          通过专家重标注与回放缓冲区训练推进在线模仿学习
        </p>
      </div>
-   </div>
 
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
+       <img src="https://github.com/RLinf/misc/raw/main/pic/recap.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="recap.html" style="text-decoration: underline; color: blue;">
+           <b>RECAP：离线优势条件策略优化</b>
+         </a><br>
+         基于优势引导的离线策略优化
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/co_training.jpeg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="co_training.html" style="text-decoration: underline; color: blue;">
@@ -317,7 +345,6 @@
          仿真 PPO + 真机 SFT，提升 Sim-to-Real 迁移
        </p>
      </div>
-
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -330,8 +357,7 @@
      </div>
 
       <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-      <!-- TODO(thumbnail): replace placeholder cover image URL for franka_reward_model -->
-       <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
+       <img src="https://github.com/RLinf/misc/raw/main/pic/franka_reward_model.jpeg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="franka_reward_model.html" style="text-decoration: underline; color: blue;">
@@ -342,8 +368,7 @@
       </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <!-- TODO(thumbnail): replace placeholder cover image URL for franka_zed_robotiq -->
-       <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
+       <img src="https://github.com/RLinf/misc/raw/main/pic/robotiq_zed.jpeg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="franka_zed_robotiq.html" style="text-decoration: underline; color: blue;">
@@ -352,44 +377,39 @@
          Franka 真机中 ZED 相机、Robotiq 夹爪安装与数据采集配置
        </p>
      </div>
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/gello.jpeg"
+           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="franka_gello.html" style="text-decoration: underline; color: blue;">
+          <b>Franka 真机使用 GELLO 遥操作设备</b>
+        </a><br>
+        Franka 真机中 GELLO 遥操作设备安装、配置与验证流程
+      </p>
+    </div>
+
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/hg-dagger.jpg"
+           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="hg-dagger.html" style="text-decoration: underline; color: blue;">
+          <b>Franka 机械臂上的 HG-DAgger</b>
+        </a><br>
+        Human-Gated 真机 DAgger 流程：数据采集、SFT 与在线干预训练
+      </p>
+    </div>
+
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/xsquare_turtle2_arm_small.jpg"
+           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="xsquare_turtle2.html" style="text-decoration: underline; color: blue;">
+          <b>XSquare Turtle2 真机强化学习</b>
+        </a><br>
+        SAC + CNN 策略在 XSquare Turtle2 双臂机器人上的真机训练
+      </p>
+    </div>
    </div>
-
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <!-- TODO(thumbnail): replace placeholder cover image URL for franka_gello -->
-       <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="franka_gello.html" style="text-decoration: underline; color: blue;">
-           <b>Franka 真机使用 GELLO 遥操作设备</b>
-         </a><br>
-         Franka 真机中 GELLO 遥操作设备安装、配置与验证流程
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/hg-dagger.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="hg-dagger.html" style="text-decoration: underline; color: blue;">
-           <b>Franka 机械臂上的 HG-DAgger</b>
-         </a><br>
-         Human-Gated 真机 DAgger 流程：数据采集、SFT 与在线干预训练
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/xsquare_turtle2_arm_small.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="xsquare_turtle2.html" style="text-decoration: underline; color: blue;">
-           <b>XSquare Turtle2 真机强化学习</b>
-         </a><br>
-         SAC + CNN 策略在 XSquare Turtle2 双臂机器人上的真机训练
-       </p>
-     </div>
-   </div>
-
 
 .. toctree::
    :hidden:
@@ -404,10 +424,13 @@
    calvin
    robocasa
    robotwin
+   roboverse
    frankasim
+   embodichain
    opensora
    wan
    gsenv
+   iql_d4rl
    pi0
    gr00t
    lingbotvla
@@ -420,6 +443,7 @@
    nft_openpi
    dsrl
    dagger
+   recap
    co_training
    franka
    franka_reward_model

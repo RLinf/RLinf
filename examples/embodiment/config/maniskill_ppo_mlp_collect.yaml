@@ -142,7 +142,6 @@ env:
     #   only_success: False       # set True to discard failed episodes
     #   robot_type: "panda"       # written to meta/info.json
     #   fps: 10                   # written to meta/info.json
-    #   stats_sample_ratio: 0.1   # fraction of frames used for stats computation
 
 rollout:
   group_name: "RolloutGroup"

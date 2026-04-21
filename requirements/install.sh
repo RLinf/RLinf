@@ -18,7 +18,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "dreamzero")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "gim_arm")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "gim_arm")
 
 #=======================Utility Functions=======================
 
@@ -501,6 +501,13 @@ install_openpi_model() {
             install_flash_attn
             uv pip install numpydantic==1.7.0 pydantic==2.11.7 numpy==1.26.0
             ;;
+        roboverse)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_flash_attn
+            install_roboverse_env
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
             exit 1
@@ -642,8 +649,16 @@ install_dreamzero_model() {
             uv pip install -r $SCRIPT_DIR/embodied/models/dreamzero.txt
             install_flash_attn
             ;;
+        "")
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install -r $SCRIPT_DIR/embodied/models/dreamzero.txt
+            install_flash_attn
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for DreamZero model." >&2
+            exit 1
+            ;;
     esac
 }
 
@@ -651,6 +666,9 @@ install_env_only() {
     create_and_sync_venv
     SKIP_ROS=${SKIP_ROS:-0}
     case "$ENV_NAME" in
+        d4rl)
+            install_d4rl_env
+            ;;
         franka)
             uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
             if [ "$SKIP_ROS" -ne 1 ]; then
@@ -667,6 +685,10 @@ install_env_only() {
         habitat)
             install_common_embodied_deps
             install_habitat_env
+            ;;
+        embodichain)
+            install_common_embodied_deps
+            install_embodichain_env
             ;;
         gim_arm)
             uv sync --extra gim_arm --active $NO_INSTALL_RLINF_CMD
@@ -691,6 +713,68 @@ install_maniskill_libero_env() {
 
     # Maniskill assets
     bash $SCRIPT_DIR/embodied/download_assets.sh --assets maniskill
+}
+
+install_d4rl_env() {
+    # Install base embodied dependencies first (gym/gymnasium/transformers stack).
+    uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
+
+    uv pip install "cython<3.0"
+    uv pip install "gym==0.23.1"
+    uv pip install "d4rl @ git+${GITHUB_PREFIX}https://github.com/Dps799/D4RL@master"
+
+    # Install MuJoCo 2.1.0 native library (mujoco-py only provides Python bindings).
+    local mujoco_root="${MUJOCO_PATH:-$HOME/.mujoco}"
+    local mujoco_dir="$mujoco_root/mujoco210"
+    if [ -f "$mujoco_dir/bin/libmujoco210.so" ]; then
+        echo "[install_d4rl_env] MuJoCo 2.1.0 already installed at $mujoco_dir, skipping download."
+    else
+        echo "[install_d4rl_env] Downloading and extracting MuJoCo 2.1.0..."
+        mkdir -p "$mujoco_root"
+        local tmpdir archive url extracted
+        tmpdir=$(mktemp -d)
+        archive="$tmpdir/mujoco210.tar.gz"
+        if [ -n "$GITHUB_PREFIX" ]; then
+            url="${GITHUB_PREFIX}github.com/google-deepmind/mujoco/releases/download/2.1.0/mujoco210-linux-x86_64.tar.gz"
+        else
+            url="https://github.com/google-deepmind/mujoco/releases/download/2.1.0/mujoco210-linux-x86_64.tar.gz"
+        fi
+        echo "[install_d4rl_env] URL: $url"
+        download_ok=0
+        if command -v wget &>/dev/null; then
+            wget --progress=bar:force --timeout=120 --tries=3 -O "$archive" "$url" && download_ok=1
+        elif command -v curl &>/dev/null; then
+            curl -fSL --connect-timeout 120 --max-time 600 --retry 3 -o "$archive" "$url" && download_ok=1
+        else
+            echo "Neither wget nor curl found. Please install one to download MuJoCo." >&2
+            rm -rf "$tmpdir"
+            exit 1
+        fi
+        if [ "$download_ok" -ne 1 ]; then
+            echo "[install_d4rl_env] Download failed. Try without --use-mirror, or download manually:" >&2
+            echo "  $url" >&2
+            rm -rf "$tmpdir"
+            exit 1
+        fi
+        tar -xzf "$archive" -C "$tmpdir"
+        extracted=$(find "$tmpdir" -mindepth 1 -maxdepth 1 -type d | head -1)
+        if [ -n "$extracted" ] && [ -d "$extracted" ]; then
+            mv "$extracted" "$mujoco_dir"
+        else
+            echo "[install_d4rl_env] Unexpected tarball layout. Expected a single top-level directory." >&2
+            ls -la "$tmpdir" >&2
+            rm -rf "$tmpdir"
+            exit 1
+        fi
+        rm -rf "$tmpdir"
+        echo "[install_d4rl_env] MuJoCo 2.1.0 installed at $mujoco_dir"
+    fi
+    if ! grep -q "mujoco210/bin" "$VENV_DIR/bin/activate" 2>/dev/null; then
+        echo "export LD_LIBRARY_PATH=\"${mujoco_dir}/bin:\$LD_LIBRARY_PATH\"" >> "$VENV_DIR/bin/activate"
+    fi
+
+    uv pip install "mujoco-py==2.1.2.14"
+    uv pip install "tqdm"
 }
 
 install_liberopro_env() {
@@ -809,7 +893,7 @@ install_franka_env() {
     if [ ! -f "$ROS_CATKIN_PATH/libfranka/build/libfranka.so" ]; then
         mkdir -p "$ROS_CATKIN_PATH/libfranka/build"
         pushd "$ROS_CATKIN_PATH/libfranka/build" >/dev/null
-        cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/openrobots/lib/cmake -DBUILD_TESTS=OFF ..
+        cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_PREFIX_PATH=/opt/openrobots/lib/cmake -DBUILD_TESTS=OFF ..
         make -j$(nproc)
         popd >/dev/null
     fi
@@ -817,10 +901,10 @@ install_franka_env() {
     export CMAKE_PREFIX_PATH=$ROS_CATKIN_PATH/libfranka/build:$CMAKE_PREFIX_PATH
 
     # Then franka_ros
-    catkin_make -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17 -DFranka_DIR:PATH=$ROS_CATKIN_PATH/libfranka/build
+    catkin_make -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17 -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DFranka_DIR:PATH=$ROS_CATKIN_PATH/libfranka/build
 
     # Finally serl_franka_controllers
-    catkin_make -DCMAKE_CXX_STANDARD=17 --pkg serl_franka_controllers
+    catkin_make -DCMAKE_CXX_STANDARD=17 -DCMAKE_POLICY_VERSION_MINIMUM=3.5 --pkg serl_franka_controllers
     popd >/dev/null
 
     echo "export LD_LIBRARY_PATH=$ROS_CATKIN_PATH/libfranka/build:/opt/openrobots/lib:\$LD_LIBRARY_PATH" >> "$VENV_DIR/bin/activate"
@@ -902,6 +986,10 @@ install_frankasim_env() {
     uv pip install -r "$serldir/franka_sim/requirements.txt"
 }
 
+install_embodichain_env() {
+    uv pip install embodichain --extra-index-url http://pyp.open3dv.site:2345/simple/ --trusted-host pyp.open3dv.site
+}
+
 install_habitat_env() {
     local habitat_sim_dir
     habitat_sim_dir=$(clone_or_reuse_repo HABITAT_SIM_PATH "$VENV_DIR/habitat" https://github.com/facebookresearch/habitat-sim.git -b v0.3,3 --recurse-submodules)
@@ -938,6 +1026,20 @@ install_wan_world_model() {
     wan_dir=$(clone_or_reuse_repo WAN_PATH "$VENV_DIR/wan" https://github.com/RLinf/diffsynth-studio.git)
     uv pip install -e "$wan_dir"
     uv pip install -r $SCRIPT_DIR/embodied/models/wan.txt
+}
+
+install_roboverse_env() {
+    local roboverse_dir
+    roboverse_dir=$(clone_or_reuse_repo ROBOVERSE_PATH "$VENV_DIR/roboverse" https://github.com/tiny-xie/roboverse.git)
+    uv pip install -e "${roboverse_dir}[mujoco]"
+    uv pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git@v0.7.9 --no-build-isolation
+    uv pip install -e "${roboverse_dir}[sapien3]"
+    uv pip install -e "${roboverse_dir}[genesis]"
+    
+    local pyroki_dir
+    pyroki_dir=$(clone_or_reuse_repo PYROKI_PATH "$roboverse_dir/pyroki" https://github.com/chungmin99/pyroki.git)
+    uv pip install -e "$pyroki_dir"
+    uv pip install "numpy==1.26.4" --force-reinstall
 }
 
 #=======================AGENTIC INSTALLER=======================
@@ -992,7 +1094,7 @@ main() {
                     echo "Unknown environment: $ENV_NAME. Supported environments: ${SUPPORTED_ENVS[*]}" >&2
                     exit 1
                 fi
-            else
+            elif [ "$MODEL" != "dreamzero" ]; then
                 echo "--env must be specified when target=embodied." >&2
                 exit 1
             fi

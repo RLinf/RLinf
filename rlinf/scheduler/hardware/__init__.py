@@ -21,6 +21,8 @@ from .hardware import (
     NodeHardwareConfig,
 )
 from .robots import (
+    DualFrankaConfig,
+    DualFrankaHWInfo,
     FrankaConfig,
     FrankaHWInfo,
     GimArmConfig,
@@ -38,6 +40,8 @@ __all__ = [
     "HardwareInfo",
     "HardwareResource",
     "NodeHardwareConfig",
+    "DualFrankaConfig",
+    "DualFrankaHWInfo",
     "FrankaConfig",
     "FrankaHWInfo",
     "GimArmConfig",

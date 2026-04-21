@@ -1755,7 +1755,7 @@ class BatchResizingIterator:
                 self.global_batch_done = True
             else:
                 assert self.consumed_batch_size < self.global_batch_size, (
-                    f"Recevied batches with a total size of {self.consumed_batch_size}, which exceeds the global batch size per dp {self.global_batch_size}. This suggests that the configured global batch size cannot be divided by the actual batch size."
+                    f"Received batches with a total size of {self.consumed_batch_size}, which exceeds the global batch size per dp {self.global_batch_size}. This suggests that the configured global batch size cannot be divided by the actual batch size."
                 )
         return micro_batch
 

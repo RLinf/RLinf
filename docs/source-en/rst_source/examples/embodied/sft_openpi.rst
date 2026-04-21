@@ -83,12 +83,12 @@ When you train OpenPI on a newly collected LeRobot dataset, compute dataset
 normalization statistics before launching SFT. This is especially important for
 a realworld collected dataset.
 
-RLinf provides ``toolkits/replay_buffer/calculate_norm_stats.py`` to calculate norm_stats for ``state`` and ``actions``. You can use it like:
+RLinf provides ``toolkits/lerobot/calculate_norm_stats.py`` to calculate norm_stats for ``state`` and ``actions``. You can use it like:
 
 .. code:: bash
 
    export HF_LEROBOT_HOME=/path/to/lerobot_root
-   python toolkits/replay_buffer/calculate_norm_stats.py \
+   python toolkits/lerobot/calculate_norm_stats.py \
        --config-name pi0_franka_dagger \
        --repo-id franka_dagger
 

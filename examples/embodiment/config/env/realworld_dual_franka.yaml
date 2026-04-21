@@ -1,0 +1,49 @@
+env_type: realworld
+
+total_num_envs: 1
+
+auto_reset: False
+ignore_terminations: False
+reward_mode: raw
+wrap_obs_mode: simple
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+max_steps_per_rollout_epoch: 100
+max_episode_steps: 100
+use_spacemouse: True
+no_gripper: False
+main_image_key: left_wrist_0_rgb
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+init_params:
+  id: "DualFrankaEnv-v1"
+  num_envs: null
+
+override_cfg:
+  is_dummy: false
+  task_description: "dual arm manipulation task"
+  # (2, 6) arrays: [left_arm, right_arm], each [x, y, z, rx, ry, rz]
+  target_ee_pose:
+    - [0.5, -0.2, 0.3, -3.14, 0.0, 0.0]
+    - [0.5,  0.2, 0.3, -3.14, 0.0, 0.0]
+  reset_ee_pose:
+    - [0.5, -0.2, 0.5, -3.14, 0.0, 0.0]
+    - [0.5,  0.2, 0.5, -3.14, 0.0, 0.0]
+  max_num_steps: 100
+  reward_threshold:
+    - [0.01, 0.01, 0.01, 0.2, 0.2, 0.2]
+    - [0.01, 0.01, 0.01, 0.2, 0.2, 0.2]
+  action_scale: [1.0, 1.0, 1.0]
+  ee_pose_limit_min:
+    - [0.3, -0.4, 0.2, -3.64, -0.5, -0.5]
+    - [0.3, -0.0, 0.2, -3.64, -0.5, -0.5]
+  ee_pose_limit_max:
+    - [0.7,  0.0, 0.6, -2.64, 0.5, 0.5]
+    - [0.7,  0.4, 0.6, -2.64, 0.5, 0.5]
+  enable_gripper_penalty: false
+  success_hold_steps: 1

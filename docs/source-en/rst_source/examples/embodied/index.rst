@@ -6,7 +6,7 @@ as well as reinforcement learning training examples on real robots.
 
 .. raw:: html
 
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+   <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 980px; margin: 0 auto;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <video controls autoplay loop muted playsinline preload="metadata" style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
          <source src="https://github.com/RLinf/misc/raw/main/pic/embody.mp4" type="video/mp4">
@@ -41,9 +41,7 @@ as well as reinforcement learning training examples on real robots.
          Support LIBERO-Pro / LIBERO-Plus + OpenVLA-OFT / π₀ / π₀.₅ + PPO/GRPO training
        </p>
      </div>
-   </div>
 
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/behavior.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -76,9 +74,7 @@ as well as reinforcement learning training examples on real robots.
          Support IsaacLab+gr00t+PPO training
        </p>
      </div>
-   </div>
 
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/calvin.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
@@ -113,9 +109,7 @@ as well as reinforcement learning training examples on real robots.
          Supports RoboTwin + OpenVLA-OFT / π₀ / π₀.₅ + PPO / GRPO training
        </p>
      </div>
-   </div>
 
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://raw.githubusercontent.com/RLinf/serl/refs/heads/RLinf/franka-sim/franka_sim/franka_sim/envs/xmls/robotiq_2f85/2f85.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
@@ -125,6 +119,17 @@ as well as reinforcement learning training examples on real robots.
            <b>RL with Franka-Sim Benchmark</b>
          </a><br>
          Supports Franka-Sim + MLP/CNN + PPO/SAC training
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/embodichain.gif"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodichain.html" style="text-decoration: underline; color: blue;">
+           <b>RL with EmbodiChain</b>
+         </a><br>
+         MLP + PPO on EmbodiChain gym tasks
        </p>
      </div>
 
@@ -151,9 +156,7 @@ as well as reinforcement learning training examples on real robots.
          Support Wan World Model + OpenVLA-OFT + GRPO training
        </p>
      </div>
-   </div>
 
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/gsenv.gif"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -162,6 +165,17 @@ as well as reinforcement learning training examples on real robots.
            <b>RL with GSEnv for Real2Sim2Real</b>
          </a><br>
          Support GSEnv + π₀.₅ + PPO training
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/d4rl.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="iql_d4rl.html" style="text-decoration: underline; color: blue;">
+           <b>Offline RL with D4RL Benchmark</b>
+         </a><br>
+         Support IQL offline training for D4RL scenarios
        </p>
      </div>
 
@@ -186,9 +200,7 @@ as well as reinforcement learning training examples on real robots.
          Support GR00T-N1.5 RL fine-tuning.
        </p>
      </div>
-   </div>
 
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/lingbotvla.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -211,17 +223,32 @@ as well as reinforcement learning training examples on real robots.
        </p>
      </div>
 
-    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-      <img src="https://github.com/RLinf/misc/raw/main/pic/starvla.png"
-          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="starvla.html" style="text-decoration: underline; color: blue;">
-          <b>RL on StarVLA Models</b>
-        </a><br>
-        StarVLA + LIBERO + GRPO embodied RL training
-      </p>
-    </div>
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/starvla.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="starvla.html" style="text-decoration: underline; color: blue;">
+           <b>RL on StarVLA Models</b>
+         </a><br>
+         StarVLA + LIBERO + GRPO embodied RL training
+       </p>
+     </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://raw.githubusercontent.com/RoboVerseOrg/RoboVerse/main/docs/source/metasim/images/tea.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
+            data-target="animated-image.originalImage">
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="roboverse.html" style="text-decoration: underline; color: blue;">
+           <b>RL with RoboVerse Benchmark</b>
+         </a><br>
+         Support RoboVerse + π₀.₅ + PPO training
+       </p>
+     </div>
+
+  </div>
+
+   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/3_layer_mlp.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
@@ -233,10 +260,7 @@ as well as reinforcement learning training examples on real robots.
          Train an MLP Policy with PPO/SAC/GRPO
        </p>
      </div>
-  </div>
 
-
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/sac-flow-overview.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -260,6 +284,9 @@ as well as reinforcement learning training examples on real robots.
        </p>
      </div>
 
+   </div>
+
+   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/release_0.2/qwen2_5_sft_vlm.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -270,9 +297,7 @@ as well as reinforcement learning training examples on real robots.
          Run full-parameter SFT and evaluation for VLM models such as Qwen
        </p>
      </div>
-   </div>
 
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <!-- TODO(thumbnail): replace placeholder cover image URL for nft_openpi -->
        <img src="https://github.com/RLinf/misc/raw/main/pic/pi0_icon.jpg"
@@ -306,11 +331,20 @@ as well as reinforcement learning training examples on real robots.
          Guide online imitation learning with expert relabeling and replay-buffer updates
        </p>
      </div>
-   </div>
 
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
+       <img src="https://github.com/RLinf/misc/raw/main/pic/recap.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="recap.html" style="text-decoration: underline; color: blue;">
+           <b>RECAP: Offline Advantage-Based Policy Optimization</b>
+         </a><br>
+         Offline policy optimization via advantage-guided classifier-free guidance
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/co_training.jpeg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="co_training.html" style="text-decoration: underline; color: blue;">
@@ -320,46 +354,41 @@ as well as reinforcement learning training examples on real robots.
        </p>
      </div>
 
-    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-      <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
-           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="franka.html" style="text-decoration: underline; color: blue;">
-          <b>Real-World RL with Franka</b>
-        </a><br>
-        RLinf worker seamlessly integrates with the Franka robotic arm
-      </p>
-    </div>
-
-    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-      <!-- TODO(thumbnail): replace placeholder cover image URL for franka_reward_model -->
-      <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
-           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="franka_reward_model.html" style="text-decoration: underline; color: blue;">
-          <b>Real-World RL with Franka (Reward Model)</b>
-        </a><br>
-        Use a reward model to assist robotic manipulation tasks
-      </p>
-    </div>
-
-    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-      <!-- TODO(thumbnail): replace placeholder cover image URL for franka_zed_robotiq -->
-      <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
-           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="franka_zed_robotiq.html" style="text-decoration: underline; color: blue;">
-          <b>Real-World Franka with ZED Cameras and Robotiq Gripper</b>
-        </a><br>
-        ZED camera, Robotiq gripper, and data-collection setup for Franka
-      </p>
-    </div>
-  </div>
-
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <!-- TODO(thumbnail): replace placeholder cover image URL for franka_gello -->
        <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="franka.html" style="text-decoration: underline; color: blue;">
+           <b>Real-World RL with Franka</b>
+         </a><br>
+         RLinf worker seamlessly integrates with the Franka robotic arm
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/franka_reward_model.jpeg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="franka_reward_model.html" style="text-decoration: underline; color: blue;">
+           <b>Real-World RL with Franka (Reward Model)</b>
+         </a><br>
+         Use a reward model to assist robotic manipulation tasks
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/robotiq_zed.jpeg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="franka_zed_robotiq.html" style="text-decoration: underline; color: blue;">
+           <b>Real-World Franka with ZED Cameras and Robotiq Gripper</b>
+         </a><br>
+         ZED camera, Robotiq gripper, and data-collection setup for Franka
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/gello.jpeg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="franka_gello.html" style="text-decoration: underline; color: blue;">
@@ -392,7 +421,6 @@ as well as reinforcement learning training examples on real robots.
      </div>
    </div>
 
-
 .. toctree::
    :hidden:
    :maxdepth: 2
@@ -406,10 +434,13 @@ as well as reinforcement learning training examples on real robots.
    calvin
    robocasa
    robotwin
+   roboverse
    frankasim
+   embodichain
    opensora
    wan
    gsenv
+   iql_d4rl
    pi0
    gr00t
    lingbotvla
@@ -422,6 +453,7 @@ as well as reinforcement learning training examples on real robots.
    nft_openpi
    dsrl
    dagger
+   recap
    co_training
    franka
    franka_reward_model

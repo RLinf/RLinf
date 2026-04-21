@@ -26,6 +26,8 @@ from rlinf.scheduler import (
     Worker,
     WorkerAddress,
 )
+from rlinf.scheduler.manager.coll_manager import CollectiveManager
+from rlinf.scheduler.manager.manager import Manager
 
 
 # Fixture to provide a ClusterResource instance for the test session
@@ -96,6 +98,26 @@ class TestWorkerAddress:
         assert addr.root_group_name == "MyWorkerGroup"
         assert addr.rank == 5
         assert addr.get_name() == "MyWorkerGroup:5"
+
+
+class TestManagerNamespace:
+    """Tests for manager namespace propagation."""
+
+    def test_manager_runtime_env_vars_include_cluster_namespace(self):
+        """Verify manager runtime env always includes the cluster namespace."""
+        with mock.patch.object(Cluster, "NAMESPACE", "test-namespace"):
+            runtime_env = Manager.get_runtime_env_vars()
+
+        assert runtime_env["CLUSTER_NAMESPACE"] == "test-namespace"
+
+    def test_sync_cluster_namespace_from_env(self):
+        """Verify manager syncs the cluster namespace from its runtime env."""
+        with mock.patch.object(Cluster, "NAMESPACE", "original-namespace"):
+            with mock.patch.dict(
+                os.environ, {"CLUSTER_NAMESPACE": "env-namespace"}, clear=False
+            ):
+                CollectiveManager()
+                assert Cluster.NAMESPACE == "env-namespace"
 
 
 class TestWorkerGroup:
