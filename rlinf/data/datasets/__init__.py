@@ -25,6 +25,7 @@ from rlinf.data.datasets.reasoning import ReasoningDataset
 from rlinf.data.datasets.rstar2 import Rstar2Dataset
 from rlinf.data.datasets.vlm import VLMDatasetRegistry
 from rlinf.data.datasets.wideseek_r1 import WideSeekR1Dataset
+from rlinf.data.packing import best_fit_decreasing, sft_packed_collate_fn
 
 
 def create_rl_dataset(
