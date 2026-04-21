@@ -1009,14 +1009,15 @@ install_habitat_env() {
 
 install_genesis_env() {
     echo "Installing Genesis environment dependencies..."
-    uv pip install torch==2.8.0
-    uv pip install torchvision==0.23.0
-    uv pip install torchaudio==2.8.0
-    uv pip install torchcodec==0.6
+    uv pip install "transformers==4.57.6"
+    uv pip install "cuda-python==12.9.6"
+    uv pip install "genesis-world==0.4.5"
+    uv pip install "pyglet==2.1.14"
 
-    uv pip install transformers<5.0
-    uv pip install cuda-python>=12.0,<13.0
-    uv pip install genesis-world
+    uv pip install "torch==2.8.0"
+    uv pip install "torchvision==0.23.0"
+    uv pip install "torchaudio==2.8.0"
+    uv pip install "torchcodec==0.6"
 }
 
 install_opensora_world_model() {
