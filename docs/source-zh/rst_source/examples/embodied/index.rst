@@ -434,3 +434,5 @@
    franka_gello
    hg-dagger
    xsquare_turtle2
+   gr00t_16
+   sft_gr00t

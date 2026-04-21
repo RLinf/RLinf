@@ -461,3 +461,5 @@ as well as reinforcement learning training examples on real robots.
    franka_gello
    hg-dagger
    xsquare_turtle2
+   gr00t_16
+   sft_gr00t
