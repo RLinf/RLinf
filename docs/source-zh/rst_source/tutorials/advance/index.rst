@@ -39,6 +39,11 @@
    目前，我们支持三种实验追踪与可视化后端：  
    TensorBoard、Weights & Biases (wandb) 和 SwanLab。  
 
+- :doc:`auto_test`  
+   介绍自动测试工具的使用方法，  
+   支持快速提交、管理和监控训练任务，  
+   并可利用闲时算力自动化执行训练任务列表。
+
 
 .. toctree::
    :hidden:
@@ -52,3 +57,4 @@
    hetero
    cloud-edge
    logger
+   auto_test

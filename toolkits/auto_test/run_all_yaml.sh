@@ -19,14 +19,13 @@ export VENV_BASE_DIR="/mnt/public/xttx/xusi/rlinf_venv"
 #    YAML_ARG: Configuration file name
 TASKS=(
     # Original tasks
-    # "maniskill_libero openpi maniskill_ppo_openpi 1 10 -1"   
-    # "maniskill_libero openpi maniskill_ppo_openpi_pi05 1 120 -1"   
-    # "maniskill_libero openvla maniskill_ppo_openvla 1 120 -1"
-    # Temporarily test three
-    # "maniskill_libero openvla-oft maniskill_ppo_openvlaoft 1 120 -1"
     "maniskill_libero openpi maniskill_ppo_mlp 1 1000 -1"
     "maniskill_libero openpi libero_goal_ppo_openpi 1 120 -1"
     "maniskill_libero openpi libero_goal_ppo_openpi_pi05 1 120 -1"
+    # "maniskill_libero openpi maniskill_ppo_openpi 1 10 -1"   
+    # "maniskill_libero openpi maniskill_ppo_openpi_pi05 1 120 -1"   
+    # "maniskill_libero openvla maniskill_ppo_openvla 1 120 -1"
+    # "maniskill_libero openvla-oft maniskill_ppo_openvlaoft 1 120 -1"
     # "maniskill_libero gr00t libero_10_ppo_gr00t 1 120 -1"
 
     # "maniskill_libero openpi gsenv_ppo_openpi_pi05 1 120 -1"   
