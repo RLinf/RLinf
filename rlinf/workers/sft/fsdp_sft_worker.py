@@ -185,9 +185,8 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             grad_norm, lr_list = self.optimizer_step()
             self.optimizer.zero_grad(set_to_none=True)
 
-            lr_value = (
-                lr_list[0] if len(lr_list) > 0 else self.optimizer.param_groups[0]["lr"]
-            )
+            self.lr_scheduler.step()
+            lr_value = self.optimizer.param_groups[0]["lr"]
             grad_norm_value = (
                 float(grad_norm) if isinstance(grad_norm, torch.Tensor) else grad_norm
             )
@@ -199,8 +198,6 @@ class FSDPSftWorker(FSDPModelManager, Worker):
                     "grad_norm": grad_norm_value,
                 },
             )
-
-            self.lr_scheduler.step()
 
             if self.global_step > 0 and self.global_step % 1000 == 0:
                 clear_memory()
@@ -321,7 +318,9 @@ class FSDPVlmSftWorker(FSDPSftWorker):
 
     def load_checkpoint(self, load_path: str):
         super().load_checkpoint(load_path)
-        self._load_data_state(load_path)
+        if self.data_loader is not None:
+            # run the eval model not to load data_loader ckpt
+            self._load_data_state(load_path)
 
     def build_tokenizer(self):
         from transformers import AutoTokenizer
@@ -411,7 +410,10 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         attention_mask = batch["attention_mask"].to(self.device)
         multi_modal_inputs = batch["multi_modal_inputs"]
         for k, v in multi_modal_inputs.items():
-            multi_modal_inputs[k] = v.to(device=self.device)
+            if isinstance(v, list):
+                multi_modal_inputs[k] = torch.cat(v, dim=0).to(device=self.device)
+            else:
+                multi_modal_inputs[k] = v.to(device=self.device)
 
         eos_token_id = self.tokenizer.eos_token_id
         pad_token_id = (
@@ -440,9 +442,15 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 new_token_ids.tolist(), skip_special_tokens=False
             )
 
-            pred_text = vlm_extract_answer(full_pred_text)
+            pred_text = vlm_extract_answer(
+                full_pred_text, self.cfg.actor.model.model_type
+            )
             gold_text = answers[i]
 
+            print(
+                f"pred_text {vlm_normalize_text(pred_text)} gold_text {vlm_normalize_text(gold_text)}",
+                flush=True,
+            )
             if vlm_normalize_text(pred_text) == vlm_normalize_text(gold_text):
                 correct += 1
 
@@ -455,7 +463,10 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         attention_mask = batch["attention_mask"].to(self.device, dtype=torch.bool)
         multi_modal_inputs = batch["multi_modal_inputs"]
         for k, v in multi_modal_inputs.items():
-            multi_modal_inputs[k] = v.to(device=self.device)
+            if isinstance(v, list):
+                multi_modal_inputs[k] = torch.cat(v, dim=0).to(device=self.device)
+            else:
+                multi_modal_inputs[k] = v.to(device=self.device)
         label_mask = batch["label_mask"].to(device=self.device, dtype=torch.bool)
 
         labels = input_ids.detach().clone().masked_fill(~attention_mask, -100)

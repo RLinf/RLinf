@@ -17,7 +17,7 @@ import re
 from rlinf.config import SupportedModel
 
 
-def _extract_boxed(self, text: str) -> str | None:
+def _extract_boxed(text: str) -> str | None:
     idx = text.rfind("boxed")
     if idx < 0:
         return None
@@ -44,15 +44,13 @@ def _extract_boxed(self, text: str) -> str | None:
     return ans or None
 
 
-def vlm_extract_answer(self, text: str) -> str:
-    if SupportedModel(self.cfg.actor.model.model_type) not in [
+def vlm_extract_answer(text: str, model_type) -> str:
+    if SupportedModel(model_type) not in [
         SupportedModel.QWEN2_5_VL_SFT,
         SupportedModel.QWEN3_VL_SFT,
         SupportedModel.QWEN3_VL_MOE_SFT,
     ]:
-        raise ValueError(
-            f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
-        )
+        raise ValueError(f"not support such model type {model_type} for SFT right now.")
 
     if not text:
         return ""
@@ -94,7 +92,7 @@ def vlm_extract_answer(self, text: str) -> str:
                 break
 
     # 5) Math-style boxed fallback.
-    boxed = self._extract_boxed(body)
+    boxed = _extract_boxed(body)
     if boxed:
         body = boxed
 
@@ -109,5 +107,5 @@ def vlm_extract_answer(self, text: str) -> str:
     return body
 
 
-def vlm_normalize_text(self, s: str) -> str:
+def vlm_normalize_text(s: str) -> str:
     return " ".join(str(s).strip().lower().split())

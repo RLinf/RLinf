@@ -174,7 +174,7 @@ def postprocess_packed_seqs(
 def remove_left_padding(
     input_ids: torch.Tensor,
     attention_mask: torch.Tensor,
-    position_ids: torch.Tensor,
+    position_ids: torch.Tensor = None,
     sequence_parallel: bool = False,
     pre_process: bool = True,
 ):
@@ -183,7 +183,6 @@ def remove_left_padding(
     return new_input_ids, new_attention_mask, new_position_ids
     """
     assert attention_mask.ndim == 2
-    assert position_ids.ndim == 2
     cp_size = parallel_state.get_context_parallel_world_size()
     assert cp_size == 1, "Context parallel size without seq_pack is not supported"
     batch_size = input_ids.shape[0]
@@ -204,14 +203,22 @@ def remove_left_padding(
         device=attention_mask.device,
         size=(batch_size, seq_len),
     )
-    new_position_ids = torch.zeros(
-        dtype=position_ids.dtype, device=position_ids.device, size=(batch_size, seq_len)
-    )
+    if position_ids is not None:
+        assert position_ids.ndim == 2
+        new_position_ids = torch.zeros(
+            dtype=position_ids.dtype,
+            device=position_ids.device,
+            size=(batch_size, seq_len),
+        )
+    else:
+        new_position_ids = None
+
     for i in range(batch_size):
         if pre_process:
             new_input_ids[i, : seq_lens[i]] = input_ids[i, attention_mask[i]]
         new_attention_mask[i, : seq_lens[i]] = attention_mask[i, attention_mask[i]]
-        new_position_ids[i, : seq_lens[i]] = position_ids[i, attention_mask[i]]
+        if new_position_ids is not None:
+            new_position_ids[i, : seq_lens[i]] = position_ids[i, attention_mask[i]]
     if pre_process:
         return new_input_ids, new_attention_mask, new_position_ids
     else:
@@ -238,3 +245,23 @@ def recover_left_padding(
     for i in range(batch_size):
         new_result[i, original_attention_mask[i]] = result[i, attention_mask[i]]
     return new_result
+
+
+def tensor_rm_left_padding(
+    x: torch.Tensor, attention_mask: torch.Tensor
+) -> torch.Tensor:
+    assert attention_mask.ndim == 2
+    cp_size = parallel_state.get_context_parallel_world_size()
+    assert cp_size == 1, "Context parallel size without seq_pack is not supported"
+    if x.ndim < 2 or x.shape[:2] != attention_mask.shape:
+        raise ValueError(
+            f"x shape {x.shape} does not match attention_mask shape {attention_mask.shape}"
+        )
+    seq_lens = attention_mask.sum(dim=1)
+    batch_size = x.shape[0]
+    max_len = seq_lens.max().item()
+    out_shape = (batch_size, max_len) + tuple(x.shape[2:])
+    output = torch.zeros(out_shape, dtype=x.dtype, device=x.device)
+    for i in range(batch_size):
+        output[i, : seq_lens[i]] = x[i, attention_mask[i]]
+    return output

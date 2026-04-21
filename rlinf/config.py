@@ -251,7 +251,11 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
 
     hf_config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=True)
 
-    if "Qwen2ForCausalLM" in hf_config.architectures:
+    if (
+        "Qwen2ForCausalLM" in hf_config.architectures
+        or "Qwen2_5ForCausalLM" in hf_config.architectures
+        or "Qwen2_5_VLForConditionalGeneration" in hf_config.architectures
+    ):
         qkv_bias = True
     else:
         qkv_bias = getattr(hf_config, "attention_bias", False)
@@ -259,6 +263,8 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
     if (
         "Qwen3ForCausalLM" in hf_config.architectures
         or "Qwen3MoeForCausalLM" in hf_config.architectures
+        or "Qwen3VLForConditionalGeneration" in hf_config.architectures
+        or "Qwen3VLMoeForConditionalGeneration" in hf_config.architectures
     ):
         qk_layernorm = True
     else:
@@ -275,6 +281,10 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
             else:
                 # mrope
                 cfg.model.seq_len_interpolation_factor = None
+        if cfg.model.model_type == "qwen3_vl":
+            # qwen3_vl config.json set the model config in text_config
+            hf_config = hf_config.text_config
+
         cfg.model.padded_vocab_size = hf_config.vocab_size
         cfg.model.max_position_embeddings = hf_config.max_position_embeddings
         cfg.model.rotary_base = hf_config.rope_theta
@@ -467,6 +477,9 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
         cfg.megatron.enable_gloo_process_groups = cfg.megatron.get(
             "enable_gloo_process_groups", True
         )
+
+        #  megatron >= 0.15.0
+        cfg.megatron.skip_train = cfg.megatron.get("skip_train", False)
 
         # ddp config
         cfg.megatron.check_for_nan_in_loss_and_grad = cfg.megatron.get(
