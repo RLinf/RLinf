@@ -1,3 +1,17 @@
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """上传项目文件到平台"""
 
 import base64
@@ -10,7 +24,7 @@ import tarfile
 import tempfile
 import time
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import requests
 
@@ -104,9 +118,7 @@ def push_training_job(
             ssh_user=ssh_user,
         )
 
-    raise ValueError(
-        "不支持的 upload_method。支持的值：job、aicoder_scp。"
-    )
+    raise ValueError("不支持的 upload_method。支持的值：job、aicoder_scp。")
 
 
 def _apply_upload_preset(
@@ -177,7 +189,9 @@ def _push_training_job_via_job(
                 )
 
         if framework_id is None:
-            framework_id = training_job.get("framework_id") or os.getenv("INFINI_FRAMEWORK_ID")
+            framework_id = training_job.get("framework_id") or os.getenv(
+                "INFINI_FRAMEWORK_ID"
+            )
             if not framework_id:
                 raise ValueError(
                     "未指定框架 ID。请选择以下方式之一：\n"
@@ -188,7 +202,9 @@ def _push_training_job_via_job(
                 )
 
         if resource_spec_id is None:
-            resource_spec_id = training_job.get("resource_spec_id") or os.getenv("INFINI_RESOURCE_SPEC_ID")
+            resource_spec_id = training_job.get("resource_spec_id") or os.getenv(
+                "INFINI_RESOURCE_SPEC_ID"
+            )
             if not resource_spec_id:
                 raise ValueError(
                     "未指定资源规格 ID。请选择以下方式之一：\n"
@@ -218,7 +234,9 @@ def _push_training_job_via_job(
         base64_size = len(tar_base64)
 
         if file_size_mb > 5:
-            print(f"警告: 文件较大 ({file_size_mb:.2f} MB)，base64 编码后大小: {base64_size / 1024:.2f} KB")
+            print(
+                f"警告: 文件较大 ({file_size_mb:.2f} MB)，base64 编码后大小: {base64_size / 1024:.2f} KB"
+            )
             print("注意: 如果命令过长导致失败，请考虑使用 Web 控制台或其他方式上传。")
 
         tar_base64_escaped = tar_base64.replace("\\", "\\\\").replace('"', '\\"')
@@ -283,13 +301,15 @@ print(f'文件大小: {{len(file_content)}} 字节')
         except requests.exceptions.HTTPError as exc:
             error_msg = _extract_error_message(exc)
 
-            if "Spot 规格已受限" in error_msg or ("Spot" in error_msg and "受限" in error_msg):
+            if "Spot 规格已受限" in error_msg or (
+                "Spot" in error_msg and "受限" in error_msg
+            ):
                 raise ValueError(
                     f"资源规格受限错误：\n"
                     f"  当前使用的 Spot 规格 ({resource_spec_id}) 已受限，无法使用。\n\n"
                     f"解决方案：\n"
                     f"1. 使用其他 Spot 规格：通过 --resource-spec-id 参数指定其他可用的资源规格 ID\n"
-                    f"2. 使用包年包月资源：在 config.py 中设置 resource_type=\"reserved\" 并提供 pool_id\n"
+                    f'2. 使用包年包月资源：在 config.py 中设置 resource_type="reserved" 并提供 pool_id\n'
                     f"3. 查询可用资源规格：使用平台 API 查询可用的资源规格列表\n\n"
                     f"当前配置：\n"
                     f"  - 资源类型: {'Spot' if resource_type == 1 else '包年包月'}\n"
@@ -374,14 +394,11 @@ def _push_training_job_via_aicoder_scp(
         or os.getenv("INFINI_AICODER_MOUNT_PATH")
         or DEFAULT_AICODER_MOUNT_PATH
     )
-    configured_ssh_proxy_jump = (
-        ssh_proxy_jump
-        or os.getenv("INFINI_AICODER_SSH_PROXY_JUMP")
+    configured_ssh_proxy_jump = ssh_proxy_jump or os.getenv(
+        "INFINI_AICODER_SSH_PROXY_JUMP"
     )
     ssh_user = (
-        ssh_user
-        or os.getenv("INFINI_AICODER_SSH_USER")
-        or DEFAULT_AICODER_SSH_USER
+        ssh_user or os.getenv("INFINI_AICODER_SSH_USER") or DEFAULT_AICODER_SSH_USER
     )
 
     _ensure_local_command("ssh")
@@ -411,7 +428,9 @@ def _push_training_job_via_aicoder_scp(
 
     ai_coder_id = _extract_result_value(create_result, "ai_coder_id")
     if not ai_coder_id:
-        raise ValueError(f"创建 AICoder 实例失败，响应中未返回 ai_coder_id: {create_result}")
+        raise ValueError(
+            f"创建 AICoder 实例失败，响应中未返回 ai_coder_id: {create_result}"
+        )
 
     ssh_detail_result = _wait_for_aicoder_ssh_detail(
         ai_coder_id=ai_coder_id,
@@ -471,7 +490,7 @@ def _validate_project_dir(project_dir: Path):
 def _load_training_job_config(project_dir: Path) -> dict:
     """从 config.py 读取训练配置并合并任务类型映射。"""
     config_file = project_dir / "config.py"
-    config_globals: Dict[str, Any] = {}
+    config_globals: dict[str, Any] = {}
     exec(config_file.read_text(encoding="utf-8"), config_globals)
 
     training_project = config_globals.get("training_project", {})
@@ -659,10 +678,7 @@ def _prepare_remote_target(ssh_info: dict, remote_target_path: PurePosixPath):
     """确保远端目标父目录存在，并覆盖远端同名目录。"""
     remote_parent = shlex.quote(str(remote_target_path.parent))
     remote_target = shlex.quote(str(remote_target_path))
-    remote_command = (
-        f"mkdir -p {remote_parent} && "
-        f"rm -rf {remote_target}"
-    )
+    remote_command = f"mkdir -p {remote_parent} && rm -rf {remote_target}"
 
     try:
         _run_ssh_command(ssh_info=ssh_info, remote_command=remote_command)
@@ -692,10 +708,7 @@ def _run_scp_upload(
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or "").strip()
         stdout = (exc.stdout or "").strip()
-        raise ValueError(
-            "SCP 上传失败: "
-            f"{stderr or stdout or exc}"
-        )
+        raise ValueError(f"SCP 上传失败: {stderr or stdout or exc}")
 
 
 def _run_ssh_command(ssh_info: dict, remote_command: str):
@@ -707,6 +720,8 @@ def _run_ssh_command(ssh_info: dict, remote_command: str):
         command.extend(["-p", str(ssh_info["port"])])
     command.extend([ssh_info["host_spec"], remote_command])
     return subprocess.run(command, check=True, capture_output=True, text=True)
+
+
 def _ensure_local_command(command_name: str):
     """检查本地命令是否存在。"""
     if shutil.which(command_name) is None:

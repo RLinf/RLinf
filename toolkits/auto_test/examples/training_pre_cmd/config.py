@@ -1,3 +1,17 @@
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # Training Service Idle Resources Configuration
 
 project_name = "training_server_test"
@@ -13,7 +27,7 @@ local_pre_commands = [
     "mkdir -p RLinf_test",
     "cd RLinf_test",
     "rm -rf RLinf",
-    "git clone https://ghfast.top/https://github.com/RLinf/RLinf.git", 
+    "git clone https://ghfast.top/https://github.com/RLinf/RLinf.git",
     "cd RLinf",
     "ls",
     # envsetup(optional)
@@ -23,7 +37,7 @@ local_pre_commands = [
     # TODO: "mv required run_yaml.sh and check.py",
     # TODO: where should the source run_yaml.sh and check.py be placed?
     f"mv /mnt/public/zhouyiming/Training_Client/training_client/run_yaml.sh {workspace_dir}/RLinf_test/RLinf",
-    f"ls {workspace_dir}/RLinf_test/RLinf", 
+    f"ls {workspace_dir}/RLinf_test/RLinf",
 ]
 
 # xusi
@@ -38,7 +52,7 @@ local_pre_commands = [
 training_runtime = {
     "start_commands": [
         f"cd {workspace_dir}/RLinf_test/RLinf",
-        f"ls",
+        "ls",
         "sleep 100",
         # "bash run_yaml.sh",
     ],

@@ -1,3 +1,17 @@
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """配置映射：任务类型和资源环境的映射关系"""
 
 from typing import Optional
@@ -6,24 +20,22 @@ from typing import Optional
 TASK_TYPE_MAPPING = {
     "pretrain": {
         "image_id": "im-db5yl3csf7ulsudj",  # TODO: 替换为实际镜像 ID
-        "framework_id": "fw-c6q6a7sfyhoeb5xi",   # TODO: 替换为实际框架 ID
-        "pool_id": "po-c77m6nj3hteszywp", # 宁夏B的资源池ID
+        "framework_id": "fw-c6q6a7sfyhoeb5xi",  # TODO: 替换为实际框架 ID
+        "pool_id": "po-c77m6nj3hteszywp",  # 宁夏B的资源池ID
     },
     "supervised_learning": {
         "image_id": "im-db5yl3csf7ulsudj",  # TODO: 替换为实际镜像 ID
-        "framework_id": "fw-c6q6a7sfyhoeb5xi",   # TODO: 替换为实际框架 ID
-        "pool_id": "po-c77m6nj3hteszywp", # 宁夏B的资源池ID
+        "framework_id": "fw-c6q6a7sfyhoeb5xi",  # TODO: 替换为实际框架 ID
+        "pool_id": "po-c77m6nj3hteszywp",  # 宁夏B的资源池ID
     },
     "reinforcement_learning": {
         "image_id": "im-db5yl3csf7ulsudj",  # TODO: 替换为实际镜像 ID
-        "framework_id": "fw-c6q6a7sfyhoeb5xi",   # TODO: 替换为实际框架 ID (这里是ray)
-        "pool_id": "po-c77m6nj3hteszywp", # 宁夏B的资源池ID
-    }
+        "framework_id": "fw-c6q6a7sfyhoeb5xi",  # TODO: 替换为实际框架 ID (这里是ray)
+        "pool_id": "po-c77m6nj3hteszywp",  # 宁夏B的资源池ID
+    },
 }
 
-IMAGE_NAME_MAPPING = {
-    "behavior": "im-db5yl3csf7ulsudj"
-}
+IMAGE_NAME_MAPPING = {"behavior": "im-db5yl3csf7ulsudj"}
 
 # 资源可用区到资源规格和存储卷的映射
 POOL_MAPPING = {
@@ -155,21 +167,20 @@ DEFAULT_CONFIG = {
 def get_task_config(task_type: str) -> dict:
     """
     根据任务类型获取配置
-    
+
     Args:
         task_type: 任务类型（如 "预训练"、"强化学习训练"）
-    
+
     Returns:
         包含 image_id, framework_id, pool_id, device_type 的字典
-    
+
     Raises:
         ValueError: 如果任务类型不存在
     """
     if task_type not in TASK_TYPE_MAPPING:
         available_types = ", ".join(TASK_TYPE_MAPPING.keys())
         raise ValueError(
-            f"未知的任务类型: {task_type}。\n"
-            f"可用的任务类型: {available_types}"
+            f"未知的任务类型: {task_type}。\n可用的任务类型: {available_types}"
         )
     return TASK_TYPE_MAPPING[task_type].copy()
 
@@ -177,46 +188,43 @@ def get_task_config(task_type: str) -> dict:
 def get_pool_config(pool_id: str) -> dict:
     """
     根据资源池 ID 获取配置
-    
+
     Args:
         pool_id: 资源池 ID（如 "北京D"、"北京J02"）
-    
+
     Returns:
         包含 resource_spec_id, volume_id 的字典
-    
+
     Raises:
         ValueError: 如果资源池不存在
     """
     if pool_id not in POOL_MAPPING:
         available_pools = ", ".join(POOL_MAPPING.keys())
-        raise ValueError(
-            f"未知的资源池: {pool_id}。\n"
-            f"可用的资源池: {available_pools}"
-        )
+        raise ValueError(f"未知的资源池: {pool_id}。\n可用的资源池: {available_pools}")
     return POOL_MAPPING[pool_id].copy()
 
 
 def get_full_config(task_type: str) -> dict:
     """
     根据任务类型获取完整配置（合并任务类型和资源池配置）
-    
+
     Args:
         task_type: 任务类型
-    
+
     Returns:
         完整的配置字典
     """
     task_config = get_task_config(task_type)
     pool_id = task_config["pool_id"]
     pool_config = get_pool_config(pool_id)
-    
+
     # 合并配置
     full_config = {
         **DEFAULT_CONFIG,
         **task_config,
         **pool_config,
     }
-    
+
     return full_config
 
 
@@ -309,8 +317,7 @@ def get_region_resource_config(name: str) -> dict:
     if region_name is None:
         available_regions = ", ".join(REGION_RESOURCE_MAPPING.keys())
         raise ValueError(
-            f"未知的资源区域: {name}。\n"
-            f"可用的资源区域: {available_regions}"
+            f"未知的资源区域: {name}。\n可用的资源区域: {available_regions}"
         )
 
     region_config = REGION_RESOURCE_MAPPING[region_name].copy()
@@ -336,22 +343,30 @@ def apply_region_resource_config(training_project: dict) -> dict:
     requested_gpu_num = get_resource_gpu_num(training_project)
     region_config = get_region_resource_config(region_name)
     available_specs = region_config.get("specs", {}).get(normalized_resource_type, {})
-    spec_field_name = "load_spec_id" if normalized_resource_type == 0 else "resource_spec_id"
-    other_spec_field_name = "resource_spec_id" if normalized_resource_type == 0 else "load_spec_id"
+    spec_field_name = (
+        "load_spec_id" if normalized_resource_type == 0 else "resource_spec_id"
+    )
+    other_spec_field_name = (
+        "resource_spec_id" if normalized_resource_type == 0 else "load_spec_id"
+    )
 
     selected_spec_id = region_config.get(spec_field_name)
     if requested_gpu_num is not None:
         selected_spec_id = available_specs.get(requested_gpu_num)
         if not selected_spec_id:
-            available_gpu_nums = ", ".join(str(gpu_num) for gpu_num in sorted(available_specs.keys()))
+            available_gpu_nums = ", ".join(
+                str(gpu_num) for gpu_num in sorted(available_specs.keys())
+            )
             resource_type_name = "包年包月" if normalized_resource_type == 0 else "Spot"
             raise ValueError(
-                    f"资源区域 {region_config['region_name']} 在 {resource_type_name} 模式下不支持 {requested_gpu_num} 卡。\n"
-                    f"可用卡数: {available_gpu_nums or '无'}"
+                f"资源区域 {region_config['region_name']} 在 {resource_type_name} 模式下不支持 {requested_gpu_num} 卡。\n"
+                f"可用卡数: {available_gpu_nums or '无'}"
             )
     elif not selected_spec_id:
         resource_type_name = "包年包月" if normalized_resource_type == 0 else "Spot"
-        available_gpu_nums = ", ".join(str(gpu_num) for gpu_num in sorted(available_specs.keys()))
+        available_gpu_nums = ", ".join(
+            str(gpu_num) for gpu_num in sorted(available_specs.keys())
+        )
         raise ValueError(
             f"资源区域 {region_config['region_name']} 当前没有可用的 {resource_type_name} 默认规格配置。\n"
             f"可用卡数: {available_gpu_nums or '无'}"
@@ -384,7 +399,9 @@ def apply_region_resource_config(training_project: dict) -> dict:
             training_project["volume_id"] = volume_id
     else:
         if isinstance(existing_mount, list) and existing_mount:
-            training_project["mount"] = [item.copy() for item in existing_mount if isinstance(item, dict)]
+            training_project["mount"] = [
+                item.copy() for item in existing_mount if isinstance(item, dict)
+            ]
             if existing_volume_id:
                 training_project["volume_id"] = existing_volume_id
             elif training_project["mount"]:
@@ -408,8 +425,7 @@ def get_aicoder_upload_preset(name: str) -> dict:
     if preset_name is None or preset_name not in AICODER_UPLOAD_PRESET_MAPPING:
         available_presets = ", ".join(AICODER_UPLOAD_PRESET_MAPPING.keys())
         raise ValueError(
-            f"未知的上传预设: {name}。\n"
-            f"可用的上传预设: {available_presets}"
+            f"未知的上传预设: {name}。\n可用的上传预设: {available_presets}"
         )
     return AICODER_UPLOAD_PRESET_MAPPING[preset_name].copy()
 

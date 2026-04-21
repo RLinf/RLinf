@@ -1,10 +1,24 @@
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """使用闲时资源创建训练服务任务。"""
 
 import os
 import shlex
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 if __package__ in {None, ""}:
     _cli_dir = Path(__file__).resolve().parent
@@ -37,7 +51,7 @@ def create_idle_resource_train_service(
             "缺少必需文件: config.py。请确保在项目目录中运行此命令。"
         )
 
-    config_globals: Dict[str, Any] = {}
+    config_globals: dict[str, Any] = {}
     exec(config_file.read_text(encoding="utf-8"), config_globals)
 
     training_project = config_globals.get("training_project", {})
@@ -52,13 +66,12 @@ def create_idle_resource_train_service(
     apply_region_resource_config(training_project)
 
     region_id = training_project.get("region_id") or os.getenv("INFINI_REGION_ID")
-    resource_spec_id = (
-        training_project.get("resource_spec_id")
-        or os.getenv("INFINI_RESOURCE_SPEC_ID")
+    resource_spec_id = training_project.get("resource_spec_id") or os.getenv(
+        "INFINI_RESOURCE_SPEC_ID"
     )
     image_id = training_project.get("image_id") or os.getenv("INFINI_IMAGE_ID")
-    framework_id = (
-        training_project.get("framework_id") or os.getenv("INFINI_FRAMEWORK_ID")
+    framework_id = training_project.get("framework_id") or os.getenv(
+        "INFINI_FRAMEWORK_ID"
     )
     worker_num = training_project.get("compute", {}).get("node_count", 1)
     expect_train_complete_time = training_project.get(
@@ -69,7 +82,9 @@ def create_idle_resource_train_service(
     mount = _build_mount_config(training_project)
 
     if not region_id:
-        raise ValueError("未指定 region_id。请在 config.py 中设置 resource_region 或 region_id。")
+        raise ValueError(
+            "未指定 region_id。请在 config.py 中设置 resource_region 或 region_id。"
+        )
     if not resource_spec_id:
         raise ValueError(
             "未指定 resource_spec_id。请在 config.py 中设置 resource_spec_id，"
@@ -139,7 +154,11 @@ def create_idle_resource_train_service(
 def _deep_update(base_dict: dict, update_dict: dict):
     """深度更新字典。"""
     for key, value in update_dict.items():
-        if key in base_dict and isinstance(base_dict[key], dict) and isinstance(value, dict):
+        if (
+            key in base_dict
+            and isinstance(base_dict[key], dict)
+            and isinstance(value, dict)
+        ):
             _deep_update(base_dict[key], value)
         else:
             base_dict[key] = value
@@ -200,31 +219,31 @@ def _extract_result_value(result: Any, field_name: str) -> Any:
     return None
 
 
-def _run_local_pre_commands(commands: List[str], project_dir: Path) -> None:
+def _run_local_pre_commands(commands: list[str], project_dir: Path) -> None:
     """
     在本地执行预命令（在创建任务前执行）。
-    
+
     所有命令在一个 shell 中串行执行，使用 && 连接，
     这样 cd 命令可以正确影响后续命令的工作目录。
-    
+
     Args:
         commands: 要执行的命令列表
         project_dir: 项目目录路径（作为工作目录）
-    
+
     Raises:
         RuntimeError: 如果命令执行失败
     """
     if not commands:
         return
-    
+
     print(f"\n执行本地预命令 (共 {len(commands)} 条):")
     for i, cmd in enumerate(commands, 1):
         print(f"  [{i}/{len(commands)}] {cmd}")
     print("-" * 50)
-    
+
     # 将所有命令用 && 连接，在一个 shell 中串行执行
     combined_command = " && ".join(commands)
-    
+
     try:
         # 使用 Popen 实时打印输出
         process = subprocess.Popen(
@@ -235,23 +254,23 @@ def _run_local_pre_commands(commands: List[str], project_dir: Path) -> None:
             stderr=subprocess.STDOUT,  # 将 stderr 合并到 stdout
             text=True,
             bufsize=1,  # 行缓冲
-            universal_newlines=True
+            universal_newlines=True,
         )
-        
+
         # 实时读取并打印输出
         for line in process.stdout:
-            print(line, end='')
-        
+            print(line, end="")
+
         # 等待进程完成
         return_code = process.wait()
-        
+
         # 检查返回码
         if return_code != 0:
             print(f"\n✗ 命令执行失败，返回码: {return_code}")
             raise RuntimeError(f"本地预命令执行失败，返回码: {return_code}")
-        
+
         print("-" * 50)
         print("✓ 所有本地预命令执行完成\n")
-        
+
     except subprocess.SubprocessError as e:
         raise RuntimeError(f"本地预命令执行异常: {e}")
