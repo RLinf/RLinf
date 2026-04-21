@@ -13,7 +13,6 @@ Reward Model 使用指南（真机）
 工作流概览
 -----------------------
 
-与 :doc:`reward_model` 中描述的工作流不同，两种真机采集方式均无需繁琐的离线预处理步骤。
 方式一将数据采集、标注和数据集生成整合为一次端到端运行；方式二采用简化的两步式流程。
 
 .. code-block:: text
@@ -29,9 +28,9 @@ Reward Model 使用指南（真机）
    └── 方式二：固定位姿（目标驱动）
        1. 配置目标末端执行器位姿（无需键盘标注）。
        2. 机器人到达目标位姿时 episode 自动终止。
-       3. 从 episode 轨迹中自动提取成功/失败帧。
-       4. 对 fail:success 比例进行采样，并划分训练/验证集。
-       5. 直接保存 train.pt / val.pt。
+       3. 保存 episode 轨迹为 .pkl 文件。
+       4. 从 episode 轨迹中自动提取成功/失败帧。
+       5. 通过 preprocess_reward_dataset.py 预处理并生成 train.pt / val.pt。
 
 预备工作
 -----------------------
@@ -222,7 +221,7 @@ Reward Model 使用指南（真机）
 .. code-block:: python
 
    {
-       "images": list[torch.Tensor],   # [C, H, W] 张量，来自腕部相机 NHWC 格式
+       "images": list[torch.Tensor], 
        "labels": list[int],             # 1 = 成功，0 = 失败
        "metadata": dict,                # 采集统计信息和配置参数
    }

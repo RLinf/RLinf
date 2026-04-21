@@ -15,11 +15,7 @@ Before getting started, it is strongly recommended to read the following documen
 Workflow Overview
 -----------------------
 
-Unlike the workflow described in :doc:`reward_model`, both real-world approaches
-**do not require** a separate offline preprocessing step (Approach 1) or use a
-streamlined pipeline (Approach 2). The collection script combines data collection,
-labeling, and dataset generation into one end-to-end run (Approach 1) or a
-simplified two-step pipeline (Approach 2).
+The collection script combines data collection, labeling, and dataset generation into one end-to-end run (Approach 1) or a streamlined two-step pipeline (Approach 2).
 
 .. code-block:: text
 
@@ -34,9 +30,9 @@ simplified two-step pipeline (Approach 2).
    └── Approach 2: Fixed-pose (target-driven)
        1. Configure a target end-effector pose (no keyboard labeling needed).
        2. Episode auto-terminates on reaching the pose.
-       3. Automatically extract success/fail frames from episode trajectories.
-       4. Apply fail:success ratio sampling and train/val split.
-       5. Save train.pt / val.pt directly.
+       3. Save collected episodes as .pkl files.
+       4. Automatically extract success/fail frames from episode trajectories.
+       5. Run preprocess_reward_dataset.py to generate train.pt / val.pt.
 
 Prerequisites
 -----------------------
@@ -239,7 +235,7 @@ Each ``.pt`` file follows the ``RewardDatasetPayload`` schema:
 .. code-block:: python
 
    {
-       "images": list[torch.Tensor],   # [C, H, W] tensors, NHWC from wrist camera
+       "images": list[torch.Tensor],
        "labels": list[int],             # 1 = success, 0 = fail
        "metadata": dict,                # collection stats and config
    }

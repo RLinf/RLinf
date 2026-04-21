@@ -133,7 +133,7 @@ This step is identical to **Section 2 — Reward Model Training** in :doc:`../..
 
 In particular, for real-world scenarios, it is recommended to lower the ``min_delta`` of ``early_stop``, for example:
 
-.. code-block:: bash
+.. code-block:: yaml
 
   runner:
     early_stop:

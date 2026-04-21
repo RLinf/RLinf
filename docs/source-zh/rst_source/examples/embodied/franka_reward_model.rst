@@ -124,7 +124,7 @@ Reward Model 训练
 
 特别的，在真实世界场景中，建议降低 ``early_stop`` 的 ``min_delta``，例如：
 
-.. code-block:: bash
+.. code-block:: yaml
 
   runner:
     early_stop
