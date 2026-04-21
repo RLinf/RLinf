@@ -1,0 +1,314 @@
+GR00T-N1.6 Model Reinforcement Learning Training
+==================================================================
+
+.. |huggingface| image:: /_static/svg/hf-logo.svg
+    :width: 16px
+    :height: 16px
+    :class: inline-icon
+
+This example provides a complete guide on how to fine-tune the GR00T-N1.6 algorithm with reinforcement learning using the RLinf framework in the LIBERO environment. It covers environment setup, core algorithm design, training configuration, evaluation, and visualization, and includes reproducible commands and configuration snippets.
+
+The main goals are to develop a model capable of performing robotic manipulation tasks, including:
+
+1. Visual and language understanding: Use a large-scale pretrained frozen backbone to process multi-view RGB images and natural language task instructions.
+2. Smooth continuous control: Use a Flow Matching / Diffusion action head to generate high-frequency, smooth continuous action trajectories.
+3. Reinforcement learning fine-tuning: Optimize the policy with PPO using environment feedback.
+
+Environment
+-----------
+
+Environment
+-----------
+
+**LIBERO Environment**
+
+- Environment: The LIBERO simulation benchmark built on robosuite (MuJoCo).
+- Tasks: Control a 7-DoF manipulator to perform various household skills (pick-and-place, stacking, opening drawers, spatial rearrangement).
+- Observations: RGB images captured by off-screen cameras placed around the workspace (typical resolutions: 128×128, 224×224, or 256×256).
+- Action space: The environment provides a native 7-dimensional continuous action — 3D end-effector position control (x, y, z), 3D rotation control (roll, pitch, yaw), and gripper control (open/close). Note: GR00T-N1.6 internally zero-pads this 7-D action to a 128-D cross-embodiment universal action space via an embodiment tag.
+
+Task Description Format
+
+GR00T-N1.6 directly uses the environment-provided natural language task descriptions as input to the language model, leveraging the frozen backbone to extract semantic features.
+
+Data Structure
+
+- Images: Continuous RGB video frames from the main view and wrist view, typically named "main_images" and "wrist_images". Considering time-step history, shapes are often ``[batch_size, seq_len, 224, 224, 3]`` (actual keys and resolutions are managed by ``modality_config``).
+- State: End-effector position, orientation, and gripper state (concatenated with visual features as state representation).
+- Task description: Natural language instruction.
+- Reward: Sparse reward for PPO (success = 1, failure = 0).
+
+Algorithm
+---------
+
+Core Algorithm Components
+
+1. PPO (Proximal Policy Optimization)
+
+    - Use GAE (Generalized Advantage Estimation) for advantage estimation
+    - Policy clipping to limit ratio updates
+    - Value function clipping
+    - Entropy regularization
+
+
+
+Environment and Cross-Embodiment Support
+---------------------------------------
+
+Flexible Embodiment Ecosystem & Modality Config
+
+GR00T-N1.6 adopts a highly decoupled data interface design. With configurable "Embodiment Tags" and modality converters, the framework natively supports the 7-DoF manipulator in LIBERO (3D position, 3D rotation, gripper) and can extend to different body morphologies (e.g., a quadruped) using the same underlying continuous control parameters without invasive changes to the network architecture.
+
+GR00T-N1.6 Core Architecture Upgrades
+--------------------------------------
+
+1. FSDP (Fully Sharded Data Parallel) Actor Worker
+
+Given the increased parameter scale of GR00T-N1.6, RLinf's Actor node has been fully refactored into an ``EmbodiedFSDPActor``. This architecture shards model weights, gradients, and optimizer states across multiple GPUs, overcoming single-GPU memory limits of traditional DDP and significantly improving throughput.
+
+2. Head-only Fine-tuning & Gradient Protection
+
+To adapt to limited data from physical environments and save compute, GR00T-N1.6 RL training uses partial fine-tuning:
+- Backbone freezing: Strictly lock the multi-billion-parameter visual and language backbones to run in inference mode (Eval).
+- Action head fine control: Only unfreeze the action output head to learn physical dynamics. Additionally, the framework enforces freezing and gradient hook interception on the timestep encoder (``timestep_encoder``) to precisely prevent NaN gradient explosions that can arise in high-dimensional action distributions.
+
+Dependencies Installation
+-----------------------
+
+1. Clone the RLinf repository
+~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+    # To speed up downloads in some regions, you can use:
+    # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+    git clone https://github.com/RLinf/RLinf.git
+    cd RLinf
+
+2. Install dependencies
+~~~~~~~~~~~~~~~~
+
+Option 1: Docker image
+
+Run experiments using a Docker image.
+
+.. code:: bash
+
+    docker run -it --rm --gpus all \
+        --shm-size 20g \
+        --network host \
+        --name rlinf \
+        -v .:/workspace/RLinf \
+        rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+        # If you need faster image downloads in some regions, you can use:
+        # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+
+Please use the built-in `switch_env` tool inside the image to switch to the corresponding virtual environment:
+
+.. code:: bash
+
+    source switch_env gr00t_16
+
+Option 2: Custom environment
+
+.. code:: bash
+
+    # To speed up dependency installation in some regions, you can add `--use-mirror` to the install.sh command below
+
+    bash requirements/install.sh embodied --model gr00t_16 --env maniskill_libero
+    source .venv/bin/activate
+
+Model Download
+--------------
+
+Before training, you need to run the previously provided GR00T-N1.6 SFT, convert the model format, and set the model path in the specified YAML file.
+
+
+--------------
+
+GR00T-N1.6 Primer
+-----------------------------
+This section describes core architecture upgrades and key design principles of GR00T-N1.6 to help developers better understand the underlying logic and deploy the model efficiently.
+
+1. Two-Stage Decoupled Training Paradigm
+
+RLinf adopts a highly decoupled two-stage training pipeline for GR00T-N1.6, where SFT and PPO are logically and physically separated:
+- Stage 1 (Pure SFT warm-up): Run in "Pure SFT Model" mode. The model is trained solely on offline expert datasets (e.g., LeRobot/LIBERO) without interaction with the simulator, focusing on fitting target action trajectories. All environment rollout and sampling interfaces are disabled.
+- Stage 2 (PPO reinforcement alignment): Load the converged SFT model into FSDP-based distributed Actors for real-time interaction with the simulator. Use advantage estimators and PPO for closed-loop physical fine-tuning.
+
+2. Minimal Local Fine-tuning Strategy (Head-only Fine-Tuning)
+
+To drastically reduce memory usage and avoid catastrophic forgetting of pretrained visual-language representations, the framework defaults to freezing the backbone:
+- Backbone freezing: During both SFT and subsequent RL phases, the large visual-language backbone is locked (``requires_grad=False``) and used only as a feature extractor.
+- Focus on action head: Only the action output head is unfrozen for gradient updates, greatly reducing memory footprint and enabling fine-tuning of multi-billion-parameter models on common compute clusters.
+
+3. Flow-Matching Action Generation (Flow-Matching Action Head)
+
+Unlike discrete token autoregressive action generation, GR00T-N1.6 uses a state-of-the-art continuous action generation scheme:
+- The model uses a flow-matching denoise mechanism (Flow-SDE / Diffusion) to directly generate smooth, high-frequency future action blocks in continuous space.
+- Key configs: use ``num_action_chunks`` to control how many future time steps to predict per inference, and ``denoising_steps`` to control sampling depth for denoising.
+
+4. Highly Generalized Modality Configuration (Modality Config & Cross-Embodiment)
+
+With an abstract data interface, the model decouples from specific hardware morphology:
+- Embodiment Tag: By providing configuration tags (e.g., ``ROBOCASA_PANDA_OMRON``), the system dynamically adapts the corresponding state encoder and action space. The same continuous control logic can be reused across single-arm manipulators and quadrupeds, enabling cross-embodiment generalization.
+
+5. FSDP Distributed Parallel Architecture
+
+Faced with GR00T-N1.6's large parameter scale (e.g., 3B), traditional distributed training easily hits memory bottlenecks during alternating environment sampling and backpropagation:
+- The system refactors Actor nodes (e.g., ``EmbodiedFSDPActor``) to shard model weights, gradients, and optimizer states across GPUs. This overcomes single-card memory limits and ensures efficient throughput for high-dimensional action space training.
+
+---------------
+
+After fine-tuning, the system will produce ``metadata.json`` and other summary files in the output directory, preserving key modality information for inference and deployment.
+---------------
+
+Run Scripts
+---------------
+
+1. Key cluster configuration
+
+.. code:: yaml
+
+    cluster:
+        num_nodes: 1
+        hardware_ranks: [[0]]
+        component_placement:
+          actor,env,rollout: all
+
+Here you can flexibly configure the number of GPUs for env, rollout, and actor components.
+
+--------------
+
+2. Model key parameter configuration
+
+GR00T-N1.6's PPO configuration refines control over distributed sharding and action generation. You can tune core modules according to the configuration examples below:
+
+2.1 Actor model and action head config (`actor.model`)
+
+.. code-block:: yaml
+
+    model:
+      model_type: "gr00t_1_6"   
+      add_value_head: True          # RL critical: dynamically inject a value head
+      num_action_chunks: 1          # Set to 1 in PPO phase for higher-frequency physical interaction
+      denoising_steps: 1            # Control flow-matching denoising steps
+
+- Action chunking and denoising (`num_action_chunks`, `denoising_steps`):
+  For PPO closed-loop training, lower these values (e.g., to ``1``) to speed up environment rollouts and reduce computation.
+- Value head injection (`add_value_head: True`):
+  The framework supports dynamically attaching a critic value head inside GR00T that shares backbone features with the actor to compute accurate PPO advantages.
+
+2.2 FSDP sharding strategy (`actor.fsdp_config` & `no_split_modules`)
+
+To ensure FSDP can shard GR00T-1.6's multimodal complex architecture correctly and efficiently across GPUs, explicitly specify which core modules should not be over-sharded:
+
+.. code-block:: yaml
+
+    no_split_modules:
+      - "Qwen3DecoderLayer"                             # Language LLM layer
+      - "Siglip2EncoderLayer"                           # Visual encoder layer
+      - "FlowMatchingActionHeadForRLActionPrediction"   # Core action prediction head
+      - "TimestepEncoder" / "TimestepEmbedding"         # Diffusion timestep encoding
+      - "ValueHead" / "ExploreNoiseNet"                 # RL-specific networks
+
+- Strategy:
+  The listed modules will be treated as the smallest atomic units for FSDP wrapping (Transformer wrappers), preventing cross-layer splitting that would cause excessive communication overhead during forward/backward passes.
+
+2.3 PPO and optimizer hyperparameters (`algorithm` & `actor.optim`)
+
+.. code-block:: yaml
+
+    algorithm:
+      adv_type: gae                 # Generalized Advantage Estimation
+      clip_ratio_high: 0.2          # Upper clip for policy ratio
+      clip_ratio_low: 0.2           # Lower clip for policy ratio
+      gamma: 0.99                   # Discount factor
+      gae_lambda: 0.95              # GAE smoothing parameter
+
+    optim:
+      lr: 5.0e-6                    # Actor (policy) learning rate
+      value_lr: 1.0e-4              # Critic (value) learning rate typically larger than actor
+      clip_grad: 1.0                # Gradient clipping threshold to stabilize training
+
+3. Configuration files
+
+- GR00T-N1.6 + PPO + Libero-Spatial:
+  ``examples/embodiment/config/libero_spatial_ppo_gr00t_16.yaml``
+
+You need to update the path to the post-SFT model
+
+·· code:: yaml
+
+     model:
+        model_path: "/path/to/GR00T-N1.6-libero-spatial-ppo"
+--------------
+
+4. Launch commands
+
+To start training with the selected configuration, run one of the following commands:
+
+::
+
+    bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t_16
+
+--------------
+
+Visualization and Results
+-------------------------
+
+1. TensorBoard logs
+
+.. code:: bash
+
+    # Start TensorBoard
+    tensorboard --logdir ./logs --port 6006
+
+--------------
+
+2. Key monitoring metrics
+
+- Training metrics
+
+  - ``actor/loss``: policy loss
+  - ``actor/value_loss``: value function loss (PPO)
+  - ``actor/grad_norm``: gradient norm
+  - ``actor/approx_kl``: approximate KL between new and old policy
+  - ``actor/pg_clipfrac``: policy clipping fraction
+  - ``actor/value_clip_ratio``: value loss clipping ratio (PPO)
+
+- Rollout metrics
+
+  - ``rollout/returns_mean``: mean episode returns
+  - ``rollout/advantages_mean``: mean advantages
+
+- Environment metrics
+
+  - ``env/episode_len``: average episode length
+  - ``env/success_once``: task success rate
+
+--------------
+
+3. Video generation
+
+.. code:: yaml
+
+    video_cfg:
+        save_video: True
+        video_base_dir: ${runner.logger.log_path}/video/eval
+
+--------------
+
+4. TensorBoard integration
+
+.. code:: yaml
+
+    runner:
+        task_type: embodied
+        logger:
+            log_path: "../results"
+            project_name: rlinf
+            experiment_name: "libero_spatial_ppo_gr00t_n16"   
+            logger_backends: ["tensorboard"]
+
+--------------
