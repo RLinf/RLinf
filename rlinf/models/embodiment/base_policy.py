@@ -23,6 +23,10 @@ class ForwardType(Enum):
     SAC_Q = "sac_q"
     CROSSQ = "crossq"
     CROSSQ_Q = "crossq_q"
+    IQL_ACTOR = "iql_actor"
+    IQL_CRITIC = "iql_critic"
+    IQL_VALUE = "iql_value"
+    NFT = "nft"
 
 
 class BasePolicy(ABC):
@@ -40,6 +44,7 @@ class BasePolicy(ABC):
         - sac_q_forward
         - crossq_forward
         - crossq_q_forward
+        - iql_forward
         - prepare_dagger_sft_batch
     """
 
@@ -59,6 +64,9 @@ class BasePolicy(ABC):
         raise NotImplementedError
 
     def crossq_q_forward(self, **kwargs):
+        raise NotImplementedError
+
+    def iql_forward(self, **kwargs):
         raise NotImplementedError
 
     def prepare_dagger_sft_batch(self, batch):

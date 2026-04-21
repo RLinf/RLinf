@@ -81,23 +81,30 @@ jobs:
             embodied_filter: &embodied
               - *shared
               - 'rlinf/workers/actor/async_ppo_fsdp_worker.py'
+              - 'rlinf/workers/actor/fsdp_iql_policy_worker.py'
+              - 'rlinf/runners/offline_runner.py'
               - 'rlinf/workers/actor/async_fsdp_dagger_policy_worker.py'
               - 'rlinf/envs/**'
               - 'rlinf/workers/actor/async_fsdp_sac_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_dagger_policy_worker.py'
+              - 'rlinf/workers/actor/fsdp_nft_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_sac_policy_worker.py'
               - 'rlinf/workers/env/**'
               - 'rlinf/workers/rollout/hf/**'
               - 'rlinf/models/embodiment/**'
               - 'rlinf/models/worldmodel/**'
               - 'rlinf/runners/*embodied*.py'
+              - 'rlinf/runners/*reward*.py'
               - 'examples/embodiment/**'
+              - 'examples/recap/process/**'
+              - 'examples/reward/**'
               - 'tests/e2e_tests/embodied/**'
               - 'tests/e2e_tests/training_backend/**'
               - 'toolkits/eval_scripts_openpi/**'
               - 'toolkits/eval_scripts_dexbotic/**'
               - 'toolkits/realworld_check/**'
               - 'toolkits/replay_buffer/**'
+              - 'toolkits/lerobot/**'
               - '.github/workflows/embodied-e2e-tests.yml'
             agent_reason_filter: &agent
               - *shared
@@ -125,6 +132,8 @@ jobs:
               - *shared
               - 'rlinf/workers/sft/**'
               - 'rlinf/runners/sft_runner.py'
+              - 'examples/recap/cfg/**'
+              - 'examples/recap/value/**'
               - 'examples/sft/**'
               - 'tests/e2e_tests/sft/**'
               - '.github/workflows/sft-e2e-tests.yml'
@@ -148,6 +157,7 @@ jobs:
               - *sft
               - *unit
               - *scheduler
+              - '.pre-commit-config.yaml'
               - docs/**/*.py
               - '.github/workflows/ci-tests.yml'
             all_changes_filter: &all_changes
@@ -156,6 +166,7 @@ jobs:
               - '**/*.py'
               - 'tests/**'
               - '.github/workflows/*tests.yml'
+              - '.pre-commit-config.yaml'
               - '*.yaml'
             all_changes_no_delete_filter:
               - added|modified: *all_changes

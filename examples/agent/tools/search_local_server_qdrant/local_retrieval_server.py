@@ -462,7 +462,7 @@ if __name__ == "__main__":
         query3 = ["Tell me about Mars", "Tell me about Mercury"]
         result3 = await retriever.abatch_search(query3, 3, return_score=True)
         logging.info(f"test3: query: {query3}, result: {result3}")
-        logging.info("Retriver is ready.")
+        logging.info("Retriever is ready.")
 
     loop.run_until_complete(test())
 

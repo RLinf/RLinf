@@ -26,7 +26,7 @@ Brief for AI coding agents working on RLinf. For full contribution flow, code st
 - **`requirements/`** – `install.sh` (targets: embodied, reason, docs; `--model`, `--env`), optional deps in subdirs.
 - **`docker/`** – Dockerfile and build targets per model/env.
 - **`ray_utils/`** – `start_ray.sh` (multi-node head/worker), `check_ray.sh`, `realworld/setup_before_ray.sh`.
-- **`toolkits/`** – Checkpoint convertors, verifiers, eval scripts, replay buffer, auto-placement.
+- **`toolkits/`** – Checkpoint converters, verifiers, eval scripts, replay buffer, auto-placement.
 - **`docs/`** – Sphinx RST (EN/ZH): start, tutorials, examples, APIs, FAQ.
 
 ---

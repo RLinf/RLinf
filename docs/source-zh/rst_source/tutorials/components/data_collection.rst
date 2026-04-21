@@ -38,8 +38,9 @@ Episode 数据采集
   将重置后的初始观测带入下一 episode。
 - 写入操作在独立后台线程异步执行，不阻塞 RL 训练主循环。
 - LeRobot writer 在第一条 episode 写入时懒初始化，自动推断图像尺寸、状态维度、动作维度。
-- LeRobot 导出支持保存 ``image``、``wrist_image``，以及在观测中存在时的
-  单路 ``extra_view_image``。
+- LeRobot 导出支持保存 ``image`` 与 ``extra_view_image``；当 ``extra_view_images``
+  为 ``[N, H, W, C]`` 多视角堆叠时，会自动按索引展开成 ``extra_view_image-0``、
+  ``extra_view_image-1`` …… 等列。
 - ``only_success=True`` 可过滤失败 episode，节省磁盘空间。
 
 构造参数
@@ -89,10 +90,6 @@ Episode 数据采集
      - ``bool``
      - ``False``
      - 仅保存成功的 episode
-   * - ``stats_sample_ratio``
-     - ``float``
-     - ``0.1``
-     - LeRobot 增量统计的图像采样比例（仅 lerobot 格式有效）
    * - ``finalize_interval``
      - ``int``
      - ``100``
@@ -129,17 +126,17 @@ Episode 数据采集
 
 .. code-block:: yaml
 
-   env:
-     group_name: "EnvGroup"
-     enable_offload: False
-
-     data_collection:
-       enabled: True
-       save_dir: ${runner.logger.log_path}/collected_data
-       export_format: "lerobot"      # 或 "pickle"
-       only_success: True
-       robot_type: "panda"
-       fps: 10
+  env:
+    group_name: "EnvGroup"
+    enable_offload: False
+    eval:
+      data_collection:
+        enabled: True
+        save_dir: ${runner.logger.log_path}/collected_data
+        export_format: "lerobot"      # 或 "pickle"
+        only_success: True
+        robot_type: "panda"
+        fps: 10
 
 然后正常启动训练脚本，数据会在训练过程中自动采集：
 
@@ -210,10 +207,9 @@ Episode 数据采集
      - 说明
    * - ``image``
      - 主摄像头图像（bytes + path），uint8
-   * - ``wrist_image``
-     - 腕部摄像头图像（bytes + path），uint8；无腕部摄像头时列为空
-   * - ``extra_view_image``
-     - 一路额外视角图像（bytes + path），uint8；无额外视角时列为空
+   * - ``extra_view_image`` / ``extra_view_image-N``
+     - 额外视角图像（bytes + path），uint8；多视角堆叠时展开为
+       ``extra_view_image-0``、``extra_view_image-1`` …… 无额外视角时列为空
    * - ``state``
      - 机器人状态向量，``float32[state_dim]``
    * - ``actions``
@@ -243,10 +239,9 @@ Episode 数据采集
      - 查找键（按优先级）
    * - 主图像
      - ``main_images`` → ``image`` → ``full_image``
-   * - 腕部图像
-     - ``wrist_images`` → ``wrist_image``
    * - 额外视角图像
-     - ``extra_view_images``（若有多路，仅取第一路）→ ``extra_view_image``
+     - ``extra_view_images`` → ``extra_view_image``（``[N, H, W, C]`` 会按索引
+       展开为 ``extra_view_image-0``、``extra_view_image-1`` ……）
    * - 状态
      - ``states`` → ``state``
 
@@ -272,7 +267,7 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 ----------------------------
 
 真机采集用于 RLPD（Reinforcement Learning from Prior Data）或策略初始化。
-操作员通过 SpaceMouse 等人工干预设备完成任务，数据以 ``Trajectory``
+操作员通过 SpaceMouse 或 GELLO 等人工干预设备完成任务，数据以 ``Trajectory``
 格式保存，可直接供后续真机训练使用。
 
 与仿真的大规模并行采集不同，真机采集在单控制节点运行，按目标成功次数自动停止。
@@ -314,6 +309,12 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
    * - ``env.eval.no_gripper``
      - ``False``
      - 是否使用不带夹爪维度的 6 维真机动作
+   * - ``env.eval.use_gello``
+     - ``False``
+     - 是否启用 GELLO 遥操作（与 SpaceMouse 互斥）
+   * - ``env.eval.gello_port``
+     - —
+     - GELLO 设备串口路径（``use_gello`` 为 ``True`` 时必填）
    * - ``env.eval.override_cfg.target_ee_pose``
      - —
      - 任务目标末端位姿 ``[x, y, z, rx, ry, rz]``
@@ -366,7 +367,7 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 
 ``examples/embodiment/collect_real_data.py`` 现在支持在同一次真机采集中，
 同时写出 replay buffer 和 ``CollectEpisode`` 导出的 episode 数据。只要启用
-``env.data_collection.enabled=True``，成功轨迹就会同时保存到：
+``env.eval.data_collection.enabled=True``，成功轨迹就会同时保存到：
 
 - ``logs/{timestamp}/demos/``：``TrajectoryReplayBuffer`` 轨迹，用于 RLPD
 - ``logs/{timestamp}/collected_data/``：``pickle`` 或 LeRobot 格式的 episode 数据
@@ -376,13 +377,14 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 .. code-block:: yaml
 
    env:
-     data_collection:
-       enabled: True
-       save_dir: ${runner.logger.log_path}/collected_data
-       export_format: "lerobot"
-       only_success: True
-       robot_type: "panda"
-       fps: 10
+     eval:
+       data_collection:
+        enabled: True
+        save_dir: ${runner.logger.log_path}/collected_data
+        export_format: "lerobot"
+        only_success: True
+        robot_type: "panda"
+        fps: 10
 
 使用步骤
 ~~~~~~~~
@@ -422,8 +424,17 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
       # 或使用自定义配置：
       bash examples/embodiment/collect_data.sh my_custom_config
 
-4. 用 SpaceMouse 操作机器人完成任务。成功次数达到 ``num_data_episodes`` 后，
-   脚本自动保存并退出，日志和数据存放在 ``logs/{timestamp}/`` 目录下。
+4. 用 SpaceMouse（或 GELLO）操作机器人完成任务。成功次数达到
+   ``num_data_episodes`` 后，脚本自动保存并退出，日志和数据存放在
+   ``logs/{timestamp}/`` 目录下。
+
+   如需使用 GELLO 替代 SpaceMouse，可使用专用配置：
+
+   .. code-block:: bash
+
+      bash examples/embodiment/collect_data.sh realworld_collect_data_gello
+
+   GELLO 的安装与设置请参考 :doc:`../../examples/embodied/franka`。
 
 ----
 
@@ -433,8 +444,6 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 **Episode 采集（CollectEpisode）**
 
 - 图像数据体积大，若磁盘有限，可配合 ``only_success=True`` 过滤失败 episode。
-- 使用 LeRobot 格式时，``stats_sample_ratio`` 控制用于计算统计量的图像比例，
-  降低该值可减少内存占用，但统计精度略降。
 - 分布式训练时，每个 Worker 设置不同 ``rank``，避免文件名冲突。
 
 **真机 Replay Buffer 采集**
@@ -470,12 +479,12 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 
 **LeRobot 数据集**
 
-使用 ``toolkits/replay_buffer/visualize_lerobot_dataset.py`` 将 LeRobot 数据集
+使用 ``toolkits/lerobot/visualize_lerobot_dataset.py`` 将 LeRobot 数据集
 展开为按 episode 分目录的 ``.jpg`` 图像和 ``.txt`` step 元数据：
 
 .. code-block:: bash
 
-   python toolkits/replay_buffer/visualize_lerobot_dataset.py \
+   python toolkits/lerobot/visualize_lerobot_dataset.py \
        --dataset-path logs/{timestamp}/collected_data \
        --output-dir logs/{timestamp}/collected_data_visualized
 

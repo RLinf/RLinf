@@ -29,7 +29,7 @@ class ManagerProxy:
 
     def __init__(self, manager_cls: "type[Manager]", no_wait: bool):
         """Launch the Manager class as a remote actor if not already running."""
-        from ..worker import Worker
+        self._manager_cls = manager_cls
 
         if not ray.is_initialized():
             ray.init(
@@ -38,22 +38,7 @@ class ManagerProxy:
                 logging_level=Cluster.LOGGING_LEVEL,
             )
 
-        count = 0
-        while True:
-            try:
-                self._manager = ray.get_actor(
-                    name=manager_cls.MANAGER_NAME, namespace=Cluster.NAMESPACE
-                )
-                break
-            except ValueError as e:
-                if no_wait:
-                    raise e
-                count += 1
-                time.sleep(0.001)
-                if count % Cluster.TIMEOUT_WARN_TIME == 0:
-                    Worker.logger.warning(
-                        f"Waiting for manager named {manager_cls.MANAGER_NAME} to be ready for {count // 1000} seconds..."
-                    )
+        self._manager = self._wait_for_manager_actor(no_wait=no_wait)
 
         # Suppress warning for blocking get inside asyncio
         if (
@@ -70,17 +55,40 @@ class ManagerProxy:
         ]
 
         class ProxyMethod:
-            def __init__(self, func_name, manager):
+            def __init__(self, func_name, manager_proxy: "ManagerProxy"):
                 self._func_name = func_name
-                self._manager = manager
+                self._manager_proxy = manager_proxy
 
             def __call__(self, *args, **kwargs):
                 return ray.get(
-                    getattr(self._manager, self._func_name).remote(*args, **kwargs)
+                    getattr(self._manager_proxy._manager, self._func_name).remote(
+                        *args, **kwargs
+                    )
                 )
 
         for func in sched_fun_list:
-            setattr(self, func, ProxyMethod(func, self._manager))
+            setattr(self, func, ProxyMethod(func, self))
+
+    def _wait_for_manager_actor(self, no_wait: bool):
+        """Resolve manager actor handle by name."""
+        from ..worker import Worker
+
+        count = 0
+        while True:
+            try:
+                return ray.get_actor(
+                    name=self._manager_cls.MANAGER_NAME,
+                    namespace=Cluster.NAMESPACE,
+                )
+            except ValueError as e:
+                if no_wait:
+                    raise e
+                count += 1
+                time.sleep(0.001)
+                if count % Cluster.TIMEOUT_WARN_TIME == 0:
+                    Worker.logger.warning(
+                        f"Waiting for manager named {self._manager_cls.MANAGER_NAME} to be ready for {count // 1000} seconds..."
+                    )
 
 
 class Manager:
@@ -89,7 +97,19 @@ class Manager:
     MANAGER_NAME = ""
     proxy: ManagerProxy = None
     PID = None
-    ENV_LIST = ["RAY_ADDRESS"]
+    ENV_LIST = ["RAY_ADDRESS", "CLUSTER_NAMESPACE"]
+
+    def __new__(cls, *args, **kwargs):
+        """Sync namespace before any subclass-specific ``__init__`` runs."""
+        cls.sync_cluster_namespace()
+        return super().__new__(cls)
+
+    @classmethod
+    def sync_cluster_namespace(cls) -> None:
+        """Keep ``Cluster.NAMESPACE`` aligned with the runtime environment."""
+        namespace = os.environ.get("CLUSTER_NAMESPACE")
+        if namespace:
+            Cluster.NAMESPACE = namespace
 
     @classmethod
     def get_proxy(cls: type[ManagerClsType], no_wait: bool = False) -> ManagerClsType:
@@ -102,6 +122,7 @@ class Manager:
             ManagerProxy: The singleton proxy instance for the Manager class.
 
         """
+        cls.sync_cluster_namespace()
         if (
             cls.proxy is None or os.getpid() != cls.PID
         ):  # Reinitialize if PID has changed
@@ -120,4 +141,5 @@ class Manager:
         for var in cls.ENV_LIST:
             if var in os.environ:
                 runtime_env[var] = os.environ[var]
+        runtime_env["CLUSTER_NAMESPACE"] = Cluster.NAMESPACE
         return runtime_env

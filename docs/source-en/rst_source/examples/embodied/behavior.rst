@@ -288,15 +288,101 @@ Using behavior as an example:
   RLinf first loads OmniGibson's base ``r1pro_behavior.yaml`` and then applies
   overrides from ``omni_config`` (see ``setup_omni_cfg`` in
   ``rlinf/envs/behavior/utils.py``).
+- ``omni_config.task.type: RLinfBehaviorTask`` and
+  ``omni_config.scene.type: RLinfInteractiveTraversableScene``:
+  RLinf ships a lightweight BEHAVIOR compatibility patch for
+  ``omnigibson==3.7.1``. Keep these two types in
+  ``examples/embodiment/config/env/behavior_r1pro.yaml`` when using RLinf's
+  BEHAVIOR setup. ``install_patch()`` is still called automatically by
+  ``rlinf/envs/behavior/behavior_env.py`` before ``VectorEnvironment`` is
+  created, but it only registers the RLinf classes and applies monkey patches.
+  It does not rewrite ``task.type`` or ``scene.type`` anymore, so these two
+  YAML entries must be set explicitly.
+- RLinf BEHAVIOR patch contents:
+  The patch fixes several multi-environment issues observed with
+  OmniGibson 3.7.1, including cross-scene ``BehaviorTask`` callbacks,
+  presampled robot poses being applied in world frame instead of scene frame,
+  cross-scene shared control views for the same robot type, and RLinf's
+  missing ``scene`` sub-config override in ``setup_omni_cfg``.
+- Version note:
+  The current patch is only tested and supported on ``omnigibson==3.7.1``.
+  RLinf raises an error during environment initialization if a different
+  OmniGibson version is detected.
 - ``task_idx``:
   Current task id (0-49). RLinf maps it to the concrete task name and writes it
   into ``task.activity_name`` (see ``rlinf/envs/behavior/behavior_env.py``).
-- ``omni_config.task.resample_task_when_reset: True``:
-  Before each ``env.reset()``, RLinf calls ``update_task`` to resample, so scene
-  and object layouts can change across episodes under the same
-  ``activity_name``. This requires ``online_object_sampling: True`` and
-  ``use_presampled_robot_pose: False`` (otherwise an assertion is raised). Set
-  it to ``False`` if you need fixed scenes for strict A/B comparisons.
+- ``omni_config.task.instance_resample_mode``:
+  Controls reset-time instance switching. Supported modes are
+  ``disabled``, ``offline``, and ``online``.
+  In ``offline`` mode, RLinf scans ``omni_config.task.activity_instance_dir``
+  once at startup, parses cached instance ids from
+  filenames in that directory, and samples one cached offline instance before
+  each ``env.reset()``. ``*_template.json`` files are treated as full cached
+  templates and are reloaded through the heavier scene-reload path, while
+  ``*_template-tro_state.json`` files are treated as task-relevant-only cached
+  states and are applied through the lighter in-place path. This is useful
+  when you want more reset-time diversity than a fixed
+  ``activity_instance_id`` but lower overhead than ``online_object_sampling``.
+  In ``online`` mode, RLinf reuses the online task-resampling path and requires
+  ``online_object_sampling: True`` plus ``use_presampled_robot_pose: False``.
+  In ``disabled`` mode, if ``activity_instance_dir`` is set RLinf loads the
+  configured ``activity_instance_id`` from that directory before each reset.
+- ``omni_config.task.activity_instance_dir``:
+  Optional directory containing cached task instance JSON files. RLinf
+  recognizes official ``*_template.json`` instances and
+  ``*_template-tro_state.json`` files. Used by
+  ``instance_resample_mode: offline`` and by fixed ``activity_instance_id``
+  loading when the mode is ``disabled``.
+- ``omni_config.task.instance_file_format``:
+  Optional cached-instance format selector. Supported values are ``template``
+  and ``tro_state``. Use ``template`` to force full cached-template reloads, or
+  ``tro_state`` to force light-weight task-relevant-only reloads. RLinf also
+  accepts official ``tro_state`` files that do not include ``robot_poses``; in
+  that case, RLinf clears any stale cached robot-pose metadata and the
+  subsequent reset uses the task's default robot reset pose instead of a
+  presampled pose override. When converting from
+  ``template.json``, omitting ``robot_poses`` is usually safer than writing the
+  current simulator robot pose into the cache.
+- Generating cached instances with RLinf's generator:
+  RLinf provides ``rlinf/envs/behavior/instance_generator.py`` to
+  generate ``*_template.json`` and ``*_template-tro_state.json`` files directly
+  from ``examples/embodiment/config/env/behavior_r1pro.yaml``.
+  The script reads ``omni_config.scene.scene_model``,
+  ``omni_config.task.activity_name``,
+  ``omni_config.task.activity_definition_id``, the robot config, and room
+  loading settings from the yaml, then temporarily switches the task to online
+  object sampling for cached-instance generation.
+  It writes into ``omni_config.task.activity_instance_dir`` when that field is
+  set; otherwise it falls back to ``OMNIGIBSON_DATA_PATH``'s default
+  ``2025-challenge-task-instances`` directory. Use ``--output-dir`` to override
+  either behavior.
+
+  .. code-block:: bash
+
+     cd /path/to/RLinf
+
+     python rlinf/envs/behavior/instance_generator.py \
+       --config examples/embodiment/config/env/behavior_r1pro.yaml \
+       --output-format template \
+       --start-idx 1 \
+       --end-idx 50
+
+     python rlinf/envs/behavior/instance_generator.py \
+       --config examples/embodiment/config/env/behavior_r1pro.yaml \
+       --output-format tro_state \
+       --start-idx 1 \
+       --end-idx 50
+
+  The generated filenames follow
+  ``<scene_model>_task_<activity_name>_<activity_definition_id>_<activity_instance_id>_template(.json|-tro_state.json)``.
+  ``--start-idx`` and ``--end-idx`` therefore control the generated
+  ``activity_instance_id`` range. ``tro_state`` outputs include top-level
+  ``robot_poses`` when the task metadata provides them; otherwise the key is
+  omitted so RLinf reset falls back to the task's default robot reset pose.
+  BEHAVIOR-1K's upstream
+  ``OmniGibson/omnigibson/sampling/multiply_b1k_tasks.py`` is still usable, but
+  RLinf's generator is the recommended path because it reads the RLinf yaml
+  directly and preserves ``activity_definition_id`` from that config.
 - ``camera.head_resolution`` / ``camera.wrist_resolution``:
   Head / wrist camera resolutions. RLinf overrides default values in
   ``omnigibson.learning.utils.eval_utils`` (default 720x720 and 480x480), then

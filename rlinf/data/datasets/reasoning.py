@@ -178,7 +178,7 @@ class ReasoningDataset(Dataset):
                         else:
                             merged_data.append(content)
                     else:
-                        logging.error(f"Unsupport {file_extension}, skip: {path}")
+                        logging.error(f"Unsupported {file_extension}, skip: {path}")
             except Exception:
                 raise RuntimeError("Load data error")
 

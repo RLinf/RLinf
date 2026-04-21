@@ -46,7 +46,7 @@ class FrankaGripper(BaseGripper):
         self._MoveActionGoal = MoveActionGoal
 
         self._position_value: float = 0.0
-        self._is_open_flag: bool = False
+        self._is_open_flag: bool = True
         self._is_ready_flag: bool = False
 
         # ROS channels

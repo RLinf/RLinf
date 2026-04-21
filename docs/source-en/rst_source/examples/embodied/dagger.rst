@@ -4,9 +4,10 @@ DAgger for Embodied Policies
 **DAgger** (Dataset Aggregation) is an imitation-learning algorithm that lets
 the student policy interact with the environment, asks an expert policy to
 relabel the visited states, and aggregates those expert-labeled trajectories
-for further training. This example documents RLinf's embodied DAgger workflow.
-Current DAgger support covers MLP and Pi0 models, and both **sync** and
-**async** training pipelines.
+for further training. This page documents RLinf's simulator-based embodied DAgger workflow. Current DAgger support covers MLP and Pi0 models, and both
+**sync** and **async** training pipelines.
+
+For the real-world Franka pipeline, see :doc:`hg-dagger`.
 
 Environment
 -----------
@@ -58,8 +59,7 @@ Dependency Installation
 -----------------------
 
 For installation details, please first refer to :doc:`../../start/installation`.
-The DAgger examples below use the embodied image or the equivalent local
-environment.
+The DAgger examples below use the embodied image or the equivalent local environment.
 
 **Option 1: Docker Image**
 
@@ -105,7 +105,8 @@ The MLP DAgger config uses a student checkpoint and an expert checkpoint under
      ckpt_path: null                       # Optional student warm start
      expert_ckpt_path: /path/to/expert_ckpt
 
-The expert model in ``expert_ckpt_path`` could be produced by a PPO running :doc:`mlp` .
+The expert model in ``expert_ckpt_path`` could be produced by a PPO run in
+:doc:`mlp`.
 
 **2. LIBERO Spatial + Pi0**
 
@@ -132,7 +133,7 @@ You can find pretrained Pi0 checkpoints on Hugging Face for student initializati
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir /path/to/model
 
-The expert model checkpoint could also come from a PPO running :doc:`pi0` .
+The expert model checkpoint could also come from a PPO run in :doc:`pi0`.
 
 Running Scripts
 ---------------

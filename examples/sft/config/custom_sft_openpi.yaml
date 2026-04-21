@@ -46,7 +46,7 @@ actor:
     precision: null
     model_path: "/path/to/pi0-model"
     num_action_chunks: 4 # interface for the env
-    add_value_head: True
+    add_value_head: False
     openpi:
       config_name: "pi0_custom"
       detach_critic_input: True

@@ -89,6 +89,7 @@ The real-world setup requires the following hardware components:
 - **Computing Unit**: A computer with GPU support for training the CNN policy
 - **Robot Controller**: A small computer (does not require GPU) connected with the robotic arm in the same local network
 - **Space Mouse (Optional)**: For teleoperation data collection or human intervention during training.
+- **GELLO (Optional)**: A joint-level teleoperation device as an alternative to SpaceMouse, providing more intuitive control with native gripper support.
 
 .. warning::
 
@@ -368,6 +369,44 @@ The script will terminate after 20 episodes of data collection (can be configure
    :ref:`Data Collection <franka-zed-robotiq-data-collection>` section in
    :doc:`franka_zed_robotiq`.
 
+Data Collection with GELLO
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+In addition to SpaceMouse, RLinf also supports using `GELLO <https://github.com/wuphilipp/gello_software>`_ for teleoperation data collection.
+GELLO is a joint-level teleoperation device that mirrors the kinematic structure of the Franka arm, providing more intuitive and precise control with full gripper support.
+
+**Prerequisites**
+
+- Install the ``gello`` and ``gello-teleop`` packages. See :doc:`franka_gello` for detailed installation instructions.
+- A GELLO device connected to the control node via USB serial.
+- Identify your GELLO serial port (e.g. ``/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0``).
+  You can list available serial ports with:
+
+  .. code-block:: bash
+
+     ls /dev/serial/by-id/
+
+**Configuration**
+
+Use the config file ``examples/embodiment/config/realworld_collect_data_gello.yaml``.
+The key differences from the SpaceMouse config are:
+
+.. code-block:: yaml
+
+   env:
+     eval:
+       use_spacemouse: False
+       use_gello: True
+       gello_port: "/dev/serial/by-id/usb-FTDI_..."  # Replace with your GELLO serial port
+
+**Running**
+
+.. code-block:: bash
+
+   bash examples/embodiment/collect_data.sh realworld_collect_data_gello
+
+The workflow is the same as SpaceMouse collection: use the GELLO device to demonstrate the task, and the script will automatically save successful episodes.
+
 Cluster Setup
 ~~~~~~~~~~~~~~~~~
 
@@ -423,6 +462,48 @@ Similarly, you first need to fill your robot's IP address to the field ``robot_i
 
 Then, change the ``model_path`` field in both ``rollout`` and ``actor`` sections to the path where you have downloaded the pretrained model.
 Change the ``data.path`` field to the path where you have uploaded the collected demo data.
+
+Headless Keyboard Reward Wrapper (Optional)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If you want to label rewards from a physical keyboard by human, enable the keyboard wrapper in the real-world env config.
+
+For example, in ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async.yaml``:
+
+.. code-block:: yaml
+
+   env:
+     train:
+       keyboard_reward_wrapper: single_stage  # or multi_stage
+
+The available modes are:
+
+- ``single_stage``: press ``a`` for failure reward, ``b`` for neutral reward, and ``c`` for success reward.
+- ``multi_stage``: press ``a`` / ``b`` / ``c`` to switch among reward stages, and press ``q`` to emit a negative reward.
+
+The keyboard listener reads Linux input devices directly, so you should export ``RLINF_KEYBOARD_DEVICE`` before starting ray on the controller node.
+
+First, list the available keyboard devices:
+
+.. code-block:: bash
+
+   ls -l /dev/input/by-id/*-event-kbd
+
+This command shows the stable keyboard name and the corresponding ``eventX`` device. For example, ``usb-Logitech_USB_Keyboard-event-kbd -> ../event20`` means the keyboard device is ``/dev/input/event20``.
+
+Before starting training, grant access to that event device:
+
+.. code-block:: bash
+
+   chmod 666 /dev/input/event20
+
+Then export the event device in your setup script or shell before ``ray start``:
+
+.. code-block:: bash
+
+   export RLINF_KEYBOARD_DEVICE=/dev/input/event20
+
+If you are using ``ray_utils/realworld/setup_before_ray.sh``, add the export there on the controller node so that all ray-launched env processes inherit it.
 
 Testing the Setup (Optional)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

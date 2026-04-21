@@ -1,0 +1,46 @@
+# Compute returns for LeRobot datasets
+#
+# Usage:
+#   cd examples/recap/process && python compute_returns.py --config-name compute_returns
+#
+# Writes return, reward, prompt to meta/returns_{tag}.parquet
+
+data:
+  data_root: null
+  # List of datasets to process
+  # Each entry can have:
+  #   - dataset_path: Path to LeRobot dataset (REQUIRED)
+  #   - output_path: Output path (optional, null = modify in-place)
+  #   - type: "sft" or "rollout" (default: use global dataset_type)
+  #   - gamma: Discount factor (default: use global gamma)
+  #   - failure_reward: Failure penalty (default: use global failure_reward)
+  #
+  # Example configuration:
+  #   train_data_paths:
+  #     - dataset_path: /path/to/sft_dataset
+  #       type: sft
+  #     - dataset_path: /path/to/rollout_dataset
+  #       type: rollout
+  #       failure_reward: -300.0
+  train_data_paths:
+    - dataset_path: /path/to/sft_dataset
+      type: sft
+    - dataset_path: /path/to/rollout_dataset
+      type: rollout
+
+  # "sft": all episodes successful (reward=-1/step, last=0)
+  # "rollout": read is_success from data (failure gets failure_reward)
+  dataset_type: "sft"
+  gamma: 1.0
+  failure_reward: -300.0
+
+  # Saves to meta/returns_{tag}.parquet
+  tag: null
+  num_workers: 128
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false
