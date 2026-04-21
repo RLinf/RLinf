@@ -41,8 +41,8 @@ reset 与奖励逻辑：
   （默认 0.02 rad）控制的小幅扰动，以增加数据多样性。
 
 - **Reward**: 在笛卡尔空间中，将 FK 推出的 TCP 位姿与 ``target_ee_pose`` 逐轴比较。成功判定依据
-  ``reward_threshold``（默认：位置 1 cm）。``reward_threshold`` 配置接受
-  6 元素数组 ``[x, y, z, rx, ry, rz]``（与 Franka API 对齐），但当前仅使用 XYZ 位置分量；
+  ``reward_threshold``\ （默认：位置 1 cm）。``reward_threshold`` 配置接受
+  6 元素数组 ``[x, y, z, rx, ry, rz]``\ （与 Franka API 对齐），但当前仅使用 XYZ 位置分量；
   姿态分量保留给未来使用。
 
 硬件准备
@@ -285,7 +285,7 @@ ________________________________
 
 关键配置字段：
 
-- ``target_ee_pose``：目标末端位姿 ``[x, y, z, rx, ry, rz]``（单位：米 / Euler XYZ 弧度）。
+- ``target_ee_pose``：目标末端位姿 ``[x, y, z, rx, ry, rz]``\ （单位：米 / Euler XYZ 弧度）。
 - ``reset_joint_qpos``：每一回合起始时的关节角配置。
 - ``safe_retract_qpos``：Peg-Insertion reset 期间的安全回缩关节角配置。
 - ``is_dummy``：设为 ``true`` 可在无硬件情况下测试流程。
