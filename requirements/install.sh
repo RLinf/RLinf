@@ -689,6 +689,7 @@ install_env_only() {
         genesis)
             install_common_embodied_deps
             install_genesis_env
+			;;
         embodichain)
             install_common_embodied_deps
             install_embodichain_env
