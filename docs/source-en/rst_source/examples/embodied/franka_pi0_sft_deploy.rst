@@ -250,7 +250,7 @@ See :doc:`sft_openpi` for more details on OpenPI datasets and SFT training.
 Step 5: Real-World Deployment
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Modify ``examples/embodiment/config/realworld_pnp_sft_openpi_deploy.yaml``
+Modify ``examples/embodiment/config/realworld_pnp_eval.yaml``
 to match your cluster, camera, and target pose:
 
 .. code-block:: yaml
@@ -286,7 +286,7 @@ After starting the Ray cluster (see the **Cluster configuration** section in
 
 .. code:: bash
 
-   bash examples/embodiment/run_realworld_eval.sh realworld_pnp_sft_openpi_deploy
+   bash examples/embodiment/run_realworld_eval.sh realworld_pnp_eval
 
 The script runs in **eval-only mode** (``runner.only_eval: True``); the policy
 will autonomously control the robot to complete the Bin-relocation task.
