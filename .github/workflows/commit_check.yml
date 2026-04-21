@@ -20,10 +20,25 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # use GITHUB_TOKEN because use of pr-comments
         with:
           message: true
-          branch: true
+          branch: false
           author-name: false
           author-email: false
           commit-signoff: true
           merge-base: false
           imperative: false
           job-summary: true
+      - name: Check branch naming convention
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH_NAME="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          BRANCH_REGEX='^((bugfix|feature|release|hotfix|task|chore|dev)\/.+|master|main|HEAD|PR-.+)$'
+
+          if [[ ! "$BRANCH_NAME" =~ $BRANCH_REGEX ]]; then
+            echo "Type branch check failed => ${BRANCH_NAME}"
+            echo "It doesn't match regex: ${BRANCH_REGEX}"
+            echo "Branches must begin with: bugfix/ feature/ release/ hotfix/ task/ chore/ dev/"
+            exit 1
+          fi
+
+          echo "Branch check passed: ${BRANCH_NAME}"
