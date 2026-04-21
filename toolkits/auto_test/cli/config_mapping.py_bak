@@ -1,0 +1,131 @@
+"""配置映射：任务类型和资源环境的映射关系"""
+
+# 任务类型到环境配置的映射
+TASK_TYPE_MAPPING = {
+    "pretrain": {
+        "image_id": "im-db5yl3csf7ulsudj",  # TODO: 替换为实际镜像 ID
+        "framework_id": "fw-c6q6a7sfyhoeb5xi",   # TODO: 替换为实际框架 ID
+        "pool_id": "po-c77m6nj3hteszywp", # 宁夏B的资源池ID
+    },
+    "supervised_learning": {
+        "image_id": "im-db5yl3csf7ulsudj",  # TODO: 替换为实际镜像 ID
+        "framework_id": "fw-c6q6a7sfyhoeb5xi",   # TODO: 替换为实际框架 ID
+        "pool_id": "po-c77m6nj3hteszywp", # 宁夏B的资源池ID
+    },
+    "reinforcement_learning": {
+        "image_id": "im-db5yl3csf7ulsudj",  # TODO: 替换为实际镜像 ID
+        "framework_id": "fw-c6q6a7sfyhoeb5xi",   # TODO: 替换为实际框架 ID (这里是ray)
+        "pool_id": "po-c77m6nj3hteszywp", # 宁夏B的资源池ID
+    }
+}
+
+IMAGE_NAME_MAPPING = {
+    "behavior": "im-db5yl3csf7ulsudj"
+}
+
+# 资源可用区到资源规格和存储卷的映射
+POOL_MAPPING = {
+    "po-c77m6nj3hteszywp": {
+        "load_spec_id": "ls-c7ankietdy2zcogp",  # 包年包月资源使用 load_spec_id
+        "resource_spec_id": "rs-c7ankiesi2kstmp7",  # Spot 资源使用 resource_spec_id
+        "mount": {
+            "path": "/mnt/public/xusi",  # 默认挂载路径
+            "volume_id": "vo-c77m6nj4qru75pqs",  # 存储卷 ID
+            "rw_setting": "can_write",  # 默认只读
+        },
+    },
+    "po-for-beijing-D": {
+        "load_spec_id": "ls-c7ankietdy2zcogp",  # 包年包月资源使用 load_spec_id
+        "resource_spec_id": "rs-c7swkumcrl6o7cdw",  # Spot 资源使用 resource_spec_id
+        "mount": {
+            "path": "/mnt/public",  # 默认挂载路径
+            "volume_id": "vo-c7auvh4vk4kljhgd",  # 存储卷 ID
+            "rw_setting": "only_read",  # 默认只读
+        },
+    },
+}
+
+# 默认配置
+DEFAULT_CONFIG = {
+    "resource_type": 0,  # 0=包年包月, 1=Spot（默认 Spot）
+    "worker_num": 1,
+    "rdma_enable": False,
+}
+
+
+def get_task_config(task_type: str) -> dict:
+    """
+    根据任务类型获取配置
+    
+    Args:
+        task_type: 任务类型（如 "预训练"、"强化学习训练"）
+    
+    Returns:
+        包含 image_id, framework_id, pool_id, device_type 的字典
+    
+    Raises:
+        ValueError: 如果任务类型不存在
+    """
+    if task_type not in TASK_TYPE_MAPPING:
+        available_types = ", ".join(TASK_TYPE_MAPPING.keys())
+        raise ValueError(
+            f"未知的任务类型: {task_type}。\n"
+            f"可用的任务类型: {available_types}"
+        )
+    return TASK_TYPE_MAPPING[task_type].copy()
+
+
+def get_pool_config(pool_id: str) -> dict:
+    """
+    根据资源池 ID 获取配置
+    
+    Args:
+        pool_id: 资源池 ID（如 "北京D"、"北京J02"）
+    
+    Returns:
+        包含 resource_spec_id, volume_id 的字典
+    
+    Raises:
+        ValueError: 如果资源池不存在
+    """
+    if pool_id not in POOL_MAPPING:
+        available_pools = ", ".join(POOL_MAPPING.keys())
+        raise ValueError(
+            f"未知的资源池: {pool_id}。\n"
+            f"可用的资源池: {available_pools}"
+        )
+    return POOL_MAPPING[pool_id].copy()
+
+
+def get_full_config(task_type: str) -> dict:
+    """
+    根据任务类型获取完整配置（合并任务类型和资源池配置）
+    
+    Args:
+        task_type: 任务类型
+    
+    Returns:
+        完整的配置字典
+    """
+    task_config = get_task_config(task_type)
+    pool_id = task_config["pool_id"]
+    pool_config = get_pool_config(pool_id)
+    
+    # 合并配置
+    full_config = {
+        **DEFAULT_CONFIG,
+        **task_config,
+        **pool_config,
+    }
+    
+    return full_config
+
+
+def list_task_types() -> list:
+    """列出所有可用的任务类型"""
+    return list(TASK_TYPE_MAPPING.keys())
+
+
+def list_pools() -> list:
+    """列出所有可用的资源池"""
+    return list(POOL_MAPPING.keys())
