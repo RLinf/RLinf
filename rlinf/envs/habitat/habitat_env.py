@@ -32,6 +32,9 @@ from hydra.core.global_hydra import GlobalHydra
 from rlinf.envs.habitat.extensions import measures
 from rlinf.envs.habitat.extensions.utils import observations_to_image
 from rlinf.envs.habitat.venv import HabitatRLEnv, ReconfigureSubprocEnv
+from rlinf.envs.habitat.extensions.allocator import (
+    vram_balance_episode_ids,
+)
 from rlinf.envs.utils import (
     list_of_dict_to_dict_of_list,
     to_tensor,
@@ -519,8 +522,11 @@ class HabitatEnv(gym.Env):
                     config=config.habitat.dataset,
                 )
 
+                episodes_by_id = {
+                    episode.episode_id: episode for episode in dataset.episodes
+                }
                 dataset.episodes = [
-                    ep for ep in dataset.episodes if ep.episode_id in episode_ids
+                    episodes_by_id[episode_id] for episode_id in episode_ids
                 ]
                 if gt_data_path is not None:
                     with gzip.open(gt_data_path, "rt", encoding="utf-8") as f:
@@ -558,6 +564,8 @@ class HabitatEnv(gym.Env):
             f"habitat.dataset.split={self.cfg.split}",
             f"habitat.dataset.data_path={self.cfg.data_path}",
             f"habitat.dataset.scenes_dir={self.cfg.scenes_dir}",
+            "habitat.environment.iterator_options.shuffle=False",
+            "habitat.environment.iterator_options.group_by_scene=False",
         ]
         habitat_config = get_config(config_path, overrides=overrides)
 
@@ -572,28 +580,21 @@ class HabitatEnv(gym.Env):
             self.cfg.seed,
         )
 
-        episode_ids = self._build_ordered_episodes(habitat_dataset)
-
-        num_episodes = len(episode_ids)
-        # total_num_processes = world_size * stage_num
-        # Take floor division to ensure each process gets an equal number of episodes.
-        episodes_per_process = num_episodes // self.total_num_processes
-        start_process = self.seed_offset * episodes_per_process
-        end_process = start_process + episodes_per_process
-        process_episode_ids = episode_ids[start_process:end_process]
-        num_episodes_this_process = len(process_episode_ids)
-
-        start = 0
-        episode_ranges = []
-        episodes_per_group = num_episodes_this_process // self.num_group
-        for g in range(self.num_group):
-            episode_ranges.append((start, start + episodes_per_group))
-            start += episodes_per_group
+        # Load episodes to GPUs in a balanced way according to scene vram profile
+        process_group_episode_ids = vram_balance_episode_ids(
+            habitat_dataset.episodes,
+            auto_reset=self.auto_reset,
+            total_num_processes=self.total_num_processes,
+            num_group=self.num_group,
+            total_num_envs=self.cfg.total_num_envs,
+            max_steps_per_rollout_epoch=self.cfg.max_steps_per_rollout_epoch,
+            max_episode_steps=self.max_episode_steps,
+            seed_offset=self.seed_offset,
+        )
 
         for env_id in range(self.num_envs):
             group_id = env_id // self.group_size
-            start, end = episode_ranges[group_id]
-            assigned_ids = process_episode_ids[start:end]
+            assigned_ids = list(process_group_episode_ids[group_id])
 
             env_fn_params.append(
                 {
@@ -616,9 +617,7 @@ class HabitatEnv(gym.Env):
         """Subsample episodes to those belonging to a random subset of scenes."""
         if sample_num_scenes is None:
             return
-        scene_ids = list(
-            dict.fromkeys(ep.scene_id for ep in habitat_dataset.episodes)
-        )
+        scene_ids = list(dict.fromkeys(ep.scene_id for ep in habitat_dataset.episodes))
         if sample_num_scenes > len(scene_ids):
             raise ValueError(
                 f"sample_num_scenes={sample_num_scenes} exceeds available scenes={len(scene_ids)}"
@@ -634,29 +633,3 @@ class HabitatEnv(gym.Env):
             f"[HabitatEnv] sampled {sample_num_scenes}/{len(scene_ids)} scenes "
             f"with seed={seed}, kept {len(habitat_dataset.episodes)} episodes"
         )
-
-    def _build_ordered_episodes(self, dataset):
-        """
-        rearrange the episode ids to be consecutive for each scene
-        """
-        scene_ids = []
-        episode_ids = []
-        scene_id_to_idx = {}  # scene_id(str) -> scene_idx(int)
-        scene_to_episodes = {}  # scene_idx(int) -> episode_ids(list[int])
-
-        for episode in dataset.episodes:
-            sid = episode.scene_id
-            eid = episode.episode_id
-            if sid not in scene_id_to_idx:
-                scene_idx = len(scene_ids)
-                scene_id_to_idx[sid] = scene_idx
-                scene_ids.append(sid)
-                scene_to_episodes[scene_idx] = []
-            else:
-                scene_idx = scene_id_to_idx[sid]
-            scene_to_episodes[scene_idx].append(eid)
-
-        for scene_idx in range(len(scene_ids)):
-            episode_ids.extend(scene_to_episodes[scene_idx])
-
-        return episode_ids
