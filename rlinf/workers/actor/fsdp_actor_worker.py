@@ -68,11 +68,11 @@ from rlinf.utils.metric_utils import (
     compute_rollout_metrics,
     compute_split_num,
 )
-from rlinf.utils.nsight_profiler import NsightProfiler
 from rlinf.utils.nested_dict_process import (
     put_tensor_device,
     split_dict_to_chunk,
 )
+from rlinf.utils.nsight_profiler import NsightProfiler
 from rlinf.utils.placement import (
     HybridComponentPlacement,
     ModelParallelComponentPlacement,

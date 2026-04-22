@@ -17,12 +17,14 @@ import gc
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..worker import Worker, WorkerAddress
-from .channel import DEFAULT_KEY
 from rlinf.utils.nsight_profiler import nvtx_range, set_channel_nvtx_enabled
 
+from ..worker import Worker, WorkerAddress
+from .channel import DEFAULT_KEY
+
 try:
-    import nvtx as _nvtx_mod
+    import nvtx  # noqa: F401
+
     _HAS_NVTX = True
 except ImportError:
     _HAS_NVTX = False
@@ -377,15 +379,19 @@ class ChannelWorker(Worker):
         """
         with nvtx_range(
             f"cw/{self._group_name}/recv_from_producer src={src_addr.get_name()}",
-            color="cyan", enabled=_HAS_NVTX,
+            color="cyan",
+            enabled=_HAS_NVTX,
         ):
-            item, (key, weight) = self.recv(src_addr.root_group_name, src_addr.rank_path)
+            item, (key, weight) = self.recv(
+                src_addr.root_group_name, src_addr.rank_path
+            )
 
         self.create_queue(key, self.maxsize())
         _qsize = self._queue_map[key].qsize()
         with nvtx_range(
             f"cw/{self._group_name}/enqueue key={key} qsize_before={_qsize}",
-            color="yellow", enabled=_HAS_NVTX,
+            color="yellow",
+            enabled=_HAS_NVTX,
         ):
             item = WeightedItem(weight=weight, item=item)
             if nowait:
@@ -438,7 +444,8 @@ class ChannelWorker(Worker):
         _qsize = self._queue_map[key].qsize()
         with nvtx_range(
             f"cw/{self._group_name}/dequeue key={key} qsize_before={_qsize}",
-            color="yellow", enabled=_HAS_NVTX,
+            color="yellow",
+            enabled=_HAS_NVTX,
         ):
             if nowait:
                 try:
@@ -450,7 +457,8 @@ class ChannelWorker(Worker):
                 weighted_item: WeightedItem = await self._queue_map[key].get()
         with nvtx_range(
             f"cw/{self._group_name}/send_to_consumer dst={dst_addr.get_name()}",
-            color="cyan", enabled=_HAS_NVTX,
+            color="cyan",
+            enabled=_HAS_NVTX,
         ):
             self.send(
                 weighted_item.item,

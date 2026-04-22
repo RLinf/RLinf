@@ -147,7 +147,9 @@ class NsightProfiler:
         if not self.discrete:
             torch.cuda.profiler.start()
         if step is not None:
-            logger.info("Nsight profiler started for step %d on rank %d", step, self.rank)
+            logger.info(
+                "Nsight profiler started for step %d on rank %d", step, self.rank
+            )
 
     def stop(self) -> None:
         """End profiling for the current step."""
@@ -181,23 +183,32 @@ class NsightProfiler:
 
             class MyWorker(Worker):
                 @NsightProfiler.annotate("rollout/predict")
-                def predict(self, obs):
-                    ...
+                def predict(self, obs): ...
         """
 
         def decorator(func: Callable) -> Callable:
             if inspect.iscoroutinefunction(func):
 
                 @functools.wraps(func)
-                async def async_wrapper(self_instance: Any, *args: Any, **kwargs: Any) -> Any:
-                    profiler: Optional[NsightProfiler] = getattr(self_instance, "nsight_profiler", None)
-                    if profiler is None or not profiler.is_active or not _NVTX_AVAILABLE:
+                async def async_wrapper(
+                    self_instance: Any, *args: Any, **kwargs: Any
+                ) -> Any:
+                    profiler: Optional[NsightProfiler] = getattr(
+                        self_instance, "nsight_profiler", None
+                    )
+                    if (
+                        profiler is None
+                        or not profiler.is_active
+                        or not _NVTX_AVAILABLE
+                    ):
                         return await func(self_instance, *args, **kwargs)
 
                     label = message or func.__name__
                     if profiler.discrete:
                         torch.cuda.profiler.start()
-                    range_id = nvtx.start_range(message=label, color=color, domain=domain)
+                    range_id = nvtx.start_range(
+                        message=label, color=color, domain=domain
+                    )
                     try:
                         result = await func(self_instance, *args, **kwargs)
                     finally:
@@ -210,7 +221,9 @@ class NsightProfiler:
 
             @functools.wraps(func)
             def sync_wrapper(self_instance: Any, *args: Any, **kwargs: Any) -> Any:
-                profiler: Optional[NsightProfiler] = getattr(self_instance, "nsight_profiler", None)
+                profiler: Optional[NsightProfiler] = getattr(
+                    self_instance, "nsight_profiler", None
+                )
                 if profiler is None or not profiler.is_active or not _NVTX_AVAILABLE:
                     return func(self_instance, *args, **kwargs)
 

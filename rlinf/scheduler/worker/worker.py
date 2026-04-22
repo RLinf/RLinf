@@ -31,6 +31,8 @@ import ray.util.state
 import torch
 from omegaconf import OmegaConf
 
+from rlinf.utils.nsight_profiler import NsightProfiler
+
 from ..cluster import (
     Cluster,
     ClusterEnvVar,
@@ -39,7 +41,6 @@ from ..cluster import (
 )
 from ..hardware import AcceleratorType, AcceleratorUtil, HardwareInfo
 from ..manager import WorkerAddress
-from rlinf.utils.nsight_profiler import NsightProfiler
 
 if TYPE_CHECKING:
     from ..collective import CollectiveGroupOptions

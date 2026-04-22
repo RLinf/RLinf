@@ -23,15 +23,16 @@ from unittest import mock
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Fixtures — import module and patch nvtx availability
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def _reset_channel_flag():
     """Ensure the module-level channel flag is reset between tests."""
     from rlinf.utils import nsight_profiler as mod
+
     original = mod._channel_nvtx_enabled
     yield
     mod._channel_nvtx_enabled = original
@@ -41,6 +42,7 @@ def _reset_channel_flag():
 def mod():
     """Return the nsight_profiler module."""
     from rlinf.utils import nsight_profiler as mod
+
     return mod
 
 
@@ -49,22 +51,27 @@ def mock_nvtx(mod):
     """Patch ``_NVTX_AVAILABLE=True`` and mock ``nvtx`` calls."""
     fake_nvtx = mock.MagicMock()
     fake_nvtx.start_range.return_value = 42
-    with mock.patch.object(mod, "_NVTX_AVAILABLE", True), \
-         mock.patch.object(mod, "nvtx", fake_nvtx, create=True):
+    with (
+        mock.patch.object(mod, "_NVTX_AVAILABLE", True),
+        mock.patch.object(mod, "nvtx", fake_nvtx, create=True),
+    ):
         yield fake_nvtx
 
 
 @pytest.fixture()
 def mock_cuda_profiler():
     """Mock ``torch.cuda.profiler.start/stop``."""
-    with mock.patch("torch.cuda.profiler.start") as start, \
-         mock.patch("torch.cuda.profiler.stop") as stop:
+    with (
+        mock.patch("torch.cuda.profiler.start") as start,
+        mock.patch("torch.cuda.profiler.stop") as stop,
+    ):
         yield start, stop
 
 
 # ---------------------------------------------------------------------------
 # from_config
 # ---------------------------------------------------------------------------
+
 
 class TestFromConfig:
     def test_none_config_returns_disabled(self, mod):
@@ -107,6 +114,7 @@ class TestFromConfig:
 # Rank filtering
 # ---------------------------------------------------------------------------
 
+
 class TestRankFiltering:
     def test_all_ranks(self, mod):
         p = mod.NsightProfiler(enable=True, rank=5, all_ranks=True)
@@ -128,6 +136,7 @@ class TestRankFiltering:
 # ---------------------------------------------------------------------------
 # start / stop / is_active
 # ---------------------------------------------------------------------------
+
 
 class TestStartStop:
     def test_start_activates_profiler(self, mod, mock_nvtx, mock_cuda_profiler):
@@ -155,7 +164,9 @@ class TestStartStop:
         p.stop()
         cuda_stop.assert_called_once()
 
-    def test_discrete_mode_skips_cuda_profiler(self, mod, mock_nvtx, mock_cuda_profiler):
+    def test_discrete_mode_skips_cuda_profiler(
+        self, mod, mock_nvtx, mock_cuda_profiler
+    ):
         cuda_start, cuda_stop = mock_cuda_profiler
         p = mod.NsightProfiler(enable=True, rank=0, discrete=True)
         p.start(step=0)
@@ -176,6 +187,7 @@ class TestStartStop:
 # ---------------------------------------------------------------------------
 # Channel NVTX flag side-effect
 # ---------------------------------------------------------------------------
+
 
 class TestChannelNvtxFlag:
     def test_start_enables_channel_flag(self, mod, mock_nvtx, mock_cuda_profiler):
@@ -201,6 +213,7 @@ class TestChannelNvtxFlag:
 # nvtx_range
 # ---------------------------------------------------------------------------
 
+
 class TestNvtxRange:
     def test_noop_when_disabled(self, mod, mock_nvtx):
         with mod.nvtx_range("test", enabled=False):
@@ -211,7 +224,9 @@ class TestNvtxRange:
         with mod.nvtx_range("test_label", color="red", enabled=True):
             pass
         mock_nvtx.start_range.assert_called_once_with(
-            message="test_label", color="red", domain=None,
+            message="test_label",
+            color="red",
+            domain=None,
         )
         mock_nvtx.end_range.assert_called_once_with(42)
 
@@ -224,6 +239,7 @@ class TestNvtxRange:
 # ---------------------------------------------------------------------------
 # @annotate decorator — sync
 # ---------------------------------------------------------------------------
+
 
 class TestAnnotateSync:
     def test_sync_noop_when_profiler_inactive(self, mod):
@@ -254,7 +270,9 @@ class TestAnnotateSync:
         mock_nvtx.start_range.assert_called()
         mock_nvtx.end_range.assert_called()
 
-    def test_sync_uses_func_name_as_default_label(self, mod, mock_nvtx, mock_cuda_profiler):
+    def test_sync_uses_func_name_as_default_label(
+        self, mod, mock_nvtx, mock_cuda_profiler
+    ):
         profiler = mod.NsightProfiler(enable=True, rank=0)
         profiler.start(step=0)
 
@@ -267,13 +285,16 @@ class TestAnnotateSync:
 
         Stub().my_custom_method()
         call_args = mock_nvtx.start_range.call_args
-        assert call_args.kwargs.get("message") == "my_custom_method" or \
-               call_args[1].get("message") == "my_custom_method"
+        assert (
+            call_args.kwargs.get("message") == "my_custom_method"
+            or call_args[1].get("message") == "my_custom_method"
+        )
 
 
 # ---------------------------------------------------------------------------
 # @annotate decorator — async
 # ---------------------------------------------------------------------------
+
 
 class TestAnnotateAsync:
     def test_async_noop_when_profiler_inactive(self, mod):
@@ -325,6 +346,7 @@ class TestAnnotateAsync:
 # ---------------------------------------------------------------------------
 # @annotate — no nsight_profiler attr on instance
 # ---------------------------------------------------------------------------
+
 
 class TestAnnotateNoProfilerAttr:
     def test_sync_no_profiler_attr(self, mod):

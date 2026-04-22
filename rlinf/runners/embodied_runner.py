@@ -28,8 +28,8 @@ from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.metric_utils import compute_evaluate_metrics, print_metrics_table
-from rlinf.utils.runner_utils import check_progress
 from rlinf.utils.nsight_profiler import NsightProfiler
+from rlinf.utils.runner_utils import check_progress
 from rlinf.utils.timers import Timer
 
 logger = logging.getLogger(__name__)
@@ -77,7 +77,9 @@ class EmbodiedRunner:
         )
         nsight_cfg = self.cfg.get("nsight_profiler", None)
         profile_steps = nsight_cfg.get("steps", None) if nsight_cfg else None
-        self.profile_steps: set[int] | None = set(profile_steps) if profile_steps else None
+        self.profile_steps: set[int] | None = (
+            set(profile_steps) if profile_steps else None
+        )
 
         from omegaconf import OmegaConf
 
@@ -91,8 +93,12 @@ class EmbodiedRunner:
 
         # Data channels
         self.env_channel = Channel.create("Env", nsight_options=channel_nsight_options)
-        self.rollout_channel = Channel.create("Rollout", nsight_options=channel_nsight_options)
-        self.actor_channel = Channel.create("Actor", nsight_options=channel_nsight_options)
+        self.rollout_channel = Channel.create(
+            "Rollout", nsight_options=channel_nsight_options
+        )
+        self.actor_channel = Channel.create(
+            "Actor", nsight_options=channel_nsight_options
+        )
         if self.reward is not None:
             self.reward_channel = Channel.create("Reward")
         else:
@@ -288,7 +294,9 @@ class EmbodiedRunner:
         return self.profile_steps is not None and step in self.profile_steps
 
     def _should_start_profiling(self, step: int) -> bool:
-        return self._should_profile(step) and not getattr(self, "_profiling_active", False)
+        return self._should_profile(step) and not getattr(
+            self, "_profiling_active", False
+        )
 
     def _should_stop_profiling(self, step: int) -> bool:
         if not getattr(self, "_profiling_active", False):

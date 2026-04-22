@@ -47,6 +47,7 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
     def _recv_rollout_thread_main(self, input_channel):
         try:
             import nvtx as _nvtx_mod
+
             _has_nvtx = True
         except ImportError:
             _has_nvtx = False
@@ -55,6 +56,7 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
         )
         if _profiler_enabled and _has_nvtx:
             from rlinf.utils.nsight_profiler import set_channel_nvtx_enabled
+
             set_channel_nvtx_enabled(True)
 
         send_num = self._component_placement.get_world_size("env") * self.stage_num
