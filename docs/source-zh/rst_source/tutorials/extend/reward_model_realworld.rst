@@ -1,17 +1,17 @@
 Reward Model 使用指南（真机）
-==========================================
+===============================
 
 本文档介绍如何在真实世界的 Franka 机械臂上直接采集并预处理 reward model 训练数据集。
-支持两种数据采集方式：**通用键盘标注方式**和**固定位姿方式**（通过预定的目标位姿驱动 episode 成功/失败）。
+支持两种数据采集方式：**通用键盘标注方式** 和 **固定位姿方式** （通过预定的目标位姿驱动 episode 成功/失败）。
 
 在开始前，强烈建议先阅读以下文档：
 
-1. :doc:`franka` 以熟悉 Franka 机械臂真机训练全流程。
+1. :doc:`../../examples/embodied/franka` 以熟悉 Franka 机械臂真机训练全流程。
 2. :doc:`reward_model` 以了解 RLinf 中标准的 reward model 工作流（通过 ``pickle`` 采集数据、离线预处理、训练、RL 推理）。
 3. :doc:`../../examples/embodied/franka_reward_model` 以了解在训练好 reward model 后如何接入真机 RL 流程。
 
 工作流概览
------------------------
+-----------------
 
 方式一将数据采集、标注和数据集生成整合为一次端到端运行；方式二采用简化的两步式流程。
 
@@ -33,16 +33,16 @@ Reward Model 使用指南（真机）
        5. 通过 preprocess_reward_dataset.py 预处理并生成 train.pt / val.pt。
 
 预备工作
------------------------
+------------
 
 请根据 :doc:`../../examples/embodied/franka` 中的 **Prerequisites** 和 **Hardware Setup** 章节，
 完成机器人连接和环境验证步骤。
 
 数据采集
------------------------
+------------
 
 方式一：键盘标注（通用）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 此方式通过键盘在实时 episode 中手动标注每一帧，适用于任何操作任务。
 
@@ -98,7 +98,7 @@ Reward Model 使用指南（真机）
 - ``runner.num_success_frames`` / ``runner.num_fail_frames`` — 目标采集帧数。两个阈值均达到时停止采集。
 - ``runner.val_split`` — 所有标注帧中用于验证集的比例。
 - ``runner.fail_success_ratio`` — 训练集后处理阶段，失败帧会被下采样，使 ``num_fail = num_success * fail_success_ratio``。设为 ``0`` 可禁用下采样。
-- ``env.eval.keyboard_reward_wrapper`` — 设为 ``single_stage``（或任务对应的 stage key）以启用键盘标注界面。
+- ``env.eval.keyboard_reward_wrapper`` — 设为 ``single_stage``（或任务对应的 ``stage``）以启用键盘标注界面。
 - ``env.eval.use_spacemouse`` — 是否使用 SpaceMouse 进行遥操作（step info 中的 ``intervene_action`` 会覆盖默认零动作）。
 - ``env.eval.override_cfg.target_ee_pose`` — 任务的目标末端执行器位姿。
 
@@ -131,7 +131,7 @@ Reward Model 使用指南（真机）
 
 
 方式二：固定位姿（目标驱动）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 此方式专为**固定目标位姿**的任务设计（例如到达预定箱体位置）。
 无需手动键盘标注，episode 会根据机器人是否到达配置的 ``target_ee_pose`` 自动驱动成功/失败判定。
@@ -143,7 +143,7 @@ Reward Model 使用指南（真机）
 
 
 步骤 1：固定位姿 Reward 数据采集
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 为了得到高质量的 reward model，需要采集更多的数据用来训练和评估。
 在上述专家轨迹采集的基础上，进一步对采集脚本做以下修改：
@@ -166,7 +166,7 @@ Reward Model 使用指南（真机）
 - 在到达目标位姿时，在保持目标位姿的前提下进行小范围移动，以便获得更多样的成功样本。
 
 步骤 2：预处理为 Reward Dataset
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 采集好的 ``.pkl`` episode 通过 ``preprocess_reward_dataset.py`` 转换为 ``train.pt`` / ``val.pt``。
 建议调高 ``fail-success-ratio`` 至 ``3``：
@@ -204,7 +204,7 @@ Reward Model 使用指南（真机）
 
 
 输出
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~
 
 采集完成后（两种方式均适用），两个 ``.pt`` 文件会保存到 ``runner.logger.log_path``
 （默认为 Hydra run dir）：
@@ -236,7 +236,7 @@ Reward Model 使用指南（真机）
 具体用法与 :doc:`reward_model` 第 2 节描述一致。
 
 数据采集方式对比
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. list-table::
    :header-rows: 1
@@ -261,21 +261,21 @@ Reward Model 使用指南（真机）
      - 具有固定目标位姿的任务
 
 Reward Model 训练
------------------------------------------
+-------------------
 
 完成以上步骤后，继续参考 :doc:`reward_model` 第 2 节（**Reward Model 训练**）
 使用生成的 ``train.pt`` / ``val.pt`` 文件进行 reward model 训练。
 
 训练好 reward model 后，有两种方式在真机上使用：
 
-- **真机遥操作 + 在线推理**（见下文）— 使用 SpaceMouse 遥操作机械臂，
+- **真机遥操作 + 在线推理** （见下文）——使用 SpaceMouse 遥操作机械臂，
   同时让 reward model 在 GPU 节点上运行，实时向终端输出成功概率。
   无需启动完整 RL 训练循环。
-- **真机 RL 训练**（参见 :doc:`../../examples/embodied/franka_reward_model`）—
+- **真机 RL 训练** （参见 :doc:`../../examples/embodied/franka_reward_model`）——
   将 reward model 接入物理 Franka 上的完整 RL 训练循环。
 
 真机遥操作 + 在线 Reward Model 推理
--------------------------------------------------------
+--------------------------------------------
 
 获得 reward model checkpoint 后，``examples/reward/eval_realworld_teleop.py`` 提供了一种
 遥操作模式：SpaceMouse 控制机器人运动，reward model 在 GPU 节点上运行，
@@ -288,7 +288,7 @@ Reward Model 训练
 - 定性评估 reward model 对当前场景的泛化能力。
 
 集群配置
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+------------
 
 遥操作脚本需要**两个节点**：一个用于 Franka 机器人，一个用于运行 reward model 推理的 GPU：
 
@@ -318,7 +318,7 @@ Reward worker 被部署在 GPU 节点（``"4090"``）上，与机器人节点（
 这是一种解聚式部署（disaggregated placement）。
 
 配置文件
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+------------
 
 默认配置为 ``examples/reward/config/realworld_teleop.yaml``，
 环境参数从 ``env/realworld_bin_relocation.yaml`` 继承：
@@ -380,7 +380,7 @@ Reward worker 被部署在 GPU 节点（``"4090"``）上，与机器人节点（
 - ``reward.model.model_path`` — 指向训练好的 reward model checkpoint。
 
 启动
-^^^^^^^^^^^^^
+------
 
 设置环境变量并运行：
 
@@ -414,7 +414,7 @@ SpaceMouse 控制说明：
 - **Ctrl+C** — 停止。
 
 工作原理
-^^^^^^^^^^^^^
+------------
 
 ``TeleopWorker`` 内部流程：
 

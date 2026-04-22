@@ -1,5 +1,5 @@
 Reward Model Guide (Real-World)
-==========================================
+===============================
 
 This document describes how to collect and preprocess a reward model training dataset
 directly on a real-world Franka robot. Two data collection approaches are supported:
@@ -8,12 +8,12 @@ uses a predetermined target pose to drive episode success/failure.
 
 Before getting started, it is strongly recommended to read the following documents:
 
-1. :doc:`franka` — to familiarize yourself with the end-to-end real-world Franka training pipeline.
+1. :doc:`../../examples/embodied/franka` — to familiarize yourself with the end-to-end real-world Franka training pipeline.
 2. :doc:`reward_model` — to understand the canonical reward model workflow in RLinf (data collection via ``pickle``, offline preprocessing, training, RL inference).
 3. :doc:`../../examples/embodied/franka_reward_model` — to understand the full real-world RL pipeline that follows after you have a trained reward model.
 
 Workflow Overview
------------------------
+-----------------
 
 The collection script combines data collection, labeling, and dataset generation into one end-to-end run (Approach 1) or a streamlined two-step pipeline (Approach 2).
 
@@ -35,16 +35,16 @@ The collection script combines data collection, labeling, and dataset generation
        5. Run preprocess_reward_dataset.py to generate train.pt / val.pt.
 
 Prerequisites
------------------------
+-------------
 
 Follow the **Prerequisites** and **Hardware Setup** sections in :doc:`../../examples/embodied/franka`
 up to and including the robot connection and environment validation steps.
 
 Data Collection
------------------------
+---------------
 
 Approach 1: Keyboard Labeling (General-Purpose)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 This approach uses keyboard keys to manually label each frame during a live episode.
 It is task-agnostic and works for any manipulation task.
@@ -154,7 +154,7 @@ that uses the same script as Approach 1 (``realworld_collect_process_dataset.py`
 
 
 Step 1: Fixed-Pose Reward Data Collection
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 To obtain a high-quality reward model, additional data needs to be collected for training
 and evaluation. On top of the expert trajectory collection above, make the following
@@ -180,7 +180,7 @@ Collection tips:
   to obtain more diverse successful samples.
 
 Step 2: Preprocessing into a Reward Dataset
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The collected ``.pkl`` episodes are converted into ``train.pt`` / ``val.pt`` using
 ``preprocess_reward_dataset.py``. It is recommended to increase ``fail-success-ratio`` to ``3``:
@@ -218,7 +218,7 @@ Where:
 
 
 Output
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~
 
 After collection (both approaches), the output consists of two ``.pt`` files saved to
 ``runner.logger.log_path`` (defaults to the Hydra run dir):
@@ -250,7 +250,7 @@ These ``.pt`` files can be fed directly into ``RewardBinaryDataset`` for trainin
 exactly as described in :doc:`reward_model` Section 2.
 
 Comparison of Data Collection Approaches
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. list-table::
    :header-rows: 1
@@ -275,7 +275,7 @@ Comparison of Data Collection Approaches
      - Tasks with a fixed target pose
 
 Reward Model Training
------------------------------------------
+---------------------
 
 After completing the above steps, continue with Section 2
 (**Reward Model Training**) in :doc:`reward_model` using the generated
@@ -290,7 +290,7 @@ After training, you can use the trained reward model in two real-world ways:
   integrate the reward model into the full RL training loop on the physical Franka.
 
 Real-World Teleoperation with Live Reward Inference
--------------------------------------------------------
+---------------------------------------------------
 
 Once a reward model checkpoint is available, ``examples/reward/eval_realworld_teleop.py``
 provides a teleoperation mode where SpaceMouse drives the robot while the reward model
@@ -303,7 +303,7 @@ This is useful for:
 - Qualitatively evaluating whether the reward model generalizes to the current scene.
 
 Cluster Configuration
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+---------------------
 
 The teleop script requires **two nodes**: one for the Franka robot and one for the GPU
 that runs the reward model inference:
@@ -335,7 +335,7 @@ on the robot node (``franka``). This is a disaggregated placement — the reward
 not share a node with the robot.
 
 Configuration File
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+------------------
 
 The default config is ``examples/reward/config/realworld_teleop.yaml``,
 which inherits environment parameters from ``env/realworld_bin_relocation.yaml``:
@@ -397,7 +397,7 @@ Key fields for the reward model in teleop mode:
 - ``reward.model.model_path`` — path to the trained reward model checkpoint.
 
 Launching
-^^^^^^^^^^
+---------
 
 Set environment variables and run:
 
@@ -431,7 +431,7 @@ SpaceMouse controls:
 - **Ctrl+C** — stop.
 
 How It Works
-^^^^^^^^^^^^^
+------------
 
 Inside ``TeleopWorker``:
 
