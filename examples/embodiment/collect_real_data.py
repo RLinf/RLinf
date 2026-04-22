@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import os
 
 import hydra
@@ -36,6 +35,10 @@ class DataCollector(Worker):
         self.cfg = cfg
         self.num_data_episodes = cfg.runner.num_data_episodes
         self.total_cnt = 0
+        override_cfg = cfg.env.eval.get("override_cfg", {})
+        self.manual_episode_control_only = bool(
+            override_cfg.get("manual_episode_control_only", False)
+        )
         self.env = RealWorldEnv(
             cfg.env.eval,
             num_envs=1,
@@ -154,13 +157,26 @@ class DataCollector(Worker):
                 if isinstance(r_val, torch.Tensor):
                     r_val = r_val.item()
 
-                self.total_cnt += 1
+                manual_done = False
+                if "manual_done" in info:
+                    md = info["manual_done"]
+                    if hasattr(md, "__getitem__") and len(md) > 0:
+                        manual_done = bool(md[0])
+                    else:
+                        manual_done = bool(md)
 
-                if r_val >= 0.5:
+                self.total_cnt += 1
+                if self.manual_episode_control_only:
+                    save_episode = bool(manual_done)
+                else:
+                    save_episode = bool(r_val >= 0.5 or manual_done)
+
+                if save_episode:
                     success_cnt += 1
 
                     self.log_info(
-                        f"Success: {r_val}. Total: {success_cnt}/{self.num_data_episodes}"
+                        f"Success (reward={r_val}, manual_done={manual_done}). "
+                        f"Total: {success_cnt}/{self.num_data_episodes}"
                     )
 
                     trajectory = current_rollout.to_trajectory()
@@ -176,7 +192,10 @@ class DataCollector(Worker):
                         f"Discarded. Total success: {success_cnt}/{self.num_data_episodes}"
                     )
 
-                obs, _ = self.env.reset()
+                reset_options = None
+                if success_cnt >= self.num_data_episodes:
+                    reset_options = {"skip_wait_for_start": True}
+                obs, _ = self.env.reset(options=reset_options)
                 current_obs_processed = self._process_obs(obs)
                 current_rollout = EmbodiedRolloutResult(
                     max_episode_length=self.cfg.env.eval.max_episode_steps,
