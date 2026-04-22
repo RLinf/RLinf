@@ -122,8 +122,8 @@ Then install the RLinf Python dependencies for the embodied real-world setup:
 
    On the Turtle2 controller node, we recommend a **dual-container split** to reduce ROS ownership conflicts:
 
-   - The **control container** (for example, ``enter_env`` / ``turtle2_release``) owns the ROS master, UI, low-level bring-up, and the camera / arm control nodes.
-   - The **RLinf container** (for example, ``enter_rlinf``) only runs RLinf and the Ray worker, and should not directly own ``roscore``, the UI, or ``run.sh``.
+   - The **control container** (for example, the vendor-provided Turtle2 control container such as ``turtle2_release``) owns the ROS master, UI, low-level bring-up, and the camera / arm control nodes.
+   - A **separate RLinf container** only runs RLinf and the Ray worker, and should not directly own ``roscore``, the UI, or ``run.sh``.
 
    The RLinf container should be built from an image configuration that is **compatible with the control container**, ideally sharing the same base image, system dependencies, ROS runtime, and required mounts, while only adding the RLinf Python environment and code on top. This reduces drift in ROS dependencies, message definitions, and device access.
 

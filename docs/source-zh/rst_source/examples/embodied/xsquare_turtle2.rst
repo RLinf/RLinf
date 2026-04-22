@@ -118,8 +118,8 @@ XSquare Turtle2平台自带SDK和基于ROS的控制器。**请在开始下安装
 
    在 Turtle2 控制节点上，推荐采用**双 Docker 分工**来降低 ROS 冲突风险：
 
-   - **控制容器**（例如 ``enter_env`` / ``turtle2_release``）负责 ROS master、UI、底层 bring-up，以及相机/机械臂控制节点。
-   - **RLinf 容器**（例如 ``enter_rlinf``）只负责 RLinf 运行时与 Ray worker，不直接接管 ``roscore``、UI 或 ``run.sh``。
+   - **控制容器**（例如厂商提供的 Turtle2 控制容器，如 ``turtle2_release``）负责 ROS master、UI、底层 bring-up，以及相机/机械臂控制节点。
+   - **独立的 RLinf 容器**只负责 RLinf 运行时与 Ray worker，不直接接管 ``roscore``、UI 或 ``run.sh``。
 
    建议 RLinf 容器基于与控制容器**兼容的同源镜像配置**构建，例如复用相同的基础镜像、系统依赖、ROS 运行时和必要挂载，只在其上额外加入 RLinf 所需的 Python 环境与代码。这样可以减少因为容器环境漂移导致的消息定义、设备访问或 ROS 依赖不一致问题。
 
