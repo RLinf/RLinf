@@ -299,7 +299,7 @@ From top to bottom: ActorGroup rank 0--3 (H20) with
 EnvGroup rank 0--3 (L20) with ``env/interact_once`` / ``env/step``.
 All three worker groups run **asynchronously** in parallel.
 
-.. image:: /_static/images/nsight_profiler/all_overall.png
+.. image:: ../../../_static/images/nsight_profiler/all_overall.png
    :alt: Overall view showing all ActorGroup, RolloutGroup, and EnvGroup ranks
    :width: 100%
 
@@ -436,7 +436,7 @@ thread shared across all producers --- it processes incoming payloads
 sequentially.  At large scale or with large payloads this single recv
 thread could become a serialization point.
 
-.. image:: /_static/images/nsight_profiler/RolloutWorker0_RolloutChannel1_EnvWorker0_overview.png
+.. image:: ../../../_static/images/nsight_profiler/RolloutWorker0_RolloutChannel1_EnvWorker0_overview.png
    :alt: Channel_Rollout overview showing single recv thread handling all producers
    :width: 100%
 
@@ -461,7 +461,7 @@ From top to bottom:
   ``channel/Rollout/get key=0_0_train_rollout_results [244.9 ms]``
   blocks until the data arrives, then ``env/interact_once`` resumes.
 
-.. image:: /_static/images/nsight_profiler/RolloutWorker0_RolloutChannel1_EnvWorker0.png
+.. image:: ../../../_static/images/nsight_profiler/RolloutWorker0_RolloutChannel1_EnvWorker0.png
    :alt: Action transfer from RolloutGroup_rank0 to EnvGroup_rank0 via Channel_Rollout_rank1
    :width: 100%
 
@@ -485,7 +485,7 @@ list, because the obs dataclass mixes images and non-tensor fields.
   ``[640613]``; process row ``[637728]`` is not pinned in this screenshot) ---
   ``rollout/recv_obs [6.582 s]`` blocks until the obs arrives.
 
-.. image:: /_static/images/nsight_profiler/EnvWorker0_EnvChannel1_RolloutWorker0.png
+.. image:: ../../../_static/images/nsight_profiler/EnvWorker0_EnvChannel1_RolloutWorker0.png
    :alt: Observation transfer from EnvGroup_rank0 to RolloutGroup_rank0 via Channel_Env_rank1
    :width: 100%
 
@@ -520,7 +520,7 @@ Channel_RB@H20) crosses the network.
   thread; received trajectories are drained into the replay buffer at
   the start of each ``run_training`` step.
 
-.. image:: /_static/images/nsight_profiler/EnvWorker0_ReplayBuffer0_ActorWorker0.png
+.. image:: ../../../_static/images/nsight_profiler/EnvWorker0_ReplayBuffer0_ActorWorker0.png
    :alt: Trajectory transfer from EnvGroup_rank0 to ActorGroup_rank0 via Channel_ReplayBuffer_rank0
    :width: 100%
 
@@ -546,7 +546,7 @@ Note the **NCCL kernel** row visible on both processes
 (``ncclDevKernel_Broadcast_RING_LL``) --- this confirms the transfer runs
 on GPU via NCCL, not via CPU-side GLOO.
 
-.. image:: /_static/images/nsight_profiler/ActorWorker_RolloutWorker.png
+.. image:: ../../../_static/images/nsight_profiler/ActorWorker_RolloutWorker.png
    :alt: Weight sync from ActorGroup_rank0 to RolloutGroup_rank0 via P2P NCCL
    :width: 100%
 
