@@ -1,0 +1,46 @@
+env_type: realworld
+
+total_num_envs: 1
+
+auto_reset: False
+ignore_terminations: False
+reward_mode: raw
+wrap_obs_mode: x2robot_raw
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+max_steps_per_rollout_epoch: 300
+max_episode_steps: 300
+use_spacemouse: False
+no_gripper: False
+main_image_key: wrist_2
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/eval
+
+init_params:
+  id: "Turtle2DeployEnv-v1"
+  num_envs: null
+
+override_cfg:
+  is_dummy: false
+  task_description: "fold the towel"
+  use_arm_ids: [0, 1]
+  use_camera_ids: [0, 1, 2]
+  obs_mode: x2robot_raw
+  action_mode: absolute_pose
+  enforce_gripper_close: false
+  reset_ee_pose:
+    - [0.20, 0.00, 0.10, 0.00, 0.00, 0.00]
+    - [0.20, 0.00, 0.10, 0.00, 0.00, 0.00]
+  reset_gripper_width: [0.0, 0.0]
+  max_num_steps: 300
+  action_scale: [1.0, 1.0, 1.0]
+  ee_pose_limit_min:
+    - [-0.20, -0.60, -0.05, -3.20, -3.20, -3.20]
+    - [-0.20, -0.60, -0.05, -3.20, -3.20, -3.20]
+  ee_pose_limit_max:
+    - [0.80, 0.60, 0.60, 3.20, 3.20, 3.20]
+    - [0.80, 0.60, 0.60, 3.20, 3.20, 3.20]
