@@ -309,24 +309,34 @@
    calvin
    robocasa
    robotwin
+   roboverse
    frankasim
+   embodichain
    opensora
    wan
    gsenv
+   iql_d4rl
    pi0
    gr00t
-   sac_flow
-   mlp
+   lingbotvla
    dexbotic
-   franka
-   franka_zed_robotiq
-   xsquare_turtle2
+   starvla
+   mlp
+   sac_flow
    sft_openpi
    sft_vlm
-   co_training
+   nft_openpi
    dsrl
    dagger
-   lingbotvla
+   recap
+   co_training
+   franka
+   franka_reward_model
+   franka_zed_robotiq
+   franka_gello
+   hg-dagger
+   xsquare_turtle2
+   dosw1
    gr00t_16
    sft_gr00t
 
