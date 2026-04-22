@@ -20,12 +20,12 @@ import openpi.transforms as _transforms
 from openpi.training.config import DataConfig, DataConfigFactory, ModelTransformFactory
 from typing_extensions import override
 
-from rlinf.models.embodiment.openpi.policies import franka_dagger_policy
+from rlinf.models.embodiment.openpi.policies import realworld_policy
 
 
 @dataclasses.dataclass(frozen=True)
-class LeRobotFrankaDaggerDataConfig(DataConfigFactory):
-    """Data configuration for RLinf-collected Franka dagger LeRobot datasets."""
+class LeRobotRealworldDataConfig(DataConfigFactory):
+    """Data configuration for RLinf-collected realworld LeRobot datasets."""
 
     default_prompt: str | None = None
     extra_delta_transform: bool = False
@@ -33,7 +33,7 @@ class LeRobotFrankaDaggerDataConfig(DataConfigFactory):
     def generate_observations(
         image: np.ndarray, state: np.ndarray, prompt: str
     ) -> dict:
-        """Creates an input example for the Franka dagger policy."""
+        """Creates an input example for the realworld policy."""
         return {
             "observation/image": image,
             "observation/state": state,
@@ -60,12 +60,12 @@ class LeRobotFrankaDaggerDataConfig(DataConfigFactory):
 
         data_transforms = _transforms.Group(
             inputs=[
-                franka_dagger_policy.FrankaDaggerInputs(
+                realworld_policy.RealworldInputs(
                     action_dim=model_config.action_dim,
                     model_type=model_config.model_type,
                 )
             ],
-            outputs=[franka_dagger_policy.FrankaDaggerOutputs()],
+            outputs=[realworld_policy.RealworldOutputs()],
         )
 
         model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(
