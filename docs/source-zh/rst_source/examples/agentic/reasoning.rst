@@ -1,5 +1,5 @@
-Math推理的强化学习训练
-=======================
+使用 GRPO 训练 Math 推理任务
+=============================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

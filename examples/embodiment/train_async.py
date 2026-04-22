@@ -19,10 +19,10 @@ import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
 from rlinf.config import validate_cfg
-from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.async_env_worker import AsyncEnvWorker
+from rlinf.workers.reward.reward_worker import EmbodiedRewardWorker
 from rlinf.workers.rollout.hf.async_huggingface_worker import (
     AsyncMultiStepRolloutWorker,
 )
@@ -37,20 +37,41 @@ def main(cfg) -> None:
     cfg = validate_cfg(cfg)
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
-    cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
+    cluster = Cluster(
+        cluster_cfg=cfg.cluster, distributed_log_dir=cfg.runner.per_worker_log_path
+    )
     component_placement = HybridComponentPlacement(cfg, cluster)
 
     # Create actor worker group
     actor_placement = component_placement.get_strategy("actor")
 
     if cfg.algorithm.loss_type == "embodied_sac":
+        from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
         from rlinf.workers.actor.async_fsdp_sac_policy_worker import (
             AsyncEmbodiedSACFSDPPolicy,
         )
 
+        runner_cls = AsyncEmbodiedRunner
         actor_worker_cls = AsyncEmbodiedSACFSDPPolicy
+    elif cfg.algorithm.loss_type == "embodied_dagger":
+        from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
+        from rlinf.workers.actor.async_fsdp_dagger_policy_worker import (
+            AsyncEmbodiedDAGGERFSDPPolicy,
+        )
+
+        runner_cls = AsyncEmbodiedRunner
+        actor_worker_cls = AsyncEmbodiedDAGGERFSDPPolicy
+    elif cfg.algorithm.loss_type == "decoupled_actor_critic":
+        from rlinf.runners.async_ppo_embodied_runner import AsyncPPOEmbodiedRunner
+        from rlinf.workers.actor.async_ppo_fsdp_worker import AsyncPPOEmbodiedFSDPActor
+
+        runner_cls = AsyncPPOEmbodiedRunner
+        actor_worker_cls = AsyncPPOEmbodiedFSDPActor
     else:
-        raise NotImplementedError("Currently, async only supports SAC. ")
+        raise ValueError(
+            f"Unsupported loss type {cfg.algorithm.loss_type} for async embodied runner"
+        )
+
     actor_group = actor_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
     )
@@ -66,11 +87,22 @@ def main(cfg) -> None:
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 
-    runner = AsyncEmbodiedRunner(
+    reward_group = None
+    if cfg.get("reward", {}).get("use_reward_model", False) and not cfg.get(
+        "reward", {}
+    ).get("standalone_realworld", False):
+        # Create reward worker group
+        reward_placement = component_placement.get_strategy("reward")
+        reward_group = EmbodiedRewardWorker.create_group(cfg).launch(
+            cluster, name=cfg.reward.group_name, placement_strategy=reward_placement
+        )
+
+    runner = runner_cls(
         cfg=cfg,
         actor=actor_group,
         rollout=rollout_group,
         env=env_group,
+        reward=reward_group,
     )
 
     runner.init_workers()

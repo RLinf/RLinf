@@ -1,11 +1,22 @@
 智能体场景
 ==========
 
-RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的支持使RLinf天然支持智能体工作流的构建，以及智能体的训练。以下示例包含数学推理强化学习与智能体 AI 工作流，例如智能体工作流构建、在线强化学习训练、环境接入，以及**以推理为中心的智能体强化学习**等场景。
+RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的支持使RLinf天然支持智能体工作流的构建，以及智能体的训练。以下示例包含数学推理强化学习与智能体 AI 工作流，例如智能体工作流构建、在线强化学习训练、环境接入，以及 **以推理为中心的智能体强化学习** 等场景。
 
 .. raw:: html
 
    <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/wideseek_r1/scaling.png"
+            style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="wideseek_r1/index.html" style="text-decoration: underline; color: blue;">
+          <b>WideSeek-R1</b>
+         </a><br>
+         通过多智能体强化学习探索用于广泛信息检索的宽度扩展方法
+       </p>
+     </div>
+
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/coding_online_rl_offline_numbers.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -29,10 +40,12 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/waiting_icon.jpg"
+       <img src="https://github.com/RLinf/misc/raw/main/pic/rstar2-RLinf-7b.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>rStar2-agent强化学习</b><br>
+        <a href="rstar2.html" style="text-decoration: underline; color: blue;">
+          <b>rStar2-agent强化学习</b>
+         </a><br>
          通过强化学习让模型学会使用Python工具进行自主推理和反思,以极低计算成本达到数学推理领域的顶尖水平
        </p>
      </div>
@@ -46,23 +59,36 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
        </p>
      </div>
 
-   <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-     <img src="https://github.com/RLinf/misc/raw/main/pic/math_numbers_small.jpg"
-          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-     <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-      <a href="reasoning.html" style="text-decoration: underline; color: blue;">
-        <b>Math推理的强化学习训练</b>
-       </a><br>
-       使用强化学习提升数学推理能力，在 AIME24/AIME25/GPQA-diamond 上达到 SOTA
-     </p>
-   </div>
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/math_numbers_small.jpg"
+           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+       <a href="reasoning.html" style="text-decoration: underline; color: blue;">
+         <b>使用 GRPO 训练 Math 推理任务</b>
+        </a><br>
+        使用强化学习提升数学推理能力，在 AIME24/AIME25/GPQA-diamond 上达到 SOTA
+      </p>
+    </div>
+
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/ppo_vs_grpo.png"
+           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+       <a href="reasoning_ppo.html" style="text-decoration: underline; color: blue;">
+         <b>使用 PPO 训练 Math 推理任务</b>
+        </a><br>
+        使用 PPO 算法进行数学推理强化学习训练，示例配置基于 Qwen2.5-1.5B
+      </p>
+    </div>
    </div>
 
 .. toctree::
    :hidden:
    :maxdepth: 2
 
+   wideseek_r1/index
    coding_online_rl
    searchr1
    reasoning
+   reasoning_ppo
    rstar2

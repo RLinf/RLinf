@@ -128,7 +128,7 @@ class FSDPInference(FSDPActor):
                     non_blocking=True,
                 )
 
-        torch.cuda.synchronize()
+        self.torch_platform.synchronize()
         torch.distributed.barrier()
 
     def sync_model_from_actor(self) -> None:

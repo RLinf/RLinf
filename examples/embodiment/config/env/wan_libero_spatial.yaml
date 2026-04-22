@@ -44,6 +44,7 @@ model_path: ${env.train.wan_wm_hf_ckpt_path}/model-00001.safetensors
 enable_kir: True # keyframe-int rollout
 initial_image_path: ${env.train.wan_wm_hf_ckpt_path}/dataset/
 
+num_inference_steps: 5       # number of inference steps for world model
 chunk: 8                     # should be same as chunk in VLA
 condition_frame_length: 5    # condition frame length of world model
 image_size: [256, 256]       # output image size of world model

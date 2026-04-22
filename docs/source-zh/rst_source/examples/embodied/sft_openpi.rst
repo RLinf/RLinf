@@ -26,6 +26,7 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
 - pi0_maniskill
 - pi0_libero
 - pi0_aloha_robotwin
+- pi0_realworld
 - pi05_libero
 - pi05_maniskill
 - pi05_metaworld
@@ -75,11 +76,47 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
             self.extra_delta_transform = True
             self.action_train_with_rotation_6d = False
 
+新 LeRobot 数据集的归一化统计
+-----------------------------
+
+当你在新采集的 LeRobot 数据集上训练 OpenPI 时，需要在启动 SFT 之前先计算
+归一化统计。这对真实机器人采集的数据集尤其重要。
+
+RLinf 提供了 ``toolkits/lerobot/calculate_norm_stats.py``，用于为
+``state`` 和 ``actions`` 计算 ``norm_stats``。使用方式如下：
+
+.. code:: bash
+
+   export HF_LEROBOT_HOME=/path/to/lerobot_root
+   python toolkits/lerobot/calculate_norm_stats.py \
+       --config-name pi0_realworld \
+       --repo-id realworld_franka_bin_relocation
+
+注意事项：
+
+- 运行脚本前必须先设置 ``HF_LEROBOT_HOME``。
+- ``config_name`` 必须与训练时使用的自定义 OpenPI dataconfig 一致。
+- ``repo_id`` 必须与你的 LeRobot 格式数据集名称一致。
+
+该脚本会将生成的统计信息写入
+``<assest_dir>/<exp_name>/<repo_id>/norm_stats.json``。
+
+OpenPI 加载器会在运行时从 ``<model_path>/<repo_id>`` 读取归一化统计信息。
+
+另一个有助于稳定训练的实用建议是，手动检查归一化统计中是否存在非常小的标准差，
+或过窄的 q99-q01 区间。适当增大标准差，或拉宽 q99-q01 的范围，通常有助于提升
+训练稳定性，尤其是在先做 SFT 再进入在线训练的两阶段流程中。
+
 
 训练配置
 -------------
 
-完整示例配置位于 ``examples/sft/config/libero_sft_openpi.yaml``，核心字段如下：
+完整示例配置位于：
+
+- ``examples/sft/config/libero_sft_openpi.yaml``
+- ``examples/sft/config/realworld_sft_openpi.yaml``
+
+通用的 OpenPI SFT 配置示例如下：
 
 .. code:: yaml
 
@@ -126,9 +163,9 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
         --network host \
         --name rlinf \
         -v .:/workspace/RLinf \
-        rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
+        rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
         # 如果需要国内加速下载镜像，可以使用：
-        # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
+        # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
 进入容器后，请通过内置的 `switch_env` 工具切换到对应的虚拟环境：
 
@@ -150,16 +187,9 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
 启动脚本
 -------------
 
-先启动 Ray 集群，然后执行辅助脚本：
+执行训练脚本：
 
 .. code:: bash
 
-   export RANK=0  # set the rank of the current node
-   cd /path_to_RLinf/ray_utils
-   bash start_ray.sh
-
    # return to repo root
-   bash examples/sft/train_embodiment_sft.sh --config libero_sft_openpi
-
-同一脚本也适用于通用文本 SFT，只需替换配置文件。
-
+   bash examples/sft/run_vla_sft.sh libero_sft_openpi

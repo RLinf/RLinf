@@ -1,0 +1,67 @@
+# Advantage computation for CFG-RL training
+#
+# Usage:
+#   cd examples/recap/process && python compute_advantages.py --config-name compute_advantages \
+#       advantage.value_checkpoint=/path/to/checkpoint
+#
+# Multi-GPU:
+#   cd examples/recap/process && torchrun --nproc_per_node=4 compute_advantages.py \
+#       --config-name compute_advantages \
+#       advantage.value_checkpoint=/path/to/checkpoint
+
+defaults:
+  - model/value@advantage.model
+
+advantage:
+  value_checkpoint: /path/to/value_checkpoint
+  batch_size: 1024
+  flush_interval: 256
+  num_dataloader_workers_per_gpu: 12
+  prefetch_factor: 2
+  discount_next_value: true
+
+  # Top X% of samples will have positive advantage (threshold at 1-X percentile)
+  positive_quantile: 0.3
+
+  # Tag for saving/reading: advantages_{tag}.parquet / returns_{returns_tag}.parquet
+  tag: null
+  returns_tag: null
+
+  model:
+    critic_expert_variant: "gemma_1m"
+    tokenizer_path: /path/to/gemma-3-270m
+    siglip_path: /path/to/siglip2-so400m-patch14-224
+    gemma3_path: /path/to/gemma-3-270m
+
+data:
+  model_type: "pi05"
+  # Options: "libero", "franka"
+  robot_type: "libero"
+
+  train_data_paths:
+    - dataset_path: "/path/to/sft_dataset"
+      robot_type: "libero"
+      type: "sft"
+      weight: 1.0
+
+    # Uncomment to add rollout datasets:
+    # - dataset_path: "/path/to/rollout_dataset"
+    #   robot_type: "libero"
+    #   type: "rollout"
+    #   weight: 1.0
+
+  # N in: A = normalize(r_{t:t+N}) + gamma^N * V(o_{t+N}) - V(o_t)
+  advantage_lookahead_step: 10
+  gamma: 1.0
+
+distributed:
+  enabled: true
+  backend: "nccl"
+  timeout: 3600
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

@@ -12,15 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .franka import FrankaEnv, FrankaRobotConfig, FrankaRobotState, tasks
+from .dosw1 import DOSW1Config, DOSW1Env
+from .dosw1 import tasks as dosw1_tasks
+from .franka import FrankaEnv, FrankaRobotConfig, FrankaRobotState
+from .franka import tasks as franka_tasks
+from .franka.dual_franka_env import DualFrankaEnv, DualFrankaRobotConfig
 from .realworld_env import RealWorldEnv
+from .xsquare import Turtle2Env, Turtle2RobotConfig, Turtle2RobotState
+from .xsquare import tasks as xsquare_tasks
 
 RealWorldEnv.realworld_setup()
 
 __all__ = [
+    "DualFrankaEnv",
+    "DualFrankaRobotConfig",
+    "DOSW1Config",
+    "DOSW1Env",
+    "dosw1_tasks",
     "FrankaEnv",
     "FrankaRobotConfig",
     "FrankaRobotState",
-    "tasks",
+    "franka_tasks",
+    "Turtle2Env",
+    "Turtle2RobotConfig",
+    "Turtle2RobotState",
+    "xsquare_tasks",
     "RealWorldEnv",
 ]

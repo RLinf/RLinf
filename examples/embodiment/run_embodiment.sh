@@ -6,12 +6,13 @@ export SRC_FILE="${EMBODIED_PATH}/train_embodied_agent.py"
 
 export MUJOCO_GL="egl"
 export PYOPENGL_PLATFORM="egl"
-
 export ROBOTWIN_PATH=${ROBOTWIN_PATH:-"/path/to/RoboTwin"}
 export PYTHONPATH=${REPO_PATH}:${ROBOTWIN_PATH}:$PYTHONPATH
 
 # Base path to the BEHAVIOR dataset, which is the BEHAVIOR-1k repo's dataset folder
 # Only required when running the behavior experiment.
+export OMNIGIBSON_NO_OMNI_LOGS=${OMNIGIBSON_NO_OMNI_LOGS:-1}
+export OMNIGIBSON_DEBUG=${OMNIGIBSON_DEBUG:-0}
 export OMNIGIBSON_DATA_PATH=$OMNIGIBSON_DATA_PATH
 export OMNIGIBSON_DATASET_PATH=${OMNIGIBSON_DATASET_PATH:-$OMNIGIBSON_DATA_PATH/behavior-1k-assets/}
 export OMNIGIBSON_KEY_PATH=${OMNIGIBSON_KEY_PATH:-$OMNIGIBSON_DATA_PATH/omnigibson.key}
@@ -32,6 +33,19 @@ fi
 ROBOT_PLATFORM=${2:-${ROBOT_PLATFORM:-"LIBERO"}}
 
 export ROBOT_PLATFORM
+
+# Libero variant: standard, pro, plus
+export LIBERO_TYPE=${LIBERO_TYPE:-"standard"}
+if [ "$LIBERO_TYPE" == "pro" ]; then
+    export LIBERO_PERTURBATION="all"  # all,swap,object,lan
+    echo "Evaluation Mode: LIBERO-PRO | Perturbation: $LIBERO_PERTURBATION"
+elif [ "$LIBERO_TYPE" == "plus" ]; then
+    export LIBERO_SUFFIX="all"
+    echo "Evaluation Mode: LIBERO-PLUS | Suffix: $LIBERO_SUFFIX"
+else
+    echo "Evaluation Mode: Standard LIBERO"
+fi
+
 echo "Using ROBOT_PLATFORM=$ROBOT_PLATFORM"
 
 echo "Using Python at $(which python)"

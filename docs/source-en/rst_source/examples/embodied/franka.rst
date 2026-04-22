@@ -84,15 +84,23 @@ Hardware Setup
 The real-world setup requires the following hardware components:
 
 - **Robotic Arm**: Franka Emika Panda
-- **Cameras**: Intel RealSense cameras for capturing RGB images
+- **Cameras**: Intel RealSense cameras (default) or Stereolabs ZED cameras
+- **Gripper**: Franka hand (default) or Robotiq 2F-85/2F-140
 - **Computing Unit**: A computer with GPU support for training the CNN policy
 - **Robot Controller**: A small computer (does not require GPU) connected with the robotic arm in the same local network
 - **Space Mouse (Optional)**: For teleoperation data collection or human intervention during training.
+- **GELLO (Optional)**: A joint-level teleoperation device as an alternative to SpaceMouse, providing more intuitive control with native gripper support.
 
 .. warning::
 
   Ensure all computers are networked in the same local network.
   The robot arm is only required to be in the same local network as the robot controller.
+
+.. note::
+
+   **Using ZED cameras or Robotiq grippers?**  See the dedicated guide
+   :doc:`franka_zed_robotiq` for SDK installation, serial-device setup,
+   YAML configuration fields, and data collection.
 
 Dependency Installation
 -------------------------
@@ -155,9 +163,9 @@ To access the robot, camera, and space mouse devices from within the docker cont
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.1-franka
+      rlinf/rlinf:agentic-rlinf0.2-franka
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-franka
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-franka
 
 Currently, the docker image contains libfranka version ``0.10.0``, ``0.13.3``, ``0.14.1``, ``0.15.0``, and ``0.18.0`` with franka_ros version ``0.10.0``.
 
@@ -238,9 +246,9 @@ Use Docker image for the experiment.
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
 **Option 2: Custom Environment**
 
@@ -283,7 +291,7 @@ Prerequisites
 
 **Get the Target Pose for the Task**
 
-To acquire the target pose for the peg-insertion task, you can use the `toolkits.realworld_check.test_controller` script.
+To acquire the target pose for the peg-insertion task, you can use the `toolkits.realworld_check.test_franka_controller` script.
 
 First, you need to activate your Franka robot's programming mode, and manually move the robot to the desired target pose.
 
@@ -297,7 +305,7 @@ Next, run the script:
 
 .. code-block:: bash
 
-   python -m toolkits.realworld_check.test_controller
+   python -m toolkits.realworld_check.test_franka_controller
 
 The script will prompt you to input command, you can enter `getpos_euler` to get the current end-effector pose in Euler angles.
 
@@ -353,6 +361,51 @@ During the data collection, you can manually intervene the robot using a space m
 The script will terminate after 20 episodes of data collection (can be configured with the `num_data_episodes` field in the configuration file), and the collected data will be stored in the ``logs/[running-timestamp]/data.pkl`` folder.
 
 5. After data collection, you can upload the collected data to the training/rollout nodes.
+
+.. note::
+
+   **Using ZED cameras and Robotiq grippers?**  A dedicated data collection
+   script and config are available.  See the
+   :ref:`Data Collection <franka-zed-robotiq-data-collection>` section in
+   :doc:`franka_zed_robotiq`.
+
+Data Collection with GELLO
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+In addition to SpaceMouse, RLinf also supports using `GELLO <https://github.com/wuphilipp/gello_software>`_ for teleoperation data collection.
+GELLO is a joint-level teleoperation device that mirrors the kinematic structure of the Franka arm, providing more intuitive and precise control with full gripper support.
+
+**Prerequisites**
+
+- Install the ``gello`` and ``gello-teleop`` packages. See :doc:`franka_gello` for detailed installation instructions.
+- A GELLO device connected to the control node via USB serial.
+- Identify your GELLO serial port (e.g. ``/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0``).
+  You can list available serial ports with:
+
+  .. code-block:: bash
+
+     ls /dev/serial/by-id/
+
+**Configuration**
+
+Use the config file ``examples/embodiment/config/realworld_collect_data_gello.yaml``.
+The key differences from the SpaceMouse config are:
+
+.. code-block:: yaml
+
+   env:
+     eval:
+       use_spacemouse: False
+       use_gello: True
+       gello_port: "/dev/serial/by-id/usb-FTDI_..."  # Replace with your GELLO serial port
+
+**Running**
+
+.. code-block:: bash
+
+   bash examples/embodiment/collect_data.sh realworld_collect_data_gello
+
+The workflow is the same as SpaceMouse collection: use the GELLO device to demonstrate the task, and the script will automatically save successful episodes.
 
 Cluster Setup
 ~~~~~~~~~~~~~~~~~
@@ -410,6 +463,48 @@ Similarly, you first need to fill your robot's IP address to the field ``robot_i
 Then, change the ``model_path`` field in both ``rollout`` and ``actor`` sections to the path where you have downloaded the pretrained model.
 Change the ``data.path`` field to the path where you have uploaded the collected demo data.
 
+Headless Keyboard Reward Wrapper (Optional)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If you want to label rewards from a physical keyboard by human, enable the keyboard wrapper in the real-world env config.
+
+For example, in ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async.yaml``:
+
+.. code-block:: yaml
+
+   env:
+     train:
+       keyboard_reward_wrapper: single_stage  # or multi_stage
+
+The available modes are:
+
+- ``single_stage``: press ``a`` for failure reward, ``b`` for neutral reward, and ``c`` for success reward.
+- ``multi_stage``: press ``a`` / ``b`` / ``c`` to switch among reward stages, and press ``q`` to emit a negative reward.
+
+The keyboard listener reads Linux input devices directly, so you should export ``RLINF_KEYBOARD_DEVICE`` before starting ray on the controller node.
+
+First, list the available keyboard devices:
+
+.. code-block:: bash
+
+   ls -l /dev/input/by-id/*-event-kbd
+
+This command shows the stable keyboard name and the corresponding ``eventX`` device. For example, ``usb-Logitech_USB_Keyboard-event-kbd -> ../event20`` means the keyboard device is ``/dev/input/event20``.
+
+Before starting training, grant access to that event device:
+
+.. code-block:: bash
+
+   chmod 666 /dev/input/event20
+
+Then export the event device in your setup script or shell before ``ray start``:
+
+.. code-block:: bash
+
+   export RLINF_KEYBOARD_DEVICE=/dev/input/event20
+
+If you are using ``ray_utils/realworld/setup_before_ray.sh``, add the export there on the controller node so that all ray-launched env processes inherit it.
+
 Testing the Setup (Optional)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -419,11 +514,11 @@ First, test the camera connection by running on the controller node:
 
 .. code-block:: bash
 
-   python -m toolkits.realworld_check.test_camera
+   python -m toolkits.realworld_check.test_franka_camera
 
-Next, test the basic cluster setup by running a dummy setup. Refer to ``examples/embodiment/config/real_world_dummy_sac_cnn.yaml`` and add `env.eval.override_cfg`.
+Next, test the basic cluster setup by running a dummy setup. Refer to ``examples/embodiment/config/realworld_dummy_franka_sac_cnn.yaml`` and add `env.eval.override_cfg`.
 You can set the `is_dummy` field to `True` in both `env.train.override_cfg` and `env.eval.override_cfg` sections in the configuration file to enable the dummy setup.
-And fill the camera serial numbers obtained from ``running toolkits.realworld_check.test_camera.py`` into the field `camera_serials` under both `env.train.override_cfg` and `env.eval.override_cfg`.
+And fill the camera serial numbers obtained from ``running toolkits.realworld_check.test_franka_camera.py`` into the field `camera_serials` under both `env.train.override_cfg` and `env.eval.override_cfg`.
 
 Then, run the test script on the head node:
 

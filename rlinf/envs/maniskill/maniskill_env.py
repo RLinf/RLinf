@@ -59,6 +59,7 @@ class ManiskillEnv(gym.Env):
         self.auto_reset = cfg.auto_reset
         self.use_rel_reward = cfg.use_rel_reward
         self.ignore_terminations = cfg.ignore_terminations
+        self.use_full_state = bool(getattr(cfg, "use_full_state", False))
         self.num_group = num_envs // cfg.group_size
         self.group_size = cfg.group_size
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
@@ -78,6 +79,7 @@ class ManiskillEnv(gym.Env):
         self._is_start = True
         self._init_reset_state_ids()
         self.info_logging_keys = ["is_src_obj_grasped", "consecutive_grasp", "success"]
+        self._show_goal_site_visual()
         if self.record_metrics:
             self._init_metrics()
 
@@ -129,6 +131,18 @@ class ManiskillEnv(gym.Env):
             repeats=self.group_size
         ).to(self.device)
 
+    def _show_goal_site_visual(self):
+        """Keep ManiSkill goal-site visualization visible for reward-model RGB input."""
+        if not hasattr(self.env.unwrapped, "goal_site"):
+            return
+
+        goal_site = self.env.unwrapped.goal_site
+        if hasattr(self.env.unwrapped, "_hidden_objects"):
+            while goal_site in self.env.unwrapped._hidden_objects:
+                self.env.unwrapped._hidden_objects.remove(goal_site)
+        if hasattr(goal_site, "show_visual"):
+            goal_site.show_visual()
+
     def _wrap_obs(self, raw_obs, infos=None):
         wrap_obs_mode = getattr(self.cfg, "wrap_obs_mode", "default")
         if wrap_obs_mode == "raw":
@@ -138,30 +152,29 @@ class ManiskillEnv(gym.Env):
         if wrap_obs_mode == "simple":
             if self.env.unwrapped.obs_mode == "state":
                 return {"states": raw_obs}
+            elif self.env.unwrapped.obs_mode == "rgb":
+                sensor_data = raw_obs.pop("sensor_data")
+                raw_obs.pop("sensor_param")
+                if self.use_full_state:
+                    state = self._get_full_state_obs()
+                else:
+                    state = common.flatten_state_dict(
+                        raw_obs, use_torch=True, device=self.device
+                    )
 
-            sensor_data = raw_obs["sensor_data"]
-            state_inputs = {
-                k: v
-                for k, v in raw_obs.items()
-                if k not in {"sensor_data", "sensor_param"}
-            }
-            state = common.flatten_state_dict(
-                state_inputs, use_torch=True, device=self.device
-            )
-
-            main_images = sensor_data["base_camera"]["rgb"]
-            sorted_images = OrderedDict(sorted(sensor_data.items()))
-            sorted_images.pop("base_camera")
-            extra_view_images = (
-                torch.stack([v["rgb"] for v in sorted_images.values()], dim=1)
-                if sorted_images
-                else None
-            )
-            return {
-                "main_images": main_images,
-                "extra_view_images": extra_view_images,
-                "states": state,
-            }
+                main_images = sensor_data["base_camera"]["rgb"]
+                sorted_images = OrderedDict(sorted(sensor_data.items()))
+                sorted_images.pop("base_camera")
+                extra_view_images = (
+                    torch.stack([v["rgb"] for v in sorted_images.values()], dim=1)
+                    if sorted_images
+                    else None
+                )
+                return {
+                    "main_images": main_images,
+                    "extra_view_images": extra_view_images,
+                    "states": state,
+                }
 
         # Default
         obs_image = raw_obs["sensor_data"]["3rd_view_camera"]["rgb"].to(
@@ -175,6 +188,22 @@ class ManiskillEnv(gym.Env):
             "states": proprioception,
             "task_descriptions": self.instruction,
         }
+
+    def _get_full_state_obs(self):
+        base_env = self.env.unwrapped
+        mode_attr = "_obs_mode" if hasattr(base_env, "_obs_mode") else "obs_mode"
+        original_mode = getattr(base_env, mode_attr)
+        setattr(base_env, mode_attr, "state")
+        try:
+            state_obs = base_env.get_obs()
+        finally:
+            setattr(base_env, mode_attr, original_mode)
+
+        if isinstance(state_obs, dict):
+            return common.flatten_state_dict(
+                state_obs, use_torch=True, device=self.device
+            )
+        return state_obs
 
     def _calc_step_reward(self, reward, info):
         if getattr(self.cfg, "reward_mode", "default") == "raw":
@@ -253,6 +282,7 @@ class ManiskillEnv(gym.Env):
                 else {}
             )
         raw_obs, infos = self.env.reset(seed=seed, options=options)
+        self._show_goal_site_visual()
         extracted_obs = self._wrap_obs(raw_obs, infos=infos)
         if "env_idx" in options:
             env_idx = options["env_idx"]
