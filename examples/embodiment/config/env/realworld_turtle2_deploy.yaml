@@ -5,7 +5,7 @@ total_num_envs: 1
 auto_reset: False
 ignore_terminations: False
 reward_mode: raw
-wrap_obs_mode: x2robot_raw
+wrap_obs_mode: simple
 seed: 0
 group_size: 1
 use_fixed_reset_state_ids: False
@@ -26,18 +26,16 @@ init_params:
 
 override_cfg:
   is_dummy: false
-  task_description: "fold the towel"
+  task_description: "Describe your Turtle2 deployment task here."
   use_arm_ids: [0, 1]
   use_camera_ids: [0, 1, 2]
-  obs_mode: x2robot_raw
-  action_mode: absolute_pose
   enforce_gripper_close: false
+  # Turtle2DeployEnv interprets each 7D per-arm action as absolute pose
+  # [x, y, z, rx, ry, rz, gripper].
   reset_ee_pose:
     - [0.20, 0.00, 0.10, 0.00, 0.00, 0.00]
     - [0.20, 0.00, 0.10, 0.00, 0.00, 0.00]
-  reset_gripper_width: [0.0, 0.0]
   max_num_steps: 300
-  action_scale: [1.0, 1.0, 1.0]
   ee_pose_limit_min:
     - [-0.20, -0.60, -0.05, -3.20, -3.20, -3.20]
     - [-0.20, -0.60, -0.05, -3.20, -3.20, -3.20]
