@@ -1,0 +1,62 @@
+defaults:
+  - env/dosw1_pick@env.eval
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env:
+      node_group: dosw1
+      placement: 0
+  node_groups:
+    - label: dosw1
+      node_ranks: 0
+      hardware:
+        type: DOSW1
+        configs:
+          - robot_url: "127.0.0.1"             # Replace with DOS-W1 gRPC address
+            left_arm_port: 50051
+            right_arm_port: 50053
+            left_lead_port: 50050
+            right_lead_port: 50052
+            camera_serials: []                 # Replace with your RealSense serial numbers
+            node_rank: 0
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: null
+    project_name: rlinf
+    experiment_name: "dosw1-collect-data"
+    logger_backends: ["tensorboard"]
+  num_data_episodes: 20
+  record_task_description: False
+
+seed: 1234
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    keyboard_intervention_wrapper: True
+    no_gripper: False
+    use_spacemouse: False
+    ignore_terminations: False
+    auto_reset: False
+    override_cfg:
+      enable_human_in_loop: True
+      manual_episode_control_only: True
+
+    data_collection:
+      enabled: True
+      save_dir: ${runner.logger.log_path}/collected_data
+      export_format: "pickle"
+      only_success: False
+      robot_type: "dosw1"
+      fps: 10

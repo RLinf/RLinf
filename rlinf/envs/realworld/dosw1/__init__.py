@@ -12,18 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .dosw1 import DOSW1HWConfig, DOSW1HWInfo
-from .dual_franka import DualFrankaConfig, DualFrankaHWInfo
-from .franka import FrankaConfig, FrankaHWInfo
-from .xsquare import Turtle2Config, Turtle2HWInfo
+from rlinf.envs.realworld.dosw1.dosw1_env import ControlMode, DOSW1Config, DOSW1Env
 
-__all__ = [
-    "DOSW1HWConfig",
-    "DOSW1HWInfo",
-    "DualFrankaConfig",
-    "DualFrankaHWInfo",
-    "FrankaConfig",
-    "FrankaHWInfo",
-    "Turtle2Config",
-    "Turtle2HWInfo",
-]
+__all__ = ["ControlMode", "DOSW1Config", "DOSW1Env"]
