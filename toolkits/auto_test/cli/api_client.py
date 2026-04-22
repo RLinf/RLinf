@@ -34,12 +34,10 @@ def get_account_id() -> str:
     """从环境变量获取账户 ID"""
     account_id = os.getenv("INFINI_ACCOUNT_ID")
     if not account_id:
-        account_id = "ac-c6ufbjizmek2plv3"
-        # TODO change to raise ValueError
-        # raise ValueError(
-        #     "未设置账户 ID。请设置环境变量 INFINI_ACCOUNT_ID，"
-        #     "或通过 --account-id 参数提供。"
-        # )
+        raise ValueError(
+            "未设置账户 ID。请设置环境变量 INFINI_ACCOUNT_ID，"
+            "或通过 --account-id 参数提供。"
+        )
     return account_id
 
 

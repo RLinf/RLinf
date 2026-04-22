@@ -450,8 +450,8 @@ def main():
                 if isinstance(result, dict):
                     if "data" in result:
                         volumes = result["data"]
-                    elif isinstance(result, list):
-                        volumes = result
+                elif isinstance(result, list):
+                    volumes = result
 
                 if not volumes:
                     print("未找到可用的存储卷")
