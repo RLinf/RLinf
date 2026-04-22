@@ -118,6 +118,17 @@ Then install the RLinf Python dependencies for the embodied real-world setup:
    bash requirements/install.sh embodied --env xsquare_turtle2
    source .venv/bin/activate
 
+.. note::
+
+   On the Turtle2 controller node, we recommend a **dual-container split** to reduce ROS ownership conflicts:
+
+   - The **control container** (for example, ``enter_env`` / ``turtle2_release``) owns the ROS master, UI, low-level bring-up, and the camera / arm control nodes.
+   - The **RLinf container** (for example, ``enter_rlinf``) only runs RLinf and the Ray worker, and should not directly own ``roscore``, the UI, or ``run.sh``.
+
+   The RLinf container should be built from an image configuration that is **compatible with the control container**, ideally sharing the same base image, system dependencies, ROS runtime, and required mounts, while only adding the RLinf Python environment and code on top. This reduces drift in ROS dependencies, message definitions, and device access.
+
+   A common setup is to run both containers with ``host network`` so they share the controller node's network namespace. In that case, the RLinf container can connect to the existing ROS master instead of starting another control plane inside its own container. During training or evaluation, it is safer to open the UI only temporarily for calibration in the control container, then close it before running RLinf, to avoid multiple processes publishing to the same arm-control topics.
+
 Training / Rollout Node
 ~~~~~~~~~~~~~~~~~~~~~~~
 

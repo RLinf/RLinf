@@ -121,6 +121,8 @@ XSquare Turtle2平台自带SDK和基于ROS的控制器。**请在开始下安装
    - **控制容器**（例如 ``enter_env`` / ``turtle2_release``）负责 ROS master、UI、底层 bring-up，以及相机/机械臂控制节点。
    - **RLinf 容器**（例如 ``enter_rlinf``）只负责 RLinf 运行时与 Ray worker，不直接接管 ``roscore``、UI 或 ``run.sh``。
 
+   建议 RLinf 容器基于与控制容器**兼容的同源镜像配置**构建，例如复用相同的基础镜像、系统依赖、ROS 运行时和必要挂载，只在其上额外加入 RLinf 所需的 Python 环境与代码。这样可以减少因为容器环境漂移导致的消息定义、设备访问或 ROS 依赖不一致问题。
+
    一个常见做法是让两个容器都使用 ``host network``，从而共享控制节点的网络栈；这样 RLinf 容器可以直接连接已有的 ROS master，而不需要重新在自己的容器里启动一套控制面。实际训练或评估时，建议仅在控制容器中临时打开 UI 做校准，完成后关闭 UI，再由 RLinf 容器执行任务，以避免多个进程同时占用机械臂控制话题。
 
 训练 / Rollout 节点
