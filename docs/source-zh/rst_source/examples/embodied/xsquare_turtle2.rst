@@ -114,6 +114,15 @@ XSquare Turtle2平台自带SDK和基于ROS的控制器。**请在开始下安装
    bash requirements/install.sh embodied --env xsquare_turtle2
    source .venv/bin/activate
 
+.. note::
+
+   在 Turtle2 控制节点上，推荐采用**双 Docker 分工**来降低 ROS 冲突风险：
+
+   - **控制容器**（例如 ``enter_env`` / ``turtle2_release``）负责 ROS master、UI、底层 bring-up，以及相机/机械臂控制节点。
+   - **RLinf 容器**（例如 ``enter_rlinf``）只负责 RLinf 运行时与 Ray worker，不直接接管 ``roscore``、UI 或 ``run.sh``。
+
+   一个常见做法是让两个容器都使用 ``host network``，从而共享控制节点的网络栈；这样 RLinf 容器可以直接连接已有的 ROS master，而不需要重新在自己的容器里启动一套控制面。实际训练或评估时，建议仅在控制容器中临时打开 UI 做校准，完成后关闭 UI，再由 RLinf 容器执行任务，以避免多个进程同时占用机械臂控制话题。
+
 训练 / Rollout 节点
 ~~~~~~~~~~~~~~~~~~~
 
