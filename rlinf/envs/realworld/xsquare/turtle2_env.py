@@ -54,7 +54,6 @@ class Turtle2RobotConfig:
             [[0.3, 0, 0.0, 0.2, 0, 0], [0.1, 0, 0.1, 0, 0.8, 0.0]]
         )
     )
-    reset_gripper_width: np.ndarray = field(default_factory=lambda: np.zeros(2))
 
     max_num_steps: int = 100
     reward_threshold: np.ndarray = field(default_factory=lambda: np.zeros((2, 6)))
@@ -80,35 +79,6 @@ class Turtle2RobotConfig:
     enable_gripper_penalty: bool = True
     gripper_penalty: float = 0.1
     save_video_path: Optional[str] = None
-    task_description: str = ""
-    obs_mode: str = "default"
-    action_mode: str = "delta_pose"
-
-    def __post_init__(self):
-        self.target_ee_pose = np.asarray(self.target_ee_pose, dtype=np.float64)
-        self.reset_ee_pose = np.asarray(self.reset_ee_pose, dtype=np.float64)
-        self.reset_gripper_width = np.asarray(
-            self.reset_gripper_width, dtype=np.float64
-        )
-        self.reward_threshold = np.asarray(self.reward_threshold, dtype=np.float64)
-        self.action_scale = np.asarray(self.action_scale, dtype=np.float64)
-        self.ee_pose_limit_min = np.asarray(self.ee_pose_limit_min, dtype=np.float64)
-        self.ee_pose_limit_max = np.asarray(self.ee_pose_limit_max, dtype=np.float64)
-
-        if self.reset_gripper_width.shape != (2,):
-            raise ValueError(
-                "reset_gripper_width must have shape (2,) for the left/right arms."
-            )
-        if self.obs_mode not in {"default", "x2robot_raw"}:
-            raise ValueError(
-                f"Unsupported obs_mode '{self.obs_mode}'. "
-                "Expected one of {'default', 'x2robot_raw'}."
-            )
-        if self.action_mode not in {"delta_pose", "absolute_pose"}:
-            raise ValueError(
-                f"Unsupported action_mode '{self.action_mode}'. "
-                "Expected one of {'delta_pose', 'absolute_pose'}."
-            )
 
 
 class Turtle2Env(gym.Env):
@@ -151,6 +121,7 @@ class Turtle2Env(gym.Env):
         ), "please choose camera IDs from [0, 1, 2]."
         self._turtle2_state = Turtle2RobotState()
         self._num_steps = 0
+
         if not self.config.is_dummy:
             self._setup_hardware()
 
@@ -203,51 +174,20 @@ class Turtle2Env(gym.Env):
             high=self.config.ee_pose_limit_max[1, 3:].flatten(),
             dtype=np.float64,
         )
-        if self.config.action_mode == "absolute_pose":
-            action_low = []
-            action_high = []
-            for arm_id in self.config.use_arm_ids:
-                action_low.append(
-                    np.concatenate(
-                        [
-                            self.config.ee_pose_limit_min[arm_id],
-                            np.array([self.config.gripper_width_limit_min]),
-                        ]
-                    )
-                )
-                action_high.append(
-                    np.concatenate(
-                        [
-                            self.config.ee_pose_limit_max[arm_id],
-                            np.array([self.config.gripper_width_limit_max]),
-                        ]
-                    )
-                )
-            self.action_space = gym.spaces.Box(
-                low=np.concatenate(action_low).astype(np.float32),
-                high=np.concatenate(action_high).astype(np.float32),
-                dtype=np.float32,
-            )
-        else:
-            self.action_space = gym.spaces.Box(
-                np.ones((len(self.config.use_arm_ids) * 7), dtype=np.float32) * -1,
-                np.ones((len(self.config.use_arm_ids) * 7), dtype=np.float32),
-                dtype=np.float32,
-            )
-
-        obs_state_key = (
-            "arm_state" if self.config.obs_mode == "x2robot_raw" else "tcp_pose"
+        self.action_space = gym.spaces.Box(
+            np.ones((len(self.config.use_arm_ids) * 7), dtype=np.float32) * -1,
+            np.ones((len(self.config.use_arm_ids) * 7), dtype=np.float32),
         )
-        obs_dim_per_arm = 7
+
+        obs_dim_per_arm = 7  # xyz(3) + quat(4)
         self.observation_space = gym.spaces.Dict(
             {
                 "state": gym.spaces.Dict(
                     {
-                        obs_state_key: gym.spaces.Box(
+                        "tcp_pose": gym.spaces.Box(
                             -np.inf,
                             np.inf,
                             shape=(len(self.config.use_arm_ids) * obs_dim_per_arm,),
-                            dtype=np.float64,
                         ),
                     }
                 ),
@@ -284,23 +224,11 @@ class Turtle2Env(gym.Env):
             random_xy2 = np.random.uniform(
                 -self.config.random_xy_range, self.config.random_xy_range, (2,)
             )
-            random_euler1 = np.array(
-                [
-                    np.random.uniform(
-                        -self.config.random_rz_range, self.config.random_rz_range
-                    ),
-                    0.0,
-                    0.0,
-                ]
+            random_euler1 = np.random.uniform(
+                -self.config.random_rz_range, self.config.random_rz_range, (3,)
             )
-            random_euler2 = np.array(
-                [
-                    np.random.uniform(
-                        -self.config.random_rz_range, self.config.random_rz_range
-                    ),
-                    0.0,
-                    0.0,
-                ]
+            random_euler2 = np.random.uniform(
+                -self.config.random_rz_range, self.config.random_rz_range, (3,)
             )
         else:
             random_xy1 = np.zeros(2)
@@ -313,7 +241,7 @@ class Turtle2Env(gym.Env):
             left_arm_reset_pose[:2] += random_xy1
             left_arm_reset_pose[3:6] += random_euler1
             left_arm_reset_pose = left_arm_reset_pose.tolist()
-            left_arm_reset_pose.append(float(self.config.reset_gripper_width[0]))
+            left_arm_reset_pose.append(0.0)
         else:
             left_arm_reset_pose = [0, 0, 0, 0, 0, 0, 0]
         if 1 in self.config.use_arm_ids:
@@ -321,7 +249,7 @@ class Turtle2Env(gym.Env):
             right_arm_reset_pose[:2] += random_xy2
             right_arm_reset_pose[3:6] += random_euler2
             right_arm_reset_pose = right_arm_reset_pose.tolist()
-            right_arm_reset_pose.append(float(self.config.reset_gripper_width[1]))
+            right_arm_reset_pose.append(0.0)
         else:
             right_arm_reset_pose = [0, 0, 0, 0, 0, 0, 0]
 
@@ -334,36 +262,32 @@ class Turtle2Env(gym.Env):
         self._controller.move_arm(left_arm_reset_pose, right_arm_reset_pose).wait()
 
         reach = False
-        reset_pos_threshold = 0.04
-        reset_ori_threshold = 0.12
         start_time = time.time()
         while not reach:
             state = self._controller.get_state().wait()[0]
             left_pos = state.follow1_pos
             right_pos = state.follow2_pos
-            left_pos_err = np.linalg.norm(left_pos[:3] - np.array(left_arm_reset_pose)[:3])
-            left_ori_err = np.linalg.norm(left_pos[3:6] - np.array(left_arm_reset_pose)[3:6])
-            right_pos_err = np.linalg.norm(right_pos[:3] - np.array(right_arm_reset_pose)[:3])
-            right_ori_err = np.linalg.norm(
-                right_pos[3:6] - np.array(right_arm_reset_pose)[3:6]
-            )
             left_reach = (
-                left_pos_err < reset_pos_threshold and left_ori_err < reset_ori_threshold
+                np.linalg.norm(left_pos[:6] - np.array(left_arm_reset_pose)[:6]) < 0.04
                 if 0 in self.config.use_arm_ids
                 else True
             )
             right_reach = (
-                right_pos_err < reset_pos_threshold
-                and right_ori_err < reset_ori_threshold
+                np.linalg.norm(right_pos[:6] - np.array(right_arm_reset_pose)[:6])
+                < 0.04
                 if 1 in self.config.use_arm_ids
                 else True
             )
             reach = left_reach and right_reach
             if time.time() - start_time > 10.0:
+                left_err = np.linalg.norm(
+                    left_pos[:6] - np.array(left_arm_reset_pose)[:6]
+                )
+                right_err = np.linalg.norm(
+                    right_pos[:6] - np.array(right_arm_reset_pose)[:6]
+                )
                 raise ValueError(
-                    "Reset arms timeout: "
-                    f"left_pos_err={left_pos_err:.6f}, left_ori_err={left_ori_err:.6f}, "
-                    f"right_pos_err={right_pos_err:.6f}, right_ori_err={right_ori_err:.6f}"
+                    f"Reset arms timeout: left_err={left_err:.6f}, right_err={right_err:.6f}"
                 )
 
             time.sleep(0.1)
@@ -429,32 +353,45 @@ class Turtle2Env(gym.Env):
 
         action = np.clip(action, self.action_space.low, self.action_space.high)
 
+        # deal with dual arms (xyz)
         action = action.reshape(-1, 7)
-        next_positions = {
-            0: self._turtle2_state.follow1_pos.copy(),
-            1: self._turtle2_state.follow2_pos.copy(),
-        }
-        for action_row, arm_id in zip(action, self.config.use_arm_ids, strict=False):
-            if self.config.action_mode == "absolute_pose":
-                next_positions[arm_id][:6] = action_row[:6]
-            else:
-                next_positions[arm_id][:3] = (
-                    next_positions[arm_id][:3]
-                    + action_row[:3] * self.config.action_scale[0]
-                )
-                next_positions[arm_id][3:6] = (
-                    next_positions[arm_id][3:6]
-                    + action_row[3:6] * self.config.action_scale[1]
-                )
+        xyz_delta = action[:, :3]
 
-            if self.config.enforce_gripper_close:
-                next_positions[arm_id][6] = self.config.gripper_width_limit_min
-            else:
-                next_positions[arm_id][6] = action_row[6]
+        # self._turtle2_state = self._controller.get_state().wait()[0]
+        next_position1 = self._turtle2_state.follow1_pos.copy()
+        next_position2 = self._turtle2_state.follow2_pos.copy()
+
+        if 0 in self.config.use_arm_ids:
+            next_position1[:3] = (
+                next_position1[:3] + xyz_delta[0] * self.config.action_scale[0]
+            )
+        if 1 in self.config.use_arm_ids:
+            next_position2[:3] = (
+                next_position2[:3] + xyz_delta[-1] * self.config.action_scale[0]
+            )
+
+        # deal with dual arms (rpy)
+        if 0 in self.config.use_arm_ids:
+            next_position1[3:6] = (
+                next_position1[3:6] + action[0, 3:6] * self.config.action_scale[1]
+            )
+        if 1 in self.config.use_arm_ids:
+            next_position2[3:6] = (
+                next_position2[3:6] + action[-1, 3:6] * self.config.action_scale[1]
+            )
+
+        if self.config.enforce_gripper_close:
+            next_position1[6] = self.config.gripper_width_limit_min
+            next_position2[6] = self.config.gripper_width_limit_min
+        else:
+            if 0 in self.config.use_arm_ids:
+                next_position1[6] = action[0, 6]
+            if 1 in self.config.use_arm_ids:
+                next_position2[6] = action[-1, 6]
 
         # clip to safety box
         next_position = self._clip_position_to_safety_box(
-            np.stack([next_positions[0], next_positions[1]])
+            np.stack([next_position1, next_position2])
         )
         next_position1 = next_position[0]
         next_position2 = next_position[1]
@@ -483,10 +420,6 @@ class Turtle2Env(gym.Env):
     @property
     def num_steps(self):
         return self._num_steps
-
-    @property
-    def task_description(self):
-        return self.config.task_description
 
     def _calc_step_reward(
         self,
@@ -603,30 +536,22 @@ class Turtle2Env(gym.Env):
             assert len(frames) == len(self.config.use_camera_ids), "get frames failed."
             for i in range(len(frames)):
                 frames[i] = self._crop_frame(frames[i], (128, 128))
-            state_chunks = []
+            tcp_pose = []
             if 0 in self.config.use_arm_ids:
-                if self.config.obs_mode == "x2robot_raw":
-                    state_chunks.append(self._turtle2_state.follow1_pos.copy())
-                else:
-                    tmp = np.zeros(7)
-                    tmp[0:3] = self._turtle2_state.follow1_pos[0:3]
-                    r1 = R.from_euler("xyz", self._turtle2_state.follow1_pos[3:6])
-                    tmp[3:7] = r1.as_quat()
-                    state_chunks.append(tmp.copy())
+                tmp = np.zeros(7)
+                tmp[0:3] = self._turtle2_state.follow1_pos[0:3]
+                r1 = R.from_euler("xyz", self._turtle2_state.follow1_pos[3:6])
+                tmp[3:7] = r1.as_quat()
+                tcp_pose.append(tmp.copy())
             if 1 in self.config.use_arm_ids:
-                if self.config.obs_mode == "x2robot_raw":
-                    state_chunks.append(self._turtle2_state.follow2_pos.copy())
-                else:
-                    tmp = np.zeros(7)
-                    tmp[0:3] = self._turtle2_state.follow2_pos[0:3]
-                    r2 = R.from_euler("xyz", self._turtle2_state.follow2_pos[3:6])
-                    tmp[3:7] = r2.as_quat()
-                    state_chunks.append(tmp.copy())
-            state_key = (
-                "arm_state" if self.config.obs_mode == "x2robot_raw" else "tcp_pose"
-            )
+                tmp = np.zeros(7)
+                tmp[0:3] = self._turtle2_state.follow2_pos[0:3]
+                r2 = R.from_euler("xyz", self._turtle2_state.follow2_pos[3:6])
+                tmp[3:7] = r2.as_quat()
+                tcp_pose.append(tmp.copy())
+            tcp_pose = np.concatenate(tcp_pose, axis=0)
             state = {
-                state_key: np.concatenate(state_chunks, axis=0),
+                "tcp_pose": tcp_pose,
             }
             frames_dict = {}
             for k in range(len(self.config.use_camera_ids)):
