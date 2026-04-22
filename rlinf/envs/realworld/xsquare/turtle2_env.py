@@ -121,7 +121,6 @@ class Turtle2Env(gym.Env):
         ), "please choose camera IDs from [0, 1, 2]."
         self._turtle2_state = Turtle2RobotState()
         self._num_steps = 0
-
         if not self.config.is_dummy:
             self._setup_hardware()
 
@@ -224,11 +223,23 @@ class Turtle2Env(gym.Env):
             random_xy2 = np.random.uniform(
                 -self.config.random_xy_range, self.config.random_xy_range, (2,)
             )
-            random_euler1 = np.random.uniform(
-                -self.config.random_rz_range, self.config.random_rz_range, (3,)
+            random_euler1 = np.array(
+                [
+                    np.random.uniform(
+                        -self.config.random_rz_range, self.config.random_rz_range
+                    ),
+                    0.0,
+                    0.0,
+                ]
             )
-            random_euler2 = np.random.uniform(
-                -self.config.random_rz_range, self.config.random_rz_range, (3,)
+            random_euler2 = np.array(
+                [
+                    np.random.uniform(
+                        -self.config.random_rz_range, self.config.random_rz_range
+                    ),
+                    0.0,
+                    0.0,
+                ]
             )
         else:
             random_xy1 = np.zeros(2)
@@ -262,32 +273,36 @@ class Turtle2Env(gym.Env):
         self._controller.move_arm(left_arm_reset_pose, right_arm_reset_pose).wait()
 
         reach = False
+        reset_pos_threshold = 0.04
+        reset_ori_threshold = 0.12
         start_time = time.time()
         while not reach:
             state = self._controller.get_state().wait()[0]
             left_pos = state.follow1_pos
             right_pos = state.follow2_pos
+            left_pos_err = np.linalg.norm(left_pos[:3] - np.array(left_arm_reset_pose)[:3])
+            left_ori_err = np.linalg.norm(left_pos[3:6] - np.array(left_arm_reset_pose)[3:6])
+            right_pos_err = np.linalg.norm(right_pos[:3] - np.array(right_arm_reset_pose)[:3])
+            right_ori_err = np.linalg.norm(
+                right_pos[3:6] - np.array(right_arm_reset_pose)[3:6]
+            )
             left_reach = (
-                np.linalg.norm(left_pos[:6] - np.array(left_arm_reset_pose)[:6]) < 0.04
+                left_pos_err < reset_pos_threshold and left_ori_err < reset_ori_threshold
                 if 0 in self.config.use_arm_ids
                 else True
             )
             right_reach = (
-                np.linalg.norm(right_pos[:6] - np.array(right_arm_reset_pose)[:6])
-                < 0.04
+                right_pos_err < reset_pos_threshold
+                and right_ori_err < reset_ori_threshold
                 if 1 in self.config.use_arm_ids
                 else True
             )
             reach = left_reach and right_reach
             if time.time() - start_time > 10.0:
-                left_err = np.linalg.norm(
-                    left_pos[:6] - np.array(left_arm_reset_pose)[:6]
-                )
-                right_err = np.linalg.norm(
-                    right_pos[:6] - np.array(right_arm_reset_pose)[:6]
-                )
                 raise ValueError(
-                    f"Reset arms timeout: left_err={left_err:.6f}, right_err={right_err:.6f}"
+                    "Reset arms timeout: "
+                    f"left_pos_err={left_pos_err:.6f}, left_ori_err={left_ori_err:.6f}, "
+                    f"right_pos_err={right_pos_err:.6f}, right_ori_err={right_ori_err:.6f}"
                 )
 
             time.sleep(0.1)
