@@ -34,15 +34,24 @@ offering practical guidance to help you fully optimize your RL post-training wor
    Shows how to build a cloud-edge training setup with EasyTier, connect cloud and
    edge nodes into one overlay network, and run RLinf on top of that topology.
 
-- :doc:`logger`  
-   Introduces how to visualize and track key metrics during your training process.  
-   Currently, we support three backends for experiment tracking and visualization: 
+- :doc:`logger`
+   Introduces how to visualize and track key metrics during your training process.
+   Currently, we support three backends for experiment tracking and visualization:
    TensorBoard, Weights & Biases (wandb), and SwanLab.
 
 - :doc:`weight_syncer`
    Introduces the actor-to-rollout weight synchronization optimization used in
    embodied training, including the ``patch`` and ``bucket`` modes, their
    configuration, recommended use cases, and performance considerations.
+
+- :doc:`nsight_code_design`
+   Explains the code architecture of RLinf's Nsight profiler integration and
+   NVTX annotation framework -- config flow, annotation layers, and how to
+   add new instrumentation.
+
+- :doc:`nsight_profiler_guide`
+   Hands-on guide to profiling RLinf with Nsight Systems.  Walks through a
+   multi-node async SAC experiment and shows how to read the timeline.
 
 
 .. toctree::
@@ -58,3 +67,5 @@ offering practical guidance to help you fully optimize your RL post-training wor
    cloud-edge
    logger
    weight_syncer
+   nsight_code_design
+   nsight_profiler_guide
