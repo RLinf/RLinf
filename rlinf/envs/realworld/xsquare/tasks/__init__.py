@@ -23,6 +23,9 @@ from rlinf.envs.realworld.common.wrappers import apply_single_arm_wrappers
 from rlinf.envs.realworld.xsquare.tasks.button_env import (
     ButtonEnv as ButtonEnv,
 )
+from rlinf.envs.realworld.xsquare.tasks.deploy_env import (
+    Turtle2DeployEnv as Turtle2DeployEnv,
+)
 
 
 def create_button_env(
@@ -44,4 +47,9 @@ def create_button_env(
 register(
     id="ButtonEnv-v1",
     entry_point="rlinf.envs.realworld.xsquare.tasks:create_button_env",
+)
+
+register(
+    id="Turtle2DeployEnv-v1",
+    entry_point="rlinf.envs.realworld.xsquare.tasks:Turtle2DeployEnv",
 )
