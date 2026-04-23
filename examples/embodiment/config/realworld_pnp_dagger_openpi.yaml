@@ -148,7 +148,7 @@ actor:
     action_dim: 7
     add_value_head: False
     openpi:
-      config_name: "pi0_franka_dagger"
+      config_name: "pi0_realworld"
       num_images_in_input: 2
       train_expert_only: False
       detach_critic_input: True

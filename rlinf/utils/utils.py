@@ -50,6 +50,23 @@ def move_to_device_if_tensor(device, item):
 
 cuda_dict = partial(apply_func_to_dict, partial(move_to_device_if_tensor, "cuda"))
 cpu_dict = partial(apply_func_to_dict, partial(move_to_device_if_tensor, "cpu"))
+_UINT32_MOD = 2**32
+
+
+def seed_everything(seed: int) -> int:
+    """Seed Python, NumPy, and PyTorch RNGs."""
+    normalized_seed = int(seed)
+    numpy_seed = normalized_seed % _UINT32_MOD
+
+    random.seed(normalized_seed)
+    np.random.seed(numpy_seed)
+    torch.manual_seed(normalized_seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(normalized_seed)
+        torch.cuda.manual_seed_all(normalized_seed)
+
+    return normalized_seed
 
 
 def retrieve_model_state_dict_in_cpu(model, offloaded_buffer=None):
@@ -133,7 +150,7 @@ def masked_mean(values: torch.Tensor, mask: torch.Tensor, axis=None):
 
 
 def masked_sum(values: torch.Tensor, mask: torch.Tensor, axis=None):
-    """Compute mean of tensor with a masked values."""
+    """Compute sum of tensor with a masked values."""
     return (values * mask).sum(axis=axis)
 
 

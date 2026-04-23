@@ -1,0 +1,245 @@
+defaults:
+  - env/dosw1_pick@env.train
+  - env/dosw1_pick@env.eval
+  - model/flow_policy@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    actor:
+      node_group: "gpu"
+      placement: 0
+    env:
+      node_group: dosw1
+      placement: 0
+    rollout:
+      node_group: "gpu"
+      placement: 0
+  node_groups:
+    - label: "gpu"
+      node_ranks: 0
+    - label: dosw1
+      node_ranks: 1
+      hardware:
+        type: DOSW1
+        configs:
+          - robot_url: "127.0.0.1"             # Replace with DOS-W1 gRPC address
+            left_arm_port: 50051
+            right_arm_port: 50053
+            left_lead_port: 50050
+            right_lead_port: 50052
+            camera_serials:                    # Replace with your RealSense serial numbers
+              - "419622072872"
+              - "243722075219"
+              - "244222070702"
+            node_rank: 1
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "dosw1_pick_sac_flow_async"
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: 8000
+  max_steps: -1
+
+  only_eval: False
+  val_check_interval: -1
+  save_interval: -1
+  weight_sync_interval: 30
+
+algorithm:
+  update_epoch: 30
+  group_size: 1
+  normalize_advantages: False
+  kl_penalty: kl
+  enable_drq: False
+
+  agg_q: min
+  actor_agg_q: mean
+
+  backup_entropy: False
+  critic_subsample_size: 2
+  eval_rollout_epoch: 1
+
+  adv_type: embodied_sac
+  loss_type: embodied_sac
+  loss_agg_func: "token-mean"
+
+  bootstrap_type: standard
+
+  gamma: 0.9
+  tau: 0.005
+  entropy_tuning:
+    alpha_type: softplus
+    initial_alpha: 0.01
+    target_entropy: -14  # -action_dim (dual arm 14D)
+    optim:
+      lr: 3.0e-4
+      lr_scheduler: torch_constant
+      clip_grad: 10.0
+
+  critic_actor_ratio: 4
+  replay_buffer:
+    enable_cache: True
+    cache_size: 200
+    min_buffer_size: 2
+    sample_window_size: 200
+    auto_save: False
+
+  demo_buffer:
+    enable_cache: True
+    cache_size: 200
+    min_buffer_size: 1
+    sample_window_size: 200
+    load_path: "/path/to/demo_data"  # Replace with your demo data path, or remove this section if not using RLPD
+    auto_save: False
+
+  target_update_freq: 1
+
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+
+  length_params:
+    max_new_token: 14  # = action_dim (dual arm 14D)
+    max_length: 1024
+    min_length: 1
+
+env:
+  group_name: "EnvGroup"
+
+  train:
+    keyboard_intervention_wrapper: True
+    ignore_terminations: False
+    total_num_envs: 1
+    override_cfg:
+      is_dummy: False
+      use_dense_reward: True
+      target_grasp_joint: [-0.4724574685096741, -1.1331731081008911, 0.6509880423545837, 1.408216953277588, -0.5987258553504944, -1.0904479026794434]   # Calibrate for your setup
+      target_lift_joint: [-0.5140383243560791, -0.9435797929763794, 0.6078813076019287, 1.3971542119979858, -0.6315327882766724, -1.1175326108932495]   # Calibrate for your setup
+
+      # -- Safety parameters --
+      max_joint_delta: 0.1                              # Max joint change per step (rad), ~5.7 deg
+      action_scale: 1.0                                 # Interpolation factor toward target (<1 = slower)
+      # ee_pose safety box (xyz in meters, calibrate for your workspace)
+      left_ee_pose_limit_min: [0.1, -0.35, 0.02]     # z > 0 prevents table collision
+      left_ee_pose_limit_max: [0.4, 0.08, 0.4]
+      right_ee_pose_limit_min: [0.28, -0.01, 0.16]
+      right_ee_pose_limit_max: [0.3, 0.01, 0.17]
+
+      # support human-in-the-loop teleop
+      enable_human_in_loop: True
+
+  eval:
+    total_num_envs: 1
+
+rollout:
+  group_name: "RolloutGroup"
+  backend: "huggingface"
+  enable_offload: False
+  pipeline_stage_num: 1
+  sync_weight_nccl_max_ctas: 32
+
+  collect_transitions: True
+  collect_prev_infos: False
+
+  model:
+    model_path: "/path/to/resnet10_pretrained"  # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    precision: ${actor.model.precision}
+    num_q_heads: 10
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  sync_weight_no_wait: True
+
+  micro_batch_size: 256
+  global_batch_size: 256
+  seed: 1234
+  enable_offload: False
+
+  model:
+    model_type: "flow_policy"
+    input_type: "mixed"  # only mixed input can be used in real world
+
+    model_path: "/path/to/resnet10_pretrained"  # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+
+    state_dim: 14   # DOS-W1: left 6 joints + 1 gripper + right 6 joints + 1 gripper
+    action_dim: 14  # DOS-W1: left 6 joints + 1 gripper + right 6 joints + 1 gripper
+    image_num: 3    # 1 = cam_left only; set to 3 for all cameras (cam_left, cam_right, cam_front)
+
+    num_action_chunks: 1
+    hidden_dim: 256
+
+    precision: "32"
+    add_value_head: False
+    add_q_head: True
+    num_q_heads: 10
+    backbone: resnet
+
+    ##-- Flow Matching specific parameters --##
+    denoising_steps: 4
+    d_model: 256
+    n_head: 4
+    n_layers: 2
+    use_batch_norm: False
+    batch_norm_momentum: 0.99
+    flow_actor_type: "JaxFlowTActor"
+    noise_std_head: False
+    log_std_min_train: -5
+    log_std_max_train: 2
+    log_std_min_rollout: -20
+    log_std_max_rollout: 0
+    noise_std_train: 0.3
+    noise_std_rollout: 0.02
+
+    is_lora: False
+    lora_rank: 32
+    ckpt_path: null
+    gradient_checkpointing: False
+    sharding_strategy: no_shard
+    vh_mode: "q_network"
+    q_network_separate_processing: True
+
+    encoder_config:
+      ckpt_name: "resnet10_pretrained.pt"
+
+  optim:
+    clip_grad: 1.0
+    lr: 3e-4
+    lr_scheduler: torch_constant
+
+  critic_optim:
+    clip_grad: 1.0
+    lr: 3e-4
+    lr_scheduler: torch_constant
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False
