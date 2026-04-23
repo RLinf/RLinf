@@ -131,11 +131,24 @@ Libero数据集下载：
    # 为提升国内下载速度，可以设置：
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
-   hf download ZibinDong/libero_spatial --local-dir Gr00t_16-libero-Spatial-dataset
+   hf download ZibinDong/libero_spatial --repo-type dataset --local-dir Gr00t_16-libero-Spatial-dataset
    # 也可以下载其他数据集 如libero_object, libero_goal, libero_10
-   # hf download ZibinDong/libero_object --local-dir Gr00t_16-libero-Object-dataset
-   # hf download ZibinDong/libero_goal --local-dir Gr00t_16-libero-Goal-dataset
-   # hf download ZibinDong/libero_10 --local-dir Gr00t_16-libero-10-dataset
+   # hf download ZibinDong/libero_object --repo-type dataset --local-dir Gr00t_16-libero-Object-dataset
+   # hf download ZibinDong/libero_goal --repo-type dataset --local-dir Gr00t_16-libero-Goal-dataset
+   # hf download ZibinDong/libero_10 --repo-type dataset --local-dir Gr00t_16-libero-10-dataset
+
+GR00T-N1.6 模型下载
+.. code-block:: bash
+
+   # 方法1：使用git clone
+   git lfs install
+   git clone https://huggingface.co/nvidia/GR00T-N1.6-3B
+
+   # 方法2：使用huggingface-hub
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
+   pip install huggingface-hub
+   hf download nvidia/GR00T-N1.6-3B --repo-type dataset --local-dir GR00T-N1.6-3B
 
 启动脚本
 ------------------------------------------------------------------

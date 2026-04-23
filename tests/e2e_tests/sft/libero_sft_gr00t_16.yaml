@@ -29,7 +29,7 @@ runner:
   save_interval: 10
 
 data:
-  train_data_paths: "/workspace/RLinf/rlinf/data/libero_spatial"
+  train_data_paths: "/workspace/dataset/Gr00t_16-libero-Spatial-dataset"
 
 algorithm:
   adv_type: gae
@@ -44,7 +44,7 @@ actor:
   # Override the default values in model/gr00t_16
   model:
     precision: "bf16"
-    model_path: "/workspace/RLinf/GR00T-N1.6-3B"
+    model_path: "/workspace/dataset/GR00T-N1.6-3B"
     model_type: "gr00t_1_6_sft"
     num_action_chunks: 1 
     add_value_head: True

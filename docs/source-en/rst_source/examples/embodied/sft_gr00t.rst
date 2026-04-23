@@ -132,12 +132,24 @@ Libero Dataset Download:
      # To improve download speed in China, you can set:
      # export HF_ENDPOINT=https://hf-mirror.com
      pip install huggingface-hub
-     hf download ZibinDong/libero_spatial --local-dir Gr00t_16-libero-Spatial-dataset
+     hf download ZibinDong/libero_spatial --repo-type dataset --local-dir Gr00t_16-libero-Spatial-dataset
      # You can also download other datasets such as libero_object, libero_goal, libero_10
-     # hf download ZibinDong/libero_object --local-dir Gr00t_16-libero-Object-dataset
-     # hf download ZibinDong/libero_goal --local-dir Gr00t_16-libero-Goal-dataset
-     # hf download ZibinDong/libero_10 --local-dir Gr00t_16-libero-10-dataset
+     # hf download ZibinDong/libero_object --repo-type dataset --local-dir Gr00t_16-libero-Object-dataset
+     # hf download ZibinDong/libero_goal --repo-type dataset --local-dir Gr00t_16-libero-Goal-dataset
+     # hf download ZibinDong/libero_10 --repo-type dataset --local-dir Gr00t_16-libero-10-dataset
 
+GR00T-N1.6 Model Download
+.. code-block:: bash
+
+     # Method 1: Using git clone
+     git lfs install
+     git clone https://huggingface.co/nvidia/GR00T-N1.6-3B
+
+     # Method 2: Using huggingface-hub
+     # To improve download speed in China, you can set:
+     # export HF_ENDPOINT=https://hf-mirror.com
+     pip install huggingface-hub
+     hf download nvidia/GR00T-N1.6-3B --repo-type dataset --local-dir GR00T-N1.6-3B
 
 Launch script
 ------------------------------------------------------------------
