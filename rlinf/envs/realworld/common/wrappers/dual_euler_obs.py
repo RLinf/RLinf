@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Quaternion-to-Euler observation wrapper for dual-arm environments."""
+"""Quaternion-to-Euler observation wrapper for dual-arm pose observations."""
 
 import gymnasium as gym
 import numpy as np
@@ -21,9 +21,10 @@ from scipy.spatial.transform import Rotation as R
 
 
 class DualQuat2EulerWrapper(gym.ObservationWrapper):
-    """Convert quaternion TCP pose to euler angles for dual-arm envs.
+    """Convert 14D dual-arm ``xyz + quat`` TCP pose to euler angles.
 
-    Maps ``(14,)`` tcp_pose (two ``xyz + quat``) to ``(12,)`` (two ``xyz + euler``).
+    This wrapper is robot-agnostic: it only requires the observation to contain
+    ``state.tcp_pose`` laid out as two ``xyz + quat`` pose vectors.
     """
 
     def __init__(self, env: Env):
@@ -35,6 +36,10 @@ class DualQuat2EulerWrapper(gym.ObservationWrapper):
     def observation(self, observation: dict) -> dict:
         """Convert dual-arm quaternion TCP pose to euler angles in-place."""
         tcp_pose = observation["state"]["tcp_pose"]
+        if tcp_pose.shape[-1] != 14:
+            raise ValueError(
+                f"DualQuat2EulerWrapper expects 14D tcp_pose, got shape {tcp_pose.shape}."
+            )
         left = tcp_pose[:7]
         right = tcp_pose[7:]
         left_euler = np.concatenate(

@@ -26,6 +26,10 @@ from rlinf.envs.realworld.common.wrappers.dual_euler_obs import (
 from rlinf.envs.realworld.common.wrappers.dual_gello_intervention import (
     DualGelloIntervention,
 )
+from rlinf.envs.realworld.common.wrappers.dual_pose_action import (
+    DualAbsolutePoseActionWrapper,
+    DualRelativePoseActionWrapper,
+)
 from rlinf.envs.realworld.common.wrappers.dual_relative_frame import (
     DualRelativeFrame,
 )
@@ -135,5 +139,27 @@ def apply_dual_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
 
     if cfg.get("use_relative_frame", True):
         env = DualRelativeFrame(env)
+    env = DualQuat2EulerWrapper(env)
+    return env
+
+
+def apply_dual_pose_action_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
+    """Wrapper stack for dual-arm pose-action deploy envs.
+
+    This intentionally does not apply Franka teleop wrappers such as GELLO,
+    SpaceMouse, or RelativeFrame. It only selects the pose action contract and
+    converts the final dual-arm ``xyz + quat`` observation to ``xyz + euler``.
+    """
+    action_mode = cfg.get("action_mode", "absolute_pose")
+    if action_mode == "absolute_pose":
+        env = DualAbsolutePoseActionWrapper(env)
+    elif action_mode == "relative_pose":
+        env = DualRelativePoseActionWrapper(env)
+    else:
+        raise ValueError(
+            f"Unsupported action_mode={action_mode!r}. "
+            "Expected one of {'absolute_pose', 'relative_pose'}."
+        )
+
     env = DualQuat2EulerWrapper(env)
     return env
