@@ -167,5 +167,6 @@ def apply_dual_pose_action_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym
             "Expected one of {'absolute_pose', 'relative_pose'}."
         )
 
+    env = _apply_keyboard_reward(env, cfg.get("keyboard_reward_wrapper", None))
     env = DualQuat2EulerWrapper(env)
     return env
