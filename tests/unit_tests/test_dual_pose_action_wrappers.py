@@ -96,14 +96,33 @@ def test_dual_pose_builder_absolute_mode_routes_and_converts_euler_obs():
     assert info == {}
 
 
-def test_dual_pose_builder_relative_mode_routes_and_converts_euler_obs():
+def test_dual_pose_builder_relative_mode_applies_relative_frame_by_default():
     env = DummyDualPoseEnv()
     wrapped = apply_dual_pose_action_wrappers(env, {"action_mode": "relative_pose"})
+
+    # reset() initialises the adjoint matrices inside DualRelativeFrame.
+    wrapped.reset()
 
     action = np.full((14,), 0.5, dtype=np.float32)
     obs, *_ = wrapped.step(action)
 
     assert wrapped.action_space.low[0] == -1.0
+    assert env.last_mode == "relative_pose"
+    # The action reaching the env has been transformed by DualRelativeFrame;
+    # we only verify shape and routing, not the exact transformed values.
+    assert env.last_action.shape == (14,)
+    assert obs["state"]["tcp_pose"].shape == (12,)
+
+
+def test_dual_pose_builder_relative_mode_no_relative_frame():
+    env = DummyDualPoseEnv()
+    wrapped = apply_dual_pose_action_wrappers(
+        env, {"action_mode": "relative_pose", "use_relative_frame": False}
+    )
+
+    action = np.full((14,), 0.5, dtype=np.float32)
+    obs, *_ = wrapped.step(action)
+
     assert env.last_mode == "relative_pose"
     np.testing.assert_array_equal(env.last_action, action)
     assert obs["state"]["tcp_pose"].shape == (12,)

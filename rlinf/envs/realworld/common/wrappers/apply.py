@@ -146,15 +146,21 @@ def apply_dual_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
 def apply_dual_pose_action_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
     """Wrapper stack for dual-arm pose-action deploy envs.
 
-    This intentionally does not apply Franka teleop wrappers such as GELLO,
-    SpaceMouse, or RelativeFrame. It only selects the pose action contract and
-    converts the final dual-arm ``xyz + quat`` observation to ``xyz + euler``.
+    For ``relative_pose`` mode, ``DualRelativeFrame`` is applied by default
+    (``use_relative_frame=True``) so that the policy sees EE-frame observations
+    and its EE-frame delta actions are transformed to base frame — matching the
+    training wrapper contract.  Pass ``use_relative_frame=False`` to skip.
+
+    This intentionally does not apply Franka teleop wrappers such as GELLO or
+    SpaceMouse; those have no meaning in a deploy-only env.
     """
     action_mode = cfg.get("action_mode", "absolute_pose")
     if action_mode == "absolute_pose":
         env = DualAbsolutePoseActionWrapper(env)
     elif action_mode == "relative_pose":
         env = DualRelativePoseActionWrapper(env)
+        if cfg.get("use_relative_frame", True):
+            env = DualRelativeFrame(env)
     else:
         raise ValueError(
             f"Unsupported action_mode={action_mode!r}. "
