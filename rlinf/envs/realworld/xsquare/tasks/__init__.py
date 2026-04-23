@@ -19,7 +19,10 @@ from typing import Any, Mapping
 import gymnasium as gym
 from gymnasium.envs.registration import register
 
-from rlinf.envs.realworld.common.wrappers import apply_single_arm_wrappers
+from rlinf.envs.realworld.common.wrappers import (
+    apply_dual_pose_action_wrappers,
+    apply_single_arm_wrappers,
+)
 from rlinf.envs.realworld.xsquare.tasks.button_env import (
     ButtonEnv as ButtonEnv,
 )
@@ -51,12 +54,13 @@ def create_turtle2_deploy_env(
     env_idx: int,
     env_cfg: Mapping[str, Any],
 ) -> gym.Env:
-    return Turtle2DeployEnv(
+    env = Turtle2DeployEnv(
         override_cfg=override_cfg,
         worker_info=worker_info,
         hardware_info=hardware_info,
         env_idx=env_idx,
     )
+    return apply_dual_pose_action_wrappers(env, env_cfg)
 
 
 register(

@@ -60,6 +60,7 @@ class Turtle2DeployEnv(Turtle2Env):
 
     def _init_action_obs_spaces(self):
         super()._init_action_obs_spaces()
+        self._relative_pose_action_space = self.action_space
         action_low = []
         action_high = []
         for arm_id in self.config.use_arm_ids:
@@ -79,20 +80,30 @@ class Turtle2DeployEnv(Turtle2Env):
                     ]
                 )
             )
-        self.action_space = gym.spaces.Box(
+        self._absolute_pose_action_space = gym.spaces.Box(
             low=np.concatenate(action_low).astype(np.float32),
             high=np.concatenate(action_high).astype(np.float32),
             dtype=np.float32,
         )
 
-    def step(self, action: np.ndarray):
+    def get_absolute_pose_action_space(self) -> gym.spaces.Box:
+        return self._absolute_pose_action_space
+
+    def get_relative_pose_action_space(self) -> gym.spaces.Box:
+        return self._relative_pose_action_space
+
+    def step_absolute_pose(self, action: np.ndarray):
         assert action.shape == (len(self.config.use_arm_ids) * 7,), (
             f"Action shape must be {(len(self.config.use_arm_ids) * 7,)}, but got {action.shape}."
         )
 
         start_time = time.time()
 
-        action = np.clip(action, self.action_space.low, self.action_space.high)
+        action = np.clip(
+            action,
+            self._absolute_pose_action_space.low,
+            self._absolute_pose_action_space.high,
+        )
         action = action.reshape(-1, 7)
         next_positions = {
             0: self._turtle2_state.follow1_pos.copy(),
@@ -115,6 +126,9 @@ class Turtle2DeployEnv(Turtle2Env):
             self._controller.move_arm(
                 next_position1.tolist(), next_position2.tolist()
             ).wait()
+        else:
+            self._turtle2_state.follow1_pos = next_position1.copy()
+            self._turtle2_state.follow2_pos = next_position2.copy()
 
         self._num_steps += 1
         step_time = time.time() - start_time
@@ -127,6 +141,12 @@ class Turtle2DeployEnv(Turtle2Env):
         terminated = False
         truncated = self._num_steps >= self.config.max_num_steps
         return observation, reward, terminated, truncated, {}
+
+    def step_relative_pose(self, action: np.ndarray):
+        return super().step(action)
+
+    def step(self, action: np.ndarray):
+        return self.step_relative_pose(action)
 
     def _calc_step_reward(self, observation) -> float:
         return 0.0
