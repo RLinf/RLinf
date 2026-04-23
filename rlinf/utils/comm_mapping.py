@@ -25,6 +25,56 @@ class CommMapper:
         return f"{src_rank}_{dst_rank}_{extra}"
 
     @staticmethod
+    def decoupled_get_batch_index(
+        batch_size: int,
+        src_world_size: int,
+        dst_world_size: int,
+    ) -> list[int]:
+        """Compute destination ranks and transfer sizes for one source rank."""
+        # in decoupled mode, the src_world_size and dst_world_size are the world size of the source and destination workers.
+        # the batch_size is the total batch size of the source workers.
+        # the return value is a list of batch sizes for thi rank destination to send batch split size.
+
+        assert batch_size % src_world_size == 0, (
+            f"batch_size ({batch_size}) must be divisible by src_world_size ({src_world_size})."
+        )
+        assert batch_size % dst_world_size == 0, (
+            f"batch_size ({batch_size}) must be divisible by dst_world_size ({dst_world_size})."
+        )
+
+        if src_world_size >= dst_world_size:
+            # Execute the following code when src_world_size == 1 and dst_world_size == 1.
+            assert src_world_size % dst_world_size == 0, (
+                f"src_world_size ({src_world_size}) must be divisible by dst_world_size ({dst_world_size})."
+            )
+            # the src_world_size > dst_world_size
+            # for example, src_world_size = 4, dst_world_size = 2, batch_size = 32
+            # the rank 0 [8] rank1 [8] rank2 [8] rank3 [8]
+            return [batch_size // src_world_size]
+        else:
+            assert dst_world_size % src_world_size == 0, (
+                f"dst_world_size ({dst_world_size}) must be divisible by src_world_size ({src_world_size})."
+            )
+            # the dst_world_size > src_world_size
+            # for example, src_world_size = 2, dst_world_size = 8, batch_size = 32
+            # the rank 0 [4, 4, 4, 4] rank1 [4, 4, 4, 4]
+            if src_world_size == 1:
+                # special case for src_world_size == 1 and env_worker > rollout_worker size case
+                # To avoid the rollout worker become deadlocked, the len(buffer) should be divisible by 2.
+                # In env decoupled mode the env worker nums should >= rollout worker nums when rollout worker num is 1.
+                # for example, rollout_worker_nums = 1, env_worker_nums = 4, batch_size = 32
+                # the rollout worker rank 0 [8, 8] (the buffer size should be divisible by 2)
+                # the env worker rank 0 [8] rank1 [8] rank2 [8] rank3 [8]
+                return [
+                    batch_size // dst_world_size
+                    for _ in range(dst_world_size // src_world_size // 2)
+                ]
+            return [
+                batch_size // dst_world_size
+                for _ in range(dst_world_size // src_world_size)
+            ]
+
+    @staticmethod
     def get_dst_ranks(
         batch_size: int, src_world_size: int, dst_world_size: int, src_rank: int
     ) -> list[tuple[int, int]]:

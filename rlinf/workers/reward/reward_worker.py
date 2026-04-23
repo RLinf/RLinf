@@ -40,7 +40,11 @@ from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.placement import (
     HybridComponentPlacement,
 )
-from rlinf.utils.utils import clear_memory
+from rlinf.utils.utils import (
+    _build_channel_message,
+    _split_channel_message,
+    clear_memory,
+)
 
 
 class RewardWorker(Worker):
@@ -250,16 +254,34 @@ class EmbodiedRewardWorker(Worker):
         if self._standalone_realworld:
             return
 
-        self.dst_ranks = {
-            "train": self._setup_dst_ranks(
-                self.total_num_train_envs // self.num_pipeline_stages
-            ),
-        }
-        self.src_ranks = {
-            "train": self._setup_src_ranks(
-                self.total_num_train_envs // self.num_pipeline_stages
-            ),
-        }
+        # check env mode
+        env_mode = self.cfg.env.train.get("env_mode", None)
+        assert env_mode in ["decoupled", None], f"{env_mode} is not supported"
+        self.env_decoupled_mode = env_mode == "decoupled"
+        if self.env_decoupled_mode:
+            self.batch_size_map = {
+                "train": self._decoupled_env_mode_setup_batch_size(
+                    self.total_num_train_envs // self.num_pipeline_stages
+                ),
+            }
+            # save the run-time imformation in communicate channel for decoupled mode
+            self.batch_index_map = {
+                "train": [],
+            }
+            self.logger.info(
+                f"decoupled model reward worker initialized with batch_size_map: {self.batch_size_map}"
+            )
+        else:
+            self.dst_ranks = {
+                "train": self._setup_dst_ranks(
+                    self.total_num_train_envs // self.num_pipeline_stages
+                ),
+            }
+            self.src_ranks = {
+                "train": self._setup_src_ranks(
+                    self.total_num_train_envs // self.num_pipeline_stages
+                ),
+            }
 
     async def compute_rewards(self, input_channel: Channel, output_channel: Channel):
         if self.enable_offload:
@@ -307,6 +329,36 @@ class EmbodiedRewardWorker(Worker):
 
         merged_images = self._merge_image_batches(image_batches)
         return merged_images, last_run_count
+
+    async def recv_merged_reward_input_from_channel(
+        self, input_channel: Channel, mode: Literal["train", "eval"] = "train"
+    ) -> tuple[torch.Tensor | np.ndarray, int]:
+        """Receive all mapped reward inputs, merge images on batch dim."""
+        assert mode in ["train", "eval"], f"{mode=} is not supported"
+
+        batch_size_map = self.batch_size_map[mode]
+        batch_index_map = self.batch_index_map[mode]
+        assert len(batch_index_map) == 0, (
+            f"batch_index_map must be empty, but got batch_index_map {batch_index_map}."
+        )
+        image_batches: list[torch.Tensor | np.ndarray] = []
+
+        for expected_size in batch_size_map:
+            data = await input_channel.get(
+                async_op=True,
+            ).async_wait()
+            images = data["batch"]["images"]
+            actual_size = self._infer_reward_batch_size(images)
+            # Note: the last_run tag don't handle in decoupled mode
+            batch_index = data["batch_index"]
+            batch_index_map.append(batch_index)
+            assert actual_size == expected_size, (
+                f"Expected reward input batch size {expected_size} the batch_index {batch_index}, "
+                f"got {actual_size}."
+            )
+            image_batches.append(images)
+        merged_images = self._merge_image_batches(image_batches)
+        return merged_images
 
     @staticmethod
     def _merge_image_batches(
@@ -361,6 +413,16 @@ class EmbodiedRewardWorker(Worker):
         if isinstance(rewards, torch.Tensor):
             return rewards.detach().cpu()
         return rewards
+
+    def _decoupled_env_mode_setup_batch_size(
+        self, batch_size: int
+    ) -> dict[str, list[int]]:
+        """Compute batch_size for this reward worker in decoupled mode."""
+        return CommMapper.decoupled_get_batch_index(
+            batch_size=batch_size,
+            src_world_size=self.placement.get_world_size("reward"),
+            dst_world_size=self.placement.get_world_size("env"),
+        )
 
     def _setup_dst_ranks(self, batch_size: int) -> list[tuple[int, int]]:
         """Compute env peer ranks for this reward worker.
@@ -422,6 +484,42 @@ class EmbodiedRewardWorker(Worker):
                 async_op=True,
             )
 
+    def send_reward_output_to_channel(
+        self,
+        output_channel: Channel,
+        reward_tensor: torch.Tensor | np.ndarray,
+    ):
+        """Send action shards to origin env ranks.
+        get the information from the recv_merged_reward_input_from_channel
+
+        Args:
+            output_channel: Channel carrying reward->env action chunks.
+            reward_tensor: Predicted rewards (tensor or ndarray).
+        """
+        batch_size_map = self.batch_size_map["train"]
+        batch_index_map = self.batch_index_map["train"]
+        reward_tensor_split = list(torch.split(reward_tensor, batch_size_map, dim=0))
+        for i, reward_i in enumerate(reward_tensor_split):
+            batch_index = batch_index_map[i]
+            env_rank, batch_idx, _, last_run = _split_channel_message(batch_index)
+            if isinstance(reward_i, torch.Tensor):
+                reward_i = reward_i.cpu().contiguous()
+            item = {
+                "batch_index": _build_channel_message(
+                    env_rank, batch_idx, "train", last_run, "reward_output"
+                ),
+                "batch": reward_i,
+            }
+            output_channel.put(
+                item,
+                key=CommMapper.build_channel_key(None, env_rank, extra="reward_output"),
+                async_op=True,
+            )
+
+        # delete the batch index map
+        self.batch_index_map["train"] = []
+        return
+
     async def compute_rewards_async(
         self, input_channel: Channel, output_channel: Channel
     ):
@@ -438,11 +536,18 @@ class EmbodiedRewardWorker(Worker):
 
     async def _compute_rewards(self, input_channel: Channel, output_channel: Channel):
         while True:
-            merged_images, _ = await self.recv_merged_reward_input(
-                input_channel, mode="train"
-            )
-            rewards = self._compute_image_rewards(images=merged_images)
-            self.send_reward_output(output_channel, rewards)
+            if self.env_decoupled_mode:
+                merged_images = await self.recv_merged_reward_input_from_channel(
+                    input_channel, mode="train"
+                )
+                rewards = self._compute_image_rewards(images=merged_images)
+                self.send_reward_output_to_channel(output_channel, rewards)
+            else:
+                merged_images, _ = await self.recv_merged_reward_input(
+                    input_channel, mode="train"
+                )
+                rewards = self._compute_image_rewards(images=merged_images)
+                self.send_reward_output(output_channel, rewards)
 
     async def stop(self):
         if self._interact_task is not None and not self._interact_task.done():

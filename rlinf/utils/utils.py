@@ -499,3 +499,50 @@ def set_rng_state(rng_state: dict) -> None:
     random.setstate(rng_state["random"])
     if Worker.torch_platform.is_available() and Worker.torch_device_type in rng_state:
         Worker.torch_platform.set_rng_state(rng_state[Worker.torch_device_type])
+
+
+def _build_channel_message(
+    env_rank: int,
+    batch_idx: int,
+    mode: str,
+    last_run: bool,
+    message_type: str,
+) -> str:
+    """
+    Construct a channel message key that matches the expected communication schema.
+
+    Schema:
+        {env_rank}_{batch_idx}_{mode}_{last_run}_{message_type}
+
+    Args:
+        env_rank: Environment worker rank.
+        batch_idx: Batch index within the worker.
+        mode: Execution mode (e.g., "train", "eval").
+        last_run: Whether this is the last run segment.
+        message_type: Type of message (e.g., "obs", "rollout_results").
+
+    Returns:
+        A formatted channel message string.
+    """
+    assert mode in ("train", "eval"), f"Unsupported mode: {mode}"
+    assert isinstance(last_run, bool), f"last_run must be bool, got {type(last_run)}"
+
+    return f"{env_rank}_{batch_idx}_{mode}_{last_run}_{message_type}"
+
+
+def _split_channel_message(channel_message: str) -> tuple[int, int, str, bool, str]:
+    """
+    This function is used to get the rollout worker and env worker communication without the rankmap,
+    To get the env_rank, batch_idx, mode, last_run from the communication.
+    channel_message: {self._rank}_{index}_{mode}_{last_run}_{message_type}
+    This func split the channel_message into env_rank, batch_idx, mode, last_run
+    Args:
+        channel_message: The batch index string.
+    Returns:
+        A tuple of env_rank, batch_idx, mode, last_run.
+    """
+    env_rank, batch_idx, mode, last_run, _ = channel_message.split("_", 4)
+    env_rank = int(env_rank)
+    batch_idx = int(batch_idx)
+    last_run = last_run == "True"
+    return env_rank, batch_idx, mode, last_run
