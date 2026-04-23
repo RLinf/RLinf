@@ -32,9 +32,7 @@ from hydra.core.global_hydra import GlobalHydra
 from rlinf.envs.habitat.extensions import measures
 from rlinf.envs.habitat.extensions.utils import observations_to_image
 from rlinf.envs.habitat.venv import HabitatRLEnv, ReconfigureSubprocEnv
-from rlinf.envs.habitat.extensions.allocator import (
-    vram_balance_episode_ids,
-)
+from rlinf.envs.habitat.extensions.allocator import vram_balance_episode_ids
 from rlinf.envs.utils import (
     list_of_dict_to_dict_of_list,
     to_tensor,
