@@ -111,6 +111,32 @@ After entering the container, switch to the corresponding virtual environment us
      bash requirements/install.sh embodied --model gr00t_16 --env maniskill_libero
      source .venv/bin/activate
 
+Model Download
+------------------------------------------------------------------
+Before starting SFT training, you need to download the corresponding datasets and the pre-trained GR00T-N1.6 model, and place them in appropriate locations.
+Currently supports four Libero tasks: Spatial, Object, Goal, 10
+
+Libero Dataset Download:
+.. code-block:: bash
+     # Method 1: Using git clone
+     git lfs install
+     git clone https://hf-mirror.com/datasets/ZibinDong/libero_spatial
+     # You can also download other datasets such as libero_object, libero_goal, libero_10
+     # https://hf-mirror.com/datasets/ZibinDong/libero_object
+     # https://hf-mirror.com/datasets/ZibinDong/libero_goal
+     # https://hf-mirror.com/datasets/ZibinDong/libero_10
+
+     # Method 2: Using huggingface-hub
+     # To improve download speed in China, you can set:
+     # export HF_ENDPOINT=https://hf-mirror.com
+     pip install huggingface-hub
+     hf download ZibinDong/libero_spatial --local-dir Gr00t_16-libero-Spatial-dataset
+     # You can also download other datasets such as libero_object, libero_goal, libero_10
+     # hf download ZibinDong/libero_object --local-dir Gr00t_16-libero-Object-dataset
+     # hf download ZibinDong/libero_goal --local-dir Gr00t_16-libero-Goal-dataset
+     # hf download ZibinDong/libero_10 --local-dir Gr00t_16-libero-10-dataset
+
+
 Launch script
 ------------------------------------------------------------------
 

@@ -111,6 +111,31 @@ RLinf 目前支持 LeRobot 格式的数据集。
    bash requirements/install.sh embodied --model gr00t_16 --env maniskill_libero
    source .venv/bin/activate
 
+模型下载
+------------------------------------------------------------------
+在开始做SFT训练之前，需要下载对应的数据集以及Gr00T-N1.6的预训练模型，并将它们放置在合适的位置。
+目前支持四种libero任务：Saptial, Object, Goal, 10
+
+Libero数据集下载：
+.. code-block:: bash
+   # 方法1：使用git clone
+   git lfs install
+   git clone https://hf-mirror.com/datasets/ZibinDong/libero_spatial
+   # 也可以下载其他数据集 如libero_object, libero_goal, libero_long
+   # https://hf-mirror.com/datasets/ZibinDong/libero_object
+   # https://hf-mirror.com/datasets/ZibinDong/libero_object
+   # https://hf-mirror.com/datasets/ZibinDong/libero_10
+
+   # 方法2：使用huggingface-hub
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
+   pip install huggingface-hub
+   hf download ZibinDong/libero_spatial --local-dir Gr00t_16-libero-Spatial-dataset
+   # 也可以下载其他数据集 如libero_object, libero_goal, libero_10
+   # hf download ZibinDong/libero_object --local-dir Gr00t_16-libero-Object-dataset
+   # hf download ZibinDong/libero_goal --local-dir Gr00t_16-libero-Goal-dataset
+   # hf download ZibinDong/libero_10 --local-dir Gr00t_16-libero-10-dataset
+
 启动脚本
 ------------------------------------------------------------------
 

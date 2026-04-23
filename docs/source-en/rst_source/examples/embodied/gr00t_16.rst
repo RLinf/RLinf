@@ -113,7 +113,7 @@ Switch to the corresponding virtual environment using the built-in ``switch_env`
 
 Model Download
 ------------------------------------------------------------------
-Before starting training, you need to run the previously provided GR00T-N1.6 SFT from RLinf to obtain the model after format conversion, and configure the model path in the specified YAML file.
+Before starting training, you need to run the previously provided GR00T-N1.6 SFT from RLinf to obtain the model after format conversion, and configure the model path in the specified YAML file. The RLinf SFT models will be released subsequently, stay tuned! Currently supports four types of libero tasks: Spatial, Object, Goal, 10.
 
 GR00T-N1.6 Core Architecture Design Philosophy
 ------------------------------------------------------------------
