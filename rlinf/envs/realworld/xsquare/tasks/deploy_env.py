@@ -28,6 +28,24 @@ class Turtle2DeployEnvConfig(Turtle2RobotConfig):
     enforce_gripper_close: bool = False
     task_description: str = ""
 
+    def __post_init__(self):
+        self.target_ee_pose = np.asarray(self.target_ee_pose, dtype=np.float64).reshape(
+            2, 6
+        )
+        self.reset_ee_pose = np.asarray(self.reset_ee_pose, dtype=np.float64).reshape(
+            2, 6
+        )
+        self.ee_pose_limit_min = np.asarray(
+            self.ee_pose_limit_min, dtype=np.float64
+        ).reshape(2, 6)
+        self.ee_pose_limit_max = np.asarray(
+            self.ee_pose_limit_max, dtype=np.float64
+        ).reshape(2, 6)
+        self.reward_threshold = np.asarray(
+            self.reward_threshold, dtype=np.float64
+        ).reshape(2, 6)
+        self.action_scale = np.asarray(self.action_scale, dtype=np.float64)
+
 
 class Turtle2DeployEnv(Turtle2Env):
     CONFIG_CLS = Turtle2DeployEnvConfig
