@@ -117,7 +117,9 @@ Before starting SFT training, you need to download the corresponding datasets an
 Currently supports four Libero tasks: Spatial, Object, Goal, 10
 
 Libero Dataset Download:
+
 .. code-block:: bash
+
      # Method 1: Using git clone
      git lfs install
      git clone https://hf-mirror.com/datasets/ZibinDong/libero_spatial

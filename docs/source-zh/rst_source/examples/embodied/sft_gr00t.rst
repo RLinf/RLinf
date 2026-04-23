@@ -118,6 +118,7 @@ RLinf 目前支持 LeRobot 格式的数据集。
 
 Libero数据集下载：
 .. code-block:: bash
+   
    # 方法1：使用git clone
    git lfs install
    git clone https://hf-mirror.com/datasets/ZibinDong/libero_spatial
