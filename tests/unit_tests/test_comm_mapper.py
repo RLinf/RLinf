@@ -15,7 +15,15 @@
 import torch
 
 from rlinf.data.embodied_io_struct import EnvOutput
-from rlinf.utils.comm_mapping import CommMapper
+from rlinf.data.embodied_io_struct import RolloutResult
+from rlinf.scheduler.worker.routing import (
+    build_recv_plan,
+    build_route_channel_key,
+    build_send_plan,
+    merge_batches,
+    split_batch,
+)
+from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 
 def _make_obs(start: int, batch_size: int) -> dict:
@@ -32,72 +40,175 @@ def _make_obs(start: int, batch_size: int) -> dict:
     }
 
 
-def test_setup_dst_ranks_env_to_rollout():
-    # total batch=12, env_world=2, rollout_world=3
-    assert CommMapper.get_dst_ranks(
-        batch_size=12, src_world_size=2, dst_world_size=3, src_rank=0
-    ) == [
+def test_build_send_plan_load_balance_env_to_rollout():
+    plan = build_send_plan(
+        src_group_name="env",
+        dst_group_name="rollout",
+        src_rank=0,
+        src_world_size=2,
+        dst_world_size=3,
+        tag="train_obs",
+        local_batch_size=6,
+    )
+    assert [(entry.peer_rank, entry.batch_size) for entry in plan.entries] == [
         (0, 4),
         (1, 2),
     ]
-    assert CommMapper.get_dst_ranks(
-        batch_size=12, src_world_size=2, dst_world_size=3, src_rank=1
-    ) == [
+
+    plan = build_send_plan(
+        src_group_name="env",
+        dst_group_name="rollout",
+        src_rank=1,
+        src_world_size=2,
+        dst_world_size=3,
+        tag="train_obs",
+        local_batch_size=6,
+    )
+    assert [(entry.peer_rank, entry.batch_size) for entry in plan.entries] == [
         (1, 2),
         (2, 4),
     ]
 
 
-def test_setup_dst_ranks_rollout_to_env():
-    # total batch=12, rollout_world=3, env_world=2
-    assert CommMapper.get_dst_ranks(
-        batch_size=12, src_world_size=3, dst_world_size=2, src_rank=0
-    ) == [(0, 4)]
-    assert CommMapper.get_dst_ranks(
-        batch_size=12, src_world_size=3, dst_world_size=2, src_rank=1
-    ) == [
+def test_build_send_plan_load_balance_rollout_to_env():
+    plan = build_send_plan(
+        src_group_name="rollout",
+        dst_group_name="env",
+        src_rank=0,
+        src_world_size=3,
+        dst_world_size=2,
+        tag="train_actions",
+        local_batch_size=4,
+    )
+    assert [(entry.peer_rank, entry.batch_size) for entry in plan.entries] == [(0, 4)]
+
+    plan = build_send_plan(
+        src_group_name="rollout",
+        dst_group_name="env",
+        src_rank=1,
+        src_world_size=3,
+        dst_world_size=2,
+        tag="train_actions",
+        local_batch_size=4,
+    )
+    assert [(entry.peer_rank, entry.batch_size) for entry in plan.entries] == [
         (0, 2),
         (1, 2),
     ]
-    assert CommMapper.get_dst_ranks(
-        batch_size=12, src_world_size=3, dst_world_size=2, src_rank=2
-    ) == [(1, 4)]
 
-
-def test_setup_src_ranks_matches_expected_receive_sizes():
-    # Reverse lookup for destination ranks when env_world=2, rollout_world=3.
-    assert CommMapper.get_src_ranks(
-        batch_size=12, src_world_size=2, dst_world_size=3, dst_rank=0
-    ) == [(0, 4)]
-    assert CommMapper.get_src_ranks(
-        batch_size=12, src_world_size=2, dst_world_size=3, dst_rank=1
-    ) == [(0, 2), (1, 2)]
-    assert CommMapper.get_src_ranks(
-        batch_size=12, src_world_size=2, dst_world_size=3, dst_rank=2
-    ) == [(1, 4)]
-
-
-def test_build_channel_key_is_stable():
-    assert CommMapper.build_channel_key(2, 1, "train") == "2_1_train"
-    assert CommMapper.build_channel_key(0, 3, "eval") == "0_3_eval"
-
-
-def test_rank_mapping_results_are_stable():
-    first_dst = CommMapper.get_dst_ranks(
-        batch_size=12, src_world_size=2, dst_world_size=3, src_rank=0
+    plan = build_send_plan(
+        src_group_name="rollout",
+        dst_group_name="env",
+        src_rank=2,
+        src_world_size=3,
+        dst_world_size=2,
+        tag="train_actions",
+        local_batch_size=4,
     )
-    second_dst = CommMapper.get_dst_ranks(
-        batch_size=12, src_world_size=2, dst_world_size=3, src_rank=0
-    )
-    assert first_dst == second_dst
+    assert [(entry.peer_rank, entry.batch_size) for entry in plan.entries] == [(1, 4)]
 
-    first_src = CommMapper.get_src_ranks(
-        batch_size=12, src_world_size=2, dst_world_size=3, dst_rank=1
+
+def test_build_recv_plan_matches_expected_receive_sizes():
+    assert [
+        (entry.peer_rank, entry.batch_size)
+        for entry in build_recv_plan(
+            src_group_name="env",
+            dst_group_name="rollout",
+            dst_rank=0,
+            src_world_size=2,
+            dst_world_size=3,
+            tag="train_obs",
+            local_batch_size=4,
+        ).entries
+    ] == [(0, 4)]
+    assert [
+        (entry.peer_rank, entry.batch_size)
+        for entry in build_recv_plan(
+            src_group_name="env",
+            dst_group_name="rollout",
+            dst_rank=1,
+            src_world_size=2,
+            dst_world_size=3,
+            tag="train_obs",
+            local_batch_size=4,
+        ).entries
+    ] == [(0, 2), (1, 2)]
+    assert [
+        (entry.peer_rank, entry.batch_size)
+        for entry in build_recv_plan(
+            src_group_name="env",
+            dst_group_name="rollout",
+            dst_rank=2,
+            src_world_size=2,
+            dst_world_size=3,
+            tag="train_obs",
+            local_batch_size=4,
+        ).entries
+    ] == [(1, 4)]
+
+
+def test_build_route_channel_key_is_stable():
+    assert build_route_channel_key("env", "rollout", 2, 1, "train") == (
+        "scheduler_route",
+        "env",
+        "rollout",
+        "train",
+        "",
+        2,
+        1,
     )
-    second_src = CommMapper.get_src_ranks(
-        batch_size=12, src_world_size=2, dst_world_size=3, dst_rank=1
+    assert build_route_channel_key("rollout", "env", 0, 3, "eval", "k") == (
+        "scheduler_route",
+        "rollout",
+        "env",
+        "eval",
+        "k",
+        0,
+        3,
     )
-    assert first_src == second_src
+
+def test_split_and_merge_nested_batches():
+    batch = {
+        "obs": _make_obs(0, 6),
+        "final_obs": None,
+        "rewards": torch.arange(6, dtype=torch.float32).unsqueeze(-1),
+    }
+    shards = split_batch(batch, [4, 2])
+    assert shards[0]["obs"]["states"].shape[0] == 4
+    assert len(shards[1]["obs"]["task_descriptions"]) == 2
+
+    merged = merge_batches(shards)
+    assert torch.equal(merged["obs"]["states"], batch["obs"]["states"])
+    assert merged["obs"]["task_descriptions"] == batch["obs"]["task_descriptions"]
+    assert torch.equal(merged["rewards"], batch["rewards"])
+
+
+def test_rollout_result_split_merge_invariant():
+    rollout_result = RolloutResult(
+        actions=torch.arange(12, dtype=torch.float32).view(6, 2),
+        prev_logprobs=torch.arange(12, dtype=torch.float32).view(6, 2),
+        prev_values=torch.arange(6, dtype=torch.float32).view(6, 1),
+        bootstrap_values=torch.arange(6, dtype=torch.float32).view(6, 1),
+        save_flags=torch.ones((6, 3), dtype=torch.bool),
+        forward_inputs={
+            "action": torch.arange(12, dtype=torch.float32).view(6, 2),
+            "states": torch.arange(18, dtype=torch.float32).view(6, 3),
+        },
+        versions=torch.arange(6, dtype=torch.float32).view(6, 1),
+    )
+
+    worker = object.__new__(MultiStepRolloutWorker)
+    shards = worker._split_rollout_result(rollout_result, [4, 2])
+    merged = RolloutResult.merge_rollout_results(shards)
+
+    assert torch.equal(merged.actions, rollout_result.actions)
+    assert torch.equal(merged.prev_logprobs, rollout_result.prev_logprobs)
+    assert torch.equal(merged.prev_values, rollout_result.prev_values)
+    assert torch.equal(merged.bootstrap_values, rollout_result.bootstrap_values)
+    assert torch.equal(merged.save_flags, rollout_result.save_flags)
+    assert torch.equal(merged.forward_inputs["action"], rollout_result.forward_inputs["action"])
+    assert torch.equal(merged.forward_inputs["states"], rollout_result.forward_inputs["states"])
+    assert torch.equal(merged.versions, rollout_result.versions)
 
 
 def test_merge_env_outputs_with_partial_optional_fields():

@@ -33,7 +33,6 @@ from rlinf.scheduler import (
     NodePlacementStrategy,
     Worker,
 )
-from rlinf.utils.comm_mapping import CommMapper
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.down_sampling import down_sample_batch
 from rlinf.utils.metric_utils import append_to_dict
@@ -213,10 +212,18 @@ class EmbodiedRewardWorker(Worker):
             self.total_num_train_envs = cfg.env.train.total_num_envs
             self.total_num_eval_envs = cfg.env.eval.total_num_envs
             self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
+            self.train_batch_size = (
+                self.total_num_train_envs // self._world_size // self.num_pipeline_stages
+            )
+            self.eval_batch_size = (
+                self.total_num_eval_envs // self._world_size // self.num_pipeline_stages
+            )
         else:
             self.total_num_train_envs = 1
             self.total_num_eval_envs = 1
             self.num_pipeline_stages = 1
+            self.train_batch_size = 1
+            self.eval_batch_size = 1
 
         self.enable_offload = self.cfg.reward.get("enable_offload", False)
         self._interact_task = None
@@ -250,86 +257,39 @@ class EmbodiedRewardWorker(Worker):
         if self._standalone_realworld:
             return
 
-        self.dst_ranks = {
-            "train": self._setup_dst_ranks(
-                self.total_num_train_envs // self.num_pipeline_stages
-            ),
-        }
-        self.src_ranks = {
-            "train": self._setup_src_ranks(
-                self.total_num_train_envs // self.num_pipeline_stages
-            ),
-        }
-
     async def compute_rewards(self, input_channel: Channel, output_channel: Channel):
         if self.enable_offload:
             self.model.to(self.device)
 
-        local_num_train_envs = sum(size for _, size in self.src_ranks["train"])
+        local_num_train_envs = self.train_batch_size
         total_last_run_count = 0
         while True:
-            merged_images, last_run_count = await self.recv_merged_reward_input(
-                input_channel, mode="train"
-            )
+            merged_data = await self.recv_from(
+                group_name=self.cfg.env.group_name,
+                channel=input_channel,
+                tag="train_reward_input",
+                async_op=True,
+                batch_size=self.train_batch_size,
+            ).async_wait()
+            merged_images = merged_data.get("images")
+            last_run = merged_data.get("last_run", None)
+            last_run_count = int(last_run.sum().item()) if last_run is not None else 0
             rewards = self._compute_image_rewards(images=merged_images)
-            self.send_reward_output(output_channel, rewards)
+            if isinstance(rewards, torch.Tensor):
+                rewards = rewards.cpu().contiguous()
+            self.send_to(
+                group_name=self.cfg.env.group_name,
+                channel=output_channel,
+                data=rewards,
+                tag="reward_output",
+                async_op=True,
+            )
             total_last_run_count += last_run_count
             if total_last_run_count >= local_num_train_envs:
                 break
 
         if self.enable_offload:
             self.model.to("cpu")
-
-    async def recv_merged_reward_input(
-        self, input_channel: Channel, mode: Literal["train", "eval"] = "train"
-    ) -> tuple[torch.Tensor | np.ndarray, int]:
-        """Receive all mapped reward inputs, merge images on batch dim."""
-        assert mode in ["train", "eval"], f"{mode=} is not supported"
-        src_ranks_and_sizes = self.src_ranks[mode]
-        image_batches: list[torch.Tensor | np.ndarray] = []
-        last_run_count = 0
-        for src_rank, expected_size in src_ranks_and_sizes:
-            data = await input_channel.get(
-                key=CommMapper.build_channel_key(
-                    src_rank, self._rank, extra=f"{mode}_reward_input"
-                ),
-                async_op=True,
-            ).async_wait()
-            images = data.get("images")
-            actual_size = self._infer_reward_batch_size(images)
-            assert actual_size == expected_size, (
-                f"Expected reward input batch size {expected_size} from env rank {src_rank}, "
-                f"got {actual_size}."
-            )
-            image_batches.append(images)
-            last_run = data.get("last_run", None)
-            last_run_count += int(last_run.sum().item()) if last_run is not None else 0
-
-        merged_images = self._merge_image_batches(image_batches)
-        return merged_images, last_run_count
-
-    @staticmethod
-    def _merge_image_batches(
-        image_batches: list[torch.Tensor | np.ndarray],
-    ) -> torch.Tensor | np.ndarray:
-        if len(image_batches) == 0:
-            raise ValueError("No image batches received for reward inference.")
-        if all(isinstance(images, torch.Tensor) for images in image_batches):
-            return torch.cat(image_batches, dim=0)
-        if all(isinstance(images, np.ndarray) for images in image_batches):
-            return np.concatenate(image_batches, axis=0)
-        # Fallback for mixed types: cast ndarray to tensor and merge as torch.Tensor.
-        tensor_batches = [
-            images if isinstance(images, torch.Tensor) else torch.from_numpy(images)
-            for images in image_batches
-        ]
-        return torch.cat(tensor_batches, dim=0)
-
-    @staticmethod
-    def _infer_reward_batch_size(images: torch.Tensor | np.ndarray) -> int:
-        if isinstance(images, torch.Tensor) or isinstance(images, np.ndarray):
-            return images.shape[0]
-        raise ValueError(f"Unsupported reward input image type: {type(images)}")
 
     @Worker.timer("compute_image_rewards")
     def _compute_image_rewards(self, images: torch.Tensor):
@@ -362,66 +322,6 @@ class EmbodiedRewardWorker(Worker):
             return rewards.detach().cpu()
         return rewards
 
-    def _setup_dst_ranks(self, batch_size: int) -> list[tuple[int, int]]:
-        """Compute env peer ranks for this reward worker.
-
-        This mapping supports both one-to-many and many-to-one env/reward layouts.
-        The returned ranks are used as communication counterparts for receiving env
-        outputs and sending action chunks.
-
-        Args:
-            batch_size: Total env batch size per pipeline stage across all workers.
-
-        Returns:
-            Ordered ``(env_rank, batch_size)`` tuples this reward worker should
-            send action chunks to.
-        """
-        env_world_size = self.placement.get_world_size("env")
-        reward_world_size = self.placement.get_world_size("reward")
-        return CommMapper.get_dst_ranks(
-            batch_size=batch_size,
-            src_world_size=reward_world_size,
-            dst_world_size=env_world_size,
-            src_rank=self._rank,
-        )
-
-    def _setup_src_ranks(self, batch_size: int) -> list[tuple[int, int]]:
-        """Compute env source ranks and sizes for receiving env outputs."""
-        env_world_size = self.placement.get_world_size("env")
-        reward_world_size = self.placement.get_world_size("reward")
-        return CommMapper.get_src_ranks(
-            batch_size=batch_size,
-            src_world_size=env_world_size,
-            dst_world_size=reward_world_size,
-            dst_rank=self._rank,
-        )
-
-    def send_reward_output(
-        self,
-        output_channel: Channel,
-        reward_tensor: torch.Tensor | np.ndarray,
-    ):
-        """Send action shards to mapped env ranks.
-
-        Args:
-            output_channel: Channel carrying rollout->env action chunks.
-            reward_tensor: Predicted rewards (tensor or ndarray).
-        """
-
-        dst_ranks_and_sizes = self.dst_ranks["train"]
-        split_sizes = [size for _, size in dst_ranks_and_sizes]
-        reward_tensor_split = list(torch.split(reward_tensor, split_sizes, dim=0))
-        for (dst_rank, _), reward_i in zip(dst_ranks_and_sizes, reward_tensor_split):
-            if isinstance(reward_i, torch.Tensor):
-                reward_i = reward_i.cpu().contiguous()
-            output_channel.put(
-                reward_i,
-                key=CommMapper.build_channel_key(
-                    self._rank, dst_rank, extra="reward_output"
-                ),
-                async_op=True,
-            )
-
     async def compute_rewards_async(
         self, input_channel: Channel, output_channel: Channel
     ):
@@ -438,11 +338,24 @@ class EmbodiedRewardWorker(Worker):
 
     async def _compute_rewards(self, input_channel: Channel, output_channel: Channel):
         while True:
-            merged_images, _ = await self.recv_merged_reward_input(
-                input_channel, mode="train"
-            )
+            merged_data = await self.recv_from(
+                group_name=self.cfg.env.group_name,
+                channel=input_channel,
+                tag="train_reward_input",
+                async_op=True,
+                batch_size=self.train_batch_size,
+            ).async_wait()
+            merged_images = merged_data.get("images")
             rewards = self._compute_image_rewards(images=merged_images)
-            self.send_reward_output(output_channel, rewards)
+            if isinstance(rewards, torch.Tensor):
+                rewards = rewards.cpu().contiguous()
+            self.send_to(
+                group_name=self.cfg.env.group_name,
+                channel=output_channel,
+                data=rewards,
+                tag="reward_output",
+                async_op=True,
+            )
 
     async def stop(self):
         if self._interact_task is not None and not self._interact_task.done():

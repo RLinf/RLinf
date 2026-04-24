@@ -15,7 +15,7 @@
 import asyncio
 import threading
 from concurrent.futures import Future as ConcurrentFuture
-from typing import Any, Callable, Optional, overload
+from typing import Any, Callable, Optional, Sequence, overload
 
 import ray.actor
 import torch.distributed as dist
@@ -384,3 +384,44 @@ class AsyncRayWork(AsyncWork):
     def wait(self):
         """Wait for the work to complete."""
         return ray.get(self._ray_object)
+
+
+class AsyncRouteWork(AsyncWork):
+    """Aggregate multiple async channel operations into one routed result."""
+
+    def __init__(
+        self,
+        works: Sequence[AsyncWork],
+        finalize_fn: Callable[[list[Any]], Any],
+    ):
+        self._works = list(works)
+        self._finalize_fn = finalize_fn
+        self._result: Any = None
+        self._has_result = False
+
+    async def async_wait(self):
+        if self._has_result:
+            return self._result
+        results = [await work.async_wait() for work in self._works]
+        self._result = self._finalize_fn(results)
+        self._has_result = True
+        return self._result
+
+    def wait(self):
+        if self._has_result:
+            return self._result
+        results = [work.wait() for work in self._works]
+        self._result = self._finalize_fn(results)
+        self._has_result = True
+        return self._result
+
+    def then(self, func: Callable, *args, **kwargs):
+        raise NotImplementedError("AsyncRouteWork does not support chained callbacks.")
+
+    def done(self):
+        if self._has_result:
+            return True
+        return all(work.done() for work in self._works)
+
+    def get_next_work(self):
+        return None
