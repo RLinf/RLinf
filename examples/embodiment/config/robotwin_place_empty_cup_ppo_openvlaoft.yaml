@@ -3,6 +3,7 @@ defaults:
   - env/robotwin_place_empty_cup@env.eval
   - model/openvla_oft@actor.model
   - training_backend/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
 hydra:
