@@ -37,30 +37,38 @@ import numpy as np
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="GimArm env-level hardware test"
-    )
+    parser = argparse.ArgumentParser(description="GimArm env-level hardware test")
     parser.add_argument(
-        "--can", type=str, default="can0",
+        "--can",
+        type=str,
+        default="can0",
         help="CAN socket interface name (default: can0)",
     )
     parser.add_argument(
-        "--variant", type=str, default="gim_arm_xl",
+        "--variant",
+        type=str,
+        default="gim_arm_xl",
         choices=["gim_arm", "gim_arm_xl"],
         help="Arm variant (default: gim_arm_xl)",
     )
     parser.add_argument(
-        "--no-gripper", action="store_true", help="Disable gripper",
+        "--no-gripper",
+        action="store_true",
+        help="Disable gripper",
     )
     parser.add_argument(
-        "--gripper-type", type=str, default="parallel",
+        "--gripper-type",
+        type=str,
+        default="parallel",
         choices=["parallel", "single_side"],
         help="Gripper type (default: parallel)",
     )
     parser.add_argument(
-        "-y", "--yes", action="store_true",
+        "-y",
+        "--yes",
+        action="store_true",
         help="Skip interactive confirmation before sending motion commands "
-             "(use for CI / repeat runs on a known-safe setup).",
+        "(use for CI / repeat runs on a known-safe setup).",
     )
     args = parser.parse_args()
 
@@ -98,22 +106,41 @@ def main():
         print("\n[3] Checking get_state() ...")
         state = controller.get_state().wait()[0]
 
-        check("tcp_pose shape (7,)", state.tcp_pose.shape == (7,),
-              f"got {state.tcp_pose.shape}")
-        check("tcp_vel shape (6,)", state.tcp_vel.shape == (6,),
-              f"got {state.tcp_vel.shape}")
-        check("arm_joint_position shape (6,)",
-              state.arm_joint_position.shape == (6,),
-              f"got {state.arm_joint_position.shape}")
-        check("arm_joint_velocity shape (6,)",
-              state.arm_joint_velocity.shape == (6,),
-              f"got {state.arm_joint_velocity.shape}")
-        check("tcp_force shape (3,)", state.tcp_force.shape == (3,),
-              f"got {state.tcp_force.shape}")
-        check("tcp_torque shape (3,)", state.tcp_torque.shape == (3,),
-              f"got {state.tcp_torque.shape}")
-        check("arm_jacobian shape (6, 6)", state.arm_jacobian.shape == (6, 6),
-              f"got {state.arm_jacobian.shape}")
+        check(
+            "tcp_pose shape (7,)",
+            state.tcp_pose.shape == (7,),
+            f"got {state.tcp_pose.shape}",
+        )
+        check(
+            "tcp_vel shape (6,)",
+            state.tcp_vel.shape == (6,),
+            f"got {state.tcp_vel.shape}",
+        )
+        check(
+            "arm_joint_position shape (6,)",
+            state.arm_joint_position.shape == (6,),
+            f"got {state.arm_joint_position.shape}",
+        )
+        check(
+            "arm_joint_velocity shape (6,)",
+            state.arm_joint_velocity.shape == (6,),
+            f"got {state.arm_joint_velocity.shape}",
+        )
+        check(
+            "tcp_force shape (3,)",
+            state.tcp_force.shape == (3,),
+            f"got {state.tcp_force.shape}",
+        )
+        check(
+            "tcp_torque shape (3,)",
+            state.tcp_torque.shape == (3,),
+            f"got {state.tcp_torque.shape}",
+        )
+        check(
+            "arm_jacobian shape (6, 6)",
+            state.arm_jacobian.shape == (6, 6),
+            f"got {state.arm_jacobian.shape}",
+        )
         check("tcp_pose has no NaN", not np.any(np.isnan(state.tcp_pose)))
         check("arm_jacobian has no NaN", not np.any(np.isnan(state.arm_jacobian)))
 
@@ -138,7 +165,9 @@ def main():
         if not args.yes:
             print("\n--- About to send joint motion commands to the robot ---")
             print("  Ramp: J1 → 0.3 rad, J3 → 0.3 rad, all → 0 (2 s each)")
-            print("  Verify the arm is at its mechanical home and the workspace is clear.")
+            print(
+                "  Verify the arm is at its mechanical home and the workspace is clear."
+            )
             try:
                 input("  Press ENTER to continue, or Ctrl+C to abort... ")
             except KeyboardInterrupt:
@@ -159,16 +188,19 @@ def main():
                 time.sleep(step_dt)
             state_after = controller.get_state().wait()[0]
             max_err = np.max(np.abs(state_after.arm_joint_position - target_q))
-            check(f"{label} (max_err={max_err:.4f})", max_err < 0.1,
-                  f"actual={np.round(state_after.arm_joint_position, 4)}")
+            check(
+                f"{label} (max_err={max_err:.4f})",
+                max_err < 0.1,
+                f"actual={np.round(state_after.arm_joint_position, 4)}",
+            )
             print(f"  Joint positions: {np.round(state_after.arm_joint_position, 4)}")
 
         # Small motion on joints 1 and 3 individually, holding previous positions.
         target = np.zeros(6)
         for j in [0, 2]:
             target[j] = 0.3
-            print(f"\n[4.{j+1}] Moving J{j+1} to 0.3 rad ...")
-            ramp_to(f"J{j+1} reached 0.3 rad", target.copy())
+            print(f"\n[4.{j + 1}] Moving J{j + 1} to 0.3 rad ...")
+            ramp_to(f"J{j + 1} reached 0.3 rad", target.copy())
 
         # Return to zero.
         print("\n[4.3] Moving all joints back to zero ...")
@@ -181,9 +213,11 @@ def main():
 
         state_after_reset = controller.get_state().wait()[0]
         max_error = np.max(np.abs(state_after_reset.arm_joint_position))
-        check(f"All joints near zero after reset (max_err={max_error:.4f})",
-              max_error < 0.1,
-              f"positions={np.round(state_after_reset.arm_joint_position, 4)}")
+        check(
+            f"All joints near zero after reset (max_err={max_error:.4f})",
+            max_error < 0.1,
+            f"positions={np.round(state_after_reset.arm_joint_position, 4)}",
+        )
         print(f"  Joint positions: {np.round(state_after_reset.arm_joint_position, 4)}")
 
         # ── 6. Gripper ───────────────────────────────────────────────────────
@@ -199,8 +233,10 @@ def main():
             controller.close_gripper().wait()
             time.sleep(1.5)
             state_closed = controller.get_state().wait()[0]
-            check("Gripper reports closed after close_gripper()",
-                  not state_closed.gripper_open)
+            check(
+                "Gripper reports closed after close_gripper()",
+                not state_closed.gripper_open,
+            )
             print(f"  Gripper position: {state_closed.gripper_position:.4f} rad")
 
             controller.open_gripper().wait()

@@ -70,60 +70,7 @@ The controller node and the training/rollout node(s) should be set up with diffe
 Robot Controller Node
 ~~~~~~~~~~~~~~~~~~~~~~
 
-1. CAN Interface Initialization
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-The CAN bus must be initialized before using the robot.
-The ``gim_arm_control`` SDK provides a convenience script, or you can run the commands manually.
-
-Using the script from the ``gim_arm_control`` repository:
-
-.. code:: bash
-
-   bash sh/init_can.sh can0
-
-Or manually:
-
-.. code:: bash
-
-   sudo ip link set can0 type can bitrate 1000000 dbitrate 5000000 fd on
-   sudo ip link set can0 txqueuelen 1000
-   sudo ip link set can0 up
-
-This sets a 1 Mbps standard bitrate and 5 Mbps CAN FD data bitrate.
-
-.. warning::
-
-  The CAN interface must be re-initialized after every system reboot.
-  You can verify the interface is up with:
-
-  .. code:: bash
-
-     ip link show can0
-
-2. Motor Zero Calibration
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Before first use (or after replacing a motor), you must calibrate the motor zero positions.
-This sets the current physical position as the zero reference for Damiao motors.
-
-From the ``gim_arm_control`` repository:
-
-.. code:: bash
-
-   # Zero a single motor (CAN ID in hex)
-   bash sh/set_zero.sh can0 001
-
-   # Zero all motors (001-008)
-   bash sh/set_zero.sh can0 --all
-
-.. warning::
-
-  Calibration should only be done with the arm in its mechanical home position.
-  Incorrect calibration can cause the arm to move unexpectedly.
-  Requires ``can-utils`` (install with ``sudo apt install can-utils``).
-
-3. Installation
+1. Installation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 a. Clone RLinf Repository
@@ -150,7 +97,8 @@ c. Install gim_arm_control SDK
 ________________________________
 
 The ``gim_arm_control`` package provides the low-level CAN communication driver and Python bindings
-for controlling the GimArm robot.
+for controlling the GimArm robot. It also ships the helper shell scripts used in the next steps
+(``sh/init_can.sh``, ``sh/set_zero.sh``), so install it before proceeding.
 
 .. code:: bash
 
@@ -175,6 +123,60 @@ This builds the C++ core via CMake and installs Python bindings using nanobind.
    .. code:: bash
 
       pip install -e ".[pin270]"
+
+2. CAN Interface Initialization
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The CAN bus must be initialized before using the robot.
+The ``gim_arm_control`` SDK (installed in the previous step) provides a convenience script,
+or you can run the commands manually.
+
+Using the script from the ``gim_arm_control`` repository:
+
+.. code:: bash
+
+   bash sh/init_can.sh can0
+
+Or manually:
+
+.. code:: bash
+
+   sudo ip link set can0 type can bitrate 1000000 dbitrate 5000000 fd on
+   sudo ip link set can0 txqueuelen 1000
+   sudo ip link set can0 up
+
+This sets a 1 Mbps standard bitrate and 5 Mbps CAN FD data bitrate.
+
+.. warning::
+
+  The CAN interface must be re-initialized after every system reboot.
+  You can verify the interface is up with:
+
+  .. code:: bash
+
+     ip link show can0
+
+3. Motor Zero Calibration
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Before first use (or after replacing a motor), you must calibrate the motor zero positions.
+This sets the current physical position as the zero reference for Damiao motors.
+
+From the ``gim_arm_control`` repository:
+
+.. code:: bash
+
+   # Zero a single motor (CAN ID in hex)
+   bash sh/set_zero.sh can0 001
+
+   # Zero all motors (001-008)
+   bash sh/set_zero.sh can0 --all
+
+.. warning::
+
+  Calibration should only be done with the arm in its mechanical home position.
+  Incorrect calibration can cause the arm to move unexpectedly.
+  Requires ``can-utils`` (install with ``sudo apt install can-utils``).
 
 Training/Rollout Nodes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -399,6 +399,19 @@
       </p>
     </div>
 
+    <!-- TODO: 待 GimArm peg-insertion 的图片/视频上传到 RLinf/misc 后替换下方 src
+         （PR #1016 中 zanghz21 的评审意见）。 -->
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/gim_arm.jpg"
+           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="gim_arm.html" style="text-decoration: underline; color: blue;">
+          <b>GimArm 真机强化学习</b>
+        </a><br>
+        GimArm 六自由度机械臂 + peg-insertion 任务，通过 SocketCAN 通信，并基于 Pinocchio 做正运动学
+      </p>
+    </div>
+
     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
       <img src="https://github.com/RLinf/misc/raw/main/pic/xsquare_turtle2_arm_small.jpg"
            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />

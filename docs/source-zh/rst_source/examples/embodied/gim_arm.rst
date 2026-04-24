@@ -62,60 +62,7 @@ reset 与奖励逻辑：
 机器人控制节点
 ~~~~~~~~~~~~~~~~~~~~~~
 
-1. CAN 接口初始化
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-CAN 总线需要在使用机械臂之前完成初始化。
-``gim_arm_control`` SDK 提供了方便脚本，或者也可以手动执行相关命令。
-
-使用 ``gim_arm_control`` 仓库自带的脚本：
-
-.. code:: bash
-
-   bash sh/init_can.sh can0
-
-或者手动执行：
-
-.. code:: bash
-
-   sudo ip link set can0 type can bitrate 1000000 dbitrate 5000000 fd on
-   sudo ip link set can0 txqueuelen 1000
-   sudo ip link set can0 up
-
-命令将标准 bitrate 设为 1 Mbps、CAN FD 数据 bitrate 设为 5 Mbps。
-
-.. warning::
-
-  每次系统重启后，CAN 接口都需要重新初始化。
-  可以通过以下命令确认接口是否已经启用：
-
-  .. code:: bash
-
-     ip link show can0
-
-2. 电机零点校准
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-首次使用（或更换电机后）需要对达妙电机进行零点校准。
-校准会把电机当前的物理位置设为零参考点。
-
-通过 ``gim_arm_control`` 仓库的脚本：
-
-.. code:: bash
-
-   # 对单个电机进行零点校准（CAN ID 使用十六进制）
-   bash sh/set_zero.sh can0 001
-
-   # 对所有电机（001-008）进行零点校准
-   bash sh/set_zero.sh can0 --all
-
-.. warning::
-
-  校准必须在机械臂处于机械零位时进行。
-  错误的校准会导致机械臂执行意料之外的动作。
-  该操作依赖 ``can-utils``（使用 ``sudo apt install can-utils`` 安装）。
-
-3. 安装
+1. 安装
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 a. 克隆 RLinf 仓库
@@ -142,6 +89,8 @@ c. 安装 gim_arm_control SDK
 ________________________________
 
 ``gim_arm_control`` 包提供了用于控制 GimArm 机械臂的底层 CAN 通信驱动与 Python 绑定。
+它同时附带了下一步需要使用的辅助脚本（``sh/init_can.sh``、``sh/set_zero.sh``），
+因此请先完成本步骤的安装再继续。
 
 .. code:: bash
 
@@ -166,6 +115,59 @@ ________________________________
    .. code:: bash
 
       pip install -e ".[pin270]"
+
+2. CAN 接口初始化
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+CAN 总线需要在使用机械臂之前完成初始化。
+``gim_arm_control`` SDK（在上一步中安装）提供了方便脚本，或者也可以手动执行相关命令。
+
+使用 ``gim_arm_control`` 仓库自带的脚本：
+
+.. code:: bash
+
+   bash sh/init_can.sh can0
+
+或者手动执行：
+
+.. code:: bash
+
+   sudo ip link set can0 type can bitrate 1000000 dbitrate 5000000 fd on
+   sudo ip link set can0 txqueuelen 1000
+   sudo ip link set can0 up
+
+命令将标准 bitrate 设为 1 Mbps、CAN FD 数据 bitrate 设为 5 Mbps。
+
+.. warning::
+
+  每次系统重启后，CAN 接口都需要重新初始化。
+  可以通过以下命令确认接口是否已经启用：
+
+  .. code:: bash
+
+     ip link show can0
+
+3. 电机零点校准
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+首次使用（或更换电机后）需要对达妙电机进行零点校准。
+校准会把电机当前的物理位置设为零参考点。
+
+通过 ``gim_arm_control`` 仓库的脚本：
+
+.. code:: bash
+
+   # 对单个电机进行零点校准（CAN ID 使用十六进制）
+   bash sh/set_zero.sh can0 001
+
+   # 对所有电机（001-008）进行零点校准
+   bash sh/set_zero.sh can0 --all
+
+.. warning::
+
+  校准必须在机械臂处于机械零位时进行。
+  错误的校准会导致机械臂执行意料之外的动作。
+  该操作依赖 ``can-utils``（使用 ``sudo apt install can-utils`` 安装）。
 
 训练/采样节点
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
