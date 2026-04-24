@@ -1,0 +1,61 @@
+env_type: mujoco_warp
+
+seed: 0
+total_num_envs: null
+group_size: 1
+
+auto_reset: True
+ignore_terminations: False
+use_fixed_reset_state_ids: False
+
+max_steps_per_rollout_epoch: 50
+max_episode_steps: 50
+
+use_rel_reward: False
+reward_coef: 1.0
+is_eval: False
+
+video_cfg:
+  save_video: True
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+init_params:
+  task_name: cube_pick
+  # MuJoCo-Warp physics parameters
+  # timestep=0.005s × n_substeps=8 → 0.04s control period
+  # (matches MuJoCo/Genesis CubePick control period)
+  timestep: 0.005
+  n_substeps: 8
+  # Settle for 5 control steps = 0.2s (matches mujoco_cubepick.yaml)
+  reset_settle_control_steps: 5
+  lock_eef_orientation: true
+  action_pos_scale: 0.10
+  action_rot_scale: 0.35
+  ik_damping: 0.1
+  ik_integration_dt: 0.04
+  ik_max_dq: 5.0
+  # IK gains restored to 0.95 (session 4 fix; lower gains caused wrist lag).
+  ik_pos_gain: 0.95
+  ik_rot_gain: 0.95
+  # Task parameters
+  success_height: 0.15
+  cube_x_range:
+    - 0.45
+    - 0.65
+  cube_y_range:
+    - -0.25
+    - 0.25
+  # Camera for video generation (matches mujoco_cubepick.yaml)
+  camera_height: 256
+  camera_width: 256
+  camera_eye:
+    - 1.45
+    - 0.0
+    - 0.8
+  camera_lookat:
+    - 0.6
+    - 0.0
+    - 0.16
+  camera_fov: 55
+  # Path to Franka Panda MJCF — defaults to assets/franka_emika_panda/panda.xml

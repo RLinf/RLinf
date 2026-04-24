@@ -1,0 +1,33 @@
+<mujoco model="cartpole">
+  <compiler angle="radian" autolimits="true"/>
+
+  <default>
+    <joint damping="0.01" armature="0.0"/>
+    <!-- No default density: each geom sets its own to get the correct mass
+         in both MuJoCo (Genesis) and PhysX (SAPIEN/ManiSkill).
+         SAPIEN ignores geom mass= attributes and uses density instead. -->
+    <geom friction="0.1 0.005 0.0001"/>
+  </default>
+
+  <worldbody>
+    <!-- Cart: box sliding along x-axis -->
+    <body name="cart" pos="0 0 0.1">
+      <joint name="slider" type="slide" axis="1 0 0" range="-2.4 2.4" damping="0.01"/>
+      <!-- density = 1.0 kg / (0.6*0.4*0.2 m^3) = 20.833 kg/m^3 → mass = 1.0 kg -->
+      <geom name="cart_geom" type="box" size="0.3 0.2 0.1" rgba="0.8 0.6 0.4 1" density="20.833"/>
+
+      <!-- Pole: cylinder hinged at top of cart -->
+      <body name="pole" pos="0 0 0.1">
+        <joint name="hinge" type="hinge" axis="0 1 0" damping="0.001"/>
+        <!-- density = 80.1 kg/m^3 → mass ≈ 0.1 kg in both MuJoCo and SAPIEN
+             (MuJoCo: pi*0.02^2*1.0 * 80.1 = 0.1007 kg;
+              SAPIEN: 0.0012486 m^3 * 80.1 = 0.100 kg) -->
+        <geom name="pole_geom" type="cylinder" size="0.02 0.5" fromto="0 0 0 0 0 1" rgba="0.9 0.1 0.1 1" density="80.1"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <motor name="cart_motor" joint="slider" ctrlrange="-3 3"/>
+  </actuator>
+</mujoco>

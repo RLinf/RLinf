@@ -1,0 +1,96 @@
+<mujoco model="panda_hand">
+  <compiler angle="radian" meshdir="assets" autolimits="true"/>
+
+  <default>
+    <default class="panda">
+      <material specular="0.5" shininess="0.25"/>
+      <default class="finger">
+        <joint axis="0 1 0" type="slide" range="0 0.04"/>
+      </default>
+      <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2"/>
+      </default>
+      <default class="collision">
+        <geom group="3" type="mesh" contype="0" conaffinity="0"/>
+        <default class="primitive_collision">
+          <geom group="3" type="box" contype="0" conaffinity="0"
+           condim="3" solimp="0.99 0.995 0.01" solref="0.01 1" friction="1 0.005 0.0001"/>
+          <default class="fingertip_pad_collision_1">
+            <geom type="box" size="0.011 0.0075 0.01" pos="0 0.0185 0.011"/>
+          </default>
+          <default class="fingertip_pad_collision_2">
+            <geom type="box" size="0.011 0.0044 0.0019" pos="0 0.0068 0.0022"/>
+          </default>
+          <default class="fingertip_pad_collision_3">
+            <geom type="box" size="0.00875 0.0035 0.01175" pos="0 0.0159 0.02835" quat="1 0.25 0 0"/>
+          </default>
+          <default class="fingertip_pad_collision_4">
+            <geom type="box" size="0.00875 0.0076 0.00825" pos="0 0.00758 0.04525" conaffinity="3"/>
+          </default>
+        </default>
+      </default>
+    </default>
+  </default>
+
+  <asset>
+    <material class="panda" name="white" rgba="1 1 1 1"/>
+    <material class="panda" name="off_white" rgba="0.901961 0.921569 0.929412 1"/>
+    <material class="panda" name="black" rgba="0.25 0.25 0.25 1"/>
+
+    <mesh name="hand_c" file="hand.stl"/>
+    <mesh file="hand_0.obj"/>
+    <mesh file="hand_1.obj"/>
+    <mesh file="hand_2.obj"/>
+    <mesh file="hand_3.obj"/>
+    <mesh file="hand_4.obj"/>
+    <mesh file="finger_0.obj"/>
+    <mesh file="finger_1.obj"/>
+  </asset>
+
+  <worldbody>
+    <body name="hand" pos="0 0 0.107" quat="0.9238795 0 0 -0.3826834">
+      <inertial mass="0.73" pos="-0.01 0 0.03" diaginertia="0.001 0.0025 0.0017"/>
+      <geom mesh="hand_0" material="off_white" class="visual"/>
+      <geom mesh="hand_1" material="black" class="visual"/>
+      <geom mesh="hand_2" material="black" class="visual"/>
+      <geom mesh="hand_3" material="white" class="visual"/>
+      <geom mesh="hand_4" material="off_white" class="visual"/>
+      <geom mesh="hand_c" class="collision"/>
+      <geom name="hand_capsule" type="capsule"
+       class="collision" conaffinity="1" size="0.04 0.06"
+       quat="1 1 0 0" pos="0 0 0.03"/>
+      <site name="gripper" pos="0 0 0.1"/>
+      <body name="left_finger" pos="0 0 0.0584">
+        <inertial mass="0.015" pos="0 0 0" diaginertia="2.375e-6 2.375e-6 7.5e-7"/>
+        <joint name="finger_joint1" class="finger" damping="10"/>
+        <geom mesh="finger_0" material="off_white" class="visual"/>
+        <geom mesh="finger_1" material="black" class="visual"/>
+        <geom mesh="finger_0" class="collision"/>
+        <geom class="fingertip_pad_collision_1"/>
+        <geom class="fingertip_pad_collision_2"/>
+        <geom class="fingertip_pad_collision_3"/>
+        <geom name="left_finger_pad" class="fingertip_pad_collision_4"/>
+      </body>
+      <body name="right_finger" pos="0 0 0.0584" quat="0 0 0 1">
+        <inertial mass="0.015" pos="0 0 0" diaginertia="2.375e-6 2.375e-6 7.5e-7"/>
+        <joint name="finger_joint2" class="finger" damping="10"/>
+        <geom mesh="finger_0" material="off_white" class="visual"/>
+        <geom mesh="finger_1" material="black" class="visual"/>
+        <geom mesh="finger_0" class="collision"/>
+        <geom class="fingertip_pad_collision_1"/>
+        <geom class="fingertip_pad_collision_2"/>
+        <geom class="fingertip_pad_collision_3"/>
+        <geom name="right_finger_pad" class="fingertip_pad_collision_4"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <equality>
+    <joint joint1="finger_joint1" joint2="finger_joint2" solimp="0.95 0.99 0.001" solref="0.005 1"/>
+  </equality>
+
+  <actuator>
+    <general class="panda" name="actuator8" joint="finger_joint1"
+     ctrlrange="0 0.04" gainprm="350 0 0" biasprm="0 -350 -10" forcerange="-200 200"/>
+  </actuator>
+</mujoco>
