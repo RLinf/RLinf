@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from rlinf.envs.realworld.common.wrappers import apply_dual_pose_action_wrappers
+from rlinf.envs.realworld.franka.utils import construct_adjoint_matrix
 
 
 class DummyDualPoseEnv(gym.Env):
@@ -101,16 +102,22 @@ def test_dual_pose_builder_relative_mode_applies_relative_frame_by_default():
     wrapped = apply_dual_pose_action_wrappers(env, {"action_mode": "relative_pose"})
 
     # reset() initialises the adjoint matrices inside DualRelativeFrame.
-    wrapped.reset()
+    reset_obs, _ = wrapped.reset()
+    np.testing.assert_allclose(
+        reset_obs["state"]["tcp_pose"], np.zeros((12,), dtype=np.float32), atol=1e-6
+    )
 
     action = np.full((14,), 0.5, dtype=np.float32)
     obs, *_ = wrapped.step(action)
 
     assert wrapped.action_space.low[0] == -1.0
     assert env.last_mode == "relative_pose"
-    # The action reaching the env has been transformed by DualRelativeFrame;
-    # we only verify shape and routing, not the exact transformed values.
-    assert env.last_action.shape == (14,)
+    expected_action = action.copy()
+    reset_pose = env._obs()["state"]["tcp_pose"]
+    expected_action[:6] = construct_adjoint_matrix(reset_pose[:7]) @ action[:6]
+    expected_action[7:13] = construct_adjoint_matrix(reset_pose[7:]) @ action[7:13]
+    np.testing.assert_allclose(env.last_action, expected_action)
+    assert not np.allclose(env.last_action, action)
     assert obs["state"]["tcp_pose"].shape == (12,)
 
 
