@@ -96,7 +96,9 @@ def load_spans(trace_dir: str) -> list[Span]:
                 spans.append(
                     Span(
                         worker_type=str(worker_type),
-                        group_name=group_name if group_name is None else str(group_name),
+                        group_name=group_name
+                        if group_name is None
+                        else str(group_name),
                         rank=rank,
                         pid=pid,
                         hostname=hostname if hostname is None else str(hostname),
@@ -180,7 +182,9 @@ def _try_plot_plotly(
         hover_data=["worker_type", "rank", "stage_id", "epoch", "chunk_step_idx"],
         title=title or "Pipeline overlap (ms, relative)",
     )
-    fig.update_traces(text=df["Label"], textposition="inside", insidetextanchor="middle")
+    fig.update_traces(
+        text=df["Label"], textposition="inside", insidetextanchor="middle"
+    )
     fig.update_yaxes(autorange="reversed")
     fig.update_xaxes(title="ms (relative)")
     # Widen figure to make inside labels readable, without changing time ordering.
@@ -235,7 +239,7 @@ def _plot_pure_html(
         stage_disp = s.stage_id + 1
         hover = (
             f"{s.worker_type} r{s.rank} stage{stage_disp} epoch={s.epoch} "
-            f"chunk={s.chunk_step_idx} op={s.op} dur_ms={(s.end_ns - s.start_ns)/1e6:.3f}"
+            f"chunk={s.chunk_step_idx} op={s.op} dur_ms={(s.end_ns - s.start_ns) / 1e6:.3f}"
         )
         bar_elems.append(
             f'<rect x="{x:.2f}" y="{y}" width="{w:.2f}" height="{bar_h}" '
@@ -245,7 +249,7 @@ def _plot_pure_html(
         label = f"c{s.chunk_step_idx}/s{stage_disp}"
         if w >= 70:
             text_elems.append(
-                f'<text x="{x + w/2:.2f}" y="{y + bar_h/2 + 4}" text-anchor="middle" '
+                f'<text x="{x + w / 2:.2f}" y="{y + bar_h / 2 + 4}" text-anchor="middle" '
                 f'font-family="monospace" font-size="11" fill="#111" opacity="0.9">{label}</text>'
             )
 
@@ -275,11 +279,11 @@ def _plot_pure_html(
     svg = f"""<svg width="{chart_w}" height="{chart_h}" xmlns="http://www.w3.org/2000/svg">
   <rect x="0" y="0" width="{chart_w}" height="{chart_h}" fill="white"></rect>
   <text x="10" y="18" font-family="sans-serif" font-size="14" fill="#111">{(title or "Pipeline overlap (ms, relative)")}</text>
-  {''.join(legend)}
+  {"".join(legend)}
   <line x1="{label_w}" y1="30" x2="{label_w}" y2="{chart_h - 10}" stroke="#ddd" stroke-width="1"></line>
-  {''.join(label_elems)}
-  {''.join(bar_elems)}
-  {''.join(text_elems)}
+  {"".join(label_elems)}
+  {"".join(bar_elems)}
+  {"".join(text_elems)}
 </svg>"""
 
     html = f"""<!doctype html>
@@ -315,7 +319,7 @@ def _plot_matplotlib(spans: list[Span], out_path: str, title: str | None) -> Non
 
     # Group by op for legend consistency.
     ops = sorted({s.op for s in spans})
-    colors = {op: None for op in ops}
+    colors = dict.fromkeys(ops)
 
     for s in spans:
         y = y_index[s.y_label]
@@ -445,4 +449,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

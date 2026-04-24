@@ -33,15 +33,15 @@ from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.wrappers import RecordVideo
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.comm_mapping import CommMapper
-from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.memory_monitor import spawn_monitor
+from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.nested_dict_process import (
     copy_dict_tensor,
     split_dict,
     update_nested_cfg,
 )
-from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.utils.pipeline_trace import PipelineTracer
+from rlinf.utils.placement import HybridComponentPlacement
 
 
 class EnvWorker(Worker):
@@ -406,9 +406,13 @@ class EnvWorker(Worker):
         env_info = {}
 
         with self.worker_timer(f"chunk_step_{stage_id}"):
-            obs_list, chunk_rewards, chunk_terminations, chunk_truncations, infos_list = (
-                self.env_list[stage_id].chunk_step(chunk_actions)
-            )
+            (
+                obs_list,
+                chunk_rewards,
+                chunk_terminations,
+                chunk_truncations,
+                infos_list,
+            ) = self.env_list[stage_id].chunk_step(chunk_actions)
         if isinstance(obs_list, (list, tuple)):
             extracted_obs = obs_list[-1] if obs_list else None
         if isinstance(infos_list, (list, tuple)):

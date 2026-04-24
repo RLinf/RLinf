@@ -16,8 +16,8 @@ from abc import ABC
 from enum import Enum
 from typing import Optional
 
-from node import ComponentNode
 from fitter import DataFitter
+from node import ComponentNode
 from util import get_global_config
 
 
@@ -40,9 +40,9 @@ class PlacementStrategy(Enum):
       ranges.
     """
 
-    COLLOCATED = "collocated" # All components share the same set of GPUs.
-    DISAGGREGATED = "disaggregated" # Each component has its own dedicated set of GPUs.
-    HYBRID = "hybrid" # Hybrid placement mode that allows components to run on any sets of GPUs.
+    COLLOCATED = "collocated"  # All components share the same set of GPUs.
+    DISAGGREGATED = "disaggregated"  # Each component has its own dedicated set of GPUs.
+    HYBRID = "hybrid"  # Hybrid placement mode that allows components to run on any sets of GPUs.
 
 
 class ScheduleResult(ABC):
@@ -91,7 +91,10 @@ class ScheduleResult(ABC):
         config = get_global_config()
 
         # In Reasoning task, mixed GPU sharing is not supported.
-        if config.task_type == "reasoning" and res.placement_strategy == PlacementStrategy.HYBRID:
+        if (
+            config.task_type == "reasoning"
+            and res.placement_strategy == PlacementStrategy.HYBRID
+        ):
             return None
 
         # Embodied hybrid pipeline: env / env_rollout may use disjoint GPU blocks while
@@ -196,7 +199,7 @@ class CollocatedScheduleResult(ScheduleResult):
                 **sink_res.placement,
             },
             cost_per_group_batch=None,
-            total_cost= self.source_res.total_cost + self.sink_res.total_cost,
+            total_cost=self.source_res.total_cost + self.sink_res.total_cost,
         )
 
     def get_cost_per_group_batch(self, is_source: bool) -> float:
@@ -265,9 +268,13 @@ class DisaggregatedScheduleResult(ScheduleResult):
             sink_has_env = "env" in sink_roles
             source_has_rollout = "env_rollout" in source_roles
             sink_has_rollout = "env_rollout" in sink_roles
-            return (source_has_env ^ sink_has_env) and (source_has_rollout ^ sink_has_rollout)
+            return (source_has_env ^ sink_has_env) and (
+                source_has_rollout ^ sink_has_rollout
+            )
 
-        def _gpus_for_role(role: str, source_roles: set[str], sink_roles: set[str]) -> int:
+        def _gpus_for_role(
+            role: str, source_roles: set[str], sink_roles: set[str]
+        ) -> int:
             # In this model, each side's `total_gpu_num` is the GPU allocation for
             # that sub-workflow.
             if role in source_roles:
@@ -292,7 +299,9 @@ class DisaggregatedScheduleResult(ScheduleResult):
             env_batch_size = total_envs // env_gpus // stage_num
             rollout_batch_size = total_envs // rollout_gpus // stage_num
 
-            profile_time = getattr(config, "profile_time", getattr(config, "profile_data", None))
+            profile_time = getattr(
+                config, "profile_time", getattr(config, "profile_data", None)
+            )
             if profile_time is None:
                 raise ValueError("Missing profile_time for placement.")
             env_profiler = DataFitter(profile_time.env_profile_time)
@@ -300,14 +309,17 @@ class DisaggregatedScheduleResult(ScheduleResult):
             env_stage_cost = env_profiler.get_value(env_batch_size)
             rollout_stage_cost = rollout_profiler.get_value(rollout_batch_size)
             self.warmup_time = env_stage_cost + rollout_stage_cost
-            return max(env_stage_cost, rollout_stage_cost) * (stage_num - self.warmup_group_num) + self.warmup_time
+            return (
+                max(env_stage_cost, rollout_stage_cost)
+                * (stage_num - self.warmup_group_num)
+                + self.warmup_time
+            )
 
         source_roles = _roles(self.source_res)
         sink_roles = _roles(self.sink_res)
 
         # Warmup/drain for embodied pipeline is treated as negligible in this model.
         self.warmup_time = 0.0
-
 
         # Generate-internal cut: prefer the stage-aware model only for env<->env_rollout cuts.
         if _is_env_rollout_cut(source_roles, sink_roles):
@@ -320,10 +332,10 @@ class DisaggregatedScheduleResult(ScheduleResult):
                 total_envs=_total_envs(),
             )
             return stable_cost, stable_cost
-        
+
         if _has_actor_cut(source_roles, sink_roles):
             return None, None
-            
+
         return None, None
 
     def _get_disaggregated_time_reasoning(self) -> tuple[float, float]:

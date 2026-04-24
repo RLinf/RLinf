@@ -26,7 +26,6 @@ from node import (
 )
 from placement import (
     PlacementStrategy,
-    ScheduleMode,
     ScheduleResult,
     SingleNodeScheduleResult,
 )
@@ -186,7 +185,11 @@ class AutoPlacementWorker:
             generate_cost = 0.0
             actor_cost = component_costs.get("actor", 0.0)
 
-        stage_info = _get_embodied_stage_cost_info(res) if self.config.task_type == "embodied" else {}
+        stage_info = (
+            _get_embodied_stage_cost_info(res)
+            if self.config.task_type == "embodied"
+            else {}
+        )
         _CANDIDATE_RESULTS.append(
             {
                 "mode": res.placement_strategy.value,
@@ -216,7 +219,9 @@ def get_component_predicted_costs(
     return component_costs
 
 
-def _get_embodied_stage_cost_info(schedule_result: ScheduleResult) -> dict[str, float | int | None]:
+def _get_embodied_stage_cost_info(
+    schedule_result: ScheduleResult,
+) -> dict[str, float | int | None]:
     """Return per-stage env counts and fitted costs for embodied candidates.
 
     This mirrors the stage-aware model used in `placement.py` for env<->env_rollout cuts,
@@ -352,16 +357,15 @@ def main(cfg):
         return None
 
     res = (
-            ", ".join(
-                [
-                    node.role
-                    for node in schedule_result.placement
-                    if node.role != "inference"
-                ]
-            )
-            + " : all"
+        ", ".join(
+            [
+                node.role
+                for node in schedule_result.placement
+                if node.role != "inference"
+            ]
         )
-
+        + " : all"
+    )
 
     logging.info("=" * 50)
     logging.info("Best placement for this task is:\n%s", res)

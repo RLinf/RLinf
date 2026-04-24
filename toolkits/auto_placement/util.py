@@ -103,7 +103,9 @@ def init_global_config_env(config, component_placement, cluster) -> None:
         total_gpus=cluster.num_accelerators,
         env_num=total_num_envs,
         pipeline_stage_num=config.rollout.pipeline_stage_num,
-        profile_time=getattr(config, "profile_time", getattr(config, "profile_data", None)),
+        profile_time=getattr(
+            config, "profile_time", getattr(config, "profile_data", None)
+        ),
         profile_memory=getattr(config, "profile_memory", None),
         rollout_batch_size=1,  # For actor node init
         group_size=1,  # For actor node init
@@ -393,9 +395,7 @@ def extract_from_tensorboard():
                 total_env_vals = _vals_in_window(
                     total_env_events, t_start, t_end, inclusive_end=True
                 )
-                total_num_envs = (
-                    int(total_env_vals[-1]) if total_env_vals else None
-                )
+                total_num_envs = int(total_env_vals[-1]) if total_env_vals else None
             env_vals = _vals_in_window(
                 env_cost_events, t_start, t_end, inclusive_end=True
             )
@@ -417,20 +417,22 @@ def extract_from_tensorboard():
                     env_vals
                 )
             if rollout_vals:
-                rollout_time_profile_data[env_num_per_instance] = sum(rollout_vals) / len(
+                rollout_time_profile_data[env_num_per_instance] = sum(
                     rollout_vals
-                )
+                ) / len(rollout_vals)
             if actor_vals and total_num_envs is not None:
-                actor_time_profile_data[total_num_envs] = sum(actor_vals) / len(actor_vals)
+                actor_time_profile_data[total_num_envs] = sum(actor_vals) / len(
+                    actor_vals
+                )
 
             if env_mem_util_vals:
-                env_memory_util_profile_data[env_num_per_instance] = sum(env_mem_util_vals) / len(
+                env_memory_util_profile_data[env_num_per_instance] = sum(
                     env_mem_util_vals
-                )
+                ) / len(env_mem_util_vals)
             if rollout_mem_util_vals:
-                rollout_memory_util_profile_data[env_num_per_instance] = sum(rollout_mem_util_vals) / len(
+                rollout_memory_util_profile_data[env_num_per_instance] = sum(
                     rollout_mem_util_vals
-                )
+                ) / len(rollout_mem_util_vals)
 
     profile_time: dict[str, dict[int, float]] = {}
     if env_time_profile_data:

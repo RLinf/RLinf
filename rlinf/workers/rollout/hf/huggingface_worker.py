@@ -31,8 +31,8 @@ from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, CollectiveGroupOptions, Worker
 from rlinf.utils.comm_mapping import CommMapper
 from rlinf.utils.memory_monitor import spawn_monitor
-from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.utils.pipeline_trace import PipelineTracer
+from rlinf.utils.placement import HybridComponentPlacement
 
 
 class MultiStepRolloutWorker(Worker):
@@ -345,7 +345,7 @@ class MultiStepRolloutWorker(Worker):
         ):
             return None
         with torch.no_grad():
-            with self.worker_timer(f"predict_bootstrap"):
+            with self.worker_timer("predict_bootstrap"):
                 actions, result = self.predict(final_obs)
             if "prev_values" in result and result["prev_values"] is not None:
                 final_values = result["prev_values"]
@@ -470,7 +470,7 @@ class MultiStepRolloutWorker(Worker):
             )
             with self.worker_timer(f"send_rollout_result_stage_{stage_id}"):
                 self.send_rollout_result(output_channel, rollout_result, mode="train")
-    
+
     async def generate(
         self,
         input_channel: Channel,

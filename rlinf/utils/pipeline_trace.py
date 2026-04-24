@@ -71,7 +71,9 @@ class PipelineTracer:
         enable_flag = bool(getattr(cfg_runner, "enable_pipeline_trace", False))
         trace_dir = getattr(cfg_runner, "trace_dir", None)
         enabled = enable_flag or bool(trace_dir)
-        return PipelineTraceConfig(enabled=enabled, trace_dir=str(trace_dir) if trace_dir else "")
+        return PipelineTraceConfig(
+            enabled=enabled, trace_dir=str(trace_dir) if trace_dir else ""
+        )
 
     @classmethod
     def from_worker(
@@ -95,7 +97,9 @@ class PipelineTracer:
         hostname = socket.gethostname()
         safe_group = (group_name or "unknown").replace("/", "_")
         safe_rank = "unknown" if rank is None else str(rank)
-        filename = f"trace_{worker_type}_{safe_group}_r{safe_rank}_pid{pid}_{hostname}.jsonl"
+        filename = (
+            f"trace_{worker_type}_{safe_group}_r{safe_rank}_pid{pid}_{hostname}.jsonl"
+        )
         trace_path = os.path.join(cfg.trace_dir, filename)
 
         static_fields = {
@@ -106,4 +110,3 @@ class PipelineTracer:
             "hostname": hostname,
         }
         return cls(enabled=True, trace_path=trace_path, static_fields=static_fields)
-

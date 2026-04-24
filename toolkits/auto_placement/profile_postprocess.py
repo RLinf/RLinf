@@ -58,7 +58,11 @@ def main() -> None:
 
     # Mirror profiling-time overrides (previously in modify_cfg_for_profiling()).
     with open_dict(cfg):
-        cfg.cluster.component_placement = {"actor": "all", "rollout": "all", "env": "all"}
+        cfg.cluster.component_placement = {
+            "actor": "all",
+            "rollout": "all",
+            "env": "all",
+        }
         cfg.env.train.total_num_envs = int(args.total_num_envs)
         cfg.runner.logger.per_worker_log = True
         cfg.rollout.pipeline_stage_num = 1
@@ -76,4 +80,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
