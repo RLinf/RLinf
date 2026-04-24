@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Relative-frame wrappers for dual-arm (14-dim tcp_pose) Franka environments.
+"""Relative-frame wrappers for dual-arm environments with 14D tcp_pose.
 
 These wrappers mirror :class:`RelativeFrame` and :class:`RelativeTargetFrame`
 but operate on the concatenated ``(14,)`` tcp_pose produced by
-:class:`DualFrankaEnv`.  Each arm's adjoint / homogeneous transform is
-computed independently.
+dual-arm real-world environments.  Each arm's adjoint / homogeneous transform
+is computed independently.
 """
 
 import gymnasium as gym
