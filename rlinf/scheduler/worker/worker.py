@@ -367,6 +367,7 @@ class Worker(metaclass=WorkerMeta):
         self._actor = None
         self._has_initialized = False
         self._timer_metrics: dict[str, float] = {}
+        self._memory_metrics: dict[str, float] = {}
         self._set_new_omegaconf_resolvers()
 
         # Load user-provided extension modules (e.g., for registering custom envs/models)
@@ -926,6 +927,19 @@ class Worker(metaclass=WorkerMeta):
         """Retrieve and clear all execution times."""
         metrics = dict(self._timer_metrics)
         self._timer_metrics.clear()
+        return metrics
+
+    def set_memory_metrics(self, metrics: dict[str, float]) -> None:
+        """Overwrite memory metrics buffer for this worker."""
+        if not hasattr(self, "_memory_metrics") or self._memory_metrics is None:
+            self._memory_metrics = {}
+        self._memory_metrics.update(metrics)
+
+    def pop_memory_metrics(self) -> dict[str, float]:
+        """Retrieve and clear all memory metrics."""
+        metrics = dict(getattr(self, "_memory_metrics", {}) or {})
+        if hasattr(self, "_memory_metrics") and self._memory_metrics is not None:
+            self._memory_metrics.clear()
         return metrics
 
     @contextmanager

@@ -74,12 +74,15 @@ def init_global_config_reasoning(config, component_placement) -> None:
 def init_global_config_env(config, component_placement, cluster) -> None:
     global _GLOBAL_CONFIG
 
-    # Use actor_profile_data (env_num_per_instance -> time).
-    actor_profile_cfg = OmegaConf.select(config, "profile_data.actor_profile_data")
+    # Use actor_profile_time (total_num_envs -> time). Prefer `profile_time.*`,
+    # fallback to legacy `profile_data.*` for backward compatibility.
+    actor_profile_cfg = OmegaConf.select(config, "profile_time.actor_profile_time")
+    if actor_profile_cfg is None:
+        actor_profile_cfg = OmegaConf.select(config, "profile_data.actor_profile_data")
     if not isinstance(actor_profile_cfg, DictConfig) or actor_profile_cfg == {}:
         raise ValueError(
-            "Missing profile_data.actor_profile_data. "
-            "Please run collect_profile to generate actor_profile_data."
+            "Missing profile_time.actor_profile_time (or legacy profile_data.actor_profile_data). "
+            "Please run collect_profile to generate profiling data."
         )
     actor_profile_data = OmegaConf.to_container(actor_profile_cfg, resolve=True)
     actor_profile_data = {int(k): float(v) for k, v in actor_profile_data.items()}
@@ -100,7 +103,8 @@ def init_global_config_env(config, component_placement, cluster) -> None:
         total_gpus=cluster.num_accelerators,
         env_num=total_num_envs,
         pipeline_stage_num=config.rollout.pipeline_stage_num,
-        profile_data=config.profile_data,
+        profile_time=getattr(config, "profile_time", getattr(config, "profile_data", None)),
+        profile_memory=getattr(config, "profile_memory", None),
         rollout_batch_size=1,  # For actor node init
         group_size=1,  # For actor node init
         n_minibatches=1,  # For actor node init
@@ -167,12 +171,19 @@ def get_valid_gpu_num_list(role: str) -> list[int]:
 
 def has_profile_data(cfg) -> bool:
     """Check if there is profile data in the config."""
-    if OmegaConf.select(cfg, "profile_data.actor_profile_data") is None:
+    if (
+        OmegaConf.select(cfg, "profile_time.actor_profile_time") is None
+        and OmegaConf.select(cfg, "profile_data.actor_profile_data") is None
+    ):
         return False
-    env_profile = OmegaConf.select(cfg, "profile_data.env_profile_data")
+    env_profile = OmegaConf.select(cfg, "profile_time.env_profile_time")
+    if env_profile is None:
+        env_profile = OmegaConf.select(cfg, "profile_data.env_profile_data")
     if not isinstance(env_profile, DictConfig) or env_profile == {}:
         return False
-    rollout_profile = OmegaConf.select(cfg, "profile_data.rollout_profile_data")
+    rollout_profile = OmegaConf.select(cfg, "profile_time.rollout_profile_time")
+    if rollout_profile is None:
+        rollout_profile = OmegaConf.select(cfg, "profile_data.rollout_profile_data")
     if not isinstance(rollout_profile, DictConfig) or rollout_profile == {}:
         return False
     return True
@@ -228,14 +239,22 @@ def update_yaml_with_profile_data(profile_data):
     with open(original_config_path, "r") as f:
         content = yaml.safe_load(f)
 
-    if "profile_data" not in content:
-        content["profile_data"] = {}
-    content["profile_data"].update(profile_data)
+    # New format: split time and memory.
+    profile_time = profile_data.get("profile_time", {})
+    profile_memory = profile_data.get("profile_memory", {})
+    if profile_time:
+        if "profile_time" not in content:
+            content["profile_time"] = {}
+        content["profile_time"].update(profile_time)
+    if profile_memory:
+        if "profile_memory" not in content:
+            content["profile_memory"] = {}
+        content["profile_memory"].update(profile_memory)
 
     with open(new_config_path, "w") as f:
         yaml.dump(content, f, default_flow_style=False, sort_keys=False)
 
-    logging.info(f"Updated profile_data in new file: {new_config_path}")
+    logging.info(f"Updated profile_time/profile_memory in new file: {new_config_path}")
 
 
 def log_env_num_instavg_to_tensorboard(cfg, env_num_per_instance: int) -> None:
@@ -304,6 +323,8 @@ def _load_scalars(run_dir: Path) -> dict[str, list[tuple[int, float]]]:
         "time/env/env_interact_step",
         "time/rollout/predict",
         "time/actor/run_training",
+        "env/memory/util",
+        "rollout/memory/util",
         "profile/env_num_per_instance",
         "profile/total_num_envs",
     ):
@@ -330,9 +351,13 @@ def extract_from_tensorboard():
         print(f"# No TensorBoard event files found under: {logdir}")
         return {}
 
-    env_profile_data: dict[int, float] = {}
-    rollout_profile_data: dict[int, float] = {}
-    actor_profile_data: dict[int, float] = {}
+    # Time profile data
+    env_time_profile_data: dict[int, float] = {}
+    rollout_time_profile_data: dict[int, float] = {}
+    actor_time_profile_data: dict[int, float] = {}
+    # Memory profile data (%util)
+    env_memory_util_profile_data: dict[int, float] = {}
+    rollout_memory_util_profile_data: dict[int, float] = {}
 
     def _vals_in_window(events, t_start, t_end, inclusive_end: bool = False):
         """Return values with timestamps in (t_start, t_end] if inclusive_end else [t_start, t_end)."""
@@ -352,6 +377,8 @@ def extract_from_tensorboard():
         env_cost_events = data.get("time/env/env_interact_step", [])
         rollout_cost_events = data.get("time/rollout/predict", [])
         actor_cost_events = data.get("time/actor/run_training", [])
+        env_mem_util_events = data.get("env/memory/util", [])
+        rollout_mem_util_events = data.get("rollout/memory/util", [])
 
         # Profile markers: each run logs env_num_per_instance then total_num_envs
         # with consecutive wall times, so the total is always strictly after the
@@ -378,23 +405,52 @@ def extract_from_tensorboard():
             actor_vals = _vals_in_window(
                 actor_cost_events, t_start, t_end, inclusive_end=True
             )
+            env_mem_util_vals = _vals_in_window(
+                env_mem_util_events, t_start, t_end, inclusive_end=True
+            )
+            rollout_mem_util_vals = _vals_in_window(
+                rollout_mem_util_events, t_start, t_end, inclusive_end=True
+            )
 
             if env_vals:
-                env_profile_data[env_num_per_instance] = sum(env_vals) / len(env_vals)
+                env_time_profile_data[env_num_per_instance] = sum(env_vals) / len(
+                    env_vals
+                )
             if rollout_vals:
-                rollout_profile_data[env_num_per_instance] = sum(rollout_vals) / len(
+                rollout_time_profile_data[env_num_per_instance] = sum(rollout_vals) / len(
                     rollout_vals
                 )
             if actor_vals and total_num_envs is not None:
-                actor_profile_data[total_num_envs] = sum(actor_vals) / len(actor_vals)
+                actor_time_profile_data[total_num_envs] = sum(actor_vals) / len(actor_vals)
 
-    profile_data = {}
-    if env_profile_data:
-        profile_data["env_profile_data"] = env_profile_data
-    if rollout_profile_data:
-        profile_data["rollout_profile_data"] = rollout_profile_data
-    if actor_profile_data:
-        profile_data["actor_profile_data"] = actor_profile_data
+            if env_mem_util_vals:
+                env_memory_util_profile_data[env_num_per_instance] = sum(env_mem_util_vals) / len(
+                    env_mem_util_vals
+                )
+            if rollout_mem_util_vals:
+                rollout_memory_util_profile_data[env_num_per_instance] = sum(rollout_mem_util_vals) / len(
+                    rollout_mem_util_vals
+                )
+
+    profile_time: dict[str, dict[int, float]] = {}
+    if env_time_profile_data:
+        profile_time["env_profile_time"] = env_time_profile_data
+    if rollout_time_profile_data:
+        profile_time["rollout_profile_time"] = rollout_time_profile_data
+    if actor_time_profile_data:
+        profile_time["actor_profile_time"] = actor_time_profile_data
+
+    profile_memory: dict[str, dict[int, float]] = {}
+    if env_memory_util_profile_data:
+        profile_memory["env_profile_memory"] = env_memory_util_profile_data
+    if rollout_memory_util_profile_data:
+        profile_memory["rollout_profile_memory"] = rollout_memory_util_profile_data
+
+    profile_data: dict[str, dict] = {}
+    if profile_time:
+        profile_data["profile_time"] = profile_time
+    if profile_memory:
+        profile_data["profile_memory"] = profile_memory
 
     print(profile_data)
 

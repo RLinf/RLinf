@@ -293,9 +293,10 @@ class EmbodiedRunner:
                             input_channel=self.reward_channel,
                             output_channel=self.env_channel,
                         )
-                    self.actor.recv_rollout_trajectories(
-                        input_channel=self.actor_channel
-                    ).wait()
+                    with self.timer("recv_rollout_trajectories"):
+                        self.actor.recv_rollout_trajectories(
+                            input_channel=self.actor_channel
+                        ).wait()
                     rollout_handle.wait()
                     if self.reward is not None:
                         reward_handle.wait()
@@ -362,11 +363,16 @@ class EmbodiedRunner:
                 )
 
             env_results = env_handle.wait()
+            env_memory_metrics = env_handle.consume_memory_metrics(
+                reduction_type="max", return_per_rank=False
+            )
             env_results_list = [
                 results for results in env_results if results is not None
             ]
             env_metrics = compute_evaluate_metrics(env_results_list)
             env_metrics = {f"env/{k}": v for k, v in env_metrics.items()}
+            if env_memory_metrics:
+                env_metrics.update(env_memory_metrics)
             ranked_env_results = [
                 {"rank": rank, "env": rank_metrics}
                 for rank, rank_metrics in enumerate(env_results)
@@ -382,6 +388,11 @@ class EmbodiedRunner:
                     actor_rollout_metrics
                 ).items()
             }
+            rollout_memory_metrics = rollout_handle.consume_memory_metrics(
+                reduction_type="max", return_per_rank=False
+            )
+            if rollout_memory_metrics:
+                rollout_metrics.update(rollout_memory_metrics)
             training_metrics = {
                 f"train/{k}": v
                 for k, v in self._aggregate_numeric_metrics(

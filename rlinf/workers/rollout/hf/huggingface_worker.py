@@ -14,6 +14,7 @@
 
 import copy
 import gc
+import os
 from typing import Any, Literal
 
 import numpy as np
@@ -29,7 +30,9 @@ from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, CollectiveGroupOptions, Worker
 from rlinf.utils.comm_mapping import CommMapper
+from rlinf.utils.memory_monitor import spawn_monitor
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.pipeline_trace import PipelineTracer
 
 
 class MultiStepRolloutWorker(Worker):
@@ -86,6 +89,14 @@ class MultiStepRolloutWorker(Worker):
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self.version = 0
         self.finished_episodes = None
+
+        self._pipeline_tracer = PipelineTracer.from_worker(
+            cfg_runner=self.cfg.runner,
+            worker_type="rollout",
+            group_name=getattr(self, "_group_name", None),
+            rank=getattr(self, "_rank", None),
+            pid=getattr(self, "PID", None) or os.getpid(),
+        )
 
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
@@ -334,7 +345,8 @@ class MultiStepRolloutWorker(Worker):
         ):
             return None
         with torch.no_grad():
-            actions, result = self.predict(final_obs)
+            with self.worker_timer(f"predict_bootstrap"):
+                actions, result = self.predict(final_obs)
             if "prev_values" in result and result["prev_values"] is not None:
                 final_values = result["prev_values"]
             else:
@@ -389,15 +401,32 @@ class MultiStepRolloutWorker(Worker):
         self.torch_platform.empty_cache()
 
     @Worker.timer("generate_one_epoch")
-    async def generate_one_epoch(self, input_channel: Channel, output_channel: Channel):
+    async def generate_one_epoch(
+        self, input_channel: Channel, output_channel: Channel, *, epoch_idx: int
+    ):
         self.update_dagger_beta()
-        for _ in range(self.n_train_chunk_steps):
+        first_run = True
+        actions = None
+        result = None
+        for chunk_step_idx in range(self.n_train_chunk_steps):
             for stage_id in range(self.num_pipeline_stages):
                 with self.worker_timer(f"recv_env_output_stage_{stage_id}"):
                     env_output = await self.recv_env_output(input_channel)
 
+                self._pipeline_tracer.emit(
+                    "rollout_predict_start",
+                    epoch=epoch_idx,
+                    stage_id=stage_id,
+                    chunk_step_idx=chunk_step_idx,
+                )
                 with self.worker_timer(f"predict_stage_{stage_id}"):
                     actions, result = self.predict(env_output["obs"])
+                self._pipeline_tracer.emit(
+                    "rollout_predict_end",
+                    epoch=epoch_idx,
+                    stage_id=stage_id,
+                    chunk_step_idx=chunk_step_idx,
+                )
 
                 save_flags = None
                 if result.get("expert_label_flag", False):
@@ -429,7 +458,8 @@ class MultiStepRolloutWorker(Worker):
                 self.send_rollout_result(output_channel, rollout_result, mode="train")
         for stage_id in range(self.num_pipeline_stages):
             env_output = await self.recv_env_output(input_channel)
-            actions, result = self.predict(env_output["obs"])
+            with self.worker_timer(f"predict_tail_stage_{stage_id}"):
+                actions, result = self.predict(env_output["obs"])
 
             rollout_result = RolloutResult(
                 actions=actions,
@@ -449,12 +479,32 @@ class MultiStepRolloutWorker(Worker):
         if self.enable_offload:
             self.reload_model()
 
-        for _ in tqdm(
+        for epoch_idx in tqdm(
             range(self.rollout_epoch),
             desc="Generating Rollout Epochs",
             disable=(self._rank != 0),
         ):
-            await self.generate_one_epoch(input_channel, output_channel)
+            with self.worker_timer(f"epoch_{epoch_idx}"):
+                await self.generate_one_epoch(
+                    input_channel, output_channel, epoch_idx=epoch_idx
+                )
+
+        # Sample before offload so we capture rollout's GPU footprint.
+        try:
+            device_index = (
+                int(self.global_accelerator_ids[0])
+                if getattr(self, "global_accelerator_ids", None)
+                else 0
+            )
+            m = spawn_monitor(device_index, interval=0.1, duration=0.5)
+            self.set_memory_metrics(
+                {
+                    "rollout/memory/max_gib": float(m.max_gib),
+                    "rollout/memory/util": float(m.util),
+                }
+            )
+        except Exception:
+            self.set_memory_metrics({})
 
         if self.enable_offload:
             self.offload_model()
@@ -624,7 +674,6 @@ class MultiStepRolloutWorker(Worker):
                 async_op=True,
             )
 
-    @Worker.timer("split_rollout_result")
     def _split_rollout_result(
         self, rollout_result: RolloutResult, sizes: list[int]
     ) -> list[RolloutResult]:

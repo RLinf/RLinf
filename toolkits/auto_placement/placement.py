@@ -22,25 +22,27 @@ from util import get_global_config
 
 
 class ScheduleMode(Enum):
-    """Mode of schedule result."""
+    """
+    Mode of schedule result.
+    - ``ScheduleMode`` labels how two sub-schedules were merged in the DP tree
+      (collocated vs disaggregated merge operator).
+    """
 
     SINGLE_NODE = "single_node"
     COLLOCATED = "collocated"
     DISAGGREGATED = "disaggregated"
 
 
-class PlacementTopology(Enum):
-    """Topology derived from the *final* placement GPU overlap pattern.
-
-    This is intentionally separate from ScheduleMode:
-    - ScheduleMode is the DP merge operator on the binary recursion tree.
-    - PlacementTopology describes the global GPU sharing semantics of the final result.
+class PlacementStrategy(Enum):
+    """
+    Final GPU-range sharing pattern.
+    - ``PlacementStrategy`` describes the sharing pattern of component GPU
+      ranges.
     """
 
-    SINGLE_NODE = "single_node"
-    ALL_SHARED = "all_shared"
-    ALL_DISJOINT = "all_disjoint"
-    MIXED_SHARED = "mixed_shared"
+    COLLOCATED = "collocated" # All components share the same set of GPUs.
+    DISAGGREGATED = "disaggregated" # Each component has its own dedicated set of GPUs.
+    HYBRID = "hybrid" # Hybrid placement mode that allows components to run on any sets of GPUs.
 
 
 class ScheduleResult(ABC):
@@ -52,22 +54,22 @@ class ScheduleResult(ABC):
         return max(a.start, b.start) < min(a.stop, b.stop)
 
     @staticmethod
-    def _derive_topology_from_placement(
+    def _derive_placement_strategy_from_placement(
         total_gpu_num: int, placement: dict[ComponentNode, range]
-    ) -> PlacementTopology:
+    ) -> PlacementStrategy:
         if len(placement) <= 1:
-            return PlacementTopology.SINGLE_NODE
+            return PlacementStrategy.SINGLE_NODE
 
         full = range(total_gpu_num)
         if all(gpu_range == full for gpu_range in placement.values()):
-            return PlacementTopology.ALL_SHARED
+            return PlacementStrategy.COLLOCATED
 
         ranges = list(placement.values())
         for i in range(len(ranges)):
             for j in range(i + 1, len(ranges)):
                 if ScheduleResult._ranges_overlap(ranges[i], ranges[j]):
-                    return PlacementTopology.MIXED_SHARED
-        return PlacementTopology.ALL_DISJOINT
+                    return PlacementStrategy.HYBRID
+        return PlacementStrategy.DISAGGREGATED
 
     @staticmethod
     def merger_schedule_results(
@@ -89,18 +91,13 @@ class ScheduleResult(ABC):
         config = get_global_config()
 
         # In Reasoning task, mixed GPU sharing is not supported.
-        if config.task_type == "reasoning" and res.topology == PlacementTopology.MIXED_SHARED:
+        if config.task_type == "reasoning" and res.placement_strategy == PlacementStrategy.HYBRID:
             return None
 
-        # In Embodiment task, actor should run on all GPUs.
-        if config.task_type == "embodied":
-            nodes = list(res.placement.keys())
-            if (
-                nodes[-1].role == "actor"
-                and len(res.placement[nodes[-1]]) != res.total_gpu_num
-            ):
-                print(f"actor now runs on {res.placement[nodes[-1]]} GPUs")
-                return None
+        # Embodied hybrid pipeline: env / env_rollout may use disjoint GPU blocks while
+        # the policy actor is still scheduled on all accelerators (overlapping both).
+        # Do not reject disaggregated env<->rollout splits just because the merge tree
+        # first assigned actor to a suffix of GPUs; placement is normalized below.
         return res
 
     @staticmethod
@@ -108,8 +105,11 @@ class ScheduleResult(ABC):
         first: "ScheduleResult", second: "ScheduleResult"
     ) -> Optional["ScheduleResult"]:
         if first is None or second is None:
-            return first if first is not None else second
-        return first if first.total_cost < second.total_cost else second
+            best_res = first if first is not None else second
+            return best_res
+        best_res = first if first.total_cost < second.total_cost else second
+        print(f"[debug] best_res: {best_res}")
+        return best_res
 
     def __init__(
         self,
@@ -126,39 +126,17 @@ class ScheduleResult(ABC):
         self.total_cost = total_cost
 
     @property
-    def topology(self) -> PlacementTopology:
-        return self._derive_topology_from_placement(self.total_gpu_num, self.placement)
-
-    @property
-    def effective_mode(self) -> str:
-        """Unified external mode string for display/metrics.
-
-        For embodied:
-        - disaggregated => ALL_DISJOINT (e.g., env/env_rollout/actor all separated)
-        - hybrid        => MIXED_SHARED (pipeline + GPU sharing)
-        - collocated    => ALL_SHARED
-        For reasoning:
-        - hybrid (mixed) is filtered out in merger_schedule_results.
-        """
-        config = get_global_config()
-        if config.task_type == "embodied":
-            if self.topology == PlacementTopology.ALL_SHARED:
-                return "collocated"
-            if self.topology == PlacementTopology.ALL_DISJOINT:
-                return "disaggregated"
-            if self.topology == PlacementTopology.MIXED_SHARED:
-                return "hybrid"
-            return "single_node"
-        # reasoning (and others): keep original DP mode as external name
-        return self.mode.value
+    def placement_strategy(self) -> PlacementStrategy:
+        return self._derive_placement_strategy_from_placement(
+            self.total_gpu_num, self.placement
+        )
 
     def get_cost_per_group_batch(self, *args, **kwargs) -> float:
         return self.cost_per_group_batch
 
     def is_hybrid(self) -> bool:
         # Kept for backward compatibility with existing call sites.
-        # Prefer using `topology`/`effective_mode` for unified semantics.
-        return self.topology == PlacementTopology.MIXED_SHARED
+        return self.placement_strategy == PlacementStrategy.HYBRID
 
     @property
     def placement_str(self) -> str:
@@ -170,7 +148,7 @@ class ScheduleResult(ABC):
     def __str__(self):
         return (
             f"ScheduleResult : total_gpu_num={self.total_gpu_num}, total_cost={self.total_cost}, "
-            f"mode={self.mode.value}, effective_mode={self.effective_mode}, placement:\n{self.placement_str}"
+            f"mode={self.mode.value}, placement:\n{self.placement_str}"
         )
 
     def __repr__(self) -> str:
@@ -311,13 +289,16 @@ class DisaggregatedScheduleResult(ScheduleResult):
             ):
                 return float("inf")
 
-            env_num_per_gpu_per_stage = total_envs // env_gpus // stage_num
-            rollout_num_per_gpu_per_stage = total_envs // rollout_gpus // stage_num
+            env_batch_size = total_envs // env_gpus // stage_num
+            rollout_batch_size = total_envs // rollout_gpus // stage_num
 
-            env_prof = DataFitter(config.profile_data.env_profile_data)
-            rollout_prof = DataFitter(config.profile_data.rollout_profile_data)
-            env_stage_cost = float(env_prof.get_value(env_num_per_gpu_per_stage))
-            rollout_stage_cost = float(rollout_prof.get_value(rollout_num_per_gpu_per_stage))
+            profile_time = getattr(config, "profile_time", getattr(config, "profile_data", None))
+            if profile_time is None:
+                raise ValueError("Missing profile_time for placement.")
+            env_profiler = DataFitter(profile_time.env_profile_time)
+            rollout_profiler = DataFitter(profile_time.rollout_profile_time)
+            env_stage_cost = env_profiler.get_value(env_batch_size)
+            rollout_stage_cost = rollout_profiler.get_value(rollout_batch_size)
             self.warmup_time = env_stage_cost + rollout_stage_cost
             return max(env_stage_cost, rollout_stage_cost) * (stage_num - self.warmup_group_num) + self.warmup_time
 
@@ -327,10 +308,6 @@ class DisaggregatedScheduleResult(ScheduleResult):
         # Warmup/drain for embodied pipeline is treated as negligible in this model.
         self.warmup_time = 0.0
 
-        if _has_actor_cut(source_roles, sink_roles):
-            # Runner executes generate and actor sequentially.
-            stable_cost = self.source_res.total_cost + self.sink_res.total_cost
-            return stable_cost, stable_cost
 
         # Generate-internal cut: prefer the stage-aware model only for env<->env_rollout cuts.
         if _is_env_rollout_cut(source_roles, sink_roles):
@@ -343,10 +320,11 @@ class DisaggregatedScheduleResult(ScheduleResult):
                 total_envs=_total_envs(),
             )
             return stable_cost, stable_cost
-
-        # Other generate cuts: bottleneck dominates (env vs rollout overlap).
-        stable_cost = max(self.source_res.total_cost, self.sink_res.total_cost)
-        return stable_cost, stable_cost
+        
+        if _has_actor_cut(source_roles, sink_roles):
+            return None, None
+            
+        return None, None
 
     def _get_disaggregated_time_reasoning(self) -> tuple[float, float]:
         config = get_global_config()
@@ -400,4 +378,12 @@ class DisaggregatedScheduleResult(ScheduleResult):
             pipeline_placement[node] = range(
                 gpu_range[0] + offset, gpu_range[-1] + 1 + offset
             )
+        # Embodied actor is modeled on all GPUs used by this schedule node (cluster
+        # chunk for the root), overlapping env / env_rollout pipeline segments.
+        config = get_global_config()
+        if config.task_type == "embodied":
+            for node in list(pipeline_placement.keys()):
+                if node.role == "actor":
+                    pipeline_placement[node] = range(self.total_gpu_num)
+                    break
         return pipeline_placement

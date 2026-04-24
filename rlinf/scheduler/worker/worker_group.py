@@ -539,6 +539,33 @@ class WorkerGroupFuncResult:
             return reduced_metrics, metrics_list
         return reduced_metrics
 
+    def consume_memory_metrics(
+        self, reduction_type: str = "max", return_per_rank: bool = False
+    ) -> dict[str, float] | tuple[dict[str, float], list[dict[str, float]]]:
+        """Get memory metric map across ranks.
+
+        This implicitly waits for the function to finish.
+
+        Args:
+            reduction_type: "max", "min", or "mean" across ranks for each key.
+            return_per_rank: If True, also return the raw per-rank dicts.
+        """
+        self.wait()
+        metrics_list = self._worker_group.pop_memory_metrics().wait()
+        reduction_func = getattr(np, reduction_type)
+        merged: dict[str, list[float]] = {}
+        for metrics in metrics_list:
+            if not metrics:
+                continue
+            for key, value in metrics.items():
+                merged.setdefault(key, []).append(value)
+        reduced_metrics = {
+            key: float(reduction_func(values)) for key, values in merged.items()
+        }
+        if return_per_rank:
+            return reduced_metrics, metrics_list
+        return reduced_metrics
+
     def wait(self):
         """Wait for all remote results to complete and return the results."""
         if not self._wait_done:

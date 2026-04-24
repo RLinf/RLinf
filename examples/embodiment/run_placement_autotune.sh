@@ -1,23 +1,8 @@
 #! /bin/bash
-set -x
+# Backward-compatible wrapper. The canonical script now lives under toolkits.
+set -euo pipefail
 
-tabs 4
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_PATH="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-CONFIG_PATH="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-REPO_PATH=$(dirname $(dirname "$CONFIG_PATH"))
-export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
-
-## 
-export EMBODIED_PATH="${REPO_PATH}/examples/embodiment"
-##
-
-if [ -z "$1" ]; then
-    CONFIG_NAME="maniskill_ppo_openvla_quickstart"
-else
-    CONFIG_NAME=$1
-fi
-
-
-python ${REPO_PATH}/toolkits/auto_placement/auto_placement_worker.py \
-    --config-path ${EMBODIED_PATH}/config \
-    --config-name $CONFIG_NAME \
+exec "${REPO_PATH}/toolkits/auto_placement/run_placement_autotune.sh" "$@"

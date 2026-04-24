@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import os
 from collections import defaultdict
 from typing import Any, Literal
 
@@ -33,12 +34,14 @@ from rlinf.envs.wrappers import RecordVideo
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.comm_mapping import CommMapper
 from rlinf.utils.metric_utils import compute_split_num
+from rlinf.utils.memory_monitor import spawn_monitor
 from rlinf.utils.nested_dict_process import (
     copy_dict_tensor,
     split_dict,
     update_nested_cfg,
 )
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.pipeline_trace import PipelineTracer
 
 
 class EnvWorker(Worker):
@@ -109,6 +112,14 @@ class EnvWorker(Worker):
             // self.cfg.actor.model.num_action_chunks
         )
         self.actor_split_num = self.get_actor_split_num()
+
+        self._pipeline_tracer = PipelineTracer.from_worker(
+            cfg_runner=self.cfg.runner,
+            worker_type="env",
+            group_name=getattr(self, "_group_name", None),
+            rank=getattr(self, "_rank", None),
+            pid=getattr(self, "PID", None) or os.getpid(),
+        )
 
         if not self.only_eval:
             self.train_prev_done: list[torch.Tensor] = [
@@ -650,7 +661,6 @@ class EnvWorker(Worker):
 
         return RolloutResult.merge_rollout_results(rollout_results)
 
-    @Worker.timer("compute_bootstrap_rewards")
     def compute_bootstrap_rewards(
         self,
         env_output: EnvOutput,
@@ -995,8 +1005,20 @@ class EnvWorker(Worker):
                             rollout_result.save_flags
                         )
 
+                    self._pipeline_tracer.emit(
+                        "env_interact_step_start",
+                        epoch=epoch,
+                        stage_id=stage_id,
+                        chunk_step_idx=chunk_step_idx,
+                    )
                     env_output, env_info = self.env_interact_step(
                         rollout_result.actions, stage_id
+                    )
+                    self._pipeline_tracer.emit(
+                        "env_interact_step_end",
+                        epoch=epoch,
+                        stage_id=stage_id,
+                        chunk_step_idx=chunk_step_idx,
                     )
                     env_batch = env_output.to_dict()
                     self.send_env_batch(
@@ -1084,6 +1106,23 @@ class EnvWorker(Worker):
             actor_channel,
             cooperative_yield=False,
         )
+
+        # Sample before offload so we capture env's GPU footprint.
+        try:
+            device_index = (
+                int(self.global_accelerator_ids[0])
+                if getattr(self, "global_accelerator_ids", None)
+                else 0
+            )
+            m = spawn_monitor(device_index, interval=0.1, duration=0.5)
+            self.set_memory_metrics(
+                {
+                    "env/memory/max_gib": float(m.max_gib),
+                    "env/memory/util": float(m.util),
+                }
+            )
+        except Exception:
+            self.set_memory_metrics({})
 
         for env in self.env_list:
             if self.enable_offload and hasattr(env, "offload"):

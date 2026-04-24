@@ -25,6 +25,7 @@ from node import (
     RolloutNode,
 )
 from placement import (
+    PlacementStrategy,
     ScheduleMode,
     ScheduleResult,
     SingleNodeScheduleResult,
@@ -69,14 +70,18 @@ class AutoPlacementWorker:
         elif component_name == "env":
             node = EnvNode(
                 profiler=EnvProfiler(
-                    self.config.profile_data.env_profile_data,
+                    self.config.profile_time.env_profile_time
+                    if hasattr(self.config, "profile_time")
+                    else self.config.profile_data.env_profile_data,
                     self.config.env_num,
                 )
             )
         elif component_name == "env_rollout":
             node = EnvRolloutNode(
                 profiler=EnvProfiler(
-                    self.config.profile_data.rollout_profile_data,
+                    self.config.profile_time.rollout_profile_time
+                    if hasattr(self.config, "profile_time")
+                    else self.config.profile_data.rollout_profile_data,
                     self.config.env_num,
                 ),
                 model_parallel_size=self.components_config[
@@ -184,7 +189,7 @@ class AutoPlacementWorker:
         stage_info = _get_embodied_stage_cost_info(res) if self.config.task_type == "embodied" else {}
         _CANDIDATE_RESULTS.append(
             {
-                "mode": res.effective_mode,
+                "mode": res.placement_strategy.value,
                 "total_cost": float(res.total_cost),
                 "generate_cost": float(generate_cost),
                 "actor_cost": float(actor_cost),
@@ -199,8 +204,11 @@ def get_component_predicted_costs(
 ) -> dict[str, float]:
     """Estimate per-component predicted cost from final placement."""
     component_costs: dict[str, float] = {}
+    config = get_global_config()
     for node, gpu_range in schedule_result.placement.items():
         gpu_num = len(gpu_range)
+        if config.task_type == "embodied" and node.role == "actor":
+            gpu_num = schedule_result.total_gpu_num
         cost = node.profile(gpu_num)
         if cost is None:
             continue
@@ -218,7 +226,7 @@ def _get_embodied_stage_cost_info(schedule_result: ScheduleResult) -> dict[str, 
     # In collocated mode (all components share the same GPUs), there is no meaningful
     # env<->rollout pipeline separation in this cost model. Default stage_num to 1
     # for clearer logging.
-    if getattr(schedule_result, "effective_mode", None) == "collocated":
+    if schedule_result.placement_strategy == PlacementStrategy.COLLOCATED:
         stage_num = 1
     else:
         stage_num = int(getattr(config, "pipeline_stage_num", 2))
@@ -343,8 +351,7 @@ def main(cfg):
         )
         return None
 
-    if schedule_result.effective_mode == "collocated":
-        res = (
+    res = (
             ", ".join(
                 [
                     node.role
@@ -354,8 +361,7 @@ def main(cfg):
             )
             + " : all"
         )
-    else:
-        res = schedule_result.placement_str
+
 
     logging.info("=" * 50)
     logging.info("Best placement for this task is:\n%s", res)

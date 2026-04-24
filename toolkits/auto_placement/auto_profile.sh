@@ -83,8 +83,8 @@ ENV_GROUP_NAME="EnvGroup"
 ENV_NUM_TEST_LIST=(
   "${BASE_ENV_NUM}"
   "$((BASE_ENV_NUM * 2))"
-  "$((BASE_ENV_NUM * 3))"
-  "$((BASE_ENV_NUM * 4))"
+#   "$((BASE_ENV_NUM * 3))"
+#   "$((BASE_ENV_NUM * 4))"
 )
 
 echo "Profiling env nums: ${ENV_NUM_TEST_LIST[*]}" | tee -a "${MEGA_LOG_FILE}"
@@ -207,6 +207,8 @@ def _load_scalars(run_dir: Path) -> dict[str, list[tuple[float, float]]]:
         "time/env/env_interact_step",
         "time/rollout/predict",
         "time/actor/run_training",
+        "env/memory/util",
+        "rollout/memory/util",
         "profile/env_num_per_instance",
         "profile/total_num_envs",
     ):
@@ -226,9 +228,11 @@ def extract_from_tensorboard(log_dir: str) -> dict:
         print(f"# No TensorBoard event files found under: {logdir}")
         return {}
 
-    env_profile_data: dict[int, float] = {}
-    rollout_profile_data: dict[int, float] = {}
-    actor_profile_data: dict[int, float] = {}
+    env_time_profile_data: dict[int, float] = {}
+    rollout_time_profile_data: dict[int, float] = {}
+    actor_time_profile_data: dict[int, float] = {}
+    env_memory_util_profile_data: dict[int, float] = {}
+    rollout_memory_util_profile_data: dict[int, float] = {}
 
     def _vals_in_window(events, t_start, t_end, inclusive_end: bool = False):
         if inclusive_end:
@@ -247,6 +251,8 @@ def extract_from_tensorboard(log_dir: str) -> dict:
         env_cost_events = data.get("time/env/env_interact_step", [])
         rollout_cost_events = data.get("time/rollout/predict", [])
         actor_cost_events = data.get("time/actor/run_training", [])
+        env_mem_util_events = data.get("env/memory/util", [])
+        rollout_mem_util_events = data.get("rollout/memory/util", [])
 
         for i, (t_end, env_num_val) in enumerate(env_events):
             t_start = env_events[i - 1][0] if i > 0 else 0.0
@@ -275,23 +281,44 @@ def extract_from_tensorboard(log_dir: str) -> dict:
             actor_vals = _vals_in_window(
                 actor_cost_events, t_start, t_end, inclusive_end=True
             )
+            env_mem_util_vals = _vals_in_window(
+                env_mem_util_events, t_start, t_end, inclusive_end=True
+            )
+            rollout_mem_util_vals = _vals_in_window(
+                rollout_mem_util_events, t_start, t_end, inclusive_end=True
+            )
 
             if env_vals:
-                env_profile_data[env_num_per_instance] = sum(env_vals) / len(env_vals)
+                env_time_profile_data[env_num_per_instance] = sum(env_vals) / len(env_vals)
             if rollout_vals:
-                rollout_profile_data[env_num_per_instance] = sum(rollout_vals) / len(
-                    rollout_vals
-                )
+                rollout_time_profile_data[env_num_per_instance] = sum(rollout_vals) / len(rollout_vals)
             if actor_vals and total_num_envs is not None:
-                actor_profile_data[total_num_envs] = sum(actor_vals) / len(actor_vals)
+                actor_time_profile_data[total_num_envs] = sum(actor_vals) / len(actor_vals)
+
+            if env_mem_util_vals:
+                env_memory_util_profile_data[env_num_per_instance] = sum(env_mem_util_vals) / len(env_mem_util_vals)
+            if rollout_mem_util_vals:
+                rollout_memory_util_profile_data[env_num_per_instance] = sum(rollout_mem_util_vals) / len(rollout_mem_util_vals)
+
+    profile_time = {}
+    if env_time_profile_data:
+        profile_time["env_profile_time"] = env_time_profile_data
+    if rollout_time_profile_data:
+        profile_time["rollout_profile_time"] = rollout_time_profile_data
+    if actor_time_profile_data:
+        profile_time["actor_profile_time"] = actor_time_profile_data
+
+    profile_memory = {}
+    if env_memory_util_profile_data:
+        profile_memory["env_profile_memory"] = env_memory_util_profile_data
+    if rollout_memory_util_profile_data:
+        profile_memory["rollout_profile_memory"] = rollout_memory_util_profile_data
 
     profile_data = {}
-    if env_profile_data:
-        profile_data["env_profile_data"] = env_profile_data
-    if rollout_profile_data:
-        profile_data["rollout_profile_data"] = rollout_profile_data
-    if actor_profile_data:
-        profile_data["actor_profile_data"] = actor_profile_data
+    if profile_time:
+        profile_data["profile_time"] = profile_time
+    if profile_memory:
+        profile_data["profile_memory"] = profile_memory
 
     print(profile_data)
     return profile_data
@@ -304,14 +331,21 @@ def update_yaml_with_profile_data(config_path: str, config_name: str, profile_da
     with open(original_config_path, "r") as f:
         content = yaml.safe_load(f)
 
-    if "profile_data" not in content:
-        content["profile_data"] = {}
-    content["profile_data"].update(profile_data)
+    profile_time = profile_data.get("profile_time", {})
+    profile_memory = profile_data.get("profile_memory", {})
+    if profile_time:
+        if "profile_time" not in content:
+            content["profile_time"] = {}
+        content["profile_time"].update(profile_time)
+    if profile_memory:
+        if "profile_memory" not in content:
+            content["profile_memory"] = {}
+        content["profile_memory"].update(profile_memory)
 
     with open(new_config_path, "w") as f:
         yaml.dump(content, f, default_flow_style=False, sort_keys=False)
 
-    print(f"Updated profile_data in new file: {new_config_path}")
+    print(f"Updated profile_time/profile_memory in new file: {new_config_path}")
 
 
 embodied_path = os.environ["EMBODIED_PATH"]
