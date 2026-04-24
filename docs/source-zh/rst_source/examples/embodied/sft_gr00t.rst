@@ -148,7 +148,7 @@ GR00T-N1.6 模型下载
    # 为提升国内下载速度，可以设置：
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
-   hf download nvidia/GR00T-N1.6-3B --repo-type dataset --local-dir GR00T-N1.6-3B
+   hf download nvidia/GR00T-N1.6-3B --repo-type model --local-dir GR00T-N1.6-3B
 
 启动脚本
 ------------------------------------------------------------------
