@@ -137,6 +137,12 @@ Libero数据集下载：
    # hf download ZibinDong/libero_goal --repo-type dataset --local-dir Gr00t_16-libero-Goal-dataset
    # hf download ZibinDong/libero_10 --repo-type dataset --local-dir Gr00t_16-libero-10-dataset
 
+数据版本转换
+由于给出来的数据版本是老版本的Lerobot数据，需要转换为最新版本
+.. code-block:: bash
+
+   python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id=/path/to/Gr00t_16-libero-<task>-dataset
+
 GR00T-N1.6 模型下载
 .. code-block:: bash
 
