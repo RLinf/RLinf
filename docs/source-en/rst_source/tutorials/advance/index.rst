@@ -39,6 +39,11 @@ offering practical guidance to help you fully optimize your RL post-training wor
    Currently, we support three backends for experiment tracking and visualization: 
    TensorBoard, Weights & Biases (wandb), and SwanLab.
 
+- :doc:`weight_syncer`
+   Introduces the actor-to-rollout weight synchronization optimization used in
+   embodied training, including the ``patch`` and ``bucket`` modes, their
+   configuration, recommended use cases, and performance considerations.
+
 
 .. toctree::
    :hidden:
@@ -52,3 +57,4 @@ offering practical guidance to help you fully optimize your RL post-training wor
    hetero
    cloud-edge
    logger
+   weight_syncer

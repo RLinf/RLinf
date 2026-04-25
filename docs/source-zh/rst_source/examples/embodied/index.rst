@@ -413,6 +413,17 @@
     </div>
 
     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/pi0_icon.jpg"
+           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="franka_pi0_sft_deploy.html" style="text-decoration: underline; color: blue;">
+          <b>Franka真机Pi0监督微调与部署全流程</b>
+        </a><br>
+        数据采集 + Pi0 SFT + 真机部署的完整端到端演示
+      </p>
+    </div>
+
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
       <img src="https://github.com/RLinf/misc/raw/main/pic/xsquare_turtle2_arm_small.jpg"
            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -420,6 +431,18 @@
           <b>XSquare Turtle2 真机强化学习</b>
         </a><br>
         SAC + CNN 策略在 XSquare Turtle2 双臂机器人上的真机训练
+      </p>
+    </div>
+
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <!-- TODO(thumbnail): replace placeholder cover image URL for dosw1 -->
+      <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/dos-w1.png"
+           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="dosw1.html" style="text-decoration: underline; color: blue;">
+          <b>Dexmal DOS-W1 真机强化学习</b>
+        </a><br>
+        基于 Flow Matching 策略 + SAC 的 Dexmal DOS-W1 双臂抓取任务
       </p>
     </div>
    </div>
@@ -462,6 +485,8 @@
    franka_reward_model
    franka_zed_robotiq
    franka_gello
+   franka_pi0_sft_deploy
    hg-dagger
    gim_arm
    xsquare_turtle2
+   dosw1

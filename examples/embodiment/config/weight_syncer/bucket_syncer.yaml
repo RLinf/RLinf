@@ -1,0 +1,7 @@
+type: bucket
+bucket:
+  bucket_size: 536870912 # 512MB
+  bucket_dtype: null
+  bucket_device: cuda
+  is_agent: false
+  load_instant: true

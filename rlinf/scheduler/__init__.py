@@ -18,6 +18,7 @@ from .collective import CollectiveGroupOptions
 from .hardware import (
     AcceleratorType,
     AcceleratorUtil,
+    DOSW1HWInfo,
     DualFrankaHWInfo,
     FrankaHWInfo,
     GimArmHWInfo,
@@ -38,6 +39,7 @@ __all__ = [
     "AcceleratorUtil",
     "AcceleratorType",
     "HardwareInfo",
+    "DOSW1HWInfo",
     "DualFrankaHWInfo",
     "FrankaHWInfo",
     "GimArmHWInfo",
