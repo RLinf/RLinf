@@ -19,7 +19,6 @@ Uses expert forward mode: Gemma expert + [CLS] -> categorical value prediction.
 """
 
 import logging
-import math
 from dataclasses import dataclass
 from typing import Optional
 
@@ -291,8 +290,7 @@ class ValueCriticModel(nn.Module):
             pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
 
         def embed_lang(tokens):
-            emb = self.value_expert.embed_language_tokens(tokens)
-            return emb * math.sqrt(emb.shape[-1])
+            return self.value_expert.embed_language_tokens(tokens)
 
         lang_emb = self._apply_checkpoint(embed_lang, lang_tokens)
         embs.append(lang_emb)
