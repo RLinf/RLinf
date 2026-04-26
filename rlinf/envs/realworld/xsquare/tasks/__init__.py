@@ -54,6 +54,8 @@ def create_turtle2_deploy_env(
     env_idx: int,
     env_cfg: Mapping[str, Any],
 ) -> gym.Env:
+    override_cfg = dict(override_cfg)
+    override_cfg.setdefault("action_mode", env_cfg.get("action_mode", "absolute_pose"))
     env = Turtle2DeployEnv(
         override_cfg=override_cfg,
         worker_info=worker_info,

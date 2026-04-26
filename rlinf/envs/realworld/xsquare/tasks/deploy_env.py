@@ -14,11 +14,16 @@
 
 import time
 from dataclasses import dataclass, field
+from typing import Literal
 
 import gymnasium as gym
 import numpy as np
 
 from rlinf.envs.realworld.xsquare.turtle2_env import Turtle2Env, Turtle2RobotConfig
+
+NUM_ARMS = 2
+POSE_DIM = 6
+ACTION_DIM_PER_ARM = POSE_DIM + 1
 
 
 @dataclass
@@ -27,23 +32,24 @@ class Turtle2DeployEnvConfig(Turtle2RobotConfig):
     use_arm_ids: list[int] = field(default_factory=lambda: [0, 1])
     enforce_gripper_close: bool = False
     task_description: str = ""
+    action_mode: Literal["absolute_pose", "relative_pose"] = "absolute_pose"
 
     def __post_init__(self):
         self.target_ee_pose = np.asarray(self.target_ee_pose, dtype=np.float64).reshape(
-            2, 6
+            NUM_ARMS, POSE_DIM
         )
         self.reset_ee_pose = np.asarray(self.reset_ee_pose, dtype=np.float64).reshape(
-            2, 6
+            NUM_ARMS, POSE_DIM
         )
         self.ee_pose_limit_min = np.asarray(
             self.ee_pose_limit_min, dtype=np.float64
-        ).reshape(2, 6)
+        ).reshape(NUM_ARMS, POSE_DIM)
         self.ee_pose_limit_max = np.asarray(
             self.ee_pose_limit_max, dtype=np.float64
-        ).reshape(2, 6)
+        ).reshape(NUM_ARMS, POSE_DIM)
         self.reward_threshold = np.asarray(
             self.reward_threshold, dtype=np.float64
-        ).reshape(2, 6)
+        ).reshape(NUM_ARMS, POSE_DIM)
         self.action_scale = np.asarray(self.action_scale, dtype=np.float64)
 
 
@@ -93,8 +99,9 @@ class Turtle2DeployEnv(Turtle2Env):
         return self._relative_pose_action_space
 
     def step_absolute_pose(self, action: np.ndarray):
-        assert action.shape == (len(self.config.use_arm_ids) * 7,), (
-            f"Action shape must be {(len(self.config.use_arm_ids) * 7,)}, but got {action.shape}."
+        expected_shape = (len(self.config.use_arm_ids) * ACTION_DIM_PER_ARM,)
+        assert action.shape == expected_shape, (
+            f"Action shape must be {expected_shape}, but got {action.shape}."
         )
 
         start_time = time.time()
@@ -104,17 +111,17 @@ class Turtle2DeployEnv(Turtle2Env):
             self._absolute_pose_action_space.low,
             self._absolute_pose_action_space.high,
         )
-        action = action.reshape(-1, 7)
+        action = action.reshape(-1, ACTION_DIM_PER_ARM)
         next_positions = {
             0: self._turtle2_state.follow1_pos.copy(),
             1: self._turtle2_state.follow2_pos.copy(),
         }
         for action_row, arm_id in zip(action, self.config.use_arm_ids, strict=False):
-            next_positions[arm_id][:6] = action_row[:6]
+            next_positions[arm_id][:POSE_DIM] = action_row[:POSE_DIM]
             if self.config.enforce_gripper_close:
-                next_positions[arm_id][6] = self.config.gripper_width_limit_min
+                next_positions[arm_id][POSE_DIM] = self.config.gripper_width_limit_min
             else:
-                next_positions[arm_id][6] = action_row[6]
+                next_positions[arm_id][POSE_DIM] = action_row[POSE_DIM]
 
         next_position = self._clip_position_to_safety_box(
             np.stack([next_positions[0], next_positions[1]])
@@ -146,7 +153,14 @@ class Turtle2DeployEnv(Turtle2Env):
         return super().step(action)
 
     def step(self, action: np.ndarray):
-        return self.step_relative_pose(action)
+        if self.config.action_mode == "absolute_pose":
+            return self.step_absolute_pose(action)
+        if self.config.action_mode == "relative_pose":
+            return self.step_relative_pose(action)
+        raise ValueError(
+            f"Unsupported action_mode={self.config.action_mode!r}. "
+            "Expected one of {'absolute_pose', 'relative_pose'}."
+        )
 
     def _calc_step_reward(self, observation) -> float:
         return 0.0

@@ -36,10 +36,6 @@ class DualQuat2EulerWrapper(gym.ObservationWrapper):
     def observation(self, observation: dict) -> dict:
         """Convert dual-arm quaternion TCP pose to euler angles in-place."""
         tcp_pose = observation["state"]["tcp_pose"]
-        if tcp_pose.shape[-1] != 14:
-            raise ValueError(
-                f"DualQuat2EulerWrapper expects 14D tcp_pose, got shape {tcp_pose.shape}."
-            )
         left = tcp_pose[:7]
         right = tcp_pose[7:]
         left_euler = np.concatenate(
