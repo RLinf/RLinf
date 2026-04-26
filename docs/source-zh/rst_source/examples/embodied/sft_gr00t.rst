@@ -196,7 +196,7 @@ LeRobot SFT 模型格式转换
 
    <div style="display: flex; justify-content: center; margin: 20px 0;">
      <div style="flex: 0.5; text-align: center;">
-       <img src="https://github.com/yangzhongii/misc/blob/main/pic/gr00t_1.6_sft_loss.png?raw=true" style="width: 100%;"/>
+       <img src="https://github.com/RLinf/misc/blob/main/pic/gr00t_1.6_sft_loss.png?raw=true" style="width: 100%;"/>
        <p><em>GR00T-N1.6 SFT 在 LIBERO_Spatial 的损失函数曲线</em></p>
      </div>
    </div>
