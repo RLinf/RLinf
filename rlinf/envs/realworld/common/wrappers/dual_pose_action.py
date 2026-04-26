@@ -14,10 +14,6 @@
 
 """Dual-arm pose action-mode wrappers."""
 
-from __future__ import annotations
-
-from typing import Callable
-
 import gymnasium as gym
 import numpy as np
 
@@ -32,22 +28,11 @@ class DualAbsolutePoseActionWrapper(gym.Wrapper):
 
     def __init__(self, env: gym.Env):
         super().__init__(env)
-        self._step_absolute_pose = self._get_required_callable("step_absolute_pose")
-        self.action_space = self._get_required_callable(
-            "get_absolute_pose_action_space"
-        )()
+        self._step_absolute_pose = self.get_wrapper_attr("step_absolute_pose")
+        self.action_space = self.get_wrapper_attr("get_absolute_pose_action_space")()
 
     def step(self, action: np.ndarray):
         return self._step_absolute_pose(action)
-
-    def _get_required_callable(self, name: str) -> Callable:
-        value = self.get_wrapper_attr(name)
-        if not callable(value):
-            raise AttributeError(
-                f"{type(self.env).__name__} must define callable {name}() for "
-                f"{type(self).__name__}."
-            )
-        return value
 
 
 class DualRelativePoseActionWrapper(gym.Wrapper):
@@ -55,19 +40,8 @@ class DualRelativePoseActionWrapper(gym.Wrapper):
 
     def __init__(self, env: gym.Env):
         super().__init__(env)
-        self._step_relative_pose = self._get_required_callable("step_relative_pose")
-        get_action_space = getattr(env, "get_relative_pose_action_space", None)
-        if callable(get_action_space):
-            self.action_space = get_action_space()
+        self._step_relative_pose = self.get_wrapper_attr("step_relative_pose")
+        self.action_space = self.get_wrapper_attr("get_relative_pose_action_space")()
 
     def step(self, action: np.ndarray):
         return self._step_relative_pose(action)
-
-    def _get_required_callable(self, name: str) -> Callable:
-        value = self.get_wrapper_attr(name)
-        if not callable(value):
-            raise AttributeError(
-                f"{type(self.env).__name__} must define callable {name}() for "
-                f"{type(self).__name__}."
-            )
-        return value

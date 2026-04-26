@@ -331,6 +331,69 @@ After verifying the setup, start the real-world training experiment on the head 
 
    bash examples/embodiment/run_realworld_async.sh realworld_button_turtle2_sac_cnn
 
+
+Deployment
+----------
+
+For policy-only real-world rollout or evaluation, RLinf provides a generic
+Turtle2 deployment environment registered as ``Turtle2DeployEnv-v1``. The env
+fragment is:
+
+.. code-block:: text
+
+   examples/embodiment/config/env/realworld_turtle2_deploy.yaml
+
+Use it as the ``env.eval`` entry in an eval-only config, for example by copying
+``examples/embodiment/config/realworld_eval.yaml`` and replacing the env default:
+
+.. code-block:: yaml
+
+   defaults:
+     - env/realworld_turtle2_deploy@env.eval
+     - model/pi0@actor.model
+     - training_backend/fsdp@actor.fsdp_config
+     - weight_syncer/patch_syncer@weight_syncer
+     - override hydra/job_logging: stdout
+
+The Turtle2 deploy fragment sets ``init_params.id`` to ``Turtle2DeployEnv-v1``
+and exposes ``action_mode`` at the env level:
+
+.. code-block:: yaml
+
+   env:
+     eval:
+       action_mode: absolute_pose
+       override_cfg:
+         task_description: "Describe your Turtle2 deployment task here."
+         use_arm_ids: [0, 1]
+         use_camera_ids: [0, 1, 2]
+         reset_ee_pose:
+           - [0.20, 0.00, 0.10, 0.00, 0.00, 0.00]
+           - [0.20, 0.00, 0.10, 0.00, 0.00, 0.00]
+         ee_pose_limit_min:
+           - [-0.20, -0.60, -0.05, -3.20, -3.20, -3.20]
+           - [-0.20, -0.60, -0.05, -3.20, -3.20, -3.20]
+         ee_pose_limit_max:
+           - [0.80, 0.60, 0.60, 3.20, 3.20, 3.20]
+           - [0.80, 0.60, 0.60, 3.20, 3.20, 3.20]
+
+``apply_dual_pose_action_wrappers`` attaches the deploy action wrapper stack:
+
+- ``absolute_pose`` uses ``DualAbsolutePoseActionWrapper``. The policy emits
+  one 7D absolute pose command per active arm:
+  ``[x, y, z, roll, pitch, yaw, gripper]``.
+- ``relative_pose`` uses ``DualRelativePoseActionWrapper``. By default it also
+  applies ``DualRelativeFrame`` so end-effector-frame delta actions are
+  transformed back to the base frame before reaching the robot env.
+- Both modes finish with ``DualQuat2EulerWrapper`` so the policy observes
+  Euler-format TCP state.
+
+Run the eval-only deployment config from the Ray head node:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_realworld_eval.sh <your_turtle2_eval_config_name>
+
 Visualization and Results
 --------------------------
 

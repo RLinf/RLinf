@@ -60,7 +60,8 @@ def _validate_teleop_mode(use_spacemouse: bool, use_gello: bool) -> None:
 
 
 def _apply_keyboard_reward(env: gym.Env, mode: Optional[str]) -> gym.Env:
-    if env.config.is_dummy or not mode:
+    config = env.get_wrapper_attr("config")
+    if config.is_dummy or not mode:
         return env
     if mode == "multi_stage":
         return KeyboardRewardDoneMultiStageWrapper(env)
@@ -146,13 +147,9 @@ def apply_dual_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
 def apply_dual_pose_action_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
     """Wrapper stack for dual-arm pose-action deploy envs.
 
-    For ``relative_pose`` mode, ``DualRelativeFrame`` is applied by default
-    (``use_relative_frame=True``) so that the policy sees EE-frame observations
-    and its EE-frame delta actions are transformed to base frame — matching the
-    training wrapper contract.  Pass ``use_relative_frame=False`` to skip.
-
-    This intentionally does not apply Franka teleop wrappers such as GELLO or
-    SpaceMouse; those have no meaning in a deploy-only env.
+    This mirrors the dual-arm tail of ``apply_dual_arm_wrappers``:
+    ``DualRelativeFrame`` plus ``DualQuat2EulerWrapper``. It skips teleop and
+    gripper-close wrappers because deploy envs do not run human interventions.
     """
     action_mode = cfg.get("action_mode", "absolute_pose")
     if action_mode == "absolute_pose":
