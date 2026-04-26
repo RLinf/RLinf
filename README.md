@@ -182,10 +182,6 @@ Multiple Backend Integrations
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dagger.html">DAgger</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/hg-dagger.html">HG-DAgger</a> ✅</li>
           </ul>
-          <li><b>Offline RL</b></li>
-          <ul>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/recap.html">RECAP (CFG)</a> ✅</li>
-          </ul>
         </ul>
       </td>
     </tr>
