@@ -151,7 +151,7 @@ def apply_dual_pose_action_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym
     ``DualRelativeFrame`` plus ``DualQuat2EulerWrapper``. It skips teleop and
     gripper-close wrappers because deploy envs do not run human interventions.
     """
-    action_mode = cfg.get("action_mode", "absolute_pose")
+    action_mode = cfg.get("action_mode", "relative_pose")
     if action_mode == "absolute_pose":
         env = DualAbsolutePoseActionWrapper(env)
     elif action_mode == "relative_pose":

@@ -356,13 +356,14 @@ Use it as the ``env.eval`` entry in an eval-only config, for example by copying
      - override hydra/job_logging: stdout
 
 The Turtle2 deploy fragment sets ``init_params.id`` to ``Turtle2DeployEnv-v1``
-and exposes ``action_mode`` at the env level:
+and exposes ``action_mode`` at the env level. The default keeps Turtle2's
+relative-pose action semantics:
 
 .. code-block:: yaml
 
    env:
      eval:
-       action_mode: absolute_pose
+       action_mode: relative_pose
        override_cfg:
          task_description: "Describe your Turtle2 deployment task here."
          use_arm_ids: [0, 1]
@@ -382,9 +383,12 @@ and exposes ``action_mode`` at the env level:
 - ``absolute_pose`` uses ``DualAbsolutePoseActionWrapper``. The policy emits
   one 7D absolute pose command per active arm:
   ``[x, y, z, roll, pitch, yaw, gripper]``.
-- ``relative_pose`` uses ``DualRelativePoseActionWrapper``. By default it also
+- ``relative_pose`` is the default and uses ``DualRelativePoseActionWrapper``.
+  By default it also
   applies ``DualRelativeFrame`` so end-effector-frame delta actions are
   transformed back to the base frame before reaching the robot env.
+- Set ``action_mode: absolute_pose`` only when the policy emits absolute pose
+  commands.
 - Both modes finish with ``DualQuat2EulerWrapper`` so the policy observes
   Euler-format TCP state.
 

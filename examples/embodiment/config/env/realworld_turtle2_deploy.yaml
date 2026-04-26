@@ -13,7 +13,7 @@ max_steps_per_rollout_epoch: 300
 max_episode_steps: 300
 no_gripper: False
 main_image_key: wrist_2
-action_mode: absolute_pose
+action_mode: relative_pose
 
 video_cfg:
   save_video: False
@@ -30,8 +30,9 @@ override_cfg:
   use_arm_ids: [0, 1]
   use_camera_ids: [0, 1, 2]
   enforce_gripper_close: false
-  # The deploy wrapper interprets each 7D per-arm action as absolute pose
-  # [x, y, z, rx, ry, rz, gripper], then exposes Euler observations.
+  # The default deploy wrapper keeps Turtle2's relative-pose action semantics.
+  # Set action_mode: absolute_pose when the policy emits absolute
+  # [x, y, z, rx, ry, rz, gripper] commands per arm.
   reset_ee_pose:
     - [0.20, 0.00, 0.10, 0.00, 0.00, 0.00]
     - [0.20, 0.00, 0.10, 0.00, 0.00, 0.00]
