@@ -32,7 +32,7 @@ class Turtle2DeployEnvConfig(Turtle2RobotConfig):
     use_arm_ids: list[int] = field(default_factory=lambda: [0, 1])
     enforce_gripper_close: bool = False
     task_description: str = ""
-    action_mode: Literal["absolute_pose", "relative_pose"] = "absolute_pose"
+    action_mode: Literal["absolute_pose", "relative_pose"] = "relative_pose"
 
     def __post_init__(self):
         self.target_ee_pose = np.asarray(self.target_ee_pose, dtype=np.float64).reshape(

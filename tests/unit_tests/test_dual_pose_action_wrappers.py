@@ -121,6 +121,19 @@ def test_dual_pose_builder_relative_mode_applies_relative_frame_by_default():
     assert obs["state"]["tcp_pose"].shape == (12,)
 
 
+def test_dual_pose_builder_defaults_to_relative_mode():
+    env = DummyDualPoseEnv()
+    wrapped = apply_dual_pose_action_wrappers(env, {"use_relative_frame": False})
+
+    action = np.full((14,), 0.5, dtype=np.float32)
+    obs, *_ = wrapped.step(action)
+
+    assert wrapped.action_space.low[0] == -1.0
+    assert env.last_mode == "relative_pose"
+    np.testing.assert_array_equal(env.last_action, action)
+    assert obs["state"]["tcp_pose"].shape == (12,)
+
+
 def test_dual_pose_builder_relative_mode_no_relative_frame():
     env = DummyDualPoseEnv()
     wrapped = apply_dual_pose_action_wrappers(
