@@ -197,7 +197,7 @@ Fine-tuning results (SFT)
 
      <div style="display: flex; justify-content: center; margin: 20px 0;">
        <div style="flex: 0.5; text-align: center;">
-           <img src="https://github.com/yangzhongii/misc/blob/main/pic/gr00t_1.6_sft_loss.png?raw=true" style="width: 100%;"/>
+           <img src="https://github.com/RLinf/misc/blob/main/pic/gr00t_1.6_sft_loss.png?raw=true" style="width: 100%;"/>
            <p><em>Loss curve of GR00T-N1.6 SFT on LIBERO_Spatial</em></p>
        </div>
      </div>
