@@ -3,6 +3,7 @@ defaults:
   - env/manikill_put_carrot_on_plate_in_scene@env.eval
   - model/openvla@actor.model
   - training_backend/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
 hydra:

@@ -16,6 +16,7 @@
 import atexit
 import contextlib
 import dataclasses
+import importlib
 import logging
 import os
 import re
@@ -75,6 +76,38 @@ def without_http_proxies():
             os.environ["no_proxy"] = prev_no_proxy_lower
         else:
             os.environ.pop("no_proxy", None)
+
+
+def load_user_extension_module(logger: Optional[logging.Logger] = None) -> None:
+    """Import ``RLINF_EXT_MODULE`` and call ``register()`` when defined."""
+    from .cluster import Cluster, ClusterEnvVar
+
+    ext_module_name = Cluster.get_sys_env_var(ClusterEnvVar.EXT_MODULE)
+    if ext_module_name is None:
+        return
+
+    log = logger or logging.getLogger(__name__)
+    try:
+        ext_module = importlib.import_module(ext_module_name)
+        if hasattr(ext_module, "register"):
+            ext_module.register()
+            log.debug(
+                "Loaded extension module '%s' and called register()",
+                ext_module_name,
+            )
+        else:
+            log.warning(
+                "Extension module '%s' has no register() function",
+                ext_module_name,
+            )
+    except ImportError as e:
+        log.warning(
+            "Failed to import extension module '%s': %s",
+            ext_module_name,
+            e,
+        )
+    except Exception:
+        log.exception("Error loading extension module '%s'", ext_module_name)
 
 
 class DistributedRayLogCollector:

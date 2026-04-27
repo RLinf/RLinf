@@ -20,16 +20,16 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "franka_sft_openpi"
+    experiment_name: "realworld_sft_openpi"
     logger_backends: ["tensorboard"]
 
-  max_epochs: 30000
+  max_epochs: 2000
   max_steps: -1
   val_check_interval: -1
-  save_interval: 2000
+  save_interval: 100
 
 data:
-  train_data_paths: "/path/to/franka-lerobot-dataset"
+  train_data_paths: "/path/to/realworld-franka-bin-relocation-dataset" # path to lerobot data
 
 algorithm:
   adv_type: gae
@@ -48,7 +48,7 @@ actor:
     action_dim: 7
     add_value_head: False
     openpi:
-      config_name: "pi0_franka_dagger"
+      config_name: "pi0_realworld"
       detach_critic_input: True
       num_images_in_input: 2
 

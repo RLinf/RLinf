@@ -26,7 +26,7 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
 - pi0_maniskill
 - pi0_libero
 - pi0_aloha_robotwin
-- pi0_franka_dagger
+- pi0_realworld
 - pi05_libero
 - pi05_maniskill
 - pi05_metaworld
@@ -89,8 +89,8 @@ RLinf 提供了 ``toolkits/lerobot/calculate_norm_stats.py``，用于为
 
    export HF_LEROBOT_HOME=/path/to/lerobot_root
    python toolkits/lerobot/calculate_norm_stats.py \
-       --config-name pi0_franka_dagger \
-       --repo-id franka_dagger
+       --config-name pi0_realworld \
+       --repo-id realworld_franka_bin_relocation
 
 注意事项：
 
@@ -114,7 +114,7 @@ OpenPI 加载器会在运行时从 ``<model_path>/<repo_id>`` 读取归一化统
 完整示例配置位于：
 
 - ``examples/sft/config/libero_sft_openpi.yaml``
-- ``examples/sft/config/franka_dagger_sft_openpi.yaml``
+- ``examples/sft/config/realworld_sft_openpi.yaml``
 
 通用的 OpenPI SFT 配置示例如下：
 
@@ -193,55 +193,3 @@ OpenPI 加载器会在运行时从 ``<model_path>/<repo_id>`` 读取归一化统
 
    # return to repo root
    bash examples/sft/run_vla_sft.sh libero_sft_openpi
-
-真机 SFT 环境与部署
----------------------
-
-RLinf 提供了一个 **通用 SFT 环境** （``FrankaEnv-v1``），允许你完全通过 YAML
-配置来定义新的真机任务，无需编写自定义环境类。适用于：
-
-- 在新任务上采集 SFT 示教数据
-- 在真机上部署（评估）已训练的策略
-
-通用 SFT 环境
-~~~~~~~~~~~~~~~
-
-环境配置模板位于
-``examples/embodiment/config/env/realworld_franka_sft_env.yaml``。
-你需要根据自己的任务修改以下关键字段：
-
-.. code:: yaml
-
-   override_cfg:
-     task_description: "pick up the object and place it into the container"
-     target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]   # 目标位姿 [x,y,z,rx,ry,rz]
-     reset_ee_pose:  [0.5, 0.0, 0.2, -3.14, 0.0, 0.0]    # 复位位姿（应高于目标）
-     max_num_steps: 300
-     reward_threshold: [0.01, 0.01, 0.01, 0.2, 0.2, 0.2]  # 成功判定容差
-     action_scale: [1.0, 1.0, 1.0]                         # [xyz, rpy, 夹爪]
-     ee_pose_limit_min: [0.4, -0.2, 0.05, -3.64, -0.5, -0.5]
-     ee_pose_limit_max: [0.6,  0.2, 0.35, -2.64,  0.5,  0.5]
-
-底层实现上，``FrankaEnv`` 现在接受 ``override_cfg`` 字典，并使用类变量
-``CONFIG_CLS`` 来实例化数据类配置（默认为 ``FrankaRobotConfig``）。
-``PegInsertionEnv`` 和 ``BottleEnv`` 等子类通过覆盖 ``CONFIG_CLS``
-来使用各自的数据类，同时共享相同的构造函数。
-
-真机评估 / 部署
-~~~~~~~~~~~~~~~~~
-
-完整的评估配置位于
-``examples/embodiment/config/realworld_eval.yaml``，它将通用 SFT
-环境与 Pi0 actor 以 **纯评估模式** （``runner.only_eval: True``）组合使用。
-
-运行前请替换以下占位符：
-
-- ``ROBOT_IP`` — 你的 Franka 机器人 IP 地址。
-- ``MODEL_PATH`` — 已训练的模型检查点路径。
-
-然后执行：
-
-.. code:: bash
-
-   bash examples/embodiment/run_realworld_eval.sh realworld_eval
-

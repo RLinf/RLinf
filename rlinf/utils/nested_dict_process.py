@@ -16,6 +16,11 @@ from typing import Any
 
 import torch
 
+# Keys that we have already warned about in concat_batch, so each missing key
+# only produces a single warning per process (avoid log spam in the replay /
+# demo batch pipeline).
+_CONCAT_BATCH_WARNED_KEYS: set[str] = set()
+
 
 def update_nested_cfg(base_cfg, override_cfg):
     for key, value in override_cfg.items():
@@ -90,6 +95,23 @@ def concat_batch(data1, data2):
                 continue
             batch[key] = torch.cat([data1[key], data2[key]], dim=0)
         elif isinstance(value, dict):
+            # NOTE: added this for dealing with different keys in demo data.
+            if key not in data2:
+                if key not in _CONCAT_BATCH_WARNED_KEYS:
+                    _CONCAT_BATCH_WARNED_KEYS.add(key)
+                    # Lazy import to avoid pulling rlinf.scheduler.worker (and
+                    # its heavy deps) at module import time. This only runs
+                    # once per missing key, inside a worker where that import
+                    # is essentially free.
+                    from rlinf.utils.logging import get_logger
+
+                    get_logger().warning(
+                        "concat_batch: key '%s' not found in data2 (value type: %s), "
+                        "skipping. This warning is only emitted once per key.",
+                        key,
+                        type(value).__name__,
+                    )
+                continue
             batch[key] = concat_batch(data1[key], data2[key])
     return batch
 
