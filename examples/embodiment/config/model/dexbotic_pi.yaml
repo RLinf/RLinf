@@ -17,6 +17,7 @@ lora_rank: 32
 use_proprio: True
 num_steps: 10  # Number of diffusion/denoising steps
 add_value_head: True  # Add value head for PPO
+safe_get_logprob: False  # Use simplified logprob calculation (False = full Gaussian)
 
 # dexbotic specific parameters
 dexbotic:

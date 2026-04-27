@@ -532,142 +532,136 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
     def sample_actions(
         self, processed_obs, noise=None, mode="train", compute_values=True
     ):
-        original_training_mode = self.training
-        self.eval()
-        try:
-            input_ids = processed_obs.get("tokenized_prompt")
-            attention_mask = processed_obs.get("tokenized_prompt_mask")
-            states = processed_obs["observation/state"].to(
-                device=next(self.parameters()).device
-            )
-            raw_images = processed_obs["observation/image"]
-            batch_size = raw_images.shape[0]
-            device = states.device
+        input_ids = processed_obs.get("tokenized_prompt")
+        attention_mask = processed_obs.get("tokenized_prompt_mask")
+        states = processed_obs["observation/state"].to(
+            device=next(self.parameters()).device
+        )
+        raw_images = processed_obs["observation/image"]
+        batch_size = raw_images.shape[0]
+        device = states.device
 
-            base_pil_images = []
+        base_pil_images = []
+        for i in range(batch_size):
+            img_np = raw_images[i].cpu().numpy()
+            if img_np.dtype != np.uint8:
+                img_np = (img_np * 255).astype(np.uint8) if img_np.max() <= 1.0 else img_np.astype(np.uint8)
+            base_pil_images.append(Image.fromarray(img_np))
+
+        wrist_pil_images = []
+        if "observation/wrist_image" in processed_obs:
             for i in range(batch_size):
-                img_np = raw_images[i].cpu().numpy()
-                if img_np.dtype != np.uint8:
-                    img_np = (img_np * 255).astype(np.uint8) if img_np.max() <= 1.0 else img_np.astype(np.uint8)
-                base_pil_images.append(Image.fromarray(img_np))
+                wrist_np = processed_obs["observation/wrist_image"][i].cpu().numpy().astype(np.uint8)
+                wrist_pil_images.append(Image.fromarray(wrist_np))
 
-            wrist_pil_images = []
-            if "observation/wrist_image" in processed_obs:
-                for i in range(batch_size):
-                    wrist_np = processed_obs["observation/wrist_image"][i].cpu().numpy().astype(np.uint8)
-                    wrist_pil_images.append(Image.fromarray(wrist_np))
+        images_list = []
+        for i in range(batch_size):
+            pil_list = [base_pil_images[i]]
+            if wrist_pil_images:
+                pil_list.append(wrist_pil_images[i])
+            images_list.append(self.process_images(pil_list))
 
-            images_list = []
-            for i in range(batch_size):
-                pil_list = [base_pil_images[i]]
-                if wrist_pil_images:
-                    pil_list.append(wrist_pil_images[i])
-                images_list.append(self.process_images(pil_list))
-
-            images = torch.stack(images_list, dim=0).to(
-                device=device, dtype=next(self.parameters()).dtype
+        images = torch.stack(images_list, dim=0).to(
+            device=device, dtype=next(self.parameters()).dtype
+        )
+        num_views = images.shape[1]
+        required_num_images = 3
+        if num_views < required_num_images:
+            pad_size = required_num_images - num_views
+            padding = torch.zeros(
+                batch_size, pad_size, *images.shape[2:],
+                dtype=images.dtype, device=device,
             )
-            num_views = images.shape[1]
-            required_num_images = 3
-            if num_views < required_num_images:
-                pad_size = required_num_images - num_views
-                padding = torch.zeros(
-                    batch_size, pad_size, *images.shape[2:],
-                    dtype=images.dtype, device=device,
-                )
-                images = torch.cat([images, padding], dim=1)
-            image_masks = torch.zeros(
-                batch_size, required_num_images, dtype=torch.bool, device=device
+            images = torch.cat([images, padding], dim=1)
+        image_masks = torch.zeros(
+            batch_size, required_num_images, dtype=torch.bool, device=device
+        )
+        image_masks[:, :num_views] = True
+
+        target_dtype = next(self.parameters()).dtype
+        num_steps = self.num_steps
+
+        # Build prefix KV cache
+        prefix_padding_mask, prefix_attn_mask, kv_cache = (
+            self._build_prefix_kv_cache(input_ids, attention_mask, images, image_masks)
+        )
+
+        # Init noise
+        x_t = torch.randn(
+            batch_size, self.config.chunk_size, self.config.action_dim,
+            device=device, dtype=target_dtype,
+        )
+
+        chains = [x_t]
+        log_probs = []
+        values = []
+
+        if self.config.joint_logprob:
+            log_probs.append(
+                self.get_logprob_norm(x_t, torch.zeros_like(x_t), torch.ones_like(x_t))
             )
-            image_masks[:, :num_views] = True
 
-            target_dtype = next(self.parameters()).dtype
-            num_steps = self.num_steps
-
-            # Build prefix KV cache
-            prefix_padding_mask, prefix_attn_mask, kv_cache = (
-                self._build_prefix_kv_cache(input_ids, attention_mask, images, image_masks)
-            )
-
-            # Init noise
-            x_t = torch.randn(
-                batch_size, self.config.chunk_size, self.config.action_dim,
-                device=device, dtype=target_dtype,
-            )
-
-            chains = [x_t]
-            log_probs = []
-            values = []
-
+        # Build denoise_inds
+        if mode == "train":
             if self.config.joint_logprob:
-                log_probs.append(
-                    self.get_logprob_norm(x_t, torch.zeros_like(x_t), torch.ones_like(x_t))
-                )
-
-            # Build denoise_inds
-            if mode == "train":
-                if self.config.joint_logprob:
-                    denoise_inds = torch.arange(num_steps)
+                denoise_inds = torch.arange(num_steps)
+            else:
+                if getattr(self.config, "ignore_last", False):
+                    denoise_inds = torch.tensor(
+                        [random.randint(0, num_steps - 2)] * num_steps
+                    )
                 else:
-                    if getattr(self.config, "ignore_last", False):
-                        denoise_inds = torch.tensor(
-                            [random.randint(0, num_steps - 2)] * num_steps
-                        )
-                    else:
-                        denoise_inds = torch.tensor(
-                            [random.randint(0, num_steps - 1)] * num_steps
-                        )
-            else:
-                denoise_inds = torch.tensor([-1] * num_steps)
-            denoise_inds = denoise_inds[None].repeat(batch_size, 1)
+                    denoise_inds = torch.tensor(
+                        [random.randint(0, num_steps - 1)] * num_steps
+                    )
+        else:
+            denoise_inds = torch.tensor([-1] * num_steps)
+        denoise_inds = denoise_inds[None].repeat(batch_size, 1)
 
-            # Diffusion loop
-            for idx in range(num_steps):
-                sample_mode = "train" if idx == denoise_inds[0][idx] else "eval"
-                x_t_mean, x_t_std, value_t = self.sample_mean_var_val(
-                    x_t,
-                    idx,
-                    prefix_padding_mask,
-                    prefix_attn_mask,
-                    kv_cache,
-                    sample_mode,
-                    num_steps,
-                    compute_values,
-                )
-                x_t = x_t_mean + torch.randn_like(x_t) * x_t_std
-                log_probs.append(self.get_logprob_norm(x_t, x_t_mean, x_t_std))
-                values.append(value_t)
-                chains.append(x_t)
+        # Diffusion loop
+        for idx in range(num_steps):
+            sample_mode = "train" if idx == denoise_inds[0][idx] else "eval"
+            x_t_mean, x_t_std, value_t = self.sample_mean_var_val(
+                x_t,
+                idx,
+                prefix_padding_mask,
+                prefix_attn_mask,
+                kv_cache,
+                sample_mode,
+                num_steps,
+                compute_values,
+            )
+            x_t = x_t_mean + torch.randn_like(x_t) * x_t_std
+            log_probs.append(self.get_logprob_norm(x_t, x_t_mean, x_t_std))
+            values.append(value_t)
+            chains.append(x_t)
 
-            x_0 = x_t
-            chains = torch.stack(chains, dim=1)
+        x_0 = x_t
+        chains = torch.stack(chains, dim=1)
 
-            log_probs = torch.stack(log_probs, dim=1)[
-                :, :, : self.num_action_chunks, : self.config.action_env_dim
+        log_probs = torch.stack(log_probs, dim=1)[
+            :, :, : self.num_action_chunks, : self.config.action_env_dim
+        ]
+        if self.config.joint_logprob:
+            log_probs = log_probs.mean(dim=1)
+        else:
+            log_probs = log_probs[
+                torch.arange(log_probs.shape[0]),
+                denoise_inds[:, 0],
             ]
-            if self.config.joint_logprob:
-                log_probs = log_probs.mean(dim=1)
-            else:
-                log_probs = log_probs[
-                    torch.arange(log_probs.shape[0]),
-                    denoise_inds[:, 0],
-                ]
 
-            if self.use_vlm_value:
-                raise NotImplementedError("use_vlm_value is not supported for DM0")
-            else:
-                values = torch.stack(values, dim=1).mean(dim=-1, keepdim=True)
+        if self.use_vlm_value:
+            raise NotImplementedError("use_vlm_value is not supported for DM0")
+        else:
+            values = torch.stack(values, dim=1).mean(dim=-1, keepdim=True)
 
-            return {
-                "actions": x_0,
-                "chains": chains,
-                "prev_logprobs": log_probs,
-                "prev_values": values,
-                "denoise_inds": denoise_inds,
-            }
-        finally:
-            if original_training_mode:
-                self.train()
+        return {
+            "actions": x_0,
+            "chains": chains,
+            "prev_logprobs": log_probs,
+            "prev_values": values,
+            "denoise_inds": denoise_inds,
+        }
 
     def get_log_prob_value(
         self,

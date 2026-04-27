@@ -127,7 +127,7 @@ actor:
     model_path: "/path/to/model/libero-db-dm0" # https://huggingface.co/Dexmal/DM0-libero
     precision: "bf16"
     num_action_chunks: 5
-    num_steps: 3
+    num_steps: 4
     action_dim: 7
     add_value_head: True
     dexbotic:
