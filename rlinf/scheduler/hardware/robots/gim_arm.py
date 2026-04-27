@@ -54,9 +54,7 @@ class GimArmRobot(Hardware):
                 resources. None if no GimArm hardware is configured for this
                 node.
         """
-        assert configs is not None, (
-            "GimArm hardware requires explicit configurations."
-        )
+        assert configs is not None, "GimArm hardware requires explicit configurations."
         robot_configs: list["GimArmConfig"] = []
         for config in configs:
             if isinstance(config, GimArmConfig) and config.node_rank == node_rank:
