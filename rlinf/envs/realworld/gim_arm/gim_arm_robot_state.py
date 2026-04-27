@@ -24,9 +24,7 @@ class GimArmRobotState:
     All Cartesian quantities are expressed in the robot base frame.
     """
 
-    tcp_pose: np.ndarray = field(
-        default_factory=lambda: np.zeros(7)
-    )
+    tcp_pose: np.ndarray = field(default_factory=lambda: np.zeros(7))
     """End-effector pose ``[x, y, z, qx, qy, qz, qw]`` (m / quaternion).
     Computed via Pinocchio FK from joint positions."""
 

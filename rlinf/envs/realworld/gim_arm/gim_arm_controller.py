@@ -93,13 +93,15 @@ class GimArmController(Worker):
         self._logger = get_logger()
 
         # Lazy imports — keep this module importable on nodes without the SDK.
+        import pinocchio as pin
         from gim_arm_control import (
             ButterworthFilter,
             ControllerConfig,
             ControlMode,
+        )
+        from gim_arm_control import (
             GimArmController as _SDKController,
         )
-        import pinocchio as pin
         from gim_arm_control.utils.urdf_loader import (
             get_urdf_path,
             load_arm6_model,
@@ -212,9 +214,7 @@ class GimArmController(Worker):
         q_pin = pin.neutral(self._pin_model)
         q_pin[:6] = q
         pin.forwardKinematics(self._pin_model, self._pin_data, q_pin)
-        pin.updateFramePlacement(
-            self._pin_model, self._pin_data, self._pin_ee_frame_id
-        )
+        pin.updateFramePlacement(self._pin_model, self._pin_data, self._pin_ee_frame_id)
         T = self._pin_data.oMf[self._pin_ee_frame_id]
         tcp_quat = pin.Quaternion(T.rotation).coeffs()  # [qx, qy, qz, qw]
         tcp_pose = np.concatenate([T.translation, tcp_quat])
@@ -251,9 +251,7 @@ class GimArmController(Worker):
 
         # Gripper state.
         gripper_pos = (
-            reading.gripper_position
-            if reading.gripper_position is not None
-            else 0.0
+            reading.gripper_position if reading.gripper_position is not None else 0.0
         )
         open_pos = self._sdk.gripper_open_position
         closed_pos = self._sdk.gripper_closed_position
@@ -285,9 +283,7 @@ class GimArmController(Worker):
         with self._lock:
             self._target_q = np.array(q_target, dtype=np.float64)
 
-    def reset_joint(
-        self, reset_qpos: list[float], duration: float = 3.0
-    ) -> None:
+    def reset_joint(self, reset_qpos: list[float], duration: float = 3.0) -> None:
         """Gradually move to a joint reset configuration using smooth interpolation.
 
         Uses quintic smoothstep to interpolate from the current position to

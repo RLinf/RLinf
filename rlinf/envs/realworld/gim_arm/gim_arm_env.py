@@ -304,7 +304,9 @@ class GimArmEnv(gym.Env):
         action = np.clip(action, self.action_space.low, self.action_space.high)
 
         if not self.config.is_dummy:
-            q_target = np.clip(action[:6], self._joint_limit_low, self._joint_limit_high)
+            q_target = np.clip(
+                action[:6], self._joint_limit_low, self._joint_limit_high
+            )
             self._controller.move_joints(q_target).wait()
 
             gripper_action = float(action[6])
@@ -395,9 +397,7 @@ class GimArmEnv(gym.Env):
             else:
                 self._success_hold_counter = 0
                 if self.config.use_dense_reward:
-                    reward = float(
-                        np.exp(-500.0 * np.sum(np.square(target_delta[:3])))
-                    )
+                    reward = float(np.exp(-500.0 * np.sum(np.square(target_delta[:3]))))
                 else:
                     reward = 0.0
                 self._logger.debug(
