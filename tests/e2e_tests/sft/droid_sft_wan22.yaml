@@ -72,6 +72,8 @@ actor:
     relative_action: true
     relative_action_per_horizon: false
 
+    load_to_device: False
+
   optim:
     lr: 1.0e-5
     value_lr: 1.55e-4

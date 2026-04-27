@@ -21,7 +21,6 @@ that convert LeRobot data into the batch format expected by VLA.forward().
 
 import bisect
 import json
-import logging
 import re
 import time
 from collections import OrderedDict
@@ -33,7 +32,9 @@ import torch
 from torch.utils.data import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-logger = logging.getLogger(__name__)
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
 
 # Shared cache across all dataset instances in the same process to avoid redundant
 # parquet reads when DataLoader forks worker subprocesses.

@@ -17,6 +17,7 @@ from typing import Callable, Optional
 from omegaconf import DictConfig
 
 from rlinf.config import EMBODIED_MODEL, SupportedModel, torch_dtype_from_precision
+from rlinf.scheduler import Worker
 
 ModelBuilder = Callable[[DictConfig, Optional[object]], object]
 _MODEL_REGISTRY: dict[str, ModelBuilder] = {}
@@ -201,6 +202,13 @@ def get_model(cfg: DictConfig):
 
     torch_dtype = torch_dtype_from_precision(cfg.precision)
     model = model_builder(cfg, torch_dtype)
+
+    if (
+        Worker.torch_platform is not None
+        and Worker.torch_platform.is_available()
+        and cfg.get("load_to_device", True)
+    ):
+        model = model.to(Worker.torch_device_type)
 
     if cfg.is_lora:
         from peft import LoraConfig, PeftModel, get_peft_model
