@@ -875,6 +875,13 @@ def validate_embodied_cfg(cfg):
         weight_sync_interval = cfg.runner.get("weight_sync_interval", 1)
         assert weight_sync_interval > 0, "weight_sync_interval must be greater than 0"
         cfg.runner.weight_sync_interval = weight_sync_interval
+        # Overlap environment bootstrap (reset) with actor training to hide reset latency.
+        # This is enabled only when offload is disabled to avoid resource contention.
+        # Note: If EnvWorker and Actor share the same accelerator, this may increase GPU memory
+        # pressure during the overlap period.
+        cfg.runner.overlap_env_bootstrap = bool(
+            cfg.runner.get("overlap_env_bootstrap", False)
+        ) and not cfg.env.train.get("enable_offload", False)
         if (
             SupportedEnvType(cfg.env.train.env_type) == SupportedEnvType.MANISKILL
             or SupportedEnvType(cfg.env.eval.env_type) == SupportedEnvType.MANISKILL
