@@ -18,6 +18,10 @@ Usage:
     python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
         --config-path /path/to/RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/config \
         --config-name fsdp_model_convertor
+
+If the checkpoint uses a custom ``model_type`` registered only through
+``RLINF_EXT_MODULE``, export that variable the same way as for Ray workers so
+``get_model`` can resolve the builder.
 """
 
 import os
@@ -26,6 +30,7 @@ import hydra
 import torch
 
 from rlinf.models import get_model
+from rlinf.scheduler.cluster import load_user_extension_module
 
 from .utils import (
     copy_model_config_and_code,
@@ -38,6 +43,7 @@ from .utils import (
     version_base="1.1", config_path="config", config_name="fsdp_model_convertor"
 )
 def main(cfg) -> None:
+    load_user_extension_module()
     model = get_model(cfg.model)
 
     model_dict = torch.load(cfg.convertor.ckpt_path)
