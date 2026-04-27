@@ -111,19 +111,19 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/dexbotic_dm0_checkpoint"
+    model_path: "/path/to/model/libero-db-dm0" # https://huggingface.co/Dexmal/DM0-libero
     precision: ${actor.model.precision}
 
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 32
-  global_batch_size: 2048
+  global_batch_size: 8192
   seed: 42
   enable_offload: False
 
   model:
-    model_path: "/path/to/dexbotic_dm0_checkpoint"
+    model_path: "/path/to/model/libero-db-dm0" # https://huggingface.co/Dexmal/DM0-libero
     precision: "bf16"
     num_action_chunks: 5
     num_steps: 3
