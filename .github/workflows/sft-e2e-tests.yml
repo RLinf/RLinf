@@ -4,6 +4,35 @@ on:
   workflow_call:
 
 jobs:
+  sft-dreamzero-droid-wan22-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create dreamzero sft environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --model dreamzero
+
+      - name: DreamZero DROID WAN22 SFT test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export DREAMZERO_PATH=/workspace/dataset/DreamZero/dreamzero
+          source .venv/bin/activate
+          bash tests/e2e_tests/sft/run_vla_sft.sh droid_sft_wan22
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   sft-maniskill-openpi-test:
     runs-on: embodied
     steps:
