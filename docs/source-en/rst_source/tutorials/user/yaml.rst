@@ -3,10 +3,10 @@ YAML Configuration
 
 
 Below is a complete reference for the configuration file used in the RLinf
-Every important key in the YAML is documented below so that you can confidently adapt the file to your own cluster, model, or research ideas.  
+Every important key in the YAML is documented below so that you can confidently adapt the file to your own cluster, model, or research ideas.
 Parameters are grouped exactly by their top-level key.
 
-For clarity, this section includes the following three main parts: 
+For clarity, this section includes the following three main parts:
 **Basic Configuration**, **MATH-specific Configuration**, and **Embody-specific Configuration**.
 Therefore, users can find the corresponding configuration information according to their own needs.
 
@@ -25,7 +25,7 @@ hydra
   hydra:
     run:
       dir: .
-    output_subdir: null 
+    output_subdir: null
 
 ``hydra.run.dir``: Working directory for Hydra runs.
 
@@ -45,7 +45,7 @@ cluster
 
 ``cluster.num_nodes``: Physical nodes to use for training.
 
-``cluster.component_placement``: 
+``cluster.component_placement``:
 The *placement strategy* for each component.
 Each line of component placement config is a dictionary of ``component_names: resource_ranks``.
 In this simple example of running on GPU nodes, the meaning is:
@@ -118,18 +118,18 @@ algorithm
   algorithm:
     group_size: 2
 
-    logprob_forward_micro_batch_size: 1 
+    logprob_forward_micro_batch_size: 1
 
-    val_rollout_batch_size_per_gpu: 4 
+    val_rollout_batch_size_per_gpu: 4
 
     loss_type: ppo
     loss_agg_func: "token-mean"
-    kl_beta: 0.0 
+    kl_beta: 0.0
     kl_penalty_type: low_var_kl
     ratio_clip_eps: 0.2
     entropy_bonus: 0.0
     calculate_entropy: False
-    clip_ratio_c: null 
+    clip_ratio_c: null
 
     adv_type: grpo
     normalize_advantages: True
@@ -285,8 +285,8 @@ algorithm
   algorithm:
 
     n_minibatches: 4
-    training_batch_size_per_gpu: 1 
-    rollout_batch_size_per_gpu: null 
+    training_batch_size_per_gpu: 1
+    rollout_batch_size_per_gpu: null
 
     sampling_params:
       max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
@@ -325,7 +325,7 @@ rollout
 
     tensor_parallel_size: 1
     pipeline_parallel_size: 1
-    
+
     validate_weight: False # whether to send all weights at first for weight comparison.
     validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
     print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
@@ -351,7 +351,7 @@ rollout
 
 ``rollout.eos``: EOS token id override; null uses tokenizer.eos id.
 
-``rollout.attention_backend``: Attention kernel backend (e.g., triton). 
+``rollout.attention_backend``: Attention kernel backend (e.g., triton).
 
 ``rollout.tensor_parallel_size``: TP degree inside the generation backend.
 
@@ -510,15 +510,15 @@ actor
       ckpt_format: torch
       use_dist_ckpt: False
       tp_comm_bootstrap_backend: nccl
-      tp_comm_overlap_cfg: null 
+      tp_comm_overlap_cfg: null
       use_hf_ckpt: True # if true, will transfer hf model to generate megatron checkpoint and use it for training.
-      
+
       ckpt: # config for ckpt convertor
         model: DeepSeek-R1-Distill-Qwen-1.5B
         hf_model_path: ${rollout.model.model_path} # path to the hf model
         save_path: ${runner.output_dir}/${runner.experiment_name}/actor/megatron_ckpt_from_hf
         use_gpu_num : 0
-        use_gpu_index: null # 
+        use_gpu_index: null #
         process_num: 16 # number of processes to use for checkpointing
         tensor_model_parallel_size: ${actor.model.tensor_model_parallel_size}
         pipeline_model_parallel_size: ${actor.model.pipeline_model_parallel_size}
@@ -546,30 +546,30 @@ actor
         param_dtype: ${actor.model.precision}
         reduce_dtype: ${actor.model.precision}
         buffer_dtype: ${actor.model.precision}
-     
-      amp_autocast:                                
-        enabled: False                    
-        precision: "bf16"                 
-      
+
+      amp_autocast:
+        enabled: False
+        precision: "bf16"
+
       grad_scaler:
-        enabled: False               
+        enabled: False
 
 **Top-level**
 
 
 ``actor.training_backend``: Training backend (megatron).
 
-``actor.mcore_gpt``: Use Megatron-Core GPT stack. 
+``actor.mcore_gpt``: Use Megatron-Core GPT stack.
 
-``actor.spec_name``: Model spec/preset name (e.g., decoder-only GPT). 
+``actor.spec_name``: Model spec/preset name (e.g., decoder-only GPT).
 
 ``actor.offload_optimizer``: Offload optimizer state to CPU to reduce GPU memory.
 
-``actor.offload_weight``: Offload model weights to CPU when possible (ZeRO-style). 
+``actor.offload_weight``: Offload model weights to CPU when possible (ZeRO-style).
 
 ``actor.offload_grad``: Offload gradients to CPU to reduce GPU memory.
 
-``actor.enable_dp_load_balance``: Enable data-parallel load balancing. 
+``actor.enable_dp_load_balance``: Enable data-parallel load balancing.
 
 ``actor.calculate_flops``: Compute and log FLOPs for profiling.
 
@@ -604,19 +604,19 @@ actor
 
 ``actor.model.apply_rope_fusion``: Use fused RoPE kernels if available.
 
-``actor.model.bias_dropout_fusion``: Fuse bias + dropout kernels. 
+``actor.model.bias_dropout_fusion``: Fuse bias + dropout kernels.
 
-``actor.model.persist_layer_norm``: Persist LN params in higher precision. 
+``actor.model.persist_layer_norm``: Persist LN params in higher precision.
 
-``actor.model.bias_activation_fusion``: Fuse bias + activation kernels. 
+``actor.model.bias_activation_fusion``: Fuse bias + activation kernels.
 
 ``actor.model.attention_softmax_in_fp32``: Compute attention softmax in FP32 for stability.
 
-``actor.model.batch_p2p_comm``: Batch P2P communications across layers. 
+``actor.model.batch_p2p_comm``: Batch P2P communications across layers.
 
 ``actor.model.variable_seq_lengths``: Allow variable sequence lengths per micro-batch.
 
-``actor.model.gradient_accumulation_fusion``: Fused gradient accumulation. 
+``actor.model.gradient_accumulation_fusion``: Fused gradient accumulation.
 
 ``actor.model.moe_token_dispatcher_type``: MoE token dispatcher (e.g., alltoall).
 
@@ -642,13 +642,13 @@ actor
 
 ``actor.optim.overlap_param_gather``: Overlap parameter all-gather with forward pass.
 
-``actor.optim.optimizer_enable_pin``: Pin optimizer memory. 
+``actor.optim.optimizer_enable_pin``: Pin optimizer memory.
 
-``actor.optim.overlap_param_gather_with_optimizer_step``: Overlap param gather with step. 
+``actor.optim.overlap_param_gather_with_optimizer_step``: Overlap param gather with step.
 
 ``actor.optim.clip_grad``: Global gradient clipping norm.
 
-``actor.optim.loss_scale_window``: Dynamic loss scale window for FP16. 
+``actor.optim.loss_scale_window``: Dynamic loss scale window for FP16.
 
 **LR schedule**
 
@@ -676,7 +676,7 @@ actor
 
 **Megatron integration**
 
-``actor.megatron.ddp_bucket_size``: DDP gradient bucket size. 
+``actor.megatron.ddp_bucket_size``: DDP gradient bucket size.
 
 ``actor.megatron.distributed_backend``: Distributed backend (nccl or gloo).
 
@@ -684,11 +684,11 @@ actor
 
 ``actor.megatron.ckpt_format``: Checkpoint format (e.g., torch).
 
-``actor.megatron.use_dist_ckpt``: Use distributed checkpointing (sharded). 
+``actor.megatron.use_dist_ckpt``: Use distributed checkpointing (sharded).
 
 ``actor.megatron.tp_comm_bootstrap_backend``: Backend used for TP bootstrap (e.g., nccl).
 
-``actor.megatron.tp_comm_overlap_cfg``: YAML path for TP comm/compute overlap. 
+``actor.megatron.tp_comm_overlap_cfg``: YAML path for TP comm/compute overlap.
 
 ``actor.megatron.use_hf_ckpt``: Convert/load from a HuggingFace checkpoint for training.
 
@@ -700,9 +700,9 @@ actor
 
 ``actor.megatron.ckpt.save_path``: Target directory to write Megatron checkpoints.
 
-``actor.megatron.ckpt.use_gpu_num``: Number of GPUs to use for conversion. 
+``actor.megatron.ckpt.use_gpu_num``: Number of GPUs to use for conversion.
 
-``actor.megatron.ckpt.use_gpu_index``: Specific GPU index to use. 
+``actor.megatron.ckpt.use_gpu_index``: Specific GPU index to use.
 
 ``actor.megatron.ckpt.process_num``: CPU processes for conversion work.
 
@@ -802,10 +802,17 @@ runner
   runner:
     only_eval: False
     max_prompt_length: 30
+    overlap_env_bootstrap: False
 
 ``runner.only_eval``: Run evaluation only without training.
 
 ``runner.max_prompt_length``: Maximum prompt length in tokens.
+
+``runner.overlap_env_bootstrap``:
+Overlap environment bootstrap (reset) with actor training to hide reset latency.
+This is particularly useful when environment reset is slow.
+**Note:** This is only effective when ``env.train.enable_offload`` is False.
+Enabling this may increase GPU memory pressure if the environment and actor share the same accelerator.
 
 algorithm
 ~~~~~~~~~~~~~~~
@@ -957,7 +964,7 @@ actor
       val_micro_batch_size: 8
       center_crop: True
       do_sample: False
-      
+
       precision: "bf16"
       add_bias_linear: False
       add_qkv_bias: True
@@ -980,7 +987,7 @@ actor
       use_fast: False
       trust_remote_code: True
       padding_side: "right"
-    
+
     optim:
       lr: 1.0e-4
       value_lr: 3.0e-3
@@ -1080,12 +1087,12 @@ actor
 
 
 
-Env-based 
+Env-based
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The following configuration describes the key parameters of the environment, using Libero-10 as an example.
 
-The path is 
+The path is
 
 **Environment Type**
 

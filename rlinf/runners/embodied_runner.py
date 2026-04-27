@@ -71,6 +71,9 @@ class EmbodiedRunner:
         self.critic = critic
         self.reward = reward
         self.weight_sync_interval = self.cfg.runner.weight_sync_interval
+        self.overlap_env_bootstrap = bool(
+            self.cfg.runner.get("overlap_env_bootstrap", False)
+        )
         # Data channels
         self.env_channel = Channel.create("Env")
         self.rollout_channel = Channel.create("Rollout")
@@ -308,8 +311,15 @@ class EmbodiedRunner:
 
                 # actor training.
                 actor_training_handle: Handle = self.actor.run_training()
+                env_bootstrap_handle: Handle | None = None
+                if self.overlap_env_bootstrap and _step + 1 < self.max_steps:
+                    env_bootstrap_handle = self.env.prefetch_train_bootstrap(
+                        rollout_channel=self.rollout_channel
+                    )
 
                 actor_training_metrics = actor_training_handle.wait()
+                if env_bootstrap_handle is not None:
+                    env_bootstrap_handle.wait()
 
                 self.global_step += 1
 
