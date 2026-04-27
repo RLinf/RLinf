@@ -152,3 +152,30 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             self.data_loader.load_state_dict(state)
 
         torch.distributed.barrier()
+
+    def get_max_steps_per_epoch(self):
+        if self.data_loader is None:
+            return 0
+        if SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.OPENPI:
+            num_batches = len(self._openpi_pytorch_dataloader(self.data_loader))
+            return max(1, num_batches // self.gradient_accumulation)
+        return super().get_max_steps_per_epoch()
+
+    @staticmethod
+    def _openpi_pytorch_dataloader(openpi_dataloader: Any):
+        """Unwrap OpenPI `DataLoaderImpl` to the inner PyTorch DataLoader.
+
+        OpenPI torch path:
+          DataLoaderImpl._data_loader -> TorchDataLoader
+          TorchDataLoader._data_loader / .torch_loader -> torch.utils.data.DataLoader
+
+        """
+        torch_data_loader = getattr(openpi_dataloader, "_data_loader", None)
+        pytorch_dl = getattr(torch_data_loader, "_data_loader", None) or getattr(
+            torch_data_loader, "torch_loader", None
+        )
+        if pytorch_dl is None:
+            raise TypeError(
+                "OpenPI dataloader does not expose an inner torch DataLoader; cannot infer steps per epoch from len()."
+            )
+        return pytorch_dl

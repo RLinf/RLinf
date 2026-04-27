@@ -458,6 +458,8 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
 
         self.cfg = cfg
 
+        self.data_loader, self.val_loader = self.build_dataloader()
+
         # Training step counter for validation interval
         self._training_step = 0
 
@@ -490,7 +492,6 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
     def init_worker(self):
         """Initialize model and optimizer using base class."""
 
-        self.data_loader, self.val_loader = self.build_dataloader()
         if self.data_loader is None:
             raise ValueError("data_loader is not set")
         self.data_iter = iter(self.data_loader)
