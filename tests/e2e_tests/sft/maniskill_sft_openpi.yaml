@@ -23,8 +23,8 @@ runner:
     experiment_name: "test_openpi"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 2
-  max_steps: -1
+  max_epochs: -1
+  max_steps: 2
   val_check_interval: -1
   save_interval: 10
 
@@ -38,7 +38,7 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 1
-  global_batch_size: 1024
+  global_batch_size: 2
   seed: 0
 
   # Override the default values in model/pi0

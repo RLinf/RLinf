@@ -26,6 +26,7 @@ from rlinf.models.embodiment.dreamzero.dreamzero_policy import (
     DreamZeroConfig,
     DreamZeroPolicy,
 )
+from rlinf.utils.logging import get_logger
 
 
 def _promote_scalar_params_to_1d(model):
@@ -55,7 +56,6 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         raise FileNotFoundError(f"DreamZero model_path does not exist: {model_path}")
 
     tokenizer_path = cfg.get("tokenizer_path", "google/umt5-xxl")
-    action_dim = cfg.get("action_dim", 7)
 
     config_path = model_path / "config.json"
     if not config_path.exists():
@@ -65,14 +65,24 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         config_dict = json.load(f)
 
     dreamzero_config = DreamZeroConfig(**config_dict)
+
+    st = model_path / "model.safetensors"
+    st_index = model_path / "model.safetensors.index.json"
+    has_full_model_weights = st.exists() or st_index.exists()
+
     # Disable defer_lora_injection for immediate loading
     if "config" in dreamzero_config.action_head_cfg and isinstance(
         dreamzero_config.action_head_cfg["config"], dict
     ):
         dreamzero_config.action_head_cfg["config"]["defer_lora_injection"] = False
-        dreamzero_config.action_head_cfg["config"]["skip_component_loading"] = True
+        # If full DreamZero safetensors are absent, fall back to component loading from
+        # WAN paths in config.json (diffusion_model_pretrained_path / text / image / vae).
+        dreamzero_config.action_head_cfg["config"]["skip_component_loading"] = (
+            has_full_model_weights
+        )
 
-    dreamzero_config.env_action_dim = action_dim
+    dreamzero_config.env_action_dim = cfg.get("action_dim", 7)
+    dreamzero_config.gradient_checkpointing = cfg.get("gradient_checkpointing", False)
 
     exp_cfg_dir = model_path / "experiment_cfg"
     metadata_path = exp_cfg_dir / "metadata.json"
@@ -99,22 +109,28 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     model = DreamZeroPolicy(
         config=dreamzero_config,
     )
-    #  load safetensors (support index shard)
-    state_dict = {}
-    st = model_path / "model.safetensors"
-    st_index = model_path / "model.safetensors.index.json"
-    if st_index.exists():
-        with open(st_index, "r") as f:
-            index = json.load(f)
-        for shard_file in sorted(set(index["weight_map"].values())):
-            state_dict.update(load_file(str(model_path / shard_file)))
-    elif st.exists():
-        state_dict.update(load_file(str(st)))
+
+    # Load DreamZero full weights if available; otherwise keep component-initialized model.
+    if has_full_model_weights:
+        state_dict = {}
+        if st_index.exists():
+            with open(st_index, "r") as f:
+                index = json.load(f)
+            for shard_file in sorted(set(index["weight_map"].values())):
+                state_dict.update(load_file(str(model_path / shard_file)))
+        elif st.exists():
+            state_dict.update(load_file(str(st)))
+        if any(".base_layer." in k for k in state_dict):
+            state_dict = {
+                k.replace(".base_layer.", "."): v for k, v in state_dict.items()
+            }
+        model.load_state_dict(state_dict, strict=False)
     else:
-        raise FileNotFoundError(f"No safetensors weights under {model_path}")
-    if any(".base_layer." in k for k in state_dict):
-        state_dict = {k.replace(".base_layer.", "."): v for k, v in state_dict.items()}
-    model.load_state_dict(state_dict, strict=False)
+        get_logger().warning(
+            "No model.safetensors under %s; initializing DreamZero from component weights "
+            "configured in config.json (WAN diffusion/text/image/vae paths).",
+            model_path,
+        )
 
     _promote_scalar_params_to_1d(model)
     model = model.to(dtype=torch_dtype)
