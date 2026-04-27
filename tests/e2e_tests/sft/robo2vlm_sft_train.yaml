@@ -52,7 +52,7 @@ algorithm:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 4
+  micro_batch_size: 2
   global_batch_size: 8
   seed: 42
 

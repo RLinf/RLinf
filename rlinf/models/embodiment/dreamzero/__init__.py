@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import json
-import logging
 from pathlib import Path
 
 import torch.nn as nn
@@ -27,8 +26,7 @@ from rlinf.models.embodiment.dreamzero.dreamzero_policy import (
     DreamZeroConfig,
     DreamZeroPolicy,
 )
-
-logger = logging.getLogger(__name__)
+from rlinf.utils.logging import get_logger
 
 
 def _promote_scalar_params_to_1d(model):
@@ -128,7 +126,7 @@ def get_model(cfg: DictConfig, torch_dtype=None):
             }
         model.load_state_dict(state_dict, strict=False)
     else:
-        logger.warning(
+        get_logger().warning(
             "No model.safetensors under %s; initializing DreamZero from component weights "
             "configured in config.json (WAN diffusion/text/image/vae paths).",
             model_path,
