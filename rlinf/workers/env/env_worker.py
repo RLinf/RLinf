@@ -55,6 +55,7 @@ class EnvWorker(Worker):
 
         self.last_obs_list = []
         self.last_intervened_info_list = []
+        self._prefetched_train_bootstrap: list[EnvOutput] | None = None
         self.rollout_epoch = self.cfg.algorithm.get("rollout_epoch", 1)
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
 
@@ -876,6 +877,36 @@ class EnvWorker(Worker):
 
         return env_outputs
 
+    def _send_train_bootstrap(
+        self, rollout_channel: Channel, env_outputs: list[EnvOutput]
+    ) -> None:
+        for stage_id in range(self.stage_num):
+            env_output: EnvOutput = env_outputs[stage_id]
+            env_batch = env_output.to_dict()
+            self.send_env_batch(
+                rollout_channel,
+                {
+                    "obs": env_batch["obs"],
+                    "final_obs": env_batch["final_obs"],
+                },
+            )
+
+    def _bootstrap_and_send_train(self, rollout_channel: Channel) -> list[EnvOutput]:
+        env_outputs = self.bootstrap_step()
+        self._send_train_bootstrap(rollout_channel, env_outputs)
+        return env_outputs
+
+    def prefetch_train_bootstrap(self, rollout_channel: Channel) -> None:
+        """Prepare and send the first env batch for the next training rollout."""
+        if self._prefetched_train_bootstrap is not None:
+            raise RuntimeError(
+                "A prefetched train bootstrap already exists. "
+                "Call interact() to consume it before prefetching again."
+            )
+        self._prefetched_train_bootstrap = self._bootstrap_and_send_train(
+            rollout_channel
+        )
+
     def record_env_metrics(
         self, env_metrics: dict[str, list], env_info: dict[str, Any], epoch: int
     ):
@@ -926,17 +957,11 @@ class EnvWorker(Worker):
         env_metrics = defaultdict(list)
 
         for epoch in range(self.rollout_epoch):
-            env_outputs = self.bootstrap_step()
-            for stage_id in range(self.stage_num):
-                env_output: EnvOutput = env_outputs[stage_id]
-                env_batch = env_output.to_dict()
-                self.send_env_batch(
-                    rollout_channel,
-                    {
-                        "obs": env_batch["obs"],
-                        "final_obs": env_batch["final_obs"],
-                    },
-                )
+            if epoch == 0 and self._prefetched_train_bootstrap is not None:
+                env_outputs = self._prefetched_train_bootstrap
+                self._prefetched_train_bootstrap = None
+            else:
+                env_outputs = self._bootstrap_and_send_train(rollout_channel)
 
             for chunk_step_idx in range(self.n_train_chunk_steps):
                 for stage_id in range(self.stage_num):
