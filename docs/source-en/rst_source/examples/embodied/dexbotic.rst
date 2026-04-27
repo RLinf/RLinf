@@ -62,7 +62,7 @@ Algorithm
    - Value function clipping
    - Entropy regularization
 
-2. **Dexbotic (π\ :sub:`0.5`\ -based VLA)**
+2. **Dexbotic** (π\ :sub:`0.5`\ -based VLA)
 
    - Flow-matching / flow-SDE action generation
    - Diffusion denoising for action chunks
@@ -115,7 +115,7 @@ Install dependencies directly in your environment:
 Model Download
 --------------
 
-**π\ :sub:`0`\ model**
+**π**\ :sub:`0` **model**
 
 Before starting training, download the Dexbotic π\ :sub:`0`\ SFT model from HuggingFace:
 
