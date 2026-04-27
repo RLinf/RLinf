@@ -114,13 +114,13 @@ def get_env_cls(env_type: str, env_cfg=None):
         if env_cfg is not None and hasattr(env_cfg, "init_params") and env_cfg.init_params:
             task_name = env_cfg.init_params.get("task_name", "cartpole")
         if task_name == "cube_pick":
-            from rlinf.envs.mujoco_warp.mujoco_warp_cubepick_env import MuJoCoWarpCubePickEnv
+            from rlinf.envs.mujoco_warp.tasks.cubepick import CubePickTask
 
-            return MuJoCoWarpCubePickEnv
+            return CubePickTask
         else:
-            from rlinf.envs.mujoco_warp.mujoco_warp_cartpole_env import MuJoCoWarpCartPoleEnv
+            from rlinf.envs.mujoco_warp.tasks.cartpole import CartPoleTask
 
-            return MuJoCoWarpCartPoleEnv
+            return CartPoleTask
     elif env_type == SupportedEnvType.OPENSORAWM:
         from rlinf.envs.world_model.world_model_opensora_env import OpenSoraEnv
 
