@@ -729,3 +729,23 @@ class CubePickTask(MuJoCoWarpEnv):
         }
         infos["reward_terms"] = reward_terms
         return super()._record_metrics(step_reward, success, infos)
+
+    # ------------------------------------------------------------------
+    # State serialisation
+    # ------------------------------------------------------------------
+
+    def _get_task_extra_state(self) -> dict[str, Any]:
+        wp.synchronize()
+        return {
+            "_prev_ctrl": self._mw_data.ctrl.numpy().copy(),
+            "_preferred_eef_quat": self._preferred_eef_quat.copy(),
+            "_last_reward_terms": {
+                k: v.copy() for k, v in self._last_reward_terms.items()
+            },
+        }
+
+    def _set_task_extra_state(self, state: dict[str, Any]) -> None:
+        if "_prev_ctrl" in state:
+            self._prev_ctrl = state["_prev_ctrl"]
+        if "_preferred_eef_quat" in state:
+            self._preferred_eef_quat = state["_preferred_eef_quat"]

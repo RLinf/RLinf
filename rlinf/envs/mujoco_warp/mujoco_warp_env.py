@@ -20,6 +20,7 @@ All task-specific logic is deferred to subclasses under ``tasks/``.
 from __future__ import annotations
 
 import copy
+import io
 from abc import ABC, abstractmethod
 from typing import Any, Optional, Union
 
@@ -253,8 +254,12 @@ class MuJoCoWarpEnv(gym.Env, ABC):
         self.use_fixed_reset_state_ids: bool = bool(
             cfg.get("use_fixed_reset_state_ids", False)
         )
+        self.enable_offload: bool = bool(cfg.get("enable_offload", False))
 
-        self.device = "cuda"
+        # Device: Warp uses the default CUDA device.  CUDA_VISIBLE_DEVICES
+        # isolation (set by the placement system) ensures each worker sees
+        # exactly one GPU, so ``cuda`` always refers to the correct device.
+        self.device = torch.device("cuda")
         self._is_start = True
 
         # Parse camera init_params (common to all tasks)
@@ -733,6 +738,88 @@ class MuJoCoWarpEnv(gym.Env, ABC):
         infos["_final_observation"] = dones
         infos["_elapsed_steps"] = dones
         return obs, infos
+
+    # ------------------------------------------------------------------
+    # State serialisation (for subprocess offloading)
+    # ------------------------------------------------------------------
+
+    def _get_task_extra_state(self) -> dict[str, Any]:
+        """Override to include task-specific state in ``get_state()``.
+
+        Returned values must be CPU-serialisable (numpy arrays, torch CPU tensors,
+        dicts, etc).
+        """
+        return {}
+
+    def _set_task_extra_state(self, state: dict[str, Any]) -> None:
+        """Override to restore task-specific state from ``load_state()``.
+        Called after the base state (qpos, qvel, ctrl, metrics) has been restored.
+        """
+
+    def get_state(self) -> bytes:
+        """Serialise the full environment state to a bytes buffer.
+
+        GPU arrays (qpos, qvel, ctrl) are copied to CPU numpy.  CUDA graphs and
+        render state are NOT serialised (they are rebuilt on ``load_state``).
+        """
+        wp.synchronize()
+        sim_state = {
+            "qpos": self._mw_data.qpos.numpy().copy(),
+            "qvel": self._mw_data.qvel.numpy().copy(),
+            "ctrl": self._mw_data.ctrl.numpy().copy(),
+            "elapsed_steps": self._elapsed_steps.clone(),
+            "prev_step_reward": self.prev_step_reward.clone(),
+            "is_start": self._is_start,
+            "rng_state": self._rng.__getstate__(),
+            "task_extra": self._get_task_extra_state(),
+        }
+        if self.record_metrics:
+            sim_state.update(
+                {
+                    "success_once": self.success_once.clone(),
+                    "fail_once": self.fail_once.clone(),
+                    "returns": self.returns.clone(),
+                }
+            )
+            for key, value in getattr(self, "reward_term_returns", {}).items():
+                sim_state[f"rt_{key}"] = value.clone()
+        buf = io.BytesIO()
+        torch.save(sim_state, buf)
+        return buf.getvalue()
+
+    def load_state(self, state_buffer: bytes) -> None:
+        """Restore environment state from a bytes buffer produced by ``get_state()``.
+
+        The GPU sim must already be built (``_build_sim()`` called) before this
+        method.  Only the mutable state is restored — the model and CUDA graphs
+        are left intact.
+        """
+        buf = io.BytesIO(state_buffer)
+        state = torch.load(buf, map_location="cpu", weights_only=False)
+
+        wp.copy(self._mw_data.qpos, wp.array(state["qpos"], dtype=wp.float32))
+        wp.copy(self._mw_data.qvel, wp.array(state["qvel"], dtype=wp.float32))
+        wp.copy(self._mw_data.ctrl, wp.array(state["ctrl"], dtype=wp.float32))
+        mjw.forward(self._mw_model, self._mw_data)
+        wp.synchronize()
+
+        self._elapsed_steps = state["elapsed_steps"].to(dtype=torch.int32)
+        self.prev_step_reward = state["prev_step_reward"]
+        self._is_start = state["is_start"]
+        self._rng.__setstate__(state["rng_state"])
+
+        if self.record_metrics and "success_once" in state:
+            self.success_once = state["success_once"]
+            self.fail_once = state["fail_once"]
+            self.returns = state["returns"]
+            for key, value in state.items():
+                if key.startswith("rt_"):
+                    name = key[3:]
+                    if not hasattr(self, "reward_term_returns"):
+                        self.reward_term_returns = {}
+                    self.reward_term_returns[name] = value
+
+        self._set_task_extra_state(state.get("task_extra", {}))
 
     # ------------------------------------------------------------------
     # RLinf worker interface

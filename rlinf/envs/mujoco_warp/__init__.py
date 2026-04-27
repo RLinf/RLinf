@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from rlinf.envs.mujoco_warp.mujoco_warp_offload_env import MuJoCoWarpOffloadEnv
 from rlinf.envs.mujoco_warp.tasks.cartpole import CartPoleTask
 from rlinf.envs.mujoco_warp.tasks.cubepick import CubePickTask
 
-__all__ = ["CartPoleTask", "CubePickTask"]
+__all__ = ["CartPoleTask", "CubePickTask", "MuJoCoWarpOffloadEnv"]

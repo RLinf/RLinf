@@ -214,3 +214,14 @@ class CartPoleTask(MuJoCoWarpEnv):
             qpos_np[i, 0] = cart_pos
             qpos_np[i, 1] = pole_angle
             qvel_np[i, :] = 0.0
+
+    # ------------------------------------------------------------------
+    # State serialisation
+    # ------------------------------------------------------------------
+
+    def _get_task_extra_state(self) -> dict[str, Any]:
+        return {"_last_norm_action": self._last_norm_action.clone()}
+
+    def _set_task_extra_state(self, state: dict[str, Any]) -> None:
+        if "_last_norm_action" in state:
+            self._last_norm_action = state["_last_norm_action"]
