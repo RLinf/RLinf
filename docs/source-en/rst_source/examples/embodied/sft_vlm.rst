@@ -23,6 +23,8 @@ Launch Script: ``examples/sft/run_vlm_sft.sh``
 
 Config Template: ``examples/sft/config/qwen2_5_sft_vlm.yaml``
 
+If you intend to train models such as **qwen3_vl** or **qwen3_vl_moe**, please ensure that the version of `transformers` in your current environment is **greater than or equal to 4.57.1**.
+
 The VLM config structure is similar to other RLinf training configs.  
 You mainly need to adapt ``data`` and ``actor.model`` for your VLM use case.
 
@@ -38,7 +40,7 @@ Preparation Before Running
 4. Edit ``examples/sft/config/qwen2_5_sft_vlm.yaml`` and run
    ``examples/sft/run_vlm_sft.sh``.
 
-Example of Qwen2_5_VL_4B SFT
+Example of Qwen2_5_VL_3B SFT
 ----------------------------
 
 Important note: after downloading Robo2VLM, train and eval parquet files are mixed in one directory
@@ -83,7 +85,7 @@ Keep other parameters unchanged for a baseline run.
      # Data paths: split train and eval files into different directories
      train_data_paths: "/path/to/Robo2VLM-1/train_data"
      # For eval-only runs, set train_data_paths to null
-     eval_data_paths: "/path/to/Robo2VLM-1/test_data"
+     val_data_paths: "/path/to/Robo2VLM-1/test_data"
 
      # Keys must match dataset columns
      prompt_key: "question"
@@ -179,7 +181,7 @@ Eval-Only Mode (No Training)
 If you only want evaluation, update config as:
 
 - ``data.train_data_paths: null``
-- ``data.eval_data_paths: "/eval_data_path"``
+- ``data.val_data_paths: "/path/to/validate_data"``
 
 Use the same launch command:
 
@@ -271,7 +273,7 @@ Field Reference
 - ``max_epochs``: number of full passes over dataset
 - ``save_interval``: checkpoint save frequency (in steps)
 - ``model_path``: local model directory (must exist)
-- ``train_data_paths/eval_data_paths``: dataset directory or file path
+- ``train_data_paths/val_data_paths``: dataset directory or file path
 
 Common Issues and Fixes
 -----------------------

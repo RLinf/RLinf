@@ -65,10 +65,12 @@ class FrankaRobot(Hardware):
 
         if robot_configs:
             franka_infos = []
-            cameras = cls.enumerate_cameras()
 
             for config in robot_configs:
-                # Use auto detected cameras
+                camera_type = getattr(config, "camera_type", "realsense")
+                cameras = cls.enumerate_cameras(camera_type)
+
+                # Use auto-detected cameras when not explicitly specified
                 if config.camera_serials is None:
                     config.camera_serials = list(cameras)
 
@@ -112,37 +114,65 @@ class FrankaRobot(Hardware):
                         f"An unexpected error occurred while pinging Franka robot at IP {config.robot_ip} from node rank {node_rank}. Ignoring the ping test. Error: {e}"
                     )
 
-                # Validate camera serials
-                try:
-                    importlib.import_module("pyrealsense2")
-                except ModuleNotFoundError:
-                    raise ModuleNotFoundError(
-                        f"pyrealsense2 is required for Franka robot camera serials check, but it is not installed on the node with rank {node_rank}."
-                    )
+                # Validate camera SDK and serials
+                cls._validate_camera_sdk(camera_type, node_rank)
                 if not cameras:
                     raise ValueError(
-                        f"No cameras are connected to node rank {node_rank} while Franka robot requires at least one camera."
+                        f"No {camera_type} cameras are connected to node rank {node_rank} "
+                        f"while Franka robot requires at least one camera."
                     )
                 for serial in config.camera_serials:
                     if serial not in cameras:
                         raise ValueError(
-                            f"Camera with serial {serial} for Franka robot at is not connected to node rank {node_rank}. Available cameras are: {cameras}."
+                            f"Camera with serial {serial} is not connected to node rank {node_rank}. "
+                            f"Available {camera_type} cameras: {cameras}."
                         )
 
             return HardwareResource(type=cls.HW_TYPE, infos=franka_infos)
         return None
 
     @classmethod
-    def enumerate_cameras(cls):
-        """Enumerate connected camera serial numbers."""
+    def enumerate_cameras(cls, camera_type: str = "realsense") -> set[str]:
+        """Enumerate connected camera serial numbers.
+
+        Args:
+            camera_type: ``"realsense"`` or ``"zed"``.
+        """
         cameras: set[str] = set()
-        try:
-            import pyrealsense2 as rs
-        except ImportError:
-            return cameras
-        for device in rs.context().devices:
-            cameras.add(device.get_info(rs.camera_info.serial_number))
+        if camera_type.lower() == "zed":
+            try:
+                import pyzed.sl as sl
+            except ImportError:
+                return cameras
+            for dev in sl.Camera.get_device_list():
+                cameras.add(str(dev.serial_number))
+        else:
+            try:
+                import pyrealsense2 as rs
+            except ImportError:
+                return cameras
+            for device in rs.context().devices:
+                cameras.add(device.get_info(rs.camera_info.serial_number))
         return cameras
+
+    @staticmethod
+    def _validate_camera_sdk(camera_type: str, node_rank: int) -> None:
+        if camera_type.lower() == "zed":
+            try:
+                importlib.import_module("pyzed.sl")
+            except ModuleNotFoundError:
+                raise ModuleNotFoundError(
+                    f"pyzed (ZED SDK) is required for ZED cameras, "
+                    f"but it is not installed on node rank {node_rank}."
+                )
+        else:
+            try:
+                importlib.import_module("pyrealsense2")
+            except ModuleNotFoundError:
+                raise ModuleNotFoundError(
+                    f"pyrealsense2 is required for RealSense cameras, "
+                    f"but it is not installed on node rank {node_rank}."
+                )
 
 
 @NodeHardwareConfig.register_hardware_config(FrankaRobot.HW_TYPE)
@@ -155,6 +185,22 @@ class FrankaConfig(HardwareConfig):
 
     camera_serials: Optional[list[str]] = None
     """List of camera serial numbers associated with the robot."""
+
+    camera_type: str = "realsense"
+    """Camera backend: ``"realsense"`` or ``"zed"``."""
+
+    gripper_type: str = "franka"
+    """Gripper backend: ``"franka"`` (ROS-based) or ``"robotiq"`` (Modbus RTU)."""
+
+    gripper_connection: Optional[str] = None
+    """Serial port for Robotiq grippers (e.g. ``"/dev/ttyUSB0"``).
+    Ignored when *gripper_type* is ``"franka"``."""
+
+    controller_node_rank: Optional[int] = None
+    """Node rank where :class:`FrankaController` should run.
+    When ``None`` (default), the controller is co-located with the env
+    worker.  Set this when the arm/gripper and cameras are on different
+    machines (e.g. cameras on a GPU server, arm on a NUC)."""
 
     disable_validate: bool = False
     """Whether to disable validation of robot IP connectivity and camera serials."""

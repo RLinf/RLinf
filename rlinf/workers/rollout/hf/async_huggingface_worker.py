@@ -15,7 +15,6 @@
 import asyncio
 import gc
 
-import torch
 from omegaconf.omegaconf import DictConfig
 
 from rlinf.scheduler import Channel
@@ -108,6 +107,42 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
         if self._generate_task is not None and not self._generate_task.done():
             self._generate_task.cancel()
 
+    async def _recv_and_apply_actor_sync(self) -> int:
+        async def recv_func():
+            return await self.recv(
+                self.actor_group_name,
+                src_rank=self.actor_weight_src_rank,
+                async_op=True,
+                options=self._sync_weight_comm_options,
+            ).async_wait()
+
+        async def send_func(data):
+            await self.send(
+                data,
+                dst_group_name=self.actor_group_name,
+                dst_rank=self.actor_weight_src_rank,
+                async_op=True,
+                options=self._sync_weight_comm_options,
+            ).async_wait()
+
+        if not self.weight_syncer.receiver_initialized():
+            await self.weight_syncer.init_receiver(
+                state_dict=self.hf_model.state_dict(),
+                recv=recv_func,
+                send=send_func,
+            )
+
+        applied_version = await self.weight_syncer.apply(self.hf_model, recv_func)
+        self.version = applied_version
+        if self.finished_episodes is None:
+            self.finished_episodes = (
+                self.version * self.total_num_train_envs * self.rollout_epoch
+            )
+
+        gc.collect()
+        self.torch_platform.empty_cache()
+        return applied_version
+
     def _start_background_weight_sync_if_needed(self):
         if (
             not self._background_weight_sync_active
@@ -117,19 +152,7 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
             return
 
         self._weight_sync_requested = False
-        self._weight_sync_work = self.recv(
-            self.actor_group_name,
-            src_rank=self.actor_weight_src_rank,
-            async_op=True,
-            options=self._sync_weight_comm_options,
-        )
-
-    def _apply_synced_model_weights(self, param_state_dict):
-        self.hf_model.load_state_dict(param_state_dict)
-
-        del param_state_dict
-        gc.collect()
-        torch.cuda.empty_cache()
+        self._weight_sync_work = asyncio.create_task(self._recv_and_apply_actor_sync())
 
     async def _poll_background_weight_sync(self):
         self._start_background_weight_sync_if_needed()
@@ -139,9 +162,8 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
         if not self._weight_sync_work.done():
             return
 
-        param_state_dict = await self._weight_sync_work.async_wait()
+        await self._weight_sync_work
         self._weight_sync_work = None
-        self._apply_synced_model_weights(param_state_dict)
         self._weight_sync_apply_total += 1
 
         self._start_background_weight_sync_if_needed()

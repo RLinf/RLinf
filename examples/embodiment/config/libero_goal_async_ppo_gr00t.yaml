@@ -3,6 +3,7 @@ defaults:
   - env/libero_goal@env.eval
   - model/gr00t@actor.model
   - training_backend/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
 hydra:
@@ -136,7 +137,7 @@ actor:
     adam_eps: 1.0e-08
     weight_decay: 0.01
     clip_grad: 1.0
-    critic_warmup_steps: 20
+    critic_warmup_steps: 0
   
   fsdp_config:
     strategy: "fsdp"

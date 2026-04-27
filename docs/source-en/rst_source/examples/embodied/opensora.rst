@@ -131,7 +131,7 @@ Before starting training, you need to download the corresponding pretrained mode
    git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1
    git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-object-traj1
    git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-goal-traj1
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-10-traj1
+   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-traj1
 
    # Method 2: Using huggingface-hub
    # For mainland China users, you can use the following for better download speed:
@@ -140,7 +140,7 @@ Before starting training, you need to download the corresponding pretrained mode
    hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir Openvla-oft-SFT-libero-spatial-traj1
    hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1 --local-dir Openvla-oft-SFT-libero-object-traj1
    hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir Openvla-oft-SFT-libero-goal-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero-10-traj1 --local-dir Openvla-oft-SFT-libero-10-traj1
+   hf download Haozhan72/Openvla-oft-SFT-libero10-traj1 --local-dir Openvla-oft-SFT-libero10-traj1
 
 After downloading, make sure to correctly specify the model path and the unnorm_key in the configuration yaml file.
 

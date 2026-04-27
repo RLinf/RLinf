@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import os
 import time
 from functools import partial
@@ -19,7 +20,7 @@ from typing import Optional
 
 import numpy as np
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from torch import nn
 from torch.distributed.tensor import DTensor
 from torch.multiprocessing.reductions import reduce_tensor
@@ -42,6 +43,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
     unpack_fsdp_logprobs,
     unpack_sequences,
 )
+from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel, Cluster, CollectiveGroupOptions, Worker
@@ -198,8 +200,6 @@ class FSDPActor(FSDPModelManager, Worker):
             )
         self.max_tokens_per_mbs = cfg.runner.get("max_tokens_per_mbs", 2048)
 
-        self.bucket_capacity = 128 * 1024 * 1024
-
     def init_worker(self) -> None:
         """
         Initialize the actor worker. build the model and use corresponding training backend
@@ -232,9 +232,7 @@ class FSDPActor(FSDPModelManager, Worker):
 
     def del_reshard_state_dict(self) -> None:
         """Just for interface compatibility with MegatronActor."""
-        if hasattr(self, "rollout_state_dict"):
-            del self.rollout_state_dict
-        clear_memory(sync=False)
+        pass
 
     def sync_model_to_inference(self) -> None:
         """
@@ -245,7 +243,7 @@ class FSDPActor(FSDPModelManager, Worker):
         if not self._inference_dst_map:
             self._strategy.setup_actor_sync_inference_ranks(self)
 
-        if self.is_optimizer_offloaded:
+        if self.enable_offload and not self.is_optimizer_offloaded:
             self.offload_optimizer()
 
         if self.is_weight_offloaded:
@@ -279,91 +277,74 @@ class FSDPActor(FSDPModelManager, Worker):
 
         torch.distributed.barrier()
 
-    def divide_model_to_bucket(self, state_dict, has_visual):
-        bucket_capacity = self.bucket_capacity
-        model_bucket_list = []
-        current_capacity = 0
-        model_bucket = {}
-        for key, val in state_dict.items():
-            name = key
-            if "_extra_state" in name:
-                continue
-            if has_visual:
-                if name.startswith("model.language_model."):
-                    name = "model." + name[21:]
-                # NOTE:
-                # if transformers version is 4.56.1 or older(not tested),
-                # the following line should be uncommented
-
-                # elif name.startswith("model."):
-                #     name = name[6:]
-
-            model_bucket[name] = val
-            current_capacity += (
-                val.numel() * val.element_size() * torch.distributed.get_world_size()
-            )
-
-            if current_capacity >= bucket_capacity:
-                model_bucket_list.append(model_bucket)
-                current_capacity = 0
-                model_bucket = {}
-
-        if len(model_bucket) > 0:
-            model_bucket_list.append(model_bucket)
-        return model_bucket_list
-
-    def sync_model_to_rollout(self) -> None:
+    def sync_model_to_rollout(self):
         """
         Sync the model's full state dict to the rollout worker.
         """
-        if self.enable_offload and not self.is_optimizer_offloaded:
-            self.offload_optimizer()
+        if self.enable_offload:
+            if not self.is_optimizer_offloaded:
+                self.offload_optimizer()
 
-        if self.enable_offload and self.is_weight_offloaded:
-            self.load_param_and_grad(self.device, False)
+            if self.is_weight_offloaded:
+                self.load_param_and_grad(self.device, False)
 
-        self.rollout_state_dict = self.get_model_state_dict(
+        rollout_dtype = None
+        if self._cfg.get("sync_precision", None) is not None:
+            rollout_dtype = torch_dtype_from_precision(self._cfg.sync_precision)
+
+        rollout_state_dict = self.get_model_state_dict(
             cpu_offload=False, full_state_dict=False
         )
-
-        has_visual = any("visual." in k for k in self.rollout_state_dict.keys())
-        if self._weight_dst_rank_in_rollout is not None:
-            rollout_dtype = None
-            if self._cfg.get("sync_precision", None) is not None:
-                rollout_dtype = torch_dtype_from_precision(self._cfg.sync_precision)
-            model_bucket_list = self.divide_model_to_bucket(
-                self.rollout_state_dict, has_visual
-            )
-            self.log_debug(
-                f"[sync_model_to_rollout rank-{self._rank}] length of model_bucket_list: {len(model_bucket_list)}"
-            )
-            for bucket_idx, model_bucket in enumerate(model_bucket_list):
-                buffer = {}
-                for k, v in model_bucket.items():
-                    if isinstance(v, DTensor):
-                        v = v.full_tensor()
-                    if rollout_dtype is not None:
-                        v = v.to(rollout_dtype)
-                    if not self.is_pipeline:
-                        v = reduce_tensor(v)
-                    buffer[k] = v
-                if bucket_idx == 0:
-                    buffer["bucket_length"] = len(model_bucket_list)
+        has_visual = any("visual." in k for k in rollout_state_dict.keys())
+        model_bucket_list = self.divide_model_to_bucket(rollout_state_dict, has_visual)
+        del rollout_state_dict
+        send_handles = []
+        buffer = {}
+        for bucket_idx, model_bucket in enumerate(model_bucket_list):
+            for k, v in model_bucket.items():
+                if isinstance(v, DTensor):
+                    v = v.full_tensor()
+                if rollout_dtype is not None:
+                    v = v.to(rollout_dtype)
                 if not self.is_pipeline:
-                    self.send(
+                    v = reduce_tensor(v)
+                buffer[k] = v
+            if bucket_idx == 0:
+                buffer["bucket_length"] = len(model_bucket_list)
+
+            for send_handle in send_handles:
+                send_handle.wait()
+            send_handles = []
+
+            if not self.is_pipeline:
+                send_handle = self.send(
+                    buffer,
+                    self._rollout_group_name,
+                    self._weight_dst_rank_in_rollout,
+                    async_op=True,
+                )
+                send_handles.append(send_handle)
+            else:
+                for rank in self._weight_dst_rank_in_rollout:
+                    send_handle = self.send(
                         buffer,
                         self._rollout_group_name,
-                        self._weight_dst_rank_in_rollout,
+                        rank,
+                        async_op=True,
                     )
-                else:
-                    for weight_dst_rank in self._weight_dst_rank_in_rollout:
-                        self.send(
-                            buffer,
-                            self._rollout_group_name,
-                            weight_dst_rank,
-                        )
-        if self.enable_offload and not self.is_weight_offloaded:
+                    send_handles.append(send_handle)
+            buffer = {}
+
+        for send_handle in send_handles:
+            send_handle.wait()
+
+        if self.enable_offload:
+            assert not self.is_weight_offloaded, (
+                "weight should be offloaded in sync_model_to_rollout"
+            )
             self.offload_param_and_grad()
+
+        clear_memory(sync=False)
 
     def get_batch(
         self, channel: Channel
@@ -1017,6 +998,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.enable_sft_co_train:
             self._build_sft_data_loader()
 
+        # create weight syncer
+        weight_syncer_cfg = OmegaConf.select(cfg, "weight_syncer")
+        self.weight_syncer = WeightSyncer.create(weight_syncer_cfg)
+
     def _setup_rollout_weight_dst_ranks(self) -> None:
         """
         Setup destination ranks for weight communication.
@@ -1045,6 +1030,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.enable_offload:
             self.offload_param_and_grad()
             self.offload_optimizer()
+
         self._setup_rollout_weight_dst_ranks()
 
     def model_provider_func(self) -> nn.Module:
@@ -1058,27 +1044,73 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         return model
 
-    def sync_model_to_rollout(self) -> None:
-        """
-        Sync the model's full state dict to the rollout worker.
-        """
-        if self.enable_offload and not self.is_optimizer_offloaded:
-            self.offload_optimizer()
-
-        if self.enable_offload and self.is_weight_offloaded:
-            self.load_param_and_grad(self.device)
-
-        state_dict = self.get_model_state_dict(cpu_offload=False, full_state_dict=True)
-        for rank in self._weight_dst_rank_in_rollout:
-            self.send(
-                state_dict,
-                self._rollout_group_name,
-                rank,
-                async_op=True,
-                options=self._sync_weight_comm_options,
+    async def sync_model_to_rollout(self) -> None:
+        if not self._weight_dst_rank_in_rollout:
+            self.log_debug(
+                f"Actor rank {self._rank} has no rollout weight-sync destination."
             )
-        if self.enable_offload and not self.is_weight_offloaded:
-            self.offload_param_and_grad()
+            if self.enable_offload:
+                if not self.is_optimizer_offloaded:
+                    self.offload_optimizer()
+                if not self.is_weight_offloaded:
+                    self.offload_param_and_grad(True)
+            return
+
+        if self.enable_offload:
+            if not self.is_optimizer_offloaded:
+                self.offload_optimizer()
+
+            if self.is_weight_offloaded:
+                self.load_param_and_grad(self.device, False)
+
+        state_dict = self.get_model_state_dict(cpu_offload=False, full_state_dict=False)
+
+        async def send_func(data):
+            handle = []
+            for rank in self._weight_dst_rank_in_rollout:
+                handle.append(
+                    self.send(
+                        data,
+                        dst_group_name=self._rollout_group_name,
+                        dst_rank=rank,
+                        async_op=True,
+                        options=self._sync_weight_comm_options,
+                    ).async_wait()
+                )
+            await asyncio.gather(*handle)
+
+        async def recv_func():
+            handle = []
+            for rank in self._weight_dst_rank_in_rollout:
+                handle.append(
+                    self.recv(
+                        src_group_name=self._rollout_group_name,
+                        src_rank=rank,
+                        async_op=True,
+                        options=self._sync_weight_comm_options,
+                    ).async_wait()
+                )
+            metadata_list = await asyncio.gather(*handle)
+            metadata = metadata_list[0]
+            for other_metadata in metadata_list[1:]:
+                if other_metadata != metadata:
+                    raise ValueError("Patch metadata differs across rollout ranks")
+            return metadata
+
+        if not self.weight_syncer.sender_initialized():
+            await self.weight_syncer.init_sender(
+                state_dict=state_dict,
+                send=send_func,
+                recv=recv_func,
+            )
+
+        await self.weight_syncer.sync(state_dict, send_func, version=self.version)
+
+        if self.enable_offload:
+            assert not self.is_weight_offloaded, (
+                "weight should be offloaded in sync_model_to_rollout"
+            )
+            self.offload_param_and_grad(True)
 
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
         """

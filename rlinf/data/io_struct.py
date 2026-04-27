@@ -1412,6 +1412,7 @@ class DynamicRolloutResult:
             "prompt_lengths",
             "response_lengths",
             "prev_logprobs",
+            "ref_logprobs",
             "rewards",
             "advantages",
             "loss_scales",
@@ -1478,6 +1479,8 @@ class DynamicRolloutResult:
                 continue
 
             for k in tensor_keys:
+                if k not in pack_params:
+                    continue
                 pack_params[k].append(split_params[k][i])
             new_idx_to_traj.append(batch["idx_to_traj"][i])
 
@@ -1573,6 +1576,13 @@ class DynamicRolloutResult:
                     )
                 else:
                     raise ValueError(f"Wrong type of advantages {type(res.advantages)}")
+
+            # Merge extra_fields_train (list fields, size: num_sequence)
+            for k, v in res.extra_fields_train.items():
+                if v is not None:
+                    if merged_result.extra_fields_train[k] is None:
+                        merged_result.extra_fields_train[k] = []
+                    merged_result.extra_fields_train[k].extend(v)
 
         return merged_result
 
@@ -1745,7 +1755,7 @@ class BatchResizingIterator:
                 self.global_batch_done = True
             else:
                 assert self.consumed_batch_size < self.global_batch_size, (
-                    f"Recevied batches with a total size of {self.consumed_batch_size}, which exceeds the global batch size per dp {self.global_batch_size}. This suggests that the configured global batch size cannot be divided by the actual batch size."
+                    f"Received batches with a total size of {self.consumed_batch_size}, which exceeds the global batch size per dp {self.global_batch_size}. This suggests that the configured global batch size cannot be divided by the actual batch size."
                 )
         return micro_batch
 

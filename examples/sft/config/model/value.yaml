@@ -1,0 +1,35 @@
+model_type: "value_model"
+
+precision: bf16
+
+# Not supported for this model
+is_lora: false
+
+siglip_path: /path/to/siglip2-so400m-patch14-224
+gemma3_path: /path/to/gemma-3-270m
+tokenizer_path: /path/to/gemma-3-270m
+
+# "gemma_1m" | "gemma_50m" | "gemma_100m" | "gemma_150m" | "gemma_300m" | "gemma_2b"
+critic_expert_variant: "gemma_1m"
+
+# Categorical value head
+num_bins: 201           # number of discretization bins
+v_min: -1.0             # minimum value for atom support
+v_max: 0.0              # maximum value for atom support
+value_dropout: 0.0
+
+action_dim: 32
+action_horizon: 50
+max_token_len: 200
+
+action_expert_variant: "gemma_300m"
+freeze_vision_encoder: false
+train_expert_only: false
+forward_mode: "vla"
+max_language_len: 50
+stop_gradient_to_vlm: false
+
+# Optional. Points to a previously trained ValueCriticModel checkpoint to
+#   resume training. Backbone weights are loaded via from_pretrained() from
+#   siglip_path/gemma3_path; leave unset to train from scratch.
+# model_path: "/path/to/checkpoint"

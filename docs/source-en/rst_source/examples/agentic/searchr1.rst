@@ -130,7 +130,7 @@ Training on 8×H100
 ------------------
 
 Download the `training dataset <https://huggingface.co/datasets/RLinf/Search-R1-Data>`__ from HuggingFace  
-and write its path into `examples/agent/searchr1/config/qwen2.5-3b-tool-1node.yaml`:
+and write its path into `examples/agent/searchr1/config/train_qwen2.5.yaml`:
 
 .. code-block:: yaml
 
@@ -139,7 +139,7 @@ and write its path into `examples/agent/searchr1/config/qwen2.5-3b-tool-1node.ya
      train_data_paths: ["/path/to/train.jsonl"]
      val_data_paths: ["/path/to/train.jsonl"]
 
-Modify `rollout.model.model_path` in `qwen2.5-3b-tool-1node.yaml`:
+Modify `rollout.model.model_path` in `train_qwen2.5.yaml`:
 
 .. code-block:: yaml
 
@@ -151,7 +151,7 @@ Modify `rollout.model.model_path` in `qwen2.5-3b-tool-1node.yaml`:
        model_path: /path/to/model/Qwen2.5-3B-Instruct
        model_type: qwen2.5
 
-If you use sampling_params.stop to control model stop and save training time, detokenize should be set to True.
+If you use `sampling_params.stop` to control model stop and save training time, detokenize should be set to True.
 
 .. code-block:: yaml
 
@@ -161,7 +161,7 @@ If you use sampling_params.stop to control model stop and save training time, de
       disable_log_stats: False
       detokenize: True  
 
-Since search-R1 will re-tokenize the model output, recompute_logprobs should be set to True.
+Since Search-R1 will re-tokenize the model output, `recompute_logprobs`` should be set to True.
 
 .. code-block:: yaml
 
@@ -170,7 +170,7 @@ Since search-R1 will re-tokenize the model output, recompute_logprobs should be 
       recompute_logprobs: True
       shuffle_rollout: False
 
-Run `examples/agent/searchr1/run_main_searchr1_single.sh` to start training.
+Run `bash examples/agent/searchr1/run_train.sh` to start training.
 
 Evaluation
 ----------
@@ -204,7 +204,7 @@ Run the following commands to convert a Megatron checkpoint into a HuggingFace m
    cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index.json) "${CKPT_PATH_HF}"
 
 Fill the converted HuggingFace model path into  
-`examples/agent/searchr1/config/qwen2.5-3b-tool-1node-eval.yaml`:
+`examples/agent/searchr1/config/eval_qwen2.5.yaml`:
 
 .. code-block:: yaml
 
@@ -225,7 +225,7 @@ Modify the evaluation dataset path:
      train_data_paths: ["/path/to/eval.jsonl"]
      val_data_paths: ["/path/to/eval.jsonl"]
 
-Run `examples/agent/searchr1/run_main_searchr1_single_eval.sh` to start evaluation.
+Run `bash examples/agent/searchr1/run_eval.sh` to start evaluation.
 
 Training Curves
 ---------------

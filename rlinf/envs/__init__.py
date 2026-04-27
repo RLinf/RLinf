@@ -29,6 +29,9 @@ class SupportedEnvType(Enum):
     HABITAT = "habitat"
     OPENSORAWM = "opensora_wm"
     WANWM = "wan_wm"
+    EMBODICHAIN = "embodichain"
+    ROBOVERSE = "roboverse"
+    D4RL = "d4rl"
 
 
 def get_env_cls(env_type: str, env_cfg=None):
@@ -94,7 +97,7 @@ def get_env_cls(env_type: str, env_cfg=None):
 
         return RobocasaEnv
     elif env_type == SupportedEnvType.REALWORLD:
-        from rlinf.envs.realworld.realworld_env import RealWorldEnv
+        from rlinf.envs.realworld import RealWorldEnv
 
         return RealWorldEnv
     elif env_type == SupportedEnvType.HABITAT:
@@ -113,5 +116,17 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.world_model.world_model_wan_env import WanEnv
 
         return WanEnv
+    elif env_type == SupportedEnvType.EMBODICHAIN:
+        from rlinf.envs.embodichain.embodichain_env import EmbodiChainEnv
+
+        return EmbodiChainEnv
+    elif env_type == SupportedEnvType.ROBOVERSE:
+        from rlinf.envs.roboverse.roboverse_env import RoboVerseEnv
+
+        return RoboVerseEnv
+    elif env_type == SupportedEnvType.D4RL:
+        from rlinf.envs.d4rl.d4rl_env import D4RLEnv
+
+        return D4RLEnv
     else:
         raise NotImplementedError(f"Environment type {env_type} not implemented")
