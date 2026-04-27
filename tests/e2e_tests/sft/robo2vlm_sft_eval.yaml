@@ -54,7 +54,7 @@ actor:
   training_backend: "fsdp"
   eval_batch_size: 4
   micro_batch_size: 4
-  global_batch_size: 256
+  global_batch_size: 8
   seed: 42
 
   model:

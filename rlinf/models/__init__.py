@@ -17,7 +17,6 @@ from typing import Callable, Optional
 from omegaconf import DictConfig
 
 from rlinf.config import EMBODIED_MODEL, SupportedModel, torch_dtype_from_precision
-from rlinf.scheduler import Worker as Worker
 
 ModelBuilder = Callable[[DictConfig, Optional[object]], object]
 _MODEL_REGISTRY: dict[str, ModelBuilder] = {}

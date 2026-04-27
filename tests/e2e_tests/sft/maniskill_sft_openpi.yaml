@@ -38,7 +38,7 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 1
-  global_batch_size: 1024
+  global_batch_size: 2
   seed: 0
 
   # Override the default values in model/pi0
