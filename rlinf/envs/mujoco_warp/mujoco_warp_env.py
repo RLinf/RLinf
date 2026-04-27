@@ -250,6 +250,9 @@ class MuJoCoWarpEnv(gym.Env, ABC):
         self.ignore_terminations: bool = cfg.ignore_terminations
         self.max_episode_steps: int = cfg.max_episode_steps
         self.video_cfg = cfg.video_cfg
+        self._render_for_policy: bool = bool(
+            getattr(cfg.video_cfg, "render_for_policy", False)
+        )
         self.reward_coef: float = float(cfg.get("reward_coef", 1.0))
         self.use_fixed_reset_state_ids: bool = bool(
             cfg.get("use_fixed_reset_state_ids", False)
@@ -612,6 +615,17 @@ class MuJoCoWarpEnv(gym.Env, ABC):
     # ------------------------------------------------------------------
     # Rendering
     # ------------------------------------------------------------------
+
+    def _should_render_obs(self) -> bool:
+        """Return True if images should be included in the observation dict."""
+        return self._render_for_policy or getattr(self.video_cfg, "save_video", False)
+
+    def _maybe_add_render_to_obs(self, obs: dict[str, Any]) -> None:
+        """Add ``main_images`` to obs dict if rendering is requested."""
+        if self._should_render_obs():
+            imgs = self._render_images()
+            if imgs is not None:
+                obs["main_images"] = torch.from_numpy(imgs)
 
     def _render_images(self) -> Optional[np.ndarray]:
         """Render all parallel envs on GPU; return (B, H, W, 3) uint8 array."""

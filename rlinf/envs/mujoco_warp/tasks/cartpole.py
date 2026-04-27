@@ -145,10 +145,7 @@ class CartPoleTask(MuJoCoWarpEnv):
             "task_descriptions": [self._task_description] * self.num_envs,
         }
 
-        if getattr(self.video_cfg, "save_video", False):
-            imgs = self._render_images()
-            if imgs is not None:
-                obs["main_images"] = torch.from_numpy(imgs)
+        self._maybe_add_render_to_obs(obs)
 
         return obs
 
