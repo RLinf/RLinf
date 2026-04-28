@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
 import types
 
@@ -41,7 +42,13 @@ class FakePosCmd:
         self.mode2 = None
 
 
+def _install_realworld_import_stubs(monkeypatch):
+    monkeypatch.setitem(sys.modules, "cv2", types.ModuleType("cv2"))
+
+
 def _install_controller_import_stubs(monkeypatch):
+    _install_realworld_import_stubs(monkeypatch)
+
     rospy = types.ModuleType("rospy")
     rospy.loginfo_throttle = lambda *args, **kwargs: None
     monkeypatch.setitem(sys.modules, "rospy", rospy)
@@ -70,25 +77,27 @@ def _install_controller_import_stubs(monkeypatch):
 def _load_controller_class(monkeypatch):
     _install_controller_import_stubs(monkeypatch)
     sys.modules.pop("rlinf.envs.realworld.xsquare.turtle2_smooth_controller", None)
-    from rlinf.envs.realworld.xsquare.turtle2_smooth_controller import (
-        Turtle2SmoothController,
+    turtle2_smooth_controller = importlib.import_module(
+        "rlinf.envs.realworld.xsquare.turtle2_smooth_controller"
     )
 
-    return Turtle2SmoothController
+    return turtle2_smooth_controller.Turtle2SmoothController
 
 
-def test_turtle2_robot_config_default_backend_is_smooth():
-    sys.modules.setdefault("cv2", types.ModuleType("cv2"))
-    from rlinf.envs.realworld.xsquare.turtle2_env import Turtle2RobotConfig
+def test_turtle2_robot_config_default_backend_is_smooth(monkeypatch):
+    _install_realworld_import_stubs(monkeypatch)
+    turtle2_env = importlib.import_module("rlinf.envs.realworld.xsquare.turtle2_env")
 
-    assert Turtle2RobotConfig().pose_control_backend == "smooth"
+    assert turtle2_env.Turtle2RobotConfig().pose_control_backend == "smooth"
 
 
-def test_turtle2_absolute_pose_step_direct_accepts_raw_action():
-    sys.modules.setdefault("cv2", types.ModuleType("cv2"))
-    from rlinf.envs.realworld.xsquare.tasks.deploy_env import Turtle2DeployEnv
+def test_turtle2_absolute_pose_step_direct_accepts_raw_action(monkeypatch):
+    _install_realworld_import_stubs(monkeypatch)
+    deploy_env = importlib.import_module(
+        "rlinf.envs.realworld.xsquare.tasks.deploy_env"
+    )
 
-    env = Turtle2DeployEnv(
+    env = deploy_env.Turtle2DeployEnv(
         {
             "is_dummy": True,
             "pose_control_backend": "direct",
@@ -116,11 +125,15 @@ def test_turtle2_absolute_pose_step_direct_accepts_raw_action():
     np.testing.assert_array_equal(env._turtle2_state.follow2_pos, action[7:])
 
 
-def test_turtle2_absolute_pose_step_direct_rejects_out_of_bounds_without_publish():
-    sys.modules.setdefault("cv2", types.ModuleType("cv2"))
-    from rlinf.envs.realworld.xsquare.tasks.deploy_env import Turtle2DeployEnv
+def test_turtle2_absolute_pose_step_direct_rejects_out_of_bounds_without_publish(
+    monkeypatch,
+):
+    _install_realworld_import_stubs(monkeypatch)
+    deploy_env = importlib.import_module(
+        "rlinf.envs.realworld.xsquare.tasks.deploy_env"
+    )
 
-    env = Turtle2DeployEnv(
+    env = deploy_env.Turtle2DeployEnv(
         {
             "is_dummy": True,
             "pose_control_backend": "direct",
@@ -150,11 +163,13 @@ def test_turtle2_absolute_pose_step_direct_rejects_out_of_bounds_without_publish
     np.testing.assert_array_equal(env._turtle2_state.follow2_pos, before[7:])
 
 
-def test_turtle2_absolute_pose_step_direct_rejects_bad_shape():
-    sys.modules.setdefault("cv2", types.ModuleType("cv2"))
-    from rlinf.envs.realworld.xsquare.tasks.deploy_env import Turtle2DeployEnv
+def test_turtle2_absolute_pose_step_direct_rejects_bad_shape(monkeypatch):
+    _install_realworld_import_stubs(monkeypatch)
+    deploy_env = importlib.import_module(
+        "rlinf.envs.realworld.xsquare.tasks.deploy_env"
+    )
 
-    env = Turtle2DeployEnv(
+    env = deploy_env.Turtle2DeployEnv(
         {
             "is_dummy": True,
             "pose_control_backend": "direct",
@@ -171,12 +186,12 @@ def test_turtle2_absolute_pose_step_direct_rejects_bad_shape():
     assert info["executed_action"].shape == (14,)
 
 
-def test_turtle2_reset_next_step_bounds_large_pose_jumps():
-    sys.modules.setdefault("cv2", types.ModuleType("cv2"))
-    from rlinf.envs.realworld.xsquare.turtle2_env import Turtle2Env, Turtle2RobotConfig
+def test_turtle2_reset_next_step_bounds_large_pose_jumps(monkeypatch):
+    _install_realworld_import_stubs(monkeypatch)
+    turtle2_env = importlib.import_module("rlinf.envs.realworld.xsquare.turtle2_env")
 
-    env = Turtle2Env.__new__(Turtle2Env)
-    env.config = Turtle2RobotConfig(
+    env = turtle2_env.Turtle2Env.__new__(turtle2_env.Turtle2Env)
+    env.config = turtle2_env.Turtle2RobotConfig(
         reset_max_xyz_step=0.02,
         reset_max_rpy_step=0.075,
         reset_max_gripper_step=0.25,
@@ -203,7 +218,7 @@ def test_turtle2_reset_next_step_bounds_large_pose_jumps():
         assert (
             np.max(
                 np.abs(
-                    Turtle2Env._shortest_angle_delta(
+                    turtle2_env.Turtle2Env._shortest_angle_delta(
                         previous[:, 3:6],
                         waypoint[:, 3:6],
                     )

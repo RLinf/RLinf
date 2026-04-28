@@ -19,7 +19,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-import cv2
 import gymnasium as gym
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -687,6 +686,8 @@ class Turtle2Env(gym.Env):
         cropped_frame = frame[
             start_y : start_y + crop_size, start_x : start_x + crop_size
         ]
+        import cv2
+
         resized_frame = cv2.resize(cropped_frame, reshape_size)
         return resized_frame
 

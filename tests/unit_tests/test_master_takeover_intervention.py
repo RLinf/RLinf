@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import importlib
 import socket
 import sys
 import time
@@ -23,19 +24,34 @@ import gymnasium as gym
 import numpy as np
 import pytest
 
-sys.modules.setdefault("cv2", types.ModuleType("cv2"))
+MSG_JOINT = None
+MSG_MODE = None
+X2RobotTakeoverTCPConfig = None
+X2RobotTakeoverTCPServer = None
+make_ros_running_mode_getter = None
+recv_frame = None
+MasterTakeoverIntervention = None
 
-from rlinf.envs.realworld.common.takeover.x2robot_protocol import (  # noqa: E402
-    MSG_JOINT,
-    MSG_MODE,
-    X2RobotTakeoverTCPConfig,
-    X2RobotTakeoverTCPServer,
-    make_ros_running_mode_getter,
-    recv_frame,
-)
-from rlinf.envs.realworld.common.wrappers.master_takeover_intervention import (  # noqa: E402
-    MasterTakeoverIntervention,
-)
+
+@pytest.fixture(autouse=True)
+def _realworld_imports(monkeypatch):
+    monkeypatch.setitem(sys.modules, "cv2", types.ModuleType("cv2"))
+    protocol = importlib.import_module(
+        "rlinf.envs.realworld.common.takeover.x2robot_protocol"
+    )
+    takeover_wrapper = importlib.import_module(
+        "rlinf.envs.realworld.common.wrappers.master_takeover_intervention"
+    )
+
+    globals()["MSG_JOINT"] = protocol.MSG_JOINT
+    globals()["MSG_MODE"] = protocol.MSG_MODE
+    globals()["X2RobotTakeoverTCPConfig"] = protocol.X2RobotTakeoverTCPConfig
+    globals()["X2RobotTakeoverTCPServer"] = protocol.X2RobotTakeoverTCPServer
+    globals()["make_ros_running_mode_getter"] = protocol.make_ros_running_mode_getter
+    globals()["recv_frame"] = protocol.recv_frame
+    globals()["MasterTakeoverIntervention"] = (
+        takeover_wrapper.MasterTakeoverIntervention
+    )
 
 
 class FakeTakeoverAdapter:

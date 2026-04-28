@@ -12,19 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
-import types
+import importlib
 
 import gymnasium as gym
 import numpy as np
 import pytest
 
-sys.modules.setdefault("cv2", types.ModuleType("cv2"))
+apply_dual_pose_action_wrappers = None
+construct_adjoint_matrix = None
 
-from rlinf.envs.realworld.common.wrappers import (  # noqa: E402
-    apply_dual_pose_action_wrappers,
-)
-from rlinf.envs.realworld.franka.utils import construct_adjoint_matrix  # noqa: E402
+
+@pytest.fixture(autouse=True)
+def _realworld_imports(monkeypatch):
+    import sys
+    import types
+
+    monkeypatch.setitem(sys.modules, "cv2", types.ModuleType("cv2"))
+    wrappers = importlib.import_module("rlinf.envs.realworld.common.wrappers")
+    franka_utils = importlib.import_module("rlinf.envs.realworld.franka.utils")
+
+    globals()["apply_dual_pose_action_wrappers"] = (
+        wrappers.apply_dual_pose_action_wrappers
+    )
+    globals()["construct_adjoint_matrix"] = franka_utils.construct_adjoint_matrix
 
 
 class DummyDualPoseEnv(gym.Env):
