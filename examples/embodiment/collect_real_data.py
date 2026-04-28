@@ -65,6 +65,11 @@ class DataCollector(Worker):
                 only_success=getattr(
                     self.cfg.env.eval.data_collection, "only_success", False
                 ),
+                record_executed_action=getattr(
+                    self.cfg.env.eval.data_collection,
+                    "record_executed_action",
+                    False,
+                ),
                 finalize_interval=getattr(
                     self.cfg.env.eval.data_collection, "finalize_interval", 100
                 ),

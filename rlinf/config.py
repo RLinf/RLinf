@@ -810,6 +810,12 @@ def validate_embodied_cfg(cfg):
                 f"env.{split}.master_takeover.control_mode must be 'pose' for this "
                 f"takeover raw-collection path, got {control_mode!r}."
             )
+        use_arm_ids = env_cfg.get("override_cfg", {}).get("use_arm_ids", [0, 1])
+        if list(use_arm_ids) != [0, 1]:
+            raise ValueError(
+                f"env.{split}.use_master_takeover=True requires "
+                f"override_cfg.use_arm_ids=[0, 1], got {list(use_arm_ids)!r}."
+            )
 
     # NOTE: Currently we only support actor_critic as PPO algorithm loss, and only support value_head as critic model.
     # This will be updated in the future to support more algorithms and critic models.

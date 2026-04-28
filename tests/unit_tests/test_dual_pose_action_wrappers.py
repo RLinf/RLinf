@@ -12,12 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+import types
+
 import gymnasium as gym
 import numpy as np
 import pytest
 
-from rlinf.envs.realworld.common.wrappers import apply_dual_pose_action_wrappers
-from rlinf.envs.realworld.franka.utils import construct_adjoint_matrix
+sys.modules.setdefault("cv2", types.ModuleType("cv2"))
+
+from rlinf.envs.realworld.common.wrappers import (  # noqa: E402
+    apply_dual_pose_action_wrappers,
+)
+from rlinf.envs.realworld.franka.utils import construct_adjoint_matrix  # noqa: E402
 
 
 class DummyDualPoseEnv(gym.Env):

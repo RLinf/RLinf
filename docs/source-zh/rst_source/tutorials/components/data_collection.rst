@@ -90,6 +90,10 @@ Episode 数据采集
      - ``bool``
      - ``False``
      - 仅保存成功的 episode
+   * - ``record_executed_action``
+     - ``bool``
+     - ``False``
+     - 优先记录 ``info["executed_action"]`` / accepted ``info["intervene_action"]``，主要用于 takeover raw 审计
    * - ``finalize_interval``
      - ``int``
      - ``100``

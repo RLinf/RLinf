@@ -18,10 +18,12 @@ from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
+import pytest
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import OmegaConf
 
+from rlinf.config import validate_embodied_cfg
 from rlinf.envs.wrappers import CollectEpisode
 from rlinf.workers.env.env_worker import EnvWorker
 
@@ -46,6 +48,8 @@ def test_turtle2_takeover_collect_openpi_config_composes(monkeypatch):
 
     assert cfg.runner.only_eval is True
     assert cfg.rollout.collect_transitions is False
+    assert cfg.algorithm.adv_type == "raw"
+    assert cfg.algorithm.loss_type == "actor"
     assert cfg.env.eval.use_master_takeover is True
     assert cfg.env.eval.action_mode == "absolute_pose"
     assert cfg.env.eval.master_takeover.control_mode == "pose"
@@ -55,10 +59,22 @@ def test_turtle2_takeover_collect_openpi_config_composes(monkeypatch):
     assert cfg.env.eval.data_collection.enabled is True
     assert cfg.env.eval.data_collection.export_format == "pickle"
     assert cfg.env.eval.data_collection.only_success is False
+    assert cfg.env.eval.data_collection.record_executed_action is True
     assert cfg.env.eval.data_collection.robot_type == "turtle2"
     assert cfg.actor.model.openpi.config_name == "pi0_turtle2_x2robot_s2s"
     assert cfg.actor.model.action_dim == 14
     assert cfg.actor.model.num_action_chunks == 30
+
+
+def test_turtle2_takeover_config_rejects_single_arm(monkeypatch):
+    repo_root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(repo_root / "examples" / "embodiment"))
+
+    cfg = _compose_config("realworld_turtle2_dagger_takeover_collect_openpi")
+    cfg.env.eval.override_cfg.use_arm_ids = [1]
+
+    with pytest.raises(ValueError, match=r"override_cfg.use_arm_ids=\[0, 1\]"):
+        validate_embodied_cfg(cfg)
 
 
 def test_turtle2_default_backend_stays_smooth(monkeypatch):
@@ -100,6 +116,7 @@ def test_data_collection_wraps_env_when_collect_transitions_false(tmp_path):
                 "export_format": "pickle",
                 "only_success": False,
                 "only_intervened": False,
+                "record_executed_action": True,
                 "robot_type": "turtle2",
                 "fps": 60,
                 "finalize_interval": 1,
@@ -111,3 +128,4 @@ def test_data_collection_wraps_env_when_collect_transitions_false(tmp_path):
 
     assert len(envs) == 1
     assert isinstance(envs[0], CollectEpisode)
+    assert envs[0].record_executed_action is True

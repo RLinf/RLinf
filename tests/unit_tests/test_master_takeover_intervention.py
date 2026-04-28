@@ -15,20 +15,25 @@
 from __future__ import annotations
 
 import socket
+import sys
 import time
+import types
 
 import gymnasium as gym
 import numpy as np
 import pytest
 
-from rlinf.envs.realworld.common.takeover.x2robot_protocol import (
+sys.modules.setdefault("cv2", types.ModuleType("cv2"))
+
+from rlinf.envs.realworld.common.takeover.x2robot_protocol import (  # noqa: E402
     MSG_JOINT,
     MSG_MODE,
     X2RobotTakeoverTCPConfig,
     X2RobotTakeoverTCPServer,
+    make_ros_running_mode_getter,
     recv_frame,
 )
-from rlinf.envs.realworld.common.wrappers.master_takeover_intervention import (
+from rlinf.envs.realworld.common.wrappers.master_takeover_intervention import (  # noqa: E402
     MasterTakeoverIntervention,
 )
 
@@ -373,3 +378,28 @@ def test_takeover_action_accepts_fresh_pose_after_follow_gate():
         adapter.get_takeover_action(),
         np.concatenate([left, right]).astype(np.float32),
     )
+
+
+def test_ros_running_mode_getter_requires_rospy(monkeypatch):
+    monkeypatch.setitem(sys.modules, "rospy", None)
+    getter = make_ros_running_mode_getter(X2RobotTakeoverTCPConfig())
+
+    with pytest.raises(RuntimeError, match="requires rospy"):
+        getter()
+
+
+def test_ros_running_mode_getter_rejects_non_int_param(monkeypatch):
+    fake_rospy = types.SimpleNamespace(get_param=lambda *_args: "takeover")
+    monkeypatch.setitem(sys.modules, "rospy", fake_rospy)
+    getter = make_ros_running_mode_getter(X2RobotTakeoverTCPConfig())
+
+    with pytest.raises(RuntimeError, match="must be an integer"):
+        getter()
+
+
+def test_ros_running_mode_getter_returns_int_param(monkeypatch):
+    fake_rospy = types.SimpleNamespace(get_param=lambda *_args: "2")
+    monkeypatch.setitem(sys.modules, "rospy", fake_rospy)
+    getter = make_ros_running_mode_getter(X2RobotTakeoverTCPConfig())
+
+    assert getter() == 2

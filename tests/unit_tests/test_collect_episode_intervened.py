@@ -21,9 +21,19 @@ from rlinf.envs.wrappers.collect_episode import CollectEpisode
 
 
 class OneStepCollectionEnv(gym.Env):
-    def __init__(self, intervened=False, success=True):
+    def __init__(
+        self,
+        intervened=False,
+        success=True,
+        executed_action=None,
+        intervene_action=None,
+        raw_intervene_action=None,
+    ):
         self.intervened = intervened
         self.success = success
+        self.executed_action = executed_action
+        self.intervene_action = intervene_action
+        self.raw_intervene_action = raw_intervene_action
         self.action_space = gym.spaces.Box(-10.0, 10.0, shape=(1,), dtype=np.float32)
         self.observation_space = gym.spaces.Dict(
             {"state": gym.spaces.Box(-10.0, 10.0, shape=(1,), dtype=np.float32)}
@@ -36,7 +46,19 @@ class OneStepCollectionEnv(gym.Env):
         info = {}
         if self.intervened:
             info["intervene_flag"] = np.asarray([True], dtype=bool)
-            info["executed_action"] = np.asarray([7.0], dtype=np.float32)
+        if self.executed_action is not None:
+            info["executed_action"] = np.asarray(
+                self.executed_action, dtype=np.float32
+            )
+        if self.intervene_action is not None:
+            info["intervene_action"] = np.asarray(
+                self.intervene_action, dtype=np.float32
+            )
+        if self.raw_intervene_action is not None:
+            info["raw_intervene_action"] = np.asarray(
+                self.raw_intervene_action, dtype=np.float32
+            )
+            info["intervene_rejected"] = True
         info["success"] = self.success
         return {"state": np.ones((1, 1), dtype=np.float32)}, 0.0, True, False, info
 
@@ -84,9 +106,10 @@ def test_collect_episode_only_intervened_skips_non_intervened(tmp_path):
 
 def test_collect_episode_records_full_intervened_episode_with_executed_action(tmp_path):
     wrapped = CollectEpisode(
-        OneStepCollectionEnv(intervened=True),
+        OneStepCollectionEnv(intervened=True, executed_action=[7.0]),
         save_dir=str(tmp_path),
         only_intervened=True,
+        record_executed_action=True,
     )
     wrapped.reset()
     wrapped.step(np.asarray([[1.0]], dtype=np.float32))
@@ -98,6 +121,97 @@ def test_collect_episode_records_full_intervened_episode_with_executed_action(tm
 
     assert episode["intervened"]
     np.testing.assert_array_equal(episode["actions"][0], np.asarray([7.0]))
+
+
+def test_collect_episode_default_records_input_action_even_if_executed_action_exists(
+    tmp_path,
+):
+    wrapped = CollectEpisode(
+        OneStepCollectionEnv(intervened=True, executed_action=[7.0]),
+        save_dir=str(tmp_path),
+    )
+    wrapped.reset()
+    wrapped.step(np.asarray([[1.0]], dtype=np.float32))
+    wrapped.close()
+
+    [path] = list(tmp_path.glob("*.pkl"))
+    with path.open("rb") as f:
+        episode = pickle.load(f)
+
+    np.testing.assert_array_equal(episode["actions"][0], np.asarray([1.0]))
+
+
+def test_collect_episode_record_executed_action_uses_accepted_intervene_action(
+    tmp_path,
+):
+    wrapped = CollectEpisode(
+        OneStepCollectionEnv(intervened=True, intervene_action=[8.0]),
+        save_dir=str(tmp_path),
+        record_executed_action=True,
+    )
+    wrapped.reset()
+    wrapped.step(np.asarray([[1.0]], dtype=np.float32))
+    wrapped.close()
+
+    [path] = list(tmp_path.glob("*.pkl"))
+    with path.open("rb") as f:
+        episode = pickle.load(f)
+
+    np.testing.assert_array_equal(episode["actions"][0], np.asarray([8.0]))
+
+
+def test_collect_episode_rejected_takeover_records_executed_not_raw_candidate(
+    tmp_path,
+):
+    wrapped = CollectEpisode(
+        OneStepCollectionEnv(
+            intervened=False,
+            executed_action=[6.0],
+            raw_intervene_action=[9.0],
+        ),
+        save_dir=str(tmp_path),
+        record_executed_action=True,
+    )
+    wrapped.reset()
+    wrapped.step(np.asarray([[1.0]], dtype=np.float32))
+    wrapped.close()
+
+    [path] = list(tmp_path.glob("*.pkl"))
+    with path.open("rb") as f:
+        episode = pickle.load(f)
+
+    np.testing.assert_array_equal(episode["actions"][0], np.asarray([6.0]))
+    np.testing.assert_array_equal(
+        episode["infos"][1]["raw_intervene_action"], np.asarray([9.0])
+    )
+    assert episode["infos"][1]["intervene_rejected"] is True
+
+
+def test_lerobot_legacy_intervention_override_stays_opt_in_to_lerobot(tmp_path):
+    wrapped = CollectEpisode(OneStepCollectionEnv(), save_dir=str(tmp_path))
+    try:
+        np.testing.assert_array_equal(
+            wrapped._lerobot_action_with_legacy_intervention(
+                np.asarray([1.0], dtype=np.float32),
+                {
+                    "intervene_flag": np.asarray([True], dtype=bool),
+                    "intervene_action": np.asarray([8.0], dtype=np.float32),
+                },
+            ),
+            np.asarray([8.0], dtype=np.float32),
+        )
+        np.testing.assert_array_equal(
+            wrapped._lerobot_action_with_legacy_intervention(
+                np.asarray([1.0], dtype=np.float32),
+                {
+                    "intervene_flag": np.asarray([False], dtype=bool),
+                    "intervene_action": np.asarray([8.0], dtype=np.float32),
+                },
+            ),
+            np.asarray([1.0], dtype=np.float32),
+        )
+    finally:
+        wrapped.close()
 
 
 def test_collect_episode_success_filter_is_independent_from_intervention(tmp_path):

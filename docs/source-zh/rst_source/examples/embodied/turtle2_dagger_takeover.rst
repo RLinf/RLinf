@@ -38,6 +38,14 @@ schema、label 合同和测试。
 配置
 ----
 
+前置条件：
+
+- 需要在 Turtle2/X2Robot ROS 环境中运行，且 ``rospy`` 可用。
+- Turtle2 SDK 和 follower controller 已连接真实机器人。
+- ``/follow_pos_cmd_1`` 和 ``/follow_pos_cmd_2`` 只能由 RLinf 发布；不要同时启动旧 slave 执行器。
+- ROS 参数 ``/running_mode`` 必须存在，并使用整数模式值，例如 ``1`` 表示 policy，``2`` 表示 takeover。
+- master 程序连接到 RLinf takeover TCP server，并在接管时提供 fresh ``MSG_POSE`` frame。
+
 使用：
 
 .. code-block:: bash
@@ -50,8 +58,23 @@ schema、label 合同和测试。
 - ``env.eval.action_mode: absolute_pose``
 - ``env.eval.override_cfg.pose_control_backend: direct``
 - ``env.eval.data_collection.export_format: pickle``
+- ``env.eval.data_collection.record_executed_action: true``
 - ``rollout.collect_transitions: false``
 
 pickle episode 记录实际执行动作。direct control 拒绝动作时，raw action 不会被当成
 执行动作写入；episode 的 ``actions`` 会记录保持住的 ``executed_action``，被拒绝
 的候选动作只保留在 metadata 中。
+
+这个配置里的 algorithm 字段只使用已注册占位值来通过配置兼容检查，因为
+``runner.only_eval`` 为 true。已有按按钮 SAC 示例可以使用 ``embodied_sac``，
+是因为训练脚本会分流到 SAC worker；本 takeover 示例不会启动 SAC 或在线
+DAgger 训练。
+
+数据格式
+--------
+
+RLinf 的 ``CollectEpisode`` 同时支持 ``pickle`` 和 LeRobot 导出。LeRobot
+更适合干净的示教数据集和标准训练链路。本示例刻意使用 ``pickle``，因为 raw
+takeover 采集需要保留 policy 段、master 接管段、hold/reject/recovery
+metadata，以及真实执行的 ``executed_action``。如果后续需要 LeRobot 数据集，
+应当把保存下来的 pickle episode 先清洗成 expert segments，再单独转换。

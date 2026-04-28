@@ -562,14 +562,19 @@ def make_ros_running_mode_getter(config: X2RobotTakeoverTCPConfig) -> Callable[[
     def _getter() -> int:
         try:
             import rospy
-        except ImportError:
-            return config.normal_mode_value
+        except ImportError as exc:
+            raise RuntimeError(
+                "master_takeover.running_mode_source='ros_param' requires rospy "
+                "to be importable in the RLinf env process."
+            ) from exc
 
+        value = rospy.get_param(config.running_mode_param, config.normal_mode_value)
         try:
-            return int(
-                rospy.get_param(config.running_mode_param, config.normal_mode_value)
-            )
-        except (TypeError, ValueError):
-            return config.normal_mode_value
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"ROS param {config.running_mode_param!r} must be an integer "
+                f"running mode, got {value!r}."
+            ) from exc
 
     return _getter

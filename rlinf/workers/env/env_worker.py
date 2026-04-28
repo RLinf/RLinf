@@ -260,6 +260,9 @@ class EnvWorker(Worker):
                     only_intervened=getattr(
                         env_cfg.data_collection, "only_intervened", False
                     ),
+                    record_executed_action=getattr(
+                        env_cfg.data_collection, "record_executed_action", False
+                    ),
                     finalize_interval=getattr(
                         env_cfg.data_collection, "finalize_interval", 100
                     ),

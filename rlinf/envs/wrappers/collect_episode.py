@@ -57,6 +57,9 @@ class CollectEpisode(gym.Wrapper):
         only_success: Whether to save only successful episodes. Defaults to False.
         only_intervened: Whether to save only episodes that contain at least
             one human / expert intervention step. Defaults to False.
+        record_executed_action: Whether to prefer ``info["executed_action"]``
+            and accepted ``info["intervene_action"]`` over the input action.
+            Defaults to False to preserve the original collection contract.
         finalize_interval: Call ``writer.finalize()`` every this many completed
             episodes to flush ``info.json`` and ``stats.json`` as a checkpoint.
             ``0`` disables periodic flushing (lerobot only). Defaults to 100.
@@ -74,6 +77,7 @@ class CollectEpisode(gym.Wrapper):
         fps: int = 10,
         only_success: bool = False,
         only_intervened: bool = False,
+        record_executed_action: bool = False,
         finalize_interval: int = 100,
     ):
         if isinstance(env, gym.Env):
@@ -96,6 +100,7 @@ class CollectEpisode(gym.Wrapper):
         self.fps = fps
         self.only_success = only_success
         self.only_intervened = only_intervened
+        self.record_executed_action = record_executed_action
         self.finalize_interval = finalize_interval
 
         # LeRobot writer is created lazily on the first completed episode.
@@ -431,6 +436,10 @@ class CollectEpisode(gym.Wrapper):
                 "final_info should not be present in the info"
             )
             info_with_intervene = copy.deepcopy(buf["infos"][i + 1])
+            if not self.record_executed_action:
+                np_action = self._lerobot_action_with_legacy_intervention(
+                    np_action, info_with_intervene
+                )
 
             if state is None or np_action is None:
                 continue
@@ -579,6 +588,8 @@ class CollectEpisode(gym.Wrapper):
 
     def _recorded_action(self, action, env_info, env_idx: int):
         policy_action = self._slice_copy(action, env_idx)
+        if not self.record_executed_action:
+            return policy_action
         if isinstance(env_info, dict) and "executed_action" in env_info:
             return self._copy(env_info["executed_action"])
         if (
@@ -589,6 +600,21 @@ class CollectEpisode(gym.Wrapper):
         ):
             return self._copy(env_info["intervene_action"])
         return policy_action
+
+    def _lerobot_action_with_legacy_intervention(self, np_action, env_info):
+        if np_action is None or not isinstance(env_info, dict):
+            return np_action
+        if "intervene_action" not in env_info or "intervene_flag" not in env_info:
+            return np_action
+        flag = self._to_numpy(env_info["intervene_flag"])
+        if flag is None or not np.asarray(flag, dtype=bool).reshape(-1).all():
+            return np_action
+        intervene_action = self._to_numpy(env_info["intervene_action"])
+        if intervene_action is None or not self._same_action_shape(
+            intervene_action, np_action
+        ):
+            return np_action
+        return intervene_action
 
     def _same_action_shape(self, candidate, reference) -> bool:
         candidate_np = self._to_numpy(candidate)

@@ -96,6 +96,10 @@ Constructor Arguments
      - ``bool``
      - ``False``
      - Save only successful episodes
+   * - ``record_executed_action``
+     - ``bool``
+     - ``False``
+     - Prefer ``info["executed_action"]`` / accepted ``info["intervene_action"]`` over the input action; intended for raw takeover auditing
    * - ``finalize_interval``
      - ``int``
      - ``100``
