@@ -45,9 +45,10 @@ def get_model(cfg: DictConfig):
 
     torch_dtype = torch_dtype_from_precision(cfg.precision)
     model = get_model(cfg, torch_dtype)
-
+    
+    target_device = cfg.get("device", Worker.torch_device_type)
     if Worker.torch_platform.is_available():
-        model = model.to(Worker.torch_device_type)
+        model = model.to(target_device)
 
     if cfg.is_lora:
         from peft import LoraConfig, PeftModel, get_peft_model
