@@ -692,6 +692,7 @@ install_env_only() {
             ;;
         gim_arm)
             uv sync --extra gim_arm --active $NO_INSTALL_RLINF_CMD
+            ;;
         dosw1)
             install_dosw1_env
             ;;
