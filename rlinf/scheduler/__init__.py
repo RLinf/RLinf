@@ -21,6 +21,7 @@ from .hardware import (
     DOSW1HWInfo,
     DualFrankaHWInfo,
     FrankaHWInfo,
+    GimArmHWInfo,
     HardwareInfo,
     Turtle2HWInfo,
 )
@@ -41,6 +42,7 @@ __all__ = [
     "DOSW1HWInfo",
     "DualFrankaHWInfo",
     "FrankaHWInfo",
+    "GimArmHWInfo",
     "Turtle2HWInfo",
     "CollectiveGroupOptions",
     "Cluster",

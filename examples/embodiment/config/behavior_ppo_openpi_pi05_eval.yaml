@@ -3,7 +3,7 @@ defaults:
   - env/behavior_r1pro@env.eval
   - model/pi0_5@actor.model
   - training_backend/fsdp@actor.fsdp_config
-  - weight_syncer/bucket_syncer@weight_syncer # use bucket_syncer to avoid OOM in training on 4090
+  - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
 hydra:
@@ -16,21 +16,20 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    rollout, actor: 0-1
-    env: 2-3
+    rollout,env,actor: all
 
 runner:
   task_type: embodied
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "behavior_ppo_openpi05"
+    experiment_name: "behavior_ppo_openpi05_eval"
     logger_backends: ["tensorboard"]
 
-  only_eval: False
+  only_eval: True
 
   max_epochs: 1000
-  max_steps: -1
+  max_steps: 1
 
   val_check_interval: -1
   save_interval: 40
@@ -78,8 +77,6 @@ algorithm:
     max_length: 1024
     min_length: 1
 
-  reward_coef: 5.0
-
 env:
   group_name: "EnvGroup"
 
@@ -87,12 +84,10 @@ env:
     total_num_envs: 8
     max_episode_steps: 4096
     max_steps_per_rollout_epoch: 4096
-    reward_coef: ${algorithm.reward_coef}
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/train
       fps: 15
-    num_env_subprocess: 2
   eval:
     total_num_envs: 8
     max_episode_steps: 4096
@@ -132,7 +127,7 @@ actor:
       config_name: "pi05_behavior"
       detach_critic_input: True
       joint_logprob: False
-      noise_level: 0.5
+      noise_level: 0.0
       action_env_dim: ${actor.model.action_dim}
       noise_method: "flow_sde"
 

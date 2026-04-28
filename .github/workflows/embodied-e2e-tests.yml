@@ -514,13 +514,13 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi
 
-      - name: Libero-Goal NFT test
+      - name: Libero-Object NFT test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh libero_goal_nft_openpi
+          bash tests/e2e_tests/embodied/run.sh libero_object_nft_openpi
 
       - name: Libero-Spatial DAgger test
         timeout-minutes: 20

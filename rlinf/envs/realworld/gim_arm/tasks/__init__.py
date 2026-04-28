@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,21 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .dosw1 import DOSW1HWConfig, DOSW1HWInfo
-from .dual_franka import DualFrankaConfig, DualFrankaHWInfo
-from .franka import FrankaConfig, FrankaHWInfo
-from .gim_arm import GimArmConfig, GimArmHWInfo
-from .xsquare import Turtle2Config, Turtle2HWInfo
+from gymnasium.envs.registration import register
 
-__all__ = [
-    "DOSW1HWConfig",
-    "DOSW1HWInfo",
-    "DualFrankaConfig",
-    "DualFrankaHWInfo",
-    "FrankaConfig",
-    "FrankaHWInfo",
-    "GimArmConfig",
-    "GimArmHWInfo",
-    "Turtle2Config",
-    "Turtle2HWInfo",
-]
+from rlinf.envs.realworld.gim_arm.tasks.peg_insertion import (
+    GimArmPegInsertionEnv as GimArmPegInsertionEnv,
+)
+
+register(
+    id="GimArmPegInsertionEnv-v1",
+    entry_point="rlinf.envs.realworld.gim_arm.tasks:GimArmPegInsertionEnv",
+)
