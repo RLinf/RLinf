@@ -108,6 +108,18 @@ Prerequisites
 
 Before running this example, verify the following:
 
+- The required external repositories are prepared on the corresponding machines:
+
+  - The master machine uses
+    `gen-robot/x2robot-master@dev <https://github.com/gen-robot/x2robot-master/tree/dev>`_
+    to start the master arms, gripper/joystick input node, and
+    ``bi_teleop_master.py`` TCP client.
+  - The Turtle2/slave control machine uses
+    `gen-robot/x2robot-slave@dev/dagger <https://github.com/gen-robot/x2robot-slave/tree/dev/dagger>`_
+    for Turtle2 low-level ROS, SDK, cameras, and follower-controller support.
+    In this RLinf flow, do not start its ``bi_teleop_slave.py`` or
+    ``socket2ros_async.py`` as an action executor.
+
 - Turtle2 ROS, SDK, cameras, and follower controllers are running and publishing
   robot state.
 - ``/follow_pos_cmd_1`` and ``/follow_pos_cmd_2`` are published only by the RLinf
@@ -133,6 +145,27 @@ the values from your deployment.
 The Turtle2 control node owns the ROS master, robot bring-up, cameras, and
 follower controllers. If you use two containers, the control container owns
 low-level ROS, while the RLinf container only runs the Ray worker and RLinf env.
+
+Prepare the ``dev/dagger`` branch of ``x2robot-slave`` on this machine. Example:
+
+.. code-block:: bash
+
+   # Run on the Turtle2/slave control machine. Replace the workspace path.
+   git clone -b dev/dagger https://github.com/gen-robot/x2robot-slave.git \
+     <slave_ros_ws>/src/x2robot-slave
+   cd <slave_ros_ws>
+   catkin_make
+   source devel/setup.bash
+
+If the repository already exists, verify the branch and revision before startup:
+
+.. code-block:: bash
+
+   cd <slave_ros_ws>/src/x2robot-slave
+   git fetch origin
+   git switch dev/dagger
+   git pull --ff-only
+   git rev-parse --short HEAD
 
 .. code-block:: bash
 
@@ -232,21 +265,55 @@ takeover server as a TCP client. Start the master arm ROS nodes first, then star
 the client that sends takeover frames. If gripper input depends on a separate
 communication node, start that node first as well.
 
+Prepare the ``dev`` branch of ``x2robot-master`` on this machine. Example:
+
+.. code-block:: bash
+
+   # Run on the master machine. Replace the workspace path.
+   git clone -b dev https://github.com/gen-robot/x2robot-master.git \
+     <master_ros_ws>/src/x2robot-master
+   cd <master_ros_ws>
+   catkin_make
+   source devel/setup.bash
+
+If the repository already exists, verify the branch and revision before startup:
+
+.. code-block:: bash
+
+   cd <master_ros_ws>/src/x2robot-master
+   git fetch origin
+   git switch dev
+   git pull --ff-only
+   git rev-parse --short HEAD
+
 .. code-block:: bash
 
    # Run on the master node.
    ssh <master_host>
    source /opt/ros/noetic/setup.bash
-   source <path_to_master_ros_setup>
+   source <master_ros_ws>/devel/setup.bash
 
-   # Start the master arms. Replace the launch file for your installation.
-   roslaunch <master_robot_launch>
+   # Terminal 1: start the master arms. Choose the command used by your install.
+   roslaunch arx_x5_controller_moving open_master_moving.launch
+   # Or:
+   # roslaunch <master_ros_ws>/src/x2robot-master/open_master_moving.launch
 
-   # If gripper / joystick input requires a separate communication node, start it.
-   roslaunch <master_input_launch>
+.. code-block:: bash
 
-   # Start the master TCP client and connect to the RLinf takeover server.
-   cd <path_to_x2robot_master_scripts>
+   # Terminal 2: start the master-side gripper / joystick input node.
+   ssh <master_host>
+   source /opt/ros/noetic/setup.bash
+   source <master_ros_ws>/devel/setup.bash
+   roslaunch communication communication_MS.launch
+
+.. code-block:: bash
+
+   # Terminal 3: start the master TCP client and connect to the RLinf server.
+   ssh <master_host>
+   source /opt/ros/noetic/setup.bash
+   source <master_ros_ws>/devel/setup.bash
+
+   cd <master_ros_ws>/src/x2robot-master/scripts
    python3 bi_teleop_master.py \
      --server-host <worker_ip> \
      --server-port <master_takeover_port> \

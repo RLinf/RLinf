@@ -100,6 +100,15 @@ X2Robot takeover 的三类 frame：
 
 运行本示例前，需要先确认以下条件：
 
+- 相关外部仓库已在对应机器上准备好：
+
+  - master 机器使用 `gen-robot/x2robot-master@dev <https://github.com/gen-robot/x2robot-master/tree/dev>`_，
+    用于启动 master 双臂、夹爪/手柄输入节点，以及 ``bi_teleop_master.py`` TCP client。
+  - Turtle2/slave 控制机器使用
+    `gen-robot/x2robot-slave@dev/dagger <https://github.com/gen-robot/x2robot-slave/tree/dev/dagger>`_，
+    用于 Turtle2 底层 ROS、SDK、相机和 follower controller 支撑。本 RLinf 流程不启动其中的
+    ``bi_teleop_slave.py`` 或 ``socket2ros_async.py`` 作为动作执行器。
+
 - Turtle2 ROS、SDK、相机和 follower controller 已经启动并能读到状态。
 - ``/follow_pos_cmd_1`` 和 ``/follow_pos_cmd_2`` 只能由 RLinf direct backend 发布；
   不要同时启动旧的 slave 执行器或其他会写 follower pose command 的进程。
@@ -121,6 +130,27 @@ Turtle2 控制节点负责 ROS master、机器人 bring-up、相机和 follower 
 如果使用双容器部署，控制容器负责底层 ROS，RLinf 容器只负责 Ray worker 和
 RLinf env。
 
+这台机器需要准备 ``x2robot-slave`` 的 ``dev/dagger`` 分支。示例：
+
+.. code-block:: bash
+
+   # 在 Turtle2/slave 控制机器执行。目录按现场 ROS workspace 替换。
+   git clone -b dev/dagger https://github.com/gen-robot/x2robot-slave.git \
+     <slave_ros_ws>/src/x2robot-slave
+   cd <slave_ros_ws>
+   catkin_make
+   source devel/setup.bash
+
+如果仓库已经存在，启动前建议确认分支和版本：
+
+.. code-block:: bash
+
+   cd <slave_ros_ws>/src/x2robot-slave
+   git fetch origin
+   git switch dev/dagger
+   git pull --ff-only
+   git rev-parse --short HEAD
+
 .. code-block:: bash
 
    # 在 Turtle2 控制节点执行
@@ -134,7 +164,7 @@ RLinf env。
    tmux new-session -d -s stable_roscore \
      'source /opt/ros/noetic/setup.bash; while true; do roscore; sleep 1; done'
 
-   # 启动 Turtle2 底层 bring-up。具体命令以现场 XSquare/Turtle2 安装为准。
+   # 启动 Turtle2 底层 bring-up。具体路径以现场 XSquare/Turtle2 安装为准。
    bash <path_to_turtle2_bring_up>/run.sh S
 
    # 设置默认 policy mode
@@ -214,21 +244,55 @@ master 节点负责采集操作者输入，并作为 TCP client 连接到 RLinf 
 server。请先启动 master 双臂的 ROS 节点，再启动发送 takeover frame 的 client。
 如果夹爪输入依赖额外的通信节点，也需要在 master 端先启动。
 
+这台机器需要准备 ``x2robot-master`` 的 ``dev`` 分支。示例：
+
+.. code-block:: bash
+
+   # 在 master 机器执行。目录按现场 master ROS workspace 替换。
+   git clone -b dev https://github.com/gen-robot/x2robot-master.git \
+     <master_ros_ws>/src/x2robot-master
+   cd <master_ros_ws>
+   catkin_make
+   source devel/setup.bash
+
+如果仓库已经存在，启动前建议确认分支和版本：
+
+.. code-block:: bash
+
+   cd <master_ros_ws>/src/x2robot-master
+   git fetch origin
+   git switch dev
+   git pull --ff-only
+   git rev-parse --short HEAD
+
 .. code-block:: bash
 
    # 在 master 节点执行
    ssh <master_host>
    source /opt/ros/noetic/setup.bash
-   source <path_to_master_ros_setup>
+   source <master_ros_ws>/devel/setup.bash
 
-   # 启动 master 双臂，具体 launch 文件按现场安装替换
-   roslaunch <master_robot_launch>
+   # 终端 1：启动 master 双臂。二选一，取决于现场 launch 安装方式。
+   roslaunch arx_x5_controller_moving open_master_moving.launch
+   # 或：
+   # roslaunch <master_ros_ws>/src/x2robot-master/open_master_moving.launch
 
-   # 如果夹爪 / 手柄输入依赖单独通信节点，先启动它
-   roslaunch <master_input_launch>
+.. code-block:: bash
 
-   # 启动 master TCP client，连接 Turtle2 worker 上的 RLinf takeover server
-   cd <path_to_x2robot_master_scripts>
+   # 终端 2：启动 master 端夹爪 / 手柄输入节点。
+   ssh <master_host>
+   source /opt/ros/noetic/setup.bash
+   source <master_ros_ws>/devel/setup.bash
+   roslaunch communication communication_MS.launch
+
+.. code-block:: bash
+
+   # 终端 3：启动 master TCP client，连接 Turtle2 worker 上的 RLinf takeover server。
+   ssh <master_host>
+   source /opt/ros/noetic/setup.bash
+   source <master_ros_ws>/devel/setup.bash
+
+   cd <master_ros_ws>/src/x2robot-master/scripts
    python3 bi_teleop_master.py \
      --server-host <worker_ip> \
      --server-port <master_takeover_port> \
