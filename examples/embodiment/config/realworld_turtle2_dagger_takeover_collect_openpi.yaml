@@ -104,7 +104,6 @@ env:
       save_dir: ${oc.env:RLINF_REALWORLD_DATA_DIR,../results/turtle2_takeover_rollouts}
       export_format: "pickle"
       only_success: False
-      only_intervened: False
       record_executed_action: True
       robot_type: "turtle2"
       fps: 60

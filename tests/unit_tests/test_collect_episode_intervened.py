@@ -91,24 +91,10 @@ class ChunkCollectionEnv(gym.Env):
         return obs_list, rewards, terminations, truncations, infos_list
 
 
-def test_collect_episode_only_intervened_skips_non_intervened(tmp_path):
-    wrapped = CollectEpisode(
-        OneStepCollectionEnv(intervened=False),
-        save_dir=str(tmp_path),
-        only_intervened=True,
-    )
-    wrapped.reset()
-    wrapped.step(np.asarray([[1.0]], dtype=np.float32))
-    wrapped.close()
-
-    assert list(tmp_path.glob("*.pkl")) == []
-
-
 def test_collect_episode_records_full_intervened_episode_with_executed_action(tmp_path):
     wrapped = CollectEpisode(
         OneStepCollectionEnv(intervened=True, executed_action=[7.0]),
         save_dir=str(tmp_path),
-        only_intervened=True,
         record_executed_action=True,
     )
     wrapped.reset()
@@ -214,13 +200,12 @@ def test_lerobot_legacy_intervention_override_stays_opt_in_to_lerobot(tmp_path):
         wrapped.close()
 
 
-def test_collect_episode_success_filter_is_independent_from_intervention(tmp_path):
+def test_collect_episode_success_filter_records_success_without_intervention(tmp_path):
     success_dir = tmp_path / "success"
     success_wrapped = CollectEpisode(
         OneStepCollectionEnv(intervened=False, success=True),
         save_dir=str(success_dir),
         only_success=True,
-        only_intervened=False,
     )
     success_wrapped.reset()
     success_wrapped.step(np.asarray([[1.0]], dtype=np.float32))
@@ -237,7 +222,6 @@ def test_collect_episode_success_filter_is_independent_from_intervention(tmp_pat
         OneStepCollectionEnv(intervened=True, success=False),
         save_dir=str(failed_dir),
         only_success=True,
-        only_intervened=False,
     )
     failed_wrapped.reset()
     failed_wrapped.step(np.asarray([[1.0]], dtype=np.float32))

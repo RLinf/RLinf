@@ -115,7 +115,6 @@ def test_data_collection_wraps_env_when_collect_transitions_false(tmp_path):
                 "save_dir": str(tmp_path),
                 "export_format": "pickle",
                 "only_success": False,
-                "only_intervened": False,
                 "record_executed_action": True,
                 "robot_type": "turtle2",
                 "fps": 60,

@@ -55,8 +55,6 @@ class CollectEpisode(gym.Wrapper):
         robot_type: Robot type for LeRobot metadata. Defaults to ``"panda"``.
         fps: FPS for LeRobot metadata. Defaults to 10.
         only_success: Whether to save only successful episodes. Defaults to False.
-        only_intervened: Whether to save only episodes that contain at least
-            one human / expert intervention step. Defaults to False.
         record_executed_action: Whether to prefer ``info["executed_action"]``
             and accepted ``info["intervene_action"]`` over the input action.
             Defaults to False to preserve the original collection contract.
@@ -76,7 +74,6 @@ class CollectEpisode(gym.Wrapper):
         robot_type: str = "panda",
         fps: int = 10,
         only_success: bool = False,
-        only_intervened: bool = False,
         record_executed_action: bool = False,
         finalize_interval: int = 100,
     ):
@@ -99,7 +96,6 @@ class CollectEpisode(gym.Wrapper):
         self.robot_type = robot_type
         self.fps = fps
         self.only_success = only_success
-        self.only_intervened = only_intervened
         self.record_executed_action = record_executed_action
         self.finalize_interval = finalize_interval
 
@@ -349,10 +345,7 @@ class CollectEpisode(gym.Wrapper):
             if not (done_by_term or done_by_trunc):
                 continue
             save_success = not self.only_success or (is_success and done_by_term)
-            save_intervened = (
-                not self.only_intervened or self._episode_intervened[env_idx]
-            )
-            if save_success and save_intervened:
+            if save_success:
                 self._flush_episode(env_idx, is_success)
             self._reset_env_buffer(env_idx)
 
