@@ -151,3 +151,11 @@ def test_dual_pose_builder_relative_mode_no_relative_frame():
 def test_dual_pose_builder_rejects_unknown_action_mode():
     with pytest.raises(ValueError, match="Unsupported action_mode"):
         apply_dual_pose_action_wrappers(DummyDualPoseEnv(), {"action_mode": "joint"})
+
+
+def test_dual_pose_builder_rejects_relative_master_takeover():
+    with pytest.raises(ValueError, match="requires action_mode='absolute_pose'"):
+        apply_dual_pose_action_wrappers(
+            DummyDualPoseEnv(),
+            {"action_mode": "relative_pose", "use_master_takeover": True},
+        )

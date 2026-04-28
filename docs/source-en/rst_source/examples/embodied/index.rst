@@ -499,4 +499,5 @@ as well as reinforcement learning training examples on real robots.
    hg-dagger
    gim_arm
    xsquare_turtle2
+   turtle2_dagger_takeover
    dosw1

@@ -40,6 +40,13 @@ class Turtle2SmoothController(Worker):
         env_idx: int = 0,
         node_rank: int = 0,
         worker_rank: int = 0,
+        debug_pose_control: bool = False,
+        debug_gripper_control: bool = False,
+        gripper_target_tolerance: float = 0.05,
+        pose_control_backend: str = "smooth",
+        direct_publish_hz: float = 100.0,
+        follower_pose_cmd_left_topic: str = "/follow_pos_cmd_1",
+        follower_pose_cmd_right_topic: str = "/follow_pos_cmd_2",
     ):
         """Launch a Turtle2SmoothController on the specified worker's node.
 
@@ -53,13 +60,32 @@ class Turtle2SmoothController(Worker):
         """
         cluster = Cluster()
         placement = NodePlacementStrategy(node_ranks=[node_rank])
-        return Turtle2SmoothController.create_group(freq).launch(
+        return Turtle2SmoothController.create_group(
+            freq,
+            debug_pose_control,
+            debug_gripper_control,
+            gripper_target_tolerance,
+            pose_control_backend,
+            direct_publish_hz,
+            follower_pose_cmd_left_topic,
+            follower_pose_cmd_right_topic,
+        ).launch(
             cluster=cluster,
             placement_strategy=placement,
             name=f"Turtle2SmoothController-{worker_rank}-{env_idx}",
         )
 
-    def __init__(self, freq=50):
+    def __init__(
+        self,
+        freq=50,
+        debug_pose_control: bool = False,
+        debug_gripper_control: bool = False,
+        gripper_target_tolerance: float = 0.05,
+        pose_control_backend: str = "smooth",
+        direct_publish_hz: float = 100.0,
+        follower_pose_cmd_left_topic: str = "/follow_pos_cmd_1",
+        follower_pose_cmd_right_topic: str = "/follow_pos_cmd_2",
+    ):
         super().__init__()
         self._logger = get_logger()
         # FIXME: should move to roscontroller
@@ -71,6 +97,22 @@ class Turtle2SmoothController(Worker):
         self.controller.chassis_set_current_pose_as_virtual_zero()
 
         self._state = Turtle2RobotState()
+        self.pose_control_backend = str(pose_control_backend).lower()
+        if self.pose_control_backend not in {"smooth", "direct"}:
+            raise ValueError(
+                "pose_control_backend must be one of {'smooth', 'direct'}, "
+                f"got {self.pose_control_backend!r}."
+            )
+        self.direct_publish_hz = float(direct_publish_hz)
+        if self.direct_publish_hz <= 0:
+            raise ValueError("direct_publish_hz must be positive.")
+        self._follower_pose_cmd_left_topic = follower_pose_cmd_left_topic
+        self._follower_pose_cmd_right_topic = follower_pose_cmd_right_topic
+        self._direct_pose_msg_cls = None
+        self._direct_pose_left_pub = None
+        self._direct_pose_right_pub = None
+        self._direct_pose_left_target = None
+        self._direct_pose_right_target = None
 
         control_period = rospy.Duration(1 / freq)
         state_period = rospy.Duration(1 / 200.0)
@@ -85,18 +127,25 @@ class Turtle2SmoothController(Worker):
 
         # xyz, rpy, gripper
         self.tol = [0.002, 0.005, 5]  # m, rad, cm
+        self.gripper_target_tolerance = float(gripper_target_tolerance)
+        self.debug_pose_control = bool(debug_pose_control)
+        self.debug_gripper_control = bool(debug_gripper_control)
         self.xyz_speed = 0.5  # m/s
         self.rpy_speed = 1.5  # rad/s
         self.freq = freq
 
         # FIXME: should move to roscontroller
-        rospy.Timer(control_period, self.smooth_action_callback)
+        if self.pose_control_backend == "smooth":
+            rospy.Timer(control_period, self.smooth_action_callback)
+        else:
+            direct_period = rospy.Duration(1 / self.direct_publish_hz)
+            rospy.Timer(direct_period, self.direct_pose_callback)
         rospy.Timer(state_period, self.state_callback)
 
         tracemalloc.start(15)
         self.snapshot_base = tracemalloc.take_snapshot()
 
-    def state_callback(self, event):
+    def _update_state_from_controller(self):
         arms_data = self.controller.arms_data()
         self._state.follow1_pos = np.array(arms_data[0], dtype=np.float32)
         self._state.follow2_pos = np.array(arms_data[1], dtype=np.float32)
@@ -111,11 +160,17 @@ class Turtle2SmoothController(Worker):
         self._state.lift = float(self.controller.lift_data())
         chassis_pose = self.controller.chassis_pose_data()
         self._state.car_pose = np.array(chassis_pose, dtype=np.float32)
+        return self._state
+
+    def state_callback(self, event):
+        self._update_state_from_controller()
 
     def get_state(self):
         return self._state
 
     def smooth_action_callback(self, event):
+        if getattr(self, "pose_control_backend", "smooth") != "smooth":
+            return
         # print("intimer")
         xyz_step = self.xyz_speed / self.freq  # m
         rpy_step = self.rpy_speed / self.freq  # rad
@@ -234,6 +289,88 @@ class Turtle2SmoothController(Worker):
         )
         self.left_arm_target = left_arm_target
         self.right_arm_target = right_arm_target
+        if getattr(self, "pose_control_backend", "smooth") == "direct":
+            self._direct_pose_left_target = list(left_arm_target)
+            self._direct_pose_right_target = list(right_arm_target)
+            self._publish_direct_pose(left_arm_target, right_arm_target)
+            return
+
+    def direct_pose_callback(self, event):
+        if getattr(self, "pose_control_backend", "smooth") != "direct":
+            return
+        if (
+            self._direct_pose_left_target is None
+            or self._direct_pose_right_target is None
+        ):
+            return
+        self._publish_direct_pose(
+            self._direct_pose_left_target,
+            self._direct_pose_right_target,
+        )
+
+    def _ensure_direct_pose_publishers(self):
+        if (
+            self._direct_pose_msg_cls is not None
+            and self._direct_pose_left_pub is not None
+            and self._direct_pose_right_pub is not None
+        ):
+            return
+        try:
+            from arm_control.msg import PosCmd
+        except ImportError:
+            from communicationPort.msg import PosCmd
+
+        self._direct_pose_msg_cls = PosCmd
+        self._direct_pose_left_pub = rospy.Publisher(
+            self._follower_pose_cmd_left_topic,
+            PosCmd,
+            queue_size=10,
+        )
+        self._direct_pose_right_pub = rospy.Publisher(
+            self._follower_pose_cmd_right_topic,
+            PosCmd,
+            queue_size=10,
+        )
+
+    def _make_pos_cmd_msg(self, pose):
+        msg = self._direct_pose_msg_cls()
+        msg.x = float(pose[0])
+        msg.y = float(pose[1])
+        msg.z = float(pose[2])
+        msg.roll = float(pose[3])
+        msg.pitch = float(pose[4])
+        msg.yaw = float(pose[5])
+        msg.gripper = float(pose[6])
+        if hasattr(msg, "mode1"):
+            msg.mode1 = 0
+        if hasattr(msg, "mode2"):
+            msg.mode2 = 0
+        return msg
+
+    def _publish_direct_pose(self, left_pose, right_pose):
+        self._ensure_direct_pose_publishers()
+        self._direct_pose_left_pub.publish(self._make_pos_cmd_msg(left_pose))
+        self._direct_pose_right_pub.publish(self._make_pos_cmd_msg(right_pose))
+
+    def hold_current_pose(self):
+        state = self._update_state_from_controller()
+        left_pose = state.follow1_pos.astype(np.float32, copy=True)
+        right_pose = state.follow2_pos.astype(np.float32, copy=True)
+
+        self.left_arm_target = left_pose.tolist()
+        self.right_arm_target = right_pose.tolist()
+        self.last_expected_xyz1 = left_pose[:3].copy()
+        self.last_expected_xyz2 = right_pose[:3].copy()
+        self.last_expected_rpy1 = left_pose[3:6].copy()
+        self.last_expected_rpy2 = right_pose[3:6].copy()
+
+        if getattr(self, "pose_control_backend", "smooth") == "direct":
+            self._direct_pose_left_target = self.left_arm_target
+            self._direct_pose_right_target = self.right_arm_target
+            self._publish_direct_pose(self.left_arm_target, self.right_arm_target)
+        else:
+            self.controller.arms_control(self.left_arm_target, self.right_arm_target)
+        return state
 
     def reset_arms(self):
         self.left_arm_target = [0, 0, 0, 0, 0, 0, 0]

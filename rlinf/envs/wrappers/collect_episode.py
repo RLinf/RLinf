@@ -55,6 +55,8 @@ class CollectEpisode(gym.Wrapper):
         robot_type: Robot type for LeRobot metadata. Defaults to ``"panda"``.
         fps: FPS for LeRobot metadata. Defaults to 10.
         only_success: Whether to save only successful episodes. Defaults to False.
+        only_intervened: Whether to save only episodes that contain at least
+            one human / expert intervention step. Defaults to False.
         finalize_interval: Call ``writer.finalize()`` every this many completed
             episodes to flush ``info.json`` and ``stats.json`` as a checkpoint.
             ``0`` disables periodic flushing (lerobot only). Defaults to 100.
@@ -71,6 +73,7 @@ class CollectEpisode(gym.Wrapper):
         robot_type: str = "panda",
         fps: int = 10,
         only_success: bool = False,
+        only_intervened: bool = False,
         finalize_interval: int = 100,
     ):
         if isinstance(env, gym.Env):
@@ -92,6 +95,7 @@ class CollectEpisode(gym.Wrapper):
         self.robot_type = robot_type
         self.fps = fps
         self.only_success = only_success
+        self.only_intervened = only_intervened
         self.finalize_interval = finalize_interval
 
         # LeRobot writer is created lazily on the first completed episode.
@@ -110,6 +114,7 @@ class CollectEpisode(gym.Wrapper):
         # Per-environment episode state.
         self._episode_ids = [0] * num_envs
         self._episode_success = [False] * num_envs
+        self._episode_intervened = [False] * num_envs
         self._global_step = 0
         # Holds the post-reset obs for auto-reset envs to prepend to next episode.
         self._pending_obs: list[Any] = [None] * num_envs
@@ -149,6 +154,7 @@ class CollectEpisode(gym.Wrapper):
         """
         self._buffers = [self._new_buffer() for _ in range(self.num_envs)]
         self._episode_success = [False] * self.num_envs
+        self._episode_intervened = [False] * self.num_envs
         self._pending_obs = [None] * self.num_envs
         self._pending_info = [None] * self.num_envs
 
@@ -299,19 +305,21 @@ class CollectEpisode(gym.Wrapper):
 
             buf = self._buffers[env_idx]
             buf["observations"].append(env_obs)
-            buf["actions"].append(self._slice_copy(action, env_idx))
+            buf["actions"].append(self._recorded_action(action, env_info, env_idx))
             buf["rewards"].append(self._slice_copy(reward, env_idx))
             buf["terminated"].append(self._slice_copy(terminated, env_idx))
             buf["truncated"].append(self._slice_copy(truncated, env_idx))
             buf["infos"].append(env_info)
 
             self._update_success(env_idx, self._slice_data(env_info, env_idx))
+            self._update_intervened(env_idx, env_info)
 
     def _reset_env_buffer(self, env_idx: int) -> None:
         """Advance episode counter, clear the buffer, and carry over pending obs."""
         self._episode_ids[env_idx] += 1
         self._buffers[env_idx] = self._new_buffer()
         self._episode_success[env_idx] = False
+        self._episode_intervened[env_idx] = False
 
         if self._pending_obs[env_idx] is not None:
             self._buffers[env_idx]["observations"].append(self._pending_obs[env_idx])
@@ -333,17 +341,15 @@ class CollectEpisode(gym.Wrapper):
             is_success = self._get_episode_success(self._buffers[env_idx], env_idx)
             done_by_term = self._scalar_flag(terminated, env_idx)
             done_by_trunc = self._scalar_flag(truncated, env_idx)
-            if self.only_success:
-                if is_success and done_by_term:
-                    self._flush_episode(env_idx, is_success)
-                    self._reset_env_buffer(env_idx)
-                else:
-                    if done_by_trunc:
-                        self._reset_env_buffer(env_idx)
-            else:
-                if done_by_term or done_by_trunc:
-                    self._flush_episode(env_idx, is_success)
-                    self._reset_env_buffer(env_idx)
+            if not (done_by_term or done_by_trunc):
+                continue
+            save_success = not self.only_success or (is_success and done_by_term)
+            save_intervened = (
+                not self.only_intervened or self._episode_intervened[env_idx]
+            )
+            if save_success and save_intervened:
+                self._flush_episode(env_idx, is_success)
+            self._reset_env_buffer(env_idx)
 
     def _flush_episode(self, env_idx: int, is_success: bool) -> None:
         """Dispatch a completed episode to the appropriate format writer."""
@@ -364,6 +370,7 @@ class CollectEpisode(gym.Wrapper):
                     "episode_id": self._episode_ids[env_idx],
                     "step": self._global_step,
                     "success": is_success,
+                    "intervened": self._episode_intervened[env_idx],
                     "observations": buf["observations"],
                     "actions": buf["actions"],
                     "rewards": buf["rewards"],
@@ -419,19 +426,12 @@ class CollectEpisode(gym.Wrapper):
             image, wrist_image, extra_view_image, state = self._extract_obs_image_state(
                 obs
             )
-            # Overwrite action with intervene action if present.
             np_action = self._to_numpy(action)
             assert "final_info" not in buf["infos"][i + 1], (
                 "final_info should not be present in the info"
             )
             info_with_intervene = copy.deepcopy(buf["infos"][i + 1])
 
-            if (
-                "intervene_flag" in info_with_intervene
-                and "intervene_action" in info_with_intervene
-            ):
-                if info_with_intervene["intervene_flag"].all():
-                    np_action = self._to_numpy(info_with_intervene["intervene_action"])
             if state is None or np_action is None:
                 continue
             intervene_flag = self._intervene_flag_from_info(info_with_intervene)
@@ -570,6 +570,32 @@ class CollectEpisode(gym.Wrapper):
         if success is not None:
             # Keep success sticky during an episode.
             self._episode_success[env_idx] = self._episode_success[env_idx] or success
+
+    def _update_intervened(self, env_idx: int, env_info) -> None:
+        self._episode_intervened[env_idx] = (
+            self._episode_intervened[env_idx]
+            or self._intervene_flag_from_info(env_info)
+        )
+
+    def _recorded_action(self, action, env_info, env_idx: int):
+        policy_action = self._slice_copy(action, env_idx)
+        if isinstance(env_info, dict) and "executed_action" in env_info:
+            return self._copy(env_info["executed_action"])
+        if (
+            self._intervene_flag_from_info(env_info)
+            and isinstance(env_info, dict)
+            and "intervene_action" in env_info
+            and self._same_action_shape(env_info["intervene_action"], policy_action)
+        ):
+            return self._copy(env_info["intervene_action"])
+        return policy_action
+
+    def _same_action_shape(self, candidate, reference) -> bool:
+        candidate_np = self._to_numpy(candidate)
+        reference_np = self._to_numpy(reference)
+        if candidate_np is None or reference_np is None:
+            return False
+        return candidate_np.reshape(-1).shape == reference_np.reshape(-1).shape
 
     def _get_episode_success(self, buf: dict, env_idx: int) -> bool:
         """Determine final episode success by scanning recorded info dicts.

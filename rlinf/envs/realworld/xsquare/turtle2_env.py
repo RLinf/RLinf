@@ -41,6 +41,20 @@ class Turtle2RobotConfig:
     use_dense_reward: bool = False
     step_frequency: float = 10.0  # Max number of steps per second
     smooth_frequency: int = 50  # Frequency for smooth controller
+    pose_control_backend: str = "smooth"  # "smooth" or "direct"
+    direct_publish_hz: float = 100.0
+    reset_max_xyz_step: float = 0.02
+    reset_max_rpy_step: float = 0.075
+    reset_max_gripper_step: float = 0.25
+    reset_command_interval: float = 0.02
+    reset_min_interpolation_steps: int = 75
+    reset_presettle_time: float = 2.0
+    reset_timeout: float = 20.0
+    debug_pose_control: bool = False
+    debug_gripper_control: bool = False
+    gripper_target_tolerance: float = 0.05
+    follower_pose_cmd_left_topic: str = "/follow_pos_cmd_1"
+    follower_pose_cmd_right_topic: str = "/follow_pos_cmd_2"
 
     # Positions are stored in eular angles (xyz for position, rzryrx for orientation)
     # It will be converted to quaternions internally
@@ -113,6 +127,41 @@ class Turtle2Env(gym.Env):
             self.node_rank = worker_info.cluster_node_rank
             self.env_worker_rank = worker_info.rank
 
+        self.config.pose_control_backend = str(
+            self.config.pose_control_backend
+        ).lower()
+        if self.config.pose_control_backend not in {"smooth", "direct"}:
+            raise ValueError(
+                "pose_control_backend must be one of {'smooth', 'direct'}, "
+                f"got {self.config.pose_control_backend!r}."
+            )
+        self.config.direct_publish_hz = float(self.config.direct_publish_hz)
+        if self.config.direct_publish_hz <= 0:
+            raise ValueError("direct_publish_hz must be positive.")
+        self.config.reset_max_xyz_step = float(self.config.reset_max_xyz_step)
+        self.config.reset_max_rpy_step = float(self.config.reset_max_rpy_step)
+        self.config.reset_max_gripper_step = float(self.config.reset_max_gripper_step)
+        self.config.reset_command_interval = float(self.config.reset_command_interval)
+        self.config.reset_min_interpolation_steps = int(
+            self.config.reset_min_interpolation_steps
+        )
+        self.config.reset_presettle_time = float(self.config.reset_presettle_time)
+        self.config.reset_timeout = float(self.config.reset_timeout)
+        if self.config.reset_max_xyz_step <= 0:
+            raise ValueError("reset_max_xyz_step must be positive.")
+        if self.config.reset_max_rpy_step <= 0:
+            raise ValueError("reset_max_rpy_step must be positive.")
+        if self.config.reset_max_gripper_step <= 0:
+            raise ValueError("reset_max_gripper_step must be positive.")
+        if self.config.reset_command_interval < 0:
+            raise ValueError("reset_command_interval must be non-negative.")
+        if self.config.reset_min_interpolation_steps <= 0:
+            raise ValueError("reset_min_interpolation_steps must be positive.")
+        if self.config.reset_presettle_time < 0:
+            raise ValueError("reset_presettle_time must be non-negative.")
+        if self.config.reset_timeout <= 0:
+            raise ValueError("reset_timeout must be positive.")
+
         assert len(self.config.use_arm_ids) > 0 and len(self.config.use_arm_ids) <= 2, (
             "please choose arm IDs from [0, 1]."
         )
@@ -150,6 +199,13 @@ class Turtle2Env(gym.Env):
             env_idx=self.env_idx,
             node_rank=self.node_rank,
             worker_rank=self.env_worker_rank,
+            debug_pose_control=self.config.debug_pose_control,
+            debug_gripper_control=self.config.debug_gripper_control,
+            gripper_target_tolerance=self.config.gripper_target_tolerance,
+            pose_control_backend=self.config.pose_control_backend,
+            direct_publish_hz=self.config.direct_publish_hz,
+            follower_pose_cmd_left_topic=self.config.follower_pose_cmd_left_topic,
+            follower_pose_cmd_right_topic=self.config.follower_pose_cmd_right_topic,
         )
 
     def _init_action_obs_spaces(self):
@@ -212,10 +268,10 @@ class Turtle2Env(gym.Env):
             return
 
         self._logger.info("pre-reset")
-        self._controller.move_arm(
-            [0.2, 0, 0.1, 0, 0, 0, 0], [0.2, 0, 0.1, 0, 0, 0, 0]
-        ).wait()
-        time.sleep(2.0)
+        self._move_arms_for_reset(
+            np.asarray([[0.2, 0, 0.1, 0, 0, 0, 0], [0.2, 0, 0.1, 0, 0, 0, 0]]),
+            wait_until_reached=False,
+        )
 
         if self.config.enable_random_reset:
             random_xy1 = np.random.uniform(
@@ -259,40 +315,179 @@ class Turtle2Env(gym.Env):
             repr(right_arm_reset_pose),
         )
 
-        self._controller.move_arm(left_arm_reset_pose, right_arm_reset_pose).wait()
+        reset_target = np.asarray(
+            [left_arm_reset_pose, right_arm_reset_pose], dtype=np.float32
+        )
+        self._move_arms_for_reset(reset_target, wait_until_reached=True)
+        return
 
-        reach = False
+    def _move_arms_for_reset(
+        self,
+        target_pose: np.ndarray,
+        *,
+        wait_until_reached: bool,
+    ) -> None:
+        """Move reset poses through bounded waypoints for all pose backends."""
+        target_pose = np.asarray(target_pose, dtype=np.float32).reshape(2, 7)
         start_time = time.time()
-        while not reach:
+        timeout = (
+            self.config.reset_timeout
+            if wait_until_reached
+            else self.config.reset_presettle_time
+        )
+        while True:
             state = self._controller.get_state().wait()[0]
-            left_pos = state.follow1_pos
-            right_pos = state.follow2_pos
-            left_reach = (
-                np.linalg.norm(left_pos[:6] - np.array(left_arm_reset_pose)[:6]) < 0.04
-                if 0 in self.config.use_arm_ids
-                else True
+            current_pose = np.stack([state.follow1_pos, state.follow2_pos]).astype(
+                np.float32,
+                copy=False,
             )
-            right_reach = (
-                np.linalg.norm(right_pos[:6] - np.array(right_arm_reset_pose)[:6])
-                < 0.04
-                if 1 in self.config.use_arm_ids
-                else True
-            )
-            reach = left_reach and right_reach
-            if time.time() - start_time > 10.0:
-                left_err = np.linalg.norm(
-                    left_pos[:6] - np.array(left_arm_reset_pose)[:6]
-                )
-                right_err = np.linalg.norm(
-                    right_pos[:6] - np.array(right_arm_reset_pose)[:6]
-                )
+            if self._reset_pose_reached(current_pose, target_pose):
+                break
+            for waypoint in self._reset_interpolated_waypoints(
+                current_pose, target_pose
+            ):
+                self._controller.move_arm(
+                    waypoint[0].tolist(), waypoint[1].tolist()
+                ).wait()
+                if self.config.reset_command_interval > 0:
+                    time.sleep(self.config.reset_command_interval)
+                if time.time() - start_time >= timeout:
+                    break
+            if not wait_until_reached and time.time() - start_time >= timeout:
+                break
+            if wait_until_reached and time.time() - start_time > timeout:
+                left_err, right_err = self._reset_pose_errors(current_pose, target_pose)
                 raise ValueError(
                     f"Reset arms timeout: left_err={left_err:.6f}, right_err={right_err:.6f}"
                 )
+        self._last_published_action = target_pose.reshape(-1).copy()
 
-            time.sleep(0.1)
-        time.sleep(0.5)
-        return
+    def _reset_interpolated_waypoints(
+        self,
+        current_pose: np.ndarray,
+        target_pose: np.ndarray,
+    ) -> list[np.ndarray]:
+        current_pose = np.asarray(current_pose, dtype=np.float32).reshape(2, 7)
+        target_pose = np.asarray(target_pose, dtype=np.float32).reshape(2, 7)
+
+        delta = target_pose - current_pose
+        delta[:, 3:6] = self._shortest_angle_delta(
+            current_pose[:, 3:6], target_pose[:, 3:6]
+        )
+        steps = self._reset_num_interpolation_steps(delta)
+        waypoints = []
+        previous = current_pose
+        for idx in range(1, steps + 1):
+            t = float(idx) / float(steps)
+            ratio = self._minimum_jerk_ratio(t)
+            waypoint = current_pose + delta * ratio
+            waypoint[:, 3:6] = self._normalize_angles(waypoint[:, 3:6])
+            bounded = self._reset_next_step(previous, waypoint)
+            waypoints.append(bounded)
+            previous = bounded
+        if waypoints:
+            waypoints[-1] = target_pose.astype(np.float32, copy=False)
+        return waypoints
+
+    def _reset_num_interpolation_steps(self, delta: np.ndarray) -> int:
+        delta = np.asarray(delta, dtype=np.float32).reshape(2, 7)
+        max_xyz = float(np.max(np.abs(delta[:, :3])))
+        max_rpy = float(np.max(np.abs(delta[:, 3:6])))
+        max_gripper = float(np.max(np.abs(delta[:, 6])))
+        return max(
+            self.config.reset_min_interpolation_steps,
+            int(np.ceil(2.0 * max_xyz / self.config.reset_max_xyz_step)),
+            int(np.ceil(2.0 * max_rpy / self.config.reset_max_rpy_step)),
+            int(np.ceil(2.0 * max_gripper / self.config.reset_max_gripper_step)),
+            1,
+        )
+
+    @staticmethod
+    def _minimum_jerk_ratio(t: float) -> float:
+        t = float(np.clip(t, 0.0, 1.0))
+        return 10.0 * t**3 - 15.0 * t**4 + 6.0 * t**5
+
+    def _reset_next_step(
+        self,
+        current_pose: np.ndarray,
+        target_pose: np.ndarray,
+    ) -> np.ndarray:
+        current_pose = np.asarray(current_pose, dtype=np.float32).reshape(2, 7)
+        target_pose = np.asarray(target_pose, dtype=np.float32).reshape(2, 7)
+
+        xyz_delta = target_pose[:, :3] - current_pose[:, :3]
+        rpy_delta = self._shortest_angle_delta(current_pose[:, 3:6], target_pose[:, 3:6])
+        gripper_delta = target_pose[:, 6] - current_pose[:, 6]
+
+        waypoint = current_pose.copy()
+        waypoint[:, :3] = current_pose[:, :3] + np.clip(
+            xyz_delta,
+            -self.config.reset_max_xyz_step,
+            self.config.reset_max_xyz_step,
+        )
+        waypoint[:, 3:6] = self._normalize_angles(
+            current_pose[:, 3:6]
+            + np.clip(
+                rpy_delta,
+                -self.config.reset_max_rpy_step,
+                self.config.reset_max_rpy_step,
+            )
+        )
+        waypoint[:, 6] = current_pose[:, 6] + np.clip(
+            gripper_delta,
+            -self.config.reset_max_gripper_step,
+            self.config.reset_max_gripper_step,
+        )
+        return waypoint.astype(np.float32, copy=False)
+
+    @staticmethod
+    def _normalize_angles(angles: np.ndarray) -> np.ndarray:
+        return (angles + np.pi) % (2 * np.pi) - np.pi
+
+    @staticmethod
+    def _shortest_angle_delta(current: np.ndarray, target: np.ndarray) -> np.ndarray:
+        return Turtle2Env._normalize_angles(target - current)
+
+    def _reset_pose_reached(
+        self,
+        current_pose: np.ndarray,
+        target_pose: np.ndarray,
+    ) -> bool:
+        left_err, right_err = self._reset_pose_errors(current_pose, target_pose)
+        left_reach = left_err < 0.04 if 0 in self.config.use_arm_ids else True
+        right_reach = right_err < 0.04 if 1 in self.config.use_arm_ids else True
+        return left_reach and right_reach
+
+    def _reset_pose_errors(
+        self,
+        current_pose: np.ndarray,
+        target_pose: np.ndarray,
+    ) -> tuple[float, float]:
+        current_pose = np.asarray(current_pose, dtype=np.float32).reshape(2, 7)
+        target_pose = np.asarray(target_pose, dtype=np.float32).reshape(2, 7)
+        left_err = np.linalg.norm(
+            np.concatenate(
+                [
+                    current_pose[0, :3] - target_pose[0, :3],
+                    self._shortest_angle_delta(
+                        current_pose[0, 3:6],
+                        target_pose[0, 3:6],
+                    ),
+                ]
+            )
+        )
+        right_err = np.linalg.norm(
+            np.concatenate(
+                [
+                    current_pose[1, :3] - target_pose[1, :3],
+                    self._shortest_angle_delta(
+                        current_pose[1, 3:6],
+                        target_pose[1, 3:6],
+                    ),
+                ]
+            )
+        )
+        return float(left_err), float(right_err)
 
     def _check_cameras(self):
         if self.config.is_dummy:
@@ -565,3 +760,34 @@ class Turtle2Env(gym.Env):
         else:
             obs = self._base_observation_space.sample()
             return obs
+
+    def _refresh_turtle2_state_snapshot(self) -> None:
+        if not self.config.is_dummy:
+            self._turtle2_state = self._controller.get_state().wait()[0]
+
+    def get_joint_snapshot(self) -> np.ndarray:
+        """Return current dual-arm joint positions for takeover sync."""
+        self._refresh_turtle2_state_snapshot()
+        return np.stack(
+            [self._turtle2_state.follow1_joints, self._turtle2_state.follow2_joints]
+        ).astype(np.float32, copy=True)
+
+    def get_arm_pose_snapshot(self) -> np.ndarray:
+        """Return current dual-arm Euler poses for takeover hold actions."""
+        self._refresh_turtle2_state_snapshot()
+        return np.stack(
+            [self._turtle2_state.follow1_pos, self._turtle2_state.follow2_pos]
+        ).astype(np.float32, copy=True)
+
+    def hold_current_pose_for_takeover(self) -> dict[str, np.ndarray]:
+        """Hard-hold current dual-arm pose before master takeover alignment."""
+        if not self.config.is_dummy:
+            self._turtle2_state = self._controller.hold_current_pose().wait()[0]
+        return {
+            "pose": np.stack(
+                [self._turtle2_state.follow1_pos, self._turtle2_state.follow2_pos]
+            ).astype(np.float32, copy=True),
+            "joint": np.stack(
+                [self._turtle2_state.follow1_joints, self._turtle2_state.follow2_joints]
+            ).astype(np.float32, copy=True),
+        }

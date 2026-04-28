@@ -248,11 +248,13 @@ class RealWorldEnv(gym.Env):
         obs = self._wrap_obs(raw_obs)
         step_reward = self._calc_step_reward(_reward)
         success_current_step = np.isclose(step_reward, 1.0)
-        intervene_flag = np.zeros(self.num_envs, dtype=bool)
-        if "intervene_action" in infos:
-            for env_id in range(self.num_envs):
-                if infos["intervene_action"][env_id] is not None:
-                    intervene_flag[env_id] = True
+        intervene_flag = self._extract_intervene_flag(infos)
+        if intervene_flag is None:
+            intervene_flag = np.zeros(self.num_envs, dtype=bool)
+            if "intervene_action" in infos:
+                for env_id in range(self.num_envs):
+                    if infos["intervene_action"][env_id] is not None:
+                        intervene_flag[env_id] = True
 
         infos = self._record_metrics(
             step_reward,
@@ -286,6 +288,19 @@ class RealWorldEnv(gym.Env):
             infos,
         )
 
+    def _extract_intervene_flag(self, infos):
+        if "intervene_flag" not in infos:
+            return None
+        raw_flag = infos["intervene_flag"]
+        intervene_flag = np.zeros(self.num_envs, dtype=bool)
+        raw_flag_array = np.asarray(raw_flag)
+        for env_id in range(self.num_envs):
+            env_flag = raw_flag_array[env_id] if raw_flag_array.ndim > 0 else raw_flag
+            intervene_flag[env_id] = bool(
+                np.asarray(env_flag, dtype=bool).reshape(-1).any()
+            )
+        return intervene_flag
+
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
@@ -299,20 +314,24 @@ class RealWorldEnv(gym.Env):
 
         raw_chunk_intervene_actions = []
         raw_chunk_intervene_flag = []
-        for i in range(chunk_size):
-            actions = chunk_actions[:, i]
-            extracted_obs, step_reward, terminations, truncations, infos = self.step(
-                actions, auto_reset=False
-            )
-            obs_list.append(extracted_obs)
-            infos_list.append(infos)
-            if "intervene_action" in infos:
-                raw_chunk_intervene_actions.append(infos["intervene_action"])
-                raw_chunk_intervene_flag.append(infos["intervene_flag"])
+        self._begin_action_chunk()
+        try:
+            for i in range(chunk_size):
+                actions = chunk_actions[:, i]
+                extracted_obs, step_reward, terminations, truncations, infos = self.step(
+                    actions, auto_reset=False
+                )
+                obs_list.append(extracted_obs)
+                infos_list.append(infos)
+                if "intervene_action" in infos:
+                    raw_chunk_intervene_actions.append(infos["intervene_action"])
+                    raw_chunk_intervene_flag.append(infos["intervene_flag"])
 
-            chunk_rewards.append(step_reward)
-            raw_chunk_terminations.append(terminations)
-            raw_chunk_truncations.append(truncations)
+                chunk_rewards.append(step_reward)
+                raw_chunk_terminations.append(terminations)
+                raw_chunk_truncations.append(truncations)
+        finally:
+            self._end_action_chunk()
 
         chunk_rewards = torch.stack(chunk_rewards, dim=1)  # [num_envs, chunk_steps]
         raw_chunk_terminations = torch.stack(
@@ -355,6 +374,18 @@ class RealWorldEnv(gym.Env):
             chunk_truncations,
             infos_list,
         )
+
+    def _begin_action_chunk(self):
+        if not self.cfg.get("use_master_takeover", False):
+            return
+        for begin in self.env.call("get_wrapper_attr", "begin_action_chunk"):
+            begin()
+
+    def _end_action_chunk(self):
+        if not self.cfg.get("use_master_takeover", False):
+            return
+        for end in self.env.call("get_wrapper_attr", "end_action_chunk"):
+            end()
 
     def _handle_auto_reset(self, dones, _final_obs, infos):
         final_obs = copy.deepcopy(_final_obs)

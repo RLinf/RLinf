@@ -490,4 +490,5 @@
    hg-dagger
    gim_arm
    xsquare_turtle2
+   turtle2_dagger_takeover
    dosw1

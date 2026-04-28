@@ -793,6 +793,24 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}."
     )
 
+    for split in ("train", "eval"):
+        env_cfg = cfg.env.get(split, None)
+        if env_cfg is None or not env_cfg.get("use_master_takeover", False):
+            continue
+        action_mode = env_cfg.get("action_mode", None)
+        if action_mode != "absolute_pose":
+            raise ValueError(
+                f"env.{split}.use_master_takeover=True requires "
+                "action_mode='absolute_pose'."
+            )
+        master_takeover_cfg = env_cfg.get("master_takeover", {})
+        control_mode = str(master_takeover_cfg.get("control_mode", "pose")).lower()
+        if control_mode != "pose":
+            raise ValueError(
+                f"env.{split}.master_takeover.control_mode must be 'pose' for this "
+                f"takeover raw-collection path, got {control_mode!r}."
+            )
+
     # NOTE: Currently we only support actor_critic as PPO algorithm loss, and only support value_head as critic model.
     # This will be updated in the future to support more algorithms and critic models.
     # Check that actor_critic loss requires value_head

@@ -462,6 +462,23 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         return result
 
     def obs_processor(self, env_obs):
+        if "x2robot" in self.config.config_name:
+            extra_view_images = env_obs.get("extra_view_images")
+            if extra_view_images is None or extra_view_images.shape[1] < 2:
+                raise ValueError(
+                    "x2robot OpenPI configs require extra_view_images with "
+                    "left/right wrist views."
+                )
+            return {
+                "images": {
+                    "left_wrist_view": extra_view_images[:, 0],
+                    "face_view": env_obs["main_images"],
+                    "right_wrist_view": extra_view_images[:, 1],
+                },
+                "state": env_obs["states"],
+                "prompt": env_obs["task_descriptions"],
+            }
+
         # base observation
         processed_obs = {
             "observation/image": env_obs["main_images"],
