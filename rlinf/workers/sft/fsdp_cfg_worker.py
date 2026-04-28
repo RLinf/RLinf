@@ -1,0 +1,564 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""FSDP CFG Worker for Classifier-Free Guidance training.
+
+Extends FSDPSftWorker with pre-computed advantage labels and
+CfgMixtureDataset for weighted sampling across datasets.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any
+
+import jax
+import numpy as np
+import torch
+from omegaconf import DictConfig
+
+from rlinf.data.datasets.recap.cfg_model import (
+    AdvantagePreservingDataset,
+    CFGDataLoaderImpl,
+    CfgMixtureDataset,
+    TokenizePromptWithGuidance,
+)
+from rlinf.data.datasets.recap.utils import (
+    cast_image_features,
+)
+from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
+from rlinf.scheduler import Cluster, Worker
+from rlinf.utils.distributed import all_reduce_dict
+from rlinf.utils.metric_utils import append_to_dict
+from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
+
+# Suppress libdav1d/ffmpeg verbose logging
+try:
+    import av
+
+    av.logging.set_level(av.logging.FATAL)
+except ImportError:
+    pass
+
+
+class FSDPCfgWorker(FSDPSftWorker):
+    """FSDP worker for CFG (Classifier-Free Guidance) training.
+
+    Extends FSDPSftWorker to load datasets with pre-computed advantages,
+    use CfgMixtureDataset for weighted sampling, and pass advantage
+    labels to model.forward for guidance selection.
+    """
+
+    def __init__(self, cfg: DictConfig):
+        Worker.__init__(self)
+        FSDPModelManager.__init__(self, cfg.actor, self._world_size, self._rank)
+
+        self.cfg = cfg
+        torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", 0)))
+        self.device = torch.cuda.current_device()
+
+        self._component_placement = HybridComponentPlacement(cfg, Cluster())
+
+        self.global_batch_size = self.cfg.actor.global_batch_size
+        self.micro_batch_size = self.cfg.actor.micro_batch_size
+        self.eval_batch_size = self.cfg.actor.get("eval_batch_size", 1)
+
+        assert (
+            self.global_batch_size % (self.micro_batch_size * self._world_size) == 0
+        ), "global_batch_size is not divisible by micro_batch_size * world_size"
+        self.gradient_accumulation = (
+            self.global_batch_size // self.micro_batch_size // self._world_size
+        )
+
+        self.data_loader, self.data_config = self.build_dataloader()
+        self.data_iter = iter(self.data_loader)
+        self.eval_data_loader = None
+
+        self.global_step = 0
+        self._data_epoch = 0
+        self._data_iter_offset = 0
+
+    @staticmethod
+    def _load_advantages_lookup(
+        data_path: str,
+        advantage_tag: str | None = None,
+    ) -> dict[tuple[int, int], bool]:
+        """Load advantage lookup from meta/advantages_{tag}.parquet or meta/advantages.parquet.
+
+        Args:
+            data_path: Path to LeRobot dataset.
+            advantage_tag: Advantage tag name. If None, loads meta/advantages.parquet.
+
+        Returns:
+            Dict mapping (episode_index, frame_index) -> bool.
+        """
+        import pandas as pd
+
+        if advantage_tag:
+            meta_path = Path(data_path) / "meta" / f"advantages_{advantage_tag}.parquet"
+        else:
+            meta_path = Path(data_path) / "meta" / "advantages.parquet"
+
+        if not meta_path.exists():
+            raise FileNotFoundError(
+                f"Advantage file not found: {meta_path}. "
+                f"Run compute_advantages.py first."
+            )
+
+        adv_df = pd.read_parquet(meta_path)
+
+        lookup = dict(
+            zip(
+                zip(
+                    adv_df["episode_index"].values.astype(int).tolist(),
+                    adv_df["frame_index"].values.astype(int).tolist(),
+                ),
+                adv_df["advantage"].values.astype(bool).tolist(),
+            )
+        )
+        return lookup
+
+    def build_dataloader(self):
+        """Build CFG dataloader with advantage-weighted sampling across datasets."""
+        import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
+        import openpi.training.data_loader as openpi_data_loader
+        import openpi.transforms as transforms
+
+        from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+
+        data_cfg = self.cfg.get("data", {})
+        openpi_cfg = self.cfg.actor.model.openpi
+        advantage_tag = data_cfg.get("advantage_tag", None)
+
+        datasets_config = data_cfg.get("train_data_paths", [])
+        if not datasets_config:
+            raise ValueError(
+                "At least one dataset must be provided in data.train_data_paths. "
+                "Each dataset should have 'dataset_path' and optionally 'episodes' and 'weight' fields."
+            )
+
+        first_path = datasets_config[0]["dataset_path"]
+        config = get_openpi_config(
+            openpi_cfg.config_name,
+            model_path=self.cfg.actor.model.model_path,
+            batch_size=self.cfg.actor.micro_batch_size * self._world_size,
+            repo_id=first_path,
+        )
+        data_config = config.data.create(config.assets_dirs, config.model)
+
+        model_transforms = self._build_model_transforms(data_config)
+        norm_stats = data_config.norm_stats or {}
+
+        datasets_with_weights = []
+        for ds_config in datasets_config:
+            data_path = ds_config["dataset_path"]
+            episodes = ds_config.get("episodes")
+            weight = ds_config.get("weight", 1.0)
+
+            dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(data_path)
+            base_dataset = lerobot_dataset.LeRobotDataset(
+                data_path,
+                episodes=episodes,
+                delta_timestamps={
+                    key: [
+                        t / dataset_meta.fps for t in range(config.model.action_horizon)
+                    ]
+                    for key in data_config.action_sequence_keys
+                },
+            )
+
+            base_dataset.hf_dataset = cast_image_features(base_dataset.hf_dataset)
+
+            if episodes is not None:
+                self._fix_episode_data_index(base_dataset, episodes)
+
+            if data_config.prompt_from_task:
+                base_dataset = openpi_data_loader.TransformedDataset(
+                    base_dataset,
+                    [transforms.PromptFromLeRobotTask(dataset_meta.tasks)],
+                )
+
+            # RepackTransform strips all keys except OpenPI required ones,
+            # so AdvantagePreservingDataset is needed to restore the advantage field.
+            transforms_list = [
+                *data_config.repack_transforms.inputs,
+                *data_config.data_transforms.inputs,
+                transforms.Normalize(
+                    norm_stats, use_quantiles=data_config.use_quantile_norm
+                ),
+                *model_transforms,
+            ]
+            transformed_dataset = openpi_data_loader.TransformedDataset(
+                base_dataset, transforms_list
+            )
+
+            advantages_lookup = self._load_advantages_lookup(data_path, advantage_tag)
+            if self._rank == 0:
+                adv_filename = (
+                    f"advantages_{advantage_tag}.parquet"
+                    if advantage_tag
+                    else "advantages.parquet"
+                )
+                self.log_info(
+                    f"Loaded advantages from "
+                    f"meta/{adv_filename} ({len(advantages_lookup)} entries)"
+                )
+
+            final_dataset = AdvantagePreservingDataset(
+                base_dataset=base_dataset,
+                transformed_dataset=transformed_dataset,
+                advantages_lookup=advantages_lookup,
+            )
+
+            datasets_with_weights.append((final_dataset, weight))
+
+            if self._rank == 0:
+                self.log_info(
+                    f"Loaded dataset: {data_path} "
+                    f"({len(final_dataset)} samples, weight={weight})"
+                )
+
+        combined_dataset = CfgMixtureDataset(
+            datasets=datasets_with_weights,
+            mode="train",
+            balance_dataset_weights=data_cfg.get("balance_dataset_weights", True),
+            seed=data_cfg.get("seed", 42),
+        )
+
+        torch_data_loader = self._create_torch_dataloader(
+            combined_dataset, config, openpi_data_loader
+        )
+
+        data_loader = CFGDataLoaderImpl(data_config, torch_data_loader)
+        return data_loader, data_loader.data_config()
+
+    def _build_model_transforms(self, data_config: Any) -> list:
+        """Replace TokenizePrompt with TokenizePromptWithGuidance in model transforms."""
+        tokenizer = None
+        for t in data_config.model_transforms.inputs:
+            if hasattr(t, "tokenizer"):
+                tokenizer = t.tokenizer
+                break
+
+        if tokenizer is None:
+            raise ValueError("Cannot find tokenizer in model_transforms")
+
+        model_transforms = []
+        for t in data_config.model_transforms.inputs:
+            if type(t).__name__ == "TokenizePrompt":
+                model_transforms.append(
+                    TokenizePromptWithGuidance(
+                        tokenizer=tokenizer,
+                        discrete_state_input=getattr(t, "discrete_state_input", False),
+                    )
+                )
+            else:
+                model_transforms.append(t)
+
+        return model_transforms
+
+    def _fix_episode_data_index(self, dataset: Any, episodes: list) -> None:
+        """Fix LeRobotDataset episode_data_index when using specific episodes.
+
+        LeRobotDataset has a bug where episode_data_index doesn't match the
+        original episode indices when filtering by episodes. This fixes that.
+        """
+        ep_idx_mapping = {ep: i for i, ep in enumerate(sorted(episodes))}
+        max_ep_idx = max(episodes) + 1
+
+        old_from = dataset.episode_data_index["from"]
+        old_to = dataset.episode_data_index["to"]
+
+        new_from = torch.full((max_ep_idx,), -1, dtype=old_from.dtype)
+        new_to = torch.full((max_ep_idx,), -1, dtype=old_to.dtype)
+
+        for orig_ep, new_idx in ep_idx_mapping.items():
+            new_from[orig_ep] = old_from[new_idx]
+            new_to[orig_ep] = old_to[new_idx]
+
+        dataset.episode_data_index["from"] = new_from
+        dataset.episode_data_index["to"] = new_to
+
+    def _create_torch_dataloader(
+        self,
+        dataset: Any,
+        config: Any,
+        openpi_data_loader: Any,
+        shuffle: bool = True,
+    ) -> Any:
+        """Create PyTorch DataLoader with distributed sampler."""
+        batch_size = config.batch_size
+        sampler = None
+
+        if torch.distributed.is_initialized():
+            sampler = torch.utils.data.distributed.DistributedSampler(
+                dataset,
+                num_replicas=self._world_size,
+                rank=self._rank,
+                shuffle=shuffle,
+                drop_last=True,
+            )
+            local_batch_size = batch_size // self._world_size
+        else:
+            local_batch_size = batch_size
+
+        # Use data config overrides if available, otherwise fall back to OpenPI defaults.
+        data_cfg = self.cfg.get("data", {})
+        num_workers = int(data_cfg.get("num_workers", config.num_workers))
+        return torch.utils.data.DataLoader(
+            dataset,
+            batch_size=local_batch_size,
+            shuffle=(sampler is None and shuffle),
+            sampler=sampler,
+            drop_last=True,
+            num_workers=num_workers,
+            pin_memory=True,
+            prefetch_factor=4 if num_workers > 0 else None,
+            persistent_workers=num_workers > 0,
+        )
+
+    def run_training(self):
+        """Run one training step with advantage-based CFG guidance."""
+        with self.worker_timer():
+            if self.cfg.actor.get("enable_offload", False):
+                with self.device_lock:
+                    self.load_param_and_grad(self.device)
+                    self.load_optimizer(self.device)
+
+            self.model.train()
+            if hasattr(self.model, "gradient_checkpointing_disable"):
+                self.model.gradient_checkpointing_disable()
+
+            assert (
+                self.cfg.actor.global_batch_size
+                % (self.cfg.actor.micro_batch_size * self._world_size)
+                == 0
+            ), "global_batch_size is not divisible by micro_batch_size * world_size"
+
+            self.gradient_accumulation = (
+                self.cfg.actor.global_batch_size
+                // self.cfg.actor.micro_batch_size
+                // self._world_size
+            )
+
+            metrics = {}
+            avg_loss = 0.0
+
+            for idx in range(self.gradient_accumulation):
+                backward_ctx = self.before_micro_batch(
+                    self.model,
+                    is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
+                )
+
+                try:
+                    observation, actions, advantage = next(self.data_iter)
+                except StopIteration:
+                    self._data_epoch = getattr(self, "_data_epoch", 0) + 1
+                    self._current_epoch = self._data_epoch
+                    self._data_iter_offset = 0
+                    self.data_loader.set_epoch(self._data_epoch)
+                    self.data_iter = iter(self.data_loader)
+                    observation, actions, advantage = next(self.data_iter)
+                self._data_iter_offset += 1
+
+                observation = jax.tree.map(
+                    lambda x: torch.as_tensor(x)
+                    .contiguous()
+                    .to(self.device, non_blocking=True),
+                    observation,
+                )
+                actions = actions.to(torch.float32).to(self.device, non_blocking=True)
+                advantage = advantage.to(self.device, non_blocking=True)
+
+                with self.amp_context:
+                    loss, metrics_data = self.model(
+                        data={
+                            "observation": observation,
+                            "actions": actions,
+                            "advantage": advantage,
+                        },
+                    )
+                    loss = loss.mean()
+
+                loss = loss / self.gradient_accumulation
+                avg_loss += loss.detach().item()
+                with backward_ctx:
+                    self.grad_scaler.scale(loss).backward()
+
+                if metrics_data is not None:
+                    append_to_dict(metrics, metrics_data)
+
+            grad_norm, lr_list = self.optimizer_step()
+            self.optimizer.zero_grad(set_to_none=True)
+
+            lr_value = (
+                lr_list[0] if len(lr_list) > 0 else self.optimizer.param_groups[0]["lr"]
+            )
+            grad_norm_value = (
+                float(grad_norm) if isinstance(grad_norm, torch.Tensor) else grad_norm
+            )
+            append_to_dict(
+                metrics,
+                {
+                    "loss": avg_loss,
+                    "learning_rate": lr_value,
+                    "grad_norm": grad_norm_value,
+                },
+            )
+
+            self.lr_scheduler.step()
+
+            count_keys = {
+                "conditional_count",
+                "unconditional_count",
+                "positive_label_count",
+                "negative_label_count",
+                "positive_conditional_count",
+                "positive_unconditional_count",
+                "negative_conditional_count",
+                "negative_unconditional_count",
+            }
+            loss_sum_keys = {
+                "conditional_loss_sum",
+                "unconditional_loss_sum",
+                "positive_conditional_loss_sum",
+                "positive_unconditional_loss_sum",
+                "negative_conditional_loss_sum",
+                "negative_unconditional_loss_sum",
+            }
+            special_keys = count_keys | loss_sum_keys
+            has_cfg_metrics = any(k in metrics for k in special_keys)
+
+            if has_cfg_metrics:
+                sum_m = {k: np.sum(v) for k, v in metrics.items() if k in special_keys}
+                mean_m = {
+                    k: np.mean(v) for k, v in metrics.items() if k not in special_keys
+                }
+                sum_m = all_reduce_dict(sum_m, op=torch.distributed.ReduceOp.SUM)
+                mean_m = all_reduce_dict(mean_m, op=torch.distributed.ReduceOp.AVG)
+
+                total = sum_m.get("conditional_count", 0) + sum_m.get(
+                    "unconditional_count", 0
+                )
+                if total > 0:
+                    mean_m["conditional_ratio"] = (
+                        sum_m.get("conditional_count", 0) / total
+                    )
+                    mean_m["unconditional_ratio"] = (
+                        sum_m.get("unconditional_count", 0) / total
+                    )
+                    mean_m["positive_label_ratio"] = (
+                        sum_m.get("positive_label_count", 0) / total
+                    )
+                    mean_m["negative_label_ratio"] = (
+                        sum_m.get("negative_label_count", 0) / total
+                    )
+                    mean_m["positive_conditional_ratio"] = (
+                        sum_m.get("positive_conditional_count", 0) / total
+                    )
+                    mean_m["positive_unconditional_ratio"] = (
+                        sum_m.get("positive_unconditional_count", 0) / total
+                    )
+                    mean_m["negative_conditional_ratio"] = (
+                        sum_m.get("negative_conditional_count", 0) / total
+                    )
+                    mean_m["negative_unconditional_ratio"] = (
+                        sum_m.get("negative_unconditional_count", 0) / total
+                    )
+
+                positive_total = sum_m.get("positive_label_count", 0)
+                if positive_total > 0:
+                    mean_m["positive_effective_conditional_ratio"] = (
+                        sum_m.get("positive_conditional_count", 0) / positive_total
+                    )
+                    mean_m["positive_effective_unconditional_ratio"] = (
+                        sum_m.get("positive_unconditional_count", 0) / positive_total
+                    )
+
+                negative_total = sum_m.get("negative_label_count", 0)
+                if negative_total > 0:
+                    mean_m["negative_effective_conditional_ratio"] = (
+                        sum_m.get("negative_conditional_count", 0) / negative_total
+                    )
+                    mean_m["negative_effective_unconditional_ratio"] = (
+                        sum_m.get("negative_unconditional_count", 0) / negative_total
+                    )
+
+                loss_map = {
+                    "conditional_loss": (
+                        "conditional_loss_sum",
+                        "conditional_count",
+                    ),
+                    "unconditional_loss": (
+                        "unconditional_loss_sum",
+                        "unconditional_count",
+                    ),
+                    "positive_conditional_loss": (
+                        "positive_conditional_loss_sum",
+                        "positive_conditional_count",
+                    ),
+                    "positive_unconditional_loss": (
+                        "positive_unconditional_loss_sum",
+                        "positive_unconditional_count",
+                    ),
+                    "negative_conditional_loss": (
+                        "negative_conditional_loss_sum",
+                        "negative_conditional_count",
+                    ),
+                    "negative_unconditional_loss": (
+                        "negative_unconditional_loss_sum",
+                        "negative_unconditional_count",
+                    ),
+                }
+                for metric_name, (loss_key, count_key) in loss_map.items():
+                    count = sum_m.get(count_key, 0)
+                    if count > 0:
+                        mean_m[metric_name] = sum_m.get(loss_key, 0) / count
+
+                train_metrics = mean_m
+            else:
+                train_metrics = all_reduce_dict(
+                    {k: np.mean(v) for k, v in metrics.items()},
+                    op=torch.distributed.ReduceOp.AVG,
+                )
+
+            return train_metrics
+
+    def set_global_step(self, global_step):
+        self.global_step = global_step
+
+        if hasattr(self.model, "set_global_step"):
+            self.model.set_global_step(global_step)
+
+        loader_len = len(self.data_loader)
+        if loader_len == 0:
+            return
+
+        grad_accum = (
+            self.cfg.actor.global_batch_size
+            // self.cfg.actor.micro_batch_size
+            // self._world_size
+        )
+        steps_per_epoch = max(1, loader_len // grad_accum)
+        new_epoch = global_step // steps_per_epoch
+
+        current_epoch = getattr(self, "_current_epoch", -1)
+        if current_epoch != new_epoch:
+            self._current_epoch = new_epoch
+            self._data_epoch = new_epoch
+            self._data_iter_offset = 0
+            self.data_loader.set_epoch(new_epoch)
+            self.data_iter = iter(self.data_loader)

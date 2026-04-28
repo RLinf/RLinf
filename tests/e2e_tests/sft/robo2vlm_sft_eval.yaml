@@ -20,8 +20,8 @@ runner:
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   # sft runner use the len(dataset) as one epoch
-  max_epochs: 1
-  max_steps: -1
+  max_epochs: -1
+  max_steps: 1
   # eval the model intenval
   val_check_interval: -1
   # save the model interval
@@ -44,7 +44,7 @@ data:
   image_keys: ["image"]
   max_prompt_length: 1024
   lazy_loading: false
-  num_workers: 16
+  num_workers: 2
 
 algorithm:
   adv_type: gae
@@ -52,9 +52,9 @@ algorithm:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  eval_batch_size: 4
-  micro_batch_size: 4
-  global_batch_size: 256
+  eval_batch_size: 2
+  micro_batch_size: 2
+  global_batch_size: 8
   seed: 42
 
   model:
@@ -71,7 +71,7 @@ actor:
     weight_decay: 0.01
     clip_grad: 1.0
     lr_scheduler: "cosine"
-    total_training_steps: ${runner.max_epochs}
+    total_training_steps: ${runner.max_steps}
     lr_warmup_steps: 200 
 
   # Override the default values in training_backend/fsdp

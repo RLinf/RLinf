@@ -16,11 +16,11 @@
 import torch
 from megatron.core import parallel_state
 
-from rlinf.config import SupportedModel, get_supported_model
+from rlinf.config import SupportedModel
 
 
 def get_tp_reshard_fn(model_type: str):
-    model_type = get_supported_model(model_type)
+    model_type = SupportedModel(model_type)
     if model_type == SupportedModel.QWEN2_5:
         return tp_reshard_fn_qwen2_5
     elif model_type == SupportedModel.QWEN3:
@@ -34,7 +34,7 @@ def get_tp_reshard_fn(model_type: str):
 
 
 def get_tpe_reshard_fn(model_type: str):
-    model_type = get_supported_model(model_type)
+    model_type = SupportedModel(model_type)
     if model_type == SupportedModel.QWEN3_MOE:
         return tpe_reshard_fn_qwen3_moe
     else:
@@ -44,7 +44,7 @@ def get_tpe_reshard_fn(model_type: str):
 
 
 def get_pp_reshard_fn(model_type: str):
-    model_type = get_supported_model(model_type)
+    model_type = SupportedModel(model_type)
     if model_type == SupportedModel.QWEN2_5:
         return pp_reshard_fn_qwen2_5
     elif model_type == SupportedModel.QWEN3:

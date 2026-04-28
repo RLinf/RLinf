@@ -104,6 +104,18 @@ jobs:
           bash requirements/install.sh embodied --env xsquare_turtle2
           rm -rf .venv
 
+      - name: Install d4rl (offline env)
+        run: |
+          pip install uv
+          uv cache prune --ci
+          bash requirements/install.sh embodied --env d4rl
+      - name: Install embodichain
+        run: |
+          pip install uv
+          uv cache prune --ci
+          bash requirements/install.sh embodied --env embodichain
+          rm -rf .venv
+
       - name: Install liberopro
         run: |
           pip install uv
@@ -118,11 +130,24 @@ jobs:
           bash requirements/install.sh embodied --model openvla-oft --env liberoplus
           rm -rf .venv
 
+      - name: Install starvla
+        run: |
+          pip install uv
+          bash requirements/install.sh embodied --model starvla --env maniskill_libero
+          rm -rf .venv
+
       - name: Install behavior-openvla-oft
         run: |
           pip install uv
           uv cache prune --ci
           bash requirements/install.sh embodied --model openvla-oft --env behavior
+          rm -rf .venv
+
+      - name: Install roboverse
+        run: |
+          pip install uv
+          uv cache prune --ci
+          bash requirements/install.sh embodied --model openpi --env roboverse
           rm -rf .venv
 
       - name: Install docs

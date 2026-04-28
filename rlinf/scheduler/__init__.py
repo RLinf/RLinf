@@ -18,7 +18,10 @@ from .collective import CollectiveGroupOptions
 from .hardware import (
     AcceleratorType,
     AcceleratorUtil,
+    DOSW1HWInfo,
+    DualFrankaHWInfo,
     FrankaHWInfo,
+    GimArmHWInfo,
     HardwareInfo,
     Turtle2HWInfo,
 )
@@ -36,7 +39,10 @@ __all__ = [
     "AcceleratorUtil",
     "AcceleratorType",
     "HardwareInfo",
+    "DOSW1HWInfo",
+    "DualFrankaHWInfo",
     "FrankaHWInfo",
+    "GimArmHWInfo",
     "Turtle2HWInfo",
     "CollectiveGroupOptions",
     "Cluster",

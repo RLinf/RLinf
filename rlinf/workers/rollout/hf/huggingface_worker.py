@@ -25,6 +25,7 @@ from rlinf.config import SupportedModel
 from rlinf.data.embodied_io_struct import (
     RolloutResult,
 )
+from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, CollectiveGroupOptions, Worker
@@ -46,6 +47,9 @@ class MultiStepRolloutWorker(Worker):
 
         self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
         self.enable_offload = self.cfg.rollout.get("enable_offload", False)
+        self.sync_weight_load_instant = self.cfg.rollout.get(
+            "sync_weight_load_instant", True
+        )
 
         self.placement = HybridComponentPlacement(cfg, Cluster())
 
@@ -85,6 +89,12 @@ class MultiStepRolloutWorker(Worker):
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self.version = 0
         self.finished_episodes = None
+
+        weight_syncer_cfg = OmegaConf.select(cfg, "weight_syncer", default=None)
+        assert weight_syncer_cfg is not None, (
+            "rollout.weight_syncer config must be provided"
+        )
+        self.weight_syncer = WeightSyncer.create(weight_syncer_cfg)
 
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
@@ -128,16 +138,19 @@ class MultiStepRolloutWorker(Worker):
                 eval_batch_size=self.eval_batch_size,
             )
 
-        self.dst_ranks = {
-            "train": self._setup_dst_ranks(
-                self.total_num_train_envs // self.num_pipeline_stages
-            ),
-        }
-        self.src_ranks = {
-            "train": self._setup_src_ranks(
-                self.total_num_train_envs // self.num_pipeline_stages
-            ),
-        }
+        self.dst_ranks = {}
+        self.src_ranks = {}
+        if not self.cfg.runner.only_eval:
+            self.dst_ranks = {
+                "train": self._setup_dst_ranks(
+                    self.total_num_train_envs // self.num_pipeline_stages
+                ),
+            }
+            self.src_ranks = {
+                "train": self._setup_src_ranks(
+                    self.total_num_train_envs // self.num_pipeline_stages
+                ),
+            }
         if self.enable_eval:
             self.dst_ranks["eval"] = self._setup_dst_ranks(
                 self.total_num_eval_envs // self.num_pipeline_stages
@@ -258,6 +271,7 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.GR00T,
             SupportedModel.DREAMZERO,
             SupportedModel.CNN_POLICY,
+            SupportedModel.CFG_MODEL,
         ]:
             if self.cfg.algorithm.loss_type == "embodied_dagger":
                 kwargs = {"mode": "eval"}
@@ -342,15 +356,41 @@ class MultiStepRolloutWorker(Worker):
 
     async def sync_model_from_actor(self):
         """Sync model parameters from the actor worker."""
-        param_state_dict = await self.recv(
-            self.actor_group_name,
-            src_rank=self.actor_weight_src_rank,
-            async_op=True,
-            options=self._sync_weight_comm_options,
-        ).async_wait()
-        self.hf_model.load_state_dict(param_state_dict)
 
-        del param_state_dict
+        async def recv_func() -> Any:
+            data = await self.recv(
+                src_group_name=self.actor_group_name,
+                src_rank=self.actor_weight_src_rank,
+                async_op=True,
+                options=self._sync_weight_comm_options,
+            ).async_wait()
+            return data
+
+        async def send_func(data: Any) -> None:
+            await self.send(
+                data,
+                dst_group_name=self.actor_group_name,
+                dst_rank=self.actor_weight_src_rank,
+                async_op=True,
+                options=self._sync_weight_comm_options,
+            ).async_wait()
+
+        if not self.weight_syncer.receiver_initialized():
+            await self.weight_syncer.init_receiver(
+                state_dict=self.hf_model.state_dict(),
+                recv=recv_func,
+                send=send_func,
+            )
+
+        applied_version = await self.weight_syncer.apply(self.hf_model, recv_func)
+        self.version = applied_version
+        if self.finished_episodes is None:
+            self.finished_episodes = (
+                self.version * self.total_num_train_envs * self.rollout_epoch
+            )
+        if hasattr(self.hf_model, "set_global_step"):
+            self.hf_model.set_global_step(applied_version)
+
         gc.collect()
         self.torch_platform.empty_cache()
 
@@ -647,10 +687,5 @@ class MultiStepRolloutWorker(Worker):
             )
 
     def set_global_step(self, global_step: int):
-        self.version = global_step
-        if self.finished_episodes is None:
-            self.finished_episodes = (
-                self.version * self.total_num_train_envs * self.rollout_epoch
-            )
         if hasattr(self.hf_model, "set_global_step"):
             self.hf_model.set_global_step(global_step)

@@ -24,10 +24,10 @@ class SpaceMouseExpert:
     a "get_action" method to get the latest action and button state.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, device_index: int = 0) -> None:
         import pyspacemouse
 
-        self._device = pyspacemouse.open()
+        self._device = pyspacemouse.open(device_index=device_index)
 
         self.state_lock = threading.Lock()
         self.latest_data: dict = {"action": np.zeros(6), "buttons": [0, 0]}

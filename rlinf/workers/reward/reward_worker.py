@@ -18,7 +18,7 @@ from typing import Literal, Optional
 
 import numpy as np
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, DistributedSampler
 
 from rlinf.config import torch_dtype_from_precision
@@ -26,7 +26,13 @@ from rlinf.data.datasets.reward_model import RewardBinaryDataset
 from rlinf.data.io_struct import RolloutResult
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
-from rlinf.scheduler import Channel, Cluster, Worker
+from rlinf.scheduler import (
+    Channel,
+    Cluster,
+    FlexiblePlacementStrategy,
+    NodePlacementStrategy,
+    Worker,
+)
 from rlinf.utils.comm_mapping import CommMapper
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.down_sampling import down_sample_batch
@@ -147,24 +153,76 @@ class RewardWorker(Worker):
 class EmbodiedRewardWorker(Worker):
     """Reward Worker for inference during embodied RL training."""
 
+    @staticmethod
+    def launch_for_realworld(
+        reward_cfg: dict,
+        node_rank: int,
+        node_group_label: Optional[str] = None,
+        hardware_rank: Optional[int] = None,
+        env_idx: int = 0,
+        worker_rank: int = 0,
+    ):
+        """Launch a single-rank reward worker for real-world env inference."""
+        cluster = Cluster()
+        if hardware_rank is not None:
+            placement = FlexiblePlacementStrategy(
+                [[hardware_rank]],
+                node_group_label=node_group_label,
+            )
+        elif node_group_label is not None:
+            node_group = cluster.get_node_group(node_group_label)
+            assert node_group is not None, (
+                f"Node group {node_group_label} not found in cluster."
+            )
+            assert node_rank in node_group.node_ranks, (
+                f"Node rank {node_rank} is not in node group {node_group_label}: "
+                f"{node_group.node_ranks}"
+            )
+            placement_node_rank = node_group.node_ranks.index(node_rank)
+            placement = NodePlacementStrategy(
+                [placement_node_rank], node_group_label=node_group_label
+            )
+        else:
+            placement = NodePlacementStrategy([node_rank])
+
+        standalone_reward_cfg = dict(reward_cfg)
+        standalone_reward_cfg["standalone_realworld"] = True
+        standalone_cfg = OmegaConf.create({"reward": standalone_reward_cfg})
+        return EmbodiedRewardWorker.create_group(standalone_cfg).launch(
+            cluster=cluster,
+            placement_strategy=placement,
+            name=f"EmbodiedRewardWorker-{worker_rank}-{env_idx}",
+        )
+
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
         self.cfg = cfg
 
-        self.placement = HybridComponentPlacement(cfg, Cluster())
+        self._standalone_realworld = self.cfg.reward.get("standalone_realworld", False)
+        self.placement = (
+            HybridComponentPlacement(cfg, Cluster())
+            if not self._standalone_realworld
+            else None
+        )
 
         # Device setup
         torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", 0)))
         self.device = torch.cuda.current_device()
 
-        self.total_num_train_envs = cfg.env.train.total_num_envs
-        self.total_num_eval_envs = cfg.env.eval.total_num_envs
-        self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
+        if not self._standalone_realworld:
+            self.total_num_train_envs = cfg.env.train.total_num_envs
+            self.total_num_eval_envs = cfg.env.eval.total_num_envs
+            self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
+        else:
+            self.total_num_train_envs = 1
+            self.total_num_eval_envs = 1
+            self.num_pipeline_stages = 1
 
         self.enable_offload = self.cfg.reward.get("enable_offload", False)
         self._interact_task = None
 
         self.reward_threshold = self.cfg.reward.get("reward_threshold", 0.6)
+        self._use_reward_prob = self.cfg.reward.get("use_reward_prob", False)
 
     def model_provider_func(self):
         from rlinf.models.embodiment.reward import get_reward_model_class
@@ -188,6 +246,9 @@ class EmbodiedRewardWorker(Worker):
         # Move to device and set eval mode
         self.model = self.model.to(self.device)
         self.model.eval()
+
+        if self._standalone_realworld:
+            return
 
         self.dst_ranks = {
             "train": self._setup_dst_ranks(
@@ -281,11 +342,24 @@ class EmbodiedRewardWorker(Worker):
         with torch.no_grad():
             outputs = self.model(images)
             probs = outputs["probabilities"]
+            if self._use_reward_prob:
+                self.log_info(
+                    f"[reward_model/probs] shape={probs.shape} values={probs.cpu().tolist()}"
+                )
             rewards = (probs > self.reward_threshold).to(probs.dtype)
 
         if rewards.dim() == 1:
             rewards = rewards.unsqueeze(-1)
 
+        return rewards
+
+    def compute_image_rewards(
+        self, images: torch.Tensor | np.ndarray
+    ) -> torch.Tensor | np.ndarray:
+        """Run one-shot reward inference and return CPU results."""
+        rewards = self._compute_image_rewards(images)
+        if isinstance(rewards, torch.Tensor):
+            return rewards.detach().cpu()
         return rewards
 
     def _setup_dst_ranks(self, batch_size: int) -> list[tuple[int, int]]:
@@ -384,8 +458,22 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
 
         self.cfg = cfg
 
+        self.data_loader, self.val_loader = self.build_dataloader()
+
         # Training step counter for validation interval
         self._training_step = 0
+
+        assert (
+            self.cfg.actor.global_batch_size
+            % (self.cfg.actor.micro_batch_size * self._world_size)
+            == 0
+        ), "global_batch_size is not divisible by micro_batch_size * world_size"
+
+        self.gradient_accumulation = (
+            self.cfg.actor.global_batch_size
+            // self.cfg.actor.micro_batch_size
+            // self._world_size
+        )
 
     def model_provider_func(self):
         from rlinf.models.embodiment.reward import get_reward_model_class
@@ -404,7 +492,6 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
     def init_worker(self):
         """Initialize model and optimizer using base class."""
 
-        self.data_loader, self.val_loader = self.build_dataloader()
         if self.data_loader is None:
             raise ValueError("data_loader is not set")
         self.data_iter = iter(self.data_loader)
@@ -478,18 +565,6 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
     def run_training(self) -> dict[str, float]:
         """Run one training iteration with gradient accumulation."""
         self.model.train()
-
-        assert (
-            self.cfg.actor.global_batch_size
-            % (self.cfg.actor.micro_batch_size * self._world_size)
-            == 0
-        ), "global_batch_size is not divisible by micro_batch_size * world_size"
-
-        self.gradient_accumulation = (
-            self.cfg.actor.global_batch_size
-            // self.cfg.actor.micro_batch_size
-            // self._world_size
-        )
 
         metrics = {}
 
@@ -588,3 +663,8 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
         val_metrics = all_reduce_dict(val_metrics, op=torch.distributed.ReduceOp.AVG)
 
         return val_metrics
+
+    def get_max_steps_per_epoch(self):
+        if self.data_loader is not None:
+            return max(1, len(self.data_loader) // self.gradient_accumulation)
+        return 0

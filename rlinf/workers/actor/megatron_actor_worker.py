@@ -313,7 +313,9 @@ class MegatronActor(MegatronWorker):
         return model_bucket_list
 
     def sync_model_to_rollout(self):
-        """Send the model weights to the destination ranks in the rollout task."""
+        """
+        Sync the model's full state dict to the rollout worker.
+        """
         if self.recreate_nccl_groups:
             nccl_group_recreate()
         if not self.is_running:
@@ -338,55 +340,40 @@ class MegatronActor(MegatronWorker):
 
         # send bucket size
         if len(self._weight_dst_rank_in_rollout) > 0:
-            if self.rollout_sync_mode == RolloutSyncMode.COLLOCATED:
-                send_handle = None
-                for bucket_weight in model_bucket_list:
-                    reshard_state_dict = self._get_rollout_model_state_dict(
-                        bucket_weight
-                    )
-                    buffer = {
-                        k: reduce_tensor(v) for k, v in reshard_state_dict.items()
-                    }
-                    if send_handle is not None:
-                        send_handle.wait()
-                    else:
-                        # add the bucket_length message in bucket 0
-                        buffer["bucket_length"] = len(model_bucket_list)
+            send_handles = []
+            for bucket_idx, bucket_weight in enumerate(model_bucket_list):
+                buffer = self._get_rollout_model_state_dict(bucket_weight)
+                if self.rollout_sync_mode == RolloutSyncMode.COLLOCATED:
+                    buffer = {k: reduce_tensor(v) for k, v in buffer.items()}
+                if bucket_idx == 0:
+                    # add the bucket_length message in bucket 0
+                    buffer["bucket_length"] = len(model_bucket_list)
+
+                for send_handle in send_handles:
+                    send_handle.wait()
+                send_handles = []
+
+                if self.rollout_sync_mode == RolloutSyncMode.COLLOCATED:
                     send_handle = self.send(
                         buffer,
                         self.rollout_group_name,
                         self._weight_dst_rank_in_rollout,
                         async_op=True,
                     )
-                    del reshard_state_dict
-                send_handle.wait()
-            else:
-                send_handle_bucket = []
-                for bucket_weight in model_bucket_list:
-                    reshard_state_dict = self._get_rollout_model_state_dict(
-                        bucket_weight
-                    )
-
-                    if len(send_handle_bucket) != 0:
-                        for send_handle in send_handle_bucket:
-                            send_handle.wait()
-                        send_handle_bucket = []
-                    else:
-                        # add the bucket_length message in bucket 0
-                        reshard_state_dict["bucket_length"] = len(model_bucket_list)
-
+                    send_handles.append(send_handle)
+                else:
                     for weight_dst_rank in self._weight_dst_rank_in_rollout:
                         send_handle = self.send(
-                            reshard_state_dict,
+                            buffer,
                             self.rollout_group_name,
                             weight_dst_rank,
                             async_op=True,
                         )
-                        send_handle_bucket.append(send_handle)
+                        send_handles.append(send_handle)
+                del buffer
 
-                if len(send_handle_bucket) != 0:
-                    for send_handle in send_handle_bucket:
-                        send_handle.wait()
+            for send_handle in send_handles:
+                send_handle.wait()
 
         if (
             self.placement_mode == PlacementMode.COLLOCATED

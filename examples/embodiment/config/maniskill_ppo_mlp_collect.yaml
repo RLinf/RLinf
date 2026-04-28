@@ -3,6 +3,7 @@ defaults:
   - env/maniskill_pick_cube@env.eval
   - model/mlp_policy@actor.model
   - training_backend/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
 hydra:
@@ -142,7 +143,6 @@ env:
     #   only_success: False       # set True to discard failed episodes
     #   robot_type: "panda"       # written to meta/info.json
     #   fps: 10                   # written to meta/info.json
-    #   stats_sample_ratio: 0.1   # fraction of frames used for stats computation
 
 rollout:
   group_name: "RolloutGroup"

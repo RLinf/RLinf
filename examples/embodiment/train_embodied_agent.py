@@ -79,7 +79,9 @@ def main(cfg) -> None:
     )
 
     reward_group = None
-    if cfg.get("reward", {}).get("use_reward_model", False):
+    if cfg.get("reward", {}).get("use_reward_model", False) and not cfg.get(
+        "reward", {}
+    ).get("standalone_realworld", False):
         # Create reward worker group
         reward_placement = component_placement.get_strategy("reward")
         reward_group = EmbodiedRewardWorker.create_group(cfg).launch(

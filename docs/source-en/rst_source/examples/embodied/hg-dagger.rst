@@ -175,13 +175,13 @@ Then fill in the robot configuration and keep LeRobot export enabled:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
          success_hold_steps: 1
          camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
-     data_collection:
-       enabled: True
-       save_dir: ${runner.logger.log_path}/collected_data
-       export_format: "lerobot"
-       only_success: True
-       robot_type: "panda"
-       fps: 10
+      data_collection:
+        enabled: True
+        save_dir: ${runner.logger.log_path}/collected_data
+        export_format: "lerobot"
+        only_success: True
+        robot_type: "panda"
+        fps: 10
 
 Launch collection with your copied config:
 
@@ -205,9 +205,9 @@ LeRobot dataset:
 .. code-block:: bash
 
    export HF_LEROBOT_HOME=/path/to/lerobot_root
-   python toolkits/replay_buffer/calculate_norm_stats.py \
-       --config-name pi0_franka_dagger \
-       --repo-id franka_dagger
+   python toolkits/lerobot/calculate_norm_stats.py \
+       --config-name pi0_realworld \
+       --repo-id realworld_franka_bin_relocation
 
 Use the same dataset root and dataset id that you will use for SFT. More
 OpenPI-specific dataset notes are documented in :doc:`sft_openpi`.
@@ -215,24 +215,24 @@ OpenPI-specific dataset notes are documented in :doc:`sft_openpi`.
 3. Run OpenPI SFT
 ~~~~~~~~~~~~~~~~~
 
-Edit ``examples/sft/config/franka_dagger_sft_openpi.yaml`` before launch:
+Edit ``examples/sft/config/realworld_sft_openpi.yaml`` before launch:
 
 .. code-block:: yaml
 
    data:
-     train_data_paths: "/path/to/franka-lerobot-dataset"
+     train_data_paths: "/path/to/realworld-franka-bin-relocation-dataset"
 
    actor:
      model:
        model_path: "/path/to/pi0-model"
        openpi:
-         config_name: "pi0_franka_dagger"
+         config_name: "pi0_realworld"
 
 Then run:
 
 .. code-block:: bash
 
-   bash examples/sft/run_vla_sft.sh franka_dagger_sft_openpi
+   bash examples/sft/run_vla_sft.sh realworld_sft_openpi
 
 The SFT checkpoint is the student initialization for the online stage. For more
 OpenPI SFT details, see :doc:`sft_openpi`.
@@ -286,7 +286,7 @@ your cluster, cameras, target pose, and checkpoints:
      model:
        model_path: "/path/to/pi0-model"
        openpi:
-         config_name: "pi0_franka_dagger"
+         config_name: "pi0_realworld"
 
 Launch HG-DAgger from the Ray head node:
 
