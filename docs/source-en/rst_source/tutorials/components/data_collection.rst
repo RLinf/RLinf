@@ -99,7 +99,7 @@ Constructor Arguments
    * - ``record_executed_action``
      - ``bool``
      - ``False``
-     - Prefer ``info["executed_action"]`` / accepted ``info["intervene_action"]`` over the input action; intended for raw takeover auditing
+     - Prefer ``info["executed_action"]`` / accepted ``info["intervene_action"]`` when saving actions. Disabled by default; intended for raw takeover episode auditing without changing the normal collection contract.
    * - ``finalize_interval``
      - ``int``
      - ``100``

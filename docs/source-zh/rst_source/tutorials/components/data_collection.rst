@@ -93,7 +93,7 @@ Episode 数据采集
    * - ``record_executed_action``
      - ``bool``
      - ``False``
-     - 优先记录 ``info["executed_action"]`` / accepted ``info["intervene_action"]``，主要用于 takeover raw 审计
+     - 保存 action 时优先使用 ``info["executed_action"]`` / accepted ``info["intervene_action"]``；默认关闭，主要用于 takeover raw episode 审计，避免改变普通采集的数据合同
    * - ``finalize_interval``
      - ``int``
      - ``100``
