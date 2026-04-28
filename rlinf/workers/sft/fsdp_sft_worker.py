@@ -98,6 +98,11 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         if hasattr(self.model, "set_global_step"):
             self.model.set_global_step(global_step)
 
+    def get_max_steps_per_epoch(self):
+        if self.data_loader is not None:
+            return max(1, len(self.data_loader) // self.gradient_accumulation)
+        return 0
+
     def run_eval(self):
         assert self.eval_data_loader is not None, "eval_data_loader is not set"
 

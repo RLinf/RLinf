@@ -23,8 +23,8 @@
       experiment_name: "robotwin_sft_lingbotvla"
       logger_backends: ["tensorboard"]  # wandb, swanlab
 
-    max_epochs: 30000
-    max_steps: -1
+    max_epochs: -1
+    max_steps: 30000
     val_check_interval: -1
     save_interval: 1000
 

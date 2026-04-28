@@ -23,8 +23,8 @@ runner:
     experiment_name: "libero_sft_value"
     logger_backends: ["tensorboard"]
 
-  max_epochs: 1
-  max_steps: -1
+  max_epochs: -1
+  max_steps: 1
   val_check_interval: -1
   save_interval: -1
 
@@ -72,8 +72,8 @@ algorithm:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 32
-  global_batch_size: 256
+  micro_batch_size: 2
+  global_batch_size: 4
   seed: 0
 
   model:

@@ -23,8 +23,8 @@ runner:
     experiment_name: "realworld_sft_openpi"
     logger_backends: ["tensorboard"]
 
-  max_epochs: 2000
-  max_steps: -1
+  max_epochs: -1
+  max_steps: 2000
   val_check_interval: -1
   save_interval: 100
 
