@@ -15,7 +15,6 @@
 import json
 import os
 import random
-from typing import Optional
 
 import numpy as np
 import torch
@@ -68,7 +67,6 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
                 model_dtype = torch.float32
         self.model = self.model.to(dtype=model_dtype)
 
-
         self.config = config
         self.num_steps = config.num_steps
         self.action_horizon = config.chunk_size
@@ -112,7 +110,9 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
 
     def setup_wrappers(self, transforms=(), output_transforms=()):
         self._input_transform = Pipeline(transforms) if transforms else None
-        self._output_transform = Pipeline(output_transforms) if output_transforms else None
+        self._output_transform = (
+            Pipeline(output_transforms) if output_transforms else None
+        )
 
     def input_transform(self, obs: dict, transpose=True):
         if "prompt" in obs:
@@ -260,7 +260,11 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
         for i in range(batch_size):
             img_np = raw_main_images[i]
             if img_np.dtype != np.uint8:
-                img_np = (img_np * 255).astype(np.uint8) if img_np.max() <= 1.0 else img_np.astype(np.uint8)
+                img_np = (
+                    (img_np * 255).astype(np.uint8)
+                    if img_np.max() <= 1.0
+                    else img_np.astype(np.uint8)
+                )
             base_pil_images.append(Image.fromarray(img_np))
 
         wrist_pil_images = []
@@ -285,8 +289,11 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
         if num_views < required_num_images:
             pad_size = required_num_images - num_views
             padding = torch.zeros(
-                batch_size, pad_size, *images.shape[2:],
-                dtype=images.dtype, device=device,
+                batch_size,
+                pad_size,
+                *images.shape[2:],
+                dtype=images.dtype,
+                device=device,
             )
             images = torch.cat([images, padding], dim=1)
         image_masks = torch.zeros(
@@ -311,7 +318,9 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
     def _build_prefix_kv_cache(self, input_ids, attention_mask, images, image_masks):
         """Build KV cache from prefix (images + language) using per-layer LLM forward."""
         prefix_hidden_states, prefix_padding_mask, prefix_attn_mask = (
-            self.get_prefix_hidden_states(input_ids, attention_mask, images, image_masks)
+            self.get_prefix_hidden_states(
+                input_ids, attention_mask, images, image_masks
+            )
         )
         prefix_attn_mask_2d = make_attn_mask_2d(
             padding_mask=prefix_padding_mask, attn_mask=prefix_attn_mask
@@ -337,7 +346,13 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
             )
             hidden_states = layer_outputs[0]
 
-        del hidden_states, mask, prefix_attn_mask_4d, prefix_attn_mask_2d, position_embeddings
+        del (
+            hidden_states,
+            mask,
+            prefix_attn_mask_4d,
+            prefix_attn_mask_2d,
+            position_embeddings,
+        )
         torch.cuda.empty_cache()
         return prefix_padding_mask, prefix_attn_mask, past_key_values
 
@@ -483,22 +498,22 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
                     )[:-1]
                 )
                 sigma_i = sigmas[idx][:, None, None].expand_as(x_t)
-                x_t_mean = (
-                    (1 - (t_input - delta)) * x0_pred
-                    + (t_input - delta - sigma_i**2 * delta / (2 * t_input)) * x1_pred
-                )
+                x_t_mean = (1 - (t_input - delta)) * x0_pred + (
+                    t_input - delta - sigma_i**2 * delta / (2 * t_input)
+                ) * x1_pred
                 x_t_std = torch.sqrt(delta) * sigma_i
             elif self.config.noise_method == "flow_cps":
                 pi = torch.pi
                 cos_term = torch.cos(pi * noise_level / 2).to(device)
                 sin_term = torch.sin(pi * noise_level / 2).to(device)
-                x_t_mean = (
-                    (1 - (t_input - delta)) * x0_pred
-                    + (t_input - delta) * cos_term * x1_pred
-                )
+                x_t_mean = (1 - (t_input - delta)) * x0_pred + (
+                    t_input - delta
+                ) * cos_term * x1_pred
                 x_t_std = (t_input - delta) * sin_term
             elif self.config.noise_method == "flow_noise":
-                x_t_mean = (1 - (t_input - delta)) * x0_pred + (t_input - delta) * x1_pred
+                x_t_mean = (1 - (t_input - delta)) * x0_pred + (
+                    t_input - delta
+                ) * x1_pred
                 x_t_std = self.noise_head(
                     suffix_out.to(dtype=self.model.action_out_proj.weight.dtype)
                 )
@@ -523,6 +538,7 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
 
     def gaussian_entropy(self, sigma):
         import math
+
         mask = sigma == 0
         sigma_safe = torch.where(mask, torch.ones_like(sigma), sigma)
         entropy = 0.5 * torch.log(2 * math.pi * math.e * (sigma_safe**2))
@@ -545,13 +561,22 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
         for i in range(batch_size):
             img_np = raw_images[i].cpu().numpy()
             if img_np.dtype != np.uint8:
-                img_np = (img_np * 255).astype(np.uint8) if img_np.max() <= 1.0 else img_np.astype(np.uint8)
+                img_np = (
+                    (img_np * 255).astype(np.uint8)
+                    if img_np.max() <= 1.0
+                    else img_np.astype(np.uint8)
+                )
             base_pil_images.append(Image.fromarray(img_np))
 
         wrist_pil_images = []
         if "observation/wrist_image" in processed_obs:
             for i in range(batch_size):
-                wrist_np = processed_obs["observation/wrist_image"][i].cpu().numpy().astype(np.uint8)
+                wrist_np = (
+                    processed_obs["observation/wrist_image"][i]
+                    .cpu()
+                    .numpy()
+                    .astype(np.uint8)
+                )
                 wrist_pil_images.append(Image.fromarray(wrist_np))
 
         images_list = []
@@ -569,8 +594,11 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
         if num_views < required_num_images:
             pad_size = required_num_images - num_views
             padding = torch.zeros(
-                batch_size, pad_size, *images.shape[2:],
-                dtype=images.dtype, device=device,
+                batch_size,
+                pad_size,
+                *images.shape[2:],
+                dtype=images.dtype,
+                device=device,
             )
             images = torch.cat([images, padding], dim=1)
         image_masks = torch.zeros(
@@ -582,14 +610,17 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
         num_steps = self.num_steps
 
         # Build prefix KV cache
-        prefix_padding_mask, prefix_attn_mask, kv_cache = (
-            self._build_prefix_kv_cache(input_ids, attention_mask, images, image_masks)
+        prefix_padding_mask, prefix_attn_mask, kv_cache = self._build_prefix_kv_cache(
+            input_ids, attention_mask, images, image_masks
         )
 
         # Init noise
         x_t = torch.randn(
-            batch_size, self.config.chunk_size, self.config.action_dim,
-            device=device, dtype=target_dtype,
+            batch_size,
+            self.config.chunk_size,
+            self.config.action_dim,
+            device=device,
+            dtype=target_dtype,
         )
 
         chains = [x_t]
@@ -717,7 +748,9 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
                 self.config.num_steps,
                 compute_values,
             )
-            chains_log_probs.append(self.get_logprob_norm(chains_next, x_t_mean, x_t_std))
+            chains_log_probs.append(
+                self.get_logprob_norm(chains_next, x_t_mean, x_t_std)
+            )
             chains_entropy.append(self.gaussian_entropy(x_t_std))
             chains_values.append(value_t)
 
@@ -760,7 +793,9 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
         if "tokenized_prompt" in processed_obs:
             forward_inputs["tokenized_prompt"] = processed_obs["tokenized_prompt"]
         if "tokenized_prompt_mask" in processed_obs:
-            forward_inputs["tokenized_prompt_mask"] = processed_obs["tokenized_prompt_mask"]
+            forward_inputs["tokenized_prompt_mask"] = processed_obs[
+                "tokenized_prompt_mask"
+            ]
         forward_inputs.update(to_process_obs)
         forward_inputs.pop("prompt", None)
 

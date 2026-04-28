@@ -87,8 +87,15 @@ class BaseDexboticPolicy:
         original_offline = os.environ.get("HF_HUB_OFFLINE", None)
         os.environ["HF_HUB_OFFLINE"] = "1"
         try:
+            config = self.model_cls.config_class.from_pretrained(
+                self.model_path,
+                trust_remote_code=True,
+                local_files_only=True,
+            )
+            config.processor_config = self.model_path
             self.model = self.model_cls.from_pretrained(
                 self.model_path,
+                config=config,
                 torch_dtype=None,
                 low_cpu_mem_usage=True,
                 trust_remote_code=True,
@@ -226,7 +233,9 @@ class DM0Policy(BaseDexboticPolicy):
         return [{"from": "human", "value": text}]
 
     def _call_inference_action(self, inputs: dict) -> torch.Tensor:
-        return self.model.inference_action(**inputs, diffusion_steps=self.diffusion_steps)
+        return self.model.inference_action(
+            **inputs, diffusion_steps=self.diffusion_steps
+        )
 
 
 def setup_logger(exp_name, log_dir):

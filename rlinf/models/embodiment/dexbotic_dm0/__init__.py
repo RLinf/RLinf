@@ -101,7 +101,9 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         # (layernorms, etc.).  FSDP requires all params within a wrapped unit
         # to share the same dtype, so we enforce uniform dtype across the
         # entire model (including lm_head, value_head, etc.) after load.
-        target_dtype = torch.bfloat16 if cfg.get("precision", "bf16") == "bf16" else torch.float32
+        target_dtype = (
+            torch.bfloat16 if cfg.get("precision", "bf16") == "bf16" else torch.float32
+        )
         model = model.to(dtype=target_dtype)
 
         # PEVisionTower.device and .dtype use list(self.vision_tower.parameters())[-1]

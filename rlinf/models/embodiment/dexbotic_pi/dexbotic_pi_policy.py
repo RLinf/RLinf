@@ -15,7 +15,7 @@
 import json
 import os
 import random
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 import torch
@@ -472,8 +472,11 @@ class DexboticPi0ForRLActionPrediction(BasePolicy, Pi0ForCausalLM):
 
             # Init noise
             x_t = torch.randn(
-                batch_size, self.config.chunk_size, self.config.action_dim,
-                device=device, dtype=target_dtype,
+                batch_size,
+                self.config.chunk_size,
+                self.config.action_dim,
+                device=device,
+                dtype=target_dtype,
             )
 
             chains = []
@@ -586,9 +589,9 @@ class DexboticPi0ForRLActionPrediction(BasePolicy, Pi0ForCausalLM):
         self,
         prefix_embeds: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
-        position_embeddings: Optional[Tuple] = None,
+        position_embeddings: Optional[tuple] = None,
         cache_position: Optional[torch.LongTensor] = None,
-    ) -> Tuple[torch.Tensor, DynamicCache]:
+    ) -> tuple[torch.Tensor, DynamicCache]:
         """Forward the LLM prefix only, building the KV cache.
 
         Uses each layer's forward() method so FSDP can properly gather/release
@@ -619,7 +622,7 @@ class DexboticPi0ForRLActionPrediction(BasePolicy, Pi0ForCausalLM):
         self,
         suffix_embeds: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
-        position_embeddings: Optional[Tuple] = None,
+        position_embeddings: Optional[tuple] = None,
         past_key_values: Optional[DynamicCache] = None,
         position_ids: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
