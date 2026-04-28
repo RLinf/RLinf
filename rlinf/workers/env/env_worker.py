@@ -932,7 +932,7 @@ class EnvWorker(Worker):
     async def send_rollout_trajectories(
         self, rollout_result: EmbodiedRolloutResult, channel: Channel
     ):
-        trajectories: Trajectory = rollout_result.to_splited_trajectories(
+        trajectories: list[Trajectory] = rollout_result.to_splited_trajectories(
             self.actor_split_num
         )
         for trajectory in trajectories:
