@@ -101,9 +101,7 @@ class DexpnpEnv(FrankaEnv):
         Add a small z offset before going to rest to avoid collision with object.
         """
         if self._is_hand:
-            self._end_effector_action(
-                self._hand_state_to_action(self.config.hand_reset_state)
-            )
+            self._end_effector_action(self.config.hand_reset_state)
         else:
             self._end_effector_action(np.array([1.0]))
         self._franka_state = self._controller.get_state().wait()[0]

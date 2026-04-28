@@ -104,8 +104,7 @@ class DexHandIntervention(gym.ActionWrapper):
 
         self._prev_left = self.left
 
-        hand_action = self.env._hand_state_to_action(hand_target)
-        expert_action = np.concatenate([arm_expert, hand_action])
+        expert_action = np.concatenate([arm_expert, hand_target])
 
         if time.time() - self._last_intervene < self._timeout:
             return expert_action, True
