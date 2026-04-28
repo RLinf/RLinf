@@ -1044,6 +1044,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         return model
 
+    def get_rollout_state_dict(self) -> dict:
+        return self.get_model_state_dict(cpu_offload=False, full_state_dict=False)
+
     async def sync_model_to_rollout(self) -> None:
         if not self._weight_dst_rank_in_rollout:
             self.log_debug(
@@ -1063,7 +1066,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             if self.is_weight_offloaded:
                 self.load_param_and_grad(self.device, False)
 
-        state_dict = self.get_model_state_dict(cpu_offload=False, full_state_dict=False)
+        state_dict = self.get_rollout_state_dict()
 
         async def send_func(data):
             handle = []

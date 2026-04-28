@@ -203,7 +203,11 @@ def get_model(cfg: DictConfig):
     torch_dtype = torch_dtype_from_precision(cfg.precision)
     model = model_builder(cfg, torch_dtype)
 
-    if Worker.torch_platform is not None and Worker.torch_platform.is_available():
+    if (
+        Worker.torch_platform is not None
+        and Worker.torch_platform.is_available()
+        and cfg.get("load_to_device", True)
+    ):
         model = model.to(Worker.torch_device_type)
 
     if cfg.is_lora:

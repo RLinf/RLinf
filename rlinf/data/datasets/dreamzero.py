@@ -12,41 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""DreamZero SFT data utilities for LIBERO.
+"""DreamZero SFT data utilities for LIBERO and OXE DROID (LeRobot).
 
-Provides DreamZeroLiberoDataset and DreamZeroCollator that convert
-LeRobot v3 LIBERO data into the batch format expected by VLA.forward().
+Provides DreamZeroLiberoDataset / DreamZeroDroidDataset and DreamZeroCollator
+that convert LeRobot data into the batch format expected by VLA.forward().
 
-Data flow summary (shapes shown for default config: num_chunks=4, action_horizon=64):
-  Raw parquet/mp4
-    -> __getitem__:
-         images           (T=33, H=256, W=512, C=3)  uint8   side-by-side main+wrist
-         state            (4, 64)                     float32 normalized joint angles, zero-padded
-         state_mask       (4, 64)                     bool    True for real joint dims
-         action           (64, 32)                    float32 normalized joint deltas, zero-padded
-         action_mask      (64, 32)                    bool    True for real action dims
-         text             str                         raw task description
-    -> DreamZeroCollator:
-         images           (B, 33, 256, 512, 3)        uint8
-         state            (B, 4, 64)                  float32
-         state_mask       (B, 4, 64)                  bool
-         action           (B, 64, 32)                 float32
-         action_mask      (B, 64, 32)                 bool
-         text             (B, 512)                    int64   T5 token IDs
-         text_attn_mask   (B, 512)                    int64   1=real token, 0=padding
 """
 
+import bisect
 import json
-import logging
+import re
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
+from torchdata.stateful_dataloader import StatefulDataLoader
 
-logger = logging.getLogger(__name__)
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
+
+# Shared cache across all dataset instances in the same process to avoid redundant
+# parquet reads when DataLoader forks worker subprocesses.
+_ADVANTAGE_CACHE: dict[str, dict[int, np.ndarray]] = {}
 
 # Prompt template fed to the T5 tokenizer.
 # {task} is the raw task string from tasks.jsonl, e.g. "put the white mug on the left plate".
@@ -58,6 +50,55 @@ LIBERO_PROMPT_TEMPLATE = (
 )
 POSITIVE_GUIDANCE_PROMPT_TEMPLATE = "[POSITIVE][POSITIVE]\n" + LIBERO_PROMPT_TEMPLATE
 NEGATIVE_GUIDANCE_PROMPT_TEMPLATE = "[NEGATIVE][NEGATIVE]\n" + LIBERO_PROMPT_TEMPLATE
+
+# Prompt for DROID (aligned with groot DreamZero collate / rlinf_collate wording).
+DROID_PROMPT_TEMPLATE = (
+    "A multi-view video shows that a robot {task} "
+    "The video is split into three views: The top view shows the camera view from the robot's wrist, "
+    "the bottom-left view shows the camera view from the left exterior camera, and the bottom-right view "
+    "shows the camera view from the right exterior camera. During training, one of the two bottom exterior "
+    "views may be a black screen (dropped view). The robot {task}"
+)
+
+# DreamZero projector id for OXE DROID (see rlinf.models.embodiment.dreamzero.transform_runtime).
+DROID_EMBODIMENT_ID = 17
+
+
+def _infer_droid_view_hw_from_model_cfg(model_cfg: Any) -> tuple[int, int]:
+    """Infer DROID per-view resize target, compatible with WAN2.1/WAN2.2.
+
+    Priority:
+    1) Explicit override via cfg: dreamzero_droid_view_height/width
+    2) Infer from model_path/config.json diffusion model signature
+    3) Fallback to WAN2.1-style 176x320
+    """
+    h_override = model_cfg.get("dreamzero_droid_view_height", None)
+    w_override = model_cfg.get("dreamzero_droid_view_width", None)
+    if h_override is not None and w_override is not None:
+        return int(h_override), int(w_override)
+
+    model_path = Path(str(model_cfg.get("model_path", ""))).expanduser()
+    cfg_path = model_path / "config.json"
+    if not cfg_path.is_file():
+        return (176, 320)
+
+    try:
+        with open(cfg_path) as f:
+            cfg_json = json.load(f)
+        ah_cfg = cfg_json.get("action_head_cfg", {}).get("config", {})
+        dcfg = ah_cfg.get("diffusion_model_cfg", {})
+        in_dim = int(dcfg.get("in_dim", -1))
+        model_type = str(dcfg.get("model_type", "")).lower()
+        frame_seqlen = int(dcfg.get("frame_seqlen", -1))
+        if in_dim == 48 or model_type == "ti2v" or frame_seqlen == 50:
+            return (160, 320)  # WAN2.2 default
+    except Exception:
+        logger.exception(
+            "Failed to infer DROID per-view target from %s; fallback to 176x320.",
+            cfg_path,
+        )
+
+    return (176, 320)
 
 
 def _load_gear_stats(meta_dir: Path) -> dict[str, np.ndarray]:
@@ -109,6 +150,145 @@ def q99_normalize(x: np.ndarray, q01: np.ndarray, q99: np.ndarray) -> np.ndarray
     # For constant dimensions (denom==0) keep the raw value unchanged
     out[..., ~safe] = x[..., ~safe]
     return np.clip(out, -1.0, 1.0)
+
+
+def _resolve_advantage_parquet_path(
+    meta_dir: Path, advantage_parquet: str | None
+) -> Path:
+    adv_path = (
+        Path(advantage_parquet)
+        if advantage_parquet
+        else (meta_dir / "advantages_test.parquet")
+    )
+    if not adv_path.is_absolute():
+        adv_path = meta_dir / adv_path
+    if not adv_path.exists():
+        raise FileNotFoundError(
+            f"CFG mode enabled but advantage parquet not found: {adv_path}"
+        )
+    return adv_path
+
+
+def _load_advantage_map_cached(adv_path: Path) -> dict[int, np.ndarray]:
+    """Load advantage parquet into {episode_index: bool_lookup[frame_index]} with caching."""
+    import pandas as pd
+
+    cache_key = str(adv_path.resolve())
+    if cache_key in _ADVANTAGE_CACHE:
+        return _ADVANTAGE_CACHE[cache_key]
+
+    t0 = time.monotonic()
+    df = pd.read_parquet(
+        adv_path, columns=["episode_index", "frame_index", "advantage"]
+    )
+    required_cols = {"episode_index", "frame_index", "advantage"}
+    if not required_cols.issubset(df.columns):
+        raise ValueError(
+            f"Advantage parquet must contain columns {sorted(required_cols)}, got {list(df.columns)}"
+        )
+
+    advantage_map: dict[int, np.ndarray] = {}
+    for ep_idx, ep_df in df.groupby("episode_index", sort=False):
+        frame_idx = ep_df["frame_index"].to_numpy(dtype=np.int64)
+        advantage = ep_df["advantage"].to_numpy(dtype=np.bool_)
+        max_frame = int(frame_idx.max())
+        lookup = np.zeros(max_frame + 1, dtype=np.bool_)
+        lookup[frame_idx] = advantage
+        advantage_map[int(ep_idx)] = lookup
+
+    _ADVANTAGE_CACHE[cache_key] = advantage_map
+    logger.info(
+        "Loaded advantage parquet (%d rows, %d episodes) from %s in %.1fs",
+        len(df),
+        len(advantage_map),
+        adv_path,
+        time.monotonic() - t0,
+    )
+    return advantage_map
+
+
+def _lookup_advantage_from_map(
+    advantage_map: dict[int, np.ndarray],
+    adv_path: Path | None,
+    episode_index: int,
+    frame_index: int,
+    *,
+    warn_oob: bool,
+) -> bool:
+    if episode_index not in advantage_map:
+        raise KeyError(
+            f"episode_index={episode_index} not found in advantage parquet {adv_path}"
+        )
+    values = advantage_map[int(episode_index)]
+    fi = int(frame_index)
+    if fi < 0 or fi >= len(values):
+        if warn_oob:
+            logger.warning(
+                "frame_index=%d out of range [0, %d] for episode %d; clamping to boundary",
+                fi,
+                len(values) - 1,
+                int(episode_index),
+            )
+        fi = min(max(fi, 0), len(values) - 1)
+    return bool(values[fi])
+
+
+def _probe_video_container_fps(video_path: Path) -> float | None:
+    """Read average FPS from the video container (PyAV), not meta/info.json.
+
+    Many RoboMIND / converted trees ship ``fps`` in info.json that does not match the
+    muxed stream (e.g. meta 14 vs H.264 30). Using meta for ``index / fps`` decode times
+    then violates lerobot's PTS tolerance against torchvision/pyav.
+    """
+    try:
+        import av
+    except ImportError:
+        return None
+    try:
+        with av.open(str(video_path), mode="r") as container:
+            streams = container.streams.video
+            if not streams:
+                return None
+            st = streams[0]
+
+            def _as_positive_fps(rate: Any) -> float | None:
+                if rate is None:
+                    return None
+                try:
+                    f = float(rate)
+                except (TypeError, ValueError, ZeroDivisionError):
+                    return None
+                if 0.5 < f < 480.0:
+                    return f
+                return None
+
+            for attr in ("average_frame_rate", "guessed_frame_rate", "average_rate"):
+                f = _as_positive_fps(getattr(st, attr, None))
+                if f is not None:
+                    return f
+
+            cc = getattr(st, "codec_context", None)
+            if cc is not None:
+                f = _as_positive_fps(getattr(cc, "framerate", None))
+                if f is not None:
+                    return f
+
+            nb = int(getattr(st, "frames", 0) or 0)
+            if nb > 0 and st.duration is not None and st.time_base is not None:
+                try:
+                    dur_s = float(st.duration * st.time_base)
+                    if dur_s > 1e-3:
+                        f = float(nb) / dur_s
+                        if 0.5 < f < 480.0:
+                            return f
+                except (TypeError, ValueError, ZeroDivisionError):
+                    pass
+    except OSError:
+        return None
+    except Exception:
+        logger.debug("PyAV fps probe failed for %s", video_path, exc_info=True)
+        return None
+    return None
 
 
 class DreamZeroLiberoDataset(Dataset):
@@ -217,94 +397,21 @@ class DreamZeroLiberoDataset(Dataset):
         self._advantage_path: Path | None = None
         self._init_advantage_lookup(meta_dir)
 
-    # Shared cache across all Dataset instances in the same process to avoid
-    # redundant parquet reads when DataLoader forks worker subprocesses.
-    _advantage_cache: dict[str, dict[int, np.ndarray]] = {}
-
     def _init_advantage_lookup(self, meta_dir: Path) -> None:
-        """Load per-frame advantage labels for CFG prompt guidance.
-
-        Uses a class-level cache keyed by the resolved parquet path so that
-        multiple Dataset instances (e.g. from DataLoader worker forks) share
-        the same parsed numpy arrays via copy-on-write memory.
-        """
         if not self.cfg_mode:
             return
-
-        import pandas as pd
-
-        adv_path = (
-            Path(self.advantage_parquet)
-            if self.advantage_parquet
-            else (meta_dir / "advantages_test.parquet")
-        )
-        if not adv_path.is_absolute():
-            adv_path = meta_dir / adv_path
-        if not adv_path.exists():
-            raise FileNotFoundError(
-                f"CFG mode enabled but advantage parquet not found: {adv_path}"
-            )
-
-        cache_key = str(adv_path.resolve())
-        if cache_key in DreamZeroLiberoDataset._advantage_cache:
-            self._advantage_map = DreamZeroLiberoDataset._advantage_cache[cache_key]
-            self._advantage_path = adv_path
-            return
-
-        t0 = time.monotonic()
-        df = pd.read_parquet(
-            adv_path, columns=["episode_index", "frame_index", "advantage"]
-        )
-        required_cols = {"episode_index", "frame_index", "advantage"}
-        if not required_cols.issubset(df.columns):
-            raise ValueError(
-                f"Advantage parquet must contain columns {sorted(required_cols)}, "
-                f"got {list(df.columns)}"
-            )
-
-        advantage_map: dict[int, np.ndarray] = {}
-        for ep_idx, ep_df in df.groupby("episode_index", sort=False):
-            frame_idx = ep_df["frame_index"].to_numpy(dtype=np.int64)
-            advantage = ep_df["advantage"].to_numpy(dtype=np.bool_)
-            max_frame = int(frame_idx.max())
-            lookup = np.zeros(max_frame + 1, dtype=np.bool_)
-            lookup[frame_idx] = advantage
-            advantage_map[int(ep_idx)] = lookup
-
-        DreamZeroLiberoDataset._advantage_cache[cache_key] = advantage_map
-        self._advantage_map = advantage_map
+        adv_path = _resolve_advantage_parquet_path(meta_dir, self.advantage_parquet)
+        self._advantage_map = _load_advantage_map_cached(adv_path)
         self._advantage_path = adv_path
-        elapsed = time.monotonic() - t0
-        logger.info(
-            "Loaded advantage parquet (%d rows, %d episodes) from %s in %.1fs",
-            len(df),
-            len(advantage_map),
-            adv_path,
-            elapsed,
-        )
 
     def _lookup_advantage(self, episode_index: int, frame_index: int) -> bool:
-        """Return per-frame advantage label.
-
-        Raises KeyError if the episode is missing entirely.
-        Logs a warning (once per episode) and clamps if frame_index is out of range.
-        """
-        if episode_index not in self._advantage_map:
-            raise KeyError(
-                f"episode_index={episode_index} not found in advantage parquet "
-                f"{self._advantage_path}"
-            )
-        values = self._advantage_map[episode_index]
-        fi = int(frame_index)
-        if fi < 0 or fi >= len(values):
-            logger.warning(
-                "frame_index=%d out of range [0, %d] for episode %d; clamping to boundary",
-                fi,
-                len(values) - 1,
-                episode_index,
-            )
-            fi = min(max(fi, 0), len(values) - 1)
-        return bool(values[fi])
+        return _lookup_advantage_from_map(
+            self._advantage_map,
+            self._advantage_path,
+            episode_index,
+            frame_index,
+            warn_oob=True,
+        )
 
     def _init_v3(self):
         """Initialize with LeRobot v3 dataset (mp4 videos).
@@ -771,6 +878,989 @@ class DreamZeroLiberoDataset(Dataset):
         }
 
 
+def _droid_default_state_action_slices() -> tuple[slice, slice, slice, slice]:
+    """Slice ranges into convert_droid-style concatenated vectors.
+
+    state: cartesian(6) + gripper(1) + joint(7)
+    action: cartesian(6) + cartesian_vel(6) + gripper(1) + gripper_vel(1) + joint(7) + joint_vel(7)
+    """
+    st_joint = slice(7, 14)
+    st_grip = slice(6, 7)
+    ac_joint = slice(14, 21)
+    ac_grip = slice(12, 13)
+    return st_joint, st_grip, ac_joint, ac_grip
+
+
+def _empty_slice() -> slice:
+    return slice(0, 0)
+
+
+def _infer_joint_grip_slices(
+    names: list | dict | None, feature_dim: int | None = None
+) -> tuple[slice, slice] | None:
+    """Map concat-vector indices for joint_position and gripper_position from meta names."""
+    if not names:
+        return None
+    # droid_100-style: names is a dict like {"motors": ["motor_0", ...]}.
+    if isinstance(names, dict):
+        if "joint_position" in names:
+            joints = names.get("joint_position")
+            n_joint = len(joints) if isinstance(joints, list) else 0
+            if n_joint > 0:
+                if "gripper_position" in names:
+                    gripper = names.get("gripper_position")
+                    n_grip = len(gripper) if isinstance(gripper, list) else 0
+                    if n_grip > 0:
+                        return slice(0, n_joint), slice(n_joint, n_joint + n_grip)
+                return slice(0, n_joint), _empty_slice()
+        motors = names.get("motors")
+        if isinstance(motors, list) and len(motors) > 0:
+            # Heuristic fallback:
+            # - 8 dims -> (7 joint + 1 gripper), which matches official modality definition.
+            # - otherwise keep joint-only.
+            if len(motors) >= 8:
+                return slice(0, 7), slice(7, 8)
+            return slice(0, len(motors)), _empty_slice()
+        return None
+
+    # LeRobot convert_droid-style: names is a list of component keys with known widths.
+    if all(isinstance(x, str) for x in names):
+        plan = {
+            "cartesian_position": 6,
+            "cartesian_velocity": 6,
+            "gripper_position": 1,
+            "gripper_velocity": 1,
+            "joint_position": 7,
+            "joint_velocity": 7,
+        }
+        cursor = 0
+        spans: dict[str, tuple[int, int]] = {}
+        for key in names:
+            if key not in plan:
+                return None
+            w = plan[key]
+            spans[key] = (cursor, cursor + w)
+            cursor += w
+        if "joint_position" in spans and "gripper_position" in spans:
+            j0, j1 = spans["joint_position"]
+            g0, g1 = spans["gripper_position"]
+            return slice(j0, j1), slice(g0, g1)
+        # Joint-only representation (e.g. ["motor_0", ...] or ["joint_position"]).
+        if "joint_position" in spans:
+            j0, j1 = spans["joint_position"]
+            return slice(j0, j1), _empty_slice()
+        if feature_dim is not None and feature_dim > 0:
+            return slice(0, feature_dim), _empty_slice()
+        return None
+
+    cursor = 0
+    spans = {}
+    for entry in names:
+        if isinstance(entry, str):
+            key = entry
+            size = 1
+        elif isinstance(entry, dict):
+            key = str(entry.get("name", ""))
+            shape = entry.get("shape")
+            size = (
+                int(np.prod(shape)) if shape is not None else int(entry.get("dim", 1))
+            )
+        else:
+            continue
+        spans[key] = (cursor, cursor + size)
+        cursor += size
+    need = ("joint_position", "gripper_position")
+    if not all(k in spans for k in need):
+        if "joint_position" in spans:
+            j0, j1 = spans["joint_position"]
+            return slice(j0, j1), _empty_slice()
+        if feature_dim is not None and feature_dim > 0:
+            return slice(0, feature_dim), _empty_slice()
+        return None
+    j0, j1 = spans["joint_position"]
+    g0, g1 = spans["gripper_position"]
+    return slice(j0, j1), slice(g0, g1)
+
+
+def _safe_lang_text(value: Any, task_map: dict[int, str]) -> str:
+    """Decode language field into a non-empty string when possible."""
+    raw = value
+    if hasattr(raw, "item"):
+        raw = raw.item()
+    if isinstance(raw, (list, tuple, np.ndarray)):
+        if len(raw) == 0:
+            return ""
+        raw = raw[0]
+        if hasattr(raw, "item"):
+            raw = raw.item()
+    if isinstance(raw, (int, np.integer)) and task_map:
+        return str(task_map.get(int(raw), "")).strip()
+    if raw is None:
+        return ""
+    return str(raw).strip()
+
+
+def _discover_local_lerobot_episode_indices(
+    root: Path, info: dict, allowed_episode_indices: set[int] | None = None
+) -> list[int]:
+    """Episode indices that have both parquet and all video files on disk.
+
+    LeRobot 0.3.x otherwise checks ``range(total_episodes)`` from info.json; any missing
+    file triggers Hub download (``get_safe_version``), which breaks offline machines even
+    when ``data/`` already contains a subset of episodes.
+    """
+    root = root.resolve()
+    data_root = root / "data"
+    if not data_root.is_dir():
+        raise FileNotFoundError(
+            f"LeRobot dataset missing data/ directory: {data_root}."
+            "Offline loading requires local data, videos, and meta to be aligned."
+        )
+    ep_re = re.compile(r"^episode_(\d+)\.parquet$")
+    present: set[int] = set()
+    for p in data_root.rglob("episode_*.parquet"):
+        m = ep_re.match(p.name)
+        if m:
+            present.add(int(m.group(1)))
+    if not present:
+        raise FileNotFoundError(
+            f"No episode_*.parquet found in {data_root}."
+            "Please confirm data_path matches disk directory (e.g. data/chunk-000/episode_000000.parquet)."
+        )
+    chunks_size = int(info.get("chunks_size") or 1000)
+    data_tmpl = info.get("data_path")
+    video_tmpl = info.get("video_path")
+    if not data_tmpl:
+        raise ValueError("meta/info.json missing data_path")
+    feats = info.get("features") or {}
+    video_keys = [k for k, v in feats.items() if v.get("dtype") == "video"]
+    complete: list[int] = []
+    for ep_idx in sorted(present):
+        ep_chunk = ep_idx // chunks_size
+        rel_p = Path(data_tmpl.format(episode_chunk=ep_chunk, episode_index=ep_idx))
+        if not (root / rel_p).is_file():
+            continue
+        if video_tmpl and video_keys:
+            if not all(
+                (
+                    root
+                    / Path(
+                        video_tmpl.format(
+                            episode_chunk=ep_chunk,
+                            video_key=vk,
+                            episode_index=ep_idx,
+                        )
+                    )
+                ).is_file()
+                for vk in video_keys
+            ):
+                continue
+        complete.append(ep_idx)
+    if allowed_episode_indices is not None:
+        complete = [e for e in complete if e in allowed_episode_indices]
+    if not complete:
+        raise FileNotFoundError(
+            f"Found parquet in {root}/data/, but no episode that satisfies "
+            f"data_path and video_path (both in meta/episodes.jsonl) in info.json."
+            f"({len(present)} parquet files on disk). Please fill in the corresponding videos/ or check if the paths match meta."
+        )
+    return complete
+
+
+def _infer_droid_image_keys(info: dict) -> tuple[str, str, str]:
+    feats = info.get("features") or {}
+    candidates = [k for k in feats if k.startswith("observation.images.")]
+    wrist_keys = [k for k in candidates if "wrist" in k]
+    ext_keys = sorted([k for k in candidates if "wrist" not in k])
+
+    def _lr_sort(keys: list[str]) -> list[str]:
+        # Stable heuristic: prefer *_left* then *_right*, else lexicographic.
+        def _rank(k: str) -> tuple[int, str]:
+            kl = k.lower()
+            if "left" in kl and "right" not in kl:
+                return (0, k)
+            if "right" in kl and "left" not in kl:
+                return (1, k)
+            return (2, k)
+
+        return sorted(keys, key=_rank)
+
+    # Common DROID layouts:
+    # - 2 exterior + 1 wrist (canonical)
+    # - 1 exterior (often top_cam) + 2 wrist (left/right). For DreamZero's 3-view grid, we can
+    #   use exterior as the "wrist/top" slot and put the two wrists in the bottom tiles.
+    if len(wrist_keys) == 1 and len(ext_keys) == 2:
+        exts = _lr_sort(ext_keys)
+        return exts[0], exts[1], wrist_keys[0]
+    if len(wrist_keys) == 2 and len(ext_keys) == 1:
+        wrists = _lr_sort(wrist_keys)
+        return wrists[0], wrists[1], ext_keys[0]
+
+    raise ValueError(
+        "DROID dataset needs either (2 exterior + 1 wrist) or (1 exterior + 2 wrist) "
+        "under observation.images.*; "
+        f"found wrist={sorted(wrist_keys)} exterior={sorted(ext_keys)} candidates={sorted(candidates)}"
+    )
+
+
+class DreamZeroDroidDataset(Dataset):
+    """Map LeRobot OXE DROID samples to DreamZero SFT tensors (layout matches groot OXE_DROID).
+
+    Video: 33 frames (delta 0..32), stacked into a 2x2 layout (H*2 x W*2),
+    matching DreamTransform._prepare_video for EmbodimentTag.OXE_DROID.
+
+    State: one timestep, joint (7) + gripper (1) -> padded to (1, max_state_dim).
+
+    Action: 24 steps (delta 0..23), joint + optional gripper slices -> padded to (24, max_action_dim).
+
+    Optional relative joint targets: action_joint := action_joint - ref_joint (current state),
+    same convention as groot LeRobotSingleDataset relative_action on ``joint_position``.
+    """
+
+    def __init__(
+        self,
+        data_path: str | list[str],
+        lazy_load: bool = True,
+        action_horizon: int = 24,
+        num_video_frames: int = 33,
+        total_action_steps: int = 96,
+        state_horizon: int = 4,
+        state_step: int = 24,
+        max_action_dim: int = 32,
+        max_state_dim: int = 64,
+        cfg_mode: bool = False,
+        advantage_parquet: str | None = None,
+        unconditional_prob: float = 0.3,
+        relative_action: bool = True,
+        relative_action_keys: list[str] | None = None,
+        droid_view_hw: tuple[int, int] = (176, 320),
+        pq_cache_max_episodes: int = 128,
+        video_tolerance_s: float = 0.1,
+    ):
+        if isinstance(data_path, (list, tuple)):
+            if len(data_path) == 0:
+                raise ValueError(
+                    "DreamZeroDroidDataset requires at least one data path."
+                )
+            data_path = data_path[0]
+        self.data_path = str(data_path)
+        self.lazy_load = bool(lazy_load)
+        self.action_horizon = int(action_horizon)
+        self.total_action_steps = int(total_action_steps)
+        self.num_video_frames = int(num_video_frames)
+        self.state_horizon = int(state_horizon)
+        self.state_step = int(state_step)
+        self.max_action_dim = int(max_action_dim)
+        self.max_state_dim = int(max_state_dim)
+        self.cfg_mode = bool(cfg_mode)
+        self.advantage_parquet = advantage_parquet
+        self.unconditional_prob = float(unconditional_prob)
+        self.relative_action = bool(relative_action)
+        self.relative_action_keys = list(relative_action_keys or ["joint_position"])
+        self.embodiment_id = DROID_EMBODIMENT_ID
+        self._target_view_hw = (int(droid_view_hw[0]), int(droid_view_hw[1]))
+
+        meta_dir = Path(self.data_path) / "meta"
+        with open(meta_dir / "info.json") as f:
+            info = json.load(f)
+        self._fps = float(info.get("fps", 15))
+        self._version = str(info.get("codebase_version", "v2.0"))
+        feats = info.get("features") or {}
+        self._raw_hw = feats.get("observation.images.exterior_image_1_left", {}).get(
+            "shape", [180, 320, 3]
+        )[:2]
+        self._raw_hw = (int(self._raw_hw[0]), int(self._raw_hw[1]))
+
+        st_feat = feats.get("observation.state") or {}
+        act_feat = feats.get("action") or {}
+        st_dim = int((st_feat.get("shape") or [0])[0] or 0)
+        ac_dim = int((act_feat.get("shape") or [0])[0] or 0)
+        st_slices = _infer_joint_grip_slices(st_feat.get("names"), st_dim)
+        ac_slices = _infer_joint_grip_slices(act_feat.get("names"), ac_dim)
+        if st_slices is None or ac_slices is None:
+            if st_dim > 0 and ac_dim > 0 and st_dim <= 8 and ac_dim <= 8:
+                self._st_j, self._st_g = slice(0, st_dim), _empty_slice()
+                self._ac_j, self._ac_g = slice(0, ac_dim), _empty_slice()
+                logger.info(
+                    "DROID: using joint-only slices inferred from feature dims "
+                    "(state=%d, action=%d).",
+                    st_dim,
+                    ac_dim,
+                )
+            else:
+                self._st_j, self._st_g, self._ac_j, self._ac_g = (
+                    _droid_default_state_action_slices()
+                )
+                logger.info(
+                    "DROID: using default convert_droid slices "
+                    "(meta feature names missing joint_position/gripper_position)."
+                )
+        else:
+            self._st_j, self._st_g = st_slices
+            self._ac_j, self._ac_g = ac_slices
+
+        self._img_key_left, self._img_key_right, self._img_key_wrist = (
+            _infer_droid_image_keys(info)
+        )
+        self._tasks = DreamZeroLiberoDataset._load_task_texts(meta_dir)
+
+        gear_stats = _load_gear_stats(meta_dir)
+        st_full = gear_stats.get("observation.state") or {}
+        ac_full = gear_stats.get("action") or {}
+        self._full_state_q01 = st_full.get("q01")
+        self._full_state_q99 = st_full.get("q99")
+        self._full_action_q01 = ac_full.get("q01")
+        self._full_action_q99 = ac_full.get("q99")
+
+        video_offsets = list(range(self.num_video_frames))
+        state_offsets = [i * self.state_step for i in range(self.state_horizon)]
+        action_offsets = list(range(self.total_action_steps))
+
+        if self.lazy_load:
+            # --- Map-style, episode-local loading (DreamZero official behavior) ---
+            # Avoid `datasets.load_dataset("parquet")` which materializes a huge Arrow dataset and
+            # is the source of "Generating train split ..." + OOM in multi-process jobs.
+            self._root = Path(self.data_path).resolve()
+            if not self._root.exists():
+                raise FileNotFoundError(
+                    f"DROID data_path must be a local path, got: {self.data_path}"
+                )
+            self._meta_dir = meta_dir
+            self._info = info
+            self._chunks_size = int(info.get("chunks_size") or 1000)
+            self._data_tmpl = str(info.get("data_path") or "")
+            self._video_tmpl = str(info.get("video_path") or "")
+            if not self._data_tmpl:
+                raise ValueError("meta/info.json missing data_path")
+
+            feats = info.get("features") or {}
+            self._video_keys = [
+                k for k, v in feats.items() if v.get("dtype") == "video"
+            ]
+
+            # Episodes list: only those that exist on disk and in meta/episodes.jsonl.
+            meta_episode_indices: set[int] = set()
+            episode_lengths: dict[int, int] = {}
+            with open(meta_dir / "episodes.jsonl") as _epf:
+                for _line in _epf:
+                    _line = _line.strip()
+                    if not _line:
+                        continue
+                    obj = json.loads(_line)
+                    ep_idx = int(obj.get("episode_index", 0))
+                    meta_episode_indices.add(ep_idx)
+                    # Try several common keys.
+                    for k in ("episode_length", "length", "num_frames", "num_steps"):
+                        if k in obj and obj[k] is not None:
+                            try:
+                                episode_lengths[ep_idx] = int(obj[k])
+                                break
+                            except Exception:
+                                pass
+
+            self._episodes: list[int] = _discover_local_lerobot_episode_indices(
+                self._root, info, allowed_episode_indices=meta_episode_indices
+            )
+            if not self._episodes:
+                raise FileNotFoundError(
+                    f"No local episodes found under {self._root} that match meta/episodes.jsonl."
+                )
+            logger.info(
+                "DROID lazy map-style: using %d local episodes (info total_episodes=%s).",
+                len(self._episodes),
+                info.get("total_episodes"),
+            )
+
+            # Episode -> length (fallback to parquet metadata when missing).
+            self._episode_lengths: list[int] = []
+            for ep_idx in self._episodes:
+                n = episode_lengths.get(int(ep_idx))
+                if n is None or n <= 0:
+                    n = self._infer_episode_length_from_parquet(int(ep_idx))
+                self._episode_lengths.append(int(n))
+
+            # Prefix sum offsets for global indexing (idx -> (episode, frame_in_episode)).
+            self._episode_starts: list[int] = [0]
+            total = 0
+            for n in self._episode_lengths:
+                total += int(n)
+                self._episode_starts.append(total)
+            self._total_frames = int(total)
+
+            # Cached episode parquet tables (LRU-ish using insertion order).
+            self._pq_cache: "OrderedDict[int, Any]" = OrderedDict()
+            self._pq_cache_max_episodes = max(1, int(pq_cache_max_episodes))
+
+            # Per-mp4 decode FPS: info.json ``fps`` often disagrees with the muxed stream (e.g. 14 vs 30).
+            self._video_decode_fps_cache: "OrderedDict[str, float]" = OrderedDict()
+            self._video_decode_fps_cache_max = 512
+
+            # Offsets used for sampling each modality around the base frame.
+            self._video_offsets = np.asarray(video_offsets, dtype=np.int64)
+            self._state_offsets = np.asarray(state_offsets, dtype=np.int64)
+            self._action_offsets = np.asarray(action_offsets, dtype=np.int64)
+            _tol = float(video_tolerance_s)
+            if _tol <= 0.0:
+                raise ValueError(
+                    f"video_tolerance_s must be positive, got {video_tolerance_s!r}"
+                )
+            self._video_tolerance_s = _tol
+            self._video_backend = "pyav"
+            self._parquet_columns = [
+                "timestamp",
+                # Some datasets store state under a struct column "observation" with field "state"
+                # instead of a flattened "observation.state" column.
+                "observation",
+                "observation.state",
+                "action",
+                "task",
+                "task_index",
+                "annotation.language.language_instruction",
+                "annotation.language.language_instruction_2",
+                "annotation.language.language_instruction_3",
+            ]
+        else:
+            # --- LeRobotDataset loading (legacy behavior, non-map-style) ---
+            from importlib.metadata import version as _pkg_version
+
+            import lerobot.datasets.lerobot_dataset as lerobot_dataset
+            from packaging.version import Version as _PkgVersion
+
+            delta_timestamps = {
+                self._img_key_left: [t / self._fps for t in video_offsets],
+                self._img_key_right: [t / self._fps for t in video_offsets],
+                self._img_key_wrist: [t / self._fps for t in video_offsets],
+                "observation.state": [t / self._fps for t in state_offsets],
+                "action": [t / self._fps for t in action_offsets],
+            }
+            data_path_obj = Path(self.data_path)
+            if not data_path_obj.exists():
+                raise FileNotFoundError(
+                    f"DROID data_path must be a local path, got: {self.data_path}"
+                )
+
+            # lerobot 0.3.x: first arg is repo_id (name only), not a filesystem path. Local datasets must use
+            # repo_id=<folder name> + root=<absolute path to that folder> so metadata loads from disk and
+            # never hits Hub (get_safe_version). lerobot 0.4.x rejects codebase_version v2.0 in info.json.
+            if _PkgVersion(_pkg_version("lerobot")) >= _PkgVersion("0.4.0"):
+                raise RuntimeError(
+                    "DreamZeroDroidDataset requires lerobot<0.4 for datasets with "
+                    "meta/info.json codebase_version v2.0 (e.g. DreamZero-DROID-Data-mini). "
+                    "Install lerobot==0.3.3 (see requirements/embodied/models/dreamzero.txt)."
+                )
+            # Only pass episodes that exist locally; info.json total_episodes can be full-dataset
+            # size while this tree is a subset — otherwise lerobot asserts all files and hits Hub.
+            meta_episode_indices: set[int] = set()
+            with open(meta_dir / "episodes.jsonl") as _epf:
+                for _line in _epf:
+                    _line = _line.strip()
+                    if not _line:
+                        continue
+                    meta_episode_indices.add(int(json.loads(_line)["episode_index"]))
+            local_episodes = _discover_local_lerobot_episode_indices(
+                data_path_obj, info, allowed_episode_indices=meta_episode_indices
+            )
+            logger.info(
+                "DROID LeRobot: loading %d episodes present under data/ (info total_episodes=%s).",
+                len(local_episodes),
+                info.get("total_episodes"),
+            )
+            self.dataset = lerobot_dataset.LeRobotDataset(
+                data_path_obj.name,
+                root=str(data_path_obj.resolve()),
+                episodes=local_episodes,
+                delta_timestamps=delta_timestamps,
+                video_backend="pyav",
+            )
+
+        self._advantage_map = {}
+        self._advantage_path = None
+        self._init_advantage_lookup(meta_dir)
+
+    def _infer_episode_length_from_parquet(self, episode_index: int) -> int:
+        import pyarrow.parquet as pq
+
+        p = self._get_parquet_path(episode_index)
+        md = pq.read_metadata(str(p))
+        n = int(md.num_rows)
+        if n <= 0:
+            raise ValueError(f"episode_{episode_index:06d}.parquet has 0 rows: {p}")
+        return n
+
+    def _get_parquet_path(self, episode_index: int) -> Path:
+        ep_chunk = int(episode_index) // self._chunks_size
+        rel = Path(
+            self._data_tmpl.format(
+                episode_chunk=ep_chunk, episode_index=int(episode_index)
+            )
+        )
+        p = (self._root / rel).resolve()
+        if not p.is_file():
+            raise FileNotFoundError(
+                f"Parquet file not found for episode {episode_index}: {p}"
+            )
+        return p
+
+    def _get_video_path(self, episode_index: int, video_key: str) -> Path:
+        if not self._video_tmpl:
+            raise FileNotFoundError("meta/info.json missing video_path")
+        ep_chunk = int(episode_index) // self._chunks_size
+        rel = Path(
+            self._video_tmpl.format(
+                episode_chunk=ep_chunk,
+                video_key=video_key,
+                episode_index=int(episode_index),
+            )
+        )
+        p = (self._root / rel).resolve()
+        if not p.is_file():
+            raise FileNotFoundError(
+                f"Video file not found for episode {episode_index} key {video_key}: {p}"
+            )
+        return p
+
+    def _decode_fps_for_video_file(self, video_path: Path) -> float:
+        """FPS used for ``row_index / fps`` → decode timestamp; prefers container over meta."""
+        key = str(video_path.resolve())
+        if key in self._video_decode_fps_cache:
+            fps = self._video_decode_fps_cache.pop(key)
+            self._video_decode_fps_cache[key] = fps
+            return fps
+        probed = _probe_video_container_fps(video_path)
+        fps = float(probed) if probed is not None else float(self._fps)
+        if fps <= 0.0:
+            fps = float(self._fps)
+        self._video_decode_fps_cache[key] = fps
+        if len(self._video_decode_fps_cache) > self._video_decode_fps_cache_max:
+            self._video_decode_fps_cache.popitem(last=False)
+        return fps
+
+    def _get_episode_table(self, episode_index: int):
+        # Small LRU cache keyed by episode_index.
+        episode_index = int(episode_index)
+        if episode_index in self._pq_cache:
+            tbl = self._pq_cache.pop(episode_index)
+            self._pq_cache[episode_index] = tbl
+            return tbl
+
+        import pyarrow.parquet as pq
+
+        p = self._get_parquet_path(episode_index)
+        # Only load columns we might touch; keeps per-episode memory down.
+        # Some datasets do not contain optional columns like "task" (they might only have
+        # task_index + tasks.jsonl), so intersect with the on-disk schema to avoid ArrowInvalid.
+        # IMPORTANT: use Arrow schema column names, not parquet metadata schema names.
+        # For list/fixed_size_list columns, `read_metadata(...).schema.names` can degrade into
+        # repeated "element" entries, which breaks column projection decisions.
+        schema_names = list(pq.read_schema(str(p)).names)
+        schema_set = set(schema_names)
+        cols = [c for c in self._parquet_columns if c in schema_set]
+        # Ensure required columns are never accidentally dropped by projection logic.
+        for required in ("timestamp", "action", "observation.state"):
+            if required in schema_set and required not in cols:
+                cols.append(required)
+        # Keep deterministic order (pyarrow accepts list; order doesn't matter but helps debugging).
+        cols = [c for i, c in enumerate(cols) if c not in cols[:i]]
+        tbl = pq.read_table(str(p), columns=cols)
+        self._pq_cache[episode_index] = tbl
+        if len(self._pq_cache) > self._pq_cache_max_episodes:
+            self._pq_cache.popitem(last=False)
+        return tbl
+
+    @staticmethod
+    def _pick_state_column_from_schema(schema_names: list[str]) -> str | None:
+        # Prefer the canonical flattened name.
+        if "observation.state" in schema_names:
+            return "observation.state"
+        # Common struct flattening patterns in parquet.
+        candidates = [
+            n
+            for n in schema_names
+            if ("state" in n.split(".")[-1])
+            and ("observation" in n.split(".")[0] or n.startswith("observation"))
+        ]
+        return candidates[0] if candidates else None
+
+    @staticmethod
+    def _clip_indices(indices: np.ndarray, length: int) -> np.ndarray:
+        if length <= 0:
+            return np.zeros_like(indices, dtype=np.int64)
+        return np.clip(indices.astype(np.int64), 0, int(length) - 1)
+
+    @staticmethod
+    def _col_exists(table, name: str) -> bool:
+        try:
+            # `pyarrow.Table` should expose `column_names`; some derived objects can behave
+            # oddly under column projection. Check schema too for robustness.
+            if hasattr(table, "column_names") and name in table.column_names:
+                return True
+            if hasattr(table, "schema") and hasattr(table.schema, "names"):
+                return name in table.schema.names
+            return False
+        except Exception:
+            return False
+
+    @staticmethod
+    def _read_list_column(
+        table, name: str, indices: np.ndarray, dtype=np.float32
+    ) -> np.ndarray:
+        col = table.column(name)
+        out = []
+        for i in indices.tolist():
+            v = col[int(i)].as_py()
+            out.append(v)
+        return np.asarray(out, dtype=dtype)
+
+    @staticmethod
+    def _read_struct_list_field(
+        table,
+        struct_col: str,
+        field: str,
+        indices: np.ndarray,
+        dtype=np.float32,
+    ) -> np.ndarray:
+        """Read a list/fixed_size_list field from a struct column."""
+        col = table.column(struct_col)
+        try:
+            arr = (
+                col.chunk(0)
+                if hasattr(col, "num_chunks") and col.num_chunks > 0
+                else col
+            )
+            # `arr` is a StructArray; extract the field as an Array-like
+            field_arr = arr.field(field)
+        except Exception as e:
+            raise KeyError(f"Missing struct field {struct_col}.{field}: {e}") from e
+
+        out = []
+        for i in indices.tolist():
+            out.append(field_arr[int(i)].as_py())
+        return np.asarray(out, dtype=dtype)
+
+    @staticmethod
+    def _read_scalar_column(table, name: str, index: int) -> Any:
+        return table.column(name)[int(index)].as_py()
+
+    def _init_advantage_lookup(self, meta_dir: Path) -> None:
+        if not self.cfg_mode:
+            return
+        adv_path = _resolve_advantage_parquet_path(meta_dir, self.advantage_parquet)
+        self._advantage_map = _load_advantage_map_cached(adv_path)
+        self._advantage_path = adv_path
+
+    def _lookup_advantage(self, episode_index: int, frame_index: int) -> bool:
+        return _lookup_advantage_from_map(
+            self._advantage_map,
+            self._advantage_path,
+            episode_index,
+            frame_index,
+            warn_oob=False,
+        )
+
+    def _slice_norm(
+        self,
+        x: np.ndarray,
+        full_q01: np.ndarray | None,
+        full_q99: np.ndarray | None,
+        sl: slice,
+    ) -> np.ndarray:
+        if full_q01 is None or full_q99 is None:
+            return np.clip(x.astype(np.float32), -1.0, 1.0)
+        q01 = full_q01[sl].astype(np.float32)
+        q99 = full_q99[sl].astype(np.float32)
+        return q99_normalize(x.astype(np.float32), q01, q99)
+
+    def _build_droid_frame_grid(
+        self, left: np.ndarray, right: np.ndarray, wrist: np.ndarray
+    ) -> np.ndarray:
+        """Stack three views into (H*2, W*2) per timestep (groot OXE_DROID layout)."""
+        import cv2
+
+        t = left.shape[0]
+        out = []
+        for i in range(t):
+            a = DreamZeroLiberoDataset._to_hwc_uint8(left[i])
+            b = DreamZeroLiberoDataset._to_hwc_uint8(right[i])
+            w = DreamZeroLiberoDataset._to_hwc_uint8(wrist[i])
+            # Per-view size is inferred from model config (WAN2.1/WAN2.2) or manual override.
+            target_hw = self._target_view_hw
+            if a.shape[:2] != target_hw:
+                a = cv2.resize(a, target_hw[::-1], interpolation=cv2.INTER_LINEAR)
+            if b.shape[:2] != target_hw:
+                b = cv2.resize(b, target_hw[::-1], interpolation=cv2.INTER_LINEAR)
+            if w.shape[:2] != target_hw:
+                w = cv2.resize(w, target_hw[::-1], interpolation=cv2.INTER_LINEAR)
+            h0, w0 = a.shape[0], a.shape[1]
+            hb, wb = h0 * 2, w0 * 2
+            canvas = np.zeros((hb, wb, 3), dtype=np.uint8)
+            wrist_wide = np.repeat(w, 2, axis=1)
+            canvas[:h0, :] = wrist_wide
+            canvas[h0:, :w0] = a
+            canvas[h0:, w0:] = b
+            out.append(canvas)
+        return np.stack(out, axis=0)
+
+    def __len__(self) -> int:
+        if self.lazy_load:
+            return int(self._total_frames)
+        return len(self.dataset)
+
+    def __getitem__(self, idx: int) -> dict[str, Any]:
+        if self.lazy_load:
+            # Map global frame index -> (episode_index, frame_in_episode)
+            if idx < 0 or idx >= self._total_frames:
+                raise IndexError(
+                    f"Index {idx} out of range for dataset of len {self._total_frames}"
+                )
+            ep_pos = bisect.bisect_right(self._episode_starts, int(idx)) - 1
+            ep_pos = max(0, min(ep_pos, len(self._episodes) - 1))
+            ep_start = self._episode_starts[ep_pos]
+            frame_in_ep = int(idx) - int(ep_start)
+            episode_index = int(self._episodes[ep_pos])
+            ep_len = int(self._episode_lengths[ep_pos])
+
+            table = self._get_episode_table(episode_index)
+
+            # Indices per modality (padded by clamping).
+            video_idx = self._clip_indices(frame_in_ep + self._video_offsets, ep_len)
+            state_idx = self._clip_indices(frame_in_ep + self._state_offsets, ep_len)
+            action_idx = self._clip_indices(frame_in_ep + self._action_offsets, ep_len)
+
+            # Decode times must track **muxed PTS**. (1) Parquet ``timestamp`` can disagree with
+            # PTS (fixed earlier). (2) meta ``fps`` can disagree with the stream (e.g. info 14 vs
+            # H.264 30); use PyAV-probed FPS per file, cached.
+            left_p = self._get_video_path(episode_index, self._img_key_left)
+            right_p = self._get_video_path(episode_index, self._img_key_right)
+            wrist_p = self._get_video_path(episode_index, self._img_key_wrist)
+            fl, fr, fw = (
+                self._decode_fps_for_video_file(left_p),
+                self._decode_fps_for_video_file(right_p),
+                self._decode_fps_for_video_file(wrist_p),
+            )
+            vi = video_idx.tolist()
+            ts_left = [float(int(i)) / fl for i in vi]
+            ts_right = [float(int(i)) / fr for i in vi]
+            ts_wrist = [float(int(i)) / fw for i in vi]
+
+            from lerobot.datasets.video_utils import decode_video_frames
+
+            left = decode_video_frames(
+                left_p,
+                ts_left,
+                tolerance_s=self._video_tolerance_s,
+                backend=self._video_backend,
+            )
+            right = decode_video_frames(
+                right_p,
+                ts_right,
+                tolerance_s=self._video_tolerance_s,
+                backend=self._video_backend,
+            )
+            wrist = decode_video_frames(
+                wrist_p,
+                ts_wrist,
+                tolerance_s=self._video_tolerance_s,
+                backend=self._video_backend,
+            )
+            sample: dict[str, Any] = {
+                self._img_key_left: left,
+                self._img_key_right: right,
+                self._img_key_wrist: wrist,
+                "episode_index": episode_index,
+                "frame_index": frame_in_ep,
+            }
+
+            # Optional language/task fields (base frame only).
+            for k in (
+                "task",
+                "task_index",
+                "annotation.language.language_instruction",
+                "annotation.language.language_instruction_2",
+                "annotation.language.language_instruction_3",
+            ):
+                if self._col_exists(table, k):
+                    sample[k] = self._read_scalar_column(table, k, frame_in_ep)
+
+            # Vector modalities sampled with offsets.
+            if self._col_exists(table, "observation.state"):
+                state_arr = self._read_list_column(
+                    table, "observation.state", state_idx, dtype=np.float32
+                )
+            elif self._col_exists(table, "observation"):
+                # Struct column case: observation: struct<..., state: fixed_size_list<...>, ...>
+                state_arr = self._read_struct_list_field(
+                    table, "observation", "state", state_idx, dtype=np.float32
+                )
+            else:
+                # Fallback: schema-driven column selection (handles variants like observation/state flattening)
+                import pyarrow.parquet as pq
+
+                p = self._get_parquet_path(episode_index)
+                schema_names = list(pq.read_schema(str(p)).names)
+                picked = self._pick_state_column_from_schema(schema_names)
+                if picked is not None and picked != "observation":
+                    tbl2 = pq.read_table(str(p), columns=[picked])
+                    state_arr = self._read_list_column(
+                        tbl2, picked, state_idx, dtype=np.float32
+                    )
+                else:
+                    raise KeyError(
+                        "episode parquet missing state; expected 'observation.state' or struct 'observation.state'. "
+                        f"episode={episode_index} parquet={p} loaded_cols={getattr(table, 'column_names', None)} "
+                        f"schema_cols={schema_names[:50]} (showing first 50)"
+                    )
+            if not self._col_exists(table, "action"):
+                raise KeyError("episode parquet missing 'action' column")
+            sample["observation.state"] = state_arr
+            sample["action"] = self._read_list_column(
+                table, "action", action_idx, dtype=np.float32
+            )
+        else:
+            sample = self.dataset[idx]
+
+        left = np.asarray(sample[self._img_key_left])
+        right = np.asarray(sample[self._img_key_right])
+        wrist = np.asarray(sample[self._img_key_wrist])
+        for name, arr in (("left", left), ("right", right), ("wrist", wrist)):
+            if arr.ndim == 3:
+                arr = arr[None, ...]
+            if name == "left":
+                left = arr
+            elif name == "right":
+                right = arr
+            else:
+                wrist = arr
+
+        images = self._build_droid_frame_grid(left, right, wrist).astype(np.uint8)
+        images = DreamZeroLiberoDataset._augment_video(images)
+
+        full_state = np.asarray(sample["observation.state"], dtype=np.float32)
+        if full_state.ndim == 1:
+            full_state = full_state[None, ...]
+        if full_state.shape[0] < self.state_horizon:
+            last = full_state[-1:]
+            pad = np.repeat(last, self.state_horizon - full_state.shape[0], axis=0)
+            full_state = np.concatenate([full_state, pad], axis=0)
+        full_state = full_state[: self.state_horizon]
+        joint_s = full_state[:, self._st_j].astype(np.float32)
+        grip_s = full_state[:, self._st_g].astype(np.float32)
+
+        full_action = np.asarray(sample["action"], dtype=np.float32)
+        if full_action.ndim == 1:
+            full_action = full_action[None, :]
+        if full_action.ndim == 2 and full_action.shape[0] < self.total_action_steps:
+            last = full_action[-1:]
+            pad = np.repeat(
+                last, self.total_action_steps - full_action.shape[0], axis=0
+            )
+            full_action = np.concatenate([full_action, pad], axis=0)
+        full_action = full_action[: self.total_action_steps]
+
+        joint_a = full_action[:, self._ac_j].astype(np.float32)
+        grip_a = full_action[:, self._ac_g].astype(np.float32)
+
+        if self.relative_action and "joint_position" in self.relative_action_keys:
+            # Use the first state token as reference for all action steps.
+            joint_a = joint_a - joint_s[0:1, :]
+
+        joint_s_n = self._slice_norm(
+            joint_s, self._full_state_q01, self._full_state_q99, self._st_j
+        )
+        grip_s_n = self._slice_norm(
+            grip_s, self._full_state_q01, self._full_state_q99, self._st_g
+        )
+        state_norm = np.concatenate([joint_s_n, grip_s_n], axis=-1)
+
+        joint_a_n = self._slice_norm(
+            joint_a, self._full_action_q01, self._full_action_q99, self._ac_j
+        )
+        grip_a_n = self._slice_norm(
+            grip_a.reshape(self.total_action_steps, -1),
+            self._full_action_q01,
+            self._full_action_q99,
+            self._ac_g,
+        )
+        action_norm = np.concatenate([joint_a_n, grip_a_n], axis=-1)
+
+        state_pad = np.zeros((self.state_horizon, self.max_state_dim), dtype=np.float32)
+        sd = min(state_norm.shape[-1], self.max_state_dim)
+        state_pad[:, :sd] = state_norm[:, :sd]
+        state_mask = np.zeros((self.state_horizon, self.max_state_dim), dtype=bool)
+        state_mask[:, :sd] = True
+
+        action_pad = np.zeros(
+            (self.total_action_steps, self.max_action_dim), dtype=np.float32
+        )
+        ad = min(action_norm.shape[-1], self.max_action_dim)
+        action_pad[:, :ad] = action_norm[:, :ad]
+        action_mask = np.zeros(
+            (self.total_action_steps, self.max_action_dim), dtype=bool
+        )
+        action_mask[:, :ad] = True
+
+        task_text = sample.get("task")
+        if task_text is None:
+            task_idx = int(sample.get("task_index", 0))
+            task_text = self._tasks.get(task_idx, "")
+        task_text = str(task_text)
+        lang_keys = [
+            "annotation.language.language_instruction",
+            "annotation.language.language_instruction_2",
+            "annotation.language.language_instruction_3",
+        ]
+        lang_candidates: list[str] = []
+        for lang_key in lang_keys:
+            if lang_key not in sample:
+                continue
+            text = _safe_lang_text(sample[lang_key], self._tasks)
+            if text:
+                lang_candidates.append(text)
+        # Match official training behavior: randomly sample one instruction if multiple are available.
+        if lang_candidates:
+            task_text = str(np.random.choice(lang_candidates))
+        elif not task_text.strip():
+            task_text = ""
+
+        prompt = task_text
+        if self.cfg_mode:
+            episode_index = sample.get("episode_index")
+            frame_index = sample.get("frame_index")
+            if episode_index is None or frame_index is None:
+                raise KeyError(
+                    "CFG mode requires episode_index and frame_index in each sample."
+                )
+            use_unconditional = np.random.random() < self.unconditional_prob
+            if use_unconditional:
+                prompt = DROID_PROMPT_TEMPLATE.format(task=task_text)
+            else:
+                advantage = self._lookup_advantage(int(episode_index), int(frame_index))
+                if advantage:
+                    prompt = "[POSITIVE][POSITIVE]\n" + DROID_PROMPT_TEMPLATE.format(
+                        task=task_text
+                    )
+                else:
+                    prompt = "[NEGATIVE][NEGATIVE]\n" + DROID_PROMPT_TEMPLATE.format(
+                        task=task_text
+                    )
+
+        return {
+            "images": images,
+            "state": state_pad,
+            "state_mask": state_mask,
+            "action": action_pad,
+            "action_mask": action_mask,
+            "embodiment_id": np.int64(self.embodiment_id),
+            "has_real_action": np.bool_(True),
+            "has_lapa_action": np.bool_(False),
+            "is_cotrain_instance": np.bool_(False),
+            "segmentation_target": np.zeros((2,), dtype=np.float32),
+            "segmentation_target_mask": np.zeros((1,), dtype=np.float32),
+            "lapa_action": np.zeros_like(action_pad),
+            "lapa_action_mask": np.zeros_like(action_mask),
+            "text": prompt,
+        }
+
+
 class DreamZeroCollator:
     """Collate DreamZero samples: stack tensors and tokenize text.
 
@@ -789,7 +1879,13 @@ class DreamZeroCollator:
       text_attention_mask (B, 512)            int64   1 for real tokens, 0 for padding
     """
 
-    def __init__(self, tokenizer_path: str, max_seq_len: int, cfg_mode: bool = False):
+    def __init__(
+        self,
+        tokenizer_path: str,
+        max_seq_len: int,
+        cfg_mode: bool = False,
+        sft_embodiment: str = "libero",
+    ):
         from groot.vla.model.dreamzero.transform.dreamzero_cotrain import (
             HuggingfaceTokenizer,
         )
@@ -801,6 +1897,7 @@ class DreamZeroCollator:
             clean="whitespace",
         )
         self.cfg_mode = bool(cfg_mode)
+        self.sft_embodiment = str(sft_embodiment).lower().replace("-", "_")
 
     def __call__(self, features: list[dict[str, Any]]) -> dict[str, Any]:
         batch: dict[str, Any] = {}
@@ -832,6 +1929,10 @@ class DreamZeroCollator:
         raw_texts = [str(f["text"]) for f in features]
         if self.cfg_mode:
             text_values = raw_texts
+        elif self.sft_embodiment in ("droid", "oxe_droid"):
+            text_values = [
+                DROID_PROMPT_TEMPLATE.format(task=t.lower()) for t in raw_texts
+            ]
         else:
             text_values = [LIBERO_PROMPT_TEMPLATE.format(task=t) for t in raw_texts]
         text_ids, text_mask = self.tokenizer(
@@ -859,11 +1960,6 @@ def build_dreamzero_sft_dataloader(
     model_cfg = cfg.actor.model
     tokenizer_path = model_cfg.get("tokenizer_path", "google/umt5-xxl")
     max_seq_len = int(model_cfg.get("max_seq_len", 512))
-    action_chunk_size = int(
-        model_cfg.get("dreamzero_action_horizon", 16)
-    )  # steps per chunk
-    num_chunks = int(model_cfg.get("dreamzero_num_chunks", 4))
-    effective_action_horizon = action_chunk_size * num_chunks  # = 64 total action steps
     max_action_dim = int(model_cfg.get("dreamzero_max_action_dim", 32))
     max_state_dim = int(model_cfg.get("dreamzero_max_state_dim", 64))
     cfg_mode = bool(model_cfg.get("cfg_mode", False))
@@ -872,16 +1968,77 @@ def build_dreamzero_sft_dataloader(
         advantage_parquet = None
     unconditional_prob = float(model_cfg.get("unconditional_prob", 0.3))
 
-    dataset = DreamZeroLiberoDataset(
-        data_path=data_paths,
-        action_horizon=effective_action_horizon,
-        num_chunks=num_chunks,
-        max_action_dim=max_action_dim,
-        max_state_dim=max_state_dim,
-        cfg_mode=cfg_mode,
-        advantage_parquet=advantage_parquet,
-        unconditional_prob=unconditional_prob,
-    )
+    sft_embodiment = str(model_cfg.get("embodiment_tag", "libero_sim")).lower()
+    if sft_embodiment in ("droid", "oxe_droid"):
+        # Unified knobs for both libero and droid:
+        # - dreamzero_action_horizon: per-block action steps
+        # - dreamzero_num_chunks: number of temporal chunks/blocks
+        # - dreamzero_num_video_frames: sampled video frames
+        droid_action_horizon = int(model_cfg.get("dreamzero_action_horizon", 24))
+        droid_num_chunks = int(model_cfg.get("dreamzero_num_chunks", 4))
+        droid_video_frames = int(model_cfg.get("dreamzero_num_video_frames", 33))
+        droid_total_action_steps = int(
+            model_cfg.get(
+                "dreamzero_total_action_steps",
+                droid_action_horizon * droid_num_chunks,
+            )
+        )
+        droid_state_horizon = int(
+            model_cfg.get("dreamzero_state_horizon", droid_num_chunks)
+        )
+        droid_state_step = int(
+            model_cfg.get("dreamzero_state_step", droid_action_horizon)
+        )
+        rel = bool(model_cfg.get("relative_action", True))
+        rel_keys = list(model_cfg.get("relative_action_keys", ["joint_position"]))
+        droid_view_hw = _infer_droid_view_hw_from_model_cfg(model_cfg)
+        logger.info(
+            "DreamZero DROID map-style: per-view resize target = %s", droid_view_hw
+        )
+
+        lazy_load = cfg.data.get("lazy_load", True)
+        pq_cache_max_episodes = cfg.data.get("parquet_cache_size", 128)
+        video_tolerance_s = cfg.data.get("video_tolerance_s", 0.1)
+
+        dataset = DreamZeroDroidDataset(
+            data_path=data_paths,
+            lazy_load=lazy_load,
+            action_horizon=droid_action_horizon,
+            num_video_frames=droid_video_frames,
+            total_action_steps=droid_total_action_steps,
+            state_horizon=droid_state_horizon,
+            state_step=droid_state_step,
+            max_action_dim=max_action_dim,
+            max_state_dim=max_state_dim,
+            cfg_mode=cfg_mode,
+            advantage_parquet=advantage_parquet,
+            unconditional_prob=unconditional_prob,
+            relative_action=rel,
+            relative_action_keys=rel_keys,
+            droid_view_hw=droid_view_hw,
+            pq_cache_max_episodes=pq_cache_max_episodes,
+            video_tolerance_s=video_tolerance_s,
+        )
+        collate_embodiment = "oxe_droid"
+    else:
+        action_chunk_size = int(
+            model_cfg.get("dreamzero_action_horizon", 16)
+        )  # steps per chunk
+        num_chunks = int(model_cfg.get("dreamzero_num_chunks", 4))
+        effective_action_horizon = (
+            action_chunk_size * num_chunks
+        )  # = 64 total action steps
+        dataset = DreamZeroLiberoDataset(
+            data_path=data_paths,
+            action_horizon=effective_action_horizon,
+            num_chunks=num_chunks,
+            max_action_dim=max_action_dim,
+            max_state_dim=max_state_dim,
+            cfg_mode=cfg_mode,
+            advantage_parquet=advantage_parquet,
+            unconditional_prob=unconditional_prob,
+        )
+        collate_embodiment = "libero"
     sampler = torch.utils.data.distributed.DistributedSampler(
         dataset,
         num_replicas=world_size,
@@ -889,20 +2046,22 @@ def build_dreamzero_sft_dataloader(
         shuffle=not eval_dataset,
         drop_last=not eval_dataset,
     )
-    num_workers = int(cfg.actor.get("dataloader_num_workers", 4))
-    data_loader = DataLoader(
+    num_workers = int(cfg.data.get("num_workers", 4))
+    prefetch_factor = int(cfg.data.get("prefetch_factor", 4))
+    data_loader = StatefulDataLoader(
         dataset,
         batch_size=cfg.actor.micro_batch_size,  # samples per GPU per step
         sampler=sampler,
-        shuffle=False,
         drop_last=not eval_dataset,
         num_workers=num_workers,
         pin_memory=True,  # faster CPU->GPU transfer
         persistent_workers=num_workers > 0,
+        prefetch_factor=prefetch_factor if num_workers > 0 else None,
         collate_fn=DreamZeroCollator(
             tokenizer_path=tokenizer_path,
             max_seq_len=max_seq_len,
             cfg_mode=cfg_mode,
+            sft_embodiment=collate_embodiment,
         ),
     )
     return data_loader, {"num_samples": len(dataset)}

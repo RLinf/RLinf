@@ -292,17 +292,6 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <!-- TODO(thumbnail): replace placeholder cover image URL for nft_openpi -->
-       <img src="https://github.com/RLinf/misc/raw/main/pic/pi0_icon.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="nft_openpi.html" style="text-decoration: underline; color: blue;">
-           <b>NFT：π₀ 正负样本对比强化学习</b>
-         </a><br>
-         对预训练 π₀ flow-matching 策略进行无需 critic 的在线强化学习微调
-       </p>
-     </div>
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/dsrl.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -487,8 +476,8 @@
    mlp
    sac_flow
    sft_openpi
+   sft_dreamzero
    sft_vlm
-   nft_openpi
    dsrl
    dagger
    recap

@@ -337,6 +337,9 @@ class FSDPModelManager:
             self.optimizer,
             self.lr_scheduler,
             save_path,
+            save_full_model_weights=self._cfg.fsdp_config.get(
+                "save_full_model_weights", True
+            ),
         )
 
         if restore_weight_offload:

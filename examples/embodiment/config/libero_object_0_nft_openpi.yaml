@@ -1,6 +1,6 @@
 defaults:
-  - env/libero_goal@env.train
-  - env/libero_goal@env.eval
+  - env/libero_object@env.train
+  - env/libero_object@env.eval
   - model/pi0@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
@@ -11,30 +11,33 @@ hydra:
     dir: .
   output_subdir: null
   searchpath:
-    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+    - file://${oc.env:EMBODIED_PATH}/config/
 
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: 0-1
+    actor,env,rollout: all
 
 runner:
   task_type: embodied
   logger:
-    log_path: "../results/libero_goal_nft_openpi"
+    log_path: "../results"
     project_name: rlinf
-    experiment_name: "test_openpi_nft"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    experiment_name: "libero_object_nft_openpi"
+    logger_backends: ["tensorboard"]
 
-  max_epochs: 1
+  max_epochs: 100
   max_steps: -1
 
   only_eval: False
   val_check_interval: -1
   save_interval: -1
 
+  resume_dir: null
+  ckpt_path: null
+
 algorithm:
-  group_size: 1
+  group_size: 8
   reward_coef: 1.0
   rollout_epoch: 1
   eval_rollout_epoch: 1
@@ -42,15 +45,25 @@ algorithm:
   reward_type: chunk_level
   logprob_type: chunk_level
 
-  update_epoch: 1
-  adv_type: raw
+  update_epoch: 2          
+  adv_type: grpo
   loss_type: embodied_nft
-  filter_rewards: False
+  filter_rewards: True
+  rewards_lower_bound: 0.1
+  rewards_upper_bound: 0.9
 
-  nft_beta: 1.0
-  adv_clip_max: 1.0
-  dpo_beta: 1.0
-  max_drift: 0.5
+  # NFT-specific params
+  nft_loss_form: mse         # dpo, mse
+  nft_beta: 1.0              # velocity scaling coefficient
+  adv_clip_max: 0.5          # advantage clipping bound for DPO preference signal
+  dpo_beta: 1.0             # DPO loss temperature
+  max_drift: 0.3            # max velocity drift norm for clipping
+  nft_weight_mode: "auto"  # energy weight mode: "constant", "t", "sigma", "adaptive", "auto" (auto = adaptive for ODE, sigma for SDE)
+  nft_weight_scale: [1.0, 0.2]   # weight scale 
+  nft_target_space: "x0"  # xnext or x0
+  nft_xcur_source: "resample"  # rollout or resample
+  nft_tau: 1.0          # rollout lag policy EMA; 1.0 means on-policy
+  recompute_v: False
 
   sampling_params:
     do_sample: True
@@ -60,7 +73,6 @@ algorithm:
     top_p: 1.0
     repetition_penalty: 1.0
     add_BOS: False
-
   length_params:
     max_new_token: null
     max_length: 1024
@@ -70,17 +82,21 @@ env:
   group_name: "EnvGroup"
 
   train:
-    total_num_envs: 8
-    max_episode_steps: 5
-    max_steps_per_rollout_epoch: 5
-    use_fixed_reset_state_ids: True
-    use_ordered_reset_state_ids: False
+    task_id_filter: [0]
+    total_num_envs: 64
+    group_size: ${algorithm.group_size}
+    max_episode_steps: 240
+    max_steps_per_rollout_epoch: 240
+    video_cfg:
+      save_video: False
+      video_base_dir: ${runner.logger.log_path}/video/train
   eval:
-    total_num_envs: 1
+    task_id_filter: [0]
+    total_num_envs: 500
     auto_reset: True
     ignore_terminations: True
-    max_episode_steps: 10
-    max_steps_per_rollout_epoch: 10
+    max_episode_steps: 240
+    max_steps_per_rollout_epoch: 240
     group_size: 1
     use_fixed_reset_state_ids: True
     is_eval: True
@@ -97,27 +113,28 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/workspace/dataset/pi0_libero"
+    model_path: "/path/to/model/RLinf-Pi0-SFT-Spatial-Object-Goal"
     precision: ${actor.model.precision}
 
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 2
-  global_batch_size: 8
+  micro_batch_size: 32
+  global_batch_size: 512
   seed: 42
   enable_offload: False
 
   model:
-    model_path: "/workspace/dataset/pi0_libero"
-    num_action_chunks: 5
+    model_path: "/path/to/model/RLinf-Pi0-SFT-Spatial-Object-Goal"
+    num_action_chunks: 5 # interface for the env
     add_value_head: False
     openpi:
       is_nft: True
-      noise_level: 0.2
+      noise_level: 0.0
+      noise_method: "flow_ode"
 
   optim:
-    lr: 1.0e-5
+    lr: 5.0e-6
     value_lr: 1.0e-4
     adam_beta1: 0.9
     adam_beta2: 0.95
@@ -129,7 +146,7 @@ actor:
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
-    gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
+    gradient_checkpointing: False
     mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}
