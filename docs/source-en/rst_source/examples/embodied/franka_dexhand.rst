@@ -77,26 +77,36 @@ in the task YAML as well.
 Workflow
 --------
 
-1. On the robot control machine (``NUC``), follow :doc:`franka` to finish the base environment setup, then install the Franka environment with dexterous-hand support:
+1. On the Franka control node, follow :doc:`franka` to finish the base environment setup, then install the Franka environment with dexterous-hand support:
 
    .. code-block:: bash
 
       bash requirements/install.sh embodied --env franka --dexhand
 
    This command installs ``RLinf-dexterous-hands``, which includes the Ruiyan dexterous-hand and data-glove drivers.
-2. On the ``NUC``, fill in the collection-time task configuration: ``robot_ip``, ``target_ee_pose``, ``end_effector_config``, ``glove_config``, and related settings.
-3. On the ``NUC``, collect expert demos with:
+2. Put the Franka robot into programming mode, manually move it to the task target pose, then run the script on the Franka control node to acquire the target end-effector pose:
+
+   .. code-block:: bash
+
+      python -m toolkits.realworld_check.test_franka_controller \
+        --robot-ip <FRANKA_IP> \
+        --end-effector-type ruiyan_hand \
+        --hand-port /dev/ttyUSB0
+
+   After the script starts, enter ``getpos_euler``, record the Euler-angle pose it prints, and fill that value into ``target_ee_pose``.
+3. On the Franka control node, fill in the collection-time task configuration: ``robot_ip``, ``target_ee_pose``, ``end_effector_config``, ``glove_config``, and related settings.
+4. On the Franka control node, collect expert demos with:
 
    .. code-block:: bash
 
       bash examples/embodiment/collect_data.sh realworld_collect_dexhand_data
 
-4. On the ``NUC``, collect reward raw episodes with the same entrypoint. For this pass, increase ``env.eval.override_cfg.success_hold_steps`` and use a separate log directory.
-5. Copy the collected reward raw data from the ``NUC`` to the training machine (``4090``), or place it on shared storage in advance.
-6. On the ``4090``, preprocess the raw reward episodes with ``examples/reward/preprocess_reward_dataset.py`` as described in :doc:`franka_reward_model`.
-7. On the ``4090``, train the reward model with ``examples/reward/run_reward_training.sh``.
-8. Before the final RL run, follow the cluster setup section in :doc:`franka` to start a two-node Ray cluster with the ``4090`` as head and the ``NUC`` as worker.
-9. On the ``4090``, launch RL with:
+5. On the Franka control node, collect reward raw episodes with the same entrypoint. For this pass, increase ``env.eval.override_cfg.success_hold_steps`` and use a separate log directory.
+6. Copy the collected reward raw data from the Franka control node to the training node, or place it on shared storage in advance.
+7. On the training node, preprocess the raw reward episodes with ``examples/reward/preprocess_reward_dataset.py`` as described in :doc:`franka_reward_model`.
+8. On the training node, train the reward model with ``examples/reward/run_reward_training.sh``.
+9. Before the final RL run, follow the cluster setup section in :doc:`franka` to start a two-node Ray cluster with the training node as head and the Franka control node as worker.
+10. On the training node, launch RL with:
 
    .. code-block:: bash
 

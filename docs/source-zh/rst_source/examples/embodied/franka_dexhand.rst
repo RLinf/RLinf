@@ -75,26 +75,36 @@ RL 训练使用 ``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yam
 工作流
 ------
 
-1. 在机器人控制端（``NUC``）按照 :doc:`franka` 完成基础环境部署，然后安装带灵巧手支持的 Franka 环境：
+1. 在 Franka 控制节点按照 :doc:`franka` 完成基础环境部署，然后安装带灵巧手支持的 Franka 环境：
 
    .. code-block:: bash
 
       bash requirements/install.sh embodied --env franka --dexhand
 
    该命令会安装 ``RLinf-dexterous-hands``，其中包含睿研灵巧手与数据手套驱动。
-2. 在 ``NUC`` 上配好采集任务参数，包括 ``robot_ip``、``target_ee_pose``、``end_effector_config``、``glove_config`` 等。
-3. 在 ``NUC`` 上采集专家 demo：
+2. 将 Franka 机器人切换到可编程模式，手动移动到任务目标位姿，然后在 Franka 控制节点运行脚本获取目标末端位姿：
+
+   .. code-block:: bash
+
+      python -m toolkits.realworld_check.test_franka_controller \
+        --robot-ip <FRANKA_IP> \
+        --end-effector-type ruiyan_hand \
+        --hand-port /dev/ttyUSB0
+
+   脚本启动后输入 ``getpos_euler``，记录输出的欧拉角位姿，并填入配置中的 ``target_ee_pose``。
+3. 在 Franka 控制节点配好采集任务参数，包括 ``robot_ip``、``target_ee_pose``、``end_effector_config``、``glove_config`` 等。
+4. 在 Franka 控制节点采集专家 demo：
 
    .. code-block:: bash
 
       bash examples/embodiment/collect_data.sh realworld_collect_dexhand_data
 
-4. 在 ``NUC`` 上使用同一个入口再次采集 reward 原始 episode；这一轮建议调大 ``env.eval.override_cfg.success_hold_steps``，并使用单独的日志目录。
-5. 将 reward 原始数据从 ``NUC`` 传到训练机（``4090``），或者提前写入共享存储。
-6. 在 ``4090`` 上按照 :doc:`franka_reward_model` 中的方法，用 ``examples/reward/preprocess_reward_dataset.py`` 生成 reward dataset。
-7. 在 ``4090`` 上使用 ``examples/reward/run_reward_training.sh`` 训练 reward model。
-8. 在启动 RL 之前，按照 :doc:`franka` 的集群配置说明，启动由 ``4090`` 和 ``NUC`` 组成的双机 Ray 集群。
-9. 在 ``4090`` 上启动 RL：
+5. 在 Franka 控制节点使用同一个入口再次采集 reward 原始 episode；这一轮建议调大 ``env.eval.override_cfg.success_hold_steps``，并使用单独的日志目录。
+6. 将 reward 原始数据从 Franka 控制节点传到训练节点，或者提前写入共享存储。
+7. 在训练节点按照 :doc:`franka_reward_model` 中的方法，用 ``examples/reward/preprocess_reward_dataset.py`` 生成 reward dataset。
+8. 在训练节点使用 ``examples/reward/run_reward_training.sh`` 训练 reward model。
+9. 在启动 RL 之前，按照 :doc:`franka` 的集群配置说明，启动由训练节点和 Franka 控制节点组成的双机 Ray 集群。
+10. 在训练节点启动 RL：
 
    .. code-block:: bash
 
