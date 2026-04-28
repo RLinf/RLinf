@@ -32,12 +32,12 @@ jobs:
         run: |
           set -euo pipefail
           BRANCH_NAME="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          BRANCH_REGEX='^((bugfix|feature|release|hotfix|task|chore|dev)\/.+|master|main|HEAD|PR-.+)$'
+          BRANCH_REGEX='^((fix|bugfix|feature|release|hotfix|task|chore|dev)\/.+|master|main|HEAD|PR-.+)$'
 
           if [[ ! "$BRANCH_NAME" =~ $BRANCH_REGEX ]]; then
             echo "Type branch check failed => ${BRANCH_NAME}"
             echo "It doesn't match regex: ${BRANCH_REGEX}"
-            echo "Branches must begin with: bugfix/ feature/ release/ hotfix/ task/ chore/ dev/"
+            echo "Branches must begin with: fix/ bugfix/ feature/ release/ hotfix/ task/ chore/ dev/"
             exit 1
           fi
 

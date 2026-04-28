@@ -473,6 +473,7 @@ as well as reinforcement learning training examples on real robots.
    mlp
    sac_flow
    sft_openpi
+   sft_dreamzero
    sft_vlm
    nft_openpi
    dsrl
