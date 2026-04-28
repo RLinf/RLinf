@@ -844,7 +844,9 @@ class FrankaEnv(gym.Env):
                 return True
             return False
         else:
-            scaled = np.asarray(ee_action, dtype=np.float64) * self.config.hand_action_scale
+            scaled = (
+                np.asarray(ee_action, dtype=np.float64) * self.config.hand_action_scale
+            )
             if self._last_hand_command is not None:
                 delta = scaled - self._last_hand_command
                 max_d = self.config.hand_max_delta_per_step
