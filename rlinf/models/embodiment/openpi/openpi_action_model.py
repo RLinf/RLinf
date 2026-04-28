@@ -33,6 +33,10 @@ from rlinf.utils.logging import get_logger
 from rlinf.utils.nested_dict_process import copy_dict_tensor
 
 
+def _to_numpy(x):
+    return np.asarray(x.detach().cpu()) if torch.is_tensor(x) else x
+
+
 @dataclass(frozen=True)
 class OpenPi0Config(Pi0Config):
     # config for rl
@@ -256,9 +260,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             inputs = {key: inputs[key] for key in inputs.keys() if "/" in key}
 
         # tensor -> numpy
-        inputs = jax.tree.map(
-            lambda x: np.asarray(x.detach().cpu()) if torch.is_tensor(x) else x, inputs
-        )
+        inputs = jax.tree.map(_to_numpy, inputs)
         batch_size = next(v.shape[0] for v in inputs.values() if hasattr(v, "shape"))
         # split & transform
         transformed_samples = []
@@ -716,6 +718,11 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             result["nft_x0"] = x_0.detach()
         return result
 
+    def _get_timesteps(self, denoise_steps, device):
+        timesteps = torch.linspace(1, 1 / denoise_steps, denoise_steps, device=device)
+        timesteps = torch.cat([timesteps, torch.tensor([0.0], device=device)])
+        return timesteps
+
     def sample_mean_var_val(
         self,
         x_t,
@@ -740,8 +747,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             idx = torch.tensor(idx).expand(bsize)
         # build parameters
         noise_level = self._get_noise_level(device=device, dtype=x_t.dtype)
-        timesteps = torch.linspace(1, 1 / denoise_steps, denoise_steps, device=device)
-        timesteps = torch.cat([timesteps, torch.tensor([0.0], device=device)])
+        timesteps = self._get_timesteps(denoise_steps, device)
         # input parameters
         t_input = timesteps[idx]
         delta = timesteps[idx] - timesteps[idx + 1]
@@ -909,6 +915,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         compute_values=False,
     ):
         bsize = state.shape[0]
+        batch_indices = torch.arange(bsize)
         prefix_output, prefix_pad_masks, past_key_values = self._build_prefix_cache(
             images, img_masks, lang_tokens, lang_masks
         )
@@ -931,8 +938,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             num_steps = 1
         for idx in range(num_steps):
             denoise_ind = denoise_inds[:, idx]
-            chains_pre = chains[torch.arange(bsize), denoise_ind]
-            chains_next = chains[torch.arange(bsize), denoise_ind + 1]
+            chains_pre = chains[batch_indices, denoise_ind]
+            chains_next = chains[batch_indices, denoise_ind + 1]
             x_t_mean, x_t_std, value_t, _ = self.sample_mean_var_val(
                 chains_pre,
                 denoise_ind,

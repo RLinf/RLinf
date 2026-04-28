@@ -99,6 +99,19 @@ def set_camera_resolution(camera_cfg: dict | None) -> None:
         eval_utils.WRIST_RESOLUTION = tuple(wrist_resolution)
 
 
+def apply_runtime_renderer_settings() -> None:
+    """
+    RLinf-specific renderer overrides after OmniGibson has launched.
+    """
+
+    import omnigibson.lazy as lazy
+
+    lazy.carb.settings.get_settings().set_float(
+        "/rtx-transient/resourcemanager/texturestreaming/memoryBudget",
+        0.0,
+    )
+
+
 def get_env_wrapper(wrapper_name: str):
     if wrapper_name == "rgb":
         from .rgb_wrapper import RGBWrapper

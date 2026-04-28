@@ -8,6 +8,10 @@ group_size: 1
 use_fixed_reset_state_ids: False
 max_steps_per_rollout_epoch: 2000
 max_episode_steps: 2000 # max episode steps for truncation
+# pass the render process except the last frame in cache chunk in behavior env. set to False to save full video, but slower
+skip_intermediate_obs_in_chunk: True
+# parallel env running in env workers to speed up env.step
+num_env_subprocess: 1
 
 video_cfg:
   save_video: False
@@ -106,7 +110,7 @@ omni_config:
           command_output_limits: default
 
   task:
-    type: RLinfBehaviorTask
+    type: BehaviorTask
     activity_name: turning_on_radio
     activity_definition_id: 0
     # activity_instance_id is only used when online object sampling is False.
@@ -139,7 +143,7 @@ omni_config:
       r_potential: 1.0
 
   scene:
-    type: RLinfInteractiveTraversableScene
+    type: InteractiveTraversableScene
     scene_model: house_double_floor_lower
     trav_map_resolution: 0.1
     default_erosion_radius: 0.0
