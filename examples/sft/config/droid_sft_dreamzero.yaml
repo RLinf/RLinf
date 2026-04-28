@@ -19,7 +19,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "libero_sft_dreamzero"
+    experiment_name: "droid_sft_dreamzero"
     logger_backends: ["tensorboard"]
 
   max_epochs: -1
@@ -28,8 +28,16 @@ runner:
   save_interval: 2000
   log_interval: 100
 
+  resume_dir: path/to/checkpoint
+
 data:
-  train_data_paths: "path/to/datasets/libero"
+  # Root of LeRobot DROID (OXE) dataset
+  train_data_paths: path/to/datasets/DreamZero-DROID-Data
+  lazy_load: True
+  num_workers: 4
+  prefetch_factor: 4
+  video_tolerance_s: 0.1
+  parquet_cache_size: 512
 
 algorithm:
   adv_type: gae
@@ -38,28 +46,36 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 1
-  global_batch_size: 16
+  global_batch_size: 8
   seed: 42
-  dataloader_num_workers: 1
   enable_offload: False
 
   model:
     model_type: "dreamzero"
-    precision: bf16 # fp32 when fsdp cpu offload is enabled
-    model_path: "path/to/models/DreamZero-DROID"
-    tokenizer_path: "path/to/models/umt5-xxl"
+    precision: fp32
+    model_path: path/to/models/DreamZero-DROID
+    tokenizer_path: path/to/models/umt5-xxl
     max_seq_len: 512
-    dreamzero_action_horizon: 16
-    dreamzero_num_chunks: 4
+    # Shared DreamZero dims (also match DreamZero-DROID checkpoint config).
     dreamzero_max_action_dim: 32
     dreamzero_max_state_dim: 64
+    # Unified temporal knobs (branching by embodiment_tag below):
+    dreamzero_action_horizon: 24
+    dreamzero_num_chunks: 4
+    dreamzero_num_video_frames: 33
+    relative_action_keys:
+      - joint_position
     cfg_mode: false
-    advantage_parquet: 
     unconditional_prob: 0.3
     action_loss_scale: 1.0
     pretrained_model_path: null
     add_value_head: false
     is_lora: False
+    embodiment_tag: "oxe_droid"
+    relative_action: true
+    relative_action_per_horizon: false
+
+    load_to_device: False
 
   optim:
     lr: 1.0e-5
@@ -71,8 +87,8 @@ actor:
     clip_grad: 1.0
     lr_scheduler: "cosine"
     lr_warmup_steps: -1
-    lr_warmup_steps_ratio: 0.05
-    total_training_steps: 50000
+    lr_warmup_steps_ratio: 0.01
+    total_training_steps: ${runner.max_steps}
 
   fsdp_config:
     strategy: "fsdp2"
@@ -81,8 +97,7 @@ actor:
     gradient_checkpointing: True
     limit_all_gathers: True
     reshard_after_forward: True
-    # cpu_offload: True
-    # offload_pin_memory: True
+    save_full_model_weights: False
     grad_scaler:
       enabled: False
     mixed_precision:

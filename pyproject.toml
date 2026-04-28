@@ -165,7 +165,6 @@ override-dependencies = [
     "tensorflow-addons==0.23.0",
     "setuptools>=69.5.1,<75.9",
     "datasets==3.6.0",
-    "peft==0.11.1",
 ]
 
 [tool.setuptools]
