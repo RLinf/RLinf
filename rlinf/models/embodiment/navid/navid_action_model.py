@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import warnings
 from dataclasses import dataclass
@@ -61,6 +62,7 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
         num_action_chunks: int,
     ):
         super().__init__()
+        self.global_step = 0
         self.tokenizer = tokenizer
         self.model = model
         self.image_processor = image_processor
@@ -122,14 +124,14 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
 
     def preprocess_env_obs(self, env_obs):
         out = dict(env_obs)
-        images = out["main_images"]
+        images = out["wrist_images"]
         batch_images_np: list[np.ndarray] = []
         for i in range(int(images.shape[0])):
             img_np = images[i].detach().cpu().numpy()
             if img_np.dtype != np.uint8:
                 img_np = np.clip(img_np, 0, 255).astype(np.uint8)
             batch_images_np.append(img_np)
-        out["main_images"] = batch_images_np
+        out["rgb"] = batch_images_np
 
         return out
 
@@ -141,6 +143,7 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
         return_obs: bool = True,
         **kwargs,
     ):
+        raw_env_obs = env_obs
         env_obs = self.preprocess_env_obs(env_obs)
 
         assert mode in {"train", "eval"}, f"{mode=} is not supported"
@@ -149,7 +152,7 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
 
         task_descs = env_obs["task_descriptions"]  # [N_ENV]
         episode_ids = env_obs["states"].tolist()  # [N_ENV]
-        images = env_obs["main_images"]  # [N_ENV, H, W, C]
+        images = env_obs["rgb"]  # [N_ENV, H, W, C]
         bsz = len(images)
 
         prompts, questions, convs = self._build_prompts_and_convs(
@@ -208,6 +211,16 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
 
         chunk_actions = self._parse_actions_from_texts(gen_texts=gen_texts)
         chunk_actions = np.vectorize(lambda x: self.action_map[x])(chunk_actions)
+        model_actions = torch.as_tensor(
+            chunk_actions,
+            device=device,
+            dtype=torch.long,
+        )
+        executed_actions, gt_action_mask = self._resolve_current_action_execution(
+            raw_env_obs,
+            model_actions,
+            mode=mode,
+        )
 
         prev_logprobs = torch.zeros(
             (bsz, self.action_dim), device=device, dtype=torch.float32
@@ -225,10 +238,18 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
             "prev_values": prev_values,
             "forward_inputs": forward_inputs,
         }
-        return chunk_actions, result
+        return executed_actions, result
 
     def _get_device(self) -> torch.device:
         return next(self.model.parameters()).device
+
+    def set_global_step(self, global_step):
+        self.global_step = int(global_step)
+
+    def set_total_training_steps(self, total_training_steps: int):
+        cfg = getattr(self, "cfg", None)
+        if cfg is not None:
+            cfg.gt_prefix_total_training_steps = int(total_training_steps)
 
     def _get_generation_params(self, **kwargs: Any) -> dict[str, Any]:
         do_sample = kwargs.get("do_sample", "True")
@@ -524,3 +545,105 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
             )
 
         return chunk_actions
+
+    def _resolve_current_action_execution(
+        self,
+        raw_env_obs: dict[str, Any],
+        model_actions: torch.Tensor,
+        mode: str = "train",
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Resolve the executed action and whether GT-prefix produced it."""
+        cfg = getattr(self, "cfg", None)
+        if cfg is None or not getattr(cfg, "use_gt_prefix", False):
+            return model_actions.long(), torch.zeros_like(
+                model_actions, dtype=torch.bool
+            )
+
+        effective_prefix_lengths = self._get_effective_gt_prefix_lengths(
+            raw_env_obs,
+            model_actions,
+            mode,
+        ).reshape_as(model_actions)
+
+        current_step = torch.as_tensor(
+            raw_env_obs.get("habitat_current_step"),
+            device=model_actions.device,
+            dtype=torch.long,
+        ).reshape_as(model_actions)
+        within_prefix_mask = current_step <= effective_prefix_lengths
+        gt_actions = torch.as_tensor(
+            raw_env_obs.get("habitat_gt_current_action"),
+            device=model_actions.device,
+            dtype=torch.long,
+        ).reshape_as(model_actions)
+        execute_gt_mask = within_prefix_mask
+        executed_actions = torch.where(
+            execute_gt_mask, gt_actions, model_actions.long()
+        )
+
+        return executed_actions, execute_gt_mask
+
+    def _get_effective_gt_prefix_lengths(
+        self,
+        raw_env_obs: dict[str, Any],
+        reference_actions: torch.Tensor,
+        mode: str,
+    ) -> torch.Tensor:
+        """Compute per-sample GT prefix lengths for the current runtime state."""
+        if mode != "train":
+            return torch.zeros_like(reference_actions, dtype=torch.long)
+
+        cfg = getattr(self, "cfg", None)
+        if cfg is None:
+            return torch.zeros_like(reference_actions, dtype=torch.long)
+
+        sequence_lengths = torch.as_tensor(
+            raw_env_obs.get("habitat_gt_sequence_length"),
+            device=reference_actions.device,
+            dtype=torch.long,
+        )
+        initial_lengths = torch.floor(
+            sequence_lengths.to(torch.float32)
+            * float(getattr(cfg, "gt_prefix_length_ratio", 0.0))
+        ).to(torch.long)
+
+        schedule_type = getattr(cfg, "gt_prefix_schedule_type", "log")
+        if schedule_type == "static":
+            return initial_lengths
+
+        total_training_steps = int(getattr(cfg, "gt_prefix_total_training_steps", -1))
+        if total_training_steps <= 0:
+            return initial_lengths
+
+        warmup_steps = int(
+            float(getattr(cfg, "gt_prefix_warmup_steps_ratio", 0.0))
+            * total_training_steps
+        )
+        decay_steps = total_training_steps - warmup_steps
+        if decay_steps <= 0:
+            return initial_lengths
+
+        current_step = int(self.global_step)
+        if current_step < warmup_steps:
+            return initial_lengths
+
+        step_after_warmup = current_step - warmup_steps + 1
+        final_lengths = torch.zeros_like(sequence_lengths)
+        if step_after_warmup >= decay_steps:
+            return final_lengths
+
+        if schedule_type == "linear":
+            progress = step_after_warmup / decay_steps
+        elif schedule_type == "log":
+            log_denominator = math.log(decay_steps + 1)
+            progress = (math.log(max(step_after_warmup, 1)) / log_denominator) ** float(
+                getattr(cfg, "gt_prefix_schedule_alpha", 1.0)
+            )
+        else:
+            raise ValueError(f"Unsupported gt_prefix_schedule_type: {schedule_type}")
+
+        effective_lengths = torch.ceil(
+            initial_lengths.to(torch.float32) * (1 - progress)
+        ).to(torch.long)
+
+        return effective_lengths

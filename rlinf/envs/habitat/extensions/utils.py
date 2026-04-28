@@ -110,60 +110,6 @@ def observations_to_image(
     return egocentric_view
 
 
-def resize_observation_images(
-    egocentric_view: dict[str, Any],
-    observation_size: int,
-) -> dict[str, Any]:
-    """Resize images in egocentric_view to target observation_size.
-
-    Args:
-        egocentric_view: Dictionary containing images (rgb, depth, top_down_map).
-        observation_size: Target size for resizing (assumes square images).
-
-    Returns:
-        Dictionary with resized images.
-    """
-    resized_view = {}
-
-    if "rgb" in egocentric_view:
-        rgb = egocentric_view["rgb"]
-        if rgb.shape[0] != observation_size or rgb.shape[1] != observation_size:
-            rgb = cv2.resize(
-                rgb,
-                dsize=(observation_size, observation_size),
-                interpolation=cv2.INTER_CUBIC,
-            )
-        resized_view["rgb"] = rgb
-
-    if "depth" in egocentric_view:
-        depth_map = egocentric_view["depth"]
-        if (
-            depth_map.shape[0] != observation_size
-            or depth_map.shape[1] != observation_size
-        ):
-            depth_map = cv2.resize(
-                depth_map,
-                dsize=(observation_size, observation_size),
-                interpolation=cv2.INTER_CUBIC,
-            )
-        resized_view["depth"] = depth_map
-
-    if "top_down_map" in egocentric_view:
-        td_map = egocentric_view["top_down_map"]
-        old_h, old_w, _ = td_map.shape
-        top_down_height = observation_size
-        top_down_width = int(float(top_down_height) / old_h * old_w)
-        # cv2 resize (dsize is width first)
-        td_map = cv2.resize(
-            td_map,
-            (top_down_width, top_down_height),
-            interpolation=cv2.INTER_CUBIC,
-        )
-        resized_view["top_down_map"] = td_map
-
-    return resized_view
-
-
 def pano_observations_to_image(
     observation: dict[str, Any], info: dict[str, Any]
 ) -> ndarray:

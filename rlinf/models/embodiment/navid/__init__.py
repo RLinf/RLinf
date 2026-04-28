@@ -29,4 +29,5 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         action_dim=int(cfg.action_dim),
         num_action_chunks=int(cfg.num_action_chunks),
     )
+    model.cfg = cfg
     return model
