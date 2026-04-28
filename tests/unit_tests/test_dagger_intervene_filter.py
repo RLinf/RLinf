@@ -12,11 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+import types
+
 import numpy as np
 import torch
 
-from rlinf.data.embodied_io_struct import EmbodiedRolloutResult
-from rlinf.envs.realworld.realworld_env import RealWorldEnv
+sys.modules.setdefault("cv2", types.ModuleType("cv2"))
+
+from rlinf.data.embodied_io_struct import EmbodiedRolloutResult  # noqa: E402
+from rlinf.envs.realworld.realworld_env import RealWorldEnv  # noqa: E402
 
 
 def test_extract_intervene_traj_all_drops_partial_chunk():
