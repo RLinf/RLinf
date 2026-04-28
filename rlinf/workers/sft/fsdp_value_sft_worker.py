@@ -61,6 +61,12 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         )
         self.data_iter = iter(self.data_loader)
 
+        self.gradient_accumulation = (
+            self.cfg.actor.global_batch_size
+            // self.cfg.actor.micro_batch_size
+            // self._world_size
+        )
+
     def init_worker(self):
         self.setup_model_and_optimizer()
 
@@ -470,16 +476,12 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             if hasattr(self.model, "gradient_checkpointing_disable"):
                 self.model.gradient_checkpointing_disable()
 
-            micro_bs = self.cfg.actor.micro_batch_size
-            global_bs = self.cfg.actor.global_batch_size
-            assert global_bs % (micro_bs * self._world_size) == 0
-            grad_accum = global_bs // micro_bs // self._world_size
-
             all_metrics = []
 
-            for idx in range(grad_accum):
+            for idx in range(self.gradient_accumulation):
                 backward_ctx = self.before_micro_batch(
-                    self.model, is_last_micro_batch=(idx + 1) == grad_accum
+                    self.model,
+                    is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
                 )
 
                 batch = next(self.data_iter)
@@ -523,7 +525,7 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
                         )
                     )
 
-                scaled_loss = loss / grad_accum
+                scaled_loss = loss / self.gradient_accumulation
                 with backward_ctx:
                     self.grad_scaler.scale(scaled_loss).backward()
 
@@ -732,19 +734,18 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         if loader_len == 0:
             return
 
-        grad_accum = (
-            self.cfg.actor.global_batch_size
-            // self.cfg.actor.micro_batch_size
-            // self._world_size
-        )
-        steps_per_epoch = max(1, loader_len // grad_accum)
-        new_epoch = step // steps_per_epoch
+        new_epoch = step // self.get_max_steps_per_epoch()
 
         current_epoch = getattr(self, "_current_epoch", -1)
         if current_epoch != new_epoch:
             self._current_epoch = new_epoch
             self.data_loader.set_epoch(new_epoch)
             self.data_iter = iter(self.data_loader)
+
+    def get_max_steps_per_epoch(self):
+        if self.data_loader is not None:
+            return max(1, len(self.data_loader) // self.gradient_accumulation)
+        return 0
 
 
 __all__ = ["FSDPValueSftWorker"]

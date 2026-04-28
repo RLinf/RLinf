@@ -264,6 +264,7 @@ Using behavior as an example:
 - OpenPI (Pi0) + PPO:
   ``examples/embodiment/config/behavior_ppo_openpi.yaml``
 - OpenPI (Pi0.5) + PPO:
+  ``examples/embodiment/config/behavior_ppo_openpi_pi05_eval.yaml``
   ``examples/embodiment/config/behavior_ppo_openpi_pi05.yaml``
 
 .. warning::
@@ -278,7 +279,8 @@ Using behavior as an example:
    ``examples/embodiment/config/env/behavior_r1pro.yaml`` via ``defaults``
    (for both ``env.train`` and ``env.eval``). This file defines the base R1 Pro
    environment settings, including ``task_idx``, ``max_episode_steps``,
-   ``max_steps_per_rollout_epoch``, camera resolution, and ``omni_config``.
+   ``max_steps_per_rollout_epoch``, ``num_env_subprocess``, camera resolution,
+   and ``omni_config``.
    You can override these defaults in each concrete config under
    ``env.train`` / ``env.eval``.
 
@@ -288,26 +290,13 @@ Using behavior as an example:
   RLinf first loads OmniGibson's base ``r1pro_behavior.yaml`` and then applies
   overrides from ``omni_config`` (see ``setup_omni_cfg`` in
   ``rlinf/envs/behavior/utils.py``).
-- ``omni_config.task.type: RLinfBehaviorTask`` and
-  ``omni_config.scene.type: RLinfInteractiveTraversableScene``:
-  RLinf ships a lightweight BEHAVIOR compatibility patch for
-  ``omnigibson==3.7.1``. Keep these two types in
+- ``omni_config.task.type: BehaviorTask`` and
+  ``omni_config.scene.type: InteractiveTraversableScene``:
+  RLinf now uses OmniGibson's upstream BEHAVIOR task and scene classes
+  directly. Keep these explicit type entries in
   ``examples/embodiment/config/env/behavior_r1pro.yaml`` when using RLinf's
-  BEHAVIOR setup. ``install_patch()`` is still called automatically by
-  ``rlinf/envs/behavior/behavior_env.py`` before ``VectorEnvironment`` is
-  created, but it only registers the RLinf classes and applies monkey patches.
-  It does not rewrite ``task.type`` or ``scene.type`` anymore, so these two
-  YAML entries must be set explicitly.
-- RLinf BEHAVIOR patch contents:
-  The patch fixes several multi-environment issues observed with
-  OmniGibson 3.7.1, including cross-scene ``BehaviorTask`` callbacks,
-  presampled robot poses being applied in world frame instead of scene frame,
-  cross-scene shared control views for the same robot type, and RLinf's
-  missing ``scene`` sub-config override in ``setup_omni_cfg``.
-- Version note:
-  The current patch is only tested and supported on ``omnigibson==3.7.1``.
-  RLinf raises an error during environment initialization if a different
-  OmniGibson version is detected.
+  BEHAVIOR setup so the intended OmniGibson classes are selected after
+  ``setup_omni_cfg`` applies overrides.
 - ``task_idx``:
   Current task id (0-49). RLinf maps it to the concrete task name and writes it
   into ``task.activity_name`` (see ``rlinf/envs/behavior/behavior_env.py``).
@@ -408,6 +397,25 @@ Using behavior as an example:
 - ``omni_config.macro.use_numpy_controller_backend: True``:
   Uses the numpy controller backend, which is usually faster in single-process
   or moderate-parallel settings.
+- ``skip_intermediate_obs_in_chunk``:
+  RLinf executes chunked BEHAVIOR actions by stepping several low-level robot
+  actions before returning control to the policy. When this flag is ``True``,
+  RLinf skips collecting intermediate observations inside that chunk and only
+  keeps the observations the policy actually consumes. This usually gives a
+  large environment-speed improvement because fewer camera observations are
+  wrapped, transferred, and recorded. One visible consequence is that saved
+  videos no longer include every low-level robot action frame; instead they only
+  show the frames the robot actually observes at chunk boundaries.
+- ``num_env_subprocess``:
+  Within one env-worker process, splits parallel env count ``num_envs`` across multiple
+  **child processes**, each hosting its own Isaac/OmniGibson simulation (see
+  ``BehaviorProcessProxy`` in ``behavior_env.py``). Default ``1`` keeps the legacy
+  single-subprocess behavior. When greater than ``1``, each subprocess runs
+  ``num_envs / num_env_subprocess`` parallel envs; IPC uses parallel receives to reduce
+  pipe backpressure.
+  **Constraint**: ``num_envs`` must be divisible by ``num_env_subprocess`` (asserted).
+  Increasing this value can reduce env-step bottlenecks on multi-core/GPU hosts but also
+  multiplies simulator processes and memory pressure—tune for your hardware.
 
 --------------
 
@@ -433,7 +441,7 @@ the Behavior environment, run:
 
 --------------
 
-**4. Evaluate with behavior_ppo_openpi_pi05.yaml**
+**4. Evaluate with behavior_ppo_openpi_pi05_eval.yaml**
 
 In principle, any ``pi05`` checkpoint that has non-zero success rate on
 Behavior and has been converted to PyTorch format can be used for evaluation
@@ -449,7 +457,7 @@ PyTorch format:
 Thanks to the OpenPI-Comet authors for open-sourcing the model and tools, which
 helps reproducibility and evaluation in RLinf.
 
-After conversion, update ``behavior_ppo_openpi_pi05.yaml`` as follows:
+After conversion, update ``behavior_ppo_openpi_pi05_eval.yaml`` as follows:
 
 1. Set ``actor.model.model_path`` and ``rollout.model.model_path`` to the converted model directory.
 2. Increase ``max_episode_steps`` and ``max_steps_per_rollout_epoch`` in both
@@ -471,7 +479,7 @@ Run evaluation with:
 
    export ISAAC_PATH=/path/to/isaac-sim
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   bash examples/embodiment/eval_embodiment.sh behavior_ppo_openpi_pi05
+   bash examples/embodiment/eval_embodiment.sh behavior_ppo_openpi_pi05_eval
 
 
 Visualization and Results

@@ -1,0 +1,112 @@
+defaults:
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/sft/config
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0-1
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "/workspace/results/"
+    project_name: rlinf
+    experiment_name: "droid_sft_wan22"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: -1
+  max_steps: 3
+  val_check_interval: -1
+  save_interval: -1
+  log_interval: 100
+
+  resume_dir: null
+
+data:
+  # Root of LeRobot DROID (OXE) dataset
+  train_data_paths: /workspace/dataset/data/sft-ci-data/dreamzero-droid
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 1
+  global_batch_size: 8
+  seed: 42
+  dataloader_num_workers: 1
+  enable_offload: False
+
+  model:
+    model_type: "dreamzero"
+    precision: bf16
+    model_path: /workspace/dataset/DreamZero/dreamzero-wan-22
+    tokenizer_path: /workspace/dataset/DreamZero/umt5-xxl
+    max_seq_len: 512
+    # Shared DreamZero dims (also match DreamZero-DROID checkpoint config).
+    dreamzero_max_action_dim: 32
+    dreamzero_max_state_dim: 64
+    # Unified temporal knobs (branching by embodiment_tag below):
+    dreamzero_action_horizon: 24
+    dreamzero_num_chunks: 4
+    dreamzero_num_video_frames: 33
+    relative_action_keys:
+      - joint_position
+    cfg_mode: false
+    advantage_parquet:
+    unconditional_prob: 0.3
+    action_loss_scale: 1.0
+    pretrained_model_path: null
+    add_value_head: false
+    is_lora: False
+    embodiment_tag: "oxe_droid"
+    relative_action: true
+    relative_action_per_horizon: false
+
+    load_to_device: False
+
+  optim:
+    lr: 1.0e-5
+    value_lr: 1.55e-4
+    adam_beta1: 0.95
+    adam_beta2: 0.999
+    adam_eps: 1.0e-08
+    weight_decay: 1.0e-5
+    clip_grad: 1.0
+    lr_scheduler: "cosine"
+    lr_warmup_steps: -1
+    lr_warmup_steps_ratio: 0.05
+    total_training_steps: 15000
+
+  fsdp_config:
+    strategy: "fsdp2"
+    sharding_strategy: "full_shard"
+    use_orig_params: True
+    gradient_checkpointing: True
+    limit_all_gathers: True
+    reshard_after_forward: True
+    save_full_model_weights: False
+    grad_scaler:
+      enabled: False
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: bf16
+      buffer_dtype: bf16
+    amp_autocast:
+      enabled: false
+      precision: "bf16"
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false

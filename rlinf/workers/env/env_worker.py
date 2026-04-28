@@ -486,9 +486,9 @@ class EnvWorker(Worker):
         )
 
         current_dones = chunk_dones[:, -1]  # [num_envs] bool
-        prev = self.eval_prev_done[stage_id]
-        newly_done = current_dones & ~prev.to(current_dones.device)
-        self.eval_prev_done[stage_id] = current_dones.clone()
+        prev = self.eval_prev_done[stage_id].to(current_dones.device)
+        newly_done = current_dones & ~prev
+        self.eval_prev_done[stage_id] = prev | current_dones
 
         if newly_done.any():
             if "final_info" in infos:
@@ -932,7 +932,7 @@ class EnvWorker(Worker):
     async def send_rollout_trajectories(
         self, rollout_result: EmbodiedRolloutResult, channel: Channel
     ):
-        trajectories: Trajectory = rollout_result.to_splited_trajectories(
+        trajectories: list[Trajectory] = rollout_result.to_splited_trajectories(
             self.actor_split_num
         )
         for trajectory in trajectories:
