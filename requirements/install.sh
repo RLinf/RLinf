@@ -592,9 +592,25 @@ install_gr00t_model() {
     esac
     uv pip uninstall pynvml || true
 }
+
 install_gr00t_16_model() {
     create_and_sync_venv
     install_common_embodied_deps
+
+    echo "Checking for git-lfs (required for NVIDIA Isaac-GR00T)..."
+    if ! command -v git-lfs &> /dev/null; then
+        echo "⚠️ git-lfs not found! Attempting to install it automatically..."
+        if command -v apt-get &> /dev/null; then
+            apt-get update -yqq
+            apt-get install -y git-lfs
+            echo "✅ git-lfs installed successfully."
+        else
+            echo "❌ Error: apt-get not found. Please install git-lfs manually."
+            exit 1
+        fi
+    fi
+    git lfs install
+    echo "========================================================="
 
     local gr00t_path
     gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" https://github.com/NVIDIA/Isaac-GR00T.git)
@@ -602,7 +618,16 @@ install_gr00t_16_model() {
     echo "Checking out gr00t version 7d5a455 and applying dependency patches..."
     (
         cd "$gr00t_path"
+
+        git reset --hard HEAD
+        git clean -fdx
+
         git checkout 7d5a455add459e870c2e4e4569006acace432d49
+
+        current_hash=$(git rev-parse HEAD)
+        echo "========================================================="
+        echo "✅ GR00T repo is currently at Hash: $current_hash"
+        echo "========================================================="
         
         if [ -f "pyproject.toml" ]; then
             sed -i 's/peft==0.11.1/peft>=0.17.1/g' pyproject.toml
