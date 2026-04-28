@@ -31,11 +31,26 @@ def _convert_image(img):
     return img
 
 
+def _select_wrist_views(extra_view_images):
+    extra_view_images = np.asarray(extra_view_images)
+    if extra_view_images.ndim >= 5:
+        if extra_view_images.shape[1] < 2:
+            raise ValueError(
+                "x2robot requires extra_view_images with two wrist views, "
+                f"got shape {extra_view_images.shape}."
+            )
+        return extra_view_images[:, 0], extra_view_images[:, 1]
+    if extra_view_images.shape[0] < 2:
+        raise ValueError(
+            "x2robot requires extra_view_images with two wrist views, "
+            f"got shape {extra_view_images.shape}."
+        )
+    return extra_view_images[0], extra_view_images[1]
+
+
 @dataclasses.dataclass(frozen=True)
 class X2RobotInputs(transforms.DataTransformFn):
     action_dim: int = 14
-    only_right_obs: bool = False
-    random_pos_offset: float = 0.0
 
     EXPECTED_CAMERAS: ClassVar[tuple[str, ...]] = (
         "left_wrist_view",
@@ -44,17 +59,35 @@ class X2RobotInputs(transforms.DataTransformFn):
     )
 
     def __call__(self, data: dict) -> dict:
-        images = data["images"]
-        missing = set(self.EXPECTED_CAMERAS) - set(images)
-        if missing:
-            raise ValueError(
-                f"Images must contain {self.EXPECTED_CAMERAS}, "
-                f"missing {tuple(sorted(missing))}."
+        if "images" in data:
+            images = data["images"]
+            missing = set(self.EXPECTED_CAMERAS) - set(images)
+            if missing:
+                raise ValueError(
+                    f"Images must contain {self.EXPECTED_CAMERAS}, "
+                    f"missing {tuple(sorted(missing))}."
+                )
+            face_view = images["face_view"]
+            left_wrist_view = images["left_wrist_view"]
+            right_wrist_view = images["right_wrist_view"]
+            state = data["state"]
+        else:
+            if "observation/extra_view_image" not in data:
+                raise ValueError(
+                    "x2robot runtime inputs require observation/extra_view_image "
+                    "with left/right wrist views."
+                )
+            left_wrist_view, right_wrist_view = _select_wrist_views(
+                data["observation/extra_view_image"]
             )
+            face_view = data["observation/image"]
+            state = data["observation/state"]
 
-        state = transforms.pad_to_dim(np.asarray(data["state"]), self.action_dim)
+        state = transforms.pad_to_dim(np.asarray(state), self.action_dim)
         processed_images = {
-            name: _convert_image(images[name]) for name in self.EXPECTED_CAMERAS
+            "left_wrist_view": _convert_image(left_wrist_view),
+            "face_view": _convert_image(face_view),
+            "right_wrist_view": _convert_image(right_wrist_view),
         }
         inputs = {
             "image": {
@@ -78,21 +111,6 @@ class X2RobotInputs(transforms.DataTransformFn):
             inputs["prompt"] = data["prompt"]
         if "actions_is_pad" in data:
             inputs["actions_is_pad"] = data["actions_is_pad"]
-
-        if self.random_pos_offset > 0.0:
-            pos_offset = (np.random.rand(3) * 2 - 1.0) * self.random_pos_offset
-            inputs["state"][..., :3] += pos_offset
-            inputs["state"][..., 7:10] += pos_offset
-            if "actions" in inputs:
-                inputs["actions"][..., :3] += pos_offset
-                inputs["actions"][..., 7:10] += pos_offset
-
-        if self.only_right_obs:
-            inputs["image_mask"]["base_0_rgb"] = np.False_
-            inputs["image_mask"]["left_wrist_0_rgb"] = np.False_
-            inputs["state"][..., :7] = 0.0
-            if "actions" in inputs:
-                inputs["actions"][..., :7] = 0.0
 
         return inputs
 

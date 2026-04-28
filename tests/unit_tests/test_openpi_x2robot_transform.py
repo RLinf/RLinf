@@ -43,7 +43,7 @@ def _new_x2robot_openpi_model(openpi_symbols):
     OpenPi0Config, OpenPi0ForRLActionPrediction, _, _ = openpi_symbols
     model = OpenPi0ForRLActionPrediction.__new__(OpenPi0ForRLActionPrediction)
     object.__setattr__(
-        model, "config", OpenPi0Config(config_name="pi0_turtle2_x2robot_s2s")
+        model, "config", OpenPi0Config(config_name="pi0_turtle2_x2robot")
     )
     return model
 
@@ -53,22 +53,15 @@ def _assert_x2robot_rollout_transform(env_obs, face, left, right):
     _, _, X2RobotInputs, X2RobotOutputs = openpi_symbols
     model = _new_x2robot_openpi_model(openpi_symbols)
     processed = model.obs_processor(env_obs)
-    assert set(processed["images"]) == {
-        "left_wrist_view",
-        "face_view",
-        "right_wrist_view",
-    }
     np.testing.assert_array_equal(
-        np.asarray(processed["images"]["left_wrist_view"]), np.asarray(left)
+        np.asarray(processed["observation/image"]), np.asarray(face)
     )
     np.testing.assert_array_equal(
-        np.asarray(processed["images"]["face_view"]), np.asarray(face)
+        np.asarray(processed["observation/extra_view_image"]),
+        np.asarray(env_obs["extra_view_images"]),
     )
     np.testing.assert_array_equal(
-        np.asarray(processed["images"]["right_wrist_view"]), np.asarray(right)
-    )
-    np.testing.assert_array_equal(
-        np.asarray(processed["state"]), np.asarray(env_obs["states"])
+        np.asarray(processed["observation/state"]), np.asarray(env_obs["states"])
     )
     np.testing.assert_array_equal(processed["prompt"], env_obs["task_descriptions"])
 
@@ -94,6 +87,7 @@ def test_openpi_x2robot_rollout_obs_transform_smoke():
     env_obs = {
         "main_images": face,
         "extra_view_images": np.stack([left, right], axis=1),
+        "wrist_images": None,
         "states": np.arange(batch * 14, dtype=np.float32).reshape(batch, 14),
         "task_descriptions": np.asarray(["fold the towel", "fold the towel"]),
     }
@@ -110,6 +104,7 @@ def test_openpi_x2robot_rollout_obs_transform_accepts_cpu_torch_tensors():
     env_obs = {
         "main_images": face,
         "extra_view_images": torch.stack([left, right], dim=1),
+        "wrist_images": None,
         "states": torch.arange(batch * 14, dtype=torch.float32).reshape(batch, 14),
         "task_descriptions": np.asarray(["fold the towel", "fold the towel"]),
     }

@@ -175,7 +175,7 @@ actor:
     action_dim: 14
     add_value_head: False
     openpi:
-      config_name: "pi0_turtle2_x2robot_s2s"
+      config_name: "pi0_turtle2_x2robot"
       num_images_in_input: 3
       action_chunk: ${actor.model.num_action_chunks}
       action_env_dim: ${actor.model.action_dim}

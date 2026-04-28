@@ -61,7 +61,7 @@ def test_turtle2_takeover_collect_openpi_config_composes(monkeypatch):
     assert cfg.env.eval.data_collection.only_success is False
     assert cfg.env.eval.data_collection.record_executed_action is True
     assert cfg.env.eval.data_collection.robot_type == "turtle2"
-    assert cfg.actor.model.openpi.config_name == "pi0_turtle2_x2robot_s2s"
+    assert cfg.actor.model.openpi.config_name == "pi0_turtle2_x2robot"
     assert cfg.actor.model.action_dim == 14
     assert cfg.actor.model.num_action_chunks == 30
 
