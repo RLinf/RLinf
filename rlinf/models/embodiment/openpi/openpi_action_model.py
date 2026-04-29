@@ -33,6 +33,10 @@ from rlinf.utils.logging import get_logger
 from rlinf.utils.nested_dict_process import copy_dict_tensor
 
 
+def _to_numpy(x):
+    return np.asarray(x.detach().cpu()) if torch.is_tensor(x) else x
+
+
 @dataclass(frozen=True)
 class OpenPi0Config(Pi0Config):
     # config for rl
@@ -256,9 +260,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             inputs = {key: inputs[key] for key in inputs.keys() if "/" in key}
 
         # tensor -> numpy
-        inputs = jax.tree.map(
-            lambda x: np.asarray(x.detach().cpu()) if torch.is_tensor(x) else x, inputs
-        )
+        inputs = jax.tree.map(_to_numpy, inputs)
         batch_size = next(v.shape[0] for v in inputs.values() if hasattr(v, "shape"))
         # split & transform
         transformed_samples = []
@@ -313,7 +315,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         elif forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
         elif forward_type == ForwardType.NFT:
-            return self.forward_nft(**kwargs)
+            return self.nft_forward(**kwargs)
         elif forward_type == ForwardType.SAC:
             return self.sac_forward(**kwargs)
         elif forward_type == ForwardType.SAC_Q:
@@ -423,51 +425,37 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             "entropy": entropy,
         }
 
-    def forward_nft(
+    def nft_forward(
         self,
         forward_inputs: dict[str, torch.Tensor],
         **kwargs,
     ) -> dict[str, Any]:
         """Compute velocity v_theta at explicit (x_t, timesteps) for NFT loss."""
+        # obs process
         observation = self.input_transform(forward_inputs, transpose=False)
         observation = _model.Observation.from_dict(observation)
         images, img_masks, lang_tokens, lang_masks, state = (
             self._preprocess_observation(observation, train=False)
         )
-
+        # move device
         device = next(self.parameters()).device
         images = [img.to(device) for img in images]
         img_masks = [m.to(device) for m in img_masks]
         state = state.to(device)
-
-        # get explicit inputs
-        nft_explicit_inputs = kwargs.get("nft_explicit_inputs", None)
-        if nft_explicit_inputs is not None:
-            x_t = nft_explicit_inputs["x_t"]
-            t = nft_explicit_inputs["timesteps"]
-        else:
-            if "chains" not in forward_inputs:
-                raise ValueError(
-                    "forward_nft requires `chains` or `nft_explicit_inputs`."
-                )
-            x_0 = forward_inputs["chains"][:, -1].to(device)
-            bsize = x_0.shape[0]
-            t = torch.rand((bsize,), device=device)
-            t_expanded = t[:, None, None]
-            noise = torch.randn_like(x_0)
-            x_t = (1 - t_expanded) * x_0 + t_expanded * noise
-
+        # nft inputs
+        nft_inputs = kwargs["nft_inputs"]
+        x_t = nft_inputs["x_t"].to(device)
+        t = nft_inputs["timesteps"].to(device)
+        # get v_theta
         _, prefix_pad_masks, past_key_values = self._build_prefix_cache(
             images, img_masks, lang_tokens, lang_masks
         )
-
         compute_values = kwargs.get("compute_values", False)
         v_theta, suffix_out = self.get_velocity(
             state, x_t, t, prefix_pad_masks, past_key_values
         )
         v_theta = v_theta[:, : self.config.action_chunk, :]
-
-        bsize = x_t.shape[0]
+        # result
         result: dict[str, Any] = {"v_theta": v_theta, "x_t": x_t, "timesteps": t}
         if compute_values and self.config.add_value_head:
             result["values"] = self._compute_value_from_suffix(suffix_out)[:, None]
@@ -589,12 +577,11 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         if forward_action is not None:
             forward_inputs["action"] = forward_action
 
-        if self.config.is_nft and "nft_x" in outputs:
-            forward_inputs["nft_x"] = outputs["nft_x"]
-            forward_inputs["nft_v"] = outputs["nft_v"]
-            forward_inputs["nft_xnext"] = outputs["nft_xnext"]
-            forward_inputs["nft_step_index"] = outputs["nft_step_index"]
-            forward_inputs["nft_noise_level"] = outputs["nft_noise_level"]
+        if self.config.is_nft:
+            nft_outputs = {
+                key: value for key, value in outputs.items() if key.startswith("nft_")
+            }
+            forward_inputs.update(nft_outputs)
 
         # Clone observations to avoid cross-step reference issues.
         cloned_obs = copy_dict_tensor(
@@ -655,9 +642,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         # In the joint logprob mode, we need to sample the logprob for each denoise step
         # In the non-joint logprob mode, only one denoise step is sampled and ode-sde mix sampling is used
         # denoise index
-        collect_nft_traces = self.config.is_nft and mode == "train"
+        collect_nft_state = self.config.is_nft and mode == "train"
         if mode == "train":
-            if self.config.joint_logprob or collect_nft_traces:
+            if self.config.joint_logprob or collect_nft_state:
                 denoise_inds = torch.arange(num_steps)
             else:
                 if self.config.ignore_last:
@@ -672,13 +659,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             denoise_inds = torch.tensor([-1] * num_steps)
         denoise_inds = denoise_inds[None].repeat(bsize, 1)
 
-        # collect nft traces — per-sample random step index
-        if collect_nft_traces:
-            flow_rand_idx = torch.randint(0, num_steps, (bsize,), device=device)
-            flow_x_snap = torch.zeros_like(x_t)
-            flow_v_snap = torch.zeros_like(x_t)
-            flow_xnext_snap = torch.zeros_like(x_t)
-            flow_noise_level = torch.zeros(bsize, device=device, dtype=x_t.dtype)
+        # collect nft states for nft algorithm
+        nft_state = self._init_nft_state(collect_nft_state, x_t, num_steps, device)
 
         # denoise step
         for idx in range(num_steps):
@@ -700,21 +682,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             )
             # Euler step - use new tensor assignment instead of in-place operation
             x_t = x_t_mean + self.sample_noise(x_t.shape, device) * x_t_std
-            if collect_nft_traces:
-                mask = flow_rand_idx == idx
-                mask_bc = mask[:, None, None]
-                if mask.any():
-                    flow_x_snap = torch.where(mask_bc, x_t_prev.detach(), flow_x_snap)
-                    flow_v_snap = torch.where(mask_bc, v_t.detach(), flow_v_snap)
-                    flow_xnext_snap = torch.where(
-                        mask_bc, x_t.detach(), flow_xnext_snap
-                    )
-                    nl = self._get_noise_level(
-                        device=device, dtype=x_t.dtype, sample_method=sample_method
-                    )
-                    flow_noise_level = torch.where(
-                        mask, nl.expand(bsize), flow_noise_level
-                    )
+            self._update_nft_state(nft_state, idx, x_t_prev, v_t, x_t, sample_method)
             log_prob = self.get_logprob_norm(x_t, x_t_mean, x_t_std)
             # store
             values.append(value_t)
@@ -745,17 +713,15 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             "prev_values": values,
             "denoise_inds": denoise_inds,
         }
-        if collect_nft_traces:
-            result.update(
-                {
-                    "nft_x": flow_x_snap,
-                    "nft_v": flow_v_snap,
-                    "nft_xnext": flow_xnext_snap,
-                    "nft_step_index": flow_rand_idx,
-                    "nft_noise_level": flow_noise_level,
-                }
-            )
+        if collect_nft_state:
+            result.update(nft_state)
+            result["nft_x0"] = x_0.detach()
         return result
+
+    def _get_timesteps(self, denoise_steps, device):
+        timesteps = torch.linspace(1, 1 / denoise_steps, denoise_steps, device=device)
+        timesteps = torch.cat([timesteps, torch.tensor([0.0], device=device)])
+        return timesteps
 
     def sample_mean_var_val(
         self,
@@ -781,8 +747,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             idx = torch.tensor(idx).expand(bsize)
         # build parameters
         noise_level = self._get_noise_level(device=device, dtype=x_t.dtype)
-        timesteps = torch.linspace(1, 1 / denoise_steps, denoise_steps, device=device)
-        timesteps = torch.cat([timesteps, torch.tensor([0.0], device=device)])
+        timesteps = self._get_timesteps(denoise_steps, device)
         # input parameters
         t_input = timesteps[idx]
         delta = timesteps[idx] - timesteps[idx + 1]
@@ -950,6 +915,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         compute_values=False,
     ):
         bsize = state.shape[0]
+        batch_indices = torch.arange(bsize)
         prefix_output, prefix_pad_masks, past_key_values = self._build_prefix_cache(
             images, img_masks, lang_tokens, lang_masks
         )
@@ -972,8 +938,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             num_steps = 1
         for idx in range(num_steps):
             denoise_ind = denoise_inds[:, idx]
-            chains_pre = chains[torch.arange(bsize), denoise_ind]
-            chains_next = chains[torch.arange(bsize), denoise_ind + 1]
+            chains_pre = chains[batch_indices, denoise_ind]
+            chains_next = chains[batch_indices, denoise_ind + 1]
             x_t_mean, x_t_std, value_t, _ = self.sample_mean_var_val(
                 chains_pre,
                 denoise_ind,
@@ -1242,6 +1208,62 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         q_values = self.q_head(state_features, image_features, actions)
 
         return q_values
+
+    # ===== NFT-specific methods =====
+
+    def _init_nft_state(
+        self,
+        collect_nft_state: bool,
+        x_t: torch.Tensor,
+        num_steps: int,
+        device: torch.device,
+    ) -> dict[str, torch.Tensor] | None:
+        """Initialize NFT state buffers for rollout sampling."""
+        if not collect_nft_state:
+            return None
+        return {
+            "nft_step_index": torch.randint(
+                0, num_steps, (x_t.shape[0],), device=device
+            ),
+            "nft_xcur": torch.zeros_like(x_t),
+            "nft_v": torch.zeros_like(x_t),
+            "nft_xnext": torch.zeros_like(x_t),
+            "nft_noise_level": torch.zeros(
+                x_t.shape[0], device=device, dtype=x_t.dtype
+            ),
+        }
+
+    def _update_nft_state(
+        self,
+        nft_state: dict[str, torch.Tensor] | None,
+        idx: int,
+        x_t_prev: torch.Tensor,
+        v_t: torch.Tensor,
+        x_t: torch.Tensor,
+        sample_method: str,
+    ) -> None:
+        """Update NFT state buffers for the selected denoising step."""
+        if nft_state is None:
+            return
+        mask = nft_state["nft_step_index"] == idx
+        if not mask.any():
+            return
+        mask_bc = mask[:, None, None]
+        nft_state["nft_xcur"] = torch.where(
+            mask_bc, x_t_prev.detach(), nft_state["nft_xcur"]
+        )
+        nft_state["nft_v"] = torch.where(mask_bc, v_t.detach(), nft_state["nft_v"])
+        nft_state["nft_xnext"] = torch.where(
+            mask_bc, x_t.detach(), nft_state["nft_xnext"]
+        )
+        noise_level = self._get_noise_level(
+            device=x_t.device, dtype=x_t.dtype, sample_method=sample_method
+        )
+        nft_state["nft_noise_level"] = torch.where(
+            mask,
+            torch.full_like(nft_state["nft_noise_level"], float(noise_level.item())),
+            nft_state["nft_noise_level"],
+        )
 
     def _get_noise_level(
         self, device: torch.device, dtype: torch.dtype, sample_method: str | None = None
