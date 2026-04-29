@@ -26,6 +26,169 @@ def compute_split_num(num, split_num):
     return math.lcm(num, split_num) // split_num
 
 
+def compute_pipeline_micro_batch_env_size(
+    micro_batch_size: int,
+    rollout_epoch: int,
+    n_train_chunk_steps: int,
+    group_size: int = 1,
+    rollout_epochs_per_flush: int | None = None,
+) -> int:
+    """Compute the env batch size of one pipeline local micro batch."""
+    if rollout_epochs_per_flush is None:
+        rollout_epochs_per_flush = rollout_epoch
+    assert rollout_epoch % rollout_epochs_per_flush == 0, (
+        f"rollout_epoch ({rollout_epoch}) must be divisible by "
+        f"rollout_epochs_per_flush ({rollout_epochs_per_flush})."
+    )
+    flat_samples_per_env = rollout_epochs_per_flush * n_train_chunk_steps
+    assert micro_batch_size % flat_samples_per_env == 0, (
+        f"actor.micro_batch_size ({micro_batch_size}) must be divisible by "
+        f"rollout_epochs_per_flush * n_train_chunk_steps ({flat_samples_per_env})."
+    )
+    env_batch_size = micro_batch_size // flat_samples_per_env
+    assert env_batch_size % group_size == 0, (
+        f"pipeline env batch size ({env_batch_size}) must be divisible by "
+        f"group_size ({group_size}) to keep group-aligned splits."
+    )
+    return env_batch_size
+
+
+def compute_pipeline_actor_split_num(
+    train_num_envs_per_stage: int,
+    micro_batch_size: int,
+    rollout_epoch: int,
+    n_train_chunk_steps: int,
+    group_size: int = 1,
+    rollout_epochs_per_flush: int | None = None,
+) -> int:
+    """Compute how many pipeline splits one env stage should emit per flush."""
+    env_batch_size = compute_pipeline_micro_batch_env_size(
+        micro_batch_size=micro_batch_size,
+        rollout_epoch=rollout_epoch,
+        n_train_chunk_steps=n_train_chunk_steps,
+        group_size=group_size,
+        rollout_epochs_per_flush=rollout_epochs_per_flush,
+    )
+    assert train_num_envs_per_stage % env_batch_size == 0, (
+        f"train_num_envs_per_stage ({train_num_envs_per_stage}) must be divisible by "
+        f"pipeline env micro-batch size ({env_batch_size})."
+    )
+    return train_num_envs_per_stage // env_batch_size
+
+
+def compute_pipeline_expected_actor_recv_num(
+    total_num_envs: int,
+    actor_world_size: int,
+    micro_batch_size: int,
+    rollout_epoch: int,
+    n_train_chunk_steps: int,
+) -> int:
+    """Compute how many pipeline local micro batches each actor rank should receive."""
+    total_rollout_samples = total_num_envs * rollout_epoch * n_train_chunk_steps
+    per_rank_micro_batch_samples = actor_world_size * micro_batch_size
+    assert total_rollout_samples % per_rank_micro_batch_samples == 0, (
+        f"Total flattened rollout samples ({total_rollout_samples}) must be "
+        f"divisible by actor_world_size * micro_batch_size "
+        f"({per_rank_micro_batch_samples})."
+    )
+    return total_rollout_samples // per_rank_micro_batch_samples
+
+
+def reshape_embodied_rollout_batch_for_adv(
+    nested_dict: dict,
+    rollout_epoch: int,
+) -> dict:
+    """Reshape embodied rollout tensors for advantage computation."""
+    ret_dict = {}
+    for key, value in nested_dict.items():
+        if isinstance(value, torch.Tensor):
+            new_value = value.reshape(rollout_epoch, -1, *value.shape[1:])
+            new_value = new_value.transpose(0, 1)
+            new_value = new_value.reshape(new_value.shape[0], -1, *new_value.shape[3:])
+            ret_dict[key] = new_value
+        elif isinstance(value, dict):
+            ret_dict[key] = reshape_embodied_rollout_batch_for_adv(value, rollout_epoch)
+    return ret_dict
+
+
+def process_embodied_rollout_batch_for_adv(
+    rollout_batch: dict[str, torch.Tensor],
+    *,
+    rollout_epoch: int,
+    auto_reset: bool,
+    ignore_terminations: bool,
+    reward_type: str,
+    filter_rewards: bool,
+    group_size: int,
+    rewards_lower_bound: float | None = None,
+    rewards_upper_bound: float | None = None,
+) -> dict[str, torch.Tensor]:
+    """Prepare an embodied rollout batch for advantage computation."""
+    rollout_batch = reshape_embodied_rollout_batch_for_adv(rollout_batch, rollout_epoch)
+
+    if not auto_reset and not ignore_terminations:
+        dones = rollout_batch["dones"]
+        loss_mask, loss_mask_sum = compute_loss_mask(dones)
+
+        if reward_type == "chunk_level":
+            loss_mask = loss_mask.any(dim=-1, keepdim=True)
+            loss_mask_sum = loss_mask_sum[..., -1:]
+
+        rollout_batch["loss_mask"] = loss_mask
+        rollout_batch["loss_mask_sum"] = loss_mask_sum
+
+    if filter_rewards:
+        rewards = rollout_batch["rewards"]
+        if rollout_batch.get("loss_mask", None) is not None:
+            rewards = rewards * rollout_batch["loss_mask"]
+        n_chunk_step, batch_size, _ = rewards.shape
+
+        assert batch_size % group_size == 0, (
+            f"batch {batch_size} not divisible by group_size {group_size}"
+        )
+        n_prompts = batch_size // group_size
+
+        rewards = rewards.transpose(0, 1).reshape(rewards.shape[1], -1)
+        reward_matrix = rewards.reshape(n_prompts, group_size, rewards.shape[-1])
+        reward_matrix = reward_matrix.sum(dim=-1)
+        mean_reward_in_group = reward_matrix.mean(dim=1)
+
+        reward_filter_mask = (mean_reward_in_group >= rewards_lower_bound) & (
+            mean_reward_in_group <= rewards_upper_bound
+        )
+        reward_filter_mask = reward_filter_mask.repeat_interleave(group_size)
+        reward_filter_mask = (
+            reward_filter_mask.unsqueeze(0).expand(n_chunk_step, -1).unsqueeze(-1)
+        )
+
+        if rollout_batch.get("loss_mask", None) is not None:
+            rollout_batch["loss_mask"] = reward_filter_mask & rollout_batch["loss_mask"]
+        else:
+            rollout_batch["loss_mask"] = reward_filter_mask
+
+    return rollout_batch
+
+
+def flatten_embodied_rollout_batch_for_train(
+    nested_dict: dict,
+    shuffle_id: torch.Tensor,
+) -> dict:
+    """Flatten an embodied rollout batch into train-order samples."""
+    ret_dict = {}
+    for key, value in nested_dict.items():
+        if key in ["dones", "terminations", "truncations", "prev_values"]:
+            value = value[:-1]
+        if "env_info" in key:
+            raise NotImplementedError
+        if value is None:
+            ret_dict[key] = None
+        elif isinstance(value, torch.Tensor):
+            ret_dict[key] = value.reshape(-1, *value.shape[2:])[shuffle_id]
+        elif isinstance(value, dict):
+            ret_dict[key] = flatten_embodied_rollout_batch_for_train(value, shuffle_id)
+    return ret_dict
+
+
 def _normalize_metric_shard(shard: object) -> torch.Tensor:
     """One rank's metric -> 1D float tensor on CPU."""
     if shard is None:

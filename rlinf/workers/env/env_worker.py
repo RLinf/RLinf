@@ -20,19 +20,26 @@ import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from rlinf.algorithms.registry import calculate_adv_and_returns
 from rlinf.data.embodied_io_struct import (
     ChunkStepResult,
     EmbodiedRolloutResult,
     EnvOutput,
     RolloutResult,
     Trajectory,
+    convert_trajectories_to_batch,
 )
 from rlinf.envs import get_env_cls
 from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.wrappers import RecordVideo
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.comm_mapping import CommMapper
-from rlinf.utils.metric_utils import compute_split_num
+from rlinf.utils.metric_utils import (
+    compute_split_num,
+    compute_pipeline_actor_split_num,
+    flatten_embodied_rollout_batch_for_train,
+    process_embodied_rollout_batch_for_adv,
+)
 from rlinf.utils.nested_dict_process import (
     copy_dict_tensor,
     split_dict,
@@ -929,6 +936,63 @@ class EnvWorker(Worker):
             for env_output in env_output_list
         ]
 
+    def _compute_advantages_and_returns_for_actor(
+        self,
+        rollout_batch: dict[str, torch.Tensor],
+    ) -> dict[str, torch.Tensor]:
+        kwargs = {
+            "task_type": self.cfg.runner.task_type,
+            "adv_type": self.cfg.algorithm.adv_type,
+            "rewards": rollout_batch["rewards"],
+            "dones": rollout_batch["dones"],
+            "values": rollout_batch.get("prev_values", None),
+            "gamma": self.cfg.algorithm.get("gamma", 1),
+            "gae_lambda": self.cfg.algorithm.get("gae_lambda", 1),
+            "group_size": self.cfg.algorithm.get("group_size", 8),
+            "reward_type": self.cfg.algorithm.reward_type,
+            "loss_mask": rollout_batch.get("loss_mask", None),
+            "loss_mask_sum": rollout_batch.get("loss_mask_sum", None),
+            "normalize_advantages": False,
+        }
+        if self.cfg.algorithm.adv_type == "grpo_dynamic":
+            kwargs["idx_to_traj"] = rollout_batch["idx_to_traj"]
+
+        advantages_and_returns = calculate_adv_and_returns(**kwargs)
+        rollout_batch.update(advantages_and_returns)
+        if kwargs["loss_mask"] is not None:
+            rollout_batch["loss_mask"] = kwargs["loss_mask"]
+        if kwargs["loss_mask_sum"] is not None:
+            rollout_batch["loss_mask_sum"] = kwargs["loss_mask_sum"]
+        return rollout_batch
+
+    def _prepare_training_pipeline_batch(
+        self,
+        trajectory: Trajectory,
+    ) -> dict[str, torch.Tensor]:
+        rollout_batch = convert_trajectories_to_batch([trajectory])
+        rollout_batch = process_embodied_rollout_batch_for_adv(
+            rollout_batch,
+            rollout_epoch=1,
+            auto_reset=self.cfg.env.train.auto_reset,
+            ignore_terminations=self.cfg.env.train.ignore_terminations,
+            reward_type=self.cfg.algorithm.reward_type,
+            filter_rewards=self.cfg.algorithm.get("filter_rewards", False),
+            group_size=self.cfg.algorithm.group_size,
+            rewards_lower_bound=self.cfg.algorithm.get("rewards_lower_bound", None),
+            rewards_upper_bound=self.cfg.algorithm.get("rewards_upper_bound", None),
+        )
+        if self.cfg.algorithm.adv_type == "grpo_dynamic":
+            rollout_batch["idx_to_traj"] = list(range(rollout_batch["rewards"].shape[1]))
+        rollout_batch = self._compute_advantages_and_returns_for_actor(rollout_batch)
+        rollout_size = (
+            rollout_batch["prev_logprobs"].shape[0]
+            * rollout_batch["prev_logprobs"].shape[1]
+        )
+        return flatten_embodied_rollout_batch_for_train(
+            rollout_batch,
+            torch.arange(rollout_size),
+        )
+
     async def send_rollout_trajectories(
         self, rollout_result: EmbodiedRolloutResult, channel: Channel
     ):
@@ -937,6 +1001,20 @@ class EnvWorker(Worker):
         )
         for trajectory in trajectories:
             channel.put(trajectory, async_op=True)
+
+    async def send_rollout_trajectories_pipeline(
+        self,
+        rollout_result: EmbodiedRolloutResult,
+        channel: Channel,
+    ) -> None:
+        trajectories: list[Trajectory] = rollout_result.to_splited_trajectories(
+            self.actor_split_num
+        )
+        for trajectory in trajectories:
+            with self.worker_timer("prepare_pipeline_actor_train_batch"):
+                actor_batch = self._prepare_training_pipeline_batch(trajectory)
+            with self.worker_timer("send_pipeline_actor_train_batch"):
+                channel.put(actor_batch, async_op=True)
 
     @Worker.timer("run_interact_once")
     async def _run_interact_once(
@@ -1115,6 +1193,174 @@ class EnvWorker(Worker):
 
         return env_metrics
 
+    @Worker.timer("run_interact_once_pipeline")
+    async def _run_interact_once_pipeline(
+        self,
+        input_channel: Channel,
+        rollout_channel: Channel,
+        reward_channel: Channel | None,
+        actor_channel: Channel,
+    ) -> dict[str, torch.Tensor]:
+        env_metrics = defaultdict(list)
+
+        for epoch in range(self.rollout_epoch):
+            rollout_results: list[EmbodiedRolloutResult] = [
+                EmbodiedRolloutResult(
+                    max_episode_length=self.cfg.env.train.max_episode_steps,
+                )
+                for _ in range(self.stage_num)
+            ]
+            if epoch == 0 and self._prefetched_train_bootstrap is not None:
+                env_outputs = self._prefetched_train_bootstrap
+                self._prefetched_train_bootstrap = None
+            else:
+                env_outputs = self._bootstrap_and_send_train(rollout_channel)
+
+            for chunk_step_idx in range(self.n_train_chunk_steps):
+                for stage_id in range(self.stage_num):
+                    env_output = env_outputs[stage_id]
+                    curr_obs = env_output.obs
+                    if env_output.intervene_actions is not None:
+                        rollout_results[stage_id].update_last_actions(
+                            env_output.intervene_actions,
+                            env_output.intervene_flags,
+                        )
+
+                    reward_model_output = None
+                    if reward_channel is not None and chunk_step_idx != 0:
+                        reward_model_output = self.get_reward_model_output(
+                            env_output,
+                            send_channel=reward_channel,
+                            recv_channel=input_channel,
+                        )
+                        if reward_model_output is not None:
+                            env_metrics["reward_model_output"].append(
+                                reward_model_output.detach().float().reshape(-1).cpu()
+                            )
+
+                    rollout_result = self.recv_rollout_results(input_channel, mode="train")
+                    rewards = self.compute_bootstrap_rewards(
+                        env_output, rollout_result.bootstrap_values, reward_model_output
+                    )
+                    chunk_step_result = ChunkStepResult(
+                        actions=rollout_result.forward_inputs.get("action", None),
+                        prev_logprobs=(
+                            rollout_result.prev_logprobs
+                            if self.collect_prev_infos
+                            else None
+                        ),
+                        prev_values=(
+                            rollout_result.prev_values
+                            if self.collect_prev_infos
+                            else None
+                        ),
+                        forward_inputs=rollout_result.forward_inputs,
+                        versions=rollout_result.versions,
+                        dones=env_output.dones,
+                        truncations=env_output.truncations,
+                        terminations=env_output.terminations,
+                        rewards=rewards,
+                    )
+                    rollout_results[stage_id].append_step_result(chunk_step_result)
+                    if rollout_result.save_flags is not None:
+                        rollout_results[stage_id].mark_last_step_with_flags(
+                            rollout_result.save_flags
+                        )
+
+                    env_output, env_info = self.env_interact_step(
+                        rollout_result.actions, stage_id
+                    )
+                    env_batch = env_output.to_dict()
+                    self.send_env_batch(
+                        rollout_channel,
+                        {
+                            "obs": env_batch["obs"],
+                            "final_obs": env_batch["final_obs"],
+                        },
+                    )
+                    if self.collect_transitions:
+                        next_obs = (
+                            env_output.final_obs
+                            if env_output.dones.any() and self.cfg.env.train.auto_reset
+                            else env_output.obs
+                        )
+                        rollout_results[stage_id].append_transitions(curr_obs, next_obs)
+
+                    env_outputs[stage_id] = env_output
+                    self.record_env_metrics(env_metrics, env_info, epoch)
+
+            for stage_id in range(self.stage_num):
+                env_output = env_outputs[stage_id]
+                if env_output.intervene_actions is not None:
+                    rollout_results[stage_id].update_last_actions(
+                        env_output.intervene_actions,
+                        env_output.intervene_flags,
+                    )
+
+                reward_model_output = None
+                if reward_channel is not None:
+                    reward_model_output = self.get_reward_model_output(
+                        env_output,
+                        send_channel=reward_channel,
+                        recv_channel=input_channel,
+                        last_run=epoch == self.rollout_epoch - 1,
+                    )
+                    if reward_model_output is not None:
+                        env_metrics["reward_model_output"].append(
+                            reward_model_output.detach().float().reshape(-1).cpu()
+                        )
+                rollout_result = self.recv_rollout_results(input_channel, mode="train")
+                rewards = self.compute_bootstrap_rewards(
+                    env_output, rollout_result.bootstrap_values, reward_model_output
+                )
+                rollout_results[stage_id].append_step_result(
+                    ChunkStepResult(
+                        prev_values=(
+                            rollout_result.prev_values
+                            if self.collect_prev_infos
+                            else None
+                        ),
+                        dones=env_output.dones,
+                        truncations=env_output.truncations,
+                        terminations=env_output.terminations,
+                        rewards=rewards,
+                    )
+                )
+
+            self.store_last_obs_and_intervened_info(env_outputs)
+            self.finish_rollout()
+
+            for stage_id in range(self.stage_num):
+                await self.send_rollout_trajectories_pipeline(
+                    rollout_results[stage_id], actor_channel
+                )
+
+        for key, value in env_metrics.items():
+            env_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
+
+        return env_metrics
+
+    @Worker.timer("interact_pipeline")
+    async def interact_pipeline(
+        self,
+        input_channel: Channel,
+        rollout_channel: Channel,
+        reward_channel: Channel | None,
+        actor_channel: Channel,
+    ):
+        env_metrics = await self._run_interact_once_pipeline(
+            input_channel,
+            rollout_channel,
+            reward_channel,
+            actor_channel,
+        )
+
+        for env in self.env_list:
+            if self.enable_offload and hasattr(env, "offload"):
+                env.offload()
+
+        return env_metrics
+
     def evaluate(self, input_channel: Channel, rollout_channel: Channel):
         eval_metrics = defaultdict(list)
 
@@ -1189,6 +1435,15 @@ class EnvWorker(Worker):
         return eval_metrics
 
     def get_actor_split_num(self):
+        if self.cfg.runner.get("use_training_pipeline", False):
+            return compute_pipeline_actor_split_num(
+                train_num_envs_per_stage=self.train_num_envs_per_stage,
+                micro_batch_size=self.cfg.actor.micro_batch_size,
+                rollout_epoch=self.rollout_epoch,
+                n_train_chunk_steps=self.n_train_chunk_steps,
+                group_size=self.cfg.algorithm.group_size,
+                rollout_epochs_per_flush=1,
+            )
         send_num = self._component_placement.get_world_size("env") * self.stage_num
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(recv_num, send_num)
