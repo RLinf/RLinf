@@ -3,6 +3,7 @@ defaults:
   - env/libero_spatial@env.eval
   - model/gr00t_16@actor.model           
   - training_backend/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
 hydra:
@@ -107,7 +108,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/GR00T-N1.6-libero-spatial-ppo"
+    model_path: "/workspace/RLinf/GR00T-1.6-SFT-LIBERO-Spatial-RLinf-SFT-3000"
     precision: ${actor.model.precision}
 actor:
   group_name: "ActorGroup"
@@ -119,10 +120,12 @@ actor:
   enable_offload: True
 
   model:
-    model_path: "/path/to/GR00T-N1.6-libero-spatial-ppo"
+    model_path: "/workspace/RLinf/GR00T-1.6-SFT-LIBERO-Spatial-RLinf-SFT-3000"
+    processor_path: "/workspace/Isaac-GR00T/results/libero_spatial_official_tb/processor"
     model_type: "gr00t_1_6"   
+    embodiment_tag: "libero_panda"
     add_value_head: True
-    num_action_chunks: 1       
+    num_action_chunks: 16
     denoising_steps: 1
     no_split_modules:
       - "Qwen3DecoderLayer"

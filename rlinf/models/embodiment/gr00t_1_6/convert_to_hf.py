@@ -12,31 +12,62 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
 import os
 import shutil
 
 import torch
 from safetensors.torch import save_file
 
-base_model_path = "/path/to/GR00T-N1.6-3B"  # Original un-finetuned weights directory
-sft_pt_path = "/path/to/logs/**/gr00t_16_sft_libero/checkpoints/**/actor/model_state_dict/full_weights.pt"
-hf_output_path = "/path/to/output/GR00T-1.6-SFT-LIBERO-HF"  # New directory for the converted RL model
+DEFAULT_BASE_MODEL_PATH = "/workspace/RLinf/GR00T-N1.6-3B"
+DEFAULT_SFT_PT_PATH = (
+    "/workspace/test/RLinf/logs/20260430-16:26:37/gr00t_16_sft_libero/"
+    "checkpoints/global_step_3000/actor/model_state_dict/full_weights.pt"
+)
+DEFAULT_HF_OUTPUT_PATH = "/workspace/RLinf/GR00T-1.6-SFT-LIBERO-Spatial-RLinf-SFT-3000"
+DEFAULT_PROCESSOR_PATH = "/workspace/Isaac-GR00T/results/libero_spatial_official_tb/processor"
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Convert an RLinf GR00T SFT full_weights.pt checkpoint to HF safetensors."
+    )
+    parser.add_argument("--base-model-path", default=DEFAULT_BASE_MODEL_PATH)
+    parser.add_argument("--sft-pt-path", default=DEFAULT_SFT_PT_PATH)
+    parser.add_argument("--hf-output-path", default=DEFAULT_HF_OUTPUT_PATH)
+    parser.add_argument(
+        "--processor-path",
+        default=DEFAULT_PROCESSOR_PATH,
+        help="Optional processor directory to overlay into the HF output.",
+    )
+    return parser.parse_args()
+
+
+def copy_non_weight_files(src_dir: str, dst_dir: str):
+    for filename in os.listdir(src_dir):
+        if filename.endswith((".safetensors", ".pt", ".bin", ".index.json")):
+            continue
+        src = os.path.join(src_dir, filename)
+        dst = os.path.join(dst_dir, filename)
+        if os.path.isdir(src):
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        else:
+            shutil.copy2(src, dst)
 
 
 def main():
+    args = parse_args()
+    base_model_path = args.base_model_path
+    sft_pt_path = args.sft_pt_path
+    hf_output_path = args.hf_output_path
+
     os.makedirs(hf_output_path, exist_ok=True)
 
     # 1. Copy all non-weight files (config.json, experiment_cfg, and other metadata)
     print("[1/3] Copying model configuration files...")
-    for filename in os.listdir(base_model_path):
-        # Exclude the old original weight files
-        if not filename.endswith((".safetensors", ".pt", ".bin", ".index.json")):
-            src = os.path.join(base_model_path, filename)
-            dst = os.path.join(hf_output_path, filename)
-            if os.path.isdir(src):
-                shutil.copytree(src, dst, dirs_exist_ok=True)
-            else:
-                shutil.copy2(src, dst)
+    copy_non_weight_files(base_model_path, hf_output_path)
+    if args.processor_path:
+        copy_non_weight_files(args.processor_path, hf_output_path)
 
     # 2. Load the clean weights trained from SFT
     print("[2/3] Loading the SFT-trained PyTorch weights...")

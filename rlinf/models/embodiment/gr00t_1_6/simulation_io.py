@@ -81,7 +81,23 @@ def convert_to_libero_action(
         action_array = np.concatenate([pos, rot, gripper], axis=-1)
         
     except KeyError:
-        if "rel_arm_action" in action_chunk:
+        if all(
+            key in action_chunk
+            for key in ("x", "y", "z", "roll", "pitch", "yaw", "gripper")
+        ):
+            action_array = np.concatenate(
+                [
+                    action_chunk["x"][:, :chunk_size],
+                    action_chunk["y"][:, :chunk_size],
+                    action_chunk["z"][:, :chunk_size],
+                    action_chunk["roll"][:, :chunk_size],
+                    action_chunk["pitch"][:, :chunk_size],
+                    action_chunk["yaw"][:, :chunk_size],
+                    action_chunk["gripper"][:, :chunk_size],
+                ],
+                axis=-1,
+            )
+        elif "rel_arm_action" in action_chunk:
             arm = action_chunk["rel_arm_action"][:, :chunk_size]
             grp = action_chunk["gripper_action"][:, :chunk_size]
             action_array = np.concatenate([arm, grp], axis=-1)

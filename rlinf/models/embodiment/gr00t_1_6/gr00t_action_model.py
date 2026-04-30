@@ -358,7 +358,43 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
             value_embs = vl_embs_value
         else:
             value_embs = torch.cat((vl_embs_value, state_features_value), dim=1)
+        import os
+        if os.getenv("RLINF_DEBUG_GR00T_ACTION") == "1" and not getattr(
+            self, "_printed_value_debug", False
+        ):
+            self._printed_value_debug = True
+
+            def describe_value_input(name, value):
+                arr = value.detach().float().cpu()
+                finite = torch.isfinite(arr)
+                print(
+                    f"[GR00T_VALUE_DEBUG] {name}: shape={tuple(arr.shape)} "
+                    f"finite={finite.all().item()} nan={torch.isnan(arr).sum().item()} "
+                    f"min={arr[finite].min().item() if finite.any() else float('nan'):.6g} "
+                    f"max={arr[finite].max().item() if finite.any() else float('nan'):.6g}",
+                    flush=True,
+                )
+
+            describe_value_input("vl_embs_value", vl_embs_value)
+            describe_value_input("state_features_value", state_features_value)
+            describe_value_input("value_embs", value_embs)
+
         values_vlm = self.value_head(value_embs)[:, 0]
+
+        if os.getenv("RLINF_DEBUG_GR00T_ACTION") == "1" and not getattr(
+            self, "_printed_value_output_debug", False
+        ):
+            self._printed_value_output_debug = True
+            arr = values_vlm.detach().float().cpu()
+            finite = torch.isfinite(arr)
+            print(
+                f"[GR00T_VALUE_DEBUG] values_vlm: shape={tuple(arr.shape)} "
+                f"finite={finite.all().item()} nan={torch.isnan(arr).sum().item()} "
+                f"min={arr[finite].min().item() if finite.any() else float('nan'):.6g} "
+                f"max={arr[finite].max().item() if finite.any() else float('nan'):.6g}",
+                flush=True,
+            )
+
         return values_vlm
 
 class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6,BasePolicy):
@@ -397,6 +433,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6,BasePolicy):
             self.embodiment_tag = EmbodimentTag(embodiment_tag)
         else:
             self.embodiment_tag = embodiment_tag
+        processor_path = kwargs.pop("processor_path", None)
         transformers_loading_kwargs = kwargs.pop("transformers_loading_kwargs", {"trust_remote_code": True})
         super().__init__(config, transformers_loading_kwargs=transformers_loading_kwargs, **kwargs)
 
@@ -428,14 +465,24 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6,BasePolicy):
         # self._modality_transform = modality_transform
         if modality_config is None or modality_transform is None:
             from transformers import AutoProcessor
-            
+
             print("loading Processor...")
-            processor = AutoProcessor.from_pretrained(str(local_model_path), trust_remote_code=True)
-            
-            modality_transform = processor
-            modality_config = getattr(processor, "modality_config", None) 
-            
-            print("✅ Processor loaded safely! No model weights were touched.")
+            if processor_path is not None:
+                processor_path = Path(processor_path)
+                with open(processor_path / "processor_config.json", "r") as f:
+                    processor_cfg = json.load(f)["processor_kwargs"]
+                with open(processor_path / "statistics.json", "r") as f:
+                    processor_cfg["statistics"] = json.load(f)
+                with open(processor_path / "embodiment_id.json", "r") as f:
+                    processor_cfg["embodiment_id_mapping"] = json.load(f)
+                modality_transform = Gr00tN1d6Processor(**processor_cfg)
+                modality_config = getattr(modality_transform, "modality_configs", None)
+            else:
+                processor = AutoProcessor.from_pretrained(str(local_model_path), trust_remote_code=True)
+                modality_transform = processor
+                modality_config = getattr(processor, "modality_config", None)
+
+            print("Processor loaded safely. No model weights were touched.")
 
         self._modality_config = modality_config
         self._modality_transform = modality_transform
@@ -619,6 +666,39 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6,BasePolicy):
             unnormalized_action, chunk_size=self.output_action_chunks
         )
 
+        import os
+        if os.getenv("RLINF_DEBUG_GR00T_ACTION") == "1" and not getattr(
+            self, "_printed_action_debug", False
+        ):
+            self._printed_action_debug = True
+
+            def describe(name, value):
+                if isinstance(value, torch.Tensor):
+                    arr = value.detach().float().cpu()
+                    finite = torch.isfinite(arr)
+                    print(
+                        f"[GR00T_ACTION_DEBUG] {name}: shape={tuple(arr.shape)} "
+                        f"finite={finite.all().item()} nan={torch.isnan(arr).sum().item()} "
+                        f"min={arr[finite].min().item() if finite.any() else float('nan'):.6g} "
+                        f"max={arr[finite].max().item() if finite.any() else float('nan'):.6g}",
+                        flush=True,
+                    )
+                else:
+                    arr = np.asarray(value, dtype=np.float32)
+                    finite = np.isfinite(arr)
+                    print(
+                        f"[GR00T_ACTION_DEBUG] {name}: shape={arr.shape} "
+                        f"finite={bool(finite.all())} nan={int(np.isnan(arr).sum())} "
+                        f"min={float(arr[finite].min()) if finite.any() else float('nan'):.6g} "
+                        f"max={float(arr[finite].max()) if finite.any() else float('nan'):.6g}",
+                        flush=True,
+                    )
+
+            describe("normalized_action", normalized_action)
+            describe("raw_action", raw_action)
+            describe("prev_values", result.get("prev_values"))
+            describe("prev_logprobs", result.get("prev_logprobs"))
+
         return raw_action, result
 
     # def apply_transforms(self, obs: dict[str, Any]) -> dict[str, Any]:
@@ -659,24 +739,59 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6,BasePolicy):
             else:
                 text = str(text)
                 
-            states_dict = {}
-            for k in state_keys:
-                v = obs[k][i]
-                if isinstance(v, torch.Tensor):
-                    v = v.cpu().numpy()
-                states_dict[k] = np.array(v)
-                
-            ref_T = next(iter(states_dict.values())).shape[0] if states_dict else 1
-            robocasa_requirements = {
-                "end_effector_position_relative": 3,
-                "end_effector_rotation_relative": 4,
-                "gripper_qpos": 2,
-                "base_position": 3,
-                "base_rotation": 4
-            }
-            for req_k, req_dim in robocasa_requirements.items():
-                if req_k not in states_dict:
-                    states_dict[req_k] = np.zeros((ref_T, req_dim), dtype=np.float32)
+            def to_numpy(value):
+                if isinstance(value, torch.Tensor):
+                    return value.detach().cpu().float().numpy()
+                return np.asarray(value, dtype=np.float32)
+
+            def split_libero_state(value):
+                value = to_numpy(value).reshape(-1)
+                if value.shape[0] < 7:
+                    raise ValueError(f"LIBERO state should have at least 7 dims, got {value.shape}")
+                return {
+                    "x": value[0:1][None, :],
+                    "y": value[1:2][None, :],
+                    "z": value[2:3][None, :],
+                    "roll": value[3:4][None, :],
+                    "pitch": value[4:5][None, :],
+                    "yaw": value[5:6][None, :],
+                    "gripper": value[6:8][None, :],
+                }
+
+            tag_val = self.embodiment_tag.value if hasattr(self.embodiment_tag, "value") else str(self.embodiment_tag)
+            state_key = None
+            for candidate in ("state", "observation.state"):
+                if candidate in obs:
+                    state_key = candidate
+                    break
+            if tag_val == "libero_panda" and state_key is not None:
+                states_dict = split_libero_state(obs[state_key][i])
+            elif tag_val == "libero_panda":
+                states_dict = {}
+                for k in state_keys:
+                    if k.startswith("state."):
+                        states_dict[k.split(".", 1)[1]] = to_numpy(obs[k][i])
+                if not states_dict:
+                    raise KeyError(f"No LIBERO state keys found in observation: {list(obs.keys())}")
+            else:
+                states_dict = {}
+                for k in state_keys:
+                    v = obs[k][i]
+                    if isinstance(v, torch.Tensor):
+                        v = v.cpu().float().numpy()
+                    states_dict[k] = np.array(v)
+
+                ref_T = next(iter(states_dict.values())).shape[0] if states_dict else 1
+                robocasa_requirements = {
+                    "end_effector_position_relative": 3,
+                    "end_effector_rotation_relative": 4,
+                    "gripper_qpos": 2,
+                    "base_position": 3,
+                    "base_rotation": 4
+                }
+                for req_k, req_dim in robocasa_requirements.items():
+                    if req_k not in states_dict:
+                        states_dict[req_k] = np.zeros((ref_T, req_dim), dtype=np.float32)
 
             raw_images_list = []
             for img_k in image_keys:
@@ -710,11 +825,28 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6,BasePolicy):
             
             self.image_nums = len(req_img_keys)
 
-            for idx, r_key in enumerate(req_img_keys):
-                if idx < len(raw_images_list):
-                    images_dict[r_key] = raw_images_list[idx]
-                else:
-                    images_dict[r_key] = raw_images_list[-1] if raw_images_list else []
+            if tag_val == "libero_panda":
+                raw_by_key = dict(zip(image_keys, raw_images_list))
+                source_for_req = {
+                    "image": (
+                        raw_by_key.get("base_0_rgb")
+                        or raw_by_key.get("observation.images.image")
+                        or raw_by_key.get("video.image")
+                    ),
+                    "wrist_image": (
+                        raw_by_key.get("right_wrist_0_rgb")
+                        or raw_by_key.get("observation.images.wrist_image")
+                        or raw_by_key.get("video.wrist_image")
+                    ),
+                }
+                for r_key in req_img_keys:
+                    images_dict[r_key] = source_for_req.get(r_key) or (raw_images_list[-1] if raw_images_list else [])
+            else:
+                for idx, r_key in enumerate(req_img_keys):
+                    if idx < len(raw_images_list):
+                        images_dict[r_key] = raw_images_list[idx]
+                    else:
+                        images_dict[r_key] = raw_images_list[-1] if raw_images_list else []
 
             content = SimulationContent(
                 embodiment=self.embodiment_tag,
@@ -804,7 +936,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6,BasePolicy):
         bsize = normalized_input["state"].shape[0]
         device = normalized_input["state"].device
 
-        for k in ["eagle_pixel_values", "eagle_image_sizes"]:
+        for k in ["eagle_pixel_values", "eagle_image_sizes", "pixel_values", "image_sizes"]:
             if k in normalized_input and isinstance(normalized_input[k], list):
                 if len(normalized_input[k]) > 0 and isinstance(normalized_input[k][0], torch.Tensor):
                     normalized_input[k] = torch.stack(normalized_input[k]).to(device)
@@ -822,6 +954,14 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6,BasePolicy):
                 "eagle_image_sizes"
             ].reshape(
                 bsize, self.image_nums, *normalized_input["eagle_image_sizes"].shape[-1:]
+            )
+        if "pixel_values" in normalized_input:
+            forward_inputs["pixel_values"] = normalized_input["pixel_values"].reshape(
+                bsize, self.image_nums, *normalized_input["pixel_values"].shape[-3:]
+            )
+        if "image_sizes" in normalized_input:
+            forward_inputs["image_sizes"] = normalized_input["image_sizes"].reshape(
+                bsize, self.image_nums, *normalized_input["image_sizes"].shape[-1:]
             )
         result = {
             "prev_logprobs": rlinf_outputs["prev_logprobs"],
@@ -908,8 +1048,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6,BasePolicy):
             else:
                 image_nums = 1
 
-            # self.image_nums = image_nums
-            self.image_nums = len(req_img_keys)
+            self.image_nums = image_nums
                 
             print(f"✅ Inferred from modality_config: valid_action_dim={self.valid_action_dim}, image_nums={self.image_nums}")
             return

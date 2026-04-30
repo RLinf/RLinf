@@ -98,19 +98,28 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         torch_dtype=torch_dtype,
         embodiment_tag=emb_tag,
         processor_path=cfg.get("processor_path", None),
-        # denoising_steps=cfg.denoising_steps,
-        # output_action_chunks=cfg.num_action_chunks,
-        # obs_converter_type=cfg.obs_converter_type,
+        denoising_steps=cfg.denoising_steps,
+        output_action_chunks=cfg.num_action_chunks,
+        obs_converter_type=cfg.obs_converter_type,
         tune_visual=False,
         tune_llm=False,
-        # rl_head_config=cfg.rl_head_config,
+        rl_head_config=cfg.rl_head_config,
         # weight_syncer_cfg=cfg.get("weight_syncer_cfg", None),
     )
 
+    if cfg.rl_head_config.get("add_value_head", False) and hasattr(
+        model.action_head, "value_head"
+    ):
+        # The value head is absent from SFT checkpoints. Reinitialize it explicitly
+        # after from_pretrained() so missing-key initialization cannot leave NaNs.
+        value_head = model.action_head.value_head.float()
+        value_head._init_weights("relu")
+        final_layer = value_head.mlp[-1]
+        torch.nn.init.zeros_(final_layer.weight)
+        if final_layer.bias is not None:
+            torch.nn.init.zeros_(final_layer.bias)
+
     model.to(torch_dtype)
-    # if cfg.rl_head_config.add_value_head:
-    #     # reinitialize the value head after model loading
-    #     model.action_head.value_head._init_weights()
 
     if cfg.rl_head_config.disable_dropout:
         replace_dropout_with_identity(model)
