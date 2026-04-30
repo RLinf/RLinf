@@ -812,6 +812,24 @@ class FrankaEnv(gym.Env):
     def _clear_error(self):
         self._controller.clear_errors().wait()
 
+    def _binary_gripper_action(self, position: float) -> bool:
+        """Execute a scaled binary gripper command."""
+        if (
+            position <= -self.config.binary_gripper_threshold
+            and self._franka_state.gripper_open
+        ):
+            self._controller.close_gripper().wait()
+            time.sleep(0.6)
+            return True
+        if (
+            position >= self.config.binary_gripper_threshold
+            and not self._franka_state.gripper_open
+        ):
+            self._controller.open_gripper().wait()
+            time.sleep(0.6)
+            return True
+        return False
+
     def _end_effector_action(self, ee_action: np.ndarray) -> bool:
         """Dispatch an action to the active end-effector.
 
@@ -828,21 +846,7 @@ class FrankaEnv(gym.Env):
         if self._ee_type.is_gripper:
             # Binary gripper logic (backward compatible)
             position = float(ee_action[0]) * self.config.action_scale[2]
-            if (
-                position <= -self.config.binary_gripper_threshold
-                and self._franka_state.gripper_open
-            ):
-                self._controller.close_gripper().wait()
-                time.sleep(0.6)
-                return True
-            elif (
-                position >= self.config.binary_gripper_threshold
-                and not self._franka_state.gripper_open
-            ):
-                self._controller.open_gripper().wait()
-                time.sleep(0.6)
-                return True
-            return False
+            return self._binary_gripper_action(position)
         else:
             scaled = (
                 np.asarray(ee_action, dtype=np.float64) * self.config.hand_action_scale

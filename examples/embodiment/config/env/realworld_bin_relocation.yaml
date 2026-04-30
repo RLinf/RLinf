@@ -13,6 +13,7 @@ max_steps_per_rollout_epoch: 240
 max_episode_steps: 240
 keyboard_reward_wrapper: single_stage
 use_spacemouse: True
+no_gripper: False
 main_image_key: wrist_1
 
 video_cfg:
