@@ -254,8 +254,8 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
                 raise ImportError(
                     "omni_config.scene.partial_scene_load=True requires the optional "
                     "`gello` package (same dependency as OmniGibson learning eval). "
-                    "Install gello, or set scene.load_room_types explicitly (use null "
-                    "to load all rooms)."
+                    "Install gello, or set omni_config.scene.load_room_types explicitly "
+                    "(use null to load all rooms)."
                 ) from exc
             activity_name = OmegaConf.select(omni_cfg, "task.activity_name")
             scene_model = OmegaConf.select(omni_cfg, "scene.scene_model")
