@@ -108,7 +108,7 @@ def apply_runtime_renderer_settings() -> None:
 
     lazy.carb.settings.get_settings().set_float(
         "/rtx-transient/resourcemanager/texturestreaming/memoryBudget",
-        0.0,
+        0.1,
     )
 
 
