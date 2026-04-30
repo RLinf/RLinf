@@ -19,9 +19,15 @@ from typing import Any, Literal, Optional, Union
 
 import numpy as np
 import torch
-from gr00t.configs.model.gr00t_n1d6 import Gr00tN1d6Config
+
 from gr00t.data.embodiment_tags import EmbodimentTag
+
+from gr00t.data.types import ModalityConfig
 from gr00t.model.gr00t_n1d6.gr00t_n1d6 import Gr00tN1d6
+from gr00t.configs.model.gr00t_n1d6 import Gr00tN1d6Config
+from gr00t.model.gr00t_n1d6.processing_gr00t_n1d6 import Gr00tN1d6Processor
+from gr00t.policy.gr00t_policy import Gr00tPolicy
+
 from torch import nn
 from torch.distributions import Normal
 from transformers.feature_extraction_utils import BatchFeature
@@ -38,11 +44,10 @@ from rlinf.models.embodiment.gr00t_1_6.utils import (
 from rlinf.models.embodiment.modules.explore_noise_net import ExploreNoiseNet
 from rlinf.models.embodiment.modules.value_head import ValueHead
 
-
 class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
     def __init__(
         self,
-        config: Any,  # config.action_head_cfg（dict）
+        config: Any,                    # config.action_head_cfg（dict）
         rl_head_config: dict[str, Any],
         output_action_chunks: int = 1,
     ):
@@ -52,9 +57,7 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
         self.padding_value = rl_head_config.get("padding_value", 0)
         self.output_action_chunks = output_action_chunks
         # self.valid_action_dim = getattr(self, "valid_action_dim", config.get("action_dim", 7))
-        self.valid_action_dim = getattr(
-            config, "max_action_dim", getattr(config, "action_dim", 7)
-        )
+        self.valid_action_dim = getattr(config, "max_action_dim", getattr(config, "action_dim", 7))
         self.action_chunk = output_action_chunks
         self.hidden_size = getattr(self, "hidden_size", 1024)
         self.action_horizon = getattr(self, "action_horizon", 16)
@@ -86,15 +89,15 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
                 noise_logvar_range=[0.08, 0.16],
                 noise_scheduler_type="learn",
             )
-
     def prepare_input(self, inputs: dict) -> BatchFeature:
-        from transformers.feature_extraction_utils import BatchFeature
 
+        from transformers.feature_extraction_utils import BatchFeature
+        
         action_inputs = {}
         for k in ["state", "action", "action_mask", "embodiment_id"]:
             if k in inputs:
                 action_inputs[k] = inputs[k]
-
+                
         return BatchFeature(data=action_inputs)
 
     def get_logprob_norm(self, sample, mu, sigma):
@@ -129,9 +132,7 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
             idx = torch.tensor(idx).expand(bsize)
 
         if self.rl_config.get("noise_anneal"):
-            noise_start, noise_end, anneal_steps = self.rl_config.get(
-                "noise_params", (0.0, 0.0, 100)
-            )
+            noise_start, noise_end, anneal_steps = self.rl_config.get("noise_params", (0.0, 0.0, 100))
             noise_level = (
                 noise_start
                 + (noise_end - noise_start)
@@ -140,25 +141,13 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
             )
             noise_level = torch.tensor(noise_level).to(device)
         else:
-            noise_level = torch.tensor(self.rl_config.get("noise_level", 0.5)).to(
-                device
-            )
+            noise_level = torch.tensor(self.rl_config.get("noise_level", 0.5)).to(device)
 
         t_cont = idx / float(denoise_steps)
-        timesteps_tensor = (
-            (t_cont * self.num_timestep_buckets).to(torch.int64).to(device)
-        )
-        action_features = (
-            self.action_encoder(x_t, timesteps_tensor, embodiment_id)
-            if hasattr(self, "action_encoder")
-            else x_t
-        )
-        if getattr(self.config, "add_pos_embed", False) and hasattr(
-            self, "position_embedding"
-        ):
-            pos_ids = torch.arange(
-                action_features.shape[1], dtype=torch.long, device=device
-            )
+        timesteps_tensor = (t_cont * self.num_timestep_buckets).to(torch.int64).to(device)
+        action_features = self.action_encoder(x_t, timesteps_tensor, embodiment_id) if hasattr(self, "action_encoder") else x_t
+        if getattr(self.config, "add_pos_embed", False) and hasattr(self, "position_embedding"):
+            pos_ids = torch.arange(action_features.shape[1], dtype=torch.long, device=device)
             pos_embs = self.position_embedding(pos_ids).unsqueeze(0)
             action_features = action_features + pos_embs
 
@@ -166,26 +155,12 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
         # sa_embs = torch.cat((state_features, future_tokens, action_features), dim=1)
         sa_embs = torch.cat((state_features, action_features), dim=1)
 
-        model_output = (
-            self.model(
-                hidden_states=sa_embs,
-                encoder_hidden_states=vl_embs,
-                timestep=timesteps_tensor,
-            )
-            if hasattr(self, "model")
-            else sa_embs
-        )
+        model_output = self.model(hidden_states=sa_embs, encoder_hidden_states=vl_embs, timestep=timesteps_tensor) if hasattr(self, "model") else sa_embs
         model_output = model_output[:, -self.action_horizon :]
 
-        v_t = (
-            self.action_decoder(model_output, embodiment_id)
-            if hasattr(self, "action_decoder")
-            else torch.zeros_like(model_output)
-        )
+        v_t = self.action_decoder(model_output, embodiment_id) if hasattr(self, "action_decoder") else torch.zeros_like(model_output)
 
-        timesteps = torch.linspace(
-            0, 1, denoise_steps + 1, device=device, dtype=vl_embs.dtype
-        )
+        timesteps = torch.linspace(0, 1, denoise_steps + 1, device=device, dtype=vl_embs.dtype)
         t_input = timesteps[idx]
         delta = timesteps[idx + 1] - timesteps[idx]
         delta = delta[:, None, None].expand_as(x_t)
@@ -230,19 +205,9 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
         mode: Literal["train", "eval"] = "train",
         compute_values=True,
     ) -> BatchFeature:
-        vl_embs = (
-            backbone_output.backbone_features
-            if hasattr(backbone_output, "backbone_features")
-            else backbone_output
-        )
-        embodiment_id = (
-            action_input.embodiment_id if hasattr(action_input, "embodiment_id") else 0
-        )
-        state_features = (
-            self.state_encoder(action_input.state, embodiment_id)
-            if hasattr(self, "state_encoder")
-            else action_input.state
-        )
+        vl_embs = backbone_output.backbone_features if hasattr(backbone_output, "backbone_features") else backbone_output
+        embodiment_id = action_input.embodiment_id if hasattr(action_input, "embodiment_id") else 0
+        state_features = self.state_encoder(action_input.state, embodiment_id) if hasattr(self, "state_encoder") else action_input.state
         batch_size = vl_embs.shape[0]
         device = vl_embs.device
         x_t = torch.randn(
@@ -265,9 +230,7 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
             if self.rl_config.get("joint_logprob"):
                 denoise_inds = torch.arange(num_steps)
             else:
-                denoise_inds = torch.tensor(
-                    [random.randint(0, num_steps - 1)] * num_steps
-                )
+                denoise_inds = torch.tensor([random.randint(0, num_steps - 1)] * num_steps)
         else:
             denoise_inds = torch.tensor([-1] * num_steps)
         denoise_inds = denoise_inds[None].repeat(batch_size, 1)
@@ -307,9 +270,9 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
         # log_probs = torch.stack(log_probs, dim=1)[
         #     :, :, : self.action_chunk, : self.valid_action_dim
         # ]
-        env_action_dim = 7
+        env_action_dim = 7  
         log_probs = torch.stack(log_probs, dim=1)[
-            :, :, : self.action_chunk, :env_action_dim
+            :, :, : self.action_chunk, : env_action_dim
         ]
         if compute_values:
             values = self.get_value(vl_embs, state_features)
@@ -334,28 +297,16 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
         denoise_inds,
         compute_values=True,
     ):
-        vl_embs = (
-            backbone_output.backbone_features
-            if hasattr(backbone_output, "backbone_features")
-            else backbone_output
-        )
-        embodiment_id = (
-            action_input.embodiment_id if hasattr(action_input, "embodiment_id") else 0
-        )
-        state_features = (
-            self.state_encoder(action_input.state, embodiment_id)
-            if hasattr(self, "state_encoder")
-            else action_input.state
-        )
+        vl_embs = backbone_output.backbone_features if hasattr(backbone_output, "backbone_features") else backbone_output
+        embodiment_id = action_input.embodiment_id if hasattr(action_input, "embodiment_id") else 0
+        state_features = self.state_encoder(action_input.state, embodiment_id) if hasattr(self, "state_encoder") else action_input.state
         batch_size = vl_embs.shape[0]
 
         chains_log_probs = []
         if self.rl_config.get("joint_logprob"):
             num_steps = getattr(self.config, "num_steps", 1)
             initial_log_prob = self.get_logprob_norm(
-                chains[:, 0],
-                torch.zeros_like(chains[:, 0]),
-                torch.ones_like(chains[:, 0]),
+                chains[:, 0], torch.zeros_like(chains[:, 0]), torch.ones_like(chains[:, 0])
             )
             chains_log_probs.append(initial_log_prob)
         else:
@@ -390,9 +341,7 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
         return chains_log_probs, chains_values
 
     def sample_noise(self, shape, device):
-        return torch.normal(
-            mean=0.0, std=1.0, size=shape, dtype=torch.bfloat16, device=device
-        )
+        return torch.normal(mean=0.0, std=1.0, size=shape, dtype=torch.bfloat16, device=device)
 
     def get_value(self, vl_embs, state_features):
         bsize = vl_embs.shape[0]
@@ -412,11 +361,11 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
         values_vlm = self.value_head(value_embs)[:, 0]
         return values_vlm
 
-
-class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
+class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6,BasePolicy):
     """
     GR00T N1.6 model for reinforcement learning action prediction.
     """
+
 
     _no_split_modules = [
         "Qwen3DecoderLayer",
@@ -425,9 +374,10 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
         "TimestepEncoder",
         "TimestepEmbedding",
         "ValueHead",
-        "ExploreNoiseNet",
+        "ExploreNoiseNet"
     ]
-
+    
+        
     def __init__(
         self,
         config: Gr00tN1d6Config,
@@ -442,16 +392,13 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
         output_action_chunks: int = 1,
         **kwargs,
     ):
+        
         if isinstance(embodiment_tag, str):
             self.embodiment_tag = EmbodimentTag(embodiment_tag)
         else:
             self.embodiment_tag = embodiment_tag
-        transformers_loading_kwargs = kwargs.pop(
-            "transformers_loading_kwargs", {"trust_remote_code": True}
-        )
-        super().__init__(
-            config, transformers_loading_kwargs=transformers_loading_kwargs, **kwargs
-        )
+        transformers_loading_kwargs = kwargs.pop("transformers_loading_kwargs", {"trust_remote_code": True})
+        super().__init__(config, transformers_loading_kwargs=transformers_loading_kwargs, **kwargs)
 
         self.padding_value = rl_head_config.get("padding_value", 0)
         self.model_path = Path(local_model_path)
@@ -460,51 +407,45 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
 
         # if modality_config is None or modality_transform is None:
         #     from gr00t.policy.gr00t_policy import Gr00tPolicy
-
+            
         #     dummy_policy = Gr00tPolicy(
         #         model_path=str(local_model_path),
         #         embodiment_tag=self.embodiment_tag,
         #         device="cpu",
         #         strict=False
         #     )
-
+            
         #     modality_config = dummy_policy.get_modality_config()
-
+            
         #     for attr in ["_modality_transform", "modality_transform", "_transform", "transform"]:
         #         if hasattr(dummy_policy, attr):
         #             modality_transform = getattr(dummy_policy, attr)
-        #             break
+        #             break       
         #     print("✅ Successfully borrowed modality_config and modality_transform from Gr00tN1d6Processor instance.")
-        #     print(f"DEBUG: Supported embodiment tags in processor: {type(modality_transform).__name__}")
+        #     print(f"DEBUG: Supported embodiment tags in processor: {type(modality_transform).__name__}") 
 
         # self._modality_config = modality_config
         # self._modality_transform = modality_transform
         if modality_config is None or modality_transform is None:
             from transformers import AutoProcessor
-
+            
             print("loading Processor...")
-            processor = AutoProcessor.from_pretrained(
-                str(local_model_path), trust_remote_code=True
-            )
-
+            processor = AutoProcessor.from_pretrained(str(local_model_path), trust_remote_code=True)
+            
             modality_transform = processor
-            modality_config = getattr(processor, "modality_config", None)
-
+            modality_config = getattr(processor, "modality_config", None) 
+            
             print("✅ Processor loaded safely! No model weights were touched.")
 
         self._modality_config = modality_config
         self._modality_transform = modality_transform
 
-        action_head_cfg = (
-            config.action_head_cfg if hasattr(config, "action_head_cfg") else config
-        )
+        action_head_cfg = config.action_head_cfg if hasattr(config, "action_head_cfg") else config
         self.action_head = FlowMatchingActionHeadForRLActionPrediction(
             action_head_cfg, rl_head_config, output_action_chunks
         )
 
-        if denoising_steps is not None and hasattr(
-            self.action_head, "num_inference_timesteps"
-        ):
+        if denoising_steps is not None and hasattr(self.action_head, "num_inference_timesteps"):
             self.action_head.num_inference_timesteps = denoising_steps
 
         self.obs_convert_fn = OBS_CONVERSION[obs_converter_type]
@@ -513,14 +454,11 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
         self._load_metadata(exp_cfg_path)
 
         self._no_split_modules = self.__class__._no_split_modules
-
+        
         if hasattr(self, "config"):
             self.config.no_split_modules = self._no_split_modules
             self.config._no_split_modules = self._no_split_modules
-        print(
-            f"✅ Forced FSDP _no_split_modules into config: {self.config.no_split_modules}"
-        )
-
+        print(f"✅ Forced FSDP _no_split_modules into config: {self.config.no_split_modules}")
     def eval(self):
         self._modality_transform.eval()
         super().eval()
@@ -546,12 +484,11 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
         use_cache: bool = False,
         **kwargs,
     ) -> dict[str, Any]:
+
         state_tensor = forward_inputs["state"]
         state_mask = forward_inputs.get("state_mask", None)
         if state_mask is None:
-            state_mask = torch.ones(
-                state_tensor.shape[:-1], dtype=torch.bool, device=state_tensor.device
-            )
+            state_mask = torch.ones(state_tensor.shape[:-1], dtype=torch.bool, device=state_tensor.device)
         bsize = state_tensor.shape[0]
         self.image_nums = forward_inputs["eagle_pixel_values"].shape[1]
         normalized_input = {
@@ -571,9 +508,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
 
         if "eagle_input_ids" in normalized_input:
             normalized_input["input_ids"] = normalized_input["eagle_input_ids"]
-            normalized_input["attention_mask"] = normalized_input[
-                "eagle_attention_mask"
-            ]
+            normalized_input["attention_mask"] = normalized_input["eagle_attention_mask"]
             normalized_input["pixel_values"] = normalized_input["eagle_pixel_values"]
             if "eagle_image_sizes" in normalized_input:
                 normalized_input["image_sizes"] = normalized_input["eagle_image_sizes"]
@@ -652,7 +587,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
             if isinstance(normalized_input[key], torch.Tensor):
                 if normalized_input[key].dtype == torch.float32:
                     normalized_input[key] = normalized_input[key].to(torch.bfloat16)
-
+        
         if "input_ids" in normalized_input:
             normalized_input["input_ids"] = torch.nn.functional.pad(
                 normalized_input["input_ids"],
@@ -672,9 +607,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
                 mode="constant",
                 value=0,
             )
-            normalized_input["eagle_attention_mask"] = normalized_input[
-                "attention_mask"
-            ]
+            normalized_input["eagle_attention_mask"] = normalized_input["attention_mask"]
 
         normalized_action, result = self._get_rl_action(normalized_input, mode=mode)
         unnormalized_action = self._get_unnormalized_action(normalized_action)
@@ -691,10 +624,10 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
     # def apply_transforms(self, obs: dict[str, Any]) -> dict[str, Any]:
     #     return self._modality_transform(obs)
     def apply_transforms(self, obs: dict) -> dict:
-        import numpy as np
         import torch
+        import numpy as np
         from PIL import Image
-
+        
         class SimulationContent:
             def __init__(self, embodiment, states, actions, images, text):
                 self.embodiment = embodiment
@@ -704,7 +637,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
                 self.text = text
 
         batch_size = len(next(iter(obs.values())))
-
+        
         text_key = None
         image_keys = []
         state_keys = []
@@ -716,30 +649,30 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
                 image_keys.append(k)
             else:
                 state_keys.append(k)
-
+                
         processed_outputs = []
-
+        
         for i in range(batch_size):
             text = obs[text_key][i] if text_key else ""
             if isinstance(text, (list, np.ndarray)):
                 text = str(text[0]) if len(text) > 0 else ""
             else:
                 text = str(text)
-
+                
             states_dict = {}
             for k in state_keys:
                 v = obs[k][i]
                 if isinstance(v, torch.Tensor):
                     v = v.cpu().numpy()
                 states_dict[k] = np.array(v)
-
+                
             ref_T = next(iter(states_dict.values())).shape[0] if states_dict else 1
             robocasa_requirements = {
                 "end_effector_position_relative": 3,
                 "end_effector_rotation_relative": 4,
                 "gripper_qpos": 2,
                 "base_position": 3,
-                "base_rotation": 4,
+                "base_rotation": 4
             }
             for req_k, req_dim in robocasa_requirements.items():
                 if req_k not in states_dict:
@@ -750,11 +683,11 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
                 img_data = obs[img_k][i]
                 if isinstance(img_data, torch.Tensor):
                     img_data = img_data.cpu().numpy()
-
+                
                 frames = []
                 if img_data.ndim == 3:
                     img_data = np.expand_dims(img_data, 0)
-
+                
                 for t in range(img_data.shape[0]):
                     frame = img_data[t]
                     if frame.shape[0] in [1, 3] and frame.shape[2] > 3:
@@ -770,21 +703,11 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
             images_dict = {}
             req_img_keys = []
             try:
-                tag_val = (
-                    self.embodiment_tag.value
-                    if hasattr(self.embodiment_tag, "value")
-                    else str(self.embodiment_tag)
-                )
-                req_img_keys = self._modality_transform.modality_configs[tag_val][
-                    "video"
-                ].modality_keys
+                tag_val = self.embodiment_tag.value if hasattr(self.embodiment_tag, "value") else str(self.embodiment_tag)
+                req_img_keys = self._modality_transform.modality_configs[tag_val]["video"].modality_keys
             except Exception:
-                req_img_keys = [
-                    "res256_image_side_0",
-                    "res256_image_wrist_0",
-                    "res256_image_front_0",
-                ]
-
+                req_img_keys = ["res256_image_side_0", "res256_image_wrist_0", "res256_image_front_0"]
+            
             self.image_nums = len(req_img_keys)
 
             for idx, r_key in enumerate(req_img_keys):
@@ -798,22 +721,22 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
                 states=states_dict,
                 actions=None,
                 images=images_dict,
-                text=text,
+                text=text
             )
 
             messages = [{"role": "user", "content": content}]
             out = self._modality_transform(messages=messages)
             processed_outputs.append(out)
-
+            
         collated_batch = self._modality_transform.collator(processed_outputs)
-
+        
         if hasattr(collated_batch, "data") and "inputs" in collated_batch.data:
             batched_out = collated_batch.data["inputs"]
         elif "inputs" in collated_batch:
             batched_out = collated_batch["inputs"]
         else:
             batched_out = dict(collated_batch)
-
+            
         if "input_ids" in batched_out:
             batched_out["eagle_input_ids"] = batched_out["input_ids"]
         if "attention_mask" in batched_out:
@@ -826,19 +749,21 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
         if "eagle_pixel_values" not in batched_out and "images" in batched_out:
             batched_out["eagle_pixel_values"] = batched_out["images"]
             batched_out["pixel_values"] = batched_out["images"]
-
+                
         return batched_out
-
     # def unapply_transforms(self, action: dict[str, Any]) -> dict[str, Any]:
     #     return self._modality_transform.unapply(action)
     def unapply_transforms(self, action: dict[str, Any]) -> dict[str, Any]:
-        raw_action_tensor = action["action"]
 
+        raw_action_tensor = action["action"]
+        
         if isinstance(raw_action_tensor, torch.Tensor):
             raw_action_tensor = raw_action_tensor.detach().cpu().numpy()
-
+            
         decoded = self._modality_transform.decode_action(
-            action=raw_action_tensor, embodiment_tag=self.embodiment_tag, state=None
+            action=raw_action_tensor,
+            embodiment_tag=self.embodiment_tag,
+            state=None
         )
         return decoded
 
@@ -846,33 +771,29 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
         self,
         normalized_input: dict[str, Any],
         mode: Literal["train", "eval"] = "train",
-    ):
+    ):  
         if "eagle_input_ids" in normalized_input:
             normalized_input["input_ids"] = normalized_input["eagle_input_ids"]
-            normalized_input["attention_mask"] = normalized_input[
-                "eagle_attention_mask"
-            ]
+            normalized_input["attention_mask"] = normalized_input["eagle_attention_mask"]
             normalized_input["pixel_values"] = normalized_input["eagle_pixel_values"]
             if "eagle_image_sizes" in normalized_input:
                 normalized_input["image_sizes"] = normalized_input["eagle_image_sizes"]
 
         if normalized_input.get("state_mask") is None and "state" in normalized_input:
             normalized_input["state_mask"] = torch.ones(
-                normalized_input["state"].shape[:-1],
-                dtype=torch.bool,
-                device=normalized_input["state"].device,
+                normalized_input["state"].shape[:-1], 
+                dtype=torch.bool, 
+                device=normalized_input["state"].device
             )
         normalized_input = {k: v for k, v in normalized_input.items() if v is not None}
-
+        
         backbone_inputs, action_inputs = self.prepare_input(normalized_input)
         backbone_outputs = self.backbone(backbone_inputs)
         action_head_outputs, rlinf_outputs = self.action_head.get_rl_action(
             backbone_outputs, action_inputs, mode=mode
-        )
+        )   
         actions = rlinf_outputs["actions"]
-        self.validate_data(
-            action_head_outputs, backbone_outputs, is_training=False
-        ) if hasattr(self, "validate_data") else None
+        self.validate_data(action_head_outputs, backbone_outputs, is_training=False) if hasattr(self, "validate_data") else None
         actions = actions.float()
 
         forward_inputs = {
@@ -885,56 +806,40 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
 
         for k in ["eagle_pixel_values", "eagle_image_sizes"]:
             if k in normalized_input and isinstance(normalized_input[k], list):
-                if len(normalized_input[k]) > 0 and isinstance(
-                    normalized_input[k][0], torch.Tensor
-                ):
+                if len(normalized_input[k]) > 0 and isinstance(normalized_input[k][0], torch.Tensor):
                     normalized_input[k] = torch.stack(normalized_input[k]).to(device)
                 else:
-                    normalized_input[k] = torch.tensor(
-                        normalized_input[k], device=device
-                    )
+                    normalized_input[k] = torch.tensor(normalized_input[k], device=device)
 
         if "eagle_pixel_values" in normalized_input:
             forward_inputs["eagle_pixel_values"] = normalized_input[
                 "eagle_pixel_values"
             ].reshape(
-                bsize,
-                self.image_nums,
-                *normalized_input["eagle_pixel_values"].shape[-3:],
+                bsize, self.image_nums, *normalized_input["eagle_pixel_values"].shape[-3:]
             )
         if "eagle_image_sizes" in normalized_input:
             forward_inputs["eagle_image_sizes"] = normalized_input[
                 "eagle_image_sizes"
             ].reshape(
-                bsize,
-                self.image_nums,
-                *normalized_input["eagle_image_sizes"].shape[-1:],
+                bsize, self.image_nums, *normalized_input["eagle_image_sizes"].shape[-1:]
             )
         result = {
             "prev_logprobs": rlinf_outputs["prev_logprobs"],
             "prev_values": rlinf_outputs["prev_values"],
             "forward_inputs": forward_inputs,
         }
-
+        
         for key in ["input_ids", "attention_mask", "pixel_values", "image_sizes"]:
             if key in result["forward_inputs"]:
                 val = result["forward_inputs"][key]
                 if isinstance(val, list):
-                    result["forward_inputs"][key] = (
-                        torch.stack(val)
-                        if len(val) > 0 and torch.is_tensor(val[0])
-                        else torch.tensor(val)
-                    )
-
+                    result["forward_inputs"][key] = torch.stack(val) if len(val) > 0 and torch.is_tensor(val[0]) else torch.tensor(val)
+            
             eagle_key = f"eagle_{key}"
             if eagle_key in result["forward_inputs"]:
                 val = result["forward_inputs"][eagle_key]
                 if isinstance(val, list):
-                    result["forward_inputs"][eagle_key] = (
-                        torch.stack(val)
-                        if len(val) > 0 and torch.is_tensor(val[0])
-                        else torch.tensor(val)
-                    )
+                    result["forward_inputs"][eagle_key] = torch.stack(val) if len(val) > 0 and torch.is_tensor(val[0]) else torch.tensor(val)
         return actions, result
 
     def _get_action_from_normalized_input(
@@ -957,103 +862,76 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
     def _load_metadata(self, exp_cfg_dir: Path):
         metadata_path = exp_cfg_dir / "metadata.json"
         if not metadata_path.exists():
-            print(
-                f"⚠️ Metadata file not found at {metadata_path}. Inferring from modality_config..."
-            )
-
+            print(f"⚠️ Metadata file not found at {metadata_path}. Inferring from modality_config...")
+            
             tag_value = self.embodiment_tag.value
             if self._modality_config is None or tag_value not in self._modality_config:
-                print(
-                    f"⚠️ Modality config is missing or does not contain tag {self.embodiment_tag.value}. Attempting to infer valid_action_dim and image_nums from config attributes."
-                )
-                self.valid_action_dim = getattr(
-                    self.config, "max_action_dim", getattr(self.config, "action_dim", 7)
-                )
-                self.image_nums = getattr(self.config, "image_nums", 1)
-
-                print(
-                    f"✅ Inferred fallback: valid_action_dim={self.valid_action_dim}, image_nums={self.image_nums}"
-                )
-                return
-
+                    print(f"⚠️ Modality config is missing or does not contain tag {self.embodiment_tag.value}. Attempting to infer valid_action_dim and image_nums from config attributes.")
+                    self.valid_action_dim = getattr(self.config, "max_action_dim", getattr(self.config, "action_dim", 7))
+                    self.image_nums = getattr(self.config, "image_nums", 1)
+                    
+                    print(f"✅ Inferred fallback: valid_action_dim={self.valid_action_dim}, image_nums={self.image_nums}")
+                    return
+                
             current_modality = self._modality_config[tag_value]
-
+            
             valid_action_dim = 0
             if "action" in current_modality:
                 action_modality_cfg = current_modality["action"]
-                if (
-                    hasattr(action_modality_cfg, "dim_map")
-                    and action_modality_cfg.dim_map
-                ):
+                if hasattr(action_modality_cfg, "dim_map") and action_modality_cfg.dim_map:
                     for dim_val in action_modality_cfg.dim_map.values():
                         valid_action_dim += dim_val
-                elif (
-                    hasattr(action_modality_cfg, "modality_keys")
-                    and action_modality_cfg.modality_keys
-                ):
-                    valid_action_dim = getattr(self.config, "max_action_dim", 29)
-                elif isinstance(action_modality_cfg, dict):
-                    if (
-                        "dim_map" in action_modality_cfg
-                        and action_modality_cfg["dim_map"]
-                    ):
-                        for dim_val in action_modality_cfg["dim_map"].values():
+                elif hasattr(action_modality_cfg, "modality_keys") and action_modality_cfg.modality_keys:
+                    valid_action_dim = getattr(self.config, "max_action_dim", 29) 
+                elif isinstance(action_modality_cfg, dict): 
+                    if 'dim_map' in action_modality_cfg and action_modality_cfg['dim_map']:
+                         for dim_val in action_modality_cfg['dim_map'].values():
                             valid_action_dim += dim_val
-                    elif "dim" in action_modality_cfg:
-                        valid_action_dim = action_modality_cfg["dim"]
-                    else:
+                    elif 'dim' in action_modality_cfg: 
+                        valid_action_dim = action_modality_cfg['dim']
+                    else: 
                         valid_action_dim = getattr(self.config, "max_action_dim", 29)
-                else:
+                else: 
                     valid_action_dim = getattr(self.config, "max_action_dim", 29)
 
             self.valid_action_dim = valid_action_dim
-
+            
             image_nums = 0
             if "video" in current_modality:
                 video_modality_cfg = current_modality["video"]
-                if (
-                    hasattr(video_modality_cfg, "modality_keys")
-                    and video_modality_cfg.modality_keys
-                ):
+                if hasattr(video_modality_cfg, "modality_keys") and video_modality_cfg.modality_keys:
                     image_nums = len(video_modality_cfg.modality_keys)
-                elif (
-                    isinstance(video_modality_cfg, dict)
-                    and "modality_keys" in video_modality_cfg
-                ):
-                    image_nums = len(video_modality_cfg["modality_keys"])
+                elif isinstance(video_modality_cfg, dict) and 'modality_keys' in video_modality_cfg:
+                    image_nums = len(video_modality_cfg['modality_keys'])
                 else:
                     image_nums = 1
             else:
                 image_nums = 1
 
-            self.image_nums = image_nums
-            # self.image_nums = len(req_img_keys)
-
-            print(
-                f"✅ Inferred from modality_config: valid_action_dim={self.valid_action_dim}, image_nums={self.image_nums}"
-            )
+            # self.image_nums = image_nums
+            self.image_nums = len(req_img_keys)
+                
+            print(f"✅ Inferred from modality_config: valid_action_dim={self.valid_action_dim}, image_nums={self.image_nums}")
             return
-
+        
         with open(metadata_path, "r") as f:
             metadatas = json.load(f)
-
+        
         metadata_dict = metadatas.get(self.embodiment_tag.value)
         if metadata_dict is None:
-            raise ValueError(
-                f"No metadata found for embodiment tag: {self.embodiment_tag.value}"
-            )
-
+            raise ValueError(f"No metadata found for embodiment tag: {self.embodiment_tag.value}")
+        
         self.metadata = metadata_dict
         if hasattr(self._modality_transform, "set_metadata"):
             self._modality_transform.set_metadata(metadata_dict)
-
+            
         valid_action_dim = 0
         action_mods = self.metadata.get("modalities", {}).get("action", {})
         for v in action_mods.values():
             shape = v.get("shape", [0]) if isinstance(v, dict) else [0]
             valid_action_dim += shape[0] if len(shape) > 0 else 0
         self.valid_action_dim = valid_action_dim
-
+        
         video_mods = self.metadata.get("modalities", {}).get("video", {})
         self.image_nums = len(video_mods)
         # with open(metadata_path, "r") as f:

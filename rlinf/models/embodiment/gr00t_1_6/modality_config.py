@@ -13,7 +13,9 @@
 # limitations under the License.
 
 
-from typing import Any, Optional
+
+from typing import Optional, List, Dict, Any
+from pathlib import Path
 
 from gr00t.data.embodiment_tags import EmbodimentTag
 from gr00t.policy.gr00t_policy import Gr00tPolicy
@@ -37,22 +39,15 @@ class BaseN16DataConfig:
             )
             self._modality_config = self._policy.get_modality_config()
 
-            for attr in [
-                "_modality_transform",
-                "modality_transform",
-                "_transform",
-                "transform",
-            ]:
+            for attr in ["_modality_transform", "modality_transform", "_transform", "transform"]:
                 if hasattr(self._policy, attr):
                     self._transform = getattr(self._policy, attr)
                     print(f"✅ N1.6 loaded successfully transform: {attr}")
                     break
             else:
-                print(
-                    "⚠️ do not find transform attribute, but modality_config is loaded"
-                )
+                print("⚠️ do not find transform attribute, but modality_config is loaded")
 
-    def modality_config(self) -> dict[str, Any]:
+    def modality_config(self) -> Dict[str, Any]:
         self._init_policy()
         return self._modality_config
 
@@ -60,15 +55,15 @@ class BaseN16DataConfig:
         self._init_policy()
         return self._transform
 
-    def get_video_keys(self) -> list[str]:
+    def get_video_keys(self) -> List[str]:
         self._init_policy()
         return self._modality_config.get("video", {}).get("modality_keys", [])
 
-    def get_state_keys(self) -> list[str]:
+    def get_state_keys(self) -> List[str]:
         self._init_policy()
         return self._modality_config.get("state", {}).get("modality_keys", [])
 
-    def get_action_keys(self) -> list[str]:
+    def get_action_keys(self) -> List[str]:
         self._init_policy()
         return self._modality_config.get("action", {}).get("modality_keys", [])
 

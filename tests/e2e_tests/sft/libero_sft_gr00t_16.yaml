@@ -24,12 +24,12 @@ runner:
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 2
-  max_steps: -1
+  max_steps: 2
   val_check_interval: -1
-  save_interval: 10
+  save_interval: -1
 
 data:
-  train_data_paths: "/workspace/dataset/Gr00t_16-libero-Spatial-dataset"
+  train_data_paths: "/workspace/RLinf/Gr00t_16-libero-Spatial-dataset"
 
 algorithm:
   adv_type: gae
@@ -44,7 +44,7 @@ actor:
   # Override the default values in model/gr00t_16
   model:
     precision: "bf16"
-    model_path: "/workspace/dataset/GR00T-N1.6-3B"
+    model_path: "/workspace/RLinf/GR00T-N1.6-3B"
     model_type: "gr00t_1_6_sft"
     num_action_chunks: 1 
     add_value_head: True
@@ -71,7 +71,7 @@ actor:
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "full_shard"
-    use_orig_params: True
+    use_orig_params: False
     gradient_checkpointing: True
     mixed_precision:
       param_dtype: ${actor.model.precision}
