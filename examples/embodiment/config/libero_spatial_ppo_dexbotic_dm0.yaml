@@ -1,7 +1,7 @@
 defaults:
   - env/libero_spatial@env.train
   - env/libero_spatial@env.eval
-  - model/dexbotic_pi@actor.model
+  - model/dexbotic_dm0@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
@@ -23,13 +23,14 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "libero_spatial_ppo_dexbotic_pi0"
+    experiment_name: "libero_spatial_ppo_dexbotic_dm0"
     logger_backends: ["tensorboard"]
 
   max_epochs: 1000
   max_steps: 300
 
   only_eval: False
+  eval_policy_path: null
   val_check_interval: -1
   save_interval: 50
 
@@ -83,7 +84,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
 
   train:
     total_num_envs: 64
@@ -112,19 +112,19 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/libero-db-pi0" # https://huggingface.co/Dexmal/libero-db-pi0
+    model_path: "/path/to/model/libero-db-dm0" # https://huggingface.co/Dexmal/DM0-libero
     precision: ${actor.model.precision}
 
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 32
-  global_batch_size: 1024
+  global_batch_size: 8192
   seed: 42
   enable_offload: False
 
   model:
-    model_path: "/path/to/model/libero-db-pi0" # https://huggingface.co/Dexmal/libero-db-pi0
+    model_path: "/path/to/model/libero-db-dm0" # https://huggingface.co/Dexmal/DM0-libero
     precision: "bf16"
     num_action_chunks: 5
     num_steps: 4
