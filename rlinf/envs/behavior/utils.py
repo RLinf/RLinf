@@ -18,6 +18,7 @@ import os
 import torch
 import yaml
 from omegaconf import DictConfig, OmegaConf, open_dict
+
 from rlinf.utils.logging import get_logger
 
 SUPPORTED_ENV_WRAPPERS = ("rgb", "default", "rgb_lowres", "rich_obs")
@@ -274,7 +275,9 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
                 relevant_rooms,
                 merge=False,
             )
-            get_logger().info(f"Auto-detected relevant rooms for task {activity_name}: {relevant_rooms}")
+            get_logger().info(
+                f"Auto-detected relevant rooms for task {activity_name}: {relevant_rooms}"
+            )
 
     # setup omnigibson macros, according to configuration yaml
     macro_cfg = OmegaConf.select(omni_cfg, "macro")
