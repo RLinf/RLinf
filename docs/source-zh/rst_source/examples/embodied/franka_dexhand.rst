@@ -75,13 +75,13 @@ RL 训练使用 ``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yam
 工作流
 ------
 
-1. 在 Franka 控制节点按照 :doc:`franka` 完成基础环境部署，然后安装带灵巧手支持的 Franka 环境：
+1. 在 Franka 控制节点安装 Franka DexHand 环境：
 
    .. code-block:: bash
 
-      bash requirements/install.sh embodied --env franka --dexhand
+      bash requirements/install.sh embodied --env franka-dexhand
 
-   该命令会安装 ``RLinf-dexterous-hands``，其中包含睿研灵巧手与数据手套驱动。
+   该命令会安装 Franka 基础依赖和 ``RLinf-dexterous-hands``，后者包含睿研灵巧手与数据手套驱动。
 2. 将 Franka 机器人切换到可编程模式，手动移动到任务目标位姿，然后在 Franka 控制节点运行脚本获取目标末端位姿：
 
    .. code-block:: bash
