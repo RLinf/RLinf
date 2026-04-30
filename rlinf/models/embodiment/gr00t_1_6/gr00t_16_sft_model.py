@@ -168,6 +168,7 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
         if local_model_path is None:
             local_model_path = getattr(config, "_name_or_path", "/workspace/RLinf/GR00T-N1.6-3B")
 
+        processor_path = kwargs.pop("processor_path", None)
         transformers_loading_kwargs = kwargs.pop("transformers_loading_kwargs", {"trust_remote_code": True})
         super().__init__(config, transformers_loading_kwargs=transformers_loading_kwargs, **kwargs)
         
@@ -183,9 +184,23 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
 
         if modality_config is None or modality_transform is None:
             print("Loading Processor...")
-            processor = AutoProcessor.from_pretrained(str(local_model_path), trust_remote_code=True)
-            modality_transform = processor
-            modality_config = getattr(processor, "modality_config", None) 
+            if processor_path is not None:
+                import json
+                from gr00t.model.gr00t_n1d6.processing_gr00t_n1d6 import Gr00tN1d6Processor
+
+                processor_path = Path(processor_path)
+                with open(processor_path / "processor_config.json", "r") as f:
+                    processor_cfg = json.load(f)["processor_kwargs"]
+                with open(processor_path / "statistics.json", "r") as f:
+                    processor_cfg["statistics"] = json.load(f)
+                with open(processor_path / "embodiment_id.json", "r") as f:
+                    processor_cfg["embodiment_id_mapping"] = json.load(f)
+                modality_transform = Gr00tN1d6Processor(**processor_cfg)
+                modality_config = getattr(modality_transform, "modality_configs", None)
+            else:
+                processor = AutoProcessor.from_pretrained(str(local_model_path), trust_remote_code=True)
+                modality_transform = processor
+                modality_config = getattr(processor, "modality_config", None) 
             print("Processor loaded successfully.")
 
         self._modality_config = modality_config
@@ -224,8 +239,13 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
 
     def sft_forward(self, data: dict, **kwargs):
         
-        obs = data["observation"]
-        actions = data["actions"] 
+        obs = dict(data["observation"])
+        actions = data["actions"]
+        action_pad_mask = None
+        for pad_key in ("actions_is_pad", "action_is_pad"):
+            if pad_key in obs:
+                action_pad_mask = obs.pop(pad_key)
+                break
 
         for k, v in obs.items():
             if isinstance(v, torch.Tensor) and v.dtype == torch.uint8:
@@ -245,27 +265,35 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
         obs = _pytree.tree_map(safe_to_tensor, obs)
         
         actions = torch.as_tensor(actions, device=self.device, dtype=torch.float32)
-        if actions.dim() == 2: 
+        if actions.dim() == 2:
             actions = actions.unsqueeze(1)
-            
-        model_inputs = self.apply_transforms(obs)
-        
-        actions = torch.nan_to_num(actions, nan=0.0)
-        actions = torch.clamp(actions, min=-1.0, max=1.0)
-        
-        target_dim = 128
-        
-        padded_actions = torch.zeros((actions.shape[0], actions.shape[1], target_dim), 
-                                     dtype=self.compute_dtype, device=actions.device)
-        padded_actions[:, :, :actions.shape[-1]] = actions.to(dtype=self.compute_dtype)
-        
-        action_mask = torch.zeros((actions.shape[0], actions.shape[1], target_dim), 
-                                 dtype=self.compute_dtype, device=actions.device)
-        action_mask[:, :, :actions.shape[-1]] = 1.0
-        
-        model_inputs["action"] = padded_actions
-        model_inputs["action_mask"] = action_mask
-        
+
+        if action_pad_mask is not None:
+            action_pad_mask = torch.as_tensor(
+                action_pad_mask, device=self.device, dtype=torch.bool
+            )
+            if action_pad_mask.dim() == 1:
+                action_pad_mask = action_pad_mask.unsqueeze(1)
+
+        model_inputs = self.apply_transforms(
+            obs, actions=actions, action_pad_mask=action_pad_mask
+        )
+
+        if action_pad_mask is not None and "action_mask" in model_inputs:
+            if action_pad_mask.shape[1] != model_inputs["action_mask"].shape[1]:
+                fixed_mask = torch.ones(
+                    model_inputs["action_mask"].shape[:2],
+                    device=self.device,
+                    dtype=torch.bool,
+                )
+                valid_horizon = min(action_pad_mask.shape[1], fixed_mask.shape[1])
+                fixed_mask[:, :valid_horizon] = action_pad_mask[:, :valid_horizon]
+                action_pad_mask = fixed_mask
+            valid_action_mask = (~action_pad_mask).unsqueeze(-1).to(
+                dtype=model_inputs["action_mask"].dtype, device=model_inputs["action_mask"].device
+            )
+            model_inputs["action_mask"] = model_inputs["action_mask"] * valid_action_mask
+
         for key in ["eagle_input_ids", "eagle_attention_mask", "eagle_pixel_values", "eagle_image_sizes"]:
             model_inputs.pop(key, None)
 
@@ -287,7 +315,7 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
             
         return loss
 
-    def apply_transforms(self, obs: dict) -> dict:
+    def apply_transforms(self, obs: dict, actions=None, action_pad_mask=None) -> dict:
         class SimulationContent:
             def __init__(self, embodiment, states, actions, images, text):
                 self.embodiment = embodiment
@@ -319,24 +347,72 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
             else:
                 text = str(text)
                 
-            states_dict = {}
-            for k in state_keys:
-                v = obs[k][i]
-                if isinstance(v, torch.Tensor):
-                    v = v.cpu().float().numpy()
-                states_dict[k] = np.array(v)
-                
-            ref_T = next(iter(states_dict.values())).shape[0] if states_dict else 1
-            robocasa_requirements = {
-                "end_effector_position_relative": 3,
-                "end_effector_rotation_relative": 4,
-                "gripper_qpos": 2,
-                "base_position": 3,
-                "base_rotation": 4
-            }
-            for req_k, req_dim in robocasa_requirements.items():
-                if req_k not in states_dict:
-                    states_dict[req_k] = np.zeros((ref_T, req_dim), dtype=np.float32)
+            def to_numpy(value):
+                if isinstance(value, torch.Tensor):
+                    return value.detach().cpu().float().numpy()
+                return np.asarray(value, dtype=np.float32)
+
+            def split_libero_state(value):
+                value = to_numpy(value).reshape(-1)
+                if value.shape[0] < 7:
+                    raise ValueError(f"LIBERO state should have at least 7 dims, got {value.shape}")
+                return {
+                    "x": value[0:1][None, :],
+                    "y": value[1:2][None, :],
+                    "z": value[2:3][None, :],
+                    "roll": value[3:4][None, :],
+                    "pitch": value[4:5][None, :],
+                    "yaw": value[5:6][None, :],
+                    "gripper": value[6:8][None, :],
+                }
+
+            def split_libero_action(value):
+                value = to_numpy(value)
+                if value.ndim == 1:
+                    value = value[None, :]
+                if value.shape[-1] < 7:
+                    raise ValueError(f"LIBERO action should have at least 7 dims, got {value.shape}")
+                return {
+                    "x": value[:, 0:1],
+                    "y": value[:, 1:2],
+                    "z": value[:, 2:3],
+                    "roll": value[:, 3:4],
+                    "pitch": value[:, 4:5],
+                    "yaw": value[:, 5:6],
+                    "gripper": value[:, 6:7],
+                }
+
+            tag_val = self.embodiment_tag.value if hasattr(self.embodiment_tag, "value") else str(self.embodiment_tag)
+            state_key = None
+            for candidate in ("state", "observation.state"):
+                if candidate in obs:
+                    state_key = candidate
+                    break
+            if tag_val == "libero_panda" and state_key is not None:
+                states_dict = split_libero_state(obs[state_key][i])
+            else:
+                states_dict = {}
+                for k in state_keys:
+                    v = obs[k][i]
+                    if isinstance(v, torch.Tensor):
+                        v = v.cpu().float().numpy()
+                    states_dict[k] = np.array(v)
+
+                ref_T = next(iter(states_dict.values())).shape[0] if states_dict else 1
+                robocasa_requirements = {
+                    "end_effector_position_relative": 3,
+                    "end_effector_rotation_relative": 4,
+                    "gripper_qpos": 2,
+                    "base_position": 3,
+                    "base_rotation": 4
+                }
+                for req_k, req_dim in robocasa_requirements.items():
+                    if req_k not in states_dict:
+                        states_dict[req_k] = np.zeros((ref_T, req_dim), dtype=np.float32)
+
+            actions_dict = None
+            if actions is not None:
+                actions_dict = split_libero_action(actions[i]) if tag_val == "libero_panda" else {"action": to_numpy(actions[i])}
 
             raw_images_list = []
             for img_k in image_keys:
@@ -363,23 +439,31 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
             images_dict = {}
             req_img_keys = []
             try:
-                tag_val = self.embodiment_tag.value if hasattr(self.embodiment_tag, "value") else str(self.embodiment_tag)
                 req_img_keys = self._modality_transform.modality_configs[tag_val]["video"].modality_keys
             except Exception:
                 req_img_keys = ["res256_image_side_0", "res256_image_wrist_0", "res256_image_front_0"]
-            
+
             self.image_nums = len(req_img_keys)
 
-            for idx, r_key in enumerate(req_img_keys):
-                if idx < len(raw_images_list):
-                    images_dict[r_key] = raw_images_list[idx]
-                else:
-                    images_dict[r_key] = raw_images_list[-1] if raw_images_list else []
+            if tag_val == "libero_panda":
+                raw_by_key = dict(zip(image_keys, raw_images_list))
+                source_for_req = {
+                    "image": raw_by_key.get("base_0_rgb") or raw_by_key.get("observation.images.image"),
+                    "wrist_image": raw_by_key.get("right_wrist_0_rgb") or raw_by_key.get("observation.images.wrist_image"),
+                }
+                for r_key in req_img_keys:
+                    images_dict[r_key] = source_for_req.get(r_key) or (raw_images_list[-1] if raw_images_list else [])
+            else:
+                for idx, r_key in enumerate(req_img_keys):
+                    if idx < len(raw_images_list):
+                        images_dict[r_key] = raw_images_list[idx]
+                    else:
+                        images_dict[r_key] = raw_images_list[-1] if raw_images_list else []
 
             content = SimulationContent(
                 embodiment=self.embodiment_tag,
                 states=states_dict,
-                actions=None,
+                actions=actions_dict,
                 images=images_dict,
                 text=text
             )
@@ -440,49 +524,70 @@ def build_gr00t_dataloader(worker_instance, eval_dataset: bool = False):
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
     print(f"[Lazy Load] Successfully triggered GR00T model file registration! Loading LeRobot Dataset...")
-    
+
+    action_key = worker_instance.cfg.data.get("action_key", "actions")
+    action_horizon = int(worker_instance.cfg.actor.model.get("num_action_chunks", 1))
+    dataset_fps = float(worker_instance.cfg.data.get("fps", 20))
+    delta_timestamps = None
+    if action_horizon > 1:
+        delta_timestamps = {
+            action_key: [step / dataset_fps for step in range(action_horizon)]
+        }
 
     dataset = LeRobotDataset(
         repo_id=worker_instance.cfg.data.train_data_paths,
         # local_files_only=True
+        delta_timestamps=delta_timestamps,
         video_backend="pyav"
     )
 
     def gr00t_collate_fn(batch):
-        action_key = next((k for k in batch[0].keys() if "action" in k.lower()), None)
-        if action_key is None:
+        batch_action_key = action_key if action_key in batch[0] else None
+        if batch_action_key is None:
+            candidates = ["actions", "action"]
+            batch_action_key = next((key for key in candidates if key in batch[0]), None)
+        if batch_action_key is None:
+            batch_action_key = next(
+                (key for key in batch[0].keys() if "action" in key.lower() and not key.endswith("_is_pad")),
+                None,
+            )
+        if batch_action_key is None:
             raise KeyError("Could not find an action key!")
 
-        actions = torch.stack([item[action_key] for item in batch])
+        actions = torch.stack([item[batch_action_key] for item in batch])
         if actions.dim() == 2:
-            actions = actions.unsqueeze(1) 
+            actions = actions.unsqueeze(1)
 
+        action_pad_key = f"{batch_action_key}_is_pad"
         obs = {}
         for key in batch[0].keys():
-            if key != action_key:
-                item_val = batch[0][key]
-                if isinstance(item_val, str) or (isinstance(item_val, (list, tuple)) and len(item_val)>0 and isinstance(item_val[0], str)):
-                    byte_ts = []
-                    for item in batch:
-                        text = item[key]
-                        if isinstance(text, (list, tuple)): text = text[0]
-                        byte_ts.append(torch.tensor(list(text.encode('utf-8')), dtype=torch.uint8))
-                    obs[key] = torch.nn.utils.rnn.pad_sequence(byte_ts, batch_first=True, padding_value=0)
-                elif isinstance(item_val, torch.Tensor):
-                    obs[key] = torch.stack([item[key] for item in batch])
-                else:
-                    try: obs[key] = torch.tensor([item[key] for item in batch])
-                    except: obs[key] = [item[key] for item in batch]
+            if key == batch_action_key:
+                continue
+            if "action" in key.lower() and key.endswith("_is_pad") and key != action_pad_key:
+                continue
+            item_val = batch[0][key]
+            if isinstance(item_val, str) or (isinstance(item_val, (list, tuple)) and len(item_val)>0 and isinstance(item_val[0], str)):
+                byte_ts = []
+                for item in batch:
+                    text = item[key]
+                    if isinstance(text, (list, tuple)): text = text[0]
+                    byte_ts.append(torch.tensor(list(text.encode('utf-8')), dtype=torch.uint8))
+                obs[key] = torch.nn.utils.rnn.pad_sequence(byte_ts, batch_first=True, padding_value=0)
+            elif isinstance(item_val, torch.Tensor):
+                obs[key] = torch.stack([item[key] for item in batch])
+            else:
+                try: obs[key] = torch.tensor([item[key] for item in batch])
+                except: obs[key] = [item[key] for item in batch]
         return obs, actions
 
     dataloader = DataLoader(
         dataset,
         batch_size=worker_instance.cfg.actor.micro_batch_size * worker_instance._world_size,
         shuffle=not eval_dataset,
-        num_workers=4,
+        num_workers=worker_instance.cfg.data.get("num_workers", 4),
         collate_fn=gr00t_collate_fn,
         pin_memory=True,
         drop_last=True
     )
-    
+
     return dataloader, None

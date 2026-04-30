@@ -121,27 +121,27 @@ Libero数据集下载：
    
    # 方法1：使用git clone
    git lfs install
-   git clone https://hf-mirror.com/datasets/ZibinDong/libero_spatial
+   git clone https://hf-mirror.com/datasets/IPEC-COMMUNITY/libero_spatial_no_noops_1.0.0_lerobot
    # 也可以下载其他数据集 如libero_object, libero_goal, libero_long
-   # https://hf-mirror.com/datasets/ZibinDong/libero_object
-   # https://hf-mirror.com/datasets/ZibinDong/libero_object
-   # https://hf-mirror.com/datasets/ZibinDong/libero_10
+   # https://hf-mirror.com/datasets/IPEC-COMMUNITY/libero_goal_no_noops_1.0.0_lerobot
+   # https://hf-mirror.com/datasets/IPEC-COMMUNITY/libero_object_no_noops_1.0.0_lerobot
+   # https://hf-mirror.com/datasets/IPEC-COMMUNITY/libero_10_no_noops_1.0.0_lerobot
 
    # 方法2：使用huggingface-hub
    # 为提升国内下载速度，可以设置：
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
-   hf download ZibinDong/libero_spatial --repo-type dataset --local-dir Gr00t_16-libero-Spatial-dataset
+   hf download IPEC-COMMUNITY/libero_spatial_no_noops_1.0.0_lerobot --repo-type dataset --local-dir Gr00t_16-libero-Spatial-dataset
    # 也可以下载其他数据集 如libero_object, libero_goal, libero_10
-   # hf download ZibinDong/libero_object --repo-type dataset --local-dir Gr00t_16-libero-Object-dataset
-   # hf download ZibinDong/libero_goal --repo-type dataset --local-dir Gr00t_16-libero-Goal-dataset
-   # hf download ZibinDong/libero_10 --repo-type dataset --local-dir Gr00t_16-libero-10-dataset
+   # hf download IPEC-COMMUNITY/libero_goal_no_noops_1.0.0_lerobot --repo-type dataset --local-dir Gr00t_16-libero-Object-dataset
+   # hf download IPEC-COMMUNITY/libero_goal_no_noops_1.0.0_lerobot --repo-type dataset --local-dir Gr00t_16-libero-Goal-dataset
+   # hf download IPEC-COMMUNITY/libero_10_no_noops_1.0.0_lerobot --repo-type dataset --local-dir Gr00t_16-libero-10-dataset
 
 数据版本转换
 由于给出来的数据版本是老版本的Lerobot数据，需要转换为最新版本
 .. code-block:: bash
 
-   python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id=/path/to/Gr00t_16-libero-<task>-dataset
+   python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --root=/path/to/Gr00t_16-libero-<task>-dataset-v30 --push-to-hub=false --force-conversion
 
 GR00T-N1.6 模型下载
 .. code-block:: bash

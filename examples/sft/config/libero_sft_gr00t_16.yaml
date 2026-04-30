@@ -28,10 +28,11 @@ runner:
   max_epochs: 100000
   max_steps: 3000
   val_check_interval: -1
-  save_interval: 2000
+  save_interval: 500
 
 data:
-  train_data_paths: "/workspace/RLinf/Gr00t_16-libero-Spatial-dataset"
+  train_data_paths: "/workspace/RLinf/libero_spatial_no_noops_1.0.0_lerobot"
+  action_key: "action"
 
 algorithm:
   adv_type: gae
@@ -40,15 +41,17 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 1
-  global_batch_size: 256
+  global_batch_size: 1
   seed: 0
 
   # Override the default values in model/gr00t_16
   model:
     precision: "bf16"
     model_path: "/workspace/RLinf/GR00T-N1.6-3B"
+    processor_path: "/workspace/Isaac-GR00T/results/libero_spatial_official_tb/processor"
     model_type: "gr00t_1_6_sft"
-    num_action_chunks: 1 
+    num_action_chunks: 16
+    embodiment_tag: "libero_panda"
     add_value_head: True
     denoising_steps: 1
     no_split_modules:
@@ -61,12 +64,16 @@ actor:
       - "ExploreNoiseNet"
 
   optim:
-    lr: 5.0e-6
+    lr: 1.0e-4
     value_lr: 1.0e-4
+    lr_scheduler: "cosine"
+    total_training_steps: 3000
+    lr_warmup_steps_ratio: 0.05
+    min_lr: 0.0
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-05
-    weight_decay: 0.01
+    weight_decay: 1.0e-5
     clip_grad: 1.0
 
   # Override the default values in training_backend/fsdp

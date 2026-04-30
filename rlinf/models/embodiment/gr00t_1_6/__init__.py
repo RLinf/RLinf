@@ -67,7 +67,9 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     )
     from rlinf.models.embodiment.gr00t_1_6.utils import replace_dropout_with_identity
 
-    if cfg.embodiment_tag in ["libero_franka", "isaaclab_franka", "maniskill_widowx", "robocasa_panda_omron","libero_panda"]:
+    if cfg.embodiment_tag in ["libero_franka", "libero_panda"]:
+        emb_tag = EmbodimentTag.LIBERO_PANDA
+    elif cfg.embodiment_tag in ["isaaclab_franka", "maniskill_widowx", "robocasa_panda_omron"]:
         emb_tag = EmbodimentTag.ROBOCASA_PANDA_OMRON 
     elif cfg.embodiment_tag == "gr1": 
         emb_tag = EmbodimentTag.GR1
@@ -94,7 +96,8 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         pretrained_model_name_or_path=str(model_path),
         # model_path,
         torch_dtype=torch_dtype,
-        embodiment_tag=emb_tag,               
+        embodiment_tag=emb_tag,
+        processor_path=cfg.get("processor_path", None),
         # denoising_steps=cfg.denoising_steps,
         # output_action_chunks=cfg.num_action_chunks,
         # obs_converter_type=cfg.obs_converter_type,
