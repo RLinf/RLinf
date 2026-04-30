@@ -30,6 +30,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 
 ## What's NEW!
+- [2026/05] 🔥 RLinf supports DM0. In particular, RLinf and Dexbotic enable Lego-style SFT-RL integration. Link: [Dexbotic project link](https://github.com/dexmal/dexbotic/blob/main/docs/RLinfAsRLBackend.md)
 - [2026/04] 🔥 RLinf supports Dexmal DOS-W1 for real-world reinforcement learning. Doc: [Real-World RL on Dexmal DOS-W1](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dosw1.html).
 - [2026/04] 🔥 RLinf supports RECAP (RL with Experience and Corrections via Advantage-conditioned Policies) for offline advantage-based policy optimization. Doc: [RECAP](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/recap.html).
 - [2026/04] 🔥 RLinf now supports offline IQL training on D4RL benchmarks. Doc: [IQL on D4RL](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/iql_d4rl.html), paper: [Offline Reinforcement Learning with Implicit Q-Learning](https://arxiv.org/abs/2110.06169).
