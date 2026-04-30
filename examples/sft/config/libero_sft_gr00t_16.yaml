@@ -42,7 +42,7 @@ actor:
   training_backend: "fsdp"
   micro_batch_size: 1
   global_batch_size: 1
-  seed: 0
+  seed: 42
 
   # Override the default values in model/gr00t_16
   model:
