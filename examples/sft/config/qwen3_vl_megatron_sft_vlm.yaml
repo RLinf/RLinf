@@ -71,7 +71,7 @@ actor:
     add_qkv_bias: False
     qk_layernorm: True
 
-    tensor_model_parallel_size: 1
+    tensor_model_parallel_size: 2
     pipeline_model_parallel_size: 1
 
     model_type: "qwen3_vl"

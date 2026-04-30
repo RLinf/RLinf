@@ -48,6 +48,7 @@ class MegatronSftWorker(MegatronModelManager, Worker):
 
         self.cfg = cfg
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
+        self.megatron_type = "sft"
 
         self.global_batch_size = int(self.cfg.actor.global_batch_size)
         self.micro_batch_size = int(self.cfg.actor.micro_batch_size)
@@ -172,8 +173,9 @@ class MegatronSftWorker(MegatronModelManager, Worker):
             return train_metrics
 
     def run_eval(self):
-        logging.info("[INFO] MegatronSftWorker.run_eval() is not Supported for now")
-        return {}
+        with self.worker_timer():
+            logging.info("[INFO] MegatronSftWorker.run_eval() is not Supported for now")
+            return {}
 
     def get_train_model_output(self, global_batch: dict[str, Any]) -> dict[str, float]:
         set_train(self)
@@ -435,7 +437,6 @@ class MegatronVlmSftWorker(MegatronSftWorker):
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 pixel_values=pixel_values,
-                # pack_seqs=False,
                 position_ids=None,
                 sequence_parallel=self.transformer_config.sequence_parallel,
                 image_grid_thw=image_grid_thw,

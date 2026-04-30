@@ -23,8 +23,6 @@ from rlinf.config import validate_cfg
 from rlinf.runners.sft_runner import SFTRunner
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.workers.sft.fsdp_sft_worker import FSDPVlmSftWorker
-from rlinf.workers.sft.megatron_sft_worker import MegatronVlmSftWorker
 
 mp.set_start_method("spawn", force=True)
 
@@ -40,10 +38,14 @@ def main(cfg) -> None:
     # Create actor worker group
     actor_placement = component_placement.get_strategy("actor")
     if cfg.actor.training_backend == "fsdp" or cfg.actor.training_backend == "fsdp2":
+        from rlinf.workers.sft.fsdp_sft_worker import FSDPVlmSftWorker
+
         actor_group = FSDPVlmSftWorker.create_group(cfg).launch(
             cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
         )
     elif cfg.actor.training_backend == "megatron":
+        from rlinf.workers.sft.megatron_sft_worker import MegatronVlmSftWorker
+
         actor_group = MegatronVlmSftWorker.create_group(cfg).launch(
             cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
         )

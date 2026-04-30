@@ -193,6 +193,10 @@ class MegatronModelManager:
 
         self._cfg = cfg
         self.mbridge = cfg.megatron.get("mbridge", False)
+        # if use the megatron-mbridge need patch some function
+        if self.mbridge:
+            self.patch_mbrdige_function()
+
         self.mcore_gpt = cfg.mcore_gpt
         self.spec_name = cfg.spec_name
         self.distributed_adam_offload_manager = None
@@ -223,6 +227,18 @@ class MegatronModelManager:
 
         # Patch Megatron MoE token dispatcher if FUSCO is available and conditions are met
         self.patch_megatron_moe_dispatcher()
+
+    def patch_mbrdige_function(self):
+        from rlinf.utils.patcher import Patcher
+
+        Patcher.clear()
+        Patcher.add_patch(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils.get_rope_index",
+            "rlinf.hybrid_engines.megatron.utils.get_rope_index",
+        )
+        Patcher.apply()
+
+        self._logger.info("Use the megatron-Mbrdige, patched the fix function Success.")
 
     def patch_megatron_moe_dispatcher(self):
         if HAVE_FUSCO:
@@ -491,9 +507,12 @@ class MegatronModelManager:
 
         yield
 
-        # sft offload will to be error TODO: fix me
-        # self.offload_model_weights_and_grad()
-        # self.offload_megatron_optimizer()
+        # Now sft don't need to offload the weight, grad and optimizer
+        if hasattr(self, "megatron_type") and self.megatron_type == "sft":
+            return
+
+        self.offload_model_weights_and_grad()
+        self.offload_megatron_optimizer()
 
     def save_checkpoint(
         self,

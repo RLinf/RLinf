@@ -59,9 +59,9 @@ actor:
   enable_dp_load_balance: False
   calculate_flops: False
 
-  micro_batch_size: 2
+  micro_batch_size: 4
   eval_batch_size: 1
-  global_batch_size: 4
+  global_batch_size: 256
   seed: 42
 
   model:
