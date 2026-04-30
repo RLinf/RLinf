@@ -66,7 +66,6 @@ from rlinf.utils.metric_utils import (
     append_to_dict,
     compute_rollout_metrics,
     compute_split_num,
-    compute_pipeline_expected_actor_recv_num,
     flatten_embodied_rollout_batch_for_train,
     process_embodied_rollout_batch_for_adv,
 )
@@ -1436,99 +1435,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 self._finish_embodied_global_batch(metrics)
 
         return self._finalize_embodied_training_metrics(metrics)
-
-    @Worker.timer("run_training_pipeline")
-    def run_training_pipeline(self, input_channel: Channel) -> dict[str, dict]:
-        self._prepare_embodied_training()
-
-        expected_split_num = compute_pipeline_expected_actor_recv_num(
-            total_num_envs=self.cfg.env.train.total_num_envs,
-            actor_world_size=self._world_size,
-            micro_batch_size=self.cfg.actor.micro_batch_size,
-            rollout_epoch=self.cfg.algorithm.rollout_epoch,
-            n_train_chunk_steps=self.cfg.env.train.max_steps_per_rollout_epoch
-            // self.cfg.actor.model.num_action_chunks,
-        )
-        metrics: dict[str, list[float]] = {}
-        pipeline_train_batches = []
-        micro_batches_in_current_global_batch = 0
-
-        self.optimizer.zero_grad()
-        for _ in range(expected_split_num):
-            with self.worker_timer("wait_pipeline_rollout_batch"):
-                train_micro_batch = input_channel.get()
-
-            pipeline_train_batches.append(train_micro_batch)
-            micro_batches_in_current_global_batch += 1
-
-            with self.worker_timer("pipeline_train_micro_batch"):
-                self._train_embodied_micro_batch(
-                    train_micro_batch,
-                    metrics,
-                    is_last_micro_batch=(
-                        micro_batches_in_current_global_batch
-                        == self.gradient_accumulation
-                    ),
-                )
-
-            if micro_batches_in_current_global_batch == self.gradient_accumulation:
-                with self.worker_timer("pipeline_train_global_batch_step"):
-                    self._finish_embodied_global_batch(metrics)
-                self.optimizer.zero_grad()
-                micro_batches_in_current_global_batch = 0
-
-        assert micro_batches_in_current_global_batch == 0, (
-            "The training pipeline ended with an incomplete global batch."
-        )
-
-        self.rollout_batch = _merge_pipeline_train_batches(pipeline_train_batches)
-        rollout_metrics = compute_rollout_metrics(self.rollout_batch)
-        rollout_metrics.update(
-            {
-                "pipeline_received_splits": float(len(pipeline_train_batches)),
-                "pipeline_expected_splits": float(expected_split_num),
-            }
-        )
-
-        update_epoch = self.cfg.algorithm.get("update_epoch", 1)
-        if update_epoch > 1:
-            rollout_size = self.rollout_batch["prev_logprobs"].size(0)
-            batch_size_per_rank = self.cfg.actor.global_batch_size // self._world_size
-            assert rollout_size % batch_size_per_rank == 0, (
-                f"{rollout_size} is not divisible by {batch_size_per_rank}"
-            )
-
-            for _ in range(update_epoch - 1):
-                rollout_dataloader_iter = split_dict_to_chunk(
-                    self.rollout_batch,
-                    rollout_size // batch_size_per_rank,
-                )
-                for train_global_batch in rollout_dataloader_iter:
-                    train_global_batch_size = train_global_batch["prev_logprobs"].shape[0]
-                    assert (
-                        train_global_batch_size
-                        == self.cfg.actor.global_batch_size
-                        // torch.distributed.get_world_size()
-                    )
-                    assert train_global_batch_size % self.cfg.actor.micro_batch_size == 0, (
-                        f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size}"
-                    )
-
-                    train_micro_batches = split_dict_to_chunk(
-                        train_global_batch,
-                        train_global_batch_size // self.cfg.actor.micro_batch_size,
-                    )
-                    self.optimizer.zero_grad()
-                    for idx, batch in enumerate(train_micro_batches):
-                        self._train_embodied_micro_batch(
-                            batch,
-                            metrics,
-                            is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
-                        )
-                    self._finish_embodied_global_batch(metrics)
-
-        training_metrics = self._finalize_embodied_training_metrics(metrics)
-        return {"rollout": rollout_metrics, "train": training_metrics}
 
     def set_global_step(self, global_step: int) -> None:
         """

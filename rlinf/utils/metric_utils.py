@@ -21,6 +21,8 @@ import torch.distributed
 
 from rlinf.scheduler import Worker
 
+PIPELINE_BATCH_KEY_SEPARATOR = "::"
+
 
 def compute_split_num(num, split_num):
     return math.lcm(num, split_num) // split_num
@@ -187,6 +189,45 @@ def flatten_embodied_rollout_batch_for_train(
         elif isinstance(value, dict):
             ret_dict[key] = flatten_embodied_rollout_batch_for_train(value, shuffle_id)
     return ret_dict
+
+
+def pack_pipeline_train_batch_for_transport(
+    nested_dict: dict,
+    prefix: str = "",
+) -> dict[str, torch.Tensor]:
+    """Flatten a nested pipeline train batch into a tensor-only transport dict."""
+    packed_dict: dict[str, torch.Tensor] = {}
+    for key, value in nested_dict.items():
+        packed_key = (
+            key if not prefix else f"{prefix}{PIPELINE_BATCH_KEY_SEPARATOR}{key}"
+        )
+        if value is None:
+            continue
+        if isinstance(value, torch.Tensor):
+            packed_dict[packed_key] = value
+        elif isinstance(value, dict):
+            packed_dict.update(
+                pack_pipeline_train_batch_for_transport(value, prefix=packed_key)
+            )
+        else:
+            raise TypeError(
+                f"Unsupported value type in pipeline train batch: {type(value)}"
+            )
+    return packed_dict
+
+
+def unpack_pipeline_train_batch_from_transport(
+    packed_dict: dict[str, torch.Tensor],
+) -> dict:
+    """Restore a nested pipeline train batch from a transport dict."""
+    nested_dict: dict = {}
+    for packed_key, value in packed_dict.items():
+        cursor = nested_dict
+        key_parts = packed_key.split(PIPELINE_BATCH_KEY_SEPARATOR)
+        for key_part in key_parts[:-1]:
+            cursor = cursor.setdefault(key_part, {})
+        cursor[key_parts[-1]] = value
+    return nested_dict
 
 
 def _normalize_metric_shard(shard: object) -> torch.Tensor:

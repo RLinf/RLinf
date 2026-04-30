@@ -82,6 +82,7 @@
 
    runner:
      use_training_pipeline: true
+     pipeline_schedule: global_batch
 
 最常见的启动方式是直接在 YAML 中写入，或者在命令行追加 override：
 
@@ -90,7 +91,13 @@
    python examples/embodiment/train_embodied_agent.py \
      --config-path examples/embodiment/config \
      --config-name <your_config> \
-     +runner.use_training_pipeline=true
+     +runner.use_training_pipeline=true \
+     +runner.pipeline_schedule=global_batch
+
+其中 ``runner.pipeline_schedule`` 当前支持两种取值：
+
+- ``global_batch``：以 global batch 为调度单位，更接近原始 step 边界
+- ``micro_batch``：以 micro batch 为调度单位，更激进，也更容易填补 bubble
 
 
 当前支持范围
@@ -121,10 +128,9 @@
 使用限制与注意事项
 ------------------------------
 
-1. ``shuffle_rollout`` 当前必须设为 ``false``。
+1. 需要显式指定 ``runner.pipeline_schedule``。
 
-   这套模式依赖“micro batch 到达后尽快训练”。如果仍然要求在完整 rollout 上做全局 shuffle，
-   actor 就必须等待更多数据到齐，重叠窗口会明显变小。
+   当前可选值为 ``global_batch`` 和 ``micro_batch``。
 
 2. ``gae`` 和 ``raw`` 路径下，不再做额外的全局 ``normalize_advantages``。
 
@@ -132,18 +138,24 @@
    全局 normalize。对于 ``grpo``，其组内归一化逻辑仍然由对应的
    advantage 定义本身负责。
 
-3. ``update_epoch > 1`` 时，收益会下降。
+3. ``shuffle_rollout`` 不是严格的 full-rollout 全局 shuffle。
+
+   当 ``pipeline_schedule=global_batch`` 时，shuffle 只会发生在 ready 的 global batch 之间；
+   当 ``pipeline_schedule=micro_batch`` 时，shuffle 只会发生在 ready 的 micro batch 之间。
+   因此它更接近一种 pipeline 内部调度打散，而不是默认同步路径里的整步全局 shuffle。
+
+4. ``update_epoch > 1`` 时，收益会下降。
 
    只有第 1 个 update epoch 会参与这条 pipeline 的重叠过程。
    剩余的 ``update_epoch - 1`` 轮仍然要在数据全部到齐后本地 replay，因此无法继续与
    ``env -> actor`` 通信或后续 rollout epoch 的数据生成重叠。
 
-4. ``rollout_epoch > 1`` 时，这个模式通常更容易体现收益。
+5. ``rollout_epoch > 1`` 时，这个模式通常更容易体现收益。
 
    当前实现会在每个 ``rollout_epoch`` 结束后向 actor flush 一次数据，而不是等整个 step 全部结束。
    因此当 ``rollout_epoch > 1`` 时，actor 往往能更早拿到第一批可训练 micro batch，更容易形成有效重叠。
 
-5. ``micro_batch_size`` 需要与当前 rollout 形状对齐。
+6. ``micro_batch_size`` 需要与当前 rollout 形状对齐。
 
    在当前实现里，env 是按“每个 ``rollout_epoch`` flush 一次”来切分的，因此一个 actor 本地
    pipeline micro batch 大致对应：

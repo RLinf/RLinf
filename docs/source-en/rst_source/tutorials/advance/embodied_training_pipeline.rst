@@ -97,6 +97,7 @@ Enable it in your embodied training config:
 
    runner:
      use_training_pipeline: true
+     pipeline_schedule: global_batch
 
 The most common way is either to set it directly in YAML or override it on the
 command line:
@@ -106,7 +107,15 @@ command line:
    python examples/embodiment/train_embodied_agent.py \
      --config-path examples/embodiment/config \
      --config-name <your_config> \
-     +runner.use_training_pipeline=true
+     +runner.use_training_pipeline=true \
+     +runner.pipeline_schedule=global_batch
+
+``runner.pipeline_schedule`` currently supports two values:
+
+- ``global_batch``: schedule work at global-batch granularity, closer to the
+  original optimizer-step boundary
+- ``micro_batch``: schedule work at micro-batch granularity, more aggressive
+  and better at filling pipeline bubbles
 
 
 Current Support
@@ -139,11 +148,9 @@ This mode is also not recommended for:
 Limitations And Notes
 ------------------------------
 
-1. ``shuffle_rollout`` must currently be set to ``false``.
+1. ``runner.pipeline_schedule`` must be set explicitly.
 
-   This mode depends on training as soon as micro-batches arrive. If full-rollout
-   global shuffle is still required, actor has to wait for more data, which
-   reduces the overlap window.
+   The currently supported values are ``global_batch`` and ``micro_batch``.
 
 2. Extra global ``normalize_advantages`` is not used for ``gae`` and ``raw``.
 
@@ -152,21 +159,28 @@ Limitations And Notes
    For ``grpo``, the group-relative normalization behavior is still handled by
    the advantage definition itself.
 
-3. Gains usually decrease when ``update_epoch > 1``.
+3. ``shuffle_rollout`` is not an exact full-rollout global shuffle in this mode.
+
+   With ``pipeline_schedule=global_batch``, shuffle only happens among ready
+   global batches. With ``pipeline_schedule=micro_batch``, shuffle only happens
+   among ready micro-batches. This is closer to schedule-local reordering than
+   to the exact full-step global shuffle used by the default synchronous path.
+
+4. Gains usually decrease when ``update_epoch > 1``.
 
    Only the first update epoch participates in this pipeline overlap. The
    remaining ``update_epoch - 1`` epochs are replayed locally after all data has
    arrived, so they no longer overlap with ``env -> actor`` communication or
    with data generation in later rollout epochs.
 
-4. This mode usually shows clearer benefit when ``rollout_epoch > 1``.
+5. This mode usually shows clearer benefit when ``rollout_epoch > 1``.
 
    The current implementation flushes to actor after each ``rollout_epoch``
    instead of waiting for the full step. When ``rollout_epoch > 1``, actor can
    usually receive its first trainable micro-batch earlier and build a more
    effective overlap window.
 
-5. ``micro_batch_size`` must align with the rollout shape.
+6. ``micro_batch_size`` must align with the rollout shape.
 
    In the current implementation, env flushes once per ``rollout_epoch``, so one
    actor-local pipeline micro-batch roughly corresponds to:

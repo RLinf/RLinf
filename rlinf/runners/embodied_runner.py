@@ -469,6 +469,16 @@ class EmbodiedRunner:
         self.log_thread.join(timeout=1.0)
 
     def _validate_training_pipeline(self) -> None:
+        if "pipeline_schedule" not in self.cfg.runner:
+            raise ValueError(
+                "runner.use_training_pipeline requires runner.pipeline_schedule."
+            )
+        supported_pipeline_schedules = {"global_batch", "micro_batch"}
+        if self.cfg.runner.pipeline_schedule not in supported_pipeline_schedules:
+            raise ValueError(
+                "runner.pipeline_schedule must be one of "
+                f"{sorted(supported_pipeline_schedules)}."
+            )
         if self.cfg.algorithm.normalize_advantages and self.cfg.algorithm.adv_type in {
             "gae",
             "raw",
@@ -476,10 +486,6 @@ class EmbodiedRunner:
             raise ValueError(
                 "runner.use_training_pipeline requires algorithm.normalize_advantages=False "
                 "for algorithm.adv_type in {'gae', 'raw'}."
-            )
-        if self.cfg.algorithm.get("shuffle_rollout", True):
-            raise ValueError(
-                "runner.use_training_pipeline requires algorithm.shuffle_rollout=False."
             )
         supported_adv_types = {"gae", "raw", "grpo", "grpo_dynamic"}
         if self.cfg.algorithm.adv_type not in supported_adv_types:
@@ -565,7 +571,9 @@ class EmbodiedRunner:
             actor_time_metrics, actor_time_metrics_per_rank = (
                 actor_pipeline_handle.consume_durations(return_per_rank=True)
             )
-            time_metrics.update({f"time/env/{k}": v for k, v in env_time_metrics.items()})
+            time_metrics.update(
+                {f"time/env/{k}": v for k, v in env_time_metrics.items()}
+            )
             time_metrics.update(
                 {f"time/rollout/{k}": v for k, v in rollout_time_metrics.items()}
             )
