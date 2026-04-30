@@ -237,6 +237,45 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
         omni_cfg, "robots[0].proprio_obs", override_proprio_obs, merge=True
     )
 
+    # OmniGibson ``learning/eval.py`` uses ``partial_scene_load`` to set
+    # ``scene.load_room_types`` via gello (task-relevant rooms + augmentation).
+    # InteractiveTraversableScene does not accept this key — strip it and apply here.
+    partial_scene_load = OmegaConf.select(omni_cfg, "scene.partial_scene_load")
+    if partial_scene_load is not None:
+        with open_dict(omni_cfg.scene):
+            omni_cfg.scene.pop("partial_scene_load", None)
+        if partial_scene_load:
+            try:
+                from gello.robots.sim_robot.og_teleop_utils import (
+                    augment_rooms,
+                    get_task_relevant_room_types,
+                )
+            except ImportError as exc:
+                raise ImportError(
+                    "omni_config.scene.partial_scene_load=True requires the optional "
+                    "`gello` package (same dependency as OmniGibson learning eval). "
+                    "Install gello, or set scene.load_room_types explicitly (use null "
+                    "to load all rooms)."
+                ) from exc
+            activity_name = OmegaConf.select(omni_cfg, "task.activity_name")
+            scene_model = OmegaConf.select(omni_cfg, "scene.scene_model")
+            if not activity_name or not scene_model:
+                raise ValueError(
+                    "partial_scene_load requires task.activity_name and scene.scene_model "
+                    f"in omni_config; got activity_name={activity_name!r}, "
+                    f"scene_model={scene_model!r}."
+                )
+            relevant_rooms = get_task_relevant_room_types(activity_name=activity_name)
+            relevant_rooms = augment_rooms(relevant_rooms, scene_model, activity_name)
+            OmegaConf.update(
+                omni_cfg,
+                "scene.load_room_types",
+                relevant_rooms,
+                merge=False,
+            )
+            print(f"Auto-detected relevant rooms for task {activity_name}: {relevant_rooms}")
+
+
     # setup omnigibson macros, according to configuration yaml
     macro_cfg = OmegaConf.select(omni_cfg, "macro")
     gm.HEADLESS = macro_cfg.headless
