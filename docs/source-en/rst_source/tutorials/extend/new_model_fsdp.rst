@@ -78,6 +78,12 @@ the docstring of ``ClusterEnvVar.EXT_MODULE`` in
    # or a fully qualified package path, e.g.:
    export RLINF_EXT_MODULE=workflows.scripts.rlinf_ext
 
+Standalone checkpoint utilities (for example
+``python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf``) also
+load ``RLINF_EXT_MODULE`` before calling ``get_model``, matching worker behavior.
+If your ``model_type`` is registered only via an extension module, set this
+environment variable when running those tools as well.
+
 2. Model Implementation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

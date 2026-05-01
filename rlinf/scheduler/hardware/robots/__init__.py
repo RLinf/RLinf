@@ -12,7 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .dosw1 import DOSW1HWConfig, DOSW1HWInfo
+from .dual_franka import DualFrankaConfig, DualFrankaHWInfo
 from .franka import FrankaConfig, FrankaHWInfo
+from .gim_arm import GimArmConfig, GimArmHWInfo
 from .xsquare import Turtle2Config, Turtle2HWInfo
 
-__all__ = ["FrankaConfig", "FrankaHWInfo", "Turtle2Config", "Turtle2HWInfo"]
+__all__ = [
+    "DOSW1HWConfig",
+    "DOSW1HWInfo",
+    "DualFrankaConfig",
+    "DualFrankaHWInfo",
+    "FrankaConfig",
+    "FrankaHWInfo",
+    "GimArmConfig",
+    "GimArmHWInfo",
+    "Turtle2Config",
+    "Turtle2HWInfo",
+]

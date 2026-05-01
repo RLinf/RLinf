@@ -66,6 +66,11 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_dexbotic_dm0(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.dexbotic_dm0 import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_mlp_policy(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.mlp_policy import get_model
 
@@ -101,6 +106,16 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_openpi_cfg(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.openpi_cfg import get_model
+
+        return get_model(cfg, torch_dtype)
+
+    def _build_value_model(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.value_model import get_model
+
+        return get_model(cfg, torch_dtype)
+
     register_model(
         SupportedModel.OPENVLA.value,
         _build_openvla,
@@ -122,6 +137,12 @@ def _register_builtin_models():
     register_model(
         SupportedModel.DEXBOTIC_PI.value,
         _build_dexbotic_pi,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.DEXBOTIC_DM0.value,
+        _build_dexbotic_dm0,
         category="embodied",
         force=True,
     )
@@ -167,6 +188,18 @@ def _register_builtin_models():
         category="embodied",
         force=True,
     )
+    register_model(
+        SupportedModel.CFG_MODEL.value,
+        _build_openpi_cfg,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.VALUE_MODEL.value,
+        _build_value_model,
+        category="embodied",
+        force=True,
+    )
 
 
 _register_builtin_models()
@@ -181,7 +214,11 @@ def get_model(cfg: DictConfig):
     torch_dtype = torch_dtype_from_precision(cfg.precision)
     model = model_builder(cfg, torch_dtype)
 
-    if Worker.torch_platform is not None and Worker.torch_platform.is_available():
+    if (
+        Worker.torch_platform is not None
+        and Worker.torch_platform.is_available()
+        and cfg.get("load_to_device", True)
+    ):
         model = model.to(Worker.torch_device_type)
 
     if cfg.is_lora:
@@ -212,7 +249,10 @@ def get_model(cfg: DictConfig):
                 ],
                 init_lora_weights="gaussian",
             )
-            if model_type == SupportedModel.OPENPI.value:
+            if SupportedModel(model_type) in (
+                SupportedModel.OPENPI,
+                SupportedModel.CFG_MODEL,
+            ):
                 module_to_lora = model.paligemma_with_expert.paligemma
                 module_to_lora = get_peft_model(module_to_lora, lora_config)
                 tag_vlm_subtree(model, False)

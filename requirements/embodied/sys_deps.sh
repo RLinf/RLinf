@@ -88,6 +88,7 @@ install_deps_apt() {
         unzip \
         curl \
         cmake \
+        patchelf \
         lsb-release \
         libavutil-dev \
         libavcodec-dev \
@@ -138,6 +139,7 @@ install_deps_dnf() {
         unzip \
         curl \
         cmake \
+        patchelf \
         ffmpeg-free-devel \
         libibverbs-devel \
         ncurses \
@@ -177,6 +179,7 @@ install_deps_yum() {
         unzip \
         curl \
         cmake \
+        patchelf \
         ffmpeg-devel \
         libibverbs-devel \
         ncurses \
@@ -216,6 +219,7 @@ install_deps_pacman() {
         curl \
         lsb-release \
         cmake \
+        patchelf \
         ffmpeg \
         rdma-core \
         ncurses \
@@ -278,5 +282,3 @@ fi
 if [ ! -f /etc/vulkan/implicit_layer.d/nvidia_layers.json ]; then
     printf '{\n    "file_format_version" : "1.0.0",\n    "layer": {\n        "name": "VK_LAYER_NV_optimus",\n        "type": "INSTANCE",\n        "library_path": "libGLX_nvidia.so.0",\n        "api_version" : "1.3.194",\n        "implementation_version" : "1",\n        "description" : "NVIDIA Optimus layer",\n        "functions": {\n            "vkGetInstanceProcAddr": "vk_optimusGetInstanceProcAddr",\n            "vkGetDeviceProcAddr": "vk_optimusGetDeviceProcAddr"\n        },\n        "enable_environment": {\n            "__NV_PRIME_RENDER_OFFLOAD": "1"\n        },\n        "disable_environment": {\n            "DISABLE_LAYER_NV_OPTIMUS_1": ""\n        }\n    }\n}\n' | sudo tee /etc/vulkan/implicit_layer.d/nvidia_layers.json
 fi
-
-

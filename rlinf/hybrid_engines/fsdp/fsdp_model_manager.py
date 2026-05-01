@@ -305,6 +305,13 @@ class FSDPModelManager:
         Args:
             load_path: the directory to load checkpoint.
         """
+        if self.is_weight_offloaded:
+            self.load_param_and_grad(self.device)
+            self.is_weight_offloaded = False
+        if self.is_optimizer_offloaded:
+            self.load_optimizer(self.device)
+            self.is_optimizer_offloaded = False
+
         self._strategy.load_checkpoint(
             self.model, self.optimizer, self.lr_scheduler, load_path
         )
@@ -317,19 +324,28 @@ class FSDPModelManager:
         Args:
             save_path: the directory to save checkpoint.
         """
-        if self.is_weight_offloaded:
+        restore_weight_offload = self.is_weight_offloaded
+        restore_optimizer_offload = self.is_optimizer_offloaded
+
+        if restore_weight_offload:
             self.load_param_and_grad(self.device)
-            self.is_weight_offloaded = False
-        if self.is_optimizer_offloaded:
+        if restore_optimizer_offload:
             self.load_optimizer(self.device)
-            self.is_optimizer_offloaded = False
 
         self._strategy.save_checkpoint(
             self.model,
             self.optimizer,
             self.lr_scheduler,
             save_path,
+            save_full_model_weights=self._cfg.fsdp_config.get(
+                "save_full_model_weights", True
+            ),
         )
+
+        if restore_weight_offload:
+            self.offload_param_and_grad()
+        if restore_optimizer_offload:
+            self.offload_optimizer()
 
     def offload_param_and_grad(self, offload_grad: bool = False) -> None:
         """
@@ -572,7 +588,7 @@ class FSDPModelManager:
 
         for key, params in filtered_params_dict.items():
             assert len(params) > 0, (
-                f"optimer {key=} is not match any params, with {param_filters(key)=}"
+                f"optimer {key=} is not match any params, with {param_filters[key]=}"
             )
         for key, params in filtered_params_dict.items():
             optimizers.append(

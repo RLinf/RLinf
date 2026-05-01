@@ -90,6 +90,9 @@ class LiberoEnv(gym.Env):
         self.num_group = self.num_envs // self.group_size
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
         self.specific_reset_id = cfg.get("specific_reset_id", None)
+        self.task_id_filter = cfg.get("task_id_filter", None)
+        if self.task_id_filter is not None:
+            self.task_id_filter = list(self.task_id_filter)
 
         self.ignore_terminations = cfg.ignore_terminations
         self.auto_reset = cfg.auto_reset
@@ -359,6 +362,33 @@ class LiberoEnv(gym.Env):
             self.total_num_group_envs += task_num_trials
         self.cumsum_trial_id_bins = np.cumsum(self.trial_id_bins)
 
+        if self.task_id_filter is not None:
+            num_tasks = len(self.trial_id_bins)
+            validated_tids = []
+            for tid in self.task_id_filter:
+                if not isinstance(tid, (int, np.integer)):
+                    raise ValueError(
+                        f"task_id_filter must contain ints, got "
+                        f"{type(tid).__name__}: {tid}"
+                    )
+                tid_int = int(tid)
+                if tid_int < 0 or tid_int >= num_tasks:
+                    raise ValueError(
+                        f"task_id {tid_int} in task_id_filter is out of range "
+                        f"[0, {num_tasks - 1}]"
+                    )
+                validated_tids.append(tid_int)
+            validated_tids = sorted(set(validated_tids))
+
+            self._valid_reset_state_ids = []
+            for tid in validated_tids:
+                start = self.cumsum_trial_id_bins[tid - 1] if tid > 0 else 0
+                end = self.cumsum_trial_id_bins[tid]
+                self._valid_reset_state_ids.extend(range(start, end))
+            self._valid_reset_state_ids = np.array(self._valid_reset_state_ids)
+        else:
+            self._valid_reset_state_ids = None
+
     def update_reset_state_ids(self):
         if self.cfg.is_eval or self.cfg.use_ordered_reset_state_ids:
             reset_state_ids = self._get_ordered_reset_state_ids(self.num_group)
@@ -376,6 +406,11 @@ class LiberoEnv(gym.Env):
             reset_state_ids = self.specific_reset_id * np.ones(
                 (num_reset_states,), dtype=int
             )
+        elif self._valid_reset_state_ids is not None:
+            indices = self._generator.integers(
+                low=0, high=len(self._valid_reset_state_ids), size=(num_reset_states,)
+            )
+            reset_state_ids = self._valid_reset_state_ids[indices]
         else:
             reset_state_ids = self._generator.integers(
                 low=0, high=self.total_num_group_envs, size=(num_reset_states,)
@@ -383,11 +418,22 @@ class LiberoEnv(gym.Env):
         return reset_state_ids
 
     def get_reset_state_ids_all(self):
-        reset_state_ids = np.arange(self.total_num_group_envs)
+        if self._valid_reset_state_ids is not None:
+            reset_state_ids = self._valid_reset_state_ids.copy()
+        else:
+            reset_state_ids = np.arange(self.total_num_group_envs)
+
+        if not self.cfg.is_eval:
+            self._generator_ordered.shuffle(reset_state_ids)
+
+        # Ensure we have enough IDs for all processes by tiling if needed
+        if len(reset_state_ids) < self.total_num_processes:
+            repeats = (self.total_num_processes // len(reset_state_ids)) + 1
+            reset_state_ids = np.tile(reset_state_ids, repeats)
+
         valid_size = len(reset_state_ids) - (
             len(reset_state_ids) % self.total_num_processes
         )
-        self._generator_ordered.shuffle(reset_state_ids)
         reset_state_ids = reset_state_ids[:valid_size]
         reset_state_ids = reset_state_ids.reshape(self.total_num_processes, -1)
         return reset_state_ids
@@ -453,6 +499,7 @@ class LiberoEnv(gym.Env):
         self.success_once = np.zeros(self.num_envs, dtype=bool)
         self.fail_once = np.zeros(self.num_envs, dtype=bool)
         self.returns = np.zeros(self.num_envs)
+        self.success_episode_len = np.zeros(self.num_envs, dtype=np.int32)
 
     def _reset_metrics(self, env_idx=None):
         if env_idx is not None:
@@ -462,22 +509,39 @@ class LiberoEnv(gym.Env):
             self.success_once[mask] = False
             self.fail_once[mask] = False
             self.returns[mask] = 0
+            self.success_episode_len[mask] = 0
             self._elapsed_steps[env_idx] = 0
         else:
             self.prev_step_reward[:] = 0
             self.success_once[:] = False
             self.fail_once[:] = False
             self.returns[:] = 0.0
+            self.success_episode_len[:] = 0
             self._elapsed_steps[:] = 0
 
     def _record_metrics(self, step_reward, terminations, infos):
         episode_info = {}
-        self.returns += step_reward
+        # Only accumulate returns while not yet succeeded
+        self.returns += step_reward * (~self.success_once)
+        # Record episode_len at first success
+        new_success_mask = terminations & ~self.success_once
+        if new_success_mask.any():
+            self.success_episode_len[new_success_mask] = self.elapsed_steps[
+                new_success_mask
+            ]
+
         self.success_once = self.success_once | terminations
         episode_info["success_once"] = self.success_once.copy()
         episode_info["return"] = self.returns.copy()
         episode_info["episode_len"] = self.elapsed_steps.copy()
-        episode_info["reward"] = episode_info["return"] / episode_info["episode_len"]
+
+        # Use success episode_len for reward if already succeeded, else current elapsed
+        episode_len_for_reward = np.where(
+            self.success_once, self.success_episode_len, self.elapsed_steps
+        )
+        episode_info["reward"] = episode_info["return"] / np.maximum(
+            episode_len_for_reward, 1
+        )
         infos["episode"] = to_tensor(episode_info)
         return infos
 

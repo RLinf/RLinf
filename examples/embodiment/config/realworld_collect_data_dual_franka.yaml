@@ -1,0 +1,69 @@
+defaults:
+  - env/realworld_dual_franka@env.eval
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    env:
+      node_group: franka
+      placement: 0
+  node_groups:
+    - label: franka
+      node_ranks: 0-1
+      hardware:
+        type: DualFranka
+        configs:
+          - left_robot_ip: LEFT_ROBOT_IP
+            right_robot_ip: RIGHT_ROBOT_IP
+            base_camera_serials:
+              - BASE_CAMERA_SERIAL
+            left_camera_serials:
+              - LEFT_CAMERA_SERIAL
+            right_camera_serials:
+              - RIGHT_CAMERA_SERIAL
+            camera_type: realsense
+            left_gripper_type: robotiq
+            right_gripper_type: robotiq
+            left_gripper_connection: LEFT_GRIPPER_CONNECTION # e.g. /dev/ttyUSB0
+            right_gripper_connection: RIGHT_GRIPPER_CONNECTION
+            left_controller_node_rank: 0
+            right_controller_node_rank: 1
+            node_rank: 0
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: null
+    project_name: rlinf
+    experiment_name: "collect-data-dual-franka"
+    logger_backends: ["tensorboard"]
+  num_data_episodes: 20
+  record_task_description: False
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    no_gripper: False
+    ignore_terminations: False
+    auto_reset: False
+    use_spacemouse: True
+    keyboard_reward_wrapper: "single_stage"
+    override_cfg:
+      target_ee_pose: TARGET_EE_POSE
+      success_hold_steps: 1
+
+    data_collection:
+      enabled: True
+      save_dir: ${runner.logger.log_path}/collected_data
+      export_format: "lerobot"
+      only_success: True
+      robot_type: "dual_panda"
+      fps: 10

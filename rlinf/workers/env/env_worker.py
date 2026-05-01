@@ -55,6 +55,7 @@ class EnvWorker(Worker):
 
         self.last_obs_list = []
         self.last_intervened_info_list = []
+        self._prefetched_train_bootstrap: list[EnvOutput] | None = None
         self.rollout_epoch = self.cfg.algorithm.get("rollout_epoch", 1)
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
 
@@ -77,10 +78,20 @@ class EnvWorker(Worker):
             self.env_reward_weight = self.cfg.reward.get("env_reward_weight", 0.0)
 
         # Env configurations
-        self.enable_offload = self.cfg.env.train.get("enable_offload", False)
         self.only_eval = getattr(self.cfg.runner, "only_eval", False)
+        train_env_cfg = self.cfg.env.get("train", None)
+        eval_env_cfg = self.cfg.env.eval
+        self.enable_offload = (
+            train_env_cfg.get("enable_offload", False)
+            if train_env_cfg is not None
+            else eval_env_cfg.get("enable_offload", False)
+        )
         self.enable_eval = self.cfg.runner.val_check_interval > 0 or self.only_eval
         if not self.only_eval:
+            if train_env_cfg is None:
+                raise ValueError(
+                    "env.train config is required when runner.only_eval=False."
+                )
             self.train_num_envs_per_stage = (
                 self.cfg.env.train.total_num_envs // self._world_size // self.stage_num
             )
@@ -88,10 +99,12 @@ class EnvWorker(Worker):
             self.eval_num_envs_per_stage = (
                 self.cfg.env.eval.total_num_envs // self._world_size // self.stage_num
             )
-        self.n_train_chunk_steps = (
-            self.cfg.env.train.max_steps_per_rollout_epoch
-            // self.cfg.actor.model.num_action_chunks
-        )
+        self.n_train_chunk_steps = 0
+        if not self.only_eval:
+            self.n_train_chunk_steps = (
+                self.cfg.env.train.max_steps_per_rollout_epoch
+                // self.cfg.actor.model.num_action_chunks
+            )
         self.n_eval_chunk_steps = (
             self.cfg.env.eval.max_steps_per_rollout_epoch
             // self.cfg.actor.model.num_action_chunks
@@ -397,9 +410,11 @@ class EnvWorker(Worker):
         final_obs = (
             self._build_chunk_final_obs(obs_list, infos_list)
             if self.use_external_reward_model
-            else infos["final_observation"]
-            if isinstance(infos, dict) and "final_observation" in infos
-            else None
+            else (
+                infos["final_observation"]
+                if isinstance(infos, dict) and "final_observation" in infos
+                else None
+            )
         )
         if not self.cfg.env.train.auto_reset:
             if self.cfg.env.train.ignore_terminations:
@@ -467,15 +482,17 @@ class EnvWorker(Worker):
         final_obs = (
             self._build_chunk_final_obs(obs_list, infos_list)
             if self.use_external_reward_model
-            else infos["final_observation"]
-            if isinstance(infos, dict) and "final_observation" in infos
-            else None
+            else (
+                infos["final_observation"]
+                if isinstance(infos, dict) and "final_observation" in infos
+                else None
+            )
         )
 
         current_dones = chunk_dones[:, -1]  # [num_envs] bool
-        prev = self.eval_prev_done[stage_id]
-        newly_done = current_dones & ~prev.to(current_dones.device)
-        self.eval_prev_done[stage_id] = current_dones.clone()
+        prev = self.eval_prev_done[stage_id].to(current_dones.device)
+        newly_done = current_dones & ~prev
+        self.eval_prev_done[stage_id] = prev | current_dones
 
         if newly_done.any():
             if "final_info" in infos:
@@ -836,9 +853,11 @@ class EnvWorker(Worker):
                     dones=dones,
                     terminations=terminations,
                     truncations=truncations,
-                    final_obs=infos["final_observation"]
-                    if "final_observation" in infos
-                    else None,
+                    final_obs=(
+                        infos["final_observation"]
+                        if "final_observation" in infos
+                        else None
+                    ),
                     intervene_actions=None,
                     intervene_flags=None,
                 )
@@ -861,6 +880,36 @@ class EnvWorker(Worker):
                 env_outputs.append(env_output)
 
         return env_outputs
+
+    def _send_train_bootstrap(
+        self, rollout_channel: Channel, env_outputs: list[EnvOutput]
+    ) -> None:
+        for stage_id in range(self.stage_num):
+            env_output: EnvOutput = env_outputs[stage_id]
+            env_batch = env_output.to_dict()
+            self.send_env_batch(
+                rollout_channel,
+                {
+                    "obs": env_batch["obs"],
+                    "final_obs": env_batch["final_obs"],
+                },
+            )
+
+    def _bootstrap_and_send_train(self, rollout_channel: Channel) -> list[EnvOutput]:
+        env_outputs = self.bootstrap_step()
+        self._send_train_bootstrap(rollout_channel, env_outputs)
+        return env_outputs
+
+    def prefetch_train_bootstrap(self, rollout_channel: Channel) -> None:
+        """Prepare and send the first env batch for the next training rollout."""
+        if self._prefetched_train_bootstrap is not None:
+            raise RuntimeError(
+                "A prefetched train bootstrap already exists. "
+                "Call interact() to consume it before prefetching again."
+            )
+        self._prefetched_train_bootstrap = self._bootstrap_and_send_train(
+            rollout_channel
+        )
 
     def record_env_metrics(
         self, env_metrics: dict[str, list], env_info: dict[str, Any], epoch: int
@@ -887,7 +936,7 @@ class EnvWorker(Worker):
     async def send_rollout_trajectories(
         self, rollout_result: EmbodiedRolloutResult, channel: Channel
     ):
-        trajectories: Trajectory = rollout_result.to_splited_trajectories(
+        trajectories: list[Trajectory] = rollout_result.to_splited_trajectories(
             self.actor_split_num
         )
         for trajectory in trajectories:
@@ -912,17 +961,11 @@ class EnvWorker(Worker):
         env_metrics = defaultdict(list)
 
         for epoch in range(self.rollout_epoch):
-            env_outputs = self.bootstrap_step()
-            for stage_id in range(self.stage_num):
-                env_output: EnvOutput = env_outputs[stage_id]
-                env_batch = env_output.to_dict()
-                self.send_env_batch(
-                    rollout_channel,
-                    {
-                        "obs": env_batch["obs"],
-                        "final_obs": env_batch["final_obs"],
-                    },
-                )
+            if epoch == 0 and self._prefetched_train_bootstrap is not None:
+                env_outputs = self._prefetched_train_bootstrap
+                self._prefetched_train_bootstrap = None
+            else:
+                env_outputs = self._bootstrap_and_send_train(rollout_channel)
 
             for chunk_step_idx in range(self.n_train_chunk_steps):
                 for stage_id in range(self.stage_num):
@@ -957,12 +1000,16 @@ class EnvWorker(Worker):
                     )
                     chunk_step_result = ChunkStepResult(
                         actions=rollout_result.forward_inputs.get("action", None),
-                        prev_logprobs=rollout_result.prev_logprobs
-                        if self.collect_prev_infos
-                        else None,
-                        prev_values=rollout_result.prev_values
-                        if self.collect_prev_infos
-                        else None,
+                        prev_logprobs=(
+                            rollout_result.prev_logprobs
+                            if self.collect_prev_infos
+                            else None
+                        ),
+                        prev_values=(
+                            rollout_result.prev_values
+                            if self.collect_prev_infos
+                            else None
+                        ),
                         forward_inputs=rollout_result.forward_inputs,
                         versions=rollout_result.versions,
                         dones=env_output.dones,
@@ -1041,9 +1088,9 @@ class EnvWorker(Worker):
                     env_output, rollout_result.bootstrap_values, reward_model_output
                 )
                 chunk_step_result = ChunkStepResult(
-                    prev_values=rollout_result.prev_values
-                    if self.collect_prev_infos
-                    else None,
+                    prev_values=(
+                        rollout_result.prev_values if self.collect_prev_infos else None
+                    ),
                     dones=env_output.dones,
                     truncations=env_output.truncations,
                     terminations=env_output.terminations,
@@ -1119,9 +1166,11 @@ class EnvWorker(Worker):
                     extracted_obs, infos = self.eval_env_list[stage_id].reset()
                     env_output = EnvOutput(
                         obs=extracted_obs,
-                        final_obs=infos["final_observation"]
-                        if "final_observation" in infos
-                        else None,
+                        final_obs=(
+                            infos["final_observation"]
+                            if "final_observation" in infos
+                            else None
+                        ),
                     )
                     env_batch = env_output.to_dict()
                     self.send_env_batch(

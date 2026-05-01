@@ -3,6 +3,7 @@ defaults:
   - env/realworld_peg_insertion@env.eval
   - model/cnn_policy@actor.model
   - training_backend/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
 hydra:

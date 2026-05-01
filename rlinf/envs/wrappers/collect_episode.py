@@ -142,8 +142,6 @@ class CollectEpisode(gym.Wrapper):
     def is_start(self, value):
         setattr(self.env, "is_start", value)
 
-    # ─────────────────────────────────────────── gymnasium interface ──────────
-
     def reset(
         self,
         *,
@@ -303,8 +301,6 @@ class CollectEpisode(gym.Wrapper):
             return self.env.close()
         return None
 
-    # ─────────────────────────────────────────── buffer management ────────────
-
     def _new_buffer(self) -> dict[str, list]:
         return {
             "observations": [],
@@ -390,8 +386,6 @@ class CollectEpisode(gym.Wrapper):
             self._buffers[env_idx]["terminated"].append(False)
             self._buffers[env_idx]["truncated"].append(False)
 
-    # ─────────────────────────────────────────── episode flushing ─────────────
-
     def _maybe_flush(self, terminated, truncated) -> None:
         """Save finished episodes and reset their buffers."""
         for env_idx in range(self.num_envs):
@@ -451,8 +445,6 @@ class CollectEpisode(gym.Wrapper):
             self._submit(
                 self._write_pickle, os.path.join(self.save_dir, filename), episode_data
             )
-
-    # ─────────────────────────────────────────── lerobot helpers ──────────────
 
     def _buffer_to_lerobot_ep(
         self, buf: dict, env_idx: int, is_success: bool
@@ -627,13 +619,9 @@ class CollectEpisode(gym.Wrapper):
                 break
         return episodes
 
-    # ─────────────────────────────────────────── pickle helpers ───────────────
-
     def _write_pickle(self, save_path: str, episode_data: dict) -> None:
         with open(save_path, "wb") as f:
             pickle.dump(episode_data, f)
-
-    # ─────────────────────────────────────────── async I/O ────────────────────
 
     def _submit(self, fn, *args) -> None:
         if self._executor is None:
@@ -658,8 +646,6 @@ class CollectEpisode(gym.Wrapper):
 
     def _finalize_on_exit(self) -> None:
         self.close()
-
-    # ─────────────────────────────────────────── success tracking ─────────────
 
     def _update_success(self, env_idx: int, env_info) -> None:
         """Update the per-env success flag from a single-env info dict."""
@@ -756,8 +742,6 @@ class CollectEpisode(gym.Wrapper):
             return any(episode_values)
 
         return self._extract_success_from_source(info)
-
-    # ─────────────────────────────────────────── data utilities ───────────────
 
     def _extract_task_description(self, buf: dict, env_idx: int) -> str:
         for obs in reversed(buf["observations"]):
@@ -879,8 +863,6 @@ class CollectEpisode(gym.Wrapper):
         if isinstance(data, tuple):
             return tuple(self._copy(item) for item in data)
         return data
-
-    # ─────────────────────────────────────── goal site visualization ──────────
 
     def _show_goal_site_visual(self) -> None:
         """Unhide the goal site in environments that support it."""

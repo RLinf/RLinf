@@ -90,12 +90,16 @@ SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
 SupportedModel.GR00T = SupportedModel.register("gr00t", force=True)
 SupportedModel.DEXBOTIC_PI = SupportedModel.register("dexbotic_pi", force=True)
+SupportedModel.DEXBOTIC_DM0 = SupportedModel.register("dexbotic_dm0", force=True)
 SupportedModel.DREAMZERO = SupportedModel.register("dreamzero", force=True)
 SupportedModel.CNN_POLICY = SupportedModel.register("cnn_policy", force=True)
 SupportedModel.FLOW_POLICY = SupportedModel.register("flow_policy", force=True)
 SupportedModel.CMA_POLICY = SupportedModel.register("cma", force=True)
 SupportedModel.LINGBOTVLA = SupportedModel.register("lingbotvla", force=True)
 SupportedModel.RESNET_REWARD = SupportedModel.register("resnet", force=True)
+SupportedModel.CFG_MODEL = SupportedModel.register("cfg_model", force=True)
+SupportedModel.VALUE_MODEL = SupportedModel.register("value_model", force=True)
+
 SupportedModel.QWEN2_5_VL_SFT = SupportedModel.register("qwen2.5_vl", force=True)
 SupportedModel.QWEN3_VL_SFT = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_VL_MOE_SFT = SupportedModel.register("qwen3_vl_moe", force=True)
@@ -109,12 +113,15 @@ EMBODIED_MODEL = set(
         SupportedModel.MLP_POLICY,
         SupportedModel.GR00T,
         SupportedModel.DEXBOTIC_PI,
+        SupportedModel.DEXBOTIC_DM0,
         SupportedModel.DREAMZERO,
         SupportedModel.CNN_POLICY,
         SupportedModel.FLOW_POLICY,
         SupportedModel.CMA_POLICY,
         SupportedModel.LINGBOTVLA,
         SupportedModel.RESNET_REWARD,
+        SupportedModel.CFG_MODEL,
+        SupportedModel.VALUE_MODEL,
     }
 )
 
@@ -126,6 +133,7 @@ SUPPORTED_TASK_TYPE = [
     "reasoning_eval",
     "coding_online_rl",
     "sft",
+    "offline",
 ]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 __all__ = ["build_config"]
@@ -869,6 +877,13 @@ def validate_embodied_cfg(cfg):
         weight_sync_interval = cfg.runner.get("weight_sync_interval", 1)
         assert weight_sync_interval > 0, "weight_sync_interval must be greater than 0"
         cfg.runner.weight_sync_interval = weight_sync_interval
+        # Overlap environment bootstrap (reset) with actor training to hide reset latency.
+        # This is enabled only when offload is disabled to avoid resource contention.
+        # Note: If EnvWorker and Actor share the same accelerator, this may increase GPU memory
+        # pressure during the overlap period.
+        cfg.runner.overlap_env_bootstrap = bool(
+            cfg.runner.get("overlap_env_bootstrap", False)
+        ) and not cfg.env.train.get("enable_offload", False)
         if (
             SupportedEnvType(cfg.env.train.env_type) == SupportedEnvType.MANISKILL
             or SupportedEnvType(cfg.env.eval.env_type) == SupportedEnvType.MANISKILL
@@ -918,6 +933,109 @@ def validate_embodied_cfg(cfg):
             cfg.env.train.omnigibson_cfg = omnigibson_cfg
             cfg.env.eval.omnigibson_cfg = omnigibson_cfg
 
+    return cfg
+
+
+def validate_offline_cfg(cfg: DictConfig) -> DictConfig:
+    """Validation for offline tasks (e.g. IQL).
+
+    Requires explicit offline IQL runtime fields and validates their ranges.
+    """
+    actor_global = cfg.actor.get("global_batch_size", None)
+    actor_micro = cfg.actor.get("micro_batch_size", None)
+    runner_local_update_steps = cfg.runner.get("local_update_steps", None)
+    runner_max_steps = cfg.runner.get("max_steps", None)
+    runner_only_eval = cfg.runner.get("only_eval", None)
+    algorithm_gamma = cfg.algorithm.get("gamma", None)
+    actor_seed = cfg.actor.get("seed", None)
+    if actor_global is None:
+        raise AssertionError("offline training requires actor.global_batch_size")
+    if actor_micro is None:
+        raise AssertionError("offline training requires actor.micro_batch_size")
+    if runner_local_update_steps is None:
+        raise AssertionError("offline training requires runner.local_update_steps")
+    if runner_max_steps is None:
+        raise AssertionError("offline training requires runner.max_steps")
+    if runner_only_eval is None:
+        raise AssertionError("offline training requires runner.only_eval")
+    if algorithm_gamma is None:
+        raise AssertionError("offline training requires algorithm.gamma")
+    if actor_seed is None:
+        raise AssertionError("offline training requires actor.seed")
+
+    actor_global_int = int(actor_global)
+    actor_micro_int = int(actor_micro)
+    runner_local_update_steps_int = int(runner_local_update_steps)
+    runner_max_steps_int = int(runner_max_steps)
+    try:
+        float(algorithm_gamma)
+    except (TypeError, ValueError) as exc:
+        raise AssertionError(
+            f"algorithm.gamma must be numeric, got {algorithm_gamma!r}"
+        ) from exc
+    try:
+        int(actor_seed)
+    except (TypeError, ValueError) as exc:
+        raise AssertionError(
+            f"actor.seed must be int-castable, got {actor_seed!r}"
+        ) from exc
+
+    assert actor_global_int > 0, (
+        f"actor.global_batch_size must be > 0, got {actor_global_int}"
+    )
+    assert actor_micro_int > 0, (
+        f"actor.micro_batch_size must be > 0, got {actor_micro_int}"
+    )
+    assert runner_local_update_steps_int > 0, (
+        "runner.local_update_steps must be > 0 for offline training"
+    )
+    assert runner_max_steps_int >= 0, (
+        f"runner.max_steps must be >= 0, got {runner_max_steps_int}"
+    )
+    assert actor_global_int >= actor_micro_int, (
+        "actor.global_batch_size must be >= actor.micro_batch_size for offline training"
+    )
+
+    with open_dict(cfg):
+        cfg.runner.only_eval = bool(runner_only_eval)
+
+        # Offline RL only needs env.eval for evaluation interaction.
+        if cfg.env.get("train", None) is None:
+            cfg.env.train = OmegaConf.create(
+                OmegaConf.to_container(cfg.env.eval, resolve=True)
+            )
+
+    if cfg.runner.val_check_interval > 0 or cfg.runner.only_eval:
+        component_placement = HybridComponentPlacement(cfg, Cluster())
+        stage_num = cfg.rollout.pipeline_stage_num
+        env_world_size = component_placement.get_world_size("env")
+        assert cfg.env.eval.total_num_envs > 0, (
+            "Total number of parallel environments for evaluation must be greater than 0"
+        )
+        assert cfg.env.eval.total_num_envs % env_world_size == 0, (
+            "Total number of parallel environments for evaluation must be divisible by the number of environment processes"
+        )
+        assert cfg.env.eval.total_num_envs % env_world_size % stage_num == 0, (
+            "Total number of parallel environments for evaluation must be divisible by the number of environment processes and the number of pipeline stages"
+        )
+        assert cfg.env.eval.total_num_envs // env_world_size // stage_num > 0, (
+            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
+        )
+        assert (
+            cfg.env.eval.total_num_envs
+            // env_world_size
+            // stage_num
+            % cfg.env.eval.group_size
+            == 0
+        ), (
+            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
+        )
+        assert (
+            cfg.env.eval.max_steps_per_rollout_epoch % cfg.actor.model.num_action_chunks
+            == 0
+        ), (
+            "env.eval.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
+        )
     return cfg
 
 
@@ -1083,6 +1201,8 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         return cfg
     elif cfg.runner.task_type == "sft":
         cfg = validate_sft_cfg(cfg)
+    elif cfg.runner.task_type == "offline":
+        cfg = validate_offline_cfg(cfg)
 
     if cfg.runner.task_type != "sft":
         if cfg.algorithm.adv_type in ("grpo", "grpo_dynamic", "reinpp_baseline"):

@@ -222,6 +222,7 @@ class EmbodiedRewardWorker(Worker):
         self._interact_task = None
 
         self.reward_threshold = self.cfg.reward.get("reward_threshold", 0.6)
+        self._use_reward_prob = self.cfg.reward.get("use_reward_prob", False)
 
     def model_provider_func(self):
         from rlinf.models.embodiment.reward import get_reward_model_class
@@ -341,6 +342,10 @@ class EmbodiedRewardWorker(Worker):
         with torch.no_grad():
             outputs = self.model(images)
             probs = outputs["probabilities"]
+            if self._use_reward_prob:
+                self.log_info(
+                    f"[reward_model/probs] shape={probs.shape} values={probs.cpu().tolist()}"
+                )
             rewards = (probs > self.reward_threshold).to(probs.dtype)
 
         if rewards.dim() == 1:
@@ -453,8 +458,22 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
 
         self.cfg = cfg
 
+        self.data_loader, self.val_loader = self.build_dataloader()
+
         # Training step counter for validation interval
         self._training_step = 0
+
+        assert (
+            self.cfg.actor.global_batch_size
+            % (self.cfg.actor.micro_batch_size * self._world_size)
+            == 0
+        ), "global_batch_size is not divisible by micro_batch_size * world_size"
+
+        self.gradient_accumulation = (
+            self.cfg.actor.global_batch_size
+            // self.cfg.actor.micro_batch_size
+            // self._world_size
+        )
 
     def model_provider_func(self):
         from rlinf.models.embodiment.reward import get_reward_model_class
@@ -473,7 +492,6 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
     def init_worker(self):
         """Initialize model and optimizer using base class."""
 
-        self.data_loader, self.val_loader = self.build_dataloader()
         if self.data_loader is None:
             raise ValueError("data_loader is not set")
         self.data_iter = iter(self.data_loader)
@@ -547,18 +565,6 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
     def run_training(self) -> dict[str, float]:
         """Run one training iteration with gradient accumulation."""
         self.model.train()
-
-        assert (
-            self.cfg.actor.global_batch_size
-            % (self.cfg.actor.micro_batch_size * self._world_size)
-            == 0
-        ), "global_batch_size is not divisible by micro_batch_size * world_size"
-
-        self.gradient_accumulation = (
-            self.cfg.actor.global_batch_size
-            // self.cfg.actor.micro_batch_size
-            // self._world_size
-        )
 
         metrics = {}
 
@@ -657,3 +663,8 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
         val_metrics = all_reduce_dict(val_metrics, op=torch.distributed.ReduceOp.AVG)
 
         return val_metrics
+
+    def get_max_steps_per_epoch(self):
+        if self.data_loader is not None:
+            return max(1, len(self.data_loader) // self.gradient_accumulation)
+        return 0
