@@ -59,7 +59,9 @@ RL 训练使用 ``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yam
 - ``end_effector_config`` 与 ``glove_config`` 中的串口参数
 
 如果需要自定义相机命名或 crop，请直接在 ``override_cfg`` 中按序列号 serial
-填写；本 PR 默认不提交任何特定 serial 的配置，避免影响其他项目。例如：
+填写；本 PR 默认不提交任何特定 serial 的配置，避免影响其他项目。不配置
+``camera_names`` 时，默认命名会按照 ``camera_serials`` 列表顺序分配：第一个
+serial 是 ``wrist_1``，第二个 serial 是 ``wrist_2``，不会按序列号排序。例如：
 
 .. code-block:: yaml
 

@@ -61,7 +61,9 @@ Before running, fill in:
 
 Camera naming and crop are configured directly in ``override_cfg`` when needed.
 This PR does not ship any serial-specific defaults so that other projects are
-not affected. For example:
+not affected. Without ``camera_names``, default names follow the
+``camera_serials`` list order: the first serial is ``wrist_1``, the second is
+``wrist_2``. Serial numbers are not sorted. For example:
 
 .. code-block:: yaml
 

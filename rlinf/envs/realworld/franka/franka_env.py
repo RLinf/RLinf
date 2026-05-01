@@ -495,6 +495,8 @@ class FrankaEnv(gym.Env):
         self._clear_error()
         self._num_steps = 0
         self._franka_state = self._controller.get_state().wait()[0]
+        if self._ee_type.is_gripper:
+            self._franka_state.gripper_open = True
         observation = self._get_observation()
 
         return observation, {}
@@ -536,6 +538,7 @@ class FrankaEnv(gym.Env):
             )
         else:
             self._controller.reset_end_effector().wait()
+            self._franka_state.gripper_open = True
 
     @property
     def _ee_type(self) -> EndEffectorType:
@@ -612,13 +615,6 @@ class FrankaEnv(gym.Env):
         self._base_observation_space = copy.deepcopy(self.observation_space)
 
     @staticmethod
-    def _serial_sort_key(serial: str) -> tuple[int, int | str]:
-        serial = str(serial)
-        if serial.isdigit():
-            return (0, int(serial))
-        return (1, serial)
-
-    @staticmethod
     def _normalize_crop_region(
         crop_region: Any,
         *,
@@ -665,16 +661,13 @@ class FrankaEnv(gym.Env):
         if self.config.camera_serials is None:
             return []
 
-        sorted_serials = sorted(
-            [str(serial) for serial in self.config.camera_serials],
-            key=self._serial_sort_key,
-        )
+        ordered_serials = [str(serial) for serial in self.config.camera_serials]
 
         default_camera_type = self.config.camera_type or "realsense"
         camera_names = self.config.camera_names or {}
         camera_crop_regions = self.config.camera_crop_regions or {}
         camera_infos: list[CameraInfo] = []
-        for camera_index, serial in enumerate(sorted_serials, start=1):
+        for camera_index, serial in enumerate(ordered_serials, start=1):
             default_name = f"wrist_{camera_index}"
             name = camera_names.get(serial, default_name)
 
@@ -711,7 +704,8 @@ class FrankaEnv(gym.Env):
         """Release all hardware resources including cameras and video player."""
         if hasattr(self, "camera_player"):
             self.camera_player.stop()
-        self._close_cameras()
+        if not self.config.is_dummy and hasattr(self, "_cameras"):
+            self._close_cameras()
         super().close()
 
     def _close_cameras(self):
