@@ -49,6 +49,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self._lerobot_iter = None
         self.data_source = cfg.actor.get("data_source", "buffer")
         self._data_epoch = 0
+        # Actor-side LeRobot writer state (used when data_collection.defer_write=True)
+        self._lerobot_writer = None
+        self._lerobot_episodes_written = 0
 
     def _build_lerobot_dataset(self):
         enable_cache = self.cfg.actor.get("enable_decoded_cache", False)
@@ -146,14 +149,14 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def setup_dagger_components(self):
         """Initialize DAgger-specific replay buffer state."""
         seed = self.cfg.actor.get("seed", 1234)
-        auto_save_path = self.cfg.algorithm.replay_buffer.get("auto_save_path", None)
-        if auto_save_path is None:
-            auto_save_path = os.path.join(
-                self.cfg.runner.logger.log_path, f"replay_buffer/rank_{self._rank}"
-            )
-        else:
-            auto_save_path = os.path.join(auto_save_path, f"rank_{self._rank}")
         if self.data_source == "buffer":
+            auto_save_path = self.cfg.algorithm.replay_buffer.get("auto_save_path", None)
+            if auto_save_path is None:
+                auto_save_path = os.path.join(
+                    self.cfg.runner.logger.log_path, f"replay_buffer/rank_{self._rank}"
+                )
+            else:
+                auto_save_path = os.path.join(auto_save_path, f"rank_{self._rank}")
             self.replay_buffer = TrajectoryReplayBuffer(
                 seed=seed,
                 enable_cache=self.cfg.algorithm.replay_buffer.enable_cache,
@@ -184,7 +187,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 recv_list.append(trajectory)
             return self.recv_buffer_rollout_trajectories(recv_list)
         elif self.data_source == "lerobot":
-            return self.recv_lerobot_rollout_trajectories()
+            return self.recv_lerobot_rollout_trajectories(input_channel)
         else:
             raise ValueError(f"Invalid data source: {self.data_source}")
 
@@ -198,17 +201,106 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         if intervene_traj_list:
             self.replay_buffer.add_trajectories(intervene_traj_list)
 
-    def recv_lerobot_rollout_trajectories(self) -> None:
+    def recv_lerobot_rollout_trajectories(self, input_channel: Channel) -> None:
+        """Receive episodes from EnvWorker via channel, write to disk, then refresh.
+
+        When ``data_collection.defer_write=True``, EnvWorkers buffer completed
+        episodes in memory and send them here instead of writing directly to
+        disk. The actor writes each received episode to ``actor.sft_data_path``
+        and then calls ``refresh()`` on the rolling dataset so new shards are
+        picked up for training.
+        """
+
+        if input_channel is not None:
+            send_num = self._component_placement.get_world_size("env") * self.stage_num
+            recv_num = self._component_placement.get_world_size("actor")
+            split_num = compute_split_num(send_num, recv_num)
+            for _ in range(split_num):
+                episodes: list[list[dict]] = input_channel.get()
+                for ep_frames in episodes:
+                    if ep_frames:
+                        self._write_lerobot_episode_to_disk(ep_frames)
+
         refresher = (
             self.preload_dataset if self.preload_dataset is not None else self.dataset
         )
         refresher.refresh()
         while not self.dataset.is_ready():
             time.sleep(1)
-            print("waiting for dataset to be ready")
+            self.log_info("waiting for lerobot dataset to be ready")
             refresher.refresh()
         if self.preload_dataset is None:
             self._build_lerobot_data_loader()
+
+    @staticmethod
+    def _collect_lerobot_image_keys(
+        frame: dict, prefix: str
+    ) -> dict[str, tuple[int, ...]]:
+        """Return ``{key: shape}`` for all frame keys matching *prefix*."""
+        return {
+            k: tuple(frame[k].shape)
+            for k in frame
+            if (k == prefix or k.startswith(f"{prefix}-"))
+            and isinstance(frame[k], np.ndarray)
+            and frame[k].ndim == 3
+        }
+
+    def _write_lerobot_episode_to_disk(self, ep_frames: list[dict]) -> None:
+        """Write a single episode to disk using the actor-side LeRobot writer.
+
+        The writer is created lazily on the first episode using metadata from
+        the first frame. After every ``actor.lerobot.finalize_interval`` episodes
+        the writer is finalised and a new shard is opened, matching the behaviour
+        of ``CollectEpisode`` on the env side.
+
+        Args:
+            ep_frames: List of per-step frame dicts as produced by
+                ``CollectEpisode._buffer_to_lerobot_ep``.
+        """
+        if not ep_frames:
+            return
+
+        from rlinf.data.lerobot_writer import LeRobotDatasetWriter
+
+        if self._lerobot_writer is None:
+            self._lerobot_writer = LeRobotDatasetWriter()
+
+        if self._lerobot_writer.dataset is None:
+            first = ep_frames[0]
+            wrist_image_keys = self._collect_lerobot_image_keys(first, "wrist_image")
+            extra_view_image_keys = self._collect_lerobot_image_keys(
+                first, "extra_view_image"
+            )
+            lerobot_cfg = self.cfg.actor.get("lerobot", {})
+            robot_type = lerobot_cfg.get("robot_type", "panda")
+            fps = lerobot_cfg.get("fps", 10)
+            self._lerobot_writer.create(
+                repo_id=os.path.join(
+                    self.cfg.actor.sft_data_path,
+                    f"rank_{self._rank}",
+                    f"id_{self._lerobot_episodes_written}",
+                ),
+                robot_type=robot_type,
+                fps=fps,
+                image_shape=first["image"].shape if "image" in first else None,
+                state_dim=int(first["state"].shape[-1]),
+                action_dim=int(first["actions"].shape[-1]),
+                has_image="image" in first,
+                wrist_image_keys=wrist_image_keys,
+                extra_view_image_keys=extra_view_image_keys,
+                has_intervene_flag="intervene_flag" in first,
+            )
+
+        self._lerobot_writer.add_episode(ep_frames)
+        self._lerobot_episodes_written += 1
+
+        finalize_interval = self.cfg.actor.get("lerobot", {}).get("finalize_interval", 8)
+        if (
+            finalize_interval > 0
+            and self._lerobot_episodes_written % finalize_interval == 0
+        ):
+            self._lerobot_writer.finalize()
+            # dataset is now None; next episode will open a new shard.
 
     def _prepare_sft_batch(self, batch):
         """Prepare model-specific DAgger training inputs."""

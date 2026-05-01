@@ -85,12 +85,13 @@ env:
 
     data_collection:
       enabled: True
-      save_dir: ${runner.logger.log_path}/maniskill
+      save_dir: ${runner.logger.log_path}/maniskill   # unused when defer_write=True
       export_format: "lerobot"      # or "pickle"
       only_success: False
       robot_type: "panda"
       fps: 10
       finalize_interval: 8
+      defer_write: false   # episodes are sent via channel; actor writes to disk
   eval:
     total_num_envs: 32
     auto_reset: True
@@ -136,6 +137,10 @@ actor:
 
   sft_data_path: ${runner.logger.log_path}/maniskill
   data_source: "lerobot"
+  lerobot:
+    robot_type: "panda"
+    fps: 10
+    finalize_interval: 8   # flush LeRobot shard every N episodes
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 6400

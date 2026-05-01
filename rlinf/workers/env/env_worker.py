@@ -247,6 +247,9 @@ class EnvWorker(Worker):
                     finalize_interval=getattr(
                         env_cfg.data_collection, "finalize_interval", 100
                     ),
+                    defer_write=getattr(
+                        env_cfg.data_collection, "defer_write", False
+                    ),
                 )
             env_list.append(env)
         return env_list
@@ -1053,10 +1056,28 @@ class EnvWorker(Worker):
             self.finish_rollout()
 
         if actor_channel is not None:
-            for stage_id in range(self.stage_num):
-                await self.send_rollout_trajectories(
-                    self.rollout_results[stage_id], actor_channel
-                )
+            data_source = self.cfg.actor.get("data_source", "buffer")
+            if data_source == "buffer":
+                for stage_id in range(self.stage_num):
+                    await self.send_rollout_trajectories(
+                        self.rollout_results[stage_id], actor_channel
+                    )
+            elif data_source == "lerobot":
+                # Drain completed episodes from each stage's CollectEpisode wrapper
+                # and send them to the actor via channel so the actor can write to
+                # disk and refresh the rolling dataset.
+                # TODO(agent): for actor_world_size > 1 the episode list should be
+                #   split across actor ranks rather than replicated.
+                for stage_id in range(self.stage_num):
+                    collect_wrapper = self._find_collect_wrapper(
+                        self.env_list[stage_id]
+                    )
+                    episodes: list[list[dict]] = (
+                        collect_wrapper.drain_pending_episodes()
+                        if collect_wrapper is not None
+                        else []
+                    )
+                    actor_channel.put(episodes, async_op=True)
 
         for key, value in env_metrics.items():
             env_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
@@ -1161,3 +1182,14 @@ class EnvWorker(Worker):
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(recv_num, send_num)
         return split_num
+
+    @staticmethod
+    def _find_collect_wrapper(env):
+        """Traverse env wrappers to find a CollectEpisode instance, or None."""
+        from rlinf.envs.wrappers.collect_episode import CollectEpisode
+
+        while env is not None:
+            if isinstance(env, CollectEpisode):
+                return env
+            env = getattr(env, "env", None)
+        return None

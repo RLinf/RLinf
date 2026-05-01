@@ -28,6 +28,17 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
 
     async def recv_rollout_trajectories(self, input_channel):
         if self.data_source == "lerobot":
+            if (
+                getattr(self, "_recv_lerobot_thread", None) is None
+                or not self._recv_lerobot_thread.is_alive()
+            ):
+                if input_channel is not None:
+                    self._recv_lerobot_thread = threading.Thread(
+                        target=self._recv_lerobot_thread_main,
+                        args=(input_channel,),
+                        daemon=True,
+                    )
+                    self._recv_lerobot_thread.start()
             return
         if getattr(self, "_recv_queue", None) is None:
             self._recv_queue = queue.Queue()
@@ -41,6 +52,18 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
                 daemon=True,
             )
             self._recv_rollout_thread.start()
+
+    def _recv_lerobot_thread_main(self, input_channel):
+        """Background thread: receive episode batches from EnvWorker and write to disk."""
+        send_num = self._component_placement.get_world_size("env") * self.stage_num
+        recv_num = self._component_placement.get_world_size("actor")
+        split_num = compute_split_num(send_num, recv_num)
+        while not self.should_stop:
+            for _ in range(split_num):
+                episodes: list[list[dict]] = input_channel.get()
+                for ep_frames in episodes:
+                    if ep_frames:
+                        self._write_lerobot_episode_to_disk(ep_frames)
 
     def _recv_rollout_thread_main(self, input_channel):
         send_num = self._component_placement.get_world_size("env") * self.stage_num
@@ -143,3 +166,6 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
         recv_thread = getattr(self, "_recv_rollout_thread", None)
         if recv_thread is not None and recv_thread.is_alive():
             await asyncio.to_thread(recv_thread.join, 5)
+        lerobot_thread = getattr(self, "_recv_lerobot_thread", None)
+        if lerobot_thread is not None and lerobot_thread.is_alive():
+            await asyncio.to_thread(lerobot_thread.join, 5)

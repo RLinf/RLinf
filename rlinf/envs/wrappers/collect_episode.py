@@ -18,6 +18,7 @@ import atexit
 import copy
 import os
 import pickle
+import queue
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Lock
 from typing import Any, Optional
@@ -74,6 +75,7 @@ class CollectEpisode(gym.Wrapper):
         allow_partial_chunk: bool = False,
         stats_sample_ratio: float = 0.1,
         finalize_interval: int = 100,
+        defer_write: bool = False,
     ):
         if isinstance(env, gym.Env):
             super().__init__(env)
@@ -95,12 +97,16 @@ class CollectEpisode(gym.Wrapper):
         self.fps = fps
         self.only_success = only_success
         self.finalize_interval = finalize_interval
+        self.defer_write = defer_write
 
         # LeRobot writer is created lazily on the first completed episode.
         if export_format == "lerobot":
             self._lerobot_writer: Optional[Any] = None
             self._lerobot_lock = Lock()
             self._episodes_written = 0  # guarded by _lerobot_lock
+            if defer_write:
+                # Thread-safe queue for episodes to be written by the actor worker.
+                self._pending_episodes: queue.SimpleQueue = queue.SimpleQueue()
 
         # Single-worker executor keeps write ordering deterministic.
         self._executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(
@@ -414,7 +420,11 @@ class CollectEpisode(gym.Wrapper):
         if self.export_format == "lerobot":
             ep_data = self._buffer_to_lerobot_ep(buf, env_idx, is_success)
             if ep_data is not None:
-                self._submit(self._write_lerobot_episode, ep_data)
+                if self.defer_write:
+                    self._pending_episodes.put(ep_data)
+                    self.logger.info(f"Pending episodes: {self._pending_episodes.qsize()}")
+                else:
+                    self._submit(self._write_lerobot_episode, ep_data)
         else:
             episode_data = self._copy(
                 {
@@ -588,11 +598,34 @@ class CollectEpisode(gym.Wrapper):
         """Drain pending futures then write the LeRobot dataset metadata."""
         if self.export_format != "lerobot":
             return
+        if self.defer_write:
+            return
         self._wait_futures()
         with self._lerobot_lock:
             if self._lerobot_writer is not None:
                 self._lerobot_writer.finalize()
                 self._lerobot_writer = None
+
+    def drain_pending_episodes(self) -> list[list[dict]]:
+        """Return all completed episodes buffered since the last drain.
+
+        Only valid when ``defer_write=True`` and ``export_format="lerobot"``.
+        Clears the internal queue and returns every episode as a list of
+        per-step frame dicts (the format expected by
+        ``LeRobotDatasetWriter.add_episode``).
+
+        Returns:
+            List of episodes; each episode is itself a ``list[dict]``.
+        """
+        if not self.defer_write or self.export_format != "lerobot":
+            return []
+        episodes: list[list[dict]] = []
+        while True:
+            try:
+                episodes.append(self._pending_episodes.get_nowait())
+            except queue.Empty:
+                break
+        return episodes
 
     # ─────────────────────────────────────────── pickle helpers ───────────────
 
