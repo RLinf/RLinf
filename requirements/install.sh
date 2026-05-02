@@ -925,7 +925,7 @@ install_franka_env() {
 }
 
 install_franka_dexhand_deps() {
-    uv pip install RLinf-dexterous-hands
+    uv pip install "RLinf-dexterous-hands[glove]"
 }
 
 install_xsquare_turtle2_env() {
