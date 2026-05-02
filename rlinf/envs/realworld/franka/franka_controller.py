@@ -326,7 +326,8 @@ class FrankaController(Worker):
     def reset_end_effector(self, target_state: np.ndarray | None = None) -> None:
         """Reset the end-effector to a target or default state."""
         if self._end_effector_type.is_gripper:
-            self.open_gripper()
+            if target_state is not None:
+                self.command_end_effector(np.asarray(target_state))
             return
 
         assert self._end_effector is not None

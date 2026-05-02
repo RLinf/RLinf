@@ -495,8 +495,6 @@ class FrankaEnv(gym.Env):
         self._clear_error()
         self._num_steps = 0
         self._franka_state = self._controller.get_state().wait()[0]
-        if self._ee_type.is_gripper:
-            self._franka_state.gripper_open = True
         observation = self._get_observation()
 
         return observation, {}
@@ -529,16 +527,14 @@ class FrankaEnv(gym.Env):
             if cnt > 2:
                 break
 
-        # Reset end-effector
+        # Reset dexterous hands here. Gripper state is task-specific, matching
+        # the upstream Franka reset path where the base env does not open/close it.
         if self._is_hand:
             self._controller.reset_end_effector(self.config.hand_reset_state).wait()
             self._last_hand_command = (
                 np.array(self.config.hand_reset_state, dtype=np.float64)
                 * self.config.hand_action_scale
             )
-        else:
-            self._controller.reset_end_effector().wait()
-            self._franka_state.gripper_open = True
 
     @property
     def _ee_type(self) -> EndEffectorType:
