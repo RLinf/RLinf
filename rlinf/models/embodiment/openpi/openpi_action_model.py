@@ -386,18 +386,14 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             if k in ["image", "wrist_image", "extra_view_image", "state"]
         ]
         for key in raw_obs_keys:
-            obs_dict[key] = batch[f"observation/{key}"]
+            obs_dict[f"observation/{key}"] = batch[key]
 
         bsz = batch["actions"].shape[0]
         obs_dict["actions"] = batch["actions"].reshape(
             bsz, self.config.action_chunk, -1
         )
-        obs_dict["prompt"] = ["empty" for _ in range(bsz)]
+        obs_dict["prompt"] = batch["task"]
         processed_obs = self.input_transform(obs_dict, transpose=False)
-        if "tokenized_prompt" in batch:
-            processed_obs["tokenized_prompt"] = batch["tokenized_prompt"]
-        if "tokenized_prompt_mask" in batch:
-            processed_obs["tokenized_prompt_mask"] = batch["tokenized_prompt_mask"]
         processed_obs = self.precision_processor(processed_obs)
         observation = _model.Observation.from_dict(processed_obs)
         actions = processed_obs["actions"].clone()
