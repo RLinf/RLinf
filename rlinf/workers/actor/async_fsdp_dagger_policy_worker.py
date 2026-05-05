@@ -54,7 +54,16 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             self._recv_rollout_thread.start()
 
     def _recv_lerobot_thread_main(self, input_channel):
-        """Background thread: receive episode batches from EnvWorker and write to disk."""
+        """Background thread: receive episode batches from EnvWorker and write to disk.
+
+        When ``in_memory_mode=True``, each shard is also populated into the
+        dataset's in-memory shard cache via
+        :meth:`~rlinf.workers.actor.fsdp_dagger_policy_worker.EmbodiedDAGGERFSDPPolicy._write_lerobot_episode_to_disk`,
+        which calls
+        :meth:`~rlinf.data.rolling_lerobot_dataset.RollingLeRobotDataset.add_shard_to_memory`
+        at finalize time so the polling loop in
+        :meth:`_wait_for_lerobot_dataset_ready` picks up new shards from RAM.
+        """
         send_num = self._component_placement.get_world_size("env") * self.stage_num
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(send_num, recv_num)

@@ -933,6 +933,18 @@ def validate_embodied_cfg(cfg):
             cfg.env.train.omnigibson_cfg = omnigibson_cfg
             cfg.env.eval.omnigibson_cfg = omnigibson_cfg
 
+    if bool(OmegaConf.select(cfg, "actor.lerobot.in_memory_mode", default=False)):
+        defer_write = bool(
+            OmegaConf.select(
+                cfg, "env.train.data_collection.defer_write", default=False
+            )
+        )
+        assert defer_write, (
+            "actor.lerobot.in_memory_mode=True requires "
+            "env.train.data_collection.defer_write=True so the actor receives "
+            "episodes and can populate the rolling LeRobot shard RAM cache."
+        )
+
     return cfg
 
 

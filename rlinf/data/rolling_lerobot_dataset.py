@@ -88,6 +88,7 @@ import queue
 import re
 import threading
 import time
+from collections import deque
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -366,6 +367,327 @@ def _build_delta_timestamps(
 
 
 # ---------------------------------------------------------------------------
+# In-memory Arrow store (used by RollingLeRobotDataset.in_memory_mode)
+# ---------------------------------------------------------------------------
+
+
+class InMemoryArrowStore:
+    """Append-only in-memory frame store backed by per-episode Arrow tables.
+
+    Provides chunk sampling with episode-boundary clamping and ``*_is_pad``
+    masks that are **bit-for-bit identical** to
+    :meth:`~lerobot.common.datasets.lerobot_dataset.LeRobotDataset.__getitem__`
+    without any disk I/O.
+
+    Each episode is stored as an independent HuggingFace
+    :class:`datasets.Dataset` (Arrow table).  Appending a new episode is
+    O(1) — no ``concatenate_datasets`` copy.  Random access requires an
+    O(log N_episodes) binary search to locate the correct episode, then
+    O(chunk_size) Arrow ``select`` rows for the chunk window.
+
+    The HuggingFace ``Features`` schema is **inferred automatically** from
+    the first episode's frame dicts, so the caller does not need to know the
+    feature layout up front.
+
+    Args:
+        chunk_size: Consecutive frames per sample.  ``<= 1`` disables
+            chunking (single-frame output with no ``delta_indices``).
+        action_sequence_keys: Keys to apply chunk sampling to.  Determines
+            which keys appear as ``[chunk_size, …]`` tensors and get
+            companion ``*_is_pad`` masks.
+        fps: Frames per second used for the ``timestamp`` metadata column.
+        image_transforms: Optional callable applied to image tensors after
+            ``hf_transform_to_torch`` converts PIL → float32 ``[C,H,W]``.
+    """
+
+    def __init__(
+        self,
+        chunk_size: int = 1,
+        action_sequence_keys: list[str] | None = None,
+        fps: int = 10,
+        image_transforms: Callable | None = None,
+    ) -> None:
+        self._chunk_size = chunk_size
+        self._fps = max(fps, 1)
+        self._image_transforms = image_transforms
+        keys = action_sequence_keys or []
+        self._delta_indices: dict[str, list[int]] = (
+            {k: list(range(chunk_size)) for k in keys} if chunk_size > 1 else {}
+        )
+        self._episode_datasets: deque[Any] = deque()
+        self._ep_from: deque[int] = deque()
+        self._ep_to: deque[int] = deque()
+        self._total_frames: int = 0
+        self._hf_features: Any = None
+        self._image_keys: set[str] = set()
+        self._task_to_idx: dict[str, int] = {}
+        self._tasks: dict[int, str] = {}
+        self._hits: int = 0
+
+    # ------------------------------------------------------------------
+    # Schema inference
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _infer_hf_features(frame: dict) -> tuple[Any, set[str]]:
+        """Derive a HuggingFace ``Features`` schema from a raw frame dict.
+
+        Returns the schema and the set of keys that hold image arrays
+        (``uint8 [H, W, C]``).
+        """
+        import datasets as hf_datasets
+
+        meta_features: dict[str, Any] = {
+            "index": hf_datasets.Value("int64"),
+            "episode_index": hf_datasets.Value("int64"),
+            "frame_index": hf_datasets.Value("int64"),
+            "timestamp": hf_datasets.Value("float32"),
+            "task_index": hf_datasets.Value("int64"),
+        }
+        data_features: dict[str, Any] = {}
+        image_keys: set[str] = set()
+
+        for key, val in frame.items():
+            if key == "task":
+                continue
+            if not isinstance(val, np.ndarray):
+                continue
+            if val.dtype == np.uint8 and val.ndim == 3:
+                data_features[key] = hf_datasets.Image()
+                image_keys.add(key)
+            elif val.shape == (1,):
+                dtype_str = "bool" if np.issubdtype(val.dtype, np.bool_) else str(val.dtype)
+                data_features[key] = hf_datasets.Value(dtype_str)
+            elif val.ndim == 1:
+                dtype_str = "bool" if np.issubdtype(val.dtype, np.bool_) else str(val.dtype)
+                data_features[key] = hf_datasets.Sequence(
+                    length=val.shape[0],
+                    feature=hf_datasets.Value(dtype_str),
+                )
+            elif val.ndim == 2:
+                data_features[key] = hf_datasets.Array2D(
+                    shape=tuple(val.shape), dtype=str(val.dtype)
+                )
+
+        return hf_datasets.Features({**meta_features, **data_features}), image_keys
+
+    # ------------------------------------------------------------------
+    # Episode addition
+    # ------------------------------------------------------------------
+
+    def add_episode(self, ep_frames: list[dict]) -> None:
+        """Append *ep_frames* as a new episode; O(1) Arrow table creation.
+
+        The HuggingFace features schema is inferred lazily from the first
+        episode so callers do not need to specify it up front.
+
+        Args:
+            ep_frames: Per-step frame dicts as produced by
+                :meth:`~rlinf.envs.wrappers.collect_episode.CollectEpisode._buffer_to_lerobot_ep`.
+        """
+        import PIL.Image as PILImage
+        from datasets import Dataset
+        from lerobot.common.datasets.utils import hf_transform_to_torch
+
+        n = len(ep_frames)
+        if n == 0:
+            return
+
+        if self._hf_features is None:
+            self._hf_features, self._image_keys = self._infer_hf_features(ep_frames[0])
+
+        ep_idx = len(self._ep_from)
+        base = self._total_frames
+
+        # Register task strings and build per-frame task_index array.
+        task_indices: list[int] = []
+        for frame in ep_frames:
+            task_str = frame.get("task", "")
+            if task_str not in self._task_to_idx:
+                tidx = len(self._task_to_idx)
+                self._task_to_idx[task_str] = tidx
+                self._tasks[tidx] = task_str
+            task_indices.append(self._task_to_idx[task_str])
+
+        ep_dict: dict[str, Any] = {
+            "index": np.arange(base, base + n, dtype=np.int64),
+            "episode_index": np.full((n,), ep_idx, dtype=np.int64),
+            "frame_index": np.arange(n, dtype=np.int64),
+            "timestamp": np.arange(n, dtype=np.float32) / self._fps,
+            "task_index": np.array(task_indices, dtype=np.int64),
+        }
+
+        for key in self._hf_features:
+            if key in ("index", "episode_index", "frame_index", "timestamp", "task_index"):
+                continue
+            if key in self._image_keys:
+                ep_dict[key] = [PILImage.fromarray(f[key]) for f in ep_frames]
+            else:
+                vals = [f.get(key) for f in ep_frames]
+                if all(v is not None for v in vals):
+                    stacked = np.stack(vals)
+                    # Scalar (1,) — squeeze to 1-D so Arrow Value dtype matches.
+                    ep_dict[key] = (
+                        stacked.squeeze(1) if stacked.shape == (n, 1) else stacked
+                    )
+
+        ep_ds = Dataset.from_dict(ep_dict, features=self._hf_features)
+        ep_ds.set_transform(hf_transform_to_torch)
+        self._episode_datasets.append(ep_ds)
+        self._ep_from.append(base)
+        self._ep_to.append(base + n)
+        self._total_frames += n
+
+    # ------------------------------------------------------------------
+    # Access
+    # ------------------------------------------------------------------
+
+    def __len__(self) -> int:
+        return self._total_frames
+
+    @property
+    def num_episodes(self) -> int:
+        """Number of episodes stored in this shard."""
+        return len(self._episode_datasets)
+
+    def __getitem__(self, local_idx: int) -> dict[str, Any]:
+        """Fetch one sample with a chunk window identical to LeRobot's output.
+
+        Args:
+            local_idx: Frame index within this shard (0-based).
+
+        Returns:
+            Dict of tensors.  When ``chunk_size > 1``, keys listed in
+            ``delta_indices`` are replaced by ``[chunk_size, …]`` tensors and
+            companion ``*_is_pad`` bool tensors are added — matching
+            :class:`~lerobot.common.datasets.lerobot_dataset.LeRobotDataset`
+            ``__getitem__`` output exactly.
+        """
+        local_idx = max(0, min(local_idx, self._total_frames - 1))
+        self._hits += 1
+        ep_idx = bisect.bisect_right(self._ep_to, local_idx)
+        ep_start = self._ep_from[ep_idx]
+        ep_end = self._ep_to[ep_idx]
+        local_frame = local_idx - ep_start
+
+        ep_ds = self._episode_datasets[ep_idx]
+        item: dict[str, Any] = ep_ds[local_frame]
+        item["task"] = self._tasks.get(int(item["task_index"].item()), "")
+
+        if self._image_transforms is not None:
+            for k in self._image_keys:
+                if k in item:
+                    item[k] = self._image_transforms(item[k])
+
+        if self._delta_indices:
+            query_indices = {
+                key: [
+                    max(ep_start, min(ep_end - 1, local_idx + d)) for d in deltas
+                ]
+                for key, deltas in self._delta_indices.items()
+            }
+            padding = {
+                f"{key}_is_pad": torch.BoolTensor(
+                    [
+                        (local_idx + d < ep_start) | (local_idx + d >= ep_end)
+                        for d in deltas
+                    ]
+                )
+                for key, deltas in self._delta_indices.items()
+            }
+            # All chunk indices are within the same episode — use local offsets.
+            query_result = {
+                key: torch.stack(
+                    ep_ds.select([q - ep_start for q in q_idxs])[key]
+                )
+                for key, q_idxs in query_indices.items()
+                if key in self._hf_features and key not in self._image_keys
+            }
+            item = {**item, **padding}
+            for k, v in query_result.items():
+                item[k] = v
+
+        return item
+
+    def stats(self) -> dict[str, Any]:
+        """Return access counter and current store size.
+
+        Returns:
+            Dictionary with keys:
+
+            * ``in_memory_store_episodes`` – number of episodes in this shard.
+            * ``in_memory_store_frames`` – total frames in this shard.
+            * ``in_memory_store_hits`` – number of ``__getitem__`` calls.
+        """
+        return {
+            "in_memory_store_episodes": len(self._episode_datasets),
+            "in_memory_store_frames": self._total_frames,
+            "in_memory_store_hits": self._hits,
+        }
+
+
+def _compute_intervene_valid_local_indices_in_memory(
+    store: InMemoryArrowStore,
+    intervene_flag_key: str,
+    chunk_size: int,
+) -> list[int]:
+    """Like :func:`_compute_intervene_valid_local_indices` for :class:`InMemoryArrowStore`.
+
+    Uses the same padding and per-chunk flag rules as the LeRobot path so
+    index construction matches disk-backed shards without opening
+    :class:`~lerobot.common.datasets.lerobot_dataset.LeRobotDataset`.
+    """
+    n = len(store)
+    if n == 0:
+        return []
+
+    for ep_ds in store._episode_datasets:
+        if intervene_flag_key not in ep_ds.column_names:
+            logger.warning(
+                "[RollingLeRobotDataset] require_all_intervene=True but column %r "
+                "missing in in-memory shard; keeping all %d chunk starts for this shard.",
+                intervene_flag_key,
+                n,
+            )
+            return list(range(n))
+
+    flag_parts = [
+        _hf_column_to_numpy_bool_1d(ep_ds, intervene_flag_key)
+        for ep_ds in store._episode_datasets
+    ]
+    flags = np.concatenate(flag_parts, axis=0)
+    assert int(flags.shape[0]) == n
+
+    ep_from = np.array(list(store._ep_from), dtype=np.int64)
+    ep_to = np.array(list(store._ep_to), dtype=np.int64)
+    ep_idx = np.empty(n, dtype=np.int64)
+    for ei in range(len(ep_from)):
+        ep_idx[ep_from[ei] : ep_to[ei]] = ei
+
+    if chunk_size <= 1:
+        deltas = np.array([0], dtype=np.int64)
+    else:
+        deltas = np.arange(chunk_size, dtype=np.int64)
+
+    idx_range = np.arange(n, dtype=np.int64)[:, None]
+    raw = idx_range + deltas[None, :]
+    ep_start = ep_from[ep_idx][:, None]
+    ep_end = ep_to[ep_idx][:, None]
+    is_pad = (raw < ep_start) | (raw >= ep_end)
+    chunk_ok = np.ones(n, dtype=np.bool_)
+    for j in range(int(deltas.shape[0])):
+        padded = is_pad[:, j]
+        rj = raw[:, j]
+        step_ok = np.zeros(n, dtype=np.bool_)
+        step_ok[padded] = True
+        m = ~padded
+        if m.any():
+            step_ok[m] = flags[rj[m]]
+        chunk_ok &= step_ok
+    return np.nonzero(chunk_ok)[0].tolist()
+
+
+# ---------------------------------------------------------------------------
 # Dataset
 # ---------------------------------------------------------------------------
 
@@ -486,6 +808,8 @@ class RollingLeRobotDataset(Dataset):
         index_load_workers: int = 1,
         cache_ingest_rank: int = 0,
         cache_ingest_world_size: int = 1,
+        in_memory_mode: bool = False,
+        fps: int = 10,
     ) -> None:
         self.root_dir = Path(root_dir)
         self.skip_last_n = skip_last_n
@@ -532,6 +856,23 @@ class RollingLeRobotDataset(Dataset):
         # Running total of episodes across all loaded sub-datasets.
         self._total_episodes: int = 0
 
+        # Shard cache: when ``in_memory_mode=True``, newly written shards are
+        # kept in RAM (keyed by their disk path) so that
+        # ``_load_item_from_lerobot`` can serve frames from RAM instead of
+        # reading them back from disk.  Disk writes are kept as a persistence
+        # sidecar.  When a shard scrolls fully out of ``window_size`` it is
+        # evicted from RAM; the disk copy remains as a transparent fallback.
+        self._shard_cache_enabled: bool = bool(in_memory_mode)
+        self._in_memory_shards: dict[Path, InMemoryArrowStore] = {}
+        # Config kept so per-shard InMemoryArrowStore instances can be built
+        # in add_shard_to_memory without requiring the caller to repeat params.
+        self._shard_cache_chunk_size: int = chunk_size
+        self._shard_cache_fps: int = max(1, int(fps))
+        self._shard_cache_action_keys: list[str] = list(action_sequence_keys or [])
+        # Hit/miss counters for the shard-level cache lookup in
+        # _load_item_from_lerobot (shard found in RAM vs. fell back to disk).
+        self._shard_cache_hits: int = 0
+        self._shard_cache_misses: int = 0
         self._build_index(_discover_safe_datasets(self.root_dir, self.skip_last_n))
         if self._decoded_cache is not None and self.cache_ingest_mode in (
             "last_n",
@@ -546,7 +887,7 @@ class RollingLeRobotDataset(Dataset):
         return len(self) >= self.min_frames
 
     def _num_physical_frames(self) -> int:
-        """Total indexed frames across all LeRobot shards (ignores intervene filter)."""
+        """Total indexed frames (ignores intervene filter and window)."""
         return int(self._cumulative_lengths[-1])
 
     def _logical_to_physical(self, logical_idx: int) -> int:
@@ -616,7 +957,36 @@ class RollingLeRobotDataset(Dataset):
         return _build_delta_timestamps(info, self.chunk_size, self.action_sequence_keys)
 
     def _probe_shard_for_index(self, ds_path: Path) -> _ShardIndexProbe:
-        """Open *ds_path* once and return length / optional intervene mask (thread-safe per path)."""
+        """Open *ds_path* once and return length / optional intervene mask (thread-safe per path).
+
+        When ``in_memory_mode`` is enabled and *ds_path* is already present in
+        :attr:`_in_memory_shards` (typically because :meth:`add_shard_to_memory`
+        ran after the writer finalized the shard), metadata is taken from the
+        in-memory store so :class:`~lerobot.common.datasets.lerobot_dataset.LeRobotDataset`
+        is not opened for indexing.
+        """
+        ds_path = Path(ds_path)
+        if self._shard_cache_enabled:
+            store = self._in_memory_shards.get(ds_path)
+            if store is not None:
+                n_frames = len(store)
+                num_episodes = store.num_episodes
+                intervene_locals: list[int] | None = None
+                if self.require_all_intervene:
+                    intervene_locals = _compute_intervene_valid_local_indices_in_memory(
+                        store,
+                        self.intervene_flag_key,
+                        self.chunk_size,
+                    )
+                return _ShardIndexProbe(
+                    ds_path=ds_path,
+                    ok=True,
+                    sub_ds=None,
+                    n_frames=n_frames,
+                    num_episodes=num_episodes,
+                    intervene_locals=intervene_locals,
+                )
+
         from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
         delta_timestamps = self._get_delta_timestamps(ds_path)
@@ -745,9 +1115,28 @@ class RollingLeRobotDataset(Dataset):
         return item
 
     def _load_item_from_lerobot(self, idx: int) -> dict[str, Any]:
-        """Fetch one sample (including chunk windows) from the backing LeRobot datasets."""
+        """Fetch one sample (including chunk windows) from the backing store.
+
+        When ``in_memory_mode=True`` and the shard containing *idx* is cached,
+        the :class:`InMemoryArrowStore` for that shard is used directly,
+        avoiding any disk I/O.  Falls through to the LeRobot disk path when
+        the shard is not cached (e.g. older shards evicted from RAM).
+        Either way the returned dict is key-filtered by ``self.keys`` and has
+        the same chunk / ``*_is_pad`` structure produced by
+        :class:`~lerobot.common.datasets.lerobot_dataset.LeRobotDataset`.
+        """
         ds_idx = bisect.bisect_right(self._cumulative_lengths, idx) - 1
         local_idx = idx - self._cumulative_lengths[ds_idx]
+        if self._shard_cache_enabled:
+            path = self._sub_datasets[ds_idx]
+            store = self._in_memory_shards.get(path)
+            if store is not None:
+                self._shard_cache_hits += 1
+                item = store[local_idx]
+                if self.keys is not None:
+                    item = {k: v for k, v in item.items() if k in self.keys}
+                return item
+            self._shard_cache_misses += 1
         lerobot_ds = self._ensure_lerobot_open(ds_idx)
         return self._load_item_from_open_lerobot(lerobot_ds, local_idx)
 
@@ -847,6 +1236,81 @@ class RollingLeRobotDataset(Dataset):
         self._ingest_physical_indices_sharded(uniq, reuse_open_by_path)
 
     # ------------------------------------------------------------------
+    # Shard cache API
+    # ------------------------------------------------------------------
+
+    def add_shard_to_memory(
+        self, path: str | Path, episodes: list[list[dict]]
+    ) -> None:
+        """Populate the in-memory shard cache for *path* with *episodes*.
+
+        Should be called by the actor worker immediately after a shard is
+        finalized on disk (via
+        :meth:`~rlinf.data.lerobot_writer.LeRobotDatasetWriter.finalize`),
+        so the next :meth:`__getitem__` call for any frame in that shard can
+        be served from RAM instead of reading back from disk.
+
+        Thread-safe.  No-op when ``in_memory_mode=False``.
+
+        Args:
+            path: Root path of the finalized shard, matching the ``repo_id``
+                passed to
+                :meth:`~rlinf.data.lerobot_writer.LeRobotDatasetWriter.create`.
+            episodes: Ordered list of episodes in the shard; each episode is a
+                ``list[dict]`` of per-step frame dicts as produced by
+                :meth:`~rlinf.envs.wrappers.collect_episode.CollectEpisode._buffer_to_lerobot_ep`.
+        """
+        if not self._shard_cache_enabled or not episodes:
+            return
+        store = InMemoryArrowStore(
+            chunk_size=self._shard_cache_chunk_size,
+            action_sequence_keys=self._shard_cache_action_keys,
+            fps=self._shard_cache_fps,
+            image_transforms=self.image_transforms,
+        )
+        for ep_frames in episodes:
+            if ep_frames:
+                store.add_episode(ep_frames)
+        path = Path(path)
+        with self._rolling_access_lock:
+            self._in_memory_shards[path] = store
+            logger.debug(
+                "[RollingLeRobotDataset] shard cached: %s (%d episodes, %d frames)",
+                path.name,
+                len(store._episode_datasets),
+                len(store),
+            )
+
+    def _evict_stale_shards(self) -> int:
+        """Remove shard stores from RAM whose frames are all before the window.
+
+        Must be called under :attr:`_rolling_access_lock`, after
+        :meth:`_update_window_sampling_bounds`.  Shards whose cumulative end
+        frame index ``<= _window_physical_start`` lie fully outside the
+        sampling window and their Arrow tables are freed from RAM; the disk
+        copy remains as a transparent fallback.
+
+        Returns:
+            Number of shard stores evicted.
+        """
+        if not self._in_memory_shards or not self._window_enabled():
+            return 0
+        n_evicted = 0
+        for ds_idx, path in enumerate(self._sub_datasets):
+            shard_end = self._cumulative_lengths[ds_idx + 1]
+            if shard_end <= self._window_physical_start:
+                if self._in_memory_shards.pop(path, None) is not None:
+                    n_evicted += 1
+        if n_evicted:
+            logger.debug(
+                "[RollingLeRobotDataset] evicted %d shard(s) from shard cache "
+                "(window_physical_start=%d)",
+                n_evicted,
+                self._window_physical_start,
+            )
+        return n_evicted
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
@@ -883,6 +1347,7 @@ class RollingLeRobotDataset(Dataset):
                         self._total_logical_samples(),
                         len(self),
                     )
+                self._evict_stale_shards()
                 if self._decoded_cache is not None:
                     self._ingest_decoded_cache(
                         physical_before,
@@ -898,41 +1363,28 @@ class RollingLeRobotDataset(Dataset):
         return n_new
 
     def refresh(self) -> int:
-        """Re-scan ``root_dir`` and load any newly completed sub-datasets.
+        """Ingest newly available data.
 
-        Call this periodically (e.g. after each training epoch) to pick up
-        sub-datasets written since the last call.  The method is additive:
-        existing sub-datasets are never removed or reloaded.
-
-        When ``enable_decoded_cache`` is set, also ingests frames into the FIFO
-        decoded cache according to ``cache_ingest_mode``.
-
-        New shards opened during index construction are passed through to cache
-        ingest and dropped before returning so each new path is loaded at most
-        once per refresh; the lazy :attr:`_lerobot_open` handle is cleared at
-        the end of ingest.
+        Re-scans ``root_dir`` for newly completed LeRobot sub-datasets,
+        optionally ingests them into the decoded FIFO cache, and (when
+        ``in_memory_mode=True``) evicts shard stores that have scrolled out
+        of the rolling window.
 
         Returns:
-            Number of new sub-datasets added (0 if nothing changed).
+            Number of new sub-datasets added; ``0`` if nothing changed.
         """
         safe = _discover_safe_datasets(self.root_dir, self.skip_last_n)
         new_paths = [p for p in safe if p not in self._indexed_datasets]
         return self._refresh_impl(new_paths)
 
     def refresh_one(self) -> int:
-        """Re-scan ``root_dir`` and load at most **one** new sub-dataset.
+        """Ingest one new sub-dataset (at most) per call.
 
-        Designed to be called repeatedly in a polling loop (e.g. every
-        training step or via ``await asyncio.sleep``) so that each
-        invocation performs bounded I/O — at most one shard is opened,
-        indexed, and optionally ingested into the decoded cache.
-
-        The discovery order is deterministic (rank ascending, then id
-        ascending), so successive calls pick up shards in the order they
-        were produced.
+        Bounds I/O for tight polling loops.  In disk mode at most one new
+        sub-dataset is indexed per call.
 
         Returns:
-            ``1`` if a new sub-dataset was added, ``0`` otherwise.
+            Number of items added; ``0`` if nothing changed.
         """
         safe = _discover_safe_datasets(self.root_dir, self.skip_last_n)
         new_paths = [p for p in safe if p not in self._indexed_datasets]
@@ -957,6 +1409,10 @@ class RollingLeRobotDataset(Dataset):
             "require_all_intervene": self.require_all_intervene,
             "window_size": self.window_size if self.window_size is not None else 0,
             "window_physical_start": self._window_physical_start,
+            "shard_cache_enabled": self._shard_cache_enabled,
+            "shard_cache_shards": len(self._in_memory_shards),
+            "shard_cache_hits": self._shard_cache_hits,
+            "shard_cache_misses": self._shard_cache_misses,
         }
         if self._decoded_cache is not None:
             stats.update(self._decoded_cache.stats())
@@ -1298,6 +1754,8 @@ def build_rolling_lerobot_dataset(
     index_load_workers: int = 1,
     cache_ingest_rank: int = 0,
     cache_ingest_world_size: int = 1,
+    in_memory_mode: bool = False,
+    fps: int = 10,
 ) -> RollingLeRobotDataset:
     """Build a :class:`RollingLeRobotDataset` for rolling data collection.
 
@@ -1360,6 +1818,8 @@ def build_rolling_lerobot_dataset(
         index_load_workers=index_load_workers,
         cache_ingest_rank=cache_ingest_rank,
         cache_ingest_world_size=cache_ingest_world_size,
+        in_memory_mode=in_memory_mode,
+        fps=fps,
     )
 
     logger.info(

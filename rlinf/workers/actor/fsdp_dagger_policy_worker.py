@@ -52,6 +52,10 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         # Actor-side LeRobot writer state (used when data_collection.defer_write=True)
         self._lerobot_writer = None
         self._lerobot_episodes_written = 0
+        # Shard-cache tracking: accumulate episodes belonging to the current
+        # open shard so they can be passed to add_shard_to_memory at finalize.
+        self._current_shard_path: str | None = None
+        self._current_shard_episodes: list[list[dict]] = []
 
     def _build_lerobot_dataset(self):
         enable_cache = self.cfg.actor.get("enable_decoded_cache", False)
@@ -66,6 +70,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 lerobot_num_workers,
             )
         self._lerobot_num_workers = int(lerobot_num_workers)
+        lerobot_cfg = self.cfg.actor.get("lerobot", {})
+        in_memory_mode = bool(lerobot_cfg.get("in_memory_mode", False))
+        lerobot_fps = int(lerobot_cfg.get("fps", 10))
         self.dataset = build_rolling_lerobot_dataset(
             root_dir=self.cfg.actor.sft_data_path,
             chunk_size=self.cfg.actor.model.num_action_chunks,
@@ -83,6 +90,8 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             index_load_workers=self.cfg.actor.get("rolling_lerobot_index_workers", 4),
             cache_ingest_rank=self._rank,
             cache_ingest_world_size=self._world_size,
+            in_memory_mode=in_memory_mode,
+            fps=lerobot_fps,
         )
 
     def _build_lerobot_data_loader(self):
@@ -245,6 +254,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             and frame[k].ndim == 3
         }
 
+    @Worker.timer("write_lerobot_episode_to_disk")
     def _write_lerobot_episode_to_disk(self, ep_frames: list[dict]) -> None:
         """Write a single episode to disk using the actor-side LeRobot writer.
 
@@ -252,6 +262,11 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         the first frame. After every ``actor.lerobot.finalize_interval`` episodes
         the writer is finalised and a new shard is opened, matching the behaviour
         of ``CollectEpisode`` on the env side.
+
+        When ``in_memory_mode=True``, episodes are accumulated per shard and
+        :meth:`~rlinf.data.rolling_lerobot_dataset.RollingLeRobotDataset.add_shard_to_memory`
+        is called at finalize time, so the shard is available in RAM before
+        the next :meth:`refresh` indexes it from disk.
 
         Args:
             ep_frames: List of per-step frame dicts as produced by
@@ -274,12 +289,13 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             lerobot_cfg = self.cfg.actor.get("lerobot", {})
             robot_type = lerobot_cfg.get("robot_type", "panda")
             fps = lerobot_cfg.get("fps", 10)
+            shard_repo_id = os.path.join(
+                self.cfg.actor.sft_data_path,
+                f"rank_{self._rank}",
+                f"id_{self._lerobot_episodes_written}",
+            )
             self._lerobot_writer.create(
-                repo_id=os.path.join(
-                    self.cfg.actor.sft_data_path,
-                    f"rank_{self._rank}",
-                    f"id_{self._lerobot_episodes_written}",
-                ),
+                repo_id=shard_repo_id,
                 robot_type=robot_type,
                 fps=fps,
                 image_shape=first["image"].shape if "image" in first else None,
@@ -290,8 +306,11 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 extra_view_image_keys=extra_view_image_keys,
                 has_intervene_flag="intervene_flag" in first,
             )
+            self._current_shard_path = shard_repo_id
+            self._current_shard_episodes = []
 
         self._lerobot_writer.add_episode(ep_frames)
+        self._current_shard_episodes.append(ep_frames)
         self._lerobot_episodes_written += 1
 
         finalize_interval = self.cfg.actor.get("lerobot", {}).get("finalize_interval", 8)
@@ -300,6 +319,18 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             and self._lerobot_episodes_written % finalize_interval == 0
         ):
             self._lerobot_writer.finalize()
+            # Populate the shard cache BEFORE refresh() so the next __getitem__
+            # call can serve frames from RAM without a disk round-trip.
+            if (
+                self._current_shard_path is not None
+                and self._current_shard_episodes
+                and self.dataset is not None
+            ):
+                self.dataset.add_shard_to_memory(
+                    self._current_shard_path, self._current_shard_episodes
+                )
+            self._current_shard_path = None
+            self._current_shard_episodes = []
             # dataset is now None; next episode will open a new shard.
 
     def _prepare_sft_batch(self, batch):
