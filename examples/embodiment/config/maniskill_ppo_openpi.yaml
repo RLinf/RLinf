@@ -88,7 +88,7 @@ env:
 
   # Override the default values in env/train or env/eval
   train:
-    total_num_envs: 320
+    total_num_envs: 16
     auto_reset: True
     use_fixed_reset_state_ids: False
     max_episode_steps: 80 # max episode steps for truncation
@@ -96,7 +96,7 @@ env:
     init_params:
       use_multiple_plates: False
   eval:
-    total_num_envs: 320
+    total_num_envs: 64
     auto_reset: True
     ignore_terminations: True
     max_episode_steps: 80
@@ -119,7 +119,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-Pi0-ManiSkill-25Main-SFT" # https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT
+    model_path: "/mnt/public/zhouyiming/model/RLinf-Pi0-ManiSkill-25Main-SFT" # https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT
     precision: ${actor.model.precision}
 
 actor:
@@ -131,7 +131,7 @@ actor:
   enable_offload: False
   # Override the default values in model/pi0
   model:
-    model_path: "/path/to/model/RLinf-Pi0-ManiSkill-25Main-SFT" # https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT
+    model_path: "/mnt/public/zhouyiming/model/RLinf-Pi0-ManiSkill-25Main-SFT" # https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT
     model_name: "openpi"
     precision: null    # bf16
     num_action_chunks: 5 # interface for the env
