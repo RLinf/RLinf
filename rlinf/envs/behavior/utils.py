@@ -239,26 +239,17 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
         omni_cfg, "robots[0].proprio_obs", override_proprio_obs, merge=True
     )
 
-    # OmniGibson ``learning/eval.py`` uses ``partial_scene_load`` to set
-    # ``scene.load_room_types`` via gello (task-relevant rooms + augmentation).
-    # InteractiveTraversableScene does not accept this key — strip it and apply here.
+    # automatically set task-relevant rooms to ``scene.load_room_types`` via gello.
+    # (mirrored from OmniGibson ``learning/eval.py``)
     partial_scene_load = OmegaConf.select(omni_cfg, "scene.partial_scene_load")
     if partial_scene_load is not None:
         with open_dict(omni_cfg.scene):
             omni_cfg.scene.pop("partial_scene_load", None)
         if partial_scene_load:
-            try:
-                from gello.robots.sim_robot.og_teleop_utils import (
-                    augment_rooms,
-                    get_task_relevant_room_types,
-                )
-            except ImportError as exc:
-                raise ImportError(
-                    "omni_config.scene.partial_scene_load=True requires the optional "
-                    "`gello` package (same dependency as OmniGibson learning eval). "
-                    "Install gello, or set omni_config.scene.load_room_types explicitly "
-                    "(use null to load all rooms)."
-                ) from exc
+            from gello.robots.sim_robot.og_teleop_utils import (
+                augment_rooms,
+                get_task_relevant_room_types,
+            )
             activity_name = OmegaConf.select(omni_cfg, "task.activity_name")
             scene_model = OmegaConf.select(omni_cfg, "scene.scene_model")
             if not activity_name or not scene_model:
@@ -269,6 +260,7 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
                 )
             relevant_rooms = get_task_relevant_room_types(activity_name=activity_name)
             relevant_rooms = augment_rooms(relevant_rooms, scene_model, activity_name)
+            relevant_rooms.sort()
             OmegaConf.update(
                 omni_cfg,
                 "scene.load_room_types",
