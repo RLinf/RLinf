@@ -200,8 +200,12 @@ class CollectEpisode(gym.Wrapper):
             Tuple of (obs_list, rewards, terminations, truncations, infos_list).
         """
         # breakpoint()
+        if isinstance(input_actions, dict):
+            _input_actions = input_actions["actions"]
+        else:
+            _input_actions = input_actions
         obs_list, rewards, terminations, truncations, infos_list = self.env.chunk_step(
-            input_actions
+            _input_actions
         )
 
         chunk_size = len(obs_list) if isinstance(obs_list, (list, tuple)) else 1

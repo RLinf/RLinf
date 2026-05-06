@@ -680,8 +680,6 @@ class LiberoEnv(gym.Env):
 
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
-        if isinstance(chunk_actions, dict):
-            chunk_actions = chunk_actions["actions"]
         chunk_size = chunk_actions.shape[1]
         obs_list = []
         infos_list = []
