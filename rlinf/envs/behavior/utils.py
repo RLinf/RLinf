@@ -250,6 +250,7 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
                 augment_rooms,
                 get_task_relevant_room_types,
             )
+
             activity_name = OmegaConf.select(omni_cfg, "task.activity_name")
             scene_model = OmegaConf.select(omni_cfg, "scene.scene_model")
             if not activity_name or not scene_model:
