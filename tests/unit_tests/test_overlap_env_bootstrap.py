@@ -14,7 +14,7 @@
 
 import sys
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import torch
 from omegaconf import OmegaConf
@@ -92,6 +92,10 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         self.worker.enable_offload = False
         self.worker.collect_transitions = False
         self.worker.collect_prev_infos = True
+        self.worker.reward_pending_step_window = 1
+        self.worker.use_oracle_delta_gae = False
+        self.worker.reward_mode = "default"
+        self.worker.history_reward_assign = False
         self.worker._prefetched_train_bootstrap = None
 
         # Mock env_list
@@ -148,14 +152,10 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         # 2. Interact (should consume the prefetch)
         import asyncio
 
-        loop = asyncio.get_event_loop()
         # Mock send_rollout_trajectories as it's awaited
-        self.worker.send_rollout_trajectories = MagicMock(return_value=asyncio.Future())
-        self.worker.send_rollout_trajectories.return_value.set_result(None)
+        self.worker.send_rollout_trajectories = AsyncMock(return_value=None)
 
-        loop.run_until_complete(
-            self.worker.interact(input_channel, rollout_channel, None, None)
-        )
+        asyncio.run(self.worker.interact(input_channel, rollout_channel, None, None))
 
         self.assertIsNone(self.worker._prefetched_train_bootstrap)
         # Verify that _bootstrap_and_send_train was NOT called during interact
