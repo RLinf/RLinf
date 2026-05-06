@@ -38,6 +38,10 @@ runner:
   save_interval: -1
 
   resume_dir: null  # Set to checkpoint path to resume training
+  ckpt_path: null
+  per_worker_log: false
+  per_worker_log_path: null
+  weight_sync_interval: 1
 
 algorithm:
   update_epoch: 8
@@ -80,11 +84,14 @@ algorithm:
     max_length: 1024
     min_length: 1
 
+data:
+  rollout_batch_size: 128
+
 env:
   group_name: "EnvGroup"
 
   train:
-    total_num_envs: 128
+    total_num_envs: 32
     wrap_obs_mode: simple
     auto_reset: True
     ignore_terminations: False
@@ -155,8 +162,8 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 6400
-  global_batch_size: 6400
+  micro_batch_size: 80
+  global_batch_size: 80
   seed: 1234
   enable_offload: False
 
@@ -185,6 +192,7 @@ actor:
 
 reward:
   use_reward_model: True
+  use_output_step: 100
   group_name: "RewardGroup"
   
   # Reward mode:
