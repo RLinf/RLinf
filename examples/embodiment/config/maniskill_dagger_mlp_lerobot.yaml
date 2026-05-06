@@ -3,6 +3,7 @@ defaults:
   - env/maniskill_pick_cube@env.eval
   - model/mlp_policy@actor.model
   - training_backend/fsdp@actor.fsdp_config
+  - weight_syncer/bucket_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
 hydra:
@@ -91,7 +92,7 @@ env:
       robot_type: "panda"
       fps: 10
       finalize_interval: 8
-      defer_write: false   # episodes are sent via channel; actor writes to disk
+      defer_write: true   # episodes are sent via channel; actor writes to disk
   eval:
     total_num_envs: 32
     auto_reset: True
@@ -141,6 +142,7 @@ actor:
     robot_type: "panda"
     fps: 10
     finalize_interval: 8   # flush LeRobot shard every N episodes
+    in_memory_mode: true   # episodes live in RAM; disk writes are persistence-only
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 6400
