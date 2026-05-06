@@ -9,6 +9,8 @@ ENV_NAME=""
 VENV_DIR=".venv"
 PYTHON_VERSION="3.11.14"
 TEST_BUILD=${TEST_BUILD:-0}
+VLM_REWARD=0
+VLM_REWARD_SGLANG=0
 # Absolute path to this script (resolves symlinks)
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
@@ -17,7 +19,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "dreamzero")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen_vlm_reward")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm")
 
 #=======================Utility Functions=======================
@@ -34,6 +36,8 @@ Targets:
 Options (for target=embodied):
     --model <name>         Embodied model to install: ${SUPPORTED_MODELS[*]}.
     --env <name>           Single environment to install: ${SUPPORTED_ENVS[*]}.
+    --vlm-reward           Install Qwen3-VL Hugging Face reward dependencies.
+    --vlm-reward-sglang    Install Qwen3-VL SGLang reward dependencies. This also enables --vlm-reward.
 
 Common options:
     -h, --help             Show this help message and exit.
@@ -80,6 +84,8 @@ parse_args() {
                 ENV_NAME="${2:-}"
                 shift 2
                 ;;
+            --vlm-reward) VLM_REWARD=1; shift ;;
+            --vlm-reward-sglang) VLM_REWARD=1; VLM_REWARD_SGLANG=1; shift ;;
             --use-mirror)
                 USE_MIRRORS=1
                 shift
@@ -336,9 +342,76 @@ clone_or_reuse_repo() {
     printf '%s\n' "$(realpath "$target_dir")"
 }
 
+get_python_site_packages() {
+    python - <<'EOF'
+import sysconfig
+
+print(sysconfig.get_paths()["purelib"])
+EOF
+}
+
+assert_transformers_version() {
+    local expected_version="$1"
+    local actual_version
+    actual_version=$(python - <<'EOF'
+import transformers
+
+print(transformers.__version__)
+EOF
+)
+    if [ "$actual_version" != "$expected_version" ]; then
+        echo "Expected transformers==$expected_version after installation/patching, found $actual_version." >&2
+        exit 1
+    fi
+}
+
+install_qwen_vlm_reward_deps() {
+    uv pip install -r "$SCRIPT_DIR/embodied/models/qwen_vlm_reward.txt"
+    assert_transformers_version "4.57.1"
+}
+
+install_qwen_vlm_reward_sglang_deps() {
+    uv pip install -r "$SCRIPT_DIR/embodied/models/qwen_vlm_reward_sglang.txt"
+    assert_transformers_version "4.57.1"
+    python - <<'EOF'
+from importlib.metadata import version
+
+from packaging.version import Version
+
+expected = Version("0.5.4")
+actual = Version(version("sglang"))
+if actual != expected:
+    raise SystemExit(f"Expected sglang=={expected}, found {actual}.")
+EOF
+}
+
+apply_openpi_transformers_patch() {
+    # OpenPI currently declares transformers==4.53.2. Install the
+    # Qwen3-VL-compatible runtime without resolving against that old pin,
+    # then apply RLinf's ported OpenPI patch below.
+    uv pip install --upgrade --no-deps "transformers==4.57.1" "tokenizers>=0.22,<0.23"
+
+    local site_packages
+    site_packages="$(get_python_site_packages)"
+    local openpi_transformers_patch_dir="$SCRIPT_DIR/embodied/patches/openpi_transformers_4_57_1/transformers"
+    if [ ! -d "$openpi_transformers_patch_dir" ]; then
+        echo "OpenPI transformers patch directory not found: $openpi_transformers_patch_dir" >&2
+        exit 1
+    fi
+    if [ ! -d "$site_packages/transformers" ]; then
+        echo "transformers package directory not found in site-packages: $site_packages/transformers" >&2
+        exit 1
+    fi
+    cp -r "$openpi_transformers_patch_dir/"* "$site_packages/transformers/"
+    assert_transformers_version "4.57.1"
+}
+
 #=======================EMBODIED INSTALLERS=======================
 install_common_embodied_deps() {
     uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
+    if [ "$VLM_REWARD" -eq 1 ]; then
+        install_qwen_vlm_reward_deps
+    fi
     uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
     if [ "$NO_ROOT" -eq 0 ]; then
         bash $SCRIPT_DIR/embodied/sys_deps.sh
@@ -514,15 +587,16 @@ install_openpi_model() {
             ;;
     esac
 
-    # Replace transformers models with OpenPI's modified versions
-    local py_major_minor
-    py_major_minor=$(python - <<'EOF'
-import sys
-print(f"{sys.version_info.major}.{sys.version_info.minor}")
-EOF
-)
-    cp -r "$VENV_DIR/lib/python${py_major_minor}/site-packages/openpi/models_pytorch/transformers_replace/"* \
-        "$VENV_DIR/lib/python${py_major_minor}/site-packages/transformers/"
+    apply_openpi_transformers_patch
+    if [ "$VLM_REWARD_SGLANG" -eq 1 ]; then
+        install_qwen_vlm_reward_sglang_deps
+        # SGLang may reinstall the vanilla transformers wheel. Reapply the
+        # OpenPI patch after the SGLang runtime stack is finalized.
+        apply_openpi_transformers_patch
+        # SGLang also owns the torch runtime stack, so refresh flash-attn
+        # after torch has settled.
+        install_flash_attn
+    fi
     
     bash $SCRIPT_DIR/embodied/download_assets.sh --assets openpi
     uv pip uninstall pynvml || true
@@ -563,6 +637,27 @@ install_starvla_model() {
     fi
 
     install_flash_attn
+    uv pip uninstall pynvml || true
+}
+
+install_qwen_vlm_reward_model() {
+    case "$ENV_NAME" in
+        maniskill_libero)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_maniskill_libero_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for Qwen VLM reward workers." >&2
+            exit 1
+            ;;
+    esac
+
+    if [ "$VLM_REWARD_SGLANG" -eq 1 ]; then
+        install_qwen_vlm_reward_sglang_deps
+    else
+        install_qwen_vlm_reward_deps
+    fi
     uv pip uninstall pynvml || true
 }
 
@@ -666,6 +761,10 @@ install_env_only() {
     create_and_sync_venv
     SKIP_ROS=${SKIP_ROS:-0}
     case "$ENV_NAME" in
+        maniskill_libero)
+            install_common_embodied_deps
+            install_maniskill_libero_env
+            ;;
         d4rl)
             install_d4rl_env
             ;;
@@ -1141,6 +1240,10 @@ main() {
                 echo "--env must be specified when target=embodied." >&2
                 exit 1
             fi
+            if [ "$VLM_REWARD_SGLANG" -eq 1 ] && [ "$MODEL" != "openpi" ] && [ "$MODEL" != "qwen_vlm_reward" ]; then
+                echo "--vlm-reward-sglang is supported only with --model openpi or --model qwen_vlm_reward." >&2
+                exit 1
+            fi
 
             case "$MODEL" in
                 openvla)
@@ -1166,6 +1269,9 @@ main() {
                     ;;
                 dreamzero)
                     install_dreamzero_model
+                    ;;
+                qwen_vlm_reward)
+                    install_qwen_vlm_reward_model
                     ;;
                 "")
                     install_env_only
