@@ -175,7 +175,7 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         if self.reward is None:
             return None
 
-        print(f"Activating reward worker at step {self.global_step}")
+        self.logger.info("Activating reward worker at step %s", self.global_step)
         self.reward_channel = Channel.create(channel_name(self.cfg, "Reward"))
         self.reward_initialized = True
         return self.reward.compute_rewards_async(

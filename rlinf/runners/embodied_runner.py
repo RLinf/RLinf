@@ -117,7 +117,7 @@ class EmbodiedRunner:
             except queue.Empty:
                 continue
             except Exception as e:
-                print(f"Logging error: {e}")
+                self.logger.error("Logging error: %s", e, exc_info=True)
                 continue
 
     def print_metrics_table_async(
@@ -308,7 +308,9 @@ class EmbodiedRunner:
                         and self.global_step
                         >= self.cfg.reward.get("use_output_step", 0)
                     ):
-                        print(f"Activating reward worker at step {self.global_step}")
+                        self.logger.info(
+                            "Activating reward worker at step %s", self.global_step
+                        )
                         self.reward_channel = Channel.create(
                             channel_name(self.cfg, "Reward")
                         )
