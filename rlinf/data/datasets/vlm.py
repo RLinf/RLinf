@@ -16,6 +16,7 @@ import ast
 import json
 import logging
 import os
+import pickle
 from io import BytesIO
 from typing import Any, Callable, Optional, Union
 
@@ -122,6 +123,57 @@ class VLMBaseDataset(Dataset):
             return f"{q}{choices}\n"
         return str(q)
 
+    @staticmethod
+    def process_inputs(
+        processor: AutoProcessor,
+        system_prompt: Optional[str],
+        use_chat_template: bool,
+        prompt_texts: list[str],
+        images,
+    ) -> tuple[str, dict[str, Any]]:
+        """Shared helper to build chat-template text and processor inputs for VLM.
+
+        This mirrors the logic in VLMBaseDataset.encode_prompt so it can be reused
+        by both datasets and downstream modules (e.g., reward models).
+        """
+        prompt_text = prompt_texts[0]
+
+        messages: list[dict[str, Any]] = []
+        if system_prompt is not None:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": [{"type": "text", "text": system_prompt}],
+                }
+            )
+
+        content: list[dict[str, Any]] = []
+        for _ in range(max(0, len(images))):
+            content.append({"type": "image"})
+        content.append({"type": "text", "text": prompt_text})
+        messages.append({"role": "user", "content": content})
+
+        if use_chat_template:
+            rendered = processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+        else:
+            rendered = prompt_text
+
+        images_inputs = []
+        for image in images:
+            image_obj = None
+            if isinstance(image, Image.Image):
+                image_obj = image.convert("RGB")
+            if isinstance(image, (bytes, bytearray)):
+                image_obj = Image.open(BytesIO(image)).convert("RGB")
+            images_inputs.append(image_obj)
+
+        inputs = processor(
+            text=[rendered], images=images_inputs, padding=True, return_tensors="pt"
+        )
+        return rendered, inputs
+
     def encode_prompt(
         self, prompt_text: str, images
     ) -> tuple[torch.Tensor, int, Optional[str]]:
@@ -134,41 +186,19 @@ class VLMBaseDataset(Dataset):
                 self._processor = AutoProcessor.from_pretrained(
                     self.cfg.actor.model.model_path
                 )
-            messages = []
-            if self.system_prompt is not None:
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": [{"type": "text", "text": self.system_prompt}],
-                    }
-                )
-
-            content: list[dict[str, Any]] = []
-            for _ in range(max(0, len(images))):
-                content.append({"type": "image"})
-            content.append({"type": "text", "text": prompt_text})
-            messages.append({"role": "user", "content": content})
-            rendered = self._processor.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
+            rendered, inputs = self.process_inputs(
+                processor=self._processor,
+                system_prompt=self.system_prompt,
+                use_chat_template=self.use_chat_template,
+                prompt_texts=[prompt_text],
+                images=images,
             )
 
-            images_inputs = []
-            for image in images:
-                image_obj = None
-                if isinstance(image, Image.Image):
-                    image_obj = image.convert("RGB")
-                if isinstance(image, (bytes, bytearray)):
-                    image_obj = Image.open(BytesIO(image)).convert("RGB")
-                images_inputs.append(image_obj)
-
-            inputs = self._processor(
-                text=[rendered], images=images_inputs, padding=True, return_tensors="pt"
-            )
-            inputs.pop("attention_mask")
+            inputs.pop("attention_mask", None)
             if self.cfg.rollout.rollout_backend == "sglang":
                 ids = inputs.pop("input_ids")
             elif self.cfg.rollout.rollout_backend == "vllm":
-                inputs.pop("input_ids")
+                inputs.pop("input_ids", None)
                 ids = self._processor(
                     text=[rendered], images=None, padding=True, return_tensors="pt"
                 )["input_ids"]
@@ -682,3 +712,383 @@ class Robo2VLMSFTDataset(Robo2VLMDataset):
             label_mask,
             multi_modal_inputs,
         )
+
+
+def _resolve_video_path(path: str, data_root: Optional[str]) -> str:
+    """解析视频路径：若原路径不存在且 data_root 已配置，则用 data_root 重写。"""
+    if not isinstance(path, str):
+        return str(path)
+    if os.path.isfile(path):
+        return path
+    if not data_root:
+        return path
+    # 从绝对路径中提取 data/ 及之后部分，用 data_root 重写（适配 host→container 路径差异）
+    idx = path.find("data/")
+    if idx >= 0:
+        resolved = os.path.join(data_root, path[idx:])
+        if os.path.isfile(resolved):
+            return resolved
+    # 相对路径：直接拼接
+    if not os.path.isabs(path):
+        resolved = os.path.join(data_root, path)
+        if os.path.isfile(resolved):
+            return resolved
+    return path
+
+
+def _validate_qwentrend_frames(
+    frames: Any,
+    sample_idx: int,
+    field_name: str,
+    expected_num_frames: int,
+) -> None:
+    if len(frames) != expected_num_frames:
+        raise ValueError(
+            f"Sample {sample_idx} {field_name} must contain exactly "
+            f"{expected_num_frames} frames, got {len(frames)}"
+        )
+
+
+@VLMDatasetRegistry.register("qwentrend_progress_sft")
+class QwenTrendProgressSFTDataset(VLMBaseDataset):
+    """SFT dataset for QwenTrend progress: full_video + video_clip 输入，与 pilot 一致。
+
+    Each record: full_video (mp4), video_clip (mp4), question, answer.
+    Qwen3-VL 用 videos 输入，与数据集形式一致。
+    若 JSONL 中路径为 host 绝对路径，可配置 data.data_root 以在 container 中解析。
+    """
+
+    EXPECTED_VIDEO_FRAMES = 5
+
+    def __init__(
+        self,
+        data_paths: Union[list[str], str],
+        config: DictConfig,
+        tokenizer: AutoTokenizer,
+        eval_dataset: bool = False,
+    ) -> None:
+        super().__init__(data_paths, config, tokenizer)
+        self.eval_dataset = eval_dataset
+        self._data_root = config.data.get("data_root") or os.environ.get(
+            "RLINF_DATA_ROOT"
+        )
+        self._expected_video_frames = int(
+            config.data.get("video_nframes", self.EXPECTED_VIDEO_FRAMES)
+            or self.EXPECTED_VIDEO_FRAMES
+        )
+        if self._expected_video_frames != self.EXPECTED_VIDEO_FRAMES:
+            raise ValueError(
+                "QwenTrendProgressSFTDataset requires exactly "
+                f"{self.EXPECTED_VIDEO_FRAMES} frames per video; got "
+                f"data.video_nframes={self._expected_video_frames}."
+            )
+
+    @classmethod
+    def _build_video_user_content(
+        cls, processor: AutoProcessor, prompt_text: str
+    ) -> str:
+        video_tok = getattr(processor, "video_token", "<|video_pad|>")
+        return f"{video_tok}\n{video_tok}\n\n{prompt_text}"
+
+    @classmethod
+    def _build_video_metadata(cls, video: Any) -> dict[str, Any]:
+        if isinstance(video, (str, os.PathLike)):
+            total_num_frames = cls.EXPECTED_VIDEO_FRAMES
+        else:
+            total_num_frames = len(video)
+        return {"total_num_frames": total_num_frames, "fps": 24.0}
+
+    @classmethod
+    def process_inputs(
+        cls,
+        processor: AutoProcessor,
+        system_prompt: Optional[str],
+        use_chat_template: bool,
+        prompt_texts: list[str] | list[list[str]],
+        videos: list[Any] | list[list[Any]],
+        answer_text: Optional[str] | list[Optional[str]] = None,
+    ) -> tuple[str | list[str], dict[str, Any], dict[str, Any]]:
+        """
+        Build Qwen3-VL processor inputs for QwenTrend progress SFT.
+        """
+
+        def _render_prompt_text(
+            prompt_text: str, answer_text_i: Optional[str]
+        ) -> tuple[str, str]:
+            user_content = cls._build_video_user_content(processor, prompt_text)
+
+            try:
+                if answer_text_i is None:
+                    rendered_prompt = processor.apply_chat_template(
+                        [{"role": "user", "content": user_content}],
+                        tokenize=False,
+                        add_generation_prompt=True,
+                    )
+                    rendered_label = rendered_prompt
+                else:
+                    rendered_prompt = processor.apply_chat_template(
+                        [
+                            {"role": "user", "content": user_content},
+                            {"role": "assistant", "content": answer_text_i},
+                        ],
+                        tokenize=False,
+                        add_generation_prompt=True,
+                    )
+                    rendered_label = processor.apply_chat_template(
+                        [{"role": "user", "content": user_content}],
+                        tokenize=False,
+                        add_generation_prompt=True,
+                    )
+            except Exception:
+                rendered_prompt = (
+                    f"<|im_start|>user\n{user_content}<|im_end|>\n"
+                    f"<|im_start|>assistant\n"
+                )
+                rendered_label = rendered_prompt
+
+            return rendered_prompt, rendered_label
+
+        is_batch_input = bool(prompt_texts) and isinstance(prompt_texts[0], list)
+        if is_batch_input:
+            prompt_texts_batch: list[list[str]] = prompt_texts
+            videos_batch: list[list[Any]] = videos
+            batch_size = len(prompt_texts_batch)
+
+            if isinstance(answer_text, list):
+                assert len(answer_text) == batch_size, (
+                    f"answer_text list size {len(answer_text)} does not match batch size {batch_size}"
+                )
+                answer_text_batch = answer_text
+            else:
+                answer_text_batch = [answer_text for _ in range(batch_size)]
+
+            rendered_prompts: list[str] = []
+            rendered_labels: list[str] = []
+            videos_kwargs = {"video_metadata": []}
+
+            for prompt_texts_i, videos_i, answer_text_i in zip(
+                prompt_texts_batch, videos_batch, answer_text_batch
+            ):
+                rendered_prompt_i, rendered_label_i = _render_prompt_text(
+                    prompt_texts_i[0], answer_text_i
+                )
+                rendered_prompts.append(rendered_prompt_i)
+                rendered_labels.append(rendered_label_i)
+                videos_kwargs["video_metadata"].append(
+                    [cls._build_video_metadata(video) for video in videos_i]
+                )
+
+            full_inputs = processor(
+                text=rendered_prompts,
+                videos=videos_batch,
+                return_tensors="pt",
+                padding=True,
+                videos_kwargs=videos_kwargs,
+            )
+
+            if all(answer is None for answer in answer_text_batch):
+                label_inputs = {"attention_mask": full_inputs["attention_mask"]}
+            else:
+                label_inputs = processor(
+                    text=rendered_labels,
+                    videos=videos_batch,
+                    return_tensors="pt",
+                    padding=True,
+                    videos_kwargs=videos_kwargs,
+                )
+
+            return rendered_prompts, full_inputs, label_inputs
+
+        prompt_text = prompt_texts[0]
+        rendered_prompt, rendered_label = _render_prompt_text(prompt_text, answer_text)
+        videos_kwargs = {
+            "video_metadata": [cls._build_video_metadata(video) for video in videos],
+        }
+
+        full_inputs = processor(
+            text=[rendered_prompt],
+            videos=videos,
+            return_tensors="pt",
+            padding=True,
+            videos_kwargs=videos_kwargs,
+        )
+
+        if answer_text is None:
+            # Inference: avoid an extra processor call for label_text.
+            # Downstream expects `label_inputs` to at least provide `attention_mask`.
+            label_inputs = {"attention_mask": full_inputs["attention_mask"]}
+        else:
+            label_inputs = processor(
+                text=[rendered_label],
+                videos=videos,
+                return_tensors="pt",
+                padding=True,
+                videos_kwargs=videos_kwargs,
+            )
+
+        return rendered_prompt, full_inputs, label_inputs
+
+    def encode_prompt(
+        self,
+        prompt_text: str,
+        videos: list[Any],
+        answer_text: str,
+    ) -> tuple[torch.Tensor, int, torch.Tensor, torch.Tensor, dict[str, Any]]:
+        """
+        Encode prompt into input_ids + masks for SFT training.
+
+        Returns:
+          - input_ids: token ids for (user + assistant)
+          - length: number of tokens in input_ids
+          - attention_mask: mask for input_ids
+          - label_mask: mask for prompt part only (used to keep answer tokens)
+          - multi_modal_inputs: processor outputs excluding text-only tensors
+        """
+        if self._processor is None:
+            self._processor = AutoProcessor.from_pretrained(
+                self.cfg.actor.model.model_path
+            )
+
+        _, full_inputs, label_inputs = self.process_inputs(
+            processor=self._processor,
+            system_prompt=self.system_prompt,
+            use_chat_template=self.use_chat_template,
+            prompt_texts=[prompt_text],
+            videos=videos,
+            answer_text=answer_text,
+        )
+
+        input_ids = full_inputs.pop("input_ids")
+        attention_mask = full_inputs.pop("attention_mask")
+        label_mask = label_inputs.pop("attention_mask")
+
+        if isinstance(input_ids, torch.Tensor):
+            if input_ids.dim() == 2 and input_ids.size(0) == 1:
+                input_ids = input_ids.squeeze(0)
+            input_ids = input_ids.to(dtype=torch.long)
+        else:
+            input_ids = torch.tensor(input_ids, dtype=torch.long)
+
+        plen = int(input_ids.numel())
+        multi_modal_inputs = dict(full_inputs)
+        return input_ids, plen, attention_mask, label_mask, multi_modal_inputs
+
+    @classmethod
+    def _parse_raw_record(
+        cls,
+        raw: dict[str, Any],
+        idx: int,
+        data_root: Optional[str],
+        expected_video_frames: int = EXPECTED_VIDEO_FRAMES,
+    ) -> tuple[str, str, list[Any], list[Any]]:
+        full_video = raw.get("full_video")
+        video_clip = raw.get("video_clip")
+        question = str(raw.get("question", ""))
+        answer_text = str(raw.get("answer", ""))
+
+        if full_video and video_clip:
+            full_video = _resolve_video_path(str(full_video), data_root)
+            video_clip = _resolve_video_path(str(video_clip), data_root)
+            return (
+                question,
+                answer_text,
+                [full_video, video_clip],
+                [full_video, video_clip],
+            )
+
+        pkl_path = raw.get("pkl_path")
+        if not pkl_path:
+            raise ValueError(f"Sample {idx} missing full_video/video_clip or pkl_path")
+
+        resolved_pkl_path = _resolve_video_path(str(pkl_path), data_root)
+        with open(resolved_pkl_path, "rb") as f:
+            payload = pickle.load(f)
+        main_frames = payload.get("main_frames")
+        extra_view_frames = payload.get("extra_view_frames")
+        if main_frames is None or extra_view_frames is None:
+            raise ValueError(f"Sample {idx} pkl missing dual-view frame arrays")
+        _validate_qwentrend_frames(
+            main_frames, idx, "main_frames", expected_video_frames
+        )
+        _validate_qwentrend_frames(
+            extra_view_frames, idx, "extra_view_frames", expected_video_frames
+        )
+        return (
+            question,
+            answer_text,
+            [main_frames, extra_view_frames],
+            [resolved_pkl_path, resolved_pkl_path],
+        )
+
+    def _process_raw_record(self, raw: dict[str, Any], idx: int) -> "SftDatasetItem":
+        prompt_text, answer_text, videos, image_data = self._parse_raw_record(
+            raw, idx, self._data_root, self._expected_video_frames
+        )
+        input_ids, plen, attention_mask, label_mask, multi_modal_inputs = (
+            self.encode_prompt(
+                prompt_text=prompt_text,
+                videos=videos,
+                answer_text=answer_text,
+            )
+        )
+        if plen > self.max_prompt_length:
+            input_ids = input_ids[: self.max_prompt_length]
+            attention_mask = attention_mask[..., : self.max_prompt_length]
+            label_mask = label_mask[..., : self.max_prompt_length]
+            plen = self.max_prompt_length
+        return SftDatasetItem(
+            prompt=input_ids,
+            length=plen,
+            idx=idx,
+            image_data=image_data,
+            answer=answer_text,
+            prompt_text=prompt_text,
+            attention_mask=attention_mask,
+            label_mask=label_mask,
+            meta=None,
+            multi_modal_inputs=multi_modal_inputs,
+        )
+
+
+@VLMDatasetRegistry.register("simple_qwentrend_sft")
+class SimpleQwenTrendSFTDataset(QwenTrendProgressSFTDataset):
+    """SFT dataset for a single-video, single-word QwenTrend format."""
+
+    @classmethod
+    def _build_video_user_content(
+        cls, processor: AutoProcessor, prompt_text: str
+    ) -> str:
+        video_tok = getattr(processor, "video_token", "<|video_pad|>")
+        return f"{video_tok}\n\n{prompt_text}"
+
+    @classmethod
+    def _parse_raw_record(
+        cls,
+        raw: dict[str, Any],
+        idx: int,
+        data_root: Optional[str],
+    ) -> tuple[str, str, list[str], list[str]]:
+        clip_path = raw.get("clip_path") or raw.get("video_clip")
+        if not clip_path:
+            raise ValueError(f"Sample {idx} missing clip_path or video_clip")
+
+        clip_path = _resolve_video_path(str(clip_path), data_root)
+        prompt_text = str(raw.get("prompt") or raw.get("question") or "").strip()
+        if not prompt_text:
+            raise ValueError(f"Sample {idx} missing prompt or question")
+
+        supervision = raw.get("supervision")
+        supervision_label = (
+            supervision.get("label", "") if isinstance(supervision, dict) else ""
+        )
+        answer_text = (
+            str(raw.get("answer") or raw.get("label") or supervision_label)
+            .strip()
+            .lower()
+        )
+        return prompt_text, answer_text, [clip_path], [clip_path]
+
+
+# Backward-compatible class names used by the online reward input builders.
+RoboChallengeProgressSFTDataset = QwenTrendProgressSFTDataset
+SimpleRobochallengeSFTDataset = SimpleQwenTrendSFTDataset
