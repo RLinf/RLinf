@@ -18,12 +18,13 @@ import queue
 import threading
 import time
 from collections import defaultdict
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Literal, Union
 
 from omegaconf.dictconfig import DictConfig
 
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
+from rlinf.utils.channel_utils import channel_name
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
@@ -75,13 +76,11 @@ class EmbodiedRunner:
             self.cfg.runner.get("overlap_env_bootstrap", False)
         )
         # Data channels
-        self.env_channel = Channel.create("Env")
-        self.rollout_channel = Channel.create("Rollout")
-        self.actor_channel = Channel.create("Actor")
-        if self.reward is not None:
-            self.reward_channel = Channel.create("Reward")
-        else:
-            self.reward_channel = None
+        self.env_channel = Channel.create(channel_name(self.cfg, "Env"))
+        self.rollout_channel = Channel.create(channel_name(self.cfg, "Rollout"))
+        self.actor_channel = Channel.create(channel_name(self.cfg, "Actor"))
+        self.reward_channel = None
+        self.reward_initialized = False
 
         # this timer checks if we should stop training
         self.run_timer = Timer(None)  # Timer that checks if we should stop training
@@ -203,7 +202,11 @@ class EmbodiedRunner:
                 rank=rank,
             )
 
-    def _aggregate_numeric_metrics(self, metrics_list: list[dict] | None) -> dict:
+    def _aggregate_numeric_metrics(
+        self,
+        metrics_list: list[dict] | None,
+        reduction: Literal["mean", "max", "sum"] = "mean",
+    ) -> dict:
         if not metrics_list:
             return {}
         merged_metrics = defaultdict(list)
@@ -212,14 +215,26 @@ class EmbodiedRunner:
                 continue
             for key, value in metrics.items():
                 merged_metrics[key].append(value)
-        return {
-            key: (sum(values) / len(values))
-            for key, values in merged_metrics.items()
-            if values
-        }
+        aggregated_metrics = {}
+        for key, values in merged_metrics.items():
+            if not values:
+                continue
+            if reduction == "mean":
+                aggregated_metrics[key] = sum(values) / len(values)
+            elif reduction == "max":
+                aggregated_metrics[key] = max(values)
+            elif reduction == "sum":
+                aggregated_metrics[key] = sum(values)
+            else:
+                raise ValueError(f"Unsupported numeric metric reduction: {reduction}")
+        return aggregated_metrics
 
     def _process_ranked_numeric_results(
-        self, results: list[dict], metric_field: str
+        self,
+        results: list[dict],
+        metric_field: str,
+        intra_rank_reduction: Literal["mean", "max", "sum"] = "mean",
+        cross_rank_reduction: Literal["mean", "max", "sum"] = "mean",
     ) -> tuple[dict, list[dict]]:
         metric_list: list[dict] = []
         per_rank_metrics: dict[int, list[dict]] = defaultdict(list)
@@ -232,15 +247,21 @@ class EmbodiedRunner:
             if rank is not None:
                 per_rank_metrics[int(rank)].append(metrics)
 
-        aggregated_metrics = self._aggregate_numeric_metrics(metric_list)
+        aggregated_metrics = self._aggregate_numeric_metrics(
+            metric_list, reduction=cross_rank_reduction
+        )
         ranked_metrics_list: list[dict] = []
         if per_rank_metrics:
             max_rank = max(per_rank_metrics.keys())
             ranked_metrics_list = [{} for _ in range(max_rank + 1)]
             for rank, metrics_list in per_rank_metrics.items():
                 ranked_metrics_list[rank] = self._aggregate_numeric_metrics(
-                    metrics_list
+                    metrics_list, reduction=intra_rank_reduction
                 )
+            aggregated_metrics = self._aggregate_numeric_metrics(
+                [metrics for metrics in ranked_metrics_list if metrics],
+                reduction=cross_rank_reduction,
+            )
         return aggregated_metrics, ranked_metrics_list
 
     def _process_ranked_eval_results(
@@ -281,6 +302,18 @@ class EmbodiedRunner:
                     if _step % self.weight_sync_interval == 0:
                         self.update_rollout_weights()
                 with self.timer("generate_rollouts"):
+                    if (
+                        self.reward is not None
+                        and not self.reward_initialized
+                        and self.global_step
+                        >= self.cfg.reward.get("use_output_step", 0)
+                    ):
+                        print(f"Activating reward worker at step {self.global_step}")
+                        self.reward_channel = Channel.create(
+                            channel_name(self.cfg, "Reward")
+                        )
+                        self.reward_initialized = True
+
                     env_handle: Handle = self.env.interact(
                         input_channel=self.env_channel,
                         rollout_channel=self.rollout_channel,
@@ -291,7 +324,8 @@ class EmbodiedRunner:
                         input_channel=self.rollout_channel,
                         output_channel=self.env_channel,
                     )
-                    if self.reward is not None:
+                    reward_handle = None
+                    if self.reward_initialized:
                         reward_handle: Handle = self.reward.compute_rewards(
                             input_channel=self.reward_channel,
                             output_channel=self.env_channel,
@@ -300,7 +334,7 @@ class EmbodiedRunner:
                         input_channel=self.actor_channel
                     ).wait()
                     rollout_handle.wait()
-                    if self.reward is not None:
+                    if self.reward_initialized:
                         reward_handle.wait()
 
                 # compute advantages and returns.
@@ -363,7 +397,7 @@ class EmbodiedRunner:
             time_metrics.update(
                 {f"time/actor/{k}": v for k, v in actor_time_metrics.items()}
             )
-            if self.reward is not None:
+            if self.reward_initialized:
                 reward_time_metrics, reward_time_metrics_per_rank = (
                     reward_handle.consume_durations(return_per_rank=True)
                 )
@@ -439,7 +473,7 @@ class EmbodiedRunner:
                 prefix="env",
                 worker_group_name=self.env.worker_group_name,
             )
-            if self.reward is not None:
+            if self.reward_initialized:
                 self._log_ranked_metrics(
                     metrics_list=reward_time_metrics_per_rank,
                     step=_step,
