@@ -386,7 +386,9 @@ class EnvWorker(Worker):
         This function is used to interact with the environment.
         """
         exec_actions = prepare_actions(
-            raw_chunk_actions=chunk_actions["raw_actions"],
+            raw_chunk_actions=chunk_actions["raw_actions"]
+            if isinstance(chunk_actions, dict)
+            else chunk_actions,
             env_type=self.cfg.env.train.env_type,
             model_type=self.cfg.actor.model.model_type,
             num_action_chunks=self.cfg.actor.model.num_action_chunks,
@@ -394,7 +396,10 @@ class EnvWorker(Worker):
             policy=self.cfg.actor.model.get("policy_setup", None),
             wm_env_type=self.cfg.env.train.get("wm_env_type", None),
         )
-        chunk_actions["actions"] = exec_actions
+        if isinstance(chunk_actions, dict):
+            chunk_actions["actions"] = exec_actions
+        else:
+            chunk_actions = exec_actions
         env_info = {}
 
         obs_list, chunk_rewards, chunk_terminations, chunk_truncations, infos_list = (
@@ -1036,7 +1041,7 @@ class EnvWorker(Worker):
                             "save_flags": rollout_result.save_flags,
                         }
                     else:
-                        actions = {"raw_actions": rollout_result.actions}
+                        actions = rollout_result.actions
                     env_output, env_info = self.env_interact_step(actions, stage_id)
                     env_batch = env_output.to_dict()
                     self.send_env_batch(
