@@ -456,10 +456,14 @@ class InMemoryArrowStore:
                 data_features[key] = hf_datasets.Image()
                 image_keys.add(key)
             elif val.shape == (1,):
-                dtype_str = "bool" if np.issubdtype(val.dtype, np.bool_) else str(val.dtype)
+                dtype_str = (
+                    "bool" if np.issubdtype(val.dtype, np.bool_) else str(val.dtype)
+                )
                 data_features[key] = hf_datasets.Value(dtype_str)
             elif val.ndim == 1:
-                dtype_str = "bool" if np.issubdtype(val.dtype, np.bool_) else str(val.dtype)
+                dtype_str = (
+                    "bool" if np.issubdtype(val.dtype, np.bool_) else str(val.dtype)
+                )
                 data_features[key] = hf_datasets.Sequence(
                     length=val.shape[0],
                     feature=hf_datasets.Value(dtype_str),
@@ -518,7 +522,13 @@ class InMemoryArrowStore:
         }
 
         for key in self._hf_features:
-            if key in ("index", "episode_index", "frame_index", "timestamp", "task_index"):
+            if key in (
+                "index",
+                "episode_index",
+                "frame_index",
+                "timestamp",
+                "task_index",
+            ):
                 continue
             if key in self._image_keys:
                 ep_dict[key] = [PILImage.fromarray(f[key]) for f in ep_frames]
@@ -581,9 +591,7 @@ class InMemoryArrowStore:
 
         if self._delta_indices:
             query_indices = {
-                key: [
-                    max(ep_start, min(ep_end - 1, local_idx + d)) for d in deltas
-                ]
+                key: [max(ep_start, min(ep_end - 1, local_idx + d)) for d in deltas]
                 for key, deltas in self._delta_indices.items()
             }
             padding = {
@@ -597,9 +605,7 @@ class InMemoryArrowStore:
             }
             # All chunk indices are within the same episode — use local offsets.
             query_result = {
-                key: torch.stack(
-                    ep_ds.select([q - ep_start for q in q_idxs])[key]
-                )
+                key: torch.stack(ep_ds.select([q - ep_start for q in q_idxs])[key])
                 for key, q_idxs in query_indices.items()
                 if key in self._hf_features and key not in self._image_keys
             }
@@ -1239,9 +1245,7 @@ class RollingLeRobotDataset(Dataset):
     # Shard cache API
     # ------------------------------------------------------------------
 
-    def add_shard_to_memory(
-        self, path: str | Path, episodes: list[list[dict]]
-    ) -> None:
+    def add_shard_to_memory(self, path: str | Path, episodes: list[list[dict]]) -> None:
         """Populate the in-memory shard cache for *path* with *episodes*.
 
         Should be called by the actor worker immediately after a shard is

@@ -193,7 +193,7 @@ class CollectEpisode(gym.Wrapper):
         data fidelity.
 
         Args:
-            input_actions: dict of actions, containing raw_actions, actions, 
+            input_actions: dict of actions, containing raw_actions, actions,
             expert_actions, and save_flags
 
         Returns:
@@ -416,7 +416,9 @@ class CollectEpisode(gym.Wrapper):
             if ep_data is not None:
                 if self.defer_write:
                     self._pending_episodes.put(ep_data)
-                    self.logger.info(f"Pending episodes: {self._pending_episodes.qsize()}")
+                    self.logger.info(
+                        f"Pending episodes: {self._pending_episodes.qsize()}"
+                    )
                 else:
                     self._submit(self._write_lerobot_episode, ep_data)
         else:

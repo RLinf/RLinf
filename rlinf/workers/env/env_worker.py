@@ -260,9 +260,7 @@ class EnvWorker(Worker):
                     finalize_interval=getattr(
                         env_cfg.data_collection, "finalize_interval", 100
                     ),
-                    defer_write=getattr(
-                        env_cfg.data_collection, "defer_write", False
-                    ),
+                    defer_write=getattr(env_cfg.data_collection, "defer_write", False),
                 )
             env_list.append(env)
         return env_list

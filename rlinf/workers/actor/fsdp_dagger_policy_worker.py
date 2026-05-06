@@ -159,7 +159,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         """Initialize DAgger-specific replay buffer state."""
         seed = self.cfg.actor.get("seed", 1234)
         if self.data_source == "buffer":
-            auto_save_path = self.cfg.algorithm.replay_buffer.get("auto_save_path", None)
+            auto_save_path = self.cfg.algorithm.replay_buffer.get(
+                "auto_save_path", None
+            )
             if auto_save_path is None:
                 auto_save_path = os.path.join(
                     self.cfg.runner.logger.log_path, f"replay_buffer/rank_{self._rank}"
@@ -313,7 +315,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self._current_shard_episodes.append(ep_frames)
         self._lerobot_episodes_written += 1
 
-        finalize_interval = self.cfg.actor.get("lerobot", {}).get("finalize_interval", 8)
+        finalize_interval = self.cfg.actor.get("lerobot", {}).get(
+            "finalize_interval", 8
+        )
         if (
             finalize_interval > 0
             and self._lerobot_episodes_written % finalize_interval == 0
