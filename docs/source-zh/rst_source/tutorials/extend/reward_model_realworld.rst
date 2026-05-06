@@ -365,6 +365,7 @@ Reward worker 被部署在 GPU 节点（``"4090"``）上，与机器人节点（
      standalone_realworld: True
      reward_mode: "per_step"
      reward_threshold: 0.2
+     pending_step_window: 0    # 异步 reward 队列窗口；0 表示同步等待 reward
      model:
        model_path: path/to/reward_model_checkpoint
        model_type: "resnet"
@@ -377,6 +378,10 @@ Reward worker 被部署在 GPU 节点（``"4090"``）上，与机器人节点（
 - ``reward.use_reward_prob: True`` — 每步将原始 sigmoid 概率打印到终端。
 - ``reward.standalone_realworld: True`` — 利用 reward model 直接判断成功/失败并触发重置。
 - ``reward.reward_threshold`` — 概率阈值，低于该值的成功判定将被抑制。根据模型校准情况调整。
+- ``reward.pending_step_window`` — 异步 reward 队列允许积压的 rollout step 数。
+  默认建议为 ``0``，即每一步都同步等待 reward model 输出，行为与原同步流程一致。
+  设为正整数时，env/rollout 可以在最多 ``pending_step_window`` 个未完成 reward
+  step 内继续推进，用于隐藏 reward worker 推理延迟；真机调试阶段建议保持 ``0``。
 - ``reward.model.model_path`` — 指向训练好的 reward model checkpoint。
 
 启动

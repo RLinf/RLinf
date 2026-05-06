@@ -5,6 +5,8 @@ RLinf supports multiple backend engines for both training and inference. As of n
 
 - **Megatron** and **SGLang/vLLM** for training LLMs on MATH tasks.
 - **FSDP** and **Huggingface** for training VLAs on LIBERO and ManiSkill3.
+- **Hugging Face or SGLang-backed reward inference** for embodied VLM reward
+  experiments such as ManiSkill PPO with Qwen3-VL reward models.
 
 Backend Engines
 ---------------
@@ -137,6 +139,23 @@ To switch to the desired venv, use the built-in script `switch_env`:
 
   Both the `link_assets` and `switch_env` scripts are built-in utilities in the Docker image provided by us. You can find them in `/usr/local/bin`.
 
+For OpenPI + Qwen3-VL Hugging Face reward experiments, switch to the OpenPI embodied
+venv and pin the Qwen3-VL-compatible ``transformers`` version before running the
+reward worker. RLinf's repo-local OpenPI patch is compatible with this unified
+environment, so the Qwen3-VL reward worker can run in the same venv:
+
+.. code-block:: bash
+
+   source switch_env openpi
+   uv pip install --upgrade "transformers==4.57.1" "tokenizers>=0.22,<0.23"
+
+SGLang is optional and only required when
+``reward.model.model_type=history_vlm_sglang``. RLinf uses an in-process
+``sglang.Engine`` reward backend, not an external SGLang server path. The target stack
+is ``sglang==0.5.4`` with ``transformers==4.57.1`` plus the matching SGLang torch,
+xgrammar, and flashinfer runtime, so keep it separate from the default Hugging Face
+reward install unless you select that backend.
+
 Installation Method 2: UV Custom Environment
 --------------------------------------------------------------
 **If you have already used the Docker image, you can skip the following steps.**
@@ -160,6 +179,29 @@ For example, to install the dependencies for the OpenVLA + ManiSkill LIBERO expe
   bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
 This will create a virtual environment under the current path named `.venv`.
+
+For Qwen3-VL VLM reward model support in embodied ManiSkill/Libero environments, add
+``--vlm-reward``:
+
+.. code-block:: shell
+
+  bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward
+
+This flag pins ``transformers==4.57.1`` and installs the tokenizers range required by
+Qwen3-VL. It is intended to work with OpenPI through RLinf's repo-local OpenPI patch,
+without a dedicated Qwen reward venv. It does not download reward-model checkpoints or
+install SGLang.
+
+For the unified OpenPI + Qwen3-VL + in-process SGLang reward environment, use
+``--vlm-reward-sglang`` instead:
+
+.. code-block:: shell
+
+  bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward-sglang
+
+This SGLang path targets ``sglang==0.5.4`` with ``transformers==4.57.1`` and installs
+the SGLang-specific torch, xgrammar, and flashinfer runtime. Use it only when the reward
+config sets ``reward.model.model_type: history_vlm_sglang``.
 
 To activate the virtual environment, you can use the following command:
 

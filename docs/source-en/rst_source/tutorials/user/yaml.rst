@@ -247,6 +247,10 @@ reward
 
 ``reward.use_reward_model``: Whether to use a reward model.
 
+For embodied reward models, additional fields under ``reward`` control worker
+placement, reward mode, reward mixing, and the model backend. See the embodied
+reward section below for ResNet and VLM examples.
+
 critic
 ~~~~~~~~~~~~~~~
 
@@ -1084,6 +1088,83 @@ actor
 ``actor.optim.adam_eps``: Adam optimizer epsilon.
 
 ``actor.optim.clip_grad``: Gradient clipping norm.
+
+
+reward
+~~~~~~~~~~~~~~~
+
+.. code:: yaml
+
+  reward:
+    use_reward_model: True
+    group_name: "RewardGroup"
+    use_output_step: 0
+    reward_mode: history_buffer
+    history_reward_assign: True
+    reward_weight: 1.0
+    env_reward_weight: 0.0
+
+    model:
+      model_type: history_vlm
+      model_path: /path/to/Qwen3-VL-4B-Instruct
+      lora_path: /path/to/qwen3-vl-reward-lora
+      precision: bf16
+      input_builder_name: qwentrend_input_builder
+      reward_parser_name: qwentrend_reward_parser
+      history_buffers:
+        history_window:
+          history_size: 5
+          min_history_size: 5
+          input_interval: 1
+          history_keys:
+            - main_images
+            - extra_view_images
+          input_on_done: false
+      infer_micro_batch_size: 64
+
+``reward.use_reward_model``: Enable a separate embodied reward worker.
+
+``reward.group_name``: Logical reward worker group name.
+
+``reward.use_output_step``: Global step at which reward-model outputs start affecting
+the rollout reward.
+
+``reward.reward_mode``: Reward inference mode. ``terminal`` and ``per_step`` are used
+by image reward models; ``history_buffer`` sends a short observation history to VLM
+reward models.
+
+``reward.history_reward_assign``: When using ``history_buffer``, assign the current
+history-window score back to the earlier steps covered by that window.
+
+``reward.reward_weight`` / ``reward.env_reward_weight``: Weights used to combine
+learned reward and raw environment reward.
+
+``reward.model.model_type``: Reward model implementation. Common embodied values are
+``resnet``, ``vlm``, ``history_vlm``, and ``history_vlm_sglang``. ``history_vlm`` uses
+in-process Hugging Face generation; ``history_vlm_sglang`` uses the SGLang-backed
+history VLM reward backend and requires the corresponding SGLang endpoint fields in
+the backend config.
+
+``reward.model.model_path``: Base model or checkpoint path used by the reward model.
+
+``reward.model.lora_path``: Optional LoRA checkpoint path for VLM reward models.
+
+``reward.model.input_builder_name``: Input builder used to convert observations and
+history buffers into model inputs.
+
+``reward.model.reward_parser_name``: Parser that maps model outputs to scalar rewards.
+
+``reward.model.history_buffers``: Named history-buffer specs. ``history_keys`` must
+match observation keys emitted by the environment, such as ``main_images`` and
+``extra_view_images`` for dual-view ManiSkill VLM rewards.
+
+``reward.model.infer_micro_batch_size``: Reward-model inference micro-batch size for
+the in-process Hugging Face VLM path.
+
+In async embodied runners, ``EmbodiedRewardWorker.compute_rewards_async`` stays alive
+and consumes queued reward inputs from env workers. Env workers send split inputs with
+``train_reward_input`` channel keys and receive split reward tensors through
+``reward_output`` keys.
 
 
 

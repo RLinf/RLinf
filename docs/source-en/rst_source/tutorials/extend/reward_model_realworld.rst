@@ -382,6 +382,7 @@ which inherits environment parameters from ``env/realworld_bin_relocation.yaml``
      standalone_realworld: True
      reward_mode: "per_step"
      reward_threshold: 0.2
+     pending_step_window: 0    # async reward queue window; 0 waits synchronously
      model:
        model_path: path/to/reward_model_checkpoint
        model_type: "resnet"
@@ -394,6 +395,11 @@ Key fields for the reward model in teleop mode:
 - ``reward.use_reward_prob: True`` — print raw sigmoid probabilities to the terminal each step.
 - ``reward.standalone_realworld: True`` — use the reward model to directly drive success/failure and resets.
 - ``reward.reward_threshold`` — probability below which success is suppressed. Adjust based on model calibration.
+- ``reward.pending_step_window`` — number of rollout steps that the async reward queue may keep pending.
+  The recommended default is ``0``, which waits for the reward model output at every step and matches
+  the synchronous behavior. Set it to a positive integer to let env/rollout continue while up to
+  ``pending_step_window`` reward steps are still unresolved, which can hide reward worker inference
+  latency; keep it at ``0`` for real-world debugging.
 - ``reward.model.model_path`` — path to the trained reward model checkpoint.
 
 Launching
