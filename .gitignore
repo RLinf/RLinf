@@ -21,3 +21,18 @@ rlinf/envs/maniskill/assets
 PKG-INFO
 *.egg-info/
 .claude/settings.json
+data/*
+
+# Local model checkpoints / datasets / external env repos.
+/models/
+!requirements/embodied/models/
+!requirements/embodied/models/*.txt
+Qwen2.5-VL-3B-Instruct/
+Qwen3-VL-4B-Instruct/
+RLinf-Gr00t-SFT-*/
+RLinf-OpenVLAOFT-*/
+lingbot-vla-4b/
+lingbot-vla-4b-posttrain-robotwin/
+RoboTwin/
+examples/embodiment/.ps__*
+wandb/
