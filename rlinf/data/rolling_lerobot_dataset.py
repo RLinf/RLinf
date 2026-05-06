@@ -1066,10 +1066,13 @@ class RollingLeRobotDataset(Dataset):
             probes = [self._probe_shard_for_index(p) for p in pending]
 
         for probe in probes:
-            if not probe.ok or probe.sub_ds is None:
+            if not probe.ok:
+                continue
+            # sub_ds is None for in-memory shards (no LeRobotDataset opened);
+            # that is expected and must not be treated as a failure.
+            if probe.sub_ds is None and not self._shard_cache_enabled:
                 continue
             ds_path = probe.ds_path
-            sub_ds = probe.sub_ds
             physical_base = self._cumulative_lengths[-1]
             n_frames = probe.n_frames
             self._sub_datasets.append(ds_path)
@@ -1087,8 +1090,8 @@ class RollingLeRobotDataset(Dataset):
             self._indexed_datasets.add(ds_path)
             self._total_episodes += probe.num_episodes
             n_new += 1
-            if out_open_handles is not None:
-                out_open_handles[ds_path] = sub_ds
+            if out_open_handles is not None and probe.sub_ds is not None:
+                out_open_handles[ds_path] = probe.sub_ds
 
         self._update_window_sampling_bounds()
         return n_new
