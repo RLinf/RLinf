@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -40,3 +41,35 @@ def test_openpi_sglang_install_flag_reapplies_transformers_patch():
         "--vlm-reward-sglang is supported only with --model openpi or --model qwen_vlm_reward"
         in install_script
     )
+
+
+def test_qwen_vlm_reward_can_install_sglang_without_env():
+    install_script = (REPO_ROOT / "requirements/install.sh").read_text()
+
+    assert (
+        '[ "$MODEL" != "dreamzero" ] && [ "$MODEL" != "qwen_vlm_reward" ]'
+        in install_script
+    )
+
+    match = re.search(
+        r"install_qwen_vlm_reward_model\(\) \{\n(?P<body>.*?)\n\}\n\ninstall_gr00t_model",
+        install_script,
+        flags=re.S,
+    )
+    assert match is not None
+
+    body = match.group("body")
+    light_branch = re.search(
+        r'\n\s*""\)\n(?P<body>.*?)\n\s*;;',
+        body,
+        flags=re.S,
+    )
+    assert light_branch is not None
+
+    light_branch_body = light_branch.group("body")
+    assert "create_and_sync_venv" in light_branch_body
+    assert (
+        "uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD" in light_branch_body
+    )
+    assert "install_common_embodied_deps" not in light_branch_body
+    assert "install_maniskill_libero_env" not in light_branch_body

@@ -82,7 +82,43 @@ jobs:
           rm -rf .venv
           bash requirements/install.sh embodied --model openpi --env isaaclab
           rm -rf .venv
-          
+
+      - name: Install qwen_vlm_reward SGLang
+        env:
+          UV_HTTP_TIMEOUT: "900"
+          UV_CONCURRENT_DOWNLOADS: "1"
+        run: |
+          pip install uv
+          rm -rf .venv
+          bash requirements/install.sh embodied --model qwen_vlm_reward --vlm-reward-sglang --venv .venv --no-root
+          .venv/bin/python - <<'PY'
+          from importlib.metadata import version
+
+          import transformers
+          import transformers.models.qwen3_vl
+          from packaging.version import Version
+          from sglang import Engine
+          from transformers import GemmaConfig, Qwen3VLForConditionalGeneration
+
+          from rlinf.models.embodiment.reward import get_reward_model_class
+
+          assert transformers.__version__ == "4.57.1"
+          assert Qwen3VLForConditionalGeneration is not None
+          assert Version(version("sglang")) == Version("0.5.4")
+          assert Engine is not None
+          gemma_config = GemmaConfig()
+          if hasattr(gemma_config, "use_adarms") or hasattr(
+              gemma_config, "adarms_cond_dim"
+          ):
+              assert hasattr(gemma_config, "use_adarms")
+              assert hasattr(gemma_config, "adarms_cond_dim")
+          assert (
+              get_reward_model_class("history_vlm_sglang").__name__
+              == "HistoryVLMSGLangRewardModel"
+          )
+          PY
+          rm -rf .venv
+
       - name: Install gr00t
         run: |
           pip install uv

@@ -642,6 +642,10 @@ install_starvla_model() {
 
 install_qwen_vlm_reward_model() {
     case "$ENV_NAME" in
+        "")
+            create_and_sync_venv
+            uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
+            ;;
         maniskill_libero)
             create_and_sync_venv
             install_common_embodied_deps
@@ -1236,7 +1240,7 @@ main() {
                     echo "Unknown environment: $ENV_NAME. Supported environments: ${SUPPORTED_ENVS[*]}" >&2
                     exit 1
                 fi
-            elif [ "$MODEL" != "dreamzero" ]; then
+            elif [ "$MODEL" != "dreamzero" ] && [ "$MODEL" != "qwen_vlm_reward" ]; then
                 echo "--env must be specified when target=embodied." >&2
                 exit 1
             fi
