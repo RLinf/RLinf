@@ -2,14 +2,13 @@ Turtle2 Takeover Raw Data Collection
 ====================================
 
 This example shows how to run **policy rollout + master takeover** raw episode
-collection on XSquare Turtle2. It records policy-controlled execution, manual
-takeover, hold/recovery behavior after takeover, and the action actually sent
-to the robot for debugging, auditing, and later offline cleaning.
+collection on XSquare Turtle2. It records policy-controlled execution and
+accepted manual takeover frames for later offline cleaning.
 
 This example is **not an online DAgger training config**. It does not start SAC
 or DAgger actor updates, and it does not modify the OpenPI loss. If the collected
-data should later be used for SFT or DAgger, first clean the saved pickle
-episodes into the required expert segments.
+data should later be used for SFT or DAgger, first clean the saved LeRobot
+dataset into the required expert segments.
 
 Overall Path
 ------------
@@ -22,23 +21,19 @@ Runtime uses one robot execution path:
       -> 14D absolute pose + gripper action
       -> DualAbsolutePoseActionWrapper
       -> MasterTakeoverIntervention
-      -> Turtle2 direct pose backend
+      -> Turtle2 hybrid pose control
       -> /follow_pos_cmd_1, /follow_pos_cmd_2
-      -> CollectEpisode pickle export
+      -> CollectEpisode LeRobot export
 
 ``MasterTakeoverIntervention`` only selects which action should be executed:
 
 - in normal mode, it passes through the policy action;
 - in takeover mode, when a fresh master pose is available, it replaces the
   policy action with the master pose;
-- in takeover mode, before a fresh master pose is ready, it holds the current
-  slave pose;
-- after leaving takeover, it keeps holding until the current action chunk
-  boundary so stale actions from the old policy chunk are not executed.
-
-The selected action always enters the same Turtle2 direct pose backend. In other
-words, policy actions, master takeover actions, and later debug/replay actions
-share the same executor as long as they use the same 14D absolute pose contract.
+- in takeover mode, before a fresh master pose is ready, it waits without
+  stepping or recording;
+- after leaving takeover, it skips the rest of the current policy action chunk
+  so stale actions are not executed or recorded.
 
 Action and Control Semantics
 ----------------------------
@@ -54,13 +49,10 @@ Important details:
 
 - ``action_mode`` must be ``absolute_pose``. The master sends absolute end-effector
   poses, which must not be interpreted as relative/delta actions.
-- ``pose_control_backend`` is set to ``direct``. The direct backend publishes
-  ``PosCmd``-style commands to ``/follow_pos_cmd_1`` and ``/follow_pos_cmd_2``
-  and does not use the RLinf smooth interpolation path.
-- The direct backend first checks shape, finite values, and safety bounds. An
-  accepted action satisfies ``executed_action == raw_action``. A rejected action
-  is not published; the robot holds the previous accepted action, and the info
-  dict records ``action_rejected`` and ``rejection_reason``.
+- ``pose_control_backend`` is set to ``hybrid``. Policy actions use the smooth
+  path; accepted master poses use the takeover publish path.
+- Takeover sync waits and policy chunk tails after takeover exit are not stepped,
+  so they are not recorded as trajectory frames.
 
 Pure deployment can still use the Turtle2 deploy default ``relative_pose`` if
 the policy was trained with delta actions. Takeover raw collection must use
@@ -83,7 +75,7 @@ The protocol keeps three X2Robot takeover frame types:
 
 ``MSG_JOINT`` is used only for pre-takeover synchronization. The robot action
 that gets executed comes from the policy or from the master's 14D pose and is
-sent through the same direct pose backend.
+sent through the hybrid control path.
 
 Mode switching is done through a ROS parameter:
 
@@ -123,8 +115,8 @@ Before running this example, verify the following:
 - Turtle2 ROS, SDK, cameras, and follower controllers are running and publishing
   robot state.
 - ``/follow_pos_cmd_1`` and ``/follow_pos_cmd_2`` are published only by the RLinf
-  direct backend. Do not start legacy slave executors or other processes that
-  write follower pose commands at the same time.
+  hybrid takeover controller. Do not start legacy slave executors or other
+  processes that write follower pose commands at the same time.
 - The master program is connected to the RLinf takeover TCP server and can send
   ``MSG_POSE`` frames.
 - ``/running_mode`` uses integer mode values. This example defaults to ``1`` for
@@ -197,7 +189,7 @@ If the repository already exists, verify the branch and revision before startup:
 
 If a UI is used for temporary calibration, close any UI or legacy executor that
 publishes ``/follow_pos_cmd_*`` before running this example. These command topics
-should be owned by the RLinf direct backend during collection.
+should be owned by RLinf during collection.
 
 2. GPU / Ray Head Node: Start Ray Head
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -337,7 +329,7 @@ Run on the Ray head node:
    export RLINF_COMM_NET_DEVICES=<head_network_interface>
    export PYTHONPATH=<path_to_rlinf_repo>:$PYTHONPATH
    export RLINF_OPENPI_MODEL_PATH=<path_to_openpi_checkpoint>
-   export RLINF_REALWORLD_DATA_DIR=<path_to_save_pickle_episodes>
+   export RLINF_REALWORLD_DATA_DIR=<path_to_save_lerobot_dataset>
 
    bash examples/embodiment/run_realworld_eval.sh realworld_turtle2_dagger_takeover_collect_openpi
 
@@ -363,15 +355,15 @@ Key fields:
        action_mode: absolute_pose
        data_collection:
          enabled: True
-         export_format: "pickle"
-         record_executed_action: True
+         export_format: "lerobot"
+         record_intervention_action: True
        master_takeover:
          running_mode_source: "ros_param"
          running_mode_param: "/running_mode"
          normal_mode_value: 1
          takeover_mode_value: 2
        override_cfg:
-         pose_control_backend: direct
+         pose_control_backend: hybrid
          use_arm_ids: [0, 1]
 
 ``algorithm.adv_type`` and ``algorithm.loss_type`` use registered placeholder
@@ -404,54 +396,38 @@ boundary.
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 After the run finishes, check ``RLINF_REALWORLD_DATA_DIR`` or the configured
-``data_collection.save_dir``. The pickle episode should contain fields such as
-``observations``, ``actions``, ``infos``, ``success``, and ``intervened``. If
-takeover happened, ``infos`` should include metadata such as ``intervene_flag``,
-``intervene_action``, and ``takeover_active``.
+``data_collection.save_dir``. The LeRobot dataset should contain frame fields
+such as ``state``, ``actions``, ``task``, ``done``, ``is_success``, and
+``intervene_flag``, plus image fields when cameras are available. If takeover
+happened, accepted master-pose frames should have ``intervene_flag=True`` and
+``actions`` should contain the accepted master action.
 
 Data Recording Semantics
 ------------------------
 
-This example recommends ``pickle`` export for raw episodes instead of direct
-LeRobot export.
-
-The reason is that raw takeover episodes often need to preserve the full
-context:
+This example records a clean takeover trajectory contract:
 
 - policy-controlled segments;
 - master takeover segments;
-- pre-takeover synchronization and hold;
-- chunk-boundary recovery after leaving takeover;
-- rejected-action metadata such as ``raw_intervene_action``, ``action_rejected``,
-  and ``rejection_reason``;
-- the actual or held ``executed_action``.
+- no trajectory frames for pre-takeover synchronization waits;
+- no trajectory frames for skipped policy chunk tails after leaving takeover.
 
 The config sets:
 
 .. code-block:: yaml
 
    data_collection:
-     export_format: "pickle"
-     record_executed_action: True
+     export_format: "lerobot"
+     record_intervention_action: True
 
-Therefore ``episode["actions"]`` prefers the action that was actually executed:
-
-- if the backend accepts an action, it records the accepted ``executed_action``;
-- if a takeover action is accepted, ``intervene_action`` is aligned with
-  ``executed_action``;
-- if a takeover action is rejected, the rejected candidate is kept only in
-  ``episode["infos"]``, while ``episode["actions"]`` records the action the robot
-  actually held.
-
-``CollectEpisode`` still supports LeRobot export, but LeRobot is better suited
-for cleaned demonstration datasets. This example saves raw takeover episodes. If
-you later want to train OpenPI, first clean usable expert segments from the
-pickle episodes, then convert those segments to LeRobot separately.
+Therefore the LeRobot ``actions`` field uses the policy action on policy frames
+and the accepted ``intervene_action`` on takeover frames. Hold, sync-wait, and
+skipped chunk-tail actions are not stepped and are not recorded.
 
 Notes
 -----
 
-- This example is eval-only raw collection. Whether a saved pickle episode is
+- This example is eval-only raw collection. Whether a saved LeRobot episode is
   used for training is decided by later offline cleaning and training configs.
 - Do not start another executor that publishes ``/follow_pos_cmd_1`` or
   ``/follow_pos_cmd_2`` at the same time.

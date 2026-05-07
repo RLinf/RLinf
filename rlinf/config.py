@@ -797,11 +797,43 @@ def validate_embodied_cfg(cfg):
         env_cfg = cfg.env.get(split, None)
         if env_cfg is None or not env_cfg.get("use_master_takeover", False):
             continue
+        if split == "train":
+            raise ValueError(
+                "env.train.use_master_takeover=True is not supported. "
+                "Master takeover no-step collection is only supported on env.eval."
+            )
+        env_type = str(env_cfg.get("env_type", "")).lower()
+        if env_type != "realworld":
+            raise ValueError(
+                f"env.{split}.use_master_takeover=True is only supported for "
+                f"env_type='realworld', got {env_type!r}."
+            )
+        total_num_envs = int(env_cfg.get("total_num_envs", 1))
+        if total_num_envs != 1:
+            raise ValueError(
+                f"env.{split}.use_master_takeover=True requires total_num_envs=1, "
+                f"got {total_num_envs}."
+            )
+        stage_num = int(cfg.rollout.get("pipeline_stage_num", 1))
+        if stage_num != 1:
+            raise ValueError(
+                f"env.{split}.use_master_takeover=True requires "
+                f"rollout.pipeline_stage_num=1, got {stage_num}."
+            )
         action_mode = env_cfg.get("action_mode", None)
         if action_mode != "absolute_pose":
             raise ValueError(
                 f"env.{split}.use_master_takeover=True requires "
                 "action_mode='absolute_pose'."
+            )
+        override_cfg = env_cfg.get("override_cfg", {}) or {}
+        pose_control_backend = str(
+            override_cfg.get("pose_control_backend", "smooth")
+        ).lower()
+        if pose_control_backend != "hybrid":
+            raise ValueError(
+                f"env.{split}.use_master_takeover=True requires "
+                "override_cfg.pose_control_backend='hybrid'."
             )
         master_takeover_cfg = env_cfg.get("master_takeover", {})
         control_mode = str(master_takeover_cfg.get("control_mode", "pose")).lower()
@@ -810,7 +842,7 @@ def validate_embodied_cfg(cfg):
                 f"env.{split}.master_takeover.control_mode must be 'pose' for this "
                 f"takeover raw-collection path, got {control_mode!r}."
             )
-        use_arm_ids = env_cfg.get("override_cfg", {}).get("use_arm_ids", [0, 1])
+        use_arm_ids = override_cfg.get("use_arm_ids", [0, 1])
         if list(use_arm_ids) != [0, 1]:
             raise ValueError(
                 f"env.{split}.use_master_takeover=True requires "

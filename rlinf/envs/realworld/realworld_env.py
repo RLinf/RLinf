@@ -17,7 +17,7 @@ import os
 import pathlib
 import time
 from functools import partial
-from typing import OrderedDict
+from typing import Any, Mapping, OrderedDict
 
 import gymnasium as gym
 import numpy as np
@@ -318,9 +318,24 @@ class RealWorldEnv(gym.Env):
         try:
             for i in range(chunk_size):
                 actions = chunk_actions[:, i]
+                collect_actions = actions
+                if self.cfg.get("use_master_takeover", False):
+                    self._poll_keyboard_running_mode()
+                    action_np = self._single_env_action_numpy(actions)
+                    decision = self._select_takeover_action(action_np)
+                    if not decision["should_step"]:
+                        continue
+                    self._set_pending_takeover_decision(decision)
+                    collect_actions = np.expand_dims(
+                        np.asarray(decision["action"], dtype=np.float32), axis=0
+                    )
                 extracted_obs, step_reward, terminations, truncations, infos = self.step(
                     actions, auto_reset=False
                 )
+                infos["_collect_action"] = collect_actions
+                if "intervene_action" in infos:
+                    infos["_collect_intervene_action"] = infos["intervene_action"]
+                    infos["_collect_intervene_flag"] = infos["intervene_flag"]
                 obs_list.append(extracted_obs)
                 infos_list.append(infos)
                 if "intervene_action" in infos:
@@ -332,6 +347,11 @@ class RealWorldEnv(gym.Env):
                 raw_chunk_truncations.append(truncations)
         finally:
             self._end_action_chunk()
+
+        if not chunk_rewards:
+            empty_rewards = torch.zeros((self.num_envs, 0), dtype=torch.float32)
+            empty_flags = torch.zeros((self.num_envs, 0), dtype=torch.bool)
+            return obs_list, empty_rewards, empty_flags, empty_flags.clone(), infos_list
 
         chunk_rewards = torch.stack(chunk_rewards, dim=1)  # [num_envs, chunk_steps]
         raw_chunk_terminations = torch.stack(
@@ -374,6 +394,36 @@ class RealWorldEnv(gym.Env):
             chunk_truncations,
             infos_list,
         )
+
+    def _single_env_action_numpy(self, actions) -> np.ndarray:
+        if self.num_envs != 1:
+            raise ValueError("Master takeover no-step collection requires num_envs == 1.")
+        action = actions[0]
+        if isinstance(action, torch.Tensor):
+            return action.detach().cpu().numpy()
+        return np.asarray(action, dtype=np.float32)
+
+    def _wrapper_methods(self, name: str):
+        try:
+            return self.env.call("get_wrapper_attr", name)
+        except AttributeError:
+            return []
+
+    def _poll_keyboard_running_mode(self) -> None:
+        for poll in self._wrapper_methods("poll_keyboard_running_mode"):
+            poll()
+
+    def _select_takeover_action(self, action: np.ndarray) -> dict[str, Any]:
+        selectors = self._wrapper_methods("select_takeover_action")
+        if not selectors:
+            raise RuntimeError("use_master_takeover=True but no takeover selector exists.")
+        return selectors[0](action)
+
+    def _set_pending_takeover_decision(self, decision: Mapping[str, Any]) -> None:
+        setters = self._wrapper_methods("set_pending_takeover_decision")
+        if not setters:
+            raise RuntimeError("use_master_takeover=True but no pending-decision setter exists.")
+        setters[0](decision)
 
     def _begin_action_chunk(self):
         if not self.cfg.get("use_master_takeover", False):

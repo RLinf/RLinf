@@ -41,6 +41,9 @@ from rlinf.envs.realworld.common.wrappers.gello_intervention import (
     GelloIntervention,
 )
 from rlinf.envs.realworld.common.wrappers.gripper_close import GripperCloseEnv
+from rlinf.envs.realworld.common.wrappers.keyboard_running_mode_wrapper import (
+    KeyboardRunningModeWrapper,
+)
 from rlinf.envs.realworld.common.wrappers.master_takeover_intervention import (
     MasterTakeoverIntervention,
 )
@@ -71,6 +74,17 @@ def _apply_keyboard_reward(env: gym.Env, mode: Optional[str]) -> gym.Env:
     if mode == "single_stage":
         return KeyboardRewardDoneWrapper(env)
     return env
+
+
+def _apply_keyboard_running_mode(
+    env: gym.Env, config: Mapping[str, Any] | None
+) -> gym.Env:
+    if config is None or not config.get("enabled", False):
+        return env
+    env_config = env.get_wrapper_attr("config")
+    if env_config.is_dummy:
+        return env
+    return KeyboardRunningModeWrapper(env, config=config)
 
 
 def apply_single_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
@@ -177,6 +191,7 @@ def apply_dual_pose_action_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym
 
     if use_master_takeover:
         env = MasterTakeoverIntervention(env, config=cfg.get("master_takeover", None))
+        env = _apply_keyboard_running_mode(env, cfg.get("keyboard_running_mode", None))
 
     env = _apply_keyboard_reward(env, cfg.get("keyboard_reward_wrapper", None))
     env = DualQuat2EulerWrapper(env)

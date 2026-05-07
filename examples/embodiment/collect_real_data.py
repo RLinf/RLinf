@@ -39,6 +39,13 @@ class DataCollector(Worker):
         self.manual_episode_control_only = bool(
             override_cfg.get("manual_episode_control_only", False)
         )
+        if self.cfg.env.eval.get("use_master_takeover", False):
+            raise ValueError(
+                "collect_real_data.py does not support use_master_takeover=True. "
+                "Use examples/embodiment/run_realworld_eval.sh with the Turtle2 "
+                "takeover collect config so no-step sync waits are handled by "
+                "chunk_step()."
+            )
         self.env = RealWorldEnv(
             cfg.env.eval,
             num_envs=1,
@@ -65,9 +72,9 @@ class DataCollector(Worker):
                 only_success=getattr(
                     self.cfg.env.eval.data_collection, "only_success", False
                 ),
-                record_executed_action=getattr(
+                record_intervention_action=getattr(
                     self.cfg.env.eval.data_collection,
-                    "record_executed_action",
+                    "record_intervention_action",
                     False,
                 ),
                 finalize_interval=getattr(

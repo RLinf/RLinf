@@ -40,8 +40,8 @@ class Turtle2RobotConfig:
     use_dense_reward: bool = False
     step_frequency: float = 10.0  # Max number of steps per second
     smooth_frequency: int = 50  # Frequency for smooth controller
-    pose_control_backend: str = "smooth"  # "smooth" or "direct"
-    direct_publish_hz: float = 100.0
+    pose_control_backend: str = "smooth"  # "smooth" or "hybrid"
+    takeover_publish_hz: float = 100.0
     reset_max_xyz_step: float = 0.02
     reset_max_rpy_step: float = 0.075
     reset_max_gripper_step: float = 0.25
@@ -120,6 +120,9 @@ class Turtle2Env(gym.Env):
         self.config = config
         self.hardware_info = hardware_info
         self.env_idx = env_idx
+        self._pose_control_backend_override: str | None = None
+        self._pose_control_action_source: str | None = None
+        self._takeover_gate_enabled = False
         self.node_rank = 0
         self.env_worker_rank = 0
         if worker_info is not None:
@@ -129,14 +132,14 @@ class Turtle2Env(gym.Env):
         self.config.pose_control_backend = str(
             self.config.pose_control_backend
         ).lower()
-        if self.config.pose_control_backend not in {"smooth", "direct"}:
+        if self.config.pose_control_backend not in {"smooth", "hybrid"}:
             raise ValueError(
-                "pose_control_backend must be one of {'smooth', 'direct'}, "
+                "pose_control_backend must be one of {'smooth', 'hybrid'}, "
                 f"got {self.config.pose_control_backend!r}."
             )
-        self.config.direct_publish_hz = float(self.config.direct_publish_hz)
-        if self.config.direct_publish_hz <= 0:
-            raise ValueError("direct_publish_hz must be positive.")
+        self.config.takeover_publish_hz = float(self.config.takeover_publish_hz)
+        if self.config.takeover_publish_hz <= 0:
+            raise ValueError("takeover_publish_hz must be positive.")
         self.config.reset_max_xyz_step = float(self.config.reset_max_xyz_step)
         self.config.reset_max_rpy_step = float(self.config.reset_max_rpy_step)
         self.config.reset_max_gripper_step = float(self.config.reset_max_gripper_step)
@@ -202,7 +205,7 @@ class Turtle2Env(gym.Env):
             debug_gripper_control=self.config.debug_gripper_control,
             gripper_target_tolerance=self.config.gripper_target_tolerance,
             pose_control_backend=self.config.pose_control_backend,
-            direct_publish_hz=self.config.direct_publish_hz,
+            takeover_publish_hz=self.config.takeover_publish_hz,
             follower_pose_cmd_left_topic=self.config.follower_pose_cmd_left_topic,
             follower_pose_cmd_right_topic=self.config.follower_pose_cmd_right_topic,
         )
@@ -359,8 +362,6 @@ class Turtle2Env(gym.Env):
                 raise ValueError(
                     f"Reset arms timeout: left_err={left_err:.6f}, right_err={right_err:.6f}"
                 )
-        self._last_published_action = target_pose.reshape(-1).copy()
-
     def _reset_interpolated_waypoints(
         self,
         current_pose: np.ndarray,
@@ -779,6 +780,44 @@ class Turtle2Env(gym.Env):
         return np.stack(
             [self._turtle2_state.follow1_pos, self._turtle2_state.follow2_pos]
         ).astype(np.float32, copy=True)
+
+    def set_pose_control_backend_override(self, backend: str, source: str) -> None:
+        backend = str(backend).lower()
+        if backend not in {"smooth", "takeover"}:
+            raise ValueError(
+                "pose control backend override must be one of "
+                f"{{'smooth', 'takeover'}}, got {backend!r}."
+            )
+        self._pose_control_backend_override = backend
+        self._pose_control_action_source = str(source)
+
+    def _consume_pose_control_backend_override(self) -> tuple[str, str]:
+        backend = getattr(self, "_pose_control_backend_override", None)
+        source = getattr(self, "_pose_control_action_source", None)
+        self._pose_control_backend_override = None
+        self._pose_control_action_source = None
+        if self.config.pose_control_backend == "hybrid":
+            return backend or "smooth", source or "policy"
+        return "smooth", source or "policy"
+
+    def set_takeover_gate(self, enabled: bool) -> None:
+        self._takeover_gate_enabled = bool(enabled)
+        if not self.config.is_dummy:
+            self._controller.set_takeover_gate(bool(enabled)).wait()
+
+    def is_takeover_gate_active(self) -> bool:
+        return bool(self._takeover_gate_enabled)
+
+    def clear_takeover_target(self) -> None:
+        if not self.config.is_dummy:
+            self._controller.clear_takeover_target().wait()
+
+    def sync_smooth_target_to_current_pose(self) -> np.ndarray:
+        if not self.config.is_dummy:
+            self._turtle2_state = self._controller.sync_smooth_target_to_current_pose().wait()[
+                0
+            ]
+        return self.get_arm_pose_snapshot()
 
     def hold_current_pose_for_takeover(self) -> dict[str, np.ndarray]:
         """Hard-hold current dual-arm pose before master takeover alignment."""

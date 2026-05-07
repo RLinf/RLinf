@@ -2,13 +2,12 @@ Turtle2 接管式 Raw 数据采集
 ===========================
 
 本示例展示如何在 XSquare Turtle2 上运行 **policy rollout + master takeover**
-的 raw episode 采集流程。它的目标是把 policy 自主执行、人工接管、接管后的
-hold/recovery，以及真实下发到机器人的动作一起保存下来，供调试、审计和后续
-离线清洗使用。
+的 raw episode 采集流程。它的目标是保存 policy 自主执行帧和 accepted 人工接管帧，
+供后续离线清洗使用。
 
 这个示例 **不是在线 DAgger 训练配置**。它不会启动 SAC、DAgger actor update，
 也不会修改 OpenPI loss。训练数据如果需要进入 SFT 或 DAgger，应当在采集后从
-pickle episode 中再清洗出需要的 expert segments。
+LeRobot 数据集中再清洗出需要的 expert segments。
 
 整体链路
 --------
@@ -21,21 +20,17 @@ pickle episode 中再清洗出需要的 expert segments。
       -> 14D absolute pose + gripper action
       -> DualAbsolutePoseActionWrapper
       -> MasterTakeoverIntervention
-      -> Turtle2 direct pose backend
+      -> Turtle2 hybrid pose control
       -> /follow_pos_cmd_1, /follow_pos_cmd_2
-      -> CollectEpisode pickle export
+      -> CollectEpisode LeRobot export
 
 ``MasterTakeoverIntervention`` 只负责选择当前执行哪一种 action：
 
 - normal mode 下直接放行 policy action；
 - takeover mode 下，如果收到 fresh master pose，则用 master pose 覆盖 policy action；
-- takeover mode 下如果 master pose 还没准备好，则保持当前 slave pose；
-- 从 takeover 退出后，在当前 action chunk 结束前继续 hold，避免执行旧 policy chunk
-  中尚未执行的 stale action。
-
-最终动作始终进入同一个 Turtle2 direct pose backend。也就是说，policy action、
-master takeover action 和后续 debug/replay action 只要都是 14D absolute pose，
-就不会因为来源不同而走不同执行器。
+- takeover mode 下如果 master pose 还没准备好，则等待，不 step 也不记录；
+- 从 takeover 退出后，跳过当前 policy action chunk 的剩余动作，避免执行或记录
+  stale action。
 
 动作与控制语义
 --------------
@@ -51,12 +46,10 @@ master takeover action 和后续 debug/replay action 只要都是 14D absolute p
 
 - ``action_mode`` 必须是 ``absolute_pose``。master 发送的是绝对末端位姿，
   不能被解释成 relative/delta action。
-- ``pose_control_backend`` 设置为 ``direct``。direct backend 会尽量按
-  ``PosCmd`` 语义直接发布到 ``/follow_pos_cmd_1`` 和 ``/follow_pos_cmd_2``，
-  不走 RLinf 的 smooth interpolation 路径。
-- direct backend 会先做 shape、finite 和安全边界检查。被接受的动作满足
-  ``executed_action == raw_action``；被拒绝的动作不会发布，机器人保持上一条
-  accepted action，并在 info 中记录 ``action_rejected`` 和 ``rejection_reason``。
+- ``pose_control_backend`` 设置为 ``hybrid``。policy action 使用 smooth 路径；
+  accepted master pose 使用 takeover 发布路径。
+- takeover 同步等待，以及退出 takeover 后当前 policy chunk 的剩余动作都不会
+  step，因此不会记录成 trajectory frame。
 
 纯部署场景仍然可以使用 Turtle2 deploy 默认的 ``relative_pose``，前提是策略本身
 就是按 delta action 训练的。takeover raw collect 必须使用 ``absolute_pose``，
@@ -76,7 +69,7 @@ X2Robot takeover 的三类 frame：
 - ``MSG_POSE``：master 向 RLinf 发送 14D absolute pose。
 
 ``MSG_JOINT`` 只用于接管前同步。机器人实际执行的动作来自 policy 或 master
-发送的 14D pose，并由同一个 direct pose backend 下发。
+发送的 14D pose，并由 hybrid control path 下发。
 
 模式切换通过 ROS 参数完成：
 
@@ -110,8 +103,9 @@ X2Robot takeover 的三类 frame：
     ``bi_teleop_slave.py`` 或 ``socket2ros_async.py`` 作为动作执行器。
 
 - Turtle2 ROS、SDK、相机和 follower controller 已经启动并能读到状态。
-- ``/follow_pos_cmd_1`` 和 ``/follow_pos_cmd_2`` 只能由 RLinf direct backend 发布；
-  不要同时启动旧的 slave 执行器或其他会写 follower pose command 的进程。
+- ``/follow_pos_cmd_1`` 和 ``/follow_pos_cmd_2`` 只能由 RLinf hybrid takeover
+  controller 发布；不要同时启动旧的 slave 执行器或其他会写 follower pose command
+  的进程。
 - master 端程序已经连接到 RLinf takeover TCP server，并能发送 ``MSG_POSE``。
 - ``/running_mode`` 使用整数模式值；本示例默认 ``1`` 为 policy，``2`` 为 takeover。
 - OpenPI checkpoint 路径通过 ``RLINF_OPENPI_MODEL_PATH`` 或配置中的
@@ -180,7 +174,7 @@ RLinf env。
    rostopic info /camera3/usb_cam3/image_raw
 
 如果临时使用 UI 做校准，校准后请关闭会发布 ``/follow_pos_cmd_*`` 的 UI 或旧执行器。
-运行本示例时，这两个 command topic 应由 RLinf direct backend 独占。
+运行本示例时，这两个 command topic 应由 RLinf 独占。
 
 2. GPU / Ray head 节点：启动 Ray head
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -316,7 +310,7 @@ server。请先启动 master 双臂的 ROS 节点，再启动发送 takeover fra
    export RLINF_COMM_NET_DEVICES=<head_network_interface>
    export PYTHONPATH=<path_to_rlinf_repo>:$PYTHONPATH
    export RLINF_OPENPI_MODEL_PATH=<path_to_openpi_checkpoint>
-   export RLINF_REALWORLD_DATA_DIR=<path_to_save_pickle_episodes>
+   export RLINF_REALWORLD_DATA_DIR=<path_to_save_lerobot_dataset>
 
    bash examples/embodiment/run_realworld_eval.sh realworld_turtle2_dagger_takeover_collect_openpi
 
@@ -342,15 +336,15 @@ server。请先启动 master 双臂的 ROS 节点，再启动发送 takeover fra
        action_mode: absolute_pose
        data_collection:
          enabled: True
-         export_format: "pickle"
-         record_executed_action: True
+         export_format: "lerobot"
+         record_intervention_action: True
        master_takeover:
          running_mode_source: "ros_param"
          running_mode_param: "/running_mode"
          normal_mode_value: 1
          takeover_mode_value: 2
        override_cfg:
-         pose_control_backend: direct
+         pose_control_backend: hybrid
          use_arm_ids: [0, 1]
 
 ``algorithm.adv_type`` 和 ``algorithm.loss_type`` 在该配置中只使用已注册的占位值，
@@ -382,48 +376,37 @@ loss，也不会执行在线训练更新。
 ~~~~~~~~~~~~~~~
 
 运行结束后，检查 ``RLINF_REALWORLD_DATA_DIR`` 或配置中的 ``data_collection.save_dir``。
-pickle episode 中应包含 ``observations``、``actions``、``infos``、``success`` 和
-``intervened`` 等字段。若发生接管，``infos`` 中可以看到 ``intervene_flag``、
-``intervene_action``、``takeover_active`` 等 metadata。
+LeRobot dataset 中应包含 ``state``、``actions``、``task``、``done``、
+``is_success`` 和 ``intervene_flag`` 等 frame 字段；如果相机可用，还会包含图像字段。
+若发生接管，accepted master-pose frame 应当带有 ``intervene_flag=True``，并且
+``actions`` 中应保存 accepted master action。
 
 数据保存语义
 ------------
 
-本示例推荐使用 ``pickle`` 导出 raw episode，而不是直接导出 LeRobot 数据集。
-
-原因是 takeover raw episode 通常需要保留完整上下文：
+本示例记录一个干净的 takeover trajectory contract：
 
 - policy 自主执行段；
 - master 接管段；
-- 接管前同步和 hold；
-- 退出接管后的 chunk-boundary recovery；
-- 被拒绝动作的 ``raw_intervene_action``、``action_rejected``、
-  ``rejection_reason`` 等 metadata；
-- 真实执行或保持的 ``executed_action``。
+- 接管同步等待不产生 trajectory frame；
+- 退出接管后的 policy chunk tail 不产生 trajectory frame。
 
 配置中设置了：
 
 .. code-block:: yaml
 
    data_collection:
-     export_format: "pickle"
-     record_executed_action: True
+     export_format: "lerobot"
+     record_intervention_action: True
 
-因此 ``episode["actions"]`` 会优先记录真实执行动作：
-
-- 如果 backend 接受 action，则记录 accepted ``executed_action``；
-- 如果 takeover action 被接受，则 ``intervene_action`` 与 ``executed_action`` 对齐；
-- 如果 takeover action 被拒绝，则 rejected candidate 不会写成 action label，只保留在
-  ``episode["infos"]`` 中，``episode["actions"]`` 记录机器人实际保持的动作。
-
-``CollectEpisode`` 仍然支持 LeRobot 导出，但 LeRobot 更适合已经清洗过的干净示教
-数据集。本示例保存的是 raw takeover episode。如果后续要训练 OpenPI，建议先从
-pickle episode 中清洗出可用 expert segments，再单独转换为 LeRobot。
+因此 LeRobot ``actions`` 字段在 policy frame 记录 policy action，在 takeover
+frame 记录 accepted ``intervene_action``。hold、sync-wait 和 skipped chunk-tail
+不会 step，也不会被记录。
 
 注意事项
 --------
 
-- 本示例是 eval-only raw collection。采集到的 pickle episode 是否用于训练，
+- 本示例是 eval-only raw collection。采集到的 LeRobot episode 是否用于训练，
   由后续离线清洗和训练配置决定。
 - 不要同时启动其他会发布 ``/follow_pos_cmd_1`` 或 ``/follow_pos_cmd_2`` 的执行器。
 - 如果 policy checkpoint 是 relative/delta action 训练得到的，请使用普通

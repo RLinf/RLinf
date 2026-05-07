@@ -32,7 +32,7 @@ from rlinf.envs.realworld.common.takeover.x2robot_protocol import (
 
 
 class MasterTakeoverIntervention(gym.ActionWrapper):
-    """Override absolute dual-arm policy actions with X2Robot master poses."""
+    """Select policy or master takeover actions without recording sync waits."""
 
     def __init__(
         self,
@@ -76,7 +76,12 @@ class MasterTakeoverIntervention(gym.ActionWrapper):
         self._hold_until_chunk_end = False
         self._was_takeover_active = self.adapter.is_takeover_active()
         self._chunk_step_index = 0
-        self._takeover_sync_hold_steps = 0
+        self._takeover_sync_wait_steps = 0
+        self._pending_decision: dict[str, Any] | None = None
+        if self._was_takeover_active:
+            self._clear_takeover_target()
+            self._set_takeover_gate(True)
+            self._hard_hold_action()
 
     def begin_action_chunk(self) -> None:
         self._chunk_active = True
@@ -87,112 +92,196 @@ class MasterTakeoverIntervention(gym.ActionWrapper):
         self._chunk_active = False
         self._hold_until_chunk_end = False
 
+    def _call_env_hook(self, name: str, *args):
+        try:
+            hook = self.get_wrapper_attr(name)
+        except AttributeError:
+            return None
+        return hook(*args)
+
+    def _set_takeover_gate(self, enabled: bool) -> None:
+        self._call_env_hook("set_takeover_gate", enabled)
+
+    def _sync_smooth_target_to_current_pose(self) -> None:
+        self._call_env_hook("sync_smooth_target_to_current_pose")
+
+    def _clear_takeover_target(self) -> None:
+        self._call_env_hook("clear_takeover_target")
+
+    def _set_pose_backend_override(self, backend: str, source: str) -> None:
+        self._call_env_hook("set_pose_control_backend_override", backend, source)
+
+    def _make_decision(
+        self,
+        *,
+        action: np.ndarray | None,
+        should_step: bool,
+        source: str,
+        replaced: bool = False,
+        step_start: float,
+    ) -> dict[str, Any]:
+        decision = {
+            "action": action,
+            "should_step": should_step,
+            "source": source,
+            "replaced": replaced,
+            "chunk_step_index": self._chunk_step_index,
+            "step_start": step_start,
+            "selected_time": time.time(),
+        }
+        self._chunk_step_index += 1
+        return decision
+
     def action(
         self, action: np.ndarray
     ) -> tuple[np.ndarray, bool, bool, bool, str, str]:
+        decision = self.select_takeover_action(action)
+        if decision["should_step"]:
+            return (
+                decision["action"],
+                bool(decision["replaced"]),
+                False,
+                False,
+                str(decision["source"]),
+                "pose",
+            )
+        return (
+            action,
+            False,
+            decision["source"] == "chunk_tail_skip",
+            decision["source"] == "sync_wait",
+            str(decision["source"]),
+            "pose",
+        )
+
+    def set_pending_takeover_decision(self, decision: Mapping[str, Any]) -> None:
+        self._pending_decision = dict(decision)
+
+    def select_takeover_action(self, action: np.ndarray) -> dict[str, Any]:
+        step_start = time.time()
         self.adapter.poll()
         takeover_active = self.adapter.is_takeover_active()
-        if self._chunk_active and self._was_takeover_active and not takeover_active:
-            self._hold_until_chunk_end = True
-            if self._debug_log:
+
+        if self._was_takeover_active and not takeover_active:
+            self._sync_smooth_target_to_current_pose()
+            self._clear_takeover_target()
+            self._set_takeover_gate(False)
+            if self._chunk_active:
+                self._hold_until_chunk_end = True
+            if self._chunk_active and self._debug_log:
                 self._logger.info(
-                    "Master takeover wrapper mode exit inside chunk: chunk_step=%s; holding until boundary",
+                    "Master takeover mode exit inside chunk: chunk_step=%s; skipping until boundary",
                     self._chunk_step_index,
                 )
+
         if takeover_active and not self._was_takeover_active:
-            self._takeover_sync_hold_steps = 0
+            self._clear_takeover_target()
+            self._set_takeover_gate(True)
+            self._hard_hold_action()
+            self._hold_until_chunk_end = False
+            self._takeover_sync_wait_steps = 0
             if self._debug_log:
                 self._logger.info(
-                    "Master takeover wrapper mode enter: chunk_active=%s chunk_step=%s; policy actions will be blocked until fresh master pose",
+                    "Master takeover mode enter: chunk_active=%s chunk_step=%s; waiting for fresh master pose",
                     self._chunk_active,
                     self._chunk_step_index,
                 )
+
         self._was_takeover_active = takeover_active
 
         expert_action = self.adapter.get_takeover_action()
         if expert_action is not None:
-            return (
-                expert_action.astype(np.float32, copy=False),
-                True,
-                False,
-                False,
-                "expert",
-                "pose",
+            return self._make_decision(
+                action=expert_action.astype(np.float32, copy=False),
+                should_step=True,
+                source="expert",
+                replaced=True,
+                step_start=step_start,
             )
 
         if takeover_active:
-            self._takeover_sync_hold_steps += 1
-            return self._hold_action(), False, False, True, "sync_hold", "pose"
-
-        if self._hold_until_chunk_end:
-            return self._hold_action(), False, True, False, "chunk_hold", "pose"
-
-        return action, False, False, False, "policy", "pose"
-
-    def step(self, action):
-        step_start = time.time()
-        (
-            new_action,
-            replaced,
-            chunk_holding,
-            sync_holding,
-            decision,
-            selected_control_mode,
-        ) = self.action(action)
-        action_selected_time = time.time()
-        pre_step_sync_done = False
-        if sync_holding and self._takeover_sync_hold_steps == 1:
-            new_action = self._hard_hold_action()
-            if self._slave_hold_settle_s > 0:
+            self._takeover_sync_wait_steps += 1
+            if self._takeover_sync_wait_steps == 1 and self._slave_hold_settle_s > 0:
                 if self._debug_log:
                     self._logger.info(
-                        "Master takeover wrapper settling slave hold before master sync: settle_s=%.3f",
+                        "Master takeover settling slave hold before sync: settle_s=%.3f",
                         self._slave_hold_settle_s,
                     )
                 time.sleep(self._slave_hold_settle_s)
             self.adapter.sync_control_plane()
-            pre_step_sync_done = True
-        obs, rew, done, truncated, info = self.env.step(new_action)
-        env_step_done_time = time.time()
-        if not pre_step_sync_done:
-            self.adapter.sync_control_plane()
-        control_plane_done_time = time.time()
-        executed_for_log = np.asarray(
-            info.get("executed_action", new_action), dtype=np.float32
-        )
-        action_rejected = bool(info.get("action_rejected", False))
-        if self._debug_log and (
-            self.adapter.is_takeover_active() or decision != "policy"
-        ):
-            self._logger.info(
-                "Master takeover wrapper step: decision=%s chunk_step=%s sync_hold_steps=%s selected_dt=%.4f env_dt=%.4f sync_dt=%.4f action=%s executed=%s",
-                decision,
-                self._chunk_step_index,
-                self._takeover_sync_hold_steps,
-                action_selected_time - step_start,
-                env_step_done_time - action_selected_time,
-                control_plane_done_time - env_step_done_time,
-                np.array2string(np.asarray(new_action), precision=4, threshold=20),
-                np.array2string(executed_for_log, precision=4, threshold=20),
+            time.sleep(0.01)
+            return self._make_decision(
+                action=None,
+                should_step=False,
+                source="sync_wait",
+                step_start=step_start,
             )
-        self._chunk_step_index += 1
-        info["takeover_control_mode"] = "pose"
-        info["executed_action"] = executed_for_log
-        accepted_intervention = replaced and not action_rejected
-        info["intervene_flag"] = np.asarray([accepted_intervention], dtype=bool)
-        if replaced and action_rejected:
-            info["raw_intervene_action"] = np.asarray(new_action, dtype=np.float32)
-            info["intervene_rejected"] = True
-        elif accepted_intervention:
-            info["intervene_action"] = executed_for_log
-        info["takeover_active"] = self.adapter.is_takeover_active()
-        info["takeover_chunk_hold"] = chunk_holding
-        info["takeover_sync_hold"] = sync_holding
-        info["master_takeover_connected"] = self.adapter.is_connected()
+
+        if self._hold_until_chunk_end:
+            self.adapter.sync_control_plane()
+            return self._make_decision(
+                action=None,
+                should_step=False,
+                source="chunk_tail_skip",
+                step_start=step_start,
+            )
+
+        return self._make_decision(
+            action=np.asarray(action, dtype=np.float32),
+            should_step=True,
+            source="policy",
+            step_start=step_start,
+        )
+
+    def step(self, action):
+        if self._pending_decision is None:
+            decision = self.select_takeover_action(action)
+        else:
+            decision = self._pending_decision
+            self._pending_decision = None
+        if not decision["should_step"]:
+            raise RuntimeError(
+                "Master takeover sync_wait/chunk_tail_skip decisions only support "
+                "the chunk_step() collection path. Use run_realworld_eval.sh with "
+                "the Turtle2 takeover collect config instead of direct env.step()."
+            )
+        return self.step_takeover_action(decision)
+
+    def step_takeover_action(self, decision: Mapping[str, Any]):
+        action = np.asarray(decision["action"], dtype=np.float32)
+        source = str(decision["source"])
+        backend = "takeover" if source == "expert" else "smooth"
+        self._set_pose_backend_override(backend, source)
+
+        obs, rew, done, truncated, info = self.env.step(action)
+        env_step_done_time = time.time()
+        self.adapter.sync_control_plane()
+        control_plane_done_time = time.time()
+
+        if self._debug_log and (self.adapter.is_takeover_active() or source != "policy"):
+            self._logger.info(
+                "Master takeover step: decision=%s chunk_step=%s selected_dt=%.4f env_dt=%.4f sync_dt=%.4f action=%s",
+                source,
+                decision["chunk_step_index"],
+                decision["selected_time"] - decision["step_start"],
+                env_step_done_time - decision["selected_time"],
+                control_plane_done_time - env_step_done_time,
+                np.array2string(action, precision=4, threshold=20),
+            )
+
+        if source == "expert":
+            info["intervene_flag"] = np.asarray([True], dtype=bool)
+            info["intervene_action"] = action.copy()
         return obs, rew, done, truncated, info
 
     def close(self):
-        self.adapter.close()
+        try:
+            if self._was_takeover_active or self.adapter.is_takeover_active():
+                self._sync_smooth_target_to_current_pose()
+            self._clear_takeover_target()
+            self._set_takeover_gate(False)
+        finally:
+            self.adapter.close()
         return self.env.close()
 
     def _hold_action(self) -> np.ndarray:

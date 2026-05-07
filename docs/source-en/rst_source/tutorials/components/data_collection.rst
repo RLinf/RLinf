@@ -96,10 +96,10 @@ Constructor Arguments
      - ``bool``
      - ``False``
      - Save only successful episodes
-   * - ``record_executed_action``
+   * - ``record_intervention_action``
      - ``bool``
      - ``False``
-     - Prefer ``info["executed_action"]`` / accepted ``info["intervene_action"]`` when saving actions. Disabled by default; intended for raw takeover episode auditing without changing the normal collection contract.
+     - Prefer accepted ``info["intervene_action"]`` when saving actions. Disabled by default to preserve the normal collection contract.
    * - ``finalize_interval``
      - ``int``
      - ``100``
