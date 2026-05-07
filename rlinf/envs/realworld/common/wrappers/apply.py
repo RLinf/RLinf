@@ -98,7 +98,7 @@ def apply_single_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
 
     if cfg.get("use_relative_frame", True):
         env = RelativeFrame(env)
-    env = Quat2EulerWrapper(env)
+    env = Quat2EulerWrapper(env, keep_gripper=not no_gripper)
     return env
 
 
