@@ -12,38 +12,70 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+import types
+from pathlib import Path
+
 import torch
 from omegaconf import DictConfig
-from pathlib import Path
+
+# Monkey-patch: inject a stub for rlinf.envs.libero.asset_paths so that
+# env workers can import it even when the file is absent from the container.
+# This avoids modifying the official rlinf/envs/libero/libero_env.py.
+_OLD_ASSET_PATHS = sys.modules.get("rlinf.envs.libero.asset_paths")
+if _OLD_ASSET_PATHS is None:
+    _stub = types.ModuleType("rlinf.envs.libero.asset_paths")
+
+    def _noop(*args, **kwargs):
+        pass
+
+    _stub.apply_standard_libero_env_vars = _noop
+    sys.modules["rlinf.envs.libero.asset_paths"] = _stub
 
 
 def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
-    from transformers import AutoConfig, AutoModel
     from gr00t.configs.model.gr00t_n1d6 import Gr00tN1d6Config
     from gr00t.model.gr00t_n1d6.gr00t_n1d6 import Gr00tN1d6
+    from transformers import AutoConfig, AutoModel
+
     AutoConfig.register("Gr00tN1d6", Gr00tN1d6Config)
     AutoModel.register(Gr00tN1d6Config, Gr00tN1d6)
-    print("Successfully registered custom architecture Gr00tN1d6, authentication passed!")
+    print(
+        "Successfully registered custom architecture Gr00tN1d6, authentication passed!"
+    )
     import rlinf.hybrid_engines.fsdp.strategy.fsdp as fsdp_strategy
-    
+
     if not hasattr(fsdp_strategy, "_is_gr00t_patched"):
         orig_policy = fsdp_strategy.get_fsdp_wrap_policy
-        
-        def custom_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
-            from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+
+        def custom_fsdp_wrap_policy(
+            module, config=None, is_lora=False, model_type=None
+        ):
             import functools
-            
-            target_keywords = ["DecoderLayer", "EncoderLayer", "DiTBlock", "NoiseNet", "ValueHead", "ActionHead", "Timestep"]
+
+            from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+
+            target_keywords = [
+                "DecoderLayer",
+                "EncoderLayer",
+                "DiTBlock",
+                "NoiseNet",
+                "ValueHead",
+                "ActionHead",
+                "Timestep",
+            ]
             found_classes = set()
             for name, mod in module.named_modules():
                 cname = mod.__class__.__name__
                 if any(key in cname for key in target_keywords):
                     found_classes.add(mod.__class__)
-            
+
             if found_classes:
                 print(f"\n  FSDP Slicer: {[c.__name__ for c in found_classes]}\n")
-                return functools.partial(transformer_auto_wrap_policy, transformer_layer_cls=found_classes)
-            
+                return functools.partial(
+                    transformer_auto_wrap_policy, transformer_layer_cls=found_classes
+                )
+
             return orig_policy(module, config, is_lora, model_type)
 
         fsdp_strategy.get_fsdp_wrap_policy = custom_fsdp_wrap_policy
@@ -62,16 +94,21 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     Patcher.apply()
 
     from gr00t.data.embodiment_tags import EmbodimentTag
+
     from rlinf.models.embodiment.gr00t_1_6.gr00t_action_model import (
         GR00T_N1_6_ForRLActionPrediction,
     )
     from rlinf.models.embodiment.gr00t_1_6.utils import replace_dropout_with_identity
 
-    if cfg.embodiment_tag in ["libero_franka", "libero_panda"]:
-        emb_tag = EmbodimentTag.LIBERO_PANDA
-    elif cfg.embodiment_tag in ["isaaclab_franka", "maniskill_widowx", "robocasa_panda_omron"]:
-        emb_tag = EmbodimentTag.ROBOCASA_PANDA_OMRON 
-    elif cfg.embodiment_tag == "gr1": 
+    if cfg.embodiment_tag in [
+        "libero_franka",
+        "isaaclab_franka",
+        "maniskill_widowx",
+        "robocasa_panda_omron",
+        "libero_panda",
+    ]:
+        emb_tag = EmbodimentTag.ROBOCASA_PANDA_OMRON
+    elif cfg.embodiment_tag == "gr1":
         emb_tag = EmbodimentTag.GR1
     elif cfg.embodiment_tag == "behavior_r1_pro":
         emb_tag = EmbodimentTag.BEHAVIOR_R1_PRO
@@ -87,6 +124,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
 
     if cfg.get("model_type") == "gr00t_1_6_sft":
         from .gr00t_16_sft_model import GR00T_1_6_SFT_Model
+
         model_cls = GR00T_1_6_SFT_Model
     else:
         model_cls = GR00T_N1_6_ForRLActionPrediction
@@ -97,29 +135,21 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         # model_path,
         torch_dtype=torch_dtype,
         embodiment_tag=emb_tag,
-        processor_path=cfg.get("processor_path", None),
         denoising_steps=cfg.denoising_steps,
         output_action_chunks=cfg.num_action_chunks,
         obs_converter_type=cfg.obs_converter_type,
         tune_visual=False,
         tune_llm=False,
         rl_head_config=cfg.rl_head_config,
-        # weight_syncer_cfg=cfg.get("weight_syncer_cfg", None),
     )
 
-    if cfg.rl_head_config.get("add_value_head", False) and hasattr(
-        model.action_head, "value_head"
-    ):
-        # The value head is absent from SFT checkpoints. Reinitialize it explicitly
-        # after from_pretrained() so missing-key initialization cannot leave NaNs.
-        value_head = model.action_head.value_head.float()
-        value_head._init_weights("relu")
-        final_layer = value_head.mlp[-1]
-        torch.nn.init.zeros_(final_layer.weight)
-        if final_layer.bias is not None:
-            torch.nn.init.zeros_(final_layer.bias)
-
     model.to(torch_dtype)
+    if (
+        cfg.rl_head_config.add_value_head
+        and hasattr(model.action_head, "value_head")
+    ):
+        # reinitialize the value head after model loading
+        model.action_head.value_head._init_weights()
 
     if cfg.rl_head_config.disable_dropout:
         replace_dropout_with_identity(model)

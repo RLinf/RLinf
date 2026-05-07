@@ -19,13 +19,15 @@ import shutil
 import torch
 from safetensors.torch import save_file
 
-DEFAULT_BASE_MODEL_PATH = "/workspace/RLinf/GR00T-N1.6-3B"
+DEFAULT_BASE_MODEL_PATH = "/workspace/test/RLinf/GR00T-N1.6-3B"
 DEFAULT_SFT_PT_PATH = (
     "/workspace/test/RLinf/logs/20260430-16:26:37/gr00t_16_sft_libero/"
     "checkpoints/global_step_3000/actor/model_state_dict/full_weights.pt"
 )
-DEFAULT_HF_OUTPUT_PATH = "/workspace/RLinf/GR00T-1.6-SFT-LIBERO-Spatial-RLinf-SFT-3000"
-DEFAULT_PROCESSOR_PATH = "/workspace/Isaac-GR00T/results/libero_spatial_official_tb/processor"
+DEFAULT_HF_OUTPUT_PATH = "/workspace/test/RLinf/GR00T-1.6-SFT-LIBERO-Spatial-RLinf-SFT-3000"
+DEFAULT_PROCESSOR_PATH = (
+    "/workspace/Isaac-GR00T/results/libero_spatial_official_tb/processor"
+)
 
 
 def parse_args():

@@ -17,7 +17,6 @@ from enum import Enum
 
 
 class EmbodimentTag(Enum):
-
     AGIBOT_GENIE1 = "agibot_genie1"
     """
     The AgiBot Genie-1 with gripper dataset.
@@ -37,7 +36,7 @@ class EmbodimentTag(Enum):
     """
     The isaaclab Franka dataset.
     """
-    ##### Pretrain embodiment tags #####
+    # Pretrain embodiment tags #####
     ROBOCASA_PANDA_OMRON = "robocasa_panda_omron"
     """
     The RoboCasa Panda robot with omron mobile base.
@@ -48,7 +47,7 @@ class EmbodimentTag(Enum):
     The Fourier GR1 robot.
     """
 
-    ##### Pre-registered posttrain embodiment tags #####
+    # Pre-registered posttrain embodiment tags #####
     UNITREE_G1 = "unitree_g1"
     """
     The Unitree G1 robot.

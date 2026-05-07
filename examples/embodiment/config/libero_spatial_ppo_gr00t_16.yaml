@@ -27,7 +27,7 @@ runner:
     experiment_name: "libero_spatial_ppo_gr00t_n16"   
     logger_backends: ["tensorboard"]
 
-  max_epochs: 1000
+  max_epochs: 2000
   max_steps: -1
 
   only_eval: False
@@ -85,11 +85,14 @@ algorithm:
 env:
   group_name: "EnvGroup"
   train:
+    use_rel_reward: false
     total_num_envs: 8
     group_size: 1
     max_episode_steps: 240
     max_steps_per_rollout_epoch: 240
+    auto_reset: True
   eval:
+    use_rel_reward: false
     total_num_envs: 8
     group_size: 1
     auto_reset: True
@@ -108,7 +111,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/workspace/RLinf/GR00T-1.6-SFT-LIBERO-Spatial-RLinf-SFT-3000"
+    model_path: "/workspace/test/RLinf/GR00T-1.6-SFT-LIBERO-Spatial-RLinf-SFT-3000"
     precision: ${actor.model.precision}
 actor:
   group_name: "ActorGroup"
@@ -120,13 +123,12 @@ actor:
   enable_offload: True
 
   model:
-    model_path: "/workspace/RLinf/GR00T-1.6-SFT-LIBERO-Spatial-RLinf-SFT-3000"
-    processor_path: "/workspace/Isaac-GR00T/results/libero_spatial_official_tb/processor"
+    model_path: "/workspace/test/RLinf/GR00T-1.6-SFT-LIBERO-Spatial-RLinf-SFT-3000"
     model_type: "gr00t_1_6"   
     embodiment_tag: "libero_panda"
     add_value_head: True
     num_action_chunks: 16
-    denoising_steps: 1
+    denoising_steps: 4
     no_split_modules:
       - "Qwen3DecoderLayer"
       - "Siglip2EncoderLayer"

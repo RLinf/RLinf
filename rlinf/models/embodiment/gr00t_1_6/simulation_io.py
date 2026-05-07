@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -69,17 +71,46 @@ def convert_maniskill_obs_to_gr00t_1_6_format(env_obs):
     groot_obs["annotation.human.action.task_description"] = env_obs["task_descriptions"]
     return groot_obs
 
+
+def _debug_libero_action_stats(prefix: str, action_array: np.ndarray):
+    dim_names = ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]
+    flat = action_array.reshape(-1, action_array.shape[-1]).astype(np.float32)
+    stats = []
+    for dim, name in enumerate(dim_names[: flat.shape[-1]]):
+        vals = flat[:, dim]
+        stats.append(
+            f"{name}:min={vals.min():.6g},max={vals.max():.6g},mean={vals.mean():.6g}"
+        )
+    preview = action_array[0, : min(action_array.shape[1], 8)].astype(np.float32)
+    print(
+        f"[GR00T_LIBERO_ACTION_DEBUG] {prefix}: shape={action_array.shape} "
+        f"{' | '.join(stats)} first_chunk={preview.tolist()}",
+        flush=True,
+    )
+
+
+def _apply_official_libero_gripper_action(action_array: np.ndarray) -> np.ndarray:
+    # Match Isaac-GR00T official LIBERO wrapper: normalize [0, 1] -> [-1, 1],
+    # binarize, then invert because LIBERO uses -1=open and +1=close.
+    action_array = action_array.copy()
+    action_array[..., -1] = 2 * action_array[..., -1] - 1
+    action_array[..., -1] = np.sign(action_array[..., -1])
+    action_array[..., -1] *= -1.0
+    return action_array
+
+
 def convert_to_libero_action(
-    action_chunk: dict[str, np.array], chunk_size: int = 1
+    action_chunk: dict[str, np.array],
+    chunk_size: int = 1,
+    gripper_mode: str = "legacy",
 ) -> np.ndarray:
-    
     try:
-        pos = action_chunk["end_effector_position"][:, :chunk_size] # (B, chunk, 3)
-        rot = action_chunk["end_effector_rotation"][:, :chunk_size] # (B, chunk, 3)
-        gripper = action_chunk["gripper_close"][:, :chunk_size]     # (B, chunk, 1)
-        
+        pos = action_chunk["end_effector_position"][:, :chunk_size]  # (B, chunk, 3)
+        rot = action_chunk["end_effector_rotation"][:, :chunk_size]  # (B, chunk, 3)
+        gripper = action_chunk["gripper_close"][:, :chunk_size]  # (B, chunk, 1)
+
         action_array = np.concatenate([pos, rot, gripper], axis=-1)
-        
+
     except KeyError:
         if all(
             key in action_chunk
@@ -104,8 +135,33 @@ def convert_to_libero_action(
         else:
             raise KeyError(f"can not find Action Keys: {list(action_chunk.keys())}")
 
-    action_array = normalize_gripper_action(action_array, binarize=True)
-    
+    if os.getenv("RLINF_DEBUG_GR00T_ACTION") == "1" and not getattr(
+        convert_to_libero_action, "_printed_pre_debug", False
+    ):
+        convert_to_libero_action._printed_pre_debug = True
+        _debug_libero_action_stats("pre_gripper_conversion", action_array)
+
+    if gripper_mode == "legacy":
+        action_array = normalize_gripper_action(action_array, binarize=True)
+    elif gripper_mode == "official":
+        action_array = _apply_official_libero_gripper_action(action_array)
+    elif gripper_mode == "passthrough":
+        action_array = action_array.copy()
+        action_array[..., -1] = np.sign(action_array[..., -1])
+    else:
+        raise ValueError(
+            f"Unknown libero gripper conversion mode: {gripper_mode}. "
+            "Expected one of: legacy, official, passthrough."
+        )
+
+    if os.getenv("RLINF_DEBUG_GR00T_ACTION") == "1" and not getattr(
+        convert_to_libero_action, "_printed_post_debug", False
+    ):
+        convert_to_libero_action._printed_post_debug = True
+        _debug_libero_action_stats(
+            f"post_gripper_conversion[{gripper_mode}]", action_array
+        )
+
     return action_array
 
 

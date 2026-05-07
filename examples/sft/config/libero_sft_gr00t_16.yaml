@@ -18,77 +18,73 @@ cluster:
 runner:
   task_type: sft
   logger:
-    log_path: "../results"
+    log_path: '../results'
     project_name: rlinf
-    experiment_name: "gr00t_16_sft_libero"
-    logger_backends: ["tensorboard","wandb"] # wandb, swanlab
+    experiment_name: 'gr00t_16_sft_libero'
+    logger_backends: ['tensorboard']
 
-  # SFT runner now treats max_epochs as full dataset epochs. Keep max_steps
-  # explicit so the training budget is stable across dataset size changes.
   max_epochs: 100000
-  max_steps: 3000
+  max_steps: 20000
   val_check_interval: -1
-  save_interval: 500
+  save_interval: 1000
 
 data:
-  train_data_paths: "/workspace/RLinf/libero_spatial_no_noops_1.0.0_lerobot"
-  action_key: "action"
+  train_data_paths: '/workspace/test/RLinf/libero_spatial_no_noops_1.0.0_lerobot'
+  action_key: 'action'
 
 algorithm:
   adv_type: gae
 
 actor:
-  group_name: "ActorGroup"
-  training_backend: "fsdp"
+  group_name: 'ActorGroup'
+  training_backend: 'fsdp'
   micro_batch_size: 1
-  global_batch_size: 1
+  global_batch_size: 64
   seed: 42
 
-  # Override the default values in model/gr00t_16
   model:
-    precision: "bf16"
-    model_path: "/workspace/RLinf/GR00T-N1.6-3B"
-    processor_path: "/workspace/Isaac-GR00T/results/libero_spatial_official_tb/processor"
-    model_type: "gr00t_1_6_sft"
+    precision: 'bf16'
+    model_path: '/workspace/test/RLinf/GR00T-N1.6-3B'
+    processor_path: '/workspace/test/RLinf/logs/sft_curve_compare_after_fix_20260501_165521/official_sft_tb/processor'
+    model_type: 'gr00t_1_6_sft'
     num_action_chunks: 16
-    embodiment_tag: "libero_panda"
-    add_value_head: True
-    denoising_steps: 1
+    embodiment_tag: 'libero_panda'
+    add_value_head: true
+    denoising_steps: 4
     no_split_modules:
-      - "Qwen3DecoderLayer"
-      - "Siglip2EncoderLayer"
-      - "FlowMatchingActionHeadForRLActionPrediction"
-      - "TimestepEncoder"
-      - "TimestepEmbedding"
-      - "ValueHead"
-      - "ExploreNoiseNet"
+      - 'Qwen3DecoderLayer'
+      - 'Siglip2EncoderLayer'
+      - 'FlowMatchingActionHeadForRLActionPrediction'
+      - 'TimestepEncoder'
+      - 'TimestepEmbedding'
+      - 'ValueHead'
+      - 'ExploreNoiseNet'
 
   optim:
     lr: 1.0e-4
     value_lr: 1.0e-4
-    lr_scheduler: "cosine"
-    total_training_steps: 3000
+    lr_scheduler: 'cosine'
+    total_training_steps: 20000
     lr_warmup_steps_ratio: 0.05
     min_lr: 0.0
     adam_beta1: 0.9
     adam_beta2: 0.95
-    adam_eps: 1.0e-05
+    adam_eps: 1.0e-08
     weight_decay: 1.0e-5
     clip_grad: 1.0
 
-  # Override the default values in training_backend/fsdp
   fsdp_config:
-    strategy: "fsdp"
-    sharding_strategy: "full_shard"
-    use_orig_params: False
-    gradient_checkpointing: False
+    strategy: 'fsdp'
+    sharding_strategy: 'full_shard'
+    use_orig_params: false
+    gradient_checkpointing: false
     mixed_precision:
-      param_dtype: ${actor.model.precision}
-      reduce_dtype: ${actor.model.precision}
-      buffer_dtype: ${actor.model.precision}
+      param_dtype: '${actor.model.precision}'
+      reduce_dtype: '${actor.model.precision}'
+      buffer_dtype: '${actor.model.precision}'
 
 reward:
-  use_reward_model: False
+  use_reward_model: false
 
 critic:
-  use_critic_model: False
+  use_critic_model: false

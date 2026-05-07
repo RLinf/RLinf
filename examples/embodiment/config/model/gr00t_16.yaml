@@ -7,15 +7,13 @@ is_lora: false
 
 # Action and policy settings
 action_dim: 7
-num_action_chunks: 1
+num_action_chunks: 10
 denoising_steps: 1
 
-# Observation and embodiment settings
 obs_converter_type: "libero"
-embodiment_tag: "robocasa_panda_omron"  
+embodiment_tag: libero_panda
 add_value_head: True
 
-# RL head configuration
 rl_head_config:
   joint_logprob: False
   noise_method: "flow_sde"
@@ -31,3 +29,6 @@ rl_head_config:
   use_vlm_value: False
   value_vlm_mode: "mean_token"
   padding_value: 570
+
+num_steps: 4
+
