@@ -100,8 +100,9 @@ reward worker can run in the same venv:
 SGLang is optional and only required when ``reward.model.model_type=history_vlm_sglang``.
 RLinf uses an in-process ``sglang.Engine`` reward backend, not an external SGLang server
 path. The target stack is ``sglang==0.5.4`` with ``transformers==4.57.1`` plus the
-matching SGLang torch, xgrammar, and flashinfer runtime, so keep it separate from the
-default Hugging Face reward install unless you select that backend.
+matching SGLang torch, xgrammar, and flashinfer runtime. Install it into the same
+OpenPI venv only when you select that backend; RLinf reapplies the OpenPI
+``transformers==4.57.1`` patch after the SGLang runtime is installed.
 
 **Option 2: Custom Environment**
 
@@ -116,7 +117,7 @@ range required by Qwen3-VL. It is intended to work with OpenPI through RLinf's
 repo-local OpenPI patch, without a dedicated Qwen reward venv. It does not download
 reward checkpoints or install SGLang.
 
-For the unified OpenPI + Qwen3-VL + in-process SGLang reward environment, use
+For the same-venv OpenPI + Qwen3-VL + in-process SGLang reward environment, use
 ``--vlm-reward-sglang`` instead:
 
 .. code:: bash
@@ -125,8 +126,18 @@ For the unified OpenPI + Qwen3-VL + in-process SGLang reward environment, use
    source .venv/bin/activate
 
 This SGLang path targets ``sglang==0.5.4`` with ``transformers==4.57.1`` and installs
-the SGLang-specific torch, xgrammar, and flashinfer runtime. Use it only when the reward
-config sets ``reward.model.model_type: history_vlm_sglang``.
+the SGLang-specific torch, xgrammar, and flashinfer runtime into the same OpenPI venv.
+Use it only when the reward config sets ``reward.model.model_type: history_vlm_sglang``.
+The installer reapplies RLinf's OpenPI ``transformers==4.57.1`` patch after SGLang
+finalizes its runtime stack.
+
+If you only need a reward-worker environment without OpenPI or an embodied env, keep
+using the reward-only model entry:
+
+.. code:: bash
+
+   bash requirements/install.sh embodied --model qwen_vlm_reward --vlm-reward
+   bash requirements/install.sh embodied --model qwen_vlm_reward --vlm-reward-sglang
 
 Assets Download
 ----------------
@@ -324,7 +335,7 @@ backends:
   ``sglang.Engine`` inside the reward worker. It is not an external server endpoint path.
   Keep the same ``history_buffers``, ``input_builder_name``, and ``reward_parser_name``
   fields, and use the ``--vlm-reward-sglang`` environment because this backend targets
-  ``sglang==0.5.4`` with its own torch, xgrammar, and flashinfer runtime.
+  ``sglang==0.5.4`` with its matching torch, xgrammar, and flashinfer runtime.
 
 **2. Configuration Files**
 

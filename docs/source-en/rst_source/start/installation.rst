@@ -153,8 +153,9 @@ SGLang is optional and only required when
 ``reward.model.model_type=history_vlm_sglang``. RLinf uses an in-process
 ``sglang.Engine`` reward backend, not an external SGLang server path. The target stack
 is ``sglang==0.5.4`` with ``transformers==4.57.1`` plus the matching SGLang torch,
-xgrammar, and flashinfer runtime, so keep it separate from the default Hugging Face
-reward install unless you select that backend.
+xgrammar, and flashinfer runtime. Install it into the same OpenPI venv only when you
+select that backend; RLinf reapplies the OpenPI ``transformers==4.57.1`` patch after
+the SGLang runtime is installed.
 
 Installation Method 2: UV Custom Environment
 --------------------------------------------------------------
@@ -192,7 +193,7 @@ Qwen3-VL. It is intended to work with OpenPI through RLinf's repo-local OpenPI p
 without a dedicated Qwen reward venv. It does not download reward-model checkpoints or
 install SGLang.
 
-For the unified OpenPI + Qwen3-VL + in-process SGLang reward environment, use
+For the same-venv OpenPI + Qwen3-VL + in-process SGLang reward environment, use
 ``--vlm-reward-sglang`` instead:
 
 .. code-block:: shell
@@ -200,8 +201,18 @@ For the unified OpenPI + Qwen3-VL + in-process SGLang reward environment, use
   bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward-sglang
 
 This SGLang path targets ``sglang==0.5.4`` with ``transformers==4.57.1`` and installs
-the SGLang-specific torch, xgrammar, and flashinfer runtime. Use it only when the reward
-config sets ``reward.model.model_type: history_vlm_sglang``.
+the SGLang-specific torch, xgrammar, and flashinfer runtime into the same OpenPI venv.
+Use it only when the reward config sets ``reward.model.model_type: history_vlm_sglang``.
+The installer reapplies RLinf's OpenPI ``transformers==4.57.1`` patch after SGLang
+finalizes its runtime stack.
+
+If you only need a reward-worker environment without OpenPI or an embodied env, keep
+using the reward-only model entry:
+
+.. code-block:: shell
+
+  bash requirements/install.sh embodied --model qwen_vlm_reward --vlm-reward
+  bash requirements/install.sh embodied --model qwen_vlm_reward --vlm-reward-sglang
 
 To activate the virtual environment, you can use the following command:
 

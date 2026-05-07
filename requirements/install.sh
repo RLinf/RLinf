@@ -409,7 +409,7 @@ apply_openpi_transformers_patch() {
 #=======================EMBODIED INSTALLERS=======================
 install_common_embodied_deps() {
     uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
-    if [ "$VLM_REWARD" -eq 1 ]; then
+    if [ "$VLM_REWARD" -eq 1 ] && [ "$VLM_REWARD_SGLANG" -eq 0 ]; then
         install_qwen_vlm_reward_deps
     fi
     uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt

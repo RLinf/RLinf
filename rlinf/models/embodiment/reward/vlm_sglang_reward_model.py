@@ -14,10 +14,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
+import signal
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
@@ -39,6 +40,8 @@ from rlinf.models.embodiment.reward.vlm_reward_utils.reward_parser import (
 
 logger = logging.getLogger(__name__)
 
+_RAW_FRAME_VIDEO_FORMAT = "rlinf_raw_frames"
+
 
 def _to_plain_dict(value: Any) -> dict[str, Any]:
     if value is None:
@@ -46,6 +49,105 @@ def _to_plain_dict(value: Any) -> dict[str, Any]:
     if isinstance(value, DictConfig):
         return dict(OmegaConf.to_container(value, resolve=True))
     return dict(value)
+
+
+class _RawFrameBatch:
+    def __init__(self, frames: np.ndarray):
+        self._frames = frames
+
+    def asnumpy(self) -> np.ndarray:
+        return self._frames
+
+
+class _RawFrameVideoReader:
+    """Small in-memory subset of decord.VideoReader used by SGLang Qwen-VL."""
+
+    def __init__(self, frames: np.ndarray, fps: float):
+        if frames.ndim != 4:
+            raise ValueError(
+                "Raw video frames must have shape (num_frames, height, width, channels), "
+                f"got {frames.shape}."
+            )
+        if frames.shape[0] == 0:
+            raise ValueError("SGLang video reward input cannot be empty.")
+        self._frames = np.ascontiguousarray(np.asarray(frames, dtype=np.uint8))
+        self._fps = max(float(fps), 1.0)
+
+    def __len__(self) -> int:
+        return int(self._frames.shape[0])
+
+    def get_avg_fps(self) -> float:
+        return self._fps
+
+    def get_batch(self, indices: Any) -> _RawFrameBatch:
+        if isinstance(indices, torch.Tensor):
+            indices = indices.detach().cpu().tolist()
+        selected = np.ascontiguousarray(self._frames[[int(index) for index in indices]])
+        return _RawFrameBatch(selected)
+
+
+class _RawFrameVideoData(dict[str, Any]):
+    """Dict-backed video item that bypasses SGLang load_video and acts as a reader."""
+
+    def __init__(self, frames: np.ndarray, fps: float):
+        frame_array = np.ascontiguousarray(np.asarray(frames, dtype=np.uint8))
+        frame_fps = max(float(fps), 1.0)
+        super().__init__(
+            {
+                "format": _RAW_FRAME_VIDEO_FORMAT,
+                "frames": frame_array,
+                "fps": frame_fps,
+            }
+        )
+        self._reader = _RawFrameVideoReader(frame_array, frame_fps)
+
+    def __len__(self) -> int:
+        return len(self._reader)
+
+    def get_avg_fps(self) -> float:
+        return self._reader.get_avg_fps()
+
+    def get_batch(self, indices: Any) -> _RawFrameBatch:
+        return self._reader.get_batch(indices)
+
+
+def _is_raw_frame_video_data(value: Any) -> bool:
+    return isinstance(value, dict) and value.get("format") == _RAW_FRAME_VIDEO_FORMAT
+
+
+def _raw_frame_video_reader_from_data(value: dict[str, Any]) -> _RawFrameVideoReader:
+    return _RawFrameVideoReader(
+        frames=np.asarray(value["frames"], dtype=np.uint8),
+        fps=float(value.get("fps", 1.0)),
+    )
+
+
+def _install_sglang_raw_frame_video_patch() -> bool:
+    """Teach SGLang Qwen-VL preprocessing to accept RLinf raw-frame dicts."""
+
+    try:
+        from sglang.srt.multimodal.processors import qwen_vl
+    except Exception as exc:
+        logger.debug("Skipping SGLang raw-frame video patch: %s", exc)
+        return False
+
+    current_preprocess_video = getattr(qwen_vl, "preprocess_video", None)
+    if current_preprocess_video is None:
+        return False
+    if getattr(current_preprocess_video, "_rlinf_raw_frame_patch", False):
+        return True
+
+    async def preprocess_video_with_raw_frames(
+        video: Any, *args: Any, **kwargs: Any
+    ) -> Any:
+        if _is_raw_frame_video_data(video):
+            video = _raw_frame_video_reader_from_data(video)
+        return await current_preprocess_video(video, *args, **kwargs)
+
+    preprocess_video_with_raw_frames._rlinf_raw_frame_patch = True
+    preprocess_video_with_raw_frames._rlinf_original = current_preprocess_video
+    qwen_vl.preprocess_video = preprocess_video_with_raw_frames
+    return True
 
 
 class HistoryVLMSGLangRewardModel(BaseRewardModel):
@@ -81,11 +183,6 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
 
         self.sampling_params = self._build_sampling_params(cfg)
         self._engine: Any | None = None
-        self._generate_executor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="rlinf_sglang_reward",
-        )
-
         self.prepare_inputs_ms = 0.0
         self.media_convert_ms = 0.0
         self.sglang_generate_ms = 0.0
@@ -94,6 +191,8 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
         self.last_timing_ms: dict[str, float] = {}
         self.last_generation_stats: dict[str, float] = {}
         self.last_outputs: list[str] = []
+        self._empty_input_log_count = 0
+        self._executor: ThreadPoolExecutor | None = None
 
         self.setup_processor()
         self.setup_input_builder()
@@ -154,6 +253,8 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
 
     def _ensure_engine(self) -> Any:
         if self._engine is None:
+            _install_sglang_raw_frame_video_patch()
+
             from sglang import Engine
 
             python_bin_dir = os.path.dirname(sys.executable)
@@ -162,8 +263,29 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
                 if not os.environ.get("PATH")
                 else f"{python_bin_dir}{os.pathsep}{os.environ['PATH']}"
             )
-            self._engine = Engine(**self.sglang_engine_kwargs)
+            self._engine = self._create_engine(Engine)
         return self._engine
+
+    def _create_engine(self, engine_cls: Any) -> Any:
+        if threading.current_thread() is threading.main_thread():
+            return engine_cls(**self.sglang_engine_kwargs)
+
+        original_signal = signal.signal
+
+        def signal_without_launch_sigquit(signum: int, handler: Any) -> Any:
+            if signum == signal.SIGQUIT:
+                logger.warning(
+                    "Skipping SGLang launch SIGQUIT handler registration because "
+                    "the reward worker is not running in the Python main thread."
+                )
+                return signal.SIG_DFL
+            return original_signal(signum, handler)
+
+        signal.signal = signal_without_launch_sigquit
+        try:
+            return engine_cls(**self.sglang_engine_kwargs)
+        finally:
+            signal.signal = original_signal
 
     def slice_history_input(
         self,
@@ -227,28 +349,26 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
 
         return np.ascontiguousarray(frame[..., :3])
 
-    def _convert_video(
-        self, video: list[Any]
-    ) -> tuple[list[np.ndarray], dict[str, Any]]:
+    def _convert_video(self, video: list[Any]) -> _RawFrameVideoData:
         frames = [self._frame_to_numpy(frame) for frame in video]
-        metadata = {
-            "fps": self.video_fps,
-            "duration": len(frames) / self.video_fps if self.video_fps > 0 else 0.0,
-            "total_num_frames": len(frames),
-            "frames_indices": list(range(len(frames))),
-            "video_backend": "rlinf_memory",
-        }
-        return frames, metadata
+        if not frames:
+            raise ValueError("SGLang video reward input cannot be empty.")
+
+        if len(frames) == 1:
+            frames = frames * 2
+
+        frame_array = np.stack(frames, axis=0)
+        return _RawFrameVideoData(frame_array, fps=self.video_fps)
 
     def _build_sglang_inputs(
         self,
         prepared_inputs: dict[str, Any],
-    ) -> tuple[list[str], list[list[tuple[list[np.ndarray], dict[str, Any]]]]]:
+    ) -> tuple[list[str], list[list[_RawFrameVideoData]]]:
         prompt_texts_list = prepared_inputs.get("prompt_texts_list") or []
         videos_list = prepared_inputs.get("videos_list") or []
 
         prompts: list[str] = []
-        video_data: list[list[tuple[list[np.ndarray], dict[str, Any]]]] = []
+        video_data: list[list[_RawFrameVideoData]] = []
         for prompt_texts, videos in zip(prompt_texts_list, videos_list):
             prompts.append(self._render_prompt(prompt_texts, videos))
             video_data.append([self._convert_video(video) for video in videos])
@@ -305,15 +425,45 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
             "generated_tokens_max": float(max(completion_tokens)),
         }
 
+    def _log_empty_valid_inputs(
+        self,
+        observations: dict[str, Any],
+        history_input: dict[str, dict[str, list[list[Any]]]],
+    ) -> None:
+        self._empty_input_log_count += 1
+        if self._empty_input_log_count not in {1, 10}:
+            return
+
+        history_lengths = {
+            buffer_name: {
+                history_key: [len(video) for video in videos]
+                for history_key, videos in history_buffer.items()
+            }
+            for buffer_name, history_buffer in history_input.items()
+        }
+        task_descriptions = observations.get("task_descriptions") or []
+        nonempty_task_count = sum(
+            1 for task_description in task_descriptions if task_description
+        )
+        logger.warning(
+            "HistoryVLMSGLangRewardModel received no valid inputs; "
+            "observation_keys=%s, nonempty_task_descriptions=%d/%d, "
+            "history_lengths=%s",
+            sorted(observations.keys()),
+            nonempty_task_count,
+            len(task_descriptions),
+            history_lengths,
+        )
+
     def _generate(
         self, prompts: list[str], video_data: list[list[Any]]
     ) -> tuple[list[str], list[int]]:
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return self._generate_sync(prompts, video_data)
-
-        return self._generate_executor.submit(
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="sglang_reward",
+            )
+        return self._executor.submit(
             self._generate_sync,
             prompts,
             video_data,
@@ -322,6 +472,7 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
     def _generate_sync(
         self, prompts: list[str], video_data: list[list[Any]]
     ) -> tuple[list[str], list[int]]:
+        _install_sglang_raw_frame_video_patch()
         result = self._ensure_engine().generate(
             prompt=prompts,
             sampling_params=self.sampling_params,
@@ -382,6 +533,10 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
                 micro_history_input,
             )
             if len(valid_input_ids) == 0:
+                self._log_empty_valid_inputs(
+                    micro_observations,
+                    micro_history_input,
+                )
                 reward_chunks.append(reward_chunk)
                 continue
 

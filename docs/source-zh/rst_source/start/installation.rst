@@ -150,8 +150,9 @@ reward worker 使用单独的 venv：
 SGLang 是可选依赖，仅当 ``reward.model.model_type=history_vlm_sglang`` 时需要。
 RLinf 使用进程内 ``sglang.Engine`` reward 后端，不走外部 SGLang server 路径。目标
 依赖栈是 ``sglang==0.5.4``、``transformers==4.57.1``，以及匹配的 SGLang torch、
-xgrammar 和 flashinfer runtime；除非选择该后端，否则请使用默认 Hugging Face reward
-安装路径。
+xgrammar 和 flashinfer runtime。只有选择该后端时才把这些依赖安装到同一个 OpenPI
+venv；SGLang runtime 安装完成后，RLinf 会重新应用 OpenPI 的
+``transformers==4.57.1`` patch。
 
 安装方式2：UV 自定义环境
 -------------------------------
@@ -189,7 +190,7 @@ xgrammar 和 flashinfer runtime；除非选择该后端，否则请使用默认 
 版本范围。该环境通过 RLinf 仓库内的 OpenPI 本地 patch 与 OpenPI 共用，不需要为
 Qwen reward 单独创建 venv；它不会下载 reward-model checkpoint，也不会安装 SGLang。
 
-如果需要统一的 OpenPI + Qwen3-VL + 进程内 SGLang reward 环境，请改用
+如果需要同一 venv 内的 OpenPI + Qwen3-VL + 进程内 SGLang reward 环境，请改用
 ``--vlm-reward-sglang``：
 
 .. code-block:: shell
@@ -197,8 +198,18 @@ Qwen reward 单独创建 venv；它不会下载 reward-model checkpoint，也不
   bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward-sglang
 
 该 SGLang 路径面向 ``sglang==0.5.4`` 和 ``transformers==4.57.1``，并安装
-SGLang 专用的 torch、xgrammar 与 flashinfer runtime。仅当 reward 配置设置
-``reward.model.model_type: history_vlm_sglang`` 时使用。
+SGLang 专用的 torch、xgrammar 与 flashinfer runtime 到同一个 OpenPI venv。仅当
+reward 配置设置 ``reward.model.model_type: history_vlm_sglang`` 时使用。SGLang
+runtime 固化后，安装脚本会重新应用 RLinf 的 OpenPI ``transformers==4.57.1`` patch。
+
+如果只需要 reward worker 环境，不需要 OpenPI 或具身 env，请继续使用 reward-only model
+入口：
+
+.. code-block:: shell
+
+  bash requirements/install.sh embodied --model qwen_vlm_reward --vlm-reward
+  bash requirements/install.sh embodied --model qwen_vlm_reward --vlm-reward-sglang
+
 要激活该虚拟环境，可以使用以下命令：
 
 .. code-block:: shell

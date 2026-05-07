@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional, Union
 
+import numpy as np
 import torch
 from PIL import Image
 from transformers import AutoProcessor
@@ -34,18 +35,44 @@ def _to_pil_images(
 ) -> list[Image.Image]:
     """Convert EnvOutput image tensors to per-sample PIL image lists.
 
-    Expected EnvOutput image formats: [B, H, W, C]
+    Expected EnvOutput image formats: [B, H, W, C] or [B, V, H, W, C].
     """
     if isinstance(images, torch.Tensor):
         arr = images.detach().cpu().numpy()
     elif isinstance(images, list):
         if len(images) == 0:
             return []
-        arr = torch.stack(images).cpu().numpy()
+        arr = torch.stack(
+            [
+                image.detach().cpu() if isinstance(image, torch.Tensor) else image
+                for image in images
+            ]
+        ).numpy()
+    else:
+        arr = np.asarray(images)
+
+    if arr.ndim < 2:
+        return []
+
+    if arr.ndim == 3:
+        arr = arr[None, ...]
+    elif arr.ndim > 4:
+        arr = arr.reshape(-1, *arr.shape[-3:])
 
     per_sample: list[Image.Image] = []
     for i in range(arr.shape[0]):
-        per_sample.append(Image.fromarray(arr[i][..., :3]).convert("RGB"))
+        image = arr[i]
+        if image.ndim == 3 and image.shape[0] in (1, 3, 4) and image.shape[-1] not in (
+            1,
+            3,
+            4,
+        ):
+            image = np.moveaxis(image, 0, -1)
+        if image.ndim == 2:
+            image = np.stack([image] * 3, axis=-1)
+        if image.dtype != np.uint8:
+            image = np.clip(image, 0, 255).astype(np.uint8)
+        per_sample.append(Image.fromarray(image[..., :3]).convert("RGB"))
     return per_sample  # [B, H, W, C]
 
 
