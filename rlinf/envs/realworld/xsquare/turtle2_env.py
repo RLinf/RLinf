@@ -233,7 +233,7 @@ class Turtle2Env(gym.Env):
             np.ones((len(self.config.use_arm_ids) * 7), dtype=np.float32),
         )
 
-        obs_dim_per_arm = 7  # xyz(3) + quat(4)
+        obs_dim_per_arm = 8  # xyz(3) + quat(4) + gripper(1)
         self.observation_space = gym.spaces.Dict(
             {
                 "state": gym.spaces.Dict(
@@ -727,16 +727,18 @@ class Turtle2Env(gym.Env):
                 frames[i] = self._crop_frame(frames[i], (128, 128))
             tcp_pose = []
             if 0 in self.config.use_arm_ids:
-                tmp = np.zeros(7)
+                tmp = np.zeros(8, dtype=np.float32)
                 tmp[0:3] = self._turtle2_state.follow1_pos[0:3]
                 r1 = R.from_euler("xyz", self._turtle2_state.follow1_pos[3:6])
                 tmp[3:7] = r1.as_quat()
+                tmp[7] = self._turtle2_state.follow1_pos[6]
                 tcp_pose.append(tmp.copy())
             if 1 in self.config.use_arm_ids:
-                tmp = np.zeros(7)
+                tmp = np.zeros(8, dtype=np.float32)
                 tmp[0:3] = self._turtle2_state.follow2_pos[0:3]
                 r2 = R.from_euler("xyz", self._turtle2_state.follow2_pos[3:6])
                 tmp[3:7] = r2.as_quat()
+                tmp[7] = self._turtle2_state.follow2_pos[6]
                 tcp_pose.append(tmp.copy())
             tcp_pose = np.concatenate(tcp_pose, axis=0)
             state = {
