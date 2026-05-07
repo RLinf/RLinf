@@ -24,7 +24,9 @@ DEFAULT_SFT_PT_PATH = (
     "/workspace/test/RLinf/logs/20260430-16:26:37/gr00t_16_sft_libero/"
     "checkpoints/global_step_3000/actor/model_state_dict/full_weights.pt"
 )
-DEFAULT_HF_OUTPUT_PATH = "/workspace/test/RLinf/GR00T-1.6-SFT-LIBERO-Spatial-RLinf-SFT-3000"
+DEFAULT_HF_OUTPUT_PATH = (
+    "/workspace/test/RLinf/GR00T-1.6-SFT-LIBERO-Spatial-RLinf-SFT-3000"
+)
 DEFAULT_PROCESSOR_PATH = (
     "/workspace/Isaac-GR00T/results/libero_spatial_official_tb/processor"
 )

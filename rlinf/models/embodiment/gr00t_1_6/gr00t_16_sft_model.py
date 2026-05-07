@@ -232,16 +232,19 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
         # so we must patch it BEFORE importing Gr00tN1d6Processor.
         from gr00t.data import utils as gr00t_utils
 
-        if hasattr(gr00t_utils, 'normalize_values_minmax'):
+        if hasattr(gr00t_utils, "normalize_values_minmax"):
             gr00t_utils.normalize_values_minmax = _patched_normalize_values_minmax
             print("[RLinf Patch] Patched gr00t.data.utils.normalize_values_minmax")
 
         # Also patch StateActionProcessor's module-level reference
         try:
             from gr00t.data.state_action import state_action_processor as sap_module
-            if hasattr(sap_module, 'normalize_values_minmax'):
+
+            if hasattr(sap_module, "normalize_values_minmax"):
                 sap_module.normalize_values_minmax = _patched_normalize_values_minmax
-                print("[RLinf Patch] Patched state_action_processor.normalize_values_minmax")
+                print(
+                    "[RLinf Patch] Patched state_action_processor.normalize_values_minmax"
+                )
         except ImportError:
             pass
 
@@ -269,6 +272,7 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
             print("Loading Processor...")
             if processor_path is not None:
                 import json
+
                 from gr00t.model.gr00t_n1d6.processing_gr00t_n1d6 import (
                     Gr00tN1d6Processor,
                 )
@@ -295,10 +299,15 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
             # After Processor is loaded, patch the StateActionProcessor's
             # normalize_values_minmax reference in sys.modules
             import sys
-            if 'gr00t.data.state_action.state_action_processor' in sys.modules:
-                sap_module = sys.modules['gr00t.data.state_action.state_action_processor']
+
+            if "gr00t.data.state_action.state_action_processor" in sys.modules:
+                sap_module = sys.modules[
+                    "gr00t.data.state_action.state_action_processor"
+                ]
                 sap_module.normalize_values_minmax = _patched_normalize_values_minmax
-                print("[RLinf Patch] Patched sys.modules state_action_processor.normalize_values_minmax")
+                print(
+                    "[RLinf Patch] Patched sys.modules state_action_processor.normalize_values_minmax"
+                )
 
         self._modality_config = modality_config
         self._modality_transform = modality_transform
@@ -617,7 +626,11 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
                     else:
                         raw_state = raw_state.reshape(1, -1)
                 elif raw_state.ndim == 2:
-                    raw_state = raw_state.reshape(-1, 7) if raw_state.shape[1] >= 7 else raw_state
+                    raw_state = (
+                        raw_state.reshape(-1, 7)
+                        if raw_state.shape[1] >= 7
+                        else raw_state
+                    )
                 else:
                     raw_state = raw_state.reshape(-1, 7)
 
@@ -626,7 +639,9 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
 
                 if raw_state.shape[-1] < 7:
                     if raw_state.ndim == 1:
-                        raw_state = np.concatenate([raw_state, np.zeros(7 - raw_state.shape[0])])
+                        raw_state = np.concatenate(
+                            [raw_state, np.zeros(7 - raw_state.shape[0])]
+                        )
                         raw_state = raw_state.reshape(1, 7)
                     else:
                         padded = np.zeros((raw_state.shape[0], 7), dtype=np.float32)
@@ -636,9 +651,9 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
 
                 # Extract parts
                 ref_T = raw_state.shape[0]
-                eef_pos = raw_state[:, 0:3]            # (T, 3)  -- correct
-                axis_angle = raw_state[:, 3:6]          # (T, 3)  -- axis-angle
-                grip_val = raw_state[:, 6:7]            # (T, 1)  -- scalar gripper
+                eef_pos = raw_state[:, 0:3]  # (T, 3)  -- correct
+                axis_angle = raw_state[:, 3:6]  # (T, 3)  -- axis-angle
+                grip_val = raw_state[:, 6:7]  # (T, 1)  -- scalar gripper
 
                 # Convert axis-angle -> quat: (T, 3) -> (T, 4)
                 eef_quat = _axis_angle_to_quat(eef_pos)  # temp holder
@@ -759,12 +774,13 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
                             raw_images_list[-1] if raw_images_list else []
                         )
 
-
             # --- DIAGNOSTIC: print state dict shapes ---
             with open("/tmp/state_diag.txt", "a") as _df:
                 _df.write(f"tag={tag_val}  i={i}\n")
                 for _k, _v in sorted(states_dict.items()):
-                    _df.write(f"  {_k}: shape={getattr(_v, 'shape', type(_v).__name__)}\n")
+                    _df.write(
+                        f"  {_k}: shape={getattr(_v, 'shape', type(_v).__name__)}\n"
+                    )
 
             content = SimulationContent(
                 embodiment=self.embodiment_tag,

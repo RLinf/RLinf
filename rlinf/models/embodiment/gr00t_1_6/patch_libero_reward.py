@@ -1,22 +1,34 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Monkey-patch for LiberoEnv._calc_step_reward to provide a denser reward signal for PPO.
 
 This file patches:
-1. LiberoEnv._calc_step_reward - adds per-step penalty 
+1. LiberoEnv._calc_step_reward - adds per-step penalty
 2. EnvWorker.init_worker - ensures env processes also get the reward patch
 3. rlinf.envs.get_env_cls - auto-applies patch when LIBERO env is requested
 """
-
-import sys
-import types
 
 _PATCHED = False
 
 
 def _patch_libero_calc_reward():
     """Patch LiberoEnv._calc_step_reward to add per-step penalty."""
-    import rlinf.envs.libero.libero_env as le
     import numpy as np
+
+    import rlinf.envs.libero.libero_env as le
 
     def _patched_calc(self, terminations):
         # Original reward: terminations * reward_coef (config default is 1.0)
@@ -47,15 +59,15 @@ def _patch_gr00t_explore_noise():
     Patch GR00T to add exploration noise during rollout.
 
     Strategy:
-    1. Set flow_sde noise config in __init__ 
+    1. Set flow_sde noise config in __init__
     2. Patch sample_mean_var_val to always use mode="train"
     3. Patch rollout worker's predict to add Gaussian noise to actions
        (belt-and-suspenders approach)
     """
     try:
-        import rlinf.models.embodiment.gr00t_1_6.gr00t_action_model as gam
         import torch
-        import numpy as np
+
+        import rlinf.models.embodiment.gr00t_1_6.gr00t_action_model as gam
 
         # Fix 1: Set stronger noise config
         _orig_init = gam.FlowMatchingActionHeadForRLActionPrediction.__init__
@@ -69,17 +81,22 @@ def _patch_gr00t_explore_noise():
         gam.FlowMatchingActionHeadForRLActionPrediction.__init__ = _patched_init
 
         # Fix 2: Always use train mode in sample_mean_var_val
-        _orig_sample = gam.FlowMatchingActionHeadForRLActionPrediction.sample_mean_var_val
+        _orig_sample = (
+            gam.FlowMatchingActionHeadForRLActionPrediction.sample_mean_var_val
+        )
 
         def _patched_sample(self, *args, **kwargs):
             kwargs["mode"] = "train"
             return _orig_sample(self, *args, **kwargs)
 
-        gam.FlowMatchingActionHeadForRLActionPrediction.sample_mean_var_val = _patched_sample
+        gam.FlowMatchingActionHeadForRLActionPrediction.sample_mean_var_val = (
+            _patched_sample
+        )
 
         # Fix 3: Patch rollout predict to add Gaussian action noise
         try:
             from rlinf.workers.rollout.hf import huggingface_worker as hfw
+
             _orig_predict = hfw.MultiStepRolloutWorker.predict
 
             def _patched_predict(self, env_obs, mode="train"):
@@ -95,11 +112,15 @@ def _patch_gr00t_explore_noise():
                 return actions, result
 
             hfw.MultiStepRolloutWorker.predict = _patched_predict
-            print("[GR00T patch] Rollout predict patched: Gaussian noise 0.3 on actions")
+            print(
+                "[GR00T patch] Rollout predict patched: Gaussian noise 0.3 on actions"
+            )
         except Exception as e:
             print(f"[GR00T patch] Failed to patch rollout predict: {e}")
 
-        print("[GR00T patch] GR00T explore noise: train mode for ALL steps, noise_level=5.0, action_noise=0.3")
+        print(
+            "[GR00T patch] GR00T explore noise: train mode for ALL steps, noise_level=5.0, action_noise=0.3"
+        )
     except Exception as e:
         print(f"[GR00T patch] Failed to patch GR00T explore noise: {e}")
 
@@ -108,7 +129,6 @@ def _patch_worker_init():
     """Patch EnvWorker.init_worker to apply reward patch before env creation."""
     try:
         from rlinf.scheduler import Worker
-        import numpy as np
 
         # Find EnvWorker in subclasses
         for subcls in Worker.__subclasses__():
@@ -139,7 +159,9 @@ def _patch_get_env_cls():
 
     def _patched(env_type, env_cfg=None):
         result = _orig(env_type, env_cfg)
-        if str(env_type) == "libero" or (hasattr(env_type, "value") and env_type.value == "libero"):
+        if str(env_type) == "libero" or (
+            hasattr(env_type, "value") and env_type.value == "libero"
+        ):
             try:
                 _patch_libero_calc_reward()
             except Exception:
@@ -157,7 +179,9 @@ def patch_libero_reward():
 
     try:
         _patch_libero_calc_reward()
-        print("[GR00T patch] LiberoEnv._calc_step_reward patched: per-step -0.01, success x5")
+        print(
+            "[GR00T patch] LiberoEnv._calc_step_reward patched: per-step -0.01, success x5"
+        )
     except Exception as e:
         print(f"[GR00T patch] Failed direct patch: {e}")
 
@@ -168,7 +192,9 @@ def patch_libero_reward():
 
     try:
         _patch_get_env_cls()
-        print("[GR00T patch] get_env_cls patched: auto-applies reward patch on LIBERO env")
+        print(
+            "[GR00T patch] get_env_cls patched: auto-applies reward patch on LIBERO env"
+        )
     except Exception as e:
         print(f"[GR00T patch] Failed get_env_cls patch: {e}")
 

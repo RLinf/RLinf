@@ -144,10 +144,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     )
 
     model.to(torch_dtype)
-    if (
-        cfg.rl_head_config.add_value_head
-        and hasattr(model.action_head, "value_head")
-    ):
+    if cfg.rl_head_config.add_value_head and hasattr(model.action_head, "value_head"):
         # reinitialize the value head after model loading
         model.action_head.value_head._init_weights()
 
