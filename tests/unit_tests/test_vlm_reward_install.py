@@ -77,10 +77,7 @@ def test_common_embodied_deps_skip_hf_reward_when_sglang_reward_is_selected():
     assert match is not None
 
     body = match.group("body")
-    assert (
-        'if [ "$VLM_REWARD" -eq 1 ] && [ "$VLM_REWARD_SGLANG" -eq 0 ]; then'
-        in body
-    )
+    assert 'if [ "$VLM_REWARD" -eq 1 ] && [ "$VLM_REWARD_SGLANG" -eq 0 ]; then' in body
     assert "install_qwen_vlm_reward_deps" in body
     assert "install_qwen_vlm_reward_sglang_deps" not in body
 

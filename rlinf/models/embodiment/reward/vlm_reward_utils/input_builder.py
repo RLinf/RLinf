@@ -62,10 +62,15 @@ def _to_pil_images(
     per_sample: list[Image.Image] = []
     for i in range(arr.shape[0]):
         image = arr[i]
-        if image.ndim == 3 and image.shape[0] in (1, 3, 4) and image.shape[-1] not in (
-            1,
-            3,
-            4,
+        if (
+            image.ndim == 3
+            and image.shape[0] in (1, 3, 4)
+            and image.shape[-1]
+            not in (
+                1,
+                3,
+                4,
+            )
         ):
             image = np.moveaxis(image, 0, -1)
         if image.ndim == 2:
