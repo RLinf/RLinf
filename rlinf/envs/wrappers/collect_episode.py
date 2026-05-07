@@ -55,9 +55,6 @@ class CollectEpisode(gym.Wrapper):
         robot_type: Robot type for LeRobot metadata. Defaults to ``"panda"``.
         fps: FPS for LeRobot metadata. Defaults to 10.
         only_success: Whether to save only successful episodes. Defaults to False.
-        record_intervention_action: Whether accepted ``info["intervene_action"]``
-            should replace the input policy action in the saved trajectory.
-            Defaults to False to preserve the original collection contract.
         finalize_interval: Call ``writer.finalize()`` every this many completed
             episodes to flush ``info.json`` and ``stats.json`` as a checkpoint.
             ``0`` disables periodic flushing (lerobot only). Defaults to 100.
@@ -74,7 +71,6 @@ class CollectEpisode(gym.Wrapper):
         robot_type: str = "panda",
         fps: int = 10,
         only_success: bool = False,
-        record_intervention_action: bool = False,
         finalize_interval: int = 100,
     ):
         if isinstance(env, gym.Env):
@@ -96,7 +92,6 @@ class CollectEpisode(gym.Wrapper):
         self.robot_type = robot_type
         self.fps = fps
         self.only_success = only_success
-        self.record_intervention_action = record_intervention_action
         self.finalize_interval = finalize_interval
 
         # LeRobot writer is created lazily on the first completed episode.
@@ -440,10 +435,7 @@ class CollectEpisode(gym.Wrapper):
                 "final_info should not be present in the info"
             )
             info_with_intervene = copy.deepcopy(buf["infos"][i + 1])
-            if self.record_intervention_action:
-                np_action = self._action_with_intervention(
-                    np_action, info_with_intervene
-                )
+            np_action = self._action_with_intervention(np_action, info_with_intervene)
 
             if state is None or np_action is None:
                 continue
@@ -593,8 +585,7 @@ class CollectEpisode(gym.Wrapper):
     def _recorded_action(self, action, env_info, env_idx: int):
         policy_action = self._slice_copy(action, env_idx)
         if (
-            self.record_intervention_action
-            and isinstance(env_info, dict)
+            isinstance(env_info, dict)
             and self._intervene_flag_from_info(env_info)
             and "intervene_action" in env_info
         ):
@@ -629,13 +620,6 @@ class CollectEpisode(gym.Wrapper):
             "_collect_intervene_flag",
         ):
             env_info.pop(key, None)
-
-    def _same_action_shape(self, candidate, reference) -> bool:
-        candidate_np = self._to_numpy(candidate)
-        reference_np = self._to_numpy(reference)
-        if candidate_np is None or reference_np is None:
-            return False
-        return candidate_np.reshape(-1).shape == reference_np.reshape(-1).shape
 
     def _action_like(self, candidate, reference, env_idx: int | None = None):
         candidate_np = self._to_numpy(candidate)

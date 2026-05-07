@@ -60,12 +60,7 @@ class MasterTakeoverIntervention(gym.ActionWrapper):
                 logger=logging.getLogger(__name__),
             )
         self.adapter = adapter
-        self._logger = logging.getLogger(__name__)
         adapter_config = getattr(adapter, "config", None)
-        self._debug_log = bool(
-            getattr(adapter_config, "debug_log", False)
-            or (config is not None and bool(config.get("debug_log", False)))
-        )
         self._slave_hold_settle_s = float(
             getattr(adapter_config, "slave_hold_settle_s", 0.0)
             or (config.get("slave_hold_settle_s", 0.0) if config is not None else 0.0)
@@ -75,7 +70,6 @@ class MasterTakeoverIntervention(gym.ActionWrapper):
         self._chunk_active = False
         self._hold_until_chunk_end = False
         self._was_takeover_active = self.adapter.is_takeover_active()
-        self._chunk_step_index = 0
         self._takeover_sync_wait_steps = 0
         self._pending_decision: dict[str, Any] | None = None
         if self._was_takeover_active:
@@ -86,7 +80,6 @@ class MasterTakeoverIntervention(gym.ActionWrapper):
     def begin_action_chunk(self) -> None:
         self._chunk_active = True
         self._hold_until_chunk_end = False
-        self._chunk_step_index = 0
 
     def end_action_chunk(self) -> None:
         self._chunk_active = False
@@ -118,19 +111,13 @@ class MasterTakeoverIntervention(gym.ActionWrapper):
         should_step: bool,
         source: str,
         replaced: bool = False,
-        step_start: float,
     ) -> dict[str, Any]:
-        decision = {
+        return {
             "action": action,
             "should_step": should_step,
             "source": source,
             "replaced": replaced,
-            "chunk_step_index": self._chunk_step_index,
-            "step_start": step_start,
-            "selected_time": time.time(),
         }
-        self._chunk_step_index += 1
-        return decision
 
     def action(
         self, action: np.ndarray
@@ -158,7 +145,6 @@ class MasterTakeoverIntervention(gym.ActionWrapper):
         self._pending_decision = dict(decision)
 
     def select_takeover_action(self, action: np.ndarray) -> dict[str, Any]:
-        step_start = time.time()
         self.adapter.poll()
         takeover_active = self.adapter.is_takeover_active()
 
@@ -168,11 +154,6 @@ class MasterTakeoverIntervention(gym.ActionWrapper):
             self._set_takeover_gate(False)
             if self._chunk_active:
                 self._hold_until_chunk_end = True
-            if self._chunk_active and self._debug_log:
-                self._logger.info(
-                    "Master takeover mode exit inside chunk: chunk_step=%s; skipping until boundary",
-                    self._chunk_step_index,
-                )
 
         if takeover_active and not self._was_takeover_active:
             self._clear_takeover_target()
@@ -180,12 +161,6 @@ class MasterTakeoverIntervention(gym.ActionWrapper):
             self._hard_hold_action()
             self._hold_until_chunk_end = False
             self._takeover_sync_wait_steps = 0
-            if self._debug_log:
-                self._logger.info(
-                    "Master takeover mode enter: chunk_active=%s chunk_step=%s; waiting for fresh master pose",
-                    self._chunk_active,
-                    self._chunk_step_index,
-                )
 
         self._was_takeover_active = takeover_active
 
@@ -196,17 +171,11 @@ class MasterTakeoverIntervention(gym.ActionWrapper):
                 should_step=True,
                 source="expert",
                 replaced=True,
-                step_start=step_start,
             )
 
         if takeover_active:
             self._takeover_sync_wait_steps += 1
             if self._takeover_sync_wait_steps == 1 and self._slave_hold_settle_s > 0:
-                if self._debug_log:
-                    self._logger.info(
-                        "Master takeover settling slave hold before sync: settle_s=%.3f",
-                        self._slave_hold_settle_s,
-                    )
                 time.sleep(self._slave_hold_settle_s)
             self.adapter.sync_control_plane()
             time.sleep(0.01)
@@ -214,7 +183,6 @@ class MasterTakeoverIntervention(gym.ActionWrapper):
                 action=None,
                 should_step=False,
                 source="sync_wait",
-                step_start=step_start,
             )
 
         if self._hold_until_chunk_end:
@@ -223,14 +191,12 @@ class MasterTakeoverIntervention(gym.ActionWrapper):
                 action=None,
                 should_step=False,
                 source="chunk_tail_skip",
-                step_start=step_start,
             )
 
         return self._make_decision(
             action=np.asarray(action, dtype=np.float32),
             should_step=True,
             source="policy",
-            step_start=step_start,
         )
 
     def step(self, action):
@@ -254,20 +220,7 @@ class MasterTakeoverIntervention(gym.ActionWrapper):
         self._set_pose_backend_override(backend, source)
 
         obs, rew, done, truncated, info = self.env.step(action)
-        env_step_done_time = time.time()
         self.adapter.sync_control_plane()
-        control_plane_done_time = time.time()
-
-        if self._debug_log and (self.adapter.is_takeover_active() or source != "policy"):
-            self._logger.info(
-                "Master takeover step: decision=%s chunk_step=%s selected_dt=%.4f env_dt=%.4f sync_dt=%.4f action=%s",
-                source,
-                decision["chunk_step_index"],
-                decision["selected_time"] - decision["step_start"],
-                env_step_done_time - decision["selected_time"],
-                control_plane_done_time - env_step_done_time,
-                np.array2string(action, precision=4, threshold=20),
-            )
 
         if source == "expert":
             info["intervene_flag"] = np.asarray([True], dtype=bool)

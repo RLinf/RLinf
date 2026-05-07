@@ -337,7 +337,6 @@ server。请先启动 master 双臂的 ROS 节点，再启动发送 takeover fra
        data_collection:
          enabled: True
          export_format: "lerobot"
-         record_intervention_action: True
        master_takeover:
          running_mode_source: "ros_param"
          running_mode_param: "/running_mode"
@@ -397,7 +396,6 @@ LeRobot dataset 中应包含 ``state``、``actions``、``task``、``done``、
 
    data_collection:
      export_format: "lerobot"
-     record_intervention_action: True
 
 因此 LeRobot ``actions`` 字段在 policy frame 记录 policy action，在 takeover
 frame 记录 accepted ``intervene_action``。hold、sync-wait 和 skipped chunk-tail

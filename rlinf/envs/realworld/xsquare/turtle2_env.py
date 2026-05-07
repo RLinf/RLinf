@@ -49,8 +49,6 @@ class Turtle2RobotConfig:
     reset_min_interpolation_steps: int = 75
     reset_presettle_time: float = 2.0
     reset_timeout: float = 20.0
-    debug_pose_control: bool = False
-    debug_gripper_control: bool = False
     gripper_target_tolerance: float = 0.05
     follower_pose_cmd_left_topic: str = "/follow_pos_cmd_1"
     follower_pose_cmd_right_topic: str = "/follow_pos_cmd_2"
@@ -201,8 +199,6 @@ class Turtle2Env(gym.Env):
             env_idx=self.env_idx,
             node_rank=self.node_rank,
             worker_rank=self.env_worker_rank,
-            debug_pose_control=self.config.debug_pose_control,
-            debug_gripper_control=self.config.debug_gripper_control,
             gripper_target_tolerance=self.config.gripper_target_tolerance,
             pose_control_backend=self.config.pose_control_backend,
             takeover_publish_hz=self.config.takeover_publish_hz,
@@ -511,10 +507,6 @@ class Turtle2Env(gym.Env):
         self._num_steps = 0
         self._turtle2_state = self._controller.get_state().wait()[0]
         observation = self._get_observation()
-        # save if debug
-        # for key in observation["frames"].keys():
-        #     img = Image.fromarray(observation["frames"][key])
-        #     img.save(f'{key}.jpg')
 
         return observation, {}
 

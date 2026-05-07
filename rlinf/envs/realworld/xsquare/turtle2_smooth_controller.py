@@ -41,8 +41,6 @@ class Turtle2SmoothController(Worker):
         env_idx: int = 0,
         node_rank: int = 0,
         worker_rank: int = 0,
-        debug_pose_control: bool = False,
-        debug_gripper_control: bool = False,
         gripper_target_tolerance: float = 0.05,
         pose_control_backend: str = "smooth",
         takeover_publish_hz: float = 100.0,
@@ -63,8 +61,6 @@ class Turtle2SmoothController(Worker):
         placement = NodePlacementStrategy(node_ranks=[node_rank])
         return Turtle2SmoothController.create_group(
             freq,
-            debug_pose_control,
-            debug_gripper_control,
             gripper_target_tolerance,
             pose_control_backend,
             takeover_publish_hz,
@@ -79,8 +75,6 @@ class Turtle2SmoothController(Worker):
     def __init__(
         self,
         freq=50,
-        debug_pose_control: bool = False,
-        debug_gripper_control: bool = False,
         gripper_target_tolerance: float = 0.05,
         pose_control_backend: str = "smooth",
         takeover_publish_hz: float = 100.0,
@@ -131,8 +125,6 @@ class Turtle2SmoothController(Worker):
         # xyz, rpy, gripper
         self.tol = [0.002, 0.005, 5]  # m, rad, cm
         self.gripper_target_tolerance = float(gripper_target_tolerance)
-        self.debug_pose_control = bool(debug_pose_control)
-        self.debug_gripper_control = bool(debug_gripper_control)
         self.xyz_speed = 0.5  # m/s
         self.rpy_speed = 1.5  # rad/s
         self.freq = freq

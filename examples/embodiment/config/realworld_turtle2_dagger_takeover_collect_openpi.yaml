@@ -104,7 +104,6 @@ env:
       save_dir: ${oc.env:RLINF_REALWORLD_DATA_DIR,../results/turtle2_takeover_rollouts}
       export_format: "lerobot"
       only_success: False
-      record_intervention_action: True
       robot_type: "turtle2"
       fps: 60
       finalize_interval: 1
@@ -122,7 +121,6 @@ env:
       socket_timeout_s: 0.1
       accept_timeout_s: 0.1
       reconnect_sleep_s: 0.1
-      debug_log: False
     keyboard_running_mode:
       enabled: True
       running_mode_param: "/running_mode"
@@ -139,8 +137,6 @@ env:
       takeover_publish_hz: 100.0
       reset_command_interval: 0.02
       reset_min_interpolation_steps: 75
-      debug_pose_control: false
-      debug_gripper_control: false
       reset_ee_pose:
         - [0.20, 0.00, 0.10, 0.00, 0.00, 0.00]
         - [0.20, 0.00, 0.10, 0.00, 0.00, 0.00]

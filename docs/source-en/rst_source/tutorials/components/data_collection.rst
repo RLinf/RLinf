@@ -96,10 +96,6 @@ Constructor Arguments
      - ``bool``
      - ``False``
      - Save only successful episodes
-   * - ``record_intervention_action``
-     - ``bool``
-     - ``False``
-     - Prefer accepted ``info["intervene_action"]`` when saving actions. Disabled by default to preserve the normal collection contract.
    * - ``finalize_interval``
      - ``int``
      - ``100``

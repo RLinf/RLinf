@@ -54,7 +54,6 @@ class X2RobotTakeoverTCPConfig:
     takeover_delay_s: float = 4.0
     slave_hold_settle_s: float = 0.0
     max_pose_age_s: float = 0.25
-    debug_log: bool = False
 
     @classmethod
     def from_dict(
@@ -230,7 +229,6 @@ class X2RobotTakeoverTCPServer:
         self._master_pose_recv_time = 0.0
         self._follow_start_time: float | None = None
         self._min_pose_timestamp_us = 0
-        self._last_pose_debug_log_time = 0.0
 
     def start(self) -> None:
         if self._io_thread is not None:
@@ -272,7 +270,6 @@ class X2RobotTakeoverTCPServer:
         running_mode = int(self._running_mode_getter())
         with self._state_lock:
             if running_mode != self._current_mode:
-                old_mode = self._current_mode
                 self._current_mode = running_mode
                 self._mode_dirty = True
                 self._master_pose_left = None
@@ -283,13 +280,6 @@ class X2RobotTakeoverTCPServer:
                 self._follow_start_time = None
                 self._min_pose_timestamp_us = 0
                 self._snapshot_dirty = running_mode == self.config.takeover_mode_value
-                if self.config.debug_log:
-                    self._logger.info(
-                        "X2Robot takeover protocol mode change: %s -> %s, snapshot_dirty=%s",
-                        old_mode,
-                        running_mode,
-                        self._snapshot_dirty,
-                    )
 
     def sync_control_plane(self) -> None:
         self._sync_control_plane()
@@ -308,52 +298,19 @@ class X2RobotTakeoverTCPServer:
             if self._current_mode != self.config.takeover_mode_value:
                 return None
             if self._follow_start_time is None or now < self._follow_start_time:
-                if self.config.debug_log:
-                    self._log_pose_gate_locked("delay", now)
                 return None
             if (
                 self._master_pose_left is None
                 or self._master_pose_right is None
                 or self._master_pose_recv_time <= self._follow_start_time
             ):
-                if self.config.debug_log:
-                    self._log_pose_gate_locked("missing_or_before_gate", now)
                 return None
             pose_age_s = now - self._master_pose_recv_time
             if self.config.max_pose_age_s > 0 and pose_age_s > self.config.max_pose_age_s:
-                if self.config.debug_log:
-                    self._log_pose_gate_locked("stale", now, pose_age_s=pose_age_s)
                 return None
-            if self.config.debug_log:
-                self._log_pose_gate_locked("fresh", now, pose_age_s=pose_age_s)
             return np.concatenate(
                 [self._master_pose_left, self._master_pose_right], axis=0
             ).astype(np.float32)
-
-    def _log_pose_gate_locked(
-        self,
-        reason: str,
-        now: float,
-        pose_age_s: float | None = None,
-    ) -> None:
-        if now - self._last_pose_debug_log_time < 1.0:
-            return
-        self._last_pose_debug_log_time = now
-        follow_start = self._follow_start_time or 0.0
-        if pose_age_s is None and self._master_pose_recv_time > 0:
-            pose_age_s = now - self._master_pose_recv_time
-        self._logger.info(
-            "X2Robot takeover pose gate: reason=%s seq=%s pose_age_s=%s "
-            "pose_ts_us=%s min_pose_ts_us=%s pose_recv=%.6f follow_start=%.6f now=%.6f",
-            reason,
-            self._master_pose_seq,
-            "none" if pose_age_s is None else f"{pose_age_s:.4f}",
-            self._master_pose_timestamp_us,
-            self._min_pose_timestamp_us,
-            self._master_pose_recv_time,
-            follow_start,
-            now,
-        )
 
     def _io_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -456,12 +413,6 @@ class X2RobotTakeoverTCPServer:
 
         def send_mode() -> bool:
             try:
-                if self.config.debug_log:
-                    self._logger.info(
-                        "X2Robot takeover protocol send MSG_MODE: mode=%s t=%.6f",
-                        current_mode,
-                        time.time(),
-                    )
                 send_frame(
                     client_socket,
                     {
@@ -485,14 +436,6 @@ class X2RobotTakeoverTCPServer:
                 return False
 
             try:
-                if self.config.debug_log:
-                    self._logger.info(
-                        "X2Robot takeover protocol send MSG_JOINT[%s]: t=%.6f left=%s right=%s",
-                        phase,
-                        time.time(),
-                        np.array2string(joint_snapshot[0], precision=4),
-                        np.array2string(joint_snapshot[1], precision=4),
-                    )
                 send_frame(
                     client_socket,
                     {
@@ -534,15 +477,6 @@ class X2RobotTakeoverTCPServer:
                 self._master_pose_recv_time = 0.0
                 self._follow_start_time = now + self.config.takeover_delay_s
                 self._min_pose_timestamp_us = int(self._follow_start_time * 1e6)
-                if self.config.debug_log:
-                    self._logger.info(
-                        "X2Robot takeover protocol waiting for fresh master pose: now=%.6f follow_start=%.6f delay=%.3f min_pose_ts_us=%s max_pose_age_s=%.3f",
-                        now,
-                        self._follow_start_time,
-                        self.config.takeover_delay_s,
-                        self._min_pose_timestamp_us,
-                        self.config.max_pose_age_s,
-                    )
             return
 
         if mode_dirty:

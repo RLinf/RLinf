@@ -356,7 +356,6 @@ Key fields:
        data_collection:
          enabled: True
          export_format: "lerobot"
-         record_intervention_action: True
        master_takeover:
          running_mode_source: "ros_param"
          running_mode_param: "/running_mode"
@@ -418,7 +417,6 @@ The config sets:
 
    data_collection:
      export_format: "lerobot"
-     record_intervention_action: True
 
 Therefore the LeRobot ``actions`` field uses the policy action on policy frames
 and the accepted ``intervene_action`` on takeover frames. Hold, sync-wait, and
