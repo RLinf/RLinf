@@ -190,18 +190,48 @@ class Turtle2SmoothController(Worker):
         # print(targetrpy1, targetrpy2)
         errrpy1 = np.linalg.norm(currpy1 - targetrpy1)
         errrpy2 = np.linalg.norm(currpy2 - targetrpy2)
+        targetgripper1 = float(self.left_arm_target[6])
+        targetgripper2 = float(self.right_arm_target[6])
+        errgripper1 = abs(float(self._state.follow1_pos[6]) - targetgripper1)
+        errgripper2 = abs(float(self._state.follow2_pos[6]) - targetgripper2)
 
-        if (
+        pose_reached = (
             errxyz1 < self.tol[0]
             and errxyz2 < self.tol[0]
             and errrpy1 < self.tol[1]
             and errrpy2 < self.tol[1]
-        ):
+        )
+        gripper_reached = (
+            errgripper1 < self.gripper_target_tolerance
+            and errgripper2 < self.gripper_target_tolerance
+        )
+        if pose_reached:
             # print(f"[INFO] target reach! {errxyz1:.4f}, {errxyz2:.4f}, {errrpy1:.4f}, {errrpy2:.4f}")
             self.last_expected_xyz1 = curxyz1.copy()
             self.last_expected_xyz2 = curxyz2.copy()
             self.last_expected_rpy1 = currpy1.copy()
             self.last_expected_rpy2 = currpy2.copy()
+            if not gripper_reached:
+                self.controller.arms_control(
+                    [
+                        curxyz1[0],
+                        curxyz1[1],
+                        curxyz1[2],
+                        currpy1[0],
+                        currpy1[1],
+                        currpy1[2],
+                        targetgripper1,
+                    ],
+                    [
+                        curxyz2[0],
+                        curxyz2[1],
+                        curxyz2[2],
+                        currpy2[0],
+                        currpy2[1],
+                        currpy2[2],
+                        targetgripper2,
+                    ],
+                )
             return
         else:
             # interpolate xyz
