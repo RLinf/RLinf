@@ -663,6 +663,9 @@ install_dreamzero_model() {
 }
 
 install_env_only() {
+    if [ "$ENV_NAME" = "d4rl" ]; then
+        PYTHON_VERSION="3.10"
+    fi
     create_and_sync_venv
     SKIP_ROS=${SKIP_ROS:-0}
     case "$ENV_NAME" in
