@@ -235,7 +235,12 @@ def test_env_no_pending_reward_mode_waits_and_finalizes_immediately():
         batch["obs"]["states"].clone()
     )
     worker.send_reward_request = (
-        lambda env_output, send_channel, stage_id, last_run=False, epoch=None, chunk_step_idx=None: (
+        lambda env_output,
+        send_channel,
+        stage_id,
+        last_run=False,
+        epoch=None,
+        chunk_step_idx=None: (
             True,
             None,
         )
