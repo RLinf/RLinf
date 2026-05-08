@@ -117,6 +117,7 @@ RLinf 目前支持 LeRobot 格式的数据集。
 目前支持四种libero任务：Saptial, Object, Goal, 10
 
 Libero数据集下载：
+
 .. code-block:: bash
    
    # 方法1：使用git clone
@@ -139,11 +140,14 @@ Libero数据集下载：
 
 数据版本转换
 由于给出来的数据版本是老版本的Lerobot数据，需要转换为最新版本
+
 .. code-block:: bash
 
-   python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --root=/path/to/Gr00t_16-libero-<task>-dataset-v30 --push-to-hub=false --force-conversion
+   python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id=Gr00t_16-libero-<task>-dataset --root=/path/to/RLinf --push-to-hub=false --force-conversion
+   # 如：python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id=Gr00t_16-libero-Spatial-dataset  --root=/workspace/test/RLinf  --push-to-hub=false --force-conversion
 
 GR00T-N1.6 模型下载
+
 .. code-block:: bash
 
    # 方法1：使用git clone

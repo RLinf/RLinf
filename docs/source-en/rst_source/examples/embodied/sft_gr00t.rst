@@ -117,6 +117,7 @@ Before starting SFT training, download the required dataset and the GR00T-N1.6 p
 Currently, four Libero tasks are supported: Spatial, Object, Goal, and 10.
 
 Libero dataset download:
+
 .. code-block:: bash
    
    # Method 1: use git clone
@@ -139,11 +140,14 @@ Libero dataset download:
 
 Data version conversion
 Since the provided data version is an older Lerobot version, it needs to be converted to the latest version.
+
 .. code-block:: bash
 
-   python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --root=/path/to/Gr00t_16-libero-<task>-dataset-v30 --push-to-hub=false --force-conversion
+   python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id=Gr00t_16-libero-<task>-dataset --root=/path/to/RLinf --push-to-hub=false --force-conversion
+   # e.g.：python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id=Gr00t_16-libero-Spatial-dataset  --root=/workspace/test/RLinf  --push-to-hub=false --force-conversion
 
 GR00T-N1.6 model download
+
 .. code-block:: bash
 
    # Method 1: use git clone
