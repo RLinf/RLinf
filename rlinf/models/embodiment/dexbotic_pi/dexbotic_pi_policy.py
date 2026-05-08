@@ -14,6 +14,8 @@
 
 import json
 import os
+import random
+from typing import Optional
 
 import numpy as np
 import torch
@@ -32,8 +34,30 @@ from rlinf.utils.logging import get_logger
 
 
 class DexboticPi0ForRLActionPrediction(BasePolicy, Pi0ForCausalLM):
+    _no_split_names = [
+        "action_in_proj",
+        "action_out_proj",
+        "state_proj",
+        "action_time_mlp_in",
+        "action_time_mlp_out",
+    ]
+
     def __init__(self, config):
         Pi0ForCausalLM.__init__(self, config)
+        if getattr(config, "train_expert_only", False):
+            self._no_split_modules = [
+                "GemmaDecoderLayer",
+                "SiglipVisionEmbeddings",
+                "GemmaRMSNorm",
+                "GemmaRotaryEmbedding",
+            ]
+        else:
+            self._no_split_modules = [
+                "GemmaMLP",
+                "SiglipVisionEmbeddings",
+                "GemmaRMSNorm",
+                "GemmaRotaryEmbedding",
+            ]
         self.logger = get_logger()
         model_dtype = None
         if (
@@ -423,43 +447,117 @@ class DexboticPi0ForRLActionPrediction(BasePolicy, Pi0ForCausalLM):
                 batch_size, required_num_images, dtype=torch.bool, device=device
             )
             image_masks[:, :num_views] = True
-            model_dtype = next(self.parameters()).dtype
-            device_type = next(self.parameters()).device.type
+            target_dtype = next(self.parameters()).dtype
+            num_steps = self.num_steps
 
-            if model_dtype == torch.bfloat16:
-                with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                    actions = self.inference_action(
-                        input_ids=input_ids,
-                        attention_mask=attention_mask,
-                        states=states,
-                        images=images,
-                        image_masks=image_masks,
-                        diffusion_steps=self.num_steps,
-                    )
-            else:
-                actions = self.inference_action(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    states=states,
-                    images=images,
-                    image_masks=image_masks,
-                    diffusion_steps=self.num_steps,
-                )
-            dummy_chains = (
-                actions.unsqueeze(1)
-                .expand(batch_size, self.num_steps + 1, -1, -1)
-                .contiguous()
+            # Prefix forward: embed and cache LLM prefix
+            prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                images=images,
+                image_masks=image_masks,
             )
+            prefix_att_2d_masks = make_attn_mask(prefix_pad_masks, prefix_att_masks)
+            prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+            prefix_att_2d_masks_4d = make_attn_mask_4d(prefix_att_2d_masks)
+
+            prefix_output, past_key_values = self._forward_mot_prefix(
+                prefix_embeds=prefix_embs,
+                mask=prefix_att_2d_masks_4d,
+                position_embeddings=self.model.llm.rotary_emb(
+                    prefix_embs, prefix_position_ids
+                ),
+                cache_position=prefix_position_ids,
+            )
+
+            # Init noise
+            x_t = torch.randn(
+                batch_size,
+                self.config.chunk_size,
+                self.config.action_dim,
+                device=device,
+                dtype=target_dtype,
+            )
+
+            chains = []
+            log_probs = []
+            values = []
+            chains.append(x_t)
+
+            if self.use_vlm_value:
+                values_vlm = self.get_value_from_vlm(prefix_output)
+            if self.config.joint_logprob:
+                initial_log_prob = self.get_logprob_norm(
+                    x_t, torch.zeros_like(x_t), torch.ones_like(x_t)
+                )
+                log_probs.append(initial_log_prob)
+
+            # Build denoise_inds
+            if mode == "train":
+                if self.config.joint_logprob:
+                    denoise_inds = torch.arange(num_steps)
+                else:
+                    if getattr(self.config, "ignore_last", False):
+                        denoise_inds = torch.tensor(
+                            [random.randint(0, num_steps - 2)] * num_steps
+                        )
+                    else:
+                        denoise_inds = torch.tensor(
+                            [random.randint(0, num_steps - 1)] * num_steps
+                        )
+            else:
+                denoise_inds = torch.tensor([-1] * num_steps)
+            denoise_inds = denoise_inds[None].repeat(batch_size, 1)
+
+            # Diffusion loop
+            for idx in range(num_steps):
+                if idx == denoise_inds[0][idx]:
+                    sample_mode = "train"
+                else:
+                    sample_mode = "eval"
+                x_t_mean, x_t_std, value_t = self.sample_mean_var_val(
+                    x_t,
+                    idx,
+                    states,
+                    prefix_pad_masks,
+                    past_key_values,
+                    sample_mode,
+                    num_steps,
+                    compute_values,
+                )
+                x_t = x_t_mean + torch.randn_like(x_t) * x_t_std
+                log_prob = self.get_logprob_norm(x_t, x_t_mean, x_t_std)
+                values.append(value_t)
+                chains.append(x_t)
+                log_probs.append(log_prob)
+
+            x_0 = x_t
+            chains = torch.stack(chains, dim=1)
+
+            # Post-process logprobs
+            log_probs = torch.stack(log_probs, dim=1)[
+                :, :, : self.num_action_chunks, : self.config.action_env_dim
+            ]
+            if self.config.joint_logprob:
+                log_probs = log_probs.mean(dim=1)
+            else:
+                log_probs = log_probs[
+                    torch.arange(log_probs.shape[0]),
+                    denoise_inds[:, 0],
+                ]
+
+            # Post-process values
+            if self.use_vlm_value:
+                values = values_vlm[:, None]
+            else:
+                values = torch.stack(values, dim=1).mean(dim=-1, keepdim=True)
+
             return {
-                "actions": actions,
-                "chains": dummy_chains,
-                "prev_logprobs": torch.zeros(
-                    batch_size, 10, self.config.action_env_dim, device=device
-                ),
-                "prev_values": torch.zeros(batch_size, 1, device=device),
-                "denoise_inds": torch.zeros(
-                    batch_size, self.num_steps, dtype=torch.long, device=device
-                ),
+                "actions": x_0,
+                "chains": chains,
+                "prev_logprobs": log_probs,
+                "prev_values": values,
+                "denoise_inds": denoise_inds,
             }
         finally:
             if original_training_mode:
@@ -486,6 +584,80 @@ class DexboticPi0ForRLActionPrediction(BasePolicy, Pi0ForCausalLM):
         sigma_safe = torch.where(mask, torch.ones_like(sigma), sigma)
         entropy = 0.5 * torch.log(2 * math.pi * math.e * (sigma_safe**2))
         return entropy
+
+    def _forward_mot_prefix(
+        self,
+        prefix_embeds: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+        position_embeddings: Optional[tuple] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+    ) -> tuple[torch.Tensor, DynamicCache]:
+        """Forward the LLM prefix only, building the KV cache.
+
+        Uses each layer's forward() method so FSDP can properly gather/release
+        parameters per layer.
+        """
+        hidden_states = prefix_embeds
+        past_key_values = DynamicCache()
+        # Cast mask to match model dtype (make_attn_mask_4d produces float32,
+        # but SDPA requires mask dtype == query dtype).
+        if mask is not None:
+            mask = mask.to(dtype=hidden_states.dtype)
+
+        for layer in self.model.llm.layers:
+            layer_outputs = layer(
+                hidden_states,
+                attention_mask=mask,
+                position_ids=cache_position,
+                past_key_value=past_key_values,
+                use_cache=True,
+                position_embeddings=position_embeddings,
+            )
+            hidden_states = layer_outputs[0]
+
+        prefix_output = self.model.llm.norm(hidden_states)
+        return prefix_output, past_key_values
+
+    def _forward_mot_suffix(
+        self,
+        suffix_embeds: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+        position_embeddings: Optional[tuple] = None,
+        past_key_values: Optional[DynamicCache] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+    ) -> torch.Tensor:
+        """Forward the action expert suffix only, attending to the LLM KV cache.
+
+        Uses each layer's forward() method so FSDP can properly gather/release
+        parameters per layer. Clones the KV cache to avoid mutating the
+        original prefix cache (needed for multiple suffix calls).
+        """
+        hidden_states = suffix_embeds
+
+        # Cast mask to match model dtype
+        if mask is not None:
+            mask = mask.to(dtype=hidden_states.dtype)
+
+        # Shallow-clone the cache so cache.update() doesn't corrupt the original
+        cloned_cache = DynamicCache()
+        if past_key_values is not None:
+            for k, v in zip(past_key_values.key_cache, past_key_values.value_cache):
+                cloned_cache.key_cache.append(k)
+                cloned_cache.value_cache.append(v)
+
+        for layer in self.model.action_expert.layers:
+            layer_outputs = layer(
+                hidden_states,
+                attention_mask=mask,
+                position_ids=position_ids,
+                past_key_value=cloned_cache,
+                use_cache=True,
+                position_embeddings=position_embeddings,
+            )
+            hidden_states = layer_outputs[0]
+
+        suffix_output = self.model.action_expert.norm(hidden_states)
+        return suffix_output
 
     def get_suffix_out(
         self,
@@ -521,22 +693,14 @@ class DexboticPi0ForRLActionPrediction(BasePolicy, Pi0ForCausalLM):
         full_position_embeddings = self.model.llm.rotary_emb(
             suffix_tokens, full_positions
         )
-        decoder_embeds_list, _, _, _ = self._inner_forward_mot(
-            [self.model.llm, self.model.action_expert],
-            [None, suffix_tokens],
+        suffix_out = self._forward_mot_suffix(
+            suffix_embeds=suffix_tokens,
             mask=full_attn_mask,
             position_embeddings=full_position_embeddings,
             past_key_values=past_key_values,
-            cache_position=None,
-            output_hidden_states=False,
-            output_attentions=False,
-            update_cache=False,
+            position_ids=full_positions,
         )
-        prefix_out = decoder_embeds_list[0]
-        suffix_out = decoder_embeds_list[1]
-        assert prefix_out is None
         suffix_out = suffix_out.clone()[:, -self.config.chunk_size :]
-        suffix_out = suffix_out.to(dtype=next(self.parameters()).dtype)
         return suffix_out
 
     def sample_mean_var_val(
@@ -578,9 +742,7 @@ class DexboticPi0ForRLActionPrediction(BasePolicy, Pi0ForCausalLM):
             x_t,
             t_input,
         )
-        v_t = self.model.action_out_proj(
-            suffix_out.to(dtype=self.model.action_out_proj.weight.dtype)
-        )
+        v_t = self.model.action_out_proj(suffix_out)
         if (
             self.config.add_value_head
             and compute_values
@@ -651,29 +813,35 @@ class DexboticPi0ForRLActionPrediction(BasePolicy, Pi0ForCausalLM):
         compute_values=False,
     ):
         bsize = state.shape[0]
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-            input_ids=lang_tokens,
-            attention_mask=lang_masks,
-            images=images,
-            image_masks=img_masks,
-        )
-        prefix_att_2d_masks = make_attn_mask(prefix_pad_masks, prefix_att_masks)
-        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-        prefix_att_2d_masks_4d = make_attn_mask_4d(prefix_att_2d_masks)
 
-        [prefix_output, _], past_key_values, _, _ = self._inner_forward_mot(
-            [self.model.llm, self.model.action_expert],
-            [prefix_embs, None],
-            mask=prefix_att_2d_masks_4d,
-            position_embeddings=self.model.llm.rotary_emb(
-                prefix_embs, prefix_position_ids
-            ),
-            past_key_values=DynamicCache(),
-            cache_position=prefix_position_ids,
-            output_hidden_states=False,
-            output_attentions=False,
-            update_cache=True,
+        # When train_expert_only, the vision tower, LLM, and projector are all
+        # frozen.  Wrapping the prefix computation in no_grad avoids storing
+        # intermediate activations for these frozen modules, which is the main
+        # source of memory savings.
+        no_grad_ctx = (
+            torch.no_grad()
+            if getattr(self.config, "train_expert_only", False)
+            else torch.enable_grad()
         )
+        with no_grad_ctx:
+            prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+                input_ids=lang_tokens,
+                attention_mask=lang_masks,
+                images=images,
+                image_masks=img_masks,
+            )
+            prefix_att_2d_masks = make_attn_mask(prefix_pad_masks, prefix_att_masks)
+            prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+            prefix_att_2d_masks_4d = make_attn_mask_4d(prefix_att_2d_masks)
+
+            prefix_output, past_key_values = self._forward_mot_prefix(
+                prefix_embeds=prefix_embs,
+                mask=prefix_att_2d_masks_4d,
+                position_embeddings=self.model.llm.rotary_emb(
+                    prefix_embs, prefix_position_ids
+                ),
+                cache_position=prefix_position_ids,
+            )
 
         chains_log_probs = []
         chains_values = []

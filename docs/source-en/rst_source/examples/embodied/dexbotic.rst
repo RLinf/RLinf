@@ -9,7 +9,7 @@ RL on Dexbotic Models
 This document provides a guide to fine-tuning the **Dexbotic** VLA models with
 reinforcement learning using the RLinf framework. Dexbotic (`<https://github.com/dexmal/dexbotic>`__) is an open-source
 Vision-Language-Action toolbox from Dexmal, a unified implementation of various embodied models. This example covers the LIBERO Spatial
-benchmark with the Dexbotic π\ :sub:`0`\ model.
+benchmark with the Dexbotic π\ :sub:`0`\ model and the **DM0** model.
 
 The primary objective is to develop a model capable of robotic manipulation by:
 
@@ -62,7 +62,7 @@ Algorithm
    - Value function clipping
    - Entropy regularization
 
-2. **Dexbotic (π\ :sub:`0.5`\ -based VLA)**
+2. **Dexbotic** (π\ :sub:`0.5`\ -based VLA)
 
    - Flow-matching / flow-SDE action generation
    - Diffusion denoising for action chunks
@@ -115,7 +115,9 @@ Install dependencies directly in your environment:
 Model Download
 --------------
 
-Before starting training, download the Dexbotic SFT model from HuggingFace:
+**π**\ :sub:`0` **model**
+
+Before starting training, download the Dexbotic π\ :sub:`0`\ SFT model from HuggingFace:
 
 .. code:: bash
 
@@ -127,17 +129,37 @@ Before starting training, download the Dexbotic SFT model from HuggingFace:
    pip install huggingface-hub
    huggingface-cli download Dexmal/libero-db-pi0 --local-dir libero-db-pi0
 
-Then set ``rollout.model.model_path`` and ``actor.model.model_path`` in your
-configuration to the local path (e.g. ``/path/to/model/Dexbotic-Pi05-SFT`` or
-``./libero-db-pi0``).
+Then set ``rollout.model.model_path`` and ``actor.model.model_path`` in
+``examples/embodiment/config/libero_spatial_ppo_dexbotic_pi0.yaml`` to the
+local path (e.g. ``./libero-db-pi0``).
+
+**DM0 model**
+
+Download the DM0 SFT model from HuggingFace:
+
+.. code:: bash
+
+   # Method 1: Using git clone
+   git lfs install
+   git clone https://huggingface.co/Dexmal/DM0-libero
+
+   # Method 2: Using huggingface-hub
+   pip install huggingface-hub
+   huggingface-cli download Dexmal/DM0-libero --local-dir DM0-libero
+
+Then set ``rollout.model.model_path`` and ``actor.model.model_path`` in
+``examples/embodiment/config/libero_spatial_ppo_dexbotic_dm0.yaml`` to the
+local path (e.g. ``./DM0-libero``).
 
 Quick Start
 -----------
 
+π\ :sub:`0`\ Model
+~~~~~~~~~~~~~~~~~~~
+
 **Configuration File**
 
-- **Dexbotic + PPO + LIBERO Spatial**:
-  ``examples/embodiment/config/libero_spatial_ppo_dexbotic_pi0.yaml``
+- ``examples/embodiment/config/libero_spatial_ppo_dexbotic_pi0.yaml``
 
 **Key Config Snippets**
 
@@ -145,10 +167,10 @@ Quick Start
 
    rollout:
      model:
-       model_path: "/path/to/model/Dexbotic-Pi05-SFT"
+       model_path: "/path/to/model/libero-db-pi0"  # https://huggingface.co/Dexmal/libero-db-pi0
    actor:
      model:
-       model_path: "/path/to/model/Dexbotic-Pi05-SFT"
+       model_path: "/path/to/model/libero-db-pi0"
        num_action_chunks: 5
        num_steps: 4
        action_dim: 7
@@ -166,22 +188,78 @@ Quick Start
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_dexbotic_pi0
 
+DM0 Model
+~~~~~~~~~
+
+**Configuration File**
+
+- ``examples/embodiment/config/libero_spatial_ppo_dexbotic_dm0.yaml``
+
+**Key Config Snippets**
+
+.. code:: yaml
+
+   rollout:
+     model:
+       model_path: "/path/to/model/DM0-libero"  # https://huggingface.co/Dexmal/DM0-libero
+   actor:
+     model:
+       model_path: "/path/to/model/DM0-libero"
+       num_action_chunks: 10
+       num_steps: 3
+       action_dim: 7
+       add_value_head: True
+       dexbotic:
+         num_images_in_input: 2
+         noise_level: 0.5
+         noise_method: "flow_sde"
+         train_expert_only: True
+         detach_critic_input: True
+
+**Launch Command**
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_dexbotic_dm0
+
 Evaluation
 ----------
 
-Dexbotic provides a dedicated evaluation script for LIBERO in
-``toolkits/eval_scripts_dexbotic/``:
+π\ :sub:`0`\ Model
+~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
 
    python toolkits/eval_scripts_dexbotic/libero_eval.py \
-      --config libero_spatial_dexbotic \
-      --ckpt_path /path/to/checkpoint \
-      --action_chunk_size 50 \
-      --num_diffusion_steps 10
+      --config_name db_pi0_libero \
+      --pretrained_path /path/to/checkpoint \
+      --task_suite_name libero_spatial \
+      --num_trials_per_task 50 \
+      --action_chunk 5 \
+      --num_steps 10
+
+DM0 Model
+~~~~~~~~~
+
+.. code-block:: bash
+
+   python toolkits/eval_scripts_dexbotic/libero_eval.py \
+      --config_name dm0_libero \
+      --pretrained_path /path/to/checkpoint \
+      --task_suite_name libero_spatial \
+      --num_trials_per_task 50 \
+      --action_chunk 10 \
+      --num_steps 10
 
 You can also use RLinf's unified VLA evaluation flow; refer to the
 :doc:`VLA Evaluation Documentation <../../start/vla-eval>` for details.
+
+.. note::
+
+   The ``--action_chunk`` argument controls the replan interval (how many
+   steps the policy executes before re-querying the model). π\ :sub:`0`\ uses
+   ``5`` and DM0 uses ``10`` by default, matching their respective
+   ``num_action_chunks`` training settings.
 
 Visualization and Results
 -------------------------

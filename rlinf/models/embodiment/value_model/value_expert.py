@@ -156,6 +156,9 @@ class ValueExpert(nn.Module):
     def embed_language_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
         """Embed language tokens using Gemma3's embedding table.
 
+        HF Gemma3's embed_tokens module already applies the embedding scale
+        sqrt(hidden_size), matching Gemma3's normal input_ids forward path.
+
         Args:
             tokens: [B, L] token ids.
 

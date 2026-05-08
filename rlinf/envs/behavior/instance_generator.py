@@ -19,7 +19,6 @@ from pathlib import Path
 
 from omegaconf import DictConfig, OmegaConf
 
-from rlinf.envs.behavior.patch import install_patch
 from rlinf.envs.behavior.utils import setup_omni_cfg
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -437,9 +436,6 @@ def main() -> None:
         env_cfg,
         "omni_config.task.activity_instance_dir",
     )
-
-    print("Installing RLinf BEHAVIOR patch...", flush=True)
-    install_patch()
 
     print("Building OmniGibson sampling config...", flush=True)
     omni_cfg = build_sampling_omni_cfg(

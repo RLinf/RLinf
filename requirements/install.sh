@@ -18,7 +18,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "dreamzero")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm")
 
 #=======================Utility Functions=======================
 
@@ -663,6 +663,9 @@ install_dreamzero_model() {
 }
 
 install_env_only() {
+    if [ "$ENV_NAME" = "d4rl" ]; then
+        PYTHON_VERSION="3.10"
+    fi
     create_and_sync_venv
     SKIP_ROS=${SKIP_ROS:-0}
     case "$ENV_NAME" in
@@ -689,6 +692,9 @@ install_env_only() {
         embodichain)
             install_common_embodied_deps
             install_embodichain_env
+            ;;
+        gim_arm)
+            uv sync --extra gim_arm --active $NO_INSTALL_RLINF_CMD
             ;;
         dosw1)
             install_dosw1_env
