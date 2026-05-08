@@ -230,8 +230,41 @@ CAN 总线需要在使用机械臂之前完成初始化。
 数据采集
 ~~~~~~~~~~~~~~~~~
 
-可参考我们提供的 VR 遥操作代码（改编自 `XRoboToolkit <https://github.com/XR-Robotics>`_），
-用于 GimArm 机械臂的数据采集。
+可参考我们提供的 VR 遥操作代码 `gim_arm_teleop <https://github.com/RLinf/gim_arm_teleop>`_ ，
+用于 GimArm 机械臂的数据采集。推荐按以下流程完成部署：
+
+1. 准备运行环境：
+
+   - 控制机器人电脑推荐 Ubuntu 22.04（x86）；
+   - 头显推荐 PICO 4 Ultra，并确保与控制机器人电脑处于同一局域网；
+   - 若需头显相机数据（VST），需开启对应设备权限。
+
+2. 安装 PC 端服务（XRoboToolkit-PC-Service）并启动：
+
+   - 下载 PC 端服务：`XRoboToolkit_PC_Service_1.0.0_ubuntu_22.04_amd64.deb <https://github.com/XR-Robotics/XRoboToolkit-PC-Service/releases/download/v1.1.1/XRoboToolkit-PC-Service-1.1.1.deb>`_
+
+   .. code-block:: bash
+
+      sudo dpkg -i XRoboToolkit_PC_Service_1.0.0_ubuntu_22.04_amd64.deb
+      bash /opt/apps/roboticsservice/runService.sh
+
+3. 在头显端安装并启动 XRoboToolkit 应用：
+
+   - 安装 APK `XRoboToolkit-PICO-1.1.1.apk <https://github.com/XR-Robotics/XRoboToolkit-Unity-Client/releases/download/v1.1.1/XRoboToolkit-PICO-1.1.1.apk>`_
+   - 连接控制机器人电脑 IP；
+   - 在应用中勾选 ``head``\ /\ ``hand``\ /\ ``controller`` （按任务需求选择）。
+
+4. 安装并运行 Python 遥操作：
+
+   参考 `gim_arm_teleop <https://github.com/RLinf/gim_arm_teleop>`_
+   ，在控制机器人电脑上启动 GimArm 对应的遥操作脚本，
+
+   .. code-block:: bash
+
+      cd gim_arm_teleop
+      python scripts/hardware/teleop_gim_arm_hardware.py
+
+   将 VR 控制数据与机械臂状态同步记录为数据集。
 
 配置文件
 ~~~~~~~~~~~~~~~~~~~~~~

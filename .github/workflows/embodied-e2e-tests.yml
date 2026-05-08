@@ -1013,6 +1013,7 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
+          export LD_LIBRARY_PATH="$(python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))'):${LD_LIBRARY_PATH:-}"
           export EMBODICHAIN_DATA_ROOT=/workspace/dataset/embodichain_data
           python -m embodichain.data download --name CartPole
           python -m embodichain.data download --name SimResources
