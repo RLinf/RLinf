@@ -20,8 +20,8 @@ runner:
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   # sft runner use the len(dataset) as one epoch
-  max_epochs: 6000
-  max_steps: -1
+  max_epochs: -1
+  max_steps: 6000
   # eval the model intenval
   val_check_interval: 1000
   # save the model interval
@@ -71,7 +71,7 @@ actor:
     weight_decay: 0.01
     clip_grad: 1.0
     lr_scheduler: "cosine"
-    total_training_steps: ${runner.max_epochs}
+    total_training_steps: ${runner.max_steps}
     lr_warmup_steps: 200 
 
   fsdp_config:

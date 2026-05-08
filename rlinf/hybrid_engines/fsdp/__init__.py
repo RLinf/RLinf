@@ -24,6 +24,7 @@ except ImportError:
 if version.parse(torch.__version__) >= version.parse("2.6.0"):
     from torch.distributed.fsdp import (
         BackwardPrefetch,
+        CPUOffload,
         CPUOffloadPolicy,
         FSDPModule,
         MixedPrecisionPolicy,
@@ -41,7 +42,11 @@ elif version.parse(torch.__version__) >= version.parse("2.4.0"):
         OffloadPolicy,
         fully_shard,
     )
-    from torch.distributed.fsdp import BackwardPrefetch, ShardingStrategy  # noqa: F401
+    from torch.distributed.fsdp import (  # noqa: F401
+        BackwardPrefetch,
+        CPUOffload,
+        ShardingStrategy,
+    )
     from torch.distributed.fsdp.fully_sharded_data_parallel import (
         FullyShardedDataParallel as FSDP,  # noqa: F401
     )

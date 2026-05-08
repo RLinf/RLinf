@@ -90,6 +90,7 @@ SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
 SupportedModel.GR00T = SupportedModel.register("gr00t", force=True)
 SupportedModel.DEXBOTIC_PI = SupportedModel.register("dexbotic_pi", force=True)
+SupportedModel.DEXBOTIC_DM0 = SupportedModel.register("dexbotic_dm0", force=True)
 SupportedModel.DREAMZERO = SupportedModel.register("dreamzero", force=True)
 SupportedModel.CNN_POLICY = SupportedModel.register("cnn_policy", force=True)
 SupportedModel.FLOW_POLICY = SupportedModel.register("flow_policy", force=True)
@@ -112,6 +113,7 @@ EMBODIED_MODEL = set(
         SupportedModel.MLP_POLICY,
         SupportedModel.GR00T,
         SupportedModel.DEXBOTIC_PI,
+        SupportedModel.DEXBOTIC_DM0,
         SupportedModel.DREAMZERO,
         SupportedModel.CNN_POLICY,
         SupportedModel.FLOW_POLICY,
@@ -875,6 +877,13 @@ def validate_embodied_cfg(cfg):
         weight_sync_interval = cfg.runner.get("weight_sync_interval", 1)
         assert weight_sync_interval > 0, "weight_sync_interval must be greater than 0"
         cfg.runner.weight_sync_interval = weight_sync_interval
+        # Overlap environment bootstrap (reset) with actor training to hide reset latency.
+        # This is enabled only when offload is disabled to avoid resource contention.
+        # Note: If EnvWorker and Actor share the same accelerator, this may increase GPU memory
+        # pressure during the overlap period.
+        cfg.runner.overlap_env_bootstrap = bool(
+            cfg.runner.get("overlap_env_bootstrap", False)
+        ) and not cfg.env.train.get("enable_offload", False)
         if (
             SupportedEnvType(cfg.env.train.env_type) == SupportedEnvType.MANISKILL
             or SupportedEnvType(cfg.env.eval.env_type) == SupportedEnvType.MANISKILL

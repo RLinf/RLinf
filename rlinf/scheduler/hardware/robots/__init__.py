@@ -15,6 +15,7 @@
 from .dosw1 import DOSW1HWConfig, DOSW1HWInfo
 from .dual_franka import DualFrankaConfig, DualFrankaHWInfo
 from .franka import FrankaConfig, FrankaHWInfo
+from .gim_arm import GimArmConfig, GimArmHWInfo
 from .xsquare import Turtle2Config, Turtle2HWInfo
 
 __all__ = [
@@ -24,6 +25,8 @@ __all__ = [
     "DualFrankaHWInfo",
     "FrankaConfig",
     "FrankaHWInfo",
+    "GimArmConfig",
+    "GimArmHWInfo",
     "Turtle2Config",
     "Turtle2HWInfo",
 ]

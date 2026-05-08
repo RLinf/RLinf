@@ -19,8 +19,8 @@ runner:
     experiment_name: "ci-test"
     logger_backends: ["tensorboard"]
 
-  max_epochs: 10
-  max_steps: -1
+  max_epochs: -1
+  max_steps: 5
   val_check_interval: -1
   save_interval: -1
 

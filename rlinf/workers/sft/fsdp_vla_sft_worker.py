@@ -11,11 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
 from typing import Any
 
 import torch
 from omegaconf import DictConfig
 from torch.utils import _pytree
+from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.config import SupportedModel
 from rlinf.models.embodiment.base_policy import ForwardType
@@ -78,16 +80,8 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             SupportedModel.LINGBOTVLA,
             SupportedModel.DREAMZERO,
         ]:
-            batch_data = _pytree.tree_map(
-                lambda x: (
-                    torch.as_tensor(x, device=self.device).contiguous().clone()
-                    if isinstance(x, torch.Tensor)
-                    else x
-                ),
-                batch,
-            )
             with self.amp_context:
-                losses_dict = self.model(forward_type=ForwardType.SFT, data=batch_data)
+                losses_dict = self.model(forward_type=ForwardType.SFT, data=batch)
             if losses_dict.get("dynamics_loss", None) is not None:
                 self._dreamzero_loss = {
                     "dynamics_loss": losses_dict["dynamics_loss"],
@@ -132,3 +126,56 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             )
             self._dreamzero_loss = None
         return train_metrics
+
+    def save_checkpoint(self, save_path: str, step: int = 0) -> None:
+        super().save_checkpoint(save_path, step)
+
+        if isinstance(self.data_loader, StatefulDataLoader):
+            state = self.data_loader.state_dict()
+
+            all_states = [None] * self._world_size
+            torch.distributed.all_gather_object(all_states, state)
+
+            if self._rank == 0:
+                torch.save(all_states, os.path.join(save_path, "data.pt"))
+
+            torch.distributed.barrier()
+
+    def load_checkpoint(self, load_path: str) -> None:
+        super().load_checkpoint(load_path)
+
+        if isinstance(self.data_loader, StatefulDataLoader):
+            all_states = torch.load(
+                os.path.join(load_path, "data.pt"), weights_only=False
+            )
+            state = all_states[self._rank]
+            self.data_loader.load_state_dict(state)
+
+        torch.distributed.barrier()
+
+    def get_max_steps_per_epoch(self):
+        if self.data_loader is None:
+            return 0
+        if SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.OPENPI:
+            num_batches = len(self._openpi_pytorch_dataloader(self.data_loader))
+            return max(1, num_batches // self.gradient_accumulation)
+        return super().get_max_steps_per_epoch()
+
+    @staticmethod
+    def _openpi_pytorch_dataloader(openpi_dataloader: Any):
+        """Unwrap OpenPI `DataLoaderImpl` to the inner PyTorch DataLoader.
+
+        OpenPI torch path:
+          DataLoaderImpl._data_loader -> TorchDataLoader
+          TorchDataLoader._data_loader / .torch_loader -> torch.utils.data.DataLoader
+
+        """
+        torch_data_loader = getattr(openpi_dataloader, "_data_loader", None)
+        pytorch_dl = getattr(torch_data_loader, "_data_loader", None) or getattr(
+            torch_data_loader, "torch_loader", None
+        )
+        if pytorch_dl is None:
+            raise TypeError(
+                "OpenPI dataloader does not expose an inner torch DataLoader; cannot infer steps per epoch from len()."
+            )
+        return pytorch_dl

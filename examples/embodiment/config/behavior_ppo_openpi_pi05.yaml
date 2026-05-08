@@ -3,7 +3,7 @@ defaults:
   - env/behavior_r1pro@env.eval
   - model/pi0_5@actor.model
   - training_backend/fsdp@actor.fsdp_config
-  - weight_syncer/patch_syncer@weight_syncer
+  - weight_syncer/bucket_syncer@weight_syncer # use bucket_syncer to avoid OOM in training on 4090
   - override hydra/job_logging: stdout
 
 hydra:
@@ -16,8 +16,8 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor: 0-0
-    env,rollout: 1-1
+    rollout, actor: 0-1
+    env: 2-3
 
 runner:
   task_type: embodied
@@ -27,10 +27,11 @@ runner:
     experiment_name: "behavior_ppo_openpi05"
     logger_backends: ["tensorboard"]
 
+  only_eval: False
+
   max_epochs: 1000
   max_steps: -1
 
-  only_eval: False
   val_check_interval: -1
   save_interval: 40
   seq_length: 4096
@@ -43,8 +44,8 @@ algorithm:
   normalize_advantages: True
   kl_penalty: kl
   group_size: 1
-  rollout_epoch: 8
-  eval_rollout_epoch: 1
+  rollout_epoch: 2
+  eval_rollout_epoch: 2
 
   reward_type: chunk_level
   logprob_type: token_level
@@ -77,20 +78,29 @@ algorithm:
     max_length: 1024
     min_length: 1
 
+  reward_coef: 5.0
+
 env:
   group_name: "EnvGroup"
 
   train:
-    total_num_envs: 1
-    max_episode_steps: 32
-    max_steps_per_rollout_epoch: 32
+    total_num_envs: 8
+    max_episode_steps: 4096
+    max_steps_per_rollout_epoch: 4096
+    reward_coef: ${algorithm.reward_coef}
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/train
+      fps: 15
+    num_env_subprocess: 2
   eval:
-    total_num_envs: 1
-    max_episode_steps: 32
-    max_steps_per_rollout_epoch: 32
+    total_num_envs: 8
+    max_episode_steps: 4096
+    max_steps_per_rollout_epoch: 4096
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
+      fps: 15
 
 rollout:
   group_name: "RolloutGroup"
@@ -99,21 +109,20 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    
     model_path: "/path/to/model/pi05"
     precision: ${actor.model.precision}
 
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 2
-  global_batch_size: 16
+  micro_batch_size: 4
+  global_batch_size: 64
   seed: 1234
   num_steps: 10
   enable_offload: True
 
   model:
-    model_path: "/path/to/model/pi05"
+    model_path: ${rollout.model.model_path}
     add_value_head: True
     num_images_in_input: 3
     proprio_dim: 32
@@ -139,7 +148,7 @@ actor:
 
   fsdp_config:
     strategy: "fsdp"
-    gradient_checkpointing: True
+    gradient_checkpointing: False
     mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}

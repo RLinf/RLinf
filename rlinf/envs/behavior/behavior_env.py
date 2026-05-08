@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gc
+import inspect
 import json
 import os
 import traceback
 from multiprocessing import get_context
+from threading import Thread
 
 import gymnasium as gym
 import torch
@@ -24,6 +27,7 @@ from omegaconf import DictConfig, OmegaConf
 from rlinf.envs.behavior.instance_loader import ActivityInstanceLoader
 from rlinf.envs.behavior.utils import (
     apply_env_wrapper,
+    apply_runtime_renderer_settings,
     convert_uint8_rgb,
     setup_omni_cfg,
 )
@@ -33,16 +37,32 @@ from rlinf.utils.logging import get_logger
 __all__ = ["BehaviorEnv"]
 
 
-def _behavior_env_worker(cfg: DictConfig, conn, num_envs: int):
-    env = None
-    try:
-        from rlinf.envs.behavior.patch import install_patch
+class BehaviorProcess:
+    @staticmethod
+    def process_loop(cfg: DictConfig, conn, num_envs: int):
+        process = None
+        try:
+            process = BehaviorProcess(cfg, conn, num_envs)
+            process.loop()
+        except Exception:
+            if process is not None and process.conn is not None:
+                process.conn.send({"traceback": traceback.format_exc()})
+        finally:
+            if process is not None:
+                if process.env is not None:
+                    try:
+                        process.env.close()
+                    except Exception:
+                        pass
+                if process.conn is not None:
+                    process.conn.close()
 
-        install_patch()
+    def __init__(self, cfg: DictConfig, conn, num_envs: int):
+        self.conn = conn
         from omnigibson.envs import VectorEnvironment
 
         omni_cfg = setup_omni_cfg(cfg)
-        instance_loader = ActivityInstanceLoader.from_omni_cfg(omni_cfg)
+        self.instance_loader = ActivityInstanceLoader.from_omni_cfg(omni_cfg)
 
         # create env and apply env wrapper if enabled
         omni_cfg_dict = OmegaConf.to_container(
@@ -50,81 +70,169 @@ def _behavior_env_worker(cfg: DictConfig, conn, num_envs: int):
             resolve=True,
             throw_on_missing=True,
         )
-        env = VectorEnvironment(num_envs, omni_cfg_dict)
+        self.env = VectorEnvironment(num_envs, omni_cfg_dict)
+        apply_runtime_renderer_settings()
         wrapper_name = OmegaConf.select(omni_cfg, "env.env_wrapper")
-        env = apply_env_wrapper(env, wrapper_name)
+        self.env = apply_env_wrapper(self.env, wrapper_name)
 
-        conn.send(
-            {
-                "type": "ready",
-                "activity_name": instance_loader.activity_name,
-            }
+        # Isaac Sim's `omni.kit.app` calls ``gc.disable()`` at startup.
+        # OmniGibson has self-referential cycles and leaks memory when
+        # cyclic GC is disabled. Since we do not need real-time performance,
+        # enable cyclic GC here so that we do not encounter OOMs in long runs.
+        gc.enable()
+
+        step_signature = inspect.signature(self.env.step)
+        step_params = step_signature.parameters.values()
+        step_supports_kwargs = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in step_params
+        )
+        self.step_supports_get_obs = (
+            step_supports_kwargs or "get_obs" in step_signature.parameters
+        )
+        self.step_supports_render = (
+            step_supports_kwargs or "render" in step_signature.parameters
+        )
+        self.skip_intermediate_obs_in_chunk = bool(
+            OmegaConf.select(cfg, "skip_intermediate_obs_in_chunk", default=False)
         )
 
+        self.conn.send({"result": self.instance_loader.activity_name})
+
+    def step_env(self, actions, need_obs: bool):
+        if self.step_supports_get_obs and self.step_supports_render:
+            raw_obs, step_rewards, terminations, truncations, infos = self.env.step(
+                actions, get_obs=need_obs, render=need_obs
+            )
+        else:
+            raw_obs, step_rewards, terminations, truncations, infos = self.env.step(
+                actions
+            )
+        if not need_obs:
+            # Normalize intermediate-step observations to None so downstream
+            # code can skip parsing cleanly.
+            raw_obs = None
+        return (
+            raw_obs,
+            to_tensor(step_rewards),
+            to_tensor(terminations),
+            to_tensor(truncations),
+            infos,
+        )
+
+    def reset(self, payload):
+        self.instance_loader.prepare_reset(self.env)
+        raw_obs, infos = self.env.reset()
+        self.conn.send({"result": (raw_obs, infos)})
+
+    def chunk_step(self, chunk_actions):
+        chunk_size = chunk_actions.shape[1]
+        results = []
+        for i in range(chunk_size):
+            actions = chunk_actions[:, i]
+            is_last = i == chunk_size - 1
+            need_obs = not self.skip_intermediate_obs_in_chunk or is_last
+            results.append(self.step_env(actions, need_obs=need_obs))
+        results = tuple(zip(*results))
+        self.conn.send({"result": results})
+
+    def loop(self):
+        cmd_handlers = {
+            "reset": self.reset,
+            "chunk_step": self.chunk_step,
+        }
         while True:
-            cmd, payload = conn.recv()
-
-            if cmd == "reset":
-                instance_loader.prepare_reset(env)
-                raw_obs, infos = env.reset()
-                conn.send({"type": "ok", "result": (raw_obs, infos)})
-
-            elif cmd == "step":
-                result = env.step(payload)
-                conn.send({"type": "ok", "result": result})
-
-            elif cmd == "chunk_step":
-                chunk_actions = payload["chunk_actions"]
-                chunk_size = chunk_actions.shape[1]
-
-                raw_obs_list = []
-                chunk_rewards = []
-                raw_chunk_terminations = []
-                raw_chunk_truncations = []
-                infos_list = []
-
-                for i in range(chunk_size):
-                    actions = chunk_actions[:, i]
-                    raw_obs, step_rewards, terminations, truncations, infos = env.step(
-                        actions
-                    )
-
-                    raw_obs_list.append(raw_obs)
-                    chunk_rewards.append(to_tensor(step_rewards))
-                    raw_chunk_terminations.append(to_tensor(terminations))
-                    raw_chunk_truncations.append(to_tensor(truncations))
-                    infos_list.append(infos)
-
-                conn.send(
-                    {
-                        "type": "ok",
-                        "result": (
-                            raw_obs_list,
-                            chunk_rewards,
-                            raw_chunk_terminations,
-                            raw_chunk_truncations,
-                            infos_list,
-                        ),
-                    }
-                )
-
+            cmd, payload = self.conn.recv()
+            if cmd in cmd_handlers:
+                cmd_handlers[cmd](payload)
             elif cmd == "close":
-                env.close()
-                conn.send({"type": "ok", "result": None})
+                self.env.close()
+                self.env = None
+                self.conn.send({"result": None})
+                self.conn.close()
+                self.conn = None
                 break
             else:
                 raise NotImplementedError(f"Unknown command: {cmd}")
 
-    except Exception:
-        conn.send({"type": "error", "traceback": traceback.format_exc()})
 
-    finally:
-        if env is not None:
-            try:
-                env.close()
-            except Exception:
-                pass
-        conn.close()
+class ThreadWithResult(Thread):
+    def __init__(
+        self, group=None, target=None, name=None, args=(), kwargs=None, *, daemon=None
+    ):
+        super().__init__(group, target, name, args, kwargs, daemon=daemon)
+        self.result = None
+        self.start()
+
+    def run(self):
+        if self._target:
+            self.result = self._target(*self._args, **self._kwargs)
+
+    def join(self):
+        super().join()
+        return self.result
+
+
+class BehaviorProcessProxy:
+    def __init__(self, cfg: DictConfig, num_env_shard: int):
+        spawn_ctx = get_context("spawn")
+        self.parent_conn, child_conn = spawn_ctx.Pipe()
+        self.env_process = spawn_ctx.Process(
+            target=BehaviorProcess.process_loop,
+            args=(
+                cfg,
+                child_conn,
+                num_env_shard,
+            ),
+            daemon=True,
+        )
+        self.env_process.start()
+        child_conn.close()
+        self.last_cmd = "initialize"
+
+    def wait_ready_msg(self):
+        msg = self.wait_for_subproc("initialize")
+        return BehaviorProcessProxy.msg_postprocess(msg, "initialize")
+
+    def call_subproc(self, cmd: str, payload=None, wait=False):
+        assert self.last_cmd is None, (
+            f"last cmd({self.last_cmd}) not finished before calling new cmd({cmd})"
+        )
+        self.parent_conn.send((cmd, payload))
+        self.last_cmd = cmd
+        if wait:
+            result = self.parent_conn.recv()
+            self.last_cmd = None
+            return result
+
+    def wait_for_subproc(self, cmd: str):
+        assert self.last_cmd == cmd, (
+            f"last cmd({self.last_cmd}) called not equal to the cmd to wait for({cmd})"
+        )
+        self.last_cmd = None
+        return self.parent_conn.recv()
+
+    @staticmethod
+    def msg_postprocess(msg: dict, cmd: str):
+        if msg.get("traceback", None) is not None:
+            raise RuntimeError(
+                f"Behavior subprocess env failed on command '{cmd}':\n{msg['traceback']}"
+            )
+        return msg["result"]
+
+    def wait_for_close(self):
+        assert self.last_cmd == "close", (
+            f"last cmd({self.last_cmd}) called but wait for close"
+        )
+        if self.env_process.is_alive():
+            self.env_process.join(timeout=2)
+            if self.env_process.is_alive():
+                self.env_process.terminate()
+        self.env_process = None
+        try:
+            self.parent_conn.close()
+            self.parent_conn = None
+        except Exception:
+            pass
 
 
 class BehaviorEnv(gym.Env):
@@ -138,6 +246,7 @@ class BehaviorEnv(gym.Env):
         record_metrics=True,
     ):
         self.cfg = cfg
+        self.reward_coef = cfg.get("reward_coef", 1)
 
         self.num_envs = num_envs
         self.ignore_terminations = cfg.ignore_terminations
@@ -147,13 +256,30 @@ class BehaviorEnv(gym.Env):
         self.worker_info = worker_info
         self.record_metrics = record_metrics
         self._is_start = True
+        self.num_env_subprocess = int(self.cfg.get("num_env_subprocess", 1))
+        self.num_env_shard = self._split_num_envs(
+            self.num_envs, self.num_env_subprocess
+        )
 
         self.logger = get_logger()
 
         self.auto_reset = cfg.auto_reset
+        self.max_episode_steps = torch.tensor(cfg.max_episode_steps)
+        self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
+        self.skip_intermediate_obs_in_chunk = bool(
+            OmegaConf.select(cfg, "skip_intermediate_obs_in_chunk", default=False)
+        )
         if self.record_metrics:
             self._init_metrics()
         self._init_env()
+
+    def _split_num_envs(self, num_envs: int, num_processes: int) -> int:
+        """Split ``num_envs`` across ``num_processes`` shards as evenly as possible."""
+        assert num_processes > 0, f"num_processes({num_processes}) must be positive"
+        assert num_envs % num_processes == 0, (
+            f"num_envs({num_envs}) must be divisible by num_processes({num_processes})"
+        )
+        return num_envs // num_processes
 
     def _load_tasks_cfg(self, activity_name: str):
         # Read task description
@@ -171,35 +297,124 @@ class BehaviorEnv(gym.Env):
         self.task_description = task_description_map[activity_name]
 
     def _init_env(self):
-        self._ctx = get_context("spawn")
-        self._parent_conn, child_conn = self._ctx.Pipe()
-        self._env_process = self._ctx.Process(
-            target=_behavior_env_worker,
-            args=(
+        self.env_proxys = [
+            BehaviorProcessProxy(
                 self.cfg,
-                child_conn,
-                self.num_envs,
-            ),
-            daemon=True,
+                self.num_env_shard,
+            )
+            for _ in range(self.num_env_subprocess)
+        ]
+        activity_names = [env_proxy.wait_ready_msg() for env_proxy in self.env_proxys]
+
+        if len(set(activity_names)) != 1:
+            raise RuntimeError(
+                f"Behavior env subprocesses reported different activity_name: {activity_names}"
+            )
+        activity_name = activity_names[0]
+        self._load_tasks_cfg(activity_name)
+
+    def call_subprocs_shards(self, cmd: str, payloads: list | None = None):
+        """Send the same command to every shard; recv in parallel to avoid pipe backpressure."""
+        if payloads is None:
+            payload_shards = [None] * len(self.env_proxys)
+        else:
+            assert len(payloads) == self.num_envs, (
+                f"payload_shards length {len(payload_shards)} != num subprocesses {self.num_envs}"
+            )
+            s = self.num_env_shard
+            payload_shards = [
+                payloads[i * s : (i + 1) * s] for i in range(self.num_env_subprocess)
+            ]
+
+        if self.num_env_subprocess > 1:
+            recv_threads = [
+                ThreadWithResult(
+                    target=env_proxy.call_subproc,
+                    args=(cmd, payload_shard, True),
+                    daemon=True,
+                )
+                for env_proxy, payload_shard in zip(self.env_proxys, payload_shards)
+            ]
+            all_msgs = [thread.join() for thread in recv_threads]
+        else:
+            for env_proxy, payload_shard in zip(self.env_proxys, payload_shards):
+                env_proxy.call_subproc(cmd, payload_shard)
+            all_msgs = [
+                env_proxy.wait_for_subproc(cmd) for env_proxy in self.env_proxys
+            ]
+        return [BehaviorProcessProxy.msg_postprocess(msg, cmd) for msg in all_msgs]
+
+    def env_reset(self):
+        shard_results = self.call_subprocs_shards("reset")
+        all_raw_obs, all_infos = [], []
+        for raw_obs, infos in shard_results:
+            all_raw_obs.extend(raw_obs)
+            all_infos.extend(infos)
+        return all_raw_obs, all_infos
+
+    def merge_chunk_results(self, shard_results: list, chunk_size: int):
+        def cat_parts(parts):
+            tensors = [p if torch.is_tensor(p) else torch.as_tensor(p) for p in parts]
+            return torch.cat(tensors, dim=0)
+
+        merged_obs_lists = []
+        merged_rewards = []
+        merged_terms = []
+        merged_trunc = []
+        merged_infos = []
+        for step_idx in range(chunk_size):
+            is_last = step_idx == chunk_size - 1
+            need_obs = not self.skip_intermediate_obs_in_chunk or is_last
+            if need_obs:
+                merged_obs_step = []
+            else:
+                merged_obs_step = None
+            reward_parts = []
+            termination_parts = []
+            truncation_parts = []
+            merged_infos_step = []
+            for (
+                raw_obs_list,
+                raw_rewards_list,
+                raw_terminations_list,
+                raw_truncations_list,
+                raw_infos_list,
+            ) in shard_results:
+                if need_obs:
+                    assert raw_obs_list[step_idx] is not None, (
+                        f"obs is None at step {step_idx}"
+                    )
+                    merged_obs_step.extend(raw_obs_list[step_idx])
+                else:
+                    assert raw_obs_list[step_idx] is None, (
+                        f"obs is not None at step {step_idx}"
+                    )
+                reward_parts.append(raw_rewards_list[step_idx])
+                termination_parts.append(raw_terminations_list[step_idx])
+                truncation_parts.append(raw_truncations_list[step_idx])
+                merged_infos_step.extend(raw_infos_list[step_idx])
+            merged_obs_lists.append(merged_obs_step)
+            merged_rewards.append(cat_parts(reward_parts))
+            merged_terms.append(cat_parts(termination_parts))
+            merged_trunc.append(cat_parts(truncation_parts))
+            merged_infos.append(merged_infos_step)
+        return (
+            merged_obs_lists,
+            merged_rewards,
+            merged_terms,
+            merged_trunc,
+            merged_infos,
         )
-        self._env_process.start()
-        child_conn.close()
 
-        msg = self._parent_conn.recv()
-        if msg.get("type") != "ready":
-            raise RuntimeError(
-                f"Failed to initialize behavior subprocess env: {msg.get('traceback', msg)}"
-            )
-        self._load_tasks_cfg(msg["activity_name"])
+    def env_chunk_step(self, chunk_actions):
+        shard_results = self.call_subprocs_shards("chunk_step", chunk_actions)
+        return self.merge_chunk_results(shard_results, chunk_actions.shape[1])
 
-    def _call_subproc(self, cmd: str, payload=None):
-        self._parent_conn.send((cmd, payload))
-        msg = self._parent_conn.recv()
-        if msg.get("type") == "error":
-            raise RuntimeError(
-                f"Behavior subprocess env failed on command '{cmd}':\n{msg['traceback']}"
-            )
-        return msg["result"]
+    def env_close(self):
+        for env_proxy in self.env_proxys:
+            env_proxy.call_subproc("close")
+        for env_proxy in self.env_proxys:
+            env_proxy.wait_for_close()
 
     def _extract_obs_image(self, raw_obs):
         state = None
@@ -239,41 +454,24 @@ class BehaviorEnv(gym.Env):
             "wrist_images": torch.stack(
                 [obs["wrist_images"] for obs in extracted_obs_list], axis=0
             ),  # [N_ENV, N_IMG, H, W, C]
-            "task_descriptions": [self.task_description for i in range(self.num_envs)],
+            "task_descriptions": [self.task_description for _ in range(self.num_envs)],
             "states": torch.stack(
                 [obs["state"] for obs in extracted_obs_list], axis=0
             ),  # [N_ENV, 32]
         }
         return obs
 
+    def _calc_step_reward(self, reward):
+        reward = self.reward_coef * reward
+        return reward
+
     def reset(self):
-        raw_obs, infos = self._call_subproc("reset")
+        raw_obs, infos = self.env_reset()
         obs = self._wrap_obs(raw_obs)
         rewards = torch.zeros(self.num_envs, dtype=bool)
         infos = self._record_metrics(rewards, infos)
         self._reset_metrics()
         return obs, infos
-
-    def step(
-        self, actions=None
-    ) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor, dict]:
-        if isinstance(actions, torch.Tensor):
-            actions = actions.detach().cpu()
-        raw_obs, rewards, terminations, truncations, infos = self._call_subproc(
-            "step", actions
-        )
-        obs = self._wrap_obs(raw_obs)
-        infos = self._record_metrics(rewards, infos)
-        if self.ignore_terminations:
-            terminations[:] = False
-
-        return (
-            obs,
-            to_tensor(rewards),
-            to_tensor(terminations),
-            to_tensor(truncations),
-            infos,
-        )
 
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
@@ -285,26 +483,41 @@ class BehaviorEnv(gym.Env):
             raw_terminations_list,
             raw_truncations_list,
             raw_infos_list,
-        ) = self._call_subproc(
-            "chunk_step",
-            {
-                "chunk_actions": chunk_actions,
-            },
-        )
+        ) = self.env_chunk_step(chunk_actions)
 
-        chunk_size = len(raw_obs_list)
         obs_list = []
         infos_list = []
-        for i in range(chunk_size):
-            infos = self._record_metrics(raw_rewards_list[i], raw_infos_list[i])
+        scaled_rewards_list = []
+        merged_terminations_list = []
+        info_done_flags = []
+        for raw_obs, raw_rewards, raw_terminations, step_infos in zip(
+            raw_obs_list,
+            raw_rewards_list,
+            raw_terminations_list,
+            raw_infos_list,
+        ):
+            if raw_obs is None:
+                obs_list.append(None)
+            else:
+                obs_list.append(self._wrap_obs(raw_obs))
+            step_rewards = self._calc_step_reward(raw_rewards)
+            infos_list.append(self._record_metrics(step_rewards, step_infos))
             if self.ignore_terminations:
-                raw_terminations_list[i] = torch.zeros_like(raw_terminations_list[i])
-            obs_list.append(self._wrap_obs(raw_obs_list[i]))
-            infos_list.append(infos)
+                raw_terminations = torch.zeros_like(raw_terminations)
+            merged_terminations_list.append(raw_terminations)
+            scaled_rewards_list.append(step_rewards)
+            # `raw_infos_list[i]` is a list of per-env info dicts for chunk step i.
+            step_done = [
+                self._extract_info_done(info) if isinstance(info, dict) else False
+                for info in step_infos
+            ]
+            info_done_flags.append(torch.tensor(step_done, dtype=torch.bool))
 
-        chunk_rewards = torch.stack(raw_rewards_list, dim=1)  # [num_envs, chunk_steps]
+        chunk_rewards = torch.stack(
+            scaled_rewards_list, dim=1
+        )  # [num_envs, chunk_steps]
         raw_terminations = torch.stack(
-            raw_terminations_list, dim=1
+            merged_terminations_list, dim=1
         )  # [num_envs, chunk_steps]
         raw_truncations = torch.stack(
             raw_truncations_list, dim=1
@@ -317,16 +530,6 @@ class BehaviorEnv(gym.Env):
         # `info["done"]` while leaving `terminations`/`truncations` booleans
         # as all-False for the whole chunk. RLinf's evaluation metrics gate on
         # `terminations|truncations`, so we fall back to info-done here.
-        #
-        # `raw_infos_list[i]` is a list of per-env info dicts for chunk step i.
-        info_done_flags = []
-        for i in range(chunk_size):
-            step_infos = raw_infos_list[i]
-            step_done = [
-                self._extract_info_done(info) if isinstance(info, dict) else False
-                for info in step_infos
-            ]
-            info_done_flags.append(torch.tensor(step_done, dtype=torch.bool))
         past_info_dones = torch.stack(info_done_flags, dim=1).any(dim=1)
 
         # If the config asks to ignore terminations, map info-done into
@@ -361,7 +564,7 @@ class BehaviorEnv(gym.Env):
 
     @property
     def elapsed_steps(self):
-        return torch.tensor(self.cfg.max_episode_steps)
+        return self.max_episode_steps
 
     @property
     def is_start(self):
@@ -446,14 +649,4 @@ class BehaviorEnv(gym.Env):
         pass
 
     def close(self):
-        if not hasattr(self, "_parent_conn"):
-            return
-        try:
-            self._call_subproc("close")
-        except Exception:
-            pass
-        finally:
-            if self._env_process.is_alive():
-                self._env_process.join(timeout=2)
-                if self._env_process.is_alive():
-                    self._env_process.terminate()
+        self.env_close()

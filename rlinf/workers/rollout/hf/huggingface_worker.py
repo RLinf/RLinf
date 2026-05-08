@@ -45,9 +45,6 @@ class MultiStepRolloutWorker(Worker):
 
         self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
         self.enable_offload = self.cfg.rollout.get("enable_offload", False)
-        self.sync_weight_load_instant = self.cfg.rollout.get(
-            "sync_weight_load_instant", True
-        )
 
         self.placement = HybridComponentPlacement(cfg, Cluster())
 
