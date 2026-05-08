@@ -17,7 +17,9 @@ import os
 
 import torch
 import yaml
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
+
+from rlinf.utils.logging import get_logger
 
 SUPPORTED_ENV_WRAPPERS = ("rgb", "default", "rgb_lowres", "rich_obs")
 
@@ -108,7 +110,7 @@ def apply_runtime_renderer_settings() -> None:
 
     lazy.carb.settings.get_settings().set_float(
         "/rtx-transient/resourcemanager/texturestreaming/memoryBudget",
-        0.0,
+        0.1,
     )
 
 
@@ -236,6 +238,39 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.update(
         omni_cfg, "robots[0].proprio_obs", override_proprio_obs, merge=True
     )
+
+    # automatically set task-relevant rooms to ``scene.load_room_types`` via gello.
+    # (mirrored from OmniGibson ``learning/eval.py``)
+    partial_scene_load = OmegaConf.select(omni_cfg, "scene.partial_scene_load")
+    if partial_scene_load is not None:
+        with open_dict(omni_cfg.scene):
+            omni_cfg.scene.pop("partial_scene_load", None)
+        if partial_scene_load:
+            from gello.robots.sim_robot.og_teleop_utils import (
+                augment_rooms,
+                get_task_relevant_room_types,
+            )
+
+            activity_name = OmegaConf.select(omni_cfg, "task.activity_name")
+            scene_model = OmegaConf.select(omni_cfg, "scene.scene_model")
+            if not activity_name or not scene_model:
+                raise ValueError(
+                    "partial_scene_load requires task.activity_name and scene.scene_model "
+                    f"in omni_config; got activity_name={activity_name!r}, "
+                    f"scene_model={scene_model!r}."
+                )
+            relevant_rooms = get_task_relevant_room_types(activity_name=activity_name)
+            relevant_rooms = augment_rooms(relevant_rooms, scene_model, activity_name)
+            relevant_rooms.sort()
+            OmegaConf.update(
+                omni_cfg,
+                "scene.load_room_types",
+                relevant_rooms,
+                merge=False,
+            )
+            get_logger().info(
+                f"Auto-detected relevant rooms for task {activity_name}: {relevant_rooms}"
+            )
 
     # setup omnigibson macros, according to configuration yaml
     macro_cfg = OmegaConf.select(omni_cfg, "macro")

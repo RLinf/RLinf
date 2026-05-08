@@ -332,6 +332,13 @@ Using behavior as an example:
   presampled pose override. When converting from
   ``template.json``, omitting ``robot_poses`` is usually safer than writing the
   current simulator robot pose into the cache.
+- ``omni_config.scene.partial_scene_load``:
+  When ``true``, RLinf automatically fills ``scene.load_room_types`` with rooms relevant to
+  ``task.activity_name`` in ``scene.scene_model``, which usually reduces startup time
+  and memory versus loading the full layout. Requires both ``activity_name`` and
+  ``scene_model``. When ``false`` or omitted, RLinf does not auto-override
+  ``load_room_types``; set ``load_room_types`` explicitly if you need a custom
+  room subset.
 - Generating cached instances with RLinf's generator:
   RLinf provides ``rlinf/envs/behavior/instance_generator.py`` to
   generate ``*_template.json`` and ``*_template-tro_state.json`` files directly
