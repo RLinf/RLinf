@@ -549,7 +549,6 @@ class EmbodiedRolloutResult:
         default_factory=list
     )  # reward_length
     reward_dones: list[torch.Tensor] = field(default_factory=list)  # reward_length
-    reward_successes: list[torch.Tensor] = field(default_factory=list)  # reward_length
 
     def append_step_result(self, result: ChunkStepResult):
         if result.actions is not None:

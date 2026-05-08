@@ -43,9 +43,6 @@ from rlinf.utils.nested_dict_process import (
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.history_manager import HistoryManager
 from rlinf.workers.env.reward_postprocess import (
-    OracleDeltaGAEConfig,
-    OracleDeltaGAERewardProcessor,
-    apply_success_bonus,
     compute_reward_assign_lengths,
     normalize_total_reward,
 )
@@ -106,10 +103,6 @@ class EnvWorker(Worker):
         if self.use_external_reward_model:
             self.reward_weight = self.cfg.reward.get("reward_weight", 1.0)
             self.env_reward_weight = self.cfg.reward.get("env_reward_weight", 0.0)
-        oracle_reward_cfg = self.cfg.get("reward", {}).get("oracle_delta_gae", {})
-        self.use_oracle_delta_gae = bool(oracle_reward_cfg.get("enable", False))
-        self.oracle_reward_cfg = oracle_reward_cfg
-        self.oracle_reward_processor: OracleDeltaGAERewardProcessor | None = None
         self.normalize_total_reward = bool(
             self.cfg.get("reward", {}).get("normalize_total_reward", False)
         )
@@ -119,12 +112,11 @@ class EnvWorker(Worker):
         self.reward_normalization_eps = float(
             self.cfg.get("reward", {}).get("normalization_eps", 1.0e-6)
         )
-        self.success_bonus = float(self.cfg.get("reward", {}).get("success_bonus", 0.0))
         self.reward_pending_step_window = int(
             self.cfg.reward.get("pending_step_window", 0)
         )
-        self.use_history_reward_pipeline = self.reward_mode == "history_buffer" and (
-            self.use_external_reward_model or self.use_oracle_delta_gae
+        self.use_history_reward_pipeline = (
+            self.reward_mode == "history_buffer" and self.use_external_reward_model
         )
 
         # Env configurations
@@ -210,30 +202,6 @@ class EnvWorker(Worker):
                     HistoryManager(self.cfg.reward, self.train_num_envs_per_stage)
                     for _ in range(self.stage_num)
                 ]
-            if self.use_oracle_delta_gae:
-                self.oracle_reward_processor = OracleDeltaGAERewardProcessor(
-                    OracleDeltaGAEConfig(
-                        value_checkpoint_path=self.oracle_reward_cfg.value_checkpoint_path,
-                        gamma=float(self.oracle_reward_cfg.get("gamma", 0.8)),
-                        gae_lambda=float(self.oracle_reward_cfg.get("gae_lambda", 0.9)),
-                        label_mode=str(
-                            self.oracle_reward_cfg.get("label_mode", "threshold")
-                        ),
-                        delta_threshold=float(
-                            self.oracle_reward_cfg.get("delta_threshold", 0.2)
-                        ),
-                        positive_reward=float(
-                            self.oracle_reward_cfg.get("positive_reward", 1.0)
-                        ),
-                        unchanged_reward=float(
-                            self.oracle_reward_cfg.get("unchanged_reward", 0.0)
-                        ),
-                        negative_reward=float(
-                            self.oracle_reward_cfg.get("negative_reward", -0.5)
-                        ),
-                        device=str(self.oracle_reward_cfg.get("device", "cpu")),
-                    )
-                )
 
     def update_env_cfg(self):
         if not self.only_eval:
@@ -488,11 +456,6 @@ class EnvWorker(Worker):
                 chunk_truncations,
                 infos_list,
             ) = self.env_list[stage_id].chunk_step(chunk_actions)
-        chunk_successes = self._build_chunk_successes(
-            infos_list=infos_list,
-            num_envs=chunk_rewards.shape[0],
-            num_action_chunks=chunk_rewards.shape[1],
-        )
         if isinstance(obs_list, (list, tuple)):
             extracted_obs = obs_list[-1] if obs_list else None
         if isinstance(infos_list, (list, tuple)):
@@ -535,7 +498,6 @@ class EnvWorker(Worker):
             obs=extracted_obs,
             final_obs=final_obs,
             rewards=chunk_rewards,
-            successes=chunk_successes,
             dones=chunk_dones,
             terminations=chunk_terminations,
             truncations=chunk_truncations,
@@ -660,60 +622,6 @@ class EnvWorker(Worker):
                     merged_final_obs[key][done_mask] = final_value[done_mask]
 
         return merged_final_obs
-
-    def _build_chunk_successes(
-        self, infos_list: Any, num_envs: int, num_action_chunks: int
-    ) -> torch.Tensor:
-        """Build per-step success flags from environment infos."""
-        chunk_successes = torch.zeros(
-            (num_envs, num_action_chunks), dtype=torch.bool, device="cpu"
-        )
-        if not isinstance(infos_list, (list, tuple)):
-            return chunk_successes
-
-        num_steps = min(num_action_chunks, len(infos_list))
-        for step_idx in range(num_steps):
-            step_infos = infos_list[step_idx]
-            if not isinstance(step_infos, dict):
-                continue
-
-            step_success = torch.zeros(num_envs, dtype=torch.bool, device="cpu")
-
-            if "success" in step_infos:
-                success = step_infos["success"]
-                if isinstance(success, torch.Tensor):
-                    step_success |= success.detach().to(device="cpu", dtype=torch.bool)
-                else:
-                    step_success |= torch.as_tensor(success, dtype=torch.bool)
-
-            final_info = step_infos.get("final_info", None)
-            if isinstance(final_info, dict) and "success" in final_info:
-                final_success = final_info["success"]
-                if isinstance(final_success, torch.Tensor):
-                    final_success = final_success.detach().to(
-                        device="cpu", dtype=torch.bool
-                    )
-                else:
-                    final_success = torch.as_tensor(final_success, dtype=torch.bool)
-
-                final_mask = step_infos.get("_final_info", None)
-                if final_mask is None:
-                    final_mask = step_infos.get("_final_observation", None)
-                if final_mask is not None:
-                    if isinstance(final_mask, torch.Tensor):
-                        final_mask = final_mask.detach().to(device="cpu")
-                    else:
-                        final_mask = torch.as_tensor(final_mask)
-                    if final_mask.ndim > 1:
-                        final_mask = final_mask.any(dim=-1)
-                    final_mask = final_mask.to(dtype=torch.bool)
-                    step_success[final_mask] = final_success[final_mask]
-                else:
-                    step_success |= final_success
-
-            chunk_successes[:, step_idx] = step_success
-
-        return chunk_successes
 
     def recv_chunk_actions(self, input_channel: Channel, mode="train") -> np.ndarray:
         """Receive and merge chunked actions for the current env worker.
@@ -865,54 +773,6 @@ class EnvWorker(Worker):
     ) -> None:
         rollout_result.rewards = [step.cpu().contiguous() for step in rewards.unbind(0)]
 
-    def _apply_oracle_delta_gae_rewards(
-        self,
-        rollout_result: EmbodiedRolloutResult,
-    ) -> None:
-        if self.oracle_reward_processor is None or not rollout_result.rewards:
-            return
-
-        reward_tensor = self._stack_aligned_reward_field(rollout_result.rewards)
-        done_tensor = self._stack_aligned_reward_field(rollout_result.reward_dones)
-        reward_assign_lengths = self._stack_aligned_reward_field(
-            rollout_result.reward_assign_lengths
-        )
-        if (
-            reward_tensor is None
-            or done_tensor is None
-            or reward_assign_lengths is None
-        ):
-            return
-
-        if not rollout_result.curr_obs or not rollout_result.next_obs:
-            raise ValueError(
-                "Oracle delta-GAE reward requires collected transitions with "
-                "curr_obs/next_obs state tensors."
-            )
-        curr_states = torch.stack(
-            [step_obs["states"] for step_obs in rollout_result.curr_obs], dim=0
-        ).cpu()
-        next_states = torch.stack(
-            [step_obs["states"] for step_obs in rollout_result.next_obs], dim=0
-        ).cpu()
-
-        if reward_tensor.shape[-1] != 1:
-            raise ValueError(
-                "Oracle delta-GAE reward currently only supports "
-                "actor.model.num_action_chunks == 1."
-            )
-        oracle_rewards, _, _ = self.oracle_reward_processor.compute_oracle_rewards(
-            curr_states=curr_states,
-            next_states=next_states,
-            rewards=reward_tensor.squeeze(-1),
-            dones=done_tensor.squeeze(-1).bool(),
-            reward_assign_lengths=reward_assign_lengths.long(),
-        )
-        self._overwrite_reward_list(
-            rollout_result,
-            oracle_rewards.unsqueeze(-1).to(dtype=reward_tensor.dtype),
-        )
-
     def _apply_reward_postprocess(
         self,
         rollout_result: EmbodiedRolloutResult,
@@ -920,20 +780,9 @@ class EnvWorker(Worker):
         if not rollout_result.rewards:
             return
 
-        if self.use_oracle_delta_gae:
-            self._apply_oracle_delta_gae_rewards(rollout_result)
-
         reward_tensor = self._stack_aligned_reward_field(rollout_result.rewards)
         if reward_tensor is None:
             return
-
-        success_mask = self._stack_aligned_reward_field(rollout_result.reward_successes)
-        if success_mask is not None:
-            reward_tensor = apply_success_bonus(
-                reward_tensor,
-                success_mask=success_mask.to(dtype=torch.float32),
-                success_bonus=self.success_bonus,
-            ).to(dtype=reward_tensor.dtype)
 
         if self.normalize_total_reward:
             reward_tensor = normalize_total_reward(
@@ -1246,7 +1095,6 @@ class EnvWorker(Worker):
             truncations=pending_step.env_output.truncations,
             terminations=pending_step.env_output.terminations,
             rewards=rewards,
-            successes=pending_step.env_output.successes,
         )
         self.rollout_results[pending_step.stage_id].append_step_result(
             chunk_step_result
@@ -1268,14 +1116,6 @@ class EnvWorker(Worker):
                 )
             self.rollout_results[pending_step.stage_id].reward_dones.append(
                 reward_dones.cpu().contiguous()
-            )
-            reward_successes = pending_step.env_output.successes
-            if reward_successes is None:
-                reward_successes = torch.zeros_like(
-                    chunk_step_result.rewards, dtype=torch.bool
-                )
-            self.rollout_results[pending_step.stage_id].reward_successes.append(
-                reward_successes.cpu().contiguous()
             )
         if (
             self.reward_mode == "history_buffer"
@@ -1576,12 +1416,6 @@ class EnvWorker(Worker):
                                     )
                                 else:
                                     pending_reward_count += 1
-                        elif self.use_oracle_delta_gae:
-                            _, history_lengths = self.build_reward_request(
-                                env_output=env_output,
-                                stage_id=stage_id,
-                            )
-
                     if no_pending_reward and chunk_step_idx != 0:
                         env_batch = env_output.to_dict()
                         self.send_env_batch(
@@ -1682,12 +1516,6 @@ class EnvWorker(Worker):
                             )
                         else:
                             pending_reward_count += 1
-                elif self.use_oracle_delta_gae:
-                    _, history_lengths = self.build_reward_request(
-                        env_output=env_output,
-                        stage_id=stage_id,
-                        last_run=last_run,
-                    )
                 if no_pending_reward:
                     env_batch = env_output.to_dict()
                     self.send_env_batch(

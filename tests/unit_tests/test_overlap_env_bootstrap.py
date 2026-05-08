@@ -93,7 +93,6 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         self.worker.collect_transitions = False
         self.worker.collect_prev_infos = True
         self.worker.reward_pending_step_window = 1
-        self.worker.use_oracle_delta_gae = False
         self.worker.reward_mode = "default"
         self.worker.history_reward_assign = False
         self.worker._prefetched_train_bootstrap = None
