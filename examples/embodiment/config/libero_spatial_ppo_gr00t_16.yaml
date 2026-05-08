@@ -111,7 +111,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/workspace/test/RLinf/GR00T-1.6-SFT-LIBERO-Spatial-RLinf-SFT-3000"
+    model_path: "/path/to/GR00T-N1.6-3B-spatial"
     precision: ${actor.model.precision}
 actor:
   group_name: "ActorGroup"
@@ -123,7 +123,7 @@ actor:
   enable_offload: True
 
   model:
-    model_path: "/workspace/test/RLinf/GR00T-1.6-SFT-LIBERO-Spatial-RLinf-SFT-3000"
+    model_path: "/path/to/GR00T-N1.6-3B-spatial"
     model_type: "gr00t_1_6"   
     embodiment_tag: "libero_panda"
     add_value_head: True

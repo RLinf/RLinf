@@ -243,3 +243,28 @@ RLinf 框架针对 GR00T-N1.6 采用了高度解耦的两阶段训练架构：
        logger_backends: ["tensorboard"]
 
 微调完成后，系统将在输出目录生成 ``metadata.json`` 等统计文件，保留推理和后续部署所需的关键模态信息。
+
+在LIBERO环境中，GR00T-N1.6 通过上述配置和训练流程，能够实现从视觉输入到连续动作输出的端到端强化学习微调，显著提升机器人在复杂操作任务中的表现与泛化能力。
+
+成功率展示如下（PPO）：
+
+.. raw:: html
+
+   <div style="display: flex; justify-content: center; margin: 20px 0;">
+     <div style="flex: 0.5; text-align: center;">
+       <img src="https://github.com/RLinf/misc/blob/main/pic/gr00t_1.6_ppo_success_rate.png?raw=true" style="width: 100%;"/>
+       <p><em>GR00T-N1.6 SFT + PPO在 LIBERO_Spatial 的成功率曲线</em></p>
+     </div>
+   </div>
+
+.. list-table:: **GR00T-N1.5模型使用Flow-SDE方法在LIBERO上的结果**
+   :header-rows: 1
+
+   * - 模型
+     - Spatial 
+
+   * - GR00T-N1.6 SFT
+     - |huggingface| `70% <https://huggingface.co/RLinf/RLinf-Gr00t-N1.6-RL-Spatial>`_
+
+   * - +PPO
+     - |huggingface| `82% <https://huggingface.co/RLinf/RLinf-Gr00t-N1.6-RL-Spatial-Step500>`_

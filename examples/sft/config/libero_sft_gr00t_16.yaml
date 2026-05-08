@@ -29,7 +29,7 @@ runner:
   save_interval: 1000
 
 data:
-  train_data_paths: '/workspace/test/RLinf/libero_spatial_no_noops_1.0.0_lerobot'
+  train_data_paths: '/path/to/Gr00t_16-libero-Spatial-dataset'
   action_key: 'action'
 
 algorithm:
@@ -44,8 +44,7 @@ actor:
 
   model:
     precision: 'bf16'
-    model_path: '/workspace/test/RLinf/GR00T-N1.6-3B'
-    processor_path: '/workspace/test/RLinf/logs/sft_curve_compare_after_fix_20260501_165521/official_sft_tb/processor'
+    model_path: '/path/to/GR00T-N1.6-3B'
     model_type: 'gr00t_1_6_sft'
     num_action_chunks: 16
     embodiment_tag: 'libero_panda'

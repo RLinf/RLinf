@@ -31,7 +31,7 @@ runner:
   save_interval: -1
 
 data:
-  train_data_paths: "/workspace/test/RLinf/libero_spatial_no_noops_1.0.0_lerobot"
+  train_data_paths: "/workspace/dataset/Gr00t_16-libero-Spatial-dataset"
   action_key: "action"
 
 algorithm:
@@ -47,8 +47,7 @@ actor:
   # Override the default values in model/gr00t_16
   model:
     precision: "bf16"
-    model_path: "/workspace/test/RLinf/GR00T-N1.6-3B"
-    processor_path: "/workspace/Isaac-GR00T/results/libero_spatial_official_tb/processor"
+    model_path: "/workspace/dataset/GR00T-N1.6-3B"
     model_type: "gr00t_1_6_sft"
     num_action_chunks: 16
     embodiment_tag: "libero_panda"

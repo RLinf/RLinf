@@ -243,3 +243,29 @@ Visualization and Result Monitoring
      logger_backends: ["tensorboard"]
 
 After fine-tuning, the system will generate ``metadata.json`` and other statistical files in the output directory, preserving key modality information needed for inference and subsequent deployment.
+
+
+In the LIBERO environment, GR00T-N1.6 achieves end-to-end reinforcement learning fine-tuning from visual input to continuous motion output through the aforementioned configuration and training process, significantly improving the robot’s performance and generalization capabilities in complex operational tasks.
+
+The success rates are shown below (PPO):
+
+.. raw:: html
+
+   <div style="display: flex; justify-content: center; margin: 20px 0;">
+     <div style="flex: 0.5; text-align: center;">
+       <img src="https://github.com/RLinf/misc/blob/main/pic/gr00t_1.6_ppo_success_rate.png?raw=true" style="width: 100%;"/>
+       <p><em>GR00T-N1.6 SFT + PPO Accuracy Curve on LIBERO_Spatial</em></p>
+     </div>
+   </div>
+
+.. list-table:: **Results of the GR00T-N1.5 model using the Flow-SDE method on LIBERO**
+   :header-rows: 1
+
+   * - Model
+     - Spatial 
+
+   * - GR00T-N1.6 SFT
+     - |huggingface| `70% <https://huggingface.co/RLinf/RLinf-Gr00t-N1.6-RL-Spatial>`_
+
+   * - +PPO
+     - |huggingface| `82% <https://huggingface.co/RLinf/RLinf-Gr00t-N1.6-RL-Spatial-Step500>`_
