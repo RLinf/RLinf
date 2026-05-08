@@ -33,7 +33,7 @@ Algorithm
 
 3. **Online HG-DAgger**
 
-   - Async rollout continues on the real robot with ``beta``-scheduled expert guidance.
+   - Async rollout continues on the real robot; expert actions come from human teleoperation through the spacemouse.
    - With ``only_save_expert: True``, only expert-acted steps are added to the replay buffer.
 
 4. **Replay-Buffer Updates**

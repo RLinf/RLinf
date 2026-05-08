@@ -36,7 +36,7 @@ OpenPI SFT，最后在机器人上继续运行异步在线 HG-DAgger。
 
 3. **在线 HG-DAgger**
 
-   - 异步 rollout 在真机上继续执行，并使用 ``beta`` 调度专家引导。
+   - 异步 rollout 在真机上继续执行，专家数据由人工通过 spacemouse 遥操作产生。
    - 当 ``only_save_expert: True`` 时，只有专家实际执行的 step 会写入 replay buffer。
 
 4. **Replay Buffer 更新**
