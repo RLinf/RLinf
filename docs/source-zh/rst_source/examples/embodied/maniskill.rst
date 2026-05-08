@@ -201,6 +201,12 @@
 - **OpenVLA + GRPO**：``examples/embodiment/config/maniskill_grpo_openvla.yaml``  
 - **OpenVLA-OFT + GRPO**：``examples/embodiment/config/maniskill_grpo_openvlaoft.yaml``
 
+Reward model 变体请参考：
+
+- :doc:`maniskill_resnet_reward`：MLP policy + ResNet reward model。
+- :doc:`maniskill_vlm_reward`：MLP policy + Qwen3-VL 历史 reward model，并包含
+  async queued reward worker 与 SGLang 后端说明。
+
 **3. 启动命令**
 
 选择配置后，运行以下命令开始训练：

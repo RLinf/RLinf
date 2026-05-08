@@ -236,6 +236,9 @@ reward
 
 ``reward.use_reward_model``：是否使用奖励模型。
 
+具身 reward model 还会在 ``reward`` 下配置 worker 放置、reward 模式、reward 混合方式
+以及模型后端。ResNet 与 VLM 示例见下方具身 reward 小节。
+
 critic
 ~~~~~~~~~~~~~~~
 
@@ -1017,6 +1020,78 @@ actor
 ``actor.optim.adam_beta1/beta2/eps``：Adam 超参数。
 
 ``actor.optim.clip_grad``：梯度裁剪阈值。
+
+reward
+~~~~~~~~~~~~~~~
+
+.. code:: yaml
+
+  reward:
+    use_reward_model: True
+    group_name: "RewardGroup"
+    use_output_step: 0
+    reward_mode: history_buffer
+    history_reward_assign: True
+    reward_weight: 1.0
+    env_reward_weight: 0.0
+
+    model:
+      model_type: history_vlm
+      model_path: /path/to/Qwen3-VL-4B-Instruct
+      lora_path: /path/to/qwen3-vl-reward-lora
+      precision: bf16
+      input_builder_name: qwentrend_input_builder
+      reward_parser_name: qwentrend_reward_parser
+      history_buffers:
+        history_window:
+          history_size: 5
+          min_history_size: 5
+          input_interval: 1
+          history_keys:
+            - main_images
+            - extra_view_images
+          input_on_done: false
+      infer_micro_batch_size: 64
+
+``reward.use_reward_model``：启用独立具身 reward worker。
+
+``reward.group_name``：reward worker 组的逻辑名称。
+
+``reward.use_output_step``：从哪个 global step 开始让 reward model 输出参与 rollout reward。
+
+``reward.reward_mode``：reward 推理模式。图像 reward model 常用 ``terminal`` 或
+``per_step``；VLM reward model 可使用 ``history_buffer``，把一段观测历史送入模型。
+
+``reward.history_reward_assign``：使用 ``history_buffer`` 时，将当前历史窗口的得分回填到
+该窗口覆盖的更早 step。
+
+``reward.reward_weight`` / ``reward.env_reward_weight``：learned reward 与环境原始 reward
+的加权系数。
+
+``reward.model.model_type``：reward model 实现。具身任务中常见值包括 ``resnet``、
+``vlm``、``history_vlm`` 和 ``history_vlm_sglang``。``history_vlm`` 使用进程内
+Hugging Face 生成；``history_vlm_sglang`` 使用 SGLang 版历史 VLM reward 后端，并需要
+在该后端配置中补充 SGLang endpoint 字段。
+
+``reward.model.model_path``：reward model 使用的基础模型或 checkpoint 路径。
+
+``reward.model.lora_path``：VLM reward model 可选的 LoRA checkpoint 路径。
+
+``reward.model.input_builder_name``：将 observation 与 history buffer 转成模型输入的
+input builder。
+
+``reward.model.reward_parser_name``：将模型输出文本映射为标量 reward 的 parser。
+
+``reward.model.history_buffers``：命名历史缓冲配置。``history_keys`` 必须与环境输出的
+observation key 一致，例如 ManiSkill 双视角 VLM reward 中的 ``main_images`` 和
+``extra_view_images``。
+
+``reward.model.infer_micro_batch_size``：进程内 Hugging Face VLM 路径的 reward model
+推理微批大小。
+
+在 async 具身 runner 中，``EmbodiedRewardWorker.compute_rewards_async`` 会常驻并消费
+env worker 排队发送的 reward 输入。Env worker 用 ``train_reward_input`` channel key
+发送切分后的输入，并通过 ``reward_output`` key 接收切分后的 reward tensor。
 
 基于环境的配置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

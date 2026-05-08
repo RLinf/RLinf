@@ -210,6 +210,12 @@ The corresponding configuration files are:
 - **OpenVLA + GRPO**: ``examples/embodiment/config/maniskill_grpo_openvla.yaml``
 - **OpenVLA-OFT + GRPO**: ``examples/embodiment/config/maniskill_grpo_openvlaoft.yaml``
 
+Reward-model variants are documented separately:
+
+- :doc:`maniskill_resnet_reward` for MLP policy + ResNet reward model.
+- :doc:`maniskill_vlm_reward` for MLP policy + Qwen3-VL history reward model,
+  including async queued reward-worker and SGLang backend notes.
+
 **3. Launch Commands**
 
 To start training with a chosen configuration, run the following command:

@@ -4,7 +4,7 @@ Reward Model 使用指南
 本文档介绍如何在 RLinf 中使用 reward model，内容包括三个部分：
 
 1. 数据收集：在 RL 运行过程中采集原始 episode 数据。
-2. Reward model 训练：将原始数据预处理后训练图像奖励模型。
+2. Reward model 训练：将原始数据预处理后训练图像或 VLM 奖励模型。
 3. Reward model 在 RL 中推理：将训练好的模型接入在线 rollout，参与最终 reward 计算。
 
 1. 数据收集
@@ -101,8 +101,8 @@ RLinf 提供了训练脚本 ``examples/reward/run_reward_training.sh``，
 2.2 配置模型
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-当前 reward model 注册表仅支持 ``ResNetRewardModel`` 一种实现。
-因此 ``actor.model.model_type`` 需要设置为 ``"resnet"``：
+对于图像分类式 reward 路径，使用 ``ResNetRewardModel``，并将
+``actor.model.model_type`` 设置为 ``"resnet"``：
 
 .. code-block:: yaml
 
@@ -115,6 +115,11 @@ RLinf 提供了训练脚本 ``examples/reward/run_reward_training.sh``，
 
 如果需要从已有权重继续训练，可以通过 ``model_path`` 指定 checkpoint；
 如果希望从头训练，则保持 ``model_path: null``。
+
+对于 VLM reward，在线 reward worker 还可以使用 ``vlm``、``history_vlm`` 或
+``history_vlm_sglang`` 等冻结推理模型。QwenTrend ManiSkill 流程使用 VLM SFT runner
+训练 VLM LoRA，而不是通过 ``run_reward_training.sh`` 训练；数据转换与 SFT 步骤见
+:doc:`../../examples/embodied/maniskill_vlm_reward`。
 
 2.3 启动训练
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -134,6 +139,7 @@ RLinf 提供了两个 reward model 接入 RL 的示例配置：
 
 - ``examples/embodiment/config/maniskill_ppo_mlp_resnet_reward.yaml``
 - ``examples/embodiment/config/maniskill_sac_mlp_resnet_reward_async.yaml``
+- ``examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward.yaml``
 
 这两个配置展示了如何在 RL 训练中启用 reward worker，同时让策略网络继续使用状态观测，
 而 reward model 使用图像观测。
@@ -164,6 +170,37 @@ RLinf 提供了两个 reward model 接入 RL 的示例配置：
 - ``reward_threshold`` 用于对 reward model 输出的成功概率做阈值过滤；低于阈值的项会被置为 ``0``。
 - ``model_path`` 指向用于在线推理的 reward model 权重。
 
+对于基于历史片段的 VLM reward model，使用 ``reward_mode: history_buffer``，并在
+``reward.model.history_buffers`` 下配置历史窗口：
+
+.. code-block:: yaml
+
+   reward:
+     use_reward_model: True
+     group_name: "RewardGroup"
+     reward_mode: history_buffer
+     history_reward_assign: True
+     reward_weight: 1.0
+     env_reward_weight: 0.0
+
+     model:
+       model_type: history_vlm        # 或 history_vlm_sglang
+       model_path: /path/to/Qwen3-VL-4B-Instruct
+       lora_path: /path/to/qwen3-vl-reward-lora
+       input_builder_name: qwentrend_input_builder
+       reward_parser_name: qwentrend_reward_parser
+       history_buffers:
+         history_window:
+           history_size: 5
+           min_history_size: 5
+           input_interval: 1
+           history_keys: [main_images, extra_view_images]
+           input_on_done: false
+
+``history_vlm`` 会在 reward worker 进程内通过 Hugging Face 加载 VLM。
+``history_vlm_sglang`` 使用相同的 history/input/parser 约定，但通过 SGLang 版 reward
+后端完成生成；server host、port 和 model name 等字段按该后端配置填写。
+
 3.2 Rollout 阶段的 worker 交互
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -188,6 +225,11 @@ RLinf 提供了两个 reward model 接入 RL 的示例配置：
 在实现上，``EnvWorker`` 会在 rollout 过程中向 reward worker 请求 reward model 输出，
 再统一计算最终 reward。
 
+在 async 具身训练中，runner 会启动一次 ``EmbodiedRewardWorker.compute_rewards_async``。
+之后 reward worker 会常驻，并消费 env worker 通过 ``train_reward_input`` channel key
+发送的排队 reward 输入，再通过 ``reward_output`` key 返回切分后的结果。当 async runner
+配置了 ``reward.use_reward_model=True`` 时，ResNet 与 VLM reward worker 都走这一 queued 路径。
+
 3.3 最终 reward 的计算
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -209,6 +251,6 @@ RLinf 提供了两个 reward model 接入 RL 的示例配置：
 完整工作流如下：
 
 1. 在环境配置中开启 ``data_collection``，并将数据保存为 ``pickle`` 格式。
-2. 使用 ``examples/reward/preprocess_reward_dataset.py`` 将原始 ``.pkl`` 转成 ``RewardDatasetPayload`` 格式的 ``train.pt`` / ``val.pt``。
-3. 在 ``reward_training.yaml`` 中完成数据与模型配置后，使用 ``examples/reward/run_reward_training.sh`` 启动 ``ResNetRewardModel`` 训练。
-4. 在 RL YAML 中开启 ``reward.use_reward_model=True``，并通过示例配置接入 reward worker 完成在线推理。
+2. 对 ResNet reward，使用 ``examples/reward/preprocess_reward_dataset.py`` 将原始 ``.pkl`` 转成 ``RewardDatasetPayload`` 格式的 ``train.pt`` / ``val.pt``；对历史 VLM reward，使用 VLM 专用预处理流程。
+3. 在 ``reward_training.yaml`` 中完成数据与模型配置后，使用 ``examples/reward/run_reward_training.sh`` 启动 ``ResNetRewardModel`` 训练；VLM reward 则通过 VLM SFT runner 训练 LoRA。
+4. 在 RL YAML 中开启 ``reward.use_reward_model=True``，并接入 reward worker 完成在线推理。进程内 Hugging Face serving 使用 ``history_vlm``，SGLang 版历史 VLM serving 使用 ``history_vlm_sglang``。

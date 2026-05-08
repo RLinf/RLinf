@@ -884,6 +884,33 @@ def validate_embodied_cfg(cfg):
         cfg.runner.overlap_env_bootstrap = bool(
             cfg.runner.get("overlap_env_bootstrap", False)
         ) and not cfg.env.train.get("enable_offload", False)
+        if cfg.algorithm.loss_type == "embodied_sac":
+            pending_step_window = int(cfg.reward.get("pending_step_window", 0))
+            assert pending_step_window >= 0, (
+                "reward.pending_step_window must be greater than or equal to 0"
+            )
+            cfg.reward.pending_step_window = pending_step_window
+
+            aggregate_request_count = int(cfg.reward.get("aggregate_request_count", 1))
+            assert aggregate_request_count > 0, (
+                "reward.aggregate_request_count must be greater than 0"
+            )
+            if pending_step_window == 0:
+                assert aggregate_request_count == 1, (
+                    "reward.aggregate_request_count must be 1 when "
+                    "reward.pending_step_window is 0"
+                )
+            else:
+                assert aggregate_request_count <= pending_step_window, (
+                    "reward.aggregate_request_count must be less than or equal to "
+                    "reward.pending_step_window"
+                )
+            cfg.reward.aggregate_request_count = aggregate_request_count
+            if cfg.get("reward", {}).get("use_reward_model", False):
+                assert cfg.reward.get("use_output_step", 0) == 0, (
+                    "Async embodied SAC with reward workers requires "
+                    "reward.use_output_step=0."
+                )
         if (
             SupportedEnvType(cfg.env.train.env_type) == SupportedEnvType.MANISKILL
             or SupportedEnvType(cfg.env.eval.env_type) == SupportedEnvType.MANISKILL

@@ -315,6 +315,36 @@ class FSDPModelManager:
         self._strategy.load_checkpoint(
             self.model, self.optimizer, self.lr_scheduler, load_path
         )
+        self._reset_optimizer_lrs_from_config()
+
+    def _reset_optimizer_lrs_from_config(self) -> None:
+        if not hasattr(self, "optimizer") or self.optimizer is None:
+            return
+
+        target_lrs = []
+        if len(self.optimizer.param_groups) >= 1:
+            target_lrs.append(float(self._cfg.optim.lr))
+        if len(self.optimizer.param_groups) >= 2:
+            target_lrs.extend(
+                [float(self._cfg.optim.value_lr)]
+                * (len(self.optimizer.param_groups) - 1)
+            )
+
+        old_lrs = [float(group["lr"]) for group in self.optimizer.param_groups]
+        for group, lr in zip(self.optimizer.param_groups, target_lrs):
+            group["lr"] = lr
+
+        if hasattr(self.lr_scheduler, "base_lrs"):
+            self.lr_scheduler.base_lrs = list(target_lrs)
+        if hasattr(self.lr_scheduler, "_last_lr"):
+            self.lr_scheduler._last_lr = list(target_lrs)
+
+        new_lrs = [float(group["lr"]) for group in self.optimizer.param_groups]
+        if old_lrs != new_lrs:
+            self._logger.info(
+                f"[FSDP] Reset optimizer learning rates after checkpoint load: "
+                f"{old_lrs} -> {new_lrs}"
+            )
 
     def save_checkpoint(self, save_path: str, step: int = 0) -> None:
         """
