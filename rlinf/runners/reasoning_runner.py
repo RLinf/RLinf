@@ -307,8 +307,10 @@ class ReasoningRunner:
     def _sync_weights(self):
         if self.has_dedicated_inference:
             with self.timer("sync_to_inference"):
-                sync_model_to_inference_handle = self.actor.sync_model_to_inference()
+                self.actor.sync_model_to_inference1().wait()
+                sync_model_to_inference_handle = self.actor.sync_model_to_inference2()
                 self.inference.sync_model_from_actor().wait()
+                sync_model_to_inference_handle.wait()
 
             with self.timer("sync_to_rollout"):
                 self.inference.sync_model_to_rollout()
@@ -316,7 +318,7 @@ class ReasoningRunner:
                 # inference handle will return after it finish receiving weight from actor
                 # so the actor offload might be unfinished now.
                 # call wait() here to ensure that rollout has sufficient VRAM to receive weight from inference and onload its weight & kv cache.
-                sync_model_to_inference_handle.wait()
+                # sync_model_to_inference_handle.wait()
                 self.rollout.sync_model_from_actor().wait()
                 self.inference.del_reshard_state_dict().wait()
 
@@ -414,7 +416,7 @@ class ReasoningRunner:
                         return
 
                 time_metrics = self.timer.consume_durations()
-                time_metrics["training"] = actor_handle.consume_duration()
+                time_metrics["training"] = actor_handle.consume_duration(reduction_type="min")
                 time_metrics["rollout"] = rollout_handle.consume_duration()
                 time_metrics["reward"] = reward_handle.consume_duration()
                 if infer_handle is not None:

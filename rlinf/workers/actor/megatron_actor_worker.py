@@ -94,6 +94,23 @@ except ImportError:
     HAVE_RESHARDING = False
 
 
+import ctypes
+
+def enable_ptrace():
+    # Constants from prctl.h
+    PR_SET_PTRACER = 0x59616d61
+    PR_SET_PTRACER_ANY = -1  # Allow any process with the same UID to ptrace
+
+    libc = ctypes.CDLL("libc.so.6", use_errno=True)
+
+    result = libc.prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY, 0, 0, 0)
+    if result != 0:
+        errno = ctypes.get_errno()
+        raise OSError(errno, f"prctl(PR_SET_PTRACER, ANY) failed: {ctypes.cast(libc.strerror(errno), ctypes.c_char_p).value.decode()}")
+    else:
+        print("✅ Allowed ptrace from any same-UID process (PR_SET_PTRACER_ANY)")
+
+
 class MegatronActor(MegatronModelManager, Worker):
     """The class for running the actor training using Megatron."""
 
@@ -275,10 +292,13 @@ class MegatronActor(MegatronModelManager, Worker):
                 self.is_optimizer_offloaded = False
 
     def init_worker(self):
+        # enable_ptrace()
         self.setup_model_and_optimizer()
 
         if self.use_auto_scheduler:
-            self.init_trainer_resharding()
+            first_world_size = self.component_placement._cluster_num_gpus if self.cfg.cluster.fuse_rollout_inference_only else -1
+            self.log_on_first_rank(f"dynamic scheduler {first_world_size=}")
+            self.init_trainer_resharding(first_world_size)
             if not self.is_running:
                 return
 
@@ -733,7 +753,9 @@ class MegatronActor(MegatronModelManager, Worker):
         """Run the training loop for the actor."""
         if self.is_pipeline:
             with self.worker_timer():
-                return self.run_training_pipeline(input_channel)
+                res = self.run_training_pipeline(input_channel)
+            self._timer_metrics["run_training"] = self.pop_execution_time("run_training_pipeline")
+            return res
 
         # Get all batches for this DP
         batches = []
@@ -840,13 +862,14 @@ class MegatronActor(MegatronModelManager, Worker):
         # Global batch iterations
         training_metrics_list = []
         for _ in range(self.num_train_steps):
-            if self.is_running:
-                train_batch_iterator.reset_total_batch_size(
-                    self.total_batch_size_per_dp
-                )
-                training_metrics = self.training_step(train_batch_iterator)
-                train_batch_iterator.check_finished_global_batch()
-                training_metrics_list.append(training_metrics)
+            with self.worker_timer():
+                if self.is_running:
+                    train_batch_iterator.reset_total_batch_size(
+                        self.total_batch_size_per_dp
+                    )
+                    training_metrics = self.training_step(train_batch_iterator)
+                    train_batch_iterator.check_finished_global_batch()
+                    training_metrics_list.append(training_metrics)
             self.scheduler_scale_sync()
 
         # Gather weights if overlap_param_gather before the next weight sync
@@ -873,6 +896,8 @@ class MegatronActor(MegatronModelManager, Worker):
         """Wait for the scheduler to send the pre-process response."""
         if not self.use_pre_process_policy:
             return
+        import time
+        time.sleep(60 * 60)
         self.get_scheduler_response(False)
 
     def scheduler_scale_sync(self):
@@ -881,8 +906,22 @@ class MegatronActor(MegatronModelManager, Worker):
             return
         resharding_response = self.get_scheduler_response(True)
         if resharding_response is not None:
+            if self.cfg.cluster.fuse_rollout_inference_only and resharding_response["world_size"] == get_args().world_size:
+                return
             self.apply_parallel_strategy(resharding_response)
             self.calc_num_microbatches()
+
+    def get_scheduler_response_inference(self, send_request_first: bool):
+        inference_world_size = self.component_placement.inference_world_size
+        if self._rank == 0:
+            if send_request_first:
+                self.schedule_channel.put(None, key=self.scheduler_response_queue)
+
+            response = self.schedule_channel.get(key=self.scheduler_request_queue)
+        else:
+            response = None
+        return self.broadcast(response, ranks=list(range(inference_world_size)))
+    
 
     def scheduler_offload_sync(self):
         """Send offloaded signal to the scheduler."""
@@ -1040,7 +1079,8 @@ class MegatronActor(MegatronModelManager, Worker):
             first_world_size = self.component_placement.actor_world_size
 
         self.is_running = True
-        self.apply_parallel_strategy({"world_size": first_world_size})
+        if first_world_size != args.world_size:
+            self.apply_parallel_strategy({"world_size": first_world_size})
 
         # Note. This may affect early stopping.
         apply_hetero_dp(
@@ -1237,15 +1277,10 @@ class MegatronActor(MegatronModelManager, Worker):
             unwrap_model(self.model)
         )
 
-    def sync_model_to_inference(self):
+    def sync_model_to_inference1(self):
         if not self.is_running:
+            clear_memory(ipc=False)
             return
-
-        inference_state_dict = self._get_inference_model_state_dict()
-
-        for rank in self._weight_dst_rank_in_inference:
-            if self._rank == rank:
-                self.send(inference_state_dict, self.cfg.inference.group_name, rank)
 
         if self.offload_optimizer:
             self.offload_megatron_optimizer()
@@ -1254,16 +1289,28 @@ class MegatronActor(MegatronModelManager, Worker):
             offload_grad=self.offload_grad, offload_weight=False
         )
 
-        # original get state_dict
+        self.inference_state_dict = self._get_inference_model_state_dict()
 
         self.offload_model_weights_and_grad(
             offload_grad=False, offload_weight=self.offload_weight
         )
         self.is_weight_offloaded = self.offload_weight
 
+        clear_memory(ipc=False)
+        # self.cuda_info(f"actor: after clear memory")
+
+    def sync_model_to_inference2(self):
+        if not self.is_running:
+            clear_memory()
+            return
+        for rank in self._weight_dst_rank_in_inference:
+            if self._rank == rank:
+                self.send(self.inference_state_dict, self.cfg.inference.group_name, rank)
+
+        # original get state_dict
         # done
 
-        del inference_state_dict
+        del self.inference_state_dict
         if self.recreate_nccl_groups:
             nccl_group_recreate()
         clear_memory()
@@ -1293,6 +1340,10 @@ class MegatronActor(MegatronModelManager, Worker):
             compute_ref_logprobs: Whether to compute reference logprobs.
         """
         # self.log_on_first_rank("start_inference")
+        if self.use_pre_process_policy:
+            if self.cfg.cluster.rollout_use_all_gpus:
+                self.get_scheduler_response_inference(False)
+                self.onload_model_weights_and_grad(load_grad=False)
         recv_batch_size = 0
         recv_resp_lengths = []
         while recv_batch_size < self.total_batch_size_per_dp:
@@ -1401,7 +1452,7 @@ class MegatronActor(MegatronModelManager, Worker):
         rank_map = RankMapper.get_actor_rank_to_rollout_rank_map(
             self.component_placement
         )
-        self._weight_dst_rank_in_rollout = rank_map[self._rank]
+        self._weight_dst_rank_in_rollout = rank_map.get(self._rank, [])
         self.log_info(
             f"{self.role} rank {self._rank} will send weights to {self._weight_dst_rank_in_rollout}"
         )
@@ -1535,8 +1586,8 @@ class MegatronActor(MegatronModelManager, Worker):
         self.log_info(
             f"{text} "
             f"allocated {memory_allocated:.2f} GiB, reserved {memory_reserved:.2f} GiB, "
-            f"free {free_gpu_memory:.2f} GiB, used: {total_gpu_memory - free_gpu_memory:.2f} GiB, "
-            f"used by cuAPI or other processes: {total_gpu_memory - free_gpu_memory - memory_reserved:.2f} GiB"
+            f"free {free_gpu_memory:.2f} GiB, used: {total_gpu_memory - free_gpu_memory:.2f} GiB"
+            # f", used by cuAPI or other processes: {total_gpu_memory - free_gpu_memory - memory_reserved:.2f} GiB"
         )
 
 

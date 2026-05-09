@@ -22,9 +22,9 @@ from rlinf.utils.placement import (
 )
 from rlinf.utils.resharding.mcore_weight_reshard import MegatronCoreWeightReshard
 from rlinf.utils.resharding.reshard_config import ReshardConfig
-from rlinf.utils.utils import retrieve_model_state_dict_in_cpu
+from rlinf.utils.utils import retrieve_model_state_dict_in_cpu, clear_memory
 
-from ..actor.megatron_actor_worker import MegatronActor
+from ..actor.megatron_actor_worker import MegatronActor, enable_ptrace
 
 
 class MegatronInference(MegatronActor):
@@ -55,8 +55,14 @@ class MegatronInference(MegatronActor):
         self.offload_optimizer = False
 
     def init_worker(self):
+        # enable_ptrace()
         self.setup_model_and_optimizer()
+        self.offload_megatron_optimizer()
         self.optimizer, self.lr_scheduler = None, None
+        if self.use_auto_scheduler and self.cfg.cluster.rollout_use_all_gpus:
+            self.offload_model_weights_and_grad(offload_weight=False, offload_grad=True)
+        clear_memory()
+        self.cuda_info("after set opt to None")
 
         ref_policy_state_dict = None
         # only need this if we are running with inital kl penalty & full-parameter tuning
@@ -139,6 +145,11 @@ class MegatronInference(MegatronActor):
         )
         self.reshard_state_dict = self._get_rollout_model_state_dict()
 
+        if self.use_auto_scheduler and self.use_pre_process_policy:
+            if self.cfg.cluster.rollout_use_all_gpus:
+                self.offload_model_weights_and_grad()
+            clear_memory()
+
     def sync_model_to_rollout(self):
         """Send the model weights to the destination ranks in the rollout task."""
         # if self.recreate_nccl_groups:
@@ -146,6 +157,8 @@ class MegatronInference(MegatronActor):
         if not self.is_running:
             return
         self.get_model_state_and_offload()
+
+        self.cuda_info("inference: before send to rollout")
         assert (
             not self.component_placement._placement_mode == PlacementMode.COLLOCATED
         ), (

@@ -1,5 +1,5 @@
 #! /bin/bash
-set -x
+# set -x
 
 tabs 4
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH

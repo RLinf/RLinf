@@ -359,6 +359,9 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 self._rollout_gpus = (
                     list(range(1 + self._actor_gpus[-1])) + self._rollout_gpus
                 )
+                # modification: let rollout use all gpus at first.
+                if self._config.cluster.rollout_use_all_gpus:
+                    self._rollout_gpus += self._inference_gpus
                 self._rollout_num_gpus = len(self._rollout_gpus)
 
             num_gpus_per_rollout_dp = len(self._rollout_gpus) // self.rollout_dp_size

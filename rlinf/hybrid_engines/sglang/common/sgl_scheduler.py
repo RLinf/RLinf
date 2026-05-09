@@ -85,8 +85,8 @@ class Scheduler(_Scheduler):
         self._rlinf_worker.log_info(
             f"[dp {self._rlinf_worker.get_parent_rank()}-tp {self.tp_rank}] {text} "
             f"allocated {memory_allocated:.2f} GiB, reserved {memory_reserved:.2f} GiB, "
-            f"free {free_gpu_memory:.2f} GiB, used: {total_gpu_memory - free_gpu_memory:.2f} GiB, "
-            f"used by cuAPI or other processes: {total_gpu_memory - free_gpu_memory - memory_reserved:.2f} GiB"
+            f"free {free_gpu_memory:.2f} GiB, used: {total_gpu_memory - free_gpu_memory:.2f} GiB"
+            # f", used by cuAPI or other processes: {total_gpu_memory - free_gpu_memory - memory_reserved:.2f} GiB"
         )
 
     def release_memory_occupation(self, recv_req: ReleaseMemoryOccupationReqInput):

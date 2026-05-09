@@ -72,7 +72,21 @@ def get_valid_dp_sizes(
     max_dp_size = total_gpus // model_parallel_size_with_cp
 
     if with_hetero_dp:
-        return [1, 2, 3, 4]
+        if max_dp_size == 2:
+            return [1, 2]
+        if max_dp_size == 4:
+            return [1, 2, 3, 4]
+        elif max_dp_size == 8:
+            return [2, 4, 6, 8]
+        elif max_dp_size == 16:
+            return [4, 8, 13, 16]
+        elif max_dp_size == 32:
+            return [8, 16, 26, 32]
+        elif max_dp_size == 64:
+            return [16, 32, 54, 64]
+        else:
+            raise ValueError(f"Invalid max_dp_size: {max_dp_size}")
+        # return [1, 2, 3, 4]
         # return [2, 4, 6, 8]
         # return [4, 8, 13, 16]
         # return [8, 16, 26, 32]

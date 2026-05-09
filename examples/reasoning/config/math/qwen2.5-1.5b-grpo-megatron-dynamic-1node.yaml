@@ -11,9 +11,13 @@ cluster:
   auto_scheduler : True
   assign_policy: greedy
   use_pre_process_policy : True
+  rollout_use_all_gpus: True
+  monitor_interval: 1
   preprocess_threshold: 0.3
+  migrate_out_max_bs: 80
   use_wait_before_last_iter_policy : False
   recreate_nccl_groups : False
+  fuse_rollout_inference_only: True
   component_placement:
     actor: 0-1
     rollout: 2-5
@@ -34,13 +38,13 @@ runner:
   val_check_interval: 1
   save_interval: 50
 
-  seq_length: 28672
+  seq_length: 2048
 
   enable_dynamic_batch_size: False
   max_tokens_per_mbs: 28672
 
   resume_dir: null
-  experiment_name: 1.5b-1node-dynamic-01
+  experiment_name: rlhfuse_1.5b-${cluster.num_nodes}node-dynamic-${algorithm.group_size}*${data.rollout_batch_size}-${runner.seq_length}-${rollout.gpu_memory_utilization}-greedy-homodp-max${rollout.max_running_requests}-2
   output_dir: ./logs-revision
 
 algorithm:
@@ -102,7 +106,7 @@ inference:
 rollout:
   group_name: "RolloutGroup"
 
-  gpu_memory_utilization: 0.45
+  gpu_memory_utilization: 0.70
 
   model_dir: /mnt/project_rlinf/hf_models/DeepSeek-R1-Distill-Qwen-1.5B/
   model_arch: qwen2.5

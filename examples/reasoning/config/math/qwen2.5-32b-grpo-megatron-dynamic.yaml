@@ -13,7 +13,7 @@ cluster:
   use_pre_process_policy : True
   rollout_use_all_gpus: True
   monitor_interval: 1
-  preprocess_threshold: 0.3
+  preprocess_threshold: 0.2
   migrate_out_max_bs: 100
   use_wait_before_last_iter_policy : False
   fuse_rollout_inference_only: True
@@ -23,6 +23,13 @@ cluster:
     # rollout: 32-111
     # inference: 112-127
     # reward: all
+
+    # infer32
+    # actor: 0-31
+    # rollout: 32-95
+    # inference: 96-127
+    # reward: all
+
     actor: 0-31
     rollout: 32-55
     inference: 56-63
@@ -48,11 +55,13 @@ runner:
   max_tokens_per_mbs: 28672
 
   resume_dir: null
-  experiment_name: agent-wo_prio-32b-${cluster.num_nodes}node-dynamic-${algorithm.group_size}*${data.rollout_batch_size}-${runner.seq_length}-${rollout.gpu_memory_utilization}-greedy-homodp-max${rollout.max_running_requests}
-  output_dir: ./logs
+  experiment_name: ${cluster.num_nodes}node-dynamic-${algorithm.group_size}*${data.rollout_batch_size}-seq${runner.seq_length}-${rollout.gpu_memory_utilization}-max${rollout.max_running_requests}-th${cluster.preprocess_threshold}-mig${cluster.migrate_out_max_bs}-ruseall_${cluster.rollout_use_all_gpus}
+  output_dir: ./logs-rlhfuse/32B
+  # logs-rev-rerun/
+  # logs-rlhfuse/
 
 algorithm:
-  group_size: 8
+  group_size: 16
 
   n_minibatches: 4
   training_batch_size_per_gpu: 1 # micro batch size
@@ -110,9 +119,9 @@ inference:
 rollout:
   group_name: "RolloutGroup"
 
-  gpu_memory_utilization: 0.50
+  gpu_memory_utilization: 0.40
 
-  model_dir: /mnt/public/hf_models/DeepSeek-R1-Distill-Qwen-32B/
+  model_dir: /mnt/project_rlinf/hf_models/DeepSeek-R1-Distill-Qwen-32B/
   model_arch: qwen2.5
   precision: ${actor.model.precision}              # precision for rollout model, support [fp16, bf16, fp32]
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
@@ -147,8 +156,8 @@ rollout:
   validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
   print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
 
-  max_running_requests: 80 # the maximum number of running requests in the rollout engine.
-  cuda_graph_max_bs: 80 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
+  max_running_requests: 160 # the maximum number of running requests in the rollout engine.
+  cuda_graph_max_bs: 160 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
 
 data:
   type: math
@@ -164,8 +173,8 @@ data:
   shuffle: True
   validation_shuffle: True
   seed: 1234
-  train_data_paths: ["/mnt/public/guozhen/data/boba_106k_0319_prompt_1024.jsonl"]
-  val_data_paths: ["/mnt/public/guozhen/data/boba_106k_0319_prompt_1024.jsonl"]
+  train_data_paths: ["/mnt/project_rlinf/guozhen/data/boba_106k_0319_prompt_1024.jsonl"]
+  val_data_paths: ["/mnt/project_rlinf/guozhen/data/boba_106k_0319_prompt_1024.jsonl"]
 
 actor:
   group_name: "ActorGroup"
@@ -173,7 +182,7 @@ actor:
   mcore_gpt: True
   spec_name: decoder_gpt
 
-  checkpoint_load_path: /mnt/public/mg_ckpts/DeepSeek-R1-Distill-Qwen-32B-tp8-pp1-fp16/
+  checkpoint_load_path: /mnt/project_rlinf/yuanqwang/schedule-paper/mg_ckpts/Qwen-32B-tp8-pp1
 
   offload_optimizer: True
   offload_weight: True
@@ -247,7 +256,7 @@ actor:
     lr_decay_iters: 10
 
   tokenizer:
-    tokenizer_model: /mnt/public/hf_models/DeepSeek-R1-Distill-Qwen-32B/
+    tokenizer_model: /mnt/project_rlinf/hf_models/DeepSeek-R1-Distill-Qwen-32B/
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'
@@ -255,7 +264,7 @@ actor:
   megatron:
     ddp_bucket_size: null
     distributed_backend: nccl # Support 'nccl' and 'gloo'
-    distributed_timeout_minutes: 30
+    distributed_timeout_minutes: 180
     ckpt_format: torch
     use_dist_ckpt: False
     tp_comm_bootstrap_backend: nccl

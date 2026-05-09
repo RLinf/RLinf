@@ -38,8 +38,11 @@ mp.set_start_method("spawn", force=True)
 @hydra.main(version_base="1.1")
 @output_redirector
 def main(cfg) -> None:
+    print(">" * 20 + "config yaml")
+    print(OmegaConf.to_yaml(cfg))
+    print("<" * 20)
     cfg = validate_cfg(cfg)
-    print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
+    # print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
     cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
     component_placement = ModelParallelComponentPlacement(cfg, cluster)

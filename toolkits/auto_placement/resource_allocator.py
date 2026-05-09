@@ -123,7 +123,10 @@ class AllocationStates:
         return sum(state.world_size for state in self.states.values())
 
     def __str__(self) -> str:
-        return f"total_used_gpus={self.used_gpus()}\n{self.states}"
+        return f"total_used_gpus={self.used_gpus()}, {self.states}"
+
+    def __repr__(self) -> str:
+        return self.__str__()
 
 
 class ResourcePlanner:

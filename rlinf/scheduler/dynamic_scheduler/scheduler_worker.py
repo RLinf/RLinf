@@ -96,9 +96,31 @@ class SchedulerWorker(Worker):
         """Reset component manager states and execute pre_process policy."""
         await self.component_managers["rollout"].pre_process()
 
-        for component, manager in self.component_managers.items():
-            if component != "rollout":
-                await manager.pre_process()
+        if self.cfg.cluster.fuse_rollout_inference_only:
+            # modify to let inference run first to avoid deadlock
+            inference_component = self.component_managers["inference"]
+            rollout_component = self.component_managers["rollout"]
+            await inference_component.pre_process()
+            self.log_info("inference pre_process done")
+            released_gpu_num, incremental_gpu_num = await inference_component.release_or_allocate(train_iter=0)
+            self.scheduler_state.update(
+                "inference", released_gpu_num, incremental_gpu_num
+            )
+
+            # 0 has no effect. here, release the gpu of rollout to avoid deadlock.
+            released_gpu_num, incremental_gpu_num = await rollout_component.release_or_allocate(train_iter=0)
+            self.scheduler_state.update(
+                "rollout", released_gpu_num, incremental_gpu_num
+            )
+
+
+            await self.component_managers["actor"].pre_process()
+            self.log_info("actor pre_process done")
+
+        else:
+            for component, manager in self.component_managers.items():
+                if component != "rollout":
+                    await manager.pre_process()
 
         self.scheduler_state.reset()
 

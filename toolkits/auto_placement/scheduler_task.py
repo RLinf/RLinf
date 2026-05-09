@@ -129,6 +129,8 @@ class SchedulerTask:
                 cur_partition_cost += workflow_cost
                 cur_partition_allocations[workflow] = workflow_allocation
 
+            print(f"\nallocation {i}: cost {cur_partition_cost}, allocations {cur_partition_allocations}")
+
             if cur_partition_cost < min_partition_cost:
                 min_partition_cost = cur_partition_cost
                 min_partition_allocations = cur_partition_allocations

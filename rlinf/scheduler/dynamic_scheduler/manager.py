@@ -253,6 +253,31 @@ class RolloutManager(ComponentManager):
         assert migrate_out_gpu_num % self.model_parallel_size == 0
         assert migrate_out_instance_num > 0
 
+        migrate_range = []
+        if not self.cfg.cluster.fuse_rollout_inference_only:
+            migrate_out_gpu_num_actor = self.component_placement.actor_world_size
+            migrate_out_instance_num_actor = migrate_out_gpu_num_actor // self.model_parallel_size
+            assert migrate_out_gpu_num_actor % self.model_parallel_size == 0
+            assert migrate_out_instance_num_actor > 0
+            migrate_range.append((0, migrate_out_instance_num_actor))
+        else:
+            # if only fuse rollout and inference, then no need to release actor's resources, so no need to migrate.
+            pass
+
+        
+        if self.cfg.cluster.rollout_use_all_gpus:
+            migrate_out_gpu_num_inference = self.component_placement.inference_world_size
+            migrate_out_instance_num_inference = migrate_out_gpu_num_inference // self.model_parallel_size
+            assert migrate_out_gpu_num_inference % self.model_parallel_size == 0
+            assert migrate_out_instance_num_inference > 0
+            migrate_range.append((self.current_instance_num - migrate_out_instance_num_inference, self.current_instance_num))
+        else:
+            # if rollout_use_all_gpus=False, then the Inference will occupy gpu at first, so no need to release.
+            migrate_out_instance_num_inference = 0
+
+        self._logger.info(f"{self.current_instance_num=}, {self.current_instance_offset=}, migrate_range: {migrate_range}")
+
+
         if running_tasks_threshold == -1:
             running_tasks_threshold = int(
                 self.rollout_total_tasks * self.cfg.cluster.preprocess_threshold
@@ -270,9 +295,14 @@ class RolloutManager(ComponentManager):
                 and (self.completed_requests / self.total_requests) > 0.1
             ):
                 self._logger.info("\npre_process condition satisfied:\n" + report_str)
-                await self.migrate(migrate_out_instance_num)
+                await self.migrate(migrate_range)
                 break
-            await asyncio.sleep(1)
+            await asyncio.sleep(self.cfg.cluster.monitor_interval)
+
+
+        # patch. because migrate will call update, which will always change offset from the beginning.
+        self.current_instance_offset -= migrate_out_instance_num_inference
+        self._logger.info(f"{self.current_instance_num=}, {self.current_instance_offset=}")
 
         self.iter_counter += 1
 
@@ -334,7 +364,7 @@ class RolloutManager(ComponentManager):
                 )
                 + "\n"
             )
-        released_gpu_num = await self.migrate(released_instance_num)
+        released_gpu_num = await self.migrate([(0, released_instance_num)])
         return released_gpu_num
 
     async def allocate_resource(self, *args, **kwargs) -> int:
@@ -408,7 +438,7 @@ class RolloutManager(ComponentManager):
         return responses
 
     def _get_running_instances(self) -> list[int]:
-        return list(range(self.current_instance_offset, self.init_instance_num))
+        return list(range(self.current_instance_offset, self.current_instance_offset + self.current_instance_num))
 
     async def report(self):
         """Check the report of rollout instances."""
@@ -462,8 +492,8 @@ class RolloutManager(ComponentManager):
                 + "\n"
             )
 
-        for instance_id, report in self.reports.items():
-            report_str += f"rollout{instance_id:>4} : total_tasks={report.total_tasks:>4}, running_tasks={report.running_tasks:>4}, completed_tasks={report.completed_tasks:>4}, Group completed: {report.completed_requests:>4}, total: {report.total_requests:>4}\n"
+        # for instance_id, report in self.reports.items():
+        #     report_str += f"rollout{instance_id:>4} : total_tasks={report.total_tasks:>4}, running_tasks={report.running_tasks:>4}, completed_tasks={report.completed_tasks:>4}, Group completed: {report.completed_requests:>4}, total: {report.total_requests:>4}\n"
         return report_str
 
     async def finish(
@@ -692,7 +722,7 @@ class RolloutManager(ComponentManager):
 
         await self._scatter_requests(migrate_in_requests, migrate_in_ids)
 
-    async def migrate(self, migrate_instance_num: int) -> int:
+    async def migrate(self, migrate_range: list[tuple[int, int]]) -> int:
         """Execute the migration of rollout instances.
 
         Args:
@@ -701,14 +731,17 @@ class RolloutManager(ComponentManager):
         Returns:
             int: The number of released GPU resources.
         """
-        if migrate_instance_num == 0:
+        if len(migrate_range) == 0:
             return 0
+        migrate_instance_num = sum(e-s for s, e in migrate_range)
         assert migrate_instance_num < self.current_instance_num
-        assert len(self.reports) == self.current_instance_num
+        assert len(self.reports) == self.current_instance_num, f"{len(self.reports)=}, {self.current_instance_num=}"
 
         running_instance_ids = self._get_running_instances()
-        migrate_out_instance_ids = running_instance_ids[:migrate_instance_num]
-        migrate_in_instance_ids = running_instance_ids[migrate_instance_num:]
+        migrate_out_instance_ids = []
+        for s, e in migrate_range:
+            migrate_out_instance_ids.extend(running_instance_ids[s:e])
+        migrate_in_instance_ids = [idx for idx in running_instance_ids if idx not in migrate_out_instance_ids]
 
         # Migrate Out
         migrate_out_batches = await self.migrate_out(migrate_out_instance_ids)
@@ -834,9 +867,14 @@ class InferenceManager(ComponentManager):
 
         Initialize the main loop finished handler.
         """
+        if self.cfg.cluster.rollout_use_all_gpus:
+            await self.channels[0].put(None, key=self.request_queue, async_op=True).async_wait()
         self.main_loop_finished_handler = self.channels[0].get(
             key=self.response_queue, async_op=True
         )
+
+        if self.cfg.cluster.fuse_rollout_inference_only:
+            await self.main_loop_finished_handler.async_wait()
 
     async def main_loop_finalize(self):
         """Processing after the last training iteration in main_loop."""
