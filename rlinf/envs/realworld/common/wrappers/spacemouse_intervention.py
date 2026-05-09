@@ -36,10 +36,21 @@ class SpacemouseIntervention(gym.ActionWrapper):
         self.left, self.right = False, False
         self.gripper_action = None
         if self.gripper_enabled:
-            # init self.gripper_action
-            state = self.get_wrapper_attr("_franka_state")
-            is_open = bool(getattr(state, "gripper_open", True))
-            self.gripper_action = sample_gripper_action(is_open=is_open)
+            self._sync_gripper_action()
+
+    def _sync_gripper_action(self) -> None:
+        """Align the cached gripper command with the env gripper state."""
+        state = self.get_wrapper_attr("_franka_state")
+        is_open = bool(getattr(state, "gripper_open", True))
+        self.gripper_action = sample_gripper_action(is_open=is_open)
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        self.last_intervene = 0
+        self.left, self.right = False, False
+        if self.gripper_enabled:
+            self._sync_gripper_action()
+        return obs, info
 
     def action(self, action: np.ndarray) -> np.ndarray:
         """

@@ -375,9 +375,11 @@ class FSDPCfgWorker(FSDPSftWorker):
                 self._data_iter_offset += 1
 
                 observation = jax.tree.map(
-                    lambda x: torch.as_tensor(x)
-                    .contiguous()
-                    .to(self.device, non_blocking=True),
+                    lambda x: (
+                        torch.as_tensor(x)
+                        .contiguous()
+                        .to(self.device, non_blocking=True)
+                    ),
                     observation,
                 )
                 actions = actions.to(torch.float32).to(self.device, non_blocking=True)
