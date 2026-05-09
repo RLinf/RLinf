@@ -27,11 +27,13 @@
 # limitations under the License.
 
 import functools
+import warnings
 from enum import Enum
 from typing import ContextManager, Iterable, Optional, Union
 
 import torch
 from accelerate import init_empty_weights
+from packaging import version
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 from torch.distributed.fsdp.wrap import (
     _module_wrap_policy,
@@ -119,6 +121,38 @@ def _resolve_module_classes_to_wrap(module, module_classes_to_wrap):
                 f"got {type(module_class).__name__!r}"
             )
     return resolved_module_classes
+
+
+def _fsdp2_fully_shard_supports_ignored_params() -> bool:
+    """Whether :func:`fully_shard` accepts ``ignored_params`` (PyTorch 2.7+)."""
+    try:
+        v = torch.__version__.split("+", 1)[0]
+        return version.parse(v) >= version.parse("2.7.0")
+    except Exception:
+        return False
+
+
+def _collect_ignored_params_for_fsdp2(
+    module, ignored_module_classes
+) -> set[torch.nn.Parameter]:
+    """
+    Map ``ignored_module_classes`` (same string convention as ``module_classes_to_wrap``)
+    to a set of ``nn.Parameter`` for :func:`fully_shard`'s ``ignored_params``.
+
+    Those parameters stay unsharded (typically replicated on each rank) and are not part of
+    FSDP all-gather / reduce-scatter groups — useful for small frozen towers like CLIP ViT.
+    """
+    if not ignored_module_classes:
+        return set()
+    resolved = _resolve_module_classes_to_wrap(module, ignored_module_classes)
+    if not resolved:
+        return set()
+    cls_tuple = tuple(resolved)
+    out: set[torch.nn.Parameter] = set()
+    for sub in module.modules():
+        if isinstance(sub, cls_tuple):
+            out.update(sub.parameters())
+    return out
 
 
 def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
@@ -421,13 +455,34 @@ def apply_fsdp2_to_model(
             reshard_after_forward=reshard_after_forward,
         )
 
-    return fully_shard(
-        module,
-        mesh=device_mesh,
-        mp_policy=mp_policy,
-        offload_policy=offload_policy,
-        reshard_after_forward=False,
-    )
+    root_kwargs = {
+        "mesh": device_mesh,
+        "mp_policy": mp_policy,
+        "offload_policy": offload_policy,
+        "reshard_after_forward": False,
+    }
+
+    if _fsdp2_fully_shard_supports_ignored_params():
+        ignored_module_classes = config.get(
+            "ignored_module_classes"
+        ) or wrap_policy_config.get("ignored_module_classes")
+        ignored_params = _collect_ignored_params_for_fsdp2(
+            module, ignored_module_classes
+        )
+        root_kwargs["ignored_params"] = ignored_params
+    elif (
+        "ignored_module_classes" in config
+        or "ignored_module_classes" in wrap_policy_config
+    ):
+        warnings.warn(
+            "ignored_module_classes is configured but the current PyTorch version "
+            "does not support ignored_params in FSDP2 fully_shard; the setting will "
+            "be ignored. Upgrade to PyTorch >= 2.7 for this feature.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    return fully_shard(module, **root_kwargs)
 
 
 def get_fsdp2_full_state_dict_all_ranks(

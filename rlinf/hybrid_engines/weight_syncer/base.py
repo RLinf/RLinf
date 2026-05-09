@@ -132,6 +132,21 @@ class WeightSyncer(ABC):
                 transport_device=OmegaConf.select(
                     patch_config, "transport_device", default="cuda"
                 ),
+                init_sync_enabled=OmegaConf.select(
+                    patch_config, "init_sync.enabled", default=False
+                ),
+                init_sync_prefixes=OmegaConf.select(
+                    patch_config, "init_sync.prefixes", default=None
+                ),
+                init_sync_bucket_size=OmegaConf.select(
+                    patch_config,
+                    "init_sync.bucket_size",
+                    default=OmegaConf.select(
+                        patch_config,
+                        "init_sync.buckets_size",
+                        default=128 * 1024 * 1024,
+                    ),
+                ),
             )
         raise ValueError(f"Unsupported weight syncer type: {syncer_type}")
 
