@@ -18,7 +18,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "dreamzero")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm")
 
 #=======================Utility Functions=======================
 
@@ -662,6 +662,16 @@ install_dreamzero_model() {
     esac
 }
 
+install_franka_realworld_env() {
+    uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
+    if [ "$SKIP_ROS" -ne 1 ]; then
+        if [ "$NO_ROOT" -eq 0 ]; then
+            bash $SCRIPT_DIR/embodied/ros_install.sh
+        fi
+        install_franka_env
+    fi
+}
+
 install_env_only() {
     if [ "$ENV_NAME" = "d4rl" ]; then
         PYTHON_VERSION="3.10"
@@ -673,13 +683,11 @@ install_env_only() {
             install_d4rl_env
             ;;
         franka)
-            uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
-            if [ "$SKIP_ROS" -ne 1 ]; then
-                if [ "$NO_ROOT" -eq 0 ]; then
-                    bash $SCRIPT_DIR/embodied/ros_install.sh
-                fi
-                install_franka_env
-            fi
+            install_franka_realworld_env
+            ;;
+        franka-dexhand)
+            install_franka_realworld_env
+            install_franka_dexhand_deps
             ;;
         xsquare_turtle2)
             uv sync --extra xsquare_turtle2 --active $NO_INSTALL_RLINF_CMD
@@ -917,6 +925,10 @@ install_franka_env() {
     echo "export CMAKE_PREFIX_PATH=$ROS_CATKIN_PATH/libfranka/build:\$CMAKE_PREFIX_PATH" >> "$VENV_DIR/bin/activate"
     echo "source /opt/ros/noetic/setup.bash" >> "$VENV_DIR/bin/activate"
     echo "source $ROS_CATKIN_PATH/devel/setup.bash" >> "$VENV_DIR/bin/activate"
+}
+
+install_franka_dexhand_deps() {
+    uv pip install "RLinf-dexterous-hands[glove]"
 }
 
 install_xsquare_turtle2_env() {

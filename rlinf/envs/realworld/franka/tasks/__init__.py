@@ -26,6 +26,9 @@ from rlinf.envs.realworld.common.wrappers import (
 from rlinf.envs.realworld.franka.dual_franka_env import DualFrankaEnv as DualFrankaEnv
 from rlinf.envs.realworld.franka.franka_env import FrankaEnv as FrankaEnv
 from rlinf.envs.realworld.franka.tasks.bottle import BottleEnv as BottleEnv
+from rlinf.envs.realworld.franka.tasks.dex_pnp import (
+    DexpnpEnv as DexpnpEnv,
+)
 from rlinf.envs.realworld.franka.tasks.franka_bin_relocation import (
     FrankaBinRelocationEnv as FrankaBinRelocationEnv,
 )
@@ -114,6 +117,22 @@ def create_bottle_env(
     return apply_single_arm_wrappers(env, env_cfg)
 
 
+def create_dexpnp_env(
+    override_cfg: dict[str, Any],
+    worker_info: Any,
+    hardware_info: Any,
+    env_idx: int,
+    env_cfg: Mapping[str, Any],
+) -> gym.Env:
+    env = DexpnpEnv(
+        override_cfg=override_cfg,
+        worker_info=worker_info,
+        hardware_info=hardware_info,
+        env_idx=env_idx,
+    )
+    return apply_single_arm_wrappers(env, env_cfg)
+
+
 register(
     id="FrankaEnv-v1",
     entry_point="rlinf.envs.realworld.franka.tasks:create_franka_env",
@@ -137,4 +156,9 @@ register(
 register(
     id="BottleEnv-v1",
     entry_point="rlinf.envs.realworld.franka.tasks:create_bottle_env",
+)
+
+register(
+    id="DexpnpEnv-v1",
+    entry_point="rlinf.envs.realworld.franka.tasks:create_dexpnp_env",
 )

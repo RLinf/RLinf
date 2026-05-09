@@ -12,13 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from rlinf.envs.realworld.common.gripper.franka_gripper import FrankaGripper
 
-from .end_effectors.base import EndEffectorType
-from .franka_env import FrankaEnv, FrankaRobotConfig, FrankaRobotState
-
-__all__ = [
-    "EndEffectorType",
-    "FrankaEnv",
-    "FrankaRobotConfig",
-    "FrankaRobotState",
-]
+__all__ = ["FrankaGripper"]
