@@ -26,8 +26,9 @@ from rlinf.envs.realworld.common.wrappers import (
 from rlinf.envs.realworld.xsquare.tasks.button_env import (
     ButtonEnv as ButtonEnv,
 )
-from rlinf.envs.realworld.xsquare.tasks.deploy_env import (
-    Turtle2DeployEnv as Turtle2DeployEnv,
+from rlinf.envs.realworld.xsquare.turtle2_env import (
+    Turtle2Env,
+    Turtle2RobotConfig,
 )
 
 
@@ -55,9 +56,15 @@ def create_turtle2_deploy_env(
     env_cfg: Mapping[str, Any],
 ) -> gym.Env:
     override_cfg = dict(override_cfg)
+    override_cfg.setdefault("use_arm_ids", [0, 1])
+    override_cfg.setdefault("use_camera_ids", [0, 1, 2])
+    override_cfg.setdefault("enforce_gripper_close", False)
+    override_cfg.setdefault("enable_task_reward", False)
+    override_cfg.setdefault("task_description", env_cfg.get("task_description", ""))
     override_cfg.setdefault("action_mode", env_cfg.get("action_mode", "relative_pose"))
-    env = Turtle2DeployEnv(
-        override_cfg=override_cfg,
+    config = Turtle2RobotConfig(**override_cfg)
+    env = Turtle2Env(
+        config=config,
         worker_info=worker_info,
         hardware_info=hardware_info,
         env_idx=env_idx,
