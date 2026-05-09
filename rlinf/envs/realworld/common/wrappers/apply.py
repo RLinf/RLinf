@@ -121,11 +121,10 @@ def apply_dual_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
         )
 
     if cfg.get("no_gripper", True):
-        # No DualGripperCloseEnv yet, so a 12D action would blow up as reshape(2,7).
         raise NotImplementedError(
-            "no_gripper=True is not yet supported for dual-arm envs: "
-            "DualGripperCloseEnv is not implemented. "
-            "Set env.eval.no_gripper=False (or env.train.no_gripper=False)."
+            "Dual-arm realworld wrappers require no_gripper=False. "
+            "Pose-action modes use 7D per-arm actions including gripper, "
+            "and delta_axis_angle mode does not have DualGripperCloseEnv yet."
         )
 
     if action_mode == "relative_pose":
