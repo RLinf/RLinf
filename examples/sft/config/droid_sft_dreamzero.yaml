@@ -74,7 +74,6 @@ actor:
     embodiment_tag: "oxe_droid"
     relative_action: True
     relative_action_per_horizon: False
-    gradient_checkpointing: False
     load_to_device: False
 
   optim:
@@ -94,7 +93,8 @@ actor:
     strategy: "fsdp2"
     sharding_strategy: "full_shard"
     use_orig_params: True
-    gradient_checkpointing: False
+    gradient_checkpointing: True
+    gradient_checkpointing_use_reentrant: True
     limit_all_gathers: True
     reshard_after_forward: True
     save_full_model_weights: False
