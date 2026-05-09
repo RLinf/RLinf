@@ -187,12 +187,12 @@ def run_rollout_oft(
         use_cache=False,
     )
     sample_actions = bool(sampling_kwargs.get("do_sample")) and mode == "train"
-    actions_for_logprob = dist.sample() if sample_actions else mean_actions
+    executed_actions = dist.sample() if sample_actions else mean_actions
 
     prev_logprobs = None
     prev_values = None
     if calculate_logprobs:
-        prev_logprobs = dist.log_prob(actions_for_logprob).to(dtype=torch.float32)
+        prev_logprobs = dist.log_prob(executed_actions).to(dtype=torch.float32)
     if calculate_values:
         prev_values = compute_values_from_hidden(
             value_head=policy.value_head,
@@ -203,14 +203,14 @@ def run_rollout_oft(
     return {
         "output": {
             "normalized_actions": data_pipeline_utils.tensor_to_numpy_compatible(
-                mean_actions
+                executed_actions
             )
         },
         "model_inputs": model_inputs,
         "prev_logprobs": prev_logprobs,
         "prev_values": prev_values,
         "extra_forward_inputs": {
-            "action_for_logprob": actions_for_logprob.to(dtype=torch.float32)
+            "action_for_logprob": executed_actions.to(dtype=torch.float32)
         },
         "state": None,
     }

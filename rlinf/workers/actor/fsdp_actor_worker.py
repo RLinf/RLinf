@@ -1048,17 +1048,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         return self.get_model_state_dict(cpu_offload=False, full_state_dict=False)
 
     async def sync_model_to_rollout(self) -> None:
-        if not self._weight_dst_rank_in_rollout:
-            self.log_debug(
-                f"Actor rank {self._rank} has no rollout weight-sync destination."
-            )
-            if self.enable_offload:
-                if not self.is_optimizer_offloaded:
-                    self.offload_optimizer()
-                if not self.is_weight_offloaded:
-                    self.offload_param_and_grad(True)
-            return
-
         if self.enable_offload:
             if not self.is_optimizer_offloaded:
                 self.offload_optimizer()
