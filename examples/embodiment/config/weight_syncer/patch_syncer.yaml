@@ -4,3 +4,8 @@ patch:
   transport_device: cpu
   delta_encoding: True
   compression: none
+
+  init_sync:
+    enabled: True
+    prefixes: null
+    bucket_size: 134217728
