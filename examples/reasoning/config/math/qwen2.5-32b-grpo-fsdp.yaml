@@ -33,7 +33,7 @@ runner:
   max_tokens_per_mbs: 2048
 
   resume_dir: null
-  experiment_name: fsdp-sglang-052-32b-8cards
+  experiment_name: fsdp-sglang-052-1.5b-8cards
   output_dir: ./logs
 
 algorithm:

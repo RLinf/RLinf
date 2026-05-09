@@ -178,12 +178,17 @@ class FSDPModelManager:
             else:
                 auto_model_class = AutoModelForCausalLM
 
-            model = auto_model_class.from_pretrained(
-                cfg.model.model_path,
-                torch_dtype=self.torch_dtype,
-                config=model_config,
-                trust_remote_code=True,
-            )
+            # model = auto_model_class.from_pretrained(
+            #     cfg.model.model_path,
+            #     torch_dtype=self.torch_dtype,
+            #     config=model_config,
+            #     trust_remote_code=True,
+            # )
+            with torch.device("meta"):
+                model = auto_model_class.from_config(
+                    model_config,
+                    trust_remote_code=True,
+                )
 
         if torch.distributed.is_initialized():
             torch.distributed.barrier()
@@ -289,6 +294,14 @@ class FSDPModelManager:
         self.model = self._strategy.wrap_model(
             model=module, device_mesh=self._device_mesh
         )
+
+        self._strategy.load_hf_checkpoint_to_fsdp2_model(
+            model=self.model,
+            model_path=self._cfg.model.model_path,
+            device_mesh=self._device_mesh,
+            dtype=self.torch_dtype,
+        )
+        
         self.optimizer = self.build_optimizer(
             model=self.model, enable_critic_warmup=self.critic_warmup_steps > 0
         )
