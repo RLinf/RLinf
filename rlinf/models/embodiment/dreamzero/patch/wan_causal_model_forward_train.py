@@ -136,16 +136,36 @@ def _forward_train(
         use_ckpt = (
             torch.is_grad_enabled()
             and self.gradient_checkpointing
-            and not (action_register_length is not None and x.shape[0] > 1)
         )
 
         if use_ckpt:
-            x = torch.utils.checkpoint.checkpoint(
-                create_custom_forward(block),
-                x,
-                **kwargs,
-                use_reentrant=False,
-            )
+
+            ckpt_use_reentrant = getattr(self, 'gradient_checkpointing_use_reentrant', True)
+
+            if not ckpt_use_reentrant:
+                x = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(block),
+                    x,
+                    **kwargs,
+                    use_reentrant=False,
+                )
+            else:
+                # When use_reentrant=True, the checkpoint interface only allows positional arguments
+                x, _ = torch.utils.checkpoint.checkpoint(
+                    block,
+                    x,
+                    e0,
+                    freqs,
+                    self.freqs_action,
+                    self.freqs_state,
+                    action_register_length,
+                    context,
+                    None,  # kv_cache
+                    None,  # crossattn_cache
+                    0,  # current_start_frame
+                    clean_x is not None,  # is_tf
+                    use_reentrant=True,
+                )
         else:
             x, _ = block(x, **kwargs)
 
