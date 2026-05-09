@@ -371,7 +371,7 @@ class DistributedRayLogCollector:
                 if raw_actor_id is not None and hasattr(raw_actor_id, "hex"):
                     meta["actor_id"] = raw_actor_id.hex()
 
-            filters = [("NAME", "=", meta["worker_name"])]
+            filters = [("NAME", "=", meta["worker_name"]), ("STATE", "=", "ALIVE")]
             if self._namespace is not None:
                 filters.append(("RAY_NAMESPACE", "=", self._namespace))
             with without_http_proxies():
