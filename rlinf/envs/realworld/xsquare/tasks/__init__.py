@@ -20,7 +20,7 @@ import gymnasium as gym
 from gymnasium.envs.registration import register
 
 from rlinf.envs.realworld.common.wrappers import (
-    apply_dual_pose_action_wrappers,
+    apply_dual_arm_wrappers,
     apply_single_arm_wrappers,
 )
 from rlinf.envs.realworld.xsquare.tasks.button_env import (
@@ -30,6 +30,41 @@ from rlinf.envs.realworld.xsquare.turtle2_env import (
     Turtle2Env,
     Turtle2RobotConfig,
 )
+
+
+def _resolve_deploy_action_mode(
+    override_cfg: dict[str, Any],
+    env_cfg: Mapping[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    """Resolve deploy action mode from env-level and override-level config."""
+    wrapper_cfg = dict(env_cfg)
+    env_action_mode = wrapper_cfg.get("action_mode", None)
+    override_action_mode = override_cfg.get("action_mode", None)
+
+    if env_action_mode is not None and override_action_mode is not None:
+        if env_action_mode != override_action_mode:
+            raise ValueError(
+                "Turtle2 deploy action_mode is configured in both env config "
+                "and override_cfg with different values: "
+                f"{env_action_mode!r} != {override_action_mode!r}."
+            )
+        action_mode = env_action_mode
+    elif env_action_mode is not None:
+        action_mode = env_action_mode
+    elif override_action_mode is not None:
+        action_mode = override_action_mode
+    else:
+        action_mode = "relative_pose"
+
+    if action_mode not in {"relative_pose", "absolute_pose"}:
+        raise ValueError(
+            f"Unsupported Turtle2 deploy action_mode={action_mode!r}. "
+            "Expected one of {'relative_pose', 'absolute_pose'}."
+        )
+
+    override_cfg["action_mode"] = action_mode
+    wrapper_cfg["action_mode"] = action_mode
+    return action_mode, wrapper_cfg
 
 
 def create_button_env(
@@ -56,12 +91,13 @@ def create_turtle2_deploy_env(
     env_cfg: Mapping[str, Any],
 ) -> gym.Env:
     override_cfg = dict(override_cfg)
+    action_mode, wrapper_cfg = _resolve_deploy_action_mode(override_cfg, env_cfg)
     override_cfg.setdefault("use_arm_ids", [0, 1])
     override_cfg.setdefault("use_camera_ids", [0, 1, 2])
     override_cfg.setdefault("enforce_gripper_close", False)
     override_cfg.setdefault("enable_task_reward", False)
     override_cfg.setdefault("task_description", env_cfg.get("task_description", ""))
-    override_cfg.setdefault("action_mode", env_cfg.get("action_mode", "relative_pose"))
+    override_cfg["action_mode"] = action_mode
     config = Turtle2RobotConfig(**override_cfg)
     env = Turtle2Env(
         config=config,
@@ -69,7 +105,7 @@ def create_turtle2_deploy_env(
         hardware_info=hardware_info,
         env_idx=env_idx,
     )
-    return apply_dual_pose_action_wrappers(env, env_cfg)
+    return apply_dual_arm_wrappers(env, wrapper_cfg)
 
 
 register(
