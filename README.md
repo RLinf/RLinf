@@ -30,6 +30,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 
 ## What's NEW!
+- [2026/05] 🔥 RLinf supports SFT on DreamZero. Doc: [DreamZero](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_dreamzero.html)
 - [2026/05] 🔥 RLinf supports GimArm. Doc: [GimArm](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gim_arm.html)
 - [2026/05] 🔥 RLinf supports real-world reinforcement learning with a dexterous hand. Doc: [Franka + Dexterous Hand](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_dexhand.html)
 - [2026/05] 🔥 RLinf supports DM0. In particular, RLinf and Dexbotic enable Lego-style SFT-RL integration. Link: [Dexbotic project link](https://github.com/dexmal/dexbotic/blob/main/docs/RLinfAsRLBackend.md)
@@ -159,6 +160,10 @@ Multiple Backend Integrations
           <ul>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_reward_model.html">ResNet</a> ✅</li>
           </ul>
+          <li><b>World Action Model</b></li>
+          <ul>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_dreamzero.html">DreamZero</a> ✅</li>
+          </ul>       
         </ul>
       </td>
       <td>
