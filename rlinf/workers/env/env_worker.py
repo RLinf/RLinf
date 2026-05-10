@@ -260,6 +260,7 @@ class EnvWorker(Worker):
                     finalize_interval=getattr(
                         env_cfg.data_collection, "finalize_interval", 100
                     ),
+                    defer_write=getattr(env_cfg.data_collection, "defer_write", False),
                 )
             env_list.append(env)
         return env_list
@@ -384,8 +385,10 @@ class EnvWorker(Worker):
         """
         This function is used to interact with the environment.
         """
-        chunk_actions = prepare_actions(
-            raw_chunk_actions=chunk_actions,
+        exec_actions = prepare_actions(
+            raw_chunk_actions=chunk_actions["raw_actions"]
+            if isinstance(chunk_actions, dict)
+            else chunk_actions,
             env_type=self.cfg.env.train.env_type,
             model_type=self.cfg.actor.model.model_type,
             num_action_chunks=self.cfg.actor.model.num_action_chunks,
@@ -393,6 +396,10 @@ class EnvWorker(Worker):
             policy=self.cfg.actor.model.get("policy_setup", None),
             wm_env_type=self.cfg.env.train.get("wm_env_type", None),
         )
+        if isinstance(chunk_actions, dict):
+            chunk_actions["actions"] = exec_actions
+        else:
+            chunk_actions = exec_actions
         env_info = {}
 
         obs_list, chunk_rewards, chunk_terminations, chunk_truncations, infos_list = (
@@ -1013,15 +1020,29 @@ class EnvWorker(Worker):
                         terminations=env_output.terminations,
                         rewards=rewards,
                     )
-                    self.rollout_results[stage_id].append_step_result(chunk_step_result)
-                    if rollout_result.save_flags is not None:
-                        self.rollout_results[stage_id].mark_last_step_with_flags(
-                            rollout_result.save_flags
+                    if self.cfg.actor.get("data_source", "buffer") == "buffer":
+                        self.rollout_results[stage_id].append_step_result(
+                            chunk_step_result
                         )
+                        if rollout_result.save_flags is not None:
+                            self.rollout_results[stage_id].mark_last_step_with_flags(
+                                rollout_result.save_flags
+                            )
 
-                    env_output, env_info = self.env_interact_step(
-                        rollout_result.actions, stage_id
-                    )
+                    if self.cfg.env.train.get("data_collection", None) and getattr(
+                        self.cfg.env.train.data_collection, "enabled", False
+                    ):
+                        expert_actions = rollout_result.forward_inputs.get(
+                            "action", None
+                        )
+                        actions = {
+                            "raw_actions": rollout_result.actions,
+                            "expert_actions": expert_actions,
+                            "save_flags": rollout_result.save_flags,
+                        }
+                    else:
+                        actions = rollout_result.actions
+                    env_output, env_info = self.env_interact_step(actions, stage_id)
                     env_batch = env_output.to_dict()
                     self.send_env_batch(
                         rollout_channel,
@@ -1046,10 +1067,11 @@ class EnvWorker(Worker):
             for stage_id in range(self.stage_num):
                 env_output = env_outputs[stage_id]
                 if env_output.intervene_actions is not None:
-                    self.rollout_results[stage_id].update_last_actions(
-                        env_output.intervene_actions,
-                        env_output.intervene_flags,
-                    )
+                    if self.cfg.actor.get("data_source", "buffer") == "buffer":
+                        self.rollout_results[stage_id].update_last_actions(
+                            env_output.intervene_actions,
+                            env_output.intervene_flags,
+                        )
 
                 reward_model_output = None
                 if reward_channel is not None:
@@ -1077,16 +1099,35 @@ class EnvWorker(Worker):
                     terminations=env_output.terminations,
                     rewards=rewards,
                 )
-                self.rollout_results[stage_id].append_step_result(chunk_step_result)
+                if self.cfg.actor.get("data_source", "buffer") == "buffer":
+                    self.rollout_results[stage_id].append_step_result(chunk_step_result)
 
             self.store_last_obs_and_intervened_info(env_outputs)
             self.finish_rollout()
 
         if actor_channel is not None:
-            for stage_id in range(self.stage_num):
-                await self.send_rollout_trajectories(
-                    self.rollout_results[stage_id], actor_channel
-                )
+            data_source = self.cfg.actor.get("data_source", "buffer")
+            if data_source == "buffer":
+                for stage_id in range(self.stage_num):
+                    await self.send_rollout_trajectories(
+                        self.rollout_results[stage_id], actor_channel
+                    )
+            elif data_source == "lerobot":
+                # Drain completed episodes from each stage's CollectEpisode wrapper
+                # and send them to the actor via channel so the actor can write to
+                # disk and refresh the rolling dataset.
+                # TODO(agent): for actor_world_size > 1 the episode list should be
+                #   split across actor ranks rather than replicated.
+                for stage_id in range(self.stage_num):
+                    collect_wrapper = self._find_collect_wrapper(
+                        self.env_list[stage_id]
+                    )
+                    episodes: list[list[dict]] = (
+                        collect_wrapper.drain_pending_episodes()
+                        if collect_wrapper is not None
+                        else []
+                    )
+                    actor_channel.put(episodes, async_op=True)
 
         for key, value in env_metrics.items():
             env_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
@@ -1193,3 +1234,14 @@ class EnvWorker(Worker):
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(recv_num, send_num)
         return split_num
+
+    @staticmethod
+    def _find_collect_wrapper(env):
+        """Traverse env wrappers to find a CollectEpisode instance, or None."""
+        from rlinf.envs.wrappers.collect_episode import CollectEpisode
+
+        while env is not None:
+            if isinstance(env, CollectEpisode):
+                return env
+            env = getattr(env, "env", None)
+        return None

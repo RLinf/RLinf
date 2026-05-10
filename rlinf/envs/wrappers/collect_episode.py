@@ -18,6 +18,7 @@ import atexit
 import copy
 import os
 import pickle
+import queue
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Lock
 from typing import Any, Optional
@@ -71,7 +72,10 @@ class CollectEpisode(gym.Wrapper):
         robot_type: str = "panda",
         fps: int = 10,
         only_success: bool = False,
+        allow_partial_chunk: bool = False,
+        stats_sample_ratio: float = 0.1,
         finalize_interval: int = 100,
+        defer_write: bool = False,
     ):
         if isinstance(env, gym.Env):
             super().__init__(env)
@@ -93,12 +97,16 @@ class CollectEpisode(gym.Wrapper):
         self.fps = fps
         self.only_success = only_success
         self.finalize_interval = finalize_interval
+        self.defer_write = defer_write
 
         # LeRobot writer is created lazily on the first completed episode.
         if export_format == "lerobot":
             self._lerobot_writer: Optional[Any] = None
             self._lerobot_lock = Lock()
             self._episodes_written = 0  # guarded by _lerobot_lock
+            if defer_write:
+                # Thread-safe queue for episodes to be written by the actor worker.
+                self._pending_episodes: queue.SimpleQueue = queue.SimpleQueue()
 
         # Single-worker executor keeps write ordering deterministic.
         self._executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(
@@ -123,6 +131,8 @@ class CollectEpisode(gym.Wrapper):
 
         os.makedirs(self.save_dir, exist_ok=True)
         atexit.register(self._finalize_on_exit)
+
+        self.allow_partial_chunk = allow_partial_chunk
 
     @property
     def is_start(self):
@@ -176,24 +186,39 @@ class CollectEpisode(gym.Wrapper):
         self._maybe_flush(terminated, truncated)
         return obs, reward, terminated, truncated, info
 
-    def chunk_step(self, chunk_actions):
+    def chunk_step(self, input_actions):
         """Execute a chunk of actions, recording each sub-step individually.
 
         Both pickle and lerobot formats receive step-level records for maximum
         data fidelity.
 
         Args:
-            chunk_actions: Action chunk, typically a tensor of shape
-                ``[num_envs, chunk_size, action_dim]``.
+            input_actions: dict of actions, containing raw_actions, actions,
+            expert_actions, and save_flags
 
         Returns:
             Tuple of (obs_list, rewards, terminations, truncations, infos_list).
         """
+        # breakpoint()
+        if isinstance(input_actions, dict):
+            _input_actions = input_actions["actions"]
+        else:
+            _input_actions = input_actions
         obs_list, rewards, terminations, truncations, infos_list = self.env.chunk_step(
-            chunk_actions
+            _input_actions
         )
 
         chunk_size = len(obs_list) if isinstance(obs_list, (list, tuple)) else 1
+
+        chunk_actions = input_actions["actions"]
+        if isinstance(chunk_actions, np.ndarray):
+            chunk_actions = torch.from_numpy(chunk_actions)
+
+        save_flags = input_actions["save_flags"]
+        if "expert_actions" in input_actions:
+            expert_actions = input_actions["expert_actions"].reshape_as(chunk_actions)
+        else:
+            expert_actions = None
         for step_idx in range(chunk_size):
             step_action = (
                 chunk_actions[:, step_idx]
@@ -222,10 +247,48 @@ class CollectEpisode(gym.Wrapper):
                 if isinstance(infos_list, (list, tuple))
                 else infos_list
             )
+
+            if expert_actions is not None and "intervene_action" not in step_info:
+                if "final_info" in step_info:
+                    step_info["final_info"]["intervene_action"] = expert_actions
+                    if save_flags is not None:
+                        step_info["final_info"]["intervene_flag"] = torch.ones(
+                            expert_actions.shape[0],
+                            expert_actions.shape[1],
+                            dtype=torch.bool,
+                        )
+                    else:
+                        step_info["final_info"]["intervene_flag"] = torch.zeros(
+                            expert_actions.shape[0],
+                            expert_actions.shape[1],
+                            dtype=torch.bool,
+                        )
+
+                    step_info["intervene_action"] = expert_actions[:, step_idx]
+                    if save_flags is not None:
+                        step_info["intervene_flag"] = ~(step_trunc | step_term)
+                    else:
+                        step_info["intervene_flag"] = torch.zeros(
+                            expert_actions.shape[0], dtype=torch.bool
+                        )
+                else:
+                    step_info["intervene_action"] = expert_actions[:, step_idx]
+                    if save_flags is not None:
+                        step_info["intervene_flag"] = torch.ones(
+                            expert_actions.shape[0], dtype=torch.bool
+                        )
+                    else:
+                        step_info["intervene_flag"] = torch.zeros(
+                            expert_actions.shape[0], dtype=torch.bool
+                        )
             self._record_step(
                 step_action, step_obs, step_reward, step_term, step_trunc, step_info
             )
-            self._maybe_flush(step_term, step_trunc)
+            if self.allow_partial_chunk:
+                self._maybe_flush(step_term, step_trunc)
+
+        if not self.allow_partial_chunk:
+            self._maybe_flush(terminations, truncations)
 
         return obs_list, rewards, terminations, truncations, infos_list
 
@@ -341,7 +404,7 @@ class CollectEpisode(gym.Wrapper):
                     if done_by_trunc:
                         self._reset_env_buffer(env_idx)
             else:
-                if done_by_term or done_by_trunc:
+                if done_by_trunc:
                     self._flush_episode(env_idx, is_success)
                     self._reset_env_buffer(env_idx)
 
@@ -355,7 +418,13 @@ class CollectEpisode(gym.Wrapper):
         if self.export_format == "lerobot":
             ep_data = self._buffer_to_lerobot_ep(buf, env_idx, is_success)
             if ep_data is not None:
-                self._submit(self._write_lerobot_episode, ep_data)
+                if self.defer_write:
+                    self._pending_episodes.put(ep_data)
+                    self.logger.info(
+                        f"Pending episodes: {self._pending_episodes.qsize()}"
+                    )
+                else:
+                    self._submit(self._write_lerobot_episode, ep_data)
         else:
             episode_data = self._copy(
                 {
@@ -527,11 +596,34 @@ class CollectEpisode(gym.Wrapper):
         """Drain pending futures then write the LeRobot dataset metadata."""
         if self.export_format != "lerobot":
             return
+        if self.defer_write:
+            return
         self._wait_futures()
         with self._lerobot_lock:
             if self._lerobot_writer is not None:
                 self._lerobot_writer.finalize()
                 self._lerobot_writer = None
+
+    def drain_pending_episodes(self) -> list[list[dict]]:
+        """Return all completed episodes buffered since the last drain.
+
+        Only valid when ``defer_write=True`` and ``export_format="lerobot"``.
+        Clears the internal queue and returns every episode as a list of
+        per-step frame dicts (the format expected by
+        ``LeRobotDatasetWriter.add_episode``).
+
+        Returns:
+            List of episodes; each episode is itself a ``list[dict]``.
+        """
+        if not self.defer_write or self.export_format != "lerobot":
+            return []
+        episodes: list[list[dict]] = []
+        while True:
+            try:
+                episodes.append(self._pending_episodes.get_nowait())
+            except queue.Empty:
+                break
+        return episodes
 
     def _write_pickle(self, save_path: str, episode_data: dict) -> None:
         with open(save_path, "wb") as f:

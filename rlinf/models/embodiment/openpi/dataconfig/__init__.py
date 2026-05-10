@@ -79,6 +79,20 @@ _CONFIGS = [
         pytorch_weight_path="checkpoints/torch/pi0_base",
     ),
     TrainConfig(
+        name="pi0_libero_horizon10",
+        model=pi0_config.Pi0Config(action_horizon=10),
+        data=LeRobotLiberoDataConfig(
+            repo_id="physical-intelligence/libero",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_libero/assets"),
+            extra_delta_transform=True,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi0_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_base",
+    ),
+    TrainConfig(
         name="pi05_libero",
         model=pi0_config.Pi0Config(
             pi05=True, action_horizon=10, discrete_state_input=False

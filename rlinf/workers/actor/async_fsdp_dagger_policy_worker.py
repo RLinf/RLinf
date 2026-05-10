@@ -27,6 +27,19 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
     should_stop = False
 
     async def recv_rollout_trajectories(self, input_channel):
+        if self.data_source == "lerobot":
+            if (
+                getattr(self, "_recv_lerobot_thread", None) is None
+                or not self._recv_lerobot_thread.is_alive()
+            ):
+                if input_channel is not None:
+                    self._recv_lerobot_thread = threading.Thread(
+                        target=self._recv_lerobot_thread_main,
+                        args=(input_channel,),
+                        daemon=True,
+                    )
+                    self._recv_lerobot_thread.start()
+            return
         if getattr(self, "_recv_queue", None) is None:
             self._recv_queue = queue.Queue()
         if (
@@ -39,6 +52,27 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
                 daemon=True,
             )
             self._recv_rollout_thread.start()
+
+    def _recv_lerobot_thread_main(self, input_channel):
+        """Background thread: receive episode batches from EnvWorker and write to disk.
+
+        When ``in_memory_mode=True``, each shard is also populated into the
+        dataset's in-memory shard cache via
+        :meth:`~rlinf.workers.actor.fsdp_dagger_policy_worker.EmbodiedDAGGERFSDPPolicy._write_lerobot_episode_to_disk`,
+        which calls
+        :meth:`~rlinf.data.rolling_lerobot_dataset.RollingLeRobotDataset.add_shard_to_memory`
+        at finalize time so the polling loop in
+        :meth:`_wait_for_lerobot_dataset_ready` picks up new shards from RAM.
+        """
+        send_num = self._component_placement.get_world_size("env") * self.stage_num
+        recv_num = self._component_placement.get_world_size("actor")
+        split_num = compute_split_num(send_num, recv_num)
+        while not self.should_stop:
+            for _ in range(split_num):
+                episodes: list[list[dict]] = input_channel.get()
+                for ep_frames in episodes:
+                    if ep_frames:
+                        self._write_lerobot_episode_to_disk(ep_frames)
 
     def _recv_rollout_thread_main(self, input_channel):
         send_num = self._component_placement.get_world_size("env") * self.stage_num
@@ -83,6 +117,18 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
                 return
             await asyncio.sleep(1)
 
+    async def _wait_for_lerobot_dataset_ready(self):
+        refresher = (
+            self.preload_dataset if self.preload_dataset is not None else self.dataset
+        )
+        while True:
+            refresher.refresh_one()
+            if self.dataset.is_ready():
+                if self.preload_dataset is None:
+                    self._build_lerobot_data_loader()
+                return
+            await asyncio.sleep(1)
+
     @Worker.timer("run_training")
     async def run_training(self):
         """Run async DAgger updates with replay-buffer samples."""
@@ -90,8 +136,13 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             self.load_param_and_grad(self.device)
             self.load_optimizer(self.device)
 
-        min_buffer_size = self.cfg.algorithm.replay_buffer.get("min_buffer_size", 100)
-        await self._wait_for_replay_buffer_ready(min_buffer_size)
+        if self.data_source == "buffer":
+            min_buffer_size = self.cfg.algorithm.replay_buffer.get(
+                "min_buffer_size", 100
+            )
+            await self._wait_for_replay_buffer_ready(min_buffer_size)
+        elif self.data_source == "lerobot":
+            await self._wait_for_lerobot_dataset_ready()
 
         torch.distributed.barrier()
         assert (
@@ -124,3 +175,6 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
         recv_thread = getattr(self, "_recv_rollout_thread", None)
         if recv_thread is not None and recv_thread.is_alive():
             await asyncio.to_thread(recv_thread.join, 5)
+        lerobot_thread = getattr(self, "_recv_lerobot_thread", None)
+        if lerobot_thread is not None and lerobot_thread.is_alive():
+            await asyncio.to_thread(lerobot_thread.join, 5)

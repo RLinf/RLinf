@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import time
 
 import numpy as np
 import torch
@@ -21,6 +22,11 @@ from omegaconf import DictConfig
 from rlinf.config import SupportedModel
 from rlinf.data.embodied_io_struct import Trajectory
 from rlinf.data.replay_buffer import TrajectoryReplayBuffer
+from rlinf.data.rolling_lerobot_dataset import (
+    PreloadRollingLeRobotDataset,
+    build_rolling_lerobot_dataset,
+)
+from rlinf.data.utils import build_dataloader_from_dataset
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils import drq
@@ -37,6 +43,107 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self.replay_buffer = None
         self.update_step = 0
         self.enable_drq = bool(getattr(self.cfg.actor, "enable_drq", False))
+        self.dataset = None
+        self.preload_dataset: PreloadRollingLeRobotDataset | None = None
+        self._lerobot_loader = None  # PreloadRollingLeRobotDataset | DataLoader
+        self._lerobot_iter = None
+        self.data_source = cfg.actor.get("data_source", "buffer")
+        self._data_epoch = 0
+        # Actor-side LeRobot writer state (used when data_collection.defer_write=True)
+        self._lerobot_writer = None
+        self._lerobot_episodes_written = 0
+        # Shard-cache tracking: accumulate episodes belonging to the current
+        # open shard so they can be passed to add_shard_to_memory at finalize.
+        self._current_shard_path: str | None = None
+        self._current_shard_episodes: list[list[dict]] = []
+
+    def _build_lerobot_dataset(self):
+        enable_cache = self.cfg.actor.get("enable_decoded_cache", False)
+        lerobot_num_workers = self.cfg.actor.get("lerobot_num_workers")
+        if lerobot_num_workers is None:
+            lerobot_num_workers = 0 if enable_cache else 4
+        elif enable_cache and int(lerobot_num_workers) != 0:
+            self._logger.warning(
+                "enable_decoded_cache=True but lerobot_num_workers=%s; forked "
+                "DataLoader workers do not share the in-process decoded cache. "
+                "Prefer lerobot_num_workers=0.",
+                lerobot_num_workers,
+            )
+        self._lerobot_num_workers = int(lerobot_num_workers)
+        lerobot_cfg = self.cfg.actor.get("lerobot", {})
+        in_memory_mode = bool(lerobot_cfg.get("in_memory_mode", False))
+        lerobot_fps = int(lerobot_cfg.get("fps", 10))
+        self.dataset = build_rolling_lerobot_dataset(
+            root_dir=self.cfg.actor.sft_data_path,
+            chunk_size=self.cfg.actor.model.num_action_chunks,
+            min_frames=self.cfg.actor.get("min_frames", 1),
+            wait_interval_s=self.cfg.actor.get("wait_interval_s", 10.0),
+            enable_decoded_cache=enable_cache,
+            decoded_cache_capacity=self.cfg.actor.get("decoded_cache_capacity", 8192),
+            cache_ingest_mode=self.cfg.actor.get("cache_ingest_mode", "new_shards"),
+            cache_last_n_frames=self.cfg.actor.get("cache_last_n_frames", 10_000),
+            cache_ingest_max_frames=self.cfg.actor.get("cache_ingest_max_frames", None),
+            require_all_intervene=self.cfg.algorithm.dagger.get(
+                "only_save_expert", False
+            ),
+            window_size=self.cfg.actor.get("rolling_lerobot_window_size", None),
+            index_load_workers=self.cfg.actor.get("rolling_lerobot_index_workers", 4),
+            cache_ingest_rank=self._rank,
+            cache_ingest_world_size=self._world_size,
+            in_memory_mode=in_memory_mode,
+            fps=lerobot_fps,
+        )
+
+    def _build_lerobot_data_loader(self):
+        aligned = self.dataset.get_cache_aligned_logical_indices()
+        self.data_loader = build_dataloader_from_dataset(
+            dataset=self.dataset,
+            batch_size=self.cfg.actor.micro_batch_size,
+            world_size=self._world_size,
+            rank=self._rank,
+            use_random_replacement=True,
+            num_samples_per_epoch=self.cfg.actor.global_batch_size,
+            seed=self.cfg.actor.get("seed", 42),
+            num_workers=self._lerobot_num_workers,
+            cache_aligned_indices=aligned,
+        )
+        if hasattr(self.data_loader.sampler, "set_epoch"):
+            self.data_loader.sampler.set_epoch(self._data_epoch)
+        self._logger.info(
+            "in _build_lerobot_data_loader: len(data_loader)=%d, "
+            "len(dataset)=%d, num_samples_per_epoch=%d",
+            len(self.data_loader),
+            len(self.dataset),
+            self.cfg.actor.global_batch_size,
+        )
+        # Point the unified loader/iter at the new DataLoader.
+        self._lerobot_loader = self.data_loader
+        self._lerobot_iter = iter(self.data_loader)
+
+    def _build_lerobot_preload_dataset(self):
+        """Wrap the base dataset in a background-prefetch DataLoader."""
+
+        self.preload_dataset = PreloadRollingLeRobotDataset(
+            dataset=self.dataset,
+            batch_size=self.cfg.actor.micro_batch_size,
+            world_size=self._world_size,
+            rank=self._rank,
+            prefetch_size=self.cfg.actor.get("prefetch_size", 5),
+            use_random_replacement=True,
+            num_samples_per_epoch=self.cfg.actor.global_batch_size,
+            seed=self.cfg.actor.get("seed", 42),
+            num_workers=self._lerobot_num_workers,
+        )
+        self._logger.info(
+            "[EmbodiedDAGGERFSDPPolicy] preload dataset built: "
+            "len=%d, num_samples_per_epoch=%d, prefetch_size=%d",
+            len(self.preload_dataset),
+            self.cfg.actor.global_batch_size,
+            self.cfg.actor.get("prefetch_size", 5),
+        )
+        # Point the unified loader/iter at the preload wrapper.
+        self._lerobot_loader = self.preload_dataset
+        self._lerobot_iter = iter(self.preload_dataset)
 
     def init_worker(self):
         super().setup_model_and_optimizer()
@@ -51,37 +158,51 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def setup_dagger_components(self):
         """Initialize DAgger-specific replay buffer state."""
         seed = self.cfg.actor.get("seed", 1234)
-        auto_save_path = self.cfg.algorithm.replay_buffer.get("auto_save_path", None)
-        if auto_save_path is None:
-            auto_save_path = os.path.join(
-                self.cfg.runner.logger.log_path, f"replay_buffer/rank_{self._rank}"
+        if self.data_source == "buffer":
+            auto_save_path = self.cfg.algorithm.replay_buffer.get(
+                "auto_save_path", None
             )
-        else:
-            auto_save_path = os.path.join(auto_save_path, f"rank_{self._rank}")
-        self.replay_buffer = TrajectoryReplayBuffer(
-            seed=seed,
-            enable_cache=self.cfg.algorithm.replay_buffer.enable_cache,
-            cache_size=self.cfg.algorithm.replay_buffer.cache_size,
-            sample_window_size=self.cfg.algorithm.replay_buffer.sample_window_size,
-            auto_save=self.cfg.algorithm.replay_buffer.get("auto_save", False),
-            auto_save_path=auto_save_path,
-            trajectory_format=self.cfg.algorithm.replay_buffer.get(
-                "trajectory_format", "pt"
-            ),
-        )
+            if auto_save_path is None:
+                auto_save_path = os.path.join(
+                    self.cfg.runner.logger.log_path, f"replay_buffer/rank_{self._rank}"
+                )
+            else:
+                auto_save_path = os.path.join(auto_save_path, f"rank_{self._rank}")
+            self.replay_buffer = TrajectoryReplayBuffer(
+                seed=seed,
+                enable_cache=self.cfg.algorithm.replay_buffer.enable_cache,
+                cache_size=self.cfg.algorithm.replay_buffer.cache_size,
+                sample_window_size=self.cfg.algorithm.replay_buffer.sample_window_size,
+                auto_save=self.cfg.algorithm.replay_buffer.get("auto_save", False),
+                auto_save_path=auto_save_path,
+                trajectory_format=self.cfg.algorithm.replay_buffer.get(
+                    "trajectory_format", "pt"
+                ),
+            )
+        elif self.data_source == "lerobot":
+            self._build_lerobot_dataset()
+            if self.cfg.actor.get("enable_preload", False):
+                self._build_lerobot_preload_dataset()
 
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
         clear_memory(sync=False)
+        if self.data_source == "buffer":
+            send_num = self._component_placement.get_world_size("env") * self.stage_num
+            recv_num = self._component_placement.get_world_size("actor")
+            split_num = compute_split_num(send_num, recv_num)
+            recv_list = []
+            for _ in range(split_num):
+                trajectory: Trajectory = await input_channel.get(
+                    async_op=True
+                ).async_wait()
+                recv_list.append(trajectory)
+            return self.recv_buffer_rollout_trajectories(recv_list)
+        elif self.data_source == "lerobot":
+            return self.recv_lerobot_rollout_trajectories(input_channel)
+        else:
+            raise ValueError(f"Invalid data source: {self.data_source}")
 
-        send_num = self._component_placement.get_world_size("env") * self.stage_num
-        recv_num = self._component_placement.get_world_size("actor")
-        split_num = compute_split_num(send_num, recv_num)
-
-        recv_list = []
-        for _ in range(split_num):
-            trajectory: Trajectory = await input_channel.get(async_op=True).async_wait()
-            recv_list.append(trajectory)
-
+    def recv_buffer_rollout_trajectories(self, recv_list: list[Trajectory]) -> None:
         intervene_traj_list = []
         for traj in recv_list:
             assert isinstance(traj, Trajectory)
@@ -91,9 +212,139 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         if intervene_traj_list:
             self.replay_buffer.add_trajectories(intervene_traj_list)
 
+    def recv_lerobot_rollout_trajectories(self, input_channel: Channel) -> None:
+        """Receive episodes from EnvWorker via channel, write to disk, then refresh.
+
+        When ``data_collection.defer_write=True``, EnvWorkers buffer completed
+        episodes in memory and send them here instead of writing directly to
+        disk. The actor writes each received episode to ``actor.sft_data_path``
+        and then calls ``refresh()`` on the rolling dataset so new shards are
+        picked up for training.
+        """
+
+        if input_channel is not None:
+            send_num = self._component_placement.get_world_size("env") * self.stage_num
+            recv_num = self._component_placement.get_world_size("actor")
+            split_num = compute_split_num(send_num, recv_num)
+            for _ in range(split_num):
+                episodes: list[list[dict]] = input_channel.get()
+                for ep_frames in episodes:
+                    if ep_frames:
+                        self._write_lerobot_episode_to_disk(ep_frames)
+
+        refresher = (
+            self.preload_dataset if self.preload_dataset is not None else self.dataset
+        )
+        refresher.refresh()
+        while not self.dataset.is_ready():
+            time.sleep(1)
+            self.log_info("waiting for lerobot dataset to be ready")
+            refresher.refresh()
+        if self.preload_dataset is None:
+            self._build_lerobot_data_loader()
+
+    @staticmethod
+    def _collect_lerobot_image_keys(
+        frame: dict, prefix: str
+    ) -> dict[str, tuple[int, ...]]:
+        """Return ``{key: shape}`` for all frame keys matching *prefix*."""
+        return {
+            k: tuple(frame[k].shape)
+            for k in frame
+            if (k == prefix or k.startswith(f"{prefix}-"))
+            and isinstance(frame[k], np.ndarray)
+            and frame[k].ndim == 3
+        }
+
+    @Worker.timer("write_lerobot_episode_to_disk")
+    def _write_lerobot_episode_to_disk(self, ep_frames: list[dict]) -> None:
+        """Write a single episode to disk using the actor-side LeRobot writer.
+
+        The writer is created lazily on the first episode using metadata from
+        the first frame. After every ``actor.lerobot.finalize_interval`` episodes
+        the writer is finalised and a new shard is opened, matching the behaviour
+        of ``CollectEpisode`` on the env side.
+
+        When ``in_memory_mode=True``, episodes are accumulated per shard and
+        :meth:`~rlinf.data.rolling_lerobot_dataset.RollingLeRobotDataset.add_shard_to_memory`
+        is called at finalize time, so the shard is available in RAM before
+        the next :meth:`refresh` indexes it from disk.
+
+        Args:
+            ep_frames: List of per-step frame dicts as produced by
+                ``CollectEpisode._buffer_to_lerobot_ep``.
+        """
+        if not ep_frames:
+            return
+
+        from rlinf.data.lerobot_writer import LeRobotDatasetWriter
+
+        if self._lerobot_writer is None:
+            self._lerobot_writer = LeRobotDatasetWriter()
+
+        if self._lerobot_writer.dataset is None:
+            first = ep_frames[0]
+            wrist_image_keys = self._collect_lerobot_image_keys(first, "wrist_image")
+            extra_view_image_keys = self._collect_lerobot_image_keys(
+                first, "extra_view_image"
+            )
+            lerobot_cfg = self.cfg.actor.get("lerobot", {})
+            robot_type = lerobot_cfg.get("robot_type", "panda")
+            fps = lerobot_cfg.get("fps", 10)
+            shard_repo_id = os.path.join(
+                self.cfg.actor.sft_data_path,
+                f"rank_{self._rank}",
+                f"id_{self._lerobot_episodes_written}",
+            )
+            self._lerobot_writer.create(
+                repo_id=shard_repo_id,
+                robot_type=robot_type,
+                fps=fps,
+                image_shape=first["image"].shape if "image" in first else None,
+                state_dim=int(first["state"].shape[-1]),
+                action_dim=int(first["actions"].shape[-1]),
+                has_image="image" in first,
+                wrist_image_keys=wrist_image_keys,
+                extra_view_image_keys=extra_view_image_keys,
+                has_intervene_flag="intervene_flag" in first,
+            )
+            self._current_shard_path = shard_repo_id
+            self._current_shard_episodes = []
+
+        self._lerobot_writer.add_episode(ep_frames)
+        self._current_shard_episodes.append(ep_frames)
+        self._lerobot_episodes_written += 1
+
+        finalize_interval = self.cfg.actor.get("lerobot", {}).get(
+            "finalize_interval", 8
+        )
+        if (
+            finalize_interval > 0
+            and self._lerobot_episodes_written % finalize_interval == 0
+        ):
+            self._lerobot_writer.finalize()
+            # Populate the shard cache BEFORE refresh() so the next __getitem__
+            # call can serve frames from RAM without a disk round-trip.
+            if (
+                self._current_shard_path is not None
+                and self._current_shard_episodes
+                and self.dataset is not None
+            ):
+                self.dataset.add_shard_to_memory(
+                    self._current_shard_path, self._current_shard_episodes
+                )
+            self._current_shard_path = None
+            self._current_shard_episodes = []
+            # dataset is now None; next episode will open a new shard.
+
     def _prepare_sft_batch(self, batch):
         """Prepare model-specific DAgger training inputs."""
-        return self.model.prepare_dagger_sft_batch(batch)
+        if self.data_source == "buffer":
+            return self.model.prepare_dagger_sft_batch(batch)
+        elif self.data_source == "lerobot":
+            return self.model.prepare_lerobot_sft_batch(batch)
+        else:
+            raise ValueError(f"Invalid data source: {self.data_source}")
 
     def _reduce_sft_loss(self, loss):
         """Reduce model-specific SFT loss to a scalar."""
@@ -116,6 +367,14 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     @Worker.timer("update_one_epoch")
     def update_one_epoch(self):
+        if self.data_source == "buffer":
+            return self.update_buffer_one_epoch()
+        elif self.data_source == "lerobot":
+            return self.update_lerobot_one_epoch()
+        else:
+            raise ValueError(f"Invalid data source: {self.data_source}")
+
+    def update_buffer_one_epoch(self):
         """Run one replay-buffer update epoch for DAgger."""
         global_batch_size_per_rank = (
             self.cfg.actor.global_batch_size // self._world_size
@@ -162,13 +421,72 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             "actor/grad_norm": actor_grad_norm,
         }
 
+    def update_lerobot_one_epoch(self):
+        """Run one lerobot update epoch — unified for both preload and non-preload."""
+
+        with self.worker_timer("prepare_micro_batches"):
+            num_batches = len(self._lerobot_loader)
+            train_micro_batch_list = [
+                next(self._lerobot_iter) for _ in range(num_batches)
+            ]
+            for idx, batch in enumerate(train_micro_batch_list):
+                batch = put_tensor_device(batch, device=self.device)
+                if self.enable_drq:
+                    drq.apply_drq(batch["curr_obs"], pad=4)
+                train_micro_batch_list[idx] = batch
+
+        self.optimizer.zero_grad()
+        gbs_actor_loss = []
+        for idx, batch in enumerate(train_micro_batch_list):
+            # set the gradient accumulation backward_ctx
+            backward_ctx = self.before_micro_batch(
+                self.model,
+                is_last_micro_batch=(idx + 1) == num_batches,
+            )
+
+            with self.amp_context:
+                actor_loss = self.forward_actor(batch)
+
+            actor_loss = actor_loss / num_batches
+            with backward_ctx:
+                self.grad_scaler.scale(actor_loss).backward()
+            gbs_actor_loss.append(actor_loss.item() * num_batches)
+
+        actor_grad_norm = self.model.clip_grad_norm_(
+            max_norm=self.cfg.actor.optim.clip_grad
+        )
+        self.optimizer.step()
+        self.lr_scheduler.step()
+
+        if self.preload_dataset is None:
+            # Non-preload: advance sampler epoch and rebuild iter for the next call.
+            self._data_epoch += 1
+            if hasattr(self._lerobot_loader.sampler, "set_epoch"):
+                self._lerobot_loader.sampler.set_epoch(self._data_epoch)
+            self._lerobot_iter = iter(self._lerobot_loader)
+        # Preload: background thread owns epoch advancement — nothing to do here.
+        return {
+            "dagger/actor_loss": np.mean(gbs_actor_loss),
+            "actor/lr": self.optimizer.param_groups[0]["lr"],
+            "actor/grad_norm": actor_grad_norm,
+        }
+
     def process_train_metrics(self, metrics):
         """Aggregate DAgger training and replay-buffer metrics."""
-        replay_buffer_stats = self.replay_buffer.get_stats()
-        replay_buffer_stats = {
-            f"replay_buffer/{key}": value for key, value in replay_buffer_stats.items()
-        }
-        append_to_dict(metrics, replay_buffer_stats)
+        if self.data_source == "buffer":
+            replay_buffer_stats = self.replay_buffer.get_stats()
+            replay_buffer_stats = {
+                f"replay_buffer/{key}": value
+                for key, value in replay_buffer_stats.items()
+            }
+            append_to_dict(metrics, replay_buffer_stats)
+        elif self.data_source == "lerobot":
+            lerobot_dataset_stats = self.dataset.get_stats()
+            lerobot_dataset_stats = {
+                f"lerobot_dataset/{key}": value
+                for key, value in lerobot_dataset_stats.items()
+            }
+            append_to_dict(metrics, lerobot_dataset_stats)
 
         mean_metric_dict = {}
         for key, value in metrics.items():
@@ -194,12 +512,15 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             self.load_param_and_grad(self.device)
             self.load_optimizer(self.device)
 
-        min_buffer_size = self.cfg.algorithm.replay_buffer.get("min_buffer_size", 100)
-        if not self.replay_buffer.is_ready(min_buffer_size):
-            self.log_on_first_rank(
-                f"Replay buffer size {len(self.replay_buffer)} < {min_buffer_size}, skipping training"
+        if self.data_source == "buffer":
+            min_buffer_size = self.cfg.algorithm.replay_buffer.get(
+                "min_buffer_size", 100
             )
-            return {}
+            if not self.replay_buffer.is_ready(min_buffer_size):
+                self.log_on_first_rank(
+                    f"Replay buffer size {len(self.replay_buffer)} < {min_buffer_size}, skipping training"
+                )
+                return {}
 
         assert (
             self.cfg.actor.global_batch_size
@@ -247,10 +568,11 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             else "dcp",
         )
 
-        buffer_save_path = os.path.join(
-            save_base_path, f"dagger_components/replay_buffer/rank_{self._rank}"
-        )
-        self.replay_buffer.save_checkpoint(buffer_save_path)
+        if self.data_source == "buffer":
+            buffer_save_path = os.path.join(
+                save_base_path, f"dagger_components/replay_buffer/rank_{self._rank}"
+            )
+            self.replay_buffer.save_checkpoint(buffer_save_path)
 
     def load_checkpoint(self, load_base_path):
         self._strategy.load_checkpoint(
@@ -263,7 +585,8 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             else "dcp",
         )
 
-        buffer_load_path = os.path.join(
-            load_base_path, f"dagger_components/replay_buffer/rank_{self._rank}"
-        )
-        self.replay_buffer.load_checkpoint(buffer_load_path)
+        if self.data_source == "buffer":
+            buffer_load_path = os.path.join(
+                load_base_path, f"dagger_components/replay_buffer/rank_{self._rank}"
+            )
+            self.replay_buffer.load_checkpoint(buffer_load_path)
