@@ -350,6 +350,19 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
 
                 param.register_hook(create_check_grad_fn(name))
 
+    def load_state_dict(self, state_dict, strict=True, **kwargs):
+        """
+        [RLinf Patch] Override load_state_dict to automatically handle FSDP checkpoints.
+        Strips the '_fsdp_wrapped_module.' prefix generated during multi-GPU SFT.
+        """
+        clean_state_dict = {}
+        for key, value in state_dict.items():
+            new_key = key.replace("_fsdp_wrapped_module.", "")
+            clean_state_dict[new_key] = value
+
+        print("[SFT Override] Cleaned FSDP prefixes from state_dict keys.")
+        return super().load_state_dict(clean_state_dict, strict=strict, **kwargs)
+
     def forward(self, forward_type=ForwardType.SFT, **kwargs):
         return self.sft_forward(**kwargs)
 

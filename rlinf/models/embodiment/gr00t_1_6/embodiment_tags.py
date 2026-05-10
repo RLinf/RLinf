@@ -86,7 +86,10 @@ class EmbodimentTag(Enum):
 
 
 # Embodiment tag string: to projector index in the Action Expert Module
+# These IDs must match official gr00t (see gr00t_n1d6 processing / embodiment_id.json).
 EMBODIMENT_TAG_MAPPING = {
+    EmbodimentTag.LIBERO_PANDA.value: 2,
+    EmbodimentTag.ROBOCASA_PANDA_OMRON.value: 13,
     EmbodimentTag.LIBERO_FRANKA.value: 31,
     EmbodimentTag.OXE_DROID.value: 17,
     EmbodimentTag.AGIBOT_GENIE1.value: 26,

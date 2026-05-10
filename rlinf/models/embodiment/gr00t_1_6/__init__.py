@@ -17,7 +17,7 @@ import types
 from pathlib import Path
 
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 # Monkey-patch: inject a stub for rlinf.envs.libero.asset_paths so that
 # env workers can import it even when the file is absent from the container.
@@ -100,12 +100,21 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     )
     from rlinf.models.embodiment.gr00t_1_6.utils import replace_dropout_with_identity
 
-    if cfg.embodiment_tag in [
+    use_official_libero_panda = bool(
+        OmegaConf.select(cfg, "use_official_libero_panda", default=False)
+    )
+
+    if cfg.embodiment_tag == "libero_panda":
+        emb_tag = (
+            EmbodimentTag.LIBERO_PANDA
+            if use_official_libero_panda
+            else EmbodimentTag.ROBOCASA_PANDA_OMRON
+        )
+    elif cfg.embodiment_tag in [
         "libero_franka",
         "isaaclab_franka",
         "maniskill_widowx",
         "robocasa_panda_omron",
-        "libero_panda",
     ]:
         emb_tag = EmbodimentTag.ROBOCASA_PANDA_OMRON
     elif cfg.embodiment_tag == "gr1":
@@ -152,3 +161,138 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         replace_dropout_with_identity(model)
 
     return model
+
+
+_RLINF_GLOBAL_PATCHED = False
+
+
+def _patch_libero_calc_reward():
+    """Patch LiberoEnv._calc_step_reward to add per-step penalty."""
+    import numpy as np
+
+    import rlinf.envs.libero.libero_env as le
+
+    def _patched_calc(self, terminations):
+        step_penalty = -1 if self.use_step_penalty else 0
+        term_np = np.asarray(terminations, dtype=np.float32)
+        success_bonus = self.cfg.reward_coef * 5.0
+        termination_bonus = success_bonus * term_np
+        reward = step_penalty + termination_bonus
+
+        if self.use_rel_reward:
+            reward_diff = reward - self.prev_step_reward
+            self.prev_step_reward = reward
+            return reward_diff
+        else:
+            if not self.use_step_penalty:
+                non_term_mask = ~(term_np > 0)
+                reward = np.asarray(reward, dtype=np.float32)
+                reward = reward - 0.01 * non_term_mask
+            return reward
+
+    le.LiberoEnv._calc_step_reward = _patched_calc
+
+
+def _patch_rollout_worker_predict():
+    """Patch Rollout worker to add Gaussian noise to actions."""
+    try:
+        import torch
+
+        from rlinf.workers.rollout.hf import huggingface_worker as hfw
+
+        _orig_predict = hfw.MultiStepRolloutWorker.predict
+
+        def _patched_predict(self, env_obs, mode="train"):
+            actions, result = _orig_predict(self, env_obs, mode)
+            if mode == "train":
+                # Add Gaussian noise to actions for exploration
+                noise_scale = 0.3
+                noise = torch.randn_like(actions) * noise_scale
+                actions = actions + noise
+                actions = torch.clamp(actions, -1.0, 1.0)
+            return actions, result
+
+        hfw.MultiStepRolloutWorker.predict = _patched_predict
+        print("[GR00T patch] Rollout predict patched: Gaussian noise 0.3 on actions")
+    except Exception as e:
+        print(f"[GR00T patch] Failed to patch rollout predict: {e}")
+
+
+def _patch_worker_init():
+    """Patch EnvWorker.init_worker to apply reward patch before env creation."""
+    try:
+        from rlinf.scheduler import Worker
+
+        for subcls in Worker.__subclasses__():
+            if subcls.__name__ == "EnvWorker":
+                orig_init = subcls.init_worker
+
+                def _patched_init_worker(self):
+                    try:
+                        _patch_libero_calc_reward()
+                    except Exception:
+                        pass
+                    return orig_init(self)
+
+                subcls.init_worker = _patched_init_worker
+                print("[GR00T patch] EnvWorker.init_worker patched to apply reward fix")
+                return
+        print("[GR00T patch] EnvWorker not found in Worker subclasses")
+    except Exception as e:
+        print(f"[GR00T patch] Failed to patch EnvWorker.init_worker: {e}")
+
+
+def _patch_get_env_cls():
+    """Patch get_env_cls for good measure."""
+    import rlinf.envs as env_module
+
+    _orig = env_module.get_env_cls
+
+    def _patched(env_type, env_cfg=None):
+        result = _orig(env_type, env_cfg)
+        if str(env_type) == "libero" or (
+            hasattr(env_type, "value") and env_type.value == "libero"
+        ):
+            try:
+                _patch_libero_calc_reward()
+            except Exception:
+                pass
+        return result
+
+    env_module.get_env_cls = _patched
+
+
+def apply_global_rlinf_patches():
+    global _RLINF_GLOBAL_PATCHED
+    if _RLINF_GLOBAL_PATCHED:
+        return
+    _RLINF_GLOBAL_PATCHED = True
+
+    try:
+        _patch_libero_calc_reward()
+        print(
+            "[GR00T patch] LiberoEnv._calc_step_reward patched: per-step -0.01, success x5"
+        )
+    except Exception as e:
+        print(f"[GR00T patch] Failed direct patch: {e}")
+
+    try:
+        _patch_rollout_worker_predict()
+    except Exception as e:
+        print(f"[GR00T patch] Failed noise patch (rollout): {e}")
+
+    try:
+        _patch_get_env_cls()
+        print(
+            "[GR00T patch] get_env_cls patched: auto-applies reward patch on LIBERO env"
+        )
+    except Exception as e:
+        print(f"[GR00T patch] Failed get_env_cls patch: {e}")
+
+    try:
+        _patch_worker_init()
+    except Exception as e:
+        print(f"[GR00T patch] Failed worker init patch: {e}")
+
+
+apply_global_rlinf_patches()

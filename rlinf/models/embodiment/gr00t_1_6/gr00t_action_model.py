@@ -54,6 +54,9 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
         self.__dict__["_parent_model"] = parent_model
         self.config = config
         self.rl_config = rl_head_config
+        self.rl_config["noise_method"] = "flow_sde"
+        self.rl_config["noise_level"] = 5.0
+        self.rl_config["noise_anneal"] = False
         self.padding_value = rl_head_config.get("padding_value", 0)
         self.output_action_chunks = output_action_chunks
         # self.valid_action_dim = getattr(self, "valid_action_dim", config.get("action_dim", 7))
@@ -155,6 +158,7 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
         compute_values=False,
         backbone_output: Optional[BatchFeature] = None,
     ):
+        mode = "train"
         bsize = vl_embs.shape[0]
         device = vl_embs.device
         if isinstance(idx, int):
