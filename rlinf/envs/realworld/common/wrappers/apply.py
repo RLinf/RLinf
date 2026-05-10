@@ -26,10 +26,6 @@ from rlinf.envs.realworld.common.wrappers.dual_euler_obs import (
 from rlinf.envs.realworld.common.wrappers.dual_gello_intervention import (
     DualGelloIntervention,
 )
-from rlinf.envs.realworld.common.wrappers.dual_pose_action import (
-    DualAbsolutePoseActionWrapper,
-    DualRelativePoseActionWrapper,
-)
 from rlinf.envs.realworld.common.wrappers.dual_relative_frame import (
     DualRelativeFrame,
 )
@@ -140,15 +136,13 @@ def apply_single_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
 def apply_dual_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
     """Wrapper stack for dual-arm realworld envs.
 
-    ``action_mode`` defaults to ``delta_axis_angle`` to preserve the existing
-    dual-arm teleop/training stack.  Turtle2 deploy can opt into
-    ``relative_pose`` or ``absolute_pose`` action modes.  Those pose-action
-    modes route actions through explicit pose-action wrappers, skip teleop and
-    gripper-close wrappers, and differ only in frame handling:
-    ``relative_pose`` may use ``DualRelativeFrame`` while ``absolute_pose``
-    stays in the base frame before converting observations to euler angles.
+    Turtle2 deploy can opt into ``relative_pose`` or ``absolute_pose`` through
+    its env config.  The env owns action dispatch; this builder only applies
+    frame/observation wrappers.  Env configs without ``action_mode`` keep the
+    existing ``delta_axis_angle`` dual-arm teleop/training stack.
     """
-    action_mode = cfg.get("action_mode", "delta_axis_angle")
+    config = env.get_wrapper_attr("config")
+    action_mode = getattr(config, "action_mode", "delta_axis_angle")
     if action_mode not in {"delta_axis_angle", "relative_pose", "absolute_pose"}:
         raise ValueError(
             f"Unsupported action_mode={action_mode!r}. "
@@ -168,7 +162,6 @@ def apply_dual_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
                 "Dual-arm pose-action modes do not support teleop wrappers. "
                 "Set use_spacemouse=False and use_gello=False."
             )
-        env = DualRelativePoseActionWrapper(env)
         if cfg.get("use_relative_frame", True):
             env = DualRelativeFrame(env)
         env = _apply_keyboard_reward(env, cfg.get("keyboard_reward_wrapper", None))
@@ -181,7 +174,6 @@ def apply_dual_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
                 "Dual-arm pose-action modes do not support teleop wrappers. "
                 "Set use_spacemouse=False and use_gello=False."
             )
-        env = DualAbsolutePoseActionWrapper(env)
         env = _apply_keyboard_reward(env, cfg.get("keyboard_reward_wrapper", None))
         env = DualQuat2EulerWrapper(env)
         return env

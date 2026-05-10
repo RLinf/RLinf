@@ -32,41 +32,6 @@ from rlinf.envs.realworld.xsquare.turtle2_env import (
 )
 
 
-def _resolve_deploy_action_mode(
-    override_cfg: dict[str, Any],
-    env_cfg: Mapping[str, Any],
-) -> tuple[str, dict[str, Any]]:
-    """Resolve deploy action mode from env-level and override-level config."""
-    wrapper_cfg = dict(env_cfg)
-    env_action_mode = wrapper_cfg.get("action_mode", None)
-    override_action_mode = override_cfg.get("action_mode", None)
-
-    if env_action_mode is not None and override_action_mode is not None:
-        if env_action_mode != override_action_mode:
-            raise ValueError(
-                "Turtle2 deploy action_mode is configured in both env config "
-                "and override_cfg with different values: "
-                f"{env_action_mode!r} != {override_action_mode!r}."
-            )
-        action_mode = env_action_mode
-    elif env_action_mode is not None:
-        action_mode = env_action_mode
-    elif override_action_mode is not None:
-        action_mode = override_action_mode
-    else:
-        action_mode = "relative_pose"
-
-    if action_mode not in {"relative_pose", "absolute_pose"}:
-        raise ValueError(
-            f"Unsupported Turtle2 deploy action_mode={action_mode!r}. "
-            "Expected one of {'relative_pose', 'absolute_pose'}."
-        )
-
-    override_cfg["action_mode"] = action_mode
-    wrapper_cfg["action_mode"] = action_mode
-    return action_mode, wrapper_cfg
-
-
 def create_button_env(
     override_cfg: dict[str, Any],
     worker_info: Any,
@@ -91,7 +56,26 @@ def create_turtle2_deploy_env(
     env_cfg: Mapping[str, Any],
 ) -> gym.Env:
     override_cfg = dict(override_cfg)
-    action_mode, wrapper_cfg = _resolve_deploy_action_mode(override_cfg, env_cfg)
+    env_action_mode = env_cfg.get("action_mode", None)
+    override_action_mode = override_cfg.get("action_mode", None)
+    if (
+        env_action_mode is not None
+        and override_action_mode is not None
+        and env_action_mode != override_action_mode
+    ):
+        raise ValueError(
+            "Turtle2 deploy action_mode is configured in both env config "
+            "and override_cfg with different values: "
+            f"{env_action_mode!r} != {override_action_mode!r}."
+        )
+    action_mode = env_action_mode or override_action_mode or "relative_pose"
+    if action_mode not in {"relative_pose", "absolute_pose"}:
+        raise ValueError(
+            f"Unsupported Turtle2 deploy action_mode={action_mode!r}. "
+            "Expected one of {'relative_pose', 'absolute_pose'}."
+        )
+
+    override_cfg["action_mode"] = action_mode
     override_cfg.setdefault("use_arm_ids", [0, 1])
     override_cfg.setdefault("use_camera_ids", [0, 1, 2])
     override_cfg.setdefault("enforce_gripper_close", False)
@@ -105,7 +89,7 @@ def create_turtle2_deploy_env(
         hardware_info=hardware_info,
         env_idx=env_idx,
     )
-    return apply_dual_arm_wrappers(env, wrapper_cfg)
+    return apply_dual_arm_wrappers(env, env_cfg)
 
 
 register(

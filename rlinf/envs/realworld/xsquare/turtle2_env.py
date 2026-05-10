@@ -31,7 +31,6 @@ from rlinf.scheduler import (
 )
 from rlinf.utils.logging import get_logger
 
-
 NUM_ARMS = 2
 POSE_DIM = 6
 ACTION_DIM_PER_ARM = POSE_DIM + 1
@@ -161,14 +160,22 @@ class Turtle2Env(gym.Env):
             "ee_pose_limit_min",
             "ee_pose_limit_max",
         ):
-            value = np.asarray(getattr(self.config, name), dtype=np.float64).reshape(
-                NUM_ARMS, POSE_DIM
-            )
-            setattr(self.config, name, value)
+            setattr(self.config, name, self._as_pose_config_array(name))
         self.config.reward_threshold = np.asarray(
             self.config.reward_threshold, dtype=np.float64
         )
-        self.config.action_scale = np.asarray(self.config.action_scale, dtype=np.float64)
+        self.config.action_scale = np.asarray(
+            self.config.action_scale, dtype=np.float64
+        )
+
+    def _as_pose_config_array(self, name: str) -> np.ndarray:
+        value = np.asarray(getattr(self.config, name), dtype=np.float64)
+        expected_shape = (NUM_ARMS, POSE_DIM)
+        if value.shape != expected_shape:
+            raise ValueError(
+                f"{name} must have shape {expected_shape}, got {value.shape}."
+            )
+        return value
 
     def _setup_hardware(self):
         from .turtle2_smooth_controller import Turtle2SmoothController

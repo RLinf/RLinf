@@ -76,8 +76,8 @@ algorithm:
 env:
   group_name: "EnvGroup"
   eval:
-    action_mode: relative_pose
     override_cfg:
+      action_mode: relative_pose
       task_description: "Describe your Turtle2 deployment task here."
       is_dummy: false
       use_arm_ids: [0, 1]

@@ -19,10 +19,6 @@ from typing import TYPE_CHECKING
 from .apply import apply_dual_arm_wrappers, apply_single_arm_wrappers
 from .dual_euler_obs import DualQuat2EulerWrapper
 from .dual_gello_intervention import DualGelloIntervention
-from .dual_pose_action import (
-    DualAbsolutePoseActionWrapper,
-    DualRelativePoseActionWrapper,
-)
 from .dual_relative_frame import DualRelativeFrame, DualRelativeTargetFrame
 from .dual_spacemouse_intervention import DualSpacemouseIntervention
 from .euler_obs import Quat2EulerWrapper
@@ -41,9 +37,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DualGelloIntervention",
-    "DualAbsolutePoseActionWrapper",
     "DualQuat2EulerWrapper",
-    "DualRelativePoseActionWrapper",
     "DualRelativeFrame",
     "DualRelativeTargetFrame",
     "DualSpacemouseIntervention",
