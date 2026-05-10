@@ -15,6 +15,7 @@
 import json
 from pathlib import Path
 
+import torch
 import torch.nn as nn
 from groot.vla.data.schema import DatasetMetadata
 from groot.vla.data.transform import ComposedModalityTransform
@@ -50,6 +51,44 @@ def _promote_scalar_params_to_1d(model):
 
 def get_model(cfg: DictConfig, torch_dtype=None):
     """Load DreamZero policy from checkpoint."""
+
+    from rlinf.utils.patcher import Patcher
+
+    Patcher.clear()
+    Patcher.add_patch(
+        "groot.vla.model.dreamzero.modules.wan_video_vae.WanVideoVAE",
+        "rlinf.models.embodiment.dreamzero.patch.wan_video_vae.WanVideoVAE",
+    )
+    Patcher.add_patch(
+        "groot.vla.model.dreamzero.modules.wan_video_vae.WanVideoVAE38",
+        "rlinf.models.embodiment.dreamzero.patch.wan_video_vae.WanVideoVAE38",
+    )
+    Patcher.add_patch(
+        "groot.vla.model.dreamzero.modules.wan_video_vae.WanVideoVAEStateDictConverter",
+        "rlinf.models.embodiment.dreamzero.patch.wan_video_vae.WanVideoVAEStateDictConverter",
+    )
+    _dit_chunk = "groot.vla.model.dreamzero.modules.wan_video_dit_action_casual_chunk"
+    Patcher.add_wrapper(
+        f"{_dit_chunk}.CausalWanSelfAttention._process_clean_image_only",
+        torch.compile(mode="reduce-overhead"),
+    )
+    Patcher.add_wrapper(
+        f"{_dit_chunk}.CausalWanSelfAttention._process_state_blocks",
+        torch.compile(mode="reduce-overhead"),
+    )
+    Patcher.add_wrapper(
+        f"{_dit_chunk}.CausalWanSelfAttention._process_noisy_image_blocks",
+        torch.compile(mode="reduce-overhead"),
+    )
+    Patcher.add_wrapper(
+        f"{_dit_chunk}.CausalWanSelfAttention._process_noisy_action_blocks",
+        torch.compile(mode="reduce-overhead"),
+    )
+    Patcher.add_patch(
+        f"{_dit_chunk}.CausalWanModel._forward_train",
+        "rlinf.models.embodiment.dreamzero.patch.wan_causal_model_forward_train._forward_train",
+    )
+    Patcher.apply()
 
     model_path = Path(cfg.get("model_path"))
     if not model_path.exists():

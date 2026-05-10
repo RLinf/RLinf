@@ -32,6 +32,7 @@ class CameraInfo:
     resolution: tuple[int, int] = (640, 480)
     fps: int = 15
     enable_depth: bool = False
+    crop_region: Optional[tuple[float, float, float, float]] = None
 
 
 class BaseCamera(ABC):

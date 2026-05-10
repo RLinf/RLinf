@@ -114,6 +114,7 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
           bash requirements/install.sh agentic
+          source .venv/bin/activate
           uv pip install transformers==4.57.1
 
       - name: SFT Robo2vlm train test

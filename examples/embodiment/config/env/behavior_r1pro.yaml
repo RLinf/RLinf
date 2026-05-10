@@ -151,7 +151,9 @@ omni_config:
     num_waypoints: 1
     waypoint_resolution: 0.2
     not_load_object_categories: null
-    load_room_types: ["living_room", "kitchen"]
+    load_room_types: null
+    # if true, auto-detect relevant rooms for task and override load_room_types
+    partial_scene_load: true
     load_room_instances: null
     seg_map_resolution: 1.0
     scene_source: OG
