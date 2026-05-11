@@ -64,6 +64,8 @@ class DreamZeroConfig(VLAConfig):
         },
     )
 
+    gradient_checkpointing: bool = False
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         for key, value in kwargs.items():
@@ -75,7 +77,7 @@ class DreamZeroPolicy(VLA, BasePolicy):
 
     _no_split_modules = [
         "T5SelfAttention",  # text encoder
-        "AttentionBlock",  # image encoder
+        "AttentionBlock",  # vae
         "CausalWanAttentionBlock",  # action head
     ]
 
@@ -85,6 +87,18 @@ class DreamZeroPolicy(VLA, BasePolicy):
     ):
         super().__init__(config)
         self.config = config
+        try:
+            diffusion_model = getattr(getattr(self, "action_head", None), "model", None)
+            enabled = self.config.gradient_checkpointing
+            if diffusion_model is not None:
+                if hasattr(diffusion_model, "_set_gradient_checkpointing"):
+                    diffusion_model._set_gradient_checkpointing(
+                        diffusion_model, enabled
+                    )
+                elif hasattr(diffusion_model, "gradient_checkpointing"):
+                    diffusion_model.gradient_checkpointing = enabled
+        except Exception:
+            pass
 
     def apply(self, batch: Batch, **kwargs) -> Batch:
         """Normalize inputs"""

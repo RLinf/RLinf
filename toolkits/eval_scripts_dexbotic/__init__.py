@@ -24,13 +24,30 @@ import torch
 from dexbotic.data.dataset.transform.action import ActionNorm, PadState
 from dexbotic.data.dataset.transform.common import Pipeline, ToNumpy, ToTensor
 from dexbotic.data.dataset.transform.output import AbsoluteAction, ActionDenorm
+from dexbotic.model.dm0.dm0_arch import DM0ForCausalLM
 from dexbotic.model.pi0.pi0_arch import Pi0ForCausalLM
-from dexbotic.tokenization.process import Pi0Tokenization
+from dexbotic.tokenization.process import DM0Tokenization, Pi0Tokenization
 from PIL import Image
 from transformers import AutoTokenizer
 
 
-class DexboticPolicy:
+class BaseDexboticPolicy:
+    """Base class for Dexbotic-style policies.
+
+    Subclasses must define:
+        model_cls:          The model class to load (e.g. Pi0ForCausalLM).
+        tokenization_cls:   The tokenization class to use (e.g. Pi0Tokenization).
+
+    Subclasses may override:
+        _build_tokenization_input(text): Returns the conversations list passed to
+            the tokenization function.
+        _call_inference_action(inputs): Calls model.inference_action with the
+            appropriate keyword arguments.
+    """
+
+    model_cls = None
+    tokenization_cls = None
+
     def __init__(
         self,
         model_path: str,
@@ -38,12 +55,14 @@ class DexboticPolicy:
         num_images: int = 3,
         non_delta_mask: Optional[list[int]] = None,
         device: str = "cuda",
+        diffusion_steps: int = 10,
     ):
         self.model_path = model_path
         self.action_dim = action_dim
         self.num_images = num_images
         self.non_delta_mask = non_delta_mask or [6]
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
+        self.diffusion_steps = diffusion_steps
         norm_stats_file = os.path.join(model_path, "norm_stats.json")
         self.norm_stats = self._read_normalization_stats(norm_stats_file)
         self._load_model()
@@ -68,8 +87,15 @@ class DexboticPolicy:
         original_offline = os.environ.get("HF_HUB_OFFLINE", None)
         os.environ["HF_HUB_OFFLINE"] = "1"
         try:
-            self.model = Pi0ForCausalLM.from_pretrained(
+            config = self.model_cls.config_class.from_pretrained(
                 self.model_path,
+                trust_remote_code=True,
+                local_files_only=True,
+            )
+            config.processor_config = self.model_path
+            self.model = self.model_cls.from_pretrained(
+                self.model_path,
+                config=config,
                 torch_dtype=None,
                 low_cpu_mem_usage=True,
                 trust_remote_code=True,
@@ -84,7 +110,7 @@ class DexboticPolicy:
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.model_path, use_fast=False, local_files_only=True
         )
-        self.tokenization_func = Pi0Tokenization(self.tokenizer)
+        self.tokenization_func = self.tokenization_cls(self.tokenizer)
         self.input_transform = Pipeline(
             [
                 PadState(ndim=self.model.model.config.action_dim, axis=-1),
@@ -104,6 +130,14 @@ class DexboticPolicy:
         self.timestep = 0
         self.episode += 1
         self.prev_text = None
+
+    def _build_tokenization_input(self, text: str) -> list:
+        """Return the conversations list passed to the tokenization function."""
+        raise NotImplementedError
+
+    def _call_inference_action(self, inputs: dict) -> torch.Tensor:
+        """Call model.inference_action with the appropriate arguments."""
+        raise NotImplementedError
 
     def infer(self, observation: dict) -> dict:
         base_image = observation["observation/image"]
@@ -141,7 +175,7 @@ class DexboticPolicy:
         batch_images_tensor = torch.stack(batch_images_tensor, dim=0)
         batch_image_masks = torch.stack(batch_image_masks, dim=0)
         batch_input_ids = np.array(
-            [self.tokenization_func([{"value": text}])["input_ids"]]
+            [self.tokenization_func(self._build_tokenization_input(text))["input_ids"]]
         )
         batch_attention_mask = np.array(
             [np.array(ids != self.tokenizer.pad_token_id) for ids in batch_input_ids]
@@ -164,16 +198,44 @@ class DexboticPolicy:
             for k, v in inputs.items()
         }
         with torch.no_grad():
-            actions = self.model.inference_action(**inputs)
+            actions = self._call_inference_action(inputs)
         outputs = {
-            k: v.detach().cpu().numpy() if isinstance(v, torch.Tensor) else v
+            k: v.detach().cpu().float().numpy() if isinstance(v, torch.Tensor) else v
             for k, v in inputs.items()
         }
-        outputs["action"] = actions.detach().cpu().numpy()
+        outputs["action"] = actions.detach().cpu().float().numpy()
         outputs = self.output_transform(outputs)
         action_sequence = outputs["action"][0, :, : self.action_dim]
         self.timestep += 1
         return {"actions": action_sequence}
+
+
+class DexboticPI0Policy(BaseDexboticPolicy):
+    """Policy for Pi0ForCausalLM (Gemma-based VLM + action expert)."""
+
+    model_cls = Pi0ForCausalLM
+    tokenization_cls = Pi0Tokenization
+
+    def _build_tokenization_input(self, text: str) -> list:
+        return [{"value": text}]
+
+    def _call_inference_action(self, inputs: dict) -> torch.Tensor:
+        return self.model.inference_action(**inputs)
+
+
+class DM0Policy(BaseDexboticPolicy):
+    """Policy for DM0ForCausalLM (Qwen3-based VLM + action expert)."""
+
+    model_cls = DM0ForCausalLM
+    tokenization_cls = DM0Tokenization
+
+    def _build_tokenization_input(self, text: str) -> list:
+        return [{"from": "human", "value": text}]
+
+    def _call_inference_action(self, inputs: dict) -> torch.Tensor:
+        return self.model.inference_action(
+            **inputs, diffusion_steps=self.diffusion_steps
+        )
 
 
 def setup_logger(exp_name, log_dir):
@@ -189,15 +251,38 @@ def setup_logger(exp_name, log_dir):
     return logger
 
 
+# Mapping from config name to Policy class.
+# Use config_name to select the model, e.g. "db_pi0_libero" or "dm0_libero".
+_POLICY_CLASS_DICT = {
+    "db_pi0_libero": DexboticPI0Policy,
+    "dm0_libero": DM0Policy,
+}
+
+
 def setup_policy(args):
-    policy = DexboticPolicy(
+    config_name = getattr(args, "config_name", "db_pi0_libero")
+    if config_name not in _POLICY_CLASS_DICT:
+        raise ValueError(
+            f"Unknown config_name '{config_name}'. "
+            f"Available options: {list(_POLICY_CLASS_DICT.keys())}"
+        )
+    policy_cls = _POLICY_CLASS_DICT[config_name]
+    policy = policy_cls(
         model_path=args.pretrained_path,
         action_dim=getattr(args, "action_dim", 7),
         num_images=getattr(args, "num_images", 3),
         non_delta_mask=getattr(args, "non_delta_mask", [6]),
         device=getattr(args, "device", "cuda"),
+        diffusion_steps=getattr(args, "num_steps", 10),
     )
     return policy
 
 
-__all__ = ["setup_policy", "setup_logger"]
+__all__ = [
+    "setup_policy",
+    "setup_logger",
+    "BaseDexboticPolicy",
+    "DexboticPI0Policy",
+    "DM0Policy",
+    "_POLICY_CLASS_DICT",
+]

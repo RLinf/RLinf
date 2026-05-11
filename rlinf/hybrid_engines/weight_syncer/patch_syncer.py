@@ -28,6 +28,7 @@ from .base import (
     materialize_tensor,
     normalize_device,
 )
+from .bucket_syncer import BucketWeightSyncer, iter_named_tensor_buckets
 from .compressor import PatchCompressor
 
 
@@ -575,6 +576,9 @@ class PatchWeightSyncer(WeightSyncer):
         transport_device: torch.device | str = "cuda",
         delta_encoding: bool = True,
         compression_algorithm: str = "none",
+        init_sync_enabled: bool = False,
+        init_sync_prefixes: list[str] | None = None,
+        init_sync_bucket_size: int = 128 * 1024 * 1024,
     ):
         super().__init__()
         self.snapshot: dict[str, torch.Tensor] | None = None
@@ -584,10 +588,111 @@ class PatchWeightSyncer(WeightSyncer):
         self.delta_encoding = delta_encoding
         self.transport_device = normalize_device(transport_device)
         self.snapshot_device = normalize_device(snapshot_device)
+        self.init_sync_enabled = init_sync_enabled
+        self.init_sync_prefixes = (
+            None
+            if init_sync_prefixes is None
+            else [str(prefix) for prefix in init_sync_prefixes]
+        )
+        if self.init_sync_enabled and self.init_sync_prefixes == []:
+            raise ValueError("Patch init sync prefixes must not be empty")
+        self.init_sync_bucket_size = init_sync_bucket_size
         self.compressor = PatchCompressor.create(
             compression_algorithm=compression_algorithm,
             transport_device=self.transport_device,
         )
+
+    def _select_init_sync_weights(
+        self,
+        state_dict: dict[str, torch.Tensor | DTensor],
+    ) -> list[tuple[str, torch.Tensor | DTensor]]:
+        if self.init_sync_prefixes is None:
+            return list(state_dict.items())
+
+        matched_prefixes = dict.fromkeys(self.init_sync_prefixes, False)
+        selected_weights: list[tuple[str, torch.Tensor | DTensor]] = []
+        for key, value in state_dict.items():
+            for prefix in self.init_sync_prefixes:
+                if key == prefix or key.startswith(f"{prefix}."):
+                    matched_prefixes[prefix] = True
+                    selected_weights.append((key, value))
+                    break
+
+        unmatched_prefixes = [
+            prefix for prefix, matched in matched_prefixes.items() if not matched
+        ]
+        if unmatched_prefixes:
+            raise ValueError(
+                "Patch init sync prefixes did not match any state_dict keys: "
+                f"{unmatched_prefixes}"
+            )
+
+        return selected_weights
+
+    async def _sync_init_weights(
+        self,
+        state_dict: dict[str, torch.Tensor | DTensor],
+        receiver_dtypes: dict[str, torch.dtype],
+        send: SendFn,
+    ) -> None:
+        selected_weights = self._select_init_sync_weights(state_dict)
+        for key, _ in selected_weights:
+            if key not in receiver_dtypes:
+                raise ValueError(
+                    f"Patch init sync sender key {key} does not exist on receiver"
+                )
+
+        for bucket in iter_named_tensor_buckets(
+            selected_weights,
+            0,
+            bucket_size=self.init_sync_bucket_size,
+            bucket_device=self.transport_device,
+            dtype_resolver=lambda key, _dtype: receiver_dtypes[key],
+        ):
+            await send(bucket)
+
+    @torch.no_grad()
+    def _apply_init_weight_bucket(
+        self,
+        state_dict: dict[str, torch.Tensor | DTensor],
+        bucket: dict[str, torch.Tensor],
+    ) -> None:
+        for key, value in bucket.items():
+            if key not in state_dict:
+                raise ValueError(
+                    f"Patch init sync receiver key {key} does not exist in state_dict"
+                )
+            target = state_dict[key]
+            if isinstance(target, DTensor):
+                raise TypeError(
+                    "Patch init sync receiver does not support DTensor state_dict values"
+                )
+            target.copy_(value, non_blocking=True)
+
+    async def _apply_init_weights(
+        self,
+        state_dict: dict[str, torch.Tensor | DTensor],
+        recv: RecvFn,
+    ) -> None:
+        first_bucket = await recv()
+        if not isinstance(first_bucket, dict):
+            raise TypeError(
+                "Patch init sync receiver expected a bucket payload dictionary"
+            )
+
+        total_buckets = int(
+            first_bucket.pop(BucketWeightSyncer._TOTAL_BUCKETS_KEY).item()
+        )
+        first_bucket.pop(BucketWeightSyncer._SYNCER_VERSION_KEY)
+        self._apply_init_weight_bucket(state_dict, first_bucket)
+
+        for _ in range(total_buckets - 1):
+            bucket = await recv()
+            if not isinstance(bucket, dict):
+                raise TypeError(
+                    "Patch init sync receiver expected a bucket payload dictionary"
+                )
+            self._apply_init_weight_bucket(state_dict, bucket)
 
     async def init_sender(
         self,
@@ -596,7 +701,6 @@ class PatchWeightSyncer(WeightSyncer):
         recv: RecvFn | None = None,
     ) -> None:
         assert not self.sender_initialized(), "Sender already initialized"
-        del send
         if recv is None:
             raise ValueError("PatchWeightSyncer sender init requires a recv function")
 
@@ -606,6 +710,9 @@ class PatchWeightSyncer(WeightSyncer):
         receiver_dtypes = metadata["receiver_dtypes"]
         if set(state_dict.keys()) != set(self.ordered_keys):
             raise ValueError("Sender state dict keys do not match receiver keys")
+
+        if self.init_sync_enabled:
+            await self._sync_init_weights(state_dict, receiver_dtypes, send)
 
         with torch.no_grad():
             snapshot: dict[str, torch.Tensor] = {}
@@ -661,7 +768,6 @@ class PatchWeightSyncer(WeightSyncer):
         send: SendFn | None = None,
     ) -> None:
         assert not self.receiver_initialized(), "Receiver already initialized"
-        del recv
         if state_dict is None:
             raise ValueError("PatchWeightSyncer receiver init requires a state_dict")
         if send is None:
@@ -683,6 +789,8 @@ class PatchWeightSyncer(WeightSyncer):
                 "receiver_dtypes": receiver_dtypes,
             }
         )
+        if self.init_sync_enabled:
+            await self._apply_init_weights(state_dict, recv)
         self._receiver_initialized = True
 
     def delta_encode(
