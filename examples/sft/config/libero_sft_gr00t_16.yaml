@@ -26,7 +26,7 @@ runner:
   max_epochs: 100000
   max_steps: 20000
   val_check_interval: -1
-  save_interval: 1000
+  save_interval: 500
 
 data:
   train_data_paths: '/path/to/Gr00t_16-libero-Spatial-dataset'

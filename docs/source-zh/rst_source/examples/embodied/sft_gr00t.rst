@@ -191,7 +191,22 @@ LeRobot SFT 模型格式转换
 
 .. code-block:: bash
 
-   python rlinf/models/embodiment/gr00t_1_6/convert_to_hf.py
+   export REPO_PATH="/path/to/RLinf"
+
+   python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
+      --config-path /path/to/RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/config \
+      --config-name fsdp_model_convertor \
+      convertor.ckpt_path="/path/to/RLinf/logs/yymmdd-hours:minutes:seconds/gr00t_16_sft_libero/checkpoints/global_step_<>/actor/model_state_dict/full_weights.pt" \
+      convertor.save_path="/path/to/where/you/put/GR00T-1.6-SFT-LIBERO-Spaial-HF" \
+      ++model.model_type="gr00t_1_6_sft" \
+      ++model.model_path="/path/to/official/GR00T-N1.6-3B" \
+      ++model.embodiment_tag="libero_panda" \
+      ++model.denoising_steps=4 \
+      ++model.num_action_chunks=1 \
+      ++model.obs_converter_type="libero" \
+      ++model.is_lora=false \
+      ++model.rl_head_config.add_value_head=false \
+      ++model.rl_head_config.disable_dropout=true
 
 微调效果展示 (SFT)
 ------------------------------------------------------------------

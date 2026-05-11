@@ -12,6 +12,10 @@ denoising_steps: 1
 
 obs_converter_type: "libero"
 embodiment_tag: libero_panda
+# When true (recommended for LIBERO SFT checkpoints evaluated with official Gr00T):
+# use EmbodimentTag.LIBERO_PANDA (projector id 2) and libero_panda modality/stats in SFT.
+# Set false only for older RLinf checkpoints trained with the robocasa_panda_omron slot.
+use_official_libero_panda: true
 add_value_head: True
 
 rl_head_config:
