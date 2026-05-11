@@ -100,8 +100,9 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     )
     from rlinf.models.embodiment.gr00t_1_6.utils import replace_dropout_with_identity
 
+    is_sft_model = cfg.get("model_type") == "gr00t_1_6_sft"
     use_official_libero_panda = bool(
-        OmegaConf.select(cfg, "use_official_libero_panda", default=False)
+        OmegaConf.select(cfg, "use_official_libero_panda", default=is_sft_model)
     )
 
     if cfg.embodiment_tag == "libero_panda":
@@ -138,6 +139,8 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     else:
         model_cls = GR00T_N1_6_ForRLActionPrediction
 
+    processor_path = OmegaConf.select(cfg, "processor_path", default=None)
+
     model = model_cls.from_pretrained(
         local_model_path=str(model_path),
         pretrained_model_name_or_path=str(model_path),
@@ -150,6 +153,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         tune_visual=False,
         tune_llm=False,
         rl_head_config=cfg.rl_head_config,
+        processor_path=processor_path,
     )
 
     model.to(torch_dtype)
@@ -268,26 +272,17 @@ def apply_global_rlinf_patches():
         return
     _RLINF_GLOBAL_PATCHED = True
 
-    try:
-        _patch_libero_calc_reward()
-        print(
-            "[GR00T patch] LiberoEnv._calc_step_reward patched: per-step -0.01, success x5"
-        )
-    except Exception as e:
-        print(f"[GR00T patch] Failed direct patch: {e}")
+    # Only apply rollout predict patch at module level — it does not import
+    # tensorflow and is needed by the RolloutGroup.  Env-related patches
+    # (_patch_libero_calc_reward, _patch_get_env_cls) import tensorflow and
+    # will crash Ray workers that don't need it (e.g. RolloutGroup, ActorGroup).
+    # They are deferred and applied inside EnvWorker.init_worker via
+    # _patch_worker_init below.
 
     try:
         _patch_rollout_worker_predict()
     except Exception as e:
         print(f"[GR00T patch] Failed noise patch (rollout): {e}")
-
-    try:
-        _patch_get_env_cls()
-        print(
-            "[GR00T patch] get_env_cls patched: auto-applies reward patch on LIBERO env"
-        )
-    except Exception as e:
-        print(f"[GR00T patch] Failed get_env_cls patch: {e}")
 
     try:
         _patch_worker_init()
