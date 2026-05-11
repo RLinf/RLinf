@@ -24,10 +24,10 @@ import os
 from pathlib import Path
 from typing import Any
 
-import jax
 import numpy as np
 import torch
 from omegaconf import DictConfig
+from torch.utils._pytree import tree_map
 
 from rlinf.data.datasets.recap.cfg_model import (
     AdvantagePreservingDataset,
@@ -43,6 +43,7 @@ from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.pytree import register_pytree_dataclasses
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
 # Suppress libdav1d/ffmpeg verbose logging
@@ -374,12 +375,11 @@ class FSDPCfgWorker(FSDPSftWorker):
                     observation, actions, advantage = next(self.data_iter)
                 self._data_iter_offset += 1
 
-                observation = jax.tree.map(
-                    lambda x: (
-                        torch.as_tensor(x)
-                        .contiguous()
-                        .to(self.device, non_blocking=True)
-                    ),
+                register_pytree_dataclasses(observation)
+                observation = tree_map(
+                    lambda x: torch.as_tensor(x)
+                    .contiguous()
+                    .to(self.device, non_blocking=True),
                     observation,
                 )
                 actions = actions.to(torch.float32).to(self.device, non_blocking=True)

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import gc
 from collections import defaultdict
 from typing import Any, Literal
 
@@ -935,8 +936,11 @@ class EnvWorker(Worker):
         trajectories: list[Trajectory] = rollout_result.to_splited_trajectories(
             self.actor_split_num
         )
+        rollout_result.clear()
         for trajectory in trajectories:
             channel.put(trajectory, async_op=True)
+        del trajectories
+        gc.collect()
 
     @Worker.timer("run_interact_once")
     async def _run_interact_once(
@@ -1087,6 +1091,9 @@ class EnvWorker(Worker):
                 await self.send_rollout_trajectories(
                     self.rollout_results[stage_id], actor_channel
                 )
+            # reduce memory peak
+            self.rollout_results = []
+            gc.collect()
 
         for key, value in env_metrics.items():
             env_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()

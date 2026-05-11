@@ -286,12 +286,11 @@ class EmbodiChainEnv(gym.Env):
         )
         env_cfg.num_envs = self.num_envs
         env_cfg.max_episode_steps = self.max_episode_steps
-        sim_cfg_kwargs = {
-            "headless": bool(_cfg_get(self.cfg, "headless", True)),
-            "sim_device": self._sim_device,
-            "gpu_id": self._gpu_id,
-        }
-        env_cfg.sim_cfg = SimulationManagerCfg(**sim_cfg_kwargs)
+        env_cfg.sim_cfg = SimulationManagerCfg(
+            headless=bool(_cfg_get(self.cfg, "headless", True)),
+            sim_device=self._sim_device,
+            gpu_id=self._gpu_id,
+        )
         return build_env(gym_config["id"], base_env_cfg=env_cfg)
 
     def _wrap_obs(self, raw_obs: dict[str, Any]) -> dict[str, torch.Tensor]:
