@@ -175,18 +175,7 @@ LeRobot SFT model format conversion
 
 To use the supervised fine-tuned model for reinforcement learning in RLinf, the SFT model needs to be converted to the standard GR00T-N1.6 format.
 
-1. Configuration path
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Script location: ``rlinf/models/embodiment/gr00t_1_6/convert_to_hf.py``
-
-.. code-block:: python
-
-   base_model_path = "/path/to/GR00T-N1.6-3B"  ## change to the actual GR00T-N1.6 model path
-   sft_pt_path = "/path/to/logs/**/gr00t_16_sft_libero/checkpoints/**/actor/model_state_dict/full_weights.pt" ## path to the SFT weights
-   hf_output_path = "/path/to/output/GR00T-1.6-SFT-LIBERO-HF" ## output path
-
-2. Execute conversion
+Execute conversion
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
