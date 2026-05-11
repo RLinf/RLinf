@@ -100,9 +100,8 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     )
     from rlinf.models.embodiment.gr00t_1_6.utils import replace_dropout_with_identity
 
-    is_sft_model = cfg.get("model_type") == "gr00t_1_6_sft"
     use_official_libero_panda = bool(
-        OmegaConf.select(cfg, "use_official_libero_panda", default=is_sft_model)
+        OmegaConf.select(cfg, "use_official_libero_panda", default=False)
     )
 
     if cfg.embodiment_tag == "libero_panda":
