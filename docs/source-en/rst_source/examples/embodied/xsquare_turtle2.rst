@@ -380,6 +380,9 @@ prefer ``override_cfg.action_mode``:
            - [0.80, 0.60, 0.60, 3.20, 3.20, 3.20]
            - [0.80, 0.60, 0.60, 3.20, 3.20, 3.20]
 
+The xsquare task factory directly applies the Turtle2-specific wrapper stack
+before returning the env. The shared dual-arm wrappers remain generic.
+
 - ``absolute_pose`` makes ``Turtle2Env.step`` execute one 7D absolute pose
   command per active arm:
   ``[x, y, z, roll, pitch, yaw, gripper]``.
@@ -388,10 +391,9 @@ prefer ``override_cfg.action_mode``:
   actions are transformed back to the base frame before reaching the robot env.
 - Set ``override_cfg.action_mode: absolute_pose`` only when the policy emits
   absolute pose commands.
-- The wrapper stack handles frame and observation conversion only. Both modes
-  finish with ``DualQuat2EulerWrapper`` so the policy observes Euler-format TCP
-  state; action execution is selected inside ``Turtle2Env`` from
-  ``Turtle2RobotConfig.action_mode``.
+- Both modes finish with ``DualQuat2EulerWrapper`` so the policy observes
+  Euler-format TCP state; action execution is selected inside ``Turtle2Env``
+  from ``Turtle2RobotConfig.action_mode``.
 
 Run the eval-only deployment config from the Ray head node:
 

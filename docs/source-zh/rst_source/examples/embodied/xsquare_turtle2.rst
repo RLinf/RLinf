@@ -366,15 +366,18 @@ Turtle2 deploy 环境片段会将 ``init_params.id`` 设置为
            - [0.80, 0.60, 0.60, 3.20, 3.20, 3.20]
            - [0.80, 0.60, 0.60, 3.20, 3.20, 3.20]
 
+xsquare 的 task factory 会直接组装 Turtle2 专属的 wrapper stack，再把 env
+返回；shared dual-arm wrappers 仍然只保留通用逻辑。
+
 - ``absolute_pose`` 会让 ``Turtle2Env.step`` 为每条激活机械臂执行一个
   7 维绝对位姿动作：``[x, y, z, roll, pitch, yaw, gripper]``。
 - ``relative_pose`` 是默认模式。启用 ``use_relative_frame`` 时，wrapper stack
   会挂载 ``DualRelativeFrame``，将末端坐标系下的增量动作转换回机器人基坐标系。
 - 只有当策略输出绝对位姿命令时，才显式设置
   ``override_cfg.action_mode: absolute_pose``。
-- wrapper stack 只负责坐标系和观测转换。两种模式最后都会经过
-  ``DualQuat2EulerWrapper``，因此策略看到的是欧拉角格式的 TCP 状态；动作执行由
-  ``Turtle2Env`` 根据 ``Turtle2RobotConfig.action_mode`` 选择。
+- 两种模式最后都会经过 ``DualQuat2EulerWrapper``，因此策略看到的是欧拉角格式的
+  TCP 状态；动作执行由 ``Turtle2Env`` 根据 ``Turtle2RobotConfig.action_mode``
+  选择。
 
 在 Ray head 节点上运行 eval-only 部署配置：
 

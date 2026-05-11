@@ -134,49 +134,12 @@ def apply_single_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
 
 
 def apply_dual_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
-    """Wrapper stack for dual-arm realworld envs.
-
-    Turtle2 deploy can opt into ``relative_pose`` or ``absolute_pose`` through
-    its env config.  The env owns action dispatch; this builder only applies
-    frame/observation wrappers.  Env configs without ``action_mode`` keep the
-    existing ``delta_axis_angle`` dual-arm teleop/training stack.
-    """
+    """Wrapper stack for generic dual-arm realworld envs."""
     config = env.get_wrapper_attr("config")
-    action_mode = getattr(config, "action_mode", "delta_axis_angle")
-    if action_mode not in {"delta_axis_angle", "relative_pose", "absolute_pose"}:
-        raise ValueError(
-            f"Unsupported action_mode={action_mode!r}. "
-            "Expected one of {'delta_axis_angle', 'relative_pose', 'absolute_pose'}."
-        )
-
     if cfg.get("no_gripper", True):
         raise NotImplementedError(
-            "Dual-arm realworld wrappers require no_gripper=False. "
-            "Pose-action modes use 7D per-arm actions including gripper, "
-            "and delta_axis_angle mode does not have DualGripperCloseEnv yet."
+            "Dual-arm realworld wrappers require no_gripper=False."
         )
-
-    if action_mode == "relative_pose":
-        if cfg.get("use_spacemouse", False) or cfg.get("use_gello", False):
-            raise ValueError(
-                "Dual-arm pose-action modes do not support teleop wrappers. "
-                "Set use_spacemouse=False and use_gello=False."
-            )
-        if cfg.get("use_relative_frame", True):
-            env = DualRelativeFrame(env)
-        env = _apply_keyboard_reward(env, cfg.get("keyboard_reward_wrapper", None))
-        env = DualQuat2EulerWrapper(env)
-        return env
-
-    if action_mode == "absolute_pose":
-        if cfg.get("use_spacemouse", False) or cfg.get("use_gello", False):
-            raise ValueError(
-                "Dual-arm pose-action modes do not support teleop wrappers. "
-                "Set use_spacemouse=False and use_gello=False."
-            )
-        env = _apply_keyboard_reward(env, cfg.get("keyboard_reward_wrapper", None))
-        env = DualQuat2EulerWrapper(env)
-        return env
 
     use_spacemouse = cfg.get("use_spacemouse", True)
     use_gello = cfg.get("use_gello", False)
@@ -184,10 +147,10 @@ def apply_dual_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
 
     gripper_enabled = True
 
-    if not env.config.is_dummy and use_spacemouse:
+    if not config.is_dummy and use_spacemouse:
         env = DualSpacemouseIntervention(env, gripper_enabled=gripper_enabled)
 
-    if not env.config.is_dummy and use_gello:
+    if not config.is_dummy and use_gello:
         left_port = cfg.get("left_gello_port", None)
         right_port = cfg.get("right_gello_port", None)
         if left_port is None or right_port is None:

@@ -20,7 +20,8 @@ import gymnasium as gym
 from gymnasium.envs.registration import register
 
 from rlinf.envs.realworld.common.wrappers import (
-    apply_dual_arm_wrappers,
+    DualQuat2EulerWrapper,
+    DualRelativeFrame,
     apply_single_arm_wrappers,
 )
 from rlinf.envs.realworld.xsquare.tasks.button_env import (
@@ -76,12 +77,14 @@ def create_turtle2_deploy_env(
         )
 
     override_cfg["action_mode"] = action_mode
-    override_cfg.setdefault("use_arm_ids", [0, 1])
+    use_arm_ids = list(override_cfg.setdefault("use_arm_ids", [0, 1]))
+    if use_arm_ids != [0, 1]:
+        raise ValueError("Turtle2DeployEnv-v1 only supports use_arm_ids=[0, 1].")
+    override_cfg["use_arm_ids"] = use_arm_ids
     override_cfg.setdefault("use_camera_ids", [0, 1, 2])
     override_cfg.setdefault("enforce_gripper_close", False)
     override_cfg.setdefault("enable_task_reward", False)
     override_cfg.setdefault("task_description", env_cfg.get("task_description", ""))
-    override_cfg["action_mode"] = action_mode
     config = Turtle2RobotConfig(**override_cfg)
     env = Turtle2Env(
         config=config,
@@ -89,7 +92,12 @@ def create_turtle2_deploy_env(
         hardware_info=hardware_info,
         env_idx=env_idx,
     )
-    return apply_dual_arm_wrappers(env, env_cfg)
+    if config.action_mode == "relative_pose" and env_cfg.get(
+        "use_relative_frame", True
+    ):
+        env = DualRelativeFrame(env)
+    env = DualQuat2EulerWrapper(env)
+    return env
 
 
 register(
