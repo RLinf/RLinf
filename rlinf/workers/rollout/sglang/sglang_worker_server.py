@@ -18,10 +18,13 @@ from typing import Literal, Optional
 
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 from omegaconf import DictConfig
 from starlette.responses import Response
 
+from rlinf.hybrid_engines.sglang.server.openai_compat import (
+    downgrade_legacy_tool_call_parse_error,
+    patch_chat_body_assistant_content,
+)
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
 
@@ -40,16 +43,6 @@ except ImportError:
     TemplateManager = None  # type: ignore[misc, assignment]
 
 _LEGACY_OPENAI = OpenAIServingChat is None
-
-
-def _patch_chat_body_assistant_content(body: object) -> None:
-    """LiteLLM/OpenAI clients may omit `content` when null; older SGLang (e.g. 0.4.x)
-    ChatCompletionMessageGenericParam requires the key (value may be null). 0.5.2+
-    uses Field(default=None); this patch is harmless there."""
-    msgs = body.get("messages")
-    for m in msgs:
-        if isinstance(m, dict) and m.get("role") == "assistant" and "content" not in m:
-            m["content"] = None
 
 
 class SGLangWorkerWithHTTPServer(SGLangWorker):
@@ -84,7 +77,7 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
         @app.post("/v1/chat/completions")
         async def handle_chat_completion(raw_request: Request):
             body = await raw_request.json()
-            _patch_chat_body_assistant_content(body)
+            patch_chat_body_assistant_content(body)
             request = ChatCompletionRequest.model_validate(body)
             return await self._handle_chat_completion(request)
 
@@ -127,109 +120,78 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
         )
 
     async def _handle_chat_completion(self, request: ChatCompletionRequest):
-        try:
-            if self._return_logprobs:
-                request.logprobs = True
-                request.top_logprobs = 1
+        if self._return_logprobs:
+            request.logprobs = True
+            request.top_logprobs = 1
 
-            if request.temperature is None and "temperature" in self._sampling_params:
-                request.temperature = self._sampling_params["temperature"]
-            if request.max_tokens is None and "max_new_tokens" in self._sampling_params:
-                request.max_tokens = self._sampling_params["max_new_tokens"]
-            if request.top_p is None and "top_p" in self._sampling_params:
-                request.top_p = self._sampling_params["top_p"]
-            if request.top_k is None and "top_k" in self._sampling_params:
-                request.top_k = self._sampling_params["top_k"]
+        if request.temperature is None and "temperature" in self._sampling_params:
+            request.temperature = self._sampling_params["temperature"]
+        if request.max_tokens is None and "max_new_tokens" in self._sampling_params:
+            request.max_tokens = self._sampling_params["max_new_tokens"]
+        if request.top_p is None and "top_p" in self._sampling_params:
+            request.top_p = self._sampling_params["top_p"]
+        if request.top_k is None and "top_k" in self._sampling_params:
+            request.top_k = self._sampling_params["top_k"]
 
-            tokenizer_manager = self._engine.tokenizer_manager
-            if _LEGACY_OPENAI:
-                adapted_request, _ = v1_chat_generate_request(
-                    [request],
-                    tokenizer_manager,
-                    request_ids=[getattr(request, "rid", None)],
-                )
-            else:
-                adapted_request, _ = (
-                    self._openai_serving_chat._convert_to_internal_request(request)
-                )
-
-            adapted_request.return_logprob = self._return_logprobs
-            prompt_token_ids = None
-            if (
-                hasattr(adapted_request, "input_ids")
-                and adapted_request.input_ids is not None
-            ):
-                prompt_token_ids = adapted_request.input_ids
-                if hasattr(prompt_token_ids, "tolist"):
-                    prompt_token_ids = prompt_token_ids.tolist()
-
-            generator = tokenizer_manager.generate_request(adapted_request)
-            result = await generator.__anext__()
-
-            if not isinstance(result, list):
-                result = [result]
-
-            created = int(time.time())
-            if _LEGACY_OPENAI:
-                response = v1_chat_generate_response(
-                    request,
-                    result,
-                    created,
-                    tool_call_parser=self._cfg_rollout.sglang.get(
-                        "tool_call_parser", None
-                    ),
-                )
-            else:
-                response = self._openai_serving_chat._build_chat_response(
-                    request, result, created
-                )
-
-            # Align SGLang 0.4.x behavior with 0.5.2: tool-call parse failure should not
-            # fail the entire request. Legacy adapter returns ORJSONResponse(400) for this
-            # specific case; we downgrade it to a normal chat completion response.
-            if isinstance(response, Response):
-                body = getattr(response, "body", b"") or b""
-                status_code = int(getattr(response, "status_code", 0) or 0)
-                if (
-                    status_code == 400
-                    and b"Failed to parse fc related info to json format!" in body
-                ):
-                    # Reuse SGLang 0.4.x formatter to avoid subtle field mismatches:
-                    # rerun response building with tool calls disabled.
-                    tool_call_parser = self._cfg_rollout.sglang.get(
-                        "tool_call_parser", None
-                    )
-                    try:
-                        req_no_tools = request.model_copy(
-                            update={"tool_choice": "none", "tools": None}
-                        )
-                    except Exception:
-                        req_no_tools = request
-                        setattr(req_no_tools, "tool_choice", "none")
-                        setattr(req_no_tools, "tools", None)
-
-                    response_chat_completion = v1_chat_generate_response(
-                        req_no_tools,
-                        result,
-                        created,
-                        tool_call_parser=tool_call_parser,
-                    )
-                    response = response_chat_completion
-            response_dict = response.model_dump(exclude_none=True)
-
-            if result and len(result) > 0 and "output_ids" in result[0]:
-                response_dict["response_token_ids"] = [result[0]["output_ids"]]
-
-            if prompt_token_ids is not None:
-                response_dict["prompt_token_ids"] = prompt_token_ids
-
-            return response_dict
-
-        except Exception as e:
-            return JSONResponse(
-                status_code=500,
-                content={"error": {"message": str(e), "type": type(e).__name__}},
+        tokenizer_manager = self._engine.tokenizer_manager
+        if _LEGACY_OPENAI:
+            adapted_request, _ = v1_chat_generate_request(
+                [request],
+                tokenizer_manager,
+                request_ids=[getattr(request, "rid", None)],
             )
+        else:
+            adapted_request, _ = self._openai_serving_chat._convert_to_internal_request(
+                request
+            )
+
+        adapted_request.return_logprob = self._return_logprobs
+        prompt_token_ids = None
+        if adapted_request.input_ids is not None:
+            prompt_token_ids = adapted_request.input_ids
+            if hasattr(prompt_token_ids, "tolist"):
+                prompt_token_ids = prompt_token_ids.tolist()
+
+        generator = tokenizer_manager.generate_request(adapted_request)
+        result = await generator.__anext__()
+
+        if not isinstance(result, list):
+            result = [result]
+
+        created = int(time.time())
+        if _LEGACY_OPENAI:
+            response = v1_chat_generate_response(
+                request,
+                result,
+                created,
+                tool_call_parser=self._cfg_rollout.sglang.get("tool_call_parser", None),
+            )
+        else:
+            response = self._openai_serving_chat._build_chat_response(
+                request, result, created
+            )
+
+        # Align SGLang 0.4.x behavior with 0.5.2: tool-call parse failure should not
+        # fail the entire request. Legacy adapter returns ORJSONResponse(400) for this
+        # specific case; we downgrade it to a normal chat completion response.
+        if isinstance(response, Response):
+            response = downgrade_legacy_tool_call_parse_error(
+                response,
+                request=request,
+                ret=result,
+                created=created,
+                response_builder=v1_chat_generate_response,
+                tool_call_parser=self._cfg_rollout.sglang.get("tool_call_parser", None),
+            )
+        response_dict = response.model_dump(exclude_none=True)
+
+        if result and len(result) > 0 and "output_ids" in result[0]:
+            response_dict["response_token_ids"] = [result[0]["output_ids"]]
+
+        if prompt_token_ids is not None:
+            response_dict["prompt_token_ids"] = prompt_token_ids
+
+        return response_dict
 
     def http_server_start(self):
         if self._http_server_task is not None:
