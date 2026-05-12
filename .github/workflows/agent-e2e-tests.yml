@@ -101,7 +101,7 @@ jobs:
       - name: Install dependencies
         run: |
           source .venv/bin/activate
-          uv pip install "agentlightning==0.3.0" "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" "mcp-server-calculator" "openai==2.32.0"
+          uv pip install "agentlightning==0.3.0" "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" "mcp-server-calculator" "openai==2.32.0" "sglang-router==0.3.2"
 
       - name: AgentLightning calc_x enginehttp 
         timeout-minutes: 20
