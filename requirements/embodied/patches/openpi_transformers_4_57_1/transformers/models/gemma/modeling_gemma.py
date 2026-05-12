@@ -304,11 +304,19 @@ class GemmaAttention(nn.Module):
         )
 
         if past_key_values is not None:
-            # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
-            key_states, value_states = past_key_values.update(
-                key_states, value_states, self.layer_idx, cache_kwargs
-            )
+            if kwargs.get("use_cache", False):
+                # sin and cos are specific to RoPE models; cache_position needed for the static cache
+                cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
+                key_states, value_states = past_key_values.update(
+                    key_states, value_states, self.layer_idx, cache_kwargs
+                )
+            else:
+                key_states = torch.cat(
+                    [past_key_values[self.layer_idx][0], key_states], dim=2
+                )
+                value_states = torch.cat(
+                    [past_key_values[self.layer_idx][1], value_states], dim=2
+                )
 
         attention_interface: Callable = eager_attention_forward
         if self.config._attn_implementation != "eager":
@@ -500,6 +508,13 @@ class GemmaModel(GemmaPreTrainedModel):
 
         # embed positions
         hidden_states = inputs_embeds
+        # OpenPI may keep action embeddings in fp32 while the Gemma expert
+        # weights are bf16. Match the original transformers_replace behavior.
+        if (
+            len(self.layers) > 0
+            and self.layers[0].self_attn.q_proj.weight.dtype == torch.bfloat16
+        ):
+            hidden_states = hidden_states.to(torch.bfloat16)
 
         # create position embeddings to be shared across the decoder layers
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
