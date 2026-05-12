@@ -48,18 +48,20 @@ def collate(
                         # If it's already a scalar (string, float, int, etc.), convert to string
                         processed_item = str(parsed_item)
 
-                    if elem["embodiment_id"] == embodiment_tag_mapping[
-                        EmbodimentTag.OXE_DROID.value
-                    ]:
+                    if (
+                        elem["embodiment_id"]
+                        == embodiment_tag_mapping[EmbodimentTag.OXE_DROID.value]
+                    ):
                         processed_item = (
                             "A multi-view video shows that a robot "
                             + processed_item.lower()
                             + " The video is split into three views: The top view shows the camera view from the robot's wrist, the bottom-left view shows the camera view from the left exterior camera, and the bottom-right view shows the camera view from the right exterior camera. During training, one of the two bottom exterior views may be a black screen (dropped view). The robot "
                             + processed_item.lower()
                         )
-                    elif elem["embodiment_id"] == embodiment_tag_mapping[
-                        EmbodimentTag.LIBERO_SIM.value
-                    ]:
+                    elif (
+                        elem["embodiment_id"]
+                        == embodiment_tag_mapping[EmbodimentTag.LIBERO_SIM.value]
+                    ):
                         processed_item = (
                             "A multi-view video shows that a robot "
                             + processed_item.lower()
@@ -73,18 +75,20 @@ def collate(
                     output_values.append(processed_item)
                 except (ValueError, SyntaxError, TypeError):
                     # If parsing fails or item is already a string, use it directly
-                    if elem["embodiment_id"] == embodiment_tag_mapping[
-                        EmbodimentTag.OXE_DROID.value
-                    ]:
+                    if (
+                        elem["embodiment_id"]
+                        == embodiment_tag_mapping[EmbodimentTag.OXE_DROID.value]
+                    ):
                         item = (
                             "A multi-view video shows that a robot "
                             + str(item).lower()
                             + " The video is split into three views: The top view shows the camera view from the robot's wrist, the bottom-left view shows the camera view from the left exterior camera, and the bottom-right view shows the camera view from the right exterior camera. During training, one of the two bottom exterior views may be a black screen (dropped view). The robot "
                             + str(item).lower()
                         )
-                    elif elem["embodiment_id"] == embodiment_tag_mapping[
-                        EmbodimentTag.LIBERO_SIM.value
-                    ]:
+                    elif (
+                        elem["embodiment_id"]
+                        == embodiment_tag_mapping[EmbodimentTag.LIBERO_SIM.value]
+                    ):
                         item = (
                             "A multi-view video shows that a robot "
                             + str(item).lower()
