@@ -355,9 +355,11 @@ Use it as the ``env.eval`` entry in an eval-only config, for example by copying
      - weight_syncer/patch_syncer@weight_syncer
      - override hydra/job_logging: stdout
 
-The Turtle2 deploy fragment sets ``init_params.id`` to ``Turtle2DeployEnv-v1``
-and keeps ``action_mode`` in ``override_cfg``. The default keeps Turtle2's
-relative-pose action semantics:
+The Turtle2 deploy fragment sets ``init_params.id`` to ``Turtle2DeployEnv-v1``.
+Set ``override_cfg.action_mode`` to choose the Turtle2 action contract. The
+default keeps Turtle2's relative-pose action semantics. A top-level
+``action_mode`` key is still accepted for older configs, but new configs should
+prefer ``override_cfg.action_mode``:
 
 .. code-block:: yaml
 
@@ -378,17 +380,20 @@ relative-pose action semantics:
            - [0.80, 0.60, 0.60, 3.20, 3.20, 3.20]
            - [0.80, 0.60, 0.60, 3.20, 3.20, 3.20]
 
-``create_turtle2_deploy_env()`` assembles the Turtle2 wrapper stack locally:
+The xsquare task factory directly applies the Turtle2-specific wrapper stack
+before returning the env. The shared dual-arm wrappers remain generic.
 
-- ``relative_pose`` optionally applies ``DualRelativeFrame`` so end-effector-
-  frame delta actions are transformed back to the base frame before reaching
-  the robot env.
-- ``use_master_takeover=True`` injects ``MasterTakeoverIntervention`` and,
-  when enabled, ``KeyboardRunningModeWrapper`` before the reward wrapper.
-- Both deployment modes finish with ``DualQuat2EulerWrapper`` so the policy
-  observes Euler-format TCP state.
+- ``absolute_pose`` makes ``Turtle2Env.step`` execute one 7D absolute pose
+  command per active arm:
+  ``[x, y, z, roll, pitch, yaw, gripper]``.
+- ``relative_pose`` is the default. When ``use_relative_frame`` is enabled, the
+  wrapper stack applies ``DualRelativeFrame`` so end-effector-frame delta
+  actions are transformed back to the base frame before reaching the robot env.
 - Set ``override_cfg.action_mode: absolute_pose`` only when the policy emits
   absolute pose commands.
+- Both modes finish with ``DualQuat2EulerWrapper`` so the policy observes
+  Euler-format TCP state; action execution is selected inside ``Turtle2Env``
+  from ``Turtle2RobotConfig.action_mode``.
 
 Run the eval-only deployment config from the Ray head node:
 

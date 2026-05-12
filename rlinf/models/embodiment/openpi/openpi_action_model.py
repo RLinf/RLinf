@@ -18,19 +18,21 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-import jax
 import numpy as np
 import torch
+import torch.nn.functional as F
 from openpi import transforms as _transforms
 from openpi.models import model as _model
 from openpi.models.pi0_config import Pi0Config
 from openpi.models_pytorch.pi0_pytorch import PI0Pytorch, make_att_2d_masks
+from torch.utils._pytree import tree_map
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.modules.explore_noise_net import ExploreNoiseNet
 from rlinf.models.embodiment.modules.value_head import ValueHead
 from rlinf.utils.logging import get_logger
 from rlinf.utils.nested_dict_process import copy_dict_tensor
+from rlinf.utils.pytree import register_pytree_dataclasses
 
 
 def _to_numpy(x):
@@ -251,7 +253,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         self._output_transform = _transforms.compose(output_transforms)
 
     def input_transform(self, obs: dict, transpose=True):
-        inputs = jax.tree.map(lambda x: x, obs)
+        inputs = tree_map(lambda x: x, obs)
         # process input
         first_process = "prompt" in inputs.keys()
         if first_process:
@@ -260,22 +262,22 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             inputs = {key: inputs[key] for key in inputs.keys() if "/" in key}
 
         # tensor -> numpy
-        inputs = jax.tree.map(_to_numpy, inputs)
+        inputs = tree_map(_to_numpy, inputs)
         batch_size = next(v.shape[0] for v in inputs.values() if hasattr(v, "shape"))
         # split & transform
         transformed_samples = []
         for i in range(batch_size):
-            sample = jax.tree.map(lambda x: x[i], inputs)
+            sample = tree_map(lambda x: x[i], inputs)
             if transpose:
                 # convert from [3,256,256] -> [256,256,3]
-                sample = jax.tree.map(
+                sample = tree_map(
                     lambda x: (
                         x.transpose(1, 2, 0) if len(x.shape) == 3 and transpose else x
                     ),
                     sample,
                 )
             else:
-                sample = jax.tree.map(lambda x: x if len(x.shape) == 3 else x, sample)
+                sample = tree_map(lambda x: x if len(x.shape) == 3 else x, sample)
             if first_process:
                 sample["prompt"] = obs["prompt"][i]
             else:
@@ -283,11 +285,11 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             transformed_sample = self._input_transform(sample)
             transformed_samples.append(transformed_sample)
         # recombine
-        inputs = jax.tree.map(
+        inputs = tree_map(
             lambda *torch_arr: torch.from_numpy(np.asarray(torch_arr).copy()),
             *transformed_samples,
         )
-        # inputs = jax.tree.map(lambda *x: torch.stack(x, axis=0), inputs)
+        # inputs = tree_map(lambda *x: torch.stack(x, axis=0), inputs)
         if not first_process:
             inputs["tokenized_prompt"] = obs["tokenized_prompt"]
             inputs["tokenized_prompt_mask"] = obs["tokenized_prompt_mask"]
@@ -298,11 +300,11 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         batch_size = outputs["actions"].shape[0]
         transformed_samples = []
         for i in range(batch_size):
-            sample = jax.tree.map(lambda x: np.asarray(x[i].detach().cpu()), outputs)
+            sample = tree_map(lambda x: np.asarray(x[i].detach().cpu()), outputs)
             sample = self._output_transform(sample)
             transformed_samples.append(sample)
         # recombine
-        outputs = jax.tree.map(
+        outputs = tree_map(
             lambda *torch_arr: torch.from_numpy(np.asarray(torch_arr).copy()),
             *transformed_samples,
         )
@@ -367,7 +369,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             actions = processed_obs["actions"].clone()
             processed_obs.pop("actions")
 
-        observation = jax.tree.map(
+        register_pytree_dataclasses(observation)
+        observation = tree_map(
             lambda x: torch.as_tensor(x, device=device).contiguous().clone(),
             observation,
         )
@@ -1296,7 +1299,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         Returns:
             Tensor of shape [B, 1, C, 64, 64] - only agentview, resized, in [-1, 1].
         """
-        import torch.nn.functional as F
 
         # Extract only agentview camera (first image in the list)
         if isinstance(images, list):

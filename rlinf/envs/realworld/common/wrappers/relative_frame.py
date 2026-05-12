@@ -59,7 +59,7 @@ class RelativeFrame(gym.Wrapper):
                 "RelativeFrame expects tcp_pose shape (7,) or (8,), "
                 f"got {tcp_pose.shape}."
             )
-        return tcp_pose[:7]
+        return tcp_pose[:7], tcp_pose[7:]
 
     def step(self, action: np.ndarray):
         # action is assumed to be (x, y, z, rx, ry, rz, gripper)

@@ -18,6 +18,17 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/agentlightning_calcx.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="agentlightning_calc_x.html" style="text-decoration: underline; color: blue;">
+          <b>AgentLightning Calc-X</b>
+         </a><br>
+         基于 Agent Lightning 编排智能体强化学习，RLinf 作为分布式训练后端
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/coding_online_rl_offline_numbers.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -92,3 +103,4 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
    reasoning
    reasoning_ppo
    rstar2
+   agentlightning_calc_x

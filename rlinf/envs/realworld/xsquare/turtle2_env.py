@@ -600,7 +600,9 @@ class Turtle2Env(gym.Env):
     def get_relative_pose_action_space(self) -> gym.spaces.Box:
         return self._relative_pose_action_space
 
-    def step_relative_pose(self, action: np.ndarray) -> tuple[dict, float, bool, bool, dict]:
+    def step_relative_pose(
+        self, action: np.ndarray
+    ) -> tuple[dict, float, bool, bool, dict]:
         """Take a relative pose step in the environment.
 
         Args:

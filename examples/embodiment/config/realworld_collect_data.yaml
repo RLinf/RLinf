@@ -42,6 +42,12 @@ env:
     use_spacemouse: True
     max_episode_steps: 10000
     override_cfg:
+      # Optional per-camera overrides keyed by RealSense serial number.
+      # camera_names:
+      #   "SERIAL1": global
+      #   "SERIAL2": wrist_1
+      # camera_crop_regions:
+      #   "SERIAL1": [0.4, 0.3, 0.85, 0.7]
       target_ee_pose: TARGET_EE_POSE
       success_hold_steps: 1  # define how many consecutive steps the robot must hold the position to succeed
 
