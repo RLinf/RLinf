@@ -37,6 +37,93 @@ except Exception:
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 
+import json as _json
+
+# Embedded libero_panda modality/stats/embodiment_id data for automatic
+# injection into base models (e.g. GR00T-N1.6-3B) that were pretrained
+# only on RoboCasa and therefore lack the posttrain libero_panda entry.
+_LIBERO_PANDA_INJECTION = (
+    '{"processor":{"video":{"delta_indices":[0],"modality_keys":["image","wrist_image"],'
+    '"sin_cos_embedding_keys":null,"mean_std_embedding_keys":null,"action_configs":null},'
+    '"state":{"delta_indices":[0],"modality_keys":["x","y","z","roll","pitch","yaw","gripper"],'
+    '"sin_cos_embedding_keys":null,"mean_std_embedding_keys":null,"action_configs":null},'
+    '"action":{"delta_indices":[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],"modality_keys":'
+    '["x","y","z","roll","pitch","yaw","gripper"],"sin_cos_embedding_keys":null,'
+    '"mean_std_embedding_keys":null,"action_configs":[{"rep":"ABSOLUTE","type":"NON_EEF",'
+    '"format":"DEFAULT","state_key":null},{"rep":"ABSOLUTE","type":"NON_EEF","format":"DEFAULT",'
+    '"state_key":null},{"rep":"ABSOLUTE","type":"NON_EEF","format":"DEFAULT","state_key":null},'
+    '{"rep":"ABSOLUTE","type":"NON_EEF","format":"DEFAULT","state_key":null},'
+    '{"rep":"ABSOLUTE","type":"NON_EEF","format":"DEFAULT","state_key":null},'
+    '{"rep":"ABSOLUTE","type":"NON_EEF","format":"DEFAULT","state_key":null},'
+    '{"rep":"ABSOLUTE","type":"NON_EEF","format":"DEFAULT","state_key":null}]},'
+    '"language":{"delta_indices":[0],"modality_keys":["annotation.human.action.task_description"],'
+    '"sin_cos_embedding_keys":null,"mean_std_embedding_keys":null,"action_configs":null}},'
+    '"statistics":{"state":{"x":{"min":[-0.3095473051071167],"max":[0.1759040206670761],'
+    '"mean":[-0.024462558329105377],"std":[0.1101478561758995],"q01":[-0.2727657300233841],'
+    '"q99":[0.13529365032911292]},"y":{"min":[-0.29250794649124146],"max":[0.3904820382595062],'
+    '"mean":[0.106529600918293],"std":[0.13784688711166382],"q01":[-0.23721413239836692],'
+    '"q99":[0.3629165390133857]},"z":{"min":[0.9095591306686401],"max":[1.3290715217590332],'
+    '"mean":[1.0580483675003052],"std":[0.10442823916673634],"q01":[0.9160063165426254],'
+    '"q99":[1.2862326657772063]},"roll":{"min":[2.497488260269165],"max":[3.4566118717193604],'
+    '"mean":[3.0628468990325928],"std":[0.10451053828000996],"q01":[2.77949666261673],'
+    '"q99":[3.2829698753356933]},"pitch":{"min":[-1.8006486892700195],"max":[1.2268599271774292],'
+    '"mean":[-0.10464039444923401],"std":[0.4112098217010498],"q01":[-1.3187511622905732],'
+    '"q99":[0.9332760351896285]},"yaw":{"min":[-0.7207611203193665],"max":[1.0429412126541138],'
+    '"mean":[0.08307311683893204],"std":[0.2176690548658371],"q01":[-0.41989982962608335],'
+    '"q99":[0.6325724506378171]},"gripper":{"min":[-0.0004703797458205372,-0.041536275297403336],'
+    '"max":[0.041053611785173416,0.000775813648942858],"mean":[0.01995457336306572,'
+    '-0.020162804052233696],"std":[0.017260896041989326,0.0171116404235363],'
+    '"q01":[0.001503719249740243,-0.03989770736545324],"q99":[0.039933966137468815,'
+    '-0.001671919699292631]}},"action":{"x":{"min":[-0.9375],"max":[0.9375],'
+    '"mean":[0.15312479436397552],"std":[0.41272708773612976],"q01":[-0.7454732114076613],'
+    '"q99":[0.9375]},"y":{"min":[-0.9375],"max":[0.9375],"mean":[0.13707277178764343],'
+    '"std":[0.34724321961402893],"q01":[-0.6616071462631226],"q99":[0.8758928775787354]},'
+    '"z":{"min":[-0.9375],"max":[0.9375],"mean":[-0.15526802837848663],'
+    '"std":[0.50869220495224],"q01":[-0.9375],"q99":[0.9321428537368774]},'
+    '"roll":{"min":[-0.1875],"max":[0.1971428543329239],"mean":[-0.005176450591534376],'
+    '"std":[0.037266165018081665],"q01":[-0.1071428582072258],"q99":[0.1039285734295845]},'
+    '"pitch":{"min":[-0.3675000071525574],"max":[0.33642858266830444],'
+    '"mean":[-0.01120874285697937],"std":[0.07244449853897095],'
+    '"q01":[-0.20678570866584778],"q99":[0.17678570747375488]},'
+    '"yaw":{"min":[-0.36000001430511475],"max":[0.375],"mean":[-0.020194264128804207],'
+    '"std":[0.05762382969260216],"q01":[-0.1842857152223587],"q99":[0.14571428298950195]},'
+    '"gripper":{"min":[0.0],"max":[1.0],"mean":[0.4578818082809448],"std":[0.49827873706817627],'
+    '"q01":[0.0],"q99":[1.0]}},"relative_action":{}},"embodiment_id":2}'
+)
+
+
+def _ensure_libero_panda_in_model(model_dir: Path):
+    """Inject libero_panda into base model JSON files if missing.
+
+    Many GR00T base models (e.g. GR00T-N1.6-3B) were pretrained only on
+    RoboCasa and do not carry the libero_panda posttrain configuration
+    in their processor_config.json / statistics.json / embodiment_id.json.
+    This function adds it on first access so that SFT/PPO training with
+    embodiment_tag=libero_panda works without manual patching.
+    """
+    data = _json.loads(_LIBERO_PANDA_INJECTION)
+
+    def _patch_json(fname, path_to_container, data_key):
+        fpath = model_dir / fname
+        if not fpath.exists():
+            print(f"[GR00T SFT] {fname} not found at {model_dir}, skip injection")
+            return
+        with open(fpath) as fh:
+            cfg = _json.load(fh)
+        container = cfg
+        for seg in path_to_container:
+            container = container.setdefault(seg, {})
+        if "libero_panda" not in container:
+            container["libero_panda"] = data[data_key]
+            with open(fpath, "w") as fh:
+                _json.dump(cfg, fh, indent=2)
+            print(f"[GR00T SFT] Injected libero_panda into {fpath}")
+
+    _patch_json("processor_config.json",
+                ("processor_kwargs", "modality_configs"), "processor")
+    _patch_json("statistics.json", (), "statistics")
+    _patch_json("embodiment_id.json", (), "embodiment_id")
+
 
 def patched_sample_time(self, batch_size, device, dtype):
     alpha = torch.tensor(
@@ -203,6 +290,9 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
         transformers_loading_kwargs = kwargs.pop(
             "transformers_loading_kwargs", {"trust_remote_code": True}
         )
+
+        # Auto-inject libero_panda into base model JSON files if missing
+        _ensure_libero_panda_in_model(Path(local_model_path))
 
         def _patched_normalize_values_minmax(values, params):
             """Patched version of normalize_values_minmax for dimension broadcasting.
