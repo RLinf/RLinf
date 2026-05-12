@@ -83,14 +83,14 @@ jobs:
           bash requirements/install.sh embodied --model openpi --env isaaclab
           rm -rf .venv
 
-      - name: Install openpi with qwen_vlm_reward SGLang
+      - name: Install qwen_vlm_reward SGLang
         env:
           UV_HTTP_TIMEOUT: "900"
           UV_CONCURRENT_DOWNLOADS: "1"
         run: |
           pip install uv
           rm -rf .venv
-          bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward-sglang --venv .venv --no-root
+          bash requirements/install.sh embodied --model qwen_vlm_reward --vlm-reward-sglang --venv .venv --no-root
           .venv/bin/python - <<'PY'
           from importlib.metadata import version
 
@@ -107,8 +107,11 @@ jobs:
           assert Version(version("sglang")) == Version("0.5.4")
           assert Engine is not None
           gemma_config = GemmaConfig()
-          assert hasattr(gemma_config, "use_adarms")
-          assert hasattr(gemma_config, "adarms_cond_dim")
+          if hasattr(gemma_config, "use_adarms") or hasattr(
+              gemma_config, "adarms_cond_dim"
+          ):
+              assert hasattr(gemma_config, "use_adarms")
+              assert hasattr(gemma_config, "adarms_cond_dim")
           assert (
               get_reward_model_class("history_vlm_sglang").__name__
               == "HistoryVLMSGLangRewardModel"

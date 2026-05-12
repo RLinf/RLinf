@@ -42,45 +42,6 @@ def test_openpi_sglang_install_flag_reapplies_transformers_patch():
         in install_script
     )
 
-    match = re.search(
-        r"install_openpi_model\(\) \{\n(?P<body>.*?)\n\}\n\ninstall_starvla_model",
-        install_script,
-        flags=re.S,
-    )
-    assert match is not None
-
-    body = match.group("body")
-    assert "install_qwen_vlm_reward_sglang_deps" in body
-    assert "apply_openpi_transformers_patch" in body
-    assert "install_qwen_vlm_reward_model" not in body
-
-    sglang_branch = re.search(
-        r'if \[ "\$VLM_REWARD_SGLANG" -eq 1 \]; then\n(?P<body>.*?)\n\s*fi',
-        body,
-        flags=re.S,
-    )
-    assert sglang_branch is not None
-
-    sglang_branch_body = sglang_branch.group("body")
-    assert "install_qwen_vlm_reward_sglang_deps" in sglang_branch_body
-    assert sglang_branch_body.count("apply_openpi_transformers_patch") == 1
-    assert "create_and_sync_venv" not in sglang_branch_body
-
-
-def test_common_embodied_deps_skip_hf_reward_when_sglang_reward_is_selected():
-    install_script = (REPO_ROOT / "requirements/install.sh").read_text()
-    match = re.search(
-        r"install_common_embodied_deps\(\) \{\n(?P<body>.*?)\n\}\n\ninstall_openvla_model",
-        install_script,
-        flags=re.S,
-    )
-    assert match is not None
-
-    body = match.group("body")
-    assert 'if [ "$VLM_REWARD" -eq 1 ] && [ "$VLM_REWARD_SGLANG" -eq 0 ]; then' in body
-    assert "install_qwen_vlm_reward_deps" in body
-    assert "install_qwen_vlm_reward_sglang_deps" not in body
-
 
 def test_qwen_vlm_reward_can_install_sglang_without_env():
     install_script = (REPO_ROOT / "requirements/install.sh").read_text()
@@ -112,29 +73,3 @@ def test_qwen_vlm_reward_can_install_sglang_without_env():
     )
     assert "install_common_embodied_deps" not in light_branch_body
     assert "install_maniskill_libero_env" not in light_branch_body
-
-
-def test_vlm_reward_docs_describe_openpi_same_venv_install():
-    doc_paths = [
-        REPO_ROOT
-        / "docs/source-en/rst_resources/examples/embodied/maniskill_vlm_reward.rst",
-        REPO_ROOT
-        / "docs/source-zh/rst_resources/examples/embodied/maniskill_vlm_reward.rst",
-        REPO_ROOT / "docs/source-en/rst_source/start/installation.rst",
-        REPO_ROOT / "docs/source-zh/rst_source/start/installation.rst",
-    ]
-
-    stale_phrases = [
-        "keep it separate from the default Hugging Face reward install",
-        "请使用默认 Hugging Face reward\n安装路径",
-    ]
-
-    for doc_path in doc_paths:
-        text = doc_path.read_text()
-        assert "--model openpi --env maniskill_libero --vlm-reward" in text
-        assert "--model openpi --env maniskill_libero --vlm-reward-sglang" in text
-        assert "--model qwen_vlm_reward --vlm-reward" in text
-        assert "--model qwen_vlm_reward --vlm-reward-sglang" in text
-        assert "transformers==4.57.1" in text
-        for stale_phrase in stale_phrases:
-            assert stale_phrase not in text

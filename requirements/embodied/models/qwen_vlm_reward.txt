@@ -1,10 +1,5 @@
-# Runtime dependencies for Qwen-VL embodied reward workers.
-# The OpenPI install path applies RLinf's transformers 4.57.1-compatible
-# OpenPI patch, so Qwen3-VL reward inference can share the OpenPI venv.
+# Runtime dependencies for Qwen-VL embodied reward workers using the
+# Hugging Face backend.
 qwen-vl-utils
 transformers==4.57.1
 tokenizers>=0.22,<0.23
-
-# Optional for reward.model.model_type=history_vlm_sglang. Keep the SGLang
-# version aligned with the runtime image or install target you use for rollout.
-# sglang[all]

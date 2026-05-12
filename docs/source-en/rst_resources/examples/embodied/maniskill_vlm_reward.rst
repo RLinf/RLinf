@@ -87,10 +87,8 @@ Use Docker image for the experiment.
       # For mainland China users, you can use the following for better download speed:
       # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
-For OpenPI + Qwen3-VL Hugging Face reward experiments, use the OpenPI embodied
-environment and pin the Qwen3-VL-compatible ``transformers`` version. RLinf's
-repo-local OpenPI patch is compatible with this unified environment, so the Qwen3-VL
-reward worker can run in the same venv:
+For Qwen3-VL Hugging Face reward experiments, install the reward backend
+dependencies in the same embodied environment used by training:
 
 .. code:: bash
 
@@ -99,10 +97,8 @@ reward worker can run in the same venv:
 
 SGLang is optional and only required when ``reward.model.model_type=history_vlm_sglang``.
 RLinf uses an in-process ``sglang.Engine`` reward backend, not an external SGLang server
-path. The target stack is ``sglang==0.5.4`` with ``transformers==4.57.1`` plus the
-matching SGLang torch, xgrammar, and flashinfer runtime. Install it into the same
-OpenPI venv only when you select that backend; RLinf reapplies the OpenPI
-``transformers==4.57.1`` patch after the SGLang runtime is installed.
+path. The SGLang install path includes the Qwen-VL reward dependencies plus
+``sglang==0.5.4`` and its matching torch, xgrammar, and flashinfer runtime.
 
 **Option 2: Custom Environment**
 
@@ -112,32 +108,20 @@ OpenPI venv only when you select that backend; RLinf reapplies the OpenPI
    bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward
    source .venv/bin/activate
 
-The ``--vlm-reward`` flag pins ``transformers==4.57.1`` and installs the tokenizers
-range required by Qwen3-VL. It is intended to work with OpenPI through RLinf's
-repo-local OpenPI patch, without a dedicated Qwen reward venv. It does not download
-reward checkpoints or install SGLang.
+The ``--vlm-reward`` flag installs the Hugging Face reward backend dependencies.
+It pins ``transformers==4.57.1`` and the tokenizers range required by Qwen3-VL; it
+does not download reward checkpoints or install SGLang.
 
-For the same-venv OpenPI + Qwen3-VL + in-process SGLang reward environment, use
-``--vlm-reward-sglang`` instead:
+For the in-process SGLang reward backend, use ``--vlm-reward-sglang`` instead:
 
 .. code:: bash
 
    bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward-sglang
    source .venv/bin/activate
 
-This SGLang path targets ``sglang==0.5.4`` with ``transformers==4.57.1`` and installs
-the SGLang-specific torch, xgrammar, and flashinfer runtime into the same OpenPI venv.
-Use it only when the reward config sets ``reward.model.model_type: history_vlm_sglang``.
-The installer reapplies RLinf's OpenPI ``transformers==4.57.1`` patch after SGLang
-finalizes its runtime stack.
-
-If you only need a reward-worker environment without OpenPI or an embodied env, keep
-using the reward-only model entry:
-
-.. code:: bash
-
-   bash requirements/install.sh embodied --model qwen_vlm_reward --vlm-reward
-   bash requirements/install.sh embodied --model qwen_vlm_reward --vlm-reward-sglang
+This SGLang path installs the Qwen-VL reward dependencies plus ``sglang==0.5.4``
+and the SGLang-specific torch, xgrammar, and flashinfer runtime. Use it only when
+the reward config sets ``reward.model.model_type: history_vlm_sglang``.
 
 Assets Download
 ----------------
@@ -295,7 +279,6 @@ Running the Script
          model_type: history_vlm
          model_path: /path/to/Qwen3-VL-4B-Instruct
          lora_path: /path/to/Qwen3-VL-4B-Instruct_lora
-         gt_success_bonus: 20.0
          input_builder_name: qwentrend_input_builder
          reward_parser_name: qwentrend_reward_parser
          reward_parser_params:
@@ -335,7 +318,7 @@ backends:
   ``sglang.Engine`` inside the reward worker. It is not an external server endpoint path.
   Keep the same ``history_buffers``, ``input_builder_name``, and ``reward_parser_name``
   fields, and use the ``--vlm-reward-sglang`` environment because this backend targets
-  ``sglang==0.5.4`` with its matching torch, xgrammar, and flashinfer runtime.
+  ``sglang==0.5.4`` with its own torch, xgrammar, and flashinfer runtime.
 
 **2. Configuration Files**
 
@@ -406,5 +389,4 @@ Current Implementation Notes
 - ``reward_threshold`` is configured at the top-level ``reward`` section in these YAML files, but the ``history_vlm`` implementation does not currently apply that threshold during reward inference.
 - ``qwentrend_input_builder`` consumes both ``main_images`` and ``extra_view_images`` from ``history_input``, so the history buffer must record both keys to form the synchronized two-view prompt.
 - ``qwentrend_reward_parser`` maps the generated label directly to signed scalar rewards using ``positive_reward``, ``negative_reward``, ``unclear_reward``, and ``invalid_reward``. It does not clamp outputs into ``[0, 1]``.
-- ``gt_success_bonus`` is configured under ``reward.model`` and is applied inside the reward model path rather than in the reward worker front-end.
 - ``history_vlm_sglang`` should use the same prompt/input and parser contract as ``history_vlm``. Differences are limited to the in-process SGLang runtime and batching behavior; validate generated labels before comparing reward curves across backends.

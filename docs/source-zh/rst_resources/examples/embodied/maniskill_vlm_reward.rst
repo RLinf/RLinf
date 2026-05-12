@@ -86,9 +86,8 @@ ManiSkill PPO（基于 VLM Reward Model）
       # 如果需要国内加速下载镜像，可以使用：
       # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
-对于 OpenPI + Qwen3-VL Hugging Face reward 实验，请使用 OpenPI 具身环境，并固定
-Qwen3-VL 兼容的 ``transformers`` 版本。RLinf 仓库内的 OpenPI 本地 patch 已兼容该统一环境，
-因此不会因为安装了 OpenPI 就要求 Qwen3-VL reward worker 使用单独的 venv：
+对于 Qwen3-VL Hugging Face reward 实验，请在训练所使用的同一个具身环境中安装
+reward 后端依赖：
 
 .. code:: bash
 
@@ -96,11 +95,9 @@ Qwen3-VL 兼容的 ``transformers`` 版本。RLinf 仓库内的 OpenPI 本地 pa
    uv pip install --upgrade "transformers==4.57.1" "tokenizers>=0.22,<0.23"
 
 SGLang 是可选依赖，仅当 ``reward.model.model_type=history_vlm_sglang`` 时需要。
-RLinf 使用进程内 ``sglang.Engine`` reward 后端，不走外部 SGLang server 路径。目标
-依赖栈是 ``sglang==0.5.4``、``transformers==4.57.1``，以及匹配的 SGLang torch、
-xgrammar 和 flashinfer runtime。只有选择该后端时才把这些依赖安装到同一个 OpenPI
-venv；SGLang runtime 安装完成后，RLinf 会重新应用 OpenPI 的
-``transformers==4.57.1`` patch。
+RLinf 使用进程内 ``sglang.Engine`` reward 后端，不走外部 SGLang server 路径。
+SGLang 安装路径包含 Qwen-VL reward 依赖，以及 ``sglang==0.5.4`` 和匹配的
+torch、xgrammar、flashinfer runtime。
 
 **选项 2：自定义环境**
 
@@ -110,31 +107,20 @@ venv；SGLang runtime 安装完成后，RLinf 会重新应用 OpenPI 的
    bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward
    source .venv/bin/activate
 
-``--vlm-reward`` 会固定 ``transformers==4.57.1``，并安装 Qwen3-VL 所需的
-``tokenizers`` 版本范围。该环境通过 RLinf 仓库内的 OpenPI 本地 patch 与 OpenPI
-共用，不需要为 Qwen reward 单独创建 venv；它不会下载 reward checkpoint，也不会自动启动
-或安装 SGLang。
+``--vlm-reward`` 会安装 Hugging Face reward 后端依赖，包括 Qwen3-VL 所需的
+``transformers==4.57.1`` 和 ``tokenizers`` 版本范围；它不会下载 reward checkpoint，
+也不会安装 SGLang。
 
-如果需要同一 venv 内的 OpenPI + Qwen3-VL + 进程内 SGLang reward 环境，请改用
-``--vlm-reward-sglang``：
+如果需要进程内 SGLang reward 后端，请改用 ``--vlm-reward-sglang``：
 
 .. code:: bash
 
    bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward-sglang
    source .venv/bin/activate
 
-该 SGLang 路径面向 ``sglang==0.5.4`` 和 ``transformers==4.57.1``，并安装
-SGLang 专用的 torch、xgrammar 与 flashinfer runtime 到同一个 OpenPI venv。仅当
-reward 配置设置 ``reward.model.model_type: history_vlm_sglang`` 时使用。SGLang
-runtime 固化后，安装脚本会重新应用 RLinf 的 OpenPI ``transformers==4.57.1`` patch。
-
-如果只需要 reward worker 环境，不需要 OpenPI 或具身 env，请继续使用 reward-only model
-入口：
-
-.. code:: bash
-
-   bash requirements/install.sh embodied --model qwen_vlm_reward --vlm-reward
-   bash requirements/install.sh embodied --model qwen_vlm_reward --vlm-reward-sglang
+该 SGLang 路径会安装 Qwen-VL reward 依赖，以及 ``sglang==0.5.4`` 和 SGLang
+专用的 torch、xgrammar 与 flashinfer runtime。仅当 reward 配置设置
+``reward.model.model_type: history_vlm_sglang`` 时使用。
 
 资源下载
 ----------------
@@ -290,7 +276,6 @@ SFT checkpoint 会保存到：
          model_type: history_vlm
          model_path: /path/to/Qwen3-VL-4B-Instruct
          lora_path: /path/to/Qwen3-VL-4B-Instruct_lora
-         gt_success_bonus: 20.0
          input_builder_name: qwentrend_input_builder
          reward_parser_name: qwentrend_reward_parser
          reward_parser_params:
@@ -329,7 +314,7 @@ SFT checkpoint 会保存到：
   ``sglang.Engine`` 加载 Qwen3-VL，不是外部 server endpoint 路径。这种方式仍保留
   相同的 ``history_buffers``、``input_builder_name`` 和 ``reward_parser_name``；
   请使用 ``--vlm-reward-sglang`` 环境，因为该后端目标是 ``sglang==0.5.4``，并带有
-  匹配的 torch、xgrammar 和 flashinfer runtime。
+  独立的 torch、xgrammar 和 flashinfer runtime。
 
 **2. 配置文件**
 
@@ -400,5 +385,4 @@ channel key 发送切分后的 reward 输入，reward worker 再用 ``reward_out
 - 这些 YAML 在顶层 ``reward`` 段配置了 ``reward_threshold``，但当前 ``history_vlm`` 实现并不会在 reward 推理阶段应用这个阈值。
 - ``qwentrend_input_builder`` 会从 ``history_input`` 中同时读取 ``main_images`` 和 ``extra_view_images``，因此历史缓冲里需要同时记录这两个键，才能组成同步双视角输入。
 - ``qwentrend_reward_parser`` 会按照 ``positive_reward``、``negative_reward``、``unclear_reward`` 和 ``invalid_reward`` 直接映射成带符号标量 reward，不会把输出截断到 ``[0, 1]``。
-- ``gt_success_bonus`` 配置在 ``reward.model`` 下，并在 reward model 内部生效，而不是在 reward worker 前端额外注入。
 - ``history_vlm_sglang`` 应与 ``history_vlm`` 使用相同的 prompt/input 与 parser 约定。两者差异主要在进程内 SGLang runtime 与 batching 行为；比较 reward 曲线前建议先检查生成标签是否一致。
