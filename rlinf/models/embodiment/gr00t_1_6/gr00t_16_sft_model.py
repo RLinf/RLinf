@@ -35,9 +35,9 @@ try:
 except Exception:
     pass
 
-from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
-
 import json as _json
+
+from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 
 # Embedded libero_panda modality/stats/embodiment_id data for automatic
 # injection into base models (e.g. GR00T-N1.6-3B) that were pretrained
@@ -119,8 +119,9 @@ def _ensure_libero_panda_in_model(model_dir: Path):
                 _json.dump(cfg, fh, indent=2)
             print(f"[GR00T SFT] Injected libero_panda into {fpath}")
 
-    _patch_json("processor_config.json",
-                ("processor_kwargs", "modality_configs"), "processor")
+    _patch_json(
+        "processor_config.json", ("processor_kwargs", "modality_configs"), "processor"
+    )
     _patch_json("statistics.json", (), "statistics")
     _patch_json("embodiment_id.json", (), "embodiment_id")
 
