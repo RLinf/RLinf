@@ -24,7 +24,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch import nn
 from torch.distributed.tensor import DTensor
 from torch.multiprocessing.reductions import reduce_tensor
-from torch.utils import _pytree
+from torch.utils._pytree import tree_map
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
@@ -1281,7 +1281,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             observation, actions = next(self.sft_iterator)
 
         register_pytree_dataclasses(observation)
-        observation = _pytree.tree_map(
+        observation = tree_map(
             lambda x: x.to(self.device) if x is not None else x,
             observation,
         )
