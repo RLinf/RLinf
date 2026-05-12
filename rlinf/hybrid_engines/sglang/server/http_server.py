@@ -4,7 +4,7 @@ import dataclasses
 import json
 import multiprocessing
 from types import SimpleNamespace
-from typing import Any, Callable, Optional
+from typing import Any, Callable, List, Optional
 
 import torch
 import yaml
@@ -74,7 +74,7 @@ def _patch_openai_serving_chat() -> None:
     def _build_chat_response_with_token_ids(
         self: Any,
         request: Any,
-        ret: list[dict],
+        ret: List[dict],
         created: int,
     ) -> Any:
         response = _orig_build_chat_response(self, request, ret, created)
@@ -106,20 +106,38 @@ def _patch_openai_serving_chat() -> None:
             return await _orig_handle_non_streaming(
                 self, adapted_request, request, raw_request
             )
-        prompt_token_ids = adapted_request.input_ids
-        if prompt_token_ids is not None and hasattr(prompt_token_ids, "tolist"):
-            prompt_token_ids = prompt_token_ids.tolist()
+        prompt_token_ids = None
+        if (
+            hasattr(adapted_request, "input_ids")
+            and adapted_request.input_ids is not None
+        ):
+            pt = adapted_request.input_ids
+            prompt_token_ids = pt.tolist() if hasattr(pt, "tolist") else list(pt)
         response = await _orig_handle_non_streaming(
             self, adapted_request, request, raw_request
         )
         if prompt_token_ids is None:
             return response
         if isinstance(response, ORJSONResponse):
-            payload = json.loads(response.body.decode("utf-8"))
-        else:
-            payload = response.model_dump(exclude_none=True)
-        payload["prompt_token_ids"] = prompt_token_ids
-        return ORJSONResponse(content=payload)
+            try:
+                payload = json.loads(response.body.decode("utf-8"))
+            except (
+                AttributeError,
+                TypeError,
+                json.JSONDecodeError,
+                UnicodeDecodeError,
+            ):
+                return response
+            payload["prompt_token_ids"] = prompt_token_ids
+            return ORJSONResponse(content=payload)
+        if hasattr(response, "model_dump"):
+            try:
+                out = response.model_dump(exclude_none=True)
+                out["prompt_token_ids"] = prompt_token_ids
+                return ORJSONResponse(content=out)
+            except Exception:
+                return response
+        return response
 
     _serving_chat.OpenAIServingChat._handle_non_streaming_request = (
         _handle_non_streaming_request_with_prompt_token_ids

@@ -138,16 +138,19 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
             adapted_request, _ = v1_chat_generate_request(
                 [request],
                 tokenizer_manager,
-                request_ids=[getattr(request, "rid", None)],
+                request_ids=[request.rid],
             )
         else:
-            adapted_request, _ = self._openai_serving_chat._convert_to_internal_request(
-                request
+            adapted_request, _ = (
+                self._openai_serving_chat._convert_to_internal_request(request)
             )
 
         adapted_request.return_logprob = self._return_logprobs
         prompt_token_ids = None
-        if adapted_request.input_ids is not None:
+        if (
+            hasattr(adapted_request, "input_ids")
+            and adapted_request.input_ids is not None
+        ):
             prompt_token_ids = adapted_request.input_ids
             if hasattr(prompt_token_ids, "tolist"):
                 prompt_token_ids = prompt_token_ids.tolist()
@@ -164,7 +167,9 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
                 request,
                 result,
                 created,
-                tool_call_parser=self._cfg_rollout.sglang.get("tool_call_parser", None),
+                tool_call_parser=self._cfg_rollout.sglang.get(
+                    "tool_call_parser", None
+                ),
             )
         else:
             response = self._openai_serving_chat._build_chat_response(
@@ -181,7 +186,9 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
                 ret=result,
                 created=created,
                 response_builder=v1_chat_generate_response,
-                tool_call_parser=self._cfg_rollout.sglang.get("tool_call_parser", None),
+                tool_call_parser=self._cfg_rollout.sglang.get(
+                    "tool_call_parser", None
+                ),
             )
         response_dict = response.model_dump(exclude_none=True)
 

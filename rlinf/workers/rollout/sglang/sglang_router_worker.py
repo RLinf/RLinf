@@ -4,7 +4,7 @@ import asyncio
 import copy
 import multiprocessing as mp
 import socket
-from typing import Any, Optional
+from typing import Any, List, Optional, Union
 
 import requests
 from omegaconf import OmegaConf
@@ -36,7 +36,7 @@ class SGLangRouterWorker(Worker):
     ):
         super().__init__()
         self._router_process: Optional[mp.Process] = None
-        self._server_base_urls: list[str] = []
+        self._server_base_urls: List[str] = []
         self._server_group = server_group
 
         if placement is not None:
@@ -64,7 +64,7 @@ class SGLangRouterWorker(Worker):
             self.weight_reload = self._config.get("weight_reload")
 
         self._cached_router_base_url: Optional[str] = None
-        self._cached_server_addrs: list[str] = []
+        self._cached_server_addrs: List[str] = []
 
         if self._server_group is not None:
             cr = config_rollout or _get(config, "rollout")
