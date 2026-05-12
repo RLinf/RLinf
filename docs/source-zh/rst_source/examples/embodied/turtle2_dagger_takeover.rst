@@ -18,8 +18,8 @@ LeRobot 数据集中再清洗出需要的 expert segments。
 
    OpenPI policy
       -> 14D absolute pose + gripper action
-      -> DualAbsolutePoseActionWrapper
       -> MasterTakeoverIntervention
+      -> Turtle2Env.step_absolute_pose()
       -> Turtle2 hybrid pose control
       -> /follow_pos_cmd_1, /follow_pos_cmd_2
       -> CollectEpisode LeRobot export
@@ -45,7 +45,7 @@ LeRobot 数据集中再清洗出需要的 expert segments。
 需要注意：
 
 - ``action_mode`` 必须是 ``absolute_pose``。master 发送的是绝对末端位姿，
-  不能被解释成 relative/delta action。
+  会通过 ``Turtle2Env.step_absolute_pose()`` 执行，不能被解释成 relative/delta action。
 - ``pose_control_backend`` 设置为 ``hybrid``。policy action 使用 smooth 路径；
   accepted master pose 使用 takeover 发布路径。
 - takeover 同步等待，以及退出 takeover 后当前 policy chunk 的剩余动作都不会
@@ -333,7 +333,6 @@ server。请先启动 master 双臂的 ROS 节点，再启动发送 takeover fra
    env:
      eval:
        use_master_takeover: True
-       action_mode: absolute_pose
        data_collection:
          enabled: True
          export_format: "lerobot"
@@ -343,6 +342,7 @@ server。请先启动 master 双臂的 ROS 节点，再启动发送 takeover fra
          normal_mode_value: 1
          takeover_mode_value: 2
        override_cfg:
+         action_mode: absolute_pose
          pose_control_backend: hybrid
          use_arm_ids: [0, 1]
 

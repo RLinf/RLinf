@@ -95,7 +95,6 @@ env:
     use_spacemouse: False
     use_gello: False
     use_master_takeover: True
-    action_mode: absolute_pose
     keyboard_reward_wrapper: single_stage
     main_image_key: wrist_2
     max_steps_per_rollout_epoch: 3000
@@ -130,6 +129,7 @@ env:
       debounce_s: 0.3
     override_cfg:
       task_description: "Collect Turtle2 takeover data."
+      action_mode: absolute_pose
       use_arm_ids: [0, 1]
       use_camera_ids: [0, 1, 2]
       enforce_gripper_close: false

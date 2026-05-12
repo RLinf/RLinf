@@ -26,6 +26,9 @@ from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
 
 from rlinf.envs import SupportedEnvType
+from rlinf.envs.realworld.xsquare.turtle2_deploy_utils import (
+    validate_turtle2_takeover_requirements,
+)
 from rlinf.scheduler.cluster import Cluster
 from rlinf.utils.placement import (
     HybridComponentPlacement,
@@ -822,21 +825,10 @@ def validate_embodied_cfg(cfg):
                 f"env.{split}.use_master_takeover=True requires "
                 f"rollout.pipeline_stage_num=1, got {stage_num}."
             )
-        action_mode = env_cfg.get("action_mode", None)
-        if action_mode != "absolute_pose":
-            raise ValueError(
-                f"env.{split}.use_master_takeover=True requires "
-                "action_mode='absolute_pose'."
-            )
         override_cfg = env_cfg.get("override_cfg", {}) or {}
-        pose_control_backend = str(
-            override_cfg.get("pose_control_backend", "smooth")
-        ).lower()
-        if pose_control_backend != "hybrid":
-            raise ValueError(
-                f"env.{split}.use_master_takeover=True requires "
-                "override_cfg.pose_control_backend='hybrid'."
-            )
+        validate_turtle2_takeover_requirements(
+            env_cfg, override_cfg, split_label=split
+        )
         master_takeover_cfg = env_cfg.get("master_takeover", {})
         control_mode = str(master_takeover_cfg.get("control_mode", "pose")).lower()
         if control_mode != "pose":

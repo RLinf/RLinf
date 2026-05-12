@@ -19,8 +19,8 @@ Runtime uses one robot execution path:
 
    OpenPI policy
       -> 14D absolute pose + gripper action
-      -> DualAbsolutePoseActionWrapper
       -> MasterTakeoverIntervention
+      -> Turtle2Env.step_absolute_pose()
       -> Turtle2 hybrid pose control
       -> /follow_pos_cmd_1, /follow_pos_cmd_2
       -> CollectEpisode LeRobot export
@@ -48,7 +48,8 @@ This example uses dual-arm 14D actions:
 Important details:
 
 - ``action_mode`` must be ``absolute_pose``. The master sends absolute end-effector
-  poses, which must not be interpreted as relative/delta actions.
+  poses, which are executed through ``Turtle2Env.step_absolute_pose()`` and must
+  not be interpreted as relative/delta actions.
 - ``pose_control_backend`` is set to ``hybrid``. Policy actions use the smooth
   path; accepted master poses use the takeover publish path.
 - Takeover sync waits and policy chunk tails after takeover exit are not stepped,
@@ -352,7 +353,6 @@ Key fields:
    env:
      eval:
        use_master_takeover: True
-       action_mode: absolute_pose
        data_collection:
          enabled: True
          export_format: "lerobot"
@@ -362,6 +362,7 @@ Key fields:
          normal_mode_value: 1
          takeover_mode_value: 2
        override_cfg:
+         action_mode: absolute_pose
          pose_control_backend: hybrid
          use_arm_ids: [0, 1]
 

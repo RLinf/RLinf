@@ -14,15 +14,11 @@
 
 from .apply import (
     apply_dual_arm_wrappers,
-    apply_dual_pose_action_wrappers,
+    apply_keyboard_reward,
     apply_single_arm_wrappers,
 )
 from .dual_euler_obs import DualQuat2EulerWrapper
 from .dual_gello_intervention import DualGelloIntervention
-from .dual_pose_action import (
-    DualAbsolutePoseActionWrapper,
-    DualRelativePoseActionWrapper,
-)
 from .dual_relative_frame import DualRelativeFrame, DualRelativeTargetFrame
 from .dual_spacemouse_intervention import DualSpacemouseIntervention
 from .euler_obs import Quat2EulerWrapper
@@ -40,9 +36,7 @@ from .spacemouse_intervention import SpacemouseIntervention
 
 __all__ = [
     "DualGelloIntervention",
-    "DualAbsolutePoseActionWrapper",
     "DualQuat2EulerWrapper",
-    "DualRelativePoseActionWrapper",
     "DualRelativeFrame",
     "DualRelativeTargetFrame",
     "DualSpacemouseIntervention",
@@ -57,6 +51,6 @@ __all__ = [
     "RelativeFrame",
     "SpacemouseIntervention",
     "apply_dual_arm_wrappers",
-    "apply_dual_pose_action_wrappers",
+    "apply_keyboard_reward",
     "apply_single_arm_wrappers",
 ]
