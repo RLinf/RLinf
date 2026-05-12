@@ -577,6 +577,64 @@ class ThreeViewRobochallengeInputBuilder(RobochanallengeInputBuilder):
         )
 
 
+
+@register_input_builder("simple_threeview_ternary_input_builder")
+@dataclass
+class SimpleThreeViewTernaryInputBuilder(ThreeViewRobochallengeInputBuilder):
+    """Three-view short ternary prompt without CoT JSON."""
+
+    def prepare_inputs(
+        self,
+        observations: dict[str, Any],
+        history_input: dict[str, dict[str, list[list[Any]]]],
+        valid_input_ids: list[int],
+    ):
+        full_history = history_input.get("full_history", {})
+        history_window = history_input.get("history_window", {})
+        full_videos = self.extract_videos(full_history, self.full_video_keys)
+        main_clip_videos = self.extract_videos(history_window, ["main_images"])
+        extra_clip_videos = self.extract_videos(history_window, ["extra_view_images"])
+
+        if not (len(full_videos) == len(main_clip_videos) == len(extra_clip_videos)):
+            raise ValueError(
+                "Mismatched three-view history buffer batch sizes: "
+                f"full_history={len(full_videos)}, "
+                f"main_clip={len(main_clip_videos)}, "
+                f"extra_clip={len(extra_clip_videos)}."
+            )
+
+        videos_list: list[list[Any]] = []
+        for env_id in valid_input_ids:
+            videos_list.append(
+                full_videos[env_id]
+                + main_clip_videos[env_id]
+                + extra_clip_videos[env_id]
+            )
+
+        task_descriptions = [
+            str(task_description or "")
+            for task_description in observations["task_descriptions"]
+        ]
+        prompt_texts_list: list[list[str]] = []
+        for env_id in valid_input_ids:
+            task_description = task_descriptions[env_id].strip()
+            prompt_texts_list.append(
+                [
+                    f"You are currently performing the task: {task_description}. "
+                    "The first video is full-history context; the following two "
+                    "videos are synchronized clip views. Judge only whether the "
+                    "clip makes the task better, worse, or unchanged. "
+                    "Answer with exactly one word: positive, negative, or unchanged."
+                ]
+            )
+
+        return {
+            "images_list": None,
+            "videos_list": videos_list,
+            "prompt_texts_list": prompt_texts_list,
+        }
+
+
 @register_input_builder("simple_robochallenge_input_builder")
 @dataclass
 class SimpleRobochallengeInputBuilder(RobochanallengeInputBuilder):

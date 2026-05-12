@@ -25,7 +25,6 @@ from omegaconf import DictConfig
 from peft import (
     LoraConfig,
     get_peft_model,
-    set_peft_model_state_dict,
 )
 from transformers import AutoConfig, AutoModelForVision2Seq, AutoProcessor
 
@@ -157,10 +156,19 @@ def load_reward_checkpoint_into_model(
     if lora_state_dict:
         lora_config = _build_lora_config(lora_state_dict)
         model = get_peft_model(model, lora_config)
-        set_peft_model_state_dict(model, lora_state_dict)
+        load_result = model.load_state_dict(lora_state_dict, strict=False)
+        _, unexpected_keys = _unpack_load_state_dict_result(load_result)
+        unexpected_lora_keys = [key for key in unexpected_keys if "lora_" in key]
+        if unexpected_lora_keys:
+            preview = ", ".join(unexpected_lora_keys[:5])
+            raise ValueError(
+                "Detected LoRA checkpoint, but some LoRA weights were not loaded: "
+                f"{preview}"
+            )
         return model, {
             "checkpoint_path": resolved_checkpoint_path,
             "checkpoint_format": "lora",
+            "loaded_lora_keys": str(len(lora_state_dict)),
         }
 
     load_result = model.load_state_dict(checkpoint_state_dict, strict=False)

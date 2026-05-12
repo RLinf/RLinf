@@ -12,12 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
 import os
-import signal
 import sys
-import threading
-import types
 
 import numpy as np
 import pytest
@@ -32,12 +28,9 @@ from rlinf.models.embodiment.reward import vlm_reward_model as vlm_reward_model_
 from rlinf.models.embodiment.reward.vlm_reward_model import HistoryVLMRewardModel
 from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
     HistoryVLMInputBuilder,
-    _to_pil_images,
 )
 from rlinf.models.embodiment.reward.vlm_sglang_reward_model import (
-    _RAW_FRAME_VIDEO_FORMAT,
     HistoryVLMSGLangRewardModel,
-    _install_sglang_raw_frame_video_patch,
 )
 from rlinf.utils.comm_mapping import CommMapper
 from rlinf.utils.nested_dict_process import cat_list_of_dict_tensor, split_dict
@@ -459,7 +452,7 @@ def test_history_vlm_sglang_reward_model_writes_sparse_valid_envs_back_to_slots(
     assert model.input_builder.calls == [[21], [23]]
 
 
-def test_history_vlm_sglang_builds_video_data_as_raw_frames():
+def test_history_vlm_sglang_builds_video_data_with_metadata():
     model = object.__new__(HistoryVLMSGLangRewardModel)
     model._processor = _FakeSGLangProcessor()
     model.video_fps = 8.0
@@ -477,127 +470,18 @@ def test_history_vlm_sglang_builds_video_data_as_raw_frames():
     assert prompts == ["rendered"]
     assert len(video_data) == 1
     assert len(video_data[0]) == 1
-    raw_video = video_data[0][0]
-    assert raw_video["format"] == _RAW_FRAME_VIDEO_FORMAT
-    assert raw_video.get_avg_fps() == 8.0
-    assert len(raw_video) == 3
-
-    batch = raw_video.get_batch([2, 0]).asnumpy()
-    assert batch.shape == (2, 2, 2, 3)
-    assert batch.dtype == np.uint8
-    assert batch.flags.c_contiguous
-    assert np.all(batch[0] == 255)
-    assert np.all(batch[1] == 0)
-    assert model._processor.messages[0][0]["content"].startswith("<video>\n")
-
-
-def test_history_vlm_sglang_duplicates_single_raw_frame_for_qwen_sampling():
-    model = object.__new__(HistoryVLMSGLangRewardModel)
-    model.video_fps = 4.0
-
-    raw_video = model._convert_video([np.full((2, 2, 3), 9, dtype=np.uint8)])
-
-    assert len(raw_video) == 2
-    assert raw_video.get_batch([0, 1]).asnumpy().shape == (2, 2, 2, 3)
-    assert np.all(raw_video.get_batch([0, 1]).asnumpy() == 9)
-
-
-def test_history_vlm_sglang_raw_frame_patch_wraps_plain_dict(monkeypatch):
-    qwen_vl_module = types.ModuleType("qwen_vl")
-    seen: dict[str, object] = {}
-
-    async def fake_preprocess_video(video, *args, **kwargs):
-        del args, kwargs
-        seen["video_type"] = type(video).__name__
-        seen["length"] = len(video)
-        seen["fps"] = video.get_avg_fps()
-        seen["batch"] = video.get_batch([1, 0]).asnumpy()
-        return "video", {"fps": video.get_avg_fps()}
-
-    qwen_vl_module.preprocess_video = fake_preprocess_video
-    sglang_module = types.ModuleType("sglang")
-    srt_module = types.ModuleType("sglang.srt")
-    multimodal_module = types.ModuleType("sglang.srt.multimodal")
-    processors_module = types.ModuleType("sglang.srt.multimodal.processors")
-    sglang_module.__path__ = []
-    srt_module.__path__ = []
-    multimodal_module.__path__ = []
-    processors_module.__path__ = []
-    sglang_module.srt = srt_module
-    srt_module.multimodal = multimodal_module
-    multimodal_module.processors = processors_module
-    processors_module.qwen_vl = qwen_vl_module
-    monkeypatch.setitem(sys.modules, "sglang", sglang_module)
-    monkeypatch.setitem(sys.modules, "sglang.srt", srt_module)
-    monkeypatch.setitem(sys.modules, "sglang.srt.multimodal", multimodal_module)
-    monkeypatch.setitem(
-        sys.modules,
-        "sglang.srt.multimodal.processors",
-        processors_module,
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "sglang.srt.multimodal.processors.qwen_vl",
-        qwen_vl_module,
-    )
-
-    assert _install_sglang_raw_frame_video_patch()
-    raw_video = {
-        "format": _RAW_FRAME_VIDEO_FORMAT,
-        "frames": np.stack(
-            [
-                np.zeros((2, 2, 3), dtype=np.uint8),
-                np.ones((2, 2, 3), dtype=np.uint8),
-            ],
-            axis=0,
-        ),
-        "fps": 7.0,
+    frames, metadata = video_data[0][0]
+    assert metadata == {
+        "fps": 8.0,
+        "duration": 3 / 8.0,
+        "total_num_frames": 3,
+        "frames_indices": [0, 1, 2],
+        "video_backend": "rlinf_memory",
     }
-
-    result = asyncio.run(qwen_vl_module.preprocess_video(raw_video))
-
-    assert result == ("video", {"fps": 7.0})
-    assert seen["video_type"] == "_RawFrameVideoReader"
-    assert seen["length"] == 2
-    assert seen["fps"] == 7.0
-    assert np.all(seen["batch"][0] == 1)
-    assert np.all(seen["batch"][1] == 0)
-
-
-def test_history_vlm_sglang_create_engine_skips_sigquit_outside_main_thread():
-    model = object.__new__(HistoryVLMSGLangRewardModel)
-    model.sglang_engine_kwargs = {"model_path": "dummy"}
-    original_signal = signal.signal
-    result: dict[str, object] = {}
-
-    class FakeEngine:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            signal.signal(signal.SIGQUIT, lambda signum, frame: None)
-
-    def create_engine_in_thread() -> None:
-        try:
-            result["engine"] = model._create_engine(FakeEngine)
-        except Exception as exc:  # pragma: no cover - easier failure reporting
-            result["exc"] = exc
-
-    thread = threading.Thread(target=create_engine_in_thread)
-    thread.start()
-    thread.join()
-
-    assert "exc" not in result
-    assert isinstance(result["engine"], FakeEngine)
-    assert result["engine"].kwargs == {"model_path": "dummy"}
-    assert signal.signal is original_signal
-
-
-def test_vlm_video_input_flattens_extra_view_frame_dimension():
-    frames = [torch.zeros((1, 2, 2, 3), dtype=torch.uint8) for _ in range(5)]
-
-    images = _to_pil_images(frames)
-
-    assert len(images) == 5
-    assert all(image.size == (2, 2) for image in images)
+    assert [frame.shape for frame in frames] == [(2, 2, 3)] * 3
+    assert all(frame.dtype == np.uint8 for frame in frames)
+    assert all(frame.flags.c_contiguous for frame in frames)
+    assert model._processor.messages[0][0]["content"].startswith("<video>\n")
 
 
 def test_history_vlm_sglang_extracts_texts_and_token_counts():
@@ -701,16 +585,7 @@ def test_load_reward_checkpoint_into_model_supports_lora_checkpoint(
         calls["wrapped_model"] = wrapped_model
         return wrapped_model
 
-    def fake_set_peft_model_state_dict(model, state_dict):
-        calls["state_dict"] = state_dict
-        calls["loaded_model"] = model
-
     monkeypatch.setattr(vlm_reward_model_module, "get_peft_model", fake_get_peft_model)
-    monkeypatch.setattr(
-        vlm_reward_model_module,
-        "set_peft_model_state_dict",
-        fake_set_peft_model_state_dict,
-    )
 
     model = _FakeModel()
     loaded_model, metadata = vlm_reward_model_module.load_reward_checkpoint_into_model(
@@ -720,9 +595,11 @@ def test_load_reward_checkpoint_into_model_supports_lora_checkpoint(
     assert loaded_model is calls["wrapped_model"]
     assert metadata["checkpoint_format"] == "lora"
     assert metadata["checkpoint_path"] == str(checkpoint_file)
+    assert metadata["loaded_lora_keys"] == "2"
     assert calls["config"].r == 8
     assert set(calls["config"].target_modules) == {"q_proj"}
-    assert sorted(calls["state_dict"]) == [
+    assert loaded_model.strict is False
+    assert sorted(loaded_model.loaded_state_dict) == [
         "model.layers.0.q_proj.lora_A.weight",
         "model.layers.0.q_proj.lora_B.weight",
     ]

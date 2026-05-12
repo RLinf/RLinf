@@ -305,6 +305,7 @@ class EmbodiedRunner:
                     if (
                         self.reward is not None
                         and not self.reward_initialized
+                        and self.global_step > 0
                         and self.global_step
                         >= self.cfg.reward.get("use_output_step", 0)
                     ):

@@ -115,7 +115,6 @@ class ManiskillEnv(gym.Env):
     def extra_instructions(self):
         EXTRA_INSTRUCTION_MAP = {
             "PickCube-v1": "Pick up the red cube and place it on the green spot on the table.",
-            "PickCube3View-v1": "Pick up the red cube and place it on the green spot on the table.",
             # TODO: add more instructions for other tasks
         }
         return EXTRA_INSTRUCTION_MAP

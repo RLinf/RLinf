@@ -188,7 +188,6 @@ reward:
     model_path: "/path/to/Qwen3-VL-4B-Instruct"
     model_type: "history_vlm"
     lora_path: "/path/to/qwen3-vl-lora-checkpoin"
-    gt_success_bonus: 20.0
     precision: "bf16"
     input_builder_name: qwentrend_input_builder
     input_builder_params:

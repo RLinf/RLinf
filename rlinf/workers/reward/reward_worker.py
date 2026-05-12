@@ -65,6 +65,7 @@ class RewardWorker(Worker):
         self.cfg = cfg
         self.placement = HybridComponentPlacement(cfg, Cluster())
 
+    def init_worker(self):
         self.total_batch_size_per_dp = (
             self.cfg.data.rollout_batch_size
             * self.cfg.algorithm.get("group_size", 1)
@@ -78,7 +79,6 @@ class RewardWorker(Worker):
                 "down_sampling_config", {}
             )
 
-    def init_worker(self):
         if self.cfg.reward.use_reward_model:
             raise NotImplementedError
         else:
@@ -331,6 +331,10 @@ class EmbodiedRewardWorker(Worker):
             last_run_count += int(last_run.sum().item()) if last_run is not None else 0
             batches.append(data)
 
+        batch_keys = [set(batch) - {"last_run"} for batch in batches]
+        assert len(set(map(frozenset, batch_keys))) == 1, (
+            f"Inconsistent reward input keys across shards: {batch_keys}"
+        )
         merged = cat_list_of_dict_tensor(
             [{k: v for k, v in b.items() if k != "last_run"} for b in batches], dim=0
         )

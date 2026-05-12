@@ -245,7 +245,6 @@ reward:
     model_type: history_vlm
     model_path: "/workspace/dataset/Qwen3-VL-4B-Instruct"
     lora_path: null
-    gt_success_bonus: 20.0
     precision: bf16
     input_builder_name: qwentrend_input_builder
     reward_parser_name: qwentrend_reward_parser
