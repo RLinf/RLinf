@@ -30,7 +30,6 @@ from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, CollectiveGroupOptions, Worker
 from rlinf.utils.comm_mapping import CommMapper
-from rlinf.utils.latency_profile import record_event
 from rlinf.utils.placement import HybridComponentPlacement
 
 
@@ -499,30 +498,22 @@ class MultiStepRolloutWorker(Worker):
         """
         assert mode in ["train", "eval"], f"{mode=} is not supported"
         with self.worker_timer("recv_env_wait"):
-            with record_event(
-                self.cfg,
-                component="rollout",
-                event="recv_env_wait",
-                rank=self._rank,
-                mode=mode,
-            ) as event:
-                src_ranks_and_sizes = self.src_ranks[mode]
-                obs_batches = []
-                for src_rank, expected_size in src_ranks_and_sizes:
-                    obs_batch = await input_channel.get(
-                        key=CommMapper.build_channel_key(
-                            src_rank, self._rank, extra=f"{mode}_obs"
-                        ),
-                        async_op=True,
-                    ).async_wait()
-                    actual_size = self._infer_env_batch_size(obs_batch)
-                    assert actual_size == expected_size, (
-                        f"Expected env output batch size {expected_size} from env rank {src_rank}, "
-                        f"got {actual_size}."
-                    )
-                    obs_batches.append(obs_batch)
-                event["batch_size"] = sum(size for _, size in src_ranks_and_sizes)
-                return self._merge_obs_batches(obs_batches)
+            src_ranks_and_sizes = self.src_ranks[mode]
+            obs_batches = []
+            for src_rank, expected_size in src_ranks_and_sizes:
+                obs_batch = await input_channel.get(
+                    key=CommMapper.build_channel_key(
+                        src_rank, self._rank, extra=f"{mode}_obs"
+                    ),
+                    async_op=True,
+                ).async_wait()
+                actual_size = self._infer_env_batch_size(obs_batch)
+                assert actual_size == expected_size, (
+                    f"Expected env output batch size {expected_size} from env rank {src_rank}, "
+                    f"got {actual_size}."
+                )
+                obs_batches.append(obs_batch)
+            return self._merge_obs_batches(obs_batches)
 
     def _split_actions(
         self, actions: torch.Tensor | np.ndarray, sizes: list[int]
@@ -674,28 +665,21 @@ class MultiStepRolloutWorker(Worker):
     ):
         assert mode in ["train", "eval"], f"{mode=} is not supported"
         with self.worker_timer("send_result"):
-            with record_event(
-                self.cfg,
-                component="rollout",
-                event="send_result",
-                rank=self._rank,
-                mode=mode,
+            dst_ranks_and_sizes = self.dst_ranks[mode]
+            split_sizes = [size for _, size in dst_ranks_and_sizes]
+            split_rollout_results = self._split_rollout_result(
+                rollout_result, split_sizes
+            )
+            for (dst_rank, _), rollout_result_i in zip(
+                dst_ranks_and_sizes, split_rollout_results
             ):
-                dst_ranks_and_sizes = self.dst_ranks[mode]
-                split_sizes = [size for _, size in dst_ranks_and_sizes]
-                split_rollout_results = self._split_rollout_result(
-                    rollout_result, split_sizes
+                output_channel.put(
+                    rollout_result_i,
+                    key=CommMapper.build_channel_key(
+                        self._rank, dst_rank, extra=f"{mode}_rollout_results"
+                    ),
+                    async_op=True,
                 )
-                for (dst_rank, _), rollout_result_i in zip(
-                    dst_ranks_and_sizes, split_rollout_results
-                ):
-                    output_channel.put(
-                        rollout_result_i,
-                        key=CommMapper.build_channel_key(
-                            self._rank, dst_rank, extra=f"{mode}_rollout_results"
-                        ),
-                        async_op=True,
-                    )
 
     def set_global_step(self, global_step: int):
         if hasattr(self.hf_model, "set_global_step"):

@@ -33,7 +33,6 @@ from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.wrappers import RecordVideo
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.comm_mapping import CommMapper
-from rlinf.utils.latency_profile import record_event
 from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.nested_dict_process import (
     copy_dict_tensor,
@@ -431,31 +430,24 @@ class EnvWorker(Worker):
         """
         This function is used to interact with the environment.
         """
-        with record_event(
-            self.cfg,
-            component="env",
-            event="env_interact_step",
-            rank=self._rank,
-            stage_id=stage_id,
-        ):
-            chunk_actions = prepare_actions(
-                raw_chunk_actions=chunk_actions,
-                env_type=self.cfg.env.train.env_type,
-                model_type=self.cfg.actor.model.model_type,
-                num_action_chunks=self.cfg.actor.model.num_action_chunks,
-                action_dim=self.cfg.actor.model.action_dim,
-                policy=self.cfg.actor.model.get("policy_setup", None),
-                wm_env_type=self.cfg.env.train.get("wm_env_type", None),
-            )
-            env_info = {}
+        chunk_actions = prepare_actions(
+            raw_chunk_actions=chunk_actions,
+            env_type=self.cfg.env.train.env_type,
+            model_type=self.cfg.actor.model.model_type,
+            num_action_chunks=self.cfg.actor.model.num_action_chunks,
+            action_dim=self.cfg.actor.model.action_dim,
+            policy=self.cfg.actor.model.get("policy_setup", None),
+            wm_env_type=self.cfg.env.train.get("wm_env_type", None),
+        )
+        env_info = {}
 
-            (
-                obs_list,
-                chunk_rewards,
-                chunk_terminations,
-                chunk_truncations,
-                infos_list,
-            ) = self.env_list[stage_id].chunk_step(chunk_actions)
+        (
+            obs_list,
+            chunk_rewards,
+            chunk_terminations,
+            chunk_truncations,
+            infos_list,
+        ) = self.env_list[stage_id].chunk_step(chunk_actions)
         if isinstance(obs_list, (list, tuple)):
             extracted_obs = obs_list[-1] if obs_list else None
         if isinstance(infos_list, (list, tuple)):
@@ -939,19 +931,9 @@ class EnvWorker(Worker):
 
         batch_size = self.train_num_envs_per_stage
         with self.worker_timer("reward_request_send"):
-            with record_event(
-                self.cfg,
-                component="env",
-                event="reward_request_send",
-                rank=self._rank,
-                stage_id=stage_id,
-                epoch=epoch,
-                chunk_step_idx=chunk_step_idx,
-                batch_size=batch_size,
-            ):
-                self.send_reward_input(
-                    send_channel=send_channel, reward_input=reward_input
-                )
+            self.send_reward_input(
+                send_channel=send_channel, reward_input=reward_input
+            )
         return True, history_lengths
 
     def recv_pending_reward_output(
@@ -961,18 +943,7 @@ class EnvWorker(Worker):
         pending_step: PendingRolloutStep | None = None,
     ) -> torch.Tensor | None:
         with self.worker_timer("reward_output_wait"):
-            with record_event(
-                self.cfg,
-                component="env",
-                event="reward_output_wait",
-                rank=self._rank,
-                stage_id=pending_step.stage_id if pending_step is not None else None,
-                epoch=pending_step.epoch if pending_step is not None else None,
-                chunk_step_idx=(
-                    pending_step.chunk_step_idx if pending_step is not None else None
-                ),
-            ):
-                reward_output = self.recv_reward_results(recv_channel=recv_channel)
+            reward_output = self.recv_reward_results(recv_channel=recv_channel)
         if self.reward_mode != "terminal" or reward_output is None:
             return reward_output
 

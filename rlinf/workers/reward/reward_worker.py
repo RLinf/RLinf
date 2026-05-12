@@ -14,7 +14,6 @@
 
 import asyncio
 import os
-import time
 from typing import Any, Literal, Optional
 
 import numpy as np
@@ -36,7 +35,6 @@ from rlinf.scheduler import (
 from rlinf.utils.comm_mapping import CommMapper
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.down_sampling import down_sample_batch
-from rlinf.utils.latency_profile import emit_event, record_event
 from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.nested_dict_process import cat_list_of_dict_tensor
 from rlinf.utils.placement import (
@@ -284,40 +282,18 @@ class EmbodiedRewardWorker(Worker):
 
         total_last_run_count = 0
         while True:
-            with record_event(
-                self.cfg,
-                component="reward",
-                event="recv_input_wait",
-                rank=self._rank,
-            ) as recv_event:
-                reward_input, last_run_count = await self.recv_merged_reward_input(
-                    input_channel, mode="train"
-                )
-                batch_size = self._infer_reward_batch_size(reward_input)
-                recv_event["batch_size"] = batch_size
-                recv_event["last_run_count"] = last_run_count
+            reward_input, last_run_count = await self.recv_merged_reward_input(
+                input_channel, mode="train"
+            )
+            batch_size = self._infer_reward_batch_size(reward_input)
 
-            with record_event(
-                self.cfg,
-                component="reward",
-                event="model_compute",
-                rank=self._rank,
-                batch_size=batch_size,
-            ):
-                rewards = self.model.compute_reward(reward_input)
+            rewards = self.model.compute_reward(reward_input)
             self._record_reward_model_timings()
 
             if rewards is not None and rewards.dim() == 1:
                 rewards = rewards.unsqueeze(-1)
 
-            with record_event(
-                self.cfg,
-                component="reward",
-                event="send_output",
-                rank=self._rank,
-                batch_size=batch_size,
-            ):
-                self.send_reward_output(output_channel, rewards)
+            self.send_reward_output(output_channel, rewards)
             total_last_run_count += last_run_count
             if total_last_run_count >= self.local_num_train_envs:
                 break
@@ -569,7 +545,6 @@ class EmbodiedRewardWorker(Worker):
         timings = getattr(self.model, "last_timing_ms", None)
         if not timings:
             return
-        generation_stats = getattr(self.model, "last_generation_stats", {}) or {}
         for name, value in timings.items():
             metric_name = str(name)
             if metric_name.endswith("_ms"):
@@ -578,24 +553,6 @@ class EmbodiedRewardWorker(Worker):
             timer_key = f"model/{metric_name}"
             self._timer_metrics[timer_key] = (
                 self._timer_metrics.get(timer_key, 0.0) + duration_ms / 1000.0
-            )
-            cfg = getattr(self, "cfg", None)
-            if cfg is None:
-                continue
-            end_ns = time.time_ns()
-            begin_ns = max(0, end_ns - int(duration_ms * 1_000_000))
-            event_fields = {"source_metric": str(name)}
-            if metric_name == "total":
-                event_fields.update(generation_stats)
-            emit_event(
-                cfg,
-                component="reward",
-                event=timer_key,
-                rank=getattr(self, "_rank", None),
-                begin_ns=begin_ns,
-                end_ns=end_ns,
-                duration_ms=duration_ms,
-                **event_fields,
             )
 
     async def _compute_rewards(
@@ -609,64 +566,34 @@ class EmbodiedRewardWorker(Worker):
                 "aggregate_request_count": float(self.aggregate_request_count)
             }
             with self.worker_timer("loop_total"):
-                with record_event(
-                    self.cfg,
-                    component="reward",
-                    event="loop_total",
-                    rank=self._rank,
-                ) as loop_event:
-                    input_queue_depth = self._reward_input_queue_depth(
+                input_queue_depth = self._reward_input_queue_depth(
+                    input_channel, mode="train"
+                )
+                reward_metrics["input_queue_depth"] = float(input_queue_depth)
+                reward_metrics["input_queue_depth_max"] = float(input_queue_depth)
+                with self.worker_timer("recv_input_wait"):
+                    (
+                        observations,
+                        batch_sizes,
+                        _,
+                    ) = await self.recv_aggregated_reward_inputs(
                         input_channel, mode="train"
                     )
-                    reward_metrics["input_queue_depth"] = float(input_queue_depth)
-                    reward_metrics["input_queue_depth_max"] = float(input_queue_depth)
-                    with self.worker_timer("recv_input_wait"):
-                        with record_event(
-                            self.cfg,
-                            component="reward",
-                            event="recv_input_wait",
-                            rank=self._rank,
-                            queue_depth=input_queue_depth,
-                        ) as recv_event:
-                            (
-                                observations,
-                                batch_sizes,
-                                _,
-                            ) = await self.recv_aggregated_reward_inputs(
-                                input_channel, mode="train"
-                            )
-                            batch_size = sum(batch_sizes)
-                            recv_event["batch_size"] = batch_size
+                    batch_size = sum(batch_sizes)
 
-                    loop_event["batch_size"] = batch_size
-                    loop_event["queue_depth"] = input_queue_depth
-                    reward_metrics["input_batch_size"] = float(batch_size)
+                reward_metrics["input_batch_size"] = float(batch_size)
 
-                    with self.worker_timer("model_compute"):
-                        with record_event(
-                            self.cfg,
-                            component="reward",
-                            event="model_compute",
-                            rank=self._rank,
-                            batch_size=batch_size,
-                        ):
-                            rewards = self.model.compute_reward(observations)
-                    self._record_reward_model_timings()
+                with self.worker_timer("model_compute"):
+                    rewards = self.model.compute_reward(observations)
+                self._record_reward_model_timings()
 
-                    if rewards is not None and rewards.dim() == 1:
-                        rewards = rewards.unsqueeze(-1)
+                if rewards is not None and rewards.dim() == 1:
+                    rewards = rewards.unsqueeze(-1)
 
-                    with self.worker_timer("send_output"):
-                        with record_event(
-                            self.cfg,
-                            component="reward",
-                            event="send_output",
-                            rank=self._rank,
-                            batch_size=batch_size,
-                        ):
-                            self.send_aggregated_reward_output(
-                                output_channel, rewards, batch_sizes
-                            )
+                with self.worker_timer("send_output"):
+                    self.send_aggregated_reward_output(
+                        output_channel, rewards, batch_sizes
+                    )
 
             if metric_channel is not None:
                 time_metrics = {
