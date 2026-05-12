@@ -285,8 +285,6 @@ class EmbodiedRewardWorker(Worker):
             reward_input, last_run_count = await self.recv_merged_reward_input(
                 input_channel, mode="train"
             )
-            batch_size = self._infer_reward_batch_size(reward_input)
-
             rewards = self.model.compute_reward(reward_input)
             self._record_reward_model_timings()
 

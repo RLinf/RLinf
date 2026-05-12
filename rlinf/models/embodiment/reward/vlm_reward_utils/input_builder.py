@@ -577,7 +577,6 @@ class ThreeViewRobochallengeInputBuilder(RobochanallengeInputBuilder):
         )
 
 
-
 @register_input_builder("simple_threeview_ternary_input_builder")
 @dataclass
 class SimpleThreeViewTernaryInputBuilder(ThreeViewRobochallengeInputBuilder):

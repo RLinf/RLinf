@@ -929,11 +929,8 @@ class EnvWorker(Worker):
         if reward_input is None:
             return False, None
 
-        batch_size = self.train_num_envs_per_stage
         with self.worker_timer("reward_request_send"):
-            self.send_reward_input(
-                send_channel=send_channel, reward_input=reward_input
-            )
+            self.send_reward_input(send_channel=send_channel, reward_input=reward_input)
         return True, history_lengths
 
     def recv_pending_reward_output(
