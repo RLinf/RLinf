@@ -292,3 +292,4 @@ critic:
 
 agentlightning:
   n_runners: 10
+  openai_response_tokens: true
