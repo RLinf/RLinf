@@ -1,0 +1,14 @@
+defaults:
+  - qwen2.5-1.5b-enginehttp-multiturn
+  - _self_
+
+eval: true
+
+runner:
+  logger:
+    project_name: rlinf-calc-x-e2e-enginehttp-eval
+  experiment_name: calc-agl-qwen2.5-1.5b-instruct-enginehttp-eval
+
+rollout:
+  sglang:
+    serving_mode: worker_http

@@ -1,0 +1,11 @@
+defaults:
+  - qwen2.5-1.5b-routerserver-multiturn
+  - _self_
+
+eval: true
+
+runner:
+  logger:
+    project_name: rlinf-calc-x-e2e-routerserver-eval
+  experiment_name: calc-agl-qwen2.5-1.5b-instruct-routerserver-eval
+
