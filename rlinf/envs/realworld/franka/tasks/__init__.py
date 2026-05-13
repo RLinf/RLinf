@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,10 +20,16 @@ import gymnasium as gym
 from gymnasium.envs.registration import register
 
 from rlinf.envs.realworld.common.wrappers import (
-    apply_dual_arm_wrappers,
+    apply_dual_franka_joint_wrappers,
     apply_single_arm_wrappers,
 )
 from rlinf.envs.realworld.franka.dual_franka_env import DualFrankaEnv as DualFrankaEnv
+from rlinf.envs.realworld.franka.tasks.dual_franka_joint_env import (
+    DualFrankaJointEnv as DualFrankaJointEnv,
+)
+from rlinf.envs.realworld.franka.tasks.dual_franka_tcp_env import (
+    DualFrankaTcpEnv as DualFrankaTcpEnv,
+)
 from rlinf.envs.realworld.franka.franka_env import FrankaEnv as FrankaEnv
 from rlinf.envs.realworld.franka.tasks.bottle import BottleEnv as BottleEnv
 from rlinf.envs.realworld.franka.tasks.dex_pnp import (
@@ -53,20 +59,36 @@ def create_franka_env(
     return apply_single_arm_wrappers(env, env_cfg)
 
 
-def create_dual_franka_env(
+def create_dual_franka_joint_env(
     override_cfg: dict[str, Any],
     worker_info: Any,
     hardware_info: Any,
     env_idx: int,
     env_cfg: Mapping[str, Any],
 ) -> gym.Env:
-    env = DualFrankaEnv(
+    env = DualFrankaJointEnv(
         override_cfg=override_cfg,
         worker_info=worker_info,
         hardware_info=hardware_info,
         env_idx=env_idx,
     )
-    return apply_dual_arm_wrappers(env, env_cfg)
+    return apply_dual_franka_joint_wrappers(env, env_cfg)
+
+
+def create_dual_franka_tcp_env(
+    override_cfg: dict[str, Any],
+    worker_info: Any,
+    hardware_info: Any,
+    env_idx: int,
+    env_cfg: Mapping[str, Any],
+) -> gym.Env:
+    env = DualFrankaTcpEnv(
+        override_cfg=override_cfg,
+        worker_info=worker_info,
+        hardware_info=hardware_info,
+        env_idx=env_idx,
+    )
+    return apply_dual_franka_joint_wrappers(env, env_cfg)
 
 
 def create_peg_insertion_env(
@@ -139,8 +161,13 @@ register(
 )
 
 register(
-    id="DualFrankaEnv-v1",
-    entry_point="rlinf.envs.realworld.franka.tasks:create_dual_franka_env",
+    id="DualFrankaJointEnv-v1",
+    entry_point="rlinf.envs.realworld.franka.tasks:create_dual_franka_joint_env",
+)
+
+register(
+    id="DualFrankaTcpEnv-v1",
+    entry_point="rlinf.envs.realworld.franka.tasks:create_dual_franka_tcp_env",
 )
 
 register(

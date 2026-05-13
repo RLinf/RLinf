@@ -1,0 +1,55 @@
+env_type: realworld
+
+total_num_envs: 1
+
+auto_reset: True
+ignore_terminations: False
+reward_mode: raw
+wrap_obs_mode: simple
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+max_steps_per_rollout_epoch: 300
+max_episode_steps: 300
+# No teleop during autonomous policy rollout.
+use_spacemouse: False
+use_gello: False
+use_gello_joint: False
+# Skip DualRelativeFrame / DualQuat2EulerWrapper — rot6d TCP obs can't be
+# euler'd without hitting gimbal on wrist pitch ≈ ±90°.
+use_relative_frame: False
+no_gripper: False
+main_image_key: left_wrist_0_rgb
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/eval
+
+init_params:
+  id: "DualFrankaTcpEnv-v1"
+  num_envs: null
+
+override_cfg:
+  is_dummy: false
+  task_description: "dual arm TCP-rot6d manipulation task"
+  # Only "rot6d" is currently implemented in DualFrankaTcpEnv.
+  rotation_repr: rot6d
+  max_num_steps: 300
+  # Only [2] (gripper channel) is consumed; [0] / [1] are Cartesian-only
+  # and ignored by the rot6d env's step.
+  action_scale: [1.0, 1.0, 1.0]
+  # Per-arm (2, 6) [xyz, euler_xyz (rad)] bounds. xyz half is used to build
+  # the rot6d action_space xyz limits; euler half is reserved for
+  # display/clipping and is [-π, π] (effectively unbounded). Both arms get
+  # full y access so handover trajectories that cross y=0 (cylinder/object
+  # transfer) don't get half-clipped — the old left-only-negative-y /
+  # right-only-positive-y split silently snapped commanded xyz to 0 across
+  # the entire handover region while leaving rot6d untouched.
+  ee_pose_limit_min:
+    - [0.3, -0.4, 0.1, -3.1416, -3.1416, -3.1416]
+    - [0.3, -0.4, 0.1, -3.1416, -3.1416, -3.1416]
+  ee_pose_limit_max:
+    - [0.8,  0.4, 0.7, 3.1416, 3.1416, 3.1416]
+    - [0.8,  0.4, 0.7, 3.1416, 3.1416, 3.1416]
+  success_hold_steps: 1

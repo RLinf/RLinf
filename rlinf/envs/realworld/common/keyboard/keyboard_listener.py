@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import errno
 import os
 import threading
+import time
+from collections import deque
 
 
 class KeyboardListener:
@@ -36,6 +39,8 @@ class KeyboardListener:
 
         self.state_lock = threading.Lock()
         self.latest_data = {"key": None}
+        # Edge-press queue so a sub-period tap isn't missed (get_key() only reports the held key).
+        self._press_events: deque[str] = deque()
         self.device = self._open_keyboard_device()
 
         self.listener = threading.Thread(
@@ -60,6 +65,7 @@ class KeyboardListener:
             return device
 
         permission_denied_paths: list[str] = []
+        keyboards: list = []  # (path, device) for every device that has KEY_A/B/C/Q
         for device_path in sorted(self._list_devices()):
             try:
                 device = self._open_device(device_path)
@@ -68,8 +74,24 @@ class KeyboardListener:
                 continue
 
             if self._is_keyboard_device(device):
-                return device
-            device.close()
+                keyboards.append((device_path, device))
+            else:
+                device.close()
+
+        if len(keyboards) == 1:
+            return keyboards[0][1]
+        if len(keyboards) > 1:
+            for _, dev in keyboards:
+                dev.close()
+            listing = "\n".join(
+                f"  {path}  name={dev.name!r}" for path, dev in keyboards
+            )
+            raise RuntimeError(
+                "Multiple keyboard-capable devices on /dev/input/event*; "
+                "set RLINF_KEYBOARD_DEVICE to the intended one (prefer a "
+                "/dev/input/by-id/... path so it survives reboots).\n"
+                f"Candidates:\n{listing}"
+            )
 
         if permission_denied_paths:
             denied = ", ".join(permission_denied_paths)
@@ -123,26 +145,47 @@ class KeyboardListener:
         return required_codes.issubset(supported_key_codes)
 
     def _listen_loop(self) -> None:
-        try:
-            for event in self.device.read_loop():
-                if event.type != self._ecodes.EV_KEY:
-                    continue
+        # Cache path so we can reopen after a USB hiccup (errno=19 ENODEV); pedal shares a flaky bus with Lumos.
+        device_path = self.device.path
+        while True:
+            try:
+                for event in self.device.read_loop():
+                    if event.type != self._ecodes.EV_KEY:
+                        continue
 
-                key = self._event_to_key(event.code)
-                if key is None:
-                    continue
+                    key = self._event_to_key(event.code)
+                    if key is None:
+                        continue
 
-                if event.value in (1, 2):
-                    with self.state_lock:
-                        self.latest_data["key"] = key
-                elif event.value == 0:
-                    with self.state_lock:
-                        if self.latest_data["key"] == key:
-                            self.latest_data["key"] = None
-        finally:
-            with self.state_lock:
-                self.latest_data["key"] = None
-            self.device.close()
+                    if event.value == 1:
+                        # Initial press only; autorepeat (value==2) does not re-enqueue.
+                        with self.state_lock:
+                            self.latest_data["key"] = key
+                            self._press_events.append(key)
+                    elif event.value == 2:
+                        with self.state_lock:
+                            self.latest_data["key"] = key
+                    elif event.value == 0:
+                        with self.state_lock:
+                            if self.latest_data["key"] == key:
+                                self.latest_data["key"] = None
+            except OSError as exc:
+                if exc.errno != errno.ENODEV:
+                    raise
+                with self.state_lock:
+                    self.latest_data["key"] = None
+                try:
+                    self.device.close()
+                except Exception:
+                    pass
+                # Reopen forever; daemon thread dies with the process.
+                while True:
+                    time.sleep(0.5)
+                    try:
+                        self.device = self._input_device_cls(device_path)
+                        break
+                    except (FileNotFoundError, OSError):
+                        continue
 
     def _event_to_key(self, key_code: int) -> str | None:
         key_name = self._ecodes.bytype[self._ecodes.EV_KEY].get(key_code)
@@ -159,6 +202,22 @@ class KeyboardListener:
         return key_name.lower()
 
     def get_key(self) -> str | None:
-        """Returns the latest key pressed."""
+        """Return the currently-held key, or None.
+
+        Only reflects held state; fast taps may be missed between polls.
+        Use :meth:`pop_pressed_keys` when you need lossless press detection.
+        """
         with self.state_lock:
             return self.latest_data["key"]
+
+    def pop_pressed_keys(self) -> list[str]:
+        """Drain and return every key that has seen an initial press since the
+        last call.  Autorepeat is collapsed to a single entry per physical
+        keystroke.  Thread-safe and non-blocking.
+        """
+        with self.state_lock:
+            if not self._press_events:
+                return []
+            pressed = list(self._press_events)
+            self._press_events.clear()
+            return pressed

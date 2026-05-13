@@ -111,8 +111,21 @@ class DualFrankaConfig(HardwareConfig):
     base_camera_serials: Optional[list[str]] = None
     """Camera serial numbers for the base (third-person) camera(s)."""
 
-    camera_type: str = "zed"
-    """Camera backend: ``"realsense"`` or ``"zed"``."""
+    camera_type: str = "realsense"
+    """Default camera backend when a per-slot type is not set.
+    Supported: ``"realsense"``, ``"zed"``, ``"lumos"``."""
+
+    base_camera_type: Optional[str] = None
+    """Camera backend for the base (third-person) camera(s).
+    Falls back to :attr:`camera_type` when ``None``."""
+
+    left_camera_type: Optional[str] = None
+    """Camera backend for the left wrist camera(s).
+    Falls back to :attr:`camera_type` when ``None``."""
+
+    right_camera_type: Optional[str] = None
+    """Camera backend for the right wrist camera(s).
+    Falls back to :attr:`camera_type` when ``None``."""
 
     left_gripper_type: str = "franka"
     """Gripper backend for the left arm."""

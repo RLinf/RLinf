@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import time
 
 import hydra
 import numpy as np
@@ -47,28 +48,30 @@ class DataCollector(Worker):
             worker_info=self.worker_info,
         )
 
-        if self.cfg.env.eval.get("data_collection", None) and getattr(
-            self.cfg.env.eval.data_collection, "enabled", False
-        ):
+        dc_cfg = cfg.env.eval.get("data_collection")
+        if dc_cfg and getattr(dc_cfg, "enabled", False):
             from rlinf.envs.wrappers import CollectEpisode
 
             self.env = CollectEpisode(
                 self.env,
-                save_dir=self.cfg.env.eval.data_collection.save_dir,
-                export_format=getattr(
-                    self.cfg.env.eval.data_collection, "export_format", "pickle"
-                ),
-                robot_type=getattr(
-                    self.cfg.env.eval.data_collection, "robot_type", "panda"
-                ),
-                fps=getattr(self.cfg.env.eval.data_collection, "fps", 10),
-                only_success=getattr(
-                    self.cfg.env.eval.data_collection, "only_success", False
-                ),
-                finalize_interval=getattr(
-                    self.cfg.env.eval.data_collection, "finalize_interval", 100
-                ),
+                save_dir=dc_cfg.save_dir,
+                export_format=dc_cfg.get("export_format", "pickle"),
+                robot_type=dc_cfg.get("robot_type", "panda"),
+                fps=dc_cfg.get("fps", 10),
+                only_success=dc_cfg.get("only_success", False),
+                finalize_interval=dc_cfg.get("finalize_interval", 100),
+                resume=bool(dc_cfg.get("resume", False)),
             )
+            self._preexisting_success = int(
+                getattr(self.env, "preexisting_episode_count", 0)
+            )
+            if self._preexisting_success:
+                self.log_info(
+                    f"[resume] {self._preexisting_success} pre-existing episodes; "
+                    f"continuing toward {self.num_data_episodes}"
+                )
+        else:
+            self._preexisting_success = 0
 
         # Read from the wrapped action space so GripperCloseEnv / dual-arm all just work.
         self.action_dim = int(self.env.action_space.shape[-1])
@@ -84,6 +87,10 @@ class DataCollector(Worker):
             trajectory_format="pt",
         )
 
+        # Outer rate limiter for envs that don't self-pace (e.g. direct-stream).
+        fps = dc_cfg.get("fps") if dc_cfg else None
+        self._target_step_period = 1.0 / float(fps) if fps else None
+
     def _process_obs(self, obs):
         """Reshape env obs into the dict EmbodiedRolloutResult expects."""
         if not self.cfg.runner.record_task_description:
@@ -93,6 +100,10 @@ class DataCollector(Worker):
         for key, val in obs.items():
             if isinstance(val, np.ndarray):
                 val = torch.from_numpy(val)
+            # Below is for not crashed by 
+            # [extra_view_image_names/record_task_description=True].
+            if not isinstance(val, torch.Tensor):
+                continue
             val = val.cpu()
             if key == "images":
                 ret_obs["main_images"] = val.clone()
@@ -102,9 +113,16 @@ class DataCollector(Worker):
 
     def run(self):
         obs, _ = self.env.reset()
-        success_cnt = 0
+        # Seed from preexisting episodes so resume bar + stop target line up.
+        success_cnt = self._preexisting_success
+        if success_cnt >= self.num_data_episodes:
+            self.log_info(f"[resume] target {self.num_data_episodes} already met.")
+            self.env.close()
+            return
         progress_bar = tqdm(
-            range(self.num_data_episodes), desc="Collecting Data Episodes:"
+            total=self.num_data_episodes,
+            initial=success_cnt,
+            desc="Collecting Data Episodes:",
         )
 
         current_rollout = EmbodiedRolloutResult(
@@ -114,9 +132,16 @@ class DataCollector(Worker):
         current_obs_processed = self._process_obs(obs)
 
         while success_cnt < self.num_data_episodes:
+            iter_start = time.perf_counter()
             # Teleop wrapper overrides this via info["intervene_action"].
             action = np.zeros((1, self.action_dim))
             next_obs, reward, terminated, truncated, info = self.env.step(action)
+
+            # ``kb_phase is None`` ⇒ no keyboard wrapper attached → upstream "record every step".
+            kb_event = info["keyboard_event"][0] if "keyboard_event" in info else None
+            kb_phase = info["keyboard_phase"][0] if "keyboard_phase" in info else None
+            if kb_event:
+                self.log_info(f"[keyboard] {kb_event}")
 
             if "intervene_action" in info:
                 action = info["intervene_action"]
@@ -140,10 +165,16 @@ class DataCollector(Worker):
                 forward_inputs={"action": action_tensor},
             )
 
-            current_rollout.append_step_result(step_result)
-            current_rollout.append_transitions(
-                curr_obs=current_obs_processed, next_obs=next_obs_processed
-            )
+            # Rebuild rollout on rec-start or abort; ``restart`` kept for older wrappers.
+            if kb_event in ("start", "restart", "abort"):
+                current_rollout = EmbodiedRolloutResult(
+                    max_episode_length=self.cfg.env.eval.max_episode_steps,
+                )
+            if kb_phase in (None, "rec"):
+                current_rollout.append_step_result(step_result)
+                current_rollout.append_transitions(
+                    curr_obs=current_obs_processed, next_obs=next_obs_processed
+                )
 
             obs = next_obs
             current_obs_processed = next_obs_processed
@@ -200,6 +231,13 @@ class DataCollector(Worker):
                 current_rollout = EmbodiedRolloutResult(
                     max_episode_length=self.cfg.env.eval.max_episode_steps,
                 )
+
+            # Pin loop period; on ``done`` env.reset usually exceeds it → sleep_for≤0 no-ops.
+            if self._target_step_period is not None:
+                elapsed = time.perf_counter() - iter_start
+                sleep_for = self._target_step_period - elapsed
+                if sleep_for > 0:
+                    time.sleep(sleep_for)
 
         self.buffer.close()
         self.log_info(

@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,6 +17,14 @@ from .dosw1 import tasks as dosw1_tasks
 from .franka import FrankaEnv, FrankaRobotConfig, FrankaRobotState
 from .franka import tasks as franka_tasks
 from .franka.dual_franka_env import DualFrankaEnv, DualFrankaRobotConfig
+from .franka.tasks.dual_franka_joint_env import (
+    DualFrankaJointEnv,
+    DualFrankaJointRobotConfig,
+)
+from .franka.tasks.dual_franka_tcp_env import (
+    DualFrankaTcpEnv,
+    DualFrankaTcpRobotConfig,
+)
 from .gim_arm import GimArmEnv, GimArmRobotConfig, GimArmRobotState
 from .gim_arm import tasks as gim_arm_tasks
 from .realworld_env import RealWorldEnv
@@ -27,6 +35,10 @@ RealWorldEnv.realworld_setup()
 
 __all__ = [
     "DualFrankaEnv",
+    "DualFrankaJointEnv",
+    "DualFrankaJointRobotConfig",
+    "DualFrankaTcpEnv",
+    "DualFrankaTcpRobotConfig",
     "DualFrankaRobotConfig",
     "DOSW1Config",
     "DOSW1Env",

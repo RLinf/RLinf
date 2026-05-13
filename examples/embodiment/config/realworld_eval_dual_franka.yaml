@@ -1,0 +1,148 @@
+defaults:
+  - env/realworld_dual_franka_rot6d@env.train
+  - env/realworld_dual_franka_rot6d@env.eval
+  - model/pi0_5@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    actor:
+      node_group: franka
+      placement: 0
+    rollout:
+      node_group: franka
+      placement: 0
+    env:
+      node_group: franka
+      placement: 0
+  node_groups:
+    - label: franka
+      node_ranks: 0-1
+      env_configs:
+        - node_ranks: 0
+          python_interpreter_path: PYTHON_INTERPRETER_PATH  # Replace: e.g. /path/to/.venv-openpi/bin/python
+      hardware:
+        type: DualFranka
+        configs:
+          - left_robot_ip: LEFT_ROBOT_IP                    # Replace: left arm FCI IP
+            right_robot_ip: RIGHT_ROBOT_IP                  # Replace: right arm FCI IP
+            base_camera_serials:
+              - BASE_CAMERA_SERIAL                          # Replace: librealsense device serial
+            base_camera_type: realsense
+            left_camera_serials:
+              - LEFT_CAMERA_SERIAL                          # Replace: e.g. usb-XVisio_..._video-index0
+            left_camera_type: lumos
+            right_camera_serials:
+              - RIGHT_CAMERA_SERIAL                         # Replace: e.g. usb-XVisio_..._video-index0
+            right_camera_type: lumos
+            left_gripper_type: robotiq
+            right_gripper_type: robotiq
+            left_gripper_connection: LEFT_GRIPPER_CONNECTION    # Replace: /dev/serial/by-id/...
+            right_gripper_connection: RIGHT_GRIPPER_CONNECTION  # Replace: /dev/serial/by-id/...
+            left_controller_node_rank: 0
+            right_controller_node_rank: 1
+            node_rank: 0
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: dual-franka-openpi
+    experiment_name: "realworld-eval-dual-franka"
+    logger_backends: ["tensorboard"]
+  max_epochs: 100
+  max_steps: 100
+  only_eval: True
+  val_check_interval: -1
+
+algorithm:
+  update_epoch: 1
+  group_size: 1
+  eval_rollout_epoch: 100
+  adv_type: gae
+  loss_type: actor  # eval-only; any non-critic loss avoids the value-head assertion
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+  length_params:
+    max_new_token: 7
+    max_length: 1024
+    min_length: 1
+
+env:
+  group_name: "EnvGroup"
+  enable_offload: False
+  eval:
+    use_gello_joint: False
+    use_gello: False
+    use_spacemouse: False
+    keyboard_reward_wrapper: eval_control
+    max_episode_steps: 10000
+    max_steps_per_rollout_epoch: 10000
+    override_cfg:
+      task_description: TASK_DESCRIPTION  # Replace: prompt for the SFT policy
+      # Replace: recompute from your SFT dataset's first-frame joint means;
+      # stale values push initial obs out of the training distribution.
+      joint_reset_qpos:
+        - [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        - [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      target_ee_pose:                         # Replace if your workspace differs
+        - [0.5, -0.2, 0.5, -3.14, 0.0, 0.0]
+        - [0.5,  0.2, 0.5, -3.14, 0.0, 0.0]
+      reset_ee_pose:                          # Replace if your workspace differs
+        - [0.5, -0.2, 0.6, -3.14, 0.0, 0.0]
+        - [0.5,  0.2, 0.6, -3.14, 0.0, 0.0]
+      success_hold_steps: 1
+
+rollout:
+  group_name: "RolloutGroup"
+  backend: "huggingface"
+  recompute_logprobs: False
+  enable_offload: False
+  pipeline_stage_num: 1
+  collect_transitions: False
+  collect_prev_infos: False
+  sync_weight_nccl_max_ctas: 32
+  model:
+    # SFT ckpt expected layout:
+    #   <model_path>/actor/model_state_dict/full_weights.pt
+    #   <model_path>/<openpi_data.repo_id>/norm_stats.json
+    model_path: MODEL_PATH  # Replace: /path/to/checkpoints/<run>/global_step_<N>/
+    precision: ${actor.model.precision}
+
+critic:
+  use_critic_model: False
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 1
+  global_batch_size: 1
+  seed: 1234
+  enable_offload: False
+  model:
+    model_path: ${rollout.model.model_path}
+    precision: null
+    num_action_chunks: 20          # matches SFT action_horizon
+    action_dim: 20                 # dual-franka rot6d: [L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]
+    add_value_head: False
+    openpi:
+      config_name: "pi05_dualfranka_rot6d"
+      train_expert_only: False
+      detach_critic_input: True
+      action_chunk: ${actor.model.num_action_chunks}
+    openpi_data:
+      repo_id: SFT_DATASET_REPO_ID  # Replace: HF repo id used during SFT

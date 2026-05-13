@@ -12,11 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dual-arm Franka environment."""
+"""Dual-arm Franka env driven through ``FrankyController`` (libfranka).
+
+Abstract base; concrete subclasses (Joint, Rot6d) set ``PER_ARM_ACTION_DIM``
+/ ``GRIPPER_IDX_IN_ARM`` and implement ``_init_action_obs_spaces`` +
+``_get_observation`` + ``_dispatch_arm_motion``.
+"""
 
 from __future__ import annotations
 
-import copy
 import queue
 import time
 from dataclasses import dataclass, field
@@ -34,12 +38,9 @@ from rlinf.scheduler import DualFrankaHWInfo, WorkerInfo
 from rlinf.utils.logging import get_logger
 
 from .franka_robot_state import FrankaRobotState
-from .utils import clip_euler_to_target_window, quat_slerp
+from .franky_controller import FrankyController
 
-NUM_ARMS = 2
-ACTION_DIM_PER_ARM = 7  # xyz_delta(3) + rpy_delta(3) + gripper(1)
-TCP_POSE_DIM = 7  # xyz(3) + quat(4)
-TCP_VEL_DIM = 6
+
 # Avoids Ray actor name collision when both arms land on the same node.
 _RIGHT_ARM_ENV_IDX_OFFSET = 1000
 _MAX_CAMERA_RETRIES = 3
@@ -56,6 +57,9 @@ class DualFrankaRobotConfig:
     right_camera_serials: Optional[list[str]] = None
     base_camera_serials: Optional[list[str]] = None
     camera_type: Optional[str] = None
+    base_camera_type: Optional[str] = None
+    left_camera_type: Optional[str] = None
+    right_camera_type: Optional[str] = None
 
     left_gripper_type: Optional[str] = None
     right_gripper_type: Optional[str] = None
@@ -108,9 +112,17 @@ class DualFrankaRobotConfig:
 
 
 class DualFrankaEnv(gym.Env):
-    """Dual-arm Franka env; each arm's controller may live on a different Ray node."""
+    """Dual-arm Franka env driven through ``FrankyController`` (libfranka).
+
+    Abstract base. Subclasses set ``PER_ARM_ACTION_DIM`` / ``GRIPPER_IDX_IN_ARM``
+    and implement ``_init_action_obs_spaces`` + ``_get_observation`` +
+    ``_dispatch_arm_motion``.
+    """
 
     CONFIG_CLS: type[DualFrankaRobotConfig] = DualFrankaRobotConfig
+    PER_ARM_ACTION_DIM: int = 0
+    GRIPPER_IDX_IN_ARM: int = 0
+    _DEFAULT_GRIPPER_TYPE: str = "robotiq"
 
     def __init__(
         self,
@@ -133,19 +145,6 @@ class DualFrankaEnv(gym.Env):
 
         self._left_state = FrankaRobotState()
         self._right_state = FrankaRobotState()
-
-        if not self.config.is_dummy:
-            self._reset_poses = np.zeros((2, 7))
-            for arm_idx in range(NUM_ARMS):
-                euler = self.config.reset_ee_pose[arm_idx]
-                self._reset_poses[arm_idx] = np.concatenate(
-                    [
-                        euler[:3],
-                        R.from_euler("xyz", euler[3:].copy()).as_quat(),
-                    ]
-                )
-        else:
-            self._reset_poses = np.zeros((2, 7))
 
         self._num_steps = 0
         self._joint_reset_cycle = cycle(range(self.config.joint_reset_cycle))
@@ -176,8 +175,7 @@ class DualFrankaEnv(gym.Env):
                         label,
                     )
 
-        self._interpolate_move_both(self._reset_poses)
-        time.sleep(1.0)
+        # Initial state read
         self._left_state = self._left_ctrl.get_state().wait()[0]
         self._right_state = self._right_ctrl.get_state().wait()[0]
 
@@ -194,98 +192,38 @@ class DualFrankaEnv(gym.Env):
         if hasattr(self, "camera_player"):
             self.camera_player.stop()
 
-    def _all_camera_specs(self) -> list[tuple[str, str]]:
-        """Camera specs as ``[(name, serial), ...]`` with pi0-aligned names."""
-        specs: list[tuple[str, str]] = []
+    # ---------------------------------------------------------------- cameras
+
+    def _all_camera_specs(self) -> list[tuple[str, str, str]]:
+        """Camera specs as ``[(name, serial, camera_type), ...]`` with pi0-aligned names.
+
+        Per-slot ``*_camera_type`` falls back to the global ``camera_type``.
+        """
+        default_ct = self.config.camera_type or "realsense"
+        specs: list[tuple[str, str, str]] = []
         if self.config.base_camera_serials:
+            ct = self.config.base_camera_type or default_ct
             for j, serial in enumerate(self.config.base_camera_serials):
-                specs.append((f"base_{j}_rgb", serial))
-        for arm, serials in (
-            ("left", self.config.left_camera_serials),
-            ("right", self.config.right_camera_serials),
+                specs.append((f"base_{j}_rgb", serial, ct))
+        for arm, serials, slot_ct in (
+            ("left", self.config.left_camera_serials, self.config.left_camera_type),
+            ("right", self.config.right_camera_serials, self.config.right_camera_type),
         ):
             if not serials:
                 continue
+            ct = slot_ct or default_ct
             for j, serial in enumerate(serials):
-                specs.append((f"{arm}_wrist_{j}_rgb", serial))
+                specs.append((f"{arm}_wrist_{j}_rgb", serial, ct))
         return specs
 
     def _all_camera_serials(self) -> list[str]:
-        return [serial for _, serial in self._all_camera_specs()]
-
-    def _setup_hardware(self):
-        from .franka_controller import FrankaController
-
-        assert self.env_idx >= 0, "env_idx must be set for DualFrankaEnv."
-
-        if self.hardware_info is not None:
-            assert isinstance(self.hardware_info, DualFrankaHWInfo), (
-                f"hardware_info must be DualFrankaHWInfo, got {type(self.hardware_info)}."
-            )
-            hw = self.hardware_info.config
-            if self.config.left_robot_ip is None:
-                self.config.left_robot_ip = hw.left_robot_ip
-            if self.config.right_robot_ip is None:
-                self.config.right_robot_ip = hw.right_robot_ip
-            if self.config.left_camera_serials is None:
-                self.config.left_camera_serials = hw.left_camera_serials
-            if self.config.right_camera_serials is None:
-                self.config.right_camera_serials = hw.right_camera_serials
-            if self.config.base_camera_serials is None:
-                self.config.base_camera_serials = getattr(
-                    hw, "base_camera_serials", None
-                )
-            if self.config.camera_type is None:
-                self.config.camera_type = getattr(hw, "camera_type", "zed")
-            if self.config.left_gripper_type is None:
-                self.config.left_gripper_type = getattr(
-                    hw, "left_gripper_type", "franka"
-                )
-            if self.config.right_gripper_type is None:
-                self.config.right_gripper_type = getattr(
-                    hw, "right_gripper_type", "franka"
-                )
-            if self.config.left_gripper_connection is None:
-                self.config.left_gripper_connection = getattr(
-                    hw, "left_gripper_connection", None
-                )
-            if self.config.right_gripper_connection is None:
-                self.config.right_gripper_connection = getattr(
-                    hw, "right_gripper_connection", None
-                )
-
-        left_node = self.node_rank
-        right_node = self.node_rank
-        if self.hardware_info is not None:
-            hw = self.hardware_info.config
-            if hw.left_controller_node_rank is not None:
-                left_node = hw.left_controller_node_rank
-            if hw.right_controller_node_rank is not None:
-                right_node = hw.right_controller_node_rank
-
-        self._left_ctrl = FrankaController.launch_controller(
-            robot_ip=self.config.left_robot_ip,
-            env_idx=self.env_idx,
-            node_rank=left_node,
-            worker_rank=self.env_worker_rank,
-            gripper_type=self.config.left_gripper_type or "franka",
-            gripper_connection=self.config.left_gripper_connection,
-        )
-        self._right_ctrl = FrankaController.launch_controller(
-            robot_ip=self.config.right_robot_ip,
-            env_idx=self.env_idx + _RIGHT_ARM_ENV_IDX_OFFSET,
-            node_rank=right_node,
-            worker_rank=self.env_worker_rank,
-            gripper_type=self.config.right_gripper_type or "franka",
-            gripper_connection=self.config.right_gripper_connection,
-        )
+        return [serial for _, serial, _ in self._all_camera_specs()]
 
     def _open_cameras(self):
         self._cameras: list[BaseCamera] = []
-        camera_type = self.config.camera_type or "zed"
         camera_infos = [
-            CameraInfo(name=name, serial_number=serial, camera_type=camera_type)
-            for name, serial in self._all_camera_specs()
+            CameraInfo(name=name, serial_number=serial, camera_type=ct)
+            for name, serial, ct in self._all_camera_specs()
         ]
         for info in camera_infos:
             camera = create_camera(info)
@@ -342,11 +280,234 @@ class DualFrankaEnv(gym.Env):
             f"Cameras failed to produce frames after {_MAX_CAMERA_RETRIES} attempts."
         )
 
-    def _init_action_obs_spaces(self):
-        # Per-arm safety boxes
+    # ---------------------------------------------------------------- hardware
+
+    def _resolve_hw_overrides(self) -> None:
+        if self.hardware_info is None:
+            return
+        assert isinstance(self.hardware_info, DualFrankaHWInfo), (
+            f"hardware_info must be DualFrankaHWInfo, got {type(self.hardware_info)}."
+        )
+        hw = self.hardware_info.config
+        # (field_name, default if hw lacks the attr)
+        hw_fallback_fields: tuple[tuple[str, object], ...] = (
+            ("left_robot_ip", None),
+            ("right_robot_ip", None),
+            ("left_camera_serials", None),
+            ("right_camera_serials", None),
+            ("base_camera_serials", None),
+            ("camera_type", "realsense"),
+            ("base_camera_type", None),
+            ("left_camera_type", None),
+            ("right_camera_type", None),
+            ("left_gripper_connection", None),
+            ("right_gripper_connection", None),
+        )
+        for field_name, default in hw_fallback_fields:
+            if getattr(self.config, field_name, None) is None:
+                setattr(self.config, field_name, getattr(hw, field_name, default))
+        for side in ("left_gripper_type", "right_gripper_type"):
+            if getattr(self.config, side, None) is None:
+                setattr(
+                    self.config,
+                    side,
+                    getattr(hw, side, self._DEFAULT_GRIPPER_TYPE),
+                )
+
+    def _resolve_controller_node_ranks(self) -> tuple[int, int]:
+        """Return per-arm node ranks, honoring the hw config overrides."""
+        left_node = self.node_rank
+        right_node = self.node_rank
+        if self.hardware_info is not None:
+            hw = self.hardware_info.config
+            if hw.left_controller_node_rank is not None:
+                left_node = hw.left_controller_node_rank
+            if hw.right_controller_node_rank is not None:
+                right_node = hw.right_controller_node_rank
+        return left_node, right_node
+
+    def _setup_hardware(self):
+        assert self.env_idx >= 0, f"env_idx must be set for {type(self).__name__}."
+
+        self._resolve_hw_overrides()
+        left_node, right_node = self._resolve_controller_node_ranks()
+
+        self._left_ctrl = FrankyController.launch_controller(
+            robot_ip=self.config.left_robot_ip,
+            env_idx=self.env_idx,
+            node_rank=left_node,
+            worker_rank=self.env_worker_rank,
+            gripper_type=self.config.left_gripper_type or self._DEFAULT_GRIPPER_TYPE,
+            gripper_connection=self.config.left_gripper_connection,
+        )
+        self._right_ctrl = FrankyController.launch_controller(
+            robot_ip=self.config.right_robot_ip,
+            env_idx=self.env_idx + _RIGHT_ARM_ENV_IDX_OFFSET,
+            node_rank=right_node,
+            worker_rank=self.env_worker_rank,
+            gripper_type=self.config.right_gripper_type or self._DEFAULT_GRIPPER_TYPE,
+            gripper_connection=self.config.right_gripper_connection,
+        )
+
+    # ---------------------------------------------------------------- reset/step
+
+    def _go_to_rest(self, joint_reset: bool = False):
+        del joint_reset
+        try:
+            self._left_ctrl.open_gripper()
+            self._right_ctrl.open_gripper()
+        except Exception as exc:
+            self._logger.warning("open_gripper during reset failed: %s", exc)
+
+        left_f = self._left_ctrl.reset_joint(self.config.joint_reset_qpos[0])
+        right_f = self._right_ctrl.reset_joint(self.config.joint_reset_qpos[1])
+        left_f.wait()
+        right_f.wait()
+        time.sleep(0.5)
+        self._left_state = self._left_ctrl.get_state().wait()[0]
+        self._right_state = self._right_ctrl.get_state().wait()[0]
+
+    def reset(self, *, seed=None, options=None):
+        """``options["skip_reset_to_home"]`` lets teleop wrappers keep tracking
+        from the episode-end pose instead of bouncing through home."""
+        del seed
+        skip_reset_to_home = bool((options or {}).get("skip_reset_to_home", False))
+        self._num_steps = 0
+        self._success_hold_counter = 0
+
+        if self.config.is_dummy:
+            return self._get_observation(), {}
+
+        joint_cycle = next(self._joint_reset_cycle)
+        joint_reset = joint_cycle == 0
+        if joint_reset:
+            self._logger.info(
+                "Number of resets reached %d, resetting joints.",
+                self.config.joint_reset_cycle,
+            )
+
+        if skip_reset_to_home:
+            self._logger.info(
+                "skip_reset_to_home=True: holding arms at episode-end pose "
+                "(teleop wrapper will realign to device)."
+            )
+        else:
+            self._go_to_rest(joint_reset)
+        self._clear_errors()
+
+        left_st_f = self._left_ctrl.get_state()
+        right_st_f = self._right_ctrl.get_state()
+        self._left_state = left_st_f.wait()[0]
+        self._right_state = right_st_f.wait()[0]
+        return self._get_observation(), {}
+
+    def step(self, action: np.ndarray):
+        start_time = time.time()
+        action = np.clip(action, self.action_space.low, self.action_space.high)
+        actions = action.reshape(2, self.PER_ARM_ACTION_DIM)
+
+        is_gripper_effective = [True, True]
+
+        if not self.config.is_dummy:
+            states = [self._left_state, self._right_state]
+            ctrls = [self._left_ctrl, self._right_ctrl]
+            dt = 1.0 / self.config.step_frequency
+
+            # Grippers first so they don't contend with a fresh motion command.
+            for arm in range(2):
+                gripper_val = (
+                    actions[arm, self.GRIPPER_IDX_IN_ARM] * self.config.action_scale[2]
+                )
+                is_gripper_effective[arm] = self._gripper_action(
+                    ctrls[arm], states[arm], gripper_val
+                )
+
+            self._dispatch_arm_motion(actions, states, ctrls, dt)
+
+        self._num_steps += 1
+        if not self.config.is_dummy:
+            if self._pace_between_action_and_state_read():
+                step_time = time.time() - start_time
+                time.sleep(max(0.0, (1.0 / self.config.step_frequency) - step_time))
+            left_st_f = ctrls[0].get_state()
+            right_st_f = ctrls[1].get_state()
+            self._left_state = left_st_f.wait()[0]
+            self._right_state = right_st_f.wait()[0]
+
+        observation = self._get_observation()
+        reward = self._calc_step_reward(is_gripper_effective)
+        terminated = (reward == 1.0) and (
+            self._success_hold_counter >= self.config.success_hold_steps
+        )
+        truncated = self._num_steps >= self.config.max_num_steps
+        return observation, reward, terminated, truncated, {}
+
+    def _clear_errors(self):
+        l = self._left_ctrl.clear_errors()
+        r = self._right_ctrl.clear_errors()
+        l.wait()
+        r.wait()
+
+    # ---------------------------------------------------------------- gripper / utils
+
+    def _gripper_action(self, ctrl, state, position: float) -> bool:
+        # Fire-and-forget: collection streams gripper RPCs at 10 Hz and a
+        # blocking .wait() + 0.6 s sleep stretches eval steps to ~700 ms
+        # and rings out j7.
+        threshold = self.config.binary_gripper_threshold
+        if position <= -threshold and state.gripper_open:
+            ctrl.close_gripper()
+            return True
+        elif position >= threshold and not state.gripper_open:
+            ctrl.open_gripper()
+            return True
+        return False
+
+    def get_tcp_pose(self) -> np.ndarray:
+        """Return concatenated TCP poses ``(14,)`` for both arms."""
+        left_st_f = self._left_ctrl.get_state()
+        right_st_f = self._right_ctrl.get_state()
+        self._left_state = left_st_f.wait()[0]
+        self._right_state = right_st_f.wait()[0]
+        return np.concatenate([self._left_state.tcp_pose, self._right_state.tcp_pose])
+
+    def get_action_scale(self) -> np.ndarray:
+        """Return the action scaling factors used by teleop wrappers."""
+        return self.config.action_scale
+
+    def get_joint_positions(self) -> np.ndarray:
+        """Stacked ``(2, 7)`` joint positions from cached state (no RPC)."""
+        return np.stack(
+            [
+                self._left_state.arm_joint_position.copy(),
+                self._right_state.arm_joint_position.copy(),
+            ]
+        )
+
+    @property
+    def num_steps(self):
+        return self._num_steps
+
+    @property
+    def target_ee_pose(self):
+        """Return concatenated target poses ``(14,)`` in quaternion form."""
+        poses = []
+        for arm in range(2):
+            euler = self.config.target_ee_pose[arm]
+            poses.append(
+                np.concatenate(
+                    [
+                        euler[:3],
+                        R.from_euler("xyz", euler[3:].copy()).as_quat(),
+                    ]
+                )
+            )
+        return np.concatenate(poses)
+
+    def _cartesian_safety_boxes(self) -> None:
         self._xyz_safe_spaces = []
         self._rpy_safe_spaces = []
-        for arm in range(NUM_ARMS):
+        for arm in range(2):
             self._xyz_safe_spaces.append(
                 gym.spaces.Box(
                     low=self.config.ee_pose_limit_min[arm, :3],
@@ -362,267 +523,45 @@ class DualFrankaEnv(gym.Env):
                 )
             )
 
-        total_action_dim = NUM_ARMS * ACTION_DIM_PER_ARM
-        self.action_space = gym.spaces.Box(
-            np.ones(total_action_dim, dtype=np.float32) * -1,
-            np.ones(total_action_dim, dtype=np.float32),
-        )
-
+    def _build_observation_space(self, joint_position_dim: int) -> gym.spaces.Dict:
         camera_specs = self._all_camera_specs()
-        self.observation_space = gym.spaces.Dict(
+        return gym.spaces.Dict(
             {
                 "state": gym.spaces.Dict(
                     {
                         "tcp_pose": gym.spaces.Box(
-                            -np.inf,
-                            np.inf,
-                            shape=(NUM_ARMS * TCP_POSE_DIM,),
+                            -np.inf, np.inf, shape=(2 * 7,)
                         ),
                         "tcp_vel": gym.spaces.Box(
-                            -np.inf,
-                            np.inf,
-                            shape=(NUM_ARMS * TCP_VEL_DIM,),
+                            -np.inf, np.inf, shape=(2 * 6,)
                         ),
-                        "gripper_position": gym.spaces.Box(-1, 1, shape=(NUM_ARMS,)),
+                        "joint_position": gym.spaces.Box(
+                            -np.inf, np.inf, shape=(joint_position_dim,)
+                        ),
+                        "joint_velocity": gym.spaces.Box(
+                            -np.inf, np.inf, shape=(2 * 7,)
+                        ),
+                        "gripper_position": gym.spaces.Box(-1, 1, shape=(2,)),
                         "tcp_force": gym.spaces.Box(
-                            -np.inf, np.inf, shape=(NUM_ARMS * 3,)
+                            -np.inf, np.inf, shape=(2 * 3,)
                         ),
                         "tcp_torque": gym.spaces.Box(
-                            -np.inf, np.inf, shape=(NUM_ARMS * 3,)
+                            -np.inf, np.inf, shape=(2 * 3,)
                         ),
                     }
                 ),
                 "frames": gym.spaces.Dict(
                     {
                         name: gym.spaces.Box(
-                            0,
-                            255,
-                            shape=(128, 128, 3),
-                            dtype=np.uint8,
+                            0, 255, shape=(224, 224, 3), dtype=np.uint8
                         )
-                        for name, _ in camera_specs
+                        for name, _, _ in camera_specs
                     }
                 ),
             }
         )
-        self._base_observation_space = copy.deepcopy(self.observation_space)
 
-    def step(self, action: np.ndarray):
-        start_time = time.time()
-        action = np.clip(action, self.action_space.low, self.action_space.high)
-        actions = action.reshape(NUM_ARMS, ACTION_DIM_PER_ARM)
-
-        is_gripper_effective = [True, True]
-
-        if not self.config.is_dummy:
-            states = [self._left_state, self._right_state]
-            ctrls = [self._left_ctrl, self._right_ctrl]
-            # Compute target positions for both arms
-            target_positions = []
-            for arm in range(NUM_ARMS):
-                arm_action = actions[arm]
-                next_pos = states[arm].tcp_pose.copy()
-                next_pos[:3] += arm_action[:3] * self.config.action_scale[0]
-                next_pos[3:] = (
-                    R.from_euler("xyz", arm_action[3:6] * self.config.action_scale[1])
-                    * R.from_quat(states[arm].tcp_pose[3:].copy())
-                ).as_quat()
-                next_pos = self._clip_position_to_safety_box(next_pos, arm)
-                target_positions.append(next_pos)
-
-            # Handle grippers
-            for arm in range(NUM_ARMS):
-                gripper_val = actions[arm, 6] * self.config.action_scale[2]
-                is_gripper_effective[arm] = self._gripper_action(
-                    ctrls[arm],
-                    states[arm],
-                    gripper_val,
-                )
-
-            # Send move commands in parallel (fire both, then wait both)
-            left_future = ctrls[0].move_arm(target_positions[0].astype(np.float32))
-            right_future = ctrls[1].move_arm(target_positions[1].astype(np.float32))
-            left_future.wait()
-            right_future.wait()
-
-        self._num_steps += 1
-        if not self.config.is_dummy:
-            step_time = time.time() - start_time
-            time.sleep(max(0, (1.0 / self.config.step_frequency) - step_time))
-
-        if not self.config.is_dummy:
-            # Read states in parallel
-            left_st_f = ctrls[0].get_state()
-            right_st_f = ctrls[1].get_state()
-            self._left_state = left_st_f.wait()[0]
-            self._right_state = right_st_f.wait()[0]
-
-        observation = self._get_observation()
-        reward = self._calc_step_reward(is_gripper_effective)
-        terminated = (reward == 1.0) and (
-            self._success_hold_counter >= self.config.success_hold_steps
-        )
-        truncated = self._num_steps >= self.config.max_num_steps
-        return observation, reward, terminated, truncated, {}
-
-    def reset(self, *, seed=None, options=None):
-        self._num_steps = 0
-        self._success_hold_counter = 0
-
-        if self.config.is_dummy:
-            return self._get_observation(), {}
-
-        for ctrl in (self._left_ctrl, self._right_ctrl):
-            ctrl.reconfigure_compliance_params(self.config.compliance_param).wait()
-
-        joint_cycle = next(self._joint_reset_cycle)
-        joint_reset = joint_cycle == 0
-        if joint_reset:
-            self._logger.info(
-                "Number of resets reached %d, resetting joints.",
-                self.config.joint_reset_cycle,
-            )
-
-        self._go_to_rest(joint_reset)
-        self._clear_errors()
-
-        left_st_f = self._left_ctrl.get_state()
-        right_st_f = self._right_ctrl.get_state()
-        self._left_state = left_st_f.wait()[0]
-        self._right_state = right_st_f.wait()[0]
-        return self._get_observation(), {}
-
-    def get_tcp_pose(self) -> np.ndarray:
-        """Return concatenated TCP poses ``(14,)`` for both arms."""
-        left_st_f = self._left_ctrl.get_state()
-        right_st_f = self._right_ctrl.get_state()
-        self._left_state = left_st_f.wait()[0]
-        self._right_state = right_st_f.wait()[0]
-        return np.concatenate([self._left_state.tcp_pose, self._right_state.tcp_pose])
-
-    def get_action_scale(self) -> np.ndarray:
-        """Return the action scaling factors used by teleop wrappers."""
-        return self.config.action_scale
-
-    @property
-    def num_steps(self):
-        return self._num_steps
-
-    @property
-    def target_ee_pose(self):
-        """Return concatenated target poses ``(14,)`` in quaternion form."""
-        poses = []
-        for arm in range(NUM_ARMS):
-            euler = self.config.target_ee_pose[arm]
-            poses.append(
-                np.concatenate(
-                    [
-                        euler[:3],
-                        R.from_euler("xyz", euler[3:].copy()).as_quat(),
-                    ]
-                )
-            )
-        return np.concatenate(poses)
-
-    def _clip_position_to_safety_box(
-        self, position: np.ndarray, arm_idx: int
-    ) -> np.ndarray:
-        position[:3] = np.clip(
-            position[:3],
-            self._xyz_safe_spaces[arm_idx].low,
-            self._xyz_safe_spaces[arm_idx].high,
-        )
-        euler = R.from_quat(position[3:].copy()).as_euler("xyz")
-        euler = clip_euler_to_target_window(
-            euler=euler,
-            target_euler=self.config.target_ee_pose[arm_idx, 3:],
-            lower_euler=self._rpy_safe_spaces[arm_idx].low,
-            upper_euler=self._rpy_safe_spaces[arm_idx].high,
-        )
-        position[3:] = R.from_euler("xyz", euler).as_quat()
-        return position
-
-    def _gripper_action(self, ctrl, state: FrankaRobotState, position: float) -> bool:
-        threshold = self.config.binary_gripper_threshold
-        if position <= -threshold and state.gripper_open:
-            ctrl.close_gripper().wait()
-            time.sleep(0.6)
-            return True
-        elif position >= threshold and not state.gripper_open:
-            ctrl.open_gripper().wait()
-            time.sleep(0.6)
-            return True
-        return False
-
-    def _clear_errors(self):
-        l = self._left_ctrl.clear_errors()
-        r = self._right_ctrl.clear_errors()
-        l.wait()
-        r.wait()
-
-    def _interpolate_move_both(self, target_poses: np.ndarray, timeout: float = 1.5):
-        """Interpolate both arms towards *target_poses* ``(2, 7)``."""
-        num_steps = int(timeout * self.config.step_frequency)
-        left_st = self._left_ctrl.get_state().wait()[0]
-        right_st = self._right_ctrl.get_state().wait()[0]
-        states = [left_st, right_st]
-        ctrls = [self._left_ctrl, self._right_ctrl]
-
-        paths = []
-        for arm in range(NUM_ARMS):
-            pos_path = np.linspace(
-                states[arm].tcp_pose[:3], target_poses[arm, :3], num_steps + 1
-            )
-            quat_path = quat_slerp(
-                states[arm].tcp_pose[3:], target_poses[arm, 3:], num_steps + 1
-            )
-            paths.append((pos_path, quat_path))
-
-        for step_i in range(1, num_steps + 1):
-            for arm in range(NUM_ARMS):
-                pose = np.concatenate([paths[arm][0][step_i], paths[arm][1][step_i]])
-                ctrls[arm].move_arm(pose.astype(np.float32)).wait()
-            time.sleep(1.0 / self.config.step_frequency)
-
-    def _go_to_rest(self, joint_reset: bool = False):
-        ctrls = [self._left_ctrl, self._right_ctrl]
-        if joint_reset:
-            for arm, ctrl in enumerate(ctrls):
-                ctrl.reset_joint(self.config.joint_reset_qpos[arm]).wait()
-            time.sleep(0.5)
-
-        reset_poses = self._reset_poses.copy()
-        if self.config.enable_random_reset:
-            for arm in range(NUM_ARMS):
-                reset_poses[arm, :2] += np.random.uniform(
-                    -self.config.random_xy_range,
-                    self.config.random_xy_range,
-                    (2,),
-                )
-                euler_random = self.config.target_ee_pose[arm, 3:].copy()
-                euler_random[-1] += np.random.uniform(
-                    -self.config.random_rz_range,
-                    self.config.random_rz_range,
-                )
-                reset_poses[arm, 3:] = R.from_euler("xyz", euler_random).as_quat()
-
-        left_st = ctrls[0].get_state().wait()[0]
-        right_st = ctrls[1].get_state().wait()[0]
-        states_arr = [left_st, right_st]
-
-        for cnt in range(3):
-            converged = True
-            for arm in range(NUM_ARMS):
-                if not np.allclose(
-                    states_arr[arm].tcp_pose[:3], reset_poses[arm, :3], atol=0.02
-                ):
-                    converged = False
-            if converged:
-                break
-            self._interpolate_move_both(reset_poses)
-            left_st = ctrls[0].get_state().wait()[0]
-            right_st = ctrls[1].get_state().wait()[0]
-            states_arr = [left_st, right_st]
+    # ---------------------------------------------------------------- reward
 
     def _calc_step_reward(self, is_gripper_effective: list[bool]) -> float:
         if self.config.is_dummy:
@@ -654,42 +593,27 @@ class DualFrankaEnv(gym.Env):
                     reward -= self.config.gripper_penalty
         return reward
 
+    # --------------------------------------------------------- subclass hooks
+
+    def _init_action_obs_spaces(self):
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _init_action_obs_spaces"
+        )
+
     def _get_observation(self) -> dict:
-        if not self.config.is_dummy:
-            frames = self._get_camera_frames()
-            state = {
-                "tcp_pose": np.concatenate(
-                    [
-                        self._left_state.tcp_pose,
-                        self._right_state.tcp_pose,
-                    ]
-                ),
-                "tcp_vel": np.concatenate(
-                    [
-                        self._left_state.tcp_vel,
-                        self._right_state.tcp_vel,
-                    ]
-                ),
-                "gripper_position": np.array(
-                    [
-                        self._left_state.gripper_position,
-                        self._right_state.gripper_position,
-                    ],
-                    dtype=np.float32,
-                ),
-                "tcp_force": np.concatenate(
-                    [
-                        self._left_state.tcp_force,
-                        self._right_state.tcp_force,
-                    ]
-                ),
-                "tcp_torque": np.concatenate(
-                    [
-                        self._left_state.tcp_torque,
-                        self._right_state.tcp_torque,
-                    ]
-                ),
-            }
-            return copy.deepcopy({"state": state, "frames": frames})
-        else:
-            return self._base_observation_space.sample()
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _get_observation"
+        )
+
+    def _dispatch_arm_motion(
+        self,
+        actions: np.ndarray,
+        states: list,
+        ctrls: list,
+        dt: float,
+    ) -> None:
+        """Override in subclass to issue move_joints / move_tcp_pose."""
+        del actions, states, ctrls, dt
+
+    def _pace_between_action_and_state_read(self) -> bool:
+        return True

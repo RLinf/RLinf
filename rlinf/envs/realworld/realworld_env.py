@@ -211,12 +211,8 @@ class RealWorldEnv(gym.Env):
         """
         obs = {}
 
-        # Process states
-        full_states = []
-        raw_states = OrderedDict(sorted(raw_obs["state"].items()))
-        for value in raw_states.values():
-            full_states.append(value)
-        full_states = np.concatenate(full_states, axis=-1)
+        state = raw_obs["state"]
+        full_states = np.concatenate([state[k] for k in sorted(state)], axis=-1)
         obs["states"] = full_states
 
         frames = raw_obs["frames"]
@@ -228,11 +224,15 @@ class RealWorldEnv(gym.Env):
         raw_images = OrderedDict(sorted(frames.items()))
         raw_images.pop(self.main_image_key)
 
+        extra_view_image_names = None
         if raw_images:
             obs["extra_view_images"] = np.stack(list(raw_images.values()), axis=1)
+            extra_view_image_names = tuple(raw_images.keys())
 
         obs = to_tensor(obs)
         obs["task_descriptions"] = self.task_descriptions
+        if extra_view_image_names is not None:
+            obs["extra_view_image_names"] = extra_view_image_names
         return obs
 
     def step(self, actions=None, auto_reset=True):
@@ -241,7 +241,11 @@ class RealWorldEnv(gym.Env):
 
         self._elapsed_steps += 1
         raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
-        timeout_truncations = self.elapsed_steps >= self.cfg.max_episode_steps
+        # max_episode_steps: null → external wrapper owns episode end.
+        if self.cfg.max_episode_steps is None:
+            timeout_truncations = np.zeros_like(truncations, dtype=bool)
+        else:
+            timeout_truncations = self.elapsed_steps >= self.cfg.max_episode_steps
         if not self.manual_episode_control_only:
             truncations = timeout_truncations
 

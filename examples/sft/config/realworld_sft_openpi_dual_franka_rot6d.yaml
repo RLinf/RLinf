@@ -1,0 +1,94 @@
+defaults:
+  - model/pi0_5@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+# Dual-Franka rot6d_v1 SFT.
+#   - config_name: pi05_dualfranka_rot6d (override repo_id at runtime)
+#   - 20-d state/action [xyz + rot6d + grip] per arm
+#   - Body-frame SE(3) RigidBodyDeltaActions at training time (no euler wrap)
+#
+# Before launching:
+#   export HF_LEROBOT_HOME=/path/to/lerobot_root
+#   export DUAL_FRANKA_DATA_ROOT=/path/to/lerobot_root/<dataset>
+#   export PI05_BASE_CKPT=/path/to/pi05/torch
+#   python toolkits/lerobot/calculate_norm_stats.py \
+#       --config-name pi05_dualfranka_rot6d \
+#       --repo-id <YOUR_HF_USER>/<dataset>
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: 0-3
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: dual-franka-openpi
+    experiment_name: "dual_franka_rot6d_v1"
+    wandb_entity: WANDB_ENTITY  # Replace: your wandb team / user (or remove if you don't use wandb)
+    logger_backends: ["wandb"]
+
+  max_epochs: 100000
+  max_steps: -1
+  val_check_interval: -1
+  save_interval: 500
+
+data:
+  # LeRobot root on the training machine. Set DUAL_FRANKA_DATA_ROOT to the
+  # same HF_LEROBOT_HOME you export when running calculate_norm_stats.py.
+  train_data_paths: ${oc.env:DUAL_FRANKA_DATA_ROOT}
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 16
+  global_batch_size: 128
+  seed: 0
+
+  model:
+    precision: null
+    # Path to the pi0.5 base checkpoint (torch). Set PI05_BASE_CKPT.
+    model_path: ${oc.env:PI05_BASE_CKPT}
+    action_dim: 20 # dual-franka rot6d: [L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]
+    num_action_chunks: 20 # matches Pi0Config action_horizon
+    add_value_head: False
+    openpi:
+      config_name: "pi05_dualfranka_rot6d"
+      detach_critic_input: True
+
+  optim:
+    lr: 7.91e-6
+    value_lr: 1.55e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 0.01
+    clip_grad: 1.0
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "full_shard"
+    use_orig_params: False
+    gradient_checkpointing: False
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

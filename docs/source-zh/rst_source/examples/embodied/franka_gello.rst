@@ -47,14 +47,23 @@ GELLO 依赖两个软件包，必须 **按顺序** 安装：
 1. 安装 ``gello`` （gello_software）
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-选择一个安装目录，然后克隆仓库并初始化其子模块（包含 **Dynamixel SDK**）：
+选择一个安装目录，然后克隆仓库并**仅**初始化 **Dynamixel SDK** 子模块：
 
 .. code-block:: bash
 
    cd /path/to/install/gello
    git clone https://github.com/wuphilipp/gello_software.git
    cd gello_software
-   git submodule init && git submodule update
+   git submodule update --init third_party/DynamixelSDK
+
+.. note::
+
+   ``gello_software`` 还注册了 ``third_party/mujoco_menagerie``
+   （一个体量较大的机器人 MJCF 资产仓库，仅被上游的 mujoco 演示脚本
+   使用）。RLinf 的 GELLO 遥操作走 ``gello-teleop``，它自带 Franka
+   的 MJCF，并不需要 menagerie 子模块。
+   ``git submodule update --init <path>`` 只会注册并克隆指定的子模块；
+   如果执行裸的 ``git submodule init``，则会把 menagerie 一并排入队列。
 
 安装 ``gello`` 包和 **Dynamixel SDK** （作为第三方子模块）：
 
@@ -182,6 +191,29 @@ YAML 配置说明
 
 有关完整的数据采集流程，请参考 :doc:`franka` 中的
 **使用 GELLO 进行数据采集** 章节。
+
+
+采集进度监视
+-------------
+
+采集脚本以 Ray Worker 运行，stdout 会被 Ray 的 log monitor 批量缓冲，
+``tqdm`` 的 ``\r`` 原位刷新因此失效。要拿到实时进度条，请在
+**另一个终端** 运行 ``toolkits/realworld_check/collect_monitor.py``：
+它通过 tail 采集日志渲染一个 ``tqdm`` 进度条，显示成功计数、最近的
+脚踏事件以及被丢弃的 episode。
+
+.. code-block:: bash
+
+   # 终端 1 —— 启动采集（stdout tee 到日志文件）
+   bash examples/embodiment/collect_data.sh \
+       realworld_collect_data_gello_joint_dual_franka 2>&1 \
+       | tee logs/collect.log
+
+   # 终端 2 —— 实时进度条（日志文件未出现时会等待）
+   python toolkits/realworld_check/collect_monitor.py logs/collect.log
+
+启动时 monitor 会回放已有日志，使进度条初始位置对齐到此前已保存的
+episode 数；若希望直接从 EOF 开始 tail，请加 ``--no-replay``。
 
 
 集群配置注意事项

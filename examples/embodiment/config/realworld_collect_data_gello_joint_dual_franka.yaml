@@ -1,0 +1,113 @@
+defaults:
+  - env/realworld_dual_franka_joint@env.eval
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    env:
+      node_group: franka
+      placement: 0
+  node_groups:
+    - label: franka
+      node_ranks: 0-1
+      hardware:
+        type: DualFranka
+        configs:
+          # Two-node dual-arm rig: each node is cabled to its own Franka,
+          # so left_robot_ip / right_robot_ip are the FCI IP each node
+          # sees on its own NIC (typically the same value, e.g. 172.16.0.2).
+          - left_robot_ip: LEFT_ROBOT_IP                         # Replace: e.g. 172.16.0.2
+            right_robot_ip: RIGHT_ROBOT_IP                       # Replace: e.g. 172.16.0.2
+            base_camera_serials:
+              - BASE_CAMERA_SERIAL                               # Replace: librealsense device serial (rs.context().devices)
+            base_camera_type: realsense
+            left_camera_serials:
+              - LEFT_CAMERA_SERIAL                               # Replace: e.g. usb-XVisio_..._video-index0
+            left_camera_type: lumos
+            right_camera_serials:
+              - RIGHT_CAMERA_SERIAL                              # Replace: e.g. usb-XVisio_..._video-index0
+            right_camera_type: lumos
+            left_gripper_type: robotiq
+            right_gripper_type: robotiq
+            # Robotiq 2F-85 on RS-485 — use stable /dev/serial/by-id/ paths
+            # so the port survives reboots and USB re-enumeration.
+            left_gripper_connection: LEFT_GRIPPER_CONNECTION     # Replace: /dev/serial/by-id/usb-FTDI_..._DAAIxxxx-if00-port0
+            right_gripper_connection: RIGHT_GRIPPER_CONNECTION   # Replace: /dev/serial/by-id/usb-FTDI_..._DAAIxxxx-if00-port0
+            left_controller_node_rank: 0
+            right_controller_node_rank: 1
+            node_rank: 0
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: null
+    project_name: rlinf
+    experiment_name: "collect-data-gello-joint-dual-franka"
+    logger_backends: ["tensorboard"]
+  num_data_episodes: 200
+  record_task_description: False
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    # Defer truncation entirely to the keyboard wrapper (`c`/`b`).
+    max_episode_steps: null
+    no_gripper: False
+    ignore_terminations: False
+    auto_reset: False
+    use_spacemouse: False
+    use_gello: False
+    use_gello_joint: True
+    # Foot-pedal-driven keyboard wrapper for GELLO collection. The 3-key
+    # pedal maps to:
+    #   a (pre)  → start a new rec episode at the current pose
+    #   a (rec)  → ABORT current episode (drop buffer, return to pre,
+    #              arm stays where it is — no home reset)
+    #   b (rec)  → bump segment_id by 1 (1 s debounce; sub-task boundary)
+    #   c (rec)  → SUCCESS end (reward=+1, done) → episode saved
+    keyboard_reward_wrapper: "start_end"
+    # GELLO serial ports (FTDI USB→Dynamixel adapter, stable by-id path).
+    left_gello_port: LEFT_GELLO_PORT                              # Replace: /dev/serial/by-id/usb-FTDI_..._FTAxxxxx-if00-port0
+    right_gello_port: RIGHT_GELLO_PORT                            # Replace: /dev/serial/by-id/usb-FTDI_..._FTAxxxxx-if00-port0
+    override_cfg:
+      task_description: TASK_DESCRIPTION                          # Replace: prompt for this collection
+      joint_action_mode: "absolute"
+      # Safe dual-arm bookkeeping pose (joint-space step does NOT consume
+      # these, but DualFrankaEnv keeps the fields populated for downstream
+      # tooling); same values as the Cartesian collect config.
+      target_ee_pose:
+        - [0.5, -0.2, 0.4, -3.14, 0.0, 0.0]
+        - [0.5,  0.2, 0.4, -3.14, 0.0, 0.0]
+      reset_ee_pose:
+        - [0.5, -0.2, 0.5, -3.14, 0.0, 0.0]
+        - [0.5,  0.2, 0.5, -3.14, 0.0, 0.0]
+      success_hold_steps: 1
+      # Keep direct_stream ON so the 1 kHz daemon owns move_joints and
+      # env.step only reads state / grippers.  Pair with
+      # use_gello_joint=True above.
+      teleop_direct_stream: true
+
+    data_collection:
+      enabled: True
+      # Edit ``save_dir`` here to point successive collect runs at the
+      # same dataset root. Each run's log_path is still per-session
+      # under logs/, so run_embodiment.log stays unique even when
+      # datasets accumulate.
+      save_dir: ${runner.logger.log_path}/collected_data
+      # When true, CollectEpisode seeds its episode counter from shards
+      # already on disk under save_dir and the collector's progress bar
+      # starts from that count. New episodes land in a fresh ``id_{N}``
+      # shard so previously-finalized data is never touched.
+      resume: false
+      export_format: "lerobot"
+      only_success: True
+      robot_type: "dual_FR3"
+      fps: 10
