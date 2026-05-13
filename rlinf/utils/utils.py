@@ -20,6 +20,7 @@ import random
 import sys
 from contextlib import contextmanager
 from functools import partial, wraps
+from threading import Thread
 from typing import Callable, Literal, Optional
 
 import numpy as np
@@ -539,3 +540,20 @@ def set_rng_state(rng_state: dict) -> None:
     random.setstate(rng_state["random"])
     if Worker.torch_platform.is_available() and Worker.torch_device_type in rng_state:
         Worker.torch_platform.set_rng_state(rng_state[Worker.torch_device_type])
+
+
+class ThreadWithResult(Thread):
+    def __init__(
+        self, group=None, target=None, name=None, args=(), kwargs=None, *, daemon=None
+    ):
+        super().__init__(group, target, name, args, kwargs, daemon=daemon)
+        self.result = None
+        self.start()
+
+    def run(self):
+        if self._target:
+            self.result = self._target(*self._args, **self._kwargs)
+
+    def join(self):
+        super().join()
+        return self.result

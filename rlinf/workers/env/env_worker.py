@@ -82,11 +82,10 @@ class EnvWorker(Worker):
         self.only_eval = getattr(self.cfg.runner, "only_eval", False)
         train_env_cfg = self.cfg.env.get("train", None)
         eval_env_cfg = self.cfg.env.eval
-        self.enable_offload = (
-            train_env_cfg.get("enable_offload", False)
-            if train_env_cfg is not None
-            else eval_env_cfg.get("enable_offload", False)
-        )
+        self.train_enable_offload = train_env_cfg.get("enable_offload", False)
+        self.eval_enable_offload = eval_env_cfg.get("enable_offload", False)
+        self.train_enable_init_offload = train_env_cfg.get("enable_init_offload", True)
+        self.eval_enable_init_offload = eval_env_cfg.get("enable_init_offload", True)
         self.enable_eval = self.cfg.runner.val_check_interval > 0 or self.only_eval
         if not self.only_eval:
             if train_env_cfg is None:
@@ -146,6 +145,11 @@ class EnvWorker(Worker):
                 env_cfg=self.cfg.env.train,
                 num_envs_per_stage=self.train_num_envs_per_stage,
             )
+            if self.train_enable_offload:
+                assert all(hasattr(env, "offload") for env in self.env_list), (
+                    "train envs must have an offload method to enable offload!"
+                )
+
         if self.enable_eval:
             eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
             self.eval_env_list = self._setup_env_and_wrappers(
@@ -153,9 +157,12 @@ class EnvWorker(Worker):
                 env_cfg=self.cfg.env.eval,
                 num_envs_per_stage=self.eval_num_envs_per_stage,
             )
+            if self.eval_enable_offload:
+                assert all(hasattr(env, "offload") for env in self.eval_env_list), (
+                    "eval envs must have an offload method to enable offload!"
+                )
 
-        if not self.only_eval:
-            self._init_env()
+        self._init_env()
 
     def update_env_cfg(self):
         if not self.only_eval:
@@ -371,12 +378,16 @@ class EnvWorker(Worker):
 
     def _init_env(self):
         for i in range(self.stage_num):
-            if self.cfg.env.train.auto_reset:
-                extracted_obs, _ = self.env_list[i].reset()
-                self.last_obs_list.append(extracted_obs)
-                self.last_intervened_info_list.append((None, None))
-            if self.enable_offload and hasattr(self.env_list[i], "offload"):
-                self.env_list[i].offload()
+            if not self.only_eval:
+                if self.cfg.env.train.auto_reset:
+                    extracted_obs, _ = self.env_list[i].reset()
+                    self.last_obs_list.append(extracted_obs)
+                    self.last_intervened_info_list.append((None, None))
+                if self.train_enable_offload and self.train_enable_init_offload:
+                    self.env_list[i].offload()
+            if self.enable_eval:
+                if self.eval_enable_offload and self.eval_enable_init_offload:
+                    self.eval_env_list[i].offload()
 
     @Worker.timer("env_interact_step")
     def env_interact_step(
@@ -1117,7 +1128,7 @@ class EnvWorker(Worker):
         )
 
         for env in self.env_list:
-            if self.enable_offload and hasattr(env, "offload"):
+            if self.train_enable_offload:
                 env.offload()
 
         return env_metrics
@@ -1185,9 +1196,7 @@ class EnvWorker(Worker):
 
             self.finish_rollout(mode="eval")
         for stage_id in range(self.stage_num):
-            if self.cfg.env.eval.get("enable_offload", False) and hasattr(
-                self.eval_env_list[stage_id], "offload"
-            ):
+            if self.eval_enable_offload:
                 self.eval_env_list[stage_id].offload()
 
         for key, value in eval_metrics.items():

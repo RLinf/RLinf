@@ -417,7 +417,7 @@ def apply_fsdp2_to_model(
             default_transformer_cls_names_to_wrap
         )
         module_classes_to_wrap = None
-        no_split_names = None
+        no_split_names = getattr(module, "_no_split_names", None)
         assert (
             len(fsdp_transformer_layer_cls_to_wrap) > 0
             and fsdp_transformer_layer_cls_to_wrap[0] is not None
@@ -446,7 +446,8 @@ def apply_fsdp2_to_model(
         ):
             modules_to_shard.append((name, submodule, "transformer_or_embedding"))
 
-    for name, submodule, module_type in modules_to_shard:
+    # use reversed to wrap from sub module to root module
+    for name, submodule, module_type in reversed(modules_to_shard):
         fully_shard(
             submodule,
             mesh=device_mesh,
