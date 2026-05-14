@@ -13,25 +13,43 @@ class PriorityStore:
         # first prefer higher min_version, then break ties by higher mean_version.
         self.sl = SortedList(key=lambda x: (x[0], x[1]))
 
+        # Tracking for never-used trajectory count.
+        self._used_seqs: set = set()
+        self._discarded_unused: int = 0
+
     def add(self, priority, data):
         if len(self.sl) == self.maxsize:
             if priority < self.sl[0][0]:
+                self._discarded_unused += 1
                 return False
 
         self.sl.add((priority, self._seq, data))
         self._seq += 1
 
         if len(self.sl) > self.maxsize:
-            self.sl.pop(0)
+            evicted = self.sl.pop(0)
+            evicted_seq = evicted[1]
+            if evicted_seq not in self._used_seqs:
+                self._discarded_unused += 1
+            else:
+                self._used_seqs.discard(evicted_seq)
 
         return True
 
     def topn(self, n):
-        return list(reversed([data for _, _, data in self.sl[-n:]]))
+        items = self.sl[-n:]
+        for _, seq, _ in items:
+            self._used_seqs.add(seq)
+        return list(reversed([data for _, _, data in items]))
 
     def remove_below(self, threshold):
         to_remove = [item for item in self.sl if item[0][0] < threshold]
         for item in to_remove:
+            seq = item[1]
+            if seq not in self._used_seqs:
+                self._discarded_unused += 1
+            else:
+                self._used_seqs.discard(seq)
             self.sl.remove(item)
 
     def get_metric(self) -> dict:
@@ -48,12 +66,14 @@ class PriorityStore:
             total_cells += flat.numel()
 
         if total_cells == 0:
-            return {}
+            return {"discarded_unused": self._discarded_unused}
 
-        return {
+        result = {
             v: {"ratio": c / total_cells}
             for v, c in counts.items()
         }
+        result["discarded_unused"] = self._discarded_unused
+        return result
 
     def __len__(self):
         return len(self.sl)

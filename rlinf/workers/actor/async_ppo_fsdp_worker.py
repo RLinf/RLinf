@@ -99,6 +99,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                 continue
             self._recv_queue.put(trajectory)
 
+    @Worker.timer("drain_received_trajectories")
     def _drain_received_trajectories(self):
         while True:
             try:
@@ -117,6 +118,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
             except queue.Empty:
                 break
 
+    @Worker.timer("wait_for_rollout_store_ready")
     async def _wait_for_rollout_store_ready(self):
         while getattr(self, "_recv_queue", None) is None:
             await asyncio.sleep(1)
@@ -124,7 +126,8 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         on_policy_min_ratio = self.cfg.algorithm.get("on_policy_min_ratio", 0.0)
         while True:
             self._drain_received_trajectories()
-            self.rollout_store.remove_below(self.version - self.cfg.algorithm.get("staleness_threshold", None))
+            with self.worker_timer("remove_below"):
+                self.rollout_store.remove_below(self.version - self.cfg.algorithm.get("staleness_threshold", None))
             if len(self.rollout_store) >= self.rollout_store_size:
                 if on_policy_min_ratio <= 0.0:
                     break
@@ -139,6 +142,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                     break
             await asyncio.sleep(1)
 
+    @Worker.timer("construct_rollout_batch")
     async def construct_rollout_batch(self, max_trajectories: int | None = None):
         # from _recv_queue to rollout_batch
         await self._wait_for_rollout_store_ready()
@@ -150,6 +154,9 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
 
         staleness_metrics: dict = {}
         for version_val, stats in version_metrics.items():
+            if version_val == "discarded_unused":
+                staleness_metrics["discarded_unused_trajs"] = stats
+                continue
             diff = int(self.version) - int(version_val)
             staleness_metrics[f"data_staleness_{diff}/ratio"] = stats["ratio"]
 
