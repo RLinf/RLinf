@@ -128,9 +128,17 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         torch.distributed.barrier()
 
         rollout_batch = self.rollout_store.topn(self.rollout_store_size)
+        priority_metrics = self.rollout_store.get_metric()
+
+        staleness_metrics: dict = {}
+        for priority, stats in priority_metrics.items():
+            diff = int(self.version - priority)
+            staleness_metrics[f"data_staleness_{diff}/count"] = stats["count"]
+            staleness_metrics[f"data_staleness_{diff}/ratio"] = stats["ratio"]
+
         self.rollout_batch = convert_trajectories_to_batch(rollout_batch)
         self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
-
+        return staleness_metrics
 
     @torch.inference_mode()
     def compute_advantages_and_returns(self) -> dict[str, torch.Tensor]:

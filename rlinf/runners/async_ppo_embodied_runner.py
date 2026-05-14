@@ -132,8 +132,7 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         while self.global_step < self.max_steps:
             with self.timer("step"):
                 with self.timer("construct_rollout_batch"):
-                    self.actor.construct_rollout_batch().wait()
-                
+                    rollout_data_metrics = self.actor.construct_rollout_batch().wait()
                 if self.recompute_logprobs:
                     raise NotImplementedError
 
@@ -185,6 +184,11 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
             if rollout_time_metrics:
                 self.metric_logger.log(rollout_time_metrics, self.global_step)
             self.metric_logger.log(rollout_metrics, self.global_step)
+            if rollout_data_metrics:
+                data_staleness_metrics = {
+                    f"rollout/{k}": v for k, v in self._aggregate_numeric_metrics(rollout_data_metrics).items()
+                }
+                self.metric_logger.log(data_staleness_metrics, self.global_step)
             self.metric_logger.log(time_metrics, self.global_step)
             self._log_ranked_metrics(
                 metrics_list=training_metrics,
