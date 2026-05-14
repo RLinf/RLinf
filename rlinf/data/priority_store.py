@@ -12,7 +12,7 @@ class PriorityStore:
             if priority <= self.sl[0][0]:
                 return False
 
-        self.sl.add((priority, data))
+        self.sl.add((priority.item(), data))
 
         if len(self.sl) > self.maxsize:
             self.sl.pop(0)
