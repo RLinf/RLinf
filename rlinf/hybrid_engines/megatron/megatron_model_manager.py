@@ -259,7 +259,7 @@ class MegatronModelManager:
         """Setup model and optimizer."""
         set_megatron_args(self._cfg)
         if self.mbridge:
-            # init megatron bridge
+            # Init megatron bridge
             from megatron.bridge import AutoBridge
             from megatron.bridge.training.config import DistributedDataParallelConfig
 
@@ -275,26 +275,28 @@ class MegatronModelManager:
             position_embedding_type = getattr(
                 provider, "position_embedding_type", "mrope"
             )
+
+            # Set the provider field with the RLinf transformer_config
             for name in provider_field_names:
                 if hasattr(self.transformer_config, name):
                     setattr(provider, name, getattr(self.transformer_config, name))
+
+            # Preserve HF/provider-specific multimodal rope values.
             provider.mrope_section = mrope_section
             provider.position_embedding_type = position_embedding_type
-
             provider.vision_config._attn_implementation = "flash_attention_2"
-            provider.tensor_model_parallel_size = (
-                self._cfg.model.tensor_model_parallel_size
+
+            # the Mbridge run the qwen3-vl-moe model will freeze the language model and vision model by default.
+            provider.freeze_language_model = getattr(
+                self._cfg.model, "freeze_language_model", False
             )
-            provider.pipeline_model_parallel_size = (
-                self._cfg.model.pipeline_model_parallel_size
+            provider.freeze_vision_model = getattr(
+                self._cfg.model, "freeze_vision_model", False
             )
-            provider.expert_model_parallel_size = (
-                self._cfg.model.expert_model_parallel_size
+            provider.freeze_vision_projection = getattr(
+                self._cfg.model, "freeze_vision_projection", False
             )
-            provider.expert_tensor_parallel_size = (
-                self._cfg.model.expert_tensor_parallel_size
-            )
-            provider.sequence_parallel = self._cfg.model.sequence_parallel
+
             if (
                 getattr(self._cfg.model, "decoder_first_pipeline_num_layers", None)
                 is not None
@@ -309,6 +311,10 @@ class MegatronModelManager:
                 provider.num_layers_in_last_pipeline_stage = (
                     self._cfg.model.decoder_last_pipeline_num_layers
                 )
+
+            if self._rank == 0:
+                self._logger.info(f"Mbridge Set Provider: {provider}")
+
             provider.finalize()
             self.provider = provider
             ddp_config = DistributedDataParallelConfig(
@@ -319,6 +325,7 @@ class MegatronModelManager:
                 grad_reduce_in_fp32=True,
             )
             ddp_config.finalize()
+
             # Get Megatron Model
             self.model = self.provider.provide_distributed_model(ddp_config=ddp_config)
 
@@ -593,6 +600,7 @@ class MegatronModelManager:
         temperature: float = 1.0,
         max_batch_seqlen: int = 4096,
         padding_seqlen: Optional[int] = None,
+        keep_left_padding: bool = False,
         **model_forward_kwargs,
     ):
         """Default forward pass for GPT models with optional sequence packing."""
@@ -648,12 +656,13 @@ class MegatronModelManager:
                 )
         else:
             batch_size, sequence_length = attention_mask.shape
+            # if keep_left_padding is True, we will handle new_input_ids of all pp stages
             new_input_ids, new_attention_mask, new_position_ids = remove_left_padding(
                 input_ids,
                 attention_mask,
                 position_ids,
                 sequence_parallel,
-                pre_process=pre_process,
+                pre_process=pre_process or keep_left_padding,
             )
             output_orig = model(
                 input_ids=new_input_ids,

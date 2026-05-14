@@ -325,8 +325,8 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
             else:
                 # mrope
                 cfg.model.seq_len_interpolation_factor = None
-        if cfg.model.model_type == "qwen3_vl":
-            # qwen3_vl config.json set the model config in text_config
+        if cfg.model.model_type == "qwen3_vl" or cfg.model.model_type == "qwen3_vl_moe":
+            # qwen3_vl and qwen3_vl_moe config.json set the model config in text_config
             hf_config = hf_config.text_config
 
         cfg.model.padded_vocab_size = hf_config.vocab_size
@@ -681,7 +681,10 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
             f"grouped_gemm type only avail in [null, te]. get value ({cfg.model.moe_grouped_gemm})"
         )
 
-        if cfg.model.expert_tensor_parallel_size is not None:
+        if (
+            not getattr(cfg.megatron, "mbridge", False)
+            and cfg.model.expert_tensor_parallel_size is not None
+        ):
             assert (
                 cfg.model.expert_tensor_parallel_size
                 <= cfg.model.tensor_model_parallel_size

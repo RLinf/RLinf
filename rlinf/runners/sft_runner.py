@@ -122,7 +122,15 @@ class SFTRunner:
             if eval_model:
                 time_metrics["evaluate"] = eval_handle.consume_duration()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
-            training_metrics = {f"train/{k}": v for k, v in actor_metrics[0].items()}
+            merged_actor_metrics = {}
+            # get the merged actor metrics from all ranks
+            for metrics in actor_metrics:
+                for k, v in metrics.items():
+                    if k not in merged_actor_metrics:
+                        merged_actor_metrics[k] = v
+            training_metrics = {
+                f"train/{k}": v for k, v in merged_actor_metrics.items()
+            }
             self.metric_logger.log(time_metrics, _step)
             self.metric_logger.log(training_metrics, _step)
 

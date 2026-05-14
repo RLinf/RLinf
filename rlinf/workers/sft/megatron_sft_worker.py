@@ -438,6 +438,7 @@ class MegatronVlmSftWorker(MegatronSftWorker):
                 attention_mask=attention_mask,
                 pixel_values=pixel_values,
                 position_ids=None,
+                keep_left_padding=True,
                 sequence_parallel=self.transformer_config.sequence_parallel,
                 image_grid_thw=image_grid_thw,
                 logits_processor=logits_processor,

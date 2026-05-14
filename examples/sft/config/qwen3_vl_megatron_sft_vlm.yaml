@@ -71,11 +71,21 @@ actor:
     add_qkv_bias: False
     qk_layernorm: True
 
-    tensor_model_parallel_size: 2
+    tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1
+    expert_model_parallel_size: 8
+    expert_tensor_parallel_size: 1
 
-    model_type: "qwen3_vl"
-    model_path: "/path/to/Qwen3-VL-4B-Instruct"
+    # MoE related
+    moe_router_load_balancing_type: "aux_loss"
+    init_method_std: 0.008
+    moe_router_pre_softmax: False
+    moe_aux_loss_coeff: 0.001
+
+    moe_permute_fusion: True
+
+    model_type: "qwen3_vl_moe"
+    model_path: "/path/to/Qwen3-VL-30B-A3B-Instruct-4layers"
     is_lora: False
   
     activation: swiglu
@@ -135,7 +145,7 @@ actor:
     weight_decay_incr_style: constant
 
   tokenizer:
-    tokenizer_model:/path/to/Qwen3-VL-4B-Instruct
+    tokenizer_model: /path/to/Qwen3-VL-4B-Instruct
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'
