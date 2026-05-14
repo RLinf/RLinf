@@ -140,7 +140,10 @@ def calculate_scores(
     for step in reversed(range(kwargs["n_steps"])):
         scores = scores * ~dones[step + 1]
         scores += rewards[step]
-    scores = scores.reshape(-1, kwargs["group_size"])
+    if kwargs["adv_type"] == "grpo_dynamic":
+        scores = scores.unsqueeze(-1)
+    else:
+        scores = scores.reshape(-1, kwargs["group_size"])
 
     kwargs.update(
         {

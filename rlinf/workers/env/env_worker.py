@@ -33,7 +33,10 @@ from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.wrappers import RecordVideo
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.comm_mapping import CommMapper
-from rlinf.utils.metric_utils import compute_split_num
+from rlinf.utils.metric_utils import (
+    compute_pipeline_actor_split_num,
+    compute_split_num,
+)
 from rlinf.utils.nested_dict_process import (
     copy_dict_tensor,
     split_dict,
@@ -951,16 +954,32 @@ class EnvWorker(Worker):
         actor_channel: Channel | None,
         *,
         cooperative_yield: bool,
+        use_training_pipeline: bool,
     ) -> dict[str, torch.Tensor]:
-        self.rollout_results: list[EmbodiedRolloutResult] = [
-            EmbodiedRolloutResult(
-                max_episode_length=self.cfg.env.train.max_episode_steps,
+        if use_training_pipeline and actor_channel is None:
+            raise ValueError(
+                "actor_channel must be provided when use_training_pipeline=True."
             )
-            for _ in range(self.stage_num)
-        ]
+        if not use_training_pipeline:
+            self.rollout_results: list[EmbodiedRolloutResult] = [
+                EmbodiedRolloutResult(
+                    max_episode_length=self.cfg.env.train.max_episode_steps,
+                )
+                for _ in range(self.stage_num)
+            ]
         env_metrics = defaultdict(list)
 
         for epoch in range(self.rollout_epoch):
+            rollout_results = (
+                [
+                    EmbodiedRolloutResult(
+                        max_episode_length=self.cfg.env.train.max_episode_steps,
+                    )
+                    for _ in range(self.stage_num)
+                ]
+                if use_training_pipeline
+                else self.rollout_results
+            )
             if epoch == 0 and self._prefetched_train_bootstrap is not None:
                 env_outputs = self._prefetched_train_bootstrap
                 self._prefetched_train_bootstrap = None
@@ -975,7 +994,7 @@ class EnvWorker(Worker):
                     env_output = env_outputs[stage_id]
                     curr_obs = env_output.obs
                     if env_output.intervene_actions is not None:
-                        self.rollout_results[stage_id].update_last_actions(
+                        rollout_results[stage_id].update_last_actions(
                             env_output.intervene_actions,
                             env_output.intervene_flags,
                         )
@@ -1017,9 +1036,9 @@ class EnvWorker(Worker):
                         terminations=env_output.terminations,
                         rewards=rewards,
                     )
-                    self.rollout_results[stage_id].append_step_result(chunk_step_result)
+                    rollout_results[stage_id].append_step_result(chunk_step_result)
                     if rollout_result.save_flags is not None:
-                        self.rollout_results[stage_id].mark_last_step_with_flags(
+                        rollout_results[stage_id].mark_last_step_with_flags(
                             rollout_result.save_flags
                         )
 
@@ -1040,9 +1059,7 @@ class EnvWorker(Worker):
                             if env_output.dones.any() and self.cfg.env.train.auto_reset
                             else env_output.obs
                         )
-                        self.rollout_results[stage_id].append_transitions(
-                            curr_obs, next_obs
-                        )
+                        rollout_results[stage_id].append_transitions(curr_obs, next_obs)
 
                     env_outputs[stage_id] = env_output
                     self.record_env_metrics(env_metrics, env_info, epoch)
@@ -1050,7 +1067,7 @@ class EnvWorker(Worker):
             for stage_id in range(self.stage_num):
                 env_output = env_outputs[stage_id]
                 if env_output.intervene_actions is not None:
-                    self.rollout_results[stage_id].update_last_actions(
+                    rollout_results[stage_id].update_last_actions(
                         env_output.intervene_actions,
                         env_output.intervene_flags,
                     )
@@ -1081,12 +1098,18 @@ class EnvWorker(Worker):
                     terminations=env_output.terminations,
                     rewards=rewards,
                 )
-                self.rollout_results[stage_id].append_step_result(chunk_step_result)
+                rollout_results[stage_id].append_step_result(chunk_step_result)
 
             self.store_last_obs_and_intervened_info(env_outputs)
             self.finish_rollout()
 
-        if actor_channel is not None:
+            if use_training_pipeline:
+                for stage_id in range(self.stage_num):
+                    await self.send_rollout_trajectories_pipeline(
+                        rollout_results[stage_id], actor_channel
+                    )
+
+        if actor_channel is not None and not use_training_pipeline:
             for stage_id in range(self.stage_num):
                 await self.send_rollout_trajectories(
                     self.rollout_results[stage_id], actor_channel
@@ -1114,6 +1137,7 @@ class EnvWorker(Worker):
             reward_channel,
             actor_channel,
             cooperative_yield=False,
+            use_training_pipeline=False,
         )
 
         for env in self.env_list:
@@ -1196,6 +1220,15 @@ class EnvWorker(Worker):
         return eval_metrics
 
     def get_actor_split_num(self):
+        if self.cfg.runner.get("use_training_pipeline", False):
+            return compute_pipeline_actor_split_num(
+                train_num_envs_per_stage=self.train_num_envs_per_stage,
+                micro_batch_size=self.cfg.actor.micro_batch_size,
+                rollout_epoch=self.rollout_epoch,
+                n_train_chunk_steps=self.n_train_chunk_steps,
+                group_size=self.cfg.algorithm.group_size,
+                rollout_epochs_per_flush=1,
+            )
         send_num = self._component_placement.get_world_size("env") * self.stage_num
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(recv_num, send_num)

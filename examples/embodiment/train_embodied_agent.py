@@ -23,6 +23,7 @@ from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
+from rlinf.workers.env.pipeline_env_worker import PipelineEnvWorker
 from rlinf.workers.reward.reward_worker import EmbodiedRewardWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
@@ -59,9 +60,16 @@ def main(cfg) -> None:
 
         actor_worker_cls = EmbodiedNFTFSDPPolicy
     else:
-        from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
+        if cfg.runner.get("use_training_pipeline", False):
+            from rlinf.workers.actor.pipeline_fsdp_actor_worker import (
+                PipelineEmbodiedFSDPActor,
+            )
 
-        actor_worker_cls = EmbodiedFSDPActor
+            actor_worker_cls = PipelineEmbodiedFSDPActor
+        else:
+            from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
+
+            actor_worker_cls = EmbodiedFSDPActor
     actor_group = actor_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
     )
@@ -74,7 +82,12 @@ def main(cfg) -> None:
 
     # Create env worker group
     env_placement = component_placement.get_strategy("env")
-    env_group = EnvWorker.create_group(cfg).launch(
+    env_worker_cls = (
+        PipelineEnvWorker
+        if cfg.runner.get("use_training_pipeline", False)
+        else EnvWorker
+    )
+    env_group = env_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 

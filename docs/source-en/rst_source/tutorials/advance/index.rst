@@ -44,6 +44,11 @@ offering practical guidance to help you fully optimize your RL post-training wor
    embodied training, including the ``patch`` and ``bucket`` modes, their
    configuration, recommended use cases, and performance considerations.
 
+- :doc:`embodied_training_pipeline`
+   Introduces the ``use_training_pipeline`` mode for synchronous embodied
+   training, including the design goal, when to use it, how to enable it, and
+   its current limitations.
+
 - :doc:`nsight`
    Introduces the Hydra-based ``cluster.nsight`` configuration used to wrap
    selected Ray worker groups with ``nsys profile``, including how to enable,
@@ -64,3 +69,4 @@ offering practical guidance to help you fully optimize your RL post-training wor
    logger
    nsight
    weight_syncer
+   embodied_training_pipeline

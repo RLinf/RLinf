@@ -16,8 +16,11 @@ import cloudpickle
 import ctypes
 import gym
 import numpy as np
-import warnings
+import os
+import sys
+import traceback
 import time
+import warnings
 
 from abc import ABC, abstractmethod
 from collections import OrderedDict
@@ -242,6 +245,7 @@ def _worker(
 
     parent.close()
     env = env_fn_wrapper.data()
+    last_cmd = None
     try:
         while True:
             try:
@@ -249,6 +253,7 @@ def _worker(
             except EOFError:  # the pipe has been closed
                 p.close()
                 break
+            last_cmd = cmd
             if cmd == "step":
                 env_return = env.step(data)
                 if obs_bufs is not None:
@@ -303,6 +308,18 @@ def _worker(
                 raise NotImplementedError
     except KeyboardInterrupt:
         p.close()
+    except Exception:
+        print(
+            (
+                f"[venv worker pid={os.getpid()} env={type(env).__name__}] "
+                f"Unhandled exception while processing cmd={last_cmd!r}"
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+        traceback.print_exc()
+        p.close()
+        raise
 
 
 class DummyEnvWorker(EnvWorker):
