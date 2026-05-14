@@ -164,7 +164,6 @@ actor:
     backward_prefetch: null
     use_orig_params: false
     use_liger_kernel: false
-    fsdp_size: -1
 
     mixed_precision:
       param_dtype: ${actor.model.precision}

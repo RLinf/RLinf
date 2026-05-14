@@ -20,37 +20,20 @@ from scipy.spatial.transform import Rotation as R
 
 class Quat2EulerWrapper(gym.ObservationWrapper):
     """
-    Convert the quaternion representation of the tcp pose to euler angles.
-
-    The wrapped observation may be 7D ``xyz+quat`` or 8D
-    ``xyz+quat+gripper``.  ``keep_gripper`` only affects 8D observations; 7D
-    observations remain 6D after conversion for backward compatibility.
+    Convert the quaternion representation of the tcp pose to euler angles
     """
 
-    def __init__(self, env: Env, keep_gripper: bool = False):
+    def __init__(self, env: Env):
         super().__init__(env)
-        self.keep_gripper = bool(keep_gripper)
-        raw_dim = self.observation_space["state"]["tcp_pose"].shape[0]
-        if raw_dim not in (7, 8):
-            raise ValueError(
-                "Quat2EulerWrapper expects tcp_pose shape (7,) or (8,), "
-                f"got {self.observation_space['state']['tcp_pose'].shape}."
-            )
-        output_dim = 7 if self.keep_gripper and raw_dim == 8 else 6
+        # from xyz + quat to xyz + euler
         self.observation_space["state"]["tcp_pose"] = spaces.Box(
-            -np.inf, np.inf, shape=(output_dim,)
+            -np.inf, np.inf, shape=(6,)
         )
 
     def observation(self, observation):
-        # Convert tcp pose from xyz+quat(+gripper) to xyz+rpy(+gripper).
+        # convert tcp pose from quat to euler
         tcp_pose = observation["state"]["tcp_pose"]
-        if tcp_pose.shape[0] not in (7, 8):
-            raise ValueError(
-                "Quat2EulerWrapper expects tcp_pose shape (7,) or (8,), "
-                f"got {tcp_pose.shape}."
-            )
-        pose = [tcp_pose[:3], R.from_quat(tcp_pose[3:7].copy()).as_euler("xyz")]
-        if self.keep_gripper and tcp_pose.shape[0] == 8:
-            pose.append(tcp_pose[7:8])
-        observation["state"]["tcp_pose"] = np.concatenate(pose)
+        observation["state"]["tcp_pose"] = np.concatenate(
+            (tcp_pose[:3], R.from_quat(tcp_pose[3:].copy()).as_euler("xyz"))
+        )
         return observation

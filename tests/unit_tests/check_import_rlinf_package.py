@@ -15,8 +15,8 @@
 """Import-check all modules under the rlinf package.
 
 Usage:
-    python tests/unit_tests/test_import_rlinf_package.py --workers 16
-    python tests/unit_tests/test_import_rlinf_package.py --no-test-modules rlinf/envs rlinf/models
+    python tests/unit_tests/check_import_rlinf_package.py --workers 16
+    python tests/unit_tests/check_import_rlinf_package.py --no-test-modules rlinf/envs rlinf/models
 """
 
 import argparse

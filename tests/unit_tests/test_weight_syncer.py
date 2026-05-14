@@ -32,6 +32,7 @@ from rlinf.hybrid_engines.weight_syncer.patch_syncer import (
     as_coo_2d_view,
     downscale_nonnegative_indices,
 )
+from rlinf.scheduler import AcceleratorType, Worker
 
 
 class _TinyWeightSyncModel(torch.nn.Module):
@@ -144,9 +145,13 @@ def _make_value_head_model(
 
 
 def _get_cuda_device() -> torch.device:
-    if not torch.cuda.is_available():
-        pytest.skip("CUDA tests require at least 1 CUDA GPU.")
-    return torch.device("cuda:0")
+    if (
+        Worker.torch_platform is None
+        or not hasattr(Worker.torch_platform, "is_available")
+        or not Worker.torch_platform.is_available()
+    ):
+        pytest.skip("Accelerator tests require at least 1 accelerator.")
+    return torch.device(f"{Worker.torch_device_type}:0")
 
 
 def _assert_state_dict_equal(
@@ -707,6 +712,8 @@ def test_patch_weight_syncer_preserves_nonfloating_buffers():
 
 
 def test_patch_weight_syncer_roundtrip_cuda_nvcomp():
+    if Worker.accelerator_type != AcceleratorType.NV_GPU:
+        pytest.skip("CUDA nvcomp tests require NV_GPU.")
     device = _get_cuda_device()
     pytest.importorskip("nvidia.nvcomp")
 

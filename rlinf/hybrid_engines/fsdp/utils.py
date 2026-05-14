@@ -61,18 +61,10 @@ class FSDPVersion(str, Enum):
     FSDP2 = "fsdp2"
 
 
-def create_device_mesh(world_size, fsdp_size):
-    if fsdp_size < 0 or fsdp_size >= world_size:
-        device_mesh = init_device_mesh(
-            Worker.torch_device_type, mesh_shape=(world_size,), mesh_dim_names=["fsdp"]
-        )
-    else:
-        device_mesh = init_device_mesh(
-            Worker.torch_device_type,
-            mesh_shape=(world_size // fsdp_size, fsdp_size),
-            mesh_dim_names=["ddp", "fsdp"],
-        )
-    return device_mesh
+def create_device_mesh(world_size):
+    return init_device_mesh(
+        Worker.torch_device_type, mesh_shape=(world_size,), mesh_dim_names=["fsdp"]
+    )
 
 
 def init_fn(x: torch.nn.Module):

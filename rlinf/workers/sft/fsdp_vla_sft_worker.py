@@ -22,6 +22,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from rlinf.config import SupportedModel
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.utils.pytree import register_pytree_dataclasses
+from rlinf.utils.utils import get_rng_state, set_rng_state
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
 
@@ -141,6 +142,14 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
             torch.distributed.barrier()
 
+        rng_state = get_rng_state()
+        all_rng_states = [None] * self._world_size
+        torch.distributed.all_gather_object(all_rng_states, rng_state)
+        if self._rank == 0:
+            torch.save(all_rng_states, os.path.join(save_path, "rng.pt"))
+
+        torch.distributed.barrier()
+
     def load_checkpoint(self, load_path: str) -> None:
         super().load_checkpoint(load_path)
 
@@ -150,6 +159,12 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             )
             state = all_states[self._rank]
             self.data_loader.load_state_dict(state)
+            self.data_iter = iter(self.data_loader)
+
+        rng_path = os.path.join(load_path, "rng.pt")
+        if os.path.exists(rng_path):
+            all_rng_states = torch.load(rng_path, weights_only=False)
+            set_rng_state(all_rng_states[self._rank])
 
         torch.distributed.barrier()
 

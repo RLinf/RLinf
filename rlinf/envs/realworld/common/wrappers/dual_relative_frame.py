@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Relative-frame wrappers for dual-arm environments with dual-arm tcp_pose.
+"""Relative-frame wrappers for dual-arm (14-dim tcp_pose) Franka environments.
 
 These wrappers mirror :class:`RelativeFrame` and :class:`RelativeTargetFrame`
-but operate on concatenated dual-arm tcp poses. Each arm's adjoint /
-homogeneous transform is computed independently. Optional per-arm gripper
-channels are preserved and not used in pose transforms.
+but operate on the concatenated ``(14,)`` tcp_pose produced by
+:class:`DualFrankaEnv`.  Each arm's adjoint / homogeneous transform is
+computed independently.
 """
 
 import gymnasium as gym
@@ -35,7 +35,7 @@ NUM_ARMS = 2
 
 class DualRelativeFrame(gym.Wrapper):
     """Transform observations and actions between base and end-effector frames
-    for a dual-arm environment with ``(14,)`` or ``(16,)`` tcp_pose.
+    for a dual-arm environment with ``(14,)`` tcp_pose.
 
     The adjoint matrix is maintained per arm.  Actions are expected to be
     ``(12,)`` (no gripper) or ``(14,)`` (with gripper), laid out as
@@ -66,12 +66,11 @@ class DualRelativeFrame(gym.Wrapper):
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
         tcp_pose = obs["state"]["tcp_pose"]
-        arm_dim = self._arm_pose_dim(tcp_pose)
 
         self._update_adjoint(tcp_pose)
         if self.include_relative_pose:
             for arm in range(NUM_ARMS):
-                pose7, _ = self._split_arm_pose_tail(tcp_pose, arm, arm_dim)
+                pose7 = tcp_pose[arm * 7 : arm * 7 + 7]
                 self.T_b_r_invs[arm] = np.linalg.inv(
                     construct_homogeneous_matrix(pose7)
                 )
@@ -81,30 +80,10 @@ class DualRelativeFrame(gym.Wrapper):
     # -------------------------------------------------------------- #
 
     def _update_adjoint(self, tcp_pose: np.ndarray):
-        arm_dim = self._arm_pose_dim(tcp_pose)
         for arm in range(NUM_ARMS):
-            pose7, _ = self._split_arm_pose_tail(tcp_pose, arm, arm_dim)
-            self.adjoint_matrices[arm] = construct_adjoint_matrix(pose7)
-
-    @staticmethod
-    def _arm_pose_dim(tcp_pose: np.ndarray) -> int:
-        if tcp_pose.shape[0] not in (14, 16):
-            raise ValueError(
-                "DualRelativeFrame expects tcp_pose shape (14,) or (16,), "
-                f"got {tcp_pose.shape}."
+            self.adjoint_matrices[arm] = construct_adjoint_matrix(
+                tcp_pose[arm * 7 : arm * 7 + 7]
             )
-        return tcp_pose.shape[0] // NUM_ARMS
-
-    @staticmethod
-    def _arm_pose(tcp_pose: np.ndarray, arm: int, arm_dim: int) -> np.ndarray:
-        start = arm * arm_dim
-        return tcp_pose[start : start + arm_dim]
-
-    def _split_arm_pose_tail(
-        self, tcp_pose: np.ndarray, arm: int, arm_dim: int
-    ) -> tuple[np.ndarray, np.ndarray]:
-        pose = self._arm_pose(tcp_pose, arm, arm_dim)
-        return pose[:7], pose[7:]
 
     def _right_arm_motion_slice(self, action: np.ndarray) -> slice:
         """Return the slice for the right arm's 6D motion in *action*.
@@ -119,13 +98,12 @@ class DualRelativeFrame(gym.Wrapper):
     def transform_observation(self, obs: dict) -> dict:
         """Transform dual-arm observations from base frame to end-effector frame."""
         tcp_pose = obs["state"]["tcp_pose"]
-        arm_dim = self._arm_pose_dim(tcp_pose)
         tcp_vel = obs["state"].get("tcp_vel")
 
         out_pose_parts = []
         out_vel_parts = []
         for arm in range(NUM_ARMS):
-            pose7, tail = self._split_arm_pose_tail(tcp_pose, arm, arm_dim)
+            pose7 = tcp_pose[arm * 7 : arm * 7 + 7]
             adj_inv = np.linalg.inv(self.adjoint_matrices[arm])
 
             if tcp_vel is not None:
@@ -137,7 +115,7 @@ class DualRelativeFrame(gym.Wrapper):
                 T_r_o = self.T_b_r_invs[arm] @ T_b_o
                 p = T_r_o[:3, 3]
                 q = R.from_matrix(T_r_o[:3, :3].copy()).as_quat()
-                out_pose_parts.append(np.concatenate((p, q, tail)))
+                out_pose_parts.append(np.concatenate((p, q)))
 
         if self.include_relative_pose:
             obs["state"]["tcp_pose"] = np.concatenate(out_pose_parts)
@@ -169,10 +147,9 @@ class DualRelativeTargetFrame(DualRelativeFrame):
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
 
-        target = self.env.target_ee_pose  # (14,) or (16,) quaternion form
-        arm_dim = self._arm_pose_dim(target)
+        target = self.env.target_ee_pose  # (14,) quaternion form
         for arm in range(NUM_ARMS):
-            pose7, _ = self._split_arm_pose_tail(target, arm, arm_dim)
+            pose7 = target[arm * 7 : arm * 7 + 7]
             self.adjoint_matrices[arm] = construct_adjoint_matrix(pose7)
             if self.include_relative_pose:
                 self.T_b_r_invs[arm] = np.linalg.inv(

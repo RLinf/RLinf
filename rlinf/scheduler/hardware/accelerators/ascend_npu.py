@@ -100,6 +100,13 @@ class AscendNPUManager(AcceleratorManager):
         """Get the PyTorch platform module."""
         import torch
 
+        # torch.cuda.ipc_collect() exists for inter-process CUDA tensor cleanup;
+        # torch_npu doesn't expose it (NPU has no equivalent IPC mechanism).
+        # Scheduler call sites (collective_group, utils.utils) invoke
+        # `Worker.torch_platform.ipc_collect()` unconditionally, so attach a
+        # no-op when missing instead of guarding every call site.
+        if not hasattr(torch.npu, "ipc_collect"):
+            torch.npu.ipc_collect = lambda: None
         return torch.npu
 
     @staticmethod

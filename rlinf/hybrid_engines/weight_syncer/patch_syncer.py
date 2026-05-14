@@ -21,6 +21,8 @@ from dataclasses import dataclass
 import torch
 from torch.distributed.tensor import DTensor
 
+from rlinf.scheduler import Worker
+
 from .base import (
     RecvFn,
     SendFn,
@@ -191,7 +193,7 @@ class PatchBuilder(ABC):
                 original_shapes,
                 delta_encoding,
             )
-        elif snapshot_device.type == "cuda":
+        elif snapshot_device.type == Worker.torch_device_type:
             return GPUSnapshotPatchBuilder(
                 snapshot,
                 ordered_keys,
@@ -223,7 +225,7 @@ class _PrefetchedCPUSnapshot:
     state_2dview: torch.Tensor
     snapshot_value: torch.Tensor
     snapshot_on_state_device: torch.Tensor
-    copy_done: torch.cuda.Event
+    copy_done: torch.Event
 
 
 @dataclass
@@ -232,7 +234,7 @@ class _PendingSnapshotUpdate:
     rows: torch.Tensor
     cols: torch.Tensor
     values: torch.Tensor
-    copy_done: torch.cuda.Event
+    copy_done: torch.Event
 
 
 class CPUSnapshotPatchBuilder(PatchBuilder):
@@ -249,7 +251,7 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
             original_shapes=original_shapes,
             delta_encoding=delta_encoding,
         )
-        self._copy_streams: dict[torch.device, torch.cuda.Stream] = {}
+        self._copy_streams: dict[torch.device, torch.Stream] = {}
         self._snapshot_flush_executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="patch-snapshot-flush",
@@ -289,12 +291,14 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
             elif patch_device != current.state_2dview.device:
                 raise ValueError(
                     "CPUSnapshotPatchBuilder requires all sender state_dict tensors "
-                    "to be on the same CUDA device. "
+                    "to be on the same accelerator. "
                     f"Expected {patch_device}, got {current.state_2dview.device} "
                     f"for key={current.key}."
                 )
 
-            compute_stream = torch.cuda.current_stream(current.state_2dview.device)
+            compute_stream = Worker.torch_platform.current_stream(
+                current.state_2dview.device
+            )
             compute_stream.wait_event(current.copy_done)
             current.snapshot_on_state_device.record_stream(compute_stream)
 
@@ -380,12 +384,12 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
             pending_snapshot_updates,
         )
 
-    def _get_copy_stream(self, device: torch.device) -> torch.cuda.Stream:
+    def _get_copy_stream(self, device: torch.device | None) -> torch.Stream:
         if device.index is None:
-            device = torch.device(device.type, torch.cuda.current_device())
+            device = torch.device(device.type, Worker.torch_platform.current_device())
         copy_stream = self._copy_streams.get(device)
         if copy_stream is None:
-            copy_stream = torch.cuda.Stream(device=device)
+            copy_stream = Worker.torch_platform.Stream(device=device)
             self._copy_streams[device] = copy_stream
         return copy_stream
 
@@ -403,10 +407,10 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
                 f"expected {expected_shape}, got {value.shape}"
             )
         state_2dview, _ = as_coo_2d_view(value)
-        if state_2dview.device.type != "cuda":
+        if state_2dview.device.type != Worker.torch_device_type:
             raise ValueError(
                 "CPUSnapshotPatchBuilder requires sender state_dict tensors "
-                f"to be on CUDA. Got key={key}, device={state_2dview.device}."
+                f"to be on accelerator. Got key={key}, device={state_2dview.device}."
             )
 
         snapshot_value = self.snapshot[key]
@@ -417,13 +421,13 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
             )
 
         copy_stream = self._get_copy_stream(state_2dview.device)
-        with torch.cuda.stream(copy_stream):
+        with Worker.torch_platform.stream(copy_stream):
             snapshot_on_state_device = snapshot_value.to(
                 device=state_2dview.device,
                 non_blocking=True,
                 copy=True,
             )
-            copy_done = torch.cuda.Event()
+            copy_done = Worker.torch_platform.Event()
             copy_done.record(copy_stream)
 
         return _PrefetchedCPUSnapshot(
@@ -446,12 +450,12 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
         cols_cpu = torch.empty_like(cols, device="cpu", pin_memory=True)
         values_cpu = torch.empty_like(values, device="cpu", pin_memory=True)
 
-        with torch.cuda.device(values.device):
-            stream = torch.cuda.current_stream(values.device)
+        with Worker.torch_platform.device(values.device):
+            stream = Worker.torch_platform.current_stream(values.device)
             rows_cpu.copy_(rows, non_blocking=True)
             cols_cpu.copy_(cols, non_blocking=True)
             values_cpu.copy_(values, non_blocking=True)
-            copy_done = torch.cuda.Event()
+            copy_done = Worker.torch_platform.Event()
             copy_done.record(stream)
 
         return _PendingSnapshotUpdate(
@@ -495,21 +499,21 @@ class GPUSnapshotPatchBuilder(PatchBuilder):
                     f"expected {expected_shape}, got {value.shape}"
                 )
             value_2dview, _ = as_coo_2d_view(value)
-            if value_2dview.device.type != "cuda":
+            if value_2dview.device.type != Worker.torch_device_type:
                 raise ValueError(
                     "GPUSnapshotPatchBuilder requires sender state_dict tensors "
-                    f"to be on CUDA. Got key={key}, device={value_2dview.device}."
+                    f"to be on accelerator. Got key={key}, device={value_2dview.device}."
                 )
 
             snapshot_value = self.snapshot[key]
-            if snapshot_value.device.type != "cuda":
+            if snapshot_value.device.type != Worker.torch_device_type:
                 raise ValueError(
-                    "GPUSnapshotPatchBuilder requires snapshots to be on CUDA. "
+                    "GPUSnapshotPatchBuilder requires snapshots to be on accelerator. "
                     f"Got key={key}, device={snapshot_value.device}."
                 )
             if snapshot_value.device != value_2dview.device:
                 raise ValueError(
-                    "GPU snapshot and state tensor must be on the same CUDA device. "
+                    "GPU snapshot and state tensor must be on the same accelerator. "
                     f"Got key={key}, snapshot={snapshot_value.device}, "
                     f"state={value_2dview.device}."
                 )
@@ -573,7 +577,7 @@ class PatchWeightSyncer(WeightSyncer):
     def __init__(
         self,
         snapshot_device: torch.device | str = "cpu",
-        transport_device: torch.device | str = "cuda",
+        transport_device: torch.device | str = None,
         delta_encoding: bool = True,
         compression_algorithm: str = "none",
         init_sync_enabled: bool = False,
@@ -727,15 +731,15 @@ class PatchWeightSyncer(WeightSyncer):
                     )
                 if (
                     self.snapshot_device.type == "cpu"
-                    and value_2dview.device.type != "cuda"
+                    and value_2dview.device.type != Worker.torch_device_type
                 ):
                     raise ValueError(
                         "CPU snapshot patch sync requires sender state_dict tensors "
-                        f"to be on CUDA. Got key={key}, device={value_2dview.device}."
+                        f"to be on accelerator. Got key={key}, device={value_2dview.device}."
                     )
                 snapshot_device = (
                     value_2dview.device
-                    if self.snapshot_device.type == "cuda"
+                    if self.snapshot_device.type == Worker.torch_device_type
                     and self.snapshot_device.index is None
                     else self.snapshot_device
                 )

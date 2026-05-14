@@ -210,14 +210,6 @@ jobs:
             exit 1
           fi
 
-
-  # =============================================== install tests ====================================================
-
-  install-tests:
-    needs: [check-changes]
-    if: needs.check-changes.outputs.install_filter == 'true'
-    uses: ./.github/workflows/install.yml
-
   # =============================================== docker tests ====================================================
 
   docker-tests:
@@ -266,7 +258,6 @@ jobs:
     needs: [
       check-changes,
       filter-coverage-test,
-      install-tests,
       docker-tests,
       unit-tests,
       agent-reason-e2e-tests,
