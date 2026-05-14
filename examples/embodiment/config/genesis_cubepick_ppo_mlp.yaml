@@ -3,6 +3,7 @@ defaults:
   - env/genesis_cubepick@env.eval
   - model/mlp_policy@actor.model
   - training_backend/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
 hydra:
@@ -26,7 +27,7 @@ runner:
     logger_backends: ["tensorboard"]
 
   # max_epochs: 100
-  max_epochs: 400
+  max_epochs: 200
   max_steps: -1
 
   only_eval: False
@@ -87,7 +88,7 @@ env:
 
   train:
     # total_num_envs: 128
-    total_num_envs: 1024
+    total_num_envs: 128
     group_size: ${algorithm.group_size}
     # max_steps_per_rollout_epoch: 200
     max_episode_steps: 50 # max episode steps for truncation
@@ -129,8 +130,8 @@ rollout:
 actor:
   group_name: ActorGroup
   training_backend: fsdp
-  micro_batch_size: 2560    #51200 整除
-  global_batch_size: 2560
+  micro_batch_size: 128    #51200 整除
+  global_batch_size: 256
   seed: 1234
   enable_offload: False
 

@@ -43,12 +43,16 @@ init_params:
     - 0.5
   camera_fov: 30
   # Task
-  success_height: 0.10
   success_hold_steps: 3
   grasp_dist_threshold: 0.08
+  # Reward 1: nonlinear approach reward
+  approach_reward_scale: 1.0
+  approach_reward_sharpness: 6.0
+  # Reward 2: huge bonus once gripper grasps cube stably
+  grasp_success_reward: 100.0
   cube_x_range:
     - 0.45
-    - 0.80
+    - 0.65
   cube_y_range:
     - -0.25
     - 0.25

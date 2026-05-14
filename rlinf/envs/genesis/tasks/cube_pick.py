@@ -33,7 +33,9 @@ _HOME_QPOS = [0.0, -0.4, 0.0, -2.2, 0.0, 2.0, 0.8, 0.04, 0.04]
 _CUBE_SIZE = (0.04, 0.04, 0.04)
 _CUBE_DEFAULT_POS = (0.65, 0.0, 0.02)
 
-_DEFAULT_SUCCESS_HEIGHT = 0.20
+_DEFAULT_APPROACH_REWARD_SCALE = 1.0
+_DEFAULT_APPROACH_REWARD_SHARPNESS = 6.0
+_DEFAULT_GRASP_SUCCESS_REWARD = 100.0
 
 _CAMERA_POS = (3.5, 0.0, 2.5)
 _CAMERA_LOOKAT = (0.0, 0.0, 0.5)
@@ -50,7 +52,6 @@ class CubePickTask(GenesisTaskBase):
     * ``cube_size`` (list[float]): Cube half-extents ``[x, y, z]``.
     * ``cube_x_range`` (list[float]): Uniform sample range for cube x.
     * ``cube_y_range`` (list[float]): Uniform sample range for cube y.
-    * ``success_height`` (float): z threshold for success.
     * ``camera_height`` (int): Camera resolution height.
     * ``camera_width`` (int): Camera resolution width.
     * ``dt`` (float): Simulation time-step.
@@ -62,13 +63,14 @@ class CubePickTask(GenesisTaskBase):
         super().__init__()
         self.cube: Any = None
         self._rng: np.random.Generator | None = None
-        self._success_height: float = _DEFAULT_SUCCESS_HEIGHT
         self._cube_x_range: tuple[float, float] = (0.45, 0.80)
         self._cube_y_range: tuple[float, float] = (-0.25, 0.25)
-        self._initial_cube_z: float = _CUBE_SIZE[2] / 2.0
         self._success_hold_steps: int = 3
         self._grasp_dist_threshold: float = 0.08
         self._success_hold_counter: torch.Tensor | None = None
+        self._approach_reward_scale: float = _DEFAULT_APPROACH_REWARD_SCALE
+        self._approach_reward_sharpness: float = _DEFAULT_APPROACH_REWARD_SHARPNESS
+        self._grasp_success_reward: float = _DEFAULT_GRASP_SUCCESS_REWARD
 
     def build_scene(self, scene, cfg) -> None:
         """Add Franka, cube, plane and camera to the scene."""
@@ -132,15 +134,21 @@ class CubePickTask(GenesisTaskBase):
             _NUM_MOTOR_DOFS, _NUM_MOTOR_DOFS + _NUM_FINGER_DOFS
         )
 
-        self._success_height = float(
-            init_params.get("success_height", _DEFAULT_SUCCESS_HEIGHT)
-        )
-        self._initial_cube_z = float(
-            init_params.get("initial_cube_z", _CUBE_SIZE[2] / 2.0)
-        )
         self._success_hold_steps = int(init_params.get("success_hold_steps", 3))
         self._grasp_dist_threshold = float(
             init_params.get("grasp_dist_threshold", 0.08)
+        )
+        self._approach_reward_scale = float(
+            init_params.get("approach_reward_scale", _DEFAULT_APPROACH_REWARD_SCALE)
+        )
+        self._approach_reward_sharpness = float(
+            init_params.get(
+                "approach_reward_sharpness",
+                _DEFAULT_APPROACH_REWARD_SHARPNESS,
+            )
+        )
+        self._grasp_success_reward = float(
+            init_params.get("grasp_success_reward", _DEFAULT_GRASP_SUCCESS_REWARD)
         )
         self._cube_x_range = tuple(init_params.get("cube_x_range", self._cube_x_range))
         self._cube_y_range = tuple(init_params.get("cube_y_range", self._cube_y_range))
@@ -243,7 +251,7 @@ class CubePickTask(GenesisTaskBase):
 
     def _compute_task_signals(
         self, num_envs: int
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         cube_pos = self.cube.get_pos()
 
         eef_pos = self.eef_link.get_pos()
@@ -264,27 +272,24 @@ class CubePickTask(GenesisTaskBase):
         # During a stable grasp, fingers are not fully open.
         gripper_not_fully_open = (gripper[:, 0] < 0.04) & (gripper[:, 1] < 0.04)
         is_grasped = lf_contact & rf_contact & gripper_not_fully_open
-        return dist, z_height, is_grasped
+        is_contact = lf_contact | rf_contact
+        return dist, z_height, is_grasped, is_contact
 
     def compute_reward(self, scene, num_envs: int) -> tuple[torch.Tensor, torch.Tensor]:
-        """Compute dense shaped rewards for reaching, grasping, and lifting."""
-        dist, z_height, is_grasped = self._compute_task_signals(num_envs)
-        reaching_reward = 1.0 - torch.tanh(2.0 * dist)
-        grasp_reward = is_grasped.float() * 5.0
+        """Compute reward: approach bonus + large success bonus on stable grasp."""
+        dist, _z_height, is_grasped, _is_contact = self._compute_task_signals(num_envs)
         is_close = dist < self._grasp_dist_threshold
-        lifting_reward = (
-            torch.clamp(z_height - self._initial_cube_z, min=0.0)
-            * 10.0
-            * is_close.float()
+        success_instant = is_grasped & is_close
+
+        # Reward 1: nonlinear exponential bonus for approaching the cube.
+        approach_reward = self._approach_reward_scale * torch.exp(
+            -self._approach_reward_sharpness * dist
         )
-        # Instantaneous success is strict; final success still uses hold steps in
-        # compute_step_outcomes() to avoid one-frame spikes.
-        success = (z_height > self._success_height) & is_grasped & is_close
-        success_bonus = success.float() * 20.0
+        # Reward 2: very large bonus when the gripper stably grasps the cube.
+        grasp_success_reward = self._grasp_success_reward * success_instant.float()
 
-        reward = reaching_reward + grasp_reward + lifting_reward + success_bonus
-
-        return reward, success.bool()
+        reward = approach_reward + grasp_success_reward
+        return reward, success_instant.bool()
 
     def compute_step_outcomes(
         self,
@@ -307,12 +312,13 @@ class CubePickTask(GenesisTaskBase):
         terminations = success.bool()
         truncations = elapsed_steps >= max_episode_steps
 
-        dist, z_height, is_grasped = self._compute_task_signals(num_envs)
+        dist, z_height, is_grasped, is_contact = self._compute_task_signals(num_envs)
         infos: dict[str, Any] = {
             "success": success,
             "success_instant": success_instant,
             "success_hold_counter": self._success_hold_counter.clone(),
             "is_grasped": is_grasped,
+            "is_contact": is_contact,
             "z_height": z_height,
             "eef_cube_dist": dist,
         }
