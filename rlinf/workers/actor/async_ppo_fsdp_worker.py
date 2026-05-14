@@ -91,8 +91,10 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
     def _recv_rollout_thread_main(self, input_channel):
         while not self.should_stop:
             trajectory: Trajectory = input_channel.get()
-            print(f"{trajectory.versions.shape} trajectory.versions")
-            print(f"{input_channel.qsize()} input_channel.qsize()")
+            self.log_info(
+                f"recv trajectory versions.shape={trajectory.versions.shape} "
+                f"input_channel.qsize={input_channel.qsize()}"
+            )
             if trajectory.versions.min() < self.version - self.cfg.algorithm.get("staleness_threshold", None):
                 continue
             self._recv_queue.put(trajectory)
@@ -101,13 +103,17 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         while True:
             try:
                 traj: Trajectory = self._recv_queue.get_nowait()
-                print(f"{traj.versions.shape=} {self.version=}")
-                print(f"{self._recv_queue.qsize()} self._recv_queue.size()")
-                # TODO: FIX
+                self.log_info(
+                    f"drain traj versions.shape={traj.versions.shape} "
+                    f"versions.min={traj.versions.min()} version={self.version} "
+                    f"recv_queue.size={self._recv_queue.qsize()}"
+                )
                 if traj.versions.min() < self.version - self.cfg.algorithm.get("staleness_threshold", None):
                     continue
-                self.rollout_store.add(traj.versions.min(), traj)
-                print(f"{len(self.rollout_store)} rollout_store")
+                min_v = float(traj.versions.min().item())
+                mean_v = float(traj.versions.float().mean().item())
+                self.rollout_store.add((min_v, mean_v), traj)
+                self.log_info(f"rollout_store size={len(self.rollout_store)}")
             except queue.Empty:
                 break
 
@@ -115,17 +121,21 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         while getattr(self, "_recv_queue", None) is None:
             await asyncio.sleep(1)
 
-        on_policy_min_count = self.cfg.algorithm.get("on_policy_min_count", 0)
+        on_policy_min_ratio = self.cfg.algorithm.get("on_policy_min_ratio", 0.0)
         while True:
             self._drain_received_trajectories()
             self.rollout_store.remove_below(self.version - self.cfg.algorithm.get("staleness_threshold", None))
             if len(self.rollout_store) >= self.rollout_store_size:
-                if on_policy_min_count < 0:
+                if on_policy_min_ratio <= 0.0:
                     break
                 metrics_data = self.rollout_store.get_metric()
-                on_policy_count = metrics_data.get(self.version, {}).get("count", 0)
-                print(f"{metrics_data=} {on_policy_count=} {on_policy_min_count=}")
-                if on_policy_count >= on_policy_min_count:
+                on_policy_ratio = metrics_data.get(int(self.version), {}).get("ratio", 0.0)
+                self.log_info(
+                    f"rollout store metrics={metrics_data} "
+                    f"on_policy_ratio={on_policy_ratio:.4f} "
+                    f"on_policy_min_ratio={on_policy_min_ratio}"
+                )
+                if on_policy_ratio >= on_policy_min_ratio:
                     break
             await asyncio.sleep(1)
 
@@ -135,16 +145,17 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         torch.distributed.barrier()
 
         rollout_batch = self.rollout_store.topn(self.rollout_store_size)
-        priority_metrics = self.rollout_store.get_metric()
+        version_metrics = self.rollout_store.get_metric()
+        self.log_info(f"rollout store version metrics={version_metrics}")
 
         staleness_metrics: dict = {}
-        for priority, stats in priority_metrics.items():
-            diff = int(self.version - priority)
-            staleness_metrics[f"data_staleness_{diff}/count"] = stats["count"]
+        for version_val, stats in version_metrics.items():
+            diff = int(self.version) - int(version_val)
             staleness_metrics[f"data_staleness_{diff}/ratio"] = stats["ratio"]
 
         self.rollout_batch = convert_trajectories_to_batch(rollout_batch)
         self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
+        self.log_info(f"staleness metrics={staleness_metrics}")
         return staleness_metrics
 
     @torch.inference_mode()
