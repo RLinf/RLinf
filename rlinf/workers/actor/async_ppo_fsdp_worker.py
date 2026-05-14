@@ -115,11 +115,18 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         while getattr(self, "_recv_queue", None) is None:
             await asyncio.sleep(1)
 
+        on_policy_min_count = self.cfg.algorithm.get("on_policy_min_count", 0)
         while True:
             self._drain_received_trajectories()
             self.rollout_store.remove_below(self.version - self.cfg.algorithm.get("staleness_threshold", None))
             if len(self.rollout_store) >= self.rollout_store_size:
-                break
+                if on_policy_min_count < 0:
+                    break
+                metrics_data = self.rollout_store.get_metric()
+                on_policy_count = metrics_data.get(self.version, {}).get("count", 0)
+                print(f"{metrics_data=} {on_policy_count=} {on_policy_min_count=}")
+                if on_policy_count >= on_policy_min_count:
+                    break
             await asyncio.sleep(1)
 
     async def construct_rollout_batch(self, max_trajectories: int | None = None):

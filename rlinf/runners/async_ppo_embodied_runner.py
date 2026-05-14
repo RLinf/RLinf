@@ -145,11 +145,11 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
                     actor_training_handle = self.actor.run_training()
                     training_metrics = actor_training_handle.wait()
 
-                with self.timer("update_rollout_weights"):
-                    self.update_rollout_weights()
 
                 self.global_step += 1
                 self.actor.set_global_step(self.global_step).wait()
+                with self.timer("update_rollout_weights"):
+                    self.update_rollout_weights()
                 self.rollout.set_global_step(self.global_step).wait()
 
             time_metrics = self.timer.consume_durations()
