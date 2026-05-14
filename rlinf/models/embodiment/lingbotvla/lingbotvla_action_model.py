@@ -33,7 +33,7 @@ from lingbotvla.models.vla.pi0.modeling_lingbot_vla import (
     LingbotVlaPolicy,
     make_att_2d_masks,
 )
-from torch.utils import _pytree
+from torch.utils._pytree import tree_map
 from transformers import AutoProcessor
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
@@ -876,7 +876,7 @@ class LingbotvlaActionModel(nn.Module, BasePolicy):
     def sft_forward(self, data, **kwargs):
         device = next(iter(self.vla_model.model.parameters())).device
 
-        data = _pytree.tree_map(
+        data = tree_map(
             lambda x: (
                 torch.as_tensor(x, device=device).contiguous()
                 if isinstance(x, torch.Tensor)

@@ -35,7 +35,7 @@ data:
   train_data_paths: path/to/datasets/DreamZero-DROID-Data
   lazy_load: True
   num_workers: 4
-  prefetch_factor: 4
+  prefetch_factor: 8
   video_tolerance_s: 0.1
   parquet_cache_size: 512
 
@@ -65,16 +65,16 @@ actor:
     dreamzero_num_video_frames: 33
     relative_action_keys:
       - joint_position
-    cfg_mode: false
+    cfg_mode: False
     unconditional_prob: 0.3
     action_loss_scale: 1.0
     pretrained_model_path: null
-    add_value_head: false
+    add_value_head: False
     is_lora: False
     embodiment_tag: "oxe_droid"
-    relative_action: true
-    relative_action_per_horizon: false
-
+    relative_action: True
+    relative_action_per_horizon: False
+    gradient_checkpointing: False
     load_to_device: False
 
   optim:
@@ -94,7 +94,7 @@ actor:
     strategy: "fsdp2"
     sharding_strategy: "full_shard"
     use_orig_params: True
-    gradient_checkpointing: True
+    gradient_checkpointing: False
     limit_all_gathers: True
     reshard_after_forward: True
     save_full_model_weights: False

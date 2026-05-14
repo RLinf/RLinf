@@ -1,11 +1,11 @@
 ---
 name: add-install-docker-ci-e2e
-description: Adds install command in install script, Docker build stage in Dockerfile, and CI jobs for docker build, install script, and embodied e2e test when introducing a new model or environment in RLinf. Use when adding a new embodied model (e.g. dexbotic), new env (e.g. maniskill_libero), or new model+env combination that should be installable, dockerized, and tested in CI.
+description: Adds install command in install script, Docker build stage in Dockerfile, and CI jobs for docker build and embodied e2e test when introducing a new model or environment in RLinf. Use when adding a new embodied model (e.g. dexbotic), new env (e.g. maniskill_libero), or new model+env combination that should be installable, dockerized, and tested in CI.
 ---
 
 # Add Install, Docker Build, and CI for a New Model or Environment
 
-Use this skill when adding a **new model** or **new environment** (or combination) to RLinf so that: (1) users can install it via `requirements/install.sh`, (2) a Docker image can be built for it (optional), (3) CI runs install, Docker build, and an end-to-end test.
+Use this skill when adding a **new model** or **new environment** (or combination) to RLinf so that: (1) users can install it via `requirements/install.sh`, (2) a Docker image can be built for it (optional), (3) CI runs a Docker build and an end-to-end test.
 
 ---
 
@@ -57,19 +57,7 @@ Copy an existing `build-embodied-*` job and replace the target name. See [refere
 
 ---
 
-## 4. CI: Install script (`.github/workflows/install.yml`)
-
-Add an “Install <model>-<env>” step (or “Install <model>” with one or more envs) in the `build` job:
-
-- `pip install uv` (and `uv cache prune --ci` if desired).
-- `bash requirements/install.sh embodied --model <model> --env <env>` (add `TEST_BUILD=1` only if the install script is designed to support it for that target).
-- `rm -rf .venv` before the next install.
-
-For multiple envs for the same model, use multiple `install.sh` calls, each followed by `rm -rf .venv`. For special runners (e.g. Franka on Ubuntu 20.04), follow the existing `build-franka` pattern (container image, env vars, loop over versions if any).
-
----
-
-## 5. CI: Embodied e2e test (`.github/workflows/embodied-e2e-tests.yml`)
+## 4. CI: Embodied e2e test (`.github/workflows/embodied-e2e-tests.yml`)
 
 - **Test config**  
   Add a YAML config under `tests/e2e_tests/embodied/` (e.g. `<env>_<algo>_<model>.yaml`). The e2e runner is `train_embodied_agent.py` with `--config-name <name>`; the config name is the filename without `.yaml`.
@@ -90,5 +78,4 @@ Use `runs-on: embodied` so the job runs on a runner with GPU/datasets. See exist
 - [ ] **Install script**: Model in `SUPPORTED_MODELS` and/or env in `SUPPORTED_ENVS`; `install_*` function and `case "$MODEL"` (or env) updated.
 - [ ] **Dockerfile**: `base-image-embodied-<target>` if needed; `embodied-<target>-image` stage with `install.sh` and default venv. If multiple envs: all install.sh calls chained in one RUN (for uv hardlink).
 - [ ] **docker-build.yml**: New job `build-embodied-<target>` with `BUILD_TARGET=embodied-<target>`.
-- [ ] **install.yml**: New install step(s) for the new model/env.
 - [ ] **E2e**: Config YAML in `tests/e2e_tests/embodied/`; new job in `embodied-e2e-tests.yml` (install env, run `run.sh <config_name>`, clean up).

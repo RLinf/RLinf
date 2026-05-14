@@ -622,6 +622,20 @@ class EmbodiedRolloutResult:
         self.curr_obs.append(curr_obs)
         self.next_obs.append(next_obs)
 
+    def clear(self):
+        self.actions.clear()
+        self.intervene_flags.clear()
+        self.rewards.clear()
+        self.terminations.clear()
+        self.truncations.clear()
+        self.dones.clear()
+        self.prev_logprobs.clear()
+        self.prev_values.clear()
+        self.versions.clear()
+        self.forward_inputs.clear()
+        self.curr_obs.clear()
+        self.next_obs.clear()
+
     def to_trajectory(self) -> Trajectory:
         # return [trajectory_length, B, ...]
         trajectory = Trajectory(
@@ -727,6 +741,7 @@ class EmbodiedRolloutResult:
                     f"Unsupported value type: {type(value)} for field_name: {field_name}"
                 )
 
+        del all_trajectory
         return splited_trajectories
 
 

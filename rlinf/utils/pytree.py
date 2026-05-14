@@ -30,7 +30,10 @@ def register_pytree_dataclass_type(cls: type[Any]) -> None:
     field_names = tuple(field.name for field in fields(cls))
 
     def _flatten(instance: Any):
-        return [getattr(instance, name) for name in field_names], field_names
+        k_v_pairs = [(name, getattr(instance, name)) for name in field_names]
+        values = [v for _, v in k_v_pairs if v is not None]
+        keys = [k for k, v in k_v_pairs if v is not None]
+        return values, keys
 
     def _unflatten(values: list[Any], context: tuple[str, ...]):
         kwargs = dict(zip(context, values))

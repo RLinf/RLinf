@@ -760,18 +760,6 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
 
     async def sync_model_to_rollout(self) -> None:
         """Sync policy weights to rollout workers using the configured weight syncer."""
-
-        if not self._weight_dst_rank_in_rollout:
-            self.log_debug(
-                f"Actor rank {self._rank} has no rollout weight-sync destination."
-            )
-            if self.enable_offload:
-                if not self.is_optimizer_offloaded:
-                    self.offload_optimizer()
-                if not self.is_weight_offloaded:
-                    self.offload_param_and_grad(True)
-            return
-
         if self.enable_offload:
             if not self.is_optimizer_offloaded:
                 self.offload_optimizer()

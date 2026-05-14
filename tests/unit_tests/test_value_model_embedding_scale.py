@@ -56,6 +56,7 @@ def test_value_model_does_not_rescale_gemma3_language_embeddings(monkeypatch):
     """Gemma3 embed_tokens already applies sqrt(hidden_size) internally."""
     torch = pytest.importorskip("torch")
     pytest.importorskip("transformers")
+    pytest.importorskip("transformers.Gemma3ForCausalLM")
 
     ValueCriticModel = _load_value_critic_model(monkeypatch)
 
