@@ -12,12 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from ast import List
+import asyncio
 import os
+import queue
 from typing import Any, Optional
 
+import threading
 import numpy as np
+from rlinf.data.embodied_io_struct import Trajectory
 import torch
 
+from rlinf.scheduler import Worker
+from rlinf.data.priority_store import PriorityStore
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.config import SupportedModel
 from rlinf.utils.distributed import all_reduce_dict, masked_normalization
@@ -25,6 +32,7 @@ from rlinf.utils.metric_utils import append_to_dict, compute_rollout_metrics
 from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
 from rlinf.utils.utils import clear_memory, masked_mean, reshape_entropy
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
+from rlinf.data.embodied_io_struct import convert_trajectories_to_batch
 
 
 def flatten_rollout_batch_for_train(
@@ -59,6 +67,70 @@ def flatten_rollout_batch_for_train(
 
 class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
     """Embodied FSDP actor worker for async PPO / decoupled actor-critic training."""
+    should_stop = False
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.rollout_store_size = self.cfg.algorithm.get("rollout_store_size_per_rank", 1)
+        self.rollout_store = PriorityStore(maxsize=self.rollout_store_size)
+
+    async def recv_rollout_trajectories(self, input_channel):
+        # drain channel
+        if getattr(self, "_recv_queue", None) is None:
+            self._recv_queue = queue.Queue()
+        if (
+            getattr(self, "_recv_rollout_thread", None) is None
+            or not self._recv_rollout_thread.is_alive()
+        ):
+            self._recv_rollout_thread = threading.Thread(
+                target=self._recv_rollout_thread_main,
+                args=(input_channel,),
+                daemon=True,
+            )
+            self._recv_rollout_thread.start()
+
+    def _recv_rollout_thread_main(self, input_channel):
+        while not self.should_stop:
+            trajectory: Trajectory = input_channel.get()
+            print(f"{trajectory.versions.shape} trajectory.versions")
+            print(f"{input_channel.qsize()} input_channel.qsize()")
+            if trajectory.versions.min() < self.version - self.cfg.algorithm.get("staleness_threshold", None):
+                continue
+            self._recv_queue.put(trajectory)
+
+    def _drain_received_trajectories(self):
+        while True:
+            try:
+                traj: Trajectory = self._recv_queue.get_nowait()
+                print(f"{traj.versions.shape=} {self.version=}")
+                print(f"{self._recv_queue.qsize()} self._recv_queue.size()")
+                # TODO: FIX
+                if traj.versions.min() < self.version - self.cfg.algorithm.get("staleness_threshold", None):
+                    continue
+                self.rollout_store.add(traj.versions.min(), traj)
+                print(f"{len(self.rollout_store)} rollout_store")
+            except queue.Empty:
+                break
+
+    async def _wait_for_rollout_store_ready(self):
+        while getattr(self, "_recv_queue", None) is None:
+            await asyncio.sleep(1)
+
+        while True:
+            self._drain_received_trajectories()
+            self.rollout_store.remove_below(self.version - self.cfg.algorithm.get("staleness_threshold", None))
+            if len(self.rollout_store) >= self.rollout_store_size:
+                break
+            await asyncio.sleep(1)
+
+    async def construct_rollout_batch(self, max_trajectories: int | None = None):
+        # from _recv_queue to rollout_batch
+        await self._wait_for_rollout_store_ready()
+        torch.distributed.barrier()
+
+        rollout_batch = self.rollout_store.topn(self.rollout_store_size)
+        self.rollout_batch = convert_trajectories_to_batch(rollout_batch)
+        self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
+
 
     @torch.inference_mode()
     def compute_advantages_and_returns(self) -> dict[str, torch.Tensor]:
