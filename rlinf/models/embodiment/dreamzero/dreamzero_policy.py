@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -80,7 +81,7 @@ class DreamZeroPolicy(VLA, BasePolicy):
     _no_split_modules = [
         "T5SelfAttention",  # text encoder
         "AttentionBlock",  # vae
-        "CausalWanModel", # action head
+        "CausalWanModel",  # action head
         "CausalWanAttentionBlock",  # action head layer
     ]
 
@@ -98,15 +99,17 @@ class DreamZeroPolicy(VLA, BasePolicy):
             enabled = True
             use_reentrant = gradient_checkpointing_kwargs.get("use_reentrant", True)
 
-            if diffusion_model is not None:
-                if hasattr(diffusion_model, "_set_gradient_checkpointing"):
-                    diffusion_model._set_gradient_checkpointing(
-                        diffusion_model, enabled
-                    )
-                elif hasattr(diffusion_model, "gradient_checkpointing"):
-                    diffusion_model.gradient_checkpointing = enabled
+            if diffusion_model is None:
+                raise ValueError("DreamZero policy must have action_head.")
 
-            setattr(diffusion_model, 'gradient_checkpointing_use_reentrant', use_reentrant)
+            if hasattr(diffusion_model, "_set_gradient_checkpointing"):
+                diffusion_model._set_gradient_checkpointing(diffusion_model, enabled)
+            elif hasattr(diffusion_model, "gradient_checkpointing"):
+                diffusion_model.gradient_checkpointing = enabled
+
+            setattr(
+                diffusion_model, "gradient_checkpointing_use_reentrant", use_reentrant
+            )
 
             logging.warning(
                 "DreamZero gradient checkpointing is enabled. If you encounter errors "
@@ -340,7 +343,6 @@ class DreamZeroPolicy(VLA, BasePolicy):
             raise NotImplementedError
 
     def sft_forward(self, data=None, **kwargs):
-
         # Mark the start of each training iteration so PyTorch knows when
         # to reclaim memory held by CUDA graphs from the previous iteration.
         torch.compiler.cudagraph_mark_step_begin()
