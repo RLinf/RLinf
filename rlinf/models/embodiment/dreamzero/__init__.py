@@ -89,10 +89,6 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         "rlinf.models.embodiment.dreamzero.patch.wan_causal_model_forward_train._forward_train",
     )
     Patcher.add_patch(
-        "groot.vla.data.schema.embodiment_tags.EmbodimentTag",
-        "rlinf.models.embodiment.dreamzero.patch.embodiment_tags.EmbodimentTag",
-    )
-    Patcher.add_patch(
         "groot.vla.model.dreamzero.transform.dreamzero_cotrain.collate",
         "rlinf.models.embodiment.dreamzero.patch.dreamzero_cotrain.collate",
     )
