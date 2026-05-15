@@ -255,9 +255,15 @@ class FSDPModelManager:
             self._logger.info(
                 f"[FSDP] Enabling gradient checkpointing with use_reentrant={use_reentrant}"
             )
-            module.gradient_checkpointing_enable(
-                gradient_checkpointing_kwargs={"use_reentrant": use_reentrant}
-            )
+            if use_reentrant:
+                # use_reentrant=True is the default for HuggingFace models.
+                # We pass no arguments to stay compatible with openpi's
+                # PI0Pytorch.gradient_checkpointing_enable, which takes none.
+                module.gradient_checkpointing_enable()
+            else:
+                module.gradient_checkpointing_enable(
+                    gradient_checkpointing_kwargs={"use_reentrant": use_reentrant}
+                )
         else:
             self._logger.info("[FSDP] Gradient checkpointing is disabled")
 
