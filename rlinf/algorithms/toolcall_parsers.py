@@ -134,6 +134,33 @@ class WideSeekQwenToolCallParser:
         self.tool_call_regex = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
 
     @staticmethod
+    def _parse_tool_call_jsons(blocks: list[str]) -> list[dict]:
+        """Extract all JSON objects from <tool_call> block contents.
+
+        Handles three patterns:
+          1. Single JSON per block  (normal Qwen3 style)
+          2. Multiple <tool_call> blocks (Kimi multi-block style)
+          3. Multiple JSONs in one block, one per line
+        """
+        results = []
+        for block in blocks:
+            content = block.strip()
+            try:
+                results.append(json.loads(content))
+                continue
+            except Exception:
+                pass
+            for line in content.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    results.append(json.loads(line))
+                except Exception:
+                    continue
+        return results
+
+    @staticmethod
     def _parse_planner_calls(
         tool_name: str,
         tool_arguments: dict,
@@ -261,36 +288,43 @@ class WideSeekQwenToolCallParser:
         if not matches:
             return response_text, []
 
-        try:
-            tool_call_json = json.loads(matches[0].strip())
-        except Exception:
+        tool_jsons = self._parse_tool_call_jsons(matches)
+        if not tool_jsons:
             return response_text, []
 
-        if not isinstance(tool_call_json, dict):
-            return response_text, []
-        tool_name = tool_call_json.get("name")
-        tool_arguments = tool_call_json.get("arguments", {})
-        if not isinstance(tool_arguments, dict):
-            return response_text, []
-
-        if role == "planner":
-            function_calls = self._parse_planner_calls(
-                tool_name=tool_name,
-                tool_arguments=tool_arguments,
-                max_workers_per_planner=max_workers_per_planner,
-            )
-        elif role == "worker":
-            function_calls = self._parse_worker_calls(
-                tool_name=tool_name,
-                tool_arguments=tool_arguments,
-                max_toolcall_per_worker=max_toolcall_per_worker,
-            )
-        elif role == "single":
-            function_calls = self._parse_single_calls(
-                tool_name=tool_name, tool_arguments=tool_arguments
-            )
-        else:
-            function_calls = []
+        function_calls = []
+        for tool_call_json in tool_jsons:
+            if not isinstance(tool_call_json, dict):
+                continue
+            tool_name = tool_call_json.get("name")
+            tool_arguments = tool_call_json.get("arguments", {})
+            if not isinstance(tool_arguments, dict):
+                continue
+            try:
+                if role == "planner":
+                    function_calls.extend(
+                        self._parse_planner_calls(
+                            tool_name=tool_name,
+                            tool_arguments=tool_arguments,
+                            max_workers_per_planner=max_workers_per_planner,
+                        )
+                    )
+                elif role == "worker":
+                    function_calls.extend(
+                        self._parse_worker_calls(
+                            tool_name=tool_name,
+                            tool_arguments=tool_arguments,
+                            max_toolcall_per_worker=max_toolcall_per_worker,
+                        )
+                    )
+                elif role == "single":
+                    function_calls.extend(
+                        self._parse_single_calls(
+                            tool_name=tool_name, tool_arguments=tool_arguments
+                        )
+                    )
+            except Exception:
+                continue
 
         # remaining text exclude tool call tokens
         content = self.tool_call_regex.sub("", response_text)

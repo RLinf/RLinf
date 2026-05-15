@@ -97,6 +97,7 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
             assert self.fixed_role
 
         self.workflow = self.cfg.agentloop.get("workflow", "mas")
+        self.add_fewshot = self.cfg.agentloop.get("add_fewshot", True)
         self.is_hybrid = self.cfg.data.get("is_hybrid", False)
 
         if self.use_llm_judge:
@@ -267,6 +268,7 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
         is_markdown: bool,
         language: str,
         main_task: str | None,
+        add_fewshot: bool = True,
     ) -> tuple[list[dict], list[dict]]:
         """Build role-specific prompt history and exposed tool descriptions.
 
@@ -276,6 +278,7 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
             is_markdown: Whether markdown answer format is required.
             language: Prompt language identifier (`en` or `zh`).
             main_task: Parent task text required for worker prompts.
+            add_fewshot: Whether to include few-shot examples in prompts.
 
         Returns:
             A tuple of `(message_history, tools)` for chat-template rendering.
@@ -285,7 +288,7 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
         )
         if role == "planner":
             message_history = get_prompt_planner(
-                origin_question, is_markdown=is_markdown, language=language
+                origin_question, is_markdown=is_markdown, language=language, add_fewshot=add_fewshot
             )
             tools = [tools_description["create_sub_agents"]]
         elif role == "worker":
@@ -296,7 +299,7 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
             tools = [tools_description["search"], tools_description["access"]]
         elif role == "single":
             message_history = get_prompt_single_agent(
-                origin_question, is_markdown=is_markdown, language=language
+                origin_question, is_markdown=is_markdown, language=language, add_fewshot=add_fewshot
             )
             tools = [
                 tools_description["search_single_agent"],
@@ -392,6 +395,7 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
             is_markdown=is_markdown,
             language=language,
             main_task=main_task,
+            add_fewshot=self.add_fewshot,
         )
         max_turns = self._set_max_turns(role=role)
 

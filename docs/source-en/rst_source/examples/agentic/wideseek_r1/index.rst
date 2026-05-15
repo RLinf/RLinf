@@ -74,12 +74,12 @@ Start the judge server with SGLang:
 
 .. code-block:: bash
 
-   python3 -m sglang.launch_server \
-      --model-path /PATH/TO/Qwen3-30B-A3B-Instruct-2507 \
+   python -m sglang.launch_server \
+      --model-path /mnt/public/xzxuan/models/Qwen3-30B-A3B-Instruct-2507 \
       --host 0.0.0.0 \
       --log-level info \
       --context-length 32768 \
-      --dp 8
+      --dp 2
 
 In the main experiments, the judge model was served on 8 H100 GPUs. You can
 reduce or increase ``--dp`` based on your available hardware and throughput

@@ -207,10 +207,7 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
         mas_sum_num_subagents = 0
         mas_num_valid_trajs = 0
 
-        if is_markdown:
-            acc = {}
-        else:
-            acc = {"pass1": [], "passk": [], "avgk": [], "maxk": []}
+        acc = {"pass1": [], "passk": [], "avgk": [], "maxk": [], "all_llm_rewards": []}
 
         for idx, raw_result in enumerate(self.accumulated_raw_results):
             group_size = raw_result.get("group_size", 1)
@@ -308,14 +305,12 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
                 mas_sum_num_subagents += sum(mas_num_subagents_list)
                 mas_num_valid_trajs += len(mas_main_agent_turns_list)
 
-            if is_markdown:
-                pass
-            else:
-                values = [float(sample.get("llm_reward", 0) or 0) for sample in samples]
-                if values:
-                    acc["pass1"].append(1.0 if values[0] > 0 else 0.0)
-                    acc["avgk"].append(sum(values) / len(values))
-                    acc["passk"].append(1.0 if any(v > 0 for v in values) else 0.0)
+            values = [float(sample.get("llm_reward", 0) or 0) for sample in samples]
+            if values:
+                acc["pass1"].append(1.0 if values[0] > 0 else 0.0)
+                acc["avgk"].append(sum(values) / len(values))
+                acc["passk"].append(1.0 if any(v > 0 for v in values) else 0.0)
+                acc["all_llm_rewards"].extend(values)
 
             processed_results.append(
                 {
@@ -327,18 +322,20 @@ class WideSeekR1AgentEvalRunner(AgentEvalRunner):
             )
 
         aggregated_metrics = {}
-        if is_markdown:
-            pass
-        else:
-            aggregated_metrics["pass@1"] = (
-                sum(acc["pass1"]) / len(acc["pass1"]) if acc["pass1"] else 0.0
-            )
-            aggregated_metrics["avg@k"] = (
-                sum(acc["avgk"]) / len(acc["avgk"]) if acc["avgk"] else 0.0
-            )
-            aggregated_metrics["pass@k"] = (
-                sum(acc["passk"]) / len(acc["passk"]) if acc["passk"] else 0.0
-            )
+        aggregated_metrics["pass@1"] = (
+            sum(acc["pass1"]) / len(acc["pass1"]) if acc["pass1"] else 0.0
+        )
+        aggregated_metrics["avg@k"] = (
+            sum(acc["avgk"]) / len(acc["avgk"]) if acc["avgk"] else 0.0
+        )
+        aggregated_metrics["pass@k"] = (
+            sum(acc["passk"]) / len(acc["passk"]) if acc["passk"] else 0.0
+        )
+        aggregated_metrics["mean_llm_reward"] = (
+            sum(acc["all_llm_rewards"]) / len(acc["all_llm_rewards"])
+            if acc["all_llm_rewards"]
+            else 0.0
+        )
 
         if total_num_turns > 0:
             aggregated_metrics["avg_prompt_length"] = (

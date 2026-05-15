@@ -29,10 +29,10 @@ runner:
   val_check_interval: 30
   save_interval: 30
 
-  seq_length: 32000
+  seq_length: 32768
 
   enable_dynamic_batch_size: True
-  max_tokens_per_mbs: 32000
+  max_tokens_per_mbs: 32768
 
   resume_dir: null
   experiment_name: null 
@@ -116,6 +116,7 @@ agentloop:
   max_workers_per_planner: 10
   max_toolcall_per_worker: 5
   is_dynamic_rollout_batch: True
+  add_fewshot: True
 
   format_reward: 0.1
   call_search_reward: 0.05

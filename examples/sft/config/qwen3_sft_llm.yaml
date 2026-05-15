@@ -1,0 +1,89 @@
+defaults:
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: rlinf
+    experiment_name: ${runner.experiment_name}
+    logger_backends: ["tensorboard"]
+
+  # 30000 samples / 256 gbs = 117 steps/epoch, 2 epochs = 234 total steps.
+  # max_steps caps the total; set to -1 to let max_epochs control.
+  max_epochs: 2
+  max_steps: -1
+  val_check_interval: -1
+  save_interval: 117  # save after each epoch
+  experiment_name: qwen3_sft_llm
+  output_dir: ./logs/llm_sft
+  resume_dir: null
+
+data:
+  type: llm
+  train_data_paths: /mnt/public/yushi/Multiagent/sft_datasets/100/sft_train.jsonl
+  val_data_paths: null
+  prompt_key: "input"
+  answer_key: "output"
+  max_length: 32768
+  max_samples: -1
+  append_eos: true
+  shuffle: false
+  seed: 42
+  num_workers: 8
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 1
+  eval_batch_size: 1
+  global_batch_size: 256
+  seed: 42
+
+  model:
+    model_type: "qwen3"
+    precision: bf16
+    model_path: /mnt/public/xzxuan/models/Qwen3-4B
+    is_lora: False
+
+  optim:
+    lr: 5.0e-6
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 0.01
+    clip_grad: 1.0
+    lr_scheduler: "cosine"
+    # 30000 / 256 * 2 epochs ≈ 234 total steps
+    total_training_steps: 238
+    lr_warmup_steps: 10
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "full_shard"
+    use_orig_params: False
+    gradient_checkpointing: True
+    enable_gradient_accumulation: true
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: bf16
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

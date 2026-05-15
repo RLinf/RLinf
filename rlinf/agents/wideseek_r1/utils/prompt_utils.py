@@ -36,17 +36,15 @@ from rlinf.agents.wideseek_r1.utils.prompt import (
 )
 
 
-def get_prompt_planner(question: str, is_markdown: bool, language: str) -> str:
+def get_prompt_planner(question: str, is_markdown: bool, language: str, add_fewshot: bool = True) -> str:
     if language == "zh":
-        return get_prompt_planner_zh(question, is_markdown)
+        return get_prompt_planner_zh(question, is_markdown, add_fewshot=add_fewshot)
     else:
-        return get_prompt_planner_en(question, is_markdown)
+        return get_prompt_planner_en(question, is_markdown, add_fewshot=add_fewshot)
 
 
-def get_prompt_planner_en(question: str, is_markdown: bool) -> str:
-    # Add fewshot only for markdown questions
-    add_few_shot = is_markdown
-
+def get_prompt_planner_en(question: str, is_markdown: bool, add_fewshot: bool = True) -> str:
+    add_few_shot = add_fewshot
     if add_few_shot:
         if is_markdown:
             system = SYSTEM_PROMPT_PLANNER.format(MARKDOWN_FORMAT_EN)
@@ -64,10 +62,8 @@ def get_prompt_planner_en(question: str, is_markdown: bool) -> str:
     ]
 
 
-def get_prompt_planner_zh(question: str, is_markdown: bool) -> str:
-    # Add fewshot only for markdown questions
-    add_few_shot = is_markdown
-
+def get_prompt_planner_zh(question: str, is_markdown: bool, add_fewshot: bool = True) -> str:
+    add_few_shot = add_fewshot
     if add_few_shot:
         if is_markdown:
             system = SYSTEM_PROMPT_PLANNER_ZH.format(MARKDOWN_FORMAT_ZH)
@@ -101,17 +97,15 @@ def get_prompt_worker(origin_question: str, subtask: str, language="en") -> str:
     ]
 
 
-def get_prompt_single_agent(question: str, is_markdown: bool, language) -> str:
+def get_prompt_single_agent(question: str, is_markdown: bool, language, add_fewshot: bool = True) -> str:
     if language == "zh":
-        return get_prompt_single_agent_zh(question, is_markdown)
+        return get_prompt_single_agent_zh(question, is_markdown, add_fewshot=add_fewshot)
     else:
-        return get_prompt_single_agent_en(question, is_markdown)
+        return get_prompt_single_agent_en(question, is_markdown, add_fewshot=add_fewshot)
 
 
-def get_prompt_single_agent_en(question: str, is_markdown: bool) -> str:
-    # Add fewshot only for markdown questions
-    add_few_shot = is_markdown
-
+def get_prompt_single_agent_en(question: str, is_markdown: bool, add_fewshot: bool = True) -> str:
+    add_few_shot = add_fewshot
     if add_few_shot:
         if is_markdown:
             system = SYSTEM_PROMPT_SINGLE_AGENT.format(MARKDOWN_FORMAT_EN)
@@ -129,10 +123,8 @@ def get_prompt_single_agent_en(question: str, is_markdown: bool) -> str:
     ]
 
 
-def get_prompt_single_agent_zh(question: str, is_markdown: bool) -> str:
-    # Add fewshot only for markdown questions
-    add_few_shot = is_markdown
-
+def get_prompt_single_agent_zh(question: str, is_markdown: bool, add_fewshot: bool = True) -> str:
+    add_few_shot = add_fewshot
     if add_few_shot:
         if is_markdown:
             system = SYSTEM_PROMPT_SINGLE_AGENT_ZH.format(MARKDOWN_FORMAT_ZH)

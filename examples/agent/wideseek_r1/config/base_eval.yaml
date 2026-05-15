@@ -90,6 +90,7 @@ agentloop:
   max_workers_per_planner: 10
   max_toolcall_per_worker: 5
   is_dynamic_rollout_batch: True
+  add_fewshot: True
 
   format_reward: 0.1
   call_search_reward: 0.05
