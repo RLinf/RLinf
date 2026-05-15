@@ -325,7 +325,8 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
             else:
                 # mrope
                 cfg.model.seq_len_interpolation_factor = None
-        if cfg.model.model_type == "qwen3_vl" or cfg.model.model_type == "qwen3_vl_moe":
+        model_type = getattr(cfg.model, "model_type", None)
+        if model_type == "qwen3_vl" or model_type == "qwen3_vl_moe":
             # qwen3_vl and qwen3_vl_moe config.json set the model config in text_config
             hf_config = hf_config.text_config
 

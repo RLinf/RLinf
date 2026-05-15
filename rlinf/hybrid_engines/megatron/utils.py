@@ -248,7 +248,7 @@ def recover_left_padding(
 
 
 def tensor_rm_left_padding(
-    x: torch.Tensor, attention_mask: torch.Tensor
+    x: torch.Tensor, attention_mask: torch.Tensor, sequence_parallel=False
 ) -> torch.Tensor:
     assert attention_mask.ndim == 2
     cp_size = parallel_state.get_context_parallel_world_size()
@@ -260,6 +260,10 @@ def tensor_rm_left_padding(
     seq_lens = attention_mask.sum(dim=1)
     batch_size = x.shape[0]
     max_len = seq_lens.max().item()
+    if sequence_parallel:
+        sp_world_size = parallel_state.get_tensor_model_parallel_world_size()
+        pad_size = (sp_world_size - max_len % sp_world_size) % sp_world_size
+        max_len = max_len + pad_size
     out_shape = (batch_size, max_len) + tuple(x.shape[2:])
     output = torch.zeros(out_shape, dtype=x.dtype, device=x.device)
     for i in range(batch_size):

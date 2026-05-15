@@ -68,7 +68,6 @@ from megatron.core.optimizer import get_megatron_optimizer
 from megatron.training.checkpointing import load_checkpoint, save_checkpoint
 from megatron.training.training import (
     get_args,
-    get_megatron_optimizer_config,
     get_optimizer_param_scheduler,
     preprocess_common_state_dict,
     setup_model_and_optimizer,
@@ -209,7 +208,12 @@ class MegatronModelManager:
 
         if self._cfg.megatron.use_hf_ckpt:
             if self.mbridge:
-                self._cfg.megatron.load = self._cfg.model.model_path
+                if hasattr(self, "megatron_type") and self.megatron_type == "sft":
+                    self._cfg.megatron.load = self._cfg.model.model_path
+                else:
+                    self._cfg.megatron.load = (
+                        self._cfg.megatron.ckpt_convertor.hf_model_path
+                    )
             else:
                 self._cfg.megatron.load = self._cfg.megatron.ckpt_convertor.save_path
 
@@ -264,7 +268,7 @@ class MegatronModelManager:
             from megatron.bridge.training.config import DistributedDataParallelConfig
 
             self.bridge = AutoBridge.from_hf_pretrained(
-                self._cfg.model.model_path,
+                self._cfg.megatron.load,
                 trust_remote_code=True,
             )
             provider = self.bridge.to_megatron_provider(load_weights=True)
@@ -330,6 +334,8 @@ class MegatronModelManager:
             self.model = self.provider.provide_distributed_model(ddp_config=ddp_config)
 
             args = get_args()
+            from megatron.training.training import get_megatron_optimizer_config
+
             config, config_overrides = get_megatron_optimizer_config(args)
 
             # Get Megatron Optimizer
@@ -537,7 +543,7 @@ class MegatronModelManager:
                 self.bridge.save_hf_pretrained(
                     self.model,
                     hf_save_path,
-                    source_path=self._cfg.model.model_path,
+                    source_path=self._cfg.megatron.load,
                     show_progress=(torch.distributed.get_rank() == 0),
                     strict=True,
                 )
@@ -559,6 +565,8 @@ class MegatronModelManager:
         with self.ensure_onloaded_and_then_offload():
             args = get_args()
             args.load = load_path
+            if self.mbridge:
+                args.phase_transition_iterations = None
             load_checkpoint(
                 self.model,
                 self.optimizer,
@@ -673,7 +681,7 @@ class MegatronModelManager:
             output_orig /= temperature
             if post_process and logits_processor is not None:
                 args = {
-                    k: tensor_rm_left_padding(v, attention_mask)
+                    k: tensor_rm_left_padding(v, attention_mask, sequence_parallel)
                     for k, v in (logits_processor_args or {}).items()
                 }
                 output_dict = logits_processor(output_orig, **args)

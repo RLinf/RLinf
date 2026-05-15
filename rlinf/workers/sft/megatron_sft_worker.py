@@ -43,12 +43,12 @@ from rlinf.utils.utils import clear_memory, configure_batch_sizes
 
 class MegatronSftWorker(MegatronModelManager, Worker):
     def __init__(self, cfg: DictConfig):
+        self.megatron_type = "sft"
         Worker.__init__(self)
         super().__init__(cfg.actor)
 
         self.cfg = cfg
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
-        self.megatron_type = "sft"
 
         self.global_batch_size = int(self.cfg.actor.global_batch_size)
         self.micro_batch_size = int(self.cfg.actor.micro_batch_size)
