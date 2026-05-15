@@ -30,7 +30,7 @@ runner:
   resume_dir: path/to/checkpoint
 
 data:
-  train_data_paths: path/to/datasets/DreamZero-DROID-Data
+  train_data_paths: path/to/datasets/DreamZero-Libero-Data
   lazy_load: True
   num_workers: 8
   prefetch_factor: 8
