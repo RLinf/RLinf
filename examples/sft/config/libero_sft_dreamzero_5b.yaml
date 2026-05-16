@@ -103,7 +103,3 @@ actor:
     amp_autocast:
       enabled: False
       precision: "bf16"
-reward:
-  use_reward_model: False
-critic:
-  use_critic_model: False
