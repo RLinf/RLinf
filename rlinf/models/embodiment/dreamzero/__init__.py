@@ -88,6 +88,14 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         f"{_dit_chunk}.CausalWanModel._forward_train",
         "rlinf.models.embodiment.dreamzero.patch.wan_causal_model_forward_train._forward_train",
     )
+    Patcher.add_patch(
+        "groot.vla.model.dreamzero.transform.dreamzero_cotrain.collate",
+        "rlinf.models.embodiment.dreamzero.patch.dreamzero_cotrain.collate",
+    )
+    Patcher.add_patch(
+        "groot.vla.model.dreamzero.transform.dreamzero_cotrain.DreamTransform",
+        "rlinf.models.embodiment.dreamzero.patch.dreamzero_cotrain.DreamTransform",
+    )
     Patcher.apply()
 
     model_path = Path(cfg.get("model_path"))
@@ -170,7 +178,12 @@ def get_model(cfg: DictConfig, torch_dtype=None):
             "configured in config.json (WAN diffusion/text/image/vae paths).",
             model_path,
         )
-
+    if hasattr(model, "action_head"):
+        ah = model.action_head
+        if not hasattr(ah, "trt_engine"):
+            ah.trt_engine = None
+        if not hasattr(ah, "trt_context"):
+            ah.trt_context = None
     _promote_scalar_params_to_1d(model)
     model = model.to(dtype=torch_dtype)
 

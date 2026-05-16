@@ -19,22 +19,20 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "droid_sft_dreamzero"
+    experiment_name: "libero_sft_dreamzero"
     logger_backends: ["tensorboard"]
 
   max_epochs: -1
-  max_steps: 2000
+  max_steps: 50000
   val_check_interval: -1
-  save_interval: 2000
+  save_interval: 3000
   log_interval: 100
-
   resume_dir: path/to/checkpoint
 
 data:
-  # Root of LeRobot DROID (OXE) dataset
-  train_data_paths: path/to/datasets/DreamZero-DROID-Data
+  train_data_paths: path/to/datasets/DreamZero-Libero-Data
   lazy_load: True
-  num_workers: 4
+  num_workers: 8
   prefetch_factor: 8
   video_tolerance_s: 0.1
   parquet_cache_size: 512
@@ -45,36 +43,34 @@ algorithm:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 1
-  global_batch_size: 8
+  micro_batch_size: 32
+  global_batch_size: 256
   seed: 42
+  dataloader_num_workers: 1
   enable_offload: False
-
   model:
     model_type: "dreamzero"
     precision: fp32
-    model_path: path/to/models/DreamZero-DROID
+    model_path: path/to/models/DreamZero-Libero
     tokenizer_path: path/to/models/umt5-xxl
     max_seq_len: 512
-    # Shared DreamZero dims (also match DreamZero-DROID checkpoint config).
+    # Shared DreamZero dims (also match DreamZero-Libero checkpoint config).
     dreamzero_max_action_dim: 32
     dreamzero_max_state_dim: 64
     # Unified temporal knobs (branching by embodiment_tag below):
-    dreamzero_action_horizon: 24
+    dreamzero_action_horizon: 16
     dreamzero_num_chunks: 4
     dreamzero_num_video_frames: 33
-    relative_action_keys:
-      - joint_position
+
     cfg_mode: False
     unconditional_prob: 0.3
     action_loss_scale: 1.0
     pretrained_model_path: null
     add_value_head: False
     is_lora: False
-    embodiment_tag: "oxe_droid"
-    relative_action: True
+    embodiment_tag: "libero_sim"
+    relative_action: False
     relative_action_per_horizon: False
-    load_to_device: False
 
   optim:
     lr: 1.0e-5
@@ -86,17 +82,17 @@ actor:
     clip_grad: 1.0
     lr_scheduler: "cosine"
     lr_warmup_steps: -1
-    lr_warmup_steps_ratio: 0.01
-    total_training_steps: ${runner.max_steps}
-
+    lr_warmup_steps_ratio: 0.05
+    total_training_steps: 50000
   fsdp_config:
     strategy: "fsdp2"
-    sharding_strategy: "full_shard"
     use_orig_params: True
     gradient_checkpointing: True
     gradient_checkpointing_use_reentrant: True
-    limit_all_gathers: True
-    reshard_after_forward: True
+    limit_all_gathers: False
+    forward_prefetch: True
+    backward_prefetch: "pre"
+    reshard_after_forward: False
     save_full_model_weights: False
     grad_scaler:
       enabled: False
@@ -105,11 +101,9 @@ actor:
       reduce_dtype: bf16
       buffer_dtype: bf16
     amp_autocast:
-      enabled: false
+      enabled: False
       precision: "bf16"
-
 reward:
-  use_reward_model: false
-
+  use_reward_model: False
 critic:
-  use_critic_model: false
+  use_critic_model: False
