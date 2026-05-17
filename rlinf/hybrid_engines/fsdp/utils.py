@@ -438,7 +438,10 @@ def apply_fsdp2_to_model(
         ):
             modules_to_shard.append((name, submodule, "transformer_or_embedding"))
 
-    for name, submodule, module_type in modules_to_shard:
+    # named_modules() returns submodules outermost-first, but fully_shard should
+    # be applied inside-out. Reversing ensures child modules are wrapped first,
+    # so the parent only shards the remaining (non-wrapped) parameters.
+    for name, submodule, module_type in reversed(modules_to_shard):
         fully_shard(
             submodule,
             mesh=device_mesh,
