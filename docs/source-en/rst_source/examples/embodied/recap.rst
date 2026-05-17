@@ -666,6 +666,14 @@ We provide a reproduced experiment on the `LIBERO-10 <https://github.com/Lifelon
 - **Rollout data**: 4,096 trajectories collected by a few-shot π\ :sub:`0.5` policy on Task 0, containing both successful and failed episodes
 - **Eval data**: A held-out set collected by the same few-shot π\ :sub:`0.5` policy, used in Step 2 to monitor value model overfitting
 
+.. note::
+
+   This tutorial intentionally uses a few-shot π\ :sub:`0.5` policy with a moderate
+   initial success rate so that RECAP's offline improvement can be observed in a
+   compact Task 0 example. The baseline below is scoped to this reproduced setup;
+   it is not intended to represent the general π\ :sub:`0.5` SFT performance on
+   the full LIBERO benchmark.
+
 The dataset is available `here <https://huggingface.co/datasets/RLinf/RECAP-Libero10-Task0-48succ-Data/tree/main>`_.
 
 
@@ -673,7 +681,7 @@ The dataset is available `here <https://huggingface.co/datasets/RLinf/RECAP-Libe
 RECAP Results
 --------------
 
-After one iteration of the RECAP pipeline on LIBERO-10 Task 0, the success rate improves from **48.8%** (SFT baseline) to **66.5%** (RECAP), an absolute improvement of **17.7%**.
+After one iteration of the RECAP pipeline on LIBERO-10 Task 0, the success rate improves from **48.8%** (the few-shot SFT baseline in this tutorial setup) to **66.5%** (RECAP), an absolute improvement of **17.7%**.
 
 .. raw:: html
 
