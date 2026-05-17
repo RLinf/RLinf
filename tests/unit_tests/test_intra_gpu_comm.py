@@ -26,13 +26,31 @@ RECEIVER_GROUP_NAME = "receiver_ipc_worker_group"
 # --- Helper Functions ---
 
 
+def accelerator_is_available():
+    """Return whether the Worker accelerator backend is available."""
+    return (
+        Worker.torch_platform is not None
+        and hasattr(Worker.torch_platform, "is_available")
+        and Worker.torch_platform.is_available()
+    )
+
+
+def accelerator_device_count():
+    """Return accelerator count through the Worker backend abstraction."""
+    if Worker.torch_platform is None or not hasattr(
+        Worker.torch_platform, "device_count"
+    ):
+        return 0
+    return Worker.torch_platform.device_count()
+
+
 def get_device(rank=0):
     """Returns the appropriate torch device, setting it for the current process."""
-    if torch.cuda.is_available():
+    if accelerator_is_available():
         # In a real worker, LOCAL_RANK would be set. We simulate it.
         local_rank = int(os.environ.get("LOCAL_RANK", rank))
-        torch.cuda.set_device(local_rank)
-        return torch.device(f"cuda:{local_rank}")
+        Worker.torch_platform.set_device(local_rank)
+        return torch.device(f"{Worker.torch_device_type}:{local_rank}")
     return torch.device("cpu")
 
 
@@ -82,8 +100,8 @@ class SenderWorker(Worker):
         return True
 
     def send_mixed_gpu_tensor_list(self, async_op, group_name):
-        """Sends a list of tensors from different GPUs."""
-        num_gpus = torch.cuda.device_count()
+        """Sends a list of tensors from different accelerators."""
+        num_gpus = accelerator_device_count()
         tensors = [
             torch.ones(2, 2, device=get_device(i % num_gpus)) * (self._rank + i)
             for i in range(num_gpus)
@@ -147,9 +165,9 @@ class ReceiverWorker(Worker):
 @pytest.fixture(scope="module")
 def cluster():
     """Provides a Cluster instance for the tests."""
-    if not torch.cuda.is_available() or torch.cuda.device_count() < 1:
-        pytest.skip("IPC/Uncertain Peer tests require at least 1 CUDA GPU.")
-    # Use all GPUs on one node to test same-node communication
+    if not accelerator_is_available() or accelerator_device_count() < 1:
+        pytest.skip("IPC/Uncertain Peer tests require at least 1 accelerator.")
+    # Use all accelerators on one node to test same-node communication
     return Cluster(num_nodes=1)
 
 
@@ -186,13 +204,13 @@ def single_shared_gpu_groups(cluster):
 
 @pytest.fixture(scope="class")
 def multi_shared_gpu_groups(cluster):
-    """Workers with access to the same pool of multiple GPUs."""
+    """Workers with access to the same pool of multiple accelerators."""
     global SENDER_GROUP_NAME, RECEIVER_GROUP_NAME
     SENDER_GROUP_NAME = "sender_ipc_worker_group_multi"
     RECEIVER_GROUP_NAME = "receiver_ipc_worker_group_multi"
-    if torch.cuda.device_count() < 2:
-        pytest.skip("Multi-GPU tests require at least 2 GPUs.")
-    all_gpus = list(range(torch.cuda.device_count()))
+    if accelerator_device_count() < 2:
+        pytest.skip("Multi-accelerator tests require at least 2 accelerators.")
+    all_gpus = list(range(accelerator_device_count()))
     yield create_worker_groups(cluster, sender_gpus=all_gpus, receiver_gpus=all_gpus)
 
 
@@ -282,7 +300,7 @@ class TestSameDeviceCommunication:
             ),
         )
         assert isinstance(results, list)
-        num_gpus = torch.cuda.device_count()
+        num_gpus = accelerator_device_count()
         assert len(results) == num_gpus
         for i, tensor in enumerate(results):
             tensor = tensor[0]

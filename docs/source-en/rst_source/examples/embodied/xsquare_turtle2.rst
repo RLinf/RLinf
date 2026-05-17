@@ -118,17 +118,6 @@ Then install the RLinf Python dependencies for the embodied real-world setup:
    bash requirements/install.sh embodied --env xsquare_turtle2
    source .venv/bin/activate
 
-.. note::
-
-   On the Turtle2 controller node, we recommend a **dual-container split** to reduce ROS ownership conflicts:
-
-   - The **control container** (for example, the vendor-provided Turtle2 control container such as ``turtle2_release``) owns the ROS master, UI, low-level bring-up, and the camera / arm control nodes.
-   - A **separate RLinf container** only runs RLinf and the Ray worker, and should not directly own ``roscore``, the UI, or ``run.sh``.
-
-   The RLinf container should be built from an image configuration that is **compatible with the control container**, ideally sharing the same base image, system dependencies, ROS runtime, and required mounts, while only adding the RLinf Python environment and code on top. This reduces drift in ROS dependencies, message definitions, and device access.
-
-   A common setup is to run both containers with ``host network`` so they share the controller node's network namespace. In that case, the RLinf container can connect to the existing ROS master instead of starting another control plane inside its own container. During training or evaluation, it is safer to open the UI only temporarily for calibration in the control container, then close it before running RLinf, to avoid multiple processes publishing to the same arm-control topics.
-
 Training / Rollout Node
 ~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -330,76 +319,6 @@ After verifying the setup, start the real-world training experiment on the head 
 .. code-block:: bash
 
    bash examples/embodiment/run_realworld_async.sh realworld_button_turtle2_sac_cnn
-
-
-Deployment
-----------
-
-For policy-only real-world rollout or evaluation, RLinf provides a generic
-Turtle2 deployment environment registered as ``Turtle2DeployEnv-v1``. The env
-fragment is:
-
-.. code-block:: text
-
-   examples/embodiment/config/env/realworld_turtle2_deploy.yaml
-
-Use it as the ``env.eval`` entry in an eval-only config, for example by copying
-``examples/embodiment/config/realworld_eval.yaml`` and replacing the env default:
-
-.. code-block:: yaml
-
-   defaults:
-     - env/realworld_turtle2_deploy@env.eval
-     - model/pi0@actor.model
-     - training_backend/fsdp@actor.fsdp_config
-     - weight_syncer/patch_syncer@weight_syncer
-     - override hydra/job_logging: stdout
-
-The Turtle2 deploy fragment sets ``init_params.id`` to ``Turtle2DeployEnv-v1``.
-Set ``override_cfg.action_mode`` to choose the Turtle2 action contract. The
-default keeps Turtle2's relative-pose action semantics. A top-level
-``action_mode`` key is still accepted for older configs, but new configs should
-prefer ``override_cfg.action_mode``:
-
-.. code-block:: yaml
-
-   env:
-     eval:
-       override_cfg:
-         action_mode: relative_pose
-         task_description: "Describe your Turtle2 deployment task here."
-         use_arm_ids: [0, 1]
-         use_camera_ids: [0, 1, 2]
-         reset_ee_pose:
-           - [0.20, 0.00, 0.10, 0.00, 0.00, 0.00]
-           - [0.20, 0.00, 0.10, 0.00, 0.00, 0.00]
-         ee_pose_limit_min:
-           - [-0.20, -0.60, -0.05, -3.20, -3.20, -3.20]
-           - [-0.20, -0.60, -0.05, -3.20, -3.20, -3.20]
-         ee_pose_limit_max:
-           - [0.80, 0.60, 0.60, 3.20, 3.20, 3.20]
-           - [0.80, 0.60, 0.60, 3.20, 3.20, 3.20]
-
-The xsquare task factory directly applies the Turtle2-specific wrapper stack
-before returning the env. The shared dual-arm wrappers remain generic.
-
-- ``absolute_pose`` makes ``Turtle2Env.step`` execute one 7D absolute pose
-  command per active arm:
-  ``[x, y, z, roll, pitch, yaw, gripper]``.
-- ``relative_pose`` is the default. When ``use_relative_frame`` is enabled, the
-  wrapper stack applies ``DualRelativeFrame`` so end-effector-frame delta
-  actions are transformed back to the base frame before reaching the robot env.
-- Set ``override_cfg.action_mode: absolute_pose`` only when the policy emits
-  absolute pose commands.
-- Both modes finish with ``DualQuat2EulerWrapper`` so the policy observes
-  Euler-format TCP state; action execution is selected inside ``Turtle2Env``
-  from ``Turtle2RobotConfig.action_mode``.
-
-Run the eval-only deployment config from the Ray head node:
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_realworld_eval.sh <your_turtle2_eval_config_name>
 
 Visualization and Results
 --------------------------

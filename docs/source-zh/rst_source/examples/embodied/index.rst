@@ -30,6 +30,28 @@
        </p>
      </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/libero_numbers.jpeg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="libero_amd.html" style="text-decoration: underline; color: blue;">
+           <b>AMD ROCm 平台上的 LIBERO 强化学习</b>
+         </a><br>
+         LIBERO 强化学习的 ROCm 依赖安装与 OSMesa 渲染配置
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/libero_numbers.jpeg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="libero_ascend.html" style="text-decoration: underline; color: blue;">
+           <b>Ascend CANN 平台上的 LIBERO 强化学习</b>
+         </a><br>
+         LIBERO 强化学习的 CANN 依赖安装与驱动挂载配置
+       </p>
+     </div>
+
    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://raw.githubusercontent.com/RLinf/misc/378920588652fff0a2a0b163b392c94694993345/pic/libero-plus.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -465,6 +487,8 @@
 
    maniskill
    libero
+   libero_amd
+   libero_ascend
    liberoplus_pro
    behavior
    metaworld
