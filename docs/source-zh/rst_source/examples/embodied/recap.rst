@@ -660,6 +660,12 @@ RECAP 流程会在 ``logs/`` 目录下生成两个子目录：
 - **Rollout 数据**：few-shot π\ :sub:`0.5` 策略在 Task 0 上采集的 4,096 条轨迹，包含成功和失败的 episode
 - **Eval 数据**：同样由 few-shot π\ :sub:`0.5` 策略采集的验证集，用于 Step 2 监控价值模型是否过拟合
 
+.. note::
+
+   本教程有意使用初始成功率适中的 few-shot π\ :sub:`0.5` 策略，以便在紧凑的
+   Task 0 示例中观察 RECAP 的离线提升。下方 baseline 仅对应该可复现实验设置，
+   不代表 π\ :sub:`0.5` SFT 在完整 LIBERO benchmark 上的通用表现。
+
 数据集可从 `此处 <https://huggingface.co/datasets/RLinf/RECAP-Libero10-Task0-48succ-Data/tree/main>`_ 下载。
 
 
@@ -667,7 +673,7 @@ RECAP 流程会在 ``logs/`` 目录下生成两个子目录：
 RECAP 实验结果
 -----------------
 
-在 LIBERO-10 Task 0 上执行一轮 RECAP 迭代后，成功率从 **48.8%**\ （SFT 基线）提升至 **66.5%**\ （RECAP），绝对提升 **17.7%**。
+在 LIBERO-10 Task 0 上执行一轮 RECAP 迭代后，成功率从 **48.8%**\ （本教程设置下的 few-shot SFT baseline）提升至 **66.5%**\ （RECAP），绝对提升 **17.7%**。
 
 .. raw:: html
 

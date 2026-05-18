@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -75,10 +76,13 @@ class DreamZeroConfig(VLAConfig):
 class DreamZeroPolicy(VLA, BasePolicy):
     """Lightweight DreamZero action model: IdentityBackbone + WANPolicyHead."""
 
+    # CausalWanModel has to be wrapped to avoid a FSDP2 bug
+    # when using with gradient checkpointing
     _no_split_modules = [
         "T5SelfAttention",  # text encoder
         "AttentionBlock",  # vae
-        "CausalWanAttentionBlock",  # action head
+        "CausalWanModel",  # action head
+        "CausalWanAttentionBlock",  # action head layer
     ]
 
     def __init__(
@@ -87,16 +91,33 @@ class DreamZeroPolicy(VLA, BasePolicy):
     ):
         super().__init__(config)
         self.config = config
+
+    # This method is called in FSDPModelManager.setup_model_and_optimizer
+    def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs={}):
         try:
             diffusion_model = getattr(getattr(self, "action_head", None), "model", None)
-            enabled = self.config.gradient_checkpointing
-            if diffusion_model is not None:
-                if hasattr(diffusion_model, "_set_gradient_checkpointing"):
-                    diffusion_model._set_gradient_checkpointing(
-                        diffusion_model, enabled
-                    )
-                elif hasattr(diffusion_model, "gradient_checkpointing"):
-                    diffusion_model.gradient_checkpointing = enabled
+            enabled = True
+            use_reentrant = gradient_checkpointing_kwargs.get("use_reentrant", True)
+
+            if diffusion_model is None:
+                raise ValueError("DreamZero policy must have action_head.")
+
+            if hasattr(diffusion_model, "_set_gradient_checkpointing"):
+                diffusion_model._set_gradient_checkpointing(diffusion_model, enabled)
+            elif hasattr(diffusion_model, "gradient_checkpointing"):
+                diffusion_model.gradient_checkpointing = enabled
+
+            setattr(
+                diffusion_model, "gradient_checkpointing_use_reentrant", use_reentrant
+            )
+
+            logging.warning(
+                "DreamZero gradient checkpointing is enabled. If you encounter errors "
+                "or memory leaks, consider: (1) upgrading to PyTorch 2.10 or later; "
+                "(2) using use_reentrant=True to avoid issues when CUDA graphs and "
+                "gradient checkpointing are used together."
+            )
+
         except Exception:
             pass
 
@@ -322,6 +343,10 @@ class DreamZeroPolicy(VLA, BasePolicy):
             raise NotImplementedError
 
     def sft_forward(self, data=None, **kwargs):
+        # Mark the start of each training iteration so PyTorch knows when
+        # to reclaim memory held by CUDA graphs from the previous iteration.
+        torch.compiler.cudagraph_mark_step_begin()
+
         if data is None:
             data = kwargs.get("data")
         if data is None:
