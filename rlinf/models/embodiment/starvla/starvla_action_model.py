@@ -107,7 +107,7 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
             self.value_head = nn.Linear(hidden_size, 1).to(dtype=policy_param_dtype)
 
         self.actor_logstd = nn.Parameter(
-            torch.full((self.action_dim,), -2.0, dtype=policy_param_dtype)
+            torch.full((self.action_dim,), -2.5, dtype=policy_param_dtype)
         )
 
         # 6) Rollout/training caches.

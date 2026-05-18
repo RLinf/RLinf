@@ -20,6 +20,10 @@ detect_pkg_manager() {
 
 PKG_MANAGER=$(detect_pkg_manager)
 
+# Hardware platform (nvidia | amd). Passed by install.sh; defaults to nvidia
+# when this script is invoked directly for backward compatibility.
+PLATFORM="${1:-nvidia}"
+
 if [ "$PKG_MANAGER" = "unknown" ]; then
     echo "No supported package manager found (apt, dnf, yum, or pacman)."
     echo "Please install dependencies manually."
@@ -84,6 +88,7 @@ install_deps_apt() {
     sudo apt-get update -y
     sudo apt-get install -y --no-install-recommends libgl1-mesa-glx || sudo apt-get install -y --no-install-recommends libglx-mesa0
     sudo apt-get install -y --no-install-recommends \
+        linux-libc-dev \
         wget \
         unzip \
         curl \
@@ -135,6 +140,7 @@ install_deps_dnf() {
     sudo dnf config-manager --set-enabled crb 2>/dev/null || \
         sudo dnf config-manager --set-enabled powertools 2>/dev/null || true
     sudo dnf install -y --allowerasing \
+        kernel-headers \
         wget \
         unzip \
         curl \
@@ -175,6 +181,7 @@ install_deps_yum() {
     # YUM package names (similar to DNF)
     sudo yum install -y epel-release 2>/dev/null || true  # Enable EPEL for extra packages
     sudo yum install -y \
+        kernel-headers \
         wget \
         unzip \
         curl \
@@ -214,6 +221,7 @@ install_deps_yum() {
 install_deps_pacman() {
     # Pacman package names for Arch Linux
     sudo pacman -Sy --noconfirm \
+        linux-api-headers \
         wget \
         unzip \
         curl \
@@ -268,17 +276,92 @@ case "$PKG_MANAGER" in
         ;;
 esac
 
-# Install rendering runtime configuration files if not exist
-sudo mkdir -p /usr/share/glvnd/egl_vendor.d /etc/vulkan/icd.d /etc/vulkan/implicit_layer.d
-if [ ! -f /usr/share/glvnd/egl_vendor.d/10_nvidia.json ]; then
-    printf '{\n    "file_format_version" : "1.0.0",\n    "ICD" : {\n        "library_path" : "libEGL_nvidia.so.0"\n    }\n}\n' | sudo tee /usr/share/glvnd/egl_vendor.d/10_nvidia.json
-fi
-if [ ! -f /usr/share/glvnd/egl_vendor.d/50_mesa.json ]; then
-    printf '{\n    "file_format_version" : "1.0.0",\n    "ICD" : {\n        "library_path" : "libEGL_mesa.so.0"\n    }\n}\n' | sudo tee /usr/share/glvnd/egl_vendor.d/50_mesa.json
-fi
-if [ ! -f /etc/vulkan/icd.d/nvidia_icd.json ]; then
-    printf '{\n    "file_format_version" : "1.0.0",\n    "ICD" : {\n        "library_path" : "libGLX_nvidia.so.0",\n        "api_version" : "1.3.194"\n    }\n}\n' | sudo tee /etc/vulkan/icd.d/nvidia_icd.json
-fi
-if [ ! -f /etc/vulkan/implicit_layer.d/nvidia_layers.json ]; then
-    printf '{\n    "file_format_version" : "1.0.0",\n    "layer": {\n        "name": "VK_LAYER_NV_optimus",\n        "type": "INSTANCE",\n        "library_path": "libGLX_nvidia.so.0",\n        "api_version" : "1.3.194",\n        "implementation_version" : "1",\n        "description" : "NVIDIA Optimus layer",\n        "functions": {\n            "vkGetInstanceProcAddr": "vk_optimusGetInstanceProcAddr",\n            "vkGetDeviceProcAddr": "vk_optimusGetDeviceProcAddr"\n        },\n        "enable_environment": {\n            "__NV_PRIME_RENDER_OFFLOAD": "1"\n        },\n        "disable_environment": {\n            "DISABLE_LAYER_NV_OPTIMUS_1": ""\n        }\n    }\n}\n' | sudo tee /etc/vulkan/implicit_layer.d/nvidia_layers.json
-fi
+install_render_config_nvidia() {
+    sudo mkdir -p /usr/share/glvnd/egl_vendor.d /etc/vulkan/icd.d /etc/vulkan/implicit_layer.d
+    if [ ! -f /usr/share/glvnd/egl_vendor.d/10_nvidia.json ]; then
+        printf '{\n    "file_format_version" : "1.0.0",\n    "ICD" : {\n        "library_path" : "libEGL_nvidia.so.0"\n    }\n}\n' | sudo tee /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+    fi
+    if [ ! -f /usr/share/glvnd/egl_vendor.d/50_mesa.json ]; then
+        printf '{\n    "file_format_version" : "1.0.0",\n    "ICD" : {\n        "library_path" : "libEGL_mesa.so.0"\n    }\n}\n' | sudo tee /usr/share/glvnd/egl_vendor.d/50_mesa.json
+    fi
+    if [ ! -f /etc/vulkan/icd.d/nvidia_icd.json ]; then
+        printf '{\n    "file_format_version" : "1.0.0",\n    "ICD" : {\n        "library_path" : "libGLX_nvidia.so.0",\n        "api_version" : "1.3.194"\n    }\n}\n' | sudo tee /etc/vulkan/icd.d/nvidia_icd.json
+    fi
+    if [ ! -f /etc/vulkan/implicit_layer.d/nvidia_layers.json ]; then
+        printf '{\n    "file_format_version" : "1.0.0",\n    "layer": {\n        "name": "VK_LAYER_NV_optimus",\n        "type": "INSTANCE",\n        "library_path": "libGLX_nvidia.so.0",\n        "api_version" : "1.3.194",\n        "implementation_version" : "1",\n        "description" : "NVIDIA Optimus layer",\n        "functions": {\n            "vkGetInstanceProcAddr": "vk_optimusGetInstanceProcAddr",\n            "vkGetDeviceProcAddr": "vk_optimusGetDeviceProcAddr"\n        },\n        "enable_environment": {\n            "__NV_PRIME_RENDER_OFFLOAD": "1"\n        },\n        "disable_environment": {\n            "DISABLE_LAYER_NV_OPTIMUS_1": ""\n        }\n    }\n}\n' | sudo tee /etc/vulkan/implicit_layer.d/nvidia_layers.json
+    fi
+}
+
+install_render_config_amd() {
+    sudo mkdir -p /usr/share/glvnd/egl_vendor.d \
+        /usr/share/vulkan/icd.d \
+        /usr/share/vulkan/implicit_layer.d \
+        /usr/share/vulkan/explicit_layer.d
+    if [ ! -f /usr/share/glvnd/egl_vendor.d/50_mesa.json ]; then
+        printf '{\n    "file_format_version" : "1.0.0",\n    "ICD" : {\n        "library_path" : "libEGL_mesa.so.0"\n    }\n}\n' | sudo tee /usr/share/glvnd/egl_vendor.d/50_mesa.json
+    fi
+    if [ ! -f /usr/share/vulkan/icd.d/radeon_icd.x86_64.json ]; then
+        sudo tee /usr/share/vulkan/icd.d/radeon_icd.x86_64.json >/dev/null <<'EOF'
+{
+    "ICD": {
+        "api_version": "1.3.255",
+        "library_path": "/usr/lib/x86_64-linux-gnu/libvulkan_radeon.so"
+    },
+    "file_format_version": "1.0.0"
+}
+EOF
+    fi
+    if [ ! -f /usr/share/vulkan/implicit_layer.d/VkLayer_MESA_device_select.json ]; then
+        sudo tee /usr/share/vulkan/implicit_layer.d/VkLayer_MESA_device_select.json >/dev/null <<'EOF'
+{
+  "file_format_version" : "1.0.0",
+  "layer" : {
+    "name": "VK_LAYER_MESA_device_select",
+    "type": "GLOBAL",
+    "library_path": "libVkLayer_MESA_device_select.so",
+    "api_version": "1.3.211",
+    "implementation_version": "1",
+    "description": "Linux device selection layer",
+    "functions": {
+      "vkNegotiateLoaderLayerInterfaceVersion": "vkNegotiateLoaderLayerInterfaceVersion"
+    },
+    "disable_environment": {
+      "NODEVICE_SELECT": "1"
+    }
+  }
+}
+EOF
+    fi
+    if [ ! -f /usr/share/vulkan/explicit_layer.d/VkLayer_MESA_overlay.json ]; then
+        sudo tee /usr/share/vulkan/explicit_layer.d/VkLayer_MESA_overlay.json >/dev/null <<'EOF'
+{
+    "file_format_version" : "1.0.0",
+    "layer" : {
+        "name": "VK_LAYER_MESA_overlay",
+        "type": "GLOBAL",
+        "library_path": "libVkLayer_MESA_overlay.so",
+        "api_version": "1.3.211",
+        "implementation_version": "1",
+        "description": "Mesa Overlay layer"
+    }
+}
+EOF
+    fi
+}
+
+case "$PLATFORM" in
+    amd)
+        echo "Installing rendering runtime config for AMD/Radeon"
+        install_render_config_amd
+        ;;
+    ascend)
+        # Ascend NPU systems are server-side and typically have no display
+        # GPU. Skip the EGL/Vulkan ICD config — embodied targets that need
+        # software rendering still get mesa drivers from the apt step.
+        echo "Skipping rendering runtime config on Ascend platform"
+        ;;
+    nvidia|*)
+        echo "Installing rendering runtime config for NVIDIA"
+        install_render_config_nvidia
+        ;;
+esac

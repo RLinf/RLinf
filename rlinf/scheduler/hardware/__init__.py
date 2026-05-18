@@ -21,10 +21,14 @@ from .hardware import (
     NodeHardwareConfig,
 )
 from .robots import (
+    DOSW1HWConfig,
+    DOSW1HWInfo,
     DualFrankaConfig,
     DualFrankaHWInfo,
     FrankaConfig,
     FrankaHWInfo,
+    GimArmConfig,
+    GimArmHWInfo,
     Turtle2Config,
     Turtle2HWInfo,
 )
@@ -38,10 +42,14 @@ __all__ = [
     "HardwareInfo",
     "HardwareResource",
     "NodeHardwareConfig",
+    "DOSW1HWConfig",
+    "DOSW1HWInfo",
     "DualFrankaConfig",
     "DualFrankaHWInfo",
     "FrankaConfig",
     "FrankaHWInfo",
+    "GimArmConfig",
+    "GimArmHWInfo",
     "Turtle2Config",
     "Turtle2HWInfo",
 ]

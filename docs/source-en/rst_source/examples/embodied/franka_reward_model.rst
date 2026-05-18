@@ -22,13 +22,16 @@ Follow all steps in the :doc:`franka` document up to and including **Data Collec
 Data Collection
 -----------------------
 
+Two types of data need to be collected: (1) expert trajectories for the demo buffer, and
+(2) reward model training/evaluation data.
+
 Expert Trajectory Data Collection
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-For data collection, expert trajectory data needs to be collected first.
-This data will be stored in the demo buffer during training.
-Specifically, follow the steps in the **Data Collection** section under **Running the Experiment** in :doc:`franka`.
-Make sure that in ``examples/embodiment/config/realworld_collect_data.yaml``, ``data_collection`` under the ``env`` section is enabled:
+Expert trajectory data is collected first and stored in the demo buffer during training.
+Follow the steps in the **Data Collection** section under **Running the Experiment** in
+:doc:`franka`. Make sure that in ``examples/embodiment/config/realworld_collect_data.yaml``,
+``data_collection`` under the ``env`` section is enabled:
 
 .. code-block:: yaml
 
@@ -39,18 +42,60 @@ Make sure that in ``examples/embodiment/config/realworld_collect_data.yaml``, ``
        export_format: "pickle"
        only_success: True
 
-After launching the data collection script, episodes are automatically saved to ``save_dir``.
-When ``export_format="pickle"``, each episode is written to a separate ``.pkl`` file, which is convenient for subsequent offline preprocessing.
+Reward Model Dataset Collection
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Reward Model Training and Evaluation Data Collection
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Collecting reward model training and evaluation data supports two approaches.
+For full details, see the **Data Collection** section in
+:doc:`../../tutorials/extend/reward_model_realworld`.
+The core difference lies in the labeling method: Approach 1 uses manual keyboard labeling
+and is task-agnostic; Approach 2 uses pose-based automatic labeling and is designed for
+tasks with a fixed target pose.
 
-To obtain a high-quality reward model, more data needs to be collected for training and evaluation.
-Building on the **Data Collection** section in :doc:`franka`, make the following modifications to the collection script.
+Approach 1: Keyboard Labeling (General-Purpose)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Increase the ``success_hold_steps`` field to obtain more successful data within a limited number of collection episodes.
-When the robot arm end-effector reaches the target pose, success is not declared immediately — the arm must maintain the target pose for a certain number of steps (``success_hold_steps``) before being marked as successful.
-If the arm exits the target zone mid-hold, the counter resets.
+This approach manually labels each frame during a live episode via keyboard keys.
+It is task-agnostic and works for any manipulation task. It combines data collection,
+labeling, and dataset generation into one end-to-end run with no separate offline preprocessing.
+
+**Key configuration:**
+
+- ``runner.num_success_frames`` / ``runner.num_fail_frames`` — target numbers of frames;
+  collection stops when both thresholds are reached.
+- ``runner.val_split`` — fraction of labeled frames held out for validation.
+- ``runner.fail_success_ratio`` — fail-frame downsampling ratio during training-set post-processing.
+- ``env.eval.keyboard_reward_wrapper`` — set to ``single_stage`` to enable the keyboard interface.
+- ``env.eval.use_spacemouse`` — whether SpaceMouse is used for teleoperation.
+- ``env.eval.override_cfg.target_ee_pose`` — the target end-effector pose for the task.
+
+**Launching:**
+
+.. code-block:: bash
+
+   bash examples/reward/realworld_collect_process_dataset.sh realworld_collect_dataset
+
+**Key bindings:**
+
+- ``c`` — label the current frame as **success**.
+- ``a`` — label the current frame as **fail**.
+
+Once the target frame counts are reached, the script automatically stops, splits the data,
+and saves ``train.pt`` / ``val.pt``. See **Approach 1** in
+:doc:`../../tutorials/extend/reward_model_realworld` for full configuration details.
+
+Approach 2: Fixed-Pose (Target-Driven)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+This approach is designed for tasks with a **fixed target pose**. No manual keyboard
+labeling is required — the episode automatically drives success/failure based on whether
+the robot reaches the configured ``target_ee_pose``. ``success_hold_steps`` can be set to
+require the robot to maintain the pose for a number of steps before declaring success,
+which helps collect more diverse successful samples. It uses a streamlined two-step pipeline.
+
+**Step 1: Fixed-Pose Reward Data Collection**
+
+On top of the expert trajectory collection, increase the ``success_hold_steps`` field:
 
 .. code-block:: yaml
 
@@ -59,27 +104,27 @@ If the arm exits the target zone mid-hold, the counter resets.
        override_cfg:
          success_hold_steps: 20
 
-After launching the data collection script, episodes are automatically saved to ``save_dir``.
-When ``export_format="pickle"``, each episode is written to a separate ``.pkl`` file, which is convenient for subsequent offline preprocessing.
+Collection tips:
 
-During collection, move the robot arm slowly to obtain more diverse failure samples.
-When reaching the target pose, make small-range movements while maintaining the target pose to obtain more diverse successful samples.
+- Move the robot arm slowly to obtain more diverse failure samples.
+- When reaching the target pose, make small-range movements while maintaining the pose
+  to obtain more diverse successful samples.
 
+**Step 2: Preprocessing into a Reward Dataset**
 
-Preprocessing into a Reward Dataset
-----------------------------------------------
-
-This step is identical to **Section 1.2 — Preprocessing into a Reward Dataset** in :doc:`../../tutorials/extend/reward_model`.
-
-In particular, it is recommended to increase ``fail-success-ratio`` to ``3``.
+Run ``preprocess_reward_dataset.py`` to convert ``.pkl`` episodes into ``.pt`` files.
+It is recommended to set ``fail-success-ratio`` to ``3``:
 
 .. code-block:: bash
 
-   Example:
-       python examples/reward/preprocess_reward_dataset.py \
-           --raw-data-path logs/xxx/collected_data \
-           --output-dir logs/xxx/processed_reward_data \
-           --fail-success-ratio 3
+   python examples/reward/preprocess_reward_dataset.py \
+       --raw-data-path logs/xxx/collected_data \
+       --output-dir logs/xxx/processed_reward_data \
+       --fail-success-ratio 3
+
+The resulting ``.pt`` files follow the ``RewardDatasetPayload`` schema, containing
+``images``, ``labels`` (1 = success, 0 = fail), and ``metadata``.
+See **Approach 2** in :doc:`../../tutorials/extend/reward_model_realworld` for the full example.
 
 Reward Model Training
 -----------------------
@@ -88,11 +133,14 @@ This step is identical to **Section 2 — Reward Model Training** in :doc:`../..
 
 In particular, for real-world scenarios, it is recommended to lower the ``min_delta`` of ``early_stop``, for example:
 
-.. code-block:: bash
+.. code-block:: yaml
 
   runner:
     early_stop:
       min_delta: 1e-6
+
+For real-world teleoperation with live reward model inference (SpaceMouse + GPU node, no RL loop),
+see **Real-World Teleoperation with Live Reward Inference** in :doc:`../../tutorials/extend/reward_model_realworld`.
 
 Cluster Configuration
 -----------------------

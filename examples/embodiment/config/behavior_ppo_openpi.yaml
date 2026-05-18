@@ -3,6 +3,7 @@ defaults:
   - env/behavior_r1pro@env.eval
   - model/pi0@actor.model
   - training_backend/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
 hydra:
@@ -11,7 +12,7 @@ hydra:
   output_subdir: null 
   searchpath:
     - file://${oc.env:EMBODIED_PATH}/config/
-    
+
 cluster:
   num_nodes: 1
   component_placement:
@@ -116,7 +117,7 @@ actor:
 
   # Override the default values in model/openpi
   model:
-    model_path: "/path/to/model/RLinf-Pi0-SFT" # https://huggingface.co/RLinf/RLinf-Pi0-Behavior
+    model_path: ${rollout.model.model_path}
     add_value_head: True
     num_images_in_input: 3
     proprio_dim: 32

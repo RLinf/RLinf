@@ -104,6 +104,7 @@ agentic-vllm = [
 ]
 embodied = [
     "transformers<=4.57.6",
+    "torchcodec",
     "peft",
     "timm",
     "imageio[ffmpeg]",
@@ -143,6 +144,17 @@ xsquare_turtle2 = [
     "evdev",
     "lerobot @ git+https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
 ]
+gim_arm = [
+    # gim_arm_control SDK: install separately via
+    #   pip install -e /path/to/gim_arm_control/python
+    # (brings in pinocchio as a transitive runtime dependency)
+    "numpy",
+    "scipy",
+    "gymnasium",
+    "opencv-python",
+    "pyrealsense2",
+    "imageio[ffmpeg]",
+]
 
 [tool.uv]
 prerelease = "allow"
@@ -152,7 +164,8 @@ conflicts = [
       { extra = "agentic-vllm" },
       { extra = "embodied" },
       { extra = "franka" },
-      { extra = "xsquare_turtle2" }
+      { extra = "xsquare_turtle2" },
+      { extra = "gim_arm" }
     ],
 ]
 override-dependencies = [
@@ -162,10 +175,9 @@ override-dependencies = [
     "torchcodec==0.2",
     "xgrammar==0.1.19",
     "uvloop==0.21.0",
-    "tensorflow-addons==0.23.0",
+    "tensorflow-addons==0.23.0 ; platform_machine == 'x86_64'",
     "setuptools>=69.5.1,<75.9",
     "datasets==3.6.0",
-    "peft==0.11.1",
 ]
 
 [tool.setuptools]

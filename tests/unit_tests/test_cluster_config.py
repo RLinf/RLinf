@@ -18,13 +18,37 @@ from pathlib import Path
 
 import pytest
 import ray
-import torch
 from omegaconf import DictConfig, OmegaConf
 
-from rlinf.scheduler import Cluster, ComponentPlacement, NodePlacementStrategy, Worker
+from rlinf.scheduler import (
+    AcceleratorType,
+    Cluster,
+    ComponentPlacement,
+    NodePlacementStrategy,
+    Worker,
+)
 from rlinf.scheduler.cluster.cluster import ClusterEnvVar, PathEnvMergeMode
-from rlinf.scheduler.cluster.config import ClusterConfig
+from rlinf.scheduler.cluster.config import ClusterConfig, NsightConfig
 from rlinf.scheduler.hardware.robots.franka import FrankaConfig
+
+
+def accelerator_device_count() -> int:
+    """Return accelerator count through the Worker backend abstraction."""
+    if Worker.torch_platform is None or not hasattr(
+        Worker.torch_platform, "device_count"
+    ):
+        return 0
+    return Worker.torch_platform.device_count()
+
+
+def path_merge_test_env_var() -> str:
+    """Return a path-like env var that is safe to mutate during worker startup."""
+    if Worker.accelerator_type in (AcceleratorType.NPU, AcceleratorType.NPU.value):
+        # torch_npu loads HCCL shared libraries during Worker import. Mutating
+        # LD_LIBRARY_PATH in the actor runtime_env can hide the CANN library path
+        # before the test worker starts, so use another whitelisted path var.
+        return "LIBRARY_PATH"
+    return "LD_LIBRARY_PATH"
 
 
 def test_cluster_config_parses_node_group_hardware():
@@ -450,6 +474,177 @@ def test_cluster_config_num_nodes_must_be_positive():
         ClusterConfig.from_dict_cfg(config)
 
 
+def test_cluster_config_parses_nsight_settings():
+    config = DictConfig(
+        {
+            "num_nodes": 1,
+            "component_placement": {},
+            "nsight": {
+                "worker_groups": ["actor", "rollout"],
+                "options": {
+                    "t": "cuda,cudnn,cublas,nvtx",
+                    "capture-range": "nvtx",
+                    "stop-on-range-end": True,
+                },
+            },
+        }
+    )
+
+    cluster_cfg = ClusterConfig.from_dict_cfg(config)
+
+    assert cluster_cfg.nsight is not None
+    assert cluster_cfg.nsight.enabled is True
+    assert cluster_cfg.nsight.worker_groups == ["actor", "rollout"]
+    assert cluster_cfg.nsight.options == {
+        "t": "cuda,cudnn,cublas,nvtx",
+        "capture-range": "nvtx",
+        "capture-range-end": "stop",
+    }
+
+
+def test_cluster_config_parses_disabled_nsight_settings():
+    config = DictConfig(
+        {
+            "num_nodes": 1,
+            "component_placement": {},
+            "nsight": {
+                "enabled": False,
+                "worker_groups": ["actor"],
+                "options": {"t": "cuda,cudnn,cublas,nvtx"},
+            },
+        }
+    )
+
+    cluster_cfg = ClusterConfig.from_dict_cfg(config)
+
+    assert cluster_cfg.nsight is not None
+    assert cluster_cfg.nsight.enabled is False
+    assert cluster_cfg.nsight.worker_groups == ["actor"]
+    assert cluster_cfg.nsight.options == {"t": "cuda,cudnn,cublas,nvtx"}
+
+
+def test_cluster_config_nsight_rejects_duplicate_range_end_options():
+    config = DictConfig(
+        {
+            "num_nodes": 1,
+            "component_placement": {},
+            "nsight": {
+                "options": {
+                    "stop-on-range-end": True,
+                    "capture-range-end": "stop",
+                },
+            },
+        }
+    )
+
+    with pytest.raises(
+        AssertionError,
+        match="must not specify both 'stop-on-range-end' and 'capture-range-end'",
+    ):
+        ClusterConfig.from_dict_cfg(config)
+
+
+def test_cluster_config_nsight_options_must_be_mapping():
+    config = DictConfig(
+        {
+            "num_nodes": 1,
+            "component_placement": {},
+            "nsight": {
+                "options": ["BAD"],
+            },
+        }
+    )
+
+    with pytest.raises(AssertionError, match="Nsight options must be a dictionary"):
+        ClusterConfig.from_dict_cfg(config)
+
+
+def test_cluster_config_parses_nsight_flags():
+    config = DictConfig(
+        {
+            "num_nodes": 1,
+            "component_placement": {},
+            "nsight": {
+                "flags": ["python-backtrace"],
+            },
+        }
+    )
+
+    cluster_cfg = ClusterConfig.from_dict_cfg(config)
+
+    assert cluster_cfg.nsight is not None
+    assert cluster_cfg.nsight.flags == ["python-backtrace"]
+
+
+def test_cluster_config_rejects_duplicate_nsight_flag_and_option():
+    config = DictConfig(
+        {
+            "num_nodes": 1,
+            "component_placement": {},
+            "nsight": {
+                "flags": ["python-backtrace"],
+                "options": {"python-backtrace": "cuda"},
+            },
+        }
+    )
+
+    with pytest.raises(
+        AssertionError, match="Nsight flags and options must not specify the same names"
+    ):
+        ClusterConfig.from_dict_cfg(config)
+
+
+def test_nsight_default_preset_enables_cpu_sampling_and_cuda_backtrace():
+    preset_path = (
+        Path(__file__).resolve().parents[2]
+        / "examples"
+        / "embodiment"
+        / "config"
+        / "nsight"
+        / "default.yaml"
+    )
+    preset_cfg = OmegaConf.load(preset_path)
+    nsight_cfg = NsightConfig(**OmegaConf.to_container(preset_cfg, resolve=True))
+
+    assert nsight_cfg.options is not None
+    assert nsight_cfg.options["sample"] == "process-tree"
+    assert nsight_cfg.options["cudabacktrace"] == "all"
+    assert nsight_cfg.flags == []
+
+
+def test_nsight_to_cli_tokens_supports_flags():
+    nsight_cfg = NsightConfig(flags=["python-backtrace"])
+
+    assert nsight_cfg.to_cli_tokens() == ["--python-backtrace"]
+
+
+def test_maybe_prepend_nsight_to_py_executable_skips_non_matching_group():
+    py_executable = Cluster.maybe_prepend_nsight_to_py_executable(
+        python_interpreter_path=sys.executable,
+        worker_name="actor:0",
+        nsight_cfg=NsightConfig(
+            worker_groups=["rollout"],
+            options={"t": "cuda,cudnn,cublas,nvtx"},
+        ),
+    )
+
+    assert py_executable == sys.executable
+
+
+def test_maybe_prepend_nsight_to_py_executable_skips_disabled_nsight():
+    py_executable = Cluster.maybe_prepend_nsight_to_py_executable(
+        python_interpreter_path=sys.executable,
+        worker_name="actor:0",
+        nsight_cfg=NsightConfig(
+            enabled=False,
+            worker_groups=["actor"],
+            options={"t": "cuda,cudnn,cublas,nvtx"},
+        ),
+    )
+
+    assert py_executable == sys.executable
+
+
 def test_path_env_merge_mode_default_is_append():
     assert (
         Cluster.DEFAULT_SYS_ENV_VAR[ClusterEnvVar.PATH_ENV_MERGE_MODE]
@@ -573,8 +768,9 @@ def test_cluster_env_configs_applied_in_worker_launch():
 
 
 def test_cluster_env_configs_path_append_mode_in_worker_launch():
+    path_env_key = path_merge_test_env_var()
     custom_path = "/tmp/rlinf-custom-path-append"
-    old_path = os.environ.get("LD_LIBRARY_PATH", "")
+    old_path = os.environ.get(path_env_key, "")
     assert custom_path not in old_path.split(os.pathsep)
 
     _reset_cluster_singleton()
@@ -591,7 +787,7 @@ def test_cluster_env_configs_path_append_mode_in_worker_launch():
                         {
                             "node_ranks": "0",
                             "python_interpreter_path": sys.executable,
-                            "env_vars": [{"LD_LIBRARY_PATH": custom_path}],
+                            "env_vars": [{path_env_key: custom_path}],
                         }
                     ],
                 }
@@ -608,7 +804,7 @@ def test_cluster_env_configs_path_append_mode_in_worker_launch():
     )
 
     try:
-        worker_path = worker_group.get_env_marker("LD_LIBRARY_PATH").wait()[0]
+        worker_path = worker_group.get_env_marker(path_env_key).wait()[0]
     finally:
         worker_group._close()
         _reset_cluster_singleton()
@@ -621,6 +817,7 @@ def test_cluster_env_configs_path_append_mode_in_worker_launch():
 
 
 def test_cluster_env_configs_path_override_mode_in_worker_launch(monkeypatch):
+    path_env_key = path_merge_test_env_var()
     custom_path = "/tmp/rlinf-custom-path-override"
     monkeypatch.setenv(
         Cluster.get_full_env_var_name(ClusterEnvVar.PATH_ENV_MERGE_MODE),
@@ -641,7 +838,7 @@ def test_cluster_env_configs_path_override_mode_in_worker_launch(monkeypatch):
                         {
                             "node_ranks": "0",
                             "python_interpreter_path": sys.executable,
-                            "env_vars": [{"LD_LIBRARY_PATH": custom_path}],
+                            "env_vars": [{path_env_key: custom_path}],
                         }
                     ],
                 }
@@ -658,7 +855,7 @@ def test_cluster_env_configs_path_override_mode_in_worker_launch(monkeypatch):
     )
 
     try:
-        worker_path = worker_group.get_env_marker("LD_LIBRARY_PATH").wait()[0]
+        worker_path = worker_group.get_env_marker(path_env_key).wait()[0]
     finally:
         worker_group._close()
         _reset_cluster_singleton()
@@ -667,9 +864,9 @@ def test_cluster_env_configs_path_override_mode_in_worker_launch(monkeypatch):
 
 
 def test_cluster_env_configs_multi_node_group_and_hetero_placement():
-    # Skip if num of GPUs is not 4
-    if torch.cuda.device_count() != 4:
-        pytest.skip("Skipping test because num of GPUs is not 4")
+    # Skip if num of accelerators is not 4
+    if accelerator_device_count() != 4:
+        pytest.skip("Skipping test because num of accelerators is not 4")
     _reset_cluster_singleton()
 
     config = OmegaConf.create(

@@ -97,7 +97,7 @@ def get_env_cls(env_type: str, env_cfg=None):
 
         return RobocasaEnv
     elif env_type == SupportedEnvType.REALWORLD:
-        from rlinf.envs.realworld.realworld_env import RealWorldEnv
+        from rlinf.envs.realworld import RealWorldEnv
 
         return RealWorldEnv
     elif env_type == SupportedEnvType.HABITAT:

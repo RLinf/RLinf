@@ -90,6 +90,7 @@ SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
 SupportedModel.GR00T = SupportedModel.register("gr00t", force=True)
 SupportedModel.DEXBOTIC_PI = SupportedModel.register("dexbotic_pi", force=True)
+SupportedModel.DEXBOTIC_DM0 = SupportedModel.register("dexbotic_dm0", force=True)
 SupportedModel.DREAMZERO = SupportedModel.register("dreamzero", force=True)
 SupportedModel.CNN_POLICY = SupportedModel.register("cnn_policy", force=True)
 SupportedModel.FLOW_POLICY = SupportedModel.register("flow_policy", force=True)
@@ -112,6 +113,7 @@ EMBODIED_MODEL = set(
         SupportedModel.MLP_POLICY,
         SupportedModel.GR00T,
         SupportedModel.DEXBOTIC_PI,
+        SupportedModel.DEXBOTIC_DM0,
         SupportedModel.DREAMZERO,
         SupportedModel.CNN_POLICY,
         SupportedModel.FLOW_POLICY,
@@ -892,6 +894,13 @@ def validate_embodied_cfg(cfg):
         weight_sync_interval = cfg.runner.get("weight_sync_interval", 1)
         assert weight_sync_interval > 0, "weight_sync_interval must be greater than 0"
         cfg.runner.weight_sync_interval = weight_sync_interval
+        # Overlap environment bootstrap (reset) with actor training to hide reset latency.
+        # This is enabled only when offload is disabled to avoid resource contention.
+        # Note: If EnvWorker and Actor share the same accelerator, this may increase GPU memory
+        # pressure during the overlap period.
+        cfg.runner.overlap_env_bootstrap = bool(
+            cfg.runner.get("overlap_env_bootstrap", False)
+        ) and not cfg.env.train.get("enable_offload", False)
         if (
             SupportedEnvType(cfg.env.train.env_type) == SupportedEnvType.MANISKILL
             or SupportedEnvType(cfg.env.eval.env_type) == SupportedEnvType.MANISKILL
@@ -1191,9 +1200,23 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
             cfg.runner.per_worker_log_path = os.path.join(
                 cfg.runner.logger.log_path, "worker_logs"
             )
+        cfg.runner.nsight_output_path = None
+        nsight_cfg = cfg.cluster.get("nsight", None)
+        if nsight_cfg is not None and bool(nsight_cfg.get("enabled", True)):
+            cfg.runner.nsight_output_path = os.path.abspath(
+                os.path.join(
+                    cfg.runner.logger.log_path,
+                    cfg.runner.logger.experiment_name,
+                    "nsights",
+                )
+            )
 
     # Init cluster
-    Cluster(cluster_cfg=cfg.cluster, distributed_log_dir=cfg.runner.per_worker_log_path)
+    Cluster(
+        cluster_cfg=cfg.cluster,
+        distributed_log_dir=cfg.runner.per_worker_log_path,
+        nsight_output_dir=cfg.runner.nsight_output_path,
+    )
 
     assert cfg.runner.task_type in SUPPORTED_TASK_TYPE, (
         f"task_type must be one of {SUPPORTED_TASK_TYPE}"

@@ -16,7 +16,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, TypeVar
 
-import jax
 import numpy as np
 import openpi.models_pytorch.preprocessing_pytorch as _preprocessing
 import openpi.shared.array_typing as at
@@ -28,10 +27,11 @@ from openpi.models import model as _model
 from openpi.models.model import Observation as Obs
 from openpi.models.pi0_config import Pi0Config
 from openpi.models_pytorch.pi0_pytorch import PI0Pytorch, make_att_2d_masks
+from torch.utils._pytree import tree_map
 
 from rlinf.models.embodiment.base_policy import BasePolicy
 
-ArrayT = TypeVar("ArrayT", bound=jax.Array | torch.Tensor | np.ndarray)
+ArrayT = TypeVar("ArrayT", bound=torch.Tensor | np.ndarray)
 
 
 @at.typecheck
@@ -270,7 +270,7 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
             )
 
     def input_transform(self, obs: dict, transpose=True):
-        inputs = jax.tree.map(lambda x: x, obs)
+        inputs = tree_map(lambda x: x, obs)
         first_process = "prompt" in inputs.keys()
         if first_process:
             inputs.pop("prompt")
@@ -278,15 +278,15 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
             inputs.pop("negative_guidance_prompt")
         else:
             inputs = {key: inputs[key] for key in inputs.keys() if "/" in key}
-        inputs = jax.tree.map(
+        inputs = tree_map(
             lambda x: np.asarray(x.detach().cpu()) if torch.is_tensor(x) else x, inputs
         )
         batch_size = next(v.shape[0] for v in inputs.values() if hasattr(v, "shape"))
         transformed_samples = []
         for i in range(batch_size):
-            sample = jax.tree.map(lambda x: x[i], inputs)
+            sample = tree_map(lambda x: x[i], inputs)
             if transpose:
-                sample = jax.tree.map(
+                sample = tree_map(
                     lambda x: x.transpose(1, 2, 0) if len(x.shape) == 3 else x,
                     sample,
                 )
@@ -321,7 +321,7 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
                     }
                 )
             transformed_samples.append(transformed_sample)
-        inputs = jax.tree.map(
+        inputs = tree_map(
             lambda *torch_arr: torch.from_numpy(np.asarray(torch_arr).copy()),
             *transformed_samples,
         )
@@ -346,10 +346,10 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
         batch_size = outputs["actions"].shape[0]
         transformed_samples = []
         for i in range(batch_size):
-            sample = jax.tree.map(lambda x: np.asarray(x[i].detach().cpu()), outputs)
+            sample = tree_map(lambda x: np.asarray(x[i].detach().cpu()), outputs)
             sample = self._output_transform(sample)
             transformed_samples.append(sample)
-        outputs = jax.tree.map(
+        outputs = tree_map(
             lambda *torch_arr: torch.from_numpy(np.asarray(torch_arr).copy()),
             *transformed_samples,
         )

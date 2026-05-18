@@ -22,8 +22,8 @@ runner:
     experiment_name: "libero_sft_dreamzero"
     logger_backends: ["tensorboard"]
 
-  max_epochs: 2000
-  max_steps: -1
+  max_epochs: -1
+  max_steps: 2000
   val_check_interval: -1
   save_interval: 2000
   log_interval: 100

@@ -54,6 +54,9 @@ class RealWorldEnv(gym.Env):
         self.num_group = num_envs // cfg.group_size
         self.group_size = cfg.group_size
         self.main_image_key = cfg.main_image_key
+        self.manual_episode_control_only = bool(
+            self.override_cfg.get("manual_episode_control_only", False)
+        )
 
         self._init_env()
 
@@ -108,7 +111,9 @@ class RealWorldEnv(gym.Env):
             for env_idx in range(self.num_envs)
         ]
         self.env = NoAutoResetSyncVectorEnv(env_fns)
-        self.task_descriptions = list(self.env.call("task_description"))
+        self.task_descriptions = list(
+            self.env.call("get_wrapper_attr", "task_description")
+        )
 
     @property
     def action_space(self):
@@ -236,7 +241,9 @@ class RealWorldEnv(gym.Env):
 
         self._elapsed_steps += 1
         raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
-        truncations = self.elapsed_steps >= self.cfg.max_episode_steps
+        timeout_truncations = self.elapsed_steps >= self.cfg.max_episode_steps
+        if not self.manual_episode_control_only:
+            truncations = timeout_truncations
 
         obs = self._wrap_obs(raw_obs)
         step_reward = self._calc_step_reward(_reward)
@@ -355,9 +362,11 @@ class RealWorldEnv(gym.Env):
         final_info = copy.deepcopy(infos)
         obs, infos = self.reset(
             env_idx=env_idx,
-            reset_state_ids=self.reset_state_ids[env_idx]
-            if self.use_fixed_reset_state_ids
-            else None,
+            reset_state_ids=(
+                self.reset_state_ids[env_idx]
+                if self.use_fixed_reset_state_ids
+                else None
+            ),
         )
         # gymnasium calls it final observation but it really is just o_{t+1} or the true next observation
         infos["final_observation"] = final_obs

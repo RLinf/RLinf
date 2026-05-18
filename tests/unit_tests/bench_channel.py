@@ -55,6 +55,20 @@ PAYLOAD_TYPES = frozenset(
 _SIZE_UNITS = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3}
 
 
+def accelerator_is_available():
+    """Return whether the Worker accelerator backend is available."""
+    return (
+        Worker.torch_platform is not None
+        and hasattr(Worker.torch_platform, "is_available")
+        and Worker.torch_platform.is_available()
+    )
+
+
+def accelerator_device_type() -> str:
+    """Return the active accelerator device type."""
+    return Worker.torch_device_type or "accelerator"
+
+
 def parse_size(s: str | int) -> int:
     """Parse a size string with optional unit (B, KB, MB, GB) into bytes.
 
@@ -118,17 +132,21 @@ class BenchmarkConfig:
     enable_thread_interference: bool = False
     num_noise_threads: int = 2
     payload_type: str = "bytes"  # bytes | cpu_tensor | gpu_tensor | tensor_list | tensor_dict | tensor_dataclass | tensor_list_dataclass | tensor_dict_dataclass
-    payload_device: str = "auto"  # "auto" (cuda if available else cpu) | "cpu" | "cuda"
+    payload_device: str = (
+        "auto"  # "auto" (accelerator if available else cpu) | "cpu" | accelerator type
+    )
     enabled_tests: frozenset[str] = field(default_factory=lambda: AVAILABLE_TESTS)
     enable_ray_queue: bool = False  # Run ray.util.queue.Queue comparison for same tests
 
 
 def _resolve_device(device: str) -> str:
-    """Resolve device: 'auto' -> 'cuda' if available else 'cpu'; 'cpu'/'cuda' as-is."""
+    """Resolve device: 'auto' -> accelerator if available else 'cpu'."""
     if device == "auto":
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    if device == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("Device cuda requested but CUDA is not available")
+        return accelerator_device_type() if accelerator_is_available() else "cpu"
+    if device == accelerator_device_type() and not accelerator_is_available():
+        raise RuntimeError(
+            "Accelerator device requested but no accelerator is available"
+        )
     return device
 
 
@@ -147,12 +165,16 @@ def _create_tensor_payload(
     """Create a tensor payload of given type and approximate size in bytes.
 
     For tensor_list, tensor_dict, tensor_dataclass, tensor_list_dataclass, and
-    tensor_dict_dataclass, device controls where tensors live: 'auto' (cuda if
-    available else cpu), 'cpu', or 'cuda'. cpu_tensor and gpu_tensor ignore
-    device and always use cpu/cuda.
+    tensor_dict_dataclass, device controls where tensors live: 'auto'
+    (accelerator if available else cpu), 'cpu', or accelerator type. cpu_tensor
+    and gpu_tensor ignore device and always use cpu/accelerator.
     """
     payload_device = _resolve_device(payload_device)
-    torch_device = torch.device(payload_device) if payload_device == "cuda" else "cpu"
+    torch_device = (
+        torch.device(payload_device)
+        if payload_device == accelerator_device_type()
+        else "cpu"
+    )
 
     # float32: 4 bytes per element
     num_elements = max(1, size_bytes // 4)
@@ -162,12 +184,12 @@ def _create_tensor_payload(
         return torch.ones(shape, dtype=torch.float32, device="cpu")
 
     if payload_type == "gpu_tensor":
-        if not torch.cuda.is_available():
+        if not accelerator_is_available():
             raise RuntimeError(
-                "GPU tensor benchmark requested but CUDA is not available"
+                "GPU tensor benchmark requested but no accelerator is available"
             )
         return torch.ones(
-            shape, dtype=torch.float32, device=torch.device("cuda")
+            shape, dtype=torch.float32, device=torch.device(accelerator_device_type())
         ).contiguous()
 
     if payload_type == "tensor_list":
@@ -1012,10 +1034,17 @@ def main() -> None:
             )
         enabled_tests = requested
 
-    if args.payload_type == "gpu_tensor" and not torch.cuda.is_available():
-        raise SystemExit("Payload type gpu_tensor requested but CUDA is not available.")
-    if args.payload_device == "cuda" and not torch.cuda.is_available():
-        raise SystemExit("Device cuda requested but CUDA is not available.")
+    if args.payload_type == "gpu_tensor" and not accelerator_is_available():
+        raise SystemExit(
+            "Payload type gpu_tensor requested but no accelerator is available."
+        )
+    if (
+        args.payload_device == accelerator_device_type()
+        and not accelerator_is_available()
+    ):
+        raise SystemExit(
+            "Accelerator device requested but no accelerator is available."
+        )
 
     payload_size = parse_size(args.payload_size)
 

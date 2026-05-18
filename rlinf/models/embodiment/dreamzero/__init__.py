@@ -15,6 +15,7 @@
 import json
 from pathlib import Path
 
+import torch
 import torch.nn as nn
 from groot.vla.data.schema import DatasetMetadata
 from groot.vla.data.transform import ComposedModalityTransform
@@ -26,6 +27,7 @@ from rlinf.models.embodiment.dreamzero.dreamzero_policy import (
     DreamZeroConfig,
     DreamZeroPolicy,
 )
+from rlinf.utils.logging import get_logger
 
 
 def _promote_scalar_params_to_1d(model):
@@ -50,12 +52,57 @@ def _promote_scalar_params_to_1d(model):
 def get_model(cfg: DictConfig, torch_dtype=None):
     """Load DreamZero policy from checkpoint."""
 
+    from rlinf.utils.patcher import Patcher
+
+    Patcher.clear()
+    Patcher.add_patch(
+        "groot.vla.model.dreamzero.modules.wan_video_vae.WanVideoVAE",
+        "rlinf.models.embodiment.dreamzero.patch.wan_video_vae.WanVideoVAE",
+    )
+    Patcher.add_patch(
+        "groot.vla.model.dreamzero.modules.wan_video_vae.WanVideoVAE38",
+        "rlinf.models.embodiment.dreamzero.patch.wan_video_vae.WanVideoVAE38",
+    )
+    Patcher.add_patch(
+        "groot.vla.model.dreamzero.modules.wan_video_vae.WanVideoVAEStateDictConverter",
+        "rlinf.models.embodiment.dreamzero.patch.wan_video_vae.WanVideoVAEStateDictConverter",
+    )
+    _dit_chunk = "groot.vla.model.dreamzero.modules.wan_video_dit_action_casual_chunk"
+    Patcher.add_wrapper(
+        f"{_dit_chunk}.CausalWanSelfAttention._process_clean_image_only",
+        torch.compile(mode="reduce-overhead"),
+    )
+    Patcher.add_wrapper(
+        f"{_dit_chunk}.CausalWanSelfAttention._process_state_blocks",
+        torch.compile(mode="reduce-overhead"),
+    )
+    Patcher.add_wrapper(
+        f"{_dit_chunk}.CausalWanSelfAttention._process_noisy_image_blocks",
+        torch.compile(mode="reduce-overhead"),
+    )
+    Patcher.add_wrapper(
+        f"{_dit_chunk}.CausalWanSelfAttention._process_noisy_action_blocks",
+        torch.compile(mode="reduce-overhead"),
+    )
+    Patcher.add_patch(
+        f"{_dit_chunk}.CausalWanModel._forward_train",
+        "rlinf.models.embodiment.dreamzero.patch.wan_causal_model_forward_train._forward_train",
+    )
+    Patcher.add_patch(
+        "groot.vla.model.dreamzero.transform.dreamzero_cotrain.collate",
+        "rlinf.models.embodiment.dreamzero.patch.dreamzero_cotrain.collate",
+    )
+    Patcher.add_patch(
+        "groot.vla.model.dreamzero.transform.dreamzero_cotrain.DreamTransform",
+        "rlinf.models.embodiment.dreamzero.patch.dreamzero_cotrain.DreamTransform",
+    )
+    Patcher.apply()
+
     model_path = Path(cfg.get("model_path"))
     if not model_path.exists():
         raise FileNotFoundError(f"DreamZero model_path does not exist: {model_path}")
 
     tokenizer_path = cfg.get("tokenizer_path", "google/umt5-xxl")
-    action_dim = cfg.get("action_dim", 7)
 
     config_path = model_path / "config.json"
     if not config_path.exists():
@@ -65,14 +112,24 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         config_dict = json.load(f)
 
     dreamzero_config = DreamZeroConfig(**config_dict)
+
+    st = model_path / "model.safetensors"
+    st_index = model_path / "model.safetensors.index.json"
+    has_full_model_weights = st.exists() or st_index.exists()
+
     # Disable defer_lora_injection for immediate loading
     if "config" in dreamzero_config.action_head_cfg and isinstance(
         dreamzero_config.action_head_cfg["config"], dict
     ):
         dreamzero_config.action_head_cfg["config"]["defer_lora_injection"] = False
-        dreamzero_config.action_head_cfg["config"]["skip_component_loading"] = True
+        # If full DreamZero safetensors are absent, fall back to component loading from
+        # WAN paths in config.json (diffusion_model_pretrained_path / text / image / vae).
+        dreamzero_config.action_head_cfg["config"]["skip_component_loading"] = (
+            has_full_model_weights
+        )
 
-    dreamzero_config.env_action_dim = action_dim
+    dreamzero_config.env_action_dim = cfg.get("action_dim", 7)
+    dreamzero_config.gradient_checkpointing = cfg.get("gradient_checkpointing", False)
 
     exp_cfg_dir = model_path / "experiment_cfg"
     metadata_path = exp_cfg_dir / "metadata.json"
@@ -99,23 +156,34 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     model = DreamZeroPolicy(
         config=dreamzero_config,
     )
-    #  load safetensors (support index shard)
-    state_dict = {}
-    st = model_path / "model.safetensors"
-    st_index = model_path / "model.safetensors.index.json"
-    if st_index.exists():
-        with open(st_index, "r") as f:
-            index = json.load(f)
-        for shard_file in sorted(set(index["weight_map"].values())):
-            state_dict.update(load_file(str(model_path / shard_file)))
-    elif st.exists():
-        state_dict.update(load_file(str(st)))
-    else:
-        raise FileNotFoundError(f"No safetensors weights under {model_path}")
-    if any(".base_layer." in k for k in state_dict):
-        state_dict = {k.replace(".base_layer.", "."): v for k, v in state_dict.items()}
-    model.load_state_dict(state_dict, strict=False)
 
+    # Load DreamZero full weights if available; otherwise keep component-initialized model.
+    if has_full_model_weights:
+        state_dict = {}
+        if st_index.exists():
+            with open(st_index, "r") as f:
+                index = json.load(f)
+            for shard_file in sorted(set(index["weight_map"].values())):
+                state_dict.update(load_file(str(model_path / shard_file)))
+        elif st.exists():
+            state_dict.update(load_file(str(st)))
+        if any(".base_layer." in k for k in state_dict):
+            state_dict = {
+                k.replace(".base_layer.", "."): v for k, v in state_dict.items()
+            }
+        model.load_state_dict(state_dict, strict=False)
+    else:
+        get_logger().warning(
+            "No model.safetensors under %s; initializing DreamZero from component weights "
+            "configured in config.json (WAN diffusion/text/image/vae paths).",
+            model_path,
+        )
+    if hasattr(model, "action_head"):
+        ah = model.action_head
+        if not hasattr(ah, "trt_engine"):
+            ah.trt_engine = None
+        if not hasattr(ah, "trt_context"):
+            ah.trt_context = None
     _promote_scalar_params_to_1d(model)
     model = model.to(dtype=torch_dtype)
 

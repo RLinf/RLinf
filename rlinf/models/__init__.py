@@ -66,6 +66,11 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_dexbotic_dm0(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.dexbotic_dm0 import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_mlp_policy(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.mlp_policy import get_model
 
@@ -132,6 +137,12 @@ def _register_builtin_models():
     register_model(
         SupportedModel.DEXBOTIC_PI.value,
         _build_dexbotic_pi,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.DEXBOTIC_DM0.value,
+        _build_dexbotic_dm0,
         category="embodied",
         force=True,
     )
@@ -203,7 +214,11 @@ def get_model(cfg: DictConfig):
     torch_dtype = torch_dtype_from_precision(cfg.precision)
     model = model_builder(cfg, torch_dtype)
 
-    if Worker.torch_platform is not None and Worker.torch_platform.is_available():
+    if (
+        Worker.torch_platform is not None
+        and Worker.torch_platform.is_available()
+        and cfg.get("load_to_device", True)
+    ):
         model = model.to(Worker.torch_device_type)
 
     if cfg.is_lora:

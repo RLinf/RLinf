@@ -3,6 +3,7 @@ defaults:
   - env/frankasim_pickcube_state@env.eval
   - model/mlp_policy@actor.model
   - training_backend/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
 hydra:
@@ -162,7 +163,6 @@ actor:
     backward_prefetch: null
     use_orig_params: false
     use_liger_kernel: false
-    fsdp_size: -1
 
     mixed_precision:
       param_dtype: ${actor.model.precision}

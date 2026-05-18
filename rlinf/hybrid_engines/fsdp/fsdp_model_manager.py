@@ -75,9 +75,7 @@ class FSDPModelManager:
         if cfg.get("tokenizer", {}).get("tokenizer_model", None) is not None:
             self.tokenizer = hf_tokenizer(cfg.tokenizer.tokenizer_model)
 
-        self._device_mesh = create_device_mesh(
-            world_size, self._cfg.fsdp_config.get("fsdp_size", -1)
-        )
+        self._device_mesh = create_device_mesh(world_size)
         self._dp_group = (
             self._device_mesh["ddp"].get_group()
             if "ddp" in self._device_mesh.mesh_dim_names
@@ -251,8 +249,21 @@ class FSDPModelManager:
 
         # Enable gradient checkpointing if configured
         if self._cfg.fsdp_config.get("gradient_checkpointing", False):
-            self._logger.info("[FSDP] Enabling gradient checkpointing")
-            module.gradient_checkpointing_enable()
+            use_reentrant = self._cfg.fsdp_config.get(
+                "gradient_checkpointing_use_reentrant", True
+            )
+            self._logger.info(
+                f"[FSDP] Enabling gradient checkpointing with use_reentrant={use_reentrant}"
+            )
+            if use_reentrant:
+                # use_reentrant=True is the default for HuggingFace models.
+                # We pass no arguments to stay compatible with openpi's
+                # PI0Pytorch.gradient_checkpointing_enable, which takes none.
+                module.gradient_checkpointing_enable()
+            else:
+                module.gradient_checkpointing_enable(
+                    gradient_checkpointing_kwargs={"use_reentrant": use_reentrant}
+                )
         else:
             self._logger.info("[FSDP] Gradient checkpointing is disabled")
 
@@ -337,6 +348,9 @@ class FSDPModelManager:
             self.optimizer,
             self.lr_scheduler,
             save_path,
+            save_full_model_weights=self._cfg.fsdp_config.get(
+                "save_full_model_weights", True
+            ),
         )
 
         if restore_weight_offload:

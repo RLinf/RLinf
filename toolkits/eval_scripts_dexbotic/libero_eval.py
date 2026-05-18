@@ -251,6 +251,12 @@ if __name__ == "__main__":
         help="Experiment name used for naming log files and video save directories",
     )
     parser.add_argument(
+        "--config_name",
+        type=str,
+        default="db_pi0_libero",
+        help="Config name, used to select the model. Options: 'db_pi0_libero', 'dm0_libero'",
+    )
+    parser.add_argument(
         "--pretrained_path",
         type=str,
         required=True,

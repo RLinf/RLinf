@@ -39,6 +39,14 @@
    目前，我们支持三种实验追踪与可视化后端：  
    TensorBoard、Weights & Biases (wandb) 和 SwanLab。  
 
+- :doc:`weight_syncer`
+   介绍具身训练中 actor 到 rollout 的权重同步优化机制，
+   包括 ``patch`` 与 ``bucket`` 两种同步模式、配置方法、适用场景以及性能注意事项。
+
+- :doc:`nsight`
+   介绍基于 Hydra 的 ``cluster.nsight`` 配置，用于通过 ``nsys profile``
+   包装指定的 Ray worker group，并说明如何启用、关闭以及选择需要采样的 worker。
+
 
 .. toctree::
    :hidden:
@@ -52,3 +60,5 @@
    hetero
    cloud-edge
    logger
+   nsight
+   weight_syncer

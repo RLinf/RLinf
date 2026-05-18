@@ -21,13 +21,15 @@ Franka真机强化学习（基于 Reward Model ）
 数据采集
 -----------------------
 
+需要采集两类数据：（1）用于 demo buffer 的专家轨迹数据；（2）用于 reward model 训练和评估的数据。
+
 专家轨迹数据采集
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-在数据采集方面，首先需要采集专家轨迹数据。
-该数据会在训练中事先存储在样本缓冲区（ demo buffer ）中，
+首先需要采集专家轨迹数据，该数据会在训练中事先存储在样本缓冲区（demo buffer）中。
 具体步骤同 :doc:`franka` 中 ``运行实验`` 的 ``数据采集`` 小节。
-注意确认，配置文件 ``examples/embodiment/config/realworld_collect_data.yaml``中 ``env`` 部分的 ``data_collection`` 已开启：
+注意确认，配置文件 ``examples/embodiment/config/realworld_collect_data.yaml`` 中
+``env`` 部分的 ``data_collection`` 已开启：
 
 .. code-block:: yaml
 
@@ -38,19 +40,55 @@ Franka真机强化学习（基于 Reward Model ）
        export_format: "pickle"
        only_success: True
 
-启动数据采集脚本后，环境会自动将 episode 保存到 ``save_dir``。当 ``export_format="pickle"`` 时，
-每个 episode 会被写入一个独立的 ``.pkl`` 文件，便于后续离线预处理。
-
-reward model 训练和评估数据采集
+Reward Model 数据集采集
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-为了得到高质量的 reward model ，需要采集更多的数据用来训练和评估 reward model。
-在 :doc:`franka` 中 ``运行实验`` 的 ``数据采集`` 小节的基础上，进一步对采集脚本做以下修改。
+采集 reward model 训练和评估数据支持两种方式，详细说明请参考
+:doc:`../../tutorials/extend/reward_model_realworld` 中的 **数据采集** 部分。
+两种方式的核心区别在于标注方式：方式一为手动键盘标注，适用于任意操作任务；
+方式二为基于位姿的自动标注，专为固定目标位姿的任务设计。
 
-将配置中的 ``success_hold_steps`` 字段增大，以便在有限的采集轮次内得到更多的成功数据。
-机械臂末端在到达目标位姿后不会立刻判定为成功并重置，
-而是需要到达目标位姿并保持一定步数（ ``success_hold_steps`` ）后才会判定为成功。
-如果中途退出成功状态，会重新开始计数。
+方式一：键盘标注（通用）
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+此方式通过键盘在实时 episode 中手动标注每一帧，适用于任何操作任务。
+此方式将数据采集、标注和数据集生成整合为一次端到端运行，无需繁琐的离线预处理步骤。
+
+**关键配置：**
+
+- ``runner.num_success_frames`` / ``runner.num_fail_frames`` — 目标采集帧数，两个阈值均达到时停止采集。
+- ``runner.val_split`` — 所有标注帧中用于验证集的比例。
+- ``runner.fail_success_ratio`` — 训练集后处理阶段失败帧下采样比例。
+- ``env.eval.keyboard_reward_wrapper`` — 设为 ``single_stage`` 以启用键盘标注界面。
+- ``env.eval.use_spacemouse`` — 是否使用 SpaceMouse 进行遥操作。
+- ``env.eval.override_cfg.target_ee_pose`` — 任务的目标末端执行器位姿。
+
+**启动命令：**
+
+.. code-block:: bash
+
+   bash examples/reward/realworld_collect_process_dataset.sh realworld_collect_dataset
+
+**按键说明：**
+
+- ``c`` — 将当前帧标注为**成功**。
+- ``a`` — 将当前帧标注为**失败**。
+
+达到目标帧数后，脚本自动停止、划分数据并保存 ``train.pt`` / ``val.pt`` 文件。
+详细配置说明及完整示例请参见 :doc:`../../tutorials/extend/reward_model_realworld` 中的方式一。
+
+方式二：固定位姿（目标驱动）
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+此方式专为**固定目标位姿**的任务设计，无需手动键盘标注，episode 会根据机器人是否到达
+配置的 ``target_ee_pose`` 自动驱动成功/失败判定。
+可以设置 ``success_hold_steps``，要求机器人在目标位姿保持一定步数后才判定为成功，
+有助于采集更多样的成功样本。
+此方式采用简化的两步式流程。
+
+**步骤 1：固定位姿 Reward 数据采集**
+
+在上述专家轨迹采集的基础上，将配置中的 ``success_hold_steps`` 字段增大：
 
 .. code-block:: yaml
 
@@ -59,25 +97,26 @@ reward model 训练和评估数据采集
        override_cfg:
          success_hold_steps: 20
 
-启动数据采集脚本后，环境会自动将 episode 保存到 ``save_dir``。当 ``export_format="pickle"`` 时，
-每个 episode 会被写入一个独立的 ``.pkl`` 文件，便于后续离线预处理。
+采集技巧：
 
-在采集过程中，请尽量缓慢移动，以便获得更多样的失败样本。
-在到达目标位姿时，在保持目标位姿的前提下进行小范围移动，以便获得更多样的成功样本。
+- 请尽量缓慢移动机械臂，以便获得更多样的失败样本。
+- 在到达目标位姿时，在保持目标位姿的前提下进行小范围移动，以便获得更多样的成功样本。
 
-预处理为 reward dataset
------------------------
-本步骤同 :doc:`../../tutorials/extend/reward_model` 中的 ``1.2 预处理为 reward dataset`` 部分。
+**步骤 2：预处理为 Reward Dataset**
 
-特别的，建议调高 ``fail-success-ratio`` 至 ``3``。
+采集好的 ``.pkl`` episode 通过 ``preprocess_reward_dataset.py`` 转换为 ``train.pt`` / ``val.pt``，
+建议将 ``fail-success-ratio`` 调高至 ``3``：
 
 .. code-block:: bash
 
-  Example:
-      python examples/reward/preprocess_reward_dataset.py \
-          --raw-data-path logs/xxx/collected_data \
-          --output-dir logs/xxx/processed_reward_data \
-          --fail-success-ratio 3
+   python examples/reward/preprocess_reward_dataset.py \
+       --raw-data-path logs/xxx/collected_data \
+       --output-dir logs/xxx/processed_reward_data \
+       --fail-success-ratio 3
+
+生成的 ``.pt`` 文件符合 ``RewardDatasetPayload`` 约定的标准格式，包含 ``images``、
+``labels``（1 = 成功，0 = 失败）和 ``metadata``。
+详细说明及完整示例请参见 :doc:`../../tutorials/extend/reward_model_realworld` 中的方式二。
 
 Reward Model 训练
 -----------------------
@@ -85,12 +124,15 @@ Reward Model 训练
 
 特别的，在真实世界场景中，建议降低 ``early_stop`` 的 ``min_delta``，例如：
 
-.. code-block:: bash
+.. code-block:: yaml
 
   runner:
     early_stop
       min_delta: 1e-6
-          
+
+如需在真机遥操作中进行在线 reward model 推理（SpaceMouse + GPU 节点，无需 RL 训练循环），
+请参考 :doc:`../../tutorials/extend/reward_model_realworld` 中的 **真机遥操作 + 在线 Reward Model 推理** 部分。
+
 集群配置
 -----------------------
 本步骤同 :doc:`franka` 中的 ``运行实验`` 下的 ``集群配置`` 部分。
