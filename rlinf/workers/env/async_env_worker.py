@@ -26,6 +26,15 @@ class AsyncEnvWorker(EnvWorker):
         self._interact_task: asyncio.Task = None
         assert not self.enable_offload, "Offload not supported in AsyncEnvWorker"
 
+    def _maybe_enable_env_double_buffer(self, train_env_cls) -> None:
+        if self.env_double_buffer_requested:
+            self._warn_env_double_buffer_once(
+                "AsyncEnvWorker does not support env double buffer; use the "
+                "synchronous EnvWorker path for this optimization."
+            )
+        self.env_double_buffer_enabled = False
+        self.env_double_buffer_coordinator = None
+
     async def interact(
         self,
         input_channel: Channel,

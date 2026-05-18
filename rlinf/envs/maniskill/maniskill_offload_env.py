@@ -274,6 +274,8 @@ class ManiskillOffloadEnv(EnvOffloadMixin):
       `env.reset()` continue to work after offload.
     """
 
+    supports_env_double_buffer = True
+
     _LOCAL_ATTRS = {
         "cfg",
         "num_envs",

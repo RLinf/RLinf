@@ -137,6 +137,7 @@ class CollectEpisode(gym.Wrapper):
         *,
         seed: Optional[int] = None,
         options: Optional[dict[str, Any]] = None,
+        **kwargs,
     ):
         """Reset the environment and initialise episode buffers.
 
@@ -153,7 +154,7 @@ class CollectEpisode(gym.Wrapper):
         self._pending_info = [None] * self.num_envs
 
         try:
-            obs, info = self.env.reset(seed=seed, options=options)
+            obs, info = self.env.reset(seed=seed, options=options, **kwargs)
         except TypeError:
             obs, info = self.env.reset()
 

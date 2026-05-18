@@ -25,6 +25,8 @@ from mani_skill.utils.visualization.misc import put_info_on_image, tile_images
 from omegaconf import open_dict
 from omegaconf.omegaconf import OmegaConf
 
+from rlinf.envs.bootstrap_planning import BootstrapResetPlannerMixin
+
 __all__ = ["ManiskillEnv"]
 
 
@@ -42,7 +44,7 @@ def extract_termination_from_info(info, num_envs, device):
     return terminated
 
 
-class ManiskillEnv(gym.Env):
+class ManiskillEnv(BootstrapResetPlannerMixin, gym.Env):
     def __init__(
         self,
         cfg,
@@ -273,6 +275,7 @@ class ManiskillEnv(gym.Env):
         *,
         seed: Optional[Union[int, list[int]]] = None,
         options: Optional[dict] = None,
+        reset_state_ids=None,
     ):
         if options is None:
             seed = self.seed
@@ -281,6 +284,10 @@ class ManiskillEnv(gym.Env):
                 if self.use_fixed_reset_state_ids
                 else {}
             )
+        else:
+            options = dict(options)
+        if reset_state_ids is not None:
+            options["episode_id"] = reset_state_ids
         raw_obs, infos = self.env.reset(seed=seed, options=options)
         self._show_goal_site_visual()
         extracted_obs = self._wrap_obs(raw_obs, infos=infos)

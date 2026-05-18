@@ -21,6 +21,7 @@ import gym
 import numpy as np
 import torch
 
+from rlinf.envs.bootstrap_planning import BootstrapResetPlannerMixin
 from rlinf.envs.venv.venv import DummyVectorEnv, SubprocVectorEnv
 
 __all__ = ["D4RLEnv"]
@@ -57,7 +58,7 @@ def _to_info_list(infos: Any, batch_size: int) -> list[dict[str, Any]]:
     return [{} for _ in range(batch_size)]
 
 
-class D4RLEnv(gym.Env):
+class D4RLEnv(BootstrapResetPlannerMixin, gym.Env):
     """D4RL env wrapper compatible with EnvWorker chunk API."""
 
     def __init__(

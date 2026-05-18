@@ -24,6 +24,7 @@ import numpy as np
 import torch
 from omegaconf.omegaconf import OmegaConf
 
+from rlinf.envs.bootstrap_planning import BootstrapResetPlannerMixin
 from rlinf.envs.libero.utils import (
     get_benchmark_overridden,
     get_libero_image,
@@ -77,7 +78,13 @@ else:
     from libero.libero.benchmark import Benchmark
 
 
-class LiberoEnv(gym.Env):
+class LiberoEnv(BootstrapResetPlannerMixin, gym.Env):
+    bootstrap_planner_array_fields = ("reset_state_ids", "reset_state_ids_all")
+    bootstrap_planner_generator_fields = (
+        ("generator_state", "_generator"),
+        ("generator_ordered_state", "_generator_ordered"),
+    )
+
     def __init__(self, cfg, num_envs, seed_offset, total_num_processes, worker_info):
         self.seed_offset = seed_offset
         self.cfg = cfg

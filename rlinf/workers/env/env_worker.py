@@ -40,6 +40,7 @@ from rlinf.utils.nested_dict_process import (
     update_nested_cfg,
 )
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.workers.env.env_double_buffer import EnvDoubleBufferCoordinator
 
 
 class EnvWorker(Worker):
@@ -59,6 +60,12 @@ class EnvWorker(Worker):
         self._prefetched_train_bootstrap: list[EnvOutput] | None = None
         self.rollout_epoch = self.cfg.algorithm.get("rollout_epoch", 1)
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
+        self.env_double_buffer_requested = bool(
+            self.cfg.runner.get("env_double_buffer", False)
+        )
+        self.env_double_buffer_enabled = False
+        self.env_double_buffer_coordinator: EnvDoubleBufferCoordinator | None = None
+        self._double_buffer_warning_emitted = False
 
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
@@ -146,6 +153,8 @@ class EnvWorker(Worker):
                 env_cfg=self.cfg.env.train,
                 num_envs_per_stage=self.train_num_envs_per_stage,
             )
+            self._init_env()
+            self._maybe_enable_env_double_buffer(train_env_cls)
         if self.enable_eval:
             eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
             self.eval_env_list = self._setup_env_and_wrappers(
@@ -153,9 +162,6 @@ class EnvWorker(Worker):
                 env_cfg=self.cfg.env.eval,
                 num_envs_per_stage=self.eval_num_envs_per_stage,
             )
-
-        if not self.only_eval:
-            self._init_env()
 
     def update_env_cfg(self):
         if not self.only_eval:
@@ -227,7 +233,12 @@ class EnvWorker(Worker):
         override_cfg["reward_image_key"] = env_cfg.main_image_key
         setattr(env_cfg, "override_cfg", OmegaConf.create(override_cfg))
 
-    def _setup_env_and_wrappers(self, env_cls, env_cfg, num_envs_per_stage: int):
+    def _setup_env_and_wrappers(
+        self,
+        env_cls,
+        env_cfg,
+        num_envs_per_stage: int,
+    ):
         env_list = []
 
         for stage_id in range(self.stage_num):
@@ -375,8 +386,118 @@ class EnvWorker(Worker):
                 extracted_obs, _ = self.env_list[i].reset()
                 self.last_obs_list.append(extracted_obs)
                 self.last_intervened_info_list.append((None, None))
-            if self.enable_offload and hasattr(self.env_list[i], "offload"):
-                self.env_list[i].offload()
+        self._offload_train_envs()
+
+    def _warn_env_double_buffer_once(self, reason: str) -> None:
+        if self._double_buffer_warning_emitted:
+            return
+        self.log_warning(
+            "Env double buffer disabled; falling back to the legacy bootstrap path. "
+            f"Reason: {reason}"
+        )
+        self._double_buffer_warning_emitted = True
+
+    def _close_env_list(self, env_list: list[Any]) -> None:
+        for env in env_list:
+            if hasattr(env, "close"):
+                try:
+                    env.close()
+                except Exception as exc:
+                    self.log_warning(f"Failed to close env cleanly: {exc}")
+
+    def _set_active_train_envs(self, env_list: list[Any]) -> None:
+        self.env_list = env_list
+
+    def _offload_train_envs(self) -> None:
+        if not self.enable_offload:
+            return
+        if (
+            self.env_double_buffer_enabled
+            and self.env_double_buffer_coordinator is not None
+        ):
+            self.env_double_buffer_coordinator.offload_env_pools()
+            return
+        for env in self.env_list:
+            if hasattr(env, "offload"):
+                env.offload()
+
+    def _train_envs_support_double_buffer(self, env_list: list[Any]) -> bool:
+        return EnvDoubleBufferCoordinator.envs_support_double_buffer(env_list)
+
+    def _bootstrap_envs_for_double_buffer(
+        self, env_list: list[Any], bootstrap_plans: list[Any] | None
+    ) -> list[EnvOutput]:
+        return self._bootstrap_step_for_envs(
+            env_list,
+            bootstrap_plans=bootstrap_plans,
+        )
+
+    def _disable_env_double_buffer_runtime(self) -> None:
+        self.env_double_buffer_enabled = False
+
+    def _maybe_enable_env_double_buffer(self, train_env_cls) -> None:
+        if not self.env_double_buffer_requested:
+            return
+        if not self._train_envs_support_double_buffer(self.env_list):
+            self._warn_env_double_buffer_once(
+                "training env does not implement bootstrap reset planning."
+            )
+            return
+        try:
+            self._standby_env_list = self._setup_env_and_wrappers(
+                env_cls=train_env_cls,
+                env_cfg=self.cfg.env.train,
+                num_envs_per_stage=self.train_num_envs_per_stage,
+            )
+        except Exception as exc:
+            self._warn_env_double_buffer_once(
+                f"Failed to create standby env pool (likely OOM); "
+                f"disabling env double buffer. Error: {exc}"
+            )
+            return
+        self.env_double_buffer_coordinator = EnvDoubleBufferCoordinator(
+            env_pools=[self.env_list, self._standby_env_list],
+            bootstrap_envs=self._bootstrap_envs_for_double_buffer,
+            send_bootstrap=self._send_train_bootstrap,
+            set_active_envs=self._set_active_train_envs,
+            record_timer_duration=self._record_timer_duration,
+            log_warning=self.log_warning,
+            on_disabled=self._disable_env_double_buffer_runtime,
+            rank=self._rank,
+        )
+        self.env_double_buffer_enabled = True
+        self._offload_train_envs()
+        self.log_info(f"Enabled env double buffer on rank={self._rank}.")
+
+    def _record_timer_duration(self, tag: str, duration: float) -> None:
+        self._timer_metrics[tag] = self._timer_metrics.get(tag, 0.0) + duration
+
+    def _build_train_bootstrap_env_output(
+        self,
+        extracted_obs: dict[str, Any],
+        infos: dict[str, Any],
+        dones: torch.Tensor,
+        intervene_actions: torch.Tensor | None = None,
+        intervene_flags: torch.Tensor | None = None,
+    ) -> EnvOutput:
+        return EnvOutput(
+            obs=extracted_obs,
+            dones=dones,
+            terminations=dones.clone(),
+            truncations=dones.clone(),
+            final_obs=infos["final_observation"]
+            if "final_observation" in infos
+            else None,
+            intervene_actions=intervene_actions,
+            intervene_flags=intervene_flags,
+        )
+
+    def _append_double_buffer_metrics(self, env_metrics: dict[str, list]) -> None:
+        if not self.env_double_buffer_enabled:
+            return
+        if self.env_double_buffer_coordinator is None:
+            return
+        self.env_double_buffer_coordinator.append_metrics(env_metrics)
 
     @Worker.timer("env_interact_step")
     def env_interact_step(
@@ -704,7 +825,8 @@ class EnvWorker(Worker):
                     self.env_list[i], RecordVideo
                 ):
                     self.env_list[i].flush_video()
-                self.env_list[i].update_reset_state_ids()
+                if not self.env_double_buffer_enabled:
+                    self.env_list[i].update_reset_state_ids()
         elif mode == "eval":
             for i in range(self.stage_num):
                 if self.cfg.env.eval.video_cfg.save_video and isinstance(
@@ -831,55 +953,53 @@ class EnvWorker(Worker):
         )
         return sparse_rewards
 
-    def bootstrap_step(self) -> list[EnvOutput]:
-        def get_zero_dones() -> torch.Tensor:
-            return (
-                torch.zeros((self.train_num_envs_per_stage,), dtype=bool)
-                .unsqueeze(1)
-                .repeat(1, self.cfg.actor.model.num_action_chunks)
-            )
-
+    def _bootstrap_step_for_envs(
+        self,
+        env_list: list[Any],
+        bootstrap_plans: list[Any] | None = None,
+    ) -> list[EnvOutput]:
         env_outputs: list[EnvOutput] = []
+        dones = (
+            torch.zeros((self.train_num_envs_per_stage,), dtype=bool)
+            .unsqueeze(1)
+            .repeat(1, self.cfg.actor.model.num_action_chunks)
+        )
         if not self.cfg.env.train.auto_reset:
             for stage_id in range(self.stage_num):
-                self.env_list[stage_id].is_start = True
-                extracted_obs, infos = self.env_list[stage_id].reset()
-                dones = get_zero_dones()
-                terminations = dones.clone()
-                truncations = dones.clone()
-
-                env_output = EnvOutput(
-                    obs=extracted_obs,
-                    dones=dones,
-                    terminations=terminations,
-                    truncations=truncations,
-                    final_obs=(
-                        infos["final_observation"]
-                        if "final_observation" in infos
-                        else None
-                    ),
-                    intervene_actions=None,
-                    intervene_flags=None,
+                train_env = env_list[stage_id]
+                train_env.is_start = True
+                if bootstrap_plans is None:
+                    extracted_obs, infos = train_env.reset()
+                else:
+                    reset_state_ids = train_env.apply_bootstrap_plan(
+                        bootstrap_plans[stage_id]
+                    )
+                    extracted_obs, infos = train_env.reset(
+                        reset_state_ids=reset_state_ids
+                    )
+                env_outputs.append(
+                    self._build_train_bootstrap_env_output(
+                        extracted_obs,
+                        infos,
+                        dones,
+                    )
                 )
-                env_outputs.append(env_output)
         else:
-            dones = get_zero_dones()
-            terminations = dones.clone()
-            truncations = dones.clone()
-
             for stage_id in range(self.stage_num):
-                env_output = EnvOutput(
-                    obs=self.last_obs_list[stage_id],
-                    rewards=None,
-                    dones=dones,
-                    terminations=terminations,
-                    truncations=truncations,
-                    intervene_actions=self.last_intervened_info_list[stage_id][0],
-                    intervene_flags=self.last_intervened_info_list[stage_id][1],
+                env_outputs.append(
+                    self._build_train_bootstrap_env_output(
+                        self.last_obs_list[stage_id],
+                        {},
+                        dones,
+                        intervene_actions=self.last_intervened_info_list[stage_id][0],
+                        intervene_flags=self.last_intervened_info_list[stage_id][1],
+                    )
                 )
-                env_outputs.append(env_output)
 
         return env_outputs
+
+    def bootstrap_step(self) -> list[EnvOutput]:
+        return self._bootstrap_step_for_envs(self.env_list)
 
     def _send_train_bootstrap(
         self, rollout_channel: Channel, env_outputs: list[EnvOutput]
@@ -962,13 +1082,32 @@ class EnvWorker(Worker):
             for _ in range(self.stage_num)
         ]
         env_metrics = defaultdict(list)
+        if self.env_double_buffer_coordinator is not None:
+            self.env_double_buffer_coordinator.reset_run_state()
 
         for epoch in range(self.rollout_epoch):
-            if epoch == 0 and self._prefetched_train_bootstrap is not None:
-                env_outputs = self._prefetched_train_bootstrap
-                self._prefetched_train_bootstrap = None
+            if self.env_double_buffer_enabled:
+                if self.env_double_buffer_coordinator is None:
+                    raise RuntimeError("Env double buffer coordinator is missing.")
+                if epoch == 0 and self._prefetched_train_bootstrap is not None:
+                    env_outputs = self._prefetched_train_bootstrap
+                    self._prefetched_train_bootstrap = None
+                elif epoch == 0:
+                    env_outputs = self._bootstrap_and_send_train(rollout_channel)
+                else:
+                    env_outputs = await (
+                        self.env_double_buffer_coordinator.consume_bootstrap(
+                            rollout_channel
+                        )
+                    )
+                if epoch + 1 < self.rollout_epoch:
+                    self.env_double_buffer_coordinator.schedule_next_bootstrap_prepare()
             else:
-                env_outputs = self._bootstrap_and_send_train(rollout_channel)
+                if epoch == 0 and self._prefetched_train_bootstrap is not None:
+                    env_outputs = self._prefetched_train_bootstrap
+                    self._prefetched_train_bootstrap = None
+                else:
+                    env_outputs = self._bootstrap_and_send_train(rollout_channel)
 
             for chunk_step_idx in range(self.n_train_chunk_steps):
                 for stage_id in range(self.stage_num):
@@ -1098,6 +1237,7 @@ class EnvWorker(Worker):
             self.rollout_results = []
             gc.collect()
 
+        self._append_double_buffer_metrics(env_metrics)
         for key, value in env_metrics.items():
             env_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
 
@@ -1119,9 +1259,7 @@ class EnvWorker(Worker):
             cooperative_yield=False,
         )
 
-        for env in self.env_list:
-            if self.enable_offload and hasattr(env, "offload"):
-                env.offload()
+        self._offload_train_envs()
 
         return env_metrics
 

@@ -884,6 +884,22 @@ def validate_embodied_cfg(cfg):
         cfg.runner.overlap_env_bootstrap = bool(
             cfg.runner.get("overlap_env_bootstrap", False)
         ) and not cfg.env.train.get("enable_offload", False)
+        env_double_buffer_cfg = cfg.runner.get("env_double_buffer", None)
+        if env_double_buffer_cfg is None:
+            cfg.runner.env_double_buffer = False
+        else:
+            if not isinstance(env_double_buffer_cfg, bool):
+                raise TypeError(
+                    "runner.env_double_buffer must be a boolean, "
+                    "e.g. env_double_buffer: true."
+                )
+            cfg.runner.env_double_buffer = env_double_buffer_cfg
+            if cfg.runner.env_double_buffer and cfg.env.train.get("auto_reset", False):
+                logging.warning(
+                    "env_double_buffer is incompatible with auto_reset, "
+                    "forcing env_double_buffer=False."
+                )
+                cfg.runner.env_double_buffer = False
         if (
             SupportedEnvType(cfg.env.train.env_type) == SupportedEnvType.MANISKILL
             or SupportedEnvType(cfg.env.eval.env_type) == SupportedEnvType.MANISKILL

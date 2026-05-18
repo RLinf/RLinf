@@ -24,6 +24,7 @@ import metaworld
 import numpy as np
 import torch
 
+from rlinf.envs.bootstrap_planning import BootstrapResetPlannerMixin
 from rlinf.envs.metaworld import MetaWorldBenchmark
 from rlinf.envs.metaworld.venv import ReconfigureSubprocEnv
 from rlinf.envs.utils import list_of_dict_to_dict_of_list, to_tensor
@@ -37,7 +38,13 @@ if not getattr(metaworld, "_has_registered_mw_envs", False):
     metaworld._has_registered_mw_envs = True
 
 
-class MetaWorldEnv(gym.Env):
+class MetaWorldEnv(BootstrapResetPlannerMixin, gym.Env):
+    bootstrap_planner_array_fields = ("reset_state_ids", "reset_state_ids_all")
+    bootstrap_planner_generator_fields = (
+        ("generator_state", "_generator"),
+        ("generator_ordered_state", "_generator_ordered"),
+    )
+
     def __init__(self, cfg, num_envs, seed_offset, total_num_processes, worker_info):
         self.seed_offset = seed_offset
         self.cfg = cfg
