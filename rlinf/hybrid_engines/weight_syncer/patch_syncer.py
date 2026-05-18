@@ -131,6 +131,7 @@ class PatchBuilder(ABC):
         self.snapshot = snapshot
         self.ordered_keys = ordered_keys
         self.param_names_need_sync = param_names_need_sync
+        self.param_names_need_sync_set = set(param_names_need_sync)
         self.original_shapes = original_shapes
         self.delta_encoding = delta_encoding
 
@@ -267,7 +268,7 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
         self.param_names_need_sync_ordinals: dict[str, int] = {
             name: ordinal
             for ordinal, name in enumerate(self.ordered_keys)
-            if name in self.param_names_need_sync
+            if name in self.param_names_need_sync_set
         }
 
     def create_patch(
@@ -500,7 +501,7 @@ class GPUSnapshotPatchBuilder(PatchBuilder):
         patch_device: torch.device | None = None
 
         for ordinal, key in enumerate(self.ordered_keys):
-            if key not in self.param_names_need_sync:
+            if key not in self.param_names_need_sync_set:
                 continue
             value = materialize_tensor(state_dict[key])
             expected_shape = self.original_shapes[key]
@@ -717,7 +718,6 @@ class PatchWeightSyncer(WeightSyncer):
         recv: RecvFn | None = None,
     ) -> None:
         assert not self.sender_initialized(), "Sender already initialized"
-        assert param_names_need_sync, "param_names_need_sync must not be empty"
         if recv is None:
             raise ValueError("PatchWeightSyncer sender init requires a recv function")
 

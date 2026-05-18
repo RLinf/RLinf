@@ -143,6 +143,12 @@ class BucketWeightSyncer(WeightSyncer):
     ):
         has_visual = any("visual." in key for key in state_dict.keys())
         named_items: list[tuple[str, torch.Tensor | DTensor]] = []
+        assert hasattr(self, "param_names_need_sync"), (
+            "init_sender must be called before iter_buckets"
+        )
+        assert self.param_names_need_sync, (
+            "param_names_need_sync must be set and not empty"
+        )
         filtered_state_dict = {
             key: value
             for key, value in state_dict.items()
