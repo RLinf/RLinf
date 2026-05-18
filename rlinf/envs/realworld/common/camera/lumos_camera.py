@@ -26,9 +26,12 @@ import glob
 import os
 from typing import Optional, Union
 
+from rlinf.utils.logging import get_logger
+
 import numpy as np
 
 from .base_camera import BaseCamera, CameraInfo
+_logger = get_logger()
 
 
 class LumosCamera(BaseCamera):
@@ -41,7 +44,10 @@ class LumosCamera(BaseCamera):
     * a numeric string or int interpreted as a V4L2 device index
     """
 
-    def __init__(self, camera_info: CameraInfo, exposure: Optional[int] = None):
+    _NATIVE_W = 1280
+    _NATIVE_H = 1280
+
+    def __init__(self, camera_info: CameraInfo):
         import cv2
 
         super().__init__(camera_info)
@@ -62,24 +68,38 @@ class LumosCamera(BaseCamera):
                 f"dev_path={dev_path})."
             )
 
-        self._cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"YU12"))
+        expected_fourcc = cv2.VideoWriter_fourcc(*"YU12")
+        self._cap.set(cv2.CAP_PROP_FOURCC, expected_fourcc)
         # Keep OpenCV from silently reinterpreting the I420 buffer.
         self._cap.set(cv2.CAP_PROP_CONVERT_RGB, 0)
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._native_w)
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._native_h)
         self._cap.set(cv2.CAP_PROP_FPS, camera_info.fps)
+
+        actual_fourcc = int(self._cap.get(cv2.CAP_PROP_FOURCC))
+        if actual_fourcc != expected_fourcc:
+            raise RuntimeError(
+                f"LUMOS camera (serial={camera_info.serial_number}, dev_path={dev_path}) "
+                f"does not support YU12. Actual FOURCC={actual_fourcc:#010x}."
+            )
+
+        actual_w = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_h = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if (actual_w, actual_h) != (self._native_w, self._native_h):
+            raise RuntimeError(
+                f"LUMOS camera (serial={camera_info.serial_number}, dev_path={dev_path}) "
+                f"returned resolution {actual_w}x{actual_h}; expected "
+                f"{self._native_w}x{self._native_h}."
+            )
+
         try:
             self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        except Exception:
-            pass
-
-        if exposure is not None:
-            # 1 == manual mode for most V4L2 UVC drivers.
-            self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
-            self._cap.set(cv2.CAP_PROP_EXPOSURE, exposure)
-
-    _NATIVE_W = 1280
-    _NATIVE_H = 1280
+        except Exception as exc:
+            _logger.warning(
+                "Failed to set LUMOS buffer size (serial=%s): %s",
+                self.camera_info.serial_number,
+                exc,
+            )
 
     @staticmethod
     def _resolve_device_path(serial_number: Union[str, int]) -> Union[str, int]:
@@ -102,18 +122,22 @@ class LumosCamera(BaseCamera):
         if not ok or raw is None:
             return False, None
         try:
-            # I420 packs Y (H×W) + U (H/2×W/2) + V (H/2×W/2) into a (H*3/2)×W buffer.
             yuv = np.ascontiguousarray(raw).reshape(
                 self._native_h * 3 // 2, self._native_w
             )
-            bgr = self._cv2.cvtColor(yuv, self._cv2.COLOR_YUV2BGR_I420)
-            if (self._native_w, self._native_h) != (self._out_w, self._out_h):
-                bgr = self._cv2.resize(
-                    bgr, (self._out_w, self._out_h), interpolation=self._cv2.INTER_AREA
-                )
-            return True, bgr
-        except Exception:
+        except ValueError as exc:
+            _logger.warning(
+                "Dropping malformed LUMOS frame (serial=%s): %s",
+                self.camera_info.serial_number,
+                exc,
+            )
             return False, None
+        bgr = self._cv2.cvtColor(yuv, self._cv2.COLOR_YUV2BGR_I420)
+        if (self._native_w, self._native_h) != (self._out_w, self._out_h):
+            bgr = self._cv2.resize(
+                bgr, (self._out_w, self._out_h), interpolation=self._cv2.INTER_AREA
+            )
+        return True, bgr
 
     def _close_device(self) -> None:
         if self._cap is not None:
