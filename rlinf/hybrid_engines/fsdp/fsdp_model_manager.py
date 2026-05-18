@@ -96,6 +96,8 @@ class FSDPModelManager:
         # Bucket capacity for weight sync (in bytes), default 128MB
         self.bucket_capacity = cfg.get("sync_bucket_capacity", 128 * 1024 * 1024)
 
+        self.param_names_need_sync: list[str] = None
+
     def _create_amp_context(self) -> ContextManager:
         """
         Create AMP context manager based on configuration.
@@ -266,6 +268,17 @@ class FSDPModelManager:
                 )
         else:
             self._logger.info("[FSDP] Gradient checkpointing is disabled")
+
+        # here record the original trainable parameters' names before FSDP wrapping
+        # persist buffers' names are also recorded, which will be used for weight syncing.
+        trainable_params_names = [
+            name for name, param in module.named_parameters() if param.requires_grad
+        ]
+        model_state_dict = module.state_dict()
+        persist_buffer_names = [
+            name for name, _ in module.named_buffers() if name in model_state_dict
+        ]
+        self.param_names_need_sync = trainable_params_names + persist_buffer_names
 
         # build model, optimizer, lr_scheduler, grad_scaler
         self.model = self._strategy.wrap_model(

@@ -124,13 +124,21 @@ class PatchBuilder(ABC):
         self,
         snapshot: dict[str, torch.Tensor],
         ordered_keys: list[str],
+        param_names_need_sync: list[str],
         original_shapes: dict[str, torch.Size],
         delta_encoding: bool,
     ):
         self.snapshot = snapshot
         self.ordered_keys = ordered_keys
+        self.param_names_need_sync = param_names_need_sync
         self.original_shapes = original_shapes
         self.delta_encoding = delta_encoding
+
+        if not self.param_names_need_sync:
+            raise ValueError("param_names_need_sync must not be empty")
+
+        if not self.ordered_keys:
+            raise ValueError("ordered_keys must not be empty")
 
     @staticmethod
     def delta_encode(
@@ -182,6 +190,7 @@ class PatchBuilder(ABC):
         cls,
         snapshot: dict[str, torch.Tensor],
         ordered_keys: list[str],
+        param_names_need_sync: list[str],
         original_shapes: dict[str, torch.Size],
         snapshot_device: torch.device,
         delta_encoding: bool,
@@ -190,6 +199,7 @@ class PatchBuilder(ABC):
             return CPUSnapshotPatchBuilder(
                 snapshot,
                 ordered_keys,
+                param_names_need_sync,
                 original_shapes,
                 delta_encoding,
             )
@@ -197,6 +207,7 @@ class PatchBuilder(ABC):
             return GPUSnapshotPatchBuilder(
                 snapshot,
                 ordered_keys,
+                param_names_need_sync,
                 original_shapes,
                 delta_encoding,
             )
@@ -210,17 +221,11 @@ class PatchBuilder(ABC):
         version: torch.Tensor | int,
     ) -> EmptyWeightPatch | WeightPatch: ...
 
-    def _validate_state_dict_keys(
-        self,
-        state_dict: dict[str, torch.Tensor | DTensor],
-    ) -> None:
-        if set(state_dict.keys()) != set(self.ordered_keys):
-            raise ValueError("State dict keys do not match snapshot keys")
-
 
 @dataclass
 class _PrefetchedCPUSnapshot:
     ordinal: int
+    global_ordinal: int
     key: str
     state_2dview: torch.Tensor
     snapshot_value: torch.Tensor
@@ -242,12 +247,14 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
         self,
         snapshot: dict[str, torch.Tensor],
         ordered_keys: list[str],
+        param_names_need_sync: list[str],
         original_shapes: dict[str, torch.Size],
         delta_encoding: bool,
     ):
         super().__init__(
             snapshot=snapshot,
             ordered_keys=ordered_keys,
+            param_names_need_sync=param_names_need_sync,
             original_shapes=original_shapes,
             delta_encoding=delta_encoding,
         )
@@ -257,6 +264,11 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
             thread_name_prefix="patch-snapshot-flush",
         )
         self._pending_snapshot_flush: Future[None] | None = None
+        self.param_names_need_sync_ordinals: dict[str, int] = {
+            name: ordinal
+            for ordinal, name in enumerate(self.ordered_keys)
+            if name in self.param_names_need_sync
+        }
 
     def create_patch(
         self,
@@ -264,7 +276,6 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
         version: torch.Tensor | int,
     ) -> EmptyWeightPatch | WeightPatch:
         self._wait_pending_snapshot_flush()
-        self._validate_state_dict_keys(state_dict)
 
         ordinals: list[torch.Tensor] = []
         nnz_per_tensor: list[torch.Tensor] = []
@@ -274,15 +285,12 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
         pending_snapshot_updates: list[_PendingSnapshotUpdate] = []
         patch_device: torch.device | None = None
 
-        if not self.ordered_keys:
-            raise RuntimeError("Snapshot contains no tensors")
-
         prefetched = self._prefetch_snapshot(state_dict, 0)
-        for ordinal in range(len(self.ordered_keys)):
+        for ordinal in range(len(self.param_names_need_sync)):
             current = prefetched
             prefetched = (
                 self._prefetch_snapshot(state_dict, ordinal + 1)
-                if ordinal + 1 < len(self.ordered_keys)
+                if ordinal + 1 < len(self.param_names_need_sync)
                 else None
             )
 
@@ -332,7 +340,9 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
                 patch_rows, patch_cols = rows, cols
 
             ordinals.append(
-                torch.tensor(current.ordinal, dtype=torch.int32, device=rows.device)
+                torch.tensor(
+                    current.global_ordinal, dtype=torch.int32, device=rows.device
+                )
             )
             nnz_per_tensor.append(
                 torch.tensor(values.numel(), dtype=torch.int32, device=rows.device)
@@ -398,7 +408,7 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
         state_dict: dict[str, torch.Tensor | DTensor],
         ordinal: int,
     ) -> _PrefetchedCPUSnapshot:
-        key = self.ordered_keys[ordinal]
+        key = self.param_names_need_sync[ordinal]
         value = materialize_tensor(state_dict[key])
         expected_shape = self.original_shapes[key]
         if value.shape != expected_shape:
@@ -432,6 +442,7 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
 
         return _PrefetchedCPUSnapshot(
             ordinal=ordinal,
+            global_ordinal=self.param_names_need_sync_ordinals[key],
             key=key,
             state_2dview=state_2dview,
             snapshot_value=snapshot_value,
@@ -481,7 +492,6 @@ class GPUSnapshotPatchBuilder(PatchBuilder):
         state_dict: dict[str, torch.Tensor | DTensor],
         version: torch.Tensor | int,
     ) -> EmptyWeightPatch | WeightPatch:
-        self._validate_state_dict_keys(state_dict)
 
         ordinals: list[torch.Tensor] = []
         nnz_per_tensor: list[torch.Tensor] = []
@@ -491,6 +501,8 @@ class GPUSnapshotPatchBuilder(PatchBuilder):
         patch_device: torch.device | None = None
 
         for ordinal, key in enumerate(self.ordered_keys):
+            if key not in self.param_names_need_sync:
+                continue
             value = materialize_tensor(state_dict[key])
             expected_shape = self.original_shapes[key]
             if value.shape != expected_shape:
@@ -701,17 +713,21 @@ class PatchWeightSyncer(WeightSyncer):
     async def init_sender(
         self,
         state_dict: dict[str, torch.Tensor | DTensor],
+        param_names_need_sync: list[str],
         send: SendFn,
         recv: RecvFn | None = None,
     ) -> None:
         assert not self.sender_initialized(), "Sender already initialized"
+        assert param_names_need_sync, "param_names_need_sync must not be empty"
         if recv is None:
             raise ValueError("PatchWeightSyncer sender init requires a recv function")
 
         metadata = await recv()
         self.ordered_keys = metadata["ordered_keys"]
         self.original_shapes = metadata["original_shapes"]
+        self.param_names_need_sync = param_names_need_sync
         receiver_dtypes = metadata["receiver_dtypes"]
+
         if set(state_dict.keys()) != set(self.ordered_keys):
             raise ValueError("Sender state dict keys do not match receiver keys")
 
@@ -720,7 +736,7 @@ class PatchWeightSyncer(WeightSyncer):
 
         with torch.no_grad():
             snapshot: dict[str, torch.Tensor] = {}
-            for key in self.ordered_keys:
+            for key in self.param_names_need_sync:
                 value_2dview, original_shape = as_coo_2d_view(
                     materialize_tensor(state_dict[key])
                 )
@@ -759,6 +775,7 @@ class PatchWeightSyncer(WeightSyncer):
         self.patch_builder = PatchBuilder.create(
             self.snapshot,
             self.ordered_keys,
+            self.param_names_need_sync,
             self.original_shapes,
             self.snapshot_device,
             self.delta_encoding,
@@ -815,6 +832,10 @@ class PatchWeightSyncer(WeightSyncer):
     ) -> EmptyWeightPatch | WeightPatch:
         if self.patch_builder is None:
             raise RuntimeError("Snapshot not initialized")
+        if self.ordered_keys is None:
+            raise RuntimeError("Snapshot metadata not initialized")
+        if set(state_dict.keys()) != set(self.ordered_keys):
+            raise ValueError("State dict keys do not match snapshot keys")
         return self.patch_builder.create_patch(state_dict, version)
 
     async def sync(

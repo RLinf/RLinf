@@ -143,7 +143,12 @@ class BucketWeightSyncer(WeightSyncer):
     ):
         has_visual = any("visual." in key for key in state_dict.keys())
         named_items: list[tuple[str, torch.Tensor | DTensor]] = []
-        for key, value in state_dict.items():
+        filtered_state_dict = {
+            key: value
+            for key, value in state_dict.items()
+            if key in self.param_names_need_sync
+        }
+        for key, value in filtered_state_dict.items():
             name = self._bucket_key(key, has_visual)
             if name is None:
                 continue
@@ -163,6 +168,17 @@ class BucketWeightSyncer(WeightSyncer):
         version: int | torch.Tensor,
     ) -> list[dict[str, torch.Tensor]]:
         return list(self.iter_buckets(state_dict, version))
+
+    async def init_sender(
+        self,
+        state_dict: dict[str, torch.Tensor | DTensor],
+        param_names_need_sync: list[str],
+        send: SendFn,
+        recv: RecvFn | None = None,
+    ) -> None:
+        del state_dict, send, recv
+        self.param_names_need_sync = param_names_need_sync
+        self._sender_initialized = True
 
     async def sync(
         self,

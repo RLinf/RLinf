@@ -77,10 +77,11 @@ class WeightSyncer(ABC):
     async def init_sender(
         self,
         state_dict: dict[str, torch.Tensor | DTensor],
+        param_names_need_sync: list[str],
         send: SendFn,
         recv: RecvFn | None = None,
     ) -> None:
-        del state_dict, send, recv
+        del state_dict, send, recv, param_names_need_sync
         self._sender_initialized = True
 
     async def init_receiver(

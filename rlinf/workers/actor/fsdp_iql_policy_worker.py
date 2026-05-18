@@ -224,6 +224,15 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
         )
         value_module = self.model_provider_func(obs_dim, action_dim, type_name="value")
 
+        trainable_params_names = [
+            name for name, param in module.named_parameters() if param.requires_grad
+        ]
+        model_state_dict = module.state_dict()
+        persist_buffer_names = [
+            name for name, _ in module.named_buffers() if name in model_state_dict
+        ]
+        self.param_names_need_sync = trainable_params_names + persist_buffer_names
+
         if initialize_target:
             target_module = self.model_provider_func(
                 obs_dim, action_dim, type_name="critic"
@@ -810,6 +819,7 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
                 state_dict=state_dict,
                 send=send_func,
                 recv=recv_func,
+                param_names_need_sync=self.param_names_need_sync,
             )
 
         await self.weight_syncer.sync(state_dict, send_func, version=self.version)
