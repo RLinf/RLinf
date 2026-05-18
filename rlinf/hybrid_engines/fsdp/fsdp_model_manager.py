@@ -243,6 +243,26 @@ class FSDPModelManager:
         except Exception as e:
             self._logger.warning(f"[FSDP] Liger kernels not applied: {e}")
 
+    def _collect_param_names_need_sync(self, module: torch.nn.Module) -> list[str]:
+        trainable_param_names = [
+            name for name, param in module.named_parameters() if param.requires_grad
+        ]
+
+        persistent_buffer_names: list[str] = []
+        for module_name, submodule in module.named_modules():
+            non_persistent_buffers = getattr(
+                submodule, "_non_persistent_buffers_set", set()
+            )
+            for buffer_name, _ in submodule.named_buffers(recurse=False):
+                if buffer_name in non_persistent_buffers:
+                    continue
+                full_name = (
+                    buffer_name if not module_name else f"{module_name}.{buffer_name}"
+                )
+                persistent_buffer_names.append(full_name)
+
+        return trainable_param_names + persistent_buffer_names
+
     def setup_model_and_optimizer(self) -> None:
         """
         Setup model, lr_scheduler, optimizer and grad_scaler.
@@ -271,14 +291,7 @@ class FSDPModelManager:
 
         # here record the original trainable parameters' names before FSDP wrapping
         # persist buffers' names are also recorded, which will be used for weight syncing.
-        trainable_params_names = [
-            name for name, param in module.named_parameters() if param.requires_grad
-        ]
-        model_state_dict = module.state_dict()
-        persist_buffer_names = [
-            name for name, _ in module.named_buffers() if name in model_state_dict
-        ]
-        self.param_names_need_sync = trainable_params_names + persist_buffer_names
+        self.param_names_need_sync = self._collect_param_names_need_sync(module)
 
         # build model, optimizer, lr_scheduler, grad_scaler
         self.model = self._strategy.wrap_model(

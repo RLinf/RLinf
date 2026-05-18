@@ -149,12 +149,9 @@ class BucketWeightSyncer(WeightSyncer):
         assert self.param_names_need_sync, (
             "param_names_need_sync must be set and not empty"
         )
-        filtered_state_dict = {
-            key: value
-            for key, value in state_dict.items()
-            if key in self.param_names_need_sync
-        }
-        for key, value in filtered_state_dict.items():
+        for key, value in state_dict.items():
+            if key not in self.param_names_need_sync_set:
+                continue
             name = self._bucket_key(key, has_visual)
             if name is None:
                 continue
@@ -184,6 +181,7 @@ class BucketWeightSyncer(WeightSyncer):
     ) -> None:
         del state_dict, send, recv
         self.param_names_need_sync = param_names_need_sync
+        self.param_names_need_sync_set = set(param_names_need_sync)
         self._sender_initialized = True
 
     async def sync(

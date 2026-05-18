@@ -92,16 +92,9 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         else:
             self.logger.info("[FSDP] Gradient checkpointing is disabled")
 
-        # here record the original trainable parameters' names before FSDP wrapping
-        # persist buffers' names are also recorded, which will be used for weight syncing.
-        trainable_params_names = [
-            name for name, param in module.named_parameters() if param.requires_grad
-        ]
-        model_state_dict = module.state_dict()
-        persist_buffer_names = [
-            name for name, _ in module.named_buffers() if name in model_state_dict
-        ]
-        self.param_names_need_sync = trainable_params_names + persist_buffer_names
+        # Record the original trainable parameter names before FSDP wrapping.
+        # Persistent buffer names are also recorded for selective weight syncing.
+        self.param_names_need_sync = self._collect_param_names_need_sync(module)
 
         # build model, optimizer, lr_scheduler, grad_scaler
         self.model = self._strategy.wrap_model(
