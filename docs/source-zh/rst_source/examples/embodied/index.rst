@@ -527,3 +527,5 @@
    gim_arm
    xsquare_turtle2
    dosw1
+   gr00t_16
+   sft_gr00t

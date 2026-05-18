@@ -1,0 +1,270 @@
+GR00T-N1.6 模型强化学习训练
+==================================================================
+
+.. |huggingface| image:: /_static/svg/hf-logo.svg
+   :width: 16px
+   :height: 16px
+   :class: inline-icon
+
+本示例提供了一份完整指南，介绍如何在 LIBERO 环境中使用 RLinf 框架，通过强化学习对 GR00T-N1.6 算法进行微调。内容涵盖从环境设置、核心算法设计到训练配置、评估和可视化的全过程，并提供可复现的命令和配置片段。
+
+主要目标是开发一个能够执行机器人操作的模型，具体包括：
+
+1. **视觉与语言理解**：利用大规模预训练的冻结主干（Backbone）处理多视角 RGB 图像与自然语言任务指令。
+2. **平滑连续控制**：基于流匹配（Flow Matching / Diffusion）架构的动作头，生成高频、平滑的连续动作轨迹。
+3. **强化学习微调**：通过 PPO 算法结合环境反馈优化策略。
+
+环境说明
+------------------------------------------------------------------
+
+**LIBERO 环境**
+
+- **环境**：基于 robosuite (MuJoCo) 构建的 LIBERO 仿真基准。
+- **任务**：控制 7 自由度机械臂执行各种家庭操作技能（拾取放置、堆叠、打开抽屉、空间重排）。
+- **观测**：由放置在工作区周围的离屏摄像头捕获的 RGB 图像（典型分辨率为 128×128、224×224 或 256×256）。
+- **动作空间**：环境原生提供 7 维连续动作——3D 末端执行器位置控制（x、y、z）、3D 旋转控制（横滚、俯仰、偏航）、夹爪控制（打开/关闭）。*注：GR00T-N1.6 在底层会通过具身标签将该 7 维动作统一零填充（Zero-padding）至 128 维的跨具身通用动作空间中。*
+
+**任务描述格式**
+
+GR00T-N1.6 直接将环境提供的自然语言任务描述作为语言模型的输入，利用冻结的主干网络提取语义特征。
+
+**数据结构**
+
+- **图像**：主视角和手腕视角的连续 RGB 视频帧，通常命名为 ``main_images`` 和 ``wrist_images``。考虑到时间步历史，形状通常为 ``[batch_size, seq_len, 224, 224, 3]``。
+- **状态**：末端执行器的位置、姿态和夹爪状态（在网络底层与视觉特征拼接作为状态表征）。
+- **任务描述**：自然语言指令。
+- **奖励**：用于 PPO 强化的稀疏奖励（成功为 1，失败为 0）。
+
+算法组件
+------------------------------------------------------------------
+
+**核心算法组件**
+
+1. **PPO (Proximal Policy Optimization)**
+
+   - 使用 GAE（广义优势估计）进行优势估计。
+   - 带比例限制的策略裁剪。
+   - 价值函数裁剪。
+   - 熵正则化。
+
+环境与跨具身支持 (Cross-Embodiment)
+------------------------------------------------------------------
+**灵活的具身生态与 Modality Config**
+
+GR00T-N1.6 采用了高度解耦的数据接口设计。通过配置不同的 ``Embodiment Tag`` 与模态转换器，框架不仅原生支持如 LIBERO 中的 7 自由度机械臂（3D位置、3D旋转、夹爪），更能通过同一套底层连续控制参数无缝扩展至具有四条腿的四足机器人形态，无需对底层网络架构做任何侵入性修改。
+
+GR00T-N1.6 核心架构升级
+------------------------------------------------------------------
+**1. FSDP (Fully Sharded Data Parallel) Actor Worker**
+
+鉴于 GR00T-N1.6 参数规模的显著增长，RLinf 的 Actor 节点现已全面重构为 ``EmbodiedFSDPActor``。该架构将模型权重、梯度与优化器状态跨多 GPU 节点分片，打破了传统 DDP 的单卡显存瓶颈，极大提升了吞吐量。
+
+**2. Head-only 微调与防爆机制 (Gradient Protection)**
+
+为适应少量数据的物理环境对齐并节省计算资源，GR00T-N1.6 的 RL 训练采用部分微调策略：
+
+- **主干冻结 (Backbone Freezing)**：严格锁定数以十亿计的视觉和语言主干网络参数，使其仅以推理模式（Eval）运行。
+- **动作头精细控制**：仅解冻动作输出头（Action Head）以学习物理动力学。更进一步，框架对时间步编码器（``timestep_encoder``）进行了强制冻结与梯度 Hook 拦截，精准防范了高维动作分布中极易引发的 ``NaN`` 梯度爆炸问题。
+
+依赖安装
+------------------------------------------------------------------
+
+1. 克隆 RLinf 仓库
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   # 为提高国内下载速度，可以使用：
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+2. 安装依赖
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**选项 1：Docker 镜像**
+
+使用 Docker 镜像运行实验。
+
+.. code-block:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      # 如果需要国内加速下载镜像，可以使用：
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+
+请通过镜像内置的 ``switch_env`` 工具切换到对应的虚拟环境：
+
+.. code-block:: bash
+
+   source switch_env gr00t_16
+
+**选项 2：自定义环境**
+
+.. code-block:: bash
+
+   # 为提高国内依赖安装速度，可以添加 `--use-mirror` 到下面的 install.sh 命令
+   bash requirements/install.sh embodied --model gr00t_16 --env maniskill_libero
+   source .venv/bin/activate
+
+模型下载
+------------------------------------------------------------------
+开始训练前，您需要运行之前 RLinf 提供的 GR00T-N1.6 的 SFT，并获得经过格式转换后的模型，并将模型路径配置到指定的 yaml 文件中。RLinf SFT的模型将会后续放出，敬请期待！目前支持四种libero任务：Saptial, Object, Goal, 10。
+
+GR00T-N1.6 核心架构设计理念
+------------------------------------------------------------------
+此处介绍 GR00T-N1.6 的核心架构升级与重要设计理念，以帮助开发者更深入地理解底层逻辑。
+
+**1. 两阶段解耦训练范式 (Two-Stage Training Pipeline)**
+
+RLinf 框架针对 GR00T-N1.6 采用了高度解耦的两阶段训练架构：
+
+- **第一阶段（纯 SFT 预热）**：采用 ``Pure SFT Model`` 模式。模型完全脱离物理仿真环境，仅依赖离线专家数据集进行监督微调，专注拟合目标动作轨迹。
+- **第二阶段（PPO 强化对齐）**：在 SFT 收敛的基础上，将模型载入基于 FSDP 的分布式 Actor 中，与仿真环境进行实时交互。
+
+**2. 极简的局部微调策略 (Head-only Fine-Tuning)**
+
+为了在大幅节省显存的同时防止“灾难性遗忘”，框架默认采用“冻结主干”策略：
+
+- **主干冻结 (Backbone Freezing)**：在 SFT 和后续 RL 阶段中，视觉-语言主干网络将被严格锁定（``requires_grad=False``）。
+- **专注动作头**：仅解冻动作输出头（Action Head）参与梯度更新。
+
+**3. 流匹配动作生成 (Flow-Matching Action Head)**
+
+- 模型通过加噪与去噪的流匹配机制（Flow-SDE / Diffusion），直接在连续空间中生成高频动作块。
+- 关键配置：通过 ``num_action_chunks`` 控制预测步长，``denoising_steps`` 控制去噪深度。
+
+**4. 跨具身泛化 (Cross-Embodiment)**
+
+- **具身标签 (Embodiment Tag)**：依靠传入的配置标签（如 ``ROBOCASA_PANDA_OMRON``），系统能动态适配对应的状态编码器与动作空间。无论是单臂机械臂，还是四足机器人形态均可复用。
+
+**5. FSDP 分布式并行架构**
+
+- 底层系统针对 Actor 节点进行了重构（如 ``EmbodiedFSDPActor``），能够跨 GPU 节点对模型权重、梯度与优化器状态进行分片切分（Sharding）。
+
+运行脚本与配置
+------------------------------------------------------------------
+
+**1. 关键集群配置**
+
+.. code-block:: yaml
+
+   cluster:
+     num_nodes: 1
+     hardware_ranks: [[0]]
+     component_placement:
+       actor,env,rollout: all
+
+**2. 模型关键参数配置**
+
+**2.1 Actor 模型与动作头配置 (`actor.model`)**
+
+.. code-block:: yaml
+
+   model:
+     model_type: "gr00t_1_6"   
+     add_value_head: True          # 强化学习关键：动态注入价值网络预测优势
+     num_action_chunks: 1          # PPO阶段调为1，提升高频物理交互的实时性
+     denoising_steps: 1            # 控制流匹配(Flow-Matching)去噪步数
+
+**2.2 FSDP 分布式切片策略**
+
+.. code-block:: yaml
+
+   no_split_modules:
+     - "Qwen3DecoderLayer"
+     - "Siglip2EncoderLayer"
+     - "FlowMatchingActionHeadForRLActionPrediction"
+     - "TimestepEncoder"
+     - "ValueHead"
+
+**2.3 PPO 与优化器超参数**
+
+.. code-block:: yaml
+
+   algorithm:
+     adv_type: gae
+     clip_ratio_high: 0.2
+     gamma: 0.99
+     gae_lambda: 0.95
+
+   optim:
+     lr: 5.0e-6
+     value_lr: 1.0e-4
+     clip_grad: 1.0
+
+**3. 配置文件路径**
+
+- GR00T-N1.6 + PPO + Libero-Spatial：
+  ``examples/embodiment/config/libero_spatial_ppo_gr00t_16.yaml``
+
+需要修改 SFT 后模型的路径：
+
+.. code-block:: yaml
+
+   model:
+     model_path: "/path/to/GR00T-N1.6-libero-spatial-ppo"
+
+**4. 启动命令**
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t_16
+
+可视化与结果监控
+------------------------------------------------------------------
+
+**1. TensorBoard 日志**
+
+.. code-block:: bash
+
+   tensorboard --logdir ./logs --port 6006
+
+**2. 关键监控指标**
+
+- **训练指标**：``actor/loss``, ``actor/value_loss``, ``actor/grad_norm``, ``actor/approx_kl``。
+- **Rollout 指标**：``rollout/returns_mean``, ``rollout/advantages_mean``。
+- **环境指标**：``env/episode_len``, ``env/success_once``。
+
+**3. 视频生成与集成配置**
+
+.. code-block:: yaml
+
+   video_cfg:
+     save_video: True
+     video_base_dir: ${runner.logger.log_path}/video/eval
+
+   runner:
+     logger:
+       logger_backends: ["tensorboard"]
+
+微调完成后，系统将在输出目录生成 ``metadata.json`` 等统计文件，保留推理和后续部署所需的关键模态信息。
+
+在LIBERO环境中，GR00T-N1.6 通过上述配置和训练流程，能够实现从视觉输入到连续动作输出的端到端强化学习微调，显著提升机器人在复杂操作任务中的表现与泛化能力。
+
+成功率展示如下（PPO）：
+
+.. raw:: html
+
+   <div style="display: flex; justify-content: center; margin: 20px 0;">
+     <div style="flex: 0.5; text-align: center;">
+       <img src="https://github.com/RLinf/misc/blob/main/pic/gr00t_1.6_ppo_success_rate.png?raw=true" style="width: 100%;"/>
+       <p><em>GR00T-N1.6 SFT + PPO在 LIBERO_Spatial 的成功率曲线</em></p>
+     </div>
+   </div>
+
+.. list-table:: **GR00T-N1.5模型使用Flow-SDE方法在LIBERO上的结果**
+   :header-rows: 1
+
+   * - 模型
+     - Spatial 
+
+   * - GR00T-N1.6 SFT
+     - |huggingface| `70% <https://huggingface.co/RLinf/RLinf-Gr00t-N1.6-RL-Spatial>`_
+
+   * - +PPO
+     - |huggingface| `82% <https://huggingface.co/RLinf/RLinf-Gr00t-N1.6-RL-Spatial-Step500>`_

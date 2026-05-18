@@ -1,0 +1,38 @@
+model_type: "gr00t_1_6"
+
+# Model precision and loading settings
+precision: "bf16"
+trust_remote_code: True
+is_lora: false
+
+# Action and policy settings
+action_dim: 7
+num_action_chunks: 10
+denoising_steps: 1
+
+obs_converter_type: "libero"
+embodiment_tag: libero_panda
+# When true (recommended for LIBERO SFT checkpoints evaluated with official Gr00T):
+# use EmbodimentTag.LIBERO_PANDA (projector id 2) and libero_panda modality/stats in SFT.
+# Set false only for older RLinf checkpoints trained with the robocasa_panda_omron slot.
+use_official_libero_panda: true
+add_value_head: True
+
+rl_head_config:
+  joint_logprob: False
+  noise_method: "flow_sde"
+  ignore_last: False
+  safe_get_logprob: False
+  noise_anneal: False
+  noise_params: [0.7, 0.3, 400]
+  noise_level: 0.5
+  add_value_head: ${actor.model.add_value_head}
+  chunk_critic_input: False
+  detach_critic_input: True
+  disable_dropout: True
+  use_vlm_value: False
+  value_vlm_mode: "mean_token"
+  padding_value: 570
+
+num_steps: 4
+

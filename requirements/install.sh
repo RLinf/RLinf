@@ -74,8 +74,9 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "dreamzero")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_16" "dexbotic" "starvla" "lingbotvla" "dreamzero")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy")
+
 
 #=======================Utility Functions=======================
 
@@ -1195,6 +1196,80 @@ install_gr00t_model() {
     uv pip uninstall pynvml || true
 }
 
+install_gr00t_16_model() {
+    create_and_sync_venv
+    install_common_embodied_deps
+
+    echo "Checking for git-lfs (required for NVIDIA Isaac-GR00T)..."
+    if ! command -v git-lfs &> /dev/null; then
+        echo "⚠️ git-lfs not found! Attempting to install it automatically..."
+        if command -v apt-get &> /dev/null; then
+            apt-get update -yqq
+            apt-get install -y git-lfs
+            echo "✅ git-lfs installed successfully."
+        else
+            echo "❌ Error: apt-get not found. Please install git-lfs manually."
+            exit 1
+        fi
+    fi
+    git lfs install
+    echo "========================================================="
+
+    local gr00t_path
+    gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" https://github.com/NVIDIA/Isaac-GR00T.git)
+    
+    echo "Checking out gr00t version 7d5a455 and applying dependency patches..."
+    (
+        cd "$gr00t_path"
+
+        git reset --hard HEAD
+        git clean -fdx
+
+        git checkout 7d5a455add459e870c2e4e4569006acace432d49
+
+        current_hash=$(git rev-parse HEAD)
+        echo "========================================================="
+        echo "✅ GR00T repo is currently at Hash: $current_hash"
+        echo "========================================================="
+        
+        if [ -f "pyproject.toml" ]; then
+            sed -i 's/peft==0.11.1/peft>=0.17.1/g' pyproject.toml
+            sed -i 's/peft<0.12/peft>=0.17.1/g' pyproject.toml
+        fi
+        if [ -f "setup.py" ]; then
+            sed -i 's/peft==0.11.1/peft>=0.17.1/g' setup.py
+            sed -i 's/peft<0.12/peft>=0.17.1/g' setup.py
+        fi
+    )
+
+    uv pip install -e "$gr00t_path" --no-deps
+
+    uv pip install diffusers==0.35.1 av==15.1.0 pydantic==2.12.5 albumentations==1.4.18 \
+                pyzmq==27.0.1 pyopengl==3.1.10 mujoco==3.6.0 ray==2.54.0 lerobot==0.4.4 \
+                "transformers==4.51.3" "lmdb==1.7.5"
+
+    case "$ENV_NAME" in
+        maniskill_libero)
+            install_maniskill_libero_env
+            install_flash_attn
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not yet validated for Gr00t 1.6." >&2
+            exit 1
+            ;;
+    esac
+    
+    installed_peft=$(uv pip show peft | grep Version | awk '{print $2}')
+    if [ "$installed_peft" != "0.17.1" ]; then
+        echo "Warning: PEFT version mismatch ($installed_peft). Force fixing to 0.17.1..."
+        source "$VENV_DIR/bin/activate"
+        python -m pip uninstall -y peft || true
+        python -m pip install peft==0.17.1 --no-dependencies
+    fi
+
+    uv pip uninstall pynvml || true
+}
+
 install_dexbotic_model() {
     case "$ENV_NAME" in
         maniskill_libero|libero)
@@ -1789,6 +1864,9 @@ main() {
                     ;;
                 gr00t)
                     install_gr00t_model
+                    ;;
+                gr00t_16)
+                    install_gr00t_16_model
                     ;;
                 dexbotic)
                     install_dexbotic_model
