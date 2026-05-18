@@ -447,10 +447,6 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             )
             gold_text = answers[i]
 
-            print(
-                f"pred_text {vlm_normalize_text(pred_text)} gold_text {vlm_normalize_text(gold_text)}",
-                flush=True,
-            )
             if vlm_normalize_text(pred_text) == vlm_normalize_text(gold_text):
                 correct += 1
 
