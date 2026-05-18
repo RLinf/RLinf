@@ -492,7 +492,6 @@ class GPUSnapshotPatchBuilder(PatchBuilder):
         state_dict: dict[str, torch.Tensor | DTensor],
         version: torch.Tensor | int,
     ) -> EmptyWeightPatch | WeightPatch:
-
         ordinals: list[torch.Tensor] = []
         nnz_per_tensor: list[torch.Tensor] = []
         row_chunks: list[torch.Tensor] = []

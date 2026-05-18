@@ -139,6 +139,9 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                 self.version * self.total_num_train_envs * self.rollout_epoch
             )
 
+        if hasattr(self.hf_model, "set_global_step"):
+            self.hf_model.set_global_step(applied_version)
+
         gc.collect()
         self.torch_platform.empty_cache()
         return applied_version
