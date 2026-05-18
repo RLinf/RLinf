@@ -382,7 +382,7 @@ jobs:
           uv cache prune
           rm -rf /tmp/tmp*
 
-  embodied-vlm-reward-maniskill-test:
+  embodied-reward-model-maniskill-test:
     runs-on: embodied
     steps:
       - name: Checkout code
@@ -396,7 +396,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export LIBERO_PATH=/workspace/dataset/LIBERO
-          bash requirements/install.sh embodied --env maniskill_libero --vlm-reward
+          bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl
 
       - name: ManiSkill VLM Reward PPO test
         timeout-minutes: 20
@@ -405,27 +405,6 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_mlp_qwentrend_reward
-
-      - name: Clean up
-        run: |
-          rm -rf .venv
-          uv cache prune
-
-  embodied-resnet-reward-maniskill-test:
-    runs-on: embodied
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Create embodied environment
-        run: |
-          unset UV_DEFAULT_INDEX
-          export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
-          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
-          bash requirements/install.sh embodied --env maniskill_libero --vlm-reward
 
       - name: ManiSkill ResNet Reward PPO test
         timeout-minutes: 20

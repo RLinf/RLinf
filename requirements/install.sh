@@ -66,7 +66,6 @@ DEFAULT_BACKEND_NVIDIA="auto"
 # respective dispatchers below.
 SUPPORTED_PLATFORMS=("nvidia" "amd" "ascend")
 TEST_BUILD=${TEST_BUILD:-0}
-VLM_REWARD=0
 # Absolute path to this script (resolves symlinks)
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
@@ -75,7 +74,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "dreamzero")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy")
 
 #=======================Utility Functions=======================
@@ -178,7 +177,6 @@ parse_args() {
                 ENV_NAME="${2:-}"
                 shift 2
                 ;;
-            --vlm-reward) VLM_REWARD=1; shift ;;
             --use-mirror)
                 USE_MIRRORS=1
                 shift
@@ -945,7 +943,6 @@ clone_or_reuse_repo() {
 #=======================EMBODIED INSTALLERS=======================
 install_common_embodied_deps() {
     uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
-    [ "$VLM_REWARD" -eq 1 ] && uv pip install --upgrade "transformers>=4.57.1,<=4.57.6" "tokenizers>=0.22,<0.23"
     uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
     if [ "$NO_ROOT" -eq 0 ]; then
         bash $SCRIPT_DIR/embodied/sys_deps.sh "$PLATFORM"
@@ -1267,6 +1264,25 @@ install_dreamzero_model() {
     esac
 }
 
+install_qwen3_vl_model() {
+    create_and_sync_venv
+    install_common_embodied_deps
+
+    case "$ENV_NAME" in
+        maniskill_libero|libero)
+            install_${ENV_NAME}_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for Qwen3-VL model." >&2
+            exit 1
+            ;;
+    esac
+
+    uv pip install --upgrade "transformers>=4.57.1,<=4.57.6" "tokenizers>=0.22,<0.23"
+
+    install_flash_attn
+}
+
 install_franka_realworld_env() {
     uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
     if [ "$SKIP_ROS" -ne 1 ]; then
@@ -1284,10 +1300,6 @@ install_env_only() {
     create_and_sync_venv
     SKIP_ROS=${SKIP_ROS:-0}
     case "$ENV_NAME" in
-        maniskill_libero)
-            install_common_embodied_deps
-            install_maniskill_libero_env
-            ;;
         d4rl)
             install_d4rl_env
             ;;
@@ -1324,10 +1336,6 @@ install_env_only() {
             exit 1
             ;;
     esac
-
-    if [ "$VLM_REWARD" -eq 1 ]; then
-        install_flash_attn
-    fi
 }
 
 #=======================ENV INSTALLERS=======================
@@ -1809,6 +1817,9 @@ main() {
                     ;;
                 dreamzero)
                     install_dreamzero_model
+                    ;;
+                qwen3_vl)
+                    install_qwen3_vl_model
                     ;;
                 "")
                     install_env_only
