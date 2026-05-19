@@ -331,6 +331,7 @@ class DreamZeroLiberoDataset(Dataset):
         cfg_mode: bool = False,
         advantage_parquet: str | None = None,
         unconditional_prob: float = 0.3,
+        video_backend: str = "torchcodec",
     ):
         if isinstance(data_path, (list, tuple)):
             if len(data_path) == 0:
@@ -351,6 +352,7 @@ class DreamZeroLiberoDataset(Dataset):
         self.cfg_mode = bool(cfg_mode)
         self.advantage_parquet = advantage_parquet
         self.unconditional_prob = float(unconditional_prob)
+        self._video_backend = video_backend
         if not 0.0 <= self.unconditional_prob <= 1.0:
             raise ValueError(
                 f"unconditional_prob must be in [0, 1], got {self.unconditional_prob}"
@@ -432,7 +434,7 @@ class DreamZeroLiberoDataset(Dataset):
         self.dataset = lerobot_dataset.LeRobotDataset(
             self.data_path,
             delta_timestamps=delta_timestamps,
-            video_backend="pyav",
+            video_backend=self._video_backend,
         )
         self._use_v2 = False
 
@@ -1136,6 +1138,7 @@ class DreamZeroDroidDataset(Dataset):
         droid_view_hw: tuple[int, int] = (176, 320),
         pq_cache_max_episodes: int = 128,
         video_tolerance_s: float = 0.1,
+        video_backend: str = "torchcodec",
     ):
         if isinstance(data_path, (list, tuple)):
             if len(data_path) == 0:
@@ -1215,6 +1218,8 @@ class DreamZeroDroidDataset(Dataset):
         video_offsets = list(range(self.num_video_frames))
         state_offsets = [i * self.state_step for i in range(self.state_horizon)]
         action_offsets = list(range(self.total_action_steps))
+
+        self._video_backend = video_backend
 
         if self.lazy_load:
             # --- Map-style, episode-local loading (DreamZero official behavior) ---
@@ -1305,7 +1310,6 @@ class DreamZeroDroidDataset(Dataset):
                     f"video_tolerance_s must be positive, got {video_tolerance_s!r}"
                 )
             self._video_tolerance_s = _tol
-            self._video_backend = "pyav"
             self._parquet_columns = [
                 "timestamp",
                 # Some datasets store state under a struct column "observation" with field "state"
@@ -1370,7 +1374,7 @@ class DreamZeroDroidDataset(Dataset):
                 root=str(data_path_obj.resolve()),
                 episodes=local_episodes,
                 delta_timestamps=delta_timestamps,
-                video_backend="pyav",
+                video_backend=self._video_backend,
             )
 
         self._advantage_map = {}
@@ -1967,6 +1971,7 @@ def build_dreamzero_sft_dataloader(
     if advantage_parquet in ("", None):
         advantage_parquet = None
     unconditional_prob = float(model_cfg.get("unconditional_prob", 0.3))
+    video_backend = cfg.data.get("video_backend", "torchcodec")
 
     sft_embodiment = str(model_cfg.get("embodiment_tag", "libero_sim")).lower()
     if sft_embodiment in ("droid", "oxe_droid"):
@@ -2018,6 +2023,7 @@ def build_dreamzero_sft_dataloader(
             droid_view_hw=droid_view_hw,
             pq_cache_max_episodes=pq_cache_max_episodes,
             video_tolerance_s=video_tolerance_s,
+            video_backend=video_backend,
         )
         collate_embodiment = "oxe_droid"
     else:
@@ -2037,6 +2043,7 @@ def build_dreamzero_sft_dataloader(
             cfg_mode=cfg_mode,
             advantage_parquet=advantage_parquet,
             unconditional_prob=unconditional_prob,
+            video_backend=video_backend,
         )
         collate_embodiment = "libero"
     sampler = torch.utils.data.distributed.DistributedSampler(

@@ -38,6 +38,7 @@ data:
   prefetch_factor: 8
   video_tolerance_s: 0.1
   parquet_cache_size: 512
+  video_backend: torchcodec
 
 algorithm:
   adv_type: gae
