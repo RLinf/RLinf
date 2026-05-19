@@ -17,6 +17,7 @@ import inspect
 import json
 import os
 import threading
+import time
 from typing import ClassVar
 
 import ray
@@ -215,6 +216,7 @@ class BehaviorProcessPool:
     _shared_pool: ClassVar["BehaviorProcessPool | None"] = None
     _shared_refcount: ClassVar[int] = 0
     _pipeline_next_idx: ClassVar[int] = 0
+    _lifecycle_lock: ClassVar[threading.Lock] = threading.Lock()
 
     @classmethod
     def acquire_shared(
@@ -223,25 +225,44 @@ class BehaviorProcessPool:
         worker_info,
         pipeline_stage_num: int,
         num_envs: int,
+        retry_times: int = 1,
     ) -> tuple["BehaviorProcessPool", int]:
         """Attach to the shared pool and return ``(pool, pool_offset)``."""
-        if cls._shared_pool is None: # pool init
-            total_envs = int(OmegaConf.select(cfg, "total_num_envs", default=None))
-            total_envs_per_worker = total_envs // worker_info.group_world_size
-            num_env_subprocess = int(OmegaConf.select(cfg, "num_env_subprocess", default=1))
-            cls._shared_pool = cls(
-                cfg,
-                total_envs_per_worker,
-                num_env_subprocess,
-                pipeline_stage_num,
-            )
 
-        idx = cls._pipeline_next_idx
-        global_offset = idx * num_envs
-        cls._pipeline_next_idx += 1
-        cls._shared_refcount += 1
+        with cls._lifecycle_lock:
+            if cls._shared_pool is None:
+                total_envs = int(OmegaConf.select(cfg, "total_num_envs", default=None))
+                total_envs_per_worker = total_envs // worker_info.group_world_size
+                num_env_subprocess = int(
+                    OmegaConf.select(cfg, "num_env_subprocess", default=1)
+                )
+                last_exc: Exception | None = None
+                for attempt in range(max(int(retry_times), 1)):
+                    try:
+                        cls._shared_pool = cls(
+                            cfg,
+                            total_envs_per_worker,
+                            num_env_subprocess,
+                            pipeline_stage_num,
+                        )
+                        last_exc = None
+                        break
+                    except Exception as exc:
+                        last_exc = exc
+                        cls._shared_pool = None
+                        if attempt + 1 < max(int(retry_times), 1):
+                            time.sleep(5)
+                if last_exc is not None:
+                    raise RuntimeError(
+                        f"Failed to initialize Behavior subprocess pool after {retry_times} retries."
+                    ) from last_exc
 
-        pool = cls._shared_pool
+            idx = cls._pipeline_next_idx
+            global_offset = idx * num_envs
+            cls._pipeline_next_idx += 1
+            cls._shared_refcount += 1
+
+            pool = cls._shared_pool
 
         if global_offset + num_envs > pool.total_num_envs:
             raise ValueError(
@@ -253,12 +274,14 @@ class BehaviorProcessPool:
     @classmethod
     def release_shared(cls) -> None:
         """Drop refcount; tear down the shared pool when the last env releases."""
-        if cls._shared_pool is None:
-            return
-        cls._shared_refcount -= 1
-        if cls._shared_refcount <= 0:
-            cls._shared_pool.close()
-            cls._shared_pool = None
+        with cls._lifecycle_lock:
+            if cls._shared_pool is None or cls._shared_refcount <= 0:
+                return
+            cls._shared_refcount -= 1
+            if cls._shared_refcount <= 0:
+                cls._shared_pool.close()
+                cls._shared_pool = None
+                cls._pipeline_next_idx = 0
 
     def __init__(
         self,
@@ -280,25 +303,32 @@ class BehaviorProcessPool:
             OmegaConf.select(cfg, "skip_intermediate_obs_in_chunk", default=False)
         )
 
-        self.env_processes = [
-            BehaviorProcess.remote(
-                self.cfg,
-                self.num_env_shard,
-                pipeline_stage_num,
-            )
-            for _ in range(self.num_env_subprocess)
-        ]
-        
-        # Wait for all instances to initialize and fetch their activity name
-        activity_names_refs = [proc.get_activity_name.remote() for proc in self.env_processes]
-        activity_names = ray.get(activity_names_refs)
+        self.env_processes = []
+        try:
+            self.env_processes = [
+                BehaviorProcess.remote(
+                    self.cfg,
+                    self.num_env_shard,
+                    pipeline_stage_num,
+                )
+                for _ in range(self.num_env_subprocess)
+            ]
 
-        if len(set(activity_names)) != 1:
-            raise RuntimeError(
-                f"Behavior env subprocesses reported different activity_name: "
-                f"{activity_names}"
-            )
-        self.activity_name = activity_names[0]
+            # Wait for all instances to initialize and fetch their activity name
+            activity_names_refs = [
+                proc.get_activity_name.remote() for proc in self.env_processes
+            ]
+            activity_names = ray.get(activity_names_refs)
+
+            if len(set(activity_names)) != 1:
+                raise RuntimeError(
+                    f"Behavior env subprocesses reported different activity_name: "
+                    f"{activity_names}"
+                )
+            self.activity_name = activity_names[0]
+        except Exception:
+            self.close()
+            raise
 
     def _slice_plan(
         self, global_start: int, num_envs: int
@@ -442,15 +472,20 @@ class BehaviorEnv(gym.Env):
         self.worker_info = worker_info
         self.record_metrics = record_metrics
         self._is_start = True
+        self.pipeline_stage_num = total_num_processes // worker_info.group_world_size
+        self.retry_times = int(cfg.get("retry_times", 3))
+        self.enable_offload = bool(cfg.get("enable_offload", False))
+        self.enable_init_offload = bool(cfg.get("enable_init_offload", True))
+        self.task_description = None
         if total_num_processes % worker_info.group_world_size != 0:
             raise ValueError(
                 f"total_num_processes ({total_num_processes}) must be divisible by "
                 f"worker_info.group_world_size ({worker_info.group_world_size}) to infer pipeline_stage_num."
             )
-        pipeline_stage_num = total_num_processes // worker_info.group_world_size
-        self.pool, self.pool_offset = BehaviorProcessPool.acquire_shared(
-            cfg, worker_info, pipeline_stage_num, num_envs
-        )
+        self.pool = None
+        self.pool_offset = None
+        if not (self.enable_offload and not self.enable_init_offload):
+            self._ensure_pool()
 
         self.logger = get_logger()
 
@@ -459,7 +494,8 @@ class BehaviorEnv(gym.Env):
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
         if self.record_metrics:
             self._init_metrics()
-        self._init_env()
+        if not (self.enable_offload and not self.enable_init_offload):
+            self._init_env()
 
     def _load_tasks_cfg(self, activity_name: str):
         # Read task description
@@ -476,13 +512,28 @@ class BehaviorEnv(gym.Env):
         }
         self.task_description = task_description_map[activity_name]
 
+    def _ensure_pool(self):
+        if self.pool is None:
+            self.pool, self.pool_offset = BehaviorProcessPool.acquire_shared(
+                self.cfg,
+                self.worker_info,
+                self.pipeline_stage_num,
+                self.num_envs,
+                retry_times=self.retry_times,
+            )
+
     def _init_env(self):
+        self._ensure_pool()
         self._load_tasks_cfg(self.pool.activity_name)
 
     def env_reset(self):
+        self._ensure_pool()
+        if self.task_description is None:
+            self._load_tasks_cfg(self.pool.activity_name)
         return self.pool.env_reset_slice(self.pool_offset, self.num_envs)
 
     def env_chunk_step(self, chunk_actions: torch.Tensor):
+        self._ensure_pool()
         return self.pool.env_chunk_step_slice(
             self.pool_offset, self.num_envs, chunk_actions,
         )
@@ -719,3 +770,6 @@ class BehaviorEnv(gym.Env):
             BehaviorProcessPool.release_shared()
             self.pool = None
             self.pool_offset = None
+
+    def offload(self):
+        self.close()

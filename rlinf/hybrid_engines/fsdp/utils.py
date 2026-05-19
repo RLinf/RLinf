@@ -409,7 +409,7 @@ def apply_fsdp2_to_model(
             default_transformer_cls_names_to_wrap
         )
         module_classes_to_wrap = None
-        no_split_names = None
+        no_split_names = getattr(module, "_no_split_names", None)
         assert (
             len(fsdp_transformer_layer_cls_to_wrap) > 0
             and fsdp_transformer_layer_cls_to_wrap[0] is not None
