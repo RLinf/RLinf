@@ -54,6 +54,7 @@ class EnvOutput:
     terminations: Optional[torch.Tensor] = None  # [B]
     truncations: Optional[torch.Tensor] = None  # [B]
     rewards: Optional[torch.Tensor] = None  # [B]
+    env_infos: Optional[dict[str, Any]] = None
 
     intervene_actions: Optional[torch.Tensor] = None  # [B]
     intervene_flags: Optional[torch.Tensor] = None  # [B]
@@ -78,6 +79,11 @@ class EnvOutput:
         )
         self.rewards = (
             self.rewards.cpu().contiguous() if self.rewards is not None else None
+        )
+        self.env_infos = (
+            put_tensor_device(self.env_infos, "cpu")
+            if self.env_infos is not None
+            else None
         )
         self.intervene_actions = (
             self.intervene_actions.cpu().contiguous()
@@ -260,6 +266,7 @@ class EnvOutput:
         env_output_dict["terminations"] = self.terminations
         env_output_dict["truncations"] = self.truncations
         env_output_dict["rewards"] = self.rewards
+        env_output_dict["env_infos"] = self.env_infos
         env_output_dict["intervene_actions"] = self.intervene_actions
         env_output_dict["intervene_flags"] = self.intervene_flags
 
