@@ -15,7 +15,6 @@
 import json
 import logging
 import os
-import re
 from typing import Any
 
 import torch
@@ -24,6 +23,7 @@ from omegaconf import DictConfig
 from rlinf.config import SupportedModel
 from rlinf.hybrid_engines.fsdp.utils import generate_with_kv_cache
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
+from rlinf.workers.sft.utils import vlm_extract_answer, vlm_normalize_text
 
 
 class FSDPVlmSftWorker(FSDPSftWorker):
@@ -71,7 +71,9 @@ class FSDPVlmSftWorker(FSDPSftWorker):
 
     def load_checkpoint(self, load_path: str):
         super().load_checkpoint(load_path)
-        self._load_data_state(load_path)
+        if self.data_loader is not None:
+            # run the eval model not to load data_loader ckpt
+            self._load_data_state(load_path)
 
     def build_tokenizer(self):
         from transformers import AutoTokenizer
@@ -140,9 +142,6 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             logging.info(
                 f"Build data loader from {data_paths} with {len(train_dataset)} samples"
             )
-            assert len(data_loader) != 0, (
-                f"data_loader is not empty, please check the data_path {data_paths}"
-            )
 
             data_config = {
                 "dataset_name": dataset_name,
@@ -156,99 +155,6 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
             )
 
-    def _normalize_text(self, s: str) -> str:
-        return " ".join(str(s).strip().lower().split())
-
-    def _extract_boxed(self, text: str) -> str | None:
-        idx = text.rfind("boxed")
-        if idx < 0:
-            return None
-        s = text[idx + len("boxed") :].strip()
-        if not s:
-            return None
-        if s[0] != "{":
-            return s.split("$")[0].strip() or None
-
-        depth = 0
-        out = []
-        for ch in s:
-            if ch == "{":
-                depth += 1
-                if depth == 1:
-                    continue
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    break
-            if depth >= 1:
-                out.append(ch)
-        ans = "".join(out).strip()
-        return ans or None
-
-    def _extract_answer(self, text: str) -> str:
-        if SupportedModel(self.cfg.actor.model.model_type) not in [
-            SupportedModel.QWEN2_5_VL_SFT,
-            SupportedModel.QWEN3_VL_SFT,
-            SupportedModel.QWEN3_VL_MOE_SFT,
-        ]:
-            raise ValueError(
-                f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
-            )
-
-        if not text:
-            return ""
-
-        # 1) Get the last assistant span from common chat templates.
-        patterns = [
-            r"<\|im_start\|>assistant\s*(.*?)<\|im_end\|>",
-            r"<\|assistant\|>\s*(.*?)(?:<\|end\|>|$)",
-        ]
-        body = None
-        for p in patterns:
-            matches = re.findall(p, text, flags=re.DOTALL | re.IGNORECASE)
-            if matches:
-                body = matches[-1].strip()
-                break
-        if body is None:
-            body = text.strip()
-
-        # 2) Remove reasoning blocks if present.
-        body = re.sub(
-            r"<think>.*?</think>", "", body, flags=re.DOTALL | re.IGNORECASE
-        ).strip()
-
-        # 3) Remove chat special tokens (e.g., <|im_end|>, <|endoftext|>)
-        body = re.sub(r"<\|[^>]+?\|>", " ", body).strip()
-
-        # 4) Try explicit "final answer" markers.
-        marker_patterns = [
-            r"(?:final answer is|the answer is)\s*[:：]?\s*(.+)$",
-            r"(?:answer)\s*[:：]\s*(.+)$",
-        ]
-        for p in marker_patterns:
-            m = re.search(p, body, flags=re.IGNORECASE | re.DOTALL)
-            if m:
-                cand = m.group(1).strip()
-                cand = re.split(r"\n|<\|im_end\|>", cand)[0].strip()
-                if cand:
-                    body = cand
-                    break
-
-        # 5) Math-style boxed fallback.
-        boxed = self._extract_boxed(body)
-        if boxed:
-            body = boxed
-
-        # 6) Last non-empty line fallback.
-        lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
-        if lines:
-            body = lines[-1]
-
-        # final cleanup
-        body = body.strip().strip("`").strip()
-        body = body.rstrip(".").rstrip("/")
-        return body
-
     def get_eval_model_output(self, batch: dict[str, Any]):
         # hundle the input batch
         correct = 0
@@ -257,7 +163,10 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         attention_mask = batch["attention_mask"].to(self.device)
         multi_modal_inputs = batch["multi_modal_inputs"]
         for k, v in multi_modal_inputs.items():
-            multi_modal_inputs[k] = v.to(device=self.device)
+            if isinstance(v, list):
+                multi_modal_inputs[k] = torch.cat(v, dim=0).to(device=self.device)
+            else:
+                multi_modal_inputs[k] = v.to(device=self.device)
 
         eos_token_id = self.tokenizer.eos_token_id
         pad_token_id = (
@@ -286,10 +195,16 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 new_token_ids.tolist(), skip_special_tokens=False
             )
 
-            pred_text = self._extract_answer(full_pred_text)
+            pred_text = vlm_extract_answer(
+                full_pred_text, self.cfg.actor.model.model_type
+            )
             gold_text = answers[i]
 
-            if self._normalize_text(pred_text) == self._normalize_text(gold_text):
+            print(
+                f"pred_text {vlm_normalize_text(pred_text)} gold_text {vlm_normalize_text(gold_text)}",
+                flush=True,
+            )
+            if vlm_normalize_text(pred_text) == vlm_normalize_text(gold_text):
                 correct += 1
 
         # eval model return the correct number of answers
@@ -301,7 +216,10 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         attention_mask = batch["attention_mask"].to(self.device, dtype=torch.bool)
         multi_modal_inputs = batch["multi_modal_inputs"]
         for k, v in multi_modal_inputs.items():
-            multi_modal_inputs[k] = v.to(device=self.device)
+            if isinstance(v, list):
+                multi_modal_inputs[k] = torch.cat(v, dim=0).to(device=self.device)
+            else:
+                multi_modal_inputs[k] = v.to(device=self.device)
         label_mask = batch["label_mask"].to(device=self.device, dtype=torch.bool)
 
         labels = input_ids.detach().clone().masked_fill(~attention_mask, -100)
