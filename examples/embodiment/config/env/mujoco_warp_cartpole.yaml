@@ -1,0 +1,46 @@
+env_type: mujoco_warp
+
+seed: 0
+total_num_envs: null
+group_size: 1
+
+auto_reset: True
+ignore_terminations: False
+use_fixed_reset_state_ids: False
+
+max_steps_per_rollout_epoch: 150
+max_episode_steps: 150
+
+use_rel_reward: False
+reward_coef: 1.0
+is_eval: False
+
+video_cfg:
+  save_video: True
+  info_on_video: True
+  render_for_policy: False
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+init_params:
+  task_name: cartpole
+  # MuJoCo-Warp physics parameters
+  # timestep=0.01s × n_substeps=2 → 0.02s control period
+  # (matches MuJoCo/Genesis CartPole)
+  timestep: 0.01
+  n_substeps: 2
+  # CartPole task parameters (identical to mujoco/genesis)
+  track_half_length: 2.4
+  max_angle: 0.2
+  max_force: 3.0
+  # Camera for video generation
+  camera_height: 128
+  camera_width: 128
+  camera_eye:
+    - 0.0
+    - 4.0
+    - 2.5
+  camera_lookat:
+    - 0.0
+    - 0.0
+    - 0.75
+  camera_fov: 40
