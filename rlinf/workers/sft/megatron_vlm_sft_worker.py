@@ -47,6 +47,9 @@ class MegatronSftWorker(MegatronModelManager, Worker):
         Worker.__init__(self)
         super().__init__(cfg.actor)
 
+        assert self.mbridge is True, (
+            "Now MegatronVlmSftWorker only supports Megatron-Bridge"
+        )
         self.cfg = cfg
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
 
@@ -110,6 +113,11 @@ class MegatronSftWorker(MegatronModelManager, Worker):
         self.global_step = global_step
         if hasattr(self.model, "set_global_step"):
             self.model.set_global_step(global_step)
+
+    def get_max_steps_per_epoch(self):
+        if self.data_loader is not None:
+            return max(1, len(self.data_loader) // self.gradient_accumulation)
+        return 0
 
     def save_checkpoint(
         self,
@@ -361,6 +369,9 @@ class MegatronVlmSftWorker(MegatronSftWorker):
             )
             logging.info(
                 f"Build data loader from {data_paths} with {len(train_dataset)} samples"
+            )
+            assert len(data_loader) != 0, (
+                f"data_loader is not empty, please check the data_path {data_paths}"
             )
 
             data_config = {

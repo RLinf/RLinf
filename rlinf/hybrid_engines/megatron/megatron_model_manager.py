@@ -288,7 +288,8 @@ class MegatronModelManager:
             # Preserve HF/provider-specific multimodal rope values.
             provider.mrope_section = mrope_section
             provider.position_embedding_type = position_embedding_type
-            provider.vision_config._attn_implementation = "flash_attention_2"
+            if hasattr(provider, "vision_config"):
+                provider.vision_config._attn_implementation = "flash_attention_2"
 
             # the Mbridge run the qwen3-vl-moe model will freeze the language model and vision model by default.
             provider.freeze_language_model = getattr(

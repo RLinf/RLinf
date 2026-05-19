@@ -7,7 +7,7 @@ hydra:
   output_subdir: null
 
 cluster:
-  num_nodes: 1
+  num_nodes: 2
   component_placement:
     actor: all
 
@@ -85,7 +85,7 @@ actor:
     moe_permute_fusion: True
 
     model_type: "qwen3_vl_moe"
-    model_path: "/path/to/Qwen3-VL-30B-A3B-Instruct-4layers"
+    model_path: "/path/to/Qwen3-VL-30B-A3B-Instruct"
     is_lora: False
   
     activation: swiglu
@@ -94,9 +94,9 @@ actor:
     # recompute_method: block
     # recompute_granularity: selective
 
-    # recompute_method: uniform
-    # recompute_granularity: full
-    # recompute_num_layers: 1
+    recompute_method: uniform
+    recompute_granularity: full
+    recompute_num_layers: 1
 
     seq_length: 1024
     encoder_seq_length: ${actor.model.seq_length}
@@ -145,7 +145,7 @@ actor:
     weight_decay_incr_style: constant
 
   tokenizer:
-    tokenizer_model: /path/to/Qwen3-VL-4B-Instruct
+    tokenizer_model: /path/to/Qwen3-VL-30B-A3B-Instruct
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'
