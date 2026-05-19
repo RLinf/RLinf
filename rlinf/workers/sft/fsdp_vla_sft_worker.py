@@ -47,13 +47,26 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             )
             return data_loader, data_loader.data_config()
         elif SupportedModel(self.cfg.actor.model.model_type) in [
-            SupportedModel.LINGBOTVLA
+            SupportedModel.LINGBOTVLA,
+            SupportedModel.LINGBOTVA,
         ]:
-            from rlinf.models.embodiment.lingbotvla.sft_builder import (
-                build_lingbot_sft_dataloader,
+            if (
+                SupportedModel(self.cfg.actor.model.model_type)
+                == SupportedModel.LINGBOTVLA
+            ):
+                from rlinf.models.embodiment.lingbotvla.sft_builder import (
+                    build_lingbot_sft_dataloader,
+                )
+
+                return build_lingbot_sft_dataloader(
+                    self.cfg, self._world_size, self._rank, data_paths
+                )
+
+            from rlinf.data.datasets.lingbotva import (
+                build_lingbotva_sft_dataloader,
             )
 
-            return build_lingbot_sft_dataloader(
+            return build_lingbotva_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths
             )
         elif SupportedModel(self.cfg.actor.model.model_type) in [
@@ -79,6 +92,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
     def get_train_model_output(self, batch: dict[str, Any]):
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.LINGBOTVLA,
+            SupportedModel.LINGBOTVA,
             SupportedModel.DREAMZERO,
         ]:
             with self.amp_context:
@@ -130,6 +144,23 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def save_checkpoint(self, save_path: str, step: int = 0) -> None:
         super().save_checkpoint(save_path, step)
+
+        if (
+            SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.LINGBOTVA
+            and self._rank == 0
+        ):
+            from rlinf.models.embodiment.lingbotva.sft_core import (
+                export_official_transformer_checkpoint,
+            )
+
+            state_dict_path = os.path.join(
+                save_path, "model_state_dict", "full_weights.pt"
+            )
+            export_official_transformer_checkpoint(
+                model_path=self.cfg.actor.model.model_path,
+                state_dict_path=state_dict_path,
+                output_dir=os.path.join(save_path, "transformer"),
+            )
 
         if isinstance(self.data_loader, StatefulDataLoader):
             state = self.data_loader.state_dict()

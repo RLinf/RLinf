@@ -987,6 +987,52 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-lingbotva-robotwin-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export ROBOTWIN_PATH=/workspace/dataset/RoboTwin
+          bash requirements/install.sh embodied --venv .venv-lingbotva --model lingbotva --env robotwin
+          source .venv-lingbotva/bin/activate
+          bash requirements/embodied/download_assets.sh --dir /workspace/dataset --assets lingbotva
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          config_path = Path("/workspace/dataset/.cache/lingbotva/lingbot-va-posttrain-robotwin/transformer/config.json")
+          config = json.loads(config_path.read_text())
+          if config.get("attn_mode") not in {"torch", "flashattn"}:
+              config["attn_mode"] = "torch"
+              config_path.write_text(json.dumps(config, indent=2) + "\n")
+          PY
+
+      - name: RoboTwin-LingBotVA eval test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv-lingbotva/bin/activate
+          export ROBOT_PLATFORM=ALOHA
+          export ROBOTWIN_PATH="/workspace/dataset/RoboTwin"
+          export PYTHONPATH=${ROBOTWIN_PATH}:$PYTHONPATH
+          export LINGBOT_VA_REPO_PATH="$(pwd)/.venv-lingbotva/lingbot-va"
+          export LINGBOT_VA_MODEL_PATH="/workspace/dataset/.cache/lingbotva/lingbot-va-posttrain-robotwin"
+          bash tests/e2e_tests/embodied/run_eval.sh robotwin_eval_lingbotva egl
+
+      - name: Clean up
+        run: |
+          rm -rf .venv-lingbotva
+          uv cache prune
+
   embodied-openvlaoft-liberopro-test:
     runs-on: embodied
     steps:

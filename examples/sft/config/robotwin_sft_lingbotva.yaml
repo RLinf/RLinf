@@ -1,0 +1,84 @@
+defaults:
+  - model/lingbotva@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0-1
+
+runner:
+  task_type: sft
+  logger:
+    log_path: ${oc.env:REPO_PATH}/results
+    project_name: rlinf
+    experiment_name: "robotwin_sft_lingbotva"
+    logger_backends: ["tensorboard"]
+  max_epochs: 30000
+  max_steps: -1
+  val_check_interval: -1
+  save_interval: 1000
+
+data:
+  train_data_paths: ${oc.env:LINGBOT_VA_SFT_DATA_PATH}
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 1
+  global_batch_size: 2
+  seed: 0
+  model:
+    model_type: "lingbotva"
+    model_path: ${oc.env:LINGBOT_VA_MODEL_PATH}
+    precision: bf16
+    num_action_chunks: 32
+    action_dim: 16
+    lingbotva:
+      repo_path: ${oc.env:LINGBOT_VA_REPO_PATH}
+      train_config_name: robotwin_train
+      enable_sft: true
+      empty_emb_path: ${oc.env:LINGBOT_VA_EMPTY_EMB_PATH}
+      cfg_prob: 0.1
+      num_init_worker: 8
+      load_worker: 16
+  optim:
+    lr: 1.0e-5
+    value_lr: 1.0e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 0.1
+    clip_grad: 1.0
+    total_training_steps: 30000
+    lr_warmup_steps: 10
+    lr_scheduler: "constant"
+    num_cycles: 0.5
+    min_lr: 1.0e-6
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "full_shard"
+    use_orig_params: false
+    gradient_checkpointing: false
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false
