@@ -25,6 +25,9 @@ from rlinf.hybrid_engines.weight_syncer import (
     PatchWeightSyncer,
     WeightSyncer,
 )
+from rlinf.hybrid_engines.weight_syncer import (
+    patch_syncer as patch_syncer_module,
+)
 from rlinf.hybrid_engines.weight_syncer.bucket_syncer import (
     iter_named_tensor_buckets,
 )
@@ -33,6 +36,7 @@ from rlinf.hybrid_engines.weight_syncer.patch_syncer import (
     downscale_nonnegative_indices,
 )
 from rlinf.scheduler import AcceleratorType, Worker
+from rlinf.utils.utils import collect_param_names_need_sync
 
 
 class _TinyWeightSyncModel(torch.nn.Module):
@@ -83,6 +87,24 @@ class _ValueHeadWeightSyncModel(torch.nn.Module):
             torch.nn.Linear(4, 3),
             torch.nn.ReLU(),
             torch.nn.Linear(3, 1),
+        )
+
+
+class _TiedParamWeightSyncModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        shared = torch.nn.Parameter(torch.arange(4, dtype=torch.float32))
+        self.embed = shared
+        self.lm_head = shared
+        self.frozen = torch.nn.Parameter(torch.ones(4, dtype=torch.float32))
+        self.frozen.requires_grad = False
+        shared_buffer = torch.tensor([1.0], dtype=torch.float32)
+        self.register_buffer("persistent_buf", shared_buffer)
+        self.register_buffer("persistent_buf_alias", shared_buffer)
+        self.register_buffer(
+            "non_persistent_buf",
+            torch.tensor([2.0], dtype=torch.float32),
+            persistent=False,
         )
 
 
@@ -173,14 +195,20 @@ def _assert_state_dict_equal_on_cpu(
 
 
 def _get_param_names_need_sync(model: torch.nn.Module) -> list[str]:
-    trainable_param_names = [
-        name for name, param in model.named_parameters() if param.requires_grad
+    return collect_param_names_need_sync(model)
+
+
+def test_collect_param_names_need_sync_keeps_tied_aliases_and_persistent_buffers():
+    model = _TiedParamWeightSyncModel()
+
+    param_names_need_sync = collect_param_names_need_sync(model)
+
+    assert param_names_need_sync == [
+        "embed",
+        "lm_head",
+        "persistent_buf",
+        "persistent_buf_alias",
     ]
-    model_state_dict = model.state_dict()
-    persistent_buffer_names = [
-        name for name, _ in model.named_buffers() if name in model_state_dict
-    ]
-    return trainable_param_names + persistent_buffer_names
 
 
 async def _init_patch_syncers(
@@ -692,6 +720,55 @@ def test_patch_weight_syncer_init_sync_bootstraps_full_state_dict():
     _assert_state_dict_equal(
         _clone_state_dict(sender_model), _clone_state_dict(receiver_model)
     )
+
+
+def test_patch_weight_syncer_init_sync_waits_once_after_all_buckets(monkeypatch):
+    device = _get_cuda_device()
+    sender_model = _make_bucket_dtype_model(device)
+    receiver_model = copy.deepcopy(sender_model)
+    transport = _InMemoryDuplexTransport()
+
+    sender_syncer = PatchWeightSyncer(
+        snapshot_device="cpu",
+        transport_device="cpu",
+        delta_encoding=True,
+        compression_algorithm="none",
+        init_sync_enabled=True,
+        init_sync_prefixes=None,
+        init_sync_bucket_size=32,
+    )
+    receiver_syncer = PatchWeightSyncer(
+        snapshot_device="cpu",
+        transport_device="cpu",
+        delta_encoding=True,
+        compression_algorithm="none",
+        init_sync_enabled=True,
+        init_sync_prefixes=None,
+        init_sync_bucket_size=32,
+    )
+
+    calls: list[set[torch.device]] = []
+    original_sync = patch_syncer_module.synchronize_pending_accel_copies
+
+    def _spy(copy_devices: set[torch.device]) -> None:
+        calls.append(set(copy_devices))
+        original_sync(copy_devices)
+
+    monkeypatch.setattr(patch_syncer_module, "synchronize_pending_accel_copies", _spy)
+
+    async def _run() -> None:
+        await _init_patch_syncers(
+            sender_syncer,
+            receiver_syncer,
+            sender_model,
+            receiver_model,
+            transport,
+        )
+
+    asyncio.run(_run())
+
+    assert len(calls) == 1
+    assert calls[0] == {device}
 
 
 def test_patch_weight_syncer_preserves_nonfloating_buffers():

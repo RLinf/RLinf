@@ -22,6 +22,7 @@ import torch
 from torch.distributed.tensor import DTensor
 
 from rlinf.scheduler import Worker
+from rlinf.utils.utils import synchronize_pending_accel_copies
 
 from .base import (
     RecvFn,
@@ -672,7 +673,8 @@ class PatchWeightSyncer(WeightSyncer):
         self,
         state_dict: dict[str, torch.Tensor | DTensor],
         bucket: dict[str, torch.Tensor],
-    ) -> None:
+    ) -> set[torch.device]:
+        pending_copy_devices: set[torch.device] = set()
         for key, value in bucket.items():
             if key not in state_dict:
                 raise ValueError(
@@ -684,6 +686,11 @@ class PatchWeightSyncer(WeightSyncer):
                     "Patch init sync receiver does not support DTensor state_dict values"
                 )
             target.copy_(value, non_blocking=True)
+            if target.device.type == Worker.torch_device_type:
+                pending_copy_devices.add(target.device)
+            elif value.device.type == Worker.torch_device_type:
+                pending_copy_devices.add(value.device)
+        return pending_copy_devices
 
     async def _apply_init_weights(
         self,
@@ -700,7 +707,7 @@ class PatchWeightSyncer(WeightSyncer):
             first_bucket.pop(BucketWeightSyncer._TOTAL_BUCKETS_KEY).item()
         )
         first_bucket.pop(BucketWeightSyncer._SYNCER_VERSION_KEY)
-        self._apply_init_weight_bucket(state_dict, first_bucket)
+        pending_copy_devices = self._apply_init_weight_bucket(state_dict, first_bucket)
 
         for _ in range(total_buckets - 1):
             bucket = await recv()
@@ -708,7 +715,10 @@ class PatchWeightSyncer(WeightSyncer):
                 raise TypeError(
                     "Patch init sync receiver expected a bucket payload dictionary"
                 )
-            self._apply_init_weight_bucket(state_dict, bucket)
+            pending_copy_devices.update(
+                self._apply_init_weight_bucket(state_dict, bucket)
+            )
+        synchronize_pending_accel_copies(pending_copy_devices)
 
     async def init_sender(
         self,

@@ -43,7 +43,7 @@ from rlinf.utils.nested_dict_process import (
     put_tensor_device,
     split_dict_to_chunk,
 )
-from rlinf.utils.utils import clear_memory
+from rlinf.utils.utils import clear_memory, collect_param_names_need_sync
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -94,7 +94,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
 
         # Record the original trainable parameter names before FSDP wrapping.
         # Persistent buffer names are also recorded for selective weight syncing.
-        self.param_names_need_sync = self._collect_param_names_need_sync(module)
+        self.param_names_need_sync = collect_param_names_need_sync(module)
 
         # build model, optimizer, lr_scheduler, grad_scaler
         self.model = self._strategy.wrap_model(

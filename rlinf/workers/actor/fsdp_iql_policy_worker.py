@@ -26,6 +26,7 @@ from torch.utils.data.distributed import DistributedSampler
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.mlp_policy.iql_mlp_policy import IQLMLPPolicy
 from rlinf.scheduler import Worker
+from rlinf.utils.utils import collect_param_names_need_sync
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -224,7 +225,7 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
         )
         value_module = self.model_provider_func(obs_dim, action_dim, type_name="value")
 
-        self.param_names_need_sync = self._collect_param_names_need_sync(module)
+        self.param_names_need_sync = collect_param_names_need_sync(module)
 
         if initialize_target:
             target_module = self.model_provider_func(

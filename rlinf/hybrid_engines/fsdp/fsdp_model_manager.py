@@ -38,7 +38,10 @@ from rlinf.hybrid_engines.fsdp.utils import (
 )
 from rlinf.scheduler import Worker
 from rlinf.utils.logging import get_logger
-from rlinf.utils.utils import warmup_optimizer_state
+from rlinf.utils.utils import (
+    collect_param_names_need_sync,
+    warmup_optimizer_state,
+)
 
 warnings.filterwarnings(
     "ignore",
@@ -243,26 +246,6 @@ class FSDPModelManager:
         except Exception as e:
             self._logger.warning(f"[FSDP] Liger kernels not applied: {e}")
 
-    def _collect_param_names_need_sync(self, module: torch.nn.Module) -> list[str]:
-        trainable_param_names = [
-            name for name, param in module.named_parameters() if param.requires_grad
-        ]
-
-        persistent_buffer_names: list[str] = []
-        for module_name, submodule in module.named_modules():
-            non_persistent_buffers = getattr(
-                submodule, "_non_persistent_buffers_set", set()
-            )
-            for buffer_name, _ in submodule.named_buffers(recurse=False):
-                if buffer_name in non_persistent_buffers:
-                    continue
-                full_name = (
-                    buffer_name if not module_name else f"{module_name}.{buffer_name}"
-                )
-                persistent_buffer_names.append(full_name)
-
-        return trainable_param_names + persistent_buffer_names
-
     def setup_model_and_optimizer(self) -> None:
         """
         Setup model, lr_scheduler, optimizer and grad_scaler.
@@ -291,7 +274,7 @@ class FSDPModelManager:
 
         # here record the original trainable parameters' names before FSDP wrapping
         # persist buffers' names are also recorded, which will be used for weight syncing.
-        self.param_names_need_sync = self._collect_param_names_need_sync(module)
+        self.param_names_need_sync = collect_param_names_need_sync(module)
 
         # build model, optimizer, lr_scheduler, grad_scaler
         self.model = self._strategy.wrap_model(

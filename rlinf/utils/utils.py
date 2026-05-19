@@ -54,6 +54,47 @@ cpu_dict = partial(apply_func_to_dict, partial(move_to_device_if_tensor, "cpu"))
 _UINT32_MOD = 2**32
 
 
+def collect_param_names_need_sync(module: torch.nn.Module) -> list[str]:
+    """Collect trainable parameters and persistent buffers for selective sync."""
+    trainable_param_names = [
+        name
+        for name, param in module.named_parameters(remove_duplicate=False)
+        if param.requires_grad
+    ]
+
+    persistent_buffer_names: list[str] = []
+    for module_name, submodule in module.named_modules(remove_duplicate=False):
+        non_persistent_buffers = getattr(
+            submodule, "_non_persistent_buffers_set", set()
+        )
+        for buffer_name, _ in submodule.named_buffers(
+            recurse=False, remove_duplicate=False
+        ):
+            if buffer_name in non_persistent_buffers:
+                continue
+            full_name = (
+                buffer_name if not module_name else f"{module_name}.{buffer_name}"
+            )
+            persistent_buffer_names.append(full_name)
+
+    return trainable_param_names + persistent_buffer_names
+
+
+def synchronize_pending_accel_copies(copy_devices: set[torch.device]) -> None:
+    """Wait for queued accelerator copies before host-side consumption."""
+    if not copy_devices:
+        return
+
+    events: list[torch.Event] = []
+    for device in copy_devices:
+        event = Worker.torch_platform.Event()
+        event.record(Worker.torch_platform.current_stream(device))
+        events.append(event)
+
+    for event in events:
+        event.synchronize()
+
+
 def seed_everything(seed: int) -> int:
     """Seed Python, NumPy, and PyTorch RNGs."""
     normalized_seed = int(seed)
