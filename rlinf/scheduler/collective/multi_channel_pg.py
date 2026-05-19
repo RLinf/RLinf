@@ -176,17 +176,6 @@ class MultiChannelProcessGroup:
                     if i > 0
                     else base_group
                 )
-
-                self._recv_accel_ccl_process_groups[i] = (
-                    MultiChannelProcessGroup._split_process_group(
-                        base_group=base_group,
-                        backend=self._accel_ccl_backend,
-                        group_name=group_name + f"{self._accel_ccl_backend}_recv_{i}",
-                        timeout=timeout,
-                        pg_options=pg_options,
-                    )
-                )
-
                 self._send_gloo_process_groups[i] = (
                     MultiChannelProcessGroup._split_process_group(
                         base_group=base_group,
@@ -577,8 +566,7 @@ class MultiChannelProcessGroup:
 
         if group_name is None:
             group_name = _process_group_name(ranks, use_hashed_name=False)
-
-        pg, _ = MultiChannelProcessGroup._new_process_group_helper(
+        result = MultiChannelProcessGroup._new_process_group_helper(
             base_group,
             group_world_size,
             group_rank,
@@ -590,6 +578,18 @@ class MultiChannelProcessGroup:
             timeout=timeout,
             device_id=device_id,
         )
+        if result is None:
+            pg = MultiChannelProcessGroup._create_process_group(
+                backend=backend,
+                world_size=group_world_size,
+                rank=group_rank,
+                store=default_store,
+                group_name=group_name,
+                timeout=timeout,
+                pg_options=pg_options,
+            )
+        else:
+            pg, _ = result
 
         # Create the global rank to group rank mapping
         _world.pg_group_ranks[pg] = {

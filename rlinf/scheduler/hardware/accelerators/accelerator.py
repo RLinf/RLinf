@@ -187,6 +187,7 @@ class AcceleratorUtil:
         AcceleratorType.NV_GPU,
         AcceleratorType.AMD_GPU,
         AcceleratorType.NPU,
+        AcceleratorType.MUSA_GPU,
     ]
 
     @staticmethod

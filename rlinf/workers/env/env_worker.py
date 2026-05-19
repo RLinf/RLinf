@@ -40,6 +40,7 @@ from rlinf.utils.nested_dict_process import (
     update_nested_cfg,
 )
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.workers.env.init_utils import resolve_env_classes
 
 
 class EnvWorker(Worker):
