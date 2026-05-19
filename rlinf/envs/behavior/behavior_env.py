@@ -44,11 +44,11 @@ class BehaviorProcess:
         self,
         cfg: DictConfig,
         num_envs: int,
-        stage_n: int,
+        pipeline_stage_num: int,
     ):
         from omnigibson.envs import VectorEnvironment
 
-        self.stage_n = stage_n
+        self.pipeline_stage_num = pipeline_stage_num
         omni_cfg = setup_omni_cfg(cfg)
         self.instance_loader = ActivityInstanceLoader.from_omni_cfg(omni_cfg)
 
@@ -61,9 +61,9 @@ class BehaviorProcess:
         # When pipeline stages > 1, each stage independently advances the
         # global physics per chunk step.  Divide physics_frequency so the
         # total physics rate stays at the configured value.
-        if stage_n > 1:
+        if pipeline_stage_num > 1:
             omni_cfg_dict["env"]["physics_frequency"] = (
-                omni_cfg_dict["env"]["physics_frequency"] / stage_n
+                omni_cfg_dict["env"]["physics_frequency"] / pipeline_stage_num
             )
         self.env = VectorEnvironment(num_envs, omni_cfg_dict)
         apply_runtime_renderer_settings()
@@ -100,7 +100,7 @@ class BehaviorProcess:
                 "support get_obs; this config will be ignored."
             )
 
-        if self.stage_n > 1 and not self._step_supports_env_indices:
+        if self.pipeline_stage_num > 1 and not self._step_supports_env_indices:
             get_logger().warning(
                 "pipeline_stage_num > 1 but OG env step does not support env_indices; "
                 "this may cause inefficiency since every pipeline step will still "
