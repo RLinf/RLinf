@@ -26,11 +26,12 @@ import glob
 import os
 from typing import Optional, Union
 
-from rlinf.utils.logging import get_logger
-
 import numpy as np
 
+from rlinf.utils.logging import get_logger
+
 from .base_camera import BaseCamera, CameraInfo
+
 _logger = get_logger()
 
 
