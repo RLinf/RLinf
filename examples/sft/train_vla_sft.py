@@ -24,7 +24,7 @@ from rlinf.config import validate_cfg
 from rlinf.runners.sft_runner import SFTRunner
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.workers.sft.fsdp_sft_worker import FSDPVlaSftWorker
+from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
 
 mp.set_start_method("spawn", force=True)
 
