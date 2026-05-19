@@ -74,7 +74,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl")
+SUPPORTED_MODELS=( openvla openvla-oft openpi gr00t dexbotic starvla lingbotvla lingbotva dreamzero qwen3_vl)
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy")
 
 #=======================Utility Functions=======================
@@ -855,6 +855,55 @@ EOF
     uv pip install "flash-attn==${flash_ver}" --no-build-isolation
 }
 
+install_flash_attn_for_lingbotva() {
+    local base_url="${GITHUB_PREFIX}https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1"
+    local flash_ver="2.7.4.post1"
+
+    local py_major py_minor
+    py_major=$(python - <<'EOF'
+import sys
+print(sys.version_info.major)
+EOF
+)
+    py_minor=$(python - <<'EOF'
+import sys
+print(sys.version_info.minor)
+EOF
+)
+    local py_tag="cp${py_major}${py_minor}"
+    local abi_tag="${py_tag}"
+
+    local torch_mm
+    torch_mm=$(python - <<'EOF'
+import torch
+v = torch.__version__.split("+")[0]
+parts = v.split(".")
+print(f"{parts[0]}.{parts[1]}")
+EOF
+)
+
+    local cuda_major
+    cuda_major=$(python - <<'EOF'
+import torch
+from packaging.version import Version
+v = Version(torch.version.cuda)
+print(v.base_version.split(".")[0])
+EOF
+)
+
+    local cu_tag="cu${cuda_major}"
+    local torch_tag="torch${torch_mm}"
+    local platform_tag="linux_x86_64"
+    local cxx_abi="cxx11abiFALSE"
+    local wheel_name="flash_attn-${flash_ver}+${cu_tag}${torch_tag}${cxx_abi}-${py_tag}-${abi_tag}-${platform_tag}.whl"
+
+    python -m pip uninstall -y flash-attn || true
+    python -m pip install --no-deps "${base_url}/${wheel_name}" || (
+        echo "Flash attn installation via wheel failed. Attempting to install from source...";
+        python -m pip install --no-deps flash-attn==${flash_ver} --no-build-isolation
+    )
+}
+
 install_apex() {
     if [ "$PLATFORM" != "nvidia" ]; then
         echo "[install.sh] Skipping apex install on platform=${PLATFORM} (CUDA-only)."
@@ -1242,6 +1291,37 @@ install_lingbot_vla_model() {
     uv pip uninstall pynvml || true
 }
 
+install_lingbot_va_model() {
+    if ! command -v uv &> /dev/null && [ -x "$HOME/.local/bin/uv" ]; then
+        export PATH="$HOME/.local/bin:$PATH"
+    fi
+    create_and_sync_venv
+    install_common_embodied_deps
+
+    local lingbotva_dir
+    lingbotva_dir=$(clone_or_reuse_repo LINGBOT_VA_REPO_PATH "$VENV_DIR/lingbot-va" ${GITHUB_PREFIX}https://github.com/robbyant/lingbot-va.git --recurse-submodules)
+    local filtered_requirements
+    filtered_requirements=$(mktemp)
+    python -m pip install --upgrade -r "$SCRIPT_DIR/embodied/models/lingbotva.txt"
+    python -m pip install lerobot==0.3.3 scipy wandb jsonlines --no-deps
+    grep -vE '^[[:space:]]*(flash_attn|torch|torchvision|torchaudio|diffusers|transformers|peft|huggingface-hub|numpy|lerobot|scipy|wandb|jsonlines)([[:space:]]|=|>|<|!|$)' "$lingbotva_dir/requirements.txt" > "$filtered_requirements"
+    python -m pip install -r "$filtered_requirements"
+    rm -f "$filtered_requirements"
+    echo "export LINGBOT_VA_REPO_PATH=$(realpath "$lingbotva_dir")" >> "$VENV_DIR/bin/activate"
+
+    case "$ENV_NAME" in
+        robotwin)
+            install_robotwin_env_for_lingbotva
+            install_flash_attn_for_lingbotva
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for LingBot-VA model." >&2
+            exit 1
+            ;;
+    esac
+    uv pip uninstall pynvml || true
+}
+
 install_dreamzero_model() {
     case "$ENV_NAME" in
         maniskill_libero|libero)
@@ -1587,7 +1667,9 @@ install_robotwin_env() {
 
     uv pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git@v0.7.9  --no-build-isolation
     uv pip install warp-lang==1.11.1
-    uv pip install git+${GITHUB_PREFIX}https://github.com/NVlabs/curobo.git  --no-build-isolation
+    local curobo_dir
+    curobo_dir=$(clone_or_reuse_repo CUROBO_PATH "$VENV_DIR/curobo" ${GITHUB_PREFIX}https://github.com/NVlabs/curobo.git -b d64c4b005459db10c5dd867d8b30a87d5bda9bdb --depth 1)
+    uv pip install "$curobo_dir" --no-build-isolation
 
     # patch sapien and mplib for robotwin
     SAPIEN_LOCATION=$(uv pip show sapien | grep 'Location' | awk '{print $2}')/sapien
@@ -1621,6 +1703,40 @@ install_robotwin_env() {
     # ----------- after  ----------- 
     # 807             if np.linalg.norm(delta_twist) < 1e-4 or not within_joint_limit:
     # 808                 return {"status": "screw plan failed"}
+    PLANNER=$MPLIB_LOCATION/planner.py
+    sed -i -E 's/(if np.linalg.norm\(delta_twist\) < 1e-4 )(or collide )(or not within_joint_limit:)/\1\3/g' $PLANNER
+}
+
+install_robotwin_env_for_lingbotva() {
+    local nvcc_exe
+    if [ -x "$(command -v nvcc)" ]; then
+        nvcc_exe=$(which nvcc)
+    elif [ -x /usr/local/cuda/bin/nvcc ]; then
+        nvcc_exe="/usr/local/cuda/bin/nvcc"
+    else
+        echo "nvcc not found. Cannot build robotwin environment."
+        exit 1
+    fi
+    local cuda_major=$("$nvcc_exe" --version | grep 'Cuda compilation tools' | awk '{print $5}' | tr -d ',' | awk -F '.' '{print $1}')
+    local cuda_minor=$("$nvcc_exe" --version | grep 'Cuda compilation tools' | awk '{print $5}' | tr -d ',' | awk -F '.' '{print $2}')
+    if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; }; then
+        export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0;10.0"
+    else
+        export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0"
+    fi
+
+    python -m pip install mplib==0.2.1 gymnasium==0.29.1 av open3d zarr openai
+    python -m pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git@v0.7.9 --no-build-isolation
+    python -m pip install warp-lang==1.11.1
+    local curobo_dir
+    curobo_dir=$(clone_or_reuse_repo CUROBO_PATH "$VENV_DIR/curobo" ${GITHUB_PREFIX}https://github.com/NVlabs/curobo.git -b d64c4b005459db10c5dd867d8b30a87d5bda9bdb --depth 1)
+    python -m pip install "$curobo_dir" --no-build-isolation
+
+    SAPIEN_LOCATION=$(python -m pip show sapien | grep 'Location' | awk '{print $2}')/sapien
+    URDF_LOADER=$SAPIEN_LOCATION/wrapper/urdf_loader.py
+    sed -i -E 's/("r")(\))( as)/\1, encoding="utf-8") as/g' $URDF_LOADER
+
+    MPLIB_LOCATION=$(python -m pip show mplib | grep 'Location' | awk '{print $2}')/mplib
     PLANNER=$MPLIB_LOCATION/planner.py
     sed -i -E 's/(if np.linalg.norm\(delta_twist\) < 1e-4 )(or collide )(or not within_joint_limit:)/\1\3/g' $PLANNER
 }
@@ -1814,6 +1930,9 @@ main() {
                     ;;
                 lingbotvla)                  
                     install_lingbot_vla_model 
+                    ;;
+                lingbotva)
+                    install_lingbot_va_model
                     ;;
                 dreamzero)
                     install_dreamzero_model

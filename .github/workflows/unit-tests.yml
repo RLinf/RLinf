@@ -52,7 +52,7 @@ jobs:
       - name: Run pytest
         timeout-minutes: 20
         run: |
-          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH 
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH
           source .venv/bin/activate
           pytest tests/unit_tests
 

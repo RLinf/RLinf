@@ -14,6 +14,8 @@
 
 import json
 import os
+import sys
+from pathlib import Path
 from typing import Optional, Union
 
 import gymnasium as gym
@@ -60,6 +62,7 @@ class RoboTwinEnv(gym.Env):
         self._is_start = True
 
         self.task_name = cfg.task_config.task_name
+        self.action_type = cfg.task_config.get("action_type", "qpos")
 
         self.center_crop = cfg.get("center_crop", False)
         self._init_reset_state_ids()
@@ -78,15 +81,39 @@ class RoboTwinEnv(gym.Env):
     def _init_env(self):
         mp.set_start_method("spawn", force=True)
         os.environ["ASSETS_PATH"] = self.cfg.assets_path
+        robotwin_path = self._resolve_robotwin_repo_path(self.cfg.assets_path)
+        if robotwin_path and robotwin_path not in sys.path:
+            sys.path.insert(0, robotwin_path)
 
         from robotwin.envs.vector_env import VectorEnv
 
         env_seeds = self.reset_state_ids.tolist()
+        task_config = OmegaConf.to_container(self.cfg.task_config, resolve=True)
+        if self.action_type == "ee":
+            data_type = task_config.setdefault("data_type", {})
+            data_type["endpose"] = True
 
         self.venv = VectorEnv(
-            task_config=OmegaConf.to_container(self.cfg.task_config, resolve=True),
+            task_config=task_config,
             n_envs=self.num_envs,
             env_seeds=env_seeds,
+        )
+
+    @staticmethod
+    def _resolve_robotwin_repo_path(assets_path: str) -> str:
+        explicit_path = os.environ.get("ROBOTWIN_PATH")
+        candidate = Path(explicit_path or assets_path).expanduser()
+        repo_marker = candidate / "robotwin" / "envs" / "vector_env.py"
+        if repo_marker.exists():
+            return str(candidate)
+        if explicit_path:
+            raise FileNotFoundError(
+                "ROBOTWIN_PATH must point to a RoboTwin support repo root containing "
+                f"'robotwin/envs/vector_env.py', got: {explicit_path}"
+            )
+        raise FileNotFoundError(
+            "ROBOTWIN_PATH is required when env.assets_path is not itself a RoboTwin "
+            f"support repo root. Received assets_path={assets_path!r}."
         )
 
     @property
@@ -158,6 +185,18 @@ class RoboTwinEnv(gym.Env):
             image = center_crop_image(image)
         return np.array(image)
 
+    @staticmethod
+    def _resolve_obs_image(obs: dict, key: str, camera_key: str):
+        if key in obs and obs[key] is not None:
+            return obs[key]
+        return obs.get("observation", {}).get(camera_key, {}).get("rgb", None)
+
+    @staticmethod
+    def _resolve_obs_state(obs: dict):
+        if "state" in obs and obs["state"] is not None:
+            return obs["state"]
+        return obs.get("joint_action", {}).get("vector", None)
+
     def _extract_obs_image(self, raw_obs):
         batch_images = []
         batch_wrist_images = []
@@ -165,26 +204,36 @@ class RoboTwinEnv(gym.Env):
         batch_instructions = []
         for obs in raw_obs:
             batch_images.append(
-                self.center_and_crop(obs["full_image"], center_crop=self.center_crop)
+                self.center_and_crop(
+                    self._resolve_obs_image(obs, "full_image", "head_camera"),
+                    center_crop=self.center_crop,
+                )
             )
             wrist_images = []
-            if "left_wrist_image" in obs and obs["left_wrist_image"] is not None:
+            left_wrist_image = self._resolve_obs_image(
+                obs, "left_wrist_image", "left_camera"
+            )
+            if left_wrist_image is not None:
                 wrist_images.append(
-                    self.center_and_crop(
-                        obs["left_wrist_image"], center_crop=self.center_crop
-                    )
+                    self.center_and_crop(left_wrist_image, center_crop=self.center_crop)
                 )
-            if "right_wrist_image" in obs and obs["right_wrist_image"] is not None:
+            right_wrist_image = self._resolve_obs_image(
+                obs, "right_wrist_image", "right_camera"
+            )
+            if right_wrist_image is not None:
                 wrist_images.append(
                     self.center_and_crop(
-                        obs["right_wrist_image"], center_crop=self.center_crop
+                        right_wrist_image, center_crop=self.center_crop
                     )
                 )
             if len(wrist_images) > 0:
                 batch_wrist_images.append(
                     torch.stack([torch.from_numpy(img) for img in wrist_images])
                 )
-            batch_states.append(obs["state"])
+            state = self._resolve_obs_state(obs)
+            if state is None:
+                raise ValueError("RoboTwin observation is missing proprio state.")
+            batch_states.append(state)
             batch_instructions.append(obs["instruction"])
 
         batch_images = torch.stack([torch.from_numpy(img) for img in batch_images])
@@ -236,6 +285,47 @@ class RoboTwinEnv(gym.Env):
 
         return chunk_rewards
 
+    def _extract_eef_poses_from_raw_obs(
+        self, raw_obs: list[dict[str, dict[str, np.ndarray | float]]]
+    ) -> torch.Tensor:
+        eef_poses = []
+        for obs in raw_obs:
+            endpose = obs["endpose"]
+            pose = np.concatenate(
+                [
+                    np.asarray(endpose["left_endpose"], dtype=np.float32),
+                    np.asarray([endpose["left_gripper"]], dtype=np.float32),
+                    np.asarray(endpose["right_endpose"], dtype=np.float32),
+                    np.asarray([endpose["right_gripper"]], dtype=np.float32),
+                ]
+            )
+            eef_poses.append(torch.from_numpy(pose))
+        return torch.stack(eef_poses)
+
+    def _attach_extra_obs(
+        self,
+        extracted_obs: dict[str, torch.Tensor | list[str] | None],
+        *,
+        raw_task_obs: list[dict],
+        chunk_observations: list[list[dict]] | None = None,
+        episode_dones: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor | list[str] | dict[str, object] | None]:
+        obs = dict(extracted_obs)
+        extra_obs = dict(obs.get("extra_obs") or {})
+        extra_obs["eef_poses"] = self._extract_eef_poses_from_raw_obs(raw_task_obs)
+        if chunk_observations is not None:
+            extra_obs["chunk_observations"] = chunk_observations
+        if episode_dones is not None:
+            extra_obs["episode_dones"] = episode_dones
+        obs["extra_obs"] = extra_obs
+        return obs
+
+    def _collect_current_obs(self) -> tuple[dict, list[dict]]:
+        raw_obs = self.venv.get_obs()
+        extracted_obs = self._extract_obs_image(raw_obs)
+        extracted_obs = self._attach_extra_obs(extracted_obs, raw_task_obs=raw_obs)
+        return extracted_obs, raw_obs
+
     def reset(
         self,
         env_idx: Optional[Union[int, list[int]]] = None,
@@ -253,6 +343,8 @@ class RoboTwinEnv(gym.Env):
         self._reset_metrics(env_idx)
 
         extracted_obs = self._extract_obs_image(raw_obs)
+        if self.action_type == "ee":
+            extracted_obs = self._attach_extra_obs(extracted_obs, raw_task_obs=raw_obs)
 
         return extracted_obs, infos
 
@@ -271,6 +363,22 @@ class RoboTwinEnv(gym.Env):
         if len(actions.shape) == 2:
             # [n_envs, action_dim] -> [n_envs, 1, action_dim]
             actions = actions[:, None, :]
+
+        if self.action_type == "ee":
+            (
+                obs_list,
+                chunk_rewards,
+                chunk_terminations,
+                chunk_truncations,
+                infos_list,
+            ) = self.chunk_step(actions)
+            return (
+                obs_list[-1],
+                chunk_rewards[:, -1],
+                chunk_terminations[:, -1],
+                chunk_truncations[:, -1],
+                infos_list[-1],
+            )
 
         raw_obs, step_reward, terminations, truncations, info_list = self.venv.step(
             actions
@@ -320,6 +428,9 @@ class RoboTwinEnv(gym.Env):
     def chunk_step(self, chunk_actions):
         if isinstance(chunk_actions, torch.Tensor):
             chunk_actions = chunk_actions.cpu().numpy()
+
+        if self.action_type == "ee":
+            return self._ee_chunk_step(chunk_actions)
 
         # chunk_actions: [num_envs, chunk_step, action_dim]
         num_envs = chunk_actions.shape[0]
@@ -380,6 +491,120 @@ class RoboTwinEnv(gym.Env):
 
         chunk_truncations = torch.zeros((num_envs, chunk_step), dtype=bool)
         chunk_truncations[:, -1] = truncations
+
+        return (
+            obs_list,
+            chunk_rewards,
+            chunk_terminations,
+            chunk_truncations,
+            infos_list,
+        )
+
+    def _ee_chunk_step(self, chunk_actions):
+        num_envs, chunk_step, _ = chunk_actions.shape
+        obs_list = []
+        infos_list = []
+        chunk_start_elapsed = self._elapsed_steps.clone()
+        (
+            raw_chunk_obs,
+            raw_chunk_rewards,
+            raw_chunk_terminations,
+            raw_chunk_truncations,
+            _raw_chunk_infos,
+        ) = self.venv.chunk_step(chunk_actions)
+        chunk_rewards = torch.as_tensor(
+            np.asarray(raw_chunk_rewards, dtype=np.float32),
+            device=self.device,
+            dtype=torch.float32,
+        )
+        chunk_terminations = torch.as_tensor(
+            np.asarray(raw_chunk_terminations, dtype=bool),
+            device=self.device,
+            dtype=torch.bool,
+        )
+        chunk_truncations = torch.as_tensor(
+            np.asarray(raw_chunk_truncations, dtype=bool),
+            device=self.device,
+            dtype=torch.bool,
+        )
+        metrics_chunk_rewards = chunk_rewards.clone()
+        repeated_success_mask = (
+            chunk_terminations.to(dtype=torch.long).cumsum(dim=1) > 1
+        )
+        metrics_chunk_rewards[repeated_success_mask] = 0.0
+        chunk_observations = [list(env_obs) for env_obs in raw_chunk_obs]
+
+        for step_idx in range(chunk_step):
+            raw_step_obs = [env_obs[step_idx] for env_obs in raw_chunk_obs]
+            extracted_obs = self._extract_obs_image(raw_step_obs)
+            step_success = chunk_terminations[:, step_idx].clone()
+            infos = {"success": step_success.clone()}
+            if self.record_metrics:
+                self._elapsed_steps = chunk_start_elapsed + step_idx + 1
+                infos = self._record_metrics(metrics_chunk_rewards[:, step_idx], infos)
+
+            obs_list.append(extracted_obs)
+            infos_list.append(infos)
+
+        self._elapsed_steps = chunk_start_elapsed + chunk_step
+        truncated = self._elapsed_steps >= self.cfg.max_episode_steps
+        terminated_within_chunk = chunk_terminations.any(dim=1)
+        if truncated.any():
+            chunk_truncations[:, -1] = torch.logical_or(
+                truncated & ~terminated_within_chunk, chunk_truncations[:, -1]
+            )
+
+        if self.ignore_terminations:
+            chunk_terminations[:] = False
+            if self.record_metrics and infos_list:
+                infos_list[-1]["episode"]["success_at_end"] = infos_list[-1][
+                    "success"
+                ].clone()
+
+        effective_chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
+        episode_dones = effective_chunk_dones.any(dim=1)
+
+        # Downstream env/rollout workers consume chunk-level episode boundaries
+        # from the last chunk slot. For ee chunk stepping, success/truncation can
+        # first appear before the final substep, so propagate any effective
+        # within-chunk terminal signal to the final slot.
+        chunk_terminations[:, -1] = chunk_terminations.any(dim=1)
+        chunk_truncations[:, -1] = chunk_truncations.any(dim=1)
+
+        if self.record_metrics and infos_list and "episode" in infos_list[-1]:
+            done_mask = episode_dones
+            if done_mask.any():
+                done_offsets = torch.zeros(
+                    num_envs, dtype=torch.long, device=self.device
+                )
+                done_offsets[done_mask] = (
+                    effective_chunk_dones[done_mask].to(dtype=torch.long).argmax(dim=1)
+                    + 1
+                )
+                episode_info = infos_list[-1]["episode"]
+                episode_info["episode_len"][done_mask] = (
+                    chunk_start_elapsed[done_mask] + done_offsets[done_mask]
+                )
+                episode_info["reward"] = episode_info["return"] / torch.clamp(
+                    episode_info["episode_len"].float(), min=1.0
+                )
+        obs_list[-1] = self._attach_extra_obs(
+            obs_list[-1],
+            raw_task_obs=self.venv.get_obs(),
+            chunk_observations=chunk_observations,
+            episode_dones=episode_dones,
+        )
+
+        if episode_dones.any() and self.auto_reset:
+            obs_list[-1], infos_list[-1] = self._handle_auto_reset(
+                episode_dones, obs_list[-1], infos_list[-1]
+            )
+            obs_list[-1] = self._attach_extra_obs(
+                obs_list[-1],
+                raw_task_obs=self.venv.get_obs(),
+                chunk_observations=chunk_observations,
+                episode_dones=episode_dones,
+            )
 
         return (
             obs_list,

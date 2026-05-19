@@ -3,7 +3,7 @@
 set -euo pipefail
 
 DOWNLOAD_DIR=${DOWNLOAD_DIR:-$HOME}
-SUPPORT_LIST=("maniskill" "openpi")
+SUPPORT_LIST=("maniskill" "openpi" "lingbotva")
 GITHUB_PREFIX=${GITHUB_PREFIX:-""}
 ASSETS=()
 
@@ -66,6 +66,19 @@ download_openpi_assets() {
 	fi
 }
 
+download_lingbotva_assets() {
+	local root_dir=$1
+
+	export LINGBOTVA_MODEL_DIR="${root_dir}/.cache/lingbotva/lingbot-va-posttrain-robotwin"
+
+	if [ -f "$LINGBOTVA_MODEL_DIR/model_index.json" ] || [ -f "$LINGBOTVA_MODEL_DIR/config.json" ]; then
+		echo "[download_assets] LingBot-VA model already exists at $LINGBOTVA_MODEL_DIR, skipping download."
+	else
+		mkdir -p "$LINGBOTVA_MODEL_DIR"
+		hf download robbyant/lingbot-va-posttrain-robotwin --local-dir "$LINGBOTVA_MODEL_DIR"
+	fi
+}
+
 parse_args() {
 	while [ "$#" -gt 0 ]; do
 		case "$1" in
@@ -120,6 +133,9 @@ main() {
 				;;
 			openpi)
 				download_openpi_assets "$DOWNLOAD_DIR"
+				;;
+			lingbotva)
+				download_lingbotva_assets "$DOWNLOAD_DIR"
 				;;
 			*)
 				echo "Unknown asset group: $asset. Supported: ${SUPPORT_LIST[*]}" >&2

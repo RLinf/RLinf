@@ -1,0 +1,8 @@
+torch==2.9.0
+torchvision==0.24.0
+torchaudio==2.9.0
+diffusers==0.36.0
+transformers==4.55.2
+peft==0.17.1
+huggingface-hub==0.36.2
+numpy==1.26.4

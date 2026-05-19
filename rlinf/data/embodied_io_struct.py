@@ -109,13 +109,22 @@ class EnvOutput:
             else None
         )
 
-        return {
+        prepared = {
             "main_images": image_tensor,  # [N_ENV, H, W, C]
             "wrist_images": wrist_image_tensor,  # [N_ENV, H, W, C] or [N_ENV, N_IMG, H, W, C]
             "extra_view_images": extra_view_image_tensor,  # [N_ENV, N_IMG, H, W, C]
             "states": states,
             "task_descriptions": task_descriptions,
         }
+
+        extra_obs = obs.get("extra_obs")
+        if isinstance(extra_obs, dict) and extra_obs:
+            prepared["extra_obs"] = {
+                key: list(value) if isinstance(value, tuple) else value
+                for key, value in extra_obs.items()
+            }
+
+        return prepared
 
     @staticmethod
     def merge_env_outputs(env_outputs: list[dict]) -> dict[str, Any]:
