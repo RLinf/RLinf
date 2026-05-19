@@ -22,6 +22,7 @@ from PIL import Image
 from transformers import AutoProcessor
 
 from rlinf.data.datasets.vlm import (
+    QwenTrendProgressSFTDataset,
     RoboChallengeProgressSFTDataset,
     SimpleRobochallengeSFTDataset,
     VLMBaseDataset,
@@ -326,6 +327,7 @@ class VideoVLMInputBuilder(HistoryVLMInputBuilder):
         return videos
 
 
+@register_input_builder("robochallenge_input_builder")
 @register_input_builder("robochanallenge_input_builder")
 @dataclass
 class RobochanallengeInputBuilder(VideoVLMInputBuilder):
@@ -787,6 +789,79 @@ class SimpleDualViewTernaryInputBuilder(VideoVLMInputBuilder):
         videos_list = prepared_inputs.get("videos_list")
 
         _, processed_inputs, _ = RoboChallengeProgressSFTDataset.process_inputs(
+            processor=self._processor,
+            system_prompt=self.system_prompt,
+            use_chat_template=self.use_chat_template,
+            prompt_texts=prompt_texts_list,
+            videos=videos_list,
+            answer_text=None,
+        )
+        return processed_inputs
+
+
+@register_input_builder("qwentrend_input_builder")
+@dataclass
+class QwentrendInputBuilder(VideoVLMInputBuilder):
+    video_keys: list[str] = field(
+        default_factory=lambda: ["main_images", "extra_view_images"]
+    )
+    default_task_description: str = ""
+
+    def get_valid_input_ids(
+        self,
+        observations: dict[str, Any],
+        history_input: dict[str, dict[str, list[list[Any]]]],
+    ) -> list[int]:
+        histories = tuple(
+            history
+            for history_buffer in history_input.values()
+            for history in history_buffer.values()
+        )
+        if not histories:
+            return []
+        return [
+            env_id
+            for env_id in range(len(histories[0]))
+            if all(history[env_id] for history in histories)
+        ]
+
+    def prepare_inputs(
+        self,
+        observations: dict[str, Any],
+        history_input: dict[str, dict[str, list[list[Any]]]],
+        valid_input_ids: list[int],
+    ):
+        history_window = history_input.get("history_window", {})
+        videos_clip = self.extract_videos(history_window, self.video_keys)
+        videos_list = [videos_clip[env_id] for env_id in valid_input_ids]
+        task_descriptions = observations.get(
+            "task_descriptions",
+            [self.default_task_description] * len(videos_clip),
+        )
+
+        prompt_texts_list: list[list[str]] = []
+        for env_id in valid_input_ids:
+            prompt_texts_list.append(
+                [
+                    f"You are currently performing the task: {task_descriptions[env_id]}. "
+                    "You are given two synchronized 5-frame videos from different camera "
+                    "views (main view and third-person view) of the same robot action "
+                    "window. Judge whether the action trend is positive, negative, or "
+                    "unclear. Answer with exactly one word: positive, negative, or unclear."
+                ]
+            )
+
+        return {
+            "images_list": None,
+            "videos_list": videos_list,
+            "prompt_texts_list": prompt_texts_list,
+        }
+
+    def process_inputs(self, prepared_inputs: dict[str, Any]):
+        prompt_texts_list = prepared_inputs.get("prompt_texts_list")
+        videos_list = prepared_inputs.get("videos_list")
+
+        _, processed_inputs, _ = QwenTrendProgressSFTDataset.process_inputs(
             processor=self._processor,
             system_prompt=self.system_prompt,
             use_chat_template=self.use_chat_template,

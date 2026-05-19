@@ -203,6 +203,7 @@ class VLMRewardModel(BaseRewardModel):
         if not self.model_path:
             raise ValueError("reward.model.model_path must be set for VLMRewardModel")
         self.lora_path = self.cfg.get("lora_path")
+        self.gt_success_bonus = float(cfg.get("gt_success_bonus", 0.0))
 
         self.dtype = torch_dtype_from_precision(cfg.precision)
         self.checkpoint_metadata: Optional[dict[str, str]] = None
@@ -240,7 +241,7 @@ class VLMRewardModel(BaseRewardModel):
 
             subprocessoror = getattr(self._processor, subprocessor_name, None)
             if subprocessoror is None:
-                return
+                continue
             for key, value in dict(subprocessor_kwargs).items():
                 if hasattr(subprocessoror, key):
                     setattr(subprocessoror, key, value)
@@ -284,6 +285,42 @@ class VLMRewardModel(BaseRewardModel):
             "generated_tokens_min": float(token_counts.min().item()),
             "generated_tokens_max": float(token_counts.max().item()),
         }
+
+    def apply_gt_success_bonus(
+        self, rewards: torch.Tensor, reward_input: dict[str, Any]
+    ) -> torch.Tensor:
+        if rewards is None or self.gt_success_bonus == 0.0:
+            return rewards
+        env_infos = (
+            reward_input.get("env_infos") if isinstance(reward_input, dict) else None
+        )
+        if not isinstance(env_infos, dict):
+            return rewards
+
+        success = None
+        final_info = env_infos.get("final_info", {})
+        for info_dict in (
+            env_infos,
+            env_infos.get("episode"),
+            final_info,
+            final_info.get("episode") if isinstance(final_info, dict) else None,
+        ):
+            if not isinstance(info_dict, dict):
+                continue
+            for key in ("success", "success_at_end", "success_once"):
+                value = info_dict.get(key)
+                if value is not None:
+                    success = torch.as_tensor(value).reshape(-1).bool()
+                    break
+            if success is not None:
+                break
+
+        if success is None or success.shape[0] != rewards.shape[0]:
+            return rewards
+        bonus = success.to(device=rewards.device, dtype=rewards.dtype)
+        return rewards + (bonus * self.gt_success_bonus).view(
+            -1, *([1] * (rewards.dim() - 1))
+        )
 
     def forward(
         self, input_data: torch.Tensor, labels: Optional[torch.Tensor] = None
@@ -343,13 +380,14 @@ class VLMRewardModel(BaseRewardModel):
         timings["parse_ms"] += (time.perf_counter() - parse_start) * 1000
         timings["total_ms"] = (time.perf_counter() - total_start) * 1000
         self.last_timing_ms = timings
-        return rewards
+        return self.apply_gt_success_bonus(rewards, observations)
 
 
 class HistoryVLMRewardModel(VLMRewardModel):
     def __init__(self, cfg: DictConfig):
         self.history_buffer_names = list(cfg.history_buffers.keys())
         self.infer_micro_batch_size: int = int(cfg.get("infer_micro_batch_size", 0))
+        self.interval_reward: float = float(cfg.get("interval_reward", 0.0))
         self.debug_dump_first_inference: bool = bool(
             cfg.get("debug_dump_first_inference", False)
         )
@@ -399,10 +437,20 @@ class HistoryVLMRewardModel(VLMRewardModel):
         start: int,
         end: int,
     ) -> dict[str, Any]:
-        sliced_observations = {}
-        for observation_key, observation_values in observations.items():
-            sliced_observations.update({observation_key: observation_values[start:end]})
-        return sliced_observations
+        return {
+            key: self._slice_batch_value(value, start, end)
+            for key, value in observations.items()
+        }
+
+    def _slice_batch_value(self, value: Any, start: int, end: int) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: self._slice_batch_value(item, start, end)
+                for key, item in value.items()
+            }
+        if isinstance(value, (torch.Tensor, list, tuple)):
+            return value[start:end]
+        return value
 
     def _dump_first_inference_inputs(
         self,
@@ -513,7 +561,9 @@ class HistoryVLMRewardModel(VLMRewardModel):
             end = min(start + infer_micro_batch_size, input_batch_size)
             micro_observations = self.slice_observations(observations, start, end)
             micro_history_input = self.slice_history_input(history_input, start, end)
-            reward_chunk = torch.zeros((end - start,), dtype=torch.float32)
+            reward_chunk = torch.full(
+                (end - start,), fill_value=self.interval_reward, dtype=torch.float32
+            )
 
             valid_start = time.perf_counter()
             valid_input_ids = self.input_builder.get_valid_input_ids(
@@ -579,4 +629,6 @@ class HistoryVLMRewardModel(VLMRewardModel):
             self._debug_dump_first_inference_done = True
         timings["total_ms"] = (time.perf_counter() - total_start) * 1000
         self.last_timing_ms = timings
-        return torch.cat(reward_chunks, dim=0)
+        return self.apply_gt_success_bonus(
+            torch.cat(reward_chunks, dim=0), observations
+        )

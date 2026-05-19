@@ -87,41 +87,30 @@ Use Docker image for the experiment.
       # For mainland China users, you can use the following for better download speed:
       # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
-For Qwen3-VL Hugging Face reward experiments, install the reward backend
-dependencies in the same embodied environment used by training:
-
-.. code:: bash
-
-   source switch_env openpi
-   uv pip install --upgrade "transformers==4.57.1" "tokenizers>=0.22,<0.23"
-
-SGLang is optional and only required when ``reward.model.model_type=history_vlm_sglang``.
-RLinf uses an in-process ``sglang.Engine`` reward backend, not an external SGLang server
-path. The SGLang install path includes the Qwen-VL reward dependencies plus
-``sglang==0.5.4`` and its matching torch, xgrammar, and flashinfer runtime.
-
-**Option 2: Custom Environment**
+For Qwen3-VL reward experiments, install the reward backend dependencies:
 
 .. code:: bash
 
    # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward
+   bash requirements/install.sh embodied --model qwen3_vl --env maniskill_libero
    source .venv/bin/activate
 
-The ``--vlm-reward`` flag installs the Hugging Face reward backend dependencies.
-It pins ``transformers==4.57.1`` and the tokenizers range required by Qwen3-VL; it
-does not download reward checkpoints or install SGLang.
+RLinf uses an in-process ``sglang.Engine`` reward backend, not an external SGLang server
+path. The install path includes the Qwen-VL reward dependencies plus
+``sglang==0.5.4`` and its matching torch, xgrammar, and flashinfer runtime.
+Select the Hugging Face or SGLang backend in YAML with
+``reward.model.model_type: history_vlm`` or ``history_vlm_sglang``.
 
-For the in-process SGLang reward backend, use ``--vlm-reward-sglang`` instead:
+To add Qwen3-VL reward dependencies to an OpenPI training environment, use the
+matching flag so RLinf reapplies the OpenPI transformers patch after installing
+the Qwen runtime:
 
 .. code:: bash
 
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward-sglang
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward
 
-This SGLang path installs the Qwen-VL reward dependencies plus ``sglang==0.5.4``
-and the SGLang-specific torch, xgrammar, and flashinfer runtime. Use it only when
-the reward config sets ``reward.model.model_type: history_vlm_sglang``.
+This single flag installs the Qwen-VL dependencies needed by both
+``history_vlm`` and ``history_vlm_sglang``.
 
 Assets Download
 ----------------
@@ -317,8 +306,8 @@ backends:
 - ``reward.model.model_type: history_vlm_sglang`` loads Qwen3-VL through an in-process
   ``sglang.Engine`` inside the reward worker. It is not an external server endpoint path.
   Keep the same ``history_buffers``, ``input_builder_name``, and ``reward_parser_name``
-  fields, and use the ``--vlm-reward-sglang`` environment because this backend targets
-  ``sglang==0.5.4`` with its own torch, xgrammar, and flashinfer runtime.
+  fields. The ``qwen3_vl`` install path includes the matching ``sglang==0.5.4``
+  runtime for this backend.
 
 **2. Configuration Files**
 

@@ -44,6 +44,11 @@ offering practical guidance to help you fully optimize your RL post-training wor
    embodied training, including the ``patch`` and ``bucket`` modes, their
    configuration, recommended use cases, and performance considerations.
 
+- :doc:`nsight`
+   Introduces the Hydra-based ``cluster.nsight`` configuration used to wrap
+   selected Ray worker groups with ``nsys profile``, including how to enable,
+   disable, and target worker groups for system-level traces.
+
 
 .. toctree::
    :hidden:
@@ -57,4 +62,5 @@ offering practical guidance to help you fully optimize your RL post-training wor
    hetero
    cloud-edge
    logger
+   nsight
    weight_syncer

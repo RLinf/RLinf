@@ -1,6 +1,6 @@
 defaults:
-  - env/maniskill_pick_cube_prompt@env.train
-  - env/maniskill_pick_cube_prompt@env.eval
+  - env/maniskill_pick_cube@env.train
+  - env/maniskill_pick_cube@env.eval
   - model/mlp_policy@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
@@ -177,7 +177,6 @@ actor:
 
 reward:
   use_reward_model: true
-  use_output_step: 100
   group_name: "RewardGroup"
   reward_mode: history_buffer
   history_reward_assign: true
@@ -187,11 +186,12 @@ reward:
   model:
     model_path: "/path/to/Qwen3-VL-4B-Instruct"
     model_type: "history_vlm"
-    lora_path: "/path/to/qwen3-vl-lora-checkpoin"
+    lora_path: "/path/to/qwen3-vl-lora-checkpoint"
+    gt_success_bonus: 20.0
     precision: "bf16"
     input_builder_name: qwentrend_input_builder
     input_builder_params:
-      strict_min_frames: 5
+      default_task_description: "Pick up the red cube and place it on the green spot on the table."
     reward_parser_name: qwentrend_reward_parser
     reward_parser_params:
       positive_reward: 1.0

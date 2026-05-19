@@ -1,6 +1,6 @@
 defaults:
-  - env/maniskill_pick_cube_prompt@env.train
-  - env/maniskill_pick_cube_prompt@env.eval
+  - env/maniskill_pick_cube@env.train
+  - env/maniskill_pick_cube@env.eval
   - model/mlp_policy@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
@@ -91,7 +91,7 @@ env:
   train:
     env_type: maniskill
     total_num_envs: 32
-    wrap_obs_mode: simple_prompt
+    wrap_obs_mode: simple
     use_full_state: True
     auto_reset: True
     ignore_terminations: False
@@ -130,7 +130,7 @@ env:
   eval:
     env_type: maniskill
     total_num_envs: 32
-    wrap_obs_mode: simple_prompt
+    wrap_obs_mode: simple
     use_full_state: True
     auto_reset: True
     ignore_terminations: True
@@ -234,7 +234,6 @@ actor:
 
 reward:
   use_reward_model: true
-  use_output_step: 100
   group_name: RewardGroup
   reward_mode: history_buffer
   history_reward_assign: true
@@ -245,8 +244,11 @@ reward:
     model_type: history_vlm
     model_path: "/workspace/dataset/Qwen3-VL-4B-Instruct"
     lora_path: null
+    gt_success_bonus: 20.0
     precision: bf16
     input_builder_name: qwentrend_input_builder
+    input_builder_params:
+      default_task_description: "Pick up the red cube and place it on the green spot on the table."
     reward_parser_name: qwentrend_reward_parser
     reward_parser_params:
       positive_reward: 1.0

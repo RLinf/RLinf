@@ -42,8 +42,6 @@ from rlinf.utils.logging import get_logger
 
 logger = get_logger()
 
-STRICT_WINDOW_SIZE = 5
-
 
 def _compute_sample_indices(
     n: int, num_samples_per_episode: int, keep_last_window: bool
@@ -177,12 +175,6 @@ def load_episodes_with_labels(
     load_workers: int = 256,
 ) -> list[dict]:
     """Load episodes with per-window labels from collected data."""
-    if window_size != STRICT_WINDOW_SIZE:
-        raise ValueError(
-            f"QwenTrend reward preprocessing requires exactly "
-            f"{STRICT_WINDOW_SIZE} frames per sample; got window_size={window_size}."
-        )
-
     pkl_files = sorted(glob(os.path.join(data_path, "*.pkl")))
     logger.info(f"Found {len(pkl_files)} episode files in {data_path}")
 

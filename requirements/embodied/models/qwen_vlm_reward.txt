@@ -1,5 +1,0 @@
-# Runtime dependencies for Qwen-VL embodied reward workers using the
-# Hugging Face backend.
-qwen-vl-utils
-transformers==4.57.1
-tokenizers>=0.22,<0.23

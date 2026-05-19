@@ -1,0 +1,9 @@
+enabled: true
+worker_groups: [ActorGroup, RolloutGroup, EnvGroup, Actor, Rollout, Env]
+options:
+  t: cuda,cudnn,cublas,nvtx,osrt
+  sample: process-tree
+  cpuctxsw: process-tree
+  cudabacktrace: all
+  osrt-threshold: 1000
+flags: []

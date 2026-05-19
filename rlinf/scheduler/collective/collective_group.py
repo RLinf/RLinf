@@ -245,6 +245,29 @@ class CollectiveGroup:
             for _ in range(CollectiveGroup.POOL_SIZE)
         ]
 
+    def _get_global_accelerator_id(self, device: torch.device | int) -> str:
+        """Return the worker placement's global accelerator id for UUID-less platforms."""
+        if isinstance(device, torch.device):
+            device_idx = device.index
+        else:
+            device_idx = int(device)
+
+        if device_idx is None:
+            device_idx = Worker.torch_platform.current_device()
+
+        global_accelerator_ids = getattr(self._worker, "global_accelerator_ids", [])
+        if 0 <= int(device_idx) < len(global_accelerator_ids):
+            return str(global_accelerator_ids[int(device_idx)])
+        return str(device_idx)
+
+    def _get_accelerator_device_identity(self, device: torch.device | int) -> str:
+        """Return a stable identity for comparing accelerator devices across workers."""
+        properties = Worker.torch_platform.get_device_properties(device)
+        device_uuid = getattr(properties, "uuid", None)
+        if device_uuid is not None:
+            return str(device_uuid)
+        return self._get_global_accelerator_id(device)
+
     def send(
         self,
         object: torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any,
@@ -1149,9 +1172,7 @@ class CollectiveGroup:
     ):
         """For handling possible same devices send/recv in send_tensor."""
         # Exchange tensor device info
-        tensor_device = str(
-            Worker.torch_platform.get_device_properties(tensor.device).uuid
-        )
+        tensor_device = self._get_accelerator_device_identity(tensor.device)
         device_tensor, device_tensor_size = self._object_to_tensor(tensor_device, "cpu")
         send_work = self._send(
             device_tensor_size,
@@ -1206,9 +1227,7 @@ class CollectiveGroup:
     ):
         """For handling possible same devices send/recv in recv_tensor."""
         # Exchange tensor device info
-        tensor_device = str(
-            Worker.torch_platform.get_device_properties(tensor.device).uuid
-        )
+        tensor_device = self._get_accelerator_device_identity(tensor.device)
         device_tensor, device_tensor_size = self._object_to_tensor(tensor_device, "cpu")
 
         peer_device_tensor_size = torch.empty(1, dtype=torch.long, device="cpu")
@@ -1333,8 +1352,7 @@ class CollectiveGroup:
         """For handling same device send/recv in _send_tensor_list."""
         # Exchange tensor device info
         devices = [
-            str(Worker.torch_platform.get_device_properties(tensor.device).uuid)
-            for tensor in tensors
+            self._get_accelerator_device_identity(tensor.device) for tensor in tensors
         ]
 
         devices_tensor, devices_tensor_size = self._object_to_tensor(devices, "cpu")
@@ -1407,10 +1425,8 @@ class CollectiveGroup:
             peer_tensor_devices_tensor, peer_tensor_devices_tensor_size
         )
 
-        current_device = str(
-            Worker.torch_platform.get_device_properties(
-                Worker.torch_platform.current_device()
-            ).uuid
+        current_device = self._get_accelerator_device_identity(
+            Worker.torch_platform.current_device()
         )
         device_tensor, device_tensor_size = self._object_to_tensor(
             current_device, "cpu"

@@ -175,26 +175,28 @@ torch、xgrammar、flashinfer runtime。
 
 这将在当前路径下创建一个名为 `.venv` 的虚拟环境。
 
-如果需要在 ManiSkill/Libero 具身环境中使用 Qwen3-VL VLM reward model，可以添加
-``--vlm-reward``：
+如果需要在 ManiSkill/Libero 具身环境中使用 Qwen3-VL VLM reward model，请安装
+``qwen3_vl`` 模型依赖：
+
+.. code-block:: shell
+
+  bash requirements/install.sh embodied --model qwen3_vl --env maniskill_libero
+
+该命令会安装 Qwen-VL reward 依赖，以及 ``sglang==0.5.4`` 和 SGLang
+专用的 torch、xgrammar 与 flashinfer runtime。实际使用 Hugging Face 还是
+SGLang 后端，由 YAML 中的 ``reward.model.model_type: history_vlm`` 或
+``history_vlm_sglang`` 决定。该命令不会下载 reward-model checkpoint。
+
+如果要在 OpenPI 训练环境中添加 Qwen3-VL reward 依赖，请使用匹配的参数，
+这样 RLinf 会在安装 Qwen runtime 后重新应用 OpenPI transformers patch：
 
 .. code-block:: shell
 
   bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward
 
-``--vlm-reward`` 会安装 Hugging Face reward 后端依赖，包括 Qwen3-VL 所需的
-``transformers==4.57.1`` 和 ``tokenizers`` 版本范围；它不会下载 reward-model checkpoint，
-也不会安装 SGLang。
+这一个参数会安装 ``history_vlm`` 和 ``history_vlm_sglang`` 共同需要的
+Qwen-VL 依赖。
 
-如果需要进程内 SGLang reward 后端，请改用 ``--vlm-reward-sglang``：
-
-.. code-block:: shell
-
-  bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward-sglang
-
-该 SGLang 路径会安装 Qwen-VL reward 依赖，以及 ``sglang==0.5.4`` 和 SGLang
-专用的 torch、xgrammar 与 flashinfer runtime。仅当 reward 配置设置
-``reward.model.model_type: history_vlm_sglang`` 时使用。
 要激活该虚拟环境，可以使用以下命令：
 
 .. code-block:: shell

@@ -208,8 +208,8 @@ class ResNetRewardModel(BaseImageRewardModel):
 
         if isinstance(images, np.ndarray):
             images = torch.from_numpy(images)
-        device = next(self.parameters()).device
-        images = images.to(device)
+        model_parameter = next(self.parameters())
+        images = images.to(device=model_parameter.device, dtype=model_parameter.dtype)
 
         images = self.preprocess_images(images)
 

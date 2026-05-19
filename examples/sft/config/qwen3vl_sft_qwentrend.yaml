@@ -22,22 +22,22 @@ runner:
   max_steps: 3000
   val_check_interval: 100
   save_interval: 100
-  experiment_name: qwen3_vl_4b_5frame_dualview_revneg_train5000_evalratio_pkl
-  output_dir: /c20250301/zhoutianxing/RLinf/logs/20260427-13:44:23-maniskill_ppo_mlp_eval_dualview_collect_300
+  experiment_name: qwen3_vl_4b_5frame_dualview_json_done_trend_from_20260424_collect
+  output_dir: /path/to/output/logs
   resume_dir: null
   per_worker_log: true
 
 # Build this dataset with examples/reward/preprocess_qwentrend_reward_dataset.py
-# using the collected_data directory from the 20260427 dual-view collection run.
+# and point DUALVIEW_SFT_DATA_ROOT to the output root.
 data:
   type: vlm
   dataset_name: "qwentrend_progress_sft"
   apply_chat_template: true
   use_chat_template: true
-  train_data_paths: "/c20250301/zhoutianxing/RLinf/logs/20260427-13:44:23-maniskill_ppo_mlp_eval_dualview_collect_300/processed_qwentrend_reward_data_revneg_train5000_evalratio_pkl/train/segments.jsonl"
-  val_data_paths: "/c20250301/zhoutianxing/RLinf/logs/20260427-13:44:23-maniskill_ppo_mlp_eval_dualview_collect_300/processed_qwentrend_reward_data_revneg_train5000_evalratio_pkl/eval/segments.jsonl"
-  video_root: "/c20250301/zhoutianxing/RLinf/logs/20260427-13:44:23-maniskill_ppo_mlp_eval_dualview_collect_300/processed_qwentrend_reward_data_revneg_train5000_evalratio_pkl"
-  data_root: "/c20250301/zhoutianxing/RLinf/logs/20260427-13:44:23-maniskill_ppo_mlp_eval_dualview_collect_300/processed_qwentrend_reward_data_revneg_train5000_evalratio_pkl"
+  train_data_paths: "${oc.env:DUALVIEW_SFT_DATA_ROOT}/train/segments.jsonl"
+  val_data_paths: "${oc.env:DUALVIEW_SFT_DATA_ROOT}/eval/segments.jsonl"
+  video_root: "${oc.env:DUALVIEW_SFT_DATA_ROOT}"
+  data_root: "${oc.env:DUALVIEW_SFT_DATA_ROOT}"
   prompt_key: "prompt"
   answer_key: "answer"
   image_keys: []
@@ -64,7 +64,7 @@ actor:
   model:
     model_type: qwen3_vl
     precision: bf16
-    model_path: /c20250301/zhoutianxing/RLinf/checkpoints/Qwen3-VL-4B-Instruct
+    model_path: /path/to/Qwen3-VL-4B-Instruct
     attn_implementation: flash_attention_2
     is_lora: true
     lora_rank: 16

@@ -35,6 +35,7 @@ from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.comm_mapping import CommMapper
 from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.nested_dict_process import (
+    clone_nested_to_cpu,
     copy_dict_tensor,
     split_dict,
     update_nested_cfg,
@@ -88,7 +89,7 @@ class EnvWorker(Worker):
 
         self.reward_mode = self.cfg.get("reward", {}).get("reward_mode", "per_step")
         self.history_reward_assign = self.cfg.get("reward", {}).get(
-            "history_reward_assign", True
+            "history_reward_assign", False
         )
         self.use_reward_model = self.cfg.get("reward", {}).get(
             "use_reward_model", False
@@ -99,6 +100,7 @@ class EnvWorker(Worker):
         self.use_external_reward_model = (
             self.use_reward_model and not self.use_realworld_reward
         )
+        self.env_infos_reward_keys = ("success", "episode", "final_info")
         if self.use_external_reward_model:
             self.reward_weight = self.cfg.reward.get("reward_weight", 1.0)
             self.env_reward_weight = self.cfg.reward.get("env_reward_weight", 0.0)
@@ -493,6 +495,7 @@ class EnvWorker(Worker):
             dones=chunk_dones,
             terminations=chunk_terminations,
             truncations=chunk_truncations,
+            env_infos=infos if isinstance(infos, dict) else None,
             intervene_actions=intervene_actions,
             intervene_flags=intervene_flags,
         )
@@ -884,6 +887,10 @@ class EnvWorker(Worker):
         else:
             return None, None
         reward_input = dict(observations)
+        if env_output.env_infos is not None:
+            reward_input["env_infos"] = self._select_reward_env_infos(
+                env_output.env_infos
+            )
         history_lengths = None
 
         dones = env_output.dones
@@ -910,6 +917,14 @@ class EnvWorker(Worker):
                 }
             )
         return reward_input, history_lengths
+
+    def _select_reward_env_infos(self, env_infos: dict[str, Any]) -> dict[str, Any]:
+        reward_env_infos = {}
+        for key in self.env_infos_reward_keys:
+            if key not in env_infos:
+                continue
+            reward_env_infos[key] = clone_nested_to_cpu(env_infos[key])
+        return reward_env_infos
 
     def send_reward_request(
         self,

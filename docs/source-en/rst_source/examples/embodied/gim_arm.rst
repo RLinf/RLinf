@@ -240,7 +240,41 @@ Convert the quaternion to Euler XYZ angles for use in the ``target_ee_pose`` con
 Data Collection
 ~~~~~~~~~~~~~~~~~
 
-Follow the provided VR teleoperation code, which are adapted from `XRoboToolkit <https://github.com/XR-Robotics>`_ for data collection with the GimArm robot.
+Refer to the VR teleoperation code in `gim_arm_teleop <https://github.com/RLinf/gim_arm_teleop>`_ , for data collection with the GimArm robot.
+We recommend the following deployment steps:
+
+1. Prepare the runtime environment:
+
+   - Use Ubuntu 22.04 (x86) on the machine that controls the robot when possible;
+   - Use a PICO 4 Ultra headset and keep it on the same LAN as the control PC;
+   - If you need headset camera passthrough (VST), enable the corresponding device permissions.
+
+2. Install and start the PC service (XRoboToolkit-PC-Service):
+
+   - Download the PC service package: `XRoboToolkit_PC_Service_1.0.0_ubuntu_22.04_amd64.deb <https://github.com/XR-Robotics/XRoboToolkit-PC-Service/releases/download/v1.1.1/XRoboToolkit-PC-Service-1.1.1.deb>`_
+
+   .. code-block:: bash
+
+      sudo dpkg -i XRoboToolkit_PC_Service_1.0.0_ubuntu_22.04_amd64.deb
+      bash /opt/apps/roboticsservice/runService.sh
+
+3. Install and launch the XRoboToolkit app on the headset:
+
+   - Install the APK `XRoboToolkit-PICO-1.1.1.apk <https://github.com/XR-Robotics/XRoboToolkit-Unity-Client/releases/download/v1.1.1/XRoboToolkit-PICO-1.1.1.apk>`_
+   - Connect to the control PC's IP address;
+   - In the app, enable ``head``\ /\ ``hand``\ /\ ``controller`` (as required by your task).
+
+4. Install and run the Python teleoperation stack:
+
+   Follow the `gim_arm_teleop <https://github.com/RLinf/gim_arm_teleop>`_
+   , then on the control PC launch the GimArm hardware teleoperation script:
+
+   .. code-block:: bash
+
+      cd gim_arm_teleop
+      python scripts/hardware/teleop_gim_arm_hardware.py
+
+   Synchronously log VR control signals and robot arm state into your dataset.
 
 Configuration File
 ~~~~~~~~~~~~~~~~~~~~~~

@@ -715,20 +715,21 @@ class Robo2VLMSFTDataset(Robo2VLMDataset):
 
 
 def _resolve_video_path(path: str, data_root: Optional[str]) -> str:
-    """解析视频路径：若原路径不存在且 data_root 已配置，则用 data_root 重写。"""
+    """Resolve a video path, rewriting it with data_root if the original path is missing."""
     if not isinstance(path, str):
         return str(path)
     if os.path.isfile(path):
         return path
     if not data_root:
         return path
-    # 从绝对路径中提取 data/ 及之后部分，用 data_root 重写（适配 host→container 路径差异）
+    # Extract the data/ suffix from absolute paths and rewrite with data_root
+    # to handle host-to-container path differences.
     idx = path.find("data/")
     if idx >= 0:
         resolved = os.path.join(data_root, path[idx:])
         if os.path.isfile(resolved):
             return resolved
-    # 相对路径：直接拼接
+    # Relative path: join it directly with data_root.
     if not os.path.isabs(path):
         resolved = os.path.join(data_root, path)
         if os.path.isfile(resolved):
@@ -736,29 +737,14 @@ def _resolve_video_path(path: str, data_root: Optional[str]) -> str:
     return path
 
 
-def _validate_qwentrend_frames(
-    frames: Any,
-    sample_idx: int,
-    field_name: str,
-    expected_num_frames: int,
-) -> None:
-    if len(frames) != expected_num_frames:
-        raise ValueError(
-            f"Sample {sample_idx} {field_name} must contain exactly "
-            f"{expected_num_frames} frames, got {len(frames)}"
-        )
-
-
 @VLMDatasetRegistry.register("qwentrend_progress_sft")
 class QwenTrendProgressSFTDataset(VLMBaseDataset):
-    """SFT dataset for QwenTrend progress: full_video + video_clip 输入，与 pilot 一致。
+    """SFT dataset for QwenTrend progress: full_video + video_clip input, aligned with the pilot.
 
     Each record: full_video (mp4), video_clip (mp4), question, answer.
-    Qwen3-VL 用 videos 输入，与数据集形式一致。
-    若 JSONL 中路径为 host 绝对路径，可配置 data.data_root 以在 container 中解析。
+    Qwen3-VL uses videos input, matching the dataset format.
+    If JSONL paths are host absolute paths, set data.data_root to resolve them in the container.
     """
-
-    EXPECTED_VIDEO_FRAMES = 5
 
     def __init__(
         self,
@@ -772,16 +758,6 @@ class QwenTrendProgressSFTDataset(VLMBaseDataset):
         self._data_root = config.data.get("data_root") or os.environ.get(
             "RLINF_DATA_ROOT"
         )
-        self._expected_video_frames = int(
-            config.data.get("video_nframes", self.EXPECTED_VIDEO_FRAMES)
-            or self.EXPECTED_VIDEO_FRAMES
-        )
-        if self._expected_video_frames != self.EXPECTED_VIDEO_FRAMES:
-            raise ValueError(
-                "QwenTrendProgressSFTDataset requires exactly "
-                f"{self.EXPECTED_VIDEO_FRAMES} frames per video; got "
-                f"data.video_nframes={self._expected_video_frames}."
-            )
 
     @classmethod
     def _build_video_user_content(
@@ -789,14 +765,6 @@ class QwenTrendProgressSFTDataset(VLMBaseDataset):
     ) -> str:
         video_tok = getattr(processor, "video_token", "<|video_pad|>")
         return f"{video_tok}\n{video_tok}\n\n{prompt_text}"
-
-    @classmethod
-    def _build_video_metadata(cls, video: Any) -> dict[str, Any]:
-        if isinstance(video, (str, os.PathLike)):
-            total_num_frames = cls.EXPECTED_VIDEO_FRAMES
-        else:
-            total_num_frames = len(video)
-        return {"total_num_frames": total_num_frames, "fps": 24.0}
 
     @classmethod
     def process_inputs(
@@ -875,7 +843,10 @@ class QwenTrendProgressSFTDataset(VLMBaseDataset):
                 rendered_prompts.append(rendered_prompt_i)
                 rendered_labels.append(rendered_label_i)
                 videos_kwargs["video_metadata"].append(
-                    [cls._build_video_metadata(video) for video in videos_i]
+                    [
+                        {"total_num_frames": len(video), "fps": 24.0}
+                        for video in videos_i
+                    ]
                 )
 
             full_inputs = processor(
@@ -902,7 +873,9 @@ class QwenTrendProgressSFTDataset(VLMBaseDataset):
         prompt_text = prompt_texts[0]
         rendered_prompt, rendered_label = _render_prompt_text(prompt_text, answer_text)
         videos_kwargs = {
-            "video_metadata": [cls._build_video_metadata(video) for video in videos],
+            "video_metadata": [
+                {"total_num_frames": len(video), "fps": 24.0} for video in videos
+            ],
         }
 
         full_inputs = processor(
@@ -931,7 +904,7 @@ class QwenTrendProgressSFTDataset(VLMBaseDataset):
     def encode_prompt(
         self,
         prompt_text: str,
-        videos: list[Any],
+        videos: list[str],
         answer_text: str,
     ) -> tuple[torch.Tensor, int, torch.Tensor, torch.Tensor, dict[str, Any]]:
         """
@@ -979,7 +952,6 @@ class QwenTrendProgressSFTDataset(VLMBaseDataset):
         raw: dict[str, Any],
         idx: int,
         data_root: Optional[str],
-        expected_video_frames: int = EXPECTED_VIDEO_FRAMES,
     ) -> tuple[str, str, list[Any], list[Any]]:
         full_video = raw.get("full_video")
         video_clip = raw.get("video_clip")
@@ -1007,12 +979,6 @@ class QwenTrendProgressSFTDataset(VLMBaseDataset):
         extra_view_frames = payload.get("extra_view_frames")
         if main_frames is None or extra_view_frames is None:
             raise ValueError(f"Sample {idx} pkl missing dual-view frame arrays")
-        _validate_qwentrend_frames(
-            main_frames, idx, "main_frames", expected_video_frames
-        )
-        _validate_qwentrend_frames(
-            extra_view_frames, idx, "extra_view_frames", expected_video_frames
-        )
         return (
             question,
             answer_text,
@@ -1022,7 +988,7 @@ class QwenTrendProgressSFTDataset(VLMBaseDataset):
 
     def _process_raw_record(self, raw: dict[str, Any], idx: int) -> "SftDatasetItem":
         prompt_text, answer_text, videos, image_data = self._parse_raw_record(
-            raw, idx, self._data_root, self._expected_video_frames
+            raw, idx, self._data_root
         )
         input_ids, plen, attention_mask, label_mask, multi_modal_inputs = (
             self.encode_prompt(
@@ -1089,6 +1055,6 @@ class SimpleQwenTrendSFTDataset(QwenTrendProgressSFTDataset):
         return prompt_text, answer_text, [clip_path], [clip_path]
 
 
-# Backward-compatible class names used by the online reward input builders.
+# Backward-compatible class names used by older online reward input builders.
 RoboChallengeProgressSFTDataset = QwenTrendProgressSFTDataset
 SimpleRobochallengeSFTDataset = SimpleQwenTrendSFTDataset

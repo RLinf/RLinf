@@ -29,47 +29,37 @@ def test_qwen_vlm_reward_sglang_requirements_are_pinned():
     assert "sglang==0.5.4" in requirements
 
 
-def test_openpi_sglang_install_flag_reapplies_transformers_patch():
+def test_openpi_qwen_reward_flag_applies_transformers_patch():
     install_script = (REPO_ROOT / "requirements/install.sh").read_text()
 
-    assert "--vlm-reward-sglang" in install_script
-    assert "VLM_REWARD_SGLANG=1" in install_script
+    assert "--vlm-reward" in install_script
+    assert "VLM_REWARD=1" in install_script
+    assert "--vlm-reward-sglang" not in install_script
+    assert "VLM_REWARD_SGLANG" not in install_script
+    assert "install_qwen_vlm_reward_deps" not in install_script
     assert "install_qwen_vlm_reward_sglang_deps" in install_script
     assert "apply_openpi_transformers_patch" in install_script
+    assert "apply_openpi_transformers_4_57_1_patch" in install_script
+    assert "openpi_transformers_4_57_1/transformers" in install_script
     assert "sglang=={expected}" in install_script
     assert (
-        "--vlm-reward-sglang is supported only with --model openpi or --model qwen_vlm_reward"
+        "--vlm-reward is supported only with --model openpi or --model qwen3_vl"
         in install_script
     )
 
 
-def test_qwen_vlm_reward_can_install_sglang_without_env():
+def test_qwen3_vl_model_can_install_sglang_reward_runtime():
     install_script = (REPO_ROOT / "requirements/install.sh").read_text()
 
-    assert (
-        '[ "$MODEL" != "dreamzero" ] && [ "$MODEL" != "qwen_vlm_reward" ]'
-        in install_script
-    )
-
     match = re.search(
-        r"install_qwen_vlm_reward_model\(\) \{\n(?P<body>.*?)\n\}\n\ninstall_gr00t_model",
+        r"install_qwen3_vl_model\(\) \{\n(?P<body>.*?)\n\}\n\ninstall_franka_realworld_env",
         install_script,
         flags=re.S,
     )
     assert match is not None
 
     body = match.group("body")
-    light_branch = re.search(
-        r'\n\s*""\)\n(?P<body>.*?)\n\s*;;',
-        body,
-        flags=re.S,
-    )
-    assert light_branch is not None
-
-    light_branch_body = light_branch.group("body")
-    assert "create_and_sync_venv" in light_branch_body
-    assert (
-        "uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD" in light_branch_body
-    )
-    assert "install_common_embodied_deps" not in light_branch_body
-    assert "install_maniskill_libero_env" not in light_branch_body
+    assert "create_and_sync_venv" in body
+    assert "install_common_embodied_deps" in body
+    assert "install_qwen_vlm_reward_sglang_deps" in body
+    assert "install_qwen_vlm_reward_deps" not in body

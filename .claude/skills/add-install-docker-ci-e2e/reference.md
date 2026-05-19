@@ -72,23 +72,7 @@ All jobs use the same “Maximize storage space” and “Checkout” / “Set u
 
 ---
 
-## 4. Install CI — `.github/workflows/install.yml`
-
-In the `build` job, add a step:
-```yaml
-- name: Install <model>-<env>
-  run: |
-    pip install uv
-    uv cache prune --ci   # optional
-    bash requirements/install.sh embodied --model <model> --env <env>
-    rm -rf .venv
-```
-
-For multiple envs for one model, repeat the last two lines (install then rm -rf .venv) for each env. Use `TEST_BUILD=1` only where the install script is designed to use it (e.g. reason).
-
----
-
-## 5. E2e test — config and workflow
+## 4. E2e test — config and workflow
 
 **Config:** Add `tests/e2e_tests/embodied/<name>.yaml`. The runner is:
 ```bash

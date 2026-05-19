@@ -179,6 +179,8 @@ class HistoryManager:
                         ),
                         len(self.history_entries[env_idx]),
                     )
+                else:
+                    continue
                 append_to_history_input(history_buffer, history_range, env_idx)
 
             if done:

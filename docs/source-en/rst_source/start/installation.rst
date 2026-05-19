@@ -177,26 +177,28 @@ For example, to install the dependencies for the OpenVLA + ManiSkill LIBERO expe
 
 This will create a virtual environment under the current path named `.venv`.
 
-For Qwen3-VL VLM reward model support in embodied ManiSkill/Libero environments, add
-``--vlm-reward``:
+For Qwen3-VL VLM reward model support in embodied ManiSkill/Libero environments,
+install the ``qwen3_vl`` model dependencies:
+
+.. code-block:: shell
+
+  bash requirements/install.sh embodied --model qwen3_vl --env maniskill_libero
+
+This installs the Qwen-VL reward dependencies plus ``sglang==0.5.4`` and the
+SGLang-specific torch, xgrammar, and flashinfer runtime. Select the Hugging Face
+or SGLang backend in YAML with ``reward.model.model_type: history_vlm`` or
+``history_vlm_sglang``. It does not download reward-model checkpoints.
+
+To add Qwen3-VL reward dependencies to an OpenPI training environment, use the
+matching flag so RLinf reapplies the OpenPI transformers patch after installing
+the Qwen runtime:
 
 .. code-block:: shell
 
   bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward
 
-The ``--vlm-reward`` flag installs the Hugging Face reward backend dependencies. It
-pins ``transformers==4.57.1`` and the tokenizers range required by Qwen3-VL; it does
-not download reward-model checkpoints or install SGLang.
-
-For the in-process SGLang reward backend, use ``--vlm-reward-sglang`` instead:
-
-.. code-block:: shell
-
-  bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward-sglang
-
-This SGLang path installs the Qwen-VL reward dependencies plus ``sglang==0.5.4``
-and the SGLang-specific torch, xgrammar, and flashinfer runtime. Use it only when the
-reward config sets ``reward.model.model_type: history_vlm_sglang``.
+This single flag installs the Qwen-VL dependencies needed by both
+``history_vlm`` and ``history_vlm_sglang``.
 
 To activate the virtual environment, you can use the following command:
 

@@ -72,7 +72,10 @@ State Dict 设备要求
   无法利用当前优化路径，也不符合 patch 模式的设计目标。
 
 接收端 ``apply(...)`` 会把收到的 patch payload 搬到目标模型参数所在设备后再写入，
-但模型结构、参数顺序和初始权重仍需满足 patch 模式的初始化约束。
+但模型结构和参数顺序仍需满足 patch 模式的 metadata 约束。若启用
+``init_sync.enabled=true``，patch 模式还可以在
+``init_sender(...)`` / ``init_receiver(...)`` 阶段先做一次初始
+``state_dict`` 自举，再进入后续增量 patch 同步。
 
 
 推荐结论
@@ -88,10 +91,16 @@ State Dict 设备要求
 
 .. warning::
 
-   当前 ``patch`` 模式 **不是独立的完整权重快照** 。  
-   它发送的是“相对于发送端 snapshot 的增量”，因此要求 actor 与 rollout 在
-   patch 同步开始前已经处于**一致的初始权重状态**。  
-   如果你不能保证这一点，就应该先做一次全量同步，或直接使用 ``bucket``。
+   增量 patch 主路径发送的仍然是“相对于发送端 snapshot 的增量”，而不是一份
+   独立的完整模型快照。
+
+   为了让本地额外挂载模块的模型也能安全工作，RLinf 现在支持在 patch 模式下
+   做一次 init bootstrap。推荐默认开启
+   ``patch.init_sync.enabled=true``，并使用 ``prefixes: null``，这样 rollout
+   会在第一轮真实 patch 前先和 sender 对齐。
+
+   只有在你显式关闭 init bootstrap 时，actor 与 rollout 才仍然必须以完全一致的
+   初始权重启动。
 
 
 如何在 YAML 中启用
@@ -127,6 +136,10 @@ Patch 模式
        transport_device: cpu
        delta_encoding: true
        compression: none
+       init_sync:
+         enabled: true
+         prefixes: null
+         bucket_size: 134217728
 
 各字段含义如下：
 
@@ -152,6 +165,24 @@ Patch 模式
   - ``none``：不压缩
   - ``nvcomp_lz4``：使用 nvCOMP 在 GPU 上做无损压缩
 
+``patch.init_sync.enabled``
+  是否在正常 patch 同步开始前，于 ``init_sender(...)`` /
+  ``init_receiver(...)`` 阶段执行一次性 bootstrap。启用后，sender 会先发送一轮
+  分桶的 ``state_dict`` 子集，然后 patch 模式再继续走后续常规的增量
+  snapshot 同步。
+
+``patch.init_sync.prefixes``
+  指定需要 bootstrap 的 ``state_dict`` key 前缀。若设置为 ``null``，RLinf 会对
+  完整 ``state_dict`` 做 bootstrap，包括 parameters 和 persistent buffers；
+  若设置为 list，则只同步匹配 ``prefix`` 或 ``prefix.`` 的 key。
+
+  ``null`` 是更推荐的默认值，因为定向 prefix 很容易漏掉
+  ``action_head.value_head`` 这类嵌套模块路径。
+
+``patch.init_sync.bucket_size``
+  每个 init bootstrap bucket 的最大字节数。它只影响这一次性的 init bootstrap
+  路径，不影响后续增量 patch payload 的组织方式。
+
 
 Patch 模式的工作流程
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -161,7 +192,10 @@ Patch 模式大致分为两个阶段：
 1. 一次性初始化阶段
 
    - 接收端在 ``init_receiver(...)`` 中发送本地模型 metadata。
-   - 发送端在 ``init_sender(...)`` 中接收 metadata，并据此建立 snapshot。
+   - 若 ``init_sync.enabled=true``，发送端会在 ``init_sender(...)`` 中接收
+     metadata，并发送一次完整 ``state_dict`` 或指定 prefix 子集的分桶 bootstrap。
+   - 接收端会把这批 bootstrap 权重直接应用到本地 ``state_dict``。
+   - 发送端随后再建立用于后续增量 patch 的 snapshot。
 
    当前 metadata 主要包括：
 
@@ -171,7 +205,8 @@ Patch 模式大致分为两个阶段：
 
    接收端 **不会保存发送端 snapshot** ，它只保存足够把 patch 正确落到本地模型上的结构信息。
    发送端 snapshot 的 dtype 与接收端对应权重的 dtype 保持一致，因此可以正确支持
-   ``bfloat16`` 与 ``float32`` 混合精度模型。
+   ``bfloat16`` 与 ``float32`` 混合精度模型。init bootstrap 也会按接收端每个 key
+   的 dtype 进行对齐。
 
 2. 每次同步阶段
 
@@ -247,7 +282,8 @@ Delta Encoding
 压缩
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Patch 模式的压缩只作用于 patch 本身，而不是完整模型权重。
+Patch 模式的压缩只作用于后续的增量 patch 本身，而不是完整模型权重。一次性的
+init bootstrap 走的是分桶权重传输，不经过 patch compressor。
 
 当前 RLinf 已实现的压缩器有：
 
@@ -268,7 +304,8 @@ Patch 模式的压缩只作用于 patch 本身，而不是完整模型权重。
 
 以下场景不建议直接使用 patch：
 
-- actor 与 rollout 的初始权重不一致
+- actor 与 rollout 的 ``state_dict`` 结构或 metadata 不一致
+- 你关闭了 init bootstrap，且无法保证双方初始权重完全一致
 - 你需要一个显式、稳妥的 bootstrap / full sync
 - 参数变化并不稀疏，增量 patch 的收益不明显
 - 你希望在排查训练正确性问题时先使用最保守的同步策略
@@ -348,13 +385,16 @@ rollout 再据此更新自身版本状态。
 
 如果你的目标是优先优化同步耗时，建议按下面顺序调：
 
-1. 先使用 ``patch``，确认初始权重一致。
-2. 默认优先使用 ``snapshot_device: cpu``，在不额外占用一份模型大小 GPU 显存的前提下，
+1. 先使用 ``patch``，并保持 ``init_sync.enabled=true``。
+2. 除非你非常确定只需要同步一小部分 key，否则优先使用
+   ``init_sync.prefixes: null``。
+3. 默认优先使用 ``snapshot_device: cpu``，在不额外占用一份模型大小 GPU 显存的前提下，
    获得接近 GPU snapshot 的同步耗时。
-3. 保持 ``delta_encoding: true``。
-4. 先用 ``compression: none`` 跑通，再评估是否需要 ``nvcomp_lz4``。
-5. 如果 GPU 显存非常充足且追求最低同步延迟，可以评估 ``snapshot_device: cuda``。
-6. 若确实需要 full sync 或排查问题，再切回 ``bucket``。
+4. 保持 ``delta_encoding: true``。
+5. 先用 ``compression: none`` 跑通，再评估是否需要 ``nvcomp_lz4``。
+6. 如果 GPU 显存非常充足且追求最低同步延迟，可以评估 ``snapshot_device: cuda``。
+7. 若你需要每一步都采用最简单的 full sync 语义，或正在排查正确性问题，再切回
+   ``bucket``。
 
 需要注意的是，patch 模式会额外保存一份 sender 侧 snapshot。若
 ``snapshot_device: cuda``，这部分会占用 GPU 显存，大小约为模型参数量乘以
@@ -373,7 +413,10 @@ CPU pinned memory。其大小同样约为模型参数量乘以接收端对应权
 
 当前实现有以下限制需要注意：
 
-- ``patch`` 模式默认假设 actor 与 rollout 以相同初始权重启动。
+- 如果 ``patch.init_sync.enabled=false``，则 ``patch`` 模式默认假设 actor 与
+  rollout 以相同初始权重启动。
+- 定向配置 ``patch.init_sync.prefixes`` 时，如果 prefix 不完整，可能会漏掉嵌套
+  模块路径；``null`` 是最稳妥的默认值。
 - ``patch`` 模式当前主要为具身 HuggingFace rollout 路径设计。
 - 高维张量在内部会被转成 2D 视图；若 trailing 维无法以 view 的方式展平，patch 模式会报错。
 - 当前文档中的压缩配置仅指 patch payload 压缩，不是模型权重本体压缩。
@@ -385,12 +428,13 @@ CPU pinned memory。其大小同样约为模型参数量乘以接收端对应权
 
 可以用下面这条经验法则快速决策：
 
-- 默认训练：先用 ``patch``
-- 首次自举 / 排障：先用 ``bucket``
+- 默认训练：使用 ``patch + init_sync.enabled=true + prefixes:null``
+- 只有在你明确知道要对齐哪些 ``state_dict`` key 时，才使用定向 prefix bootstrap
+- 首次自举或想使用最简单语义排障：先用 ``bucket``
 - 确认稀疏度高且追求极致性能：``patch + delta_encoding + 可选 nvcomp``
 
 如果你不确定当前链路是否满足 patch 的前提，最安全的做法是：
 
-- 先确保 actor 与 rollout 加载同一模型路径 / checkpoint
-- 先用 ``bucket`` 验证正确性
+- 先确保 actor 与 rollout 的 ``state_dict`` 结构一致
+- 保持 patch init bootstrap 开启，或者先用 ``bucket`` 验证正确性
 - 再切到 ``patch`` 做性能优化

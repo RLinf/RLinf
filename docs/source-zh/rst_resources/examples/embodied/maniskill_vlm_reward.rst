@@ -86,41 +86,29 @@ ManiSkill PPO（基于 VLM Reward Model）
       # 如果需要国内加速下载镜像，可以使用：
       # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
-对于 Qwen3-VL Hugging Face reward 实验，请在训练所使用的同一个具身环境中安装
-reward 后端依赖：
-
-.. code:: bash
-
-   source switch_env openpi
-   uv pip install --upgrade "transformers==4.57.1" "tokenizers>=0.22,<0.23"
-
-SGLang 是可选依赖，仅当 ``reward.model.model_type=history_vlm_sglang`` 时需要。
-RLinf 使用进程内 ``sglang.Engine`` reward 后端，不走外部 SGLang server 路径。
-SGLang 安装路径包含 Qwen-VL reward 依赖，以及 ``sglang==0.5.4`` 和匹配的
-torch、xgrammar、flashinfer runtime。
-
-**选项 2：自定义环境**
+对于 Qwen3-VL reward 实验，请安装 reward 后端依赖：
 
 .. code:: bash
 
    # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward
+   bash requirements/install.sh embodied --model qwen3_vl --env maniskill_libero
    source .venv/bin/activate
 
-``--vlm-reward`` 会安装 Hugging Face reward 后端依赖，包括 Qwen3-VL 所需的
-``transformers==4.57.1`` 和 ``tokenizers`` 版本范围；它不会下载 reward checkpoint，
-也不会安装 SGLang。
+RLinf 使用进程内 ``sglang.Engine`` reward 后端，不走外部 SGLang server 路径。
+该安装路径包含 Qwen-VL reward 依赖，以及 ``sglang==0.5.4`` 和匹配的
+torch、xgrammar、flashinfer runtime。
+实际使用 Hugging Face 还是 SGLang 后端，由 YAML 中的
+``reward.model.model_type: history_vlm`` 或 ``history_vlm_sglang`` 决定。
 
-如果需要进程内 SGLang reward 后端，请改用 ``--vlm-reward-sglang``：
+如果要在 OpenPI 训练环境中添加 Qwen3-VL reward 依赖，请使用匹配的参数，
+这样 RLinf 会在安装 Qwen runtime 后重新应用 OpenPI transformers patch：
 
 .. code:: bash
 
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward-sglang
-   source .venv/bin/activate
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward
 
-该 SGLang 路径会安装 Qwen-VL reward 依赖，以及 ``sglang==0.5.4`` 和 SGLang
-专用的 torch、xgrammar 与 flashinfer runtime。仅当 reward 配置设置
-``reward.model.model_type: history_vlm_sglang`` 时使用。
+这一个参数会安装 ``history_vlm`` 和 ``history_vlm_sglang`` 共同需要的
+Qwen-VL 依赖。
 
 资源下载
 ----------------
@@ -313,8 +301,7 @@ SFT checkpoint 会保存到：
 - ``reward.model.model_type: history_vlm_sglang`` 会在 reward worker 内通过进程内
   ``sglang.Engine`` 加载 Qwen3-VL，不是外部 server endpoint 路径。这种方式仍保留
   相同的 ``history_buffers``、``input_builder_name`` 和 ``reward_parser_name``；
-  请使用 ``--vlm-reward-sglang`` 环境，因为该后端目标是 ``sglang==0.5.4``，并带有
-  独立的 torch、xgrammar 和 flashinfer runtime。
+  ``qwen3_vl`` 安装路径已经包含该后端所需的 ``sglang==0.5.4`` runtime。
 
 **2. 配置文件**
 
