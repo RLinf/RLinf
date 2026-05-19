@@ -14,8 +14,11 @@
 
 import logging
 import os
+import re
+import shlex
 import signal
 import sys
+import tempfile
 import time
 from enum import Enum
 from importlib.metadata import version
@@ -29,7 +32,7 @@ from ray._private import ray_logging
 from ray.actor import ActorHandle
 from ray.util.state import list_actors
 
-from .config import ClusterConfig
+from .config import ClusterConfig, NsightConfig
 from .node import NodeGroupInfo, NodeInfo, NodeProbe
 from .utils import DistributedRayLogCollector, without_http_proxies
 
@@ -147,6 +150,7 @@ class Cluster:
         num_nodes: Optional[int] = None,
         cluster_cfg: Optional[DictConfig] = None,
         distributed_log_dir: Optional[str] = None,
+        nsight_output_dir: Optional[str] = None,
     ):
         """Initialize the cluster.
 
@@ -154,17 +158,22 @@ class Cluster:
             num_nodes (int): The number of nodes in the cluster. When you wish to acquire the cluster instance in a processes other than the main driver process, do not pass this argument. Instead, use the `Cluster()` constructor without arguments. If num_nodes is 0, it will initialize the cluster with all ray-connected nodes.
             cluster_cfg (Optional[DictConfig]): The cluster's configuration dictionary. If set, num_nodes will be ignored and inferred from the config.
             distributed_log_dir (Optional[str]): Output directory for split logs. This must be provided when ``distributed_logging`` is True.
+            nsight_output_dir (Optional[str]): Default directory for Nsight reports when ``cluster.nsight`` is enabled and no explicit ``o``/``output`` option is configured.
         """
         if self._has_initialized:
             return
         self._setup_logger()
         self._distributed_log_collector: Optional[DistributedRayLogCollector] = None
+        self._nsight_output_dir: Optional[str] = nsight_output_dir
         if num_nodes is not None or cluster_cfg is not None:
             self._ray_instance_count = 0
             while True:
                 try:
                     self._init_and_launch_managers(
-                        num_nodes, cluster_cfg, distributed_log_dir
+                        num_nodes,
+                        cluster_cfg,
+                        distributed_log_dir,
+                        nsight_output_dir,
                     )
                     break
                 except Cluster.NamespaceConflictError:
@@ -184,6 +193,7 @@ class Cluster:
                 return self.__init__(
                     num_nodes=0,
                     distributed_log_dir=distributed_log_dir,
+                    nsight_output_dir=nsight_output_dir,
                 )
 
         self._has_initialized = True
@@ -242,6 +252,7 @@ class Cluster:
         num_nodes: int,
         cluster_cfg: Optional[DictConfig],
         distributed_log_dir: Optional[str],
+        nsight_output_dir: Optional[str],
     ):
         if ray.is_initialized():
             if self._ray_instance_count > 0:
@@ -267,6 +278,7 @@ class Cluster:
         self._cluster_cfg = (
             ClusterConfig.from_dict_cfg(cluster_cfg) if cluster_cfg else None
         )
+        self._nsight_output_dir = nsight_output_dir
         if (
             self._cluster_cfg is not None
             and num_nodes is not None
@@ -501,6 +513,62 @@ class Cluster:
         """Get the IP address of a specific node by its rank."""
         return self._nodes[node_rank].node_ip
 
+    @staticmethod
+    def _sanitize_worker_name_for_path(worker_name: str) -> str:
+        """Sanitize worker names for use in output filenames."""
+        return re.sub(r"[^A-Za-z0-9._-]", "_", worker_name)
+
+    @classmethod
+    def _get_default_nsight_output_prefix(
+        cls,
+        worker_name: str,
+        output_dir: str,
+    ) -> str:
+        safe_worker_name = cls._sanitize_worker_name_for_path(worker_name)
+        return os.path.join(output_dir, f"rlinf_nsight_{safe_worker_name}_%p")
+
+    @classmethod
+    def maybe_prepend_nsight_to_py_executable(
+        cls,
+        python_interpreter_path: str,
+        worker_name: str,
+        nsight_cfg: Optional[NsightConfig],
+        nsight_output_dir: Optional[str] = None,
+    ) -> str:
+        """Build the worker ``py_executable``, optionally wrapped with Nsight."""
+        if nsight_cfg is None:
+            return python_interpreter_path
+
+        from ..manager import WorkerAddress
+
+        worker_group_name = WorkerAddress.from_name(worker_name).root_group_name
+        if not nsight_cfg.profiles_worker_group(worker_group_name):
+            return python_interpreter_path
+
+        if nsight_output_dir is None:
+            output_dir = tempfile.gettempdir()
+
+            from rlinf.utils.logging import get_logger
+
+            get_logger().warning(
+                f"Nsight profiling is enabled for worker group '{worker_group_name}' but no output directory is configured. Nsight reports will be saved to the system temporary directory: {output_dir}."
+            )
+        else:
+            output_dir = nsight_output_dir
+        os.makedirs(output_dir, exist_ok=True)
+        default_output_prefix = cls._get_default_nsight_output_prefix(
+            worker_name,
+            output_dir=output_dir,
+        )
+
+        nsight_cmd = [
+            "nsys",
+            "profile",
+            *nsight_cfg.to_cli_tokens(default_output_prefix=default_output_prefix),
+            python_interpreter_path,
+        ]
+        return " ".join(shlex.quote(token) for token in nsight_cmd)
+
     def allocate(
         self,
         cls: type["Worker"],
@@ -562,6 +630,14 @@ class Cluster:
         cfg_python_path = node_group.get_node_python_interpreter_path(node_rank)
         if cfg_python_path is not None:
             python_interpreter_path = cfg_python_path
+        python_interpreter_path = self.maybe_prepend_nsight_to_py_executable(
+            python_interpreter_path=python_interpreter_path,
+            worker_name=worker_name,
+            nsight_cfg=self._cluster_cfg.nsight
+            if self._cluster_cfg is not None
+            else None,
+            nsight_output_dir=self._nsight_output_dir,
+        )
 
         options = {
             "runtime_env": {
