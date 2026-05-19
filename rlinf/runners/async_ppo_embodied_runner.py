@@ -126,6 +126,15 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         )
 
         while self.global_step < self.max_steps:
+            # Use the step we're ABOUT to run as the profiling key, mirroring
+            # ``EmbodiedRunner.run`` which gates before ``self.global_step += 1``.
+            profiled_step = (
+                self.global_step
+                if self._should_profile_step(self.global_step)
+                else None
+            )
+            if profiled_step is not None:
+                self._open_nsight_window(profiled_step)
             with self.timer("step"):
                 with self.timer("recv_rollout_trajectories"):
                     self.actor.recv_rollout_trajectories(
@@ -246,6 +255,9 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
             )
             if save_model:
                 self._save_checkpoint()
+
+            if profiled_step is not None:
+                self._close_nsight_window(profiled_step)
 
         self.metric_logger.finish()
 

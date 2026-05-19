@@ -618,6 +618,78 @@ def test_nsight_to_cli_tokens_supports_flags():
     assert nsight_cfg.to_cli_tokens() == ["--python-backtrace"]
 
 
+def test_cluster_config_parses_nsight_steps():
+    config = DictConfig(
+        {
+            "num_nodes": 1,
+            "component_placement": {},
+            "nsight": {
+                "worker_groups": ["actor"],
+                "steps": [5, 10, 20],
+            },
+        }
+    )
+
+    cluster_cfg = ClusterConfig.from_dict_cfg(config)
+
+    assert cluster_cfg.nsight is not None
+    assert cluster_cfg.nsight.steps == [5, 10, 20]
+
+
+def test_nsight_steps_auto_sets_capture_range():
+    nsight_cfg = NsightConfig(steps=[5])
+
+    assert nsight_cfg.options is not None
+    assert nsight_cfg.options["capture-range"] == "cudaProfilerApi"
+    assert nsight_cfg.options["capture-range-end"] == "stop"
+
+
+def test_nsight_steps_respects_explicit_capture_range():
+    nsight_cfg = NsightConfig(
+        steps=[5],
+        options={"capture-range": "nvtx", "capture-range-end": "none"},
+    )
+
+    # User's explicit values must win over the auto-set defaults.
+    assert nsight_cfg.options["capture-range"] == "nvtx"
+    assert nsight_cfg.options["capture-range-end"] == "none"
+
+
+def test_nsight_steps_none_does_not_touch_options():
+    nsight_cfg = NsightConfig(steps=None, options={"t": "cuda"})
+
+    # With steps unset, capture-range stays absent.
+    assert "capture-range" not in nsight_cfg.options
+    assert "capture-range-end" not in nsight_cfg.options
+
+
+def test_nsight_rejects_negative_steps():
+    with pytest.raises(AssertionError, match="non-negative"):
+        NsightConfig(steps=[-1])
+
+
+def test_nsight_should_profile_step_matches_configured_steps():
+    nsight_cfg = NsightConfig(steps=[5, 10])
+
+    assert nsight_cfg.should_profile_step(5) is True
+    assert nsight_cfg.should_profile_step(10) is True
+    assert nsight_cfg.should_profile_step(0) is False
+    assert nsight_cfg.should_profile_step(7) is False
+
+
+def test_nsight_should_profile_step_returns_false_when_steps_none():
+    nsight_cfg = NsightConfig(steps=None)
+
+    assert nsight_cfg.should_profile_step(0) is False
+    assert nsight_cfg.should_profile_step(100) is False
+
+
+def test_nsight_should_profile_step_returns_false_when_disabled():
+    nsight_cfg = NsightConfig(enabled=False, steps=[5])
+
+    assert nsight_cfg.should_profile_step(5) is False
+
+
 def test_maybe_prepend_nsight_to_py_executable_skips_non_matching_group():
     py_executable = Cluster.maybe_prepend_nsight_to_py_executable(
         python_interpreter_path=sys.executable,

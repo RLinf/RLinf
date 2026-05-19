@@ -23,6 +23,7 @@ from rlinf.utils.metric_utils import (
     append_to_dict,
     compute_split_num,
 )
+from rlinf.utils.nsight_profiler import NsightProfiler
 from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
 
 
@@ -89,6 +90,7 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
                 return
             await asyncio.sleep(1)
 
+    @NsightProfiler.annotate("actor/run_training")
     @Worker.timer("run_training")
     async def run_training(self):
         """SAC training using replay buffer"""

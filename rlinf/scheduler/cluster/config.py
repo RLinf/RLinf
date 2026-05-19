@@ -174,6 +174,18 @@ class NsightConfig:
     flags: Optional[list[str] | str] = None
     """Additional bare ``nsys profile`` flags emitted without values."""
 
+    steps: Optional[list[int]] = None
+    """Training step indices to gate profiling around.
+
+    When ``None`` (default), profiling covers the whole worker lifetime,
+    matching pre-existing behavior. When set, the runner wraps the listed
+    steps with ``torch.cuda.profiler.start()`` / ``stop()`` so that nsys
+    only writes data inside those windows. To make that gating actually
+    take effect, ``__post_init__`` also auto-adds
+    ``capture-range=cudaProfilerApi`` and ``capture-range-end=stop`` to
+    ``options`` (unless the user has already set them explicitly). Steps
+    are 0-indexed and match the runner's global step counter."""
+
     @staticmethod
     def _stringify_option_value(option_value: object) -> str:
         if isinstance(option_value, bool):
@@ -243,6 +255,25 @@ class NsightConfig:
             assert not ("o" in self.options and "output" in self.options), (
                 "Nsight options must not specify both 'o' and 'output'."
             )
+
+        if self.steps is not None:
+            assert isinstance(self.steps, (list, ListConfig)), (
+                "steps must be a list of ints in cluster nsight config. "
+                f"But got {type(self.steps)}: {self.steps}"
+            )
+            self.steps = [int(step_idx) for step_idx in self.steps]
+            assert all(step_idx >= 0 for step_idx in self.steps), (
+                f"Nsight steps must be non-negative ints. But got: {self.steps}"
+            )
+            # Auto-add the nsys flags that make step gating actually work.
+            # cudaProfilerApi capture-range honors torch.cuda.profiler.start()/stop()
+            # calls from the runner; without it, nsys ignores those API calls and
+            # records the whole process, producing huge traces that mask the gating.
+            # ``setdefault`` lets a user who knows what they want override these.
+            self.options = self.options or {}
+            self.options.setdefault("capture-range", "cudaProfilerApi")
+            self.options.setdefault("capture-range-end", "stop")
+
         if self.flags is not None and self.options is not None:
             overlapping_names = sorted(set(self.flags).intersection(self.options))
             assert not overlapping_names, (
@@ -261,6 +292,16 @@ class NsightConfig:
             "all" in normalized_group_names
             or worker_group_name.lower() in normalized_group_names
         )
+
+    def should_profile_step(self, step_idx: int) -> bool:
+        """Return whether the given training step should be gated for profiling.
+
+        When ``steps`` is ``None`` or ``enabled`` is False, returns False and
+        the runner skips the ``torch.cuda.profiler.start()/stop()`` calls.
+        """
+        if not self.enabled or self.steps is None:
+            return False
+        return step_idx in self.steps
 
     def to_cli_tokens(self, default_output_prefix: Optional[str] = None) -> list[str]:
         """Render ``nsys profile`` options into CLI tokens."""

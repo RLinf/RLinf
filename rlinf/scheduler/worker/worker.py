@@ -952,6 +952,25 @@ class Worker(metaclass=WorkerMeta):
 
         return decorator
 
+    def start_profile(self, step_idx: int) -> None:
+        """Open the nsys capture window for the given step on this worker.
+
+        Routes to ``rlinf.utils.nsight_profiler.start_profile`` which calls
+        ``torch.cuda.profiler.start()``. When the worker is wrapped under
+        ``nsys profile --capture-range=cudaProfilerApi`` (configured via
+        ``cluster.nsight.steps``), nsys begins writing data; otherwise the
+        cuda profiler call is a harmless no-op.
+        """
+        from rlinf.utils import nsight_profiler
+
+        nsight_profiler.start_profile(step_idx)
+
+    def stop_profile(self) -> None:
+        """Close the nsys capture window on this worker."""
+        from rlinf.utils import nsight_profiler
+
+        nsight_profiler.stop_profile()
+
     @staticmethod
     def check_worker_alive(worker_name: str) -> bool:
         """Check if a worker is alive.

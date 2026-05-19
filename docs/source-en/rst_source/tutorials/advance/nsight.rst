@@ -202,10 +202,142 @@ vary between machines. If a flag is rejected on your target node, or if
 ``backtrace`` to ``fp`` or ``dwarf``.
 
 
-How To Emit NVTX Ranges
+How To Profile Only Specific Training Steps
+-------------------------------------------
+
+By default, ``nsys profile`` runs for the entire worker lifetime. For a long
+training job, the resulting ``.nsys-rep`` quickly grows into tens or hundreds of
+megabytes and makes interesting steps hard to find. ``cluster.nsight.steps``
+restricts collection to a small set of training steps:
+
+.. code-block:: yaml
+
+   cluster:
+     nsight:
+       enabled: true
+       steps: [3]               # only profile global step 3
+
+You can list multiple steps:
+
+.. code-block:: yaml
+
+   cluster:
+     nsight:
+       steps: [3, 10, 50]
+
+Or do the same on the Hydra CLI:
+
+.. code-block:: bash
+
+   python ... '+cluster.nsight.steps=[3]'
+
+When ``steps`` is set:
+
+- RLinf auto-attaches ``capture-range=cudaProfilerApi`` and
+  ``capture-range-end=stop`` to ``cluster.nsight.options``, so you do not need
+  to remember the matching CLI flags.
+- The embodied runner calls ``torch.cuda.profiler.start()`` before each listed
+  step and ``torch.cuda.profiler.stop()`` after it. Nsight only writes data
+  inside those windows.
+- The resulting trace is bounded by the cost of the listed steps, not the full
+  training run.
+
+When ``steps`` is unset (the default), behavior is unchanged from earlier
+releases: nsys captures the full worker lifetime.
+
+If you want named ranges in the timeline at the same time, the worker-side NVTX
+annotations described in the next section emit only while a step window is
+open, so a trace produced with ``steps=[3]`` shows exactly the actor / rollout /
+env activity that ran inside step 3.
+
+
+Compute-Path NVTX Annotations
 ------------------------------
 
-RLinf already provides a small helper for emitting NVTX ranges:
+RLinf decorates the hot path of the actor, rollout, and env workers with named
+NVTX ranges via ``@NsightProfiler.annotate("...")``. These appear as labelled
+intervals in the Nsight timeline and via ``nsys stats --report nvtx_sum``.
+
+The decorator is gated by the same step window as ``cluster.nsight.steps`` --
+it only emits NVTX events while ``is_profiling_active()`` is true, so there is
+no measurable overhead when profiling is off (only a boolean read).
+
+Built-in annotations:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 25 50
+
+   * - Worker group
+     - NVTX label
+     - What it covers
+   * - Actor
+     - ``actor/recv_traj``
+     - Receiving a trajectory batch from the rollout / env side
+   * - Actor
+     - ``actor/compute_adv``
+     - Advantage / return computation
+   * - Actor
+     - ``actor/run_training``
+     - Policy / value optimization step (forward + backward + optimizer)
+   * - Actor
+     - ``actor/sync_model_to_rollout``
+     - Weight broadcast from actor to rollout workers
+   * - Rollout
+     - ``rollout/recv_obs``
+     - Pulling observations from the env channel
+   * - Rollout
+     - ``rollout/predict``
+     - Single-step policy forward pass
+   * - Rollout
+     - ``rollout/generate``
+     - Multi-step generation / unroll
+   * - Rollout
+     - ``rollout/generate_epoch``
+     - A full rollout epoch
+   * - Rollout
+     - ``rollout/send_actions``
+     - Sending actions back to env workers
+   * - Rollout
+     - ``rollout/send_traj``
+     - Shipping completed trajectories to the actor side
+   * - Rollout (async)
+     - ``rollout/poll_weight_sync`` / ``rollout/request_weight_sync``
+     - Async weight-sync handshake with the actor
+   * - Env
+     - ``env/recv_actions``
+     - Receiving the next-action batch from the rollout side
+   * - Env
+     - ``env/step`` / ``env/bootstrap_step``
+     - One simulator step (and the warm-up step at episode start)
+   * - Env
+     - ``env/interact`` / ``env/interact_once``
+     - The full env interaction loop (and a single sub-iteration of it)
+   * - Env
+     - ``env/send_obs`` / ``env/send_rollout_trajectories``
+     - Pushing observations / completed rollouts downstream
+
+Decorating your own worker method works the same way:
+
+.. code-block:: python
+
+   from rlinf.utils.nsight_profiler import NsightProfiler
+
+   class MyWorker(Worker):
+       @NsightProfiler.annotate("my_worker/my_phase", color="green")
+       def my_phase(self, batch):
+           ...
+
+The ``message`` argument is what shows up in the timeline; ``color`` and
+``domain`` are forwarded to ``nvtx.start_range``. If the optional ``nvtx``
+package is not importable in the worker process, the decorator becomes a no-op.
+
+
+How To Emit Ad-Hoc NVTX Ranges
+------------------------------
+
+For ad-hoc, in-function ranges that should always emit (independent of the
+step-gating flag), RLinf also provides a small context manager:
 
 .. code-block:: python
 
@@ -214,17 +346,17 @@ RLinf already provides a small helper for emitting NVTX ranges:
    with nvtx_range("actor.forward", color="green"):
        run_actor_forward()
 
-This is the easiest way to mark higher-level phases before you turn on
-``capture-range: nvtx`` or when you want named ranges in the Nsight timeline.
+Use this when you want to mark a region inside a single function or when the
+code path is not stable enough to be worth decorating.
 
-The helper first tries the optional ``nvtx`` Python package. If that package is
-not installed, it falls back to ``torch.cuda.nvtx`` when CUDA is available. If
-neither backend is available, the context manager becomes a no-op, so it is
+The helper first tries the optional ``nvtx`` Python package. If that package
+is not installed, it falls back to ``torch.cuda.nvtx`` when CUDA is available.
+If neither backend is available, the context manager becomes a no-op, so it is
 safe to leave in code paths that also run without NVTX support.
 
 When you use ``capture-range: nvtx``, make sure the profiled workers actually
-execute code inside these ranges. Otherwise Nsight may collect very little or no
-data.
+execute code inside these ranges. Otherwise Nsight may collect very little or
+no data.
 
 
 Output Path

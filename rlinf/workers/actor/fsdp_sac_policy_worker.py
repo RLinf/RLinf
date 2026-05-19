@@ -43,6 +43,7 @@ from rlinf.utils.nested_dict_process import (
     put_tensor_device,
     split_dict_to_chunk,
 )
+from rlinf.utils.nsight_profiler import NsightProfiler
 from rlinf.utils.utils import clear_memory
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 
@@ -307,6 +308,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                         )
                         target_param.data.copy_(shadow.to(target_param.data.dtype))
 
+    @NsightProfiler.annotate("actor/recv_traj")
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
         """
         Receive rollout trajectories from rollout workers.
@@ -695,6 +697,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         )
         return mean_metric_dict
 
+    @NsightProfiler.annotate("actor/run_training")
     @Worker.timer("run_training")
     def run_training(self):
         """SAC training using replay buffer"""
@@ -742,6 +745,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         torch.cuda.empty_cache()
         return mean_metric_dict
 
+    @NsightProfiler.annotate("actor/compute_adv")
     def compute_advantages_and_returns(self):
         """
         SAC doesn't compute advantages/returns like PPO.
