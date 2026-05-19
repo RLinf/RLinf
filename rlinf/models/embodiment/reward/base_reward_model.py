@@ -74,7 +74,6 @@ class BaseRewardModel(nn.Module, ABC):
     def compute_reward(
         self,
         observations: Any,
-        task_descriptions: Optional[list[str]] = None,
     ) -> torch.Tensor:
         """Compute rewards for inference.
 
@@ -83,7 +82,6 @@ class BaseRewardModel(nn.Module, ABC):
 
         Args:
             observations: Observation data (images, states, etc.).
-            task_descriptions: Optional task descriptions for multi-task models.
 
         Returns:
             torch.Tensor: Reward tensor of shape [B] or [B, 1].
