@@ -1414,10 +1414,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                             self.cfg.algorithm.sampling_params.temperature_train
                         )
                         kwargs["top_k"] = self.cfg.algorithm.sampling_params.top_k
-                    elif (
-                        SupportedModel(self.cfg.actor.model.model_type)
-                        == SupportedModel.GR00T
-                    ):
+                    elif SupportedModel(self.cfg.actor.model.model_type) in [
+                        SupportedModel.GR00T,
+                        SupportedModel.ABOT_M0,
+                    ]:
                         kwargs["prev_logprobs"] = prev_logprobs
 
                     compute_values = (
@@ -1434,10 +1434,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                             **kwargs,
                         )
 
-                    if (
-                        SupportedModel(self.cfg.actor.model.model_type)
-                        == SupportedModel.GR00T
-                    ):
+                    if SupportedModel(self.cfg.actor.model.model_type) in [
+                        SupportedModel.GR00T,
+                        SupportedModel.ABOT_M0,
+                    ]:
                         prev_logprobs = output_dict["prev_logprobs"]
 
                     kwargs = {

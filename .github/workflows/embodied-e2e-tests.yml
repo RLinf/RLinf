@@ -1049,6 +1049,67 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-abot-m0-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          bash requirements/install.sh embodied --model abot_m0 --env maniskill_libero
+
+      - name: LIBERO ABot-M0 PPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export LIBERO_TYPE=standard
+          bash tests/e2e_tests/embodied/run.sh libero_10_ppo_abot_m0
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-abot-m0-liberoplus-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          export LIBERO_PLUS_PATH=/workspace/dataset/LIBERO-PLUS
+          bash requirements/install.sh embodied --model abot_m0 --env liberoplus
+
+      - name: LIBERO-Plus ABot-M0 PPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export LIBERO_TYPE=plus
+          bash tests/e2e_tests/embodied/run.sh liberoplus_10_ppo_abot_m0
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-embodichain-test:
     runs-on: embodied
     steps:
