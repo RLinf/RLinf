@@ -68,6 +68,13 @@ class MultiChannelProcessGroup:
         # Check if all workers have the same accelerator type
         accel_type = group_info.workers[0].accelerator_type
         accel_model = group_info.workers[0].accelerator_model
+        # Check if workers are colocated (same node, shared accelerators)
+        same_node = len(set(w.cluster_node_rank for w in group_info.workers)) == 1
+        shared_accel = same_node and len(group_info.workers) >= 2 and bool(
+            set(group_info.workers[0].available_accelerators).intersection(
+                set(group_info.workers[1].available_accelerators)
+            )
+        )
         self._no_accel_ccl = (
             # Hetero accelerator models in the same group, disable CCL
             # NCCL for example does not support mixed GPU models
@@ -78,6 +85,8 @@ class MultiChannelProcessGroup:
             or accel_type == AcceleratorType.NO_ACCEL
             # Unsupported accelerator CCL type, disable CCL
             or accel_type not in AcceleratorUtil.CCL_SUPPORT_LIST
+            # Colocated workers on same GPU, NCCL may deadlock
+            or shared_accel
         )
         self._accel_ccl_backend = (
             AcceleratorUtil.get_ccl_backend(accel_type)
