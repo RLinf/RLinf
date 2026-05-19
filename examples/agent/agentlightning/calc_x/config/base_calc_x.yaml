@@ -25,7 +25,6 @@ runner:
   max_epochs: 2
   max_steps: -1
 
-  val_check_interval: 32
   save_interval: 32
 
   seq_length: 6144
@@ -293,3 +292,4 @@ critic:
 
 agentlightning:
   n_runners: 10
+  openai_response_tokens: true

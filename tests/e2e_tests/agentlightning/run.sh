@@ -10,4 +10,6 @@ export RAY_DEDUP_LOGS=0
 
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 
-python ${REPO_PATH}/examples/agent/agentlightning/calc_x/main.py --config-path ${REPO_PATH}/tests/e2e_tests/agentlightning --config-name qwen2.5-1.5b-multiturn
+CONFIG_NAME=${1:-qwen2.5-1.5b-enginehttp-multiturn}
+
+python ${REPO_PATH}/examples/agent/agentlightning/calc_x/main.py --config-path ${REPO_PATH}/tests/e2e_tests/agentlightning --config-name ${CONFIG_NAME}

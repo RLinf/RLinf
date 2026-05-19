@@ -37,6 +37,7 @@ elif package_version >= parse("0.4.4") and package_version <= parse("0.5.4"):
     from rlinf.hybrid_engines.sglang.common.sgl_engine import (
         Engine,
     )
+    from rlinf.hybrid_engines.sglang import server as _sglang_server_patch  
 else:
     raise ValueError(f"sglang version {package_version} not supported")
 
