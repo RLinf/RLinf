@@ -142,6 +142,9 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             logging.info(
                 f"Build data loader from {data_paths} with {len(train_dataset)} samples"
             )
+            assert len(data_loader) != 0, (
+                f"data_loader is not empty, please check the data_path {data_paths}"
+            )
 
             data_config = {
                 "dataset_name": dataset_name,
