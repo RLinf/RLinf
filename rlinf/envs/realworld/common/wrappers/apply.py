@@ -73,7 +73,8 @@ def _validate_teleop_mode(use_spacemouse: bool, use_gello: bool) -> None:
 
 
 def _apply_keyboard_reward(env: gym.Env, mode: Optional[str]) -> gym.Env:
-    if env.config.is_dummy or not mode:
+    config = env.get_wrapper_attr("config")
+    if config.is_dummy or not mode:
         return env
     if mode == "multi_stage":
         return KeyboardRewardDoneMultiStageWrapper(env)
@@ -128,18 +129,16 @@ def apply_single_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
 
     if cfg.get("use_relative_frame", True):
         env = RelativeFrame(env)
-    env = Quat2EulerWrapper(env)
+    env = Quat2EulerWrapper(env, keep_gripper=gripper_enabled)
     return env
 
 
 def apply_dual_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
-    """Wrapper stack for dual-arm realworld envs (dual-franka today)."""
+    """Wrapper stack for generic dual-arm realworld envs."""
+    config = env.get_wrapper_attr("config")
     if cfg.get("no_gripper", True):
-        # No DualGripperCloseEnv yet, so a 12D action would blow up as reshape(2,7).
         raise NotImplementedError(
-            "no_gripper=True is not yet supported for dual-arm envs: "
-            "DualGripperCloseEnv is not implemented. "
-            "Set env.eval.no_gripper=False (or env.train.no_gripper=False)."
+            "Dual-arm realworld wrappers require no_gripper=False."
         )
 
     use_spacemouse = cfg.get("use_spacemouse", True)
@@ -148,10 +147,10 @@ def apply_dual_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
 
     gripper_enabled = True
 
-    if not env.config.is_dummy and use_spacemouse:
+    if not config.is_dummy and use_spacemouse:
         env = DualSpacemouseIntervention(env, gripper_enabled=gripper_enabled)
 
-    if not env.config.is_dummy and use_gello:
+    if not config.is_dummy and use_gello:
         left_port = cfg.get("left_gello_port", None)
         right_port = cfg.get("right_gello_port", None)
         if left_port is None or right_port is None:
