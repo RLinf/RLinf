@@ -84,6 +84,9 @@ algorithm:
     max_length: 1024
     min_length: 1
 
+data:
+  rollout_batch_size: 128
+
 env:
   group_name: "EnvGroup"
 
