@@ -1,8 +1,7 @@
 RL with Behavior Benchmark
 ==========================
 
-This example provides a complete guide to fine-tuning the 
-Behavior algorithms with reinforcement learning in the `Behavior <https://behavior.stanford.edu/index.html>`_ environment
+This example provides a complete guide to fine-tuning Behavior policies with reinforcement learning in the `Behavior <https://behavior.stanford.edu/index.html>`_ environment
 using the **RLinf** framework. It covers the entire process—from
 environment setup and core algorithm design to training configuration,
 evaluation, and visualization—along with reproducible commands and
@@ -30,16 +29,16 @@ Environment
 - **Environment**: Behavior simulation benchmark built on top of *IsaacSim*.
 - **Task**: Command a dual-arm R1 Pro robot to perform a variety of household manipulation skills (pick-and-place, stacking, opening drawers, spatial rearrangement).
 - **Observation**: Multi-camera RGB images captured by robot-mounted sensors:
-  - **Head Camera**: head camera providing 224×224 RGB images for global scene understanding
-  - **Wrist Cameras**: Left and right RealSense cameras providing 224×224 RGB images for precise manipulation
+   - **Head Camera**: provides 720×720 RGB images for global scene understanding
+   - **Wrist Cameras**: left and right RealSense cameras provide 480×480 RGB images for precise manipulation
 - **Action Space**: 23-dimensional continuous actions (a 3-DOF (x,y,rz) set of joints, 4-DOF torso, x2 7-DOF arm, and x2 1-DOF parallel jaw grippers.)
 
 **Data Structure**
 
-- **Task_descriptions**: select from `behavoir-1k` tasks
+- **Task descriptions**: select from `behavior-1k` tasks
 - **Images**: Multi-camera RGB tensors
-  - Head images: ``[batch_size, 224, 224, 3]``
-  - Wrist images: ``[batch_size, 2, 224, 224, 3]`` (left and right cameras)
+   - Head images: ``[batch_size, 720, 720, 3]``
+   - Wrist images: ``[batch_size, 2, 480, 480, 3]`` (left and right cameras)
 
 
 Algorithm
@@ -76,7 +75,7 @@ Dependency Installation
 
    In particular, if your GPU is of Hopper architecture or above, please follow the instructions for NVIDIA driver version 570 or above.
 
-   Additionally, if your GPU lacks Ray Tracing capabilities (e.g., A100, H100), the rendering quality of BEHAVIOR will be very poor, and the visuals may suffer from severe artifacts or blurriness.
+   Additionally, if your GPU lacks Ray Tracing capabilities (e.g., A100, H100), the rendering quality of BEHAVIOR will be very poor, and the visuals may suffer from severe mosaic artifacts or blur. We therefore recommend GPUs with Ray Tracing support (such as RTX 30 series, RTX 40 series, or newer) for the best visual quality and training experience.
 
 1. Clone RLinf Repository
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -219,14 +218,31 @@ Running Scripts
          rollout: 4-7
          actor: 0-7
 
+   env:
+      num_env_subprocess: 2
+      train:
+         total_num_envs: 8
+
    rollout:
       pipeline_stage_num: 2
 
-Here you can flexibly configure the GPU count for env, rollout, and
-actor components.
-Additionally, by setting ``pipeline_stage_num = 2`` in the
-configuration, you can achieve pipeline overlap between rollout and
-env, improving rollout efficiency.
+You can flexibly configure the GPU count for env, rollout, and actor
+components. Because Behavior environment stepping is very slow, it is
+usually recommended to allocate more GPUs to env to improve throughput,
+though this also increases VRAM usage. One Behavior environment takes
+roughly 10 GiB of VRAM. You can therefore tune the number of environment
+processes per GPU according to your GPU memory budget. For example, on an
+RTX 4090 24G, you can set ``num_env_subprocess: 2`` so each GPU
+hosts two environment processes.
+
+Behavior also supports multiple vectorized environments inside a single
+process, so ``total_num_envs`` can be any multiple of the total number of
+Behavior processes (that is, env GPU count multiplied by
+``num_env_subprocess``). For example, if the env GPU count is 4 and
+``num_env_subprocess`` is 2, valid ``total_num_envs`` values include 8,
+16, 32, and so on. If ``pipeline_stage_num == 2``, then
+``total_num_envs`` should be at least twice the total process count (16
+in this example).
 
 .. code:: yaml
 
@@ -382,7 +398,8 @@ Using behavior as an example:
 - ``camera.head_resolution`` / ``camera.wrist_resolution``:
   Head / wrist camera resolutions. RLinf overrides default values in
   ``omnigibson.learning.utils.eval_utils`` (default 720x720 and 480x480), then
-  applies them through the environment wrapper to R1Pro sensors.
+   applies them through the environment wrapper to R1Pro sensors (if
+   ``env_wrapper`` is not ``None``).
 - ``omni_config.env.action_frequency / rendering_frequency / physics_frequency``:
   Controls action stepping, rendering, and physics frequency respectively
   (common default: 30 / 30 / 120). Higher frequencies are usually slower.
@@ -416,7 +433,7 @@ Using behavior as an example:
 - ``num_env_subprocess``:
   Within one env-worker process, splits parallel env count ``num_envs`` across multiple
   **child processes**, each hosting its own Isaac/OmniGibson simulation (see
-  ``BehaviorProcessProxy`` in ``behavior_env.py``). Default ``1`` keeps the legacy
+   ``BehaviorProcess`` in ``behavior_env.py``). Default ``1`` keeps the legacy
   single-subprocess behavior. When greater than ``1``, each subprocess runs
   ``num_envs / num_env_subprocess`` parallel envs; IPC uses parallel receives to reduce
   pipe backpressure.
