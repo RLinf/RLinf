@@ -85,8 +85,11 @@ def split_dict_to_chunk(data: dict, split_size, dim=0):
     splited_list = [{} for _ in range(split_size)]
     for key, value in data.items():
         if isinstance(value, torch.Tensor):
+            # Use tensor_split to always produce exactly split_size chunks.
+            # Make each chunk contiguous for downstream P2P communication.
             split_vs = [
-                chunk.contiguous() for chunk in torch.chunk(value, split_size, dim=dim)
+                chunk.contiguous()
+                for chunk in torch.tensor_split(value, split_size, dim=dim)
             ]
         elif value is None:
             split_vs = [None for _ in range(split_size)]

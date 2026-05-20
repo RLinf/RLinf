@@ -740,7 +740,7 @@ class EmbodiedRolloutResult:
                     setattr(splited_trajectories[i], field_name, value)
                 continue
             elif isinstance(value, torch.Tensor):
-                chunks = torch.chunk(value, split_size, dim=1)
+                chunks = torch.tensor_split(value, split_size, dim=1)
                 for i in range(split_size):
                     setattr(splited_trajectories[i], field_name, chunks[i].contiguous())
             else:

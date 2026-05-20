@@ -19,6 +19,7 @@ from typing import Any, Optional
 import cv2
 import numpy as np
 import torch
+import torch.nn.functional as F
 from groot.vla.data.transform import ComposedModalityTransform
 from groot.vla.model.dreamzero.base_vla import VLA, VLAConfig
 from tianshou.data import Batch
@@ -75,6 +76,13 @@ class DreamZeroConfig(VLAConfig):
 
 class DreamZeroPolicy(VLA, BasePolicy):
     """Lightweight DreamZero action model: IdentityBackbone + WANPolicyHead."""
+    
+    _no_split_modules = [
+        #"WanTextEncoder",
+        #"WanImageEncoder",
+        #"WanVideoVAE",
+        "CausalWanAttentionBlock",
+    ]
 
     # CausalWanModel has to be wrapped to avoid a FSDP2 bug
     # when using with gradient checkpointing
@@ -224,6 +232,24 @@ class DreamZeroPolicy(VLA, BasePolicy):
                 normalized_input[k] = v.to(dtype=target_dtype)
         return normalized_input
 
+    _DAGGER_FORWARD_RESERVED_KEYS: frozenset[str] = frozenset(
+        {"action", "model_action", "prev_logprobs", "prev_values"}
+    )
+
+    def _dagger_obs_tensors_from_normalized_input(
+        self, normalized_input: dict[str, Any]
+    ) -> dict[str, torch.Tensor]:
+        """Copy tensors into forward_inputs (CPU) for replay use."""
+        out: dict[str, torch.Tensor] = {}
+        for k, v in normalized_input.items():
+            if not torch.is_tensor(v):
+                continue
+            # TrajectoryReplayBuffer._flatten_trajectory only keeps tensors with dim>=2
+            if v.dim() < 2:
+                continue
+            out[k] = v.detach().cpu().contiguous()
+        return out
+
     def _observation_convert(self, env_obs: dict) -> dict:
         """Convert environment observation to model input for end-effector control"""
         main = env_obs["main_images"]
@@ -297,14 +323,12 @@ class DreamZeroPolicy(VLA, BasePolicy):
 
         converted_obs = self._observation_convert(env_obs)
         batch = Batch(obs=converted_obs)
-        # ---------- DreamZero inference ----------
         normalized_input = self._process_batch(batch)
         with torch.no_grad():
             model_pred = self.lazy_joint_video_action_causal(normalized_input)
 
         normalized_action = model_pred["action_pred"].float()
 
-        # Unnormalize actions (pass obs for relative action normalization)
         unnormalized_action = self.config.data_transforms.unapply(
             {"action": normalized_action.cpu()}
         )
@@ -326,7 +350,20 @@ class DreamZeroPolicy(VLA, BasePolicy):
             .reshape(actions.shape[0], -1)
             .cpu()
         )
-        forward_inputs = {"action": flat}
+        # normalized action (same distribution as action_pred); DAgger relabel will overwrite with expert's model_action
+        norm_flat = normalized_action.reshape(normalized_action.shape[0], -1).detach().cpu().contiguous()
+
+        forward_inputs: dict[str, Any] = {}
+        forward_inputs.update(
+            self._dagger_obs_tensors_from_normalized_input(normalized_input)
+        )
+        forward_inputs["model_action"] = norm_flat
+        forward_inputs["action"] = flat
+        # Keep replay payload stable for downstream split/send logic.
+        for key, value in list(forward_inputs.items()):
+            if torch.is_tensor(value):
+                forward_inputs[key] = value.detach().cpu().contiguous()
+
         result = {
             "prev_logprobs": torch.zeros_like(flat, dtype=torch.float32),
             "prev_values": torch.zeros((flat.shape[0], 1), dtype=torch.float32),
@@ -339,8 +376,64 @@ class DreamZeroPolicy(VLA, BasePolicy):
             return self.default_forward(**kwargs)
         elif forward_type == ForwardType.SFT:
             return self.sft_forward(**kwargs)
+        raise NotImplementedError
+
+    def prepare_dagger_sft_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
+        """
+        batch comes from the forward_inputs sub-dictionary of replay (keys consistent with those written by predict_action_batch).
+        The supervision target prioritizes model_action (expert relabel / normalized expert action), otherwise falls back to action (not recommended, shape may be inconsistent).
+        """
+        device = next(self.parameters()).device
+        param_dtype = next(self.parameters()).dtype
+        if "model_action" in batch:
+            target_flat = batch["model_action"]
         else:
-            raise NotImplementedError
+            target_flat = batch["action"]
+        if not torch.is_tensor(target_flat):
+            target_flat = torch.as_tensor(target_flat, dtype=torch.float32)
+        normalized_input: dict[str, Any] = {}
+        for k, v in batch.items():
+            if k in self._DAGGER_FORWARD_RESERVED_KEYS:
+                continue
+            if not torch.is_tensor(v):
+                continue
+            t = v.to(device=device)
+            if t.dtype == torch.float32 and param_dtype != torch.float32:
+                t = t.to(dtype=param_dtype)
+            normalized_input[k] = t
+        if not normalized_input:
+            raise ValueError(
+                "DreamZero DAgger: forward_inputs has no observation tensors;"
+                "Please confirm that predict_action_batch has written the keys required for lazy_joint into forward_inputs."
+            )
+        target_flat = target_flat.to(device=device, dtype=torch.float32)
+        return {
+            "normalized_input": normalized_input,
+            "target_flat": target_flat,
+        }
+      
+    def sft_forward(self, data, **kwargs):
+        """
+        Returns element-wise MSE (consistent with MLP DAgger), then mean by fsdp_dagger_worker._reduce_sft_loss.
+        If flow-matching is needed, please modify this to call the training loss of the WAN head here.
+        """
+        normalized_input = data["normalized_input"]
+        target_flat = data["target_flat"]
+        param_dtype = next(self.parameters()).dtype
+        for k, v in list(normalized_input.items()):
+            if torch.is_tensor(v) and v.dtype == torch.float32 and param_dtype != torch.float32:
+                normalized_input[k] = v.to(dtype=param_dtype)
+        model_pred = self.lazy_joint_video_action_causal(normalized_input)
+        pred = model_pred["action_pred"].float()
+        tgt = target_flat.to(device=pred.device, dtype=torch.float32)
+        if tgt.shape != pred.shape:
+            if tgt.numel() != pred.numel():
+                raise ValueError(
+                    f"DreamZero DAgger: target and action_pred have different number of elements: "
+                    f"{tuple(tgt.shape)} vs {tuple(pred.shape)}"
+                )
+            tgt = tgt.reshape(pred.shape)
+        return F.mse_loss(pred, tgt, reduction="none")
 
     def sft_forward(self, data=None, **kwargs):
         # Mark the start of each training iteration so PyTorch knows when

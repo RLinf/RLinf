@@ -43,6 +43,8 @@ class MultiStepRolloutWorker(Worker):
         self.actor_group_name = cfg.actor.group_name
         self.device = self.torch_platform.current_device()
 
+        self.expert_model_device = 1
+
         self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
         self.enable_offload = self.cfg.rollout.get("enable_offload", False)
 
@@ -96,7 +98,7 @@ class MultiStepRolloutWorker(Worker):
         with open_dict(rollout_model_config):
             rollout_model_config.precision = self.cfg.rollout.model.precision
             rollout_model_config.model_path = self.cfg.rollout.model.model_path
-
+            rollout_model_config.expert_model = False
         self.hf_model: BasePolicy = get_model(rollout_model_config)
 
         if self.cfg.runner.get("ckpt_path", None):
@@ -110,6 +112,8 @@ class MultiStepRolloutWorker(Worker):
                 expert_model_config.model_path = (
                     self.cfg.rollout.expert_model.model_path
                 )
+                expert_model_config.expert_model = True
+                expert_model_config.device = self.expert_model_device
             self.expert_model = get_model(expert_model_config)
 
             if self.cfg.runner.get("expert_ckpt_path", None):
@@ -292,10 +296,11 @@ class MultiStepRolloutWorker(Worker):
             expert_label_flag = False
             # Decide which model to act via use_expert
             if use_expert:
-                actions, result = self.expert_model.predict_action_batch(
-                    env_obs=env_obs,
-                    **kwargs,
-                )
+                with torch.cuda.device(self.expert_model_device):
+                    actions, result = self.expert_model.predict_action_batch(
+                        env_obs=env_obs,
+                        **kwargs,
+                    )
                 expert_label_flag = True
             else:
                 actions, result = self.hf_model.predict_action_batch(
@@ -310,10 +315,11 @@ class MultiStepRolloutWorker(Worker):
                 and self.expert_model is not None  # only re-label if expert exists
                 and mode == "train"  # only re-label in train mode
             ):
-                _, expert_result = self.expert_model.predict_action_batch(
-                    env_obs=env_obs,
-                    **kwargs,
-                )
+                with torch.cuda.device(self.expert_model_device):
+                    _, expert_result = self.expert_model.predict_action_batch(
+                        env_obs=env_obs,
+                        **kwargs,
+                    )
                 expert_forward_inputs = expert_result["forward_inputs"]
                 expert_target = expert_forward_inputs.get(
                     "model_action", expert_forward_inputs.get("action")
