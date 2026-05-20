@@ -16,9 +16,9 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor: 0-3
-    env: 0-1
-    rollout: 2-3
+    rollout: 0-1
+    env: 2-3
+    actor: all
 
 runner:
   task_type: embodied
@@ -82,25 +82,33 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
+  num_env_subprocess: 2
 
-  # Override the default values in env/behavior_r1pro
   train:
-    total_num_envs: 2
-    max_episode_steps: 2000 # max episode steps for truncation
-    max_steps_per_rollout_epoch: 2000
+    total_num_envs: 8
+    max_episode_steps: 4096
+    max_steps_per_rollout_epoch: 4096
+    reward_coef: ${algorithm.reward_coef}
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/train
+      fps: 15
+    enable_offload: True
+    enable_init_offload: False
   eval:
-    total_num_envs: 2
-    max_episode_steps: 2000 # max episode steps for truncation
-    max_steps_per_rollout_epoch: 2000
+    total_num_envs: 8
+    max_episode_steps: 4096
+    max_steps_per_rollout_epoch: 4096
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
+      fps: 15
 
 rollout:
   group_name: "RolloutGroup"
   backend: "huggingface"
   enable_offload: True
-  pipeline_stage_num: 1
+  pipeline_stage_num: 2
 
   model:
     model_path: "/path/to/model/RLinf-OpenVLAOFT-Behavior/" # https://huggingface.co/RLinf/RLinf-OpenVLAOFT-Behavior
