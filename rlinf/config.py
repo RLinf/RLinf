@@ -25,6 +25,10 @@ import yaml
 from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
 
+from rlinf.algorithms.sac_policy_utils import (
+    validate_fsdpsac_edac_support,
+    validate_sac_crossq_support,
+)
 from rlinf.envs import SupportedEnvType
 from rlinf.scheduler.cluster import Cluster
 from rlinf.utils.placement import (
@@ -1173,6 +1177,19 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def _validate_embodied_sac_config_before_cluster(cfg: DictConfig) -> None:
+    """Validate FSDP SAC/RLPD options that should fail before worker launch."""
+    if cfg.runner.task_type != "embodied":
+        return
+    if cfg.algorithm.loss_type != "embodied_sac":
+        return
+    if cfg.actor.training_backend != "fsdp":
+        return
+
+    validate_fsdpsac_edac_support(cfg.algorithm)
+    validate_sac_crossq_support(cfg.algorithm, cfg.actor.model)
+
+
 def validate_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.set_struct(cfg, True)
 
@@ -1193,6 +1210,8 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
                     "nsights",
                 )
             )
+
+    _validate_embodied_sac_config_before_cluster(cfg)
 
     # Init cluster
     Cluster(

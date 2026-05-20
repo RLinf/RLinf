@@ -60,39 +60,58 @@ RLPD建立在SAC配置之上，增加了离线数据集等内容。
 
 .. code-block:: yaml
 
-   data: # 添加离线演示数据
-      type: robot_demo
-      channel:
-      name: demo_data
-      path: "/path/to/demo_data"
-
    algorithm:
-      update_epoch: 30
-      group_size: 1
-      agg_q: mean
+     update_epoch: 30
+     group_size: 1
+     agg_q: mean
 
+     backup_entropy: False # 移除熵项
+     critic_subsample_size: 2 # 目标计算时采样的 Critic 数量
+     edac_eta: 0.0 # 实验性 EDAC critic diversity 系数，默认关闭。
+     edac_grad_eps: 1.0e-6 # EDAC 梯度归一化的数值稳定项。
+     eval_rollout_epoch: 1
 
-      backup_entropy: False # 移除熵项
-      critic_subsample_size: 2 # 目标计算时采样的 Critic 数量
-      eval_rollout_epoch: 1
+     demo_buffer: # 添加离线演示数据
+       enable_cache: True
+       cache_size: 200 # 内存缓存的轨迹数量
+       sample_window_size: 200 # demo buffer 的滑动采样窗口大小
+       min_buffer_size: 1
+       load_path: "/path/to/demo_data"
 
-      adv_type: embodied_sac
-      loss_type: embodied_sac
+     adv_type: embodied_sac
+     loss_type: embodied_sac
 
-      loss_agg_func: "token-mean"
-       
-      bootstrap_type: standard
-      gamma: 0.96
-      tau: 0.005
+     loss_agg_func: "token-mean"
+     bootstrap_type: standard
+     gamma: 0.96
+     tau: 0.005
+
+   actor:
+     model:
+       num_q_heads: 10 # critic ensemble 中的 Q 网络数量
 
    rollout:
-      group_name: "RolloutGroup"
-      backend: "huggingface"
-      enable_offload: False
-      pipeline_stage_num: 1
+     group_name: "RolloutGroup"
+     backend: "huggingface"
+     enable_offload: False
+     pipeline_stage_num: 1
 
-   model:
-      model_path: "/path/to/model"
-      precision: ${actor.model.precision}
-      num_q_heads: 10 # 集成的 Q 网络数量
+     model:
+       model_path: "/path/to/model"
+       precision: ${actor.model.precision}
 
+5. 可选 EDAC Critic Diversity
+-----------------------------
+
+RLPD 配置通常会使用 critic ensemble。当 ``actor.model.num_q_heads > 1`` 且
+``algorithm.critic_subsample_size > 0`` 时，目标计算会使用随机 critic 子集。
+RLinf 也提供了经过单元测试的 EDAC-style critic diversity loss helper，可用于
+SAC-N/EDAC 风格实验。
+
+由于 EDAC 需要对 action 求 Q 值梯度，并保留该梯度图用于 critic 参数更新，
+接入 critic training 后会增加 critic step 的显存和计算开销。当前 FSDP
+SAC/RLPD worker 尚未把该 helper 接入 critic update path，正数
+``algorithm.edac_eta`` 会在 config validation 阶段提前失败。如果要直接实验该
+helper，需要在自定义 worker 中 import
+``rlinf.algorithms.critic_regularizers.compute_edac_critic_diversity_loss``。
+建议把 helper 视为实验性 building block，而不是默认训练设置。

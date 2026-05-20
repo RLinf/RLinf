@@ -67,7 +67,11 @@ This ensures the BN statistics are computed over a mixture of current and replay
 4. Configuration
 --------------------
 
-CrossQ shares a nearly identical configuration with SAC. A single parameter, `q_head_type`, can be used to toggle between the CrossQ and standard SAC architectures.
+CrossQ shares a nearly identical configuration with SAC. Set ``q_head_type`` in both
+``algorithm`` and ``actor.model``: the algorithm field selects the CrossQ training
+path, while the model field constructs the CrossQ critic head. The current CrossQ
+worker path supports ``actor.model.model_type: "mlp_policy"`` and
+``actor.model.model_type: "cnn_policy"``.
 
 .. code-block:: yaml
 
@@ -101,3 +105,9 @@ CrossQ shares a nearly identical configuration with SAC. A single parameter, `q_
          cache_size: 6000  # number of trajectories cached in memory
          sample_window_size: 6000  # number of latest trajectories to sample from for replay buffer
          min_buffer_size: 2  # Minimum buffer size before training starts (in number of trajectories)
+
+   actor:
+      model:
+         model_type: "mlp_policy"
+         add_q_head: True
+         q_head_type: "crossq"

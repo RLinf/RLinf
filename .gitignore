@@ -21,3 +21,10 @@ rlinf/envs/maniskill/assets
 PKG-INFO
 *.egg-info/
 .claude/settings.json
+
+# Local planning and agent scratch files
+.agents/
+docs/plans/
+findings.md
+progress.md
+task_plan.md
