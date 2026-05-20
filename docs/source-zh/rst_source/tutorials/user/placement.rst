@@ -27,7 +27,7 @@ RLinf 会为每个组件分别创建 8 个进程（进程编号为 ``0-7``），
 
 2. **节点组形式** —— 显式选择某个节点组：
 
-关于节点组的内容，见 :doc:`../advance/hetero`。
+关于节点组的内容，见 :doc:`../multi_nodes/hetero`。
 
 .. code-block:: yaml
 
