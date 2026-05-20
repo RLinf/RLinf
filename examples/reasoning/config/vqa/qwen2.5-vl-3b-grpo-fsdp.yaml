@@ -225,8 +225,6 @@ actor:
     use_orig_params: False              # if True, FSDP will use module's original parameters, it means it will expose nn.Module.named_parameters rather than FlatParameter
     use_liger_kernel: False             # if True, liger_kernel will be used for FSDP, note that currently supported models in RLinf are [qwen2.5, qwen2.5-vl], for more details, see liger_kernel's doc
 
-    fsdp_size: -1               # Number of GPUs per FSDP group for hybrid sharding. -1 means use all available GPUs in a single FSDP group
-
     mixed_precision:            # mixed precision settings for fsdp/fsdp2 Do not enable fsdp mixed_precision simultaneously with amp_autocast.
       param_dtype: "bf16"
       reduce_dtype: "fp32"

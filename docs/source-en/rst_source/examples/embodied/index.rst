@@ -32,6 +32,28 @@ as well as reinforcement learning training examples on real robots.
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/libero_numbers.jpeg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="libero_amd.html" style="text-decoration: underline; color: blue;">
+           <b>RL with LIBERO on AMD ROCm</b>
+         </a><br>
+         ROCm dependency setup and OSMesa rendering for LIBERO RL
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/libero_numbers.jpeg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="libero_ascend.html" style="text-decoration: underline; color: blue;">
+           <b>RL with LIBERO on Ascend CANN</b>
+         </a><br>
+         CANN dependency setup and driver mounting for LIBERO RL
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://raw.githubusercontent.com/RLinf/misc/378920588652fff0a2a0b163b392c94694993345/pic/libero-plus.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -387,6 +409,17 @@ as well as reinforcement learning training examples on real robots.
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/dexhand.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="franka_dexhand.html" style="text-decoration: underline; color: blue;">
+           <b>Real-World RL with Franka and Dexterous Hand</b>
+         </a><br>
+         Franka arm + Ruiyan five-finger dexterous hand real-world RL
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/hg-dagger.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -463,6 +496,8 @@ as well as reinforcement learning training examples on real robots.
 
    maniskill
    libero
+   libero_amd
+   libero_ascend
    liberoplus_pro
    behavior
    metaworld
@@ -495,6 +530,7 @@ as well as reinforcement learning training examples on real robots.
    franka_reward_model
    franka_zed_robotiq
    franka_gello
+   franka_dexhand
    franka_pi0_sft_deploy
    hg-dagger
    gim_arm

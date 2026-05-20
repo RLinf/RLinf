@@ -14,6 +14,7 @@
 
 import atexit
 import gc
+import importlib
 import os
 import random
 import sys
@@ -123,6 +124,45 @@ def cpu_weight_swap(resident_model, cpu_weights, offloaded_buffer=None):
 
     finally:
         swap_dict(resident_model, offloaded_buffer, offload_onto_cpu=False)
+
+
+def _get_nvtx_module():
+    try:
+        return importlib.import_module("nvtx")
+    except ImportError:
+        return None
+
+
+@contextmanager
+def nvtx_range(name: str, color: str | int | None = None):
+    """Annotate a code range for Nsight or other NVTX-aware profilers."""
+    nvtx_module = _get_nvtx_module()
+    if nvtx_module is not None:
+        annotate_kwargs = {"message": name}
+        if color is not None:
+            annotate_kwargs["color"] = color
+        with nvtx_module.annotate(**annotate_kwargs):
+            yield
+        return
+
+    from rlinf.utils.logging import get_logger
+
+    get_logger().warning(
+        "nvtx_range: NVTX module not found, NVTX annotations are disabled. "
+        "Using torch.cuda.nvtx instead",
+    )
+
+    if hasattr(torch.cuda, "nvtx") and torch.cuda.is_available():
+        torch.cuda.nvtx.range_push(name)
+        try:
+            yield
+        finally:
+            torch.cuda.nvtx.range_pop()
+        return
+    get_logger().warning(
+        "nvtx_range: torch.cuda.nvtx is not available, NVTX annotations are disabled."
+    )
+    yield
 
 
 def configure_batch_sizes(rank, mbs, gbs, dp=1):

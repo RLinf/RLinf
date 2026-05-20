@@ -14,6 +14,7 @@
 
 from typing import Any
 
+import numpy as np
 import torch
 
 # Keys that we have already warned about in concat_batch, so each missing key
@@ -48,6 +49,22 @@ def copy_dict_tensor(next_extracted_obs: dict):
         else:
             ret[key] = value
     return ret
+
+
+def clone_nested_to_cpu(value: Any):
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().clone()
+    if isinstance(value, np.ndarray):
+        return value.copy()
+    if isinstance(value, dict):
+        return {key: clone_nested_to_cpu(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [clone_nested_to_cpu(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(clone_nested_to_cpu(item) for item in value)
+    return value
 
 
 def put_tensor_device(data_dict, device):
@@ -148,14 +165,23 @@ def cat_list_of_dict_tensor(list_of_dict: list, dim=0):
     ret = {}
     for key in keys:
         _v0 = list_of_dict[0][key]
+        if _v0 is None:
+            continue
+
+        v_list = [d[key] for d in list_of_dict]
+
         if isinstance(_v0, torch.Tensor):
-            v_list = [d[key] for d in list_of_dict]
             ret[key] = torch.cat(v_list, dim=dim)
+        elif isinstance(_v0, np.ndarray):
+            ret[key] = np.concatenate([v for v in v_list if v is not None], axis=dim)
+        elif isinstance(_v0, list):
+            assert dim == 0, f"{key=} is list, dim !=0 is not supported!"
+            ret[key] = [item for sub in v_list if sub is not None for item in sub]
         elif isinstance(_v0, dict):
-            v_list = [d[key] for d in list_of_dict]
-            ret[key] = cat_list_of_dict_tensor(v_list)
+            ret[key] = cat_list_of_dict_tensor(v_list, dim=dim)
         else:
             raise ValueError(f"{key=}, {type(_v0)} is not supported!")
+
     return ret
 
 

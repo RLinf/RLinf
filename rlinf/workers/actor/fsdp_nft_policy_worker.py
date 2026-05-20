@@ -197,6 +197,9 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
 
                     metrics_data["actor/total_loss"] = loss.detach().item()
                     append_to_dict(metrics, metrics_data)
+                    # avoid gpu memory leak
+                    train_micro_batch[idx] = None
+                    del batch, loss, metrics_data
 
                 self.torch_platform.empty_cache()
 

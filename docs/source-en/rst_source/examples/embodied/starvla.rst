@@ -177,14 +177,18 @@ Quickstart
 Config file
 ^^^^^^^^^^^
 
-StarVLA + GRPO + LIBERO (10 tasks) example config:
+StarVLA + GRPO + LIBERO (spatial tasks) example config:
 
-* ``examples/embodiment/config/libero_10_grpo_starvla.yaml``
+* ``examples/embodiment/config/libero_spatial_grpo_starvla.yaml``
 
 Key config snippet
 ^^^^^^^^^^^^^^^^^^
 
 .. code-block:: yaml
+
+   defaults:
+      - env/libero_spatial@env.train
+      - env/libero_spatial@env.eval
 
    rollout:
      model:
@@ -214,3 +218,29 @@ Evaluation
 
 For evaluation, we recommend RLinf's unified VLA evaluation workflow
 (see the Embodied VLA Evaluation tutorial in RLinf docs).
+
+Reference results
+
+Note: the following results use the model from
+https://huggingface.co/JasonYang66/LIBERO_BASELIEN_FORJINHUI_10K_QWENOFT.
+
+LIBERO Goal:
+
+.. image:: https://github.com/RLinf/misc/raw/main/pic/libero_goal_starvla_baseline.png
+   :alt: libero_goal_starvla_baseline result curve
+   :width: 95%
+   :align: center
+
+LIBERO Object:
+
+.. image:: https://github.com/RLinf/misc/raw/main/pic/libero_object_starvla_baseline.png
+   :alt: libero_object_starvla_baseline result curve
+   :width: 95%
+   :align: center
+
+LIBERO Spatial:
+
+.. image:: https://github.com/RLinf/misc/raw/main/pic/libero_spatial_starvla_baseline.png
+   :alt: libero_spatial_starvla_baseline result curve
+   :width: 95%
+   :align: center

@@ -291,6 +291,7 @@ class EmbodiedRunner:
                         input_channel=self.rollout_channel,
                         output_channel=self.env_channel,
                     )
+                    reward_handle = None
                     if self.reward is not None:
                         reward_handle: Handle = self.reward.compute_rewards(
                             input_channel=self.reward_channel,

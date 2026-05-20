@@ -29,6 +29,11 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 </div>
 
 ## 最新动态
+- [2026/05] 🔥 RLinf 支持 AgentLightning 单智能体强化学习训练。文档: [AgentLightning Calc-X](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/agentlightning_calc_x.html)。
+- [2026/05] 🔥 RLinf 支持 DreamZero 模型的监督微调. Doc: [DreamZero](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_dreamzero.html)
+- [2026/05] 🔥 RLinf 支持 GimArm. 文档: [GimArm](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gim_arm.html)
+- [2026/05] 🔥 RLinf 支持灵巧手的真机强化学习。文档: [Franka + 灵巧手](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/franka_dexhand.html)
+- [2026/04] 🔥 RLinf 支持 DM0。特别地，RLinf 与 Dexbotic 实现乐高式 SFT-RL，链接：[Dexbotic项目链接](https://github.com/dexmal/dexbotic/blob/main/docs/RLinfAsRLBackend.md)
 - [2026/04] 🔥 RLinf 支持 Dexmal DOS-W1 用于真机强化学习。文档：[Dexmal DOS-W1 真机强化学习](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dosw1.html)。
 - [2026/04] 🔥 RLinf 支持 RECAP（RL with Experience and Corrections via Advantage-conditioned Policies）离线优势条件策略优化。文档：[RECAP](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/recap.html)。
 - [2026/04] 🔥 RLinf 现已支持基于D4RL基准的离线 IQL 训练。文档：[D4RL 上的 IQL](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/iql_d4rl.html)，论文：[Offline Reinforcement Learning with Implicit Q-Learning](https://arxiv.org/abs/2110.06169)。
@@ -43,6 +48,10 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 - [2026/03] 🔥 RLinf 支持 [FUSCO](https://github.com/infinigence/FUSCO) 来加速 Megatron 中 MoE 模型的 All-to-All 通信。文档：[FUSCO](https://rlinf.readthedocs.io/en/latest/rst_source/examples/system/fusco.html)，论文：[FUSCO: High-Performance Distributed Data Shuffling via Transformation-Communication Fusion](https://arxiv.org/pdf/2512.22036)。
 - [2026/03] 🔥 RLinf 支持多智能体强化学习。网站： [WideSeek-R1](wideseek-r1.github.io)， 快速启动： [快速启动](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/wideseek_r1/)，论文: [WideSeek-R1: Exploring Width Scaling for Broad Information Seeking via Multi-Agent Reinforcement Learning](https://arxiv.org/abs/2602.04634)。
 - [2026/03] 🔥 RLinf支持了[XSquare](https://x2robot.com) Turtle2双臂机器人真机强化学习。文档：[XSquare Turtle2 真机强化学习](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/xsquare_turtle2.html)。
+
+<details>
+<summary><b>更多更新</b></summary>
+
 - [2026/02] 🔥 RLinf 支持对视觉语言模型的监督微调。文档: [VLM SFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html)。
 - [2026/02] 🔥 RLinf 支持 [DSRL（基于扩散模型的 SAC 强化学习）](https://arxiv.org/abs/2506.15799)，通过在潜在噪声空间训练轻量级 SAC 智能体来引导预训练的 Pi0 扩散策略。文档：[DSRL for Pi0](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dsrl.html)。
 - [2026/02] 🔥 RLinf支持[rStar2](https://github.com/volcengine/verl/pull/3397)的强化学习微调。 文档: [rStar2](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/rstar2.html)。
@@ -56,9 +65,6 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 - [2026/01] 🔥 基于[OpenSora World Model](https://github.com/hpcaitech/Open-Sora)的强化学习微调已经上线！文档：[RL on OpenSora World Model](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/opensora.html)。
 - [2026/01] 🔥 基于[RoboTwin](https://github.com/robotwin-Platform/RoboTwin)的强化学习微调已经上线！文档：[RL on RoboTwin](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robotwin.html)。
 - [2026/01] 🔥 RLinf 支持流匹配策略的 SAC 训练，包含仿真和Franka真机环境。文档：[SAC-Flow](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sac_flow.html)，论文：[SAC Flow: Sample-Efficient Reinforcement Learning of Flow-Based Policies via Velocity-Reparameterized Sequential Modeling](https://arxiv.org/abs/2509.25756)。
-<details>
-<summary><b>更多更新</b></summary>
-
 - [2025/12] 🔥 RLinf支持[Search-R1](https://github.com/PeterGriffinJin/Search-R1)的强化学习微调，相比原版实现加速 55%！ 文档: [Search-R1](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/searchr1.html)。
 - [2025/12] 🔥 RLinf v0.2-pre 发布！真机Franka的强化学习已经上线。 文档：[RL on Franka in the Real World](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/franka.html)。
 - [2025/12] 🔥 基于[RoboCasa](https://github.com/robocasa/robocasa)的强化学习微调已经上线! 文档：[RL on RoboCasa](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robocasa.html)。
@@ -90,6 +96,8 @@ RLinf具有高度灵活性，可支持多种强化学习训练工作流（PPO、
 - Megatron + SGLang/vLLM: 针对大规模训练进行了优化，为专家用户提供最大化效率。
 
 ### 具身智能
+
+RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA）的 SFT、仿真强化学习和真机强化学习。目前的支持列表如下：
 
 <table style="width: 100%; table-layout: auto; border-collapse: collapse;">
   <thead align="center" valign="bottom">
@@ -152,6 +160,10 @@ RLinf具有高度灵活性，可支持多种强化学习训练工作流（PPO、
           <ul>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/franka_reward_model.html">ResNet</a> ✅</li>
           </ul>
+          <li><b>世界动作模型</b></li>
+          <ul>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_dreamzero.html">DreamZero</a> ✅</li>
+          </ul>              
         </ul>
       </td>
       <td>
@@ -161,6 +173,7 @@ RLinf具有高度灵活性，可支持多种强化学习训练工作流（PPO、
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/iql.html">IQL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/grpo.html">GRPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/ppo.html">PPO</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/async_ppo.html">Async PPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/dapo.html">DAPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/reinforce.html">Reinforce++</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/sac.html">SAC</a> ✅</li>
@@ -200,11 +213,13 @@ RLinf具有高度灵活性，可支持多种强化学习训练工作流（PPO、
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/franka.html">Intel RealSense</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/franka_zed_robotiq.html">Stereolabs ZED</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/franka.html">Franka Hand</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/franka_dexhand.html">Ruiyan Hand</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/franka_zed_robotiq.html">Robotiq 2F-85 / 2F-140</a> ✅</li>
           </ul>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/xsquare_turtle2.html">XSquare Turtle2</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/components/data_collection.html">Dual-franka</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dosw1.html">DOS-W1</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gim_arm.html">GimArm</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
@@ -220,6 +235,11 @@ RLinf具有高度灵活性，可支持多种强化学习训练工作流（PPO、
               SpaceMouse
             </a> ✅
           </li>
+          <li>
+            <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gim_arm.html">
+              PICO VR
+            </a> ✅
+          </li>          
         </ul>
       </td>
     </tr>
@@ -247,6 +267,11 @@ RLinf具有高度灵活性，可支持多种强化学习训练工作流（PPO、
           <li>
             <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/rstar2.html">
               rStar2
+            </a> ✅
+          </li>
+          <li>
+            <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/agentlightning_calc_x.html">
+              AgentLightning Calc-X
             </a> ✅
           </li>
           <li>
@@ -294,7 +319,7 @@ RLinf具有高度灵活性，可支持多种强化学习训练工作流（PPO、
 💡 希望在此展示您的项目吗？欢迎提交拉取请求（PR），我们非常乐意将其收录其中！
 
 ## 采用方（Adoption）
-RLinf 是一款面向具身智能、可用于生产环境的开源强化学习框架。RLinf 正在被多家企业与创业团队用于具身智能与强化学习相关的研发与落地，包括 智元机器人、自变量机器人、灵初智能、原力灵机、摩尔线程、地瓜机器人与跨维智能等。
+RLinf 是一款面向具身智能、可用于生产环境的开源强化学习框架。RLinf 正在被多家企业与创业团队用于具身智能与强化学习相关的研发与落地，包括 智元机器人、自变量机器人、灵初智能、原力灵机、摩尔线程、地瓜机器人、跨维智能、华为引望、蚂蚁灵波和极佳视界等。
 
 <div align="center">
   <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/adoption.png" alt="adoption"/>
