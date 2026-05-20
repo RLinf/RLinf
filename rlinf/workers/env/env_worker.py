@@ -923,19 +923,12 @@ class EnvWorker(Worker):
         )
 
     def record_env_metrics(
-        self, env_metrics: dict[str, list], env_info: dict[str, Any], epoch: int
+        self,
+        env_metrics: dict[str, list],
+        env_info: dict[str, Any],
     ):
         for key, value in env_info.items():
-            if (
-                not self.cfg.env.train.auto_reset
-                and not self.cfg.env.train.ignore_terminations
-            ):
-                if key in env_metrics and len(env_metrics[key]) > epoch:
-                    env_metrics[key][epoch] = value
-                else:
-                    env_metrics[key].append(value)
-            else:
-                env_metrics[key].append(value)
+            env_metrics[key].append(value)
 
     def store_last_obs_and_intervened_info(self, env_output_list: list[EnvOutput]):
         self.last_obs_list = [env_output.obs for env_output in env_output_list]
@@ -1059,8 +1052,13 @@ class EnvWorker(Worker):
                         )
 
                     env_outputs[stage_id] = env_output
-                    self.record_env_metrics(env_metrics, env_info, epoch)
-
+                    should_record = (
+                        self.cfg.env.train.auto_reset
+                        or self.cfg.env.train.ignore_terminations
+                        or chunk_step_idx == self.n_train_chunk_steps - 1
+                    )
+                    if should_record:
+                        self.record_env_metrics(env_metrics, env_info)
             for stage_id in range(self.stage_num):
                 env_output = env_outputs[stage_id]
                 if env_output.intervene_actions is not None:
