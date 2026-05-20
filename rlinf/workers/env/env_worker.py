@@ -928,7 +928,7 @@ class EnvWorker(Worker):
         env_info: dict[str, Any],
     ):
         for key, value in env_info.items():
-            env_metrics[key].append(value)
+            env_metrics.setdefault(key, []).append(value)
 
     def store_last_obs_and_intervened_info(self, env_output_list: list[EnvOutput]):
         self.last_obs_list = [env_output.obs for env_output in env_output_list]
