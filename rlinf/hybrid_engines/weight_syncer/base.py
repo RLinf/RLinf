@@ -29,6 +29,9 @@ RecvFn = Callable[[], Awaitable[Any]]
 
 def materialize_tensor(tensor: torch.Tensor | DTensor) -> torch.Tensor:
     if isinstance(tensor, DTensor):
+        accel_device = normalize_device(Worker.torch_device_type)
+        if tensor.to_local().device.type != accel_device.type:
+            tensor = tensor.to(accel_device)
         return tensor.full_tensor()
     assert isinstance(tensor, torch.Tensor), "Expected a torch.Tensor or DTensor"
     return tensor
