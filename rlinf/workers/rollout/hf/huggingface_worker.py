@@ -48,8 +48,10 @@ class MultiStepRolloutWorker(Worker):
 
         self.placement = HybridComponentPlacement(cfg, Cluster())
 
-        actor_world_size = self.placement.get_world_size("actor")
-        self.actor_weight_src_rank = self._rank % actor_world_size
+        rollout_world_size = self.placement.get_world_size("rollout")
+        self.actor_weight_src_rank = 0
+        self._weight_sync_rollout_ranks = list(range(rollout_world_size))
+        self._weight_sync_is_sender = self._rank == 0
         self.rollout_epoch = cfg.algorithm.get("rollout_epoch", 1)
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
         self.expert_model = None
@@ -349,15 +351,20 @@ class MultiStepRolloutWorker(Worker):
         """Sync model parameters from the actor worker."""
 
         async def recv_func() -> Any:
-            data = await self.recv(
-                src_group_name=self.actor_group_name,
-                src_rank=self.actor_weight_src_rank,
+            return await self.broadcast(
+                None,
+                groups=[
+                    (self.actor_group_name, self.actor_weight_src_rank),
+                    (self._group_name, self._weight_sync_rollout_ranks),
+                ],
+                src=(self.actor_group_name, self.actor_weight_src_rank),
                 async_op=True,
                 options=self._sync_weight_comm_options,
             ).async_wait()
-            return data
 
         async def send_func(data: Any) -> None:
+            if not self._weight_sync_is_sender:
+                return
             await self.send(
                 data,
                 dst_group_name=self.actor_group_name,

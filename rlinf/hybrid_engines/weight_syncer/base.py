@@ -106,7 +106,9 @@ class WeightSyncer(ABC):
             return BucketWeightSyncer(
                 bucket_size=OmegaConf.select(bucket_config, "bucket_size"),
                 bucket_dtype=OmegaConf.select(bucket_config, "bucket_dtype"),
-                bucket_device=OmegaConf.select(bucket_config, "bucket_device"),
+                bucket_device=OmegaConf.select(
+                    bucket_config, "bucket_device", default=Worker.torch_device_type
+                ),
                 is_agent=OmegaConf.select(bucket_config, "is_agent", default=False),
                 load_instant=OmegaConf.select(
                     bucket_config, "load_instant", default=True

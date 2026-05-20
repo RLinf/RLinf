@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
 import os
 import time
 from functools import partial
@@ -1002,23 +1001,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         weight_syncer_cfg = OmegaConf.select(cfg, "weight_syncer")
         self.weight_syncer = WeightSyncer.create(weight_syncer_cfg)
 
-    def _setup_rollout_weight_dst_ranks(self) -> None:
-        """
-        Setup destination ranks for weight communication.
-        It can support any topology between actor and rollout workers.
-        Assuming there are M actor ranks and N rollout ranks, each actor rank
-        will send weights to most ceil(N/M) rollout ranks according to the modulo rule.
-        """
-        rollout_world_size = self._component_placement.get_world_size("rollout")
-        actor_world_size = self._world_size
-        rank = self._rank
-        self._weight_dst_rank_in_rollout = []
-        rollout_ranks_per_actor = (
-            rollout_world_size + actor_world_size - 1
-        ) // actor_world_size
-        for i in range(rollout_ranks_per_actor):
-            if i * actor_world_size + rank < rollout_world_size:
-                self._weight_dst_rank_in_rollout.append(i * actor_world_size + rank)
+        self._is_weight_sender = self._rank == 0
+        self._actor_world_size = self._world_size
+        self._rollout_all_ranks = list(
+            range(self._component_placement.get_world_size("rollout"))
+        )
 
     def init_worker(self) -> None:
         """
@@ -1030,8 +1017,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.enable_offload:
             self.offload_param_and_grad()
             self.offload_optimizer()
-
-        self._setup_rollout_weight_dst_ranks()
 
     def model_provider_func(self) -> nn.Module:
         model = get_model(self.cfg.actor.model)
@@ -1058,35 +1043,41 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         state_dict = self.get_rollout_state_dict()
 
         async def send_func(data):
-            handle = []
-            for rank in self._weight_dst_rank_in_rollout:
-                handle.append(
-                    self.send(
-                        data,
-                        dst_group_name=self._rollout_group_name,
-                        dst_rank=rank,
-                        async_op=True,
-                        options=self._sync_weight_comm_options,
-                    ).async_wait()
-                )
-            await asyncio.gather(*handle)
+            if not self._is_weight_sender:
+                return
+            await self.broadcast(
+                data,
+                groups=[
+                    (self._group_name, 0),
+                    (self._rollout_group_name, self._rollout_all_ranks),
+                ],
+                src=(self._group_name, 0),
+                async_op=True,
+                options=self._sync_weight_comm_options,
+            ).async_wait()
 
         async def recv_func():
-            handle = []
-            for rank in self._weight_dst_rank_in_rollout:
-                handle.append(
-                    self.recv(
-                        src_group_name=self._rollout_group_name,
-                        src_rank=rank,
-                        async_op=True,
-                        options=self._sync_weight_comm_options,
-                    ).async_wait()
-                )
-            metadata_list = await asyncio.gather(*handle)
-            metadata = metadata_list[0]
-            for other_metadata in metadata_list[1:]:
-                if other_metadata != metadata:
-                    raise ValueError("Patch metadata differs across rollout ranks")
+            if self._is_weight_sender:
+                metadata = await self.recv(
+                    src_group_name=self._rollout_group_name,
+                    src_rank=0,
+                    async_op=True,
+                    options=self._sync_weight_comm_options,
+                ).async_wait()
+            else:
+                metadata = None
+            if self._actor_world_size > 1:
+                metadata = await self.broadcast(
+                    metadata,
+                    groups=[
+                        (
+                            self._group_name,
+                            list(range(self._actor_world_size)),
+                        )
+                    ],
+                    src=(self._group_name, 0),
+                    async_op=True,
+                ).async_wait()
             return metadata
 
         if not self.weight_syncer.sender_initialized():
