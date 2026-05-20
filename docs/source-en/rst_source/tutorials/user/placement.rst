@@ -26,7 +26,7 @@ RLinf will create 8 processes (ranks ``0-7``) for each of these components and e
 
 2. **Node-group form** – explicitly select a node group:
 
-For information about node groups, see :doc:`../advance/hetero`.
+For information about node groups, see :doc:`../multi_nodes/hetero`.
 
 .. code-block:: yaml
 
