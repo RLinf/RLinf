@@ -215,6 +215,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <ul>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka.html">Intel RealSense</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_zed_robotiq.html">Stereolabs ZED</a> ✅</li>
+            <li>Lumos Camera ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka.html">Franka Hand</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_dexhand.html">Ruiyan Hand</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_zed_robotiq.html">Robotiq 2F-85 / 2F-140</a> ✅</li>
