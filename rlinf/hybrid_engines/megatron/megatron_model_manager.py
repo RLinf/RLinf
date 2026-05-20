@@ -36,6 +36,7 @@ from .utils import (
     preprocess_packed_seqs,
     recover_left_padding,
     remove_left_padding,
+    tensor_rm_left_padding,
 )
 
 try:
@@ -63,9 +64,11 @@ except ImportError:
     from megatron.core.transformer.module import Float16Module
 except ImportError:
     raise "Could not import Float16Module from megatron"
+from megatron.core.optimizer import get_megatron_optimizer
 from megatron.training.checkpointing import load_checkpoint, save_checkpoint
 from megatron.training.training import (
     get_args,
+    get_optimizer_param_scheduler,
     preprocess_common_state_dict,
     setup_model_and_optimizer,
     unwrap_model,
@@ -188,6 +191,11 @@ class MegatronModelManager:
         self.transformer_config = build_transformer_config(cfg.model)
 
         self._cfg = cfg
+        self.mbridge = cfg.megatron.get("mbridge", False)
+        # if use the megatron-mbridge need patch some function
+        if self.mbridge:
+            self.patch_mbrdige_function()
+
         self.mcore_gpt = cfg.mcore_gpt
         self.spec_name = cfg.spec_name
         self.distributed_adam_offload_manager = None
@@ -199,7 +207,15 @@ class MegatronModelManager:
         self.checkpoint_context = self._get_checkpoint_context()
 
         if self._cfg.megatron.use_hf_ckpt:
-            self._cfg.megatron.load = self._cfg.megatron.ckpt_convertor.save_path
+            if self.mbridge:
+                if hasattr(self, "megatron_type") and self.megatron_type == "sft":
+                    self._cfg.megatron.load = self._cfg.model.model_path
+                else:
+                    self._cfg.megatron.load = (
+                        self._cfg.megatron.ckpt_convertor.hf_model_path
+                    )
+            else:
+                self._cfg.megatron.load = self._cfg.megatron.ckpt_convertor.save_path
 
         config = build_config(ModelConfig, cfg.model)
         self.flops_calculator = FLOPSCalculator(config)
@@ -215,6 +231,18 @@ class MegatronModelManager:
 
         # Patch Megatron MoE token dispatcher if FUSCO is available and conditions are met
         self.patch_megatron_moe_dispatcher()
+
+    def patch_mbrdige_function(self):
+        from rlinf.utils.patcher import Patcher
+
+        Patcher.clear()
+        Patcher.add_patch(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils.get_rope_index",
+            "rlinf.hybrid_engines.megatron.utils.get_rope_index",
+        )
+        Patcher.apply()
+
+        self._logger.info("Use the megatron-Mbrdige, patched the fix function Success.")
 
     def patch_megatron_moe_dispatcher(self):
         if HAVE_FUSCO:
@@ -234,18 +262,107 @@ class MegatronModelManager:
     def setup_model_and_optimizer(self, model_type=ModelType.encoder_or_decoder):
         """Setup model and optimizer."""
         set_megatron_args(self._cfg)
+        if self.mbridge:
+            # Init megatron bridge
+            from megatron.bridge import AutoBridge
+            from megatron.bridge.training.config import DistributedDataParallelConfig
 
-        # if it is the critic model, then we must set the strict parameter
-        # of load_checkpoint to false, because we replaced
-        # the output layer of the critic model to value head,
-        # resulting in a mismatch with the checkpoint.
-        enable_none_strict = self.is_dedicated_critic_model
-        with patch_load_checkpoint_to_be_non_strict(enable=enable_none_strict):
-            self.model, self.optimizer, self.lr_scheduler = setup_model_and_optimizer(
-                model_provider_func=self.model_provider_func,
-                model_type=model_type,
-                checkpointing_context=self.checkpoint_context,
+            self.bridge = AutoBridge.from_hf_pretrained(
+                self._cfg.megatron.load,
+                trust_remote_code=True,
             )
+            provider = self.bridge.to_megatron_provider(load_weights=True)
+            from dataclasses import fields
+
+            provider_field_names = {f.name for f in fields(type(provider))}
+            mrope_section = getattr(provider, "mrope_section", [16, 24, 24])
+            position_embedding_type = getattr(
+                provider, "position_embedding_type", "mrope"
+            )
+
+            # Set the provider field with the RLinf transformer_config
+            for name in provider_field_names:
+                if hasattr(self.transformer_config, name):
+                    setattr(provider, name, getattr(self.transformer_config, name))
+
+            # Preserve HF/provider-specific multimodal rope values.
+            provider.mrope_section = mrope_section
+            provider.position_embedding_type = position_embedding_type
+            if hasattr(provider, "vision_config"):
+                provider.vision_config._attn_implementation = "flash_attention_2"
+
+            # the Mbridge run the qwen3-vl-moe model will freeze the language model and vision model by default.
+            provider.freeze_language_model = getattr(
+                self._cfg.model, "freeze_language_model", False
+            )
+            provider.freeze_vision_model = getattr(
+                self._cfg.model, "freeze_vision_model", False
+            )
+            provider.freeze_vision_projection = getattr(
+                self._cfg.model, "freeze_vision_projection", False
+            )
+
+            if (
+                getattr(self._cfg.model, "decoder_first_pipeline_num_layers", None)
+                is not None
+            ):
+                provider.num_layers_in_first_pipeline_stage = (
+                    self._cfg.model.decoder_first_pipeline_num_layers
+                )
+            if (
+                getattr(self._cfg.model, "decoder_last_pipeline_num_layers", None)
+                is not None
+            ):
+                provider.num_layers_in_last_pipeline_stage = (
+                    self._cfg.model.decoder_last_pipeline_num_layers
+                )
+
+            if self._rank == 0:
+                self._logger.info(f"Mbridge Set Provider: {provider}")
+
+            provider.finalize()
+            self.provider = provider
+            ddp_config = DistributedDataParallelConfig(
+                use_distributed_optimizer=self._cfg.optim.use_distributed_optimizer,
+                overlap_grad_reduce=self._cfg.optim.get("overlap_grad_reduce", False),
+                overlap_param_gather=self._cfg.optim.get("overlap_param_gather", False),
+                check_for_nan_in_grad=True,
+                grad_reduce_in_fp32=True,
+            )
+            ddp_config.finalize()
+
+            # Get Megatron Model
+            self.model = self.provider.provide_distributed_model(ddp_config=ddp_config)
+
+            args = get_args()
+            from megatron.training.training import get_megatron_optimizer_config
+
+            config, config_overrides = get_megatron_optimizer_config(args)
+
+            # Get Megatron Optimizer
+            self.optimizer = get_megatron_optimizer(
+                config,
+                self.model,
+                config_overrides=config_overrides,
+                use_gloo_process_groups=args.enable_gloo_process_groups,
+            )
+            # Get Megatron Optimizer Param Scheduler
+            self.lr_scheduler = get_optimizer_param_scheduler(self.optimizer)
+
+        else:
+            # if it is the critic model, then we must set the strict parameter
+            # of load_checkpoint to false, because we replaced
+            # the output layer of the critic model to value head,
+            # resulting in a mismatch with the checkpoint.
+            enable_none_strict = self.is_dedicated_critic_model
+            with patch_load_checkpoint_to_be_non_strict(enable=enable_none_strict):
+                self.model, self.optimizer, self.lr_scheduler = (
+                    setup_model_and_optimizer(
+                        model_provider_func=self.model_provider_func,
+                        model_type=model_type,
+                        checkpointing_context=self.checkpoint_context,
+                    )
+                )
 
     def model_provider_func(self, pre_process, post_process):
         """Model depends on pipeline paralellism."""
@@ -404,6 +521,10 @@ class MegatronModelManager:
 
         yield
 
+        # Now sft don't need to offload the weight, grad and optimizer
+        if hasattr(self, "megatron_type") and self.megatron_type == "sft":
+            return
+
         self.offload_model_weights_and_grad()
         self.offload_megatron_optimizer()
 
@@ -417,6 +538,18 @@ class MegatronModelManager:
             return
 
         with self.ensure_onloaded_and_then_offload():
+            if self.mbridge:
+                # save mbridge checkpoint to hf checkpoint
+                hf_save_path = os.path.join(save_path, "hf_checkpoint")
+                self.bridge.save_hf_pretrained(
+                    self.model,
+                    hf_save_path,
+                    source_path=self._cfg.megatron.load,
+                    show_progress=(torch.distributed.get_rank() == 0),
+                    strict=True,
+                )
+            # for the next training, we also need to save the megatron checkpoint
+
             args = get_args()
             args.save = save_path
             save_checkpoint(
@@ -433,6 +566,8 @@ class MegatronModelManager:
         with self.ensure_onloaded_and_then_offload():
             args = get_args()
             args.load = load_path
+            if self.mbridge:
+                args.phase_transition_iterations = None
             load_checkpoint(
                 self.model,
                 self.optimizer,
@@ -474,6 +609,8 @@ class MegatronModelManager:
         temperature: float = 1.0,
         max_batch_seqlen: int = 4096,
         padding_seqlen: Optional[int] = None,
+        keep_left_padding: bool = False,
+        **model_forward_kwargs,
     ):
         """Default forward pass for GPT models with optional sequence packing."""
         pre_process = unwrap_model(model).pre_process
@@ -492,6 +629,7 @@ class MegatronModelManager:
                 attention_mask=None,
                 position_ids=position_ids,
                 packed_seq_params=packed_seq_params,
+                **model_forward_kwargs,
             )
             output_orig /= temperature
             if post_process and logits_processor is not None:
@@ -526,29 +664,51 @@ class MegatronModelManager:
                     post_process=post_process,
                 )
         else:
-            assert logits_processor is None, (
-                "logits_processor is not supported for non-packed sequence"
-            )
             batch_size, sequence_length = attention_mask.shape
+            # if keep_left_padding is True, we will handle new_input_ids of all pp stages
             new_input_ids, new_attention_mask, new_position_ids = remove_left_padding(
                 input_ids,
                 attention_mask,
                 position_ids,
                 sequence_parallel,
-                pre_process=pre_process,
+                pre_process=pre_process or keep_left_padding,
             )
-            output = model(
+            output_orig = model(
                 input_ids=new_input_ids,
                 attention_mask=new_attention_mask,
                 position_ids=new_position_ids,
+                **model_forward_kwargs,
             )
-            output = recover_left_padding(
-                output,
-                new_attention_mask,
-                attention_mask,
-                sequence_length,
-                post_process=post_process,
-            )
+            output_orig /= temperature
+            if post_process and logits_processor is not None:
+                args = {
+                    k: tensor_rm_left_padding(v, attention_mask, sequence_parallel)
+                    for k, v in (logits_processor_args or {}).items()
+                }
+                output_dict = logits_processor(output_orig, **args)
+                output = {
+                    k: recover_left_padding(
+                        v,
+                        new_attention_mask,
+                        attention_mask,
+                        sequence_length,
+                        post_process=post_process,
+                    )
+                    if torch.is_tensor(v)
+                    and v.ndim >= 2
+                    and v.shape[:2] == new_attention_mask.shape
+                    else v
+                    for k, v in output_dict.items()
+                }
+            else:
+                output = recover_left_padding(
+                    output_orig,
+                    new_attention_mask,
+                    attention_mask,
+                    sequence_length,
+                    post_process=post_process,
+                )
+
         if value_model and post_process:
             output = output[..., 0]
         return output
