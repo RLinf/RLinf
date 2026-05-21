@@ -139,8 +139,6 @@ class Cluster:
     class NamespaceConflictError(Exception):
         """Raised when there is a namespace conflict in Ray initialization."""
 
-    _MAX_NAMESPACE_CONFLICT_RETRIES = 64
-
     @classmethod
     def find_free_port(cls):
         """Find a free port on the node."""
@@ -195,27 +193,11 @@ class Cluster:
                         nsight_output_dir,
                     )
                     break
-                except Cluster.NamespaceConflictError as ns_exc:
+                except Cluster.NamespaceConflictError:
+                    # Switch the namespace when multiple ray instances are created in the same node
                     self._ray_instance_count += 1
-                    if (
-                        self._ray_instance_count
-                        > Cluster._MAX_NAMESPACE_CONFLICT_RETRIES
-                    ):
-                        raise RuntimeError(
-                            f"Giving up after {Cluster._MAX_NAMESPACE_CONFLICT_RETRIES} Ray "
-                            "namespace retries (duplicate actor name suspected). Clear stale "
-                            f"jobs or run `ray stop`. Last cause: {ns_exc.__cause__!r}"
-                        ) from ns_exc
-                    cause_note = ""
-                    if ns_exc.__cause__ is not None:
-                        cause_note = f" ({ns_exc.__cause__!r})"
                     self._logger.info(
-                        "Ray duplicate named-actor conflict detected%s. Retrying Cluster init "
-                        "with namespace %s_%s (attempt %s).",
-                        cause_note,
-                        Cluster.SYS_NAME,
-                        self._ray_instance_count,
-                        self._ray_instance_count,
+                        f"Ray namespace conflict detected. Retrying to initialize Cluster with a new namespace (attempt {self._ray_instance_count})."
                     )
                     Cluster.NAMESPACE = f"{Cluster.SYS_NAME}_{self._ray_instance_count}"
         else:
