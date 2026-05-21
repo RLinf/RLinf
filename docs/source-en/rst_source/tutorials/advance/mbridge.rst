@@ -184,6 +184,7 @@ For resume training, you can load only the Megatron checkpoint. The
 HuggingFace-format checkpoint is not required.
 
 .. code:: yaml
+
    runner:
      resume_dir: /path/to/logs/qwen2.5-1.5b-grpo-megatron/checkpoints/global_step_10
 
