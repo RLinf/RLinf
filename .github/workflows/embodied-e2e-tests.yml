@@ -590,7 +590,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export LIBERO_PATH=/workspace/dataset/LIBERO
-          bash requirements/install.sh embodied --model openpi --env maniskill_libero --vlm-reward
+          bash requirements/install.sh embodied --model openpi --env maniskill_libero
 
       - name: Maniskill PPO Pi05 test
         timeout-minutes: 20
@@ -640,16 +640,6 @@ jobs:
           source .venv/bin/activate
           cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
           bash tests/e2e_tests/embodied/run_async.sh maniskill_async_ppo_openpi
-
-      - name: ManiSkill Async PPO Pi05 Qwen SGLang Reward test
-        timeout-minutes: 30
-        run: |
-          unset PYTHONPATH
-          export REPO_PATH=$(pwd)
-          export TORCHDYNAMO_DISABLE=1
-          source .venv/bin/activate
-          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
-          bash tests/e2e_tests/embodied/run_async.sh maniskill_async_ppo_openpi_qwentrend_reward
 
       - name: Libero-Spatial DSRL PPO test
         timeout-minutes: 20

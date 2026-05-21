@@ -67,11 +67,7 @@ class LeRobotManiSkillDataConfig(DataConfigFactory):
             inputs=[
                 maniskill_policy.ManiSkillInputs(model_type=model_config.model_type)
             ],
-            outputs=[
-                maniskill_policy.ManiSkillOutputs(
-                    output_action_dim=getattr(model_config, "action_env_dim", 7)
-                )
-            ],
+            outputs=[maniskill_policy.ManiSkillOutputs()],
         )
 
         # One additional data transform: pi0 models are trained on delta actions (relative to the first

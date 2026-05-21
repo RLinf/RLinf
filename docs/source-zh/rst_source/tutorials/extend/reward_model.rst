@@ -309,11 +309,10 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --model qwen3_vl --env maniskill_libero --vlm-reward
+   bash requirements/install.sh embodied --model qwen3_vl --env maniskill_libero
 
-这会安装 MLP policy 示例所需的 Qwen3-VL reward runtime。如果训练 policy
-是 OpenPI，则使用 ``--model openpi --vlm-reward``，这样 RLinf 还会应用
-适配 Qwen3-VL 所需 ``transformers`` 版本的 OpenPI patch。
+这会安装 MLP policy 示例所需的 Qwen3-VL reward runtime，并包含 SGLang
+reward 后端所需的依赖。
 
 随后在 reward 配置中使用 ``history_vlm`` 启用 Hugging Face 后端，或使用
 ``history_vlm_sglang`` 启用 SGLang 后端。QwenTrend 示例使用

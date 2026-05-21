@@ -313,12 +313,10 @@ For VLM reward inference, install embodied dependencies with VLM reward support:
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --model qwen3_vl --env maniskill_libero --vlm-reward
+   bash requirements/install.sh embodied --model qwen3_vl --env maniskill_libero
 
-This installs the Qwen3-VL reward runtime used by the MLP policy example. If the
-training policy is OpenPI, use ``--model openpi --vlm-reward`` instead so RLinf
-also applies the OpenPI patch for the Qwen3-VL-compatible ``transformers``
-runtime.
+This installs the Qwen3-VL reward runtime used by the MLP policy example,
+including the dependencies required by the SGLang reward backend.
 
 Then configure the reward section to use ``history_vlm`` for the Hugging Face
 backend or ``history_vlm_sglang`` for the SGLang backend. The QwenTrend example

@@ -57,7 +57,6 @@ jobs:
               - 'pyproject.toml'
               - 'requirements/*.sh'
               - 'requirements/*.txt'
-              - 'requirements/embodied/patches/**'
               - '.github/workflows/install.yml'
             docker_filter: &docker
               - *install

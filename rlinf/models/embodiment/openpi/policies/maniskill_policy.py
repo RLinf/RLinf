@@ -106,12 +106,9 @@ class ManiSkillOutputs(transforms.DataTransformFn):
     For your own dataset, you can copy this class and modify the action dimension based on the comments below.
     """
 
-    output_action_dim: int
-
     def __call__(self, data: dict) -> dict:
         # Only return the first N actions -- since we padded actions above to fit the model action
         # dimension, we need to now parse out the correct number of actions in the return dict.
-        # For ManiSkill, this may differ by control mode, e.g. 7D joint/pose
-        # actions or 4D end-effector delta position actions.
+        # For Libero, we only return the first 7 actions (since the rest is padding).
         # For your own dataset, replace `7` with the action dimension of your dataset.
-        return {"actions": np.asarray(data["actions"][..., : self.output_action_dim])}
+        return {"actions": np.asarray(data["actions"][:, :7])}

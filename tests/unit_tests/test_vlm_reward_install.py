@@ -29,23 +29,16 @@ def test_qwen_vlm_reward_sglang_requirements_are_pinned():
     assert "sglang==0.5.4" in requirements
 
 
-def test_openpi_qwen_reward_flag_applies_transformers_patch():
+def test_qwen_reward_runtime_is_installed_in_qwen3_vl_env():
     install_script = (REPO_ROOT / "requirements/install.sh").read_text()
 
-    assert "--vlm-reward" in install_script
-    assert "VLM_REWARD=1" in install_script
-    assert "--vlm-reward-sglang" not in install_script
-    assert "VLM_REWARD_SGLANG" not in install_script
     assert "install_qwen_vlm_reward_deps" not in install_script
     assert "install_qwen_vlm_reward_sglang_deps" in install_script
-    assert "apply_openpi_transformers_patch" in install_script
-    assert "apply_openpi_transformers_4_57_1_patch" in install_script
-    assert "openpi_transformers_4_57_1/transformers" in install_script
+    assert "--vlm-reward" not in install_script
+    assert "VLM_REWARD" not in install_script
+    assert "apply_openpi_transformers_4_57_1_patch" not in install_script
+    assert "openpi_transformers_4_57_1/transformers" not in install_script
     assert "sglang=={expected}" in install_script
-    assert (
-        "--vlm-reward is supported only with --model openpi or --model qwen3_vl"
-        in install_script
-    )
 
 
 def test_qwen3_vl_model_can_install_sglang_reward_runtime():
