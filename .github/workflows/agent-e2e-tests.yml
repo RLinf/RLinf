@@ -618,7 +618,7 @@ megatron-bridge-qwen-grpo-test:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export MEGATRON_PATH=/workspace/dataset/Megatron-LM-b0cc2706ddc60d2aefd5fff346445b5c013036a8
+          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
           bash requirements/install.sh agentic
           uv pip install transformers==4.57.1
 
@@ -631,7 +631,7 @@ megatron-bridge-qwen-grpo-test:
           export PYTHONPATH=/workspace/dataset/Megatron-LM-b0cc2706ddc60d2aefd5fff346445b5c013036a8:$PYTHONPATH
           export CUDA_DEVICE_MAX_CONNECTIONS=1
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collacated-mbridge-sgl
-          rm -rf /workspace/results/grpo-1.5b-megatron-mbridge/converted_ckpts/
+          rm -rf /workspace/results/grpo-1.5b-megatron-mbridge/
 
       - name: Clean up
         run: |

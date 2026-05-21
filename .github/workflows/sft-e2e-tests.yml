@@ -143,6 +143,7 @@ jobs:
           export PYTHONPATH=/workspace/dataset/Megatron-LM-b0cc2706ddc60d2aefd5fff346445b5c013036a8:$PYTHONPATH
           export CUDA_DEVICE_MAX_CONNECTIONS=1
           bash tests/e2e_tests/sft/run_vlm_sft.sh robo2vlm_sft_megatron_bridge_train
+          rm -rf /workspace/results/qwen3_vl_megatron_sft/
 
       - name: Clean up
         run: |

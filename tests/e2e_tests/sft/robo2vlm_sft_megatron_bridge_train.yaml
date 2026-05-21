@@ -27,7 +27,7 @@ runner:
   # save the model interval
   save_interval: 50
   experiment_name: qwen3_vl_megatron_sft
-  output_dir: ../results
+  output_dir: /workspace/results
   resume_dir: null
 
 data:
@@ -81,14 +81,7 @@ actor:
     is_lora: False
   
     activation: swiglu
-    sequence_parallel: False
-    # recompute settings
-    # recompute_method: block
-    # recompute_granularity: selective
-
-    recompute_method: uniform
-    recompute_granularity: full
-    recompute_num_layers: 1
+    sequence_parallel: True
 
     seq_length: 1024
     encoder_seq_length: ${actor.model.seq_length}
@@ -128,7 +121,7 @@ actor:
   lr_sched:
     lr_warmup_fraction: null
     lr_warmup_init: 0.0
-    lr_warmup_iters: 200
+    lr_warmup_iters: 1
     min_lr: 0.0
     lr_decay_style: cosine
     lr_decay_iters: ${runner.max_epochs}
