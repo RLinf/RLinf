@@ -161,8 +161,9 @@ latest_checkpointed_iteration.txt 文件保存了当前 checkpoint 的 step 信�
 加载方式：
 
 .. code:: yaml
-    runner:
-        resume_dir:  /path/to/logs/qwen2.5-1.5b-grpo-megatron/checkpoints/global_step_10
+
+   runner:
+     resume_dir: /path/to/logs/qwen2.5-1.5b-grpo-megatron/checkpoints/global_step_10
 
 使用建议
 --------
