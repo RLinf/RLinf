@@ -392,7 +392,6 @@ class MegatronVlmSftWorker(MegatronSftWorker):
         attention_mask = batch["attention_mask"].to(
             device=input_ids.device, dtype=torch.bool
         )
-        label_mask = batch["label_mask"].to(device=input_ids.device, dtype=torch.bool)
 
         image_grid_thw = batch["image_grid_thw"].to(device=input_ids.device)
         pixel_values = torch.cat(batch["pixel_values"]).to(device=input_ids.device)
