@@ -16,13 +16,13 @@ In embodied AI, the core challenge has gradually shifted from “can a robot arm
 
 Because task chains are longer and state transitions are more complex, the environment itself becomes critical infrastructure for the training system. Compared with lighter environments such as RoboTwin and LIBERO, BEHAVIOR provides more complete physical simulation, more complex and realistic scene structure, and benchmark scale covering more than a thousand household tasks. As a result, it has long been regarded as one of the most representative “embodied ImageNet” platforms in the field.
 
-.. image:: https://github.com/jxqiu/misc/raw/main/pic/behavior/behavior-splash.png
+.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-splash.png
    :alt: BEHAVIOR simulator environment
    :align: center
 
 *Figure 1: BEHAVIOR simulator environment.*
 
-.. image:: https://github.com/jxqiu/misc/raw/main/pic/behavior/behavior-scenes.png
+.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-scenes.png
    :alt: BEHAVIOR simulator supported scenes
    :align: center
 
@@ -37,13 +37,13 @@ But high fidelity also comes at a substantial cost. On a machine with **AMD EPYC
 - A single environment requires roughly **10 CPU cores** and **12 GiB of GPU memory**;
 - Because it depends on the full graphics rendering stack, BEHAVIOR cannot be deployed on pure compute cards as easily as purely numerical workloads can. In practice, it usually needs graphics-capable GPUs such as the RTX 4090 rather than cards such as the A100.
 
-.. image:: https://github.com/jxqiu/misc/raw/main/pic/behavior/behavior-render-4090.jpeg
+.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-render-4090.jpeg
    :alt: Rendering result on RTX 4090
    :align: center
 
 *Figure 3: Rendering result on RTX 4090.*
 
-.. image:: https://github.com/jxqiu/misc/raw/main/pic/behavior/behavior-render-a100.jpeg
+.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-render-a100.jpeg
    :alt: Rendering result on A100
    :align: center
 
@@ -68,7 +68,7 @@ A single environment step in BEHAVIOR is not just a simple transition from :math
 
 We used **Tracy** to profile a single step at fine granularity and found that the end-to-end latency of 1028 ms is not caused by one isolated physics kernel, but by the accumulation of multiple system components.
 
-.. image:: https://github.com/jxqiu/misc/raw/main/pic/behavior/behavior-timeline-slow-en.png
+.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-timeline-slow-en.png
    :alt: Timeline of a single BEHAVIOR action step
    :align: center
 
@@ -90,7 +90,7 @@ One design goal of Isaac Sim is to support interactive development, so it keeps 
 
 Both performance profiling and code-path analysis show that the default execution stack still allocates extra resources to this “display path.” It contributes almost nothing to training, yet continuously consumes GPU memory and rendering time.
 
-.. image:: https://github.com/jxqiu/misc/raw/main/pic/behavior/behavior-isaac-viewport.png
+.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-isaac-viewport.png
    :alt: Isaac Sim GUI and viewport illustration
    :align: center
 
@@ -146,7 +146,7 @@ Second is **on-demand observation**. Since the policy consumes observations at a
 
 but generate observations only at the end of the chunk, when the policy truly needs new input. This aligns observation generation frequency with policy consumption frequency and directly removes a large amount of extra overhead from the critical path.
 
-.. image:: https://github.com/jxqiu/misc/raw/main/pic/behavior/behavior-timeline-fast-en.png
+.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-timeline-fast-en.png
    :alt: Action-chunk timeline after on-demand observation
    :align: center
 
@@ -165,7 +165,7 @@ From a system perspective, a natural idea is to pipeline model rollout and envir
 
 If we partition only by process — assigning some environment processes to stage A and the rest to stage B — the scheme looks simple on paper, but it is inefficient for BEHAVIOR. The reason is that one process often corresponds to one vectorized environment, and multiple instances inside that vectorized environment still share the same global physics / rendering step. As a result, the critical path still contains large serial or semi-serial segments.
 
-.. image:: https://github.com/jxqiu/misc/raw/main/pic/behavior/behavior-parallelism-en.png
+.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-parallelism-en.png
    :alt: Illustration of BEHAVIOR's two-level parallel structure
    :align: center
 
@@ -186,7 +186,7 @@ As a result, one stage no longer “owns several complete processes.” Instead,
 - Model forward passes and environment stepping overlap more fully;
 - The system throughput ceiling is raised without linearly driving up resource cost.
 
-.. image:: https://github.com/jxqiu/misc/raw/main/pic/behavior/behavior-pipeline-stage-en.png
+.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-pipeline-stage-en.png
    :alt: Comparison of pipeline partition strategies
    :align: center
 
@@ -226,13 +226,13 @@ The result is very clear. Before optimization, the average rollout latency was *
 
 The significance of this result is not limited to “the environment became faster.” In embodied reinforcement learning, rollout throughput determines how fast the training system can collect interaction data, and therefore directly affects the cadence of model updates, experimental iteration speed, and the task scale that can be covered per unit time. After optimization, the bottleneck of the training system also changed fundamentally: the end-to-end latency, which was previously dominated entirely by the environment, was pulled back into a much more balanced regime across model, environment, and scheduling.
 
-.. image:: https://github.com/jxqiu/misc/raw/main/pic/behavior/behavior-perf-rollout.png
+.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-perf-rollout.png
    :alt: Ablation of each optimization item total rollout epoch time
    :align: center
 
 *Figure 10: Ablation of each optimization item (total rollout epoch time).*
 
-.. image:: https://github.com/jxqiu/misc/raw/main/pic/behavior/behavior-perf-env.png
+.. image:: https://github.com/rlinf/misc/raw/main/pic/behavior/behavior-perf-env.png
    :alt: Ablation of each optimization item average BEHAVIOR step cost
    :align: center
 
@@ -295,12 +295,5 @@ From this perspective, all three categories of optimizations in this post follow
 Another important lesson is that environment optimization is not just optimization of the environment itself, but optimization of the entire training system. In embodied AI tasks, the coupling among environment, model, resource layout, pipeline structure, and scheduling is much stronger than in many traditional benchmarks. Once one bottleneck is relieved, higher-level coordination and scheduling problems start to surface.
 
 The related performance patches have now been merged into **RLinf** and the upstream **StanfordVL/BEHAVIOR-1K** repository. For developers who want to start using BEHAVIOR directly, RLinf already provides a mature solution that can be used without having to rework the environment from scratch. We also hope this work can serve not only our own training system but the broader embodied AI community as well: with sufficient understanding of reinforcement learning dataflow and low-level system structure, even a complex physical simulation world can be rebuilt into efficient compute infrastructure.
-
-Related Links
--------------
-
-- GitHub: `RLinf <https://github.com/RLinf/RLinf>`_
-- Chinese docs: `BEHAVIOR example <https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/behavior.html>`_
-- English docs: `BEHAVIOR Example <https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/behavior.html>`_
 
 Image / video credits: Physical Intelligence, BEHAVIOR-1K.
