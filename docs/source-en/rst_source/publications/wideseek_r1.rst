@@ -34,7 +34,7 @@ WideSeek-R1: Exploring Width Scaling for Broad Information Seeking via Multi-Age
 
 **Code:** `WideSeek-R1 code <https://github.com/RLinf/RLinf/tree/main/examples/agent/wideseek_r1>`__ 
 
-**Dataset:** `WideSeek-R1-train-data <https://huggingface.co/datasets/RLinf/WideSeek-R1-train-data>`__  
+**Data:** `Training Data <https://huggingface.co/datasets/RLinf/WideSeek-R1-train-data>`__ | `Corpus <https://huggingface.co/datasets/RLinf/WideSeek-R1-Corpus>`__
 
 **Model:** `WideSeek-R1-4B <https://huggingface.co/RLinf/WideSeek-R1-4b>`__
 

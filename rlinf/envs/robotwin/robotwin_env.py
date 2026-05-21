@@ -81,11 +81,14 @@ class RoboTwinEnv(gym.Env):
     def _init_env(self):
         mp.set_start_method("spawn", force=True)
         os.environ["ASSETS_PATH"] = self.cfg.assets_path
-        robotwin_path = self._resolve_robotwin_repo_path(self.cfg.assets_path)
-        if robotwin_path and robotwin_path not in sys.path:
-            sys.path.insert(0, robotwin_path)
 
-        from robotwin.envs.vector_env import VectorEnv
+        try:
+            from robotwin.envs.vector_env import VectorEnv
+        except ModuleNotFoundError:
+            robotwin_path = self._resolve_robotwin_repo_path(self.cfg.assets_path)
+            if robotwin_path not in sys.path:
+                sys.path.insert(0, robotwin_path)
+            from robotwin.envs.vector_env import VectorEnv
 
         env_seeds = self.reset_state_ids.tolist()
         task_config = OmegaConf.to_container(self.cfg.task_config, resolve=True)
