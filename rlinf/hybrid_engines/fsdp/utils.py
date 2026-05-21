@@ -183,16 +183,17 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
             wrap_policy_config.get("no_split_names")
         )
 
-        if hasattr(module, "visual"):
-            default_transformer_cls_names_to_wrap.extend(
-                getattr(module.visual, "_no_split_modules", None)
-            )
     else:
         if hasattr(module, "language_model"):
             # For VLA models, get transformer classes from language_model submodule
             default_transformer_cls_names_to_wrap = getattr(
                 module.language_model, "_no_split_modules", None
             )
+            if hasattr(module, "visual"):
+                default_transformer_cls_names_to_wrap.extend(
+                    getattr(module.visual, "_no_split_modules", [])
+                )
+
         else:
             # For standard models, get transformer classes directly from module
             default_transformer_cls_names_to_wrap = getattr(
