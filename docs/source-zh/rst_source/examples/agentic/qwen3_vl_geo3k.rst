@@ -81,7 +81,7 @@
 环境要求
 --------------
 
-我们推荐 sglang>=0.5.4 以及 transformers>=v4.57.1。较低版本的 sglang 或者 transformers 不支持或者不能正确支持 Qwen3 VL 系列模型。
+我们推荐 sglang 0.5.4 以及 transformers 4.57.1。较低版本的 sglang 或者 transformers 不支持或者不能正确支持 Qwen3 VL 系列模型。
 
 运行脚本
 --------------

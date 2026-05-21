@@ -9,6 +9,9 @@ ENV_NAME=""
 VENV_DIR=".venv"
 PYTHON_VERSION="3.11.14"
 TORCH_VERSION=""
+SGLANG_VERSION=""
+TRANSFORMERS_VERSION=""
+XGRAMMAR_VERSION=""
 PLATFORM="nvidia"
 ROCM_VERSION=""
 # PEP 440 local-version segment (including the leading '+') that
@@ -101,6 +104,10 @@ Common options:
                            duration of the install; the original is restored on exit. On
                            --platform amd, defaults to the lowest torch version with a matching
                            +rocm<version> wheel on https://download.pytorch.org/whl/torch/.
+    --sglang <version>    Override sglang version (e.g., 0.5.4). xgrammar is
+                           auto-derived from the sglang version.
+    --transformers <version> Override transformers version (e.g., 4.57.1). Patches
+                           the == pinned version in agentic extras; restored on exit.
     --platform <name>      Hardware platform: nvidia (default, fully tested), amd (experimental,
                            ROCm), or ascend (experimental, NPU). Sets UV_TORCH_BACKEND
                            (auto / rocm<version> / cpu); export UV_TORCH_BACKEND yourself to
@@ -153,6 +160,22 @@ parse_args() {
                     exit 1
                 fi
                 TORCH_VERSION="${2:-}"
+                shift 2
+                ;;
+            --sglang)
+                if [ -z "${2:-}" ]; then
+                    echo "--sglang requires a version argument (e.g. 0.5.4)." >&2
+                    exit 1
+                fi
+                SGLANG_VERSION="${2:-}"
+                shift 2
+                ;;
+            --transformers)
+                if [ -z "${2:-}" ]; then
+                    echo "--transformers requires a version argument (e.g. 4.57.1)." >&2
+                    exit 1
+                fi
+                TRANSFORMERS_VERSION="${2:-}"
                 shift 2
                 ;;
             --platform)
@@ -560,6 +583,62 @@ restore_pyproject() {
     if [ -n "$PYPROJECT_BACKUP" ] && [ -f "$PYPROJECT_BACKUP" ]; then
         mv -f "$PYPROJECT_BACKUP" "$PYPROJECT_FILE"
         PYPROJECT_BACKUP=""
+    fi
+}
+
+apply_sglang_override() {
+    if [ -z "$SGLANG_VERSION" ] && [ -z "$TRANSFORMERS_VERSION" ] && [ -z "$XGRAMMAR_VERSION" ]; then
+        return 0
+    fi
+
+    if [ ! -f "$PYPROJECT_FILE" ]; then
+        echo "Cannot locate pyproject.toml at $PYPROJECT_FILE" >&2
+        exit 1
+    fi
+
+    # Reuse an existing backup if apply_torch_override already created one.
+    if [ -z "$PYPROJECT_BACKUP" ] || [ ! -f "$PYPROJECT_BACKUP" ]; then
+        PYPROJECT_BACKUP="${PYPROJECT_FILE}.rlinf-sglang-bak.$$"
+        cp "$PYPROJECT_FILE" "$PYPROJECT_BACKUP"
+        trap 'restore_pyproject' EXIT INT TERM HUP
+    fi
+
+    if [ -n "$SGLANG_VERSION" ]; then
+        sed -i \
+            -e "s/\"sglang\[all\]==[^\"]*\"/\"sglang[all]==${SGLANG_VERSION}\"/" \
+            "$PYPROJECT_FILE"
+        echo "[install.sh] Patched pyproject.toml optional-dependencies: sglang[all]==${SGLANG_VERSION}"
+    fi
+
+    if [ -n "$TRANSFORMERS_VERSION" ]; then
+        sed -i \
+            -e "s/\"transformers==[^\"]*\"/\"transformers==${TRANSFORMERS_VERSION}\"/" \
+            "$PYPROJECT_FILE"
+        echo "[install.sh] Patched pyproject.toml optional-dependencies: transformers==${TRANSFORMERS_VERSION}"
+    fi
+
+    # Auto-derive xgrammar from sglang version when not explicitly set.
+    # Mapping derived from each sglang release's python/pyproject.toml.
+    if [ -n "$SGLANG_VERSION" ] && [ -z "$XGRAMMAR_VERSION" ]; then
+        case "${SGLANG_VERSION}" in
+            0.4.6) XGRAMMAR_VERSION="0.1.17" ;;
+            0.4.7|0.4.8|0.4.9) XGRAMMAR_VERSION="0.1.19" ;;
+            0.5.0|0.5.0rc*) XGRAMMAR_VERSION="0.1.22" ;;
+            0.5.1) XGRAMMAR_VERSION="0.1.23" ;;
+            0.5.2|0.5.3) XGRAMMAR_VERSION="0.1.24" ;;
+            0.5.4) XGRAMMAR_VERSION="0.1.25" ;;
+            *)
+                echo "[install.sh] ERROR: Unsupported sglang version '${SGLANG_VERSION}' for xgrammar auto-derivation (supported: 0.4.6 – 0.5.4). Set XGRAMMAR_VERSION explicitly."
+                exit 1
+                ;;
+        esac
+    fi
+
+    if [ -n "$XGRAMMAR_VERSION" ]; then
+        sed -i \
+            -e "s/\"xgrammar==[^\"]*\"/\"xgrammar==${XGRAMMAR_VERSION}\"/" \
+            "$PYPROJECT_FILE"
+        echo "[install.sh] Patched pyproject.toml override-dependencies: xgrammar==${XGRAMMAR_VERSION}"
     fi
 }
 
@@ -1974,8 +2053,8 @@ install_agentic() {
         uv pip install -r $SCRIPT_DIR/agentic/megatron.txt --no-build-isolation
     fi
 
-    install_apex
     install_flash_attn
+    install_apex
     uv pip uninstall pynvml || true
 }
 
@@ -1995,6 +2074,7 @@ main() {
     configure_platform
     setup_mirror
     apply_torch_override
+    apply_sglang_override
 
     case "$TARGET" in
         embodied)
