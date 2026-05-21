@@ -24,7 +24,6 @@ from torch.utils.data import DataLoader, DistributedSampler
 from rlinf.data.datasets.reward_model import RewardBinaryDataset
 from rlinf.data.io_struct import RolloutResult
 from rlinf.data.tokenizers import hf_tokenizer
-from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.models.embodiment.reward import get_reward_model_class
 from rlinf.scheduler import (
     Channel,
@@ -42,6 +41,20 @@ from rlinf.utils.placement import (
     HybridComponentPlacement,
 )
 from rlinf.utils.utils import clear_memory
+
+try:
+    from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
+except ImportError as exc:
+    _FSDP_MODEL_MANAGER_IMPORT_ERROR = exc
+
+    class FSDPModelManager:  # type: ignore[no-redef]
+        """Placeholder when reward inference env lacks FSDP training deps."""
+
+        def __init__(self, *args, **kwargs):
+            raise ImportError(
+                "FSDPRewardWorker requires FSDPModelManager dependencies to be "
+                "available in the active Python environment."
+            ) from _FSDP_MODEL_MANAGER_IMPORT_ERROR
 
 
 class RewardWorker(Worker):
@@ -221,6 +234,11 @@ class EmbodiedRewardWorker(Worker):
         self.enable_offload = self.cfg.reward.get("enable_offload", False)
         self._interact_task = None
 
+        self.reward_threshold = self.cfg.reward.get("reward_threshold", 0.6)
+        self.aggregate_request_count = int(
+            self.cfg.reward.get("aggregate_request_count", 1)
+        )
+
     def model_provider_func(self):
         reward_cls = get_reward_model_class(self.cfg.reward.model.model_type)
 
@@ -233,22 +251,22 @@ class EmbodiedRewardWorker(Worker):
 
     def init_worker(self):
         """Initialize the reward worker for inference."""
+        # build model
+
         if self._standalone_realworld:
-            self.local_num_train_envs = self.total_num_train_envs
-            self.dst_ranks = {"train": [(0, self.local_num_train_envs)]}
-            self.src_ranks = {"train": [(0, self.local_num_train_envs)]}
-        else:
-            self.dst_ranks = {
-                "train": self._setup_dst_ranks(
-                    self.total_num_train_envs // self.num_pipeline_stages
-                ),
-            }
-            self.src_ranks = {
-                "train": self._setup_src_ranks(
-                    self.total_num_train_envs // self.num_pipeline_stages
-                ),
-            }
-            self.local_num_train_envs = sum(size for _, size in self.src_ranks["train"])
+            return
+
+        self.dst_ranks = {
+            "train": self._setup_dst_ranks(
+                self.total_num_train_envs // self.num_pipeline_stages
+            ),
+        }
+        self.src_ranks = {
+            "train": self._setup_src_ranks(
+                self.total_num_train_envs // self.num_pipeline_stages
+            ),
+        }
+        self.local_num_train_envs = sum(size for _, size in self.src_ranks["train"])
 
         self.model = self.model_provider_func()
 
@@ -258,6 +276,7 @@ class EmbodiedRewardWorker(Worker):
 
     @Worker.timer("compute_rewards")
     async def compute_rewards(self, input_channel: Channel, output_channel: Channel):
+        # breakpoint()
         if self.enable_offload:
             self.model.to(self.device)
 
@@ -267,6 +286,7 @@ class EmbodiedRewardWorker(Worker):
                 input_channel, mode="train"
             )
             rewards = self.model.compute_reward(reward_input)
+            self._record_reward_model_timings()
 
             if rewards is not None and rewards.dim() == 1:
                 rewards = rewards.unsqueeze(-1)
@@ -318,6 +338,40 @@ class EmbodiedRewardWorker(Worker):
         )
         return merged, last_run_count
 
+    def try_recv_merged_reward_input(
+        self, input_channel: Channel, mode: Literal["train", "eval"] = "train"
+    ) -> tuple[dict[str, Any], int] | None:
+        assert mode in ["train", "eval"], f"{mode=} is not supported"
+        src_ranks_and_sizes = self.src_ranks[mode]
+        queue_keys = [
+            CommMapper.build_channel_key(
+                src_rank, self._rank, extra=f"{mode}_reward_input"
+            )
+            for src_rank, _ in src_ranks_and_sizes
+        ]
+        if any(input_channel.qsize(key=queue_key) <= 0 for queue_key in queue_keys):
+            return None
+
+        batches: list[dict[str, Any]] = []
+        last_run_count = 0
+        for (src_rank, expected_size), queue_key in zip(
+            src_ranks_and_sizes, queue_keys
+        ):
+            data = input_channel.get(key=queue_key)
+            actual_size = self._infer_reward_batch_size(data)
+            assert actual_size == expected_size, (
+                f"Expected reward input batch size {expected_size} from env rank {src_rank}, "
+                f"got batch size {actual_size}."
+            )
+            last_run = data.get("last_run", None)
+            last_run_count += int(last_run.sum().item()) if last_run is not None else 0
+            batches.append(data)
+
+        merged = cat_list_of_dict_tensor(
+            [{k: v for k, v in b.items() if k != "last_run"} for b in batches], dim=0
+        )
+        return merged, last_run_count
+
     @staticmethod
     def _infer_reward_batch_size(reward_input: dict[str, Any]) -> int:
         main_images = reward_input.get("main_images", None)
@@ -343,9 +397,7 @@ class EmbodiedRewardWorker(Worker):
         self, images: torch.Tensor | np.ndarray
     ) -> torch.Tensor | np.ndarray:
         """Run one-shot reward inference and return CPU results."""
-        rewards = self.model.compute_reward({"main_images": images})
-        if rewards is not None and rewards.dim() == 1:
-            rewards = rewards.unsqueeze(-1)
+        rewards = self._compute_image_rewards(images)
         if isinstance(rewards, torch.Tensor):
             return rewards.detach().cpu()
         return rewards
@@ -413,31 +465,151 @@ class EmbodiedRewardWorker(Worker):
                 async_op=True,
             )
 
+    async def recv_aggregated_reward_inputs(
+        self,
+        input_channel: Channel,
+        mode: Literal["train", "eval"] = "train",
+    ) -> tuple[dict[str, Any], list[int], int]:
+        reward_inputs: list[dict[str, Any]] = []
+        batch_sizes: list[int] = []
+        total_last_run_count = 0
+
+        reward_input, last_run_count = await self.recv_merged_reward_input(
+            input_channel, mode=mode
+        )
+        reward_inputs.append(reward_input)
+        batch_sizes.append(self._infer_reward_batch_size(reward_input))
+        total_last_run_count += last_run_count
+
+        while len(reward_inputs) < self.aggregate_request_count:
+            if total_last_run_count >= self.local_num_train_envs:
+                break
+            next_request = self.try_recv_merged_reward_input(input_channel, mode=mode)
+            if next_request is None:
+                break
+            reward_input, last_run_count = next_request
+            reward_inputs.append(reward_input)
+            batch_sizes.append(self._infer_reward_batch_size(reward_input))
+            total_last_run_count += last_run_count
+
+        if len(reward_inputs) == 1:
+            return reward_inputs[0], batch_sizes, total_last_run_count
+        return (
+            cat_list_of_dict_tensor(reward_inputs, dim=0),
+            batch_sizes,
+            total_last_run_count,
+        )
+
+    def send_aggregated_reward_output(
+        self,
+        output_channel: Channel,
+        reward_tensor: torch.Tensor | np.ndarray | None,
+        batch_sizes: list[int],
+    ) -> None:
+        if reward_tensor is None:
+            for _ in batch_sizes:
+                self.send_reward_output(output_channel, None)
+            return
+
+        reward_splits = torch.split(reward_tensor, batch_sizes, dim=0)
+        for reward_split in reward_splits:
+            self.send_reward_output(output_channel, reward_split)
+
     async def compute_rewards_async(
-        self, input_channel: Channel, output_channel: Channel
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        metric_channel: Channel | None = None,
     ):
         assert self._interact_task is None or self._interact_task.done(), (
             "Previous interact task is still running while a new interact call is made."
         )
         self._interact_task = asyncio.create_task(
-            self._compute_rewards(input_channel, output_channel)
+            self._compute_rewards(input_channel, output_channel, metric_channel)
         )
         try:
             await self._interact_task
         except asyncio.CancelledError:
             pass
 
-    async def _compute_rewards(self, input_channel: Channel, output_channel: Channel):
-        while True:
-            observations, _ = await self.recv_merged_reward_input(
-                input_channel, mode="train"
+    def _reward_input_queue_depth(
+        self, input_channel: Channel, mode: Literal["train", "eval"] = "train"
+    ) -> int:
+        depth = 0
+        for src_rank, _ in self.src_ranks[mode]:
+            key = CommMapper.build_channel_key(
+                src_rank, self._rank, extra=f"{mode}_reward_input"
             )
-            rewards = self.model.compute_reward(observations)
+            depth += input_channel.qsize(key=key)
+        return depth
 
-            if rewards is not None and rewards.dim() == 1:
-                rewards = rewards.unsqueeze(-1)
+    def _record_reward_model_timings(self) -> None:
+        timings = getattr(self.model, "last_timing_ms", None)
+        if not timings:
+            return
+        for name, value in timings.items():
+            metric_name = str(name)
+            if metric_name.endswith("_ms"):
+                metric_name = metric_name[:-3]
+            duration_ms = float(value)
+            timer_key = f"model/{metric_name}"
+            self._timer_metrics[timer_key] = (
+                self._timer_metrics.get(timer_key, 0.0) + duration_ms / 1000.0
+            )
 
-            self.send_reward_output(output_channel, rewards)
+    async def _compute_rewards(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        metric_channel: Channel | None = None,
+    ):
+        while True:
+            reward_metrics: dict[str, float] = {
+                "aggregate_request_count": float(self.aggregate_request_count)
+            }
+            with self.worker_timer("loop_total"):
+                input_queue_depth = self._reward_input_queue_depth(
+                    input_channel, mode="train"
+                )
+                reward_metrics["input_queue_depth"] = float(input_queue_depth)
+                reward_metrics["input_queue_depth_max"] = float(input_queue_depth)
+                with self.worker_timer("recv_input_wait"):
+                    (
+                        observations,
+                        batch_sizes,
+                        _,
+                    ) = await self.recv_aggregated_reward_inputs(
+                        input_channel, mode="train"
+                    )
+                    batch_size = sum(batch_sizes)
+
+                reward_metrics["input_batch_size"] = float(batch_size)
+
+                with self.worker_timer("model_compute"):
+                    rewards = self.model.compute_reward(observations)
+                self._record_reward_model_timings()
+
+                if rewards is not None and rewards.dim() == 1:
+                    rewards = rewards.unsqueeze(-1)
+
+                with self.worker_timer("send_output"):
+                    self.send_aggregated_reward_output(
+                        output_channel, rewards, batch_sizes
+                    )
+
+            if metric_channel is not None:
+                time_metrics = {
+                    f"time/reward/{key}": value
+                    for key, value in self.pop_execution_times().items()
+                }
+                metric_channel.put(
+                    {
+                        "rank": self._rank,
+                        "time": time_metrics,
+                        "reward": reward_metrics,
+                    },
+                    async_op=True,
+                )
 
     async def stop(self):
         if self._interact_task is not None and not self._interact_task.done():
@@ -453,22 +625,8 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
 
         self.cfg = cfg
 
-        self.data_loader, self.val_loader = self.build_dataloader()
-
         # Training step counter for validation interval
         self._training_step = 0
-
-        assert (
-            self.cfg.actor.global_batch_size
-            % (self.cfg.actor.micro_batch_size * self._world_size)
-            == 0
-        ), "global_batch_size is not divisible by micro_batch_size * world_size"
-
-        self.gradient_accumulation = (
-            self.cfg.actor.global_batch_size
-            // self.cfg.actor.micro_batch_size
-            // self._world_size
-        )
 
     def model_provider_func(self):
         reward_cls = get_reward_model_class(self.cfg.actor.model.model_type)
@@ -482,6 +640,7 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
     def init_worker(self):
         """Initialize model and optimizer using base class."""
 
+        self.data_loader, self.val_loader = self.build_dataloader()
         if self.data_loader is None:
             raise ValueError("data_loader is not set")
         self.data_iter = iter(self.data_loader)
@@ -555,6 +714,18 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
     def run_training(self) -> dict[str, float]:
         """Run one training iteration with gradient accumulation."""
         self.model.train()
+
+        assert (
+            self.cfg.actor.global_batch_size
+            % (self.cfg.actor.micro_batch_size * self._world_size)
+            == 0
+        ), "global_batch_size is not divisible by micro_batch_size * world_size"
+
+        self.gradient_accumulation = (
+            self.cfg.actor.global_batch_size
+            // self.cfg.actor.micro_batch_size
+            // self._world_size
+        )
 
         metrics = {}
 
@@ -653,8 +824,3 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
         val_metrics = all_reduce_dict(val_metrics, op=torch.distributed.ReduceOp.AVG)
 
         return val_metrics
-
-    def get_max_steps_per_epoch(self):
-        if self.data_loader is not None:
-            return max(1, len(self.data_loader) // self.gradient_accumulation)
-        return 0

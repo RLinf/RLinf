@@ -13,9 +13,9 @@
 # limitations under the License.
 
 import asyncio
-import gc
-from collections import defaultdict
-from typing import Any, Literal
+from collections import defaultdict, deque
+from dataclasses import dataclass
+from typing import Any, Literal, Optional
 
 import numpy as np
 import torch
@@ -42,6 +42,27 @@ from rlinf.utils.nested_dict_process import (
 )
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.history_manager import HistoryManager
+from rlinf.workers.env.reward_postprocess import (
+    compute_reward_assign_lengths,
+    normalize_total_reward,
+)
+
+
+@dataclass
+class PendingRolloutStep:
+    stage_id: int
+    env_output: EnvOutput
+    rollout_result: RolloutResult
+    reward_required: bool
+    append_rollout_payload: bool = True
+    history_lengths: Optional[dict[str, list[int]]] = None
+    curr_obs: Optional[dict[str, Any]] = None
+    next_obs: Optional[dict[str, Any]] = None
+    save_flags: Optional[torch.Tensor] = None
+    intervene_actions: Optional[torch.Tensor] = None
+    intervene_flags: Optional[torch.Tensor] = None
+    epoch: Optional[int] = None
+    chunk_step_idx: Optional[int] = None
 
 
 class EnvWorker(Worker):
@@ -83,6 +104,21 @@ class EnvWorker(Worker):
         if self.use_external_reward_model:
             self.reward_weight = self.cfg.reward.get("reward_weight", 1.0)
             self.env_reward_weight = self.cfg.reward.get("env_reward_weight", 0.0)
+        self.normalize_total_reward = bool(
+            self.cfg.get("reward", {}).get("normalize_total_reward", False)
+        )
+        self.reward_normalization_mode = self.cfg.get("reward", {}).get(
+            "normalization_mode", "batch_zscore"
+        )
+        self.reward_normalization_eps = float(
+            self.cfg.get("reward", {}).get("normalization_eps", 1.0e-6)
+        )
+        self.reward_pending_step_window = int(
+            self.cfg.reward.get("pending_step_window", 0)
+        )
+        self.use_history_reward_pipeline = (
+            self.reward_mode == "history_buffer" and self.use_external_reward_model
+        )
 
         # Env configurations
         self.only_eval = getattr(self.cfg.runner, "only_eval", False)
@@ -162,12 +198,11 @@ class EnvWorker(Worker):
 
         if not self.only_eval:
             self._init_env()
-            if self.reward_mode == "history_buffer":
+            if self.use_history_reward_pipeline:
                 self.train_history_managers = [
                     HistoryManager(self.cfg.reward, self.train_num_envs_per_stage)
                     for _ in range(self.stage_num)
                 ]
-                self.history_lengths = [{} for _ in range(self.stage_num)]
 
     def update_env_cfg(self):
         if not self.only_eval:
@@ -408,9 +443,13 @@ class EnvWorker(Worker):
         )
         env_info = {}
 
-        obs_list, chunk_rewards, chunk_terminations, chunk_truncations, infos_list = (
-            self.env_list[stage_id].chunk_step(chunk_actions)
-        )
+        (
+            obs_list,
+            chunk_rewards,
+            chunk_terminations,
+            chunk_truncations,
+            infos_list,
+        ) = self.env_list[stage_id].chunk_step(chunk_actions)
         if isinstance(obs_list, (list, tuple)):
             extracted_obs = obs_list[-1] if obs_list else None
         if isinstance(infos_list, (list, tuple)):
@@ -419,11 +458,9 @@ class EnvWorker(Worker):
         final_obs = (
             self._build_chunk_final_obs(obs_list, infos_list)
             if self.use_external_reward_model
-            else (
-                infos["final_observation"]
-                if isinstance(infos, dict) and "final_observation" in infos
-                else None
-            )
+            else infos["final_observation"]
+            if isinstance(infos, dict) and "final_observation" in infos
+            else None
         )
         if not self.cfg.env.train.auto_reset:
             if self.cfg.env.train.ignore_terminations:
@@ -455,10 +492,10 @@ class EnvWorker(Worker):
             obs=extracted_obs,
             final_obs=final_obs,
             rewards=chunk_rewards,
-            env_infos=infos if isinstance(infos, dict) else None,
             dones=chunk_dones,
             terminations=chunk_terminations,
             truncations=chunk_truncations,
+            env_infos=infos if isinstance(infos, dict) else None,
             intervene_actions=intervene_actions,
             intervene_flags=intervene_flags,
         )
@@ -492,20 +529,15 @@ class EnvWorker(Worker):
         final_obs = (
             self._build_chunk_final_obs(obs_list, infos_list)
             if self.use_external_reward_model
-            else (
-                infos["final_observation"]
-                if isinstance(infos, dict) and "final_observation" in infos
-                else None
-            )
+            else infos["final_observation"]
+            if isinstance(infos, dict) and "final_observation" in infos
+            else None
         )
 
         current_dones = chunk_dones[:, -1]  # [num_envs] bool
-        if self.cfg.env.eval.auto_reset:
-            newly_done = current_dones
-        else:
-            prev = self.eval_prev_done[stage_id].to(current_dones.device)
-            newly_done = current_dones & ~prev
-            self.eval_prev_done[stage_id] = prev | current_dones
+        prev = self.eval_prev_done[stage_id]
+        newly_done = current_dones & ~prev.to(current_dones.device)
+        self.eval_prev_done[stage_id] = current_dones.clone()
 
         if newly_done.any():
             if "final_info" in infos:
@@ -709,6 +741,53 @@ class EnvWorker(Worker):
         adjusted_rewards[:, -1] += self.cfg.algorithm.gamma * final_values
         return adjusted_rewards
 
+    def _compute_reward_assign_lengths(
+        self,
+        stage_id: int,
+        history_lengths: dict[str, list[int]] | None,
+        batch_size: int,
+    ) -> torch.Tensor:
+        return compute_reward_assign_lengths(
+            history_lengths,
+            num_envs=batch_size,
+            current_rollout_length=len(self.rollout_results[stage_id].rewards),
+        )
+
+    @staticmethod
+    def _stack_aligned_reward_field(
+        field_list: list[torch.Tensor],
+    ) -> torch.Tensor | None:
+        if not field_list:
+            return None
+        return torch.stack(field_list, dim=0).cpu().contiguous()
+
+    @staticmethod
+    def _overwrite_reward_list(
+        rollout_result: EmbodiedRolloutResult,
+        rewards: torch.Tensor,
+    ) -> None:
+        rollout_result.rewards = [step.cpu().contiguous() for step in rewards.unbind(0)]
+
+    def _apply_reward_postprocess(
+        self,
+        rollout_result: EmbodiedRolloutResult,
+    ) -> None:
+        if not rollout_result.rewards:
+            return
+
+        reward_tensor = self._stack_aligned_reward_field(rollout_result.rewards)
+        if reward_tensor is None:
+            return
+
+        if self.normalize_total_reward:
+            reward_tensor = normalize_total_reward(
+                reward_tensor,
+                mode=self.reward_normalization_mode,
+                eps=self.reward_normalization_eps,
+            ).to(dtype=reward_tensor.dtype)
+
+        self._overwrite_reward_list(rollout_result, reward_tensor)
+
     def finish_rollout(self, mode="train"):
         # reset
         if mode == "train":
@@ -791,15 +870,12 @@ class EnvWorker(Worker):
             reward_results.append(rewards)
         return torch.cat(reward_results, dim=0)
 
-    @Worker.timer("get_reward_model_output")
-    def get_reward_model_output(
+    def build_reward_request(
         self,
         env_output: EnvOutput,
-        send_channel: Channel,
-        recv_channel: Channel,
         stage_id: int | None = None,
         last_run: bool = False,
-    ):
+    ) -> tuple[dict[str, Any] | None, dict[str, list[int]] | None]:
         if self.reward_mode in {"per_step", "history_buffer"}:
             observations = (
                 env_output.final_obs
@@ -809,12 +885,13 @@ class EnvWorker(Worker):
         elif self.reward_mode == "terminal" and env_output.final_obs is not None:
             observations = env_output.final_obs
         else:
-            return None
+            return None, None
         reward_input = dict(observations)
         if env_output.env_infos is not None:
             reward_input["env_infos"] = self._select_reward_env_infos(
                 env_output.env_infos
             )
+        history_lengths = None
 
         dones = env_output.dones
         if dones is not None and getattr(dones, "ndim", 0) > 1:
@@ -830,7 +907,6 @@ class EnvWorker(Worker):
                 dones=dones
             )
             reward_input["history_input"] = history_input
-            self.history_lengths[stage_id] = dict(history_lengths)
 
         if last_run:
             reward_input.update(
@@ -840,13 +916,7 @@ class EnvWorker(Worker):
                     )
                 }
             )
-        self.send_reward_input(send_channel=send_channel, reward_input=reward_input)
-        reward_output = self.recv_reward_results(recv_channel=recv_channel)
-        if self.reward_mode != "terminal" or reward_output is None:
-            return reward_output
-        return self._scatter_terminal_reward_output(
-            env_output=env_output, reward_output=reward_output
-        )
+        return reward_input, history_lengths
 
     def _select_reward_env_infos(self, env_infos: dict[str, Any]) -> dict[str, Any]:
         reward_env_infos = {}
@@ -855,6 +925,278 @@ class EnvWorker(Worker):
                 continue
             reward_env_infos[key] = clone_nested_to_cpu(env_infos[key])
         return reward_env_infos
+
+    def send_reward_request(
+        self,
+        env_output: EnvOutput,
+        send_channel: Channel,
+        stage_id: int | None = None,
+        last_run: bool = False,
+        epoch: int | None = None,
+        chunk_step_idx: int | None = None,
+    ) -> tuple[bool, dict[str, list[int]] | None]:
+        with self.worker_timer("reward_request_build"):
+            reward_input, history_lengths = self.build_reward_request(
+                env_output=env_output,
+                stage_id=stage_id,
+                last_run=last_run,
+            )
+        if reward_input is None:
+            return False, None
+
+        with self.worker_timer("reward_request_send"):
+            self.send_reward_input(send_channel=send_channel, reward_input=reward_input)
+        return True, history_lengths
+
+    def recv_pending_reward_output(
+        self,
+        recv_channel: Channel,
+        env_output: EnvOutput,
+        pending_step: PendingRolloutStep | None = None,
+    ) -> torch.Tensor | None:
+        with self.worker_timer("reward_output_wait"):
+            reward_output = self.recv_reward_results(recv_channel=recv_channel)
+        if self.reward_mode != "terminal" or reward_output is None:
+            return reward_output
+
+        with self.worker_timer("reward_output_postprocess"):
+            return self._scatter_terminal_reward_output(
+                env_output=env_output, reward_output=reward_output
+            )
+
+    @staticmethod
+    def _apply_intervene_to_rollout_result(
+        rollout_result: RolloutResult,
+        intervene_actions: torch.Tensor,
+        intervene_flags: torch.Tensor,
+    ) -> None:
+        if rollout_result.actions is None:
+            return
+
+        last_action = rollout_result.actions
+        assert last_action.dim() == 2, f"Expected 2D tensor, got {last_action.shape=}"
+        assert intervene_actions.dim() == 2, (
+            f"Expected 2D tensor, got {intervene_actions.shape=}"
+        )
+
+        if intervene_flags.dim() == 1:
+            intervene_flags = intervene_flags[:, None]
+        assert intervene_flags.dim() == 2, (
+            f"Expected 2D tensor, got {intervene_flags.shape=}"
+        )
+
+        bsz, num_action_chunks = intervene_flags.shape[:2]
+        flags = intervene_flags.reshape(-1, num_action_chunks, 1)
+        corrected_actions = intervene_actions.reshape(
+            bsz, num_action_chunks, -1
+        ) * flags + last_action.reshape(bsz, num_action_chunks, -1) * (~flags)
+        rollout_result.actions = corrected_actions.reshape(bsz, -1).cpu().contiguous()
+
+        if rollout_result.forward_inputs:
+            if "action" in rollout_result.forward_inputs:
+                rollout_result.forward_inputs["action"] = (
+                    rollout_result.actions.cpu().contiguous()
+                )
+            rollout_result.forward_inputs.pop("model_action", None)
+
+    def _register_pending_logical_step(self, pending_step: PendingRolloutStep) -> None:
+        if pending_step.append_rollout_payload:
+            self._latest_pending_step_by_stage[pending_step.stage_id] = pending_step
+
+    def _clear_pending_logical_step_if_match(
+        self, pending_step: PendingRolloutStep
+    ) -> None:
+        latest_pending_steps = getattr(self, "_latest_pending_step_by_stage", None)
+        if latest_pending_steps is None:
+            return
+        latest_pending_step = latest_pending_steps[pending_step.stage_id]
+        if latest_pending_step is pending_step:
+            latest_pending_steps[pending_step.stage_id] = None
+
+    def update_last_logical_step(
+        self,
+        stage_id: int,
+        intervene_actions: torch.Tensor,
+        intervene_flags: torch.Tensor,
+    ) -> None:
+        latest_pending_step = self._latest_pending_step_by_stage[stage_id]
+        if latest_pending_step is None:
+            self.rollout_results[stage_id].update_last_actions(
+                intervene_actions,
+                intervene_flags,
+            )
+            return
+
+        self._apply_intervene_to_rollout_result(
+            latest_pending_step.rollout_result,
+            intervene_actions,
+            intervene_flags,
+        )
+        latest_pending_step.intervene_actions = intervene_actions.cpu().contiguous()
+        latest_pending_step.intervene_flags = intervene_flags.cpu().contiguous()
+
+    def finalize_pending_rollout_step(
+        self,
+        pending_step: PendingRolloutStep,
+        reward_model_output: torch.Tensor | None,
+        env_metrics: dict[str, list],
+    ) -> None:
+        if reward_model_output is not None:
+            env_metrics["reward_model_output"].append(
+                reward_model_output.detach().float().reshape(-1).cpu()
+            )
+
+        rewards = self.compute_bootstrap_rewards(
+            pending_step.env_output,
+            pending_step.rollout_result.bootstrap_values,
+            reward_model_output,
+        )
+        append_rollout_payload = pending_step.append_rollout_payload
+        chunk_step_result = ChunkStepResult(
+            actions=(
+                pending_step.rollout_result.forward_inputs.get(
+                    "action", pending_step.rollout_result.actions
+                )
+                if append_rollout_payload
+                else None
+            ),
+            prev_logprobs=pending_step.rollout_result.prev_logprobs
+            if self.collect_prev_infos and append_rollout_payload
+            else None,
+            prev_values=pending_step.rollout_result.prev_values
+            if self.collect_prev_infos
+            else None,
+            forward_inputs=(
+                pending_step.rollout_result.forward_inputs
+                if append_rollout_payload
+                else {}
+            ),
+            versions=(
+                pending_step.rollout_result.versions if append_rollout_payload else None
+            ),
+            dones=pending_step.env_output.dones,
+            truncations=pending_step.env_output.truncations,
+            terminations=pending_step.env_output.terminations,
+            rewards=rewards,
+        )
+        self.rollout_results[pending_step.stage_id].append_step_result(
+            chunk_step_result
+        )
+        if chunk_step_result.rewards is not None:
+            batch_size = chunk_step_result.rewards.shape[0]
+            reward_assign_lengths = self._compute_reward_assign_lengths(
+                pending_step.stage_id,
+                pending_step.history_lengths,
+                batch_size,
+            )
+            self.rollout_results[pending_step.stage_id].reward_assign_lengths.append(
+                reward_assign_lengths
+            )
+            reward_dones = pending_step.env_output.dones
+            if reward_dones is None:
+                reward_dones = torch.zeros_like(
+                    chunk_step_result.rewards, dtype=torch.bool
+                )
+            self.rollout_results[pending_step.stage_id].reward_dones.append(
+                reward_dones.cpu().contiguous()
+            )
+        if (
+            self.reward_mode == "history_buffer"
+            and self.history_reward_assign
+            and reward_model_output is not None
+        ):
+            self.assign_history_reward(
+                pending_step.stage_id,
+                reward_model_output,
+                pending_step.history_lengths,
+            )
+        if pending_step.save_flags is not None:
+            self.rollout_results[pending_step.stage_id].mark_last_step_with_flags(
+                pending_step.save_flags
+            )
+        if (
+            pending_step.intervene_actions is not None
+            and pending_step.intervene_flags is not None
+        ):
+            self.rollout_results[pending_step.stage_id].update_last_actions(
+                pending_step.intervene_actions,
+                pending_step.intervene_flags,
+            )
+        if pending_step.curr_obs is not None and pending_step.next_obs is not None:
+            self.rollout_results[pending_step.stage_id].append_transitions(
+                pending_step.curr_obs,
+                pending_step.next_obs,
+            )
+
+    def drain_pending_rollout_steps(
+        self,
+        pending_steps: deque[PendingRolloutStep],
+        recv_channel: Channel,
+        env_metrics: dict[str, list],
+        *,
+        drain_all: bool = False,
+        pending_reward_count: int = 0,
+    ) -> int:
+        while pending_steps:
+            next_step = pending_steps[0]
+            if not drain_all and next_step.reward_required:
+                if pending_reward_count < self.reward_pending_step_window:
+                    break
+                env_metrics["reward_pending_window_full"].append(
+                    torch.tensor([1.0], dtype=torch.float32)
+                )
+
+            pending_step = pending_steps.popleft()
+            reward_model_output = None
+            if pending_step.reward_required:
+                reward_model_output = self.recv_pending_reward_output(
+                    recv_channel=recv_channel,
+                    env_output=pending_step.env_output,
+                    pending_step=pending_step,
+                )
+                pending_reward_count -= 1
+                env_metrics["reward_pending_count"].append(
+                    torch.tensor([pending_reward_count], dtype=torch.float32)
+                )
+
+            self.finalize_pending_rollout_step(
+                pending_step=pending_step,
+                reward_model_output=reward_model_output,
+                env_metrics=env_metrics,
+            )
+            self._clear_pending_logical_step_if_match(pending_step)
+
+        return pending_reward_count
+
+    def assign_history_reward(
+        self,
+        stage_id: int,
+        reward_model_output: torch.Tensor,
+        history_lengths: dict[str, list[int]] | None = None,
+    ):
+        if history_lengths is None:
+            return
+        reward_assign_lengths = [
+            min(
+                history_buffer_length[env_id]
+                for history_buffer_length in history_lengths.values()
+            )
+            for env_id in range(self.train_num_envs_per_stage)
+        ]
+        rollout_rewards = self.rollout_results[stage_id].rewards
+        rollout_rewards_length = len(rollout_rewards)
+        reward_assign_lengths = [
+            min(reward_assign_length, rollout_rewards_length)
+            for reward_assign_length in reward_assign_lengths
+        ]
+        if not any(reward_assign_lengths):
+            return
+        reward = (self.reward_weight * reward_model_output).to(
+            rollout_rewards[-1].dtype
+        )
+        for env_id, reward_assign_length in enumerate(reward_assign_lengths):
+            for reward_assign_step in range(2, reward_assign_length + 1):
+                rollout_rewards[-reward_assign_step][env_id] += reward[env_id]
 
     def _scatter_terminal_reward_output(
         self,
@@ -874,29 +1216,6 @@ class EnvWorker(Worker):
             reward_output[done_envs].reshape(-1).to(sparse_rewards.dtype)
         )
         return sparse_rewards
-
-    def assign_history_reward(self, stage_id: int, reward_model_output: torch.Tensor):
-        reward_assign_lengths = [
-            min(
-                history_buffer_length[env_id]
-                for history_buffer_length in self.history_lengths[stage_id].values()
-            )
-            for env_id in range(self.train_num_envs_per_stage)
-        ]
-        rollout_rewards = self.rollout_results[stage_id].rewards
-        rollout_rewards_length = len(rollout_rewards)
-        reward_assign_lengths = [
-            min(reward_assign_length, rollout_rewards_length)
-            for reward_assign_length in reward_assign_lengths
-        ]
-        if not any(reward_assign_lengths):
-            return
-        reward = (self.reward_weight * reward_model_output).to(
-            rollout_rewards[-1].dtype
-        )
-        for env_id, reward_assign_length in enumerate(reward_assign_lengths):
-            for reward_assign_step in range(2, reward_assign_length + 1):
-                rollout_rewards[-reward_assign_step][env_id] += reward[env_id]
 
     def bootstrap_step(self) -> list[EnvOutput]:
         def get_zero_dones() -> torch.Tensor:
@@ -920,11 +1239,9 @@ class EnvWorker(Worker):
                     dones=dones,
                     terminations=terminations,
                     truncations=truncations,
-                    final_obs=(
-                        infos["final_observation"]
-                        if "final_observation" in infos
-                        else None
-                    ),
+                    final_obs=infos["final_observation"]
+                    if "final_observation" in infos
+                    else None,
                     intervene_actions=None,
                     intervene_flags=None,
                 )
@@ -1003,14 +1320,12 @@ class EnvWorker(Worker):
     async def send_rollout_trajectories(
         self, rollout_result: EmbodiedRolloutResult, channel: Channel
     ):
-        trajectories: list[Trajectory] = rollout_result.to_splited_trajectories(
+        self._apply_reward_postprocess(rollout_result)
+        trajectories: Trajectory = rollout_result.to_splited_trajectories(
             self.actor_split_num
         )
-        rollout_result.clear()
         for trajectory in trajectories:
             channel.put(trajectory, async_op=True)
-        del trajectories
-        gc.collect()
 
     @Worker.timer("run_interact_once")
     async def _run_interact_once(
@@ -1031,6 +1346,10 @@ class EnvWorker(Worker):
         env_metrics = defaultdict(list)
 
         for epoch in range(self.rollout_epoch):
+            pending_steps: deque[PendingRolloutStep] = deque()
+            self._latest_pending_step_by_stage = [None] * self.stage_num
+            pending_reward_count = 0
+            no_pending_reward = self.reward_pending_step_window == 0
             if epoch == 0 and self._prefetched_train_bootstrap is not None:
                 env_outputs = self._prefetched_train_bootstrap
                 self._prefetched_train_bootstrap = None
@@ -1043,66 +1362,144 @@ class EnvWorker(Worker):
                         await asyncio.sleep(0)
 
                     env_output = env_outputs[stage_id]
-                    curr_obs = env_output.obs
+                    curr_obs = (
+                        copy_dict_tensor(env_output.obs)
+                        if self.collect_transitions
+                        else None
+                    )
                     if env_output.intervene_actions is not None:
-                        self.rollout_results[stage_id].update_last_actions(
+                        self.update_last_logical_step(
+                            stage_id,
                             env_output.intervene_actions,
                             env_output.intervene_flags,
                         )
 
-                    reward_model_output = None
-                    if reward_channel is not None and chunk_step_idx != 0:
-                        reward_model_output = self.get_reward_model_output(
-                            env_output,
-                            send_channel=reward_channel,
-                            recv_channel=input_channel,
-                            stage_id=stage_id,
-                        )
-                        if reward_model_output is not None:
-                            env_metrics["reward_model_output"].append(
-                                reward_model_output.detach().float().reshape(-1).cpu()
+                    reward_required = False
+                    history_lengths = None
+                    immediate_reward_model_output = None
+                    if chunk_step_idx != 0:
+                        if reward_channel is not None:
+                            reward_required, history_lengths = self.send_reward_request(
+                                env_output=env_output,
+                                send_channel=reward_channel,
+                                stage_id=stage_id,
+                                epoch=epoch,
+                                chunk_step_idx=chunk_step_idx,
                             )
+                            if reward_required:
+                                if no_pending_reward:
+                                    immediate_reward_model_output = (
+                                        self.recv_pending_reward_output(
+                                            recv_channel=input_channel,
+                                            env_output=env_output,
+                                        )
+                                    )
+                                    env_metrics["reward_pending_count"].append(
+                                        torch.tensor([0.0], dtype=torch.float32)
+                                    )
+                                else:
+                                    pending_reward_count += 1
+                    if no_pending_reward and chunk_step_idx != 0:
+                        env_batch = env_output.to_dict()
+                        self.send_env_batch(
+                            rollout_channel,
+                            {
+                                "obs": env_batch["obs"],
+                                "final_obs": env_batch["final_obs"],
+                            },
+                        )
 
                     rollout_result = self.recv_rollout_results(
                         input_channel, mode="train"
                     )
-                    rewards = self.compute_bootstrap_rewards(
-                        env_output, rollout_result.bootstrap_values, reward_model_output
-                    )
-                    chunk_step_result = ChunkStepResult(
-                        actions=rollout_result.forward_inputs.get("action", None),
-                        prev_logprobs=(
-                            rollout_result.prev_logprobs
-                            if self.collect_prev_infos
-                            else None
-                        ),
-                        prev_values=(
-                            rollout_result.prev_values
-                            if self.collect_prev_infos
-                            else None
-                        ),
-                        forward_inputs=rollout_result.forward_inputs,
-                        versions=rollout_result.versions,
-                        dones=env_output.dones,
-                        truncations=env_output.truncations,
-                        terminations=env_output.terminations,
-                        rewards=rewards,
-                    )
-                    self.rollout_results[stage_id].append_step_result(chunk_step_result)
-                    if (
-                        self.reward_mode == "history_buffer"
-                        and self.history_reward_assign
-                        and reward_model_output is not None
-                    ):
-                        self.assign_history_reward(stage_id, reward_model_output)
-                    if rollout_result.save_flags is not None:
-                        self.rollout_results[stage_id].mark_last_step_with_flags(
-                            rollout_result.save_flags
-                        )
-
-                    env_output, env_info = self.env_interact_step(
+                    next_env_output, env_info = self.env_interact_step(
                         rollout_result.actions, stage_id
                     )
+                    if not no_pending_reward:
+                        env_batch = next_env_output.to_dict()
+                        self.send_env_batch(
+                            rollout_channel,
+                            {
+                                "obs": env_batch["obs"],
+                                "final_obs": env_batch["final_obs"],
+                            },
+                        )
+                    next_obs = None
+                    if self.collect_transitions:
+                        next_obs = copy_dict_tensor(
+                            next_env_output.final_obs
+                            if next_env_output.dones.any()
+                            and self.cfg.env.train.auto_reset
+                            else next_env_output.obs
+                        )
+
+                    pending_step = PendingRolloutStep(
+                        stage_id=stage_id,
+                        env_output=env_output,
+                        rollout_result=rollout_result,
+                        reward_required=reward_required,
+                        history_lengths=history_lengths,
+                        curr_obs=curr_obs,
+                        next_obs=next_obs,
+                        save_flags=rollout_result.save_flags,
+                        epoch=epoch,
+                        chunk_step_idx=chunk_step_idx,
+                    )
+                    if no_pending_reward and reward_required:
+                        self.finalize_pending_rollout_step(
+                            pending_step=pending_step,
+                            reward_model_output=immediate_reward_model_output,
+                            env_metrics=env_metrics,
+                        )
+                    else:
+                        pending_steps.append(pending_step)
+                        self._register_pending_logical_step(pending_step)
+                        pending_reward_count = self.drain_pending_rollout_steps(
+                            pending_steps,
+                            input_channel,
+                            env_metrics,
+                            pending_reward_count=pending_reward_count,
+                        )
+
+                    env_outputs[stage_id] = next_env_output
+                    self.record_env_metrics(env_metrics, env_info, epoch)
+
+            for stage_id in range(self.stage_num):
+                env_output = env_outputs[stage_id]
+                if env_output.intervene_actions is not None:
+                    self.update_last_logical_step(
+                        stage_id,
+                        env_output.intervene_actions,
+                        env_output.intervene_flags,
+                    )
+
+                reward_required = False
+                history_lengths = None
+                immediate_reward_model_output = None
+                last_run = epoch == self.rollout_epoch - 1
+                if reward_channel is not None:
+                    reward_required, history_lengths = self.send_reward_request(
+                        env_output=env_output,
+                        send_channel=reward_channel,
+                        stage_id=stage_id,
+                        last_run=last_run,
+                        epoch=epoch,
+                        chunk_step_idx=self.n_train_chunk_steps,
+                    )
+                    if reward_required:
+                        if no_pending_reward:
+                            immediate_reward_model_output = (
+                                self.recv_pending_reward_output(
+                                    recv_channel=input_channel,
+                                    env_output=env_output,
+                                )
+                            )
+                            env_metrics["reward_pending_count"].append(
+                                torch.tensor([0.0], dtype=torch.float32)
+                            )
+                        else:
+                            pending_reward_count += 1
+                if no_pending_reward:
                     env_batch = env_output.to_dict()
                     self.send_env_batch(
                         rollout_channel,
@@ -1111,61 +1508,42 @@ class EnvWorker(Worker):
                             "final_obs": env_batch["final_obs"],
                         },
                     )
-                    if self.collect_transitions:
-                        next_obs = (
-                            env_output.final_obs
-                            if env_output.dones.any() and self.cfg.env.train.auto_reset
-                            else env_output.obs
-                        )
-                        self.rollout_results[stage_id].append_transitions(
-                            curr_obs, next_obs
-                        )
-
-                    env_outputs[stage_id] = env_output
-                    self.record_env_metrics(env_metrics, env_info, epoch)
-
-            for stage_id in range(self.stage_num):
-                env_output = env_outputs[stage_id]
-                if env_output.intervene_actions is not None:
-                    self.rollout_results[stage_id].update_last_actions(
-                        env_output.intervene_actions,
-                        env_output.intervene_flags,
-                    )
-
-                reward_model_output = None
-                if reward_channel is not None:
-                    last_run = epoch == self.rollout_epoch - 1
-                    reward_model_output = self.get_reward_model_output(
-                        env_output,
-                        send_channel=reward_channel,
-                        recv_channel=input_channel,
-                        stage_id=stage_id,
-                        last_run=last_run,
-                    )
-                    if reward_model_output is not None:
-                        env_metrics["reward_model_output"].append(
-                            reward_model_output.detach().float().reshape(-1).cpu()
-                        )
                 rollout_result = self.recv_rollout_results(input_channel, mode="train")
-                rewards = self.compute_bootstrap_rewards(
-                    env_output, rollout_result.bootstrap_values, reward_model_output
+                pending_step = PendingRolloutStep(
+                    stage_id=stage_id,
+                    env_output=env_output,
+                    rollout_result=rollout_result,
+                    reward_required=reward_required,
+                    append_rollout_payload=False,
+                    history_lengths=history_lengths,
+                    epoch=epoch,
+                    chunk_step_idx=self.n_train_chunk_steps,
                 )
-                chunk_step_result = ChunkStepResult(
-                    prev_values=(
-                        rollout_result.prev_values if self.collect_prev_infos else None
-                    ),
-                    dones=env_output.dones,
-                    truncations=env_output.truncations,
-                    terminations=env_output.terminations,
-                    rewards=rewards,
-                )
-                self.rollout_results[stage_id].append_step_result(chunk_step_result)
-                if (
-                    self.reward_mode == "history_buffer"
-                    and self.history_reward_assign
-                    and reward_model_output is not None
-                ):
-                    self.assign_history_reward(stage_id, reward_model_output)
+                if no_pending_reward and reward_required:
+                    self.finalize_pending_rollout_step(
+                        pending_step=pending_step,
+                        reward_model_output=immediate_reward_model_output,
+                        env_metrics=env_metrics,
+                    )
+                else:
+                    pending_steps.append(pending_step)
+                    pending_reward_count = self.drain_pending_rollout_steps(
+                        pending_steps,
+                        input_channel,
+                        env_metrics,
+                        pending_reward_count=pending_reward_count,
+                    )
+
+            pending_reward_count = self.drain_pending_rollout_steps(
+                pending_steps,
+                input_channel,
+                env_metrics,
+                drain_all=True,
+                pending_reward_count=pending_reward_count,
+            )
+            assert pending_reward_count == 0 and not pending_steps, (
+                "Pending reward slots must be fully drained before finishing the rollout."
+            )
 
             self.store_last_obs_and_intervened_info(env_outputs)
             self.finish_rollout()
@@ -1175,9 +1553,6 @@ class EnvWorker(Worker):
                 await self.send_rollout_trajectories(
                     self.rollout_results[stage_id], actor_channel
                 )
-            # reduce memory peak
-            self.rollout_results = []
-            gc.collect()
 
         for key, value in env_metrics.items():
             env_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
@@ -1219,11 +1594,9 @@ class EnvWorker(Worker):
                     extracted_obs, infos = self.eval_env_list[stage_id].reset()
                     env_output = EnvOutput(
                         obs=extracted_obs,
-                        final_obs=(
-                            infos["final_observation"]
-                            if "final_observation" in infos
-                            else None
-                        ),
+                        final_obs=infos["final_observation"]
+                        if "final_observation" in infos
+                        else None,
                     )
                     env_batch = env_output.to_dict()
                     self.send_env_batch(
