@@ -359,12 +359,12 @@ class MegatronModelManager:
         # Get Megatron Optimizer
         optimizer = get_megatron_optimizer(
             config,
-            self.model,
+            model,
             config_overrides=config_overrides,
             use_gloo_process_groups=args.enable_gloo_process_groups,
         )
         # Get Megatron Optimizer Param Scheduler
-        lr_scheduler = get_optimizer_param_scheduler(self.optimizer)
+        lr_scheduler = get_optimizer_param_scheduler(optimizer)
 
         return model, optimizer, lr_scheduler
 
