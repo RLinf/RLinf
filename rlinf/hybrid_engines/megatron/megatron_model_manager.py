@@ -263,92 +263,9 @@ class MegatronModelManager:
         """Setup model and optimizer."""
         set_megatron_args(self._cfg)
         if self.mbridge:
-            # Init megatron bridge
-            from megatron.bridge import AutoBridge
-            from megatron.bridge.training.config import DistributedDataParallelConfig
-
-            self.bridge = AutoBridge.from_hf_pretrained(
-                self._cfg.megatron.load,
-                trust_remote_code=True,
+            self.model, self.optimizer, self.lr_scheduler = (
+                self.setup_mbridge_model_and_optimizer()
             )
-            provider = self.bridge.to_megatron_provider(load_weights=True)
-            from dataclasses import fields
-
-            provider_field_names = {f.name for f in fields(type(provider))}
-            mrope_section = getattr(provider, "mrope_section", [16, 24, 24])
-            position_embedding_type = getattr(
-                provider, "position_embedding_type", "mrope"
-            )
-
-            # Set the provider field with the RLinf transformer_config
-            for name in provider_field_names:
-                if hasattr(self.transformer_config, name):
-                    setattr(provider, name, getattr(self.transformer_config, name))
-
-            # Preserve HF/provider-specific multimodal rope values.
-            provider.mrope_section = mrope_section
-            provider.position_embedding_type = position_embedding_type
-            if hasattr(provider, "vision_config"):
-                provider.vision_config._attn_implementation = "flash_attention_2"
-
-            # the Mbridge run the qwen3-vl-moe model will freeze the language model and vision model by default.
-            provider.freeze_language_model = getattr(
-                self._cfg.model, "freeze_language_model", False
-            )
-            provider.freeze_vision_model = getattr(
-                self._cfg.model, "freeze_vision_model", False
-            )
-            provider.freeze_vision_projection = getattr(
-                self._cfg.model, "freeze_vision_projection", False
-            )
-
-            if (
-                getattr(self._cfg.model, "decoder_first_pipeline_num_layers", None)
-                is not None
-            ):
-                provider.num_layers_in_first_pipeline_stage = (
-                    self._cfg.model.decoder_first_pipeline_num_layers
-                )
-            if (
-                getattr(self._cfg.model, "decoder_last_pipeline_num_layers", None)
-                is not None
-            ):
-                provider.num_layers_in_last_pipeline_stage = (
-                    self._cfg.model.decoder_last_pipeline_num_layers
-                )
-
-            if self._rank == 0:
-                self._logger.info(f"Mbridge Set Provider: {provider}")
-
-            provider.finalize()
-            self.provider = provider
-            ddp_config = DistributedDataParallelConfig(
-                use_distributed_optimizer=self._cfg.optim.use_distributed_optimizer,
-                overlap_grad_reduce=self._cfg.optim.get("overlap_grad_reduce", False),
-                overlap_param_gather=self._cfg.optim.get("overlap_param_gather", False),
-                check_for_nan_in_grad=True,
-                grad_reduce_in_fp32=True,
-            )
-            ddp_config.finalize()
-
-            # Get Megatron Model
-            self.model = self.provider.provide_distributed_model(ddp_config=ddp_config)
-
-            args = get_args()
-            from megatron.training.training import get_megatron_optimizer_config
-
-            config, config_overrides = get_megatron_optimizer_config(args)
-
-            # Get Megatron Optimizer
-            self.optimizer = get_megatron_optimizer(
-                config,
-                self.model,
-                config_overrides=config_overrides,
-                use_gloo_process_groups=args.enable_gloo_process_groups,
-            )
-            # Get Megatron Optimizer Param Scheduler
-            self.lr_scheduler = get_optimizer_param_scheduler(self.optimizer)
-
         else:
             # if it is the critic model, then we must set the strict parameter
             # of load_checkpoint to false, because we replaced
@@ -363,6 +280,93 @@ class MegatronModelManager:
                         checkpointing_context=self.checkpoint_context,
                     )
                 )
+
+    def setup_mbridge_model_and_optimizer(self):
+        # Init megatron bridge
+        from megatron.bridge import AutoBridge
+        from megatron.bridge.training.config import DistributedDataParallelConfig
+
+        self.bridge = AutoBridge.from_hf_pretrained(
+            self._cfg.megatron.load,
+            trust_remote_code=True,
+        )
+        provider = self.bridge.to_megatron_provider(load_weights=True)
+        from dataclasses import fields
+
+        provider_field_names = {f.name for f in fields(type(provider))}
+        mrope_section = getattr(provider, "mrope_section", [16, 24, 24])
+        position_embedding_type = getattr(provider, "position_embedding_type", "mrope")
+
+        # Set the provider field with the RLinf transformer_config
+        for name in provider_field_names:
+            if hasattr(self.transformer_config, name):
+                setattr(provider, name, getattr(self.transformer_config, name))
+
+        # Preserve HF/provider-specific multimodal rope values.
+        provider.mrope_section = mrope_section
+        provider.position_embedding_type = position_embedding_type
+        if hasattr(provider, "vision_config"):
+            provider.vision_config._attn_implementation = "flash_attention_2"
+
+        # the Mbridge run the qwen3-vl-moe model will freeze the language model and vision model by default.
+        provider.freeze_language_model = getattr(
+            self._cfg.model, "freeze_language_model", False
+        )
+        provider.freeze_vision_model = getattr(
+            self._cfg.model, "freeze_vision_model", False
+        )
+        provider.freeze_vision_projection = getattr(
+            self._cfg.model, "freeze_vision_projection", False
+        )
+
+        if (
+            getattr(self._cfg.model, "decoder_first_pipeline_num_layers", None)
+            is not None
+        ):
+            provider.num_layers_in_first_pipeline_stage = (
+                self._cfg.model.decoder_first_pipeline_num_layers
+            )
+        if (
+            getattr(self._cfg.model, "decoder_last_pipeline_num_layers", None)
+            is not None
+        ):
+            provider.num_layers_in_last_pipeline_stage = (
+                self._cfg.model.decoder_last_pipeline_num_layers
+            )
+
+        if self._rank == 0:
+            self._logger.info(f"Mbridge Set Provider: {provider}")
+
+        provider.finalize()
+        self.provider = provider
+        ddp_config = DistributedDataParallelConfig(
+            use_distributed_optimizer=self._cfg.optim.use_distributed_optimizer,
+            overlap_grad_reduce=self._cfg.optim.get("overlap_grad_reduce", False),
+            overlap_param_gather=self._cfg.optim.get("overlap_param_gather", False),
+            check_for_nan_in_grad=True,
+            grad_reduce_in_fp32=True,
+        )
+        ddp_config.finalize()
+
+        # Get Megatron Model
+        model = self.provider.provide_distributed_model(ddp_config=ddp_config)
+
+        args = get_args()
+        from megatron.training.training import get_megatron_optimizer_config
+
+        config, config_overrides = get_megatron_optimizer_config(args)
+
+        # Get Megatron Optimizer
+        optimizer = get_megatron_optimizer(
+            config,
+            self.model,
+            config_overrides=config_overrides,
+            use_gloo_process_groups=args.enable_gloo_process_groups,
+        )
+        # Get Megatron Optimizer Param Scheduler
+        lr_scheduler = get_optimizer_param_scheduler(self.optimizer)
+
+        return model, optimizer, lr_scheduler
 
     def model_provider_func(self, pre_process, post_process):
         """Model depends on pipeline paralellism."""

@@ -125,37 +125,7 @@ class MegatronSftWorker(MegatronModelManager, Worker):
         step: int,
         num_floating_point_operations_so_far: int = 0,
     ) -> None:
-        if not self.is_running:
-            return
-
-        # for the sft training, we don't need to offload the optimizer and weight
-        if self.mbridge:
-            # save mbridge checkpoint to hf checkpoint
-            hf_save_path = os.path.join(save_path, "hf_checkpoint")
-            self.bridge.save_hf_pretrained(
-                self.model,
-                hf_save_path,
-                source_path=self._cfg.model.model_path,
-                show_progress=(torch.distributed.get_rank() == 0),
-                strict=True,
-            )
-        # for the next training, we also need to save the megatron checkpoint
-
-        from megatron.training.training import get_args, preprocess_common_state_dict
-
-        args = get_args()
-        from megatron.training.checkpointing import save_checkpoint
-
-        args.save = save_path
-        save_checkpoint(
-            iteration=step,
-            model=self.model,
-            optimizer=self.optimizer,
-            opt_param_scheduler=self.lr_scheduler,
-            num_floating_point_operations_so_far=num_floating_point_operations_so_far,
-            checkpointing_context=self.checkpoint_context,
-            preprocess_common_state_dict_fn=preprocess_common_state_dict,
-        )
+        super().save_checkpoint(save_path, step, num_floating_point_operations_so_far)
 
     def run_training(self):
         with self.worker_timer():
@@ -451,6 +421,7 @@ class MegatronVlmSftWorker(MegatronSftWorker):
                 keep_left_padding=True,
                 sequence_parallel=self.transformer_config.sequence_parallel,
                 image_grid_thw=image_grid_thw,
+                temperature=self.cfg.algorithm.sampling_params.temperature,
                 logits_processor=logits_processor,
                 logits_processor_args={"labels": labels, "loss_mask": loss_mask},
             )

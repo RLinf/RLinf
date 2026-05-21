@@ -282,6 +282,11 @@ def get_rope_index(
     attention_mask: Optional[torch.Tensor] = None,
     packed_seq_params: Optional[PackedSeqParams] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    # RLinf patch this function to support the mbridge model
+    # origin code: https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/21b02e0cfb2f8ff907e0d8baee0c5205876c6812/src/megatron/bridge/models/qwen_vl/modelling_qwen3_vl/utils.py#L74
+    # The original Megatron-Bridge implementation does not support using packed_seq_params in this part
+    # forcibly assigns attention_mask, which leads to runtime errors.
+    # Therefore, a patch is applied here.
     """Different from the original implementation, Qwen3VL use timestamps rather than absolute time position ids."""
 
     # Since we use timestamps to seperate videos, like <t1> <vision_start> <frame1> <vision_end> <t2> <vision_start> <frame2> <vision_end>, the video_grid_thw should also be split

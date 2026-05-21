@@ -49,6 +49,8 @@ data:
 
 algorithm:
   adv_type: gae
+  sampling_params:
+    temperature: 1.0
 
 actor:
   group_name: "ActorGroup"
