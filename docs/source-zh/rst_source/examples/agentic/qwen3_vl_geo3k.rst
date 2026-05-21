@@ -128,7 +128,7 @@
 多个短序列会被打包成一个长序列进行训练。可以通过以下参数控制打包行为：
 
 - ``max_tokens_per_mbs``：每个 micro-batch 的最大 token 数
-- ``pad_after_pack``：是否在打包后将序列填充到固定长度. 本例中我们设为False
+- ``variable_seq_lengths``：是否允许变长序列，设为 ``True`` 时去除 padding 进行紧凑打包. 本例中我们设为 ``True``
 
 **FSDP2 训练**
 

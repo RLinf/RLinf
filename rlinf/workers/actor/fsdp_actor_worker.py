@@ -213,8 +213,7 @@ class FSDPActor(FSDPModelManager, Worker):
                 "Dynamic batch size is not supported in pipeline mode."
             )
         self.max_tokens_per_mbs = cfg.runner.get("max_tokens_per_mbs", 2048)
-        self.pad_after_pack = self.cfg.runner.get("pad_after_pack", False)
-        self.use_remove_padding = self.cfg.runner.get("use_remove_padding", False)
+        self.variable_seq_lengths = self.cfg.actor.model.get("variable_seq_lengths", False)
 
     def init_worker(self) -> None:
         """
@@ -494,7 +493,7 @@ class FSDPActor(FSDPModelManager, Worker):
                     dim=0,
                 ).to(Worker.torch_device_type)
 
-        if self.enable_dynamic_batch_size or self.use_remove_padding:
+        if self.enable_dynamic_batch_size or self.variable_seq_lengths:
             max_seq_len_pack = self.max_tokens_per_mbs
             max_seq_len_unpack = self.cfg.actor.model.encoder_seq_length
             max_prompt_len = self.cfg.data.max_prompt_length
@@ -508,7 +507,7 @@ class FSDPActor(FSDPModelManager, Worker):
                 idx_ends=idx_ends,
                 max_seq_len_pack=max_seq_len_pack,
                 eos_token_id=self.tokenizer.eos_token_id,
-                pad_to_fixed_len=self.pad_after_pack,
+                pad_to_fixed_len=not self.variable_seq_lengths,
             )
 
         with self.amp_context:
@@ -526,7 +525,7 @@ class FSDPActor(FSDPModelManager, Worker):
         # because this division is done on bf16/fp16
         logits.div_(self.cfg.algorithm.sampling_params.temperature)
 
-        if self.enable_dynamic_batch_size or self.use_remove_padding:
+        if self.enable_dynamic_batch_size or self.variable_seq_lengths:
             logprobs = unpack_fsdp_logprobs(
                 logits,
                 input_ids,
@@ -548,7 +547,7 @@ class FSDPActor(FSDPModelManager, Worker):
             # from logits that has been divided by temperature?
             entropy = compute_entropy_from_logits(logits)
 
-            if self.enable_dynamic_batch_size or self.use_remove_padding:
+            if self.enable_dynamic_batch_size or self.variable_seq_lengths:
                 entropy = unpack_sequences(
                     entropy, idx_starts, idx_ends, max_seq_len_unpack, pad_val=0
                 )[:, -self.response_len :]
