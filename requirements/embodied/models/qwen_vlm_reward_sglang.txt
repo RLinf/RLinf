@@ -1,0 +1,7 @@
+# Runtime dependencies for Qwen-VL embodied reward workers using SGLang.
+# Keep this opt-in because SGLang owns the torch/xgrammar/flashinfer runtime
+# stack used by the in-process reward backend.
+qwen-vl-utils
+transformers==4.57.1
+tokenizers>=0.22,<0.23
+sglang==0.5.4
