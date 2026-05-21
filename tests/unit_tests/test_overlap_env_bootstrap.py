@@ -92,6 +92,12 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         self.worker.enable_offload = False
         self.worker.collect_transitions = False
         self.worker.collect_prev_infos = True
+        self.worker.reward_mode = self.cfg.get("reward", {}).get(
+            "reward_mode", "per_step"
+        )
+        self.worker.history_reward_assign = self.cfg.get("reward", {}).get(
+            "history_reward_assign", True
+        )
         self.worker._prefetched_train_bootstrap = None
 
         # Mock env_list
