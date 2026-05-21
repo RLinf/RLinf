@@ -265,6 +265,44 @@ class EnvOutput:
 
 
 @dataclass(kw_only=True)
+class RTCRequest:
+    """Real-time correction request sent from the env worker to rollout."""
+
+    obs: dict[str, Any]
+    request_type: str = "bootstrap"
+    executed_horizon: int = 0
+    predicted_delay_steps: int = 0
+    chunk_id: int = 0
+    episode_id: int = 0
+
+    def __post_init__(self):
+        # Keep Ray channel payloads on CPU so the control node never receives
+        # CUDA tensors from the rollout node.
+        self.obs = put_tensor_device(self.obs, "cpu")
+
+
+@dataclass(kw_only=True)
+class RTCActionResponse:
+    """RTC response carrying a fresh action chunk and inference timing stats."""
+
+    actions: torch.Tensor
+    model_actions: torch.Tensor | None = None
+    infer_ms: float = 0.0
+    request_type: str = "bootstrap"
+    predicted_delay_steps: int = 0
+    chunk_id: int = 0
+    episode_id: int = 0
+    guidance_applied: bool = False
+
+    def __post_init__(self):
+        # Actions are executed by the env worker, while model_actions are kept
+        # for the next RTC overlap constraint.
+        self.actions = self.actions.cpu().contiguous()
+        if self.model_actions is not None:
+            self.model_actions = self.model_actions.cpu().contiguous()
+
+
+@dataclass(kw_only=True)
 class RolloutResult:
     """Rollout result for a single chunk step."""
 

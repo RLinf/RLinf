@@ -23,6 +23,8 @@ from tqdm import tqdm
 
 from rlinf.config import SupportedModel
 from rlinf.data.embodied_io_struct import (
+    RTCActionResponse,
+    RTCRequest,
     RolloutResult,
 )
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
@@ -80,6 +82,7 @@ class MultiStepRolloutWorker(Worker):
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self.version = 0
         self.finished_episodes = None
+        self._rtc_eval_model_actions = None
 
         weight_syncer_cfg = OmegaConf.select(cfg, "weight_syncer", default=None)
         assert weight_syncer_cfg is not None, (
@@ -326,6 +329,52 @@ class MultiStepRolloutWorker(Worker):
         result["expert_label_flag"] = bool(expert_label_flag)
         return actions, result
 
+    @Worker.timer("predict_rtc")
+    def predict_rtc(self, rtc_request: RTCRequest) -> RTCActionResponse:
+        """Run one OpenPI inference for a bootstrap or replanning RTC request."""
+        rtc_context = None
+        guidance_applied = False
+        if (
+            rtc_request.request_type == "replan"
+            and self._rtc_eval_model_actions is not None
+        ):
+            from rlinf.models.embodiment.openpi.rtc_guidance import RTCGuidanceContext
+
+            # The previous model-space chunk is used to softly constrain the
+            # overlap between already scheduled actions and the new plan.
+            rtc_context = RTCGuidanceContext(
+                prev_model_actions=self._rtc_eval_model_actions,
+                executed_horizon=rtc_request.executed_horizon,
+                delay_steps=rtc_request.predicted_delay_steps,
+            )
+            guidance_applied = True
+
+        with torch.no_grad():
+            actions, result = self.hf_model.predict_action_batch(
+                env_obs=rtc_request.obs,
+                mode="eval",
+                rtc_context=rtc_context,
+            )
+
+        if isinstance(actions, np.ndarray):
+            actions = torch.from_numpy(actions)
+
+        model_actions = result.get("model_actions")
+        if isinstance(model_actions, np.ndarray):
+            model_actions = torch.from_numpy(model_actions)
+        if model_actions is not None:
+            self._rtc_eval_model_actions = model_actions.detach().cpu().contiguous()
+
+        return RTCActionResponse(
+            actions=actions.detach().cpu().contiguous(),
+            model_actions=self._rtc_eval_model_actions,
+            request_type=rtc_request.request_type,
+            predicted_delay_steps=rtc_request.predicted_delay_steps,
+            chunk_id=rtc_request.chunk_id,
+            episode_id=rtc_request.episode_id,
+            guidance_applied=guidance_applied,
+        )
+
     def get_bootstrap_values(
         self, final_obs: dict[str, Any] | None
     ) -> torch.Tensor | None:
@@ -472,6 +521,24 @@ class MultiStepRolloutWorker(Worker):
         if self.enable_offload:
             self.offload_model()
 
+    async def evaluate_rtc(self, input_channel: Channel, output_channel: Channel):
+        """Serve RTC requests until the env worker sends an explicit stop."""
+        if self.enable_offload:
+            self.reload_model()
+
+        self._rtc_eval_model_actions = None
+
+        while True:
+            rtc_request = await self.recv_rtc_request(input_channel)
+            if rtc_request.request_type == "stop":
+                break
+
+            rtc_response = self.predict_rtc(rtc_request)
+            self.send_rtc_response(output_channel, rtc_response)
+
+        if self.enable_offload:
+            self.offload_model()
+
     def offload_model(self):
         if self.enable_cuda_graph:
             self.hf_model.release_cuda_graph()
@@ -585,6 +652,34 @@ class MultiStepRolloutWorker(Worker):
             merged_final_obs = _merge_obs_dicts(final_obs_or_obs)
 
         return {"obs": merged_obs, "final_obs": merged_final_obs}
+
+    async def recv_rtc_request(self, input_channel: Channel) -> RTCRequest:
+        """Receive the single real-world RTC request mapped to this rollout rank."""
+        src_ranks_and_sizes = self.src_ranks["eval"]
+        assert len(src_ranks_and_sizes) == 1, (
+            "RTC real-world evaluation currently supports a single env->rollout route."
+        )
+        src_rank, _ = src_ranks_and_sizes[0]
+        rtc_request = await input_channel.get(
+            key=CommMapper.build_channel_key(src_rank, self._rank, extra="eval_rtc"),
+            async_op=True,
+        ).async_wait()
+        return rtc_request
+
+    def send_rtc_response(
+        self, output_channel: Channel, rtc_response: RTCActionResponse
+    ) -> None:
+        """Send the RTC action response back to the matching env rank."""
+        dst_ranks_and_sizes = self.dst_ranks["eval"]
+        assert len(dst_ranks_and_sizes) == 1, (
+            "RTC real-world evaluation currently supports a single rollout->env route."
+        )
+        dst_rank, _ = dst_ranks_and_sizes[0]
+        output_channel.put(
+            rtc_response,
+            key=CommMapper.build_channel_key(self._rank, dst_rank, extra="eval_rtc"),
+            async_op=True,
+        )
 
     def send_chunk_actions(
         self,
