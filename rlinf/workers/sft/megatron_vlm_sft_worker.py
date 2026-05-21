@@ -102,7 +102,7 @@ class MegatronSftWorker(MegatronModelManager, Worker):
             self.eval_data_loader = None
 
         self.pack_seqs = True
-        # now mbridge pack_seqs don't support in pipeline_model_parallel_size > 1 case
+        # the mbridge pack_seqs don't support in pipeline_model_parallel_size > 1 case
         if self.cfg.actor.model.pipeline_model_parallel_size > 1:
             self.pack_seqs = False
             self.logger.info(
