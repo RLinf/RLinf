@@ -41,19 +41,17 @@ import matplotlib.pyplot as plt
 
 matplotlib.use("Agg")
 
-from parse_success_once import (
-    parse_log_file,
-    process_log_directory,
-    process_single_log,
-    print_results,
-    save_success_once_data,
-)
 from compare_baseline import (
-    compute_curve_similarity,
     compare_results_with_baseline,
+    plot_comparison_with_baseline,
     print_comparison_results,
     save_comparison_results,
-    plot_comparison_with_baseline,
+)
+from parse_success_once import (
+    print_results,
+    process_log_directory,
+    process_single_log,
+    save_success_once_data,
 )
 
 
@@ -359,7 +357,9 @@ def main():
                 if baseline_log_path:
                     try:
                         if args.output:
-                            output_path = f"{args.output.rsplit('.', 1)[0]}_vs_baseline_{i}.png"
+                            output_path = (
+                                f"{args.output.rsplit('.', 1)[0]}_vs_baseline_{i}.png"
+                            )
                         else:
                             output_path = f"{experiment_name}_vs_baseline.png"
                         plot_comparison_with_baseline(

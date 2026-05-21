@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import argparse
-import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -110,7 +109,7 @@ def check_experiment_logs(
 
     # Find all directories matching *-{experiment_name}
     matching_dirs = list(log_path.glob(f"*-{experiment_name}"))
-    
+
     if not matching_dirs:
         if verbose:
             print(f"No matching log directories found for: {experiment_name}")
@@ -181,7 +180,7 @@ if __name__ == "__main__":
 
     # Determine if we're checking a single file or an experiment
     log_path = Path(args.log_path)
-    
+
     if args.experiment:
         # Check all logs for an experiment in a directory
         reached, crashed = check_experiment_logs(
@@ -189,7 +188,9 @@ if __name__ == "__main__":
         )
     elif log_path.is_file():
         # Check single log file
-        reached, crashed = check_global_step(args.log_path, args.threshold, verbose=verbose)
+        reached, crashed = check_global_step(
+            args.log_path, args.threshold, verbose=verbose
+        )
     elif log_path.is_dir():
         # Directory provided but no experiment name - check if it's a log directory
         # Try to infer experiment name from directory name (format: timestamp-experiment_name)
@@ -199,7 +200,9 @@ if __name__ == "__main__":
             experiment_name = dir_name.split("-", maxsplit=1)[-1]
             log_file = log_path / "run_embodiment.log"
             if log_file.exists():
-                reached, crashed = check_global_step(str(log_file), args.threshold, verbose=verbose)
+                reached, crashed = check_global_step(
+                    str(log_file), args.threshold, verbose=verbose
+                )
             else:
                 if verbose:
                     print(f"No run_embodiment.log found in {log_path}")
@@ -216,4 +219,6 @@ if __name__ == "__main__":
     if args.format == "simple":
         print(f"{reached},{crashed}")
     else:
-        print(f"\nResult: reached_threshold={reached}, crashed_before_threshold={crashed}")
+        print(
+            f"\nResult: reached_threshold={reached}, crashed_before_threshold={crashed}"
+        )

@@ -39,21 +39,20 @@ import argparse
 import sys
 from pathlib import Path
 
+from compare_baseline import (
+    compare_results_with_baseline,
+    plot_comparison_with_baseline,
+    print_comparison_results,
+    save_comparison_results,
+)
 from parse_success_once import (
+    print_results,
     process_log_directory,
     process_single_log,
-    print_results,
     save_success_once_data,
 )
 from plot_success_once import (
-    plot_success_once_curves,
     plot_single_experiment,
-)
-from compare_baseline import (
-    compare_results_with_baseline,
-    print_comparison_results,
-    save_comparison_results,
-    plot_comparison_with_baseline,
 )
 
 
@@ -176,7 +175,9 @@ def analyze_logs(
 
         baseline_path = Path(baseline_dir)
         if not baseline_path.exists() or not baseline_path.is_dir():
-            print(f"Warning: Baseline directory {baseline_dir} does not exist, skipping comparison")
+            print(
+                f"Warning: Baseline directory {baseline_dir} does not exist, skipping comparison"
+            )
             return results
 
         # Find matching baseline logs for each experiment
@@ -186,10 +187,6 @@ def analyze_logs(
             experiment_name = result["experiment_name"]
             log_path = result.get("log_path", "")
             baseline_log_path = None
-
-            # Extract full directory name from log path
-            # log_path format: logs/20260510-22:01:11-libero_goal_ppo_openpi_pi05/run_embodiment.log
-            log_dir_name = Path(log_path).parent.name if log_path else ""
 
             # Match by experiment name (directory name ends with -{experiment_name})
             for baseline_subdir in baseline_path.iterdir():
@@ -208,17 +205,21 @@ def analyze_logs(
                     )[0]
                     comparison_results.append(comparison)
                 except Exception as e:
-                    comparison_results.append({
-                        "experiment_name": experiment_name,
-                        "baseline_log_path": baseline_log_path,
-                        "error": str(e),
-                    })
+                    comparison_results.append(
+                        {
+                            "experiment_name": experiment_name,
+                            "baseline_log_path": baseline_log_path,
+                            "error": str(e),
+                        }
+                    )
             else:
-                comparison_results.append({
-                    "experiment_name": experiment_name,
-                    "baseline_log_path": None,
-                    "error": f"No matching baseline found for {experiment_name}",
-                })
+                comparison_results.append(
+                    {
+                        "experiment_name": experiment_name,
+                        "baseline_log_path": None,
+                        "error": f"No matching baseline found for {experiment_name}",
+                    }
+                )
 
         # Print comparison results
         print_comparison_results(comparison_results, similarity_threshold)
@@ -251,7 +252,9 @@ def analyze_logs(
 
                 if baseline_log_path:
                     try:
-                        output_img = comparison_plot_dir / f"{experiment_name}_vs_baseline.png"
+                        output_img = (
+                            comparison_plot_dir / f"{experiment_name}_vs_baseline.png"
+                        )
                         plot_comparison_with_baseline(
                             result, baseline_log_path, str(output_img), figsize
                         )

@@ -35,7 +35,6 @@ Example:
 
 import sys
 from pathlib import Path
-from typing import Optional
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -43,15 +42,14 @@ import matplotlib.pyplot as plt
 matplotlib.use("Agg")
 
 import numpy as np
-from scipy import stats
-
 from parse_success_once import (
     parse_log_file,
+    print_results,
     process_log_directory,
     process_single_log,
-    print_results,
     save_success_once_data,
 )
+from scipy import stats
 
 
 def compute_curve_similarity(
@@ -205,8 +203,7 @@ def compare_with_baseline(
     baseline_name, baseline_step_to_success = parse_log_file(baseline_log_path)
 
     similarity_result = compute_curve_similarity(
-        result.get("step_to_success", {}), baseline_step_to_success, 
-        method=method
+        result.get("step_to_success", {}), baseline_step_to_success, method=method
     )
 
     # Calculate last step value difference
@@ -216,11 +213,11 @@ def compare_with_baseline(
         # Find the last step for experiment
         exp_last_step = max(exp_step_to_success.keys())
         exp_last_value = exp_step_to_success[exp_last_step]
-        
+
         # Find the last step for baseline
         baseline_last_step = max(baseline_step_to_success.keys())
         baseline_last_value = baseline_step_to_success[baseline_last_step]
-        
+
         # Calculate difference: experiment - baseline
         last_step_diff = exp_last_value - baseline_last_value
 
@@ -271,7 +268,9 @@ RESET = "\033[0m"
 BOLD = "\033[1m"
 
 
-def print_comparison_results(comparison_results: list, similarity_threshold: float | None = None):
+def print_comparison_results(
+    comparison_results: list, similarity_threshold: float | None = None
+):
     """
     Print comparison results with threshold alert
 
@@ -283,7 +282,7 @@ def print_comparison_results(comparison_results: list, similarity_threshold: flo
     """
     # Determine if we need to show alert column
     show_alert = similarity_threshold is not None
-    
+
     if show_alert:
         print("=" * 160)
         print(

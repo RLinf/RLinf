@@ -25,7 +25,7 @@ export SYNC_FLAG_FILE="$REPO_PATH/ray_utils/task_sync.txt"
 export FORCE_REBUILD=1
 
 # Virtual environment configuration
-export VENV_BASE_DIR="/mnt/public/zhouyiming/RLinf"
+export VENV_BASE_DIR="/path/to/venvs" # Set this to your actual base directory for virtual environments
 # 2. Task list
 #    Format: ENV_NAME MODEL_NAME YAML_ARG T_NODES d T_SAVE
 #    ENV_NAME: Environment name (maniskill_libero, behavior, isaaclab, metaworld, calvin, etc.)
