@@ -45,7 +45,13 @@ Hugging Face:
 
 - `WideSeek-R1-train-data <https://huggingface.co/datasets/RLinf/WideSeek-R1-train-data>`__
 
-The main experiments use ``hybrid_20k.jsonl`` from that dataset.
+The main experiments use ``hybrid_20k.jsonl`` from
+``WideSeek-R1-train-data``.
+
+A separate `WideSeek-R1-Corpus <https://huggingface.co/datasets/RLinf/WideSeek-R1-Corpus>`__
+artifact is also available for users who want to inspect or reuse the public
+corpus resources. It is not the ``hybrid_20k.jsonl`` training file used by the
+main experiments.
 
 After downloading the data, update
 `examples/agent/wideseek_r1/config/train_qwen3_hybrid.yaml`
