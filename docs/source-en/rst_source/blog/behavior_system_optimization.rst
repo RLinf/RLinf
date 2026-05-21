@@ -1,7 +1,7 @@
 Accelerating the "ImageNet Moment" of Embodied AI: RLinf Brings a 25× System Optimization to BEHAVIOR
 =====================================================================================================
 
-Last updated: 05/20/2026.
+Last updated: 05/21/2026.
 
 Related reading: :doc:`Reinforcement Learning Training with the BEHAVIOR Benchmark <../examples/embodied/behavior>`.
 
@@ -296,4 +296,4 @@ Another important lesson is that environment optimization is not just optimizati
 
 The related performance patches have now been merged into **RLinf** and the upstream **StanfordVL/BEHAVIOR-1K** repository. For developers who want to start using BEHAVIOR directly, RLinf already provides a mature solution that can be used without having to rework the environment from scratch. We also hope this work can serve not only our own training system but the broader embodied AI community as well: with sufficient understanding of reinforcement learning dataflow and low-level system structure, even a complex physical simulation world can be rebuilt into efficient compute infrastructure.
 
-Image / video credits: Physical Intelligence, BEHAVIOR-1K.
+Image credits: BEHAVIOR-1K.
