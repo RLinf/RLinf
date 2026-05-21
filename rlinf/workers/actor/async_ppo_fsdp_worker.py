@@ -12,27 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ast import List
 import asyncio
 import os
 import queue
+import threading
 from typing import Any, Optional
 
-import threading
 import numpy as np
-from rlinf.data.embodied_io_struct import Trajectory
 import torch
 
-from rlinf.scheduler import Worker
-from rlinf.data.priority_store import PriorityStore
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.config import SupportedModel
+from rlinf.data.embodied_io_struct import Trajectory, convert_trajectories_to_batch
+from rlinf.data.priority_store import PriorityStore
+from rlinf.scheduler import Worker
 from rlinf.utils.distributed import all_reduce_dict, masked_normalization
 from rlinf.utils.metric_utils import append_to_dict, compute_rollout_metrics
 from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
 from rlinf.utils.utils import clear_memory, masked_mean, reshape_entropy
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
-from rlinf.data.embodied_io_struct import convert_trajectories_to_batch
 
 
 def flatten_rollout_batch_for_train(
@@ -67,10 +65,14 @@ def flatten_rollout_batch_for_train(
 
 class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
     """Embodied FSDP actor worker for async PPO / decoupled actor-critic training."""
+
     should_stop = False
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.rollout_store_size = self.cfg.algorithm.get("rollout_store_size_per_rank", 1)
+        self.rollout_store_size = self.cfg.algorithm.get(
+            "rollout_store_size_per_rank", 1
+        )
         self.rollout_store = PriorityStore(maxsize=self.rollout_store_size)
 
     async def recv_rollout_trajectories(self, input_channel):
@@ -95,7 +97,9 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                 f"recv trajectory versions.shape={trajectory.versions.shape} "
                 f"input_channel.qsize={input_channel.qsize()}"
             )
-            if trajectory.versions.min() < self.version - self.cfg.algorithm.get("staleness_threshold", None):
+            if trajectory.versions.min() < self.version - self.cfg.algorithm.get(
+                "staleness_threshold", None
+            ):
                 continue
             self._recv_queue.put(trajectory)
 
@@ -109,7 +113,9 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                     f"versions.min={traj.versions.min()} version={self.version} "
                     f"recv_queue.size={self._recv_queue.qsize()}"
                 )
-                if traj.versions.min() < self.version - self.cfg.algorithm.get("staleness_threshold", None):
+                if traj.versions.min() < self.version - self.cfg.algorithm.get(
+                    "staleness_threshold", None
+                ):
                     continue
                 min_v = float(traj.versions.min().item())
                 mean_v = float(traj.versions.float().mean().item())
@@ -127,12 +133,16 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         while True:
             self._drain_received_trajectories()
             with self.worker_timer("remove_below"):
-                self.rollout_store.remove_below(self.version - self.cfg.algorithm.get("staleness_threshold", None))
+                self.rollout_store.remove_below(
+                    self.version - self.cfg.algorithm.get("staleness_threshold", None)
+                )
             if len(self.rollout_store) >= self.rollout_store_size:
                 if on_policy_min_ratio <= 0.0:
                     break
                 metrics_data = self.rollout_store.get_metric()
-                on_policy_ratio = metrics_data.get(int(self.version), {}).get("ratio", 0.0)
+                on_policy_ratio = metrics_data.get(int(self.version), {}).get(
+                    "ratio", 0.0
+                )
                 self.log_info(
                     f"rollout store metrics={metrics_data} "
                     f"on_policy_ratio={on_policy_ratio:.4f} "

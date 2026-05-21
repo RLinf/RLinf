@@ -3,7 +3,6 @@ from sortedcontainers import SortedList
 
 
 class PriorityStore:
-
     def __init__(self, maxsize):
         self.maxsize = maxsize
         self._seq = 0
@@ -68,10 +67,7 @@ class PriorityStore:
         if total_cells == 0:
             return {"discarded_unused": self._discarded_unused}
 
-        result = {
-            v: {"ratio": c / total_cells}
-            for v, c in counts.items()
-        }
+        result = {v: {"ratio": c / total_cells} for v, c in counts.items()}
         result["discarded_unused"] = self._discarded_unused
         return result
 
