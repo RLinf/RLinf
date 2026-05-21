@@ -225,6 +225,14 @@ def _make_sglang_cfg(infer_micro_batch_size: int) -> OmegaConf:
     return cfg
 
 
+def _make_sglang_cfg_with_success_bonus(
+    infer_micro_batch_size: int, gt_success_bonus: float
+) -> OmegaConf:
+    cfg = _make_sglang_cfg(infer_micro_batch_size)
+    cfg.gt_success_bonus = gt_success_bonus
+    return cfg
+
+
 def _make_reward_input(
     slot_ids: list[int], valid_env_ids: list[int] | None = None
 ) -> dict[str, object]:
@@ -511,6 +519,29 @@ def test_history_vlm_sglang_slices_nested_observation_metadata():
 
     assert torch.equal(rewards, torch.tensor([10.0, 11.0, 12.0, 13.0]))
     assert model.input_builder.calls == [[10, 11], [12, 13]]
+
+
+def test_history_vlm_sglang_reward_model_applies_gt_success_bonus():
+    model = _TestHistoryVLMSGLangRewardModel(
+        _make_sglang_cfg_with_success_bonus(2, gt_success_bonus=20.0)
+    )
+    reward_input = _make_sglang_reward_input([10, 11, 12, 13])
+    reward_input["env_infos"] = {
+        "episode": {"success_once": torch.tensor([False, True, False, True])}
+    }
+
+    def build_inputs(prepared_inputs):
+        prompts = [
+            f"rendered-{prompt_texts[0].removeprefix('prompt-')}"
+            for prompt_texts in prepared_inputs["prompt_texts_list"]
+        ]
+        return prompts, [[] for _ in prompts]
+
+    model._build_sglang_inputs = build_inputs
+
+    rewards = model.compute_reward(reward_input)
+
+    assert torch.equal(rewards, torch.tensor([10.0, 31.0, 12.0, 33.0]))
 
 
 def test_history_vlm_sglang_reward_model_writes_sparse_valid_envs_back_to_slots():

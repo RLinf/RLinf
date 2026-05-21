@@ -313,9 +313,15 @@ For VLM reward inference, install embodied dependencies with VLM reward support:
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env maniskill_libero --vlm-reward
+   bash requirements/install.sh embodied --model qwen3_vl --env maniskill_libero --vlm-reward
 
-Then configure the reward section to use ``history_vlm``. The QwenTrend example
+This installs the Qwen3-VL reward runtime used by the MLP policy example. If the
+training policy is OpenPI, use ``--model openpi --vlm-reward`` instead so RLinf
+also applies the OpenPI patch for the Qwen3-VL-compatible ``transformers``
+runtime.
+
+Then configure the reward section to use ``history_vlm`` for the Hugging Face
+backend or ``history_vlm_sglang`` for the SGLang backend. The QwenTrend example
 uses ``reward_mode: history_buffer`` so the env worker maintains per-env history
 windows and sends them to the reward worker only when a valid window is available:
 
@@ -361,10 +367,26 @@ windows and sends them to the reward worker only when a valid window is availabl
 
 Important fields:
 
+- ``model_type`` selects the reward inference backend: ``history_vlm`` uses
+  Hugging Face/Transformers, while ``history_vlm_sglang`` uses SGLang.
 - ``history_buffers`` defines which observation keys are cached, the window length, and the minimum valid history length.
 - ``input_builder_name`` converts the history window into dual-view VLM inputs.
 - ``reward_parser_name`` maps generated labels to scalar rewards using ``positive_reward``, ``negative_reward``, ``unclear_reward``, and ``invalid_reward``.
 - ``gt_success_bonus`` optionally adds a success bonus from environment info.
+
+To switch the same ManiSkill YAML to SGLang reward inference, change only the
+reward model type:
+
+.. code-block:: yaml
+
+   reward:
+     model:
+       model_type: "history_vlm_sglang"
+
+The SGLang backend reuses the same QwenTrend input builder, reward parser, and
+history buffer settings. It uses ``model_path`` and optional
+``sglang_engine_kwargs`` for engine construction; the Hugging Face ``lora_path``
+loading path does not apply to ``history_vlm_sglang``.
 
 Launch the MLP RL run with:
 

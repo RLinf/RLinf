@@ -1,0 +1,135 @@
+defaults:
+  - env/maniskill_pick_cube@env.train
+  - env/maniskill_pick_cube@env.eval
+  - _maniskill_async_ppo_openpi_common
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+cluster:
+  component_placement:
+    actor,env: 0
+    rollout,reward: 1
+
+runner:
+  logger:
+    log_path: /workspace/results/maniskill_async_ppo_openpi_qwentrend_reward
+    experiment_name: "ci-test-openpi-qwen-sglang-async"
+
+env:
+  train:
+    total_num_envs: 1
+    wrap_obs_mode: simple
+    use_full_state: false
+    state_obs_mode: zero8
+    default_task_description: "Pick up the red cube and place it on the green spot on the table."
+    max_steps_per_rollout_epoch: 10
+    max_episode_steps: 10
+    init_params:
+      id: PickCube3View-v1
+      obs_mode: rgb
+      control_mode: pd_ee_delta_pos
+      sim_backend: gpu
+      sim_config:
+        sim_freq: 100
+        control_freq: 20
+      max_episode_steps: 10
+      sensor_configs:
+        shader_pack: minimal
+        width: 224
+        height: 224
+      human_render_camera_configs:
+        shader_pack: minimal
+        width: 224
+        height: 224
+      render_mode: all
+    use_3rd_view_as_extra: true
+  eval:
+    total_num_envs: 1
+    wrap_obs_mode: simple
+    use_full_state: false
+    state_obs_mode: zero8
+    default_task_description: "Pick up the red cube and place it on the green spot on the table."
+    max_steps_per_rollout_epoch: 10
+    max_episode_steps: 10
+    video_cfg:
+      save_video: false
+    init_params:
+      id: PickCube3View-v1
+      obs_mode: rgb
+      control_mode: pd_ee_delta_pos
+      sim_backend: gpu
+      sim_config:
+        sim_freq: 100
+        control_freq: 20
+      max_episode_steps: 10
+      sensor_configs:
+        shader_pack: minimal
+        width: 224
+        height: 224
+      human_render_camera_configs:
+        shader_pack: minimal
+        width: 224
+        height: 224
+      render_mode: all
+    use_3rd_view_as_extra: true
+
+actor:
+  micro_batch_size: 1
+  global_batch_size: 1
+  model:
+    action_dim: 4
+    openpi:
+      pytorch_compile_mode: null
+    policy_setup: panda-ee-dpos
+
+reward:
+  use_reward_model: true
+  group_name: RewardGroup
+  reward_mode: history_buffer
+  history_reward_assign: true
+  reward_weight: 1.0
+  env_reward_weight: 0.0
+  pending_step_window: 1
+  aggregate_request_count: 1
+  use_output_step: 0
+  model:
+    model_type: history_vlm_sglang
+    model_path: "/workspace/dataset/Qwen3-VL-4B-Instruct"
+    lora_path: null
+    gt_success_bonus: 20.0
+    precision: bf16
+    input_builder_name: qwentrend_input_builder
+    input_builder_params:
+      video_keys:
+        - main_images
+        - extra_view_images
+      default_task_description: "Pick up the red cube and place it on the green spot on the table."
+    reward_parser_name: qwentrend_reward_parser
+    reward_parser_params:
+      positive_reward: 1.0
+      negative_reward: -0.2
+      unclear_reward: 0.0
+      invalid_reward: 0.0
+    history_buffers:
+      history_window:
+        history_size: 5
+        min_history_size: 5
+        input_interval: 1
+        history_keys:
+          - main_images
+          - extra_view_images
+        input_on_done: true
+    interval_reward: 0.0
+    infer_micro_batch_size: 1
+    max_new_tokens: 4
+    do_sample: false
+    temperature: 0.0
+    use_chat_template: true
+    sglang_engine_kwargs:
+      enable_torch_compile: false

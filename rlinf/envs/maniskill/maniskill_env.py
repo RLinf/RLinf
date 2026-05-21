@@ -60,6 +60,7 @@ class ManiskillEnv(gym.Env):
         self.use_rel_reward = cfg.use_rel_reward
         self.ignore_terminations = cfg.ignore_terminations
         self.use_full_state = bool(getattr(cfg, "use_full_state", False))
+        self.state_obs_mode = getattr(cfg, "state_obs_mode", "flatten")
         self.num_group = num_envs // cfg.group_size
         self.group_size = cfg.group_size
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
@@ -113,7 +114,13 @@ class ManiskillEnv(gym.Env):
 
     @property
     def instruction(self):
-        return self.env.unwrapped.get_language_instruction()
+        get_instruction = getattr(self.env.unwrapped, "get_language_instruction", None)
+        instruction = get_instruction() if callable(get_instruction) else None
+        if instruction is None:
+            default_instruction = getattr(self.cfg, "default_task_description", None)
+            if default_instruction is not None:
+                return [default_instruction for _ in range(self.num_envs)]
+        return instruction
 
     def _init_reset_state_ids(self):
         self._generator = torch.Generator()
@@ -157,6 +164,10 @@ class ManiskillEnv(gym.Env):
                 raw_obs.pop("sensor_param")
                 if self.use_full_state:
                     state = self._get_full_state_obs()
+                elif self.state_obs_mode == "zero8":
+                    state = torch.zeros(
+                        (self.num_envs, 8), dtype=torch.float32, device=self.device
+                    )
                 else:
                     state = common.flatten_state_dict(
                         raw_obs, use_torch=True, device=self.device
@@ -174,6 +185,7 @@ class ManiskillEnv(gym.Env):
                     "main_images": main_images,
                     "extra_view_images": extra_view_images,
                     "states": state,
+                    "task_descriptions": self.instruction,
                 }
 
         # Default

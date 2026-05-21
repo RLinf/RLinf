@@ -33,6 +33,7 @@ class AsyncEnvWorker(EnvWorker):
         reward_channel: Channel | None,
         actor_channel: Channel | None,
         metric_channel: Channel,
+        max_rollouts: int | None = None,
     ):
         assert self._interact_task is None or self._interact_task.done(), (
             "Previous interact task is still running while a new interact call is made."
@@ -44,6 +45,7 @@ class AsyncEnvWorker(EnvWorker):
                 reward_channel,
                 actor_channel,
                 metric_channel,
+                max_rollouts,
             )
         )
         try:
@@ -58,8 +60,10 @@ class AsyncEnvWorker(EnvWorker):
         reward_channel: Channel | None,
         actor_channel: Channel | None,
         metric_channel: Channel,
+        max_rollouts: int | None,
     ):
-        while True:
+        rollout_count = 0
+        while max_rollouts is None or rollout_count < max_rollouts:
             env_metrics = await self._run_interact_once(
                 input_channel,
                 rollout_channel,
@@ -79,7 +83,16 @@ class AsyncEnvWorker(EnvWorker):
                 "time": env_interact_time_metrics,
             }
             metric_channel.put(metrics, async_op=True)
+            rollout_count += 1
 
     async def stop(self):
-        if self._interact_task is not None and not self._interact_task.done():
-            self._interact_task.cancel()
+        if self._interact_task is None:
+            return
+        if self._interact_task.done():
+            await self._interact_task
+            return
+        self._interact_task.cancel()
+        try:
+            await self._interact_task
+        except asyncio.CancelledError:
+            pass

@@ -309,9 +309,14 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env maniskill_libero --vlm-reward
+   bash requirements/install.sh embodied --model qwen3_vl --env maniskill_libero --vlm-reward
 
-随后在 reward 配置中使用 ``history_vlm``。QwenTrend 示例使用
+这会安装 MLP policy 示例所需的 Qwen3-VL reward runtime。如果训练 policy
+是 OpenPI，则使用 ``--model openpi --vlm-reward``，这样 RLinf 还会应用
+适配 Qwen3-VL 所需 ``transformers`` 版本的 OpenPI patch。
+
+随后在 reward 配置中使用 ``history_vlm`` 启用 Hugging Face 后端，或使用
+``history_vlm_sglang`` 启用 SGLang 后端。QwenTrend 示例使用
 ``reward_mode: history_buffer``，因此 env worker 会按 env 维护历史窗口，
 只在窗口有效时将历史输入发送给 reward worker：
 
@@ -357,10 +362,26 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
 关键字段说明：
 
+- ``model_type`` 选择 reward 推理后端：``history_vlm`` 使用 Hugging Face/Transformers，
+  ``history_vlm_sglang`` 使用 SGLang。
 - ``history_buffers`` 定义需要缓存的 observation key、窗口长度和最小有效历史长度。
 - ``input_builder_name`` 将历史窗口转换为双视角 VLM 输入。
 - ``reward_parser_name`` 将模型生成的标签映射为标量 reward，标量由 ``positive_reward``、``negative_reward``、``unclear_reward`` 和 ``invalid_reward`` 控制。
 - ``gt_success_bonus`` 可以从环境 info 中读取成功信号并额外加分。
+
+如果要把同一个 ManiSkill YAML 切换到 SGLang reward 推理，只需要修改
+reward model type：
+
+.. code-block:: yaml
+
+   reward:
+     model:
+       model_type: "history_vlm_sglang"
+
+SGLang 后端复用同一套 QwenTrend input builder、reward parser 和 history
+buffer 配置。它使用 ``model_path`` 和可选的 ``sglang_engine_kwargs`` 构造
+engine；Hugging Face 后端的 ``lora_path`` 加载路径不适用于
+``history_vlm_sglang``。
 
 启动 MLP RL：
 

@@ -102,8 +102,16 @@ class GemmaMLP(nn.Module):
         self.act_fn = ACT2FN[config.hidden_act]
 
     def forward(self, x):
-        down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
-        return down_proj
+        up_proj_dtype = self.up_proj.weight.dtype
+        if x.dtype != up_proj_dtype:
+            x = x.to(dtype=up_proj_dtype)
+
+        hidden_states = self.act_fn(self.gate_proj(x)) * self.up_proj(x)
+        down_proj_dtype = self.down_proj.weight.dtype
+        if hidden_states.dtype != down_proj_dtype:
+            hidden_states = hidden_states.to(dtype=down_proj_dtype)
+
+        return self.down_proj(hidden_states)
 
 
 class GemmaRotaryEmbedding(nn.Module):
@@ -294,6 +302,10 @@ class GemmaAttention(nn.Module):
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
 
+        proj_dtype = self.q_proj.weight.dtype
+        if hidden_states.dtype != proj_dtype:
+            hidden_states = hidden_states.to(dtype=proj_dtype)
+
         query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
@@ -340,6 +352,9 @@ class GemmaAttention(nn.Module):
         )
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+        o_proj_dtype = self.o_proj.weight.dtype
+        if attn_output.dtype != o_proj_dtype:
+            attn_output = attn_output.to(dtype=o_proj_dtype)
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights
 
