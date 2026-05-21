@@ -78,9 +78,3 @@ actor:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
-
-reward:
-  use_reward_model: False
-
-critic:
-  use_critic_model: False
