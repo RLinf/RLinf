@@ -35,6 +35,8 @@ data:
   dataset_name: "robo2vlmsft"
   apply_chat_template: True
   use_chat_template: True
+  # packing_strategy: "best_fit"  # null (default) = no packing
+  # max_seq_length: 2048          # required when packing_strategy='best_fit'
   # if train_data_paths is not None, the sft code will just eval the model
   train_data_paths: "/path/to/Robo2VLM-1"
   val_data_paths: "/path/to/Robo2VLM-1"

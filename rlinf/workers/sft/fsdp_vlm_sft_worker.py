@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 import json
 import logging
 import os
@@ -22,6 +23,7 @@ import torch
 from omegaconf import DictConfig
 
 from rlinf.config import SupportedModel
+from rlinf.data.datasets.vlm import VLMDatasetRegistry
 from rlinf.hybrid_engines.fsdp.utils import generate_with_kv_cache
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
@@ -94,7 +96,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             from torch.utils.data import DataLoader, DistributedSampler
 
             from rlinf.data.datasets import sft_collate_fn
-            from rlinf.data.datasets.vlm import VLMDatasetRegistry
+            from rlinf.data.packing import sft_packed_collate_fn
 
             # vlm sft before load dataloader should build the tokenizer
             if not hasattr(self, "tokenizer"):
@@ -123,6 +125,25 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             else:
                 sampler = None
 
+            # Choose collate function: packed or plain
+            packing_strategy = self.cfg.data.get("packing_strategy", None)
+            if packing_strategy == "best_fit" and not eval_dataset:
+                max_seq_length = self.cfg.data.get("max_seq_length")
+                assert max_seq_length is not None, (
+                    "data.max_seq_length is required when packing_strategy='best_fit'"
+                )
+                pad_token_id = self.tokenizer.pad_token_id or 0
+                collate = functools.partial(
+                    sft_packed_collate_fn,
+                    max_seq_length=max_seq_length,
+                    pad_token_id=pad_token_id,
+                )
+                self._packing_enabled = True
+            else:
+                collate = sft_collate_fn
+                if not eval_dataset:
+                    self._packing_enabled = False
+
             batch_size = (
                 self.micro_batch_size
                 if not eval_dataset
@@ -135,7 +156,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 shuffle=(sampler is None),
                 num_workers=self.cfg.data.get("num_workers", 4),
                 drop_last=True,
-                collate_fn=sft_collate_fn,
+                collate_fn=collate,
             )
             logging.info(
                 f"Build data loader from {data_paths} with {len(train_dataset)} samples"
@@ -293,6 +314,9 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         return correct
 
     def get_train_model_output(self, batch: dict[str, Any]):
+        if getattr(self, "_packing_enabled", False):
+            return self._get_packed_train_output(batch)
+
         # hundle the input batch
         input_ids = batch["prompt"].to(self.device)
         attention_mask = batch["attention_mask"].to(self.device, dtype=torch.bool)
@@ -315,3 +339,39 @@ class FSDPVlmSftWorker(FSDPSftWorker):
 
         # train model return the loss
         return outputs.loss
+
+    def _get_packed_train_output(self, packed_batches: list[dict[str, Any]]):
+        """Forward pass for packed SFT batches.
+
+        Each element in *packed_batches* is one packed row produced by
+        ``sft_packed_collate_fn``.  We iterate over them, accumulate the
+        weighted loss (by ``num_sequences``) and return the mean.
+        """
+        total_loss = torch.tensor(0.0, device=self.device)
+        total_seqs = 0
+
+        for pb in packed_batches:
+            input_ids = pb["prompt"].to(self.device)
+            position_ids = pb["position_ids"].to(self.device)
+            labels = pb["labels"].to(self.device)
+            attention_mask = pb["attention_mask"]  # None
+            num_seq = pb["num_sequences"]
+
+            multi_modal_inputs = pb["multi_modal_inputs"]
+            for k, v in multi_modal_inputs.items():
+                if isinstance(v, torch.Tensor):
+                    multi_modal_inputs[k] = v.to(device=self.device)
+
+            with self.amp_context:
+                outputs = self.model(
+                    input_ids=input_ids,
+                    position_ids=position_ids,
+                    attention_mask=attention_mask,
+                    labels=labels,
+                    **multi_modal_inputs,
+                )
+
+            total_loss = total_loss + outputs.loss * num_seq
+            total_seqs += num_seq
+
+        return total_loss / max(total_seqs, 1)
