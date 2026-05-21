@@ -199,6 +199,7 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
             reward_channel=self.reward_channel,
             actor_channel=self.actor_channel,
             metric_channel=self.env_metric_channel,
+            max_rollouts=self.max_steps - self.global_step,
         )
         rollout_handle: Handle = self.rollout.generate(
             input_channel=self.rollout_channel,
@@ -229,8 +230,9 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
                 self.global_step += 1
                 self.actor.set_global_step(self.global_step).wait()
                 self.rollout.set_global_step(self.global_step).wait()
-                with self.timer("update_rollout_weights"):
-                    self.update_rollout_weights()
+                if self.global_step < self.max_steps:
+                    with self.timer("update_rollout_weights"):
+                        self.update_rollout_weights()
 
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}

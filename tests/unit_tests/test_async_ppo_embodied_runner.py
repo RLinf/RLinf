@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 import rlinf.runners.async_ppo_embodied_runner as async_ppo_runner_module
 import rlinf.runners.embodied_runner as embodied_runner_module
 from rlinf.runners.async_ppo_embodied_runner import AsyncPPOEmbodiedRunner
+from rlinf.workers.env.async_env_worker import AsyncEnvWorker
 
 
 class _FakeHandle:
@@ -162,6 +163,7 @@ class _FakeEnv:
         reward_channel,
         actor_channel,
         metric_channel,
+        max_rollouts=None,
     ):
         self.interact_calls.append(
             {
@@ -170,6 +172,7 @@ class _FakeEnv:
                 "reward_channel": reward_channel,
                 "actor_channel": actor_channel,
                 "metric_channel": metric_channel,
+                "max_rollouts": max_rollouts,
             }
         )
         return _FakeHandle()
@@ -288,7 +291,10 @@ def test_async_ppo_runner_starts_reward_worker_and_wires_reward_channel(
     assert reward_channel is env.interact_calls[0]["reward_channel"]
     assert reward.compute_calls[0]["output_channel"] is runner.env_channel
     assert reward.compute_calls[0]["metric_channel"] is runner.reward_metric_channel
+    assert env.interact_calls[0]["max_rollouts"] == 1
 
+    assert actor.sync_model_to_rollout_calls == 1
+    assert rollout.sync_model_from_actor_calls == 1
     assert reward.stop_calls == 1
     assert reward.handle.wait_calls == 1
 
@@ -419,3 +425,26 @@ def test_async_ppo_runner_keeps_reward_queue_depth_max_metric(
 
     assert reward_metrics["reward/input_queue_depth"] == 2.0
     assert reward_metrics["reward/input_queue_depth_max"] == 3.0
+
+
+def test_async_env_worker_stop_cancels_background_interact_task():
+    async def run_stop():
+        worker = object.__new__(AsyncEnvWorker)
+        cancelled = False
+
+        async def never_finishes():
+            nonlocal cancelled
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
+
+        worker._interact_task = asyncio.create_task(never_finishes())
+        await asyncio.sleep(0)
+        await worker.stop()
+
+        assert cancelled
+        assert worker._interact_task.done()
+
+    asyncio.run(run_stop())

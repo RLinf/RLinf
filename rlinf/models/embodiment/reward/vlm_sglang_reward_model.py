@@ -70,6 +70,7 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
 
         self.history_buffer_names = list(cfg.history_buffers.keys())
         self.infer_micro_batch_size: int = int(cfg.get("infer_micro_batch_size", 0))
+        self.gt_success_bonus = float(cfg.get("gt_success_bonus", 0.0))
         self.input_mode: str = str(cfg.get("input_mode", "video_data"))
         if self.input_mode != "video_data":
             raise ValueError(
@@ -407,6 +408,42 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
         self.last_generation_stats = dict(generation_stats)
         logger.debug("HistoryVLMSGLangRewardModel timing_ms=%s", self.last_timing_ms)
 
+    def apply_gt_success_bonus(
+        self, rewards: torch.Tensor, reward_input: dict[str, Any]
+    ) -> torch.Tensor:
+        if rewards is None or self.gt_success_bonus == 0.0:
+            return rewards
+        env_infos = (
+            reward_input.get("env_infos") if isinstance(reward_input, dict) else None
+        )
+        if not isinstance(env_infos, dict):
+            return rewards
+
+        success = None
+        final_info = env_infos.get("final_info", {})
+        for info_dict in (
+            env_infos,
+            env_infos.get("episode"),
+            final_info,
+            final_info.get("episode") if isinstance(final_info, dict) else None,
+        ):
+            if not isinstance(info_dict, dict):
+                continue
+            for key in ("success", "success_at_end", "success_once"):
+                value = info_dict.get(key)
+                if value is not None:
+                    success = torch.as_tensor(value).reshape(-1).bool()
+                    break
+            if success is not None:
+                break
+
+        if success is None or success.shape[0] != rewards.shape[0]:
+            return rewards
+        bonus = success.to(device=rewards.device, dtype=rewards.dtype)
+        return rewards + (bonus * self.gt_success_bonus).view(
+            -1, *([1] * (rewards.dim() - 1))
+        )
+
     @torch.no_grad()
     def compute_reward(
         self,
@@ -491,4 +528,5 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
             timings,
             self._summarize_generation_stats(generated_token_counts),
         )
-        return torch.cat(reward_chunks, dim=0)
+        rewards = torch.cat(reward_chunks, dim=0)
+        return self.apply_gt_success_bonus(rewards, observations)
