@@ -16,7 +16,7 @@ runner:
   logger:
     log_path: ${runner.output_dir}/${runner.experiment_name}
     project_name: rlinf
-    experiment_name: qwen3-vl-4b-megatron-bridge-sft
+    experiment_name: ${runner.experiment_name}
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   # sft runner use the len(dataset) as one epoch
@@ -26,7 +26,7 @@ runner:
   val_check_interval: 50
   # save the model interval
   save_interval: 50
-  experiment_name: qwen3_vl_megatron_sft
+  experiment_name: qwen3-vl-4b-megatron-bridge-sft
   output_dir: /workspace/results
   resume_dir: null
 
@@ -81,7 +81,7 @@ actor:
     is_lora: False
   
     activation: swiglu
-    sequence_parallel: True
+    sequence_parallel: False
 
     seq_length: 1024
     encoder_seq_length: ${actor.model.seq_length}

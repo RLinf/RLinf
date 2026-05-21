@@ -101,6 +101,14 @@ class MegatronSftWorker(MegatronModelManager, Worker):
         else:
             self.eval_data_loader = None
 
+        self.pack_seqs = True
+        # now mbridge pack_seqs don't support in pipeline_model_parallel_size > 1 case
+        if self.cfg.actor.model.pipeline_model_parallel_size > 1:
+            self.pack_seqs = False
+            self.logger.info(
+                "[INFO] pack_seqs is not support for pipeline_model_parallel_size > 1"
+            )
+
         self.global_step = 0
         self._data_epoch = 0
         self._data_iter_offset = 0
@@ -418,6 +426,7 @@ class MegatronVlmSftWorker(MegatronSftWorker):
                 attention_mask=attention_mask,
                 pixel_values=pixel_values,
                 position_ids=None,
+                pack_seqs=self.pack_seqs,
                 keep_left_padding=True,
                 sequence_parallel=self.transformer_config.sequence_parallel,
                 image_grid_thw=image_grid_thw,
