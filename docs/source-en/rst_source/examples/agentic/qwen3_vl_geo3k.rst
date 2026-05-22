@@ -69,7 +69,7 @@ We use the geo3K dataset (download from https://huggingface.co/datasets/CAIR-HKI
 
 An example training sample looks like:
 
-.. code-block:: json
+.. code-block:: text
 
    {
       "problem": "<image>\nProblem description",
@@ -117,7 +117,7 @@ We support several dataset format configurations:
       system_prompt: 'Solve the following math problem step by step. The last line of your response should be of the form Answer: \\boxed{$Answer}.'
 
 Algorithm
---------
+---------
 
 We use standard GRPO (Group Relative Policy Optimization) with **TIS** (Truncated Importance Sampling) enabled to stabilize training:
 

@@ -68,7 +68,7 @@ RLinf 提供了 ``requirements/install.sh`` 脚本一键完成环境安装：
 
 一个训练样例如下：
 
-.. code-block:: json
+.. code-block:: text
 
    {
       "problem": "<image>\nProblem description",
