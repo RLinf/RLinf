@@ -244,7 +244,7 @@ actor:
     mixed_precision:            # mixed precision settings for fsdp/fsdp2
       param_dtype: "bf16"
       reduce_dtype: "fp32"
-      buffer_dtype: "fp32"
+      buffer_dtype: "bf16"
 
     amp:
       enabled: False                 # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
