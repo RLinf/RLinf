@@ -24,48 +24,78 @@ ABot-M0 is used as the VLA policy. The RLinf wrapper keeps pretrained
 perception components frozen, trains the action model through the RL objective,
 and adds a value head for actor-critic training.
 
-Installation
-------------
-
 Dependency Installation
+-----------------------
+
+Install ABot-M0, VGGT, and the LIBERO runtime in the same Python environment as
+RLinf.
+
+1. Clone RLinf Repository
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+   # For mainland China users, you can use the following for better download speed:
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+2. Install Dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-Install ABot-M0, VGGT, and the standard LIBERO runtime in the same Python
-environment as RLinf. The following installer command installs standard LIBERO;
-only LIBERO-Plus requires the additional steps in the next section.
+**Option 1: Docker Image**
 
-.. code-block:: bash
+Use Docker image for the experiment.
 
-   git clone https://github.com/amap-cvlab/ABot-Manipulation.git
-   git clone https://github.com/facebookresearch/vggt.git
+.. code:: bash
 
-   cd <path_to_RLinf>
-   export ABOT_PATH=<path_to_ABot-Manipulation>
-   export VGGT_PATH=<path_to_vggt>
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      # For mainland China users, you can use the following for better download speed:
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
-   # Optional mirror for environments with limited access to GitHub and PyPI.
-   # Add --use-mirror to the installer command when needed.
-   bash requirements/install.sh embodied --venv .venv --model abot_m0 --env maniskill_libero --install-rlinf
+Please switch to the corresponding virtual environment via the built-in
+``switch_env`` utility in the image:
+
+.. code:: bash
+
+   source switch_env abot_m0
+
+**Option 2: Custom Environment**
+
+The installer clones ABot-M0 and VGGT automatically. If you already have local
+checkouts, set ``ABOT_PATH`` and ``VGGT_PATH`` before running the installer.
+
+.. code:: bash
+
+   # Optional: use local source checkouts instead of installer-managed clones.
+   # export ABOT_PATH=<path_to_ABot-Manipulation>
+   # export VGGT_PATH=<path_to_vggt>
+
+   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
+   bash requirements/install.sh embodied --model abot_m0 --env maniskill_libero
    source .venv/bin/activate
 
-LIBERO-Plus
-~~~~~~~~~~~
+For LIBERO-Plus experiments, install the additional ``LIBERO-plus`` runtime in
+the same environment:
 
-LIBERO-Plus requires an additional ``LIBERO-plus`` checkout. After the standard
-LIBERO installation above, run the installer with ``--env liberoplus`` in the
-same environment:
+.. code:: bash
 
-.. code-block:: bash
-
-   cd <path_to_RLinf>
-
-   # Optional mirror for environments with limited access to GitHub and PyPI.
-   # Add --use-mirror to the installer command when needed.
-   bash requirements/install.sh embodied --venv .venv --model abot_m0 --env liberoplus --install-rlinf
+   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
+   bash requirements/install.sh embodied --model abot_m0 --env liberoplus
    source .venv/bin/activate
 
-Download and extract the LIBERO-Plus assets into the installed package
-directory:
+LIBERO-Plus Assets Download
+---------------------------
+
+LIBERO-Plus requires hundreds of new objects, textures, and other assets to
+function correctly. Download the ``assets.zip`` archive from the Hugging Face
+dataset ``Sylvest/LIBERO-plus`` and extract it into the installed
+``liberoplus.liberoplus`` package directory:
 
 .. code-block:: bash
 
@@ -136,78 +166,55 @@ After extraction, the directory should look like:
 
 See :doc:`liberoplus_pro` for full LIBERO-Plus details.
 
-Model Weights
--------------
+Model Download
+--------------
 
-Evaluation Checkpoint
-~~~~~~~~~~~~~~~~~~~~~
+Before training, download the ABot-M0 checkpoint and the required backbone
+weights:
 
-The SFT checkpoint released by ABot can be used for standalone evaluation:
+* ``acvlab/ABot-M0-LIBERO`` for standalone evaluation.
+* ``HaoyunOvO/ABot-m0-LIBERO-10k-step`` as the PPO training baseline.
+* ``StarVLA/Qwen3-VL-4B-Instruct-Action`` as the Qwen3-VL backbone.
+* ``facebook/VGGT-1B`` for offline VGGT loading when Hugging Face cannot be
+  reached at runtime.
 
 .. code-block:: bash
 
-   # Optional mirror for environments that cannot access Hugging Face directly.
+   # Method 1: Using git clone
+   git lfs install
+   git clone https://huggingface.co/acvlab/ABot-M0-LIBERO
+   git clone https://huggingface.co/HaoyunOvO/ABot-m0-LIBERO-10k-step
+   git clone https://huggingface.co/StarVLA/Qwen3-VL-4B-Instruct-Action
+   git clone https://huggingface.co/facebook/VGGT-1B
+
+   # Method 2: Using huggingface-hub
+   # For mainland China users, you can use the following for better download speed:
    # export HF_ENDPOINT=https://hf-mirror.com
+   pip install huggingface-hub
+   hf download acvlab/ABot-M0-LIBERO --local-dir ./ABot-M0-LIBERO
+   hf download HaoyunOvO/ABot-m0-LIBERO-10k-step --local-dir ./ABot-m0-LIBERO-10k-step
+   hf download StarVLA/Qwen3-VL-4B-Instruct-Action --local-dir ./Qwen3-VL-4B-Instruct-Action
+   hf download facebook/VGGT-1B --local-dir ./VGGT-1B
 
-   hf download acvlab/ABot-M0-LIBERO --local-dir /path/to/ABot-M0-LIBERO
+For PPO training, the 10k-step ABot-M0 LIBERO checkpoint provides an initial
+LIBERO success rate of approximately 40% and is suitable as the starting point
+for further RL training.
 
-RL Baseline Checkpoint
-~~~~~~~~~~~~~~~~~~~~~~
+.. note::
 
-For PPO training, a 10k-step ABot-M0 LIBERO checkpoint is available as an RL
-baseline. In LIBERO evaluation it provides an initial success rate of
-approximately 40% and is suitable as the starting point for further RL training.
-
-.. code-block:: bash
-
-   hf download HaoyunOvO/ABot-m0-LIBERO-10k-step \
-     --local-dir /path/to/ABot-m0-LIBERO-10k-step
-
-Checkpoint Configuration
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-ABot-M0 checkpoints include ``config.yaml``. Check the ``qwenvl.base_vlm`` field
-and replace developer-local path with the local path to the Qwen3-VL backbone:
-
-.. code-block:: bash
-
-   # Optional mirror for environments that cannot access Hugging Face directly.
-   # export HF_ENDPOINT=https://hf-mirror.com
-
-   hf download StarVLA/Qwen3-VL-4B-Instruct-Action \
-     --local-dir /path/to/Qwen3-VL-4B-Instruct-Action
+   ABot-M0 checkpoints include ``config.yaml``. After download, update
+   ``qwenvl.base_vlm`` so it points to your local
+   ``Qwen3-VL-4B-Instruct-Action`` path.
 
 .. code-block:: yaml
 
    qwenvl:
      base_vlm: /path/to/Qwen3-VL-4B-Instruct-Action
 
-The Qwen3-VL backbone is available at
-``https://huggingface.co/StarVLA/Qwen3-VL-4B-Instruct-Action``.
-
-Offline VGGT Loading
-~~~~~~~~~~~~~~~~~~~~
-
-ABot currently initializes VGGT with:
-``VGGT.from_pretrained("facebook/VGGT-1B")``
-
-If the runtime can access Hugging Face through a mirror, set ``HF_ENDPOINT``:
-
-.. code-block:: bash
-
-   export HF_ENDPOINT=https://hf-mirror.com
-
-Otherwise, pre-download VGGT and make it available from the local Hugging Face
-cache or a local directory:
-
-.. code-block:: bash
-
-   hf download facebook/VGGT-1B --local-dir /path/to/VGGT-1B
-
-Then either:
-
-* place the model in your local Hugging Face cache, or
-* explicitly set VGGT loading to a local directory in your ABot installation.
+ABot currently initializes VGGT with
+``VGGT.from_pretrained("facebook/VGGT-1B")``. If the runtime cannot access
+Hugging Face or a mirror, place ``VGGT-1B`` in your local Hugging Face cache or
+explicitly set VGGT loading to a local directory in your ABot installation.
 
 Example local override:
 
