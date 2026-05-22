@@ -96,6 +96,10 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     def _reduce_sft_loss(self, loss):
         """Reduce model-specific SFT loss to a scalar."""
+        if hasattr(loss, "get") and not isinstance(loss, torch.Tensor):
+            loss = loss.get("loss")
+        if loss is None:
+            raise ValueError("SFT forward did not return a `loss` tensor.")
         if not isinstance(loss, torch.Tensor):
             loss = torch.as_tensor(loss, device=self.device)
 
@@ -149,10 +153,10 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 self.grad_scaler.scale(actor_loss).backward()
             gbs_actor_loss.append(actor_loss.item() * self.gradient_accumulation)
 
-        actor_grad_norm = self.model.clip_grad_norm_(
-            max_norm=self.cfg.actor.optim.clip_grad
-        )
-        self.optimizer.step()
+        # FSDP2 (DreamZero) does not expose clip_grad_norm_ on the wrapped module;
+        # use FSDPModelManager.optimizer_step() like EmbodiedFSDPActor / FSDPSftWorker.
+        # OpenPI DAgger configs typically use fsdp v1, where FSDP.clip_grad_norm_ exists.
+        actor_grad_norm, _ = self.optimizer_step()
         self.lr_scheduler.step()
 
         return {
