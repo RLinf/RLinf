@@ -17,9 +17,9 @@ Megatron-Bridge resources:
 
 - `Megatron-Bridge upstream repository <https://github.com/NVIDIA/Megatron-Bridge>`__
 
-- `Megatron-Bridge version used by RLinf <https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/v0.3.0>`__
+- `Megatron-Bridge version 0.3.0 used by RLinf <https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/v0.3.0>`__
 
-- `Corresponding Megatron-LM version <https://github.com/NVIDIA/Megatron-LM/tree/b0cc2706ddc60d2aefd5fff346445b5c013036a8>`__
+- `Corresponding Megatron-LM version b0cc2706ddc60d2aefd5fff346445b5c013036a8 <https://github.com/NVIDIA/Megatron-LM/tree/b0cc2706ddc60d2aefd5fff346445b5c013036a8>`__
 
 Overview
 --------

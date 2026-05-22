@@ -605,7 +605,7 @@ jobs:
           rm -rf FUSCO
           uv cache prune
 
-megatron-bridge-qwen-grpo-test:
+  megatron-bridge-qwen-grpo-test:
     runs-on: reason
     steps:
       - name: Checkout code

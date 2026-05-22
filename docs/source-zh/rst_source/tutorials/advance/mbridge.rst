@@ -14,9 +14,9 @@ Megatron-Bridge 相关仓库：
 
 - `Megatron-Bridge 原仓库 <https://github.com/NVIDIA/Megatron-Bridge>`__
 
-- `当前 RLinf 使用的 Megatron-Bridge 版本 <https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/v0.3.0>`__
+- `当前 RLinf 使用的 Megatron-Bridge 版本 0.3.0 <https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/v0.3.0>`__
 
-- `对应 Megatron-LM 版本 <https://github.com/NVIDIA/Megatron-LM/tree/b0cc2706ddc60d2aefd5fff346445b5c013036a8>`__
+- `对应 Megatron-LM 版本 b0cc2706ddc60d2aefd5fff346445b5c013036a8 <https://github.com/NVIDIA/Megatron-LM/tree/b0cc2706ddc60d2aefd5fff346445b5c013036a8>`__
 
 使用介绍
 --------
