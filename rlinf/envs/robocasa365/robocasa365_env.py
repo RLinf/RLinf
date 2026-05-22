@@ -53,16 +53,8 @@ _LEGACY_TASK_DESC_MAP = {
     "CoffeePressButton": "press coffee machine button",
 }
 
-_PROMPT_CANDIDATE_KEYS = (
-    "prompt",
-    "language",
-    "lang",
-    "instruction",
-    "task_description",
-    "description",
-    "task",
-)
-_NESTED_PROMPT_KEYS = ("ep_meta", "metadata", "task_metadata")
+_OFFICIAL_PROMPT_INFO_KEY = "ep_meta"
+_OFFICIAL_PROMPT_LANG_KEY = "lang"
 
 
 def _cfg_to_python(value: Any) -> Any:
@@ -101,24 +93,19 @@ def _split_camel_case(name: str) -> str:
     return " ".join(token.lower() for token in tokens) if tokens else name.lower()
 
 
-def _prompt_from_metadata(metadata: Any) -> Optional[str]:
-    if isinstance(metadata, str):
-        prompt = metadata.strip()
-        return prompt or None
-    if not isinstance(metadata, dict):
-        return None
-
-    for key in _PROMPT_CANDIDATE_KEYS:
-        value = metadata.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-
-    for key in _NESTED_PROMPT_KEYS:
-        nested_prompt = _prompt_from_metadata(metadata.get(key))
-        if nested_prompt:
-            return nested_prompt
-
-    return None
+def _official_prompt_from_info(info_single: dict[str, Any]) -> str:
+    value = info_single[_OFFICIAL_PROMPT_INFO_KEY][_OFFICIAL_PROMPT_LANG_KEY]
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, np.ndarray) and value.shape == ():
+        scalar_value = value.item()
+        if isinstance(scalar_value, str):
+            return scalar_value.strip()
+    raise TypeError(
+        "RoboCasa365 official prompt info "
+        f"'{_OFFICIAL_PROMPT_INFO_KEY}.{_OFFICIAL_PROMPT_LANG_KEY}' must contain "
+        f"a string, got {type(value).__name__}."
+    )
 
 
 def _normalize_task_filter(task_filter: Any) -> dict[str, list[str]]:
@@ -313,6 +300,15 @@ class Robocasa365Env(gym.Env):
         )
         self.observation_cfg = _cfg_to_python(cfg.get("observation", {})) or {}
         self.action_space_cfg = _cfg_to_python(cfg.get("action_space", {})) or {}
+        self.task_sampling_strategy = str(
+            cfg.get(
+                "task_sampling_strategy",
+                "ordered" if bool(cfg.get("is_eval", False)) else "random",
+            )
+        )
+        self.rotate_tasks_on_auto_reset = bool(
+            cfg.get("rotate_tasks_on_auto_reset", True)
+        )
         self.benchmark_selection = cfg.get(
             "benchmark_selection",
             _build_benchmark_selection(
@@ -325,8 +321,13 @@ class Robocasa365Env(gym.Env):
 
         self.task_specs = self._load_task_specs()
         self.num_tasks = len(self.task_specs)
-
+        self._ordered_task_cursor = (
+            (self.seed_offset * self.num_group) % self.num_tasks
+            if self.num_tasks
+            else 0
+        )
         self._init_reset_state_ids()
+        self.update_reset_state_ids()
         self._init_env()
 
         self.prev_step_reward = np.zeros(self.num_envs)
@@ -334,6 +335,8 @@ class Robocasa365Env(gym.Env):
 
         self._init_metrics()
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
+        self.current_raw_obs = None
+        self.current_info_list = None
 
         self.video_cfg = cfg.video_cfg
 
@@ -401,12 +404,7 @@ class Robocasa365Env(gym.Env):
                 metadata = {}
 
             task_label = task_name.split("/", 1)[-1]
-            prompt = _prompt_from_metadata(metadata)
-            if prompt is None:
-                prompt = _LEGACY_TASK_DESC_MAP.get(
-                    task_label.removeprefix("Kitchen"),
-                    _split_camel_case(task_label),
-                )
+            prompt = _split_camel_case(task_label)
 
             task_soup = metadata.get("task_soup")
             if not task_soup and self.task_soups:
@@ -455,12 +453,79 @@ class Robocasa365Env(gym.Env):
         self.env_seeds = [base_seed + i for i in range(self.num_envs)]
 
     def update_reset_state_ids(self):
-        pass
+        self._set_next_task_ids()
+
+    def _sample_task_ids(self, num_groups: int) -> np.ndarray:
+        use_ordered = (
+            self.task_sampling_strategy == "ordered"
+            or bool(self.cfg.get("is_eval", False))
+            or bool(self.cfg.get("use_ordered_reset_state_ids", False))
+        )
+        if use_ordered:
+            group_task_ids = (
+                np.arange(
+                    self._ordered_task_cursor,
+                    self._ordered_task_cursor + num_groups,
+                )
+                % self.num_tasks
+            )
+            self._ordered_task_cursor = (
+                self._ordered_task_cursor + num_groups * self.total_num_processes
+            ) % self.num_tasks
+            return group_task_ids.astype(np.int32, copy=False)
+
+        return self._generator.integers(
+            low=0,
+            high=self.num_tasks,
+            size=num_groups,
+            dtype=np.int32,
+        )
+
+    def _set_next_task_ids(
+        self, env_idx: Optional[Union[int, list[int], np.ndarray]] = None
+    ) -> np.ndarray:
+        if env_idx is None:
+            env_idx = np.arange(self.num_envs)
+        elif isinstance(env_idx, int):
+            env_idx = np.asarray([env_idx], dtype=np.int32)
+        else:
+            env_idx = np.asarray(env_idx, dtype=np.int32)
+
+        if env_idx.size == 0:
+            return env_idx
+
+        group_ids = np.unique(env_idx // self.group_size)
+        group_task_ids = self._sample_task_ids(len(group_ids))
+        affected_env_ids = []
+        new_task_ids = getattr(
+            self,
+            "task_ids",
+            np.zeros(self.num_envs, dtype=np.int32),
+        ).copy()
+
+        for group_id, task_id in zip(group_ids, group_task_ids):
+            group_start = int(group_id) * self.group_size
+            group_end = min(group_start + self.group_size, self.num_envs)
+            group_env_ids = np.arange(group_start, group_end, dtype=np.int32)
+            new_task_ids[group_env_ids] = int(task_id)
+            affected_env_ids.extend(group_env_ids.tolist())
+
+        affected_env_ids = np.asarray(affected_env_ids, dtype=np.int32)
+        old_task_ids = getattr(self, "task_ids", None)
+        self.task_ids = new_task_ids
+        self._refresh_task_context()
+
+        if old_task_ids is not None and hasattr(self, "env"):
+            changed_env_ids = affected_env_ids[
+                old_task_ids[affected_env_ids] != self.task_ids[affected_env_ids]
+            ]
+            if changed_env_ids.size:
+                env_fns = self.get_env_fns(env_idx=changed_env_ids)
+                self.env.reconfigure_env_fns(env_fns, changed_env_ids)
+
+        return affected_env_ids
 
     def _init_env(self):
-        self.task_ids = np.array(
-            [env_id % self.num_tasks for env_id in range(self.num_envs)]
-        )
         self._refresh_task_context()
 
         env_fns = self.get_env_fns()
@@ -487,8 +552,15 @@ class Robocasa365Env(gym.Env):
         camera_names = _ensure_list(_cfg_to_python(self.cfg.camera_names))
         return [str(camera_name) for camera_name in camera_names]
 
-    def get_env_fns(self):
+    def get_env_fns(
+        self, env_idx: Optional[Union[list[int], np.ndarray]] = None
+    ):
         env_fns = []
+
+        if env_idx is None:
+            env_idx = np.arange(self.num_envs)
+        else:
+            env_idx = np.asarray(env_idx, dtype=np.int32)
 
         camera_names = self._get_camera_names()
         camera_widths = self.cfg.init_params.camera_widths
@@ -515,7 +587,8 @@ class Robocasa365Env(gym.Env):
         if self.cfg.get("randomize_cameras", None) is not None:
             env_kwargs["randomize_cameras"] = bool(self.cfg.randomize_cameras)
 
-        for env_id in range(self.num_envs):
+        for env_id in env_idx:
+            env_id = int(env_id)
             task_spec = self.task_specs[self.task_ids[env_id]]
             env_seed = self.env_seeds[env_id]
 
@@ -633,11 +706,12 @@ class Robocasa365Env(gym.Env):
             return np.zeros(0, dtype=np.float32)
         return np.concatenate(state_components).astype(np.float32, copy=False)
 
-    def _extract_image_and_state(self, obs):
+    def _extract_image_and_state(self, obs, info_list):
         base_images = []
         wrist_images = []
         extra_view_images = []
         states = []
+        task_descriptions = []
 
         main_camera_key = self._get_obs_key(
             "main_camera_key", "robot0_agentview_left_image"
@@ -693,6 +767,7 @@ class Robocasa365Env(gym.Env):
                 extra_view_images.append(env_extra_views)
 
             states.append(self._extract_state_vector(obs_single))
+            task_descriptions.append(_official_prompt_from_info(info_list[env_id]))
 
         return {
             "base_image": np.asarray(base_images),
@@ -701,11 +776,15 @@ class Robocasa365Env(gym.Env):
                 np.asarray(extra_view_images) if extra_view_images else None
             ),
             "state": np.asarray(states),
+            "task_descriptions": task_descriptions,
         }
 
-    def _wrap_obs(self, obs_list):
-        extracted = self._extract_image_and_state(obs_list)
+    def _wrap_obs(self, obs_list, info_list):
+        extracted = self._extract_image_and_state(obs_list, info_list)
         self._refresh_task_context()
+        for env_id, task_description in enumerate(extracted["task_descriptions"]):
+            self.task_descriptions[env_id] = task_description
+            self.task_metadata[env_id]["task_description"] = task_description
 
         obs = {
             "main_images": torch.from_numpy(extracted["base_image"]),
@@ -746,9 +825,17 @@ class Robocasa365Env(gym.Env):
         if isinstance(env_idx, int):
             env_idx = [env_idx]
 
-        raw_obs, _ = self.env.reset(id=env_idx)
+        raw_obs, info_list = self.env.reset(id=env_idx)
 
-        obs = self._wrap_obs(raw_obs)
+        if self.current_raw_obs is None:
+            self.current_raw_obs = [None] * self.num_envs
+        if self.current_info_list is None:
+            self.current_info_list = [None] * self.num_envs
+        for raw_obs_id, target_env_id in enumerate(env_idx):
+            self.current_raw_obs[int(target_env_id)] = raw_obs[raw_obs_id]
+            self.current_info_list[int(target_env_id)] = info_list[raw_obs_id]
+
+        obs = self._wrap_obs(self.current_raw_obs, self.current_info_list)
         self._reset_metrics(env_idx)
         infos = {}
         return obs, infos
@@ -794,12 +881,14 @@ class Robocasa365Env(gym.Env):
 
         raw_obs, rewards, dones, info_lists = self.env.step(actions)
         del rewards, dones
+        self.current_raw_obs = raw_obs
+        self.current_info_list = info_lists
 
         terminations = np.array(
             [info.get("success", False) for info in info_lists]
         ).astype(bool)
         truncations = self._elapsed_steps >= self.task_horizons
-        obs = self._wrap_obs(raw_obs)
+        obs = self._wrap_obs(raw_obs, info_lists)
 
         step_reward = self._calc_step_reward(terminations)
 
@@ -895,6 +984,8 @@ class Robocasa365Env(gym.Env):
         final_obs = copy.deepcopy(_final_obs)
         env_idx = np.arange(0, self.num_envs)[dones]
         final_info = copy.deepcopy(infos)
+        if self.rotate_tasks_on_auto_reset and self.group_size == 1:
+            self._set_next_task_ids(env_idx=env_idx)
         obs, infos = self.reset(env_idx=env_idx)
         infos["final_observation"] = final_obs
         infos["final_info"] = final_info

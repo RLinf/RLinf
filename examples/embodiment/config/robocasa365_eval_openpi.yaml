@@ -87,6 +87,7 @@ env:
     split: pretrain
     task_soup: atomic_seen
     task_mode: atomic
+    task_sampling_strategy: random
     max_episode_steps: 700
     max_steps_per_rollout_epoch: 700
     reward_coef: 1.0
@@ -96,6 +97,7 @@ env:
     split: target
     task_soup: atomic_seen
     task_mode: atomic
+    task_sampling_strategy: ordered
     auto_reset: True
     ignore_terminations: True
     max_episode_steps: 700
@@ -116,7 +118,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/mnt/public/yule/pi0_robocasa_pretrain_human300_convert"
+    model_path: "/path/to/model/pi0_robocasa365"
     precision: null
 
 actor:
@@ -128,7 +130,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/mnt/public/yule/pi0_robocasa_pretrain_human300_convert"
+    model_path: "/path/to/model/pi0_robocasa365"
     num_action_chunks: 10
     action_dim: 12
     num_steps: 5

@@ -87,8 +87,9 @@ env:
     split: pretrain
     task_soup: atomic_seen
     task_mode: atomic
-    max_episode_steps: 300
-    max_steps_per_rollout_epoch: 300
+    task_sampling_strategy: random
+    max_episode_steps: 700
+    max_steps_per_rollout_epoch: 700
     reward_coef: 1.0
     group_size: 8
   eval:
@@ -96,10 +97,11 @@ env:
     split: target
     task_soup: atomic_seen
     task_mode: atomic
+    task_sampling_strategy: ordered
     auto_reset: True
     ignore_terminations: True
-    max_episode_steps: 300
-    max_steps_per_rollout_epoch: 300
+    max_episode_steps: 700
+    max_steps_per_rollout_epoch: 700
     group_size: 1
     is_eval: True
     video_cfg:
@@ -135,9 +137,13 @@ actor:
     add_value_head: False
     openpi:
       config_name: "pi0_robocasa365"
-      num_images_in_input: 2
+      num_images_in_input: 3
       num_steps: 5
       detach_critic_input: False
+    openpi_data:
+      state_space: "16d"
+      image_space: "3views"
+      action_space: "12d"
 
   optim:
     lr: 5.0e-6

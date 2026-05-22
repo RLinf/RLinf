@@ -7,6 +7,8 @@ split: pretrain
 task_soup: atomic_seen
 task_mode: atomic
 task_filter: []
+task_sampling_strategy: random
+rotate_tasks_on_auto_reset: True
 
 # Robot configuration
 robot_name: PandaOmron
