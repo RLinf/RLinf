@@ -15,6 +15,7 @@ robot_name: PandaOmron
 camera_names:
   - robot0_agentview_left
   - robot0_eye_in_hand
+  - robot0_agentview_right
 render_camera: robot0_agentview_left
 has_renderer: False
 has_offscreen_renderer: True
@@ -51,7 +52,8 @@ init_params:
 observation:
   main_camera_key: robot0_agentview_left_image
   wrist_camera_key: robot0_eye_in_hand_image
-  extra_camera_keys: []
+  extra_camera_keys:
+    - robot0_agentview_right_image
   flip_images_vertical: True
   state_layout:
     - eef_pos
@@ -74,6 +76,7 @@ observation:
 
 action_space:
   env_action_dim: 12
-  openpi_valid_action_slice: [5, 12]
-  disable_base_control: True
+  openpi_valid_action_slice: [0, 12]
+  disable_base_control: False
   base_mode_index: 11
+  binarize_gripper_control: True

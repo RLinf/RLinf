@@ -229,6 +229,15 @@ def _build_split_kwargs(split: Optional[str]) -> dict[str, Any]:
     raise ValueError('split must be either {None, "all", "pretrain", "target"}')
 
 
+def _get_task_horizon(task_name: str, fallback_horizon: int) -> int:
+    try:
+        from robocasa.utils.dataset_registry_utils import get_task_horizon
+
+        return int(get_task_horizon(task_name))
+    except Exception:
+        return fallback_horizon
+
+
 class Robocasa365Env(gym.Env):
     """Vectorized RLinf wrapper for the RoboCasa365 benchmark.
 
@@ -376,6 +385,7 @@ class Robocasa365Env(gym.Env):
             ]
 
         task_specs = []
+        fallback_horizon = int(self.cfg.get("max_episode_steps", 300))
         for task_name in _dedupe_preserve_order(task_names):
             metadata = {}
             try:
@@ -422,6 +432,7 @@ class Robocasa365Env(gym.Env):
                     "task_name": task_label,
                     "env_name": f"robocasa/{task_label}",
                     "task_description": prompt,
+                    "horizon": _get_task_horizon(task_label, fallback_horizon),
                     "metadata_view": {
                         k: v for k, v in metadata_view.items() if v is not None
                     },
@@ -463,6 +474,14 @@ class Robocasa365Env(gym.Env):
             copy.deepcopy(self.task_specs[task_id]["metadata_view"])
             for task_id in self.task_ids
         ]
+        fallback_horizon = int(self.cfg.get("max_episode_steps", 300))
+        self.task_horizons = np.asarray(
+            [
+                int(self.task_specs[task_id].get("horizon", fallback_horizon))
+                for task_id in self.task_ids
+            ],
+            dtype=np.int32,
+        )
 
     def _get_camera_names(self) -> list[str]:
         camera_names = _ensure_list(_cfg_to_python(self.cfg.camera_names))
@@ -779,7 +798,7 @@ class Robocasa365Env(gym.Env):
         terminations = np.array(
             [info.get("success", False) for info in info_lists]
         ).astype(bool)
-        truncations = self._elapsed_steps >= self.cfg.max_episode_steps
+        truncations = self._elapsed_steps >= self.task_horizons
         obs = self._wrap_obs(raw_obs)
 
         step_reward = self._calc_step_reward(terminations)

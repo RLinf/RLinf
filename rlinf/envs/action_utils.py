@@ -152,26 +152,45 @@ def prepare_actions_for_robocasa(
     if action_space_cfg:
         env_action_dim = action_space_cfg.get("env_action_dim", action_dim)
         openpi_valid_action_slice = action_space_cfg.get(
-            "openpi_valid_action_slice", [5, 12]
+            "openpi_valid_action_slice", [0, env_action_dim]
         )
-        disable_base_control = action_space_cfg.get("disable_base_control", True)
+        disable_base_control = action_space_cfg.get("disable_base_control", False)
         base_mode_index = action_space_cfg.get("base_mode_index", env_action_dim - 1)
+        binarize_gripper_control = action_space_cfg.get(
+            "binarize_gripper_control", True
+        )
 
         if SupportedModel(model_type) == SupportedModel.OPENPI:
             start_idx, end_idx = openpi_valid_action_slice
-            actions_7d = raw_chunk_actions[..., start_idx:end_idx]
-            output_shape = actions_7d.shape[:-1] + (env_action_dim,)
-            actions_env = np.zeros(output_shape, dtype=np.float32)
+            actions_env = raw_chunk_actions[..., start_idx:end_idx].copy().astype(
+                np.float32
+            )
 
-            copy_dim = min(actions_7d.shape[-1], env_action_dim)
-            actions_env[..., :copy_dim] = actions_7d[..., :copy_dim]
-            if disable_base_control and 0 <= base_mode_index < env_action_dim:
-                actions_env[..., base_mode_index] = 0
+            if actions_env.shape[-1] != env_action_dim:
+                raise ValueError(
+                    f"RoboCasa365 OpenPI expects {env_action_dim}D action, "
+                    f"but got {actions_env.shape[-1]}D from slice "
+                    f"{openpi_valid_action_slice}. raw shape={raw_chunk_actions.shape}"
+                )
+
+            if binarize_gripper_control and env_action_dim >= 12:
+                actions_env[..., 6] = np.where(actions_env[..., 6] < 0.5, -1.0, 1.0)
+                actions_env[..., 11] = np.where(actions_env[..., 11] < 0.5, -1.0, 1.0)
+
+            if disable_base_control and env_action_dim >= 12:
+                actions_env[..., 7:10] = 0.0
+                actions_env[..., 10] = 0.0
+                if 0 <= base_mode_index < env_action_dim:
+                    actions_env[..., base_mode_index] = -1.0
+
             return actions_env
 
-        chunk_actions = raw_chunk_actions[..., :env_action_dim]
-        if disable_base_control and 0 <= base_mode_index < env_action_dim:
-            chunk_actions[..., base_mode_index] = 0
+        chunk_actions = raw_chunk_actions[..., :env_action_dim].copy()
+        if disable_base_control and env_action_dim >= 12:
+            chunk_actions[..., 7:10] = 0.0
+            chunk_actions[..., 10] = 0.0
+            if 0 <= base_mode_index < env_action_dim:
+                chunk_actions[..., base_mode_index] = -1.0
         return chunk_actions
 
     # raw_chunk_actions shape: [num_chunks, 32]
