@@ -284,16 +284,16 @@ RLinf v0.2 测试结果
           :alt: wan_libero_spatial_grpo_openvlaoft.yaml result curve
           :width: 95%
           :align: center
-   * - examples/sft/config/qwen2_5_sft_vlm.yaml
+   * - examples/sft/config/qwen2_5_vl_sft_vlm.yaml
      - Qwen/Qwen2.5-VL-3b-Instruct
      - .. image:: https://github.com/RLinf/misc/raw/main/pic/release_0.2/qwen2_5_sft_vlm.png
-          :alt: examples/sft/config/qwen2_5_sft_vlm.yaml result curve
+          :alt: examples/sft/config/qwen2_5_vl_sft_vlm.yaml result curve
           :width: 95%
           :align: center
-   * - examples/sft/config/qwen3_sft_vlm.yaml
+   * - examples/sft/config/qwen3_vl_sft_vlm.yaml
      - Qwen/Qwen3-VL-4b-Instruct
      - .. image:: https://github.com/RLinf/misc/raw/main/pic/release_0.2/qwen3_sft_vlm.png
-          :alt: examples/sft/config/qwen3_sft_vlm.yaml result curve
+          :alt: examples/sft/config/qwen3_vl_sft_vlm.yaml result curve
           :width: 95%
           :align: center
    * - examples/reasoning/config/math/qwen2.5-1.5b-ppo-megatron.yaml
