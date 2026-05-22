@@ -135,7 +135,7 @@ class VLMBaseDataset(Dataset):
                 images.append(v)
             elif isinstance(v, dict) and "bytes" in v:
                 images.append(v["bytes"])
-            elif isinstance(v, np.ndarray) and 'bytes' in v[0]: # TODO check if necessary
+            elif isinstance(v, np.ndarray) and 'bytes' in v[0]:
                 for p in v:
                     images.append(p['bytes'])
             else:
