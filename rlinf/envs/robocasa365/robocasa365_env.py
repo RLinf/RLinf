@@ -186,6 +186,7 @@ def _guess_task_mode(
         return "composite"
     return None
 
+
 def _build_benchmark_selection(
     task_source: str,
     split: Optional[str],
@@ -369,7 +370,9 @@ class Robocasa365Env(gym.Env):
         else:
             task_names = [
                 str(task)
-                for task in _ensure_list(_cfg_to_python(self.cfg.get("task_names", None)))
+                for task in _ensure_list(
+                    _cfg_to_python(self.cfg.get("task_names", None))
+                )
             ]
 
         task_specs = []
@@ -444,7 +447,9 @@ class Robocasa365Env(gym.Env):
         pass
 
     def _init_env(self):
-        self.task_ids = np.array([env_id % self.num_tasks for env_id in range(self.num_envs)])
+        self.task_ids = np.array(
+            [env_id % self.num_tasks for env_id in range(self.num_envs)]
+        )
         self._refresh_task_context()
 
         env_fns = self.get_env_fns()
@@ -695,9 +700,7 @@ class Robocasa365Env(gym.Env):
             "task_metadata": copy.deepcopy(self.task_metadata),
         }
         if extracted["extra_view_images"] is not None:
-            obs["extra_view_images"] = torch.from_numpy(
-                extracted["extra_view_images"]
-            )
+            obs["extra_view_images"] = torch.from_numpy(extracted["extra_view_images"])
         return obs
 
     def reset(
@@ -732,7 +735,9 @@ class Robocasa365Env(gym.Env):
         self,
         actions: Optional[Union[torch.Tensor, np.ndarray]] = None,
         auto_reset: bool = True,
-    ) -> tuple[dict[str, Any], torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]]:
+    ) -> tuple[
+        dict[str, Any], torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]
+    ]:
         """Step the vectorized RoboCasa365 environments once.
 
         Args:
