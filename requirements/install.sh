@@ -46,6 +46,8 @@ PLATFORM_FLASH_ATTN_PREBUILT=0
 # so the user can skip flash-attn on platforms where it would otherwise
 # install (e.g. when build deps aren't available on the host).
 DISABLE_FLASH_ATTN=0
+# User-level opt-out for apex, set by --no-apex. Wins over the platform default.
+DISABLE_APEX=0
 # Whether apply_torch_override should rewrite the pyproject.toml `torchcodec`
 # pin from ==0.2 to >=0.5. The ==0.2 line in override-dependencies has wheels
 # only for x86_64 + torch 2.5/2.6, so it breaks on AMD (torch 2.8 from rocm
@@ -122,6 +124,8 @@ Common options:
     --no-root              Avoid system dependency installation for non-root users. Only use this if you are certain system dependencies are already installed.
     --no-flash-attn        Skip flash-attn install. Useful when the host lacks a CUDA build
                            toolchain or when the platform has no flash-attn support (Ascend).
+    --no-apex              Skip apex install. Useful when Megatron-LM is not needed and
+                           CUDA toolchain mismatch prevents download apex of the right version.
     --install-rlinf        Install RLinf itself into the python.
 EOF
 }
@@ -224,6 +228,10 @@ parse_args() {
                 ;;
             --no-flash-attn)
                 DISABLE_FLASH_ATTN=1
+                shift
+                ;;
+            --no-apex)
+                DISABLE_APEX=1
                 shift
                 ;;
             --*)
@@ -979,6 +987,10 @@ EOF
 }
 
 install_apex() {
+    if [ "$DISABLE_APEX" -eq 1 ]; then
+        echo "[install.sh] --no-apex was specified; skipping apex install."
+        return 0
+    fi
     if [ "$PLATFORM" != "nvidia" ]; then
         echo "[install.sh] Skipping apex install on platform=${PLATFORM} (CUDA-only)."
         return 0
