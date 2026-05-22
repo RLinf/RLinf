@@ -17,8 +17,8 @@
 Based on metaworld/venv.py implementation, adapted for Robocasa/Robosuite environments.
 """
 
-import multiprocessing
-from multiprocessing import connection
+from multiprocessing import Pipe, connection
+from multiprocessing.context import Process
 from typing import Any, Callable, Optional, Union
 
 import gymnasium as gym
@@ -151,8 +151,7 @@ class RobocasaSubprocEnvWorker(SubprocEnvWorker):
     """
 
     def __init__(self, env_fn: Callable[[], gym.Env], share_memory: bool = False):
-        ctx = multiprocessing.get_context("spawn")
-        self.parent_remote, self.child_remote = ctx.Pipe()
+        self.parent_remote, self.child_remote = Pipe()
         self.share_memory = share_memory
         self.buffer: Optional[Union[dict, tuple, ShArray]] = None
         if self.share_memory:
@@ -168,7 +167,7 @@ class RobocasaSubprocEnvWorker(SubprocEnvWorker):
             self.buffer,
         )
         # Use our custom _worker function
-        self.process = ctx.Process(target=_worker, args=args, daemon=True)
+        self.process = Process(target=_worker, args=args, daemon=True)
         self.process.start()
         self.child_remote.close()
         EnvWorker.__init__(self, env_fn)
