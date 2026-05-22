@@ -1,5 +1,5 @@
-Megatron-Bridge 集成
-====================
+Megatron-Bridge
+===============
 
 RLinf 通过 Megatron-LM 训练后端支持 `Megatron-Bridge`。该集成允许用户直接从
 HuggingFace 格式的 checkpoint 启动 Megatron-LM 训练，享受到 Megatron-Mridge 所支持的特殊模型结构，
@@ -10,15 +10,13 @@ HuggingFace 格式的 checkpoint 启动 Megatron-LM 训练，享受到 Megatron-
 - 需要在 actor 侧进行训练的模型特别大，使用 FSDP 或 FSDP2 运行该模型出现明显的性能瓶颈；
 - 使用的模型结构特殊，当前 RLinf 内支持的基础 Megatron-LM 框架内并无此模型结构支持；
 
-Megatron-Bridge 的 github 原仓库:
-.. _Megatron-Bridge: https://github.com/NVIDIA/Megatron-Bridge
+Megatron-Bridge 相关仓库：
 
-当前 RLinf 使用的版本：
-.. _Megatron-Bridge: https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/v0.3.0
+- `Megatron-Bridge 原仓库 <https://github.com/NVIDIA/Megatron-Bridge>`__
 
-对应 Megatron-LM 版本：
-.. _Megatron-LM: https://github.com/NVIDIA/Megatron-LM/tree/b0cc2706ddc60d2aefd5fff346445b5c013036a8
+- `当前 RLinf 使用的 Megatron-Bridge 版本 <https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/v0.3.0>`__
 
+- `对应 Megatron-LM 版本 <https://github.com/NVIDIA/Megatron-LM/tree/b0cc2706ddc60d2aefd5fff346445b5c013036a8>`__
 
 使用介绍
 --------

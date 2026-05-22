@@ -1,5 +1,5 @@
-Megatron-Bridge Integration
-===========================
+Megatron-Bridge
+===============
 
 RLinf supports `Megatron-Bridge <https://github.com/NVIDIA/Megatron-Bridge>`__
 through the Megatron-LM training backend. This integration lets users start
@@ -17,7 +17,7 @@ Megatron-Bridge resources:
 
 - `Megatron-Bridge upstream repository <https://github.com/NVIDIA/Megatron-Bridge>`__
 
-- `Currently supported Megatron-Bridge version <https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/v0.3.0>`__
+- `Megatron-Bridge version used by RLinf <https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/v0.3.0>`__
 
 - `Corresponding Megatron-LM version <https://github.com/NVIDIA/Megatron-LM/tree/b0cc2706ddc60d2aefd5fff346445b5c013036a8>`__
 
