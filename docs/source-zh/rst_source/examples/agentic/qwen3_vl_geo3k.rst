@@ -8,6 +8,59 @@
 
 本文档介绍了如何在 RLinf 框架下，使用强化学习（RL）来训练视觉语言模型（VLM）以进行几何推理。
 
+环境要求与安装
+----------------------
+
+**依赖版本**
+
+Qwen3-VL 系列模型需要较新版本的依赖库：
+
+- ``torch >= 2.8.0``
+- ``sglang == 0.5.4``
+- ``transformers == 4.57.1``
+
+较低版本的 sglang 或 transformers 不支持或者不能正确支持 Qwen3-VL 系列模型。
+
+**一键安装**
+
+RLinf 提供了 ``requirements/install.sh`` 脚本一键完成环境安装：
+
+.. code-block:: bash
+
+   export MEGATRON_PATH=/path/to/Megatron-LM
+   bash requirements/install.sh agentic \
+       --torch 2.8.0 \
+       --sglang 0.5.4 \
+       --transformers 4.57.1 \
+       --no-apex
+
+脚本会自动完成安装步骤
+
+.. note::
+
+   ``MEGATRON_PATH`` 需要指向一个已有的 Megatron-LM 仓库克隆（推荐 ``core_r0.13.0`` 分支）。
+   如果该目录不存在，安装脚本会提前退出，不执行后续的 flash-attn 和 apex 安装步骤。
+
+.. tip::
+
+   由于本例子使用 FSDP2 作为训练后端，apex 不是必需的，所以通过 --no-apex 开关避免了安装apex。
+   如果系统 CUDA 工具链版本（``nvcc --version``）与 PyTorch 编译使用的 CUDA 版本不一致，
+   apex 可能无法从源码编译。
+
+**安装后验证**
+
+安装完成后，可以通过以下命令验证关键依赖是否安装成功：
+
+.. code-block:: bash
+
+   source .venv/bin/activate
+   python -c "
+   import torch; print('torch:', torch.__version__)
+   import transformers; print('transformers:', transformers.__version__)
+   import sglang; print('sglang:', sglang.__version__)
+   print('All good')
+   "
+
 数据集
 -------------
 
@@ -52,13 +105,13 @@
   数据集支持在 prompt 中使用 ``<image>`` 占位符来标记图像位置。框架会自动解析占位符并将文本与图像交叉排列。
   如果 prompt 中不包含占位符，则图像会被放置在文本之前。
 
-- **prepend_prompt 配置**
+- **system_prompt 配置**
 
-  如果需要在数据集原有的 prompt 之前添加统一的提示词，可以使用 ``prepend_prompt`` 配置：
+  如果需要在数据集原有的 prompt 之前添加统一的提示词，可以使用 ``system_prompt`` 配置：
 
   .. code-block:: yaml
 
-      prepend_prompt: 'Solve the following math problem step by step. The last line of your response should be of the form Answer: \\boxed{$Answer}.'
+      system_prompt: 'Solve the following math problem step by step. The last line of your response should be of the form Answer: \\boxed{$Answer}.'
 
 
 算法
@@ -77,11 +130,6 @@
 
 - 正确：+1（可通过 ``reward_max_val`` 配置）
 - 错误：0（可通过 ``reward_min_val`` 配置）
-
-环境要求
---------------
-
-我们推荐 sglang 0.5.4 以及 transformers 4.57.1。较低版本的 sglang 或者 transformers 不支持或者不能正确支持 Qwen3 VL 系列模型。
 
 运行脚本
 --------------
