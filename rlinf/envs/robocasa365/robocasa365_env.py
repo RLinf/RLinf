@@ -721,6 +721,9 @@ class Robocasa365Env(gym.Env):
         if env_idx is None:
             env_idx = np.arange(self.num_envs)
 
+        if self.is_start:
+            self._is_start = False
+
         if isinstance(env_idx, int):
             env_idx = [env_idx]
 
