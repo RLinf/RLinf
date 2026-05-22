@@ -13,8 +13,8 @@ Environment
 - **Environment**: Genesis Simulation Platform
 - **Task**: Controlling a Franka Panda robotic arm to pick up a cube.
 - **Observation**:
-  - **Images**: Third-person view RGB images (640×480).
-  - **States**: 49-dimensional vector (including robot joints, end-effector poses, and object poses).
+  - **Images**: Third-person view RGB images (256×256).
+  - **States**: 16-dimensional vector (7-dim end-effector pose + 2-dim gripper + 7-dim cube pose).
 - **Action Space**: 9-dimensional continuous action space.
   - 7-DOF arm joint position control.
   - 2-DOF gripper position control.
@@ -42,15 +42,36 @@ Dependency Installation
 Running Scripts
 ---------------
 
-**1. Configuration File**
+**1. Configuration Files**
 
-- Config Path: ``examples/embodiment/config/genesis_cubepick_ppo_mlp.yaml``
+- State-only baseline: ``examples/embodiment/config/genesis_cubepick_ppo_mlp.yaml``
+- Image experiment: ``examples/embodiment/config/genesis_cubepick_ppo_cnn.yaml``
 
-**2. Launch Command**
+**2. Launch Commands**
 
 .. code-block:: bash
 
+   # A) State-only baseline (MLP policy)
    bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_mlp
+
+   # B) Image experiment (CNN policy)
+   # Note: actor.model.model_path must contain resnet10_pretrained.pt
+   bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_cnn
+
+**Get ``resnet10_pretrained.pt`` and set ``actor.model.model_path``**
+
+.. code:: bash
+
+   # Method 1: git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+
+   # Method 2: huggingface-hub (mainland China: export HF_ENDPOINT=https://hf-mirror.com)
+   pip install huggingface-hub
+   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
+
+Point ``actor.model.model_path`` and ``rollout.model.model_path`` in the YAML
+at the downloaded directory.
 
 Visualization and Results
 -------------------------
@@ -112,4 +133,4 @@ Visualization and Results
 Genesis Results
 ~~~~~~~~~~~~~~~
 
-When training with the default parameters in ``/examples/embodiment/config/genesis_cubepick_ppo_mlp.yaml``, the ``env/success_once`` metric can reach approximately **92.6%**.
+When training with the default parameters in ``/examples/embodiment/config/genesis_cubepick_ppo_mlp.yaml``, the ``env/success_once`` metric can reach approximately **80%**.

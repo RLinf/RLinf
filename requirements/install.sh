@@ -1684,7 +1684,7 @@ install_genesis_env() {
     uv pip install "cuda-python==12.9.6"
     uv pip install "genesis-world==0.4.5"
     uv pip install "pyglet==2.1.14"
-	uv pip install "matplotlib==3.10.8"
+    uv pip install "matplotlib==3.10.8"
 
     uv pip install "torch==2.8.0"
     uv pip install "torchvision==0.23.0"

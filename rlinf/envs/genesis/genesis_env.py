@@ -25,21 +25,6 @@ from omegaconf import OmegaConf
 
 from rlinf.envs.genesis.tasks import get_task_cls
 
-
-def extract_termination_from_info(info, num_envs, device):
-    if "success" in info:
-        if "fail" in info:
-            terminated = torch.logical_or(info["success"], info["fail"])
-        else:
-            terminated = info["success"].clone()
-    else:
-        if "fail" in info:
-            terminated = info["fail"].clone()
-        else:
-            terminated = torch.zeros(num_envs, dtype=bool, device=device)
-    return terminated
-
-
 # Number of physics steps executed during reset so the scene can settle.
 _RESET_SETTLE_STEPS = 5
 
@@ -511,6 +496,11 @@ class GenesisEnv(gym.Env):
         """Destroy the Genesis scene and free GPU resources."""
         if hasattr(self, "scene") and self.scene is not None:
             try:
-                self.scene = None
+                self.scene.destroy()
             except Exception:
                 pass
+            finally:
+                self.scene = None
+
+        if hasattr(self, "task"):
+            self.task = None

@@ -94,17 +94,18 @@ class CubePickTask(GenesisTaskBase):
 
         robot_file = init_params.get("robot_file", _FRANKA_MJCF)
         self.robot = scene.add_entity(gs.morphs.MJCF(file=robot_file))
+        contact_draw_debug = bool(init_params.get("contact_draw_debug", False))
         self.lf_sensor = scene.add_sensor(
             gs.sensors.Contact(
                 entity_idx=self.robot.idx,
-                draw_debug=True,
+                draw_debug=contact_draw_debug,
                 link_idx_local=self.robot.get_link("left_finger").idx_local,
             )
         )
         self.rf_sensor = scene.add_sensor(
             gs.sensors.Contact(
                 entity_idx=self.robot.idx,
-                draw_debug=True,
+                draw_debug=contact_draw_debug,
                 link_idx_local=self.robot.get_link("right_finger").idx_local,
             )
         )
