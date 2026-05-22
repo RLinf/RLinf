@@ -100,21 +100,6 @@ Use the RoboCasa dependency set:
 
    python -m robocasa.scripts.download_kitchen_assets
 
-**Note:** Since NVIDIA's HuggingFace dataset now stores Lightwheel assets as
-multiple zip files under ``fixtures_lightwheel/`` and ``objects_lightwheel/``,
-the upstream RoboCasa downloader cannot handle them automatically. Download and
-extract those zips into the corresponding RoboCasa asset directories manually.
-Locate the RoboCasa asset root with:
-
-.. code:: bash
-
-   python -c "import os, robocasa; print(os.path.join(robocasa.__path__[0], 'models', 'assets'))"
-
-Then extract the files to the following paths:
-
-- ``fixtures_lightwheel/*.zip`` → ``<robocasa_assets>/fixtures/``
-- ``objects_lightwheel/*.zip`` → ``<robocasa_assets>/objects/lightwheel/``
-
 Dataset Selection
 -----------------
 
