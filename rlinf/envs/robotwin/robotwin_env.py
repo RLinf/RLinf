@@ -40,6 +40,7 @@ class RoboTwinEnv(gym.Env):
     ):
         env_seed = cfg.seed
         self.seed = env_seed + seed_offset
+        self.base_seed = env_seed
         self.num_envs = num_envs
         self.seed_offset = seed_offset
         self.total_num_processes = total_num_processes
@@ -421,16 +422,22 @@ class RoboTwinEnv(gym.Env):
             success_seeds = data[self.task_name].get("success_seeds", None)
             if success_seeds is not None:
                 success_seeds = torch.as_tensor(success_seeds, dtype=torch.long)
-                self._generator = torch.Generator()
-                self._generator.manual_seed(self.seed)
+                # All workers use the same global seed so the shuffle order is identical,
+                # then each worker takes a non-overlapping slice keyed by its rank.
+                global_generator = torch.Generator()
+                global_generator.manual_seed(self.base_seed)
                 shuffled_indices = torch.randperm(
-                    success_seeds.numel(), generator=self._generator
+                    success_seeds.numel(), generator=global_generator
                 )
                 shuffled_seeds = success_seeds[shuffled_indices]
-                # Drop last to make total divisible by num_group
                 total_seeds = shuffled_seeds.numel()
-                keep_count = (total_seeds // self.num_group) * self.num_group
-                self.success_seeds = shuffled_seeds[:keep_count]
+                seeds_per_worker = total_seeds // self.total_num_processes
+                start = self.seed_offset * seeds_per_worker
+                end = start + seeds_per_worker
+                worker_seeds = shuffled_seeds[start:end]
+                # Drop last to make this worker's slice divisible by num_group
+                keep_count = (worker_seeds.numel() // self.num_group) * self.num_group
+                self.success_seeds = worker_seeds[:keep_count]
                 self._current_seed_index = 0
             else:
                 self.success_seeds = None
