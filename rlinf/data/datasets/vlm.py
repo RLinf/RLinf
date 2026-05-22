@@ -21,9 +21,9 @@ import re
 from io import BytesIO
 from typing import Any, Callable, Optional, Union
 
+import numpy as np
 import pandas as pd
 import torch
-import numpy as np
 from omegaconf import DictConfig
 from PIL import Image
 from torch.utils.data import Dataset
