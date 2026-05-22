@@ -814,7 +814,10 @@ def pack_sequences(
         pad_len = max_seq_len - (sum(idx_ends) - sum(idx_starts))
         if pad_len > 0:
             pad_tensor = torch.full(
-                (pad_len,), pad_val, dtype=input_tensor.dtype, device=input_tensor.device
+                (pad_len,),
+                pad_val,
+                dtype=input_tensor.dtype,
+                device=input_tensor.device,
             )
             input_tensors_rm_pad.append(pad_tensor)
 
@@ -927,7 +930,12 @@ def pack_fsdp_input(
         input_ids, position_ids: [1, max_seq_len_pack]. attention_mask: None.
     """
     input_ids = pack_sequences(
-        input_ids, idx_starts, idx_ends, max_seq_len_pack, eos_token_id, pad_to_fixed_len
+        input_ids,
+        idx_starts,
+        idx_ends,
+        max_seq_len_pack,
+        eos_token_id,
+        pad_to_fixed_len,
     ).unsqueeze(0)
     position_ids = pack_sequences(
         position_ids, idx_starts, idx_ends, max_seq_len_pack, 0, pad_to_fixed_len
@@ -982,6 +990,7 @@ def unpack_fsdp_logprobs(
         logprobs, idx_starts, idx_ends, max_seq_len_unpack, pad_val=0
     )
     return logprobs
+
 
 def generate_with_kv_cache(
     model: Union[FSDP, FSDPModule],

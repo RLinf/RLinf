@@ -33,6 +33,7 @@ from transformers import AutoProcessor, AutoTokenizer
 from rlinf.data.datasets.item import DatasetItem, SftDatasetItem
 from rlinf.data.utils import batch_pad_to_fixed_len
 
+
 class VLMDatasetRegistry:
     registry: dict[str, Callable[..., "VLMBaseDataset"]] = {}
 
@@ -58,6 +59,7 @@ class VLMDatasetRegistry:
         key = dataset_name.lower()
         dataset_class = cls.registry.get(key)
         return dataset_class(data_paths=data_paths, config=config, tokenizer=tokenizer)
+
 
 @VLMDatasetRegistry.register("base")
 class VLMBaseDataset(Dataset):
@@ -135,9 +137,9 @@ class VLMBaseDataset(Dataset):
                 images.append(v)
             elif isinstance(v, dict) and "bytes" in v:
                 images.append(v["bytes"])
-            elif isinstance(v, np.ndarray) and 'bytes' in v[0]:
+            elif isinstance(v, np.ndarray) and "bytes" in v[0]:
                 for p in v:
-                    images.append(p['bytes'])
+                    images.append(p["bytes"])
             else:
                 images.append(v)  # path or url
         if not images:
@@ -437,6 +439,7 @@ class VLMBaseDataset(Dataset):
             multi_modal_inputs=multi_modal_inputs,
         )
         return self.postprocess_dataset_item(item, raw)
+
 
 @VLMDatasetRegistry.register("robo2vlm")
 class Robo2VLMDataset(VLMBaseDataset):

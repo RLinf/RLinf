@@ -122,7 +122,9 @@ def process_nested_dict_for_train(nested_dict, shuffle_id):
     return ret_dict
 
 
-def compute_rollout_train_kl(m_batch: dict, loss_mask: torch.Tensor) -> Optional[torch.Tensor]:
+def compute_rollout_train_kl(
+    m_batch: dict, loss_mask: torch.Tensor
+) -> Optional[torch.Tensor]:
     """
     Compute the masked mean of absolute difference between rollout and training logprobs.
 
@@ -213,7 +215,9 @@ class FSDPActor(FSDPModelManager, Worker):
                 "Dynamic batch size is not supported in pipeline mode."
             )
         self.max_tokens_per_mbs = cfg.runner.get("max_tokens_per_mbs", 2048)
-        self.variable_seq_lengths = self.cfg.actor.model.get("variable_seq_lengths", False)
+        self.variable_seq_lengths = self.cfg.actor.model.get(
+            "variable_seq_lengths", False
+        )
 
     def init_worker(self) -> None:
         """

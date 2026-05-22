@@ -1195,10 +1195,12 @@ class DynamicRolloutResult:
         if self.rollout_logprobs is not None:
             logprobs = batch_pad_to_fixed_len(
                 [
-                    torch.as_tensor(logprobs, dtype=torch.float)
-                    for logprobs in self.rollout_logprobs
+                    torch.as_tensor([0] * prompt_length + logprobs, dtype=torch.float)
+                    for prompt_length, logprobs in zip(
+                        self.prompt_lengths, self.rollout_logprobs
+                    )
                 ],
-                max_batch_len=max_response_len,
+                max_batch_len=seq_length,
                 pad_token=0,
             )
             batch["rollout_logprobs"] = logprobs.to(Worker.torch_device_type)
@@ -1212,19 +1214,6 @@ class DynamicRolloutResult:
 
         if self.ref_logprobs is not None:
             batch["ref_logprobs"] = self.ref_logprobs.cuda()
-
-        if self.rollout_logprobs is not None:
-            prev_logprobs = batch_pad_to_fixed_len(
-                [
-                    torch.as_tensor([0] * prompt_length + logprobs, dtype=torch.float)
-                    for prompt_length, logprobs in zip(
-                        self.prompt_lengths, self.rollout_logprobs
-                    )
-                ],
-                max_batch_len=seq_length,
-                pad_token=0,
-            )
-            batch["prev_logprobs"] = prev_logprobs.cuda()
 
         return batch
 
