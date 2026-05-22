@@ -144,7 +144,7 @@ RLinf 提供了 ``requirements/install.sh`` 脚本一键完成环境安装：
 
 在启动前，检查配置文件。主要字段包括：
 
-- 路径：``rollout.model.model_path``（基础模型本地路径）、``data.train_data_paths``（训练数据路径）等。
+- 路径：``rollout.model.model_path`` （基础模型本地路径）、``data.train_data_paths`` （训练数据路径）等。
 - 模型类型：``rollout.model.model_type`` 需设置为 ``qwen3_vl``。
 
 **3. 启动命令**
