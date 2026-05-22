@@ -76,9 +76,7 @@ class VLMBaseDataset(Dataset):
         # Delay processor creation; only needed when use_chat_template is True
         self._processor = None
 
-        # The system_prompt has role="system", but prepend_prompt is simply concatenated before the dataset prompt with role="user".
         self.system_prompt = config.data.get("system_prompt", None)
-        self.prepend_prompt = config.data.get("prepend_prompt", None)
         self.use_chat_template = bool(config.data.use_chat_template)
         self.image_keys = list(config.data.image_keys or [])
         self.prompt_key = config.data.prompt_key
@@ -181,9 +179,6 @@ class VLMBaseDataset(Dataset):
             )
 
         content: list[dict[str, Any]] = []
-
-        # if self.prepend_prompt is not None:
-        #     content.append({"type": "text", "text": self.prepend_prompt})
 
         # Parse prompt_text for image placeholders and interleave text segments with images
         parts = re.split(r"<image>", prompt_text)
