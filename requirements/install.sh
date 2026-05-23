@@ -1516,7 +1516,7 @@ install_robocasa_env() {
 
 install_robocasa365_env() {
     local robocasa_dir
-    robocasa_dir=$(clone_or_reuse_repo ROBOCASA_PATH "$VENV_DIR/robocasa" https://github.com/robocasa/robocasa.git -b "${ROBOCASA365_GIT_REF:-v1.0}")
+    robocasa_dir=$(clone_or_reuse_repo ROBOCASA_PATH "$VENV_DIR/robocasa" https://github.com/robocasa/robocasa.git -b v1.0)
 
     uv pip install -e "$robocasa_dir"
     uv pip install --no-deps "lerobot @ git+https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"

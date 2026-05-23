@@ -96,6 +96,18 @@ RoboCasa365 的环境配置位于：
 
    python -m robocasa.scripts.download_kitchen_assets
 
+**注意：**  由于 NVIDIA 的 HuggingFace 数据已将资源拆成 ``fixtures_lightwheel/`` 和 ``objects_lightwheel/`` 下的多个 zip 文件，RoboCasa 下载脚本无法自动处理。此时需要手动下载并解压这些 zip
+到对应的 RoboCasa assets 目录。可以先用以下命令定位 RoboCasa assets 根目录：
+
+.. code:: bash
+
+   python -c "import os, robocasa; print(os.path.join(robocasa.__path__[0], 'models', 'assets'))"
+
+然后按如下路径解压放置：
+
+- ``fixtures_lightwheel/*.zip`` → ``<robocasa_assets>/fixtures/``
+- ``objects_lightwheel/*.zip`` → ``<robocasa_assets>/objects/lightwheel/``
+
 数据集任务选择
 --------------
 
