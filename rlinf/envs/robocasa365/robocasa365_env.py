@@ -357,10 +357,10 @@ class Robocasa365Env(gym.Env):
 
     def _load_dataset_registry_task_specs(self) -> list[dict[str, Any]]:
         try:
-            from robocasa.utils.dataset_registry import get_ds_meta, get_ds_soup
+            from robocasa.utils.dataset_registry_utils import get_ds_meta, get_ds_soup
         except ImportError as exc:
             raise ImportError(
-                "RoboCasa365 benchmark selection requires robocasa.utils.dataset_registry. "
+                "RoboCasa365 benchmark selection requires robocasa.utils.dataset_registry_utils. "
                 "Install a RoboCasa version that includes the benchmark dataset registry."
             ) from exc
 
@@ -390,7 +390,6 @@ class Robocasa365Env(gym.Env):
         task_specs = []
         fallback_horizon = int(self.cfg.get("max_episode_steps", 300))
         for task_name in _dedupe_preserve_order(task_names):
-            metadata = {}
             try:
                 metadata = (
                     get_ds_meta(

@@ -94,7 +94,7 @@ env:
     group_size: 1
   eval:
     total_num_envs: 8
-    split: target
+    split: pretrain
     task_soup: atomic_seen
     task_mode: atomic
     task_sampling_strategy: ordered
