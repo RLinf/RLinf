@@ -83,36 +83,45 @@ Dependency Installation
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-2. Install Dependencies
+2. Prepare RoboCasa Assets
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+   export ROBOCASA_ASSETS_PATH=/path/to/robocasa_assets
+   mkdir -p "$ROBOCASA_ASSETS_PATH"/{_downloads,objects}
+
+   hf download robocasa/robocasa-assets \
+      --repo-type dataset \
+      --include textures.zip generative_textures.zip fixtures.zip objaverse.zip aigen_objs.zip \
+      --local-dir "$ROBOCASA_ASSETS_PATH/_downloads"
+   hf download nvidia/PhysicalAI-Kitchen-Assets \
+      --repo-type dataset \
+      --include "fixtures_lightwheel/*.zip" "objects_lightwheel/*.zip" \
+      --local-dir "$ROBOCASA_ASSETS_PATH/_downloads"
+
+   for item in \
+      textures.zip:textures \
+      generative_textures.zip:generative_textures \
+      fixtures.zip:fixtures \
+      objaverse.zip:objects/objaverse \
+      aigen_objs.zip:objects/aigen_objs; do
+      mkdir -p "$ROBOCASA_ASSETS_PATH/${item#*:}"
+      unzip -q "$ROBOCASA_ASSETS_PATH/_downloads/${item%%:*}" -d "$ROBOCASA_ASSETS_PATH/${item#*:}"
+   done
+   find "$ROBOCASA_ASSETS_PATH/_downloads/fixtures_lightwheel" -name "*.zip" \
+      -exec unzip -q {} -d "$ROBOCASA_ASSETS_PATH/fixtures" \;
+   find "$ROBOCASA_ASSETS_PATH/_downloads/objects_lightwheel" -name "*.zip" \
+      -exec unzip -q {} -d "$ROBOCASA_ASSETS_PATH/objects/lightwheel" \;
+
+3. Install Dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-Use the RoboCasa dependency set:
-
 .. code:: bash
 
+   export ROBOCASA_ASSETS_PATH=/path/to/robocasa_assets
    bash requirements/install.sh embodied --model openpi --env robocasa365
    source .venv/bin/activate
-
-3. Download RoboCasa Assets
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code:: bash
-
-   python -m robocasa.scripts.download_kitchen_assets
-**Note:** Since NVIDIA's HuggingFace dataset now stores Lightwheel assets as
-multiple zip files under ``fixtures_lightwheel/`` and ``objects_lightwheel/``,
-the upstream RoboCasa downloader cannot handle them automatically. Download and
-extract those zips into the corresponding RoboCasa asset directories manually.
-Locate the RoboCasa asset root with:
-
-.. code:: bash
-
-   python -c "import os, robocasa; print(os.path.join(robocasa.__path__[0], 'models', 'assets'))"
-
-Then extract the files to the following paths:
-
-- ``fixtures_lightwheel/*.zip`` → ``<robocasa_assets>/fixtures/``
-- ``objects_lightwheel/*.zip`` → ``<robocasa_assets>/objects/lightwheel/``
 
 Dataset Selection
 -----------------

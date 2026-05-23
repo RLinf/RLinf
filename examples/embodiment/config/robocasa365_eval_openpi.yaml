@@ -93,13 +93,13 @@ env:
     reward_coef: 1.0
     group_size: 1
   eval:
-    total_num_envs: 8
+    total_num_envs: 18 #Atomic-Seen has 18 tasks，Composite-Seen has 16 tasks, Composite-Unseen has 16 tasks
     split: pretrain
     task_soup: atomic_seen
     task_mode: atomic
     task_sampling_strategy: ordered
-    auto_reset: True
-    ignore_terminations: True
+    auto_reset: False
+    ignore_terminations: False
     max_episode_steps: 700
     max_steps_per_rollout_epoch: 700
     group_size: 1

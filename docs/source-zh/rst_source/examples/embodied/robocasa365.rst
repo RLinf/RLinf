@@ -79,34 +79,45 @@ RoboCasa365 的环境配置位于：
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-2. 安装依赖
-~~~~~~~~~~~
-
-使用 RoboCasa 对应依赖集：
-
-.. code:: bash
-
-   bash requirements/install.sh embodied --model openpi --env robocasa365
-   source .venv/bin/activate
-
-3. 下载 RoboCasa 资源
+2. 准备 RoboCasa 资源
 ~~~~~~~~~~~~~~~~~~~~~
 
 .. code:: bash
 
-   python -m robocasa.scripts.download_kitchen_assets
+   export ROBOCASA_ASSETS_PATH=/path/to/robocasa_assets
+   mkdir -p "$ROBOCASA_ASSETS_PATH"/{_downloads,objects}
 
-**注意：**  由于 NVIDIA 的 HuggingFace 数据已将资源拆成 ``fixtures_lightwheel/`` 和 ``objects_lightwheel/`` 下的多个 zip 文件，RoboCasa 下载脚本无法自动处理。此时需要手动下载并解压这些 zip
-到对应的 RoboCasa assets 目录。可以先用以下命令定位 RoboCasa assets 根目录：
+   hf download robocasa/robocasa-assets \
+      --repo-type dataset \
+      --include textures.zip generative_textures.zip fixtures.zip objaverse.zip aigen_objs.zip \
+      --local-dir "$ROBOCASA_ASSETS_PATH/_downloads"
+   hf download nvidia/PhysicalAI-Kitchen-Assets \
+      --repo-type dataset \
+      --include "fixtures_lightwheel/*.zip" "objects_lightwheel/*.zip" \
+      --local-dir "$ROBOCASA_ASSETS_PATH/_downloads"
+
+   for item in \
+      textures.zip:textures \
+      generative_textures.zip:generative_textures \
+      fixtures.zip:fixtures \
+      objaverse.zip:objects/objaverse \
+      aigen_objs.zip:objects/aigen_objs; do
+      mkdir -p "$ROBOCASA_ASSETS_PATH/${item#*:}"
+      unzip -q "$ROBOCASA_ASSETS_PATH/_downloads/${item%%:*}" -d "$ROBOCASA_ASSETS_PATH/${item#*:}"
+   done
+   find "$ROBOCASA_ASSETS_PATH/_downloads/fixtures_lightwheel" -name "*.zip" \
+      -exec unzip -q {} -d "$ROBOCASA_ASSETS_PATH/fixtures" \;
+   find "$ROBOCASA_ASSETS_PATH/_downloads/objects_lightwheel" -name "*.zip" \
+      -exec unzip -q {} -d "$ROBOCASA_ASSETS_PATH/objects/lightwheel" \;
+
+3. 安装依赖
+~~~~~~~~~~~
 
 .. code:: bash
 
-   python -c "import os, robocasa; print(os.path.join(robocasa.__path__[0], 'models', 'assets'))"
-
-然后按如下路径解压放置：
-
-- ``fixtures_lightwheel/*.zip`` → ``<robocasa_assets>/fixtures/``
-- ``objects_lightwheel/*.zip`` → ``<robocasa_assets>/objects/lightwheel/``
+   export ROBOCASA_ASSETS_PATH=/path/to/robocasa_assets
+   bash requirements/install.sh embodied --model openpi --env robocasa365
+   source .venv/bin/activate
 
 数据集任务选择
 --------------

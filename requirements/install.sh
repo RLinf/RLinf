@@ -1523,6 +1523,15 @@ install_robocasa365_env() {
     uv pip install --no-deps "robosuite @ git+https://github.com/ARISE-Initiative/robosuite.git@232ce7d4a6ed89c949a9aba024a05c8c32fdd08b"
     uv pip install --no-deps mujoco==3.3.1
     uv pip install protobuf==6.33.0
+    if [[ -n "${ROBOCASA_ASSETS_PATH:-}" ]]; then
+        if [[ ! -d "$ROBOCASA_ASSETS_PATH" ]]; then
+            echo "ROBOCASA_ASSETS_PATH does not exist or is not a directory: $ROBOCASA_ASSETS_PATH"
+            exit 1
+        fi
+        cp -an "$robocasa_dir/robocasa/models/assets/." "$ROBOCASA_ASSETS_PATH/"
+        rm -rf "$robocasa_dir/robocasa/models/assets"
+        ln -s "$ROBOCASA_ASSETS_PATH" "$robocasa_dir/robocasa/models/assets"
+    fi
     python -m robocasa.scripts.setup_macros
 }
 
