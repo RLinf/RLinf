@@ -86,7 +86,7 @@ RoboCasa365 的环境配置位于：
 
 .. code:: bash
 
-   bash requirements/install.sh embodied --model openpi --env robocasa
+   bash requirements/install.sh embodied --model openpi --env robocasa365
    source .venv/bin/activate
 
 3. 下载 RoboCasa 资源

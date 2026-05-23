@@ -90,7 +90,7 @@ Use the RoboCasa dependency set:
 
 .. code:: bash
 
-   bash requirements/install.sh embodied --model openpi --env robocasa
+   bash requirements/install.sh embodied --model openpi --env robocasa365
    source .venv/bin/activate
 
 3. Download RoboCasa Assets
