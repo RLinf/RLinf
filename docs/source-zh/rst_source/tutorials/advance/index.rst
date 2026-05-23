@@ -39,6 +39,9 @@
    介绍基于 Hydra 的 ``cluster.nsight`` 配置，用于通过 ``nsys profile``
    包装指定的 Ray worker group，并说明如何启用、关闭以及选择需要采样的 worker。
 
+- :doc:`mbridge`
+   介绍如何使用 Megatron-Bridge 集成 Megatron-LM 训练后端，
+   以支持 HuggingFace 格式的 checkpoint 训练。
 
 .. toctree::
    :hidden:
@@ -52,3 +55,4 @@
    logger
    nsight
    weight_syncer
+   mbridge
