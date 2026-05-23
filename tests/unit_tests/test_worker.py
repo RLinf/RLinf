@@ -17,7 +17,6 @@ import types
 from unittest import mock
 
 import pytest
-import torch
 
 from rlinf.scheduler import (
     Cluster,
@@ -28,6 +27,15 @@ from rlinf.scheduler import (
 )
 from rlinf.scheduler.manager.coll_manager import CollectiveManager
 from rlinf.scheduler.manager.manager import Manager
+
+
+def accelerator_is_available():
+    """Return whether the Worker accelerator backend is available."""
+    return (
+        Worker.torch_platform is not None
+        and hasattr(Worker.torch_platform, "is_available")
+        and Worker.torch_platform.is_available()
+    )
 
 
 # Fixture to provide a ClusterResource instance for the test session
@@ -85,7 +93,7 @@ class TestClusterResource:
     def test_cluster_initialization(self, cluster: Cluster):
         """Verify that the cluster is initialized with correct properties."""
         assert cluster._num_nodes == 1
-        if torch.cuda.is_available():
+        if accelerator_is_available():
             assert cluster.num_accelerators >= 1
 
 
@@ -125,7 +133,7 @@ class TestWorkerGroup:
 
     def test_worker_group_creation(self, cluster: Cluster):
         """Verify that a WorkerGroup can be created successfully."""
-        if torch.cuda.is_available():
+        if accelerator_is_available():
             num_workers = cluster.num_accelerators
         else:
             num_workers = 1
@@ -144,7 +152,7 @@ class TestWorkerGroup:
 
     def test_execute_on_all_workers(self, cluster: Cluster):
         """Test calling a method on all workers in a group."""
-        if torch.cuda.is_available():
+        if accelerator_is_available():
             num_workers = cluster.num_accelerators
         else:
             num_workers = 1
@@ -161,7 +169,7 @@ class TestWorkerGroup:
 
     def test_execute_on_specific_ranks(self, cluster: Cluster):
         """Test calling a method on a subset of workers in a group."""
-        if torch.cuda.is_available():
+        if accelerator_is_available():
             placement = PackedPlacementStrategy(0, cluster.num_accelerators - 1)
         else:
             placement = NodePlacementStrategy([0] * 8)
@@ -181,7 +189,7 @@ class TestWorkerGroup:
 
     def test_multiple_worker_groups(self, cluster: Cluster):
         """Test the creation and operation of multiple independent worker groups."""
-        if torch.cuda.is_available():
+        if accelerator_is_available():
             num_workers = cluster.num_accelerators
         else:
             num_workers = 1

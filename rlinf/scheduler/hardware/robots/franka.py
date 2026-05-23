@@ -136,16 +136,21 @@ class FrankaRobot(Hardware):
         """Enumerate connected camera serial numbers.
 
         Args:
-            camera_type: ``"realsense"`` or ``"zed"``.
+            camera_type: ``"realsense"``, ``"zed"``, or ``"lumos"``.
         """
         cameras: set[str] = set()
-        if camera_type.lower() == "zed":
+        ct = camera_type.lower()
+        if ct == "zed":
             try:
                 import pyzed.sl as sl
             except ImportError:
                 return cameras
             for dev in sl.Camera.get_device_list():
                 cameras.add(str(dev.serial_number))
+        elif ct == "lumos":
+            from rlinf.envs.realworld.common.camera.lumos_camera import LumosCamera
+
+            cameras.update(LumosCamera.get_device_serial_numbers())
         else:
             try:
                 import pyrealsense2 as rs
@@ -157,12 +162,21 @@ class FrankaRobot(Hardware):
 
     @staticmethod
     def _validate_camera_sdk(camera_type: str, node_rank: int) -> None:
-        if camera_type.lower() == "zed":
+        ct = camera_type.lower()
+        if ct == "zed":
             try:
                 importlib.import_module("pyzed.sl")
             except ModuleNotFoundError:
                 raise ModuleNotFoundError(
                     f"pyzed (ZED SDK) is required for ZED cameras, "
+                    f"but it is not installed on node rank {node_rank}."
+                )
+        elif ct == "lumos":
+            try:
+                importlib.import_module("cv2")
+            except ModuleNotFoundError:
+                raise ModuleNotFoundError(
+                    f"opencv-python (cv2) is required for Lumos V4L2 cameras, "
                     f"but it is not installed on node rank {node_rank}."
                 )
         else:
@@ -187,7 +201,7 @@ class FrankaConfig(HardwareConfig):
     """List of camera serial numbers associated with the robot."""
 
     camera_type: str = "realsense"
-    """Camera backend: ``"realsense"`` or ``"zed"``."""
+    """Camera backend: ``"realsense"``, ``"zed"``, or ``"lumos"``."""
 
     gripper_type: str = "franka"
     """Gripper backend: ``"franka"`` (ROS-based) or ``"robotiq"`` (Modbus RTU)."""

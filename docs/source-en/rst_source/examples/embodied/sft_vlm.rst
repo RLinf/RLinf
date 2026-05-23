@@ -6,11 +6,11 @@ This document explains how to run **full-parameter supervised fine-tuning (Full-
 This tutorial mainly focuses on two files:
 
 - Launch script: ``examples/sft/run_vlm_sft.sh``
-- Training config: ``examples/sft/config/qwen2_5_sft_vlm.yaml``
+- Training config: ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml``
 
 Launch Script: ``examples/sft/run_vlm_sft.sh``
 
-- The script uses ``examples/sft/config/qwen2_5_sft_vlm.yaml`` by default.
+- The script uses ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` by default.
 - Logs are redirected to: ``<repo>/logs/<timestamp>/``
 - Actual command:
 
@@ -21,7 +21,7 @@ Launch Script: ``examples/sft/run_vlm_sft.sh``
      --config-name <your_config_name> \
      runner.logger.log_path=<auto_generated_log_dir>
 
-Config Template: ``examples/sft/config/qwen2_5_sft_vlm.yaml``
+Config Template: ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml``
 
 If you intend to train models such as **qwen3_vl** or **qwen3_vl_moe**, please ensure that the version of `transformers` in your current environment is **greater than or equal to 4.57.1**.
 
@@ -37,7 +37,7 @@ Preparation Before Running
    ``https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct``.
 3. Prepare Robo2VLM dataset:
    ``https://huggingface.co/datasets/keplerccc/Robo2VLM-1``.
-4. Edit ``examples/sft/config/qwen2_5_sft_vlm.yaml`` and run
+4. Edit ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` and run
    ``examples/sft/run_vlm_sft.sh``.
 
 Example of Qwen2_5_VL_3B SFT

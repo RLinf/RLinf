@@ -540,8 +540,6 @@ actor
       use_orig_params: False
       use_liger_kernel: False
 
-      fsdp_size: -1
-
       mixed_precision:
         param_dtype: ${actor.model.precision}
         reduce_dtype: ${actor.model.precision}
@@ -733,8 +731,6 @@ actor
 ``actor.fsdp_config.use_orig_params``: FSDP parameter, indicating whether to use the module's original parameters, exposing the original parameters (nn.Module.named_parameters) instead of the flattened parameters of FSDP. This improves compatibility but introduces additional communication overhead and reduces performance.
 
 ``actor.fsdp_config.use_liger_kernel``: FSDP/FSDP2 parameter, determines whether to use liger_kernel (currently only supported for some models, including qwen2.5 and qwen2.5-vl). Enabling it can reduce GPU memory usage and improve training speed.
-
-``actor.fsdp_config.fsdp_size``: FSDP2 parameter. If not -1, FSDP2 will group slices according to the size specified by this parameter.
 
 ``actor.fsdp_config.mixed_precision.param_dtype``: FSDP/FSDP2 parameter, specifying the parameter type.
 

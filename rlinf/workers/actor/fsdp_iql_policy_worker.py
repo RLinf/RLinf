@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
 import os
 from typing import Any, Optional, Sequence
 
@@ -204,7 +203,6 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
         if self.cfg.actor.get("enable_offload", False):
             self.offload_param_and_grad()
             self.offload_optimizer()
-        self._setup_rollout_weight_dst_ranks()
 
     def setup_model_and_optimizer(self, initialize_target: bool = True) -> None:
         """Setup models, optimizer and scheduler.
@@ -760,18 +758,6 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
 
     async def sync_model_to_rollout(self) -> None:
         """Sync policy weights to rollout workers using the configured weight syncer."""
-
-        if not self._weight_dst_rank_in_rollout:
-            self.log_debug(
-                f"Actor rank {self._rank} has no rollout weight-sync destination."
-            )
-            if self.enable_offload:
-                if not self.is_optimizer_offloaded:
-                    self.offload_optimizer()
-                if not self.is_weight_offloaded:
-                    self.offload_param_and_grad(True)
-            return
-
         if self.enable_offload:
             if not self.is_optimizer_offloaded:
                 self.offload_optimizer()
@@ -786,35 +772,41 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
             state_dict = self.get_policy_state_dict()
 
         async def send_func(data):
-            handles = []
-            for rank in self._weight_dst_rank_in_rollout:
-                handles.append(
-                    self.send(
-                        data,
-                        dst_group_name=self._rollout_group_name,
-                        dst_rank=rank,
-                        async_op=True,
-                        options=self._sync_weight_comm_options,
-                    ).async_wait()
-                )
-            await asyncio.gather(*handles)
+            if not self._is_weight_sender:
+                return
+            await self.broadcast(
+                data,
+                groups=[
+                    (self._group_name, 0),
+                    (self._rollout_group_name, self._rollout_all_ranks),
+                ],
+                src=(self._group_name, 0),
+                async_op=True,
+                options=self._sync_weight_comm_options,
+            ).async_wait()
 
         async def recv_func():
-            handles = []
-            for rank in self._weight_dst_rank_in_rollout:
-                handles.append(
-                    self.recv(
-                        src_group_name=self._rollout_group_name,
-                        src_rank=rank,
-                        async_op=True,
-                        options=self._sync_weight_comm_options,
-                    ).async_wait()
-                )
-            metadata_list = await asyncio.gather(*handles)
-            metadata = metadata_list[0]
-            for other_metadata in metadata_list[1:]:
-                if other_metadata != metadata:
-                    raise ValueError("Patch metadata differs across rollout ranks")
+            if self._is_weight_sender:
+                metadata = await self.recv(
+                    src_group_name=self._rollout_group_name,
+                    src_rank=0,
+                    async_op=True,
+                    options=self._sync_weight_comm_options,
+                ).async_wait()
+            else:
+                metadata = None
+            if self._actor_world_size > 1:
+                metadata = await self.broadcast(
+                    metadata,
+                    groups=[
+                        (
+                            self._group_name,
+                            list(range(self._actor_world_size)),
+                        )
+                    ],
+                    src=(self._group_name, 0),
+                    async_op=True,
+                ).async_wait()
             return metadata
 
         if not self.weight_syncer.sender_initialized():

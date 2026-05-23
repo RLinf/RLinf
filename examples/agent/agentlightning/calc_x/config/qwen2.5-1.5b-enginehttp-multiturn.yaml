@@ -1,0 +1,21 @@
+defaults:
+  - base_calc_x
+
+runner:
+  logger:
+    project_name: rlinf-calc-x-qwen2.5-1.5b-enginehttp-turn
+  experiment_name: calc-x-agl-qwen2.5-1.5b-enginehttp-turn
+
+algorithm:
+  advantage_mode: turn
+
+actor:
+  pack_traj: False
+
+rollout:
+  model:
+    model_path: /path/to/Qwen2.5-1.5B-Instruct
+
+data:
+  train_data_paths: ["/path/to/train.parquet"]
+  val_data_paths: ["/path/to/test.parquet"]

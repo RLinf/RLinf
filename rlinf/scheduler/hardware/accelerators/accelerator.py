@@ -186,7 +186,6 @@ class AcceleratorUtil:
     CCL_SUPPORT_LIST = [
         AcceleratorType.NV_GPU,
         AcceleratorType.AMD_GPU,
-        AcceleratorType.NPU,
     ]
 
     @staticmethod
