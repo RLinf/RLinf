@@ -215,6 +215,8 @@ Pi0 DAgger 配置使用单独的学生模型与专家模型路径：
    bash examples/embodiment/run_embodiment.sh maniskill_dagger_mlp
    bash examples/embodiment/run_embodiment.sh libero_spatial_dagger_openpi
    bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_dagger_openpi
+   # For RoboTwin, add the following two commands before running the .sh file:
+   # export ROBOT_PLATFORM=ALOHA export ROBOTWIN_PATH=/path/to/RoboTwin
 
 **异步模式**
 
@@ -223,6 +225,8 @@ Pi0 DAgger 配置使用单独的学生模型与专家模型路径：
    bash examples/embodiment/run_async.sh maniskill_dagger_mlp
    bash examples/embodiment/run_async.sh libero_spatial_dagger_openpi
    bash examples/embodiment/run_async.sh robotwin_adjust_bottle_dagger_openpi
+   # For RoboTwin, add the following two commands before running the .sh file:
+   # export ROBOT_PLATFORM=ALOHA export ROBOTWIN_PATH=/path/to/RoboTwin
 
 可视化与结果
 ------------
