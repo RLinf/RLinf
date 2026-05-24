@@ -64,6 +64,8 @@ dependencies = [
     "wandb<0.25.1",
     "swanlab>=0.6.11",
     "tensorboard",
+
+    "sortedcontainers"
 ]
 
 [project.urls]
