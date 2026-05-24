@@ -8,7 +8,7 @@ version = "0.2.0"
 authors = [{ name = "RLinf Contributors" }]
 description = "Reinforcement Learning Infrastructure for Embodied and Agentic AI"
 readme = {file = "README.md", content-type = "text/markdown"}
-requires-python = ">=3.10,<=3.11.14"
+requires-python = ">=3.10,<3.13"  # ISAACSIM6_PY312_COMPAT (was: >=3.10,<=3.11.14)
 license = {file = "LICENSE"}
 keywords = [
     "reinforcement-learning",
@@ -103,7 +103,7 @@ agentic-vllm = [
     "mcp",
 ]
 embodied = [
-    "transformers<=4.57.6",
+    "transformers>=4.51.1,<=4.57.6",
     "torchcodec",
     "peft",
     "timm",

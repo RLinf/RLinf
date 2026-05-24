@@ -122,10 +122,18 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         emb_tag = EmbodimentTag.GR1
     elif cfg.embodiment_tag == "behavior_r1_pro":
         emb_tag = EmbodimentTag.BEHAVIOR_R1_PRO
+    elif cfg.embodiment_tag in ("new_embodiment", "so101", "so100"):
+        # GR00T16_RLINF_COMPAT: the workshop SO-101 SFT checkpoints
+        # (aravindhs-NV/grootn16-finetune_sreetz-so101_*) were finetuned with
+        # ``--embodiment_tag NEW_EMBODIMENT``; map any of these aliases to
+        # ``NEW_EMBODIMENT`` (projector id is registered in EMBODIMENT_TAG_MAPPING).
+        emb_tag = EmbodimentTag.NEW_EMBODIMENT
     else:
         raise ValueError(
             f"Invalid or unsupported embodiment tag: {cfg.embodiment_tag}. "
-            f"Supported tags are: ['behavior_r1_pro', 'gr1', 'robocasa_panda_omron', 'libero_panda']."
+            "Supported tags are: ['behavior_r1_pro', 'gr1', 'robocasa_panda_omron', "
+            "'libero_panda', 'libero_franka', 'isaaclab_franka', 'maniskill_widowx', "
+            "'new_embodiment', 'so101', 'so100']."
         )
 
     model_path = Path(cfg.model_path)

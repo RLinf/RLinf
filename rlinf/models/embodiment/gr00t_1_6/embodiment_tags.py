@@ -96,4 +96,10 @@ EMBODIMENT_TAG_MAPPING = {
     EmbodimentTag.GR1.value: 24,
     EmbodimentTag.MANISKILL_WIDOWX.value: 30,
     EmbodimentTag.ISAACLAB_FRANKA.value: 31,
+    # GR00T16_RLINF_COMPAT: the SO-101 SFT checkpoints published by the
+    # workshop instructors (``aravindhs-NV/grootn16-finetune_sreetz-so101_*``)
+    # were finetuned with ``--embodiment_tag NEW_EMBODIMENT``. The SFT script
+    # assigned projector id 10 to that tag (see ``embodiment_id.json`` in
+    # those checkpoints), so the same id is used here to load them for RL.
+    EmbodimentTag.NEW_EMBODIMENT.value: 10,
 }
