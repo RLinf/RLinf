@@ -1102,6 +1102,15 @@ jobs:
           export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model abot_m0 --env maniskill_libero
 
+      - name: Fix ABot-M0 checkpoint config
+        run: |
+          source .venv/bin/activate
+          if [ ! -d "/workspace/dataset/Qwen3-VL-4B-Instruct-Action" ]; then
+            hf download StarVLA/Qwen3-VL-4B-Instruct-Action --local-dir /workspace/dataset/Qwen3-VL-4B-Instruct-Action
+          fi
+          sed -i 's|base_vlm:.*|base_vlm: /workspace/dataset/Qwen3-VL-4B-Instruct-Action|' \
+            /workspace/dataset/ABot-M0-LIBERO/config.yaml
+
       - name: LIBERO ABot-M0 PPO test
         timeout-minutes: 20
         run: |
@@ -1132,6 +1141,15 @@ jobs:
           export LIBERO_PATH=/workspace/dataset/LIBERO
           export LIBERO_PLUS_PATH=/workspace/dataset/LIBERO-PLUS
           bash requirements/install.sh embodied --model abot_m0 --env liberoplus
+
+      - name: Fix ABot-M0 checkpoint config
+        run: |
+          source .venv/bin/activate
+          if [ ! -d "/workspace/dataset/Qwen3-VL-4B-Instruct-Action" ]; then
+            hf download StarVLA/Qwen3-VL-4B-Instruct-Action --local-dir /workspace/dataset/Qwen3-VL-4B-Instruct-Action
+          fi
+          sed -i 's|base_vlm:.*|base_vlm: /workspace/dataset/Qwen3-VL-4B-Instruct-Action|' \
+            /workspace/dataset/ABot-M0-LIBERO/config.yaml
 
       - name: LIBERO-Plus ABot-M0 PPO test
         timeout-minutes: 20
