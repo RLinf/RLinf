@@ -75,7 +75,6 @@ The following env fields are passed to EmbodiChain's
 ``SimulationManagerCfg``:
 
 - ``headless``
-- ``enable_rt``
 - ``sim_device``
 
 When running under RLinf placement, always use logical GPU id ``0`` inside the
@@ -192,7 +191,6 @@ The reference env config is
    env_type: embodichain
    gym_config_path: configs/agents/rl/basic/cart_pole/gym_config.json
    headless: true
-   enable_rt: false
    sim_device: cuda
    state_keys: ["qpos", "qvel", "qf"]
 

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
 import os
 import time
 from functools import partial
@@ -24,7 +23,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch import nn
 from torch.distributed.tensor import DTensor
 from torch.multiprocessing.reductions import reduce_tensor
-from torch.utils import _pytree
+from torch.utils._pytree import tree_map
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
@@ -46,7 +45,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import ForwardType
-from rlinf.scheduler import Channel, Cluster, CollectiveGroupOptions, Worker
+from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
     get_reverse_idx,
@@ -986,13 +985,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.enable_offload = self.cfg.actor.get("enable_offload", False)
         self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "torch")
 
-        # Sync weight comm options
-        max_ctas = cfg.rollout.get("sync_weight_nccl_max_ctas", None)
-        min_ctas = cfg.rollout.get("sync_weight_nccl_min_ctas", None)
-        self._sync_weight_comm_options = CollectiveGroupOptions(
-            accel_max_ctas=max_ctas, accel_min_ctas=min_ctas
-        )
-
         self.enable_sft_co_train = cfg.actor.get("enable_sft_co_train", False)
         self.version = 0
         if self.enable_sft_co_train:
@@ -1001,24 +993,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         # create weight syncer
         weight_syncer_cfg = OmegaConf.select(cfg, "weight_syncer")
         self.weight_syncer = WeightSyncer.create(weight_syncer_cfg)
+        self._sync_weight_comm_options = self.weight_syncer.comm_options
 
-    def _setup_rollout_weight_dst_ranks(self) -> None:
-        """
-        Setup destination ranks for weight communication.
-        It can support any topology between actor and rollout workers.
-        Assuming there are M actor ranks and N rollout ranks, each actor rank
-        will send weights to most ceil(N/M) rollout ranks according to the modulo rule.
-        """
-        rollout_world_size = self._component_placement.get_world_size("rollout")
-        actor_world_size = self._world_size
-        rank = self._rank
-        self._weight_dst_rank_in_rollout = []
-        rollout_ranks_per_actor = (
-            rollout_world_size + actor_world_size - 1
-        ) // actor_world_size
-        for i in range(rollout_ranks_per_actor):
-            if i * actor_world_size + rank < rollout_world_size:
-                self._weight_dst_rank_in_rollout.append(i * actor_world_size + rank)
+        self._is_weight_sender = self._rank == 0
+        self._actor_world_size = self._world_size
+        self._rollout_all_ranks = list(
+            range(self._component_placement.get_world_size("rollout"))
+        )
 
     def init_worker(self) -> None:
         """
@@ -1030,8 +1011,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.enable_offload:
             self.offload_param_and_grad()
             self.offload_optimizer()
-
-        self._setup_rollout_weight_dst_ranks()
 
     def model_provider_func(self) -> nn.Module:
         model = get_model(self.cfg.actor.model)
@@ -1048,17 +1027,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         return self.get_model_state_dict(cpu_offload=False, full_state_dict=False)
 
     async def sync_model_to_rollout(self) -> None:
-        if not self._weight_dst_rank_in_rollout:
-            self.log_debug(
-                f"Actor rank {self._rank} has no rollout weight-sync destination."
-            )
-            if self.enable_offload:
-                if not self.is_optimizer_offloaded:
-                    self.offload_optimizer()
-                if not self.is_weight_offloaded:
-                    self.offload_param_and_grad(True)
-            return
-
         if self.enable_offload:
             if not self.is_optimizer_offloaded:
                 self.offload_optimizer()
@@ -1069,35 +1037,41 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         state_dict = self.get_rollout_state_dict()
 
         async def send_func(data):
-            handle = []
-            for rank in self._weight_dst_rank_in_rollout:
-                handle.append(
-                    self.send(
-                        data,
-                        dst_group_name=self._rollout_group_name,
-                        dst_rank=rank,
-                        async_op=True,
-                        options=self._sync_weight_comm_options,
-                    ).async_wait()
-                )
-            await asyncio.gather(*handle)
+            if not self._is_weight_sender:
+                return
+            await self.broadcast(
+                data,
+                groups=[
+                    (self._group_name, 0),
+                    (self._rollout_group_name, self._rollout_all_ranks),
+                ],
+                src=(self._group_name, 0),
+                async_op=True,
+                options=self._sync_weight_comm_options,
+            ).async_wait()
 
         async def recv_func():
-            handle = []
-            for rank in self._weight_dst_rank_in_rollout:
-                handle.append(
-                    self.recv(
-                        src_group_name=self._rollout_group_name,
-                        src_rank=rank,
-                        async_op=True,
-                        options=self._sync_weight_comm_options,
-                    ).async_wait()
-                )
-            metadata_list = await asyncio.gather(*handle)
-            metadata = metadata_list[0]
-            for other_metadata in metadata_list[1:]:
-                if other_metadata != metadata:
-                    raise ValueError("Patch metadata differs across rollout ranks")
+            if self._is_weight_sender:
+                metadata = await self.recv(
+                    src_group_name=self._rollout_group_name,
+                    src_rank=0,
+                    async_op=True,
+                    options=self._sync_weight_comm_options,
+                ).async_wait()
+            else:
+                metadata = None
+            if self._actor_world_size > 1:
+                metadata = await self.broadcast(
+                    metadata,
+                    groups=[
+                        (
+                            self._group_name,
+                            list(range(self._actor_world_size)),
+                        )
+                    ],
+                    src=(self._group_name, 0),
+                    async_op=True,
+                ).async_wait()
             return metadata
 
         if not self.weight_syncer.sender_initialized():
@@ -1292,7 +1266,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             observation, actions = next(self.sft_iterator)
 
         register_pytree_dataclasses(observation)
-        observation = _pytree.tree_map(
+        observation = tree_map(
             lambda x: x.to(self.device) if x is not None else x,
             observation,
         )
@@ -1502,6 +1476,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
                     metrics_data["actor/total_loss"] = loss.detach().item()
                     append_to_dict(metrics, metrics_data)
+                    # avoid gpu memory leak
+                    train_micro_batch[idx] = None
+                    del batch, output_dict, forward_inputs, loss, metrics_data
 
                 self.torch_platform.empty_cache()
 

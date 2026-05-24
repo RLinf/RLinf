@@ -297,7 +297,11 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
 
     hf_config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=True)
 
-    if "Qwen2ForCausalLM" in hf_config.architectures:
+    if (
+        "Qwen2ForCausalLM" in hf_config.architectures
+        or "Qwen2_5ForCausalLM" in hf_config.architectures
+        or "Qwen2_5_VLForConditionalGeneration" in hf_config.architectures
+    ):
         qkv_bias = True
     else:
         qkv_bias = getattr(hf_config, "attention_bias", False)
@@ -305,6 +309,8 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
     if (
         "Qwen3ForCausalLM" in hf_config.architectures
         or "Qwen3MoeForCausalLM" in hf_config.architectures
+        or "Qwen3VLForConditionalGeneration" in hf_config.architectures
+        or "Qwen3VLMoeForConditionalGeneration" in hf_config.architectures
     ):
         qk_layernorm = True
     else:
@@ -321,6 +327,11 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
             else:
                 # mrope
                 cfg.model.seq_len_interpolation_factor = None
+        model_type = getattr(cfg.model, "model_type", None)
+        if model_type == "qwen3_vl" or model_type == "qwen3_vl_moe":
+            # qwen3_vl and qwen3_vl_moe config.json set the model config in text_config
+            hf_config = hf_config.text_config
+
         cfg.model.padded_vocab_size = hf_config.vocab_size
         cfg.model.max_position_embeddings = hf_config.max_position_embeddings
         cfg.model.rotary_base = hf_config.rope_theta
@@ -514,6 +525,9 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
             "enable_gloo_process_groups", True
         )
 
+        #  megatron >= 0.15.0
+        cfg.megatron.skip_train = cfg.megatron.get("skip_train", False)
+
         # ddp config
         cfg.megatron.check_for_nan_in_loss_and_grad = cfg.megatron.get(
             "check_for_nan_in_loss_and_grad", False
@@ -670,7 +684,10 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
             f"grouped_gemm type only avail in [null, te]. get value ({cfg.model.moe_grouped_gemm})"
         )
 
-        if cfg.model.expert_tensor_parallel_size is not None:
+        if (
+            not getattr(cfg.megatron, "mbridge", False)
+            and cfg.model.expert_tensor_parallel_size is not None
+        ):
             assert (
                 cfg.model.expert_tensor_parallel_size
                 <= cfg.model.tensor_model_parallel_size
@@ -1228,9 +1245,14 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
 
     if cfg.actor.training_backend == "megatron":
         cfg.actor = validate_megatron_cfg(cfg.actor)
-        cfg.actor = validate_model_cfg_by_hf_config(
-            cfg.actor, cfg.rollout.model.model_path
-        )
+        if cfg.runner.task_type == "sft":
+            cfg.actor = validate_model_cfg_by_hf_config(
+                cfg.actor, cfg.actor.model.model_path
+            )
+        else:
+            cfg.actor = validate_model_cfg_by_hf_config(
+                cfg.actor, cfg.rollout.model.model_path
+            )
         # TODO. Need actually pad padded_vocab_size.
         assert (
             cfg.actor.model.padded_vocab_size

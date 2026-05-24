@@ -45,8 +45,7 @@ class BehaviorProcess:
             process = BehaviorProcess(cfg, conn, num_envs)
             process.loop()
         except Exception:
-            if process is not None and process.conn is not None:
-                process.conn.send({"traceback": traceback.format_exc()})
+            conn.send({"traceback": traceback.format_exc()})
         finally:
             if process is not None:
                 if process.env is not None:
@@ -54,8 +53,7 @@ class BehaviorProcess:
                         process.env.close()
                     except Exception:
                         pass
-                if process.conn is not None:
-                    process.conn.close()
+            conn.close()
 
     def __init__(self, cfg: DictConfig, conn, num_envs: int):
         self.conn = conn
@@ -148,8 +146,6 @@ class BehaviorProcess:
                 self.env.close()
                 self.env = None
                 self.conn.send({"result": None})
-                self.conn.close()
-                self.conn = None
                 break
             else:
                 raise NotImplementedError(f"Unknown command: {cmd}")

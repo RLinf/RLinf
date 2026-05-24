@@ -26,14 +26,6 @@
    讲解如何从保存的checkpoint文件转换到huggingface safetensors文件，  
    用于评估checkpoint性能或上传到huggingface仓库。  
 
-- :doc:`hetero`  
-   介绍如何配置和使用异构软硬件集群，  
-   以充分利用不同类型的计算资源和硬件设备。  
-
-- :doc:`cloud-edge`
-   展示如何使用 EasyTier 搭建云边协同训练环境，把云端与边缘节点接入同一个
-   overlay 网络，并在该网络之上运行 RLinf。
-
 - :doc:`logger`  
    介绍如何在训练过程中可视化和跟踪关键指标。  
    目前，我们支持三种实验追踪与可视化后端：  
@@ -47,6 +39,9 @@
    介绍基于 Hydra 的 ``cluster.nsight`` 配置，用于通过 ``nsys profile``
    包装指定的 Ray worker group，并说明如何启用、关闭以及选择需要采样的 worker。
 
+- :doc:`mbridge`
+   介绍如何使用 Megatron-Bridge 集成 Megatron-LM 训练后端，
+   以支持 HuggingFace 格式的 checkpoint 训练。
 
 .. toctree::
    :hidden:
@@ -57,8 +52,7 @@
    version
    resume
    convertor
-   hetero
-   cloud-edge
    logger
    nsight
    weight_syncer
+   mbridge

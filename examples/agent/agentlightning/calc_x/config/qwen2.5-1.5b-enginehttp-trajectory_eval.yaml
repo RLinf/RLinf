@@ -1,0 +1,8 @@
+defaults:
+  - qwen2.5-1.5b-enginehttp-trajectory
+
+eval: true
+
+rollout:
+  model:
+    model_path: /path/to/eval/hf_model

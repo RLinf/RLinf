@@ -76,10 +76,21 @@ class PlainMessage:
     value: float
 
 
+def accelerator_is_available():
+    """Return whether the Worker accelerator backend is available."""
+    return (
+        Worker.torch_platform is not None
+        and hasattr(Worker.torch_platform, "is_available")
+        and Worker.torch_platform.is_available()
+    )
+
+
 def get_device():
     """Returns the appropriate torch device."""
-    if torch.cuda.is_available():
-        return torch.device(f"cuda:{torch.cuda.current_device()}")
+    if accelerator_is_available():
+        return torch.device(
+            f"{Worker.torch_device_type}:{Worker.torch_platform.current_device()}"
+        )
     return torch.device("cpu")
 
 
@@ -163,8 +174,8 @@ class ProducerWorker(Worker):
     def put_mixed_tensor_list(
         self, channel: Channel, async_op: bool, key: Optional[str] = None
     ):
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA is required for mixed CPU/GPU tensor tests.")
+        if not accelerator_is_available():
+            raise RuntimeError("Accelerator is required for mixed tensor tests.")
         mixed_item = [
             torch.ones(2, 2, device="cpu") * 1,
             torch.ones(2, 2, device=get_device()) * 2,
@@ -178,8 +189,8 @@ class ProducerWorker(Worker):
     def put_mixed_tensor_dict(
         self, channel: Channel, async_op: bool, key: Optional[str] = None
     ):
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA is required for mixed CPU/GPU tensor tests.")
+        if not accelerator_is_available():
+            raise RuntimeError("Accelerator is required for mixed tensor tests.")
         mixed_item = {
             "cpu_a": torch.ones(2, 2, device="cpu") * 1,
             "cuda_b": torch.ones(2, 2, device=get_device()) * 2,
@@ -193,8 +204,8 @@ class ProducerWorker(Worker):
     def put_mixed_tensor_list_dataclass(
         self, channel: Channel, async_op: bool, key: Optional[str] = None
     ):
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA is required for mixed CPU/GPU tensor tests.")
+        if not accelerator_is_available():
+            raise RuntimeError("Accelerator is required for mixed tensor tests.")
         item = TensorListMessage(
             id=10,
             payload_list=[
@@ -212,8 +223,8 @@ class ProducerWorker(Worker):
     def put_mixed_tensor_dict_dataclass(
         self, channel: Channel, async_op: bool, key: Optional[str] = None
     ):
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA is required for mixed CPU/GPU tensor tests.")
+        if not accelerator_is_available():
+            raise RuntimeError("Accelerator is required for mixed tensor tests.")
         item = TensorDictMessage(
             id=20,
             payload_dict={
@@ -329,7 +340,7 @@ def cluster():
 
 @pytest.fixture(scope="module")
 def worker_groups(cluster):
-    if torch.cuda.is_available():
+    if accelerator_is_available():
         placement = PackedPlacementStrategy(start_hardware_rank=0, end_hardware_rank=0)
     else:
         placement = NodePlacementStrategy([0])
@@ -587,8 +598,8 @@ class TestChannel:
     def test_put_get_mixed_tensor_list(
         self, worker_groups, channel, channel_type, async_op
     ):
-        if not torch.cuda.is_available():
-            pytest.skip("Skipping mixed CPU/GPU test on CPU-only environment.")
+        if not accelerator_is_available():
+            pytest.skip("Skipping mixed tensor test without an accelerator.")
         producer, consumer = worker_groups
         key = "mixed_tensor_list"
         received_item = self._run_test(
@@ -600,7 +611,7 @@ class TestChannel:
             (channel, async_op, key),
         )
         expected_vals = [1, 2, 3]
-        expected_devices = ["cpu", "cuda", "cpu"]
+        expected_devices = ["cpu", Worker.torch_device_type, "cpu"]
         for tensor, expected_val, expected_device in zip(
             received_item, expected_vals, expected_devices
         ):
@@ -612,8 +623,8 @@ class TestChannel:
     def test_put_get_mixed_tensor_dict(
         self, worker_groups, channel, channel_type, async_op
     ):
-        if not torch.cuda.is_available():
-            pytest.skip("Skipping mixed CPU/GPU test on CPU-only environment.")
+        if not accelerator_is_available():
+            pytest.skip("Skipping mixed tensor test without an accelerator.")
         producer, consumer = worker_groups
         key = "mixed_tensor_dict"
         received_item = self._run_test(
@@ -625,7 +636,7 @@ class TestChannel:
             (channel, async_op, key),
         )
         assert received_item["cpu_a"].device.type == "cpu"
-        assert received_item["cuda_b"].device.type == "cuda"
+        assert received_item["cuda_b"].device.type == Worker.torch_device_type
         assert received_item["cpu_c"].device.type == "cpu"
         assert torch.equal(received_item["cpu_a"].cpu(), torch.ones(2, 2) * 1)
         assert torch.equal(received_item["cuda_b"].cpu(), torch.ones(2, 2) * 2)
@@ -636,8 +647,8 @@ class TestChannel:
     def test_put_get_mixed_tensor_list_dataclass(
         self, worker_groups, channel, channel_type, async_op
     ):
-        if not torch.cuda.is_available():
-            pytest.skip("Skipping mixed CPU/GPU test on CPU-only environment.")
+        if not accelerator_is_available():
+            pytest.skip("Skipping mixed tensor test without an accelerator.")
         producer, consumer = worker_groups
         key = "mixed_tensor_list_dataclass"
         received_item = self._run_test(
@@ -652,7 +663,7 @@ class TestChannel:
         assert received_item.id == 10
         assert received_item.note == "channel mixed list dataclass"
         expected_vals = [1, 2, 3]
-        expected_devices = ["cpu", "cuda", "cpu"]
+        expected_devices = ["cpu", Worker.torch_device_type, "cpu"]
         for tensor, expected_val, expected_device in zip(
             received_item.payload_list, expected_vals, expected_devices
         ):
@@ -664,8 +675,8 @@ class TestChannel:
     def test_put_get_mixed_tensor_dict_dataclass(
         self, worker_groups, channel, channel_type, async_op
     ):
-        if not torch.cuda.is_available():
-            pytest.skip("Skipping mixed CPU/GPU test on CPU-only environment.")
+        if not accelerator_is_available():
+            pytest.skip("Skipping mixed tensor test without an accelerator.")
         producer, consumer = worker_groups
         key = "mixed_tensor_dict_dataclass"
         received_item = self._run_test(
@@ -680,7 +691,9 @@ class TestChannel:
         assert received_item.id == 20
         assert received_item.note == "channel mixed dict dataclass"
         assert received_item.payload_dict["cpu_a"].device.type == "cpu"
-        assert received_item.payload_dict["cuda_b"].device.type == "cuda"
+        assert (
+            received_item.payload_dict["cuda_b"].device.type == Worker.torch_device_type
+        )
         assert received_item.payload_dict["cpu_c"].device.type == "cpu"
         assert torch.equal(
             received_item.payload_dict["cpu_a"].cpu(), torch.ones(2, 2) * 1

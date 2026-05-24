@@ -132,14 +132,12 @@ class BaseImageRewardModel(BaseRewardModel):
     def compute_reward(
         self,
         observations: dict[str, Any],
-        task_descriptions: Optional[list[str]] = None,
     ) -> torch.Tensor:
         """Compute rewards from image observations.
 
         Args:
             observations: Dictionary containing:
                 - 'images' or 'main_images': Image tensor of shape [B, C, H, W].
-            task_descriptions: Not used by image models.
 
         Returns:
             torch.Tensor: Reward tensor of shape [B].

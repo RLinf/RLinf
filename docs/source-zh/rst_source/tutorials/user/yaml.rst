@@ -519,8 +519,6 @@ actor
       use_orig_params: False
       use_liger_kernel: False
 
-      fsdp_size: -1
-
       mixed_precision:
         param_dtype: ${actor.model.precision}
         reduce_dtype: ${actor.model.precision}
@@ -682,8 +680,6 @@ actor
 ``actor.fsdp_config.use_orig_params``: FSDP1参数，表示是否使用模块的原始参数，让模块暴露原始参数（nn.Module.named_parameters），而非 FSDP 的扁平参数。可以提高兼容性，但是会引入额外的通信开销降低性能。
 
 ``actor.fsdp_config.use_liger_kernel``: FSDP/FSDP2参数，是否使用 liger_kernel（目前仅支持部分模型，包括：qwen2.5，qwen2.5-vl），开启则可以降低显存占用并提升训练速度。
-
-``actor.fsdp_config.fsdp_size``: FSDP2参数，如果不为-1，则FSDP2会按照该参数指定的大小进行分组切片
 
 ``actor.fsdp_config.mixed_precision.param_dtype``: FSDP/FSDP2参数，指定参数类型
 
