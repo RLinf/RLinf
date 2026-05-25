@@ -409,7 +409,7 @@ def apply_fsdp2_to_model(
             )
             if hasattr(module, "visual"):
                 default_transformer_cls_names_to_wrap.extend(
-                    getattr(module.visual, "_no_split_modules", None)
+                    getattr(module.visual, "_no_split_modules", [])
                 )
         else:
             default_transformer_cls_names_to_wrap = getattr(
