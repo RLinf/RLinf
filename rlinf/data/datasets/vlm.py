@@ -116,7 +116,7 @@ class VLMBaseDataset(Dataset):
     def __getstate__(self):
         state = self.__dict__.copy()
         # Drop heavy/unpicklable caches; they will be rebuilt on-demand in workers
-        for k in ("_parquet_cache", "_parquet_df_cache"):
+        for k in ("_parquet_cache", "_parquet_df_cache", "_parquet_rg_bounds"):
             if k in state:
                 state[k] = {}
         return state
@@ -126,6 +126,7 @@ class VLMBaseDataset(Dataset):
         self.__dict__.update(state)
         self._parquet_cache = getattr(self, "_parquet_cache", {})
         self._parquet_df_cache = getattr(self, "_parquet_df_cache", {})
+        self._parquet_rg_bounds = getattr(self, "_parquet_rg_bounds", {})
 
     def get_image_list(self, dataitem: dict[str, Any]) -> list[Union[bytes, str, None]]:
         images: list[Union[bytes, str, None]] = []
@@ -321,6 +322,18 @@ class VLMBaseDataset(Dataset):
         # Build indices for consistency
         self._indices = [("", "eager", i) for i in range(len(self._records))]
 
+    def _build_parquet_rg_bounds(self, pf, path: str) -> list[tuple[int, int, int]]:
+        """Build and cache row-group boundaries for a parquet file."""
+        self._parquet_rg_bounds = getattr(self, "_parquet_rg_bounds", {})
+        bounds = []
+        offset = 0
+        for g in range(pf.metadata.num_row_groups):
+            rg_rows = pf.metadata.row_group(g).num_rows
+            bounds.append((offset, offset + rg_rows, g))
+            offset += rg_rows
+        self._parquet_rg_bounds[path] = bounds
+        return bounds
+
     def _build_lazy_indices(self) -> None:
         self._indices.clear()
         for path in tqdm(self.data_paths, desc="Loading dataset files", unit="file"):
@@ -356,6 +369,8 @@ class VLMBaseDataset(Dataset):
                     # file handle cache
                     self._parquet_cache = getattr(self, "_parquet_cache", {})
                     self._parquet_cache[path] = pf
+                    # Cache row group boundaries for correct lazy indexing
+                    self._build_parquet_rg_bounds(pf, path)
                     self._indices.extend((path, "parquet", i) for i in range(num_rows))
                 except Exception:
                     df = pd.read_parquet(path)
@@ -395,13 +410,23 @@ class VLMBaseDataset(Dataset):
                         df = pd.read_parquet(path)
                         self._parquet_df_cache[path] = df
                     return df.iloc[int(key)].to_dict()
-            table = pf.read_row_group(key // max(1, pf.metadata.num_rows), columns=None)
-            try:
-                df = table.to_pandas()
-                return df.iloc[int(key) % len(df)].to_dict()
-            except Exception:
-                df_all = pf.read().to_pandas()
-                return df_all.iloc[int(key)].to_dict()
+            # Find the row group that contains the requested row
+            self._parquet_rg_bounds = getattr(self, "_parquet_rg_bounds", {})
+            bounds = self._parquet_rg_bounds.get(path)
+            if bounds is None:
+                # Rebuild bounds if cache was cleared (e.g. after unpickling)
+                bounds = self._build_parquet_rg_bounds(pf, path)
+            row = int(key)
+            target_rg = 0
+            local_idx = row
+            for start, end, rg_idx in bounds:
+                if start <= row < end:
+                    target_rg = rg_idx
+                    local_idx = row - start
+                    break
+            table = pf.read_row_group(target_rg, columns=None)
+            df = table.to_pandas()
+            return df.iloc[local_idx].to_dict()
         if fmt == "parquet_pd":
             self._parquet_df_cache = getattr(self, "_parquet_df_cache", {})
             df = self._parquet_df_cache.get(path)
