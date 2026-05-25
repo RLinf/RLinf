@@ -1,0 +1,121 @@
+model_type: "dreamzero"
+
+model_path: null
+tokenizer_path: null
+
+diffusion_model_pretrained_path: null
+image_encoder_pretrained_path: null
+text_encoder_pretrained_path: null
+vae_pretrained_path: null
+
+action_dim: 32
+
+state_horizon: 1
+action_horizon: 24
+
+num_action_per_block: 24
+
+max_action_dim: 32
+max_state_dim: 64
+
+target_video_height: 352
+target_video_width: 640
+
+action_head_cfg:
+  _convert_: object
+  _target_: groot.vla.model.dreamzero.action_head.wan_flow_matching_action_tf.WANPolicyHead
+  config:
+    _recursive_: false
+    _target_: groot.vla.model.dreamzero.action_head.wan_flow_matching_action_tf.WANPolicyHeadConfig
+    action_dim: ${actor.model.action_dim}
+    action_horizon: ${actor.model.action_horizon}
+    skip_component_loading: true
+    action_loss_embodiment_ids:
+    - 26
+    - 21
+    - 17
+    add_pos_embed: true
+    backbone_embedding_dim: 0
+    backbone_features_projector_cfg: null
+    decouple_inference_noise: false
+    decouple_video_action_noise: false
+    diffusion_model_cfg:
+      _convert_: object
+      _target_: groot.vla.model.dreamzero.modules.wan_video_dit_action_casual_chunk.CausalWanModel
+      diffusion_model_pretrained_path: ${actor.model.diffusion_model_pretrained_path}
+      dim: 5120
+      eps: 1.0e-06
+      ffn_dim: 13824
+      frame_seqlen: 880
+      freq_dim: 256
+      in_dim: 36
+      max_chunk_size: 4
+      model_type: i2v
+      num_action_per_block: ${actor.model.num_action_per_block}
+      num_frame_per_block: 2
+      num_heads: 40
+      num_layers: 40
+      num_state_per_block: 1
+      out_dim: 16
+    expand_batch: null
+    freeze_decode_layer: false
+    hidden_size: 64
+    high_noise_beta_alpha: 3.0
+    image_encoder_cfg:
+      _convert_: object
+      _target_: groot.vla.model.dreamzero.modules.wan_video_image_encoder.WanImageEncoder
+      image_encoder_pretrained_path: ${actor.model.image_encoder_pretrained_path}
+    init_lora_weights: kaiming
+    input_embedding_dim: 1536
+    load_pretrained_det_decode_layer_path: null
+    lora_alpha: 4
+    lora_rank: 4
+    lora_target_modules: q,k,v,o,ffn.0,ffn.2
+    max_action_dim: ${actor.model.max_action_dim}
+    max_state_dim: ${actor.model.max_state_dim}
+    model_dtype: float32
+    noise_beta_alpha: 1.5
+    noise_beta_beta: 1.0
+    noise_s: 0.999
+    num_frame_per_block: 2
+    num_frames: 33
+    num_inference_timesteps: 4
+    num_timestep_buckets: 1000
+    repa_coeff: 1.0
+    repa_layer: 8
+    text_encoder_cfg:
+      _convert_: object
+      _target_: groot.vla.model.dreamzero.modules.wan_video_text_encoder.WanTextEncoder
+      text_encoder_pretrained_path: ${actor.model.text_encoder_pretrained_path}
+    target_video_height: ${actor.model.target_video_height}
+    target_video_width: ${actor.model.target_video_width}
+    tile_size_height: 34
+    tile_size_width: 34
+    tile_stride_height: 18
+    tile_stride_width: 16
+    tiled: false
+    train_architecture: full
+    tune_diffusion_model: true
+    tune_projector: true
+    use_gradient_checkpointing: true
+    use_high_noise_emphasis: false
+    use_vlln: true
+    vae_cfg:
+      _convert_: object
+      _target_: groot.vla.model.dreamzero.modules.wan_video_vae.WanVideoVAE
+      vae_pretrained_path: ${actor.model.vae_pretrained_path}
+    video_inference_final_noise: 0.8
+    video_noise_beta_alpha: 3.0
+    video_noise_beta_beta: 1.0
+    vl_self_attention_cfg:
+      _target_: groot.vla.model.n1_5.modules.cross_attention_dit.SelfAttentionTransformer
+      attention_head_dim: 64
+      dropout: 0.2
+      final_dropout: true
+      num_attention_heads: 24
+      num_layers: 4
+      positional_embeddings: null
+architectures:
+- VLA
+backbone_cfg:
+  _target_: groot.vla.model.dreamzero.backbone.identity.IdentityBackbone

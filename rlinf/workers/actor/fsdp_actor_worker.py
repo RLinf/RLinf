@@ -1079,6 +1079,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 state_dict=state_dict,
                 send=send_func,
                 recv=recv_func,
+                param_names_need_sync=self.param_names_need_sync,
             )
 
         await self.weight_syncer.sync(state_dict, send_func, version=self.version)
