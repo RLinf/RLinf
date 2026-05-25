@@ -176,7 +176,7 @@ RLinf 提供了 ``requirements/install.sh`` 脚本一键完成环境安装：
 多个短序列会被打包成一个长序列进行训练。可以通过以下参数控制打包行为：
 
 - ``max_tokens_per_mbs``：每个 micro-batch 的最大 token 数
-- ``variable_seq_lengths``：是否允许变长序列，设为 ``True`` 时去除 padding 进行紧凑打包. 本例中我们设为 ``True``
+- ``variable_seq_lengths``：是否允许变长序列，设为 ``False`` 时，还会将打包后的长序列 pad 到固定长度，这有可能在某些场景下避免重复compile等问题. 本例中我们设为 ``True``
 
 **FSDP2 训练**
 

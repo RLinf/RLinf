@@ -178,7 +178,7 @@ To improve training efficiency, the framework supports dynamic sequence packing.
 multiple short sequences are packed into a single long sequence for training. The following parameters control packing behavior:
 
 - ``max_tokens_per_mbs``: Maximum number of tokens per micro-batch.
-- ``variable_seq_lengths``: When set to ``True``, padding is removed for compact packing. We set this to ``True`` in this example.
+- ``variable_seq_lengths``: Whether to allow variable-length sequences. When set to ``False``, the packed long sequence will also be padded to a fixed length, which may help avoid issues like repeated compilation in some scenarios. We set this to ``True`` in this example.
 
 **FSDP2 Training**
 
