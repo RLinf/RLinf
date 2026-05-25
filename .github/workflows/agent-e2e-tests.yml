@@ -505,22 +505,6 @@ jobs:
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
           bash requirements/install.sh agentic --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1 --no-apex
 
-      - name: Download geo3k dataset
-        run: |
-          if [ ! -f /workspace/dataset/geo3k/train-00000-of-00001.parquet ]; then
-            source .venv/bin/activate
-            python -c "
-          from datasets import load_dataset
-          import os
-          os.makedirs('/workspace/dataset/geo3k', exist_ok=True)
-          ds = load_dataset('CAIR-HKISI/geo3k')
-          ds['train'].to_parquet('/workspace/dataset/geo3k/train-00000-of-00001.parquet')
-          ds['validation'].to_parquet('/workspace/dataset/geo3k/validation-00000-of-00001.parquet')
-          "
-          else
-            echo "geo3k dataset already exists, skipping download."
-          fi
-
       - name: FSDP SGLang Collocated mode
         timeout-minutes: 20
         run: |
