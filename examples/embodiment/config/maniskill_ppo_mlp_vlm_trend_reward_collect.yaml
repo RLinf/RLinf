@@ -99,7 +99,7 @@ env:
     rollout_epoch: 1
     env_type: maniskill
     total_num_envs: 256
-    wrap_obs_mode: simple
+    wrap_obs_mode: simple_prompt
     use_full_state: true
     auto_reset: true
     ignore_terminations: false
@@ -134,9 +134,12 @@ env:
     is_eval: true
     data_collection:
       enabled: true
-      save_dir: ${runner.logger.log_path}/collected_data
+      save_dir: ${runner.logger.log_path}/collected_data/eval
       export_format: pickle
       only_success: false
+      target_success_ratio: 0.5
+      ratio_tolerance: 0.05
+      ratio_warmup_episodes: 0
       gae_gamma: 0.8
       gae_lambda: 0.9
       collect_env_stride: 1

@@ -103,6 +103,12 @@ class CollectEpisode(gym.Wrapper):
             (N = sum of episodes across pre-existing shards) so the in-progress
             write never touches previously-finalized data. Ignored for pickle.
             Defaults to False.
+        target_success_ratio: Optional target fraction of saved episodes that
+            should be successful. If unset, all eligible episodes are saved.
+        ratio_tolerance: Allowed deviation around ``target_success_ratio``.
+        ratio_warmup_episodes: Number of accepted episodes to save before ratio
+            filtering starts. The first episode of each class is always kept.
+
     """
 
     def __init__(
@@ -118,6 +124,9 @@ class CollectEpisode(gym.Wrapper):
         only_success: bool = False,
         finalize_interval: int = 100,
         resume: bool = False,
+        target_success_ratio: Optional[float] = None,
+        ratio_tolerance: float = 0.0,
+        ratio_warmup_episodes: int = 0,
     ):
         if isinstance(env, gym.Env):
             super().__init__(env)
@@ -139,6 +148,21 @@ class CollectEpisode(gym.Wrapper):
         self.fps = fps
         self.only_success = only_success
         self.finalize_interval = finalize_interval
+        self.target_success_ratio = target_success_ratio
+        self.ratio_tolerance = max(float(ratio_tolerance), 0.0)
+        self.ratio_warmup_episodes = max(int(ratio_warmup_episodes), 0)
+
+        if self.target_success_ratio is not None:
+            self.target_success_ratio = float(self.target_success_ratio)
+            if not 0.0 <= self.target_success_ratio <= 1.0:
+                raise ValueError(
+                    "target_success_ratio must be between 0.0 and 1.0, "
+                    f"got {self.target_success_ratio}"
+                )
+        self._saved_success_episodes = 0
+        self._saved_failure_episodes = 0
+        self._skipped_success_episodes = 0
+        self._skipped_failure_episodes = 0
 
         self._preexisting_episode_count = 0
         self._next_shard_id = 0
@@ -441,15 +465,32 @@ class CollectEpisode(gym.Wrapper):
 
     def _flush_episode(self, env_idx: int, is_success: bool) -> None:
         """Dispatch a completed episode to the appropriate format writer."""
+        if not self._should_save_episode(is_success):
+            label = "success" if is_success else "fail"
+            self.logger.info(
+                "Skip %s episode from env %s to keep collection ratio "
+                "(saved_success=%s, saved_fail=%s, skipped_success=%s, "
+                "skipped_fail=%s)",
+                label,
+                env_idx,
+                self._saved_success_episodes,
+                self._saved_failure_episodes,
+                self._skipped_success_episodes,
+                self._skipped_failure_episodes,
+            )
+            return
+
         self.logger.info(f"Flush env {env_idx}")
         buf = self._buffers[env_idx]
         if not buf["actions"]:
             return
 
+        saved = False
         if self.export_format == "lerobot":
             ep_data = self._buffer_to_lerobot_ep(buf, env_idx, is_success)
             if ep_data is not None:
                 self._submit(self._write_lerobot_episode, ep_data)
+                saved = True
         else:
             episode_data = self._copy(
                 {
@@ -476,6 +517,52 @@ class CollectEpisode(gym.Wrapper):
             self._submit(
                 self._write_pickle, os.path.join(self.save_dir, filename), episode_data
             )
+            saved = True
+
+        if saved:
+            self._record_saved_episode(is_success)
+
+    def _should_save_episode(self, is_success: bool) -> bool:
+        """Return whether an episode should be admitted to the saved dataset."""
+        if self.target_success_ratio is None:
+            return True
+        if self.only_success:
+            return is_success
+
+        saved_total = self._saved_success_episodes + self._saved_failure_episodes
+        if saved_total < self.ratio_warmup_episodes:
+            return True
+
+        # Keep at least one sample of each class when it appears, then use ratio
+        # filtering to avoid one class dominating the saved dataset.
+        if is_success and self._saved_success_episodes == 0:
+            return True
+        if not is_success and self._saved_failure_episodes == 0:
+            return True
+
+        if saved_total == 0:
+            return True
+
+        current_ratio = self._saved_success_episodes / saved_total
+        lower = max(0.0, self.target_success_ratio - self.ratio_tolerance)
+        upper = min(1.0, self.target_success_ratio + self.ratio_tolerance)
+        should_save = True
+        if current_ratio > upper and is_success:
+            should_save = False
+        elif current_ratio < lower and not is_success:
+            should_save = False
+        if not should_save:
+            if is_success:
+                self._skipped_success_episodes += 1
+            else:
+                self._skipped_failure_episodes += 1
+        return should_save
+
+    def _record_saved_episode(self, is_success: bool) -> None:
+        if is_success:
+            self._saved_success_episodes += 1
+        else:
+            self._saved_failure_episodes += 1
 
     def _buffer_to_lerobot_ep(
         self, buf: dict, env_idx: int, is_success: bool
