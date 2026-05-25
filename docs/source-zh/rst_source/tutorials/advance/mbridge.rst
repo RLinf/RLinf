@@ -18,6 +18,22 @@ Megatron-Bridge 相关仓库：
 
 - `对应 Megatron-LM 版本 b0cc2706ddc60d2aefd5fff346445b5c013036a8 <https://github.com/NVIDIA/Megatron-LM/tree/b0cc2706ddc60d2aefd5fff346445b5c013036a8>`__
 
+安装环境
+--------
+
+当前 mbridge 的安装环境使用的是 RLinf agentic 的运行环境，安装命令：
+
+.. code:: bash
+
+   bash requirements/install.sh agentic
+   source .venv/bin/activate
+
+此外需要额外更新和安装如下两个库：
+
+.. code:: bash
+
+   uv pip install transformers==4.57.1 bitsandbytes
+
 使用介绍
 --------
 

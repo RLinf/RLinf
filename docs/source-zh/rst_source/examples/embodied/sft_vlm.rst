@@ -242,6 +242,24 @@ loss 曲线：
 
 最后一次 Qwen3-VL-4B model 使用测试数据验证的正确率为 ``96.9%`` 。
 
+RLinf 展示当前使用 Qwen3-VL-30B-A3B MoE 模型的实验结果，当前实验在两台 8 x A100 Nvidia GPU 的机器上测试 1000 次迭代，实验结果如下：
+
+grad_norm 曲线：
+
+.. image:: https://github.com/RLinf/misc/raw/main/pic/qwen3_moe_sft_vlm_eval_grad_norm.png
+   :alt: Qwen3-VL-30B-A3B MoE VLM SFT grad norm
+   :width: 85%
+   :align: center
+
+loss 曲线：
+
+.. image:: https://github.com/RLinf/misc/raw/main/pic/qwen3_moe_sft_vlm_eval_loss.png
+   :alt: Qwen3-VL-30B-A3B MoE VLM SFT loss
+   :width: 85%
+   :align: center
+
+评估在单台8 x A100 Nvidia GPU 的机器上，训练前使用测试数据验证的正确率为 ``58.4%``, 训练后使用测试数据验证的正确率为 ``91.3%``。
+
 模型 checkpoint 说明
 ----------------------------
 

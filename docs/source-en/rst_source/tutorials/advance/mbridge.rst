@@ -21,6 +21,22 @@ Megatron-Bridge resources:
 
 - `Corresponding Megatron-LM version b0cc2706ddc60d2aefd5fff346445b5c013036a8 <https://github.com/NVIDIA/Megatron-LM/tree/b0cc2706ddc60d2aefd5fff346445b5c013036a8>`__
 
+Environment Setup
+-----------------
+
+MBridge currently uses RLinf's agentic environment. Install it with:
+
+.. code:: bash
+
+   bash requirements/install.sh agentic
+   source .venv/bin/activate
+
+In addition, update and install the following extra packages:
+
+.. code:: bash
+
+   uv pip install transformers==4.57.1 bitsandbytes
+
 Overview
 --------
 
