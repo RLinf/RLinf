@@ -103,8 +103,8 @@ SupportedModel.VALUE_MODEL = SupportedModel.register("value_model", force=True)
 SupportedModel.QWEN2_5_VL_SFT = SupportedModel.register("qwen2.5_vl", force=True)
 SupportedModel.QWEN3_VL_SFT = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_VL_MOE_SFT = SupportedModel.register("qwen3_vl_moe", force=True)
-SupportedModel.GR00T_1_6 = SupportedModel.register("gr00t_1_6", force=True)
-SupportedModel.GR00T_1_6_SFT = SupportedModel.register("gr00t_1_6_sft", force=True)
+SupportedModel.GR00T_N1D6 = SupportedModel.register("gr00t_n1d6", force=True)
+SupportedModel.GR00T_N1D6_SFT = SupportedModel.register("gr00t_n1d6_sft", force=True)
 
 EMBODIED_MODEL = set(
     {
@@ -122,8 +122,8 @@ EMBODIED_MODEL = set(
         SupportedModel.CMA_POLICY,
         SupportedModel.LINGBOTVLA,
         SupportedModel.RESNET_REWARD,
-        SupportedModel.GR00T_1_6,
-        SupportedModel.GR00T_1_6_SFT,
+        SupportedModel.GR00T_N1D6,
+        SupportedModel.GR00T_N1D6_SFT,
         SupportedModel.CFG_MODEL,
         SupportedModel.VALUE_MODEL,
     }

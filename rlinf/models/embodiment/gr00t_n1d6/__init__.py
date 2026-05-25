@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import sys
 import types
 from pathlib import Path
@@ -40,7 +41,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
 
     AutoConfig.register("Gr00tN1d6", Gr00tN1d6Config)
     AutoModel.register(Gr00tN1d6Config, Gr00tN1d6)
-    print(
+    logging.info(
         "Successfully registered custom architecture Gr00tN1d6, authentication passed!"
     )
     import rlinf.hybrid_engines.fsdp.strategy.fsdp as fsdp_strategy
@@ -71,7 +72,9 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
                     found_classes.add(mod.__class__)
 
             if found_classes:
-                print(f"\n  FSDP Slicer: {[c.__name__ for c in found_classes]}\n")
+                logging.info(
+                    "\n  FSDP Slicer: %s\n", [c.__name__ for c in found_classes]
+                )
                 return functools.partial(
                     transformer_auto_wrap_policy, transformer_layer_cls=found_classes
                 )
@@ -85,22 +88,22 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     Patcher.clear()
     Patcher.add_patch(
         "gr00t.data.embodiment_tags.EmbodimentTag",
-        "rlinf.models.embodiment.gr00t_1_6.embodiment_tags.EmbodimentTag",
+        "rlinf.models.embodiment.gr00t_n1d6.embodiment_tags.EmbodimentTag",
     )
     Patcher.add_patch(
         "gr00t.data.embodiment_tags.EMBODIMENT_TAG_MAPPING",
-        "rlinf.models.embodiment.gr00t_1_6.embodiment_tags.EMBODIMENT_TAG_MAPPING",
+        "rlinf.models.embodiment.gr00t_n1d6.embodiment_tags.EMBODIMENT_TAG_MAPPING",
     )
     Patcher.apply()
 
     from gr00t.data.embodiment_tags import EmbodimentTag
 
-    from rlinf.models.embodiment.gr00t_1_6.gr00t_action_model import (
+    from rlinf.models.embodiment.gr00t_n1d6.gr00t_action_model import (
         GR00T_N1_6_ForRLActionPrediction,
     )
-    from rlinf.models.embodiment.gr00t_1_6.utils import replace_dropout_with_identity
+    from rlinf.models.embodiment.gr00t_n1d6.utils import replace_dropout_with_identity
 
-    is_sft_model = cfg.get("model_type") == "gr00t_1_6_sft"
+    is_sft_model = cfg.get("model_type") == "gr00t_n1d6_sft"
     use_official_libero_panda = bool(
         OmegaConf.select(cfg, "use_official_libero_panda", default=is_sft_model)
     )
@@ -132,26 +135,29 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     if not model_path.exists():
         raise FileNotFoundError(f"Model path does not exist: {model_path}")
 
-    if cfg.get("model_type") == "gr00t_1_6_sft":
-        from .gr00t_16_sft_model import GR00T_1_6_SFT_Model
+    if cfg.get("model_type") == "gr00t_n1d6_sft":
+        from .gr00t_n1d6_sft_model import GR00T_N1D6_SFT_Model
 
-        model_cls = GR00T_1_6_SFT_Model
+        model_cls = GR00T_N1D6_SFT_Model
     else:
         model_cls = GR00T_N1_6_ForRLActionPrediction
+
+    config = Gr00tN1d6Config.from_pretrained(str(model_path))
+    _action_dim = cfg.get("action_dim")
+    if _action_dim is not None:
+        config.action_dim = _action_dim
 
     processor_path = OmegaConf.select(cfg, "processor_path", default=None)
 
     model = model_cls.from_pretrained(
+        config=config,
         local_model_path=str(model_path),
         pretrained_model_name_or_path=str(model_path),
-        # model_path,
         torch_dtype=torch_dtype,
         embodiment_tag=emb_tag,
         denoising_steps=cfg.denoising_steps,
         output_action_chunks=cfg.num_action_chunks,
         obs_converter_type=cfg.obs_converter_type,
-        tune_visual=False,
-        tune_llm=False,
         rl_head_config=cfg.rl_head_config,
         processor_path=processor_path,
     )
@@ -167,127 +173,18 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     return model
 
 
-_RLINF_GLOBAL_PATCHED = False
-
-
-def _patch_libero_calc_reward():
-    """Patch LiberoEnv._calc_step_reward to add per-step penalty."""
-    import numpy as np
-
-    import rlinf.envs.libero.libero_env as le
-
-    def _patched_calc(self, terminations):
-        step_penalty = -1 if self.use_step_penalty else 0
-        term_np = np.asarray(terminations, dtype=np.float32)
-        success_bonus = self.cfg.reward_coef * 5.0
-        termination_bonus = success_bonus * term_np
-        reward = step_penalty + termination_bonus
-
-        if self.use_rel_reward:
-            reward_diff = reward - self.prev_step_reward
-            self.prev_step_reward = reward
-            return reward_diff
-        else:
-            if not self.use_step_penalty:
-                non_term_mask = ~(term_np > 0)
-                reward = np.asarray(reward, dtype=np.float32)
-                reward = reward - 0.01 * non_term_mask
-            return reward
-
-    le.LiberoEnv._calc_step_reward = _patched_calc
-
-
-def _patch_rollout_worker_predict():
-    """Patch Rollout worker to add Gaussian noise to actions."""
+def patch_fsdp_rollout_state_dict():
+    """Patch EmbodiedFSDPActor.get_rollout_state_dict to use full_state_dict=True."""
     try:
-        import torch
+        from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 
-        from rlinf.workers.rollout.hf import huggingface_worker as hfw
+        def _patched_get_rollout_state_dict(self) -> dict:
+            return self.get_model_state_dict(cpu_offload=False, full_state_dict=True)
 
-        _orig_predict = hfw.MultiStepRolloutWorker.predict
-
-        def _patched_predict(self, env_obs, mode="train"):
-            actions, result = _orig_predict(self, env_obs, mode)
-            if mode == "train":
-                # Add Gaussian noise to actions for exploration
-                noise_scale = 0.3
-                noise = torch.randn_like(actions) * noise_scale
-                actions = actions + noise
-                actions = torch.clamp(actions, -1.0, 1.0)
-            return actions, result
-
-        hfw.MultiStepRolloutWorker.predict = _patched_predict
-        print("[GR00T patch] Rollout predict patched: Gaussian noise 0.3 on actions")
+        EmbodiedFSDPActor.get_rollout_state_dict = _patched_get_rollout_state_dict
+        logging.info(
+            "[GR00T patch] EmbodiedFSDPActor.get_rollout_state_dict patched: "
+            "full_state_dict=True for multi-GPU FSDP weight sync safety"
+        )
     except Exception as e:
-        print(f"[GR00T patch] Failed to patch rollout predict: {e}")
-
-
-def _patch_worker_init():
-    """Patch EnvWorker.init_worker to apply reward patch before env creation."""
-    try:
-        from rlinf.scheduler import Worker
-
-        for subcls in Worker.__subclasses__():
-            if subcls.__name__ == "EnvWorker":
-                orig_init = subcls.init_worker
-
-                def _patched_init_worker(self):
-                    try:
-                        _patch_libero_calc_reward()
-                    except Exception:
-                        pass
-                    return orig_init(self)
-
-                subcls.init_worker = _patched_init_worker
-                print("[GR00T patch] EnvWorker.init_worker patched to apply reward fix")
-                return
-        print("[GR00T patch] EnvWorker not found in Worker subclasses")
-    except Exception as e:
-        print(f"[GR00T patch] Failed to patch EnvWorker.init_worker: {e}")
-
-
-def _patch_get_env_cls():
-    """Patch get_env_cls for good measure."""
-    import rlinf.envs as env_module
-
-    _orig = env_module.get_env_cls
-
-    def _patched(env_type, env_cfg=None):
-        result = _orig(env_type, env_cfg)
-        if str(env_type) == "libero" or (
-            hasattr(env_type, "value") and env_type.value == "libero"
-        ):
-            try:
-                _patch_libero_calc_reward()
-            except Exception:
-                pass
-        return result
-
-    env_module.get_env_cls = _patched
-
-
-def apply_global_rlinf_patches():
-    global _RLINF_GLOBAL_PATCHED
-    if _RLINF_GLOBAL_PATCHED:
-        return
-    _RLINF_GLOBAL_PATCHED = True
-
-    # Only apply rollout predict patch at module level — it does not import
-    # tensorflow and is needed by the RolloutGroup.  Env-related patches
-    # (_patch_libero_calc_reward, _patch_get_env_cls) import tensorflow and
-    # will crash Ray workers that don't need it (e.g. RolloutGroup, ActorGroup).
-    # They are deferred and applied inside EnvWorker.init_worker via
-    # _patch_worker_init below.
-
-    try:
-        _patch_rollout_worker_predict()
-    except Exception as e:
-        print(f"[GR00T patch] Failed noise patch (rollout): {e}")
-
-    try:
-        _patch_worker_init()
-    except Exception as e:
-        print(f"[GR00T patch] Failed worker init patch: {e}")
-
-
-apply_global_rlinf_patches()
+        logging.warning("[GR00T patch] Failed to patch get_rollout_state_dict: %s", e)

@@ -1416,9 +1416,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         kwargs["top_k"] = self.cfg.algorithm.sampling_params.top_k
                     elif SupportedModel(self.cfg.actor.model.model_type) in [
                         SupportedModel.GR00T,
-                        SupportedModel.GR00T_1_6,
+                        SupportedModel.GR00T_N1D6,
+                        SupportedModel.GR00T_N1D6_SFT,
                     ]:
                         kwargs["prev_logprobs"] = prev_logprobs
+                        from rlinf.models.embodiment.gr00t_n1d6 import (
+                            patch_fsdp_rollout_state_dict,
+                        )
+
+                        patch_fsdp_rollout_state_dict()
 
                     compute_values = (
                         True if self.cfg.algorithm.adv_type == "gae" else False
@@ -1436,7 +1442,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
                     if SupportedModel(self.cfg.actor.model.model_type) in [
                         SupportedModel.GR00T,
-                        SupportedModel.GR00T_1_6,
+                        SupportedModel.GR00T_N1D6,
+                        SupportedModel.GR00T_N1D6_SFT,
                     ]:
                         prev_logprobs = output_dict["prev_logprobs"]
 
@@ -1462,6 +1469,21 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         "critic_warmup": self.optimizer_steps
                         < self.critic_warmup_steps,
                     }
+                    if SupportedModel(self.cfg.actor.model.model_type) in [
+                        SupportedModel.GR00T_N1D6,
+                        SupportedModel.GR00T_N1D6_SFT,
+                    ]:
+                        kwargs["clip_ratio_c"] = self.cfg.algorithm.get(
+                            "clip_ratio_c", 3.0
+                        )
+                        if self.cfg.algorithm.get("clip_log_ratio_min") is not None:
+                            kwargs["clip_log_ratio_min"] = (
+                                self.cfg.algorithm.clip_log_ratio_min
+                            )
+                        if self.cfg.algorithm.get("clip_log_ratio_max") is not None:
+                            kwargs["clip_log_ratio_max"] = (
+                                self.cfg.algorithm.clip_log_ratio_max
+                            )
                     loss, metrics_data = policy_loss(**kwargs)
 
                     entropy_loss = torch.tensor(

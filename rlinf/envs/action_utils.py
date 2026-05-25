@@ -71,6 +71,8 @@ def prepare_actions_for_libero(
     if SupportedModel(model_type) in [
         SupportedModel.OPENVLA,
         SupportedModel.OPENVLA_OFT,
+        SupportedModel.GR00T_N1D6,
+        SupportedModel.GR00T_N1D6_SFT,
     ]:
         chunk_actions[..., -1] = 2 * chunk_actions[..., -1] - 1
         chunk_actions[..., -1] = np.sign(chunk_actions[..., -1]) * -1.0

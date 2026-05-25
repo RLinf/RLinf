@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import logging
 import random
 from pathlib import Path
 from typing import Any, Literal, Optional, Union
@@ -28,16 +29,27 @@ from torch.distributions import Normal
 from transformers.feature_extraction_utils import BatchFeature
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
-from rlinf.models.embodiment.gr00t_1_6.simulation_io import (
+from rlinf.models.embodiment.gr00t_n1d6.simulation_io import (
     ACTION_CONVERSION,
     OBS_CONVERSION,
 )
-from rlinf.models.embodiment.gr00t_1_6.utils import (
+from rlinf.models.embodiment.gr00t_n1d6.utils import (
     squeeze_dict_values,
     unsqueeze_dict_values,
 )
 from rlinf.models.embodiment.modules.explore_noise_net import ExploreNoiseNet
 from rlinf.models.embodiment.modules.value_head import ValueHead
+
+
+class SimulationContent:
+    """Lightweight container for a single timestep's worth of GR00T processor inputs."""
+
+    def __init__(self, embodiment, states, actions, images, text):
+        self.embodiment = embodiment
+        self.states = states
+        self.actions = actions
+        self.images = images
+        self.text = text
 
 
 class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
@@ -64,10 +76,11 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
         self.padding_value = rl_head_config.get("padding_value", 0)
         self.output_action_chunks = output_action_chunks
         # self.valid_action_dim = getattr(self, "valid_action_dim", config.get("action_dim", 7))
-        self.valid_action_dim = getattr(
-            config, "max_action_dim", getattr(config, "action_dim", 7)
-        )
+        self.valid_action_dim = getattr(config, "max_action_dim", 7)
         self.action_chunk = output_action_chunks
+        self.action_dim = getattr(
+            config, "action_dim", getattr(config, "max_action_dim", 7)
+        )
         self.hidden_size = getattr(
             config, "hidden_size", getattr(self, "hidden_size", 1024)
         )
@@ -364,12 +377,9 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
 
         x_0 = x_t
         chains = torch.stack(chains, dim=1)
-        # log_probs = torch.stack(log_probs, dim=1)[
-        #     :, :, : self.action_chunk, : self.valid_action_dim
-        # ]
-        env_action_dim = 7
+
         log_probs = torch.stack(log_probs, dim=1)[
-            :, :, : self.action_chunk, :env_action_dim
+            :, :, : self.action_chunk, : self.action_dim
         ]
         if compute_values:
             values = self.get_value(vl_embs, state_features)
@@ -483,7 +493,7 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
             def describe_value_input(name, value):
                 arr = value.detach().float().cpu()
                 finite = torch.isfinite(arr)
-                print(
+                logging.info(
                     f"[GR00T_VALUE_DEBUG] {name}: shape={tuple(arr.shape)} "
                     f"finite={finite.all().item()} nan={torch.isnan(arr).sum().item()} "
                     f"min={arr[finite].min().item() if finite.any() else float('nan'):.6g} "
@@ -503,7 +513,7 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
             self._printed_value_output_debug = True
             arr = values_vlm.detach().float().cpu()
             finite = torch.isfinite(arr)
-            print(
+            logging.info(
                 f"[GR00T_VALUE_DEBUG] values_vlm: shape={tuple(arr.shape)} "
                 f"finite={finite.all().item()} nan={torch.isnan(arr).sum().item()} "
                 f"min={arr[finite].min().item() if finite.any() else float('nan'):.6g} "
@@ -548,7 +558,6 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
         else:
             self.embodiment_tag = embodiment_tag
         processor_path = kwargs.pop("processor_path", None)
-        self.libero_action_mode = kwargs.pop("libero_action_mode", "legacy")
         transformers_loading_kwargs = kwargs.pop(
             "transformers_loading_kwargs", {"trust_remote_code": True}
         )
@@ -560,32 +569,14 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
         self.model_path = Path(local_model_path)
         self.compute_dtype = compute_dtype
         self.output_action_chunks = output_action_chunks
+        self.action_dim = getattr(
+            config, "action_dim", getattr(config, "max_action_dim", 7)
+        )
 
-        # if modality_config is None or modality_transform is None:
-        #     from gr00t.policy.gr00t_policy import Gr00tPolicy
-
-        #     dummy_policy = Gr00tPolicy(
-        #         model_path=str(local_model_path),
-        #         embodiment_tag=self.embodiment_tag,
-        #         device="cpu",
-        #         strict=False
-        #     )
-
-        #     modality_config = dummy_policy.get_modality_config()
-
-        #     for attr in ["_modality_transform", "modality_transform", "_transform", "transform"]:
-        #         if hasattr(dummy_policy, attr):
-        #             modality_transform = getattr(dummy_policy, attr)
-        #             break
-        #     print("✅ Successfully borrowed modality_config and modality_transform from Gr00tN1d6Processor instance.")
-        #     print(f"DEBUG: Supported embodiment tags in processor: {type(modality_transform).__name__}")
-
-        # self._modality_config = modality_config
-        # self._modality_transform = modality_transform
         if modality_config is None or modality_transform is None:
             from transformers import AutoProcessor
 
-            print("loading Processor...")
+            logging.info("loading Processor...")
             if processor_path is not None:
                 processor_path = Path(processor_path)
                 with open(processor_path / "processor_config.json", "r") as f:
@@ -603,7 +594,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
                 modality_transform = processor
                 modality_config = getattr(processor, "modality_config", None)
 
-            print("Processor loaded safely. No model weights were touched.")
+            logging.info("Processor loaded safely. No model weights were touched.")
 
         self._modality_config = modality_config
         self._modality_transform = modality_transform
@@ -634,17 +625,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
             self.action_head.num_inference_timesteps = denoising_steps
 
         self.obs_convert_fn = OBS_CONVERSION[obs_converter_type]
-        action_convert_fn = ACTION_CONVERSION[obs_converter_type]
-        if obs_converter_type == "libero":
-            self.action_convert_fn = lambda action_chunk, chunk_size=1: (
-                action_convert_fn(
-                    action_chunk,
-                    chunk_size=chunk_size,
-                    gripper_mode=self.libero_action_mode,
-                )
-            )
-        else:
-            self.action_convert_fn = action_convert_fn
+        self.action_convert_fn = ACTION_CONVERSION[obs_converter_type]
         exp_cfg_path = self.model_path / "experiment_cfg"
         self._load_metadata(exp_cfg_path)
 
@@ -653,8 +634,8 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
         if hasattr(self, "config"):
             self.config.no_split_modules = self._no_split_modules
             self.config._no_split_modules = self._no_split_modules
-        print(
-            f"✅ Forced FSDP _no_split_modules into config: {self.config.no_split_modules}"
+        logging.info(
+            f" Forced FSDP _no_split_modules into config: {self.config.no_split_modules}"
         )
 
     def eval(self):
@@ -750,9 +731,8 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
             ]
         value_t = value_t.mean(dim=-1, keepdim=False)
 
-        env_action_dim = 7
-        log_probs = log_probs[..., :env_action_dim]
-        prev_logprobs = prev_logprobs[..., :env_action_dim]
+        log_probs = log_probs[..., : self.action_dim]
+        prev_logprobs = prev_logprobs[..., : self.action_dim]
 
         return {
             "logprobs": log_probs.float(),
@@ -784,7 +764,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
                 if isinstance(value, torch.Tensor):
                     arr = value.detach().float().cpu()
                     finite = torch.isfinite(arr)
-                    print(
+                    logging.info(
                         f"[GR00T_OBS_DEBUG] {name}: tensor shape={tuple(arr.shape)} "
                         f"dtype={value.dtype} finite={finite.all().item()} "
                         f"min={arr[finite].min().item() if finite.any() else float('nan'):.6g} "
@@ -795,7 +775,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
                 elif isinstance(value, np.ndarray):
                     arr = value.astype(np.float32, copy=False)
                     finite = np.isfinite(arr)
-                    print(
+                    logging.info(
                         f"[GR00T_OBS_DEBUG] {name}: ndarray shape={arr.shape} "
                         f"dtype={value.dtype} finite={bool(finite.all())} "
                         f"min={float(arr[finite].min()) if finite.any() else float('nan'):.6g} "
@@ -805,23 +785,23 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
                     )
                 elif isinstance(value, list):
                     preview = value[:2] if len(value) > 2 else value
-                    print(
+                    logging.info(
                         f"[GR00T_OBS_DEBUG] {name}: list len={len(value)} preview={preview}",
                         flush=True,
                     )
                 else:
-                    print(
+                    logging.info(
                         f"[GR00T_OBS_DEBUG] {name}: {type(value).__name__}={value}",
                         flush=True,
                     )
 
-            print(
+            logging.info(
                 f"[GR00T_OBS_DEBUG] raw env_obs keys={list(env_obs.keys())}",
                 flush=True,
             )
             for key, value in env_obs.items():
                 describe_obs_value(f"env_obs.{key}", value)
-            print(
+            logging.info(
                 f"[GR00T_OBS_DEBUG] converted obs keys={list(observations.keys())}",
                 flush=True,
             )
@@ -844,7 +824,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
             self, "_printed_processor_debug", False
         ):
             self._printed_processor_debug = True
-            print(
+            logging.info(
                 f"[GR00T_PROCESSOR_DEBUG] normalized_input keys={list(normalized_input.keys())}",
                 flush=True,
             )
@@ -852,7 +832,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
                 if isinstance(value, torch.Tensor):
                     arr = value.detach().float().cpu()
                     finite = torch.isfinite(arr)
-                    print(
+                    logging.info(
                         f"[GR00T_PROCESSOR_DEBUG] {key}: shape={tuple(value.shape)} "
                         f"dtype={value.dtype} finite={finite.all().item()} "
                         f"min={arr[finite].min().item() if finite.any() else float('nan'):.6g} "
@@ -861,7 +841,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
                         flush=True,
                     )
                 else:
-                    print(
+                    logging.info(
                         f"[GR00T_PROCESSOR_DEBUG] {key}: {type(value).__name__}",
                         flush=True,
                     )
@@ -904,6 +884,15 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
             unnormalized_action, chunk_size=self.output_action_chunks
         )
 
+        if mode == "train":
+            noise_scale = self.action_head.rl_config.get("action_noise_scale", 0.1)
+            if noise_scale > 0:
+                is_numpy = isinstance(raw_action, np.ndarray)
+                raw_tensor = torch.from_numpy(raw_action) if is_numpy else raw_action
+                noise = torch.randn_like(raw_tensor) * noise_scale
+                raw_tensor = (raw_tensor + noise).clamp(-1.0, 1.0)
+                raw_action = raw_tensor.numpy() if is_numpy else raw_tensor
+
         import os
 
         if os.getenv("RLINF_DEBUG_GR00T_ACTION") == "1" and not getattr(
@@ -915,7 +904,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
                 if isinstance(value, torch.Tensor):
                     arr = value.detach().float().cpu()
                     finite = torch.isfinite(arr)
-                    print(
+                    logging.info(
                         f"[GR00T_ACTION_DEBUG] {name}: shape={tuple(arr.shape)} "
                         f"finite={finite.all().item()} nan={torch.isnan(arr).sum().item()} "
                         f"min={arr[finite].min().item() if finite.any() else float('nan'):.6g} "
@@ -925,7 +914,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
                 else:
                     arr = np.asarray(value, dtype=np.float32)
                     finite = np.isfinite(arr)
-                    print(
+                    logging.info(
                         f"[GR00T_ACTION_DEBUG] {name}: shape={arr.shape} "
                         f"finite={bool(finite.all())} nan={int(np.isnan(arr).sum())} "
                         f"min={float(arr[finite].min()) if finite.any() else float('nan'):.6g} "
@@ -940,23 +929,44 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
 
         return raw_action, result
 
-    # def apply_transforms(self, obs: dict[str, Any]) -> dict[str, Any]:
-    #     return self._modality_transform(obs)
-    def apply_transforms(self, obs: dict) -> dict:
-        import numpy as np
-        import torch
-        from PIL import Image
+    # ------------------------------------------------------------------
+    # Observation transform helpers (refactored from the monolithic
+    # apply_transforms method).
+    # ------------------------------------------------------------------
 
-        class SimulationContent:
-            def __init__(self, embodiment, states, actions, images, text):
-                self.embodiment = embodiment
-                self.states = states
-                self.actions = actions
-                self.images = images
-                self.text = text
+    @staticmethod
+    def _tag_value(embodiment_tag) -> str:
+        return (
+            embodiment_tag.value
+            if hasattr(embodiment_tag, "value")
+            else str(embodiment_tag)
+        )
 
-        batch_size = len(next(iter(obs.values())))
+    @staticmethod
+    def _to_numpy(value):
+        if isinstance(value, torch.Tensor):
+            return value.detach().cpu().float().numpy()
+        return np.asarray(value, dtype=np.float32)
 
+    @staticmethod
+    def _split_libero_state(value):
+        value = GR00T_N1_6_ForRLActionPrediction._to_numpy(value).reshape(-1)
+        if value.shape[0] < 7:
+            raise ValueError(
+                f"LIBERO state should have at least 7 dims, got {value.shape}"
+            )
+        return {
+            "x": value[0:1][None, :],
+            "y": value[1:2][None, :],
+            "z": value[2:3][None, :],
+            "roll": value[3:4][None, :],
+            "pitch": value[4:5][None, :],
+            "yaw": value[5:6][None, :],
+            "gripper": value[6:8][None, :],
+        }
+
+    @staticmethod
+    def _classify_obs_keys(obs: dict):
         text_key = None
         image_keys = []
         state_keys = []
@@ -968,161 +978,127 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
                 image_keys.append(k)
             else:
                 state_keys.append(k)
+        return text_key, image_keys, state_keys
 
-        processed_outputs = []
+    @staticmethod
+    def _find_state_key(obs: dict):
+        for candidate in ("state", "observation.state"):
+            if candidate in obs:
+                return candidate
+        return None
 
-        for i in range(batch_size):
-            text = obs[text_key][i] if text_key else ""
-            if isinstance(text, (list, np.ndarray)):
-                text = str(text[0]) if len(text) > 0 else ""
-            else:
-                text = str(text)
+    @classmethod
+    def _extract_obs_text(cls, obs: dict, text_key, i: int) -> str:
+        if text_key is None:
+            return ""
+        text = obs[text_key][i]
+        if isinstance(text, (list, np.ndarray)):
+            return str(text[0]) if len(text) > 0 else ""
+        return str(text)
 
-            def to_numpy(value):
-                if isinstance(value, torch.Tensor):
-                    return value.detach().cpu().float().numpy()
-                return np.asarray(value, dtype=np.float32)
-
-            def split_libero_state(value):
-                value = to_numpy(value).reshape(-1)
-                if value.shape[0] < 7:
-                    raise ValueError(
-                        f"LIBERO state should have at least 7 dims, got {value.shape}"
-                    )
-                return {
-                    "x": value[0:1][None, :],
-                    "y": value[1:2][None, :],
-                    "z": value[2:3][None, :],
-                    "roll": value[3:4][None, :],
-                    "pitch": value[4:5][None, :],
-                    "yaw": value[5:6][None, :],
-                    "gripper": value[6:8][None, :],
-                }
-
-            tag_val = (
-                self.embodiment_tag.value
-                if hasattr(self.embodiment_tag, "value")
-                else str(self.embodiment_tag)
-            )
-            state_key = None
-            for candidate in ("state", "observation.state"):
-                if candidate in obs:
-                    state_key = candidate
-                    break
-            if tag_val == "libero_panda" and state_key is not None:
-                states_dict = split_libero_state(obs[state_key][i])
-            elif tag_val == "libero_panda":
-                states_dict = {}
-                for k in state_keys:
-                    if k.startswith("state."):
-                        states_dict[k.split(".", 1)[1]] = to_numpy(obs[k][i])
-                if not states_dict:
-                    raise KeyError(
-                        f"No LIBERO state keys found in observation: {list(obs.keys())}"
-                    )
-            else:
-                states_dict = {}
-                for k in state_keys:
-                    v = obs[k][i]
-                    if isinstance(v, torch.Tensor):
-                        v = v.cpu().float().numpy()
-                    states_dict[k] = np.array(v)
-
-                ref_T = next(iter(states_dict.values())).shape[0] if states_dict else 1
-                robocasa_requirements = {
-                    "end_effector_position_relative": 3,
-                    "end_effector_rotation_relative": 4,
-                    "gripper_qpos": 2,
-                    "base_position": 3,
-                    "base_rotation": 4,
-                }
-                for req_k, req_dim in robocasa_requirements.items():
-                    if req_k not in states_dict:
-                        states_dict[req_k] = np.zeros(
-                            (ref_T, req_dim), dtype=np.float32
-                        )
-
-            raw_images_list = []
-            for img_k in image_keys:
-                img_data = obs[img_k][i]
-                if isinstance(img_data, torch.Tensor):
-                    img_data = img_data.cpu().numpy()
-
-                frames = []
-                if img_data.ndim == 3:
-                    img_data = np.expand_dims(img_data, 0)
-
-                for t in range(img_data.shape[0]):
-                    frame = img_data[t]
-                    if frame.shape[0] in [1, 3] and frame.shape[2] > 3:
-                        frame = np.transpose(frame, (1, 2, 0))
-                    if frame.dtype != np.uint8:
-                        if frame.max() <= 1.0:
-                            frame = (frame * 255).astype(np.uint8)
-                        else:
-                            frame = frame.astype(np.uint8)
-                    frames.append(Image.fromarray(frame))
-                raw_images_list.append(frames)
-
-            images_dict = {}
-            req_img_keys = []
-            try:
-                tag_val = (
-                    self.embodiment_tag.value
-                    if hasattr(self.embodiment_tag, "value")
-                    else str(self.embodiment_tag)
+    @classmethod
+    def _process_obs_states(cls, obs: dict, state_keys, tag_val: str, i: int) -> dict:
+        state_key = cls._find_state_key(obs)
+        if tag_val == "libero_panda" and state_key is not None:
+            return cls._split_libero_state(obs[state_key][i])
+        if tag_val == "libero_panda":
+            states_dict = {}
+            for k in state_keys:
+                if k.startswith("state."):
+                    states_dict[k.split(".", 1)[1]] = cls._to_numpy(obs[k][i])
+            if not states_dict:
+                raise KeyError(
+                    f"No LIBERO state keys found in observation: {list(obs.keys())}"
                 )
-                req_img_keys = self._modality_transform.modality_configs[tag_val][
-                    "video"
-                ].modality_keys
-            except Exception:
-                req_img_keys = [
-                    "res256_image_side_0",
-                    "res256_image_wrist_0",
-                    "res256_image_front_0",
-                ]
+            return states_dict
 
-            self.image_nums = len(req_img_keys)
+        states_dict = {}
+        for k in state_keys:
+            v = obs[k][i]
+            if isinstance(v, torch.Tensor):
+                v = v.cpu().float().numpy()
+            states_dict[k] = np.array(v)
 
-            if tag_val == "libero_panda":
-                raw_by_key = dict(zip(image_keys, raw_images_list))
-                source_for_req = {
-                    "image": (
-                        raw_by_key.get("base_0_rgb")
-                        or raw_by_key.get("observation.images.image")
-                        or raw_by_key.get("video.image")
-                    ),
-                    "wrist_image": (
-                        raw_by_key.get("right_wrist_0_rgb")
-                        or raw_by_key.get("observation.images.wrist_image")
-                        or raw_by_key.get("video.wrist_image")
-                    ),
-                }
-                for r_key in req_img_keys:
-                    images_dict[r_key] = source_for_req.get(r_key) or (
-                        raw_images_list[-1] if raw_images_list else []
-                    )
-            else:
-                for idx, r_key in enumerate(req_img_keys):
-                    if idx < len(raw_images_list):
-                        images_dict[r_key] = raw_images_list[idx]
+        ref_T = next(iter(states_dict.values())).shape[0] if states_dict else 1
+        robocasa_requirements = {
+            "end_effector_position_relative": 3,
+            "end_effector_rotation_relative": 4,
+            "gripper_qpos": 2,
+            "base_position": 3,
+            "base_rotation": 4,
+        }
+        for req_k, req_dim in robocasa_requirements.items():
+            if req_k not in states_dict:
+                states_dict[req_k] = np.zeros((ref_T, req_dim), dtype=np.float32)
+        return states_dict
+
+    def _process_obs_images(self, obs: dict, image_keys, tag_val: str, i: int) -> dict:
+        import numpy as np
+        from PIL import Image
+
+        raw_images_list = []
+        for img_k in image_keys:
+            img_data = obs[img_k][i]
+            if isinstance(img_data, torch.Tensor):
+                img_data = img_data.cpu().numpy()
+
+            frames = []
+            if img_data.ndim == 3:
+                img_data = np.expand_dims(img_data, 0)
+
+            for t in range(img_data.shape[0]):
+                frame = img_data[t]
+                if frame.shape[0] in [1, 3] and frame.shape[2] > 3:
+                    frame = np.transpose(frame, (1, 2, 0))
+                if frame.dtype != np.uint8:
+                    if frame.max() <= 1.0:
+                        frame = (frame * 255).astype(np.uint8)
                     else:
-                        images_dict[r_key] = (
-                            raw_images_list[-1] if raw_images_list else []
-                        )
+                        frame = frame.astype(np.uint8)
+                frames.append(Image.fromarray(frame))
+            raw_images_list.append(frames)
 
-            content = SimulationContent(
-                embodiment=self.embodiment_tag,
-                states=states_dict,
-                actions=None,
-                images=images_dict,
-                text=text,
-            )
+        try:
+            req_img_keys = self._modality_transform.modality_configs[tag_val][
+                "video"
+            ].modality_keys
+        except Exception:
+            req_img_keys = [
+                "res256_image_side_0",
+                "res256_image_wrist_0",
+                "res256_image_front_0",
+            ]
 
-            messages = [{"role": "user", "content": content}]
-            out = self._modality_transform(messages=messages)
-            processed_outputs.append(out)
+        self.image_nums = len(req_img_keys)
 
+        images_dict = {}
+        if tag_val == "libero_panda":
+            raw_by_key = dict(zip(image_keys, raw_images_list))
+            source_for_req = {
+                "image": (
+                    raw_by_key.get("base_0_rgb")
+                    or raw_by_key.get("observation.images.image")
+                    or raw_by_key.get("video.image")
+                ),
+                "wrist_image": (
+                    raw_by_key.get("right_wrist_0_rgb")
+                    or raw_by_key.get("observation.images.wrist_image")
+                    or raw_by_key.get("video.wrist_image")
+                ),
+            }
+            for r_key in req_img_keys:
+                images_dict[r_key] = source_for_req.get(r_key) or (
+                    raw_images_list[-1] if raw_images_list else []
+                )
+        else:
+            for idx, r_key in enumerate(req_img_keys):
+                if idx < len(raw_images_list):
+                    images_dict[r_key] = raw_images_list[idx]
+                else:
+                    images_dict[r_key] = raw_images_list[-1] if raw_images_list else []
+        return images_dict
+
+    def _collate_and_rename(self, processed_outputs: list) -> dict:
         collated_batch = self._modality_transform.collator(processed_outputs)
 
         if hasattr(collated_batch, "data") and "inputs" in collated_batch.data:
@@ -1132,14 +1108,14 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
         else:
             batched_out = dict(collated_batch)
 
-        if "input_ids" in batched_out:
-            batched_out["eagle_input_ids"] = batched_out["input_ids"]
-        if "attention_mask" in batched_out:
-            batched_out["eagle_attention_mask"] = batched_out["attention_mask"]
-        if "pixel_values" in batched_out:
-            batched_out["eagle_pixel_values"] = batched_out["pixel_values"]
-        if "image_sizes" in batched_out:
-            batched_out["eagle_image_sizes"] = batched_out["image_sizes"]
+        for src, dst in [
+            ("input_ids", "eagle_input_ids"),
+            ("attention_mask", "eagle_attention_mask"),
+            ("pixel_values", "eagle_pixel_values"),
+            ("image_sizes", "eagle_image_sizes"),
+        ]:
+            if src in batched_out:
+                batched_out[dst] = batched_out[src]
 
         if "eagle_pixel_values" not in batched_out and "images" in batched_out:
             batched_out["eagle_pixel_values"] = batched_out["images"]
@@ -1147,8 +1123,29 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
 
         return batched_out
 
-    # def unapply_transforms(self, action: dict[str, Any]) -> dict[str, Any]:
-    #     return self._modality_transform.unapply(action)
+    def apply_transforms(self, obs: dict) -> dict:
+        text_key, image_keys, state_keys = self._classify_obs_keys(obs)
+        tag_val = self._tag_value(self.embodiment_tag)
+        batch_size = len(next(iter(obs.values())))
+        processed_outputs = []
+
+        for i in range(batch_size):
+            text = self._extract_obs_text(obs, text_key, i)
+            states_dict = self._process_obs_states(obs, state_keys, tag_val, i)
+            images_dict = self._process_obs_images(obs, image_keys, tag_val, i)
+
+            content = SimulationContent(
+                embodiment=self.embodiment_tag,
+                states=states_dict,
+                actions=None,
+                images=images_dict,
+                text=text,
+            )
+            messages = [{"role": "user", "content": content}]
+            processed_outputs.append(self._modality_transform(messages=messages))
+
+        return self._collate_and_rename(processed_outputs)
+
     def unapply_transforms(self, action: dict[str, Any]) -> dict[str, Any]:
         raw_action_tensor = action["action"]
 
@@ -1288,14 +1285,14 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
     def _load_metadata(self, exp_cfg_dir: Path):
         metadata_path = exp_cfg_dir / "metadata.json"
         if not metadata_path.exists():
-            print(
+            logging.info(
                 f"Metadata file not found at {metadata_path}. "
                 "Inferring from modality_config..."
             )
 
             tag_value = self.embodiment_tag.value
             if self._modality_config is None or tag_value not in self._modality_config:
-                print(
+                logging.info(
                     "Modality config is missing or does not contain tag "
                     f"{self.embodiment_tag.value}. Attempting to infer "
                     "valid_action_dim and image_nums from config attributes."
@@ -1304,7 +1301,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
                     self.config, "max_action_dim", getattr(self.config, "action_dim", 7)
                 )
                 self.image_nums = getattr(self.config, "image_nums", 1)
-                print(
+                logging.info(
                     "Inferred fallback: "
                     f"valid_action_dim={self.valid_action_dim}, "
                     f"image_nums={self.image_nums}"
@@ -1357,7 +1354,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
             else:
                 self.image_nums = 1
 
-            print(
+            logging.info(
                 "Inferred from modality_config: "
                 f"valid_action_dim={self.valid_action_dim}, "
                 f"image_nums={self.image_nums}"
@@ -1386,24 +1383,3 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
 
         video_mods = self.metadata.get("modalities", {}).get("video", {})
         self.image_nums = len(video_mods)
-        # with open(metadata_path, "r") as f:
-        #     metadatas = json.load(f)
-
-        # metadata_dict = metadatas.get(self.embodiment_tag.value)
-        # if metadata_dict is None:
-        #     raise ValueError(
-        #         f"No metadata found for embodiment tag: {self.embodiment_tag.value}"
-        #     )
-
-        # self.metadata = metadata_dict
-        # self._modality_transform.set_metadata(metadata_dict)
-
-        # valid_action_dim = 0
-        # action_mods = self.metadata.get("modalities", {}).get("action", {})
-        # for v in action_mods.values():
-        #     shape = v.get("shape", [0]) if isinstance(v, dict) else [0]
-        #     valid_action_dim += shape[0] if len(shape) > 0 else 0
-        # self.valid_action_dim = valid_action_dim
-
-        # video_mods = self.metadata.get("modalities", {}).get("video", {})
-        # self.image_nums = len(video_mods)

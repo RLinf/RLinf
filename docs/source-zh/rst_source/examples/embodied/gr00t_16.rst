@@ -101,14 +101,14 @@ GR00T-N1.6 核心架构升级
 
 .. code-block:: bash
 
-   source switch_env gr00t_16
+   source switch_env gr00t_n1d6
 
 **选项 2：自定义环境**
 
 .. code-block:: bash
 
    # 为提高国内依赖安装速度，可以添加 `--use-mirror` 到下面的 install.sh 命令
-   bash requirements/install.sh embodied --model gr00t_16 --env maniskill_libero
+   bash requirements/install.sh embodied --model gr00t_n1d6 --env maniskill_libero
    source .venv/bin/activate
 
 模型下载
@@ -166,7 +166,7 @@ RLinf 框架针对 GR00T-N1.6 采用了高度解耦的两阶段训练架构：
 .. code-block:: yaml
 
    model:
-     model_type: "gr00t_1_6"   
+     model_type: "gr00t_n1d6"   
      add_value_head: True          # 强化学习关键：动态注入价值网络预测优势
      num_action_chunks: 1          # PPO阶段调为1，提升高频物理交互的实时性
      denoising_steps: 1            # 控制流匹配(Flow-Matching)去噪步数
@@ -200,7 +200,7 @@ RLinf 框架针对 GR00T-N1.6 采用了高度解耦的两阶段训练架构：
 **3. 配置文件路径**
 
 - GR00T-N1.6 + PPO + Libero-Spatial：
-  ``examples/embodiment/config/libero_spatial_ppo_gr00t_16.yaml``
+  ``examples/embodiment/config/libero_spatial_ppo_gr00t_n1d6.yaml``
 
 需要修改 SFT 后模型的路径：
 
@@ -213,7 +213,7 @@ RLinf 框架针对 GR00T-N1.6 采用了高度解耦的两阶段训练架构：
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t_16
+   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t_n1d6
 
 可视化与结果监控
 ------------------------------------------------------------------

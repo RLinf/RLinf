@@ -1,5 +1,5 @@
 defaults:
-  - model/gr00t_16@actor.model
+  - model/gr00t_n1d6@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
@@ -20,7 +20,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "test_gr00t_16"
+    experiment_name: "test_gr00t_n1d6"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   # SFT runner now treats max_epochs as full dataset epochs. Keep max_steps
@@ -41,14 +41,14 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 1
-  global_batch_size: 1
+  global_batch_size: 2
   seed: 42
 
-  # Override the default values in model/gr00t_16
+  # Override the default values in model/gr00t_n1d6
   model:
     precision: "bf16"
     model_path: "/workspace/dataset/GR00T-N1.6-3B"
-    model_type: "gr00t_1_6_sft"
+    model_type: "gr00t_n1d6_sft"
     num_action_chunks: 16
     embodiment_tag: "libero_panda"
     add_value_head: True

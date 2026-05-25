@@ -12,16 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-
 import numpy as np
 import torch
 import torch.nn.functional as F
 
 
-def convert_libero_obs_to_gr00t_1_6_format(env_obs):
+def convert_libero_obs_to_gr00t_n1d6_format(env_obs):
     """
-    Convert the observation to the format expected by the gr00t_1_6 model.
+    Convert the observation to the format expected by the gr00t_n1d6 model.
     The data format is determined by the modality_config and meta/info.json following LeRobot format.
     Considering that we don't have a unified data inferface, we use direct logic here.
     """
@@ -43,9 +41,9 @@ def convert_libero_obs_to_gr00t_1_6_format(env_obs):
     return groot_obs
 
 
-def convert_maniskill_obs_to_gr00t_1_6_format(env_obs):
+def convert_maniskill_obs_to_gr00t_n1d6_format(env_obs):
     """
-    Convert the observation to the format expected by the gr00t_1_6 model.
+    Convert the observation to the format expected by the gr00t_n1d6 model.
     The data format is determined by the modality_config and meta/info.json following LeRobot format.
     Considering that we don't have a unified data inferface, we use direct logic here.
     """
@@ -64,7 +62,7 @@ def convert_maniskill_obs_to_gr00t_1_6_format(env_obs):
     if "state" in env_obs:
         raise NotImplementedError("State from simulation are not unified yet.")
     else:
-        # gr00t_1_6 pad the state to input dimension
+        # gr00t_n1d6 pad the state to input dimension
         # create state of [B, T, C]
         groot_obs["state.left_arm"] = np.zeros((env_obs["main_images"].shape[0], 1, 7))
     # annotation
@@ -72,45 +70,21 @@ def convert_maniskill_obs_to_gr00t_1_6_format(env_obs):
     return groot_obs
 
 
-def _debug_libero_action_stats(prefix: str, action_array: np.ndarray):
-    dim_names = ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]
-    flat = action_array.reshape(-1, action_array.shape[-1]).astype(np.float32)
-    stats = []
-    for dim, name in enumerate(dim_names[: flat.shape[-1]]):
-        vals = flat[:, dim]
-        stats.append(
-            f"{name}:min={vals.min():.6g},max={vals.max():.6g},mean={vals.mean():.6g}"
-        )
-    preview = action_array[0, : min(action_array.shape[1], 8)].astype(np.float32)
-    print(
-        f"[GR00T_LIBERO_ACTION_DEBUG] {prefix}: shape={action_array.shape} "
-        f"{' | '.join(stats)} first_chunk={preview.tolist()}",
-        flush=True,
-    )
-
-
-def _apply_official_libero_gripper_action(action_array: np.ndarray) -> np.ndarray:
-    # Match Isaac-GR00T official LIBERO wrapper: normalize [0, 1] -> [-1, 1],
-    # binarize, then invert because LIBERO uses -1=open and +1=close.
-    action_array = action_array.copy()
-    action_array[..., -1] = 2 * action_array[..., -1] - 1
-    action_array[..., -1] = np.sign(action_array[..., -1])
-    action_array[..., -1] *= -1.0
-    return action_array
-
-
 def convert_to_libero_action(
     action_chunk: dict[str, np.array],
     chunk_size: int = 1,
-    gripper_mode: str = "legacy",
 ) -> np.ndarray:
+    """Convert GR00T action chunk dict to a 7-dim Libero action array.
+
+    Gripper normalization is NOT applied here; it is handled by the shared
+    ``prepare_actions_for_libero`` in ``rlinf.envs.action_utils`` so that all
+    Libero gripper logic lives in one place.
+    """
     try:
         pos = action_chunk["end_effector_position"][:, :chunk_size]  # (B, chunk, 3)
         rot = action_chunk["end_effector_rotation"][:, :chunk_size]  # (B, chunk, 3)
         gripper = action_chunk["gripper_close"][:, :chunk_size]  # (B, chunk, 1)
-
         action_array = np.concatenate([pos, rot, gripper], axis=-1)
-
     except KeyError:
         if all(
             key in action_chunk
@@ -135,40 +109,16 @@ def convert_to_libero_action(
         else:
             raise KeyError(f"can not find Action Keys: {list(action_chunk.keys())}")
 
-    if os.getenv("RLINF_DEBUG_GR00T_ACTION") == "1" and not getattr(
-        convert_to_libero_action, "_printed_pre_debug", False
-    ):
-        convert_to_libero_action._printed_pre_debug = True
-        _debug_libero_action_stats("pre_gripper_conversion", action_array)
-
-    if gripper_mode == "legacy":
-        action_array = normalize_gripper_action(action_array, binarize=True)
-    elif gripper_mode == "official":
-        action_array = _apply_official_libero_gripper_action(action_array)
-    elif gripper_mode == "passthrough":
-        action_array = action_array.copy()
-        action_array[..., -1] = np.sign(action_array[..., -1])
-    else:
-        raise ValueError(
-            f"Unknown libero gripper conversion mode: {gripper_mode}. "
-            "Expected one of: legacy, official, passthrough."
-        )
-
-    if os.getenv("RLINF_DEBUG_GR00T_ACTION") == "1" and not getattr(
-        convert_to_libero_action, "_printed_post_debug", False
-    ):
-        convert_to_libero_action._printed_post_debug = True
-        _debug_libero_action_stats(
-            f"post_gripper_conversion[{gripper_mode}]", action_array
-        )
-
+    assert action_array.shape[-1] == 7, (
+        f"Expected 7-dim action, got {action_array.shape[-1]}"
+    )
     return action_array
 
 
 def convert_to_maniskill_action(
     action_chunk: dict[str, np.array], chunk_size: int = 16
 ) -> np.ndarray:
-    """Convert gr00t_1_6 action chunk to Maniskill format."""
+    """Convert gr00t_n1d6 action chunk to Maniskill format."""
     # Accord to gr1 definition, action.left_arm happens to be 7 dims, matching the demand of maniskill.
 
     return action_chunk["action.left_arm"][:, :chunk_size]
@@ -177,12 +127,12 @@ def convert_to_maniskill_action(
 def convert_to_isaaclab_stack_cube_action(
     action_chunk: dict[str, np.array], chunk_size: int = 1
 ) -> np.ndarray:
-    """Convert gr00t_1_6 action chunk to Isaaclab Stack Cube format.
+    """Convert gr00t_n1d6 action chunk to Isaaclab Stack Cube format.
     The main difference of Libero and Isaaclab Stack Cube is gripper action in
     Libero is 0 and 1, but in Isaaclab Stack Cube is -1 and +1.
 
     Args:
-        action_chunk: Dictionary of action components from gr00t_1_6 policy
+        action_chunk: Dictionary of action components from gr00t_n1d6 policy
         chunk_size: Number of action steps to consider from the chunk
 
     Returns:
@@ -207,9 +157,9 @@ def convert_to_isaaclab_stack_cube_action(
 
 # TODO: we need a unified embodiement data.
 OBS_CONVERSION = {
-    "maniskill": convert_maniskill_obs_to_gr00t_1_6_format,
-    "libero": convert_libero_obs_to_gr00t_1_6_format,
-    "isaaclab_stack_cube": convert_libero_obs_to_gr00t_1_6_format,
+    "maniskill": convert_maniskill_obs_to_gr00t_n1d6_format,
+    "libero": convert_libero_obs_to_gr00t_n1d6_format,
+    "isaaclab_stack_cube": convert_libero_obs_to_gr00t_n1d6_format,
 }
 
 ACTION_CONVERSION = {
@@ -247,18 +197,3 @@ def cut_and_resize_images(
         0, 2, 3, 1
     ).contiguous()  # [B, C, H, W] -> [B, H, W, C]
     return resized_nhwc
-
-
-def normalize_gripper_action(action, binarize=True):
-    """
-    Changes gripper action (last dimension of action vector) from [0,1] to [+1,-1].
-
-    Normalization formula: y = 1 - 2 * (x - orig_low) / (orig_high - orig_low)
-    """
-    orig_low, orig_high = 0.0, 1.0
-    action[..., -1] = 1 - 2 * (action[..., -1] - orig_low) / (orig_high - orig_low)
-
-    if binarize:
-        action[..., -1] = np.sign(action[..., -1])
-
-    return action

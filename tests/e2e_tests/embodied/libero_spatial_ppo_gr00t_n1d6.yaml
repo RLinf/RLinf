@@ -1,7 +1,7 @@
 defaults:
   - env/libero_spatial@env.train
   - env/libero_spatial@env.eval
-  - model/gr00t_16@actor.model           
+  - model/gr00t_n1d6@actor.model           
   - training_backend/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
@@ -21,9 +21,9 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: "../results/libero_spatial_ppo_gr00t_16"
+    log_path: "../results/libero_spatial_ppo_gr00t_n1d6"
     project_name: rlinf
-    experiment_name: "test_gr00t_16"
+    experiment_name: "test_gr00t_n1d6"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1
@@ -118,12 +118,13 @@ actor:
   seed: 42
   enable_offload: False
 
-  # Override the default values in model/gr00t_16
+  # Override the default values in model/gr00t_n1d6
   model:
     model_path: "/workspace/dataset/GR00T-1.6-SFT-LIBERO-HF"
-    model_type: "gr00t_1_6"   
+    model_type: "gr00t_n1d6"   
     add_value_head: True
-    num_action_chunks: 1       
+    num_action_chunks: 1
+    action_dim: 7       
     denoising_steps: 1
     no_split_modules:
       - "Qwen3DecoderLayer"

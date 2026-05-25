@@ -30,7 +30,7 @@ RLinf 目前支持 LeRobot 格式的数据集。
 ------------------------------------------------------------------
 
 完整示例配置位于：
-``examples/sft/config/libero_sft_gr00t_16.yaml``
+``examples/sft/config/libero_sft_gr00t_n1d6.yaml``
 
 通用的 GR00T-N1.6 SFT 配置示例如下：
 
@@ -50,7 +50,7 @@ RLinf 目前支持 LeRobot 格式的数据集。
 
    model:
      model_path: "/path/to/GR00T-N1.6-3B" # 修改为 GR00T-N1.6 模型的实际路径
-     model_type: "gr00t_1_6_sft"
+     model_type: "gr00t_n1d6_sft"
      precision: "bf16"
      action_dim: 128
      num_action_chunks: 1
@@ -101,14 +101,14 @@ RLinf 目前支持 LeRobot 格式的数据集。
 
 .. code-block:: bash
 
-   source switch_env gr00t_16
+   source switch_env gr00t_n1d6
 
 **方式二：自建环境**
 
 .. code-block:: bash
 
    # 为提高国内依赖安装速度，可以添加 `--use-mirror` 到下面的 install.sh 命令
-   bash requirements/install.sh embodied --model gr00t_16 --env maniskill_libero
+   bash requirements/install.sh embodied --model gr00t_n1d6 --env maniskill_libero
    source .venv/bin/activate
 
 模型下载
@@ -168,7 +168,7 @@ GR00T-N1.6 模型下载
 .. code-block:: bash
 
    # 返回仓库根目录执行
-   bash examples/sft/run_vla_sft.sh libero_sft_gr00t_16
+   bash examples/sft/run_vla_sft.sh libero_sft_gr00t_n1d6
 
 LeRobot SFT 模型格式转换
 ------------------------------------------------------------------
@@ -185,9 +185,9 @@ LeRobot SFT 模型格式转换
    python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
       --config-path /path/to/RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/config \
       --config-name fsdp_model_convertor \
-      convertor.ckpt_path="/path/to/RLinf/logs/yymmdd-hours:minutes:seconds/gr00t_16_sft_libero/checkpoints/global_step_<>/actor/model_state_dict/full_weights.pt" \
+      convertor.ckpt_path="/path/to/RLinf/logs/yymmdd-hours:minutes:seconds/gr00t_n1d6_sft_libero/checkpoints/global_step_<>/actor/model_state_dict/full_weights.pt" \
       convertor.save_path="/path/to/where/you/put/GR00T-1.6-SFT-LIBERO-Spaial-HF" \
-      ++model.model_type="gr00t_1_6_sft" \
+      ++model.model_type="gr00t_n1d6_sft" \
       ++model.model_path="/path/to/official/GR00T-N1.6-3B" \
       ++model.embodiment_tag="libero_panda" \
       ++model.denoising_steps=4 \

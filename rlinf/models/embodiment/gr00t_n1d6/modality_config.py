@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+import logging
 from typing import Any, Optional
 
 from gr00t.data.embodiment_tags import EmbodimentTag
@@ -45,11 +46,11 @@ class BaseN16DataConfig:
             ]:
                 if hasattr(self._policy, attr):
                     self._transform = getattr(self._policy, attr)
-                    print(f"✅ N1.6 loaded successfully transform: {attr}")
+                    logging.info(f" N1.6 loaded successfully transform: {attr}")
                     break
             else:
-                print(
-                    "⚠️ do not find transform attribute, but modality_config is loaded"
+                logging.info(
+                    "do not find transform attribute, but modality_config is loaded"
                 )
 
     def modality_config(self) -> dict[str, Any]:

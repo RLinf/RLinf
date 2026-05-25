@@ -74,7 +74,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_16" "dexbotic" "starvla" "lingbotvla" "dreamzero")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "dexbotic" "starvla" "lingbotvla" "dreamzero")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy")
 
 
@@ -1196,31 +1196,38 @@ install_gr00t_model() {
     uv pip uninstall pynvml || true
 }
 
-install_gr00t_16_model() {
+install_gr00t_n1d6_model() {
     create_and_sync_venv
     install_common_embodied_deps
 
     echo "Checking for git-lfs (required for NVIDIA Isaac-GR00T)..."
     if ! command -v git-lfs &> /dev/null; then
-        echo "⚠️ git-lfs not found! Attempting to install it automatically..."
+        echo " git-lfs not found! Attempting to install it automatically..."
         if command -v apt-get &> /dev/null; then
             apt-get update -yqq
             apt-get install -y git-lfs
-            echo "✅ git-lfs installed successfully."
+            echo " git-lfs installed successfully."
         else
-            echo "❌ Error: apt-get not found. Please install git-lfs manually."
+            echo " Error: apt-get not found. Please install git-lfs manually."
             exit 1
         fi
     fi
     git lfs install
     echo "========================================================="
 
+    export GIT_LFS_SKIP_SMUDGE=1
     local gr00t_path
-    gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" https://github.com/NVIDIA/Isaac-GR00T.git)
-    
+    gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" "${GITHUB_PREFIX}https://github.com/NVIDIA/Isaac-GR00T.git")    
     echo "Checking out gr00t version 7d5a455 and applying dependency patches..."
     (
         cd "$gr00t_path"
+        
+        git fetch origin 7d5a455add459e870c2e4e4569006acace432d49 || true
+
+        if [ -f "$(git rev-parse --git-dir)/shallow" ]; then
+            echo "Detected shallow clone, unshallowing..."
+            git fetch --unshallow || git fetch --all
+        fi
 
         git reset --hard HEAD
         git clean -fdx
@@ -1229,7 +1236,7 @@ install_gr00t_16_model() {
 
         current_hash=$(git rev-parse HEAD)
         echo "========================================================="
-        echo "✅ GR00T repo is currently at Hash: $current_hash"
+        echo " GR00T repo is currently at Hash: $current_hash"
         echo "========================================================="
         
         if [ -f "pyproject.toml" ]; then
@@ -1865,8 +1872,8 @@ main() {
                 gr00t)
                     install_gr00t_model
                     ;;
-                gr00t_16)
-                    install_gr00t_16_model
+                gr00t_n1d6)
+                    install_gr00t_n1d6_model
                     ;;
                 dexbotic)
                     install_dexbotic_model

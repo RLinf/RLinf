@@ -101,14 +101,14 @@ Switch to the corresponding virtual environment using the built-in ``switch_env`
 
 .. code-block:: bash
 
-  source switch_env gr00t_16
+  source switch_env gr00t_n1d6
 
 **Option 2: Custom Environment**
 
 .. code-block:: bash
 
   # To improve dependency installation speed in China, you can add `--use-mirror` to the install.sh command below
-  bash requirements/install.sh embodied --model gr00t_16 --env maniskill_libero
+  bash requirements/install.sh embodied --model gr00t_n1d6 --env maniskill_libero
   source .venv/bin/activate
 
 Model Download
@@ -166,7 +166,7 @@ Running Scripts and Configuration
 .. code-block:: yaml
 
   model:
-    model_type: "gr00t_1_6"   
+    model_type: "gr00t_n1d6"   
     add_value_head: True          # RL Key: Dynamically inject value network for advantage prediction
     num_action_chunks: 1          # Set to 1 in PPO stage to improve real-time performance for high-frequency physical interactions
     denoising_steps: 1            # Control flow-matching denoising steps
@@ -200,7 +200,7 @@ Running Scripts and Configuration
 **3. Configuration File Paths**
 
 - GR00T-N1.6 + PPO + Libero-Spatial:
-  ``examples/embodiment/config/libero_spatial_ppo_gr00t_16.yaml``
+  ``examples/embodiment/config/libero_spatial_ppo_gr00t_n1d6.yaml``
 
 Modify the path to the post-SFT model:
 
@@ -213,7 +213,7 @@ Modify the path to the post-SFT model:
 
 .. code-block:: bash
 
-  bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t_16
+  bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t_n1d6
 
 Visualization and Result Monitoring
 ------------------------------------------------------------------

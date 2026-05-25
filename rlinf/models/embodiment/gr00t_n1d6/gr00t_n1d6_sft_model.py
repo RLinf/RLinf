@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import types
 from pathlib import Path
 from typing import Any, Optional
@@ -29,7 +30,7 @@ from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoProces
 try:
     AutoConfig.register("Gr00tN1d6", Gr00tN1d6Config)
     AutoModel.register(Gr00tN1d6Config, Gr00tN1d6)
-    print(
+    logging.info(
         "[Module Pre-registration] Successfully registered Gr00tN1d6 architecture mapping to Transformers"
     )
 except Exception:
@@ -38,6 +39,7 @@ except Exception:
 import json as _json
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
+from rlinf.models.embodiment.gr00t_n1d6.gr00t_action_model import SimulationContent
 
 # Embedded libero_panda modality/stats/embodiment_id data for automatic
 # injection into base models (e.g. GR00T-N1.6-3B) that were pretrained
@@ -90,40 +92,6 @@ _LIBERO_PANDA_INJECTION = (
     '"gripper":{"min":[0.0],"max":[1.0],"mean":[0.4578818082809448],"std":[0.49827873706817627],'
     '"q01":[0.0],"q99":[1.0]}},"relative_action":{}},"embodiment_id":2}'
 )
-
-
-def _ensure_libero_panda_in_model(model_dir: Path):
-    """Inject libero_panda into base model JSON files if missing.
-
-    Many GR00T base models (e.g. GR00T-N1.6-3B) were pretrained only on
-    RoboCasa and do not carry the libero_panda posttrain configuration
-    in their processor_config.json / statistics.json / embodiment_id.json.
-    This function adds it on first access so that SFT/PPO training with
-    embodiment_tag=libero_panda works without manual patching.
-    """
-    data = _json.loads(_LIBERO_PANDA_INJECTION)
-
-    def _patch_json(fname, path_to_container, data_key):
-        fpath = model_dir / fname
-        if not fpath.exists():
-            print(f"[GR00T SFT] {fname} not found at {model_dir}, skip injection")
-            return
-        with open(fpath) as fh:
-            cfg = _json.load(fh)
-        container = cfg
-        for seg in path_to_container:
-            container = container.setdefault(seg, {})
-        if "libero_panda" not in container:
-            container["libero_panda"] = data[data_key]
-            with open(fpath, "w") as fh:
-                _json.dump(cfg, fh, indent=2)
-            print(f"[GR00T SFT] Injected libero_panda into {fpath}")
-
-    _patch_json(
-        "processor_config.json", ("processor_kwargs", "modality_configs"), "processor"
-    )
-    _patch_json("statistics.json", (), "statistics")
-    _patch_json("embodiment_id.json", (), "embodiment_id")
 
 
 def patched_sample_time(self, batch_size, device, dtype):
@@ -258,7 +226,7 @@ def patched_action_head_forward(self, backbone_output, action_input):
     }
 
 
-class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
+class GR00T_N1D6_SFT_Model(Gr00tN1d6, BasePolicy):
     _supports_flash_attn_2 = True
     _supports_sdpa = True
 
@@ -286,14 +254,10 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
         kwargs.pop("denoising_steps", None)
         kwargs.pop("output_action_chunks", None)
         kwargs.pop("obs_converter_type", None)
-        kwargs.pop("libero_action_mode", None)
         kwargs.pop("rl_head_config", None)
         transformers_loading_kwargs = kwargs.pop(
             "transformers_loading_kwargs", {"trust_remote_code": True}
         )
-
-        # Auto-inject libero_panda into base model JSON files if missing
-        _ensure_libero_panda_in_model(Path(local_model_path))
 
         def _patched_normalize_values_minmax(values, params):
             """Patched version of normalize_values_minmax for dimension broadcasting.
@@ -325,7 +289,9 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
 
         if hasattr(gr00t_utils, "normalize_values_minmax"):
             gr00t_utils.normalize_values_minmax = _patched_normalize_values_minmax
-            print("[RLinf Patch] Patched gr00t.data.utils.normalize_values_minmax")
+            logging.info(
+                "[RLinf Patch] Patched gr00t.data.utils.normalize_values_minmax"
+            )
 
         # Also patch StateActionProcessor's module-level reference
         try:
@@ -333,7 +299,7 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
 
             if hasattr(sap_module, "normalize_values_minmax"):
                 sap_module.normalize_values_minmax = _patched_normalize_values_minmax
-                print(
+                logging.info(
                     "[RLinf Patch] Patched state_action_processor.normalize_values_minmax"
                 )
         except ImportError:
@@ -357,24 +323,49 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
             self.action_head.forward = types.MethodType(
                 patched_action_head_forward, self.action_head
             )
-            print("providing patch for Action Head (Monkey Patch)")
+            logging.info("providing patch for Action Head (Monkey Patch)")
 
         if modality_config is None or modality_transform is None:
-            print("Loading Processor...")
-            if processor_path is not None:
-                import json
+            logging.info("Loading Processor...")
 
+            class AttrDict(dict):
+                def __init__(self, *args, **kwargs):
+                    super(AttrDict, self).__init__(*args, **kwargs)
+                    self.__dict__ = self
+                    for key, value in self.items():
+                        if isinstance(value, dict):
+                            self[key] = AttrDict(value)
+                        elif isinstance(value, list):
+                            self[key] = [
+                                AttrDict(x) if isinstance(x, dict) else x for x in value
+                            ]
+
+            injection_data = _json.loads(_LIBERO_PANDA_INJECTION)
+            injected_processor_obj = AttrDict(injection_data["processor"])
+
+            if processor_path is not None:
                 from gr00t.model.gr00t_n1d6.processing_gr00t_n1d6 import (
                     Gr00tN1d6Processor,
                 )
 
                 processor_path = Path(processor_path)
                 with open(processor_path / "processor_config.json", "r") as f:
-                    processor_cfg = json.load(f)["processor_kwargs"]
+                    processor_cfg = _json.load(f)["processor_kwargs"]
                 with open(processor_path / "statistics.json", "r") as f:
-                    processor_cfg["statistics"] = json.load(f)
+                    processor_cfg["statistics"] = _json.load(f)
                 with open(processor_path / "embodiment_id.json", "r") as f:
-                    processor_cfg["embodiment_id_mapping"] = json.load(f)
+                    processor_cfg["embodiment_id_mapping"] = _json.load(f)
+
+                processor_cfg["modality_configs"]["libero_panda"] = (
+                    injected_processor_obj
+                )
+                processor_cfg["statistics"]["libero_panda"] = injection_data[
+                    "statistics"
+                ]
+                processor_cfg["embodiment_id_mapping"]["libero_panda"] = injection_data[
+                    "embodiment_id"
+                ]
+
                 if "base_motion" not in processor_cfg:
                     processor_cfg["base_motion"] = None
                 modality_transform = Gr00tN1d6Processor(**processor_cfg)
@@ -383,9 +374,34 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
                 processor = AutoProcessor.from_pretrained(
                     str(local_model_path), trust_remote_code=True
                 )
+
+                if hasattr(processor, "modality_configs"):
+                    processor.modality_configs["libero_panda"] = injected_processor_obj
+                if hasattr(processor, "statistics"):
+                    processor.statistics["libero_panda"] = injection_data["statistics"]
+                if hasattr(processor, "embodiment_id_mapping"):
+                    processor.embodiment_id_mapping["libero_panda"] = injection_data[
+                        "embodiment_id"
+                    ]
+
+                sap = getattr(processor, "state_action_processor", None)
+                if sap is not None:
+                    if hasattr(sap, "modality_configs"):
+                        sap.modality_configs["libero_panda"] = injected_processor_obj
+                    if hasattr(sap, "norm_params"):
+                        sap.norm_params["libero_panda"] = injection_data["statistics"]
+                    if hasattr(sap, "embodiment_id_mapping"):
+                        sap.embodiment_id_mapping["libero_panda"] = injection_data[
+                            "embodiment_id"
+                        ]
+
                 modality_transform = processor
-                modality_config = getattr(processor, "modality_config", None)
-            print("Processor loaded successfully.")
+                modality_config = getattr(
+                    processor,
+                    "modality_configs",
+                    getattr(processor, "modality_config", None),
+                )
+            logging.info("Processor loaded successfully.")
 
             # After Processor is loaded, patch the StateActionProcessor's
             # normalize_values_minmax reference in sys.modules
@@ -396,7 +412,7 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
                     "gr00t.data.state_action.state_action_processor"
                 ]
                 sap_module.normalize_values_minmax = _patched_normalize_values_minmax
-                print(
+                logging.info(
                     "[RLinf Patch] Patched sys.modules state_action_processor.normalize_values_minmax"
                 )
 
@@ -404,7 +420,7 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
         self._modality_transform = modality_transform
 
         self.to(self.compute_dtype)
-        print(
+        logging.info(
             f"all model residual parameters have been forcibly unified and shuffled to: {self.compute_dtype}"
         )
 
@@ -417,11 +433,11 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
         self._restore_official_trainable_backbone_fp32(config)
 
         trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
-        print(
+        logging.info(
             f"[SFT Override] Number of parameters participating in training: {trainable_params / 1e6:.2f} M"
         )
 
-        print("[monitor loading] registering gradient monitors...")
+        logging.info("[monitor loading] registering gradient monitors...")
         for name, param in self.named_parameters():
             if param.requires_grad:
 
@@ -429,11 +445,8 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
                     def check_grad(grad):
                         if grad is not None:
                             if torch.isnan(grad).any() or torch.isinf(grad).any():
-                                print(
+                                logging.error(
                                     f"[gradient exposion] find NaN gradient! Layer: {layer_name}"
-                                )
-                                return torch.nan_to_num(
-                                    grad, nan=0.0, posinf=0.0, neginf=0.0
                                 )
                         return grad
 
@@ -451,7 +464,7 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
             new_key = key.replace("_fsdp_wrapped_module.", "")
             clean_state_dict[new_key] = value
 
-        print("[SFT Override] Cleaned FSDP prefixes from state_dict keys.")
+        logging.info("[SFT Override] Cleaned FSDP prefixes from state_dict keys.")
         return super().load_state_dict(clean_state_dict, strict=strict, **kwargs)
 
     def forward(self, forward_type=ForwardType.SFT, **kwargs):
@@ -547,7 +560,7 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
         loss = outputs["loss"] if isinstance(outputs, dict) else outputs.loss
 
         if torch.isnan(loss):
-            print(
+            logging.info(
                 "[detect NaN Loss] force to zero and continue training to prevent collapse."
             )
             loss = torch.zeros(
@@ -569,7 +582,7 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
             backbone_model, "language_model"
         ):
             backbone_model.language_model.requires_grad_(True)
-            print("[SFT Override] Restored full LLM backbone training.")
+            logging.info("[SFT Override] Restored full LLM backbone training.")
         else:
             tune_top_llm_layers = int(getattr(config, "tune_top_llm_layers", 0) or 0)
             language_model = getattr(backbone_model, "language_model", None)
@@ -577,7 +590,7 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
             if tune_top_llm_layers > 0 and layers is not None:
                 for layer in layers[-tune_top_llm_layers:]:
                     layer.requires_grad_(True)
-                print(
+                logging.info(
                     "[SFT Override] Restored training for top "
                     f"{tune_top_llm_layers} LLM layers."
                 )
@@ -589,7 +602,7 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
             mlp1 = getattr(backbone_model, "mlp1", None)
             if mlp1 is not None:
                 mlp1.requires_grad_(True)
-            print("[SFT Override] Restored visual backbone training.")
+            logging.info("[SFT Override] Restored visual backbone training.")
 
     def _restore_official_trainable_backbone_fp32(self, config):
         """Match official GR00T behavior for trainable backbone parameter dtype."""
@@ -606,20 +619,12 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
                 param.data = param.data.to(torch.float32)
                 cast_count += 1
         if cast_count:
-            print(
+            logging.info(
                 "[SFT Override] Restored official fp32 dtype for "
                 f"{cast_count} trainable backbone parameters."
             )
 
     def apply_transforms(self, obs: dict, actions=None, action_pad_mask=None) -> dict:
-        class SimulationContent:
-            def __init__(self, embodiment, states, actions, images, text):
-                self.embodiment = embodiment
-                self.states = states
-                self.actions = actions
-                self.images = images
-                self.text = text
-
         batch_size = len(next(iter(obs.values())))
 
         text_key = None
@@ -878,14 +883,6 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
                             raw_images_list[-1] if raw_images_list else []
                         )
 
-            # --- DIAGNOSTIC: print state dict shapes ---
-            with open("/tmp/state_diag.txt", "a") as _df:
-                _df.write(f"tag={tag_val}  i={i}\n")
-                for _k, _v in sorted(states_dict.items()):
-                    _df.write(
-                        f"  {_k}: shape={getattr(_v, 'shape', type(_v).__name__)}\n"
-                    )
-
             content = SimulationContent(
                 embodiment=self.embodiment_tag,
                 states=states_dict,
@@ -932,12 +929,11 @@ class GR00T_1_6_SFT_Model(Gr00tN1d6, BasePolicy):
 
 
 try:
-    AutoModel.register(Gr00tN1d6Config, GR00T_1_6_SFT_Model)
-    AutoModelForCausalLM.register(Gr00tN1d6Config, GR00T_1_6_SFT_Model)
-    AutoModelForCausalLM.register(Gr00tN1d6Config, GR00T_1_6_SFT_Model)
-    print("[register model] successfully registered GR00T_1_6_SFT_Model！")
+    AutoModel.register(Gr00tN1d6Config, GR00T_N1D6_SFT_Model)
+    AutoModelForCausalLM.register(Gr00tN1d6Config, GR00T_N1D6_SFT_Model)
+    logging.info("[register model] successfully registered GR00T_N1D6_SFT_Model！")
 except Exception as exc:
-    print(f"[register model] failed to register GR00T_1_6_SFT_Model: {exc}")
+    logging.error(f"[register model] failed to register GR00T_N1D6_SFT_Model: {exc}")
 
 
 def build_gr00t_dataloader(worker_instance, eval_dataset: bool = False):
@@ -945,7 +941,7 @@ def build_gr00t_dataloader(worker_instance, eval_dataset: bool = False):
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from torch.utils.data import DataLoader, Subset
 
-    print(
+    logging.info(
         "[Lazy Load] Successfully triggered GR00T model file registration! "
         "Loading LeRobot Dataset..."
     )
@@ -971,12 +967,12 @@ def build_gr00t_dataloader(worker_instance, eval_dataset: bool = False):
     )
     if valid_indices is not None:
         dataset = Subset(dataset, valid_indices)
-        print(
+        logging.info(
             "[GR00T SFT] Filtered padded tail action chunks: "
             f"using {len(valid_indices)} unpadded samples."
         )
     else:
-        print(
+        logging.info(
             "[GR00T SFT] Could not precompute unpadded sample indices; "
             "falling back to collate-time filtering."
         )
@@ -1075,7 +1071,6 @@ def _compute_gr00t_unpadded_indices(dataset_path, action_horizon: int):
     if action_horizon <= 1:
         return None
 
-    import json
     from pathlib import Path
 
     dataset_path = Path(dataset_path)
@@ -1097,7 +1092,7 @@ def _compute_gr00t_unpadded_indices(dataset_path, action_horizon: int):
                     valid_indices.extend(range(start, start + valid_length))
             return valid_indices
         except Exception as exc:
-            print(f"[GR00T SFT] Failed to read v3 episode metadata: {exc}")
+            logging.error(f"[GR00T SFT] Failed to read v3 episode metadata: {exc}")
             return None
 
     episodes_jsonl = meta_dir / "episodes.jsonl"
@@ -1107,14 +1102,14 @@ def _compute_gr00t_unpadded_indices(dataset_path, action_horizon: int):
             cursor = 0
             with open(episodes_jsonl, "r") as f:
                 for line in f:
-                    episode = json.loads(line)
+                    episode = _json.loads(line)
                     length = int(episode["length"])
                     valid_length = max(0, length - action_horizon + 1)
                     valid_indices.extend(range(cursor, cursor + valid_length))
                     cursor += length
             return valid_indices
         except Exception as exc:
-            print(f"[GR00T SFT] Failed to read v2 episode metadata: {exc}")
+            logging.error(f"[GR00T SFT] Failed to read v2 episode metadata: {exc}")
             return None
 
     return None
