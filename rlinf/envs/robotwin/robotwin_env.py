@@ -23,6 +23,7 @@ import torch.multiprocessing as mp
 from omegaconf import OmegaConf
 from PIL import Image
 
+from rlinf.envs.robotwin.seed_utils import partition_success_seeds
 from rlinf.envs.utils import center_crop_image, list_of_dict_to_dict_of_list
 
 __all__ = ["RoboTwinEnv"]
@@ -422,22 +423,13 @@ class RoboTwinEnv(gym.Env):
             success_seeds = data[self.task_name].get("success_seeds", None)
             if success_seeds is not None:
                 success_seeds = torch.as_tensor(success_seeds, dtype=torch.long)
-                # All workers use the same global seed so the shuffle order is identical,
-                # then each worker takes a non-overlapping slice keyed by its rank.
-                global_generator = torch.Generator()
-                global_generator.manual_seed(self.base_seed)
-                shuffled_indices = torch.randperm(
-                    success_seeds.numel(), generator=global_generator
+                self.success_seeds = partition_success_seeds(
+                    success_seeds,
+                    base_seed=self.base_seed,
+                    seed_offset=self.seed_offset,
+                    total_num_processes=self.total_num_processes,
+                    num_group=self.num_group,
                 )
-                shuffled_seeds = success_seeds[shuffled_indices]
-                total_seeds = shuffled_seeds.numel()
-                seeds_per_worker = total_seeds // self.total_num_processes
-                start = self.seed_offset * seeds_per_worker
-                end = start + seeds_per_worker
-                worker_seeds = shuffled_seeds[start:end]
-                # Drop last to make this worker's slice divisible by num_group
-                keep_count = (worker_seeds.numel() // self.num_group) * self.num_group
-                self.success_seeds = worker_seeds[:keep_count]
                 self._current_seed_index = 0
             else:
                 self.success_seeds = None
