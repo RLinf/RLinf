@@ -121,8 +121,14 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         ):
             train_metrics.update(
                 {
-                    "dynamics_loss": self._dreamzero_loss["dynamics_loss"],
-                    "action_loss": self._dreamzero_loss["action_loss"],
+                    "dynamics_loss": self._dreamzero_loss["dynamics_loss"]
+                    .detach()
+                    .cpu()
+                    .item(),
+                    "action_loss": self._dreamzero_loss["action_loss"]
+                    .detach()
+                    .cpu()
+                    .item(),
                 }
             )
             self._dreamzero_loss = None

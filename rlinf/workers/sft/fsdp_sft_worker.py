@@ -181,9 +181,8 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             grad_norm, lr_list = self.optimizer_step()
             self.optimizer.zero_grad(set_to_none=True)
 
-            lr_value = (
-                lr_list[0] if len(lr_list) > 0 else self.optimizer.param_groups[0]["lr"]
-            )
+            self.lr_scheduler.step()
+            lr_value = self.optimizer.param_groups[0]["lr"]
             grad_norm_value = (
                 float(grad_norm) if isinstance(grad_norm, torch.Tensor) else grad_norm
             )
@@ -195,8 +194,6 @@ class FSDPSftWorker(FSDPModelManager, Worker):
                     "grad_norm": grad_norm_value,
                 },
             )
-
-            self.lr_scheduler.step()
 
             if self.global_step > 0 and self.global_step % 1000 == 0:
                 clear_memory()

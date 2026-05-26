@@ -1,5 +1,6 @@
 defaults:
   - training_backend/fsdp@actor.fsdp_config
+  - model/dreamzero_5b@actor.model
   - override hydra/job_logging: stdout
 
 hydra:
@@ -12,7 +13,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: all
+    actor: all
 
 runner:
   task_type: sft
@@ -27,18 +28,16 @@ runner:
   val_check_interval: -1
   save_interval: 3000
   log_interval: 100
-  resume_dir: path/to/checkpoint
+  resume_dir: null
 
 data:
-  train_data_paths: path/to/datasets/DreamZero-Libero-Data
+  train_data_paths: physical-intelligence/libero # https://huggingface.co/datasets/physical-intelligence/libero
   lazy_load: True
   num_workers: 8
   prefetch_factor: 8
   video_tolerance_s: 0.1
   parquet_cache_size: 512
-
-algorithm:
-  adv_type: gae
+  sampling_mode: multi_anchor # fixed_window
 
 actor:
   group_name: "ActorGroup"
@@ -46,27 +45,26 @@ actor:
   micro_batch_size: 32
   global_batch_size: 256
   seed: 42
-  dataloader_num_workers: 1
-  enable_offload: False
+
   model:
     model_type: "dreamzero"
     precision: fp32
-    model_path: path/to/models/DreamZero-Libero
-    tokenizer_path: path/to/models/umt5-xxl
-    max_seq_len: 512
-    # Shared DreamZero dims (also match DreamZero-Libero checkpoint config).
-    dreamzero_max_action_dim: 32
-    dreamzero_max_state_dim: 64
-    # Unified temporal knobs (branching by embodiment_tag below):
-    dreamzero_action_horizon: 16
-    dreamzero_num_chunks: 4
-    dreamzero_num_video_frames: 33
+    model_path: null
+    tokenizer_path: google/umt5-xxl # https://huggingface.co/google/umt5-xxl
+    diffusion_model_pretrained_path: Wan-AI/Wan2.2-TI2V-5B # https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B
+    image_encoder_pretrained_path: Wan-AI/Wan2.1-I2V-14B-480P/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth # https://huggingface.co/Wan-AI/Wan2.1-I2V-14B-480P
+    text_encoder_pretrained_path: Wan-AI/Wan2.2-TI2V-5B/models_t5_umt5-xxl-enc-bf16.pth # https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B
+    vae_pretrained_path: Wan-AI/Wan2.2-TI2V-5B/Wan2.2_VAE.pth # https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B
+    # Dataset-generated metadata.json for normalisation statistics.
+    # Generate with: python toolkits/lerobot/generate_dreamzero_metadata.py \
+    #   --preset libero_sim --dataset-root /path/to/libero --output-metadata /path/to/metadata.json
+    # Must be explicitly specified unless it exists at model_path/experiment_cfg/metadata.json.
+    metadata_json_path: /path/to/metadata.json
+    action_horizon: 16
+    num_action_per_block: 16
+    target_video_height: 160
+    target_video_width: 320
 
-    cfg_mode: False
-    unconditional_prob: 0.3
-    action_loss_scale: 1.0
-    pretrained_model_path: null
-    add_value_head: False
     is_lora: False
     embodiment_tag: "libero_sim"
     relative_action: False
@@ -103,7 +101,3 @@ actor:
     amp_autocast:
       enabled: False
       precision: "bf16"
-reward:
-  use_reward_model: False
-critic:
-  use_critic_model: False

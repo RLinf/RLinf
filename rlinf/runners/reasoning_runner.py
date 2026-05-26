@@ -224,6 +224,7 @@ class ReasoningRunner:
                     worker is not None
                     and worker_cfg.training_backend == "megatron"
                     and worker_cfg.megatron.use_hf_ckpt
+                    and not getattr(worker_cfg.megatron, "mbridge", False)
                 ):
                     from rlinf.utils.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
                         convert_hf_to_mg,
