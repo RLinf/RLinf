@@ -37,16 +37,9 @@ import sys
 from pathlib import Path
 
 import matplotlib
-import matplotlib.pyplot as plt
 
 matplotlib.use("Agg")
-
-from compare_baseline import (
-    compare_results_with_baseline,
-    plot_comparison_with_baseline,
-    print_comparison_results,
-    save_comparison_results,
-)
+import matplotlib.pyplot as plt
 from parse_success_once import (
     print_results,
     process_log_directory,
@@ -161,7 +154,7 @@ def plot_single_experiment(
     ax.grid(True, alpha=0.3)
 
     # Set y-axis range
-    ax.set_ylim(0, max(success_values) * 1.1 if success_values else 1)
+    ax.set_ylim(0, max(max(success_values) * 1.1, 0.1) if success_values else 1.0)
 
     # Adjust layout padding
     plt.tight_layout()
@@ -284,7 +277,15 @@ def main():
     if args.plot_data:
         save_success_once_data(results, args.plot_data)
 
-    # Compare with baseline
+    # Compare with baseline (lazy import to avoid circular dependency with compare_baseline.py)
+    from compare_baseline import (
+        _find_baseline_log,
+        compare_results_with_baseline,
+        plot_comparison_with_baseline,
+        print_comparison_results,
+        save_comparison_results,
+    )
+
     baseline_dir = args.baseline_dir
     if baseline_dir is None:
         # Default baseline directory
@@ -300,16 +301,9 @@ def main():
         comparison_results = []
         for result in results:
             experiment_name = result["experiment_name"]
-            # Find baseline log with matching experiment name
-            baseline_log_path = None
-            for baseline_subdir in baseline_path.iterdir():
-                if baseline_subdir.is_dir():
-                    # Check if directory name contains experiment name
-                    if experiment_name in baseline_subdir.name:
-                        potential_log = baseline_subdir / args.baseline_filename
-                        if potential_log.exists():
-                            baseline_log_path = str(potential_log)
-                            break
+            baseline_log_path = _find_baseline_log(
+                baseline_path, experiment_name, args.baseline_filename
+            )
 
             if baseline_log_path:
                 try:
@@ -344,15 +338,9 @@ def main():
         if not args.no_comparison_plot:
             for i, result in enumerate(results):
                 experiment_name = result["experiment_name"]
-                # Find baseline log path again
-                baseline_log_path = None
-                for baseline_subdir in baseline_path.iterdir():
-                    if baseline_subdir.is_dir():
-                        if experiment_name in baseline_subdir.name:
-                            potential_log = baseline_subdir / args.baseline_filename
-                            if potential_log.exists():
-                                baseline_log_path = str(potential_log)
-                                break
+                baseline_log_path = _find_baseline_log(
+                    baseline_path, experiment_name, args.baseline_filename
+                )
 
                 if baseline_log_path:
                     try:

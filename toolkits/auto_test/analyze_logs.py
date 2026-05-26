@@ -40,6 +40,7 @@ import sys
 from pathlib import Path
 
 from compare_baseline import (
+    _find_baseline_log,
     compare_results_with_baseline,
     plot_comparison_with_baseline,
     print_comparison_results,
@@ -141,14 +142,9 @@ def analyze_logs(
 
             if has_baseline:
                 # Find matching baseline log
-                baseline_log_path = None
-                for baseline_subdir in baseline_path.iterdir():
-                    if baseline_subdir.is_dir():
-                        if baseline_subdir.name.endswith(f"-{experiment_name}"):
-                            potential_log = baseline_subdir / baseline_filename
-                            if potential_log.exists():
-                                baseline_log_path = str(potential_log)
-                                break
+                baseline_log_path = _find_baseline_log(
+                    baseline_path, experiment_name, baseline_filename
+                )
 
                 if baseline_log_path:
                     # Plot experiment vs baseline comparison
@@ -186,17 +182,9 @@ def analyze_logs(
         for result in results:
             experiment_name = result["experiment_name"]
             log_path = result.get("log_path", "")
-            baseline_log_path = None
-
-            # Match by experiment name (directory name ends with -{experiment_name})
-            for baseline_subdir in baseline_path.iterdir():
-                if baseline_subdir.is_dir():
-                    # Only match if directory name ends with -{experiment_name} exactly
-                    if baseline_subdir.name.endswith(f"-{experiment_name}"):
-                        potential_log = baseline_subdir / baseline_filename
-                        if potential_log.exists():
-                            baseline_log_path = str(potential_log)
-                            break
+            baseline_log_path = _find_baseline_log(
+                baseline_path, experiment_name, baseline_filename
+            )
 
             if baseline_log_path:
                 try:
@@ -239,16 +227,9 @@ def analyze_logs(
 
             for i, result in enumerate(results):
                 experiment_name = result["experiment_name"]
-                baseline_log_path = None
-
-                for baseline_subdir in baseline_path.iterdir():
-                    if baseline_subdir.is_dir():
-                        # Only match if directory name ends with -{experiment_name} exactly
-                        if baseline_subdir.name.endswith(f"-{experiment_name}"):
-                            potential_log = baseline_subdir / baseline_filename
-                            if potential_log.exists():
-                                baseline_log_path = str(potential_log)
-                                break
+                baseline_log_path = _find_baseline_log(
+                    baseline_path, experiment_name, baseline_filename
+                )
 
                 if baseline_log_path:
                     try:

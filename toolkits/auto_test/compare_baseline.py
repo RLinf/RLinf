@@ -37,10 +37,9 @@ import sys
 from pathlib import Path
 
 import matplotlib
-import matplotlib.pyplot as plt
 
 matplotlib.use("Agg")
-
+import matplotlib.pyplot as plt
 import numpy as np
 from parse_success_once import (
     parse_log_file,
@@ -50,6 +49,25 @@ from parse_success_once import (
     save_success_once_data,
 )
 from scipy import stats
+
+
+def _find_baseline_log(baseline_path, experiment_name, filename):
+    """Find a baseline log file by matching experiment name via directory suffix.
+
+    Args:
+        baseline_path: Path to the baseline directory.
+        experiment_name: Experiment name to match (directory must end with '-{experiment_name}').
+        filename: Log filename inside the matched subdirectory.
+
+    Returns:
+        String path to the log file, or None if no match found.
+    """
+    for d in baseline_path.iterdir():
+        if d.is_dir() and d.name.endswith(f"-{experiment_name}"):
+            log = d / filename
+            if log.exists():
+                return str(log)
+    return None
 
 
 def compute_curve_similarity(
