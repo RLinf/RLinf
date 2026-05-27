@@ -242,6 +242,24 @@ loss curve:
 
 The final evaluation accuracy of the Qwen3-VL-4B model is ``96.9%`` .
 
+RLinf provides reference results using the Qwen3-VL-30B-A3B MoE model. This experiment was run for 1000 iterations on two machines, each equipped with 8 x NVIDIA A100 GPUs. The results are shown below:
+
+grad_norm curve:
+
+.. image:: https://github.com/RLinf/misc/raw/main/pic/qwen3_moe_sft_vlm_eval_grad_norm.png
+   :alt: Qwen3-VL-30B-A3B MoE VLM SFT grad norm
+   :width: 85%
+   :align: center
+
+loss curve:
+
+.. image:: https://github.com/RLinf/misc/raw/main/pic/qwen3_moe_sft_vlm_eval_loss.png
+   :alt: Qwen3-VL-30B-A3B MoE VLM SFT loss
+   :width: 85%
+   :align: center
+
+Evaluation was performed on a single machine with 8 x NVIDIA A100 GPUs. The accuracy on the test data was ``58.4%`` before training and ``91.3%`` after training.
+
 Checkpoint Notes
 ----------------
 

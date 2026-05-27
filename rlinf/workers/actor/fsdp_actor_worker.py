@@ -23,7 +23,6 @@ from omegaconf import DictConfig, OmegaConf
 from torch import nn
 from torch.distributed.tensor import DTensor
 from torch.multiprocessing.reductions import reduce_tensor
-from torch.utils._pytree import tree_map
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
@@ -75,7 +74,6 @@ from rlinf.utils.placement import (
     HybridComponentPlacement,
     ModelParallelComponentPlacement,
 )
-from rlinf.utils.pytree import register_pytree_dataclasses
 from rlinf.utils.utils import (
     clear_memory,
     compute_entropy_from_logits,
@@ -1079,6 +1077,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 state_dict=state_dict,
                 send=send_func,
                 recv=recv_func,
+                param_names_need_sync=self.param_names_need_sync,
             )
 
         await self.weight_syncer.sync(state_dict, send_func, version=self.version)
@@ -1265,28 +1264,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self.sft_iterator = iter(self.data_loader)
             observation, actions = next(self.sft_iterator)
 
-        register_pytree_dataclasses(observation)
-        observation = tree_map(
-            lambda x: x.to(self.device) if x is not None else x,
-            observation,
-        )
-        actions = actions.to(torch.float32)
-        actions = actions.to(self.device)
-
-        sft_losses = self.model(
-            data={"observation": observation, "actions": actions},
+        sft_loss = self.model(
+            data=(observation, actions),
             forward_type=ForwardType.SFT,
         )
-        # Ensure losses is a tensor and handle different return types
-        if isinstance(sft_losses, list | tuple):
-            sft_losses = torch.stack(sft_losses)
-        elif not isinstance(sft_losses, torch.Tensor):
-            sft_losses = torch.tensor(
-                sft_losses, device=self.device, dtype=torch.float32
-            )
-
-        sft_loss = sft_losses.mean()
-        metrics_data["sft_loss"] = sft_loss.clone().detach().item()
+        metrics_data["sft_loss"] = sft_loss.detach().item()
         total_loss = loss + self.sft_loss_weight * sft_loss
         loss = total_loss
 

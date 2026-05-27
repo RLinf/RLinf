@@ -19,14 +19,15 @@ from collections.abc import Callable, Iterable, Iterator
 import torch
 from torch.distributed.tensor import DTensor
 
-from .base import (
-    RecvFn,
-    SendFn,
-    WeightSyncer,
+from rlinf.scheduler import Worker
+from rlinf.utils.utils import (
     materialize_tensor,
     normalize_device,
     normalize_dtype,
+    synchronize_pending_accel_copies,
 )
+
+from .base import RecvFn, SendFn, WeightSyncer
 
 
 def iter_named_tensor_buckets(
@@ -80,26 +81,36 @@ def iter_named_tensor_buckets(
     bucket_idx = 0
     currently_hold = 0
     bucket: dict[str, torch.Tensor] = {}
+    pending_copy_devices: set[torch.device] = set()
     for key, value, transport_dtype in prepared_items:
         tensor = materialize_tensor(value)
+        async_accel_to_cpu = (
+            bucket_device.type == "cpu"
+            and tensor.device.type == Worker.torch_device_type
+        )
         bucket[key] = tensor.to(
             device=bucket_device,
             dtype=transport_dtype,
-            non_blocking=True,
+            non_blocking=async_accel_to_cpu or bucket_device.type != "cpu",
         )
+        if async_accel_to_cpu:
+            pending_copy_devices.add(tensor.device)
         currently_hold += bucket[key].numel() * bucket[key].element_size()
 
         if currently_hold >= bucket_size:
             if bucket_idx == 0:
                 bucket.update(metadata)
+            synchronize_pending_accel_copies(pending_copy_devices)
             yield bucket
             bucket_idx += 1
             bucket = {}
             currently_hold = 0
+            pending_copy_devices = set()
 
     if bucket:
         if bucket_idx == 0:
             bucket.update(metadata)
+        synchronize_pending_accel_copies(pending_copy_devices)
         yield bucket
 
 
@@ -143,7 +154,13 @@ class BucketWeightSyncer(WeightSyncer):
     ):
         has_visual = any("visual." in key for key in state_dict.keys())
         named_items: list[tuple[str, torch.Tensor | DTensor]] = []
+
+        assert self.param_names_need_sync, (
+            "param_names_need_sync must be set and not empty"
+        )
         for key, value in state_dict.items():
+            if key not in self.param_names_need_sync:
+                continue
             name = self._bucket_key(key, has_visual)
             if name is None:
                 continue
@@ -164,6 +181,17 @@ class BucketWeightSyncer(WeightSyncer):
     ) -> list[dict[str, torch.Tensor]]:
         return list(self.iter_buckets(state_dict, version))
 
+    async def init_sender(
+        self,
+        state_dict: dict[str, torch.Tensor | DTensor],
+        param_names_need_sync: list[str],
+        send: SendFn,
+        recv: RecvFn | None = None,
+    ) -> None:
+        del state_dict, send, recv
+        self.param_names_need_sync = set(param_names_need_sync)
+        self._sender_initialized = True
+
     async def sync(
         self,
         state_dict: dict[str, torch.Tensor | DTensor],
@@ -183,8 +211,13 @@ class BucketWeightSyncer(WeightSyncer):
             model.load_state_dict(bucket, strict=False)
         else:
             cpu_buffer: dict[str, torch.Tensor] = {}
+            pending_copy_devices: set[torch.device] = set()
             for key, value in bucket.items():
-                cpu_buffer[key] = value.to("cpu", non_blocking=True)
+                if value.device.type == "cpu":
+                    cpu_buffer[key] = value
+                else:
+                    cpu_buffer[key] = value.to("cpu", non_blocking=True)
+                    pending_copy_devices.add(value.device)
         del bucket
 
         for _ in range(total_buckets - 1):
@@ -193,10 +226,15 @@ class BucketWeightSyncer(WeightSyncer):
                 model.load_state_dict(bucket, strict=False)
             else:
                 for key, value in bucket.items():
-                    cpu_buffer[key] = value.to("cpu", non_blocking=True)
+                    if value.device.type == "cpu":
+                        cpu_buffer[key] = value
+                    else:
+                        cpu_buffer[key] = value.to("cpu", non_blocking=True)
+                        pending_copy_devices.add(value.device)
             del bucket
 
         if not self.load_instant:
+            synchronize_pending_accel_copies(pending_copy_devices)
             model.load_state_dict(cpu_buffer, strict=False)
             del cpu_buffer
 
