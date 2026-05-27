@@ -56,11 +56,16 @@ RLinf currently provides two strategies:
 
 ``patch``
   Incremental synchronization. The sender maintains a snapshot and only sends
-  the changed positions and values relative to that snapshot.
+  the changed positions and values relative to that snapshot. In the current
+  FSDP actor integration, the incremental patch path only tracks trainable
+  parameters plus persistent buffers; frozen parameters with
+  ``requires_grad=False`` are excluded from incremental patch construction.
 
 ``bucket``
-  Full synchronization. The complete ``state_dict`` is split into buckets and
-  sent sequentially.
+  Bucketized tensor synchronization. Selected tensors are sent in full, bucket
+  by bucket. In the current FSDP actor integration, the selected key set is
+  typically trainable parameters plus persistent buffers, so frozen parameters
+  are also excluded here.
 
 
 State Dict Device Requirements
@@ -75,7 +80,10 @@ the sender-side ``state_dict`` device:
   bucket syncer stages them according to ``bucket_device`` and ``bucket_dtype``
   before sending. On the receiver side, ``apply(...)`` uses ``load_state_dict``;
   PyTorch copies input tensors to the target model parameter device and casts
-  them to the target parameter dtype.
+  them to the target parameter dtype. In the current actor integration,
+  ``init_sender(...)`` also provides the selected key subset, so bucket mode
+  usually transmits trainable parameters plus persistent buffers rather than the
+  entire ``state_dict``.
 
 ``patch``
   The sender-side ``state_dict`` passed to ``init_sender(...)`` and ``sync(...)``
@@ -100,6 +108,9 @@ For the mainstream embodied VLA configurations in RLinf, ``patch`` is the
 recommended default because:
 
 - Weight updates after each actor step are often highly sparse.
+- Pi-series and other VLM-based policies often freeze most or all of the VLM,
+  so excluding frozen weights can substantially reduce patch comparison and
+  transfer cost.
 - Actor and rollout usually start from the same checkpoint or model path.
 - Patch mode often sends far less data than full sync.
 
@@ -116,7 +127,8 @@ But there is one critical caveat:
    receiver is aligned with the sender before the first real patch.
 
    If you explicitly disable init bootstrap, actor and rollout must still start
-   from the same initial weights.
+   from the same initial weights, especially for frozen parameters that are
+   excluded from later incremental patch sync.
 
 
 How To Enable It In YAML
@@ -219,6 +231,8 @@ Patch mode is roughly split into two stages:
    - The receiver applies those bootstrap weights directly to its local
      ``state_dict``.
    - The sender then creates its snapshot for the later incremental patch path.
+     That snapshot only covers the keys selected for incremental sync:
+     currently trainable parameters and persistent buffers.
 
    The metadata currently includes:
 
@@ -235,7 +249,8 @@ Patch mode is roughly split into two stages:
 
 2. Per-sync update
 
-   - The sender compares the current ``state_dict`` with the snapshot.
+   - The sender compares the current incremental-sync subset
+     (trainable parameters plus persistent buffers) with the snapshot.
    - The changed entries are packed into a patch and sent.
    - The receiver applies those changes directly to local model parameters.
 
@@ -400,10 +415,10 @@ The fields mean:
 Characteristics Of Bucket Mode
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Bucket mode splits the full ``state_dict`` into multiple chunks and sends them
+Bucket mode splits the selected sync subset into multiple chunks and sends them
 in order. Its main characteristics are:
 
-- Advantage: simple semantics, suitable for full sync and bootstrapping
+- Advantage: simple semantics for full-tensor transport of the selected keys
 - Advantage: does not depend on a sender-side snapshot and does not assume sparse updates
 - Disadvantage: typically much more data is transferred than in patch mode
 
@@ -446,9 +461,10 @@ If your priority is to reduce synchronization overhead, a good tuning order is:
    whether ``nvcomp_lz4`` is worth enabling.
 6. If GPU memory is very abundant and you are pursuing the lowest possible sync
    latency, evaluate ``snapshot_device: cuda``.
-7. If you truly need full sync semantics at every step or are debugging
-   correctness, switch back to
-   ``bucket``.
+7. If you want the simplest per-tensor transport path for the selected sync
+   subset, switch to ``bucket``. If you need to realign the full model
+   including frozen weights, rely on init bootstrap or another explicit full
+   weight load.
 
 Patch mode keeps an extra sender-side snapshot. When ``snapshot_device: cuda``,
 that snapshot consumes GPU memory roughly equal to the number of model
@@ -480,9 +496,12 @@ The current implementation has several constraints to keep in mind:
   cannot be flattened as a view, patch mode will raise an error
 - compression settings in this document refer to patch payload compression, not
   compression of the model weights themselves
-- if your immediate goal is "make weight sync correct first", use ``bucket``;
-  if your goal is "make weight sync fast after correctness is verified", use
-  ``patch``
+- ``bucket`` now shares the same selected-key filtering used by the current
+  actor integration, so it is not a guaranteed full-model realignment path for
+  frozen weights
+- if your immediate goal is "validate the selected-key transport path with the
+  simplest semantics", use ``bucket``; if your goal is "make weight sync fast
+  after correctness is verified", use ``patch``
 
 
 Recommended Usage Pattern
@@ -493,12 +512,14 @@ A simple rule of thumb is:
 - default training: use ``patch + init_sync.enabled=true + prefixes:null``
 - targeted bootstrap only when you know the exact ``state_dict`` key paths you
   want to align
-- bootstrap with the simplest semantics or debugging: start with ``bucket``
+- bootstrap or debug the selected-key transport path with the simplest
+  semantics: start with ``bucket``
 - high sparsity and aggressive optimization: ``patch + delta_encoding + optional nvcomp``
 
 If you are not fully sure the patch assumptions hold for your pipeline, the
 safest approach is:
 
 - first ensure actor and rollout have the same ``state_dict`` structure
-- keep patch init bootstrap enabled, or verify correctness with ``bucket`` first
+- keep patch init bootstrap enabled, or use ``bucket`` first to validate the
+  selected-key transport path
 - then switch to ``patch`` for performance optimization

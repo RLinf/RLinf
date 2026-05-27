@@ -137,7 +137,6 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             self.model.train()
 
             metrics = {}
-            avg_loss = 0.0
 
             for idx in range(self.gradient_accumulation):
                 # set the gradient accumulation backward_ctx
@@ -162,18 +161,10 @@ class FSDPSftWorker(FSDPModelManager, Worker):
                     batch = next(self.data_iter)
                     self._data_iter_offset = 1
 
-                losses = self.get_train_model_output(batch)
-
-                if isinstance(losses, (list, tuple)):
-                    losses = torch.stack(losses)
-                elif not isinstance(losses, torch.Tensor):
-                    losses = torch.tensor(
-                        losses, device=self.device, dtype=torch.float32
-                    )
-                loss = losses.mean()
+                loss, step_metrics = self.get_train_model_output(batch)
+                append_to_dict(metrics, step_metrics)
 
                 loss = loss / self.gradient_accumulation
-                avg_loss += loss.item()
                 with backward_ctx:
                     self.grad_scaler.scale(loss).backward()
 
@@ -181,22 +172,18 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             grad_norm, lr_list = self.optimizer_step()
             self.optimizer.zero_grad(set_to_none=True)
 
-            lr_value = (
-                lr_list[0] if len(lr_list) > 0 else self.optimizer.param_groups[0]["lr"]
-            )
+            self.lr_scheduler.step()
+            lr_value = self.optimizer.param_groups[0]["lr"]
             grad_norm_value = (
                 float(grad_norm) if isinstance(grad_norm, torch.Tensor) else grad_norm
             )
             append_to_dict(
                 metrics,
                 {
-                    "loss": avg_loss,
                     "learning_rate": lr_value,
                     "grad_norm": grad_norm_value,
                 },
             )
-
-            self.lr_scheduler.step()
 
             if self.global_step > 0 and self.global_step % 1000 == 0:
                 clear_memory()
@@ -213,7 +200,9 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         raise NotImplementedError
 
     @abstractmethod
-    def get_train_model_output(self, batch: dict[str, Any]):
+    def get_train_model_output(
+        self, batch: dict[str, Any]
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
         raise NotImplementedError
 
     @abstractmethod

@@ -1,0 +1,23 @@
+defaults:
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+convertor:
+  # Training config with ``actor.model``. Accepts either:
+  #   - SFT Hydra yaml (e.g. examples/sft/config/libero_sft_dreamzero_5b.yaml)
+  #   - RLinf resolved config.yaml ({log_path}/tensorboard/config.yaml)
+  # When null, auto-searches near ``ckpt_path`` for config.yaml (see auto_find_train_config).
+  train_config_path: null
+  auto_find_train_config: true
+
+  ckpt_path: /path/to/logs/<experiment>/checkpoints/global_step_4000/actor/model.pt
+  save_path: /path/to/hf_model
+  merge_lora_weighs: true
+  strict_load: true
+  # Cast saved weights/config to this dtype (bf16, fp16, fp32, bfloat16, ...). null keeps checkpoint dtypes.
+  torch_dtype: null
+  model_overrides: null
