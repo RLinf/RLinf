@@ -89,7 +89,7 @@ class LingbotvlaActionModel(nn.Module, BasePolicy):
 
     @property
     def _no_split_names(self) -> list[str]:
-        return [
+        no_split_names = [
             "visual",
             "embed_tokens",
             "action_in_proj",
@@ -99,6 +99,17 @@ class LingbotvlaActionModel(nn.Module, BasePolicy):
             "depth_align_embs",
             "value_head",
         ]
+        if getattr(self.config, "rl_trainable_scope", "all") == "action_expert":
+            no_split_names.extend(
+                [
+                    "action_time_mlp_in",
+                    "action_time_mlp_out",
+                    "time_mlp_in",
+                    "time_mlp_out",
+                    "qwen_expert_norm",
+                ]
+            )
+        return no_split_names
 
     def __init__(self, config, torch_dtype=torch.bfloat16):
         super().__init__()
@@ -217,6 +228,7 @@ class LingbotvlaActionModel(nn.Module, BasePolicy):
         for name, module in self.named_modules():
             path_parts = name.split(".")
             setattr(module, "_fsdp_wrap_name", path_parts[-1] if path_parts else name)
+        self._mark_action_expert_fsdp_wrap_names()
 
         self.processor = build_processor(config.tokenizer_path)
         self.language_tokenizer = self.processor.tokenizer
@@ -251,6 +263,7 @@ class LingbotvlaActionModel(nn.Module, BasePolicy):
                 "action": norm_type,
             },
         )
+        self._apply_rl_trainable_scope()
 
     def _load_training_config(self, config_path: str, model_path: Optional[str]):
         candidate_paths = [os.path.join(config_path, "lingbotvla_cli.yaml")]
@@ -303,6 +316,64 @@ class LingbotvlaActionModel(nn.Module, BasePolicy):
             raise KeyError("Qwen AutoConfig is missing `vision_config`.")
         policy_config.vision_config = qwen_config.vision_config
         return policy_config
+
+    def _mark_action_expert_fsdp_wrap_names(self):
+        if getattr(self.config, "rl_trainable_scope", "all") != "action_expert":
+            return
+        qwen_expert_norm = getattr(
+            self.vla_model.model.qwenvl_with_expert.qwen_expert.model,
+            "norm",
+            None,
+        )
+        if qwen_expert_norm is not None:
+            qwen_expert_norm._fsdp_wrap_name = "qwen_expert_norm"
+
+    def _apply_rl_trainable_scope(self):
+        trainable_scope = getattr(self.config, "rl_trainable_scope", "all")
+        if trainable_scope in (None, "all"):
+            self._log_trainable_scope("all")
+            return
+
+        if trainable_scope != "action_expert":
+            raise ValueError(
+                "Unsupported LingbotVLA rl_trainable_scope: "
+                f"{trainable_scope}. Expected one of: all, action_expert."
+            )
+
+        trainable_keywords = (
+            "qwen_expert",
+            "state_proj",
+            "action_in_proj",
+            "action_out_proj",
+            "action_time_mlp",
+            "time_mlp",
+        )
+        for param in self.vla_model.parameters():
+            param.requires_grad = False
+        for name, param in self.vla_model.named_parameters():
+            if any(keyword in name for keyword in trainable_keywords):
+                param.requires_grad = True
+
+        if hasattr(self, "value_head"):
+            for param in self.value_head.parameters():
+                param.requires_grad = True
+        if hasattr(self, "noise_head"):
+            for param in self.noise_head.parameters():
+                param.requires_grad = True
+
+        self._log_trainable_scope(trainable_scope)
+
+    def _log_trainable_scope(self, trainable_scope: str):
+        trainable_params = sum(
+            param.numel() for param in self.parameters() if param.requires_grad
+        )
+        total_params = sum(param.numel() for param in self.parameters())
+        self.logger.info(
+            "LingbotVLA rl_trainable_scope=%s trainable_params=%d total_params=%d",
+            trainable_scope,
+            trainable_params,
+            total_params,
+        )
 
     def _to_chw_uint8_image(self, image):
         if isinstance(image, torch.Tensor):
