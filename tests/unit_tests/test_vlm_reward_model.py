@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# ruff: noqa: E402
+
 import asyncio
 import os
 import signal
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -26,6 +29,8 @@ from omegaconf import OmegaConf
 from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 from rlinf.models.embodiment.reward import (
     get_reward_model_class,
@@ -409,6 +414,21 @@ def test_history_vlm_resolver_defaults_to_transformers_backend():
     assert get_reward_model_class("history_vlm").__name__ == "HistoryVLMRewardModel"
 
 
+def test_history_vlm_resolver_canonicalizes_hf_backend():
+    assert resolve_reward_model_backend("history_vlm", "hf") == (
+        "history_vlm",
+        "hf",
+    )
+    assert resolve_reward_model_backend("history_vlm", "transformers") == (
+        "history_vlm",
+        "hf",
+    )
+    assert (
+        get_reward_model_class("history_vlm", inference_backend="hf").__name__
+        == "HistoryVLMRewardModel"
+    )
+
+
 def test_history_vlm_resolver_selects_sglang_backend():
     assert resolve_reward_model_backend("history_vlm", "sglang") == (
         "history_vlm",
@@ -430,6 +450,41 @@ def test_history_vlm_sglang_model_type_is_not_supported():
 def test_history_vlm_rejects_unknown_backend():
     with pytest.raises(ValueError, match="Unsupported reward.model.inference_backend"):
         resolve_reward_model_backend("history_vlm", "vllm")
+
+
+def test_qwentrend_reward_yaml_uses_canonical_backends():
+    hf_cfg = OmegaConf.load(
+        REPO_ROOT
+        / "examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward.yaml"
+    )
+    e2e_hf_cfg = OmegaConf.load(
+        REPO_ROOT / "tests/e2e_tests/embodied/maniskill_ppo_mlp_qwentrend_reward.yaml"
+    )
+    sglang_cfg = OmegaConf.load(
+        REPO_ROOT
+        / "examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward_sglang.yaml"
+    )
+
+    assert hf_cfg.reward.model.model_type == "history_vlm"
+    assert hf_cfg.reward.model.inference_backend == "hf"
+    assert resolve_reward_model_backend(
+        hf_cfg.reward.model.model_type,
+        hf_cfg.reward.model.inference_backend,
+    ) == ("history_vlm", "hf")
+
+    assert e2e_hf_cfg.reward.model.model_type == "history_vlm"
+    assert e2e_hf_cfg.reward.model.inference_backend == "hf"
+    assert resolve_reward_model_backend(
+        e2e_hf_cfg.reward.model.model_type,
+        e2e_hf_cfg.reward.model.inference_backend,
+    ) == ("history_vlm", "hf")
+
+    assert sglang_cfg.reward.model.model_type == "history_vlm"
+    assert sglang_cfg.reward.model.inference_backend == "sglang"
+    assert resolve_reward_model_backend(
+        sglang_cfg.reward.model.model_type,
+        sglang_cfg.reward.model.inference_backend,
+    ) == ("history_vlm", "sglang")
 
 
 def test_history_vlm_sglang_sampling_params_from_config():

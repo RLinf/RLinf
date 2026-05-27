@@ -64,8 +64,11 @@ reward_model_registry = {
 }
 
 _HISTORY_VLM_MODEL_TYPE = "history_vlm"
-_HISTORY_VLM_TRANSFORMERS_BACKENDS = {None, "hf", "transformers"}
-_HISTORY_VLM_SUPPORTED_BACKENDS = _HISTORY_VLM_TRANSFORMERS_BACKENDS | {"sglang"}
+_HISTORY_VLM_TRANSFORMERS_BACKEND = "hf"
+_HISTORY_VLM_TRANSFORMERS_BACKEND_ALIASES = {"hf", "transformers"}
+_HISTORY_VLM_SUPPORTED_BACKENDS = (
+    _HISTORY_VLM_TRANSFORMERS_BACKEND_ALIASES | {"sglang"}
+)
 
 
 def _load_class(class_path: tuple[str, str]) -> type:
@@ -85,7 +88,10 @@ def __getattr__(name: str) -> Any:
 def _normalize_backend(inference_backend: str | None) -> str | None:
     if inference_backend is None or inference_backend == "":
         return None
-    return str(inference_backend).lower()
+    backend = str(inference_backend).lower()
+    if backend in _HISTORY_VLM_TRANSFORMERS_BACKEND_ALIASES:
+        return _HISTORY_VLM_TRANSFORMERS_BACKEND
+    return backend
 
 
 def resolve_reward_model_backend(
@@ -106,11 +112,11 @@ def resolve_reward_model_backend(
             )
         return reward_model_type, None
 
-    if backend not in _HISTORY_VLM_SUPPORTED_BACKENDS:
+    if backend is not None and backend not in _HISTORY_VLM_SUPPORTED_BACKENDS:
         raise ValueError(
             "Unsupported reward.model.inference_backend for history_vlm: "
-            f"{inference_backend!r}. Supported backends are 'sglang', 'hf', "
-            "'transformers', or unset."
+            f"{inference_backend!r}. Supported backend values are 'hf' "
+            "(alias 'transformers'), 'sglang', or unset."
         )
     return reward_model_type, backend
 
