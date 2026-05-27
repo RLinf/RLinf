@@ -15,7 +15,6 @@
 import os
 from typing import Any, Optional, Union
 
-import imageio
 import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont
@@ -126,6 +125,13 @@ def save_rollout_video(
     """
     os.makedirs(output_dir, exist_ok=True)
     mp4_path = os.path.join(output_dir, f"{video_name}.mp4")
+    try:
+        import imageio
+    except ImportError as exc:
+        raise ImportError(
+            "imageio is required to save rollout videos; install rlinf[embodied]."
+        ) from exc
+
     video_writer = imageio.get_writer(mp4_path, fps=fps)
     for img in rollout_images:
         video_writer.append_data(img)

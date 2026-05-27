@@ -43,9 +43,14 @@ def main(cfg) -> None:
 
     # Create actor worker group
     actor_placement = component_placement.get_strategy("actor")
-    actor_group = FSDPVlaSftWorker.create_group(cfg).launch(
-        cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
-    )
+
+    if cfg.actor.training_backend == "fsdp" or cfg.actor.training_backend == "fsdp2":
+        actor_group = FSDPVlaSftWorker.create_group(cfg).launch(
+            cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
+        )
+
+    else:
+        raise ValueError(f"{cfg.actor.training_backend} backend is not supported yet")
 
     runner = SFTRunner(
         cfg=cfg,

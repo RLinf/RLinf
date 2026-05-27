@@ -31,9 +31,6 @@ runner:
 data:
   train_data_paths: "/workspace/dataset/data/sft-ci-data"
 
-algorithm:
-  adv_type: gae
-
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
