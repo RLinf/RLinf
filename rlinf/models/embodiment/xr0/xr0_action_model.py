@@ -166,25 +166,27 @@ class XR0ForRLActionPrediction(nn.Module, BasePolicy):
         )
 
         # Run XR0 forward
-        # The model expects: state, action_mask, num_steps, seed, + VLM kwargs
-        action_mask = torch.ones(
-            (batch_size, self.num_action_chunks, self.action_dim),
-            dtype=torch.bfloat16,
-            device=device,
-        )
-        model_inputs = {
-            "state": state_tensor.to(device=device, dtype=torch.bfloat16),
-            "action_mask": action_mask,
-            "num_steps": self.num_steps,
-            "seed": 42,
-        }
-        # Add VLM inputs
-        for k, v in vlm_batch.items():
-            if isinstance(v, torch.Tensor):
-                model_inputs[k] = v.to(device)
-
-        output = self.xr0_model(**model_inputs)
-        actions_pred = output.actions  # [B, action_len, action_dim]
+        if hasattr(self.xr0_model, "generate"):
+            # Stub model: uses generate(batch_dict)
+            actions_pred = self.xr0_model.generate(vlm_batch)
+        else:
+            # Real model: expects state, action_mask, num_steps, seed, + VLM kwargs
+            action_mask = torch.ones(
+                (batch_size, self.num_action_chunks, self.action_dim),
+                dtype=torch.bfloat16,
+                device=device,
+            )
+            model_inputs = {
+                "state": state_tensor.to(device=device, dtype=torch.bfloat16),
+                "action_mask": action_mask,
+                "num_steps": self.num_steps,
+                "seed": 42,
+            }
+            for k, v in vlm_batch.items():
+                if isinstance(v, torch.Tensor):
+                    model_inputs[k] = v.to(device)
+            output = self.xr0_model(**model_inputs)
+            actions_pred = output.actions
 
         # Denormalize
         actions_np = actions_pred.float().cpu().numpy()
