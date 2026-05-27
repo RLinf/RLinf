@@ -17,9 +17,11 @@
 
 from __future__ import annotations
 
+import math
 from typing import Sequence
 
 import numpy as np
+from PIL import Image
 
 ACTION_DIM = 32
 STATE_DIM = 32
@@ -64,3 +66,31 @@ def normalize_action(action, mean, std) -> np.ndarray:
 def denormalize_action(action, mean, std):
     """Denormalize actions using per-timestep mean/std."""
     return action * (std + ACTION_EPS) + mean
+
+
+def resize_image(
+    image: Image.Image,
+    factor: int = 32,
+    min_pixels: int = 32 * 32,
+    max_pixels: int = 90000,
+) -> Image.Image:
+    """Resize image so dimensions are divisible by *factor* and total pixels
+    stay within ``[min_pixels, max_pixels]``."""
+    width, height = image.size
+    ratio = max(height, width) / min(height, width)
+    if ratio > 200:
+        raise ValueError(f"absolute aspect ratio must be smaller than 200, got {ratio}")
+
+    new_height = max(factor, round(height / factor) * factor)
+    new_width = max(factor, round(width / factor) * factor)
+
+    if new_height * new_width > max_pixels:
+        scale = math.sqrt(height * width / max_pixels)
+        new_height = max(factor, math.floor(height / scale / factor) * factor)
+        new_width = max(factor, math.floor(width / scale / factor) * factor)
+    elif new_height * new_width < min_pixels:
+        scale = math.sqrt(min_pixels / (height * width))
+        new_height = max(factor, math.ceil(height * scale / factor) * factor)
+        new_width = max(factor, math.ceil(width * scale / factor) * factor)
+
+    return image.resize((new_width, new_height))

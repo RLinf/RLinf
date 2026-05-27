@@ -29,6 +29,11 @@ add_value_head: False
 trust_remote_code: True
 low_cpu_mem_usage: True
 
+# Action normalization stats (optional; skip denormalization if null)
+# Should be a YAML file with "mean" and "std" keys, each shape (num_action_chunks, action_dim)
+stats_path: null
+unnorm_key: null
+
 # XR0-specific config
 xr0:
   state_shape: [1, 32]

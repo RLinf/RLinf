@@ -20,6 +20,7 @@ it into an ``XR0ForRLActionPrediction`` instance compatible with RLinf.
 
 from __future__ import annotations
 
+import numpy as np
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
@@ -136,11 +137,25 @@ def get_model(
     if torch_dtype is not None:
         xr0_model = xr0_model.to(dtype=torch_dtype)
 
+    # Load action normalization stats (optional)
+    action_mean, action_std = None, None
+    stats_path = getattr(cfg, "stats_path", None) or getattr(xr0_cfg, "stats_path", None)
+    if stats_path:
+        import yaml
+
+        logger.info("Loading action normalization stats from %s", stats_path)
+        with open(stats_path) as f:
+            stats = yaml.safe_load(f)
+        action_mean = np.array(stats["mean"], dtype=np.float32)
+        action_std = np.array(stats["std"], dtype=np.float32)
+
     policy = XR0ForRLActionPrediction(
         xr0_model=xr0_model,
         action_dim=action_dim,
         num_action_chunks=num_action_chunks,
         num_steps=num_steps,
+        action_mean=action_mean,
+        action_std=action_std,
     )
 
     return policy

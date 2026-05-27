@@ -26,12 +26,13 @@ from typing import Any, Literal, Optional
 import numpy as np
 import torch
 import torch.nn as nn
+from PIL import Image
+from transformers import AutoProcessor
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.utils.logging import get_logger
 
-from .model.xr0_model import XR0
-from .utils import ACTION_DIM, STATE_DIM
+from .utils import ACTION_DIM, denormalize_action, resize_image
 
 
 class XR0ForRLActionPrediction(nn.Module, BasePolicy):
@@ -46,14 +47,20 @@ class XR0ForRLActionPrediction(nn.Module, BasePolicy):
         action_dim: Action dimensionality (default 32).
         num_action_chunks: Number of action timesteps per chunk (default 30).
         num_steps: Number of rectified flow denoising steps.
+        action_mean: Per-timestep action mean for denormalization, shape
+            ``(num_action_chunks, action_dim)`` or ``None``.
+        action_std: Per-timestep action std for denormalization, shape
+            ``(num_action_chunks, action_dim)`` or ``None``.
     """
 
     def __init__(
         self,
-        xr0_model: XR0,
+        xr0_model: nn.Module,
         action_dim: int = ACTION_DIM,
         num_action_chunks: int = 30,
         num_steps: int = 5,
+        action_mean: Optional[np.ndarray] = None,
+        action_std: Optional[np.ndarray] = None,
     ):
         super().__init__()
         self.logger = get_logger()
@@ -63,9 +70,35 @@ class XR0ForRLActionPrediction(nn.Module, BasePolicy):
         self.num_action_chunks = int(num_action_chunks)
         self.num_steps = int(num_steps)
 
+        # Action normalization stats
+        self.register_buffer(
+            "action_mean",
+            torch.from_numpy(action_mean).float() if action_mean is not None else None,
+        )
+        self.register_buffer(
+            "action_std",
+            torch.from_numpy(action_std).float() if action_std is not None else None,
+        )
+
+        # Qwen3-VL processor (lazy-loaded on first use to avoid HF download in tests)
+        self._processor = None
+
+        # FSDP wrap name for every submodule
+        for name, module in self.named_modules():
+            path_parts = name.split(".")
+            setattr(module, "_fsdp_wrap_name", path_parts[-1] if path_parts else name)
+
     # ------------------------------------------------------------------
     # FSDP hints
     # ------------------------------------------------------------------
+
+    @property
+    def processor(self):
+        """Lazy-load Qwen3-VL processor on first access."""
+        if self._processor is None:
+            self._processor = AutoProcessor.from_pretrained("Qwen/Qwen3-VL-4B-Instruct")
+            self._processor.tokenizer.padding_side = "right"
+        return self._processor
 
     @property
     def _no_split_modules(self) -> list[str]:
@@ -105,7 +138,7 @@ class XR0ForRLActionPrediction(nn.Module, BasePolicy):
             env_obs: Observation dict with keys ``main_images``, ``states``,
                 ``task_descriptions``.
             mode: ``"train"`` or ``"eval"``.
-            compute_values: Whether to compute value estimates (unused in v1).
+            compute_values: Whether to compute value estimates (stub for now).
 
         Returns:
             Tuple of ``(actions, result)`` where *actions* is a numpy array of
@@ -115,46 +148,45 @@ class XR0ForRLActionPrediction(nn.Module, BasePolicy):
         """
         device = next(self.parameters()).device
 
-        # --- Build VLM inputs from env_obs ---
         images = env_obs["main_images"]  # [B, H, W, C] uint8 numpy
         states = env_obs["states"]  # [B, STATE_DIM] numpy
         task_descriptions = env_obs.get("task_descriptions", [""] * len(images))
-
         batch_size = len(images)
 
-        # Convert to tensors
-        state_tensor = torch.from_numpy(np.asarray(states, dtype=np.float32)).to(device)
+        # State tensor
+        state_tensor = torch.from_numpy(np.asarray(states, dtype=np.float32))
         if state_tensor.ndim == 1:
             state_tensor = state_tensor.unsqueeze(0)
 
-        # Build VLM batch using processor
-        vlm_batch = self._build_vlm_batch(images, task_descriptions, device)
+        # Build VLM batch with real processor
+        vlm_batch = self._build_vlm_batch(
+            images, task_descriptions, state_tensor, device
+        )
 
-        # Add state to batch for XR0 model
-        vlm_batch["state"] = state_tensor.to(dtype=torch.bfloat16)
-
-        # --- Run XR0 inference ---
+        # Run XR0 generate
         actions_pred = self.xr0_model.generate(vlm_batch)  # [B, action_len, action_dim]
 
-        # Truncate/pad to num_action_chunks
-        actions_np = actions_pred[:, : self.num_action_chunks, :].float().cpu().numpy()
+        # Denormalize
+        actions_np = actions_pred.float().cpu().numpy()
+        if self.action_mean is not None and self.action_std is not None:
+            mean = self.action_mean.cpu().numpy()
+            std = self.action_std.cpu().numpy()
+            actions_np = denormalize_action(actions_np, mean, std)
 
-        # --- Build forward_inputs for training replay ---
-        forward_inputs = {
-            "input_ids": vlm_batch.get("input_ids"),
-            "attention_mask": vlm_batch.get("attention_mask"),
-            "pixel_values": vlm_batch.get("pixel_values"),
-            "image_grid_thw": vlm_batch.get("image_grid_thw"),
-            "state": state_tensor.detach().cpu(),
-            "action": torch.from_numpy(actions_np.reshape(batch_size, -1)),
-        }
+        actions_np = actions_np[:, : self.num_action_chunks, :]
 
-        # Remove None values
-        forward_inputs = {k: v for k, v in forward_inputs.items() if v is not None}
+        # Build forward_inputs for training replay
+        forward_inputs: dict[str, Any] = {}
+        for k, v in vlm_batch.items():
+            if isinstance(v, torch.Tensor):
+                forward_inputs[k] = v.detach().cpu()
+        forward_inputs["action"] = torch.from_numpy(
+            actions_np.reshape(batch_size, -1).astype(np.float32)
+        )
 
-        # --- Stub logprobs/values for v1 ---
-        prev_logprobs = torch.zeros(batch_size, device="cpu")
-        prev_values = torch.zeros(batch_size, device="cpu")
+        # Stub logprobs/values (real computation deferred to PR 3)
+        prev_logprobs = torch.zeros(batch_size)
+        prev_values = torch.zeros(batch_size)
 
         result = {
             "prev_logprobs": prev_logprobs,
@@ -177,23 +209,12 @@ class XR0ForRLActionPrediction(nn.Module, BasePolicy):
     ) -> dict[str, torch.Tensor | None]:
         """Run training-time forward for PPO terms (logprob/entropy/value).
 
-        v1 stub: returns zeros for all RL terms.  The full implementation
-        will replay the denoising chain from ``forward_inputs`` and compute
-        logprobs via the flow-matching probability model.
-
-        Args:
-            forward_inputs: Cached rollout tensors from ``predict_action_batch``.
-            compute_logprobs: Whether to compute action log-probabilities.
-            compute_entropy: Whether to compute policy entropy.
-            compute_values: Whether to compute value baseline.
-
-        Returns:
-            Dict with ``logprobs``, ``entropy``, and ``values``.
+        Stub: returns zeros.  Full implementation (PR 3) will replay the
+        denoising chain and compute logprobs via the flow-matching model.
         """
         if forward_inputs is None:
             forward_inputs = {}
 
-        # Determine batch size from available tensors
         batch_size = 1
         for v in forward_inputs.values():
             if isinstance(v, torch.Tensor) and v.ndim > 0:
@@ -201,7 +222,6 @@ class XR0ForRLActionPrediction(nn.Module, BasePolicy):
                 break
 
         device = next(self.parameters()).device
-
         return {
             "logprobs": torch.zeros(batch_size, device=device),
             "values": torch.zeros(batch_size, device=device),
@@ -216,24 +236,72 @@ class XR0ForRLActionPrediction(nn.Module, BasePolicy):
         self,
         images: np.ndarray,
         task_descriptions: list[str],
+        state_tensor: torch.Tensor,
         device: torch.device,
     ) -> dict[str, torch.Tensor]:
-        """Build a VLM input batch from raw images and task descriptions.
+        """Convert env observations to Qwen3-VL processor format.
 
-        For v1, this creates a minimal batch with placeholder tokenization.
-        The full implementation will use the Qwen3-VL processor.
+        Args:
+            images: ``[B, H, W, C]`` uint8 numpy arrays.
+            task_descriptions: Language instructions per sample.
+            state_tensor: Proprioceptive state ``[B, STATE_DIM]``.
+            device: Target device.
+
+        Returns:
+            Dict with ``input_ids``, ``attention_mask``, ``pixel_values``,
+            ``image_grid_thw``, ``state``.
         """
-        batch_size = len(images)
+        # 1. Convert numpy images to PIL, resize
+        pil_images = []
+        for img_np in images:
+            pil_img = Image.fromarray(img_np.astype(np.uint8))
+            pil_img = resize_image(pil_img, factor=32, max_pixels=90000)
+            pil_images.append(pil_img)
 
-        # v1 stub: create minimal tensors that the XR0 model expects
-        # In the full implementation, these will come from the Qwen3-VL processor
-        input_ids = torch.zeros((batch_size, 1), dtype=torch.long, device=device)
-        attention_mask = torch.ones((batch_size, 1), dtype=torch.long, device=device)
+        # 2. Build Qwen3-VL chat messages
+        messages = []
+        for i, pil_img in enumerate(pil_images):
+            instruction = task_descriptions[i] if i < len(task_descriptions) else ""
+            messages.append(
+                [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "\n# Ego View\n"},
+                            {"type": "image", "image": pil_img},
+                            {
+                                "type": "text",
+                                "text": (
+                                    "\nGenerate robot actions"
+                                    " for the task:\n"
+                                    + instruction
+                                ),
+                            },
+                        ],
+                    },
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "<bot></bot>"}],
+                    },
+                ]
+            )
 
-        return {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
+        # 3. Process with Qwen3-VL processor
+        inputs = self.processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+            padding=True,
+            images_kwargs={"do_resize": False},
+        )
+
+        # 4. Move to device, add state
+        batch = {
+            k: v.to(device) for k, v in inputs.items() if isinstance(v, torch.Tensor)
         }
+        batch["state"] = state_tensor.to(device=device, dtype=torch.bfloat16)
+        return batch
 
     # ------------------------------------------------------------------
     # Gradient checkpointing
@@ -244,7 +312,9 @@ class XR0ForRLActionPrediction(nn.Module, BasePolicy):
         if hasattr(self.xr0_model, "vlm"):
             if hasattr(self.xr0_model.vlm, "gradient_checkpointing_enable"):
                 self.xr0_model.vlm.gradient_checkpointing_enable(**kwargs)
-            elif hasattr(self.xr0_model.vlm.model, "visual"):
+            elif hasattr(self.xr0_model.vlm, "model") and hasattr(
+                self.xr0_model.vlm.model, "visual"
+            ):
                 self.xr0_model.vlm.model.visual.gradient_checkpointing_enable()
 
     def gradient_checkpointing_disable(self) -> None:
