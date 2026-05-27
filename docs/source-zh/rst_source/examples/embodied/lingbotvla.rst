@@ -110,22 +110,29 @@ RoboTwin Assets 是 RoboTwin 环境运行所需的资源文件，需要从 Huggi
 模型下载
 --------
 
-开始训练前，请从 HuggingFace 下载 Lingbot-VLA 基础权重和 Qwen 底座模型：
+开始训练前，请从 HuggingFace 下载 Lingbot-VLA 基础权重、RoboTwin SFT 权重和 Qwen 底座模型。进行 RoboTwin SFT 或强化学习实验时，请使用下面固定 revision 的 RoboTwin SFT 权重，不要直接使用 HuggingFace ``main`` 分支的最新权重。
 
 .. code-block:: bash
 
     # 方法 1：使用 git clone
     git lfs install
     git clone https://huggingface.co/robbyant/lingbot-vla-4b
+    git clone https://huggingface.co/robbyant/lingbot-vla-4b-posttrain-robotwin
+    cd lingbot-vla-4b-posttrain-robotwin
+    git checkout 3e0c7c476bde3daaac00f79f3741a292a299f60a
+    cd ..
     git clone https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
 
     # 方法 2：使用 huggingface-hub
     pip install huggingface-hub
     huggingface-cli download robbyant/lingbot-vla-4b --local-dir lingbot-vla-4b
+    huggingface-cli download robbyant/lingbot-vla-4b-posttrain-robotwin \
+        --revision 3e0c7c476bde3daaac00f79f3741a292a299f60a \
+        --local-dir lingbot-vla-4b-posttrain-robotwin
     huggingface-cli download Qwen/Qwen2.5-VL-3B-Instruct --local-dir Qwen2.5-VL-3B-Instruct
 
 
-然后在配置中将 ``rollout.model.model_path`` 和 ``actor.model.model_path`` 设为本地模型路径（如 ``/path/to/model/lingbot-vla-4b`` 或 ``./lingbot-vla-4b``），并**务必**将对应的 ``tokenizer_path`` 设为下载的 Tokenizer 路径（如 ``/path/to/model/Qwen2.5-VL-3B-Instruct``），否则 Rollout 节点在解析文本指令时会报错。
+然后在配置中将 ``rollout.model.model_path`` 和 ``actor.model.model_path`` 设为本地模型路径（如基础权重 ``/path/to/model/lingbot-vla-4b``，或固定 revision 的 RoboTwin SFT 权重 ``/path/to/model/lingbot-vla-4b-posttrain-robotwin``），并**务必**将对应的 ``tokenizer_path`` 设为下载的 Tokenizer 路径（如 ``/path/to/model/Qwen2.5-VL-3B-Instruct``），否则 Rollout 节点在解析文本指令时会报错。
 
 快速开始
 --------

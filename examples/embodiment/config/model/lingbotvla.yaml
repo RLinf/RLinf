@@ -23,7 +23,7 @@ value_type: "action_level"
 
 # Lingbotvla specific parameters 
 lingbotvla:
-  stats_path: "${oc.env:LINGBOT_VLA_PATH}/assets/norm_stats/robotwin_50.json"
+  stats_path: "${oc.env:LINGBOT_VLA_PATH}/assets/norm_stats/robotwin_all_new.json"
   max_prompt_length: 512
   noise_level: 0.5
   noise_method: "flow_sde"

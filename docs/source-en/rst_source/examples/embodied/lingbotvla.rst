@@ -110,22 +110,29 @@ RoboTwin Assets are asset files required by the RoboTwin environment and need to
 Model Download
 --------------
 
-Before starting training, download the Lingbot-VLA base weights and the Qwen backbone model from HuggingFace:
+Before starting training, download the Lingbot-VLA base weights, the RoboTwin SFT checkpoint, and the Qwen backbone model from HuggingFace. For RoboTwin SFT and RL experiments, use the pinned RoboTwin SFT checkpoint revision below instead of the latest ``main`` revision.
 
 .. code-block:: bash
 
     # Method 1: Using git clone
     git lfs install
     git clone https://huggingface.co/robbyant/lingbot-vla-4b
+    git clone https://huggingface.co/robbyant/lingbot-vla-4b-posttrain-robotwin
+    cd lingbot-vla-4b-posttrain-robotwin
+    git checkout 3e0c7c476bde3daaac00f79f3741a292a299f60a
+    cd ..
     git clone https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
 
     # Method 2: Using huggingface-hub
     pip install huggingface-hub
     huggingface-cli download robbyant/lingbot-vla-4b --local-dir lingbot-vla-4b
+    huggingface-cli download robbyant/lingbot-vla-4b-posttrain-robotwin \
+        --revision 3e0c7c476bde3daaac00f79f3741a292a299f60a \
+        --local-dir lingbot-vla-4b-posttrain-robotwin
     huggingface-cli download Qwen/Qwen2.5-VL-3B-Instruct --local-dir Qwen2.5-VL-3B-Instruct
     
 
-Then set ``rollout.model.model_path`` and ``actor.model.model_path`` in the configuration to your local model path (e.g., ``/path/to/model/lingbot-vla-4b`` or ``./lingbot-vla-4b``), and **be sure to** set the corresponding ``tokenizer_path`` to the downloaded Tokenizer path (e.g., ``/path/to/model/Qwen2.5-VL-3B-Instruct``). Otherwise, the Rollout node will throw an error when parsing text instructions.
+Then set ``rollout.model.model_path`` and ``actor.model.model_path`` in the configuration to your local model path (for example, ``/path/to/model/lingbot-vla-4b`` for base weights or ``/path/to/model/lingbot-vla-4b-posttrain-robotwin`` for the pinned RoboTwin SFT checkpoint), and **be sure to** set the corresponding ``tokenizer_path`` to the downloaded Tokenizer path (e.g., ``/path/to/model/Qwen2.5-VL-3B-Instruct``). Otherwise, the Rollout node will throw an error when parsing text instructions.
 
 Quick Start
 -----------
