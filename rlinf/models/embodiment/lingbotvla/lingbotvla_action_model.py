@@ -68,6 +68,7 @@ ROBOTWIN_REP_PADDED_STATE_INDICES = (
     list(range(12)) + list(range(73, 75)) + list(range(12, 14)) + list(range(14, 73))
 )
 ROBOTWIN_MODEL_TO_ENV_ACTION_INDICES = list(range(6)) + [14] + list(range(6, 12)) + [15]
+DEFAULT_RL_TRAINABLE_SCOPE = "action_expert"
 
 
 class LingbotvlaActionModel(nn.Module, BasePolicy):
@@ -99,7 +100,10 @@ class LingbotvlaActionModel(nn.Module, BasePolicy):
             "depth_align_embs",
             "value_head",
         ]
-        if getattr(self.config, "rl_trainable_scope", "all") == "action_expert":
+        if (
+            getattr(self.config, "rl_trainable_scope", DEFAULT_RL_TRAINABLE_SCOPE)
+            == "action_expert"
+        ):
             no_split_names.extend(
                 [
                     "action_time_mlp_in",
@@ -318,7 +322,10 @@ class LingbotvlaActionModel(nn.Module, BasePolicy):
         return policy_config
 
     def _mark_action_expert_fsdp_wrap_names(self):
-        if getattr(self.config, "rl_trainable_scope", "all") != "action_expert":
+        if (
+            getattr(self.config, "rl_trainable_scope", DEFAULT_RL_TRAINABLE_SCOPE)
+            != "action_expert"
+        ):
             return
         qwen_expert_norm = getattr(
             self.vla_model.model.qwenvl_with_expert.qwen_expert.model,
@@ -329,7 +336,9 @@ class LingbotvlaActionModel(nn.Module, BasePolicy):
             qwen_expert_norm._fsdp_wrap_name = "qwen_expert_norm"
 
     def _apply_rl_trainable_scope(self):
-        trainable_scope = getattr(self.config, "rl_trainable_scope", "all")
+        trainable_scope = getattr(
+            self.config, "rl_trainable_scope", DEFAULT_RL_TRAINABLE_SCOPE
+        )
         if trainable_scope in (None, "all"):
             self._log_trainable_scope("all")
             return

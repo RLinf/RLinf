@@ -20,6 +20,7 @@ proprio_dim: 14
 num_steps: 10
 add_value_head: False
 value_type: "action_level"
+rl_trainable_scope: "action_expert"  # Set to "all" to fine-tune the full LingbotVLA model.
 
 # Lingbotvla specific parameters 
 lingbotvla:
