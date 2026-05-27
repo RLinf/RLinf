@@ -1,0 +1,41 @@
+# XR0 VLA model config for RLinf.
+# XR0: Qwen3-VL backbone + DiT action head with rectified flow.
+
+model_type: "xr0"
+
+# Path to XR0 checkpoint (set to "dummy" for skeleton/testing without weights)
+model_path: "dummy"
+
+# Precision used by RLinf actor/rollout wrappers
+precision: "bf16"
+
+# Action/chunk settings
+action_dim: 32
+num_action_chunks: 30
+num_steps: 5
+
+# LoRA settings (disabled by default)
+is_lora: False
+lora_rank: 32
+
+# Common embodied fields
+use_proprio: True
+
+# RL head behavior
+# For GRPO actor-only this can stay False; for PPO actor_critic set to True
+add_value_head: False
+
+# Optional flags
+trust_remote_code: True
+low_cpu_mem_usage: True
+
+# XR0-specific config
+xr0:
+  state_shape: [1, 32]
+  action_shape: [30, 32]
+  dit_num_layers: 16
+  dit_hidden_size: 1024
+  local_window: 4
+  training_repeat: 4
+  enable_freq: false
+  flow_sampling: "beta"

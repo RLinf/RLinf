@@ -1,0 +1,149 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""XR0 VLA embodied policy wrapper for RLinf.
+
+This module exposes ``get_model``, which instantiates the XR0 model and wraps
+it into an ``XR0ForRLActionPrediction`` instance compatible with RLinf.
+"""
+
+from __future__ import annotations
+
+import torch
+import torch.nn as nn
+from omegaconf import DictConfig
+
+from rlinf.utils.logging import get_logger
+
+from .utils import ACTION_DIM
+from .xr0_action_model import XR0ForRLActionPrediction
+
+
+class _StubXR0(nn.Module):
+    """Lightweight stub that mimics the XR0 interface without downloading weights.
+
+    Used when ``model_path`` is ``"dummy"`` so tests and CI can run without
+    network access or large model downloads.
+    """
+
+    def __init__(self, action_shape=(30, 32), num_steps=5):
+        super().__init__()
+        self.action_shape = action_shape
+        self.num_steps = num_steps
+        # Minimal parameter so the module is not empty
+        self._dummy = nn.Linear(1, 1)
+
+    @torch.no_grad()
+    def generate(self, batch: dict) -> torch.Tensor:
+        """Return random action predictions matching the expected shape."""
+        # Infer batch size from any tensor in the batch
+        batch_size = 1
+        for v in batch.values():
+            if isinstance(v, torch.Tensor) and v.ndim > 0:
+                batch_size = v.shape[0]
+                break
+        device = self._dummy.weight.device
+        return torch.randn(
+            (batch_size, *self.action_shape),
+            device=device,
+            dtype=torch.bfloat16,
+        )
+
+
+def get_model(
+    cfg: DictConfig,
+    torch_dtype: torch.dtype | None = None,
+) -> XR0ForRLActionPrediction:
+    """Instantiate the XR0 model and wrap it for RLinf.
+
+    When ``cfg.model_path`` is ``"dummy"``, a lightweight stub is used instead
+    of the full XR0 model (no HuggingFace download required).
+
+    Args:
+        cfg: Model config.  Expected keys include ``action_dim``,
+            ``num_action_chunks``, ``num_steps``, and XR0-specific params
+            under ``cfg.xr0``.
+        torch_dtype: Optional torch dtype for the model.
+
+    Returns:
+        An ``XR0ForRLActionPrediction`` instance.
+    """
+    logger = get_logger()
+
+    action_dim = getattr(cfg, "action_dim", ACTION_DIM)
+    num_action_chunks = getattr(cfg, "num_action_chunks", 30)
+    num_steps = getattr(cfg, "num_steps", 5)
+
+    # XR0-specific config (with defaults matching the original XR0 config)
+    xr0_cfg = getattr(cfg, "xr0", cfg)
+    action_shape = tuple(getattr(xr0_cfg, "action_shape", [num_action_chunks, action_dim]))
+
+    model_path = getattr(cfg, "model_path", None)
+
+    if model_path == "dummy":
+        logger.info("Using stub XR0 model (model_path=dummy)")
+        xr0_model = _StubXR0(action_shape=action_shape, num_steps=num_steps)
+    else:
+        # Lazy import to avoid requiring transformers for stub-only usage
+        from .model.xr0_model import XR0
+
+        state_shape = tuple(getattr(xr0_cfg, "state_shape", [1, ACTION_DIM]))
+        dit_num_layers = getattr(xr0_cfg, "dit_num_layers", 16)
+        dit_hidden_size = getattr(xr0_cfg, "dit_hidden_size", 1024)
+        local_window = getattr(xr0_cfg, "local_window", 4)
+        training_repeat = getattr(xr0_cfg, "training_repeat", 4)
+        enable_freq = getattr(xr0_cfg, "enable_freq", False)
+        flow_sampling = getattr(xr0_cfg, "flow_sampling", "beta")
+
+        logger.info(
+            "Building XR0 model: action_dim=%d, num_action_chunks=%d, "
+            "dit_num_layers=%d, dit_hidden_size=%d, num_steps=%d",
+            action_dim,
+            num_action_chunks,
+            dit_num_layers,
+            dit_hidden_size,
+            num_steps,
+        )
+
+        xr0_model = XR0(
+            state_shape=state_shape,
+            action_shape=action_shape,
+            dit_num_layers=dit_num_layers,
+            dit_hidden_size=dit_hidden_size,
+            num_steps=num_steps,
+            flow_sampling=flow_sampling,
+            local_window=local_window,
+            training_repeat=training_repeat,
+            enable_freq=enable_freq,
+        )
+
+        if model_path:
+            logger.info("Loading XR0 checkpoint from %s", model_path)
+            state_dict = torch.load(model_path, map_location="cpu")
+            xr0_model.load_state_dict(state_dict, strict=False)
+
+    if torch_dtype is not None:
+        xr0_model = xr0_model.to(dtype=torch_dtype)
+
+    policy = XR0ForRLActionPrediction(
+        xr0_model=xr0_model,
+        action_dim=action_dim,
+        num_action_chunks=num_action_chunks,
+        num_steps=num_steps,
+    )
+
+    return policy
+
+
+__all__ = ["XR0ForRLActionPrediction", "get_model"]
