@@ -24,7 +24,6 @@ from omegaconf.dictconfig import DictConfig
 
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
-from rlinf.utils.channel_utils import channel_name
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
@@ -76,9 +75,9 @@ class EmbodiedRunner:
             self.cfg.runner.get("overlap_env_bootstrap", False)
         )
         # Data channels
-        self.env_channel = Channel.create(channel_name(self.cfg, "Env"))
-        self.rollout_channel = Channel.create(channel_name(self.cfg, "Rollout"))
-        self.actor_channel = Channel.create(channel_name(self.cfg, "Actor"))
+        self.env_channel = Channel.create("Env")
+        self.rollout_channel = Channel.create("Rollout")
+        self.actor_channel = Channel.create("Actor")
         self.reward_channel = None
         self.reward_initialized = False
 
@@ -312,9 +311,7 @@ class EmbodiedRunner:
                         self.logger.info(
                             "Activating reward worker at step %s", self.global_step
                         )
-                        self.reward_channel = Channel.create(
-                            channel_name(self.cfg, "Reward")
-                        )
+                        self.reward_channel = Channel.create("Reward")
                         self.reward_initialized = True
 
                     env_handle: Handle = self.env.interact(

@@ -21,7 +21,6 @@ from omegaconf.omegaconf import DictConfig
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
-from rlinf.utils.channel_utils import channel_name
 from rlinf.utils.runner_utils import check_progress
 
 if TYPE_CHECKING:
@@ -61,13 +60,9 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
             reward=reward,
             critic=critic,
         )
-        self.env_metric_channel = Channel.create(channel_name(self.cfg, "EnvMetric"))
-        self.rollout_metric_channel = Channel.create(
-            channel_name(self.cfg, "RolloutMetric")
-        )
-        self.reward_metric_channel = Channel.create(
-            channel_name(self.cfg, "RewardMetric")
-        )
+        self.env_metric_channel = Channel.create("EnvMetric")
+        self.rollout_metric_channel = Channel.create("RolloutMetric")
+        self.reward_metric_channel = Channel.create("RewardMetric")
         self.recompute_logprobs = bool(self.cfg.rollout.get("recompute_logprobs", True))
 
         if self.cfg.runner.val_check_interval > 0:
@@ -176,7 +171,7 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
             return None
 
         self.logger.info("Activating reward worker at step %s", self.global_step)
-        self.reward_channel = Channel.create(channel_name(self.cfg, "Reward"))
+        self.reward_channel = Channel.create("Reward")
         self.reward_initialized = True
         return self.reward.compute_rewards_async(
             input_channel=self.reward_channel,

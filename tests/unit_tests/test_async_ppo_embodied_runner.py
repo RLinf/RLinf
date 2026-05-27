@@ -314,48 +314,6 @@ def test_async_ppo_runner_rejects_delayed_reward_activation(
         )
 
 
-def test_async_ppo_runner_prefixes_channels(_patch_runner_dependencies):
-    cfg = _build_cfg(use_output_step=0)
-    cfg.runner.channel_prefix = "latency_run"
-
-    runner = AsyncPPOEmbodiedRunner(
-        cfg=cfg,
-        actor=_FakeActor(),
-        rollout=_FakeRollout(),
-        env=_FakeEnv(),
-        reward=_FakeReward(),
-    )
-
-    assert runner.env_channel.name == "latency_run_Env"
-    assert runner.rollout_channel.name == "latency_run_Rollout"
-    assert runner.actor_channel.name == "latency_run_Actor"
-    assert runner.env_metric_channel.name == "latency_run_EnvMetric"
-    assert runner.rollout_metric_channel.name == "latency_run_RolloutMetric"
-    assert runner.reward_metric_channel.name == "latency_run_RewardMetric"
-
-
-def test_async_ppo_runner_does_not_prefix_channels_with_run_id(
-    _patch_runner_dependencies,
-):
-    cfg = _build_cfg(use_output_step=0)
-    cfg.runner.run_id = "latency_run"
-
-    runner = AsyncPPOEmbodiedRunner(
-        cfg=cfg,
-        actor=_FakeActor(),
-        rollout=_FakeRollout(),
-        env=_FakeEnv(),
-        reward=_FakeReward(),
-    )
-
-    assert runner.env_channel.name == "Env"
-    assert runner.rollout_channel.name == "Rollout"
-    assert runner.actor_channel.name == "Actor"
-    assert runner.env_metric_channel.name == "EnvMetric"
-    assert runner.rollout_metric_channel.name == "RolloutMetric"
-    assert runner.reward_metric_channel.name == "RewardMetric"
-
-
 def test_async_ppo_runner_sums_time_per_rank_then_takes_slowest_rank(
     _patch_runner_dependencies,
 ):

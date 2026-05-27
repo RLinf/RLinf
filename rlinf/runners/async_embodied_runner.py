@@ -21,7 +21,6 @@ from omegaconf.dictconfig import DictConfig
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
-from rlinf.utils.channel_utils import channel_name
 from rlinf.utils.runner_utils import check_progress
 
 if TYPE_CHECKING:
@@ -48,10 +47,8 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         super().__init__(cfg, actor, rollout, env, reward, critic)
 
         # Data channels
-        self.env_metric_channel = Channel.create(channel_name(self.cfg, "EnvMetric"))
-        self.rollout_metric_channel = Channel.create(
-            channel_name(self.cfg, "RolloutMetric")
-        )
+        self.env_metric_channel = Channel.create("EnvMetric")
+        self.rollout_metric_channel = Channel.create("RolloutMetric")
 
         self._pending_rollout_weight_sync = None
         self._weight_sync_coalesced_total = 0
@@ -146,7 +143,7 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         start_time = time.time()
         self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
         if self.reward is not None:
-            self.reward_channel = Channel.create(channel_name(self.cfg, "Reward"))
+            self.reward_channel = Channel.create("Reward")
 
         env_handle: Handle = self.env.interact(
             input_channel=self.env_channel,
