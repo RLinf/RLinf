@@ -66,9 +66,7 @@ reward_model_registry = {
 _HISTORY_VLM_MODEL_TYPE = "history_vlm"
 _HISTORY_VLM_TRANSFORMERS_BACKEND = "hf"
 _HISTORY_VLM_TRANSFORMERS_BACKEND_ALIASES = {"hf", "transformers"}
-_HISTORY_VLM_SUPPORTED_BACKENDS = (
-    _HISTORY_VLM_TRANSFORMERS_BACKEND_ALIASES | {"sglang"}
-)
+_HISTORY_VLM_SUPPORTED_BACKENDS = _HISTORY_VLM_TRANSFORMERS_BACKEND_ALIASES | {"sglang"}
 
 
 def _load_class(class_path: tuple[str, str]) -> type:

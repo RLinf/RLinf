@@ -454,8 +454,7 @@ def test_history_vlm_rejects_unknown_backend():
 
 def test_qwentrend_reward_yaml_uses_canonical_backends():
     hf_cfg = OmegaConf.load(
-        REPO_ROOT
-        / "examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward.yaml"
+        REPO_ROOT / "examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward.yaml"
     )
     e2e_cfg = OmegaConf.load(
         REPO_ROOT / "tests/e2e_tests/embodied/maniskill_ppo_mlp_qwentrend_reward.yaml"
