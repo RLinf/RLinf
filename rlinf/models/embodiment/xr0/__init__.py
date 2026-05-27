@@ -88,7 +88,9 @@ def get_model(
 
     # XR0-specific config (with defaults matching the original XR0 config)
     xr0_cfg = getattr(cfg, "xr0", cfg)
-    action_shape = tuple(getattr(xr0_cfg, "action_shape", [num_action_chunks, action_dim]))
+    action_shape = tuple(
+        getattr(xr0_cfg, "action_shape", [num_action_chunks, action_dim])
+    )
 
     model_path = getattr(cfg, "model_path", None)
 
@@ -139,7 +141,9 @@ def get_model(
 
     # Load action normalization stats (optional)
     action_mean, action_std = None, None
-    stats_path = getattr(cfg, "stats_path", None) or getattr(xr0_cfg, "stats_path", None)
+    stats_path = getattr(cfg, "stats_path", None) or getattr(
+        xr0_cfg, "stats_path", None
+    )
     if stats_path:
         import yaml
 

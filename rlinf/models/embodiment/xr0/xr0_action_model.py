@@ -29,7 +29,7 @@ import torch.nn as nn
 from PIL import Image
 from transformers import AutoProcessor
 
-from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
+from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.utils.logging import get_logger
 
 from .utils import ACTION_DIM, denormalize_action, resize_image
