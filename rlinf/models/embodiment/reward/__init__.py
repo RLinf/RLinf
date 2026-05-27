@@ -124,10 +124,7 @@ def get_reward_model_class(
         inference_backend,
     )
 
-    if (
-        reward_model_type == _HISTORY_VLM_MODEL_TYPE
-        and inference_backend == "sglang"
-    ):
+    if reward_model_type == _HISTORY_VLM_MODEL_TYPE and inference_backend == "sglang":
         return _load_class(_LAZY_CLASS_PATHS["HistoryVLMSGLangRewardModel"])
 
     return _load_class(reward_model_registry[reward_model_type])

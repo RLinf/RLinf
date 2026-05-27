@@ -29,8 +29,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from rlinf.models.embodiment.reward import (
     get_reward_model_class,
-    reward_model_registry,
     resolve_reward_model_backend,
+    reward_model_registry,
 )
 from rlinf.models.embodiment.reward.vlm_reward_model import HistoryVLMRewardModel
 from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
