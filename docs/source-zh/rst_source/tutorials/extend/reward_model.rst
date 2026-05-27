@@ -232,8 +232,7 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
 - ``examples/embodiment/config/maniskill_ppo_mlp_resnet_reward.yaml``
 - ``examples/embodiment/config/maniskill_sac_mlp_resnet_reward_async.yaml``
-- ``examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward.yaml``（Hugging Face 后端）
-- ``examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward_sglang.yaml``（SGLang 后端）
+- ``examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward.yaml``（设置 ``inference_backend: hf``）
 
 这些配置展示了如何在 RL 训练中启用 reward worker，同时让策略网络继续使用状态观测，
 而 reward model 使用图像观测或 VLM 观测。
@@ -333,7 +332,7 @@ reward 后端所需的依赖。
      model:
        model_path: "/path/to/Qwen3-VL-4B-Instruct"
        model_type: "history_vlm"
-       inference_backend: sglang
+       inference_backend: hf
        gt_success_bonus: 20.0
        precision: "bf16"
        input_builder_name: qwentrend_input_builder
@@ -371,7 +370,7 @@ reward 后端所需的依赖。
 - ``reward_parser_name`` 将模型生成的标签映射为标量 reward，标量由 ``positive_reward``、``negative_reward``、``unclear_reward`` 和 ``invalid_reward`` 控制。
 - ``gt_success_bonus`` 可以从环境 info 中读取成功信号并额外加分。
 
-如果要使用 Hugging Face/Transformers 后端，设置 ``inference_backend: hf``，
+使用 Hugging Face/Transformers 后端时，保留 ``inference_backend: hf``，
 并按需配置 ``lora_path``：
 
 .. code-block:: yaml
@@ -384,20 +383,21 @@ reward 后端所需的依赖。
 
 SGLang 后端复用同一套 QwenTrend input builder、reward parser 和 history
 buffer 配置。它使用 ``model_path`` 和可选的 ``sglang_engine_kwargs`` 构造
-engine；Hugging Face 后端的 ``lora_path`` 加载路径不适用于 SGLang 后端。使用
-``model_type: history_vlm`` 和 ``inference_backend: sglang`` 选择 SGLang。
+engine；Hugging Face 后端的 ``lora_path`` 加载路径不适用于 SGLang 后端。通过
+覆盖后端字段选择 SGLang：
+
+.. code-block:: yaml
+
+   reward:
+     model:
+       model_type: "history_vlm"
+       inference_backend: sglang
 
 启动 MLP RL：
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_qwentrend_reward
-
-使用 SGLang 示例：
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_qwentrend_reward_sglang
 
 总结
 ----------------------------

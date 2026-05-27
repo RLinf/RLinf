@@ -237,8 +237,7 @@ RLinf provides several example configs for integrating a reward model into RL:
 
 - ``examples/embodiment/config/maniskill_ppo_mlp_resnet_reward.yaml``
 - ``examples/embodiment/config/maniskill_sac_mlp_resnet_reward_async.yaml``
-- ``examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward.yaml`` (Hugging Face backend)
-- ``examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward_sglang.yaml`` (SGLang backend)
+- ``examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward.yaml`` (sets ``inference_backend: hf``)
 
 These configs show how to enable a reward worker in RL training while keeping the policy on state observations
 and the reward model on image or VLM observations.
@@ -321,7 +320,7 @@ including the dependencies required by the SGLang reward backend.
 
 Then configure the reward section to use ``model_type: history_vlm``. Set
 ``inference_backend: hf`` for the Hugging Face/Transformers backend, or
-``inference_backend: sglang`` for the SGLang backend. The QwenTrend examples use
+``inference_backend: sglang`` for the SGLang backend. The QwenTrend example uses
 ``reward_mode: history_buffer`` so the env worker maintains per-env history
 windows and sends them to the reward worker only when a valid window is
 available:
@@ -338,7 +337,7 @@ available:
      model:
        model_path: "/path/to/Qwen3-VL-4B-Instruct"
        model_type: "history_vlm"
-       inference_backend: sglang
+       inference_backend: hf
        gt_success_bonus: 20.0
        precision: "bf16"
        input_builder_name: qwentrend_input_builder
@@ -377,8 +376,8 @@ Important fields:
 - ``reward_parser_name`` maps generated labels to scalar rewards using ``positive_reward``, ``negative_reward``, ``unclear_reward``, and ``invalid_reward``.
 - ``gt_success_bonus`` optionally adds a success bonus from environment info.
 
-To use the Hugging Face/Transformers backend instead, use
-``inference_backend: hf`` and configure ``lora_path`` if needed:
+For the Hugging Face/Transformers backend, keep ``inference_backend: hf`` and
+configure ``lora_path`` if needed:
 
 .. code-block:: yaml
 
@@ -391,20 +390,21 @@ To use the Hugging Face/Transformers backend instead, use
 The SGLang backend reuses the same QwenTrend input builder, reward parser, and
 history buffer settings. It uses ``model_path`` and optional
 ``sglang_engine_kwargs`` for engine construction; the Hugging Face ``lora_path``
-loading path does not apply to the SGLang backend. Select SGLang with
-``model_type: history_vlm`` and ``inference_backend: sglang``.
+loading path does not apply to the SGLang backend. Select SGLang by overriding
+the backend field:
+
+.. code-block:: yaml
+
+   reward:
+     model:
+       model_type: "history_vlm"
+       inference_backend: sglang
 
 Launch the MLP RL run with:
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_qwentrend_reward
-
-Use the SGLang example with:
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_qwentrend_reward_sglang
 
 Summary
 ----------------------------
