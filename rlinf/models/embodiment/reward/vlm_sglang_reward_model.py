@@ -14,15 +14,13 @@
 
 from __future__ import annotations
 
-import asyncio
+import base64
+import io
+import json
 import logging
-import os
-import signal
-import sys
-import tempfile
-import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+import urllib.error
+import urllib.request
 from typing import Any, Optional
 
 import numpy as np
@@ -42,6 +40,11 @@ from rlinf.models.embodiment.reward.vlm_reward_utils.reward_parser import (
 
 logger = logging.getLogger(__name__)
 
+try:
+    import requests
+except ImportError:  # pragma: no cover - exercised only in minimal environments.
+    requests = None
+
 
 def _to_plain_dict(value: Any) -> dict[str, Any]:
     if value is None:
@@ -52,11 +55,12 @@ def _to_plain_dict(value: Any) -> dict[str, Any]:
 
 
 class HistoryVLMSGLangRewardModel(BaseRewardModel):
-    """SGLang-backed embodied history VLM reward model.
+    """SGLang HTTP-backed embodied history VLM reward model.
 
-    The backend reuses RLinf's history VLM input builders and reward parsers, but
-    sends rendered Qwen chat prompts plus in-memory video frame lists directly to
-    SGLang native ``Engine.generate(video_data=...)``.
+    The runner starts an external SGLang OpenAI-compatible server for this
+    backend unless ``reward.model.api_base`` points to a user-managed server.
+    The reward worker sends one synchronous ``/v1/chat/completions`` request
+    per valid history-window input using multiple ``image_url`` data URLs.
     """
 
     def __init__(self, cfg: DictConfig):
@@ -71,27 +75,27 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
         self.history_buffer_names = list(cfg.history_buffers.keys())
         self.infer_micro_batch_size: int = int(cfg.get("infer_micro_batch_size", 0))
         self.gt_success_bonus = float(cfg.get("gt_success_bonus", 0.0))
-        self.input_mode: str = str(cfg.get("input_mode", "video_data"))
-        if self.input_mode != "video_data":
+        self.api_base = str(cfg.get("api_base") or "").rstrip("/")
+        if not self.api_base:
+            host = str(cfg.get("server_host", "127.0.0.1"))
+            port = int(cfg.get("server_port", 30000))
+            self.api_base = f"http://{host}:{port}/v1"
+        self.model_name = str(cfg.get("served_model_name") or self.model_path)
+        self.request_timeout = float(cfg.get("request_timeout", 120.0))
+        self.image_format = str(cfg.get("image_format", "jpeg")).lower()
+        if self.image_format not in {"jpeg", "png"}:
             raise ValueError(
-                "HistoryVLMSGLangRewardModel currently supports only "
-                f"input_mode='video_data', got {self.input_mode!r}."
+                "HistoryVLMSGLangRewardModel supports image_format='jpeg' or 'png', "
+                f"got {self.image_format!r}."
             )
-
-        self.video_fps: float = float(cfg.get("video_fps", 24.0))
-        self.sglang_engine_kwargs = _to_plain_dict(cfg.get("sglang_engine_kwargs", {}))
-        self.sglang_engine_kwargs.setdefault("model_path", self.model_path)
-        self.sglang_engine_kwargs.setdefault("trust_remote_code", True)
+        self.jpeg_quality = int(cfg.get("jpeg_quality", 95))
 
         self.sampling_params = self._build_sampling_params(cfg)
-        self._engine: Any | None = None
-        self._generate_executor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="rlinf_sglang_reward",
-        )
 
         self.prepare_inputs_ms = 0.0
+        self.image_encode_ms = 0.0
         self.media_convert_ms = 0.0
+        self.http_request_ms = 0.0
         self.sglang_generate_ms = 0.0
         self.parse_ms = 0.0
         self.total_ms = 0.0
@@ -145,9 +149,9 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
 
     def _build_sampling_params(self, cfg: DictConfig) -> dict[str, Any]:
         sampling_params = _to_plain_dict(cfg.get("sampling_params", {}))
-        sampling_params.setdefault("max_new_tokens", int(cfg.get("max_new_tokens", 32)))
+        sampling_params.setdefault("max_tokens", int(cfg.get("max_new_tokens", 32)))
         if cfg.get("min_new_tokens", None) is not None:
-            sampling_params.setdefault("min_new_tokens", int(cfg.get("min_new_tokens")))
+            sampling_params.setdefault("min_tokens", int(cfg.get("min_new_tokens")))
         if cfg.get("ignore_eos", None) is not None:
             sampling_params.setdefault("ignore_eos", bool(cfg.get("ignore_eos")))
         if "temperature" not in sampling_params:
@@ -155,37 +159,6 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
         if "top_p" not in sampling_params and cfg.get("top_p", None) is not None:
             sampling_params["top_p"] = float(cfg.get("top_p"))
         return sampling_params
-
-    def _ensure_engine(self) -> Any:
-        if self._engine is None:
-            from sglang import Engine
-
-            python_bin_dir = os.path.dirname(sys.executable)
-            os.environ["PATH"] = (
-                python_bin_dir
-                if not os.environ.get("PATH")
-                else f"{python_bin_dir}{os.pathsep}{os.environ['PATH']}"
-            )
-            self._engine = self._create_engine(Engine)
-        return self._engine
-
-    def _create_engine(self, engine_cls: Any) -> Any:
-        if threading.current_thread() is threading.main_thread():
-            return engine_cls(**self.sglang_engine_kwargs)
-
-        original_signal = signal.signal
-        previous_sigquit_handler = signal.getsignal(signal.SIGQUIT)
-
-        def signal_without_sigquit(signum: int, handler: Any) -> Any:
-            if signum == signal.SIGQUIT:
-                return previous_sigquit_handler
-            return original_signal(signum, handler)
-
-        signal.signal = signal_without_sigquit
-        try:
-            return engine_cls(**self.sglang_engine_kwargs)
-        finally:
-            signal.signal = original_signal
 
     def slice_history_input(
         self,
@@ -232,22 +205,6 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
             return value[start:end] if len(value) >= end else value
         return value
 
-    def _render_prompt(self, prompt_texts: list[str], videos: list[Any]) -> str:
-        video_tok = getattr(self._processor, "video_token", "<|video_pad|>")
-        prompt_text = prompt_texts[0]
-        user_content = "\n".join([video_tok] * len(videos)) + f"\n\n{prompt_text}"
-
-        try:
-            return self._processor.apply_chat_template(
-                [{"role": "user", "content": user_content}],
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-        except Exception:
-            return (
-                f"<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n"
-            )
-
     def _frame_to_numpy(self, frame: Any) -> np.ndarray:
         if isinstance(frame, torch.Tensor):
             frame = frame.detach().cpu().numpy()
@@ -269,96 +226,80 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
 
         return np.ascontiguousarray(frame[..., :3])
 
-    def _convert_video(self, video: list[Any]) -> bytes:
-        frames = [self._frame_to_numpy(frame) for frame in video]
-        if len(frames) == 1:
-            frames.append(frames[0])
-        return self._encode_video_bytes(frames, self.video_fps)
+    def _frame_to_data_url(self, frame: Any) -> str:
+        image = Image.fromarray(self._frame_to_numpy(frame), mode="RGB")
+        image_buffer = io.BytesIO()
+        if self.image_format == "jpeg":
+            image.save(image_buffer, format="JPEG", quality=self.jpeg_quality)
+            mime_type = "image/jpeg"
+        else:
+            image.save(image_buffer, format="PNG")
+            mime_type = "image/png"
+        encoded = base64.b64encode(image_buffer.getvalue()).decode("ascii")
+        return f"data:{mime_type};base64,{encoded}"
 
-    def _encode_video_bytes(self, frames: list[np.ndarray], fps: float) -> bytes:
-        import cv2
+    def _build_content_items(
+        self,
+        prompt_texts: list[str],
+        videos: list[list[Any]],
+    ) -> list[dict[str, Any]]:
+        prompt_text = prompt_texts[0] if prompt_texts else ""
+        content: list[dict[str, Any]] = []
+        for video in videos:
+            for frame in video:
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": self._frame_to_data_url(frame)},
+                    }
+                )
+        content.append({"type": "text", "text": prompt_text})
+        return content
 
-        height, width = frames[0].shape[:2]
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_file:
-            tmp_path = tmp_file.name
-
-        writer = cv2.VideoWriter(
-            tmp_path,
-            cv2.VideoWriter_fourcc(*"mp4v"),
-            max(float(fps), 1.0),
-            (width, height),
-        )
-        try:
-            if not writer.isOpened():
-                raise RuntimeError("Failed to create temporary mp4 video for SGLang")
-            for frame in frames:
-                writer.write(np.ascontiguousarray(frame[..., ::-1]))
-        finally:
-            writer.release()
-
-        try:
-            with open(tmp_path, "rb") as video_file:
-                return video_file.read()
-        finally:
-            os.unlink(tmp_path)
-
-    def _build_sglang_inputs(
+    def _build_chat_payloads(
         self,
         prepared_inputs: dict[str, Any],
-    ) -> tuple[list[str], list[list[bytes]]]:
+    ) -> list[dict[str, Any]]:
         prompt_texts_list = prepared_inputs.get("prompt_texts_list") or []
         videos_list = prepared_inputs.get("videos_list") or []
 
-        prompts: list[str] = []
-        video_data: list[list[tuple[list[np.ndarray], dict[str, Any]]]] = []
+        payloads: list[dict[str, Any]] = []
         for prompt_texts, videos in zip(prompt_texts_list, videos_list):
-            prompts.append(self._render_prompt(prompt_texts, videos))
-            video_data.append([self._convert_video(video) for video in videos])
+            payload = {
+                "model": self.model_name,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": self._build_content_items(prompt_texts, videos),
+                    }
+                ],
+            }
+            payload.update(self.sampling_params)
+            payloads.append(payload)
+        return payloads
 
-        return prompts, video_data
-
-    def _extract_texts_and_token_counts(
-        self, result: Any
-    ) -> tuple[list[str], list[int]]:
-        completion_tokens: list[int] = []
-
-        def append_completion_tokens(item: Any) -> None:
-            if not isinstance(item, dict):
-                return
-            meta_info = item.get("meta_info") or {}
-            if not isinstance(meta_info, dict):
-                return
-            token_count = meta_info.get("completion_tokens")
-            if token_count is None:
-                return
-            if isinstance(token_count, list):
-                completion_tokens.extend(int(value) for value in token_count)
+    def _extract_text_and_token_count(
+        self, response: dict[str, Any]
+    ) -> tuple[str, int]:
+        choices = response.get("choices") or []
+        text = ""
+        if choices:
+            message = choices[0].get("message") or {}
+            content = message.get("content", "")
+            if isinstance(content, list):
+                text = "".join(str(item.get("text", "")) for item in content)
             else:
-                completion_tokens.append(int(token_count))
+                text = str(content)
 
-        if isinstance(result, dict):
-            append_completion_tokens(result)
-            text = result.get("text", "")
-            if isinstance(text, list):
-                texts = [str(item) for item in text]
-            else:
-                texts = [str(text)]
-            return texts, completion_tokens
-
-        if isinstance(result, list):
-            outputs: list[str] = []
-            for item in result:
-                if isinstance(item, dict):
-                    append_completion_tokens(item)
-                    outputs.append(str(item.get("text", "")))
-                else:
-                    outputs.append(str(item))
-            return outputs, completion_tokens
-
-        return [str(result)], []
+        usage = response.get("usage") or {}
+        completion_tokens = usage.get("completion_tokens")
+        if completion_tokens is None:
+            completion_tokens = usage.get("output_tokens")
+        return text, int(completion_tokens or 0)
 
     @staticmethod
     def _summarize_generation_stats(completion_tokens: list[int]) -> dict[str, float]:
+        completion_tokens = [count for count in completion_tokens if count > 0]
         if not completion_tokens:
             return {}
         return {
@@ -367,29 +308,38 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
             "generated_tokens_max": float(max(completion_tokens)),
         }
 
-    def _generate(
-        self, prompts: list[str], video_data: list[list[Any]]
-    ) -> tuple[list[str], list[int]]:
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return self._generate_sync(prompts, video_data)
+    def _chat_completion(self, payload: dict[str, Any]) -> dict[str, Any]:
+        url = f"{self.api_base}/chat/completions"
+        if requests is not None:
+            response = requests.post(url, json=payload, timeout=self.request_timeout)
+            response.raise_for_status()
+            return response.json()
 
-        return self._generate_executor.submit(
-            self._generate_sync,
-            prompts,
-            video_data,
-        ).result()
-
-    def _generate_sync(
-        self, prompts: list[str], video_data: list[list[Any]]
-    ) -> tuple[list[str], list[int]]:
-        result = self._ensure_engine().generate(
-            prompt=prompts,
-            sampling_params=self.sampling_params,
-            video_data=video_data,
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
         )
-        return self._extract_texts_and_token_counts(result)
+        try:
+            with urllib.request.urlopen(request, timeout=self.request_timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"SGLang reward request failed with status {exc.code}: {body}"
+            ) from exc
+
+    def _generate(self, payloads: list[dict[str, Any]]) -> tuple[list[str], list[int]]:
+        outputs: list[str] = []
+        completion_tokens: list[int] = []
+        for payload in payloads:
+            text, token_count = self._extract_text_and_token_count(
+                self._chat_completion(payload)
+            )
+            outputs.append(text)
+            completion_tokens.append(token_count)
+        return outputs, completion_tokens
 
     def _set_timing_attrs(
         self,
@@ -397,13 +347,17 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
         generation_stats: dict[str, float],
     ) -> None:
         self.prepare_inputs_ms = timings["prepare_inputs_ms"]
-        self.media_convert_ms = timings["media_convert_ms"]
-        self.sglang_generate_ms = timings["sglang_generate_ms"]
+        self.image_encode_ms = timings["image_encode_ms"]
+        self.media_convert_ms = timings["image_encode_ms"]
+        self.http_request_ms = timings["http_request_ms"]
+        self.sglang_generate_ms = timings["http_request_ms"]
         self.parse_ms = timings["parse_ms"]
         self.total_ms = timings["total_ms"]
         self.last_timing_ms = {
             **timings,
-            "generate_ms": timings["sglang_generate_ms"],
+            "media_convert_ms": timings["image_encode_ms"],
+            "sglang_generate_ms": timings["http_request_ms"],
+            "generate_ms": timings["http_request_ms"],
         }
         self.last_generation_stats = dict(generation_stats)
         logger.debug("HistoryVLMSGLangRewardModel timing_ms=%s", self.last_timing_ms)
@@ -452,8 +406,8 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
         total_start = time.perf_counter()
         timings = {
             "prepare_inputs_ms": 0.0,
-            "media_convert_ms": 0.0,
-            "sglang_generate_ms": 0.0,
+            "image_encode_ms": 0.0,
+            "http_request_ms": 0.0,
             "parse_ms": 0.0,
             "total_ms": 0.0,
         }
@@ -491,17 +445,15 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
             )
             timings["prepare_inputs_ms"] += (time.perf_counter() - prepare_start) * 1000
 
-            media_start = time.perf_counter()
-            prompts, video_data = self._build_sglang_inputs(prepared_inputs)
-            timings["media_convert_ms"] += (time.perf_counter() - media_start) * 1000
+            image_start = time.perf_counter()
+            payloads = self._build_chat_payloads(prepared_inputs)
+            timings["image_encode_ms"] += (time.perf_counter() - image_start) * 1000
 
-            generate_start = time.perf_counter()
-            outputs, token_counts = self._generate(prompts, video_data)
+            request_start = time.perf_counter()
+            outputs, token_counts = self._generate(payloads)
             generated_token_counts.extend(token_counts)
             all_outputs.extend(outputs)
-            timings["sglang_generate_ms"] += (
-                time.perf_counter() - generate_start
-            ) * 1000
+            timings["http_request_ms"] += (time.perf_counter() - request_start) * 1000
 
             if len(outputs) != len(valid_input_ids):
                 logger.warning(

@@ -63,6 +63,7 @@ class EmbodiedRunner:
         env: Union["EnvWorker", "AsyncEnvWorker"],
         reward: Union["EmbodiedRewardWorker"] = None,
         critic=None,
+        sglang_reward_server=None,
     ):
         self.cfg = cfg
         self.actor = actor
@@ -70,6 +71,7 @@ class EmbodiedRunner:
         self.env = env
         self.critic = critic
         self.reward = reward
+        self.sglang_reward_server = sglang_reward_server
         self.weight_sync_interval = self.cfg.runner.weight_sync_interval
         self.overlap_env_bootstrap = bool(
             self.cfg.runner.get("overlap_env_bootstrap", False)
@@ -497,6 +499,9 @@ class EmbodiedRunner:
         self.stop_logging = True
         self.log_queue.join()  # Wait for all queued logs to be processed
         self.log_thread.join(timeout=1.0)
+
+        if self.sglang_reward_server is not None:
+            self.sglang_reward_server.stop()
 
     def _save_checkpoint(self):
         self.logger.info(f"Saving checkpoint at step {self.global_step}.")

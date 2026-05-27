@@ -388,10 +388,14 @@ configure ``lora_path`` if needed:
        lora_path: "/path/to/qwen3-vl-lora-checkpoint"
 
 The SGLang backend reuses the same QwenTrend input builder, reward parser, and
-history buffer settings. It uses ``model_path`` and optional
-``sglang_engine_kwargs`` for engine construction; the Hugging Face ``lora_path``
-loading path does not apply to the SGLang backend. Select SGLang by overriding
-the backend field:
+history buffer settings. When ``inference_backend: sglang`` is selected, the
+embodied runner launches an external ``python -m sglang.launch_server`` process
+and the reward worker calls its OpenAI-compatible ``/v1/chat/completions`` API
+synchronously. History frames are sent as multiple ``image_url`` data URLs in a
+single chat message, so the backend does not use in-process ``sglang.Engine`` or
+temporary MP4/video inputs.
+
+Select SGLang by overriding the backend field:
 
 .. code-block:: yaml
 
@@ -399,6 +403,22 @@ the backend field:
      model:
        model_type: "history_vlm"
        inference_backend: sglang
+
+The runner starts a local server by default. You can override the server surface
+or point to a user-managed server:
+
+.. code-block:: yaml
+
+   reward:
+     model:
+       model_type: "history_vlm"
+       inference_backend: sglang
+       server_port: 30000
+       server_startup_timeout: 600
+       served_model_name: qwentrend-reward
+       # api_base: "http://127.0.0.1:30000/v1"  # set to skip runner launch
+       # sglang_server_args:
+       #   tp_size: 2
 
 Launch the MLP RL run with:
 

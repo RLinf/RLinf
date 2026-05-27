@@ -43,8 +43,9 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         env: "AsyncEnvWorker",
         reward: "EmbodiedRewardWorker",
         critic=None,
+        sglang_reward_server=None,
     ):
-        super().__init__(cfg, actor, rollout, env, reward, critic)
+        super().__init__(cfg, actor, rollout, env, reward, critic, sglang_reward_server)
 
         # Data channels
         self.env_metric_channel = Channel.create("EnvMetric")
@@ -287,3 +288,5 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         env_handle.wait()
         rollout_handle.wait()
         actor_handle.wait()
+        if self.sglang_reward_server is not None:
+            self.sglang_reward_server.stop()

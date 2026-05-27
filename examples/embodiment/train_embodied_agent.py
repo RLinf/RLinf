@@ -20,6 +20,7 @@ from omegaconf.omegaconf import OmegaConf
 
 from rlinf.config import validate_cfg
 from rlinf.runners.embodied_runner import EmbodiedRunner
+from rlinf.runners.sglang_reward_server import maybe_start_sglang_reward_server
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
@@ -78,26 +79,32 @@ def main(cfg) -> None:
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 
-    reward_group = None
-    if cfg.get("reward", {}).get("use_reward_model", False) and not cfg.get(
-        "reward", {}
-    ).get("standalone_realworld", False):
-        # Create reward worker group
-        reward_placement = component_placement.get_strategy("reward")
-        reward_group = EmbodiedRewardWorker.create_group(cfg).launch(
-            cluster, name=cfg.reward.group_name, placement_strategy=reward_placement
+    sglang_reward_server = maybe_start_sglang_reward_server(cfg)
+    try:
+        reward_group = None
+        if cfg.get("reward", {}).get("use_reward_model", False) and not cfg.get(
+            "reward", {}
+        ).get("standalone_realworld", False):
+            # Create reward worker group
+            reward_placement = component_placement.get_strategy("reward")
+            reward_group = EmbodiedRewardWorker.create_group(cfg).launch(
+                cluster, name=cfg.reward.group_name, placement_strategy=reward_placement
+            )
+
+        runner = EmbodiedRunner(
+            cfg=cfg,
+            actor=actor_group,
+            rollout=rollout_group,
+            env=env_group,
+            reward=reward_group,
+            sglang_reward_server=sglang_reward_server,
         )
 
-    runner = EmbodiedRunner(
-        cfg=cfg,
-        actor=actor_group,
-        rollout=rollout_group,
-        env=env_group,
-        reward=reward_group,
-    )
-
-    runner.init_workers()
-    runner.run()
+        runner.init_workers()
+        runner.run()
+    finally:
+        if sglang_reward_server is not None:
+            sglang_reward_server.stop()
 
 
 if __name__ == "__main__":

@@ -14,13 +14,11 @@
 
 # ruff: noqa: E402
 
-import asyncio
 import os
 import signal
 import sys
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -43,6 +41,11 @@ from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
 )
 from rlinf.models.embodiment.reward.vlm_sglang_reward_model import (
     HistoryVLMSGLangRewardModel,
+)
+from rlinf.runners.sglang_reward_server import (
+    SGLangRewardServer,
+    maybe_start_sglang_reward_server,
+    should_launch_sglang_reward_server,
 )
 from rlinf.utils.comm_mapping import CommMapper
 from rlinf.utils.nested_dict_process import cat_list_of_dict_tensor, split_dict
@@ -158,7 +161,11 @@ class _FakeSGLangHistoryInputBuilder:
         return {
             "prompt_texts_list": [[f"prompt-{slot_id}"] for slot_id in slot_ids],
             "videos_list": [
-                [[torch.zeros((1, 1, 3), dtype=torch.uint8)]] for _ in slot_ids
+                [
+                    [torch.zeros((1, 1, 3), dtype=torch.uint8)],
+                    [torch.ones((1, 1, 3), dtype=torch.uint8)],
+                ]
+                for _ in slot_ids
             ],
         }
 
@@ -200,12 +207,13 @@ class _TestHistoryVLMSGLangRewardModel(HistoryVLMSGLangRewardModel):
         self.reward_parser = _RecordingRewardParser()
 
     def _generate(
-        self, prompts: list[str], video_data: list[list[object]]
+        self, payloads: list[dict[str, object]]
     ) -> tuple[list[str], list[int]]:
-        del video_data
-        return [prompt.removeprefix("rendered-") for prompt in prompts], [
-            len(prompts)
-        ] * len(prompts)
+        outputs = []
+        for payload in payloads:
+            content = payload["messages"][0]["content"]
+            outputs.append(content[-1]["text"].removeprefix("prompt-"))
+        return outputs, [len(payloads)] * len(payloads)
 
 
 def _make_cfg(infer_micro_batch_size: int) -> OmegaConf:
@@ -507,77 +515,36 @@ def test_history_vlm_sglang_sampling_params_from_config():
     )
 
     assert sampling_params == {
-        "max_new_tokens": 16,
-        "min_new_tokens": 8,
+        "max_tokens": 16,
+        "min_tokens": 8,
         "ignore_eos": True,
         "temperature": 0.0,
         "top_p": 0.8,
     }
 
 
-def test_history_vlm_sglang_initializes_and_generates_in_executor_thread():
+def test_history_vlm_sglang_generates_with_sync_http_client():
     model = object.__new__(HistoryVLMSGLangRewardModel)
-    model._generate_executor = ThreadPoolExecutor(max_workers=1)
-    main_thread_id = threading.get_ident()
-    calls = []
+    responses = [
+        {
+            "choices": [{"message": {"content": "1"}}],
+            "usage": {"completion_tokens": 3},
+        },
+        {
+            "choices": [{"message": {"content": "2"}}],
+            "usage": {"completion_tokens": 4},
+        },
+    ]
+    model._chat_completion = lambda payload: responses.pop(0)
 
-    def ensure_engine():
-        calls.append(("ensure", threading.get_ident()))
-        return object()
+    outputs, token_counts = model._generate([{"model": "dummy"}, {"model": "dummy"}])
 
-    def generate_sync(prompts, video_data):
-        del prompts, video_data
-        model._ensure_engine()
-        calls.append(("generate", threading.get_ident()))
-        return ["1"], [1]
-
-    model._ensure_engine = ensure_engine
-    model._generate_sync = generate_sync
-
-    async def call_generate():
-        return model._generate(["prompt"], [[]])
-
-    try:
-        outputs, token_counts = asyncio.run(call_generate())
-    finally:
-        model._generate_executor.shutdown(wait=True)
-
-    assert outputs == ["1"]
-    assert token_counts == [1]
-    assert calls[0][0] == "ensure"
-    assert calls[0][1] != main_thread_id
-    assert calls[1][0] == "generate"
-    assert calls[1][1] == calls[0][1]
-
-
-def test_history_vlm_sglang_engine_init_ignores_sigquit_in_worker_thread():
-    model = object.__new__(HistoryVLMSGLangRewardModel)
-    model.sglang_engine_kwargs = {"model_path": "dummy"}
-    original_signal = signal.signal
-
-    class FakeEngine:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            signal.signal(signal.SIGQUIT, lambda signum, frame: None)
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        engine = executor.submit(model._create_engine, FakeEngine).result()
-
-    assert engine.kwargs == {"model_path": "dummy"}
-    assert signal.signal is original_signal
+    assert outputs == ["1", "2"]
+    assert token_counts == [3, 4]
 
 
 def test_history_vlm_sglang_reward_model_keeps_micro_batch_order():
     model = _TestHistoryVLMSGLangRewardModel(_make_sglang_cfg(2))
-
-    def build_inputs(prepared_inputs):
-        prompts = [
-            f"rendered-{prompt_texts[0].removeprefix('prompt-')}"
-            for prompt_texts in prepared_inputs["prompt_texts_list"]
-        ]
-        return prompts, [[] for _ in prompts]
-
-    model._build_sglang_inputs = build_inputs
 
     rewards = model.compute_reward(_make_sglang_reward_input([10, 11, 12, 13]))
 
@@ -597,15 +564,6 @@ def test_history_vlm_sglang_slices_nested_observation_metadata():
         },
     }
 
-    def build_inputs(prepared_inputs):
-        prompts = [
-            f"rendered-{prompt_texts[0].removeprefix('prompt-')}"
-            for prompt_texts in prepared_inputs["prompt_texts_list"]
-        ]
-        return prompts, [[] for _ in prompts]
-
-    model._build_sglang_inputs = build_inputs
-
     rewards = model.compute_reward(reward_input)
 
     assert torch.equal(rewards, torch.tensor([10.0, 11.0, 12.0, 13.0]))
@@ -621,15 +579,6 @@ def test_history_vlm_sglang_reward_model_applies_gt_success_bonus():
         "episode": {"success_once": torch.tensor([False, True, False, True])}
     }
 
-    def build_inputs(prepared_inputs):
-        prompts = [
-            f"rendered-{prompt_texts[0].removeprefix('prompt-')}"
-            for prompt_texts in prepared_inputs["prompt_texts_list"]
-        ]
-        return prompts, [[] for _ in prompts]
-
-    model._build_sglang_inputs = build_inputs
-
     rewards = model.compute_reward(reward_input)
 
     assert torch.equal(rewards, torch.tensor([10.0, 31.0, 12.0, 33.0]))
@@ -637,15 +586,6 @@ def test_history_vlm_sglang_reward_model_applies_gt_success_bonus():
 
 def test_history_vlm_sglang_reward_model_writes_sparse_valid_envs_back_to_slots():
     model = _TestHistoryVLMSGLangRewardModel(_make_sglang_cfg(2))
-
-    def build_inputs(prepared_inputs):
-        prompts = [
-            f"rendered-{prompt_texts[0].removeprefix('prompt-')}"
-            for prompt_texts in prepared_inputs["prompt_texts_list"]
-        ]
-        return prompts, [[] for _ in prompts]
-
-    model._build_sglang_inputs = build_inputs
 
     rewards = model.compute_reward(
         _make_sglang_reward_input([20, 21, 22, 23], valid_env_ids=[1, 3])
@@ -655,48 +595,56 @@ def test_history_vlm_sglang_reward_model_writes_sparse_valid_envs_back_to_slots(
     assert model.input_builder.calls == [[21], [23]]
 
 
-def test_history_vlm_sglang_builds_encoded_video_data():
+def test_history_vlm_sglang_builds_multiframe_image_url_payload():
     model = object.__new__(HistoryVLMSGLangRewardModel)
-    model._processor = _FakeSGLangProcessor()
-    model.video_fps = 8.0
-    model._encode_video_bytes = lambda frames, fps: (
-        f"encoded-{len(frames)}-{fps}".encode()
-    )
+    model.model_name = "reward-model"
+    model.sampling_params = {"max_tokens": 16, "temperature": 0.0}
+    model.image_format = "jpeg"
+    model.jpeg_quality = 95
     chw_frame = torch.zeros((3, 2, 2), dtype=torch.uint8)
     gray_frame = np.ones((2, 2), dtype=np.float32) * 127.0
     pil_frame = Image.fromarray(np.full((2, 2, 3), 255, dtype=np.uint8))
+    hwc_frame = np.full((2, 2, 3), 64, dtype=np.uint8)
 
-    prompts, video_data = model._build_sglang_inputs(
+    payloads = model._build_chat_payloads(
         {
             "prompt_texts_list": [["judge progress"]],
-            "videos_list": [[[chw_frame, gray_frame, pil_frame]]],
+            "videos_list": [[[chw_frame, gray_frame], [pil_frame, hwc_frame]]],
         }
     )
 
-    assert prompts == ["rendered"]
-    assert video_data == [[b"encoded-3-8.0"]]
-    assert model._processor.messages[0][0]["content"].startswith("<video>\n")
+    assert len(payloads) == 1
+    assert payloads[0]["model"] == "reward-model"
+    assert payloads[0]["max_tokens"] == 16
+    content = payloads[0]["messages"][0]["content"]
+    image_items = [item for item in content if item["type"] == "image_url"]
+    assert len(image_items) == 4
+    assert content[-1] == {"type": "text", "text": "judge progress"}
+    assert all(
+        item["image_url"]["url"].startswith("data:image/jpeg;base64,")
+        for item in image_items
+    )
+    assert "video_data" not in payloads[0]
 
 
-def test_history_vlm_sglang_extracts_texts_and_token_counts():
+def test_history_vlm_sglang_extracts_text_and_token_count_from_openai_response():
     model = object.__new__(HistoryVLMSGLangRewardModel)
 
-    texts, token_counts = model._extract_texts_and_token_counts(
-        [
-            {"text": "positive", "meta_info": {"completion_tokens": 3}},
-            {"text": "negative", "meta_info": {"completion_tokens": [4]}},
-            "neutral",
-        ]
+    text, token_count = model._extract_text_and_token_count(
+        {
+            "choices": [{"message": {"content": "positive"}}],
+            "usage": {"completion_tokens": 3},
+        }
     )
 
-    assert texts == ["positive", "negative", "neutral"]
-    assert token_counts == [3, 4]
+    assert text == "positive"
+    assert token_count == 3
 
 
 def test_history_vlm_sglang_pads_mismatched_outputs():
     model = _TestHistoryVLMSGLangRewardModel(_make_sglang_cfg(0))
-    model._build_sglang_inputs = lambda prepared_inputs: (["prompt"], [[]])
-    model._generate = lambda prompts, video_data: (["1.0"], [5])
+    model._build_chat_payloads = lambda prepared_inputs: [{"model": "dummy"}]
+    model._generate = lambda payloads: (["1.0"], [5])
 
     rewards = model.compute_reward(_make_sglang_reward_input([30, 31]))
 
@@ -706,11 +654,11 @@ def test_history_vlm_sglang_pads_mismatched_outputs():
 
 def test_history_vlm_sglang_records_timing_and_generation_stats():
     model = _TestHistoryVLMSGLangRewardModel(_make_sglang_cfg(0))
-    model._build_sglang_inputs = lambda prepared_inputs: (
-        ["rendered-1", "rendered-2"],
-        [[], []],
-    )
-    model._generate = lambda prompts, video_data: (["1", "2"], [3, 5])
+    model._build_chat_payloads = lambda prepared_inputs: [
+        {"model": "dummy"},
+        {"model": "dummy"},
+    ]
+    model._generate = lambda payloads: (["1", "2"], [3, 5])
 
     rewards = model.compute_reward(_make_sglang_reward_input([1, 2]))
 
@@ -718,9 +666,11 @@ def test_history_vlm_sglang_records_timing_and_generation_stats():
     assert set(model.last_timing_ms) == {
         "prepare_inputs_ms",
         "media_convert_ms",
-        "sglang_generate_ms",
+        "image_encode_ms",
+        "http_request_ms",
         "parse_ms",
         "total_ms",
+        "sglang_generate_ms",
         "generate_ms",
     }
     assert model.last_generation_stats == {
@@ -728,6 +678,121 @@ def test_history_vlm_sglang_records_timing_and_generation_stats():
         "generated_tokens_min": 3.0,
         "generated_tokens_max": 5.0,
     }
+
+
+def test_sglang_reward_server_command_uses_safe_defaults_and_overrides():
+    cfg = OmegaConf.create(
+        {
+            "model_path": "/models/QwenTrend",
+            "served_model_name": "qwentrend-reward",
+            "server_host": "127.0.0.1",
+            "server_port": 30123,
+            "sglang_server_args": {"dtype": "float16", "tp_size": 2},
+        }
+    )
+
+    command = SGLangRewardServer(cfg).build_command()
+
+    assert command[:3] == [sys.executable, "-m", "sglang.launch_server"]
+    assert command[command.index("--model-path") + 1] == "/models/QwenTrend"
+    assert command[command.index("--served-model-name") + 1] == "qwentrend-reward"
+    assert command[command.index("--port") + 1] == "30123"
+    assert "--trust-remote-code" in command
+    assert "--enable-multimodal" in command
+    assert command[command.index("--dtype") + 1] == "float16"
+    assert command[command.index("--tp-size") + 1] == "2"
+    assert command[command.index("--attention-backend") + 1] == "triton"
+    assert command[command.index("--sampling-backend") + 1] == "pytorch"
+    assert command[command.index("--grammar-backend") + 1] == "none"
+
+
+def test_sglang_reward_server_readiness_polls_v1_models():
+    cfg = OmegaConf.create(
+        {
+            "model_path": "/models/QwenTrend",
+            "server_port": 30124,
+            "server_startup_timeout": 1,
+            "server_readiness_interval": 0,
+        }
+    )
+    server = SGLangRewardServer(cfg)
+    server.process = mock.Mock()
+    server.process.poll.return_value = None
+    opened_urls = []
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    def fake_urlopen(url, timeout):
+        del timeout
+        opened_urls.append(url)
+        return FakeResponse()
+
+    with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        server.wait_until_ready()
+
+    assert opened_urls == ["http://127.0.0.1:30124/v1/models"]
+
+
+def test_sglang_reward_server_stop_terminates_process_group():
+    cfg = OmegaConf.create({"model_path": "/models/QwenTrend"})
+    server = SGLangRewardServer(cfg)
+    server.process = mock.Mock()
+    server.process.pid = 123
+    server.process.poll.return_value = None
+
+    with mock.patch("os.killpg") as killpg:
+        server.stop()
+
+    killpg.assert_called_once_with(123, signal.SIGTERM)
+    assert server.process is None
+
+
+def test_sglang_reward_server_skips_user_managed_api_base():
+    cfg = OmegaConf.create(
+        {
+            "reward": {
+                "use_reward_model": True,
+                "model": {
+                    "model_type": "history_vlm",
+                    "inference_backend": "sglang",
+                    "api_base": "http://server:30000/v1",
+                },
+            }
+        }
+    )
+
+    assert not should_launch_sglang_reward_server(cfg)
+    assert maybe_start_sglang_reward_server(cfg) is None
+
+
+def test_sglang_reward_server_injects_api_base_after_launch():
+    cfg = OmegaConf.create(
+        {
+            "reward": {
+                "use_reward_model": True,
+                "model": {
+                    "model_path": "/models/QwenTrend",
+                    "model_type": "history_vlm",
+                    "inference_backend": "sglang",
+                    "server_port": 30125,
+                },
+            }
+        }
+    )
+
+    with mock.patch.object(SGLangRewardServer, "start", return_value="http://x/v1"):
+        server = maybe_start_sglang_reward_server(cfg)
+
+    assert isinstance(server, SGLangRewardServer)
+    assert cfg.reward.model.api_base == "http://x/v1"
+    assert cfg.reward.model.served_model_name == "QwenTrend"
 
 
 @pytest.mark.parametrize(

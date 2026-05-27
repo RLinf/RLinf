@@ -187,6 +187,12 @@ reward:
     model_path: "/path/to/Qwen3-VL-4B-Instruct"
     model_type: "history_vlm"
     inference_backend: hf
+    api_base: null
+    server_host: "127.0.0.1"
+    server_port: 30000
+    server_startup_timeout: 600
+    served_model_name: null
+    sglang_server_args: {}
     lora_path: "/path/to/qwen3-vl-lora-checkpoint"
     gt_success_bonus: 20.0
     precision: "bf16"
