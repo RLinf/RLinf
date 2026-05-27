@@ -98,46 +98,14 @@ def get_model(
         logger.info("Using stub XR0 model (model_path=dummy)")
         xr0_model = _StubXR0(action_shape=action_shape, num_steps=num_steps)
     else:
-        # Lazy import to avoid requiring transformers for stub-only usage
-        from .model.xr0_model import XR0
+        from transformers import AutoModel
 
-        state_shape = tuple(getattr(xr0_cfg, "state_shape", [1, ACTION_DIM]))
-        dit_num_layers = getattr(xr0_cfg, "dit_num_layers", 16)
-        dit_hidden_size = getattr(xr0_cfg, "dit_hidden_size", 1024)
-        local_window = getattr(xr0_cfg, "local_window", 4)
-        training_repeat = getattr(xr0_cfg, "training_repeat", 4)
-        enable_freq = getattr(xr0_cfg, "enable_freq", False)
-        flow_sampling = getattr(xr0_cfg, "flow_sampling", "beta")
-
-        logger.info(
-            "Building XR0 model: action_dim=%d, num_action_chunks=%d, "
-            "dit_num_layers=%d, dit_hidden_size=%d, num_steps=%d",
-            action_dim,
-            num_action_chunks,
-            dit_num_layers,
-            dit_hidden_size,
-            num_steps,
+        logger.info("Loading XR0 model from %s", model_path)
+        xr0_model = AutoModel.from_pretrained(
+            model_path,
+            trust_remote_code=True,
+            dtype=torch_dtype or torch.bfloat16,
         )
-
-        xr0_model = XR0(
-            state_shape=state_shape,
-            action_shape=action_shape,
-            dit_num_layers=dit_num_layers,
-            dit_hidden_size=dit_hidden_size,
-            num_steps=num_steps,
-            flow_sampling=flow_sampling,
-            local_window=local_window,
-            training_repeat=training_repeat,
-            enable_freq=enable_freq,
-        )
-
-        if model_path:
-            logger.info("Loading XR0 checkpoint from %s", model_path)
-            state_dict = torch.load(model_path, map_location="cpu")
-            xr0_model.load_state_dict(state_dict, strict=False)
-
-    if torch_dtype is not None:
-        xr0_model = xr0_model.to(dtype=torch_dtype)
 
     # Load action normalization stats (optional)
     action_mean, action_std = None, None

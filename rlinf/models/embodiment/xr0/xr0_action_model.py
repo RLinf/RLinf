@@ -153,18 +153,38 @@ class XR0ForRLActionPrediction(nn.Module, BasePolicy):
         task_descriptions = env_obs.get("task_descriptions", [""] * len(images))
         batch_size = len(images)
 
-        # State tensor
+        # State tensor: model expects (B, 1, STATE_DIM)
         state_tensor = torch.from_numpy(np.asarray(states, dtype=np.float32))
         if state_tensor.ndim == 1:
             state_tensor = state_tensor.unsqueeze(0)
+        if state_tensor.ndim == 2:
+            state_tensor = state_tensor.unsqueeze(1)
 
         # Build VLM batch with real processor
         vlm_batch = self._build_vlm_batch(
             images, task_descriptions, state_tensor, device
         )
 
-        # Run XR0 generate
-        actions_pred = self.xr0_model.generate(vlm_batch)  # [B, action_len, action_dim]
+        # Run XR0 forward
+        # The model expects: state, action_mask, num_steps, seed, + VLM kwargs
+        action_mask = torch.ones(
+            (batch_size, self.num_action_chunks, self.action_dim),
+            dtype=torch.bfloat16,
+            device=device,
+        )
+        model_inputs = {
+            "state": state_tensor.to(device=device, dtype=torch.bfloat16),
+            "action_mask": action_mask,
+            "num_steps": self.num_steps,
+            "seed": 42,
+        }
+        # Add VLM inputs
+        for k, v in vlm_batch.items():
+            if isinstance(v, torch.Tensor):
+                model_inputs[k] = v.to(device)
+
+        output = self.xr0_model(**model_inputs)
+        actions_pred = output.actions  # [B, action_len, action_dim]
 
         # Denormalize
         actions_np = actions_pred.float().cpu().numpy()
