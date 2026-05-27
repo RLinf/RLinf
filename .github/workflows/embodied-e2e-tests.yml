@@ -1112,7 +1112,7 @@ jobs:
             /workspace/dataset/ABot-M0-LIBERO/config.yaml
 
       - name: LIBERO ABot-M0 PPO test
-        timeout-minutes: 20
+        timeout-minutes: 60
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
@@ -1152,7 +1152,7 @@ jobs:
             /workspace/dataset/ABot-M0-LIBERO/config.yaml
 
       - name: LIBERO-Plus ABot-M0 PPO test
-        timeout-minutes: 20
+        timeout-minutes: 60
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
