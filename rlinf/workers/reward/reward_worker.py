@@ -24,7 +24,10 @@ from torch.utils.data import DataLoader, DistributedSampler
 from rlinf.data.datasets.reward_model import RewardBinaryDataset
 from rlinf.data.io_struct import RolloutResult
 from rlinf.data.tokenizers import hf_tokenizer
-from rlinf.models.embodiment.reward import get_reward_model_class
+from rlinf.models.embodiment.reward import (
+    get_reward_model_class,
+    resolve_reward_model_backend,
+)
 from rlinf.scheduler import (
     Channel,
     Cluster,
@@ -240,10 +243,17 @@ class EmbodiedRewardWorker(Worker):
         )
 
     def model_provider_func(self):
-        reward_cls = get_reward_model_class(self.cfg.reward.model.model_type)
-
         model_cfg = self.cfg.reward.model
+        model_type, inference_backend = resolve_reward_model_backend(
+            model_cfg.model_type,
+            model_cfg.get("inference_backend", None),
+        )
+        reward_cls = get_reward_model_class(model_type, inference_backend)
+
         with open_dict(model_cfg):
+            model_cfg.model_type = model_type
+            if inference_backend is not None:
+                model_cfg.inference_backend = inference_backend
             model_cfg.num_envs = self.local_num_train_envs
         model = reward_cls(model_cfg)
 

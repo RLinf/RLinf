@@ -27,7 +27,11 @@ from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
-from rlinf.models.embodiment.reward import get_reward_model_class
+from rlinf.models.embodiment.reward import (
+    get_reward_model_class,
+    reward_model_registry,
+    resolve_reward_model_backend,
+)
 from rlinf.models.embodiment.reward.vlm_reward_model import HistoryVLMRewardModel
 from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
     HistoryVLMInputBuilder,
@@ -394,11 +398,38 @@ def test_history_vlm_reward_model_writes_sparse_valid_envs_back_to_slots():
     assert model.input_builder.calls == [[21], [23]]
 
 
-def test_history_vlm_sglang_reward_model_is_registered():
+def test_history_vlm_sglang_model_type_is_not_registered():
+    assert "history_vlm_sglang" not in reward_model_registry
+    with pytest.raises(ValueError, match="Unsupported reward model type"):
+        get_reward_model_class("history_vlm_sglang")
+
+
+def test_history_vlm_resolver_defaults_to_transformers_backend():
+    assert resolve_reward_model_backend("history_vlm") == ("history_vlm", None)
+    assert get_reward_model_class("history_vlm").__name__ == "HistoryVLMRewardModel"
+
+
+def test_history_vlm_resolver_selects_sglang_backend():
+    assert resolve_reward_model_backend("history_vlm", "sglang") == (
+        "history_vlm",
+        "sglang",
+    )
     assert (
-        get_reward_model_class("history_vlm_sglang").__name__
+        get_reward_model_class("history_vlm", inference_backend="sglang").__name__
         == "HistoryVLMSGLangRewardModel"
     )
+
+
+def test_history_vlm_sglang_model_type_is_not_supported():
+    with pytest.raises(ValueError, match="Unsupported reward model type"):
+        resolve_reward_model_backend("history_vlm_sglang")
+    with pytest.raises(ValueError, match="Unsupported reward model type"):
+        resolve_reward_model_backend("history_vlm_sglang", "sglang")
+
+
+def test_history_vlm_rejects_unknown_backend():
+    with pytest.raises(ValueError, match="Unsupported reward.model.inference_backend"):
+        resolve_reward_model_backend("history_vlm", "vllm")
 
 
 def test_history_vlm_sglang_sampling_params_from_config():

@@ -313,15 +313,17 @@ For VLM reward inference, install embodied dependencies with VLM reward support:
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --model qwen3_vl --env maniskill_libero
+   bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl
 
 This installs the Qwen3-VL reward runtime used by the MLP policy example,
 including the dependencies required by the SGLang reward backend.
 
-Then configure the reward section to use ``history_vlm`` for the Hugging Face
-backend or ``history_vlm_sglang`` for the SGLang backend. The QwenTrend example
-uses ``reward_mode: history_buffer`` so the env worker maintains per-env history
-windows and sends them to the reward worker only when a valid window is available:
+Then configure the reward section to use ``model_type: history_vlm``. Omitting
+``inference_backend`` keeps the existing Hugging Face/Transformers backend;
+setting ``inference_backend: sglang`` selects the SGLang backend. The QwenTrend
+example uses ``reward_mode: history_buffer`` so the env worker maintains per-env
+history windows and sends them to the reward worker only when a valid window is
+available:
 
 .. code-block:: yaml
 
@@ -335,7 +337,7 @@ windows and sends them to the reward worker only when a valid window is availabl
      model:
        model_path: "/path/to/Qwen3-VL-4B-Instruct"
        model_type: "history_vlm"
-       lora_path: "/path/to/qwen3-vl-lora-checkpoint"
+       inference_backend: sglang
        gt_success_bonus: 20.0
        precision: "bf16"
        input_builder_name: qwentrend_input_builder
@@ -365,26 +367,30 @@ windows and sends them to the reward worker only when a valid window is availabl
 
 Important fields:
 
-- ``model_type`` selects the reward inference backend: ``history_vlm`` uses
-  Hugging Face/Transformers, while ``history_vlm_sglang`` uses SGLang.
+- ``model_type`` selects the reward model family. Use ``history_vlm`` for
+  history-window VLM rewards.
+- ``inference_backend`` selects the inference backend. Set ``sglang`` for
+  SGLang, or omit it for the default Hugging Face/Transformers path.
 - ``history_buffers`` defines which observation keys are cached, the window length, and the minimum valid history length.
 - ``input_builder_name`` converts the history window into dual-view VLM inputs.
 - ``reward_parser_name`` maps generated labels to scalar rewards using ``positive_reward``, ``negative_reward``, ``unclear_reward``, and ``invalid_reward``.
 - ``gt_success_bonus`` optionally adds a success bonus from environment info.
 
-To switch the same ManiSkill YAML to SGLang reward inference, change only the
-reward model type:
+To use the Hugging Face/Transformers backend instead, omit
+``inference_backend`` and configure ``lora_path`` if needed:
 
 .. code-block:: yaml
 
    reward:
      model:
-       model_type: "history_vlm_sglang"
+       model_type: "history_vlm"
+       lora_path: "/path/to/qwen3-vl-lora-checkpoint"
 
 The SGLang backend reuses the same QwenTrend input builder, reward parser, and
 history buffer settings. It uses ``model_path`` and optional
 ``sglang_engine_kwargs`` for engine construction; the Hugging Face ``lora_path``
-loading path does not apply to ``history_vlm_sglang``.
+loading path does not apply to the SGLang backend. Select SGLang with
+``model_type: history_vlm`` and ``inference_backend: sglang``.
 
 Launch the MLP RL run with:
 

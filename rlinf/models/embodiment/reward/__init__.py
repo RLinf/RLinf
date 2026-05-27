@@ -27,6 +27,7 @@ __all__ = [  # noqa: F822
     "HistoryVLMRewardModel",
     "HistoryVLMSGLangRewardModel",
     "get_reward_model_class",
+    "resolve_reward_model_backend",
 ]
 
 _LAZY_CLASS_PATHS = {
@@ -60,8 +61,11 @@ reward_model_registry = {
     "resnet": _LAZY_CLASS_PATHS["ResNetRewardModel"],
     "vlm": _LAZY_CLASS_PATHS["VLMRewardModel"],
     "history_vlm": _LAZY_CLASS_PATHS["HistoryVLMRewardModel"],
-    "history_vlm_sglang": _LAZY_CLASS_PATHS["HistoryVLMSGLangRewardModel"],
 }
+
+_HISTORY_VLM_MODEL_TYPE = "history_vlm"
+_HISTORY_VLM_TRANSFORMERS_BACKENDS = {None, "hf", "transformers"}
+_HISTORY_VLM_SUPPORTED_BACKENDS = _HISTORY_VLM_TRANSFORMERS_BACKENDS | {"sglang"}
 
 
 def _load_class(class_path: tuple[str, str]) -> type:
@@ -78,8 +82,52 @@ def __getattr__(name: str) -> Any:
     return loaded_class
 
 
-def get_reward_model_class(reward_model_type: str):
+def _normalize_backend(inference_backend: str | None) -> str | None:
+    if inference_backend is None or inference_backend == "":
+        return None
+    return str(inference_backend).lower()
+
+
+def resolve_reward_model_backend(
+    reward_model_type: str,
+    inference_backend: str | None = None,
+) -> tuple[str, str | None]:
+    """Resolve reward model type and inference backend."""
+    backend = _normalize_backend(inference_backend)
+
     if reward_model_type not in reward_model_registry:
         raise ValueError(f"Unsupported reward model type: {reward_model_type}")
+
+    if reward_model_type != _HISTORY_VLM_MODEL_TYPE:
+        if backend is not None:
+            raise ValueError(
+                "reward.model.inference_backend is only supported for "
+                "reward.model.model_type='history_vlm'."
+            )
+        return reward_model_type, None
+
+    if backend not in _HISTORY_VLM_SUPPORTED_BACKENDS:
+        raise ValueError(
+            "Unsupported reward.model.inference_backend for history_vlm: "
+            f"{inference_backend!r}. Supported backends are 'sglang', 'hf', "
+            "'transformers', or unset."
+        )
+    return reward_model_type, backend
+
+
+def get_reward_model_class(
+    reward_model_type: str,
+    inference_backend: str | None = None,
+):
+    reward_model_type, inference_backend = resolve_reward_model_backend(
+        reward_model_type,
+        inference_backend,
+    )
+
+    if (
+        reward_model_type == _HISTORY_VLM_MODEL_TYPE
+        and inference_backend == "sglang"
+    ):
+        return _load_class(_LAZY_CLASS_PATHS["HistoryVLMSGLangRewardModel"])
 
     return _load_class(reward_model_registry[reward_model_type])
