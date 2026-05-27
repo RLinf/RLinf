@@ -16,12 +16,10 @@ from typing import Any
 
 import torch
 from omegaconf import DictConfig
-from torch.utils._pytree import tree_map
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.config import SupportedModel
 from rlinf.models.embodiment.base_policy import ForwardType
-from rlinf.utils.pytree import register_pytree_dataclasses
 from rlinf.utils.utils import get_rng_state, set_rng_state
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
@@ -59,7 +57,6 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         elif SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.DREAMZERO
         ]:
-            self._dreamzero_loss = None
             from rlinf.data.datasets.dreamzero import (
                 build_dreamzero_sft_dataloader,
             )
@@ -76,63 +73,24 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         # now the eval is not supported for embodied sft
         raise NotImplementedError("eval is not supported for embodied sft right now.")
 
-    def get_train_model_output(self, batch: dict[str, Any]):
-        if SupportedModel(self.cfg.actor.model.model_type) in [
-            SupportedModel.LINGBOTVLA,
-            SupportedModel.DREAMZERO,
-        ]:
-            with self.amp_context:
-                losses_dict = self.model(forward_type=ForwardType.SFT, data=batch)
-            if losses_dict.get("dynamics_loss", None) is not None:
-                self._dreamzero_loss = {
-                    "dynamics_loss": losses_dict["dynamics_loss"],
-                    "action_loss": losses_dict["action_loss"],
-                }
-            return losses_dict["loss"]
-        observation, actions = batch
-
-        register_pytree_dataclasses(observation)
-        observation = tree_map(
-            lambda x: (
-                torch.as_tensor(x, device=self.device).contiguous().clone()
-                if x is not None
-                else x
-            ),
-            observation,
-        )
-        actions = actions.to(torch.float32)
-        actions = actions.to(self.device)
-
+    def get_train_model_output(self, batch: Any) -> tuple[torch.Tensor, dict[str, Any]]:
         with self.amp_context:
-            losses = self.model(
-                forward_type=ForwardType.SFT,
-                data={"observation": observation, "actions": actions},
-            )
+            output = self.model(forward_type=ForwardType.SFT, data=batch)
 
-        # train model return the loss
-        return losses
+        if isinstance(output, torch.Tensor):
+            loss = output
+        else:
+            loss = output["loss"]
 
-    def run_training(self):
-        train_metrics = super().run_training()
-        if (
-            SupportedModel(self.cfg.actor.model.model_type)
-            in [SupportedModel.DREAMZERO]
-            and self._dreamzero_loss is not None
-        ):
-            train_metrics.update(
+        step_metrics = {"loss": loss.detach().item()}
+        if isinstance(output, dict) and output.get("dynamics_loss", None) is not None:
+            step_metrics.update(
                 {
-                    "dynamics_loss": self._dreamzero_loss["dynamics_loss"]
-                    .detach()
-                    .cpu()
-                    .item(),
-                    "action_loss": self._dreamzero_loss["action_loss"]
-                    .detach()
-                    .cpu()
-                    .item(),
+                    "dynamics_loss": output["dynamics_loss"].detach().item(),
+                    "action_loss": output["action_loss"].detach().item(),
                 }
             )
-            self._dreamzero_loss = None
-        return train_metrics
+        return loss, step_metrics
 
     def save_checkpoint(self, save_path: str, step: int = 0) -> None:
         super().save_checkpoint(save_path, step)
@@ -148,13 +106,13 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
             torch.distributed.barrier()
 
-        rng_state = get_rng_state()
-        all_rng_states = [None] * self._world_size
-        torch.distributed.all_gather_object(all_rng_states, rng_state)
-        if self._rank == 0:
-            torch.save(all_rng_states, os.path.join(save_path, "rng.pt"))
+            rng_state = get_rng_state()
+            all_rng_states = [None] * self._world_size
+            torch.distributed.all_gather_object(all_rng_states, rng_state)
+            if self._rank == 0:
+                torch.save(all_rng_states, os.path.join(save_path, "rng.pt"))
 
-        torch.distributed.barrier()
+            torch.distributed.barrier()
 
     def load_checkpoint(self, load_path: str) -> None:
         super().load_checkpoint(load_path)
@@ -167,12 +125,12 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             self.data_loader.load_state_dict(state)
             self.data_iter = iter(self.data_loader)
 
-        rng_path = os.path.join(load_path, "rng.pt")
-        if os.path.exists(rng_path):
-            all_rng_states = torch.load(rng_path, weights_only=False)
-            set_rng_state(all_rng_states[self._rank])
+            rng_path = os.path.join(load_path, "rng.pt")
+            if os.path.exists(rng_path):
+                all_rng_states = torch.load(rng_path, weights_only=False)
+                set_rng_state(all_rng_states[self._rank])
 
-        torch.distributed.barrier()
+            torch.distributed.barrier()
 
     def get_max_steps_per_epoch(self):
         if self.data_loader is None:

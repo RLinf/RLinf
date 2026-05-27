@@ -322,9 +322,11 @@ class DreamZeroPolicy(VLA, BasePolicy):
         if data is None:
             raise ValueError("sft_forward requires `data` from the SFT dataloader.")
         outputs = super().forward(data)
+        if hasattr(outputs, "data"):
+            outputs = outputs.data
         if "loss" not in outputs:
             raise ValueError("sft_forward requires `loss` in the outputs.")
-        return outputs
+        return dict(outputs)
 
     def default_forward(
         self,

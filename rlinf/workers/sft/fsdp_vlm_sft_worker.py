@@ -209,7 +209,9 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         # eval model return the correct number of answers
         return correct
 
-    def get_train_model_output(self, batch: dict[str, Any]):
+    def get_train_model_output(
+        self, batch: dict[str, Any]
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
         # hundle the input batch
         input_ids = batch["prompt"].to(self.device)
         attention_mask = batch["attention_mask"].to(self.device, dtype=torch.bool)
@@ -233,5 +235,5 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 **multi_modal_inputs,
             )
 
-        # train model return the loss
-        return outputs.loss
+        loss = outputs.loss
+        return loss, {"loss": loss.detach().item()}
