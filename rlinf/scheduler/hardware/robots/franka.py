@@ -148,7 +148,9 @@ class FrankaRobot(Hardware):
             for dev in sl.Camera.get_device_list():
                 cameras.add(str(dev.serial_number))
         elif ct == "lumos":
-            from rlinf.envs.realworld.common.camera.lumos_camera import LumosCamera
+            from rlinf.envs.realworld.peripherals.cameras.lumos_camera import (
+                LumosCamera,
+            )
 
             cameras.update(LumosCamera.get_device_serial_numbers())
         else:

@@ -22,7 +22,7 @@ import gymnasium as gym
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from rlinf.envs.realworld.common.gello.gello_expert import GelloExpert
+from rlinf.envs.realworld.peripherals.teleop.gello.gello_expert import GelloExpert
 
 
 class DualGelloIntervention(gym.ActionWrapper):

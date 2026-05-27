@@ -21,7 +21,9 @@ import time
 import gymnasium as gym
 import numpy as np
 
-from rlinf.envs.realworld.common.spacemouse.spacemouse_expert import SpaceMouseExpert
+from rlinf.envs.realworld.peripherals.teleop.spacemouse.spacemouse_expert import (
+    SpaceMouseExpert,
+)
 
 
 class DualSpacemouseIntervention(gym.ActionWrapper):

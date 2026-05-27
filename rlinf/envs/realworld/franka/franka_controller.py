@@ -99,7 +99,7 @@ class FrankaController(Worker):
         self._end_effector: EndEffector | None = None
         self._gripper = None
 
-        from rlinf.envs.realworld.common.ros import ROSController
+        from rlinf.envs.realworld.peripherals.ros import ROSController
 
         self._ros = ROSController()
         self._init_ros_channels()
@@ -119,7 +119,7 @@ class FrankaController(Worker):
         gripper_connection: Optional[str],
     ) -> None:
         if self._end_effector_type.is_gripper:
-            from rlinf.envs.realworld.common.gripper import create_gripper
+            from rlinf.envs.realworld.peripherals.grippers import create_gripper
 
             self._gripper = create_gripper(
                 gripper_type=self._end_effector_type.gripper_backend,

@@ -12,6 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from rlinf.envs.realworld.common.gripper.franka_gripper import FrankaGripper
+from rlinf.envs.realworld.peripherals.grippers.franka_gripper import FrankaGripper
 
 __all__ = ["FrankaGripper"]

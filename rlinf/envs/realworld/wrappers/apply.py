@@ -20,29 +20,29 @@ from typing import Any, Mapping, Optional
 
 import gymnasium as gym
 
-from rlinf.envs.realworld.common.wrappers.dual_euler_obs import (
+from rlinf.envs.realworld.wrappers.dual_euler_obs import (
     DualQuat2EulerWrapper,
 )
-from rlinf.envs.realworld.common.wrappers.dual_gello_intervention import (
+from rlinf.envs.realworld.wrappers.dual_gello_intervention import (
     DualGelloIntervention,
 )
-from rlinf.envs.realworld.common.wrappers.dual_relative_frame import (
+from rlinf.envs.realworld.wrappers.dual_relative_frame import (
     DualRelativeFrame,
 )
-from rlinf.envs.realworld.common.wrappers.dual_spacemouse_intervention import (
+from rlinf.envs.realworld.wrappers.dual_spacemouse_intervention import (
     DualSpacemouseIntervention,
 )
-from rlinf.envs.realworld.common.wrappers.euler_obs import Quat2EulerWrapper
-from rlinf.envs.realworld.common.wrappers.gello_intervention import (
+from rlinf.envs.realworld.wrappers.euler_obs import Quat2EulerWrapper
+from rlinf.envs.realworld.wrappers.gello_intervention import (
     GelloIntervention,
 )
-from rlinf.envs.realworld.common.wrappers.gripper_close import GripperCloseEnv
-from rlinf.envs.realworld.common.wrappers.relative_frame import RelativeFrame
-from rlinf.envs.realworld.common.wrappers.reward_done_wrapper import (
+from rlinf.envs.realworld.wrappers.gripper_close import GripperCloseEnv
+from rlinf.envs.realworld.wrappers.relative_frame import RelativeFrame
+from rlinf.envs.realworld.wrappers.reward_done_wrapper import (
     KeyboardRewardDoneMultiStageWrapper,
     KeyboardRewardDoneWrapper,
 )
-from rlinf.envs.realworld.common.wrappers.spacemouse_intervention import (
+from rlinf.envs.realworld.wrappers.spacemouse_intervention import (
     SpacemouseIntervention,
 )
 
@@ -50,7 +50,7 @@ from rlinf.envs.realworld.common.wrappers.spacemouse_intervention import (
 def _load_dexhand_intervention():
     """Import DexHandIntervention only when dex-hand teleop is requested."""
     try:
-        from rlinf.envs.realworld.common.wrappers.dexhand_intervention import (
+        from rlinf.envs.realworld.wrappers.dexhand_intervention import (
             DexHandIntervention,
         )
     except ModuleNotFoundError as exc:

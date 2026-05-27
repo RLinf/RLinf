@@ -24,8 +24,12 @@ import gymnasium as gym
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from rlinf.envs.realworld.common.camera import BaseCamera, CameraInfo, create_camera
-from rlinf.envs.realworld.common.video_player import VideoPlayer
+from rlinf.envs.realworld.peripherals.cameras import (
+    BaseCamera,
+    CameraInfo,
+    create_camera,
+)
+from rlinf.envs.realworld.peripherals.video_player import VideoPlayer
 from rlinf.scheduler import GimArmHWInfo, WorkerInfo
 from rlinf.utils.logging import get_logger
 

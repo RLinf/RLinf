@@ -26,9 +26,15 @@ import cv2
 import gymnasium as gym
 import numpy as np
 
-from rlinf.envs.realworld.common.camera import BaseCamera, CameraInfo, create_camera
-from rlinf.envs.realworld.common.keyboard.keyboard_listener import KeyboardListener
-from rlinf.envs.realworld.common.video_player import VideoPlayer
+from rlinf.envs.realworld.peripherals.cameras import (
+    BaseCamera,
+    CameraInfo,
+    create_camera,
+)
+from rlinf.envs.realworld.peripherals.teleop.keyboard.keyboard_listener import (
+    KeyboardListener,
+)
+from rlinf.envs.realworld.peripherals.video_player import VideoPlayer
 from rlinf.scheduler import DOSW1HWInfo, WorkerInfo
 from rlinf.utils.logging import get_logger
 

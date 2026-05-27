@@ -19,10 +19,6 @@ from typing import Any, Mapping
 import gymnasium as gym
 from gymnasium.envs.registration import register
 
-from rlinf.envs.realworld.common.wrappers import (
-    apply_dual_arm_wrappers,
-    apply_single_arm_wrappers,
-)
 from rlinf.envs.realworld.franka.dual_franka_env import DualFrankaEnv as DualFrankaEnv
 from rlinf.envs.realworld.franka.franka_env import FrankaEnv as FrankaEnv
 from rlinf.envs.realworld.franka.tasks.bottle import BottleEnv as BottleEnv
@@ -34,6 +30,10 @@ from rlinf.envs.realworld.franka.tasks.franka_bin_relocation import (
 )
 from rlinf.envs.realworld.franka.tasks.peg_insertion_env import (
     PegInsertionEnv as PegInsertionEnv,
+)
+from rlinf.envs.realworld.wrappers import (
+    apply_dual_arm_wrappers,
+    apply_single_arm_wrappers,
 )
 
 

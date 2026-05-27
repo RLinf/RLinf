@@ -19,7 +19,7 @@ from typing import Any, Mapping
 import gymnasium as gym
 from gymnasium.envs.registration import register
 
-from rlinf.envs.realworld.common.wrappers import apply_single_arm_wrappers
+from rlinf.envs.realworld.wrappers import apply_single_arm_wrappers
 from rlinf.envs.realworld.xsquare.tasks.button_env import (
     ButtonEnv as ButtonEnv,
 )
