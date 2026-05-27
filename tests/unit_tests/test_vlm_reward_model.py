@@ -457,7 +457,7 @@ def test_qwentrend_reward_yaml_uses_canonical_backends():
         REPO_ROOT
         / "examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward.yaml"
     )
-    e2e_hf_cfg = OmegaConf.load(
+    e2e_cfg = OmegaConf.load(
         REPO_ROOT / "tests/e2e_tests/embodied/maniskill_ppo_mlp_qwentrend_reward.yaml"
     )
     sglang_cfg = OmegaConf.create(
@@ -478,12 +478,12 @@ def test_qwentrend_reward_yaml_uses_canonical_backends():
         hf_cfg.reward.model.inference_backend,
     ) == ("history_vlm", "hf")
 
-    assert e2e_hf_cfg.reward.model.model_type == "history_vlm"
-    assert e2e_hf_cfg.reward.model.inference_backend == "hf"
+    assert e2e_cfg.reward.model.model_type == "history_vlm"
+    assert OmegaConf.select(e2e_cfg, "reward.model.inference_backend") is None
     assert resolve_reward_model_backend(
-        e2e_hf_cfg.reward.model.model_type,
-        e2e_hf_cfg.reward.model.inference_backend,
-    ) == ("history_vlm", "hf")
+        e2e_cfg.reward.model.model_type,
+        OmegaConf.select(e2e_cfg, "reward.model.inference_backend"),
+    ) == ("history_vlm", None)
 
     assert sglang_cfg.reward.model.model_type == "history_vlm"
     assert sglang_cfg.reward.model.inference_backend == "sglang"

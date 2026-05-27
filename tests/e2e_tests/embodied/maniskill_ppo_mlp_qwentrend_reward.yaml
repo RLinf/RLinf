@@ -243,7 +243,6 @@ reward:
   model:
     model_type: history_vlm
     model_path: "/workspace/dataset/Qwen3-VL-4B-Instruct"
-    inference_backend: hf
     lora_path: null
     gt_success_bonus: 20.0
     precision: bf16
