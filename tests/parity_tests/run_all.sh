@@ -32,21 +32,13 @@ export VENV_BASE_DIR="/path/to/venvs" # Set this to your actual base directory f
 #    MODEL_NAME: Model name (openvla, openvla-oft, openpi, gr00t, mlp, etc.)
 #    YAML_ARG: Configuration file name
 TASKS=(
-    # Original tasks
-    # 可以使用
     "maniskill_libero openvla-oft maniskill_ppo_openvlaoft 1 100 -1"
-    # 可以使用
     "maniskill_libero openpi libero_goal_ppo_openpi 1 100 -1"
-    # 可以使用
     "maniskill_libero openpi libero_goal_ppo_openpi_pi05 1 100 -1"
-    # 可以使用
     "maniskill_libero openpi maniskill_ppo_mlp 1 100 -1"
-    # 可以使用
     "maniskill_libero openpi maniskill_ppo_openpi 1 100 -1"  
-    # 可以使用 
     "maniskill_libero openpi maniskill_ppo_openpi_pi05 1 100 -1"   
 
-    # env setup point
     # "maniskill_libero openvla maniskill_ppo_openvla 1 120 -1"
     # "maniskill_libero gr00t libero_10_ppo_gr00t 1 120 -1"
 
@@ -63,7 +55,6 @@ TASKS=(
     # "maniskill_libero openpi libero_spatial_grpo_openpi_pi05 1 120 -1"
     # "maniskill_libero openpi libero_spatial_0_grpo_mlp 1 1000 -1"
     # "maniskill_libero openpi maniskill_sac_mlp 1 1000 -1"   
-    # maniskill tests completed
 
     # "behavior openpi behavior_ppo_openpi 1 120 -1"   
     # "calvin openpi calvin_abc_d_ppo_openpi 1 120 -1"   
@@ -116,7 +107,7 @@ function switch_to_env() {
 }
 
 # Define unified cleanup function
-function super_cleanup() {
+function cleanup() {
     echo "[$(date +%T)] Performing aggressive cleanup..."
     # Try to stop ray, skip if command not found
     command -v ray >/dev/null 2>&1 && ray stop --force || echo "Ray command not found, skipping ray stop"
@@ -133,7 +124,7 @@ if [ "$RANK" -eq 0 ]; then
     
     # Clean up all residual signals before starting
     rm -f "$SYNC_FLAG_FILE"
-    super_cleanup
+    cleanup
     
     # Task statistics counters
     TOTAL_TASKS=${#TASKS[@]}
@@ -262,8 +253,6 @@ if [ "$RANK" -eq 0 ]; then
 
         # Start Ray and wait for cluster ready
         bash ray_utils/start_ray.sh
-        # TOTAL_GPUS=$(($T_NODES * $NUM_GPUS_PER_NODE))
-        # bash ray_utils/check_ray.sh "$TOTAL_GPUS"
 
         # 6. Execute task (refer to run_embodiment.sh logic)
         cd "$WORKDIR" || exit
@@ -290,7 +279,6 @@ if [ "$RANK" -eq 0 ]; then
                 ;;
         esac
         
-        # TODO
         # Execute training script
         bash "${WORKDIR}/run_embodiment.sh" "$YAML_ARG" 2>&1 | tee "${YAML_ARG}_run.log"
         EXIT_CODE=${PIPESTATUS[0]}
@@ -299,7 +287,7 @@ if [ "$RANK" -eq 0 ]; then
             echo "！！！CRITICAL ERROR: $YAML_ARG failed with Code $EXIT_CODE"
             FAILED_COUNT=$((FAILED_COUNT + 1))
             rm -f "$SYNC_FLAG_FILE"
-            super_cleanup
+            cleanup
             # No longer exit directly, continue to next task
             sleep 10
             continue
@@ -309,7 +297,7 @@ if [ "$RANK" -eq 0 ]; then
         echo "Task $YAML_ARG completed successfully."
         SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
         rm -f "$SYNC_FLAG_FILE"
-        super_cleanup
+        cleanup
         sleep 10
     done
 
@@ -387,7 +375,7 @@ else
         cd "$REPO_PATH" || exit
         # Extract ENV_NAME and MODEL_NAME from CURRENT_ENV (format: ENV_NAME_MODEL_NAME)
         switch_to_env "$CURRENT_ENV"
-        super_cleanup
+        cleanup
         
         # 2. Start Ray and join cluster
         echo "Worker: Joining Ray cluster with env $CURRENT_ENV..."
@@ -408,7 +396,7 @@ else
         done
         
         echo "Worker: Task finished signal detected. Cleaning up..."
-        super_cleanup
+        cleanup
     done
 fi
 

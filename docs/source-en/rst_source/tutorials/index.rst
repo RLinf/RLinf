@@ -38,4 +38,5 @@ This design enables users to build large-scale RL training pipelines with minima
    advance/index
    rlalg/index
    extend/index
+   testing/index
    release

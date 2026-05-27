@@ -12,8 +12,6 @@ This example gallery is continuously expanding, covering new scenarios and tasks
 
 - :doc:`system/index`: Examples demonstrating flexible and dynamic scheduling of computing resources, as well as assignment to the most suitable hardware devices.
 
-- :doc:`testing/index`: Automated batch testing toolkit for running experiments, detecting status, and baseline comparison analysis.
-
 .. toctree::
    :hidden:
    :maxdepth: 2
@@ -21,4 +19,4 @@ This example gallery is continuously expanding, covering new scenarios and tasks
    embodied/index
    agentic/index
    system/index
-   testing/index
+

@@ -10,8 +10,6 @@
 
 - :doc:`system/index`: 展示计算资源的灵活与动态调度，以及任务分配到最合适硬件设备的示例。
 
-- :doc:`testing/index`: 自动化批量测试工具，用于运行实验、检测状态并与基线对比分析。
-
 .. toctree::
    :hidden:
    :maxdepth: 2
@@ -19,4 +17,4 @@
    embodied/index
    agentic/index
    system/index
-   testing/index
+
