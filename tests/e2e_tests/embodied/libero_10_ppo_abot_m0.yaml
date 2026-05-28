@@ -85,8 +85,8 @@ env:
   group_name: "EnvGroup"
   train:
     total_num_envs: 8
-    max_episode_steps: 8
-    max_steps_per_rollout_epoch: 8
+    max_episode_steps: 100
+    max_steps_per_rollout_epoch: 100
     reward_coef: ${algorithm.reward_coef}
     use_fixed_reset_state_ids: true
     use_ordered_reset_state_ids: false
