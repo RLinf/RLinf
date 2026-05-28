@@ -12,6 +12,16 @@ export PYTHONPATH=${REPO_PATH}:${LIBERO_REPO_PATH}:$PYTHONPATH
 export DREAMZERO_PATH=${DREAMZERO_PATH:-"/path/to/DreamZero"}
 export PYTHONPATH=${DREAMZERO_PATH}:$PYTHONPATH
 
+export LINGBOT_VA_REPO_PATH=${LINGBOT_VA_REPO_PATH:-"/path/to/lingbot-va"}
+export LINGBOT_VA_MODEL_PATH=${LINGBOT_VA_MODEL_PATH:-"/path/to/lingbot-va-base"}
+export LINGBOT_VA_DATASET_PATH=${LINGBOT_VA_DATASET_PATH:-"/path/to/libero-data"}
+export PYTHONPATH=${LINGBOT_VA_REPO_PATH}:$PYTHONPATH
+
+# Required by the 5B-param transformer to fit alongside activations on a
+# single GPU; without this the allocator fragments and OOMs during model
+# wrap or first forward.
+export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-"expandable_segments:True"}
+
 if [ -z "$1" ]; then
     CONFIG_NAME="maniskill_ppo_openvlaoft"
 else

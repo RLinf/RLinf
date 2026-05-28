@@ -1,0 +1,25 @@
+model_type: lingbotva
+model_path: ${oc.env:LINGBOT_VA_MODEL_PATH}
+precision: bf16
+num_action_chunks: 12
+action_dim: 7
+is_lora: false
+lora_rank: 4
+lora_path: null
+lingbotva:
+  repo_path: ${oc.env:LINGBOT_VA_REPO_PATH}
+  config_name: libero
+  enable_offload: false
+  action_per_frame: 4
+  transformer_state_dict_path: ${oc.env:LINGBOT_VA_TRANSFORMER_STATE_DICT_PATH,null}
+  save_root: ./runtime/lingbotva
+  # SFT-only knobs (ignored by the eval path).
+  training_mode: false
+  cfg_prob: 0.1
+  empty_emb_path: null
+  # Attention backend for the transformer at load time. Eval uses "torch"
+  # (SDPA) — the per-step inference loop is not compatible with
+  # flex_attention's block-mask layout. SFT can use "flex" on torch>=2.9
+  # to match the reference recipe; on older torch the SFT YAML overrides
+  # to "torch" to dodge the flex_attention+inductor codegen bug.
+  attn_mode: torch

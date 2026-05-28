@@ -67,6 +67,21 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             return build_dreamzero_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths, eval_dataset
             )
+        elif SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.LINGBOTVA
+        ]:
+            self._lingbotva_loss = None
+            self._lingbotva_loss_accum: dict[str, list[torch.Tensor]] = {
+                "latent_loss": [],
+                "action_loss": [],
+            }
+            from rlinf.data.datasets.lingbotva import (
+                build_lingbotva_sft_dataloader,
+            )
+
+            return build_lingbotva_sft_dataloader(
+                self.cfg, self._world_size, self._rank, data_paths, eval_dataset
+            )
         else:
             raise KeyError(
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
@@ -80,6 +95,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.LINGBOTVLA,
             SupportedModel.DREAMZERO,
+            SupportedModel.LINGBOTVA,
         ]:
             with self.amp_context:
                 losses_dict = self.model(forward_type=ForwardType.SFT, data=batch)
@@ -88,6 +104,17 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                     "dynamics_loss": losses_dict["dynamics_loss"],
                     "action_loss": losses_dict["action_loss"],
                 }
+            if losses_dict.get("latent_loss", None) is not None:
+                # Accumulate per-micro-batch latent/action loss so the metric we
+                # report per optimizer step is the mean across grad-accum
+                # micro-batches, matching upstream lingbot-va's reporting (which
+                # logs `sum(loss_i / grad_accum)` over grad_accum micro-batches).
+                self._lingbotva_loss_accum["latent_loss"].append(
+                    losses_dict["latent_loss"]
+                )
+                self._lingbotva_loss_accum["action_loss"].append(
+                    losses_dict["action_loss"]
+                )
             return losses_dict["loss"]
         observation, actions = batch
 
@@ -126,6 +153,27 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                 }
             )
             self._dreamzero_loss = None
+        if (
+            SupportedModel(self.cfg.actor.model.model_type)
+            in [SupportedModel.LINGBOTVA]
+            and getattr(self, "_lingbotva_loss_accum", None) is not None
+            and self._lingbotva_loss_accum["latent_loss"]
+        ):
+            # Report the per-component mean across grad-accum micro-batches,
+            # matching upstream lingbot-va's reporting. Without this we'd log
+            # only the last micro-batch's noisy single-sample value, which is
+            # far below the mean for the heavy-tailed action-timestep weights.
+            latent_mean = torch.stack(
+                self._lingbotva_loss_accum["latent_loss"]
+            ).mean()
+            action_mean = torch.stack(
+                self._lingbotva_loss_accum["action_loss"]
+            ).mean()
+            train_metrics.update(
+                {"latent_loss": latent_mean, "action_loss": action_mean}
+            )
+            self._lingbotva_loss_accum["latent_loss"].clear()
+            self._lingbotva_loss_accum["action_loss"].clear()
         return train_metrics
 
     def save_checkpoint(self, save_path: str, step: int = 0) -> None:

@@ -1,0 +1,95 @@
+defaults:
+  - model/lingbotva@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "/workspace/results/"
+    project_name: rlinf
+    experiment_name: "libero_sft_lingbotva_e2e"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: -1
+  max_steps: 3
+  val_check_interval: -1
+  save_interval: -1
+  log_interval: 1
+
+  resume_dir: null
+
+data:
+  train_data_paths: ${oc.env:LINGBOT_VA_DATASET_PATH,/workspace/dataset/data/sft-ci-data/lingbotva-libero}
+  num_workers: 0
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 1
+  global_batch_size: 1
+  seed: 42
+  dataloader_num_workers: 0
+  enable_offload: False
+
+  model:
+    model_type: "lingbotva"
+    precision: bf16
+    model_path: ${oc.env:LINGBOT_VA_MODEL_PATH,/workspace/dataset/lingbot-va-base}
+    num_action_chunks: 12
+    action_dim: 7
+    is_lora: False
+    add_value_head: False
+    lingbotva:
+      repo_path: ${oc.env:LINGBOT_VA_REPO_PATH,/workspace/lingbot-va}
+      config_name: libero
+      training_mode: true
+      enable_offload: false
+      action_per_frame: 4
+      cfg_prob: 0.1
+      attn_mode: torch
+      save_root: ./runtime/lingbotva_sft_e2e
+
+  optim:
+    lr: 1.0e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-1
+    clip_grad: 2.0
+    optimizer_type: adamw_8bit
+    lr_scheduler: constant
+    lr_warmup_steps: 1
+    total_training_steps: 3
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: True
+    gradient_checkpointing: True
+    limit_all_gathers: True
+    reshard_after_forward: False
+    grad_scaler:
+      enabled: False
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: bf16
+    amp_autocast:
+      enabled: false
+      precision: "bf16"

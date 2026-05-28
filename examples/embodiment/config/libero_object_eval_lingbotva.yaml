@@ -1,0 +1,187 @@
+defaults:
+  - env/libero_object@env.train
+  - env/libero_object@env.eval
+  - model/lingbotva@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_object_eval_lingbotva"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1
+  max_steps: -1
+
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+
+  resume_dir: null
+  ckpt_path: null
+
+algorithm:
+  normalize_advantages: True
+  kl_penalty: kl
+  group_size: 1
+  rollout_epoch: 1
+  eval_rollout_epoch: 1
+
+  reward_type: action_level
+  logprob_type: token_level
+  entropy_type: token_level
+
+  adv_type: grpo
+  loss_type: actor
+  loss_agg_func: "token-mean"
+  kl_beta: 0.0
+  entropy_bonus: 0
+  clip_ratio_high: 0.28
+  clip_ratio_low: 0.2
+  clip_ratio_c: 3.0
+  value_clip: 0.2
+  huber_delta: 10.0
+
+  gamma: 0.99
+  gae_lambda: 0.95
+
+  reward_coef: 1.0
+  filter_rewards: False
+  rewards_lower_bound: 0.5
+  rewards_upper_bound: 4.5
+
+  sampling_params:
+    do_sample: False
+    temperature_train: 1.0
+    temperature_eval: -1
+    top_k: -1
+    top_p: 1.0
+    repetition_penalty: 1.0
+
+  length_params:
+    max_new_token: null
+    max_length: 512
+    min_length: 1
+
+env:
+  group_name: "EnvGroup"
+
+  train:
+    total_num_envs: 1
+    group_size: 1
+    max_episode_steps: 240
+    max_steps_per_rollout_epoch: 240
+    reset_gripper_open: True
+    use_fixed_reset_state_ids: True
+    use_ordered_reset_state_ids: False
+
+  eval:
+    total_num_envs: 4
+    auto_reset: True
+    # Keep terminations live so success-on-task immediately ends the episode;
+    # the LingBot-VA Libero policy can drop the object if it keeps moving past
+    # the success boundary, which would otherwise produce false negatives.
+    ignore_terminations: False
+    max_episode_steps: 240
+    max_steps_per_rollout_epoch: 240
+    group_size: 1
+    use_fixed_reset_state_ids: True
+    use_ordered_reset_state_ids: True
+    reset_gripper_open: True
+    is_eval: True
+    # Restrict eval to a subset of libero_object task ids (0..9). null = all
+    # ten tasks. Override per-task from the CLI, e.g.
+    #   bash examples/embodiment/eval_embodiment.sh libero_object_eval_lingbotva \
+    #       LIBERO env.eval.task_id_filter=[3]
+    task_id_filter: null
+    init_params:
+      camera_heights: 128
+      camera_widths: 128
+    video_cfg:
+      save_video: True
+      info_on_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  enable_offload: False
+  pipeline_stage_num: 1
+
+  model:
+    model_type: lingbotva
+    model_path: ${actor.model.model_path}
+    precision: ${actor.model.precision}
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 1
+  global_batch_size: 1
+  seed: 1234
+  enable_offload: False
+
+  model:
+    model_type: lingbotva
+    model_path: ${oc.env:LINGBOT_VA_MODEL_PATH}
+    precision: bf16
+    # SFT trains with num_action_chunks=12; eval uses 16 to match the
+    # verified per-task SR baseline. The model can predict an arbitrary
+    # number of chunks per inference call.
+    num_action_chunks: 16
+    action_dim: 7
+    lingbotva:
+      repo_path: ${oc.env:LINGBOT_VA_REPO_PATH}
+      config_name: libero
+      enable_offload: false
+      action_per_frame: 4
+      # Optional override for the transformer weights — e.g. an SFT checkpoint
+      # at .../checkpoints/global_step_N/actor/model_state_dict/full_weights.pt.
+      # Set via env var LINGBOT_VA_TRANSFORMER_STATE_DICT_PATH (default: null
+      # = use the transformer shipped under ${actor.model.model_path}).
+      transformer_state_dict_path: ${oc.env:LINGBOT_VA_TRANSFORMER_STATE_DICT_PATH,null}
+      save_root: ./runtime/lingbotva
+      # Cross-chunk KV-cache replay. Eval relies on the per-chunk
+      # record_chunk_observations / reset_episode hooks driven by
+      # eval_lingbotva.py; without this the model loses its inter-chunk
+      # memory and SR collapses to ~0%.
+      enable_kv_cache_replay: True
+
+  optim:
+    lr: 5.0e-05
+    value_lr: 1.0e-05
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-05
+    weight_decay: 0.01
+    clip_grad: 1.0
+
+  fsdp_config:
+    strategy: "fsdp"
+    gradient_checkpointing: False
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

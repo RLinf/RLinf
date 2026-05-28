@@ -2,10 +2,14 @@
 
 export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
+# Default driver. Overridden below per actor.model.model_type so that
+# policies which maintain inter-chunk state (e.g. LingBot-VA's KV-cache
+# replay) can use their dedicated single-process driver. See
+# eval_lingbotva.py for the reasoning.
 export SRC_FILE="${EMBODIED_PATH}/eval_embodied_agent.py"
 
-export MUJOCO_GL="osmesa"
-export PYOPENGL_PLATFORM="osmesa"
+export MUJOCO_GL="${MUJOCO_GL:-osmesa}"
+export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-osmesa}"
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 
 # Base path to the BEHAVIOR dataset, which is the BEHAVIOR-1k repo's dataset folder
@@ -34,6 +38,27 @@ else
     CONFIG_NAME=$1
 fi
 
+# Select eval driver based on actor.model.model_type in the config YAML.
+# Most policies use the generic, multi-worker eval_embodied_agent.py.
+# Policies that need inter-chunk model state (KV-cache replay, episode
+# buffers) need a dedicated driver that captures per-step raw obs and
+# calls their record_chunk_observations / reset_episode hooks. To opt in,
+# add a top-level "model_type:" key matching the policy name and provide
+# a per-policy driver file (eval_<model_type>.py).
+CONFIG_FILE="${EMBODIED_PATH}/config/${CONFIG_NAME}.yaml"
+if [ -f "${CONFIG_FILE}" ]; then
+    MODEL_TYPE=$(awk -F':' '/^[[:space:]]*model_type:/ {gsub(/[[:space:]"'\'',]/,"",$2); print $2; exit}' "${CONFIG_FILE}")
+fi
+case "${MODEL_TYPE}" in
+    lingbotva)
+        CANDIDATE="${EMBODIED_PATH}/eval_lingbotva.py"
+        if [ -f "${CANDIDATE}" ]; then
+            SRC_FILE="${CANDIDATE}"
+        fi
+        ;;
+esac
+echo "Eval driver: ${SRC_FILE} (model_type=${MODEL_TYPE:-unknown})"
+
 # NOTE: Set the active robot platform (required for correct action dimension and normalization), supported platforms are LIBERO, ALOHA, BRIDGE, default is LIBERO
 ROBOT_PLATFORM=${2:-${ROBOT_PLATFORM:-"LIBERO"}}
 
@@ -56,6 +81,12 @@ echo "Using ROBOT_PLATFORM=$ROBOT_PLATFORM"
 LOG_DIR="${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')-${CONFIG_NAME}" #/$(date +'%Y%m%d-%H:%M:%S')"
 MEGA_LOG_FILE="${LOG_DIR}/eval_embodiment.log"
 mkdir -p "${LOG_DIR}"
-CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ --config-name ${CONFIG_NAME} runner.logger.log_path=${LOG_DIR}"
-echo ${CMD}
-${CMD} 2>&1 | tee ${MEGA_LOG_FILE}
+# Forward any extra positional args ($3..$N) as Hydra overrides so callers
+# can do e.g. `bash eval_embodiment.sh <cfg> <platform> env.eval.task_id_filter=[3]`.
+shift $(( $# >= 2 ? 2 : $# ))
+echo "python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ --config-name ${CONFIG_NAME} runner.logger.log_path=${LOG_DIR} $*"
+python "${SRC_FILE}" \
+    --config-path "${EMBODIED_PATH}/config/" \
+    --config-name "${CONFIG_NAME}" \
+    runner.logger.log_path="${LOG_DIR}" \
+    "$@" 2>&1 | tee "${MEGA_LOG_FILE}"

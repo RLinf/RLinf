@@ -74,7 +74,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "lingbotva" "dreamzero" "qwen3_vl")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy")
 
 #=======================Utility Functions=======================
@@ -1264,6 +1264,28 @@ install_dreamzero_model() {
     esac
 }
 
+install_lingbot_va_model() {
+    create_and_sync_venv
+    install_common_embodied_deps
+    local lingbotva_dir
+    lingbotva_dir=$(clone_or_reuse_repo LINGBOT_VA_REPO_PATH "$VENV_DIR/lingbot-va" ${GITHUB_PREFIX}https://github.com/robbyant/lingbot-va.git)
+    uv pip install -e "$lingbotva_dir"
+    uv pip install -r $SCRIPT_DIR/embodied/models/lingbotva.txt
+    case "$ENV_NAME" in
+        libero|maniskill_libero)
+            install_${ENV_NAME}_env
+            install_flash_attn
+            ;;
+        "")
+            install_flash_attn
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for LingBot-VA model." >&2
+            exit 1
+            ;;
+    esac
+}
+
 install_qwen3_vl_model() {
     create_and_sync_venv
     install_common_embodied_deps
@@ -1812,8 +1834,11 @@ main() {
                 dexbotic)
                     install_dexbotic_model
                     ;;
-                lingbotvla)                  
-                    install_lingbot_vla_model 
+                lingbotvla)
+                    install_lingbot_vla_model
+                    ;;
+                lingbotva)
+                    install_lingbot_va_model
                     ;;
                 dreamzero)
                     install_dreamzero_model

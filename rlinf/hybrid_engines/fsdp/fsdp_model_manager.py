@@ -521,11 +521,26 @@ class FSDPModelManager:
                     "betas": betas,
                 }
             )
-        optimizer = torch.optim.AdamW(
-            param_groups,
-            eps=adam_eps,
-            weight_decay=weight_decay,
-        )
+        optimizer_type = self._cfg.optim.get("optimizer_type", "adamw")
+        if optimizer_type == "adamw":
+            optimizer = torch.optim.AdamW(
+                param_groups,
+                eps=adam_eps,
+                weight_decay=weight_decay,
+            )
+        elif optimizer_type == "adamw_8bit":
+            from bitsandbytes.optim import AdamW8bit
+
+            optimizer = AdamW8bit(
+                param_groups,
+                eps=adam_eps,
+                weight_decay=weight_decay,
+            )
+        else:
+            raise ValueError(
+                f"Unknown optimizer_type {optimizer_type!r}; "
+                "expected 'adamw' or 'adamw_8bit'."
+            )
 
         # run optimizer empty step to initialize optimizer.state
         # to avoid KeyError during get_state_dict/set_state_dict

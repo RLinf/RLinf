@@ -1,0 +1,9 @@
+# Extra Python dependencies for the LingBot-VA (Wan-Video VLA) integration.
+#
+# The model code itself lives in the lingbot-va peer repo and must be
+# installed separately via:
+#   pip install -e ${LINGBOT_VA_REPO_PATH}
+#
+bitsandbytes>=0.43,<0.46
+einops
+safetensors

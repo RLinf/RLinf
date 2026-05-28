@@ -1,0 +1,181 @@
+# SFT training of LingBot-VA on Libero-Object.
+#
+# Verified setup: single node, 8 x NVIDIA A100-80GB. Matches the lingbot-va
+# reference `va_libero_train_cfg`:
+#   lr=1e-5, betas=(0.9, 0.95), wd=1e-1, micro=1 x grad_accum=10 x ws=8
+#   (effective batch 80), plain torch.optim.AdamW, FSDP2 full-shard,
+#   activation checkpointing, bf16 params + fp32 grad reduction,
+#   attn_mode=flex, cfg_prob=0.1, 3000 steps.
+# Steady-state throughput ~12.5 s/step, ~32 GB/GPU.
+#
+# Prerequisites (run before launching this config):
+#   1. Download yifengzhu-hf/LIBERO-datasets (NOT IPEC-COMMUNITY) HDF5 files.
+#   2. Convert HDF5 -> LeRobot v2.1 via
+#      toolkits/data_scripts_lingbotva/convert_libero_object_to_lerobot.py.
+#   3. Extract Wan2.2 VAE latents + UMT5 empty embedding via
+#      toolkits/data_scripts_lingbotva/extract_latents.py.
+#   4. Reshape episodes_stats.jsonl image stats from (3,) to (3, 1, 1).
+# The resulting directory becomes ${LINGBOT_VA_DATASET_PATH}. See
+# docs/source-en/rst_source/examples/embodied/sft_lingbotva.rst for the full
+# walkthrough.
+#
+# Load-bearing knobs:
+#   * fsdp_config.strategy: fsdp2 + sharding_strategy: full_shard
+#       Each rank holds 1/8 of the params/grads/opt-state, which is what
+#       lets the 5B-param transformer + activations + plain-AdamW optimizer
+#       state fit at ~32 GB/GPU on 80 GB ranks.
+#   * optim.optimizer_type: adamw
+#       Plain torch.optim.AdamW. (Only the single-GPU override below uses
+#       bitsandbytes adamw_8bit, and only because 45 GB cards cannot hold
+#       fp32 optimizer state for a 5B-param transformer.)
+#   * global_batch_size: 80
+#       global_batch_size / (micro_batch_size * world_size) = grad_accum,
+#       so 80 / (1 * 8) = 10. Adjust together with world_size to keep
+#       grad_accum = 10 and the same effective batch as the reference.
+#   * lingbotva.attn_mode: flex
+#       Reference recipe (flex_attention with BlockMask enforcing the
+#       chunk/window/noise-typed attention pattern). Requires torch >= 2.9 —
+#       earlier versions hit a flex_attention + inductor codegen bug
+#       ("NameError: name 's10' is not defined"). attn_mode: torch (SDPA) is
+#       NOT a valid fallback: SDPA silently drops the BlockMask, leaking
+#       clean ground-truth tokens to noisy queries at training time, which
+#       collapses eval SR to 0%.
+#   * precision: bf16 + mixed_precision.reduce_dtype: fp32
+#       Reference recipe. The transformer is loaded bf16 + force-cast to
+#       avoid fp32 leakage from scale_shift_table (would trip FSDP's
+#       mixed-dtype check).
+#
+# ---------------------------------------------------------------------------
+# Running on a single GPU (L40-class, >=45 GB)
+# ---------------------------------------------------------------------------
+# The 8-GPU recipe above does not fit on one 45-80 GB rank because plain
+# AdamW state alone is ~37 GB for the 5B-param transformer. To run the
+# same recipe on a single GPU, override the four load-bearing knobs at
+# launch via Hydra CLI overrides:
+#
+#   bash examples/sft/run_vla_sft.sh libero_sft_lingbotva \
+#     actor.fsdp_config.strategy=fsdp \
+#     actor.fsdp_config.sharding_strategy=no_shard \
+#     actor.fsdp_config.use_orig_params=True \
+#     actor.fsdp_config.reshard_after_forward=False \
+#     actor.optim.optimizer_type=adamw_8bit \
+#     actor.global_batch_size=10 \
+#     data.num_workers=4 \
+#     actor.dataloader_num_workers=4
+#
+# Why these overrides:
+#   * FSDP1 + no_shard + use_orig_params: FSDP2's `fully_shard` wraps
+#     parameters as DTensors even at world_size=1, which crashes
+#     bitsandbytes.AdamW8bit. FSDP1 + NO_SHARD + use_orig_params keeps
+#     parameters as plain Tensors that bnb's CUDA kernels accept.
+#   * adamw_8bit: required to fit optimizer state on a 45 GB card.
+#   * global_batch_size=10: world_size=1, micro=1 -> grad_accum=10,
+#     preserving the reference effective batch.
+#
+# Single-GPU verified throughput: ~17 s/step on an L40 (45 GB). Also set
+# PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True in the launch shell
+# (run_vla_sft.sh already exports this) — without it the allocator
+# fragments and OOMs during model wrap or first forward.
+defaults:
+  - model/lingbotva@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_sft_lingbotva"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: -1
+  max_steps: 3000
+  val_check_interval: -1
+  # Each save writes full_weights.pt (~9.5 GB) and a dcp_checkpoint/ dir of
+  # sharded optimizer state (~28 GB), so a saved step costs ~38 GB on disk.
+  # If you only need eval-able weights, strip dcp_checkpoint/ after each save.
+  save_interval: 500
+  log_interval: 1
+
+data:
+  train_data_paths: ${oc.env:LINGBOT_VA_DATASET_PATH}
+  num_workers: 16
+  prefetch_factor: 2
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 1
+  # global_batch_size / (micro_batch_size * world_size) = grad_accum.
+  # ws=8, micro=1 -> global=80 gives grad_accum=10, matching the
+  # reference effective batch. Override to 10 for single-GPU launches
+  # (see the "Running on a single GPU" section in the header).
+  global_batch_size: 80
+  seed: 42
+  dataloader_num_workers: 16
+  enable_offload: False
+
+  model:
+    model_type: "lingbotva"
+    precision: bf16
+    model_path: ${oc.env:LINGBOT_VA_MODEL_PATH}
+    num_action_chunks: 12
+    action_dim: 7
+    is_lora: False
+    add_value_head: False
+    lingbotva:
+      repo_path: ${oc.env:LINGBOT_VA_REPO_PATH}
+      config_name: libero
+      training_mode: true
+      enable_offload: false
+      action_per_frame: 4
+      transformer_state_dict_path: ${oc.env:LINGBOT_VA_TRANSFORMER_STATE_DICT_PATH,null}
+      empty_emb_path: ${oc.env:LINGBOT_VA_EMPTY_EMB_PATH,null}
+      cfg_prob: 0.1
+      attn_mode: flex
+      save_root: ./runtime/lingbotva_sft
+
+  optim:
+    lr: 1.0e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-1
+    clip_grad: 2.0
+    optimizer_type: adamw
+    lr_scheduler: constant
+    lr_warmup_steps: 10
+    total_training_steps: 3000
+
+  fsdp_config:
+    strategy: "fsdp2"
+    sharding_strategy: "full_shard"
+    use_orig_params: False
+    gradient_checkpointing: True
+    limit_all_gathers: True
+    reshard_after_forward: True
+    grad_scaler:
+      enabled: False
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: bf16
+    amp_autocast:
+      enabled: false
+      precision: "bf16"
