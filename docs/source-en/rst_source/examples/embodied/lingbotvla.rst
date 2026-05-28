@@ -258,3 +258,8 @@ Visualization and Results
 
 * **Training**: ``train/actor/policy_loss``, ``train/actor/entropy_loss``, ``train/actor/approx_kl``
 * **Environment**: ``env/success_once`` (episodic success rate), ``env/episode_len``, ``env/reward``
+
+.. image:: https://github.com/RLinf/misc/raw/main/pic/lingbotvla_success_once.png
+   :alt: lingbotvla_success_once result curve
+   :width: 95%
+   :align: center
