@@ -215,4 +215,4 @@ or:
    bash examples/reasoning/run_main_grpo_math.sh <config_name>
 
 For more complex per-node software environments or heterogeneous hardware layouts,
-combine this guide with :doc:`../configuration/hetero` and :doc:`../configuration/cluster`.
+combine this guide with :doc:`../configuration/hetero` and :doc:`../advance/cluster`.

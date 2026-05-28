@@ -92,7 +92,7 @@
    我们推荐你修改配置文件中的参数 ``cluster.component_placement``。
 
    你可以根据实际资源将该项设置为 **0-1**， **0-3** 或 **0-7** 来使用 2/4/8 张 GPU。
-   查看 :doc:`../tutorials/configuration/yaml` 以获取有关 Placement 配置的更详细说明。
+   查看 :doc:`../tutorials/configuration/gpu_cluster_config` 以获取有关 Placement 配置的更详细说明。
 
    .. code-block:: yaml
 

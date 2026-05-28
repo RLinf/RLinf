@@ -45,7 +45,7 @@ YAML 配置
 - ``actor.global_batch_size``  
 - ``actor.micro_batch_size``  
 
-第一次运行建议使用默认参数，然后逐步调整。完整参数说明请参考 :doc:`../configuration/yaml`。
+第一次运行建议使用默认参数，然后逐步调整。完整参数说明请参考 :doc:`../configuration/gpu_cluster_config`。
 
 Worker 启动调度流程
 ---------------------------

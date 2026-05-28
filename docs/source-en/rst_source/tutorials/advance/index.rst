@@ -4,6 +4,11 @@ Advanced Features
 This chapter provides a step-by-step deep dive into how RLinf achieves **highly efficient execution**,
 offering practical guidance to help you fully optimize your RL post-training workflows.
 
+- :doc:`cluster`
+   Describes the globally unique *Cluster* object, responsible for coordinating all roles,
+   processes, and communication across distributed nodes. Covers Ray initialization,
+   node discovery, and worker allocation.
+
 - :doc:`5D`
    Explains how RLinf supports Megatron-style 5D parallelism, including:
    Tensor Parallelism (TP), Data Parallelism (DP), Pipeline Parallelism (PP),
@@ -52,6 +57,7 @@ offering practical guidance to help you fully optimize your RL post-training wor
    :hidden:
    :maxdepth: 2
 
+   cluster
    5D
    lora
    version

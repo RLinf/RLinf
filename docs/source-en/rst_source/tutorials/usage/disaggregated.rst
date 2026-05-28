@@ -34,7 +34,7 @@ The workers are assigned to separate GPUs. The set of GPUs is specified using gl
 .. note::
    The ``pipeline_stage_num`` configuration should be adjusted to achieve the desired pipelining effect. 
 
-Refer to :doc:`../configuration/yaml` for compete configuration.
+Refer to :doc:`../configuration/gpu_cluster_config` for compete configuration.
 
 **ComponentPlacement programming**
 

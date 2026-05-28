@@ -51,7 +51,7 @@ these examples, then iterating toward your custom task. Key options include
 - ``actor.micro_batch_size``
 
 As a first run, keep the defaults and iterate. For a full parameter reference,
-see :doc:`../configuration/yaml`.
+see :doc:`../configuration/gpu_cluster_config`.
 
 Worker Launch Orchestration
 ---------------------------

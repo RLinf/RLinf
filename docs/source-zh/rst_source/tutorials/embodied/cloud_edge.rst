@@ -208,4 +208,4 @@ RLinf 使用方式
    bash examples/reasoning/run_main_grpo_math.sh <config_name>
 
 如果你的集群同时存在更复杂的软件环境差异或异构硬件布局，可以进一步结合
-:doc:`../configuration/hetero` 与 :doc:`../configuration/cluster` 一起使用。
+:doc:`../configuration/hetero` 与 :doc:`../advance/cluster` 一起使用。
