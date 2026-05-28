@@ -47,6 +47,7 @@ from rlinf.data.datasets.dreamzero.utils import (
     probe_video_container_fps,
     safe_lang_text,
 )
+from rlinf.data.lerobot_paths import resolve_lerobot_dataset_root
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -120,7 +121,7 @@ class DreamZeroLeRobotDataset(Dataset):
                 "DreamZeroLeRobotDataset requires at least one language key."
             )
 
-        self._root = Path(self.data_path).resolve()
+        self._root = resolve_lerobot_dataset_root(self.data_path)
         self._meta_dir = self._root / "meta"
         with open(self._meta_dir / "info.json") as f:
             self._info = json.load(f)
@@ -404,6 +405,7 @@ class DreamZeroLeRobotDataset(Dataset):
                 delta_timestamps[source] = [t / self._fps for t in fixed_window.action]
         self.dataset = lerobot_dataset.LeRobotDataset(
             self.data_path,
+            root=self._root,
             delta_timestamps=delta_timestamps,
             video_backend=self._video_backend,
         )
