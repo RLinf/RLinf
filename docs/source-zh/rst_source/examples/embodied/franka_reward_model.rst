@@ -44,7 +44,7 @@ Reward Model 数据集采集
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 采集 reward model 训练和评估数据支持两种方式，详细说明请参考
-:doc:`../../tutorials/embodied/reward_model_realworld` 中的 **数据采集** 部分。
+:doc:`../../tutorials/embodied/reward_model` 中的 **数据采集** 部分。
 两种方式的核心区别在于标注方式：方式一为手动键盘标注，适用于任意操作任务；
 方式二为基于位姿的自动标注，专为固定目标位姿的任务设计。
 
@@ -75,7 +75,7 @@ Reward Model 数据集采集
 - ``a`` — 将当前帧标注为**失败**。
 
 达到目标帧数后，脚本自动停止、划分数据并保存 ``train.pt`` / ``val.pt`` 文件。
-详细配置说明及完整示例请参见 :doc:`../../tutorials/embodied/reward_model_realworld` 中的方式一。
+详细配置说明及完整示例请参见 :doc:`../../tutorials/embodied/reward_model` 中的方式一。
 
 方式二：固定位姿（目标驱动）
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -116,7 +116,7 @@ Reward Model 数据集采集
 
 生成的 ``.pt`` 文件符合 ``RewardDatasetPayload`` 约定的标准格式，包含 ``images``、
 ``labels``（1 = 成功，0 = 失败）和 ``metadata``。
-详细说明及完整示例请参见 :doc:`../../tutorials/embodied/reward_model_realworld` 中的方式二。
+详细说明及完整示例请参见 :doc:`../../tutorials/embodied/reward_model` 中的方式二。
 
 Reward Model 训练
 -----------------------
@@ -131,7 +131,7 @@ Reward Model 训练
       min_delta: 1e-6
 
 如需在真机遥操作中进行在线 reward model 推理（SpaceMouse + GPU 节点，无需 RL 训练循环），
-请参考 :doc:`../../tutorials/embodied/reward_model_realworld` 中的 **真机遥操作 + 在线 Reward Model 推理** 部分。
+请参考 :doc:`../../tutorials/embodied/reward_model` 中的 **真机遥操作 + 在线 Reward Model 推理** 部分。
 
 集群配置
 -----------------------

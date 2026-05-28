@@ -10,7 +10,7 @@ You will learn how to:
 - Add a :doc:`new model <new_model_fsdp>` using the FSDP + HuggingFace backend  
 - Add a :doc:`new model <new_model_megatron>` using the Megatron + SGLang backend  
 - Follow a complete :doc:`reward model workflow <../embodied/reward_model>`
-- Collect a :doc:`real-world reward model dataset <../embodied/reward_model_realworld>`
+- Collect a :doc:`real-world reward model dataset <../embodied/reward_model>`
 
 RLinf supports multiple backends for model training, each with its own initialization logic and execution flow.  
 This guide provides step-by-step instructions on how to:

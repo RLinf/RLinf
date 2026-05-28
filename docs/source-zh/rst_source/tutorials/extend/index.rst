@@ -9,7 +9,7 @@
 - 添加一个使用 FSDP + HuggingFace 后端的 :doc:`新模型 <new_model_fsdp>`  
 - 添加一个使用 Megatron + SGLang 后端的 :doc:`新模型 <new_model_megatron>`  
 - 参考一条完整的 :doc:`Reward Model 工作流 <../embodied/reward_model>`
-- 参考 :doc:`真机 Reward Model 数据集采集 <../embodied/reward_model_realworld>`
+- 参考 :doc:`真机 Reward Model 数据集采集 <../embodied/reward_model>`
 
 RLinf 支持多种模型训练后端，每种后端都有自己的初始化逻辑和执行流程。  
 本指南提供了逐步说明，帮助你完成以下任务：

@@ -1,5 +1,5 @@
-Channel Queuing for Pipelining
-===============================
+Use Channel for Communication
+==============================
 
 The channel module provides a high-level **distributed producer–consumer queue** abstraction for workers to exchange data asynchronously.  
 A ``Channel`` allows one or more producer workers to ``put`` items into a named queue and one or more consumer workers to ``get`` them, optionally accumulating **batches** based on per-item weights.
