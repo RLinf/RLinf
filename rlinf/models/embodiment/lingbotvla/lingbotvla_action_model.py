@@ -69,6 +69,9 @@ ROBOTWIN_REP_PADDED_STATE_INDICES = (
 )
 ROBOTWIN_MODEL_TO_ENV_ACTION_INDICES = list(range(6)) + [14] + list(range(6, 12)) + [15]
 DEFAULT_RL_TRAINABLE_SCOPE = "action_expert"
+PIL_BILINEAR = (
+    Image.Resampling.BILINEAR if hasattr(Image, "Resampling") else Image.BILINEAR
+)
 
 
 class LingbotvlaActionModel(nn.Module, BasePolicy):
@@ -148,7 +151,7 @@ class LingbotvlaActionModel(nn.Module, BasePolicy):
         qwen_config = PreTrainedConfig.from_pretrained(config_path)
 
         for key, value in training_model_config.items():
-            setattr(qwen_config, key, getattr(qwen_config, key, value))
+            setattr(qwen_config, key, value)
 
         qwen_config.attention_implementation = "eager"
         qwen_config.tokenizer_path = config.tokenizer_path
@@ -176,6 +179,12 @@ class LingbotvlaActionModel(nn.Module, BasePolicy):
             )
         )
         self.action_env_dim = int(getattr(config, "action_env_dim", self.action_dim))
+        if not 0 < self.action_env_dim <= len(ROBOTWIN_MODEL_TO_ENV_ACTION_INDICES):
+            raise ValueError(
+                "LingbotVLA action_env_dim must be in the range "
+                f"[1, {len(ROBOTWIN_MODEL_TO_ENV_ACTION_INDICES)}] for RoboTwin "
+                f"SFT action reorder, got {self.action_env_dim}."
+            )
         self.num_steps = int(getattr(config, "num_steps", 10))
         self.noise_method = getattr(config, "noise_method", "flow_sde")
         self.image_size = int(data_config.get("img_size", 224))
@@ -415,7 +424,7 @@ class LingbotvlaActionModel(nn.Module, BasePolicy):
             arr = arr.astype(np.uint8)
 
         pil_img = Image.fromarray(arr).convert("RGB")
-        pil_img = pil_img.resize((self.image_size, self.image_size), Image.BILINEAR)
+        pil_img = pil_img.resize((self.image_size, self.image_size), PIL_BILINEAR)
         return torch.from_numpy(np.array(pil_img)).permute(2, 0, 1).contiguous()
 
     def _reorder_env_state_to_robotwin_rep(self, state: torch.Tensor) -> torch.Tensor:
@@ -563,12 +572,12 @@ class LingbotvlaActionModel(nn.Module, BasePolicy):
         return [batched_images], [batched_img_masks], lang_tokens, lang_masks, state
 
     def output_transform(self, outputs: dict) -> dict:
-        action_pred = (
-            self._select_env_action_dims(outputs["actions"][:, : self.action_chunk, :])
-            .to(torch.float32)
-            .cpu()
-            .numpy()
-        )
+        actions = outputs["actions"][:, : self.action_chunk, :]
+        if actions.shape[-1] == self.action_env_dim:
+            action_pred_tensor = actions
+        else:
+            action_pred_tensor = self._select_env_action_dims(actions)
+        action_pred = action_pred_tensor.to(torch.float32).cpu().numpy()
         unnorm_data = self.normalizer.unnormalize({"action": action_pred})
         outputs["actions"] = torch.from_numpy(unnorm_data["action"])
         return outputs
@@ -759,6 +768,7 @@ class LingbotvlaActionModel(nn.Module, BasePolicy):
             log_probs.append(log_prob)
 
         x_0 = x_t
+        env_actions = self._select_env_action_dims(x_0[:, : self.action_chunk, :])
         chains = torch.stack(chains, dim=1)
 
         log_probs = self._select_env_action_dims(
@@ -778,7 +788,7 @@ class LingbotvlaActionModel(nn.Module, BasePolicy):
             values = torch.stack(values, dim=1).mean(dim=-1, keepdim=True)
 
         return {
-            "actions": x_0,
+            "actions": env_actions,
             "chains": chains,
             "prev_logprobs": log_probs,
             "prev_values": values,
