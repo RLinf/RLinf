@@ -19,6 +19,7 @@ from omegaconf import DictConfig
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.config import SupportedModel
+from rlinf.data.lerobot_paths import resolve_lerobot_repo_id
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.utils.utils import get_rng_state, set_rng_state
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
@@ -28,8 +29,15 @@ class FSDPVlaSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
 
-    def build_dataloader(self, data_paths: list[str], eval_dataset: bool = False):
+    def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
         if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:
+            repo_id = resolve_lerobot_repo_id(data_paths)
+            if repo_id is None:
+                raise ValueError(
+                    "OpenPI SFT requires data.train_data_paths to be set to a local "
+                    "dataset path or LeRobot repo id."
+                )
+
             import openpi.training.data_loader as openpi_data_loader
 
             from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
@@ -38,6 +46,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                 self.cfg.actor.model.openpi.config_name,
                 model_path=self.cfg.actor.model.model_path,
                 batch_size=self.cfg.actor.micro_batch_size * self._world_size,
+                repo_id=repo_id,
                 data_kwargs=getattr(self.cfg.actor, "openpi_data", None),
             )
             data_loader = openpi_data_loader.create_data_loader(
