@@ -328,6 +328,8 @@ class XR0ForRLActionPrediction(nn.Module, BasePolicy):
 
             chains.append(x_t.detach().clone())
             log_probs.append(log_prob)
+            # TODO: Compute real value at each denoising step using
+            # ValueHead on DiT hidden states (see lingbotvla pattern).
             values.append(torch.zeros(batch_size, device=device))
 
         # Aggregate: (B, num_steps+1, action_len, action_dim)
@@ -340,6 +342,8 @@ class XR0ForRLActionPrediction(nn.Module, BasePolicy):
         else:
             prev_logprobs = torch.zeros(batch_size, device=device)
 
+        # TODO: Aggregate per-step values into prev_values (see lingbotvla
+        # pattern: values = torch.stack(values, dim=1).mean(...)).
         prev_values = torch.zeros(batch_size, device=device)
 
         return {
@@ -381,6 +385,8 @@ class XR0ForRLActionPrediction(nn.Module, BasePolicy):
         return {
             "actions": actions,
             "chains": chains_tensor,
+            # TODO: For stub, prev_logprobs/prev_values are zeros.
+            # Real model will compute these from the chain.
             "prev_logprobs": torch.zeros(batch_size, device=device),
             "prev_values": torch.zeros(batch_size, device=device),
             "denoise_inds": torch.full(
@@ -486,7 +492,8 @@ class XR0ForRLActionPrediction(nn.Module, BasePolicy):
         denoise_inds = forward_inputs.get("denoise_inds")  # (B,)
 
         if chains is None or denoise_inds is None:
-            # Fallback: return zeros
+            # TODO: This fallback should not happen in normal usage.
+            # Indicates forward_inputs was not properly built.
             batch_size = 1
             for v in forward_inputs.values():
                 if isinstance(v, torch.Tensor) and v.ndim > 0:
@@ -512,7 +519,8 @@ class XR0ForRLActionPrediction(nn.Module, BasePolicy):
         is_stub = hasattr(self.xr0_model, "generate")
 
         if is_stub:
-            # Stub: return dummy logprobs/entropy
+            # TODO: For stub model, return dummy logprobs/entropy.
+            # Real model replays the chain below.
             return {
                 "logprobs": torch.zeros(batch_size, device=device),
                 "values": torch.zeros(batch_size, device=device),
