@@ -32,7 +32,7 @@ RLinf supports real-world RL training on the following robotic platforms:
 * **Dexmal DOS-W1** — Dual-arm robot with flow-matching + SAC pick tasks.
 * **Franka + Dexterous Hand** — Franka arm combined with Ruiyan five-finger dexterous hand for complex manipulation.
 
-For detailed setup guides, see :doc:`realworld_robot` and the :doc:`Franka examples <../examples/embodied/franka>`.
+For detailed setup guides, see :doc:`realworld_robot` and the :doc:`Franka examples <../../examples/embodied/franka>`.
 
 Supported Embodied Models
 --------------------------
@@ -63,4 +63,4 @@ Policy Networks
 * **CNN** — Convolutional neural network policy for visual RL tasks.
 * **ResNet** — Pretrained ResNet models for image-based reward modeling.
 
-For model-specific training examples, see the :doc:`Embodied Examples gallery <../examples/embodied/index>`.
+For model-specific training examples, see the :doc:`Embodied Examples gallery <../../examples/embodied/index>`.

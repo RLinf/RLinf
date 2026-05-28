@@ -31,7 +31,7 @@ RLinf 支持在以下真机平台上进行 RL 训练：
 * **Dexmal DOS-W1** — 双臂机器人，支持 flow-matching + SAC 抓取任务。
 * **Franka + 灵巧手** — Franka 机械臂配合睿研五指灵巧手，实现复杂操作。
 
-详细配置指南见 :doc:`realworld_robot` 和 :doc:`Franka 示例 <../examples/embodied/franka>`。
+详细配置指南见 :doc:`realworld_robot` 和 :doc:`Franka 示例 <../../examples/embodied/franka>`。
 
 支持的具身模型
 --------------
@@ -62,4 +62,4 @@ RLinf 支持以下 VLA 和具身策略模型：
 * **CNN** — 卷积神经网络策略，用于视觉 RL 任务。
 * **ResNet** — 预训练 ResNet 模型，用于图像奖励建模。
 
-各模型的具体训练示例见 :doc:`具身示例库 <../examples/embodied/index>`。
+各模型的具体训练示例见 :doc:`具身示例库 <../../examples/embodied/index>`。
