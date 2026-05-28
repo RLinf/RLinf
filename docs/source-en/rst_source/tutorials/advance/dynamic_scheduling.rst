@@ -1,14 +1,66 @@
 Dynamic Scheduling
 ==================
 
-
 Dynamic scheduling adjusts and migrates resources among components (actor / rollout / inference)
 in real time during training to improve overall throughput and resource utilization.
 It relies on Megatron-LM's online scaling (second-level elasticity) and SGLang/vLLM's migrate capability
 to reallocate GPU resources without stopping training.
 
-What is Dynamic Scheduling?
----------------------------
+.. contents::
+   :depth: 2
+   :local:
+
+Online Scaling Mechanism
+------------------------
+
+Online scaling (also known as elastic training)
+is a powerful feature that enables dynamic scaling of training resources, with GPU switching performed within 1 seconds.
+This capability allows you to adjust the number of GPUs and nodes used for training in real time,
+based on cluster availability, workload demands, or resource optimization goals.
+
+What is Online Scaling?
+^^^^^^^^^^^^^^^^^^^^^^^
+
+Online scaling refers to the ability to **scale up** (add more resources) or **scale down** (remove resources)
+during training while maintaining training continuity and model state consistency.
+
+In the context of RL training with Megatron-LM, this involves:
+
+- **Scaling up**: Adding nodes/GPUs to increase training throughput
+- **Scaling down**: Releasing nodes/GPUs to free up resources for other tasks
+- **Parallel strategy adjustment**: Dynamically changing Megatron's parallel strategies (TP/PP/DP/CP)
+
+The system automatically handles:
+
+- Model parameter redistribution across the new parallel configuration
+- Optimizer state migration
+- Communication group reconstruction
+- Training state synchronization
+
+Why is Online Scaling Important?
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+When using RLinf's disaggregated mode with fine-grained pipelining,
+the rollout and inference stages are completed before the actor stage finishes.
+At this point, the resources used for rollout and inference can be reallocated to the actor stage **within seconds**,
+accelerating actor training and improving overall system performance.
+
+Benefits and Effects
+^^^^^^^^^^^^^^^^^^^^
+
+**Performance Benefits:**
+
+- **Increased Throughput**: Adding more GPUs can significantly speed up training
+- **Better Resource Utilization**: Dynamic resource allocation ensures optimal usage
+- **Reduced Training Time**: Efficient scaling can reduce overall training time by 20–50%
+
+**Operational Benefits:**
+
+- **Zero Training Interruption**: Scaling occurs seamlessly without halting training
+- **Consistent Training Progress**: Maintains convergence and model continuity throughout scaling
+
+Dynamic Scheduling in Practice
+------------------------------
 
 Dynamic scheduling adjusts GPU resources across components during training based on stage-specific
 bottlenecks and workload changes:
@@ -16,8 +68,8 @@ bottlenecks and workload changes:
 - Scaling up: temporarily add GPUs when a component becomes the bottleneck
 - Scaling down: reclaim GPUs when a component is temporarily idle
 
-Benefits and Effects
---------------------
+Benefits
+^^^^^^^^
 
 **Performance benefits:**
 
@@ -31,10 +83,10 @@ Benefits and Effects
 - Consistency preserved: training/model state remains consistent during scaling
 
 How to Use Dynamic Scheduling
------------------------------
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Prerequisites
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+"""""""""""""
 
 1) Prepare Megatron-LM online scaling dependency (prebuilt):
 
@@ -58,14 +110,14 @@ This repository provides the compiled artifacts for Megatron-LM online scaling. 
 
 .. important::
     If you use `torch >= 2.6.0`, Megatron-LM 0.11 may raise errors due to the default `torch.load` behavior.
-    You can clone a modified Megatron-LM 0.11 version from 
+    You can clone a modified Megatron-LM 0.11 version from
 
     .. code-block:: bash
 
         git clone -b core_v0.11.0_rlinf git@github.com:RLinf/Megatron-LM.git
 
 Configuration Example
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+"""""""""""""""""""""
 
 Disaggregated Pipeline configuration:
 
@@ -94,7 +146,7 @@ Make sure the component order is `actor -> rollout -> inference`, otherwise the 
         inference: 6-7
 
 Scheduling Logic
-----------------
+^^^^^^^^^^^^^^^^
 
 When dynamic scheduling is enabled, the runtime scheduler monitors component progress and queues
 and decides whether to adjust resources. Typical actions include:
@@ -103,7 +155,7 @@ and decides whether to adjust resources. Typical actions include:
 - When rollout or inference finishes: release resources to expand the actor
 
 Optional Policies
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^
 
 - `use_pre_process_policy`
 
@@ -115,4 +167,4 @@ Optional Policies
 
   1. Before the last actor iter in an iteration, the actor waits for rollout and inference to finish
   2. Then the actor takes all resources for an expanded final step
-  3. Thanks to pipelining, rollout/inference typically finish earlier; with proper scheduling, the actor can fully utilize the entire cluster for the last iter 
+  3. Thanks to pipelining, rollout/inference typically finish earlier; with proper scheduling, the actor can fully utilize the entire cluster for the last iter
