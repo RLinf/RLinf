@@ -1,5 +1,5 @@
-Supported Environments, Robots, and Models
-==========================================
+Simulators, Robots, and Models
+==============================
 
 This page summarizes the simulators, real-world robotic platforms, and VLA/WAM models
 supported by RLinf for embodied reinforcement learning.
@@ -20,6 +20,8 @@ RLinf supports a wide range of GPU and CPU-based simulators through standardized
 * **FrankaSim** — Franka arm simulation environment with MLP/CNN policy support.
 * **Behavior** — Interactive simulation benchmark with complex household activities.
 * **EmbodiChain** — Gym-style environment for chain-based manipulation tasks.
+
+For simulator-specific training examples, see the :doc:`Embodied Examples gallery <../../examples/embodied/index>`.
 
 Real-World Robotics
 -------------------

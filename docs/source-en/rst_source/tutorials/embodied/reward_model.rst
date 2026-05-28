@@ -1,23 +1,21 @@
 Reward Model Guide
 ==================
 
-This document describes how to use reward models in RLinf, covering both simulation-based
-and real-world robot workflows. It covers image classification rewards such as
-``ResNetRewardModel`` and VLM rewards such as QwenTrend / ``HistoryVLMRewardModel``.
+This document describes how to use reward models in RLinf. It covers both image
+classification rewards such as ``ResNetRewardModel`` and VLM rewards such as
+QwenTrend / ``HistoryVLMRewardModel``.
+Here, QwenTrend means using a Qwen3-VL model to judge the action trend in a short
+history video and convert that judgment into a scalar reward.
 
-.. contents::
-   :depth: 2
-   :local:
-
-Simulation Reward Model
------------------------
-
-The full simulation workflow has four stages:
+The full workflow has four stages:
 
 1. Data collection: collect raw episode data during RL runs.
 2. Dataset conversion: convert raw episodes into either image classification data or VLM SFT data.
 3. Reward model training: train a ResNet reward model or fine-tune a VLM reward model.
 4. Reward model inference in RL: plug the trained model into online rollout and use it in final reward computation.
+
+Simulation Reward Model
+-----------------------
 
 1. Data Collection
 ^^^^^^^^^^^^^^^^^^
@@ -28,8 +26,8 @@ a unified collection wrapper, and the related usage is documented in :doc:`the d
 For reward model use cases, we recommend saving raw episodes in ``pickle`` format first, then converting
 them into processed training splits with the preprocessing script.
 
-Enable Data Collection
-""""""""""""""""""""""
+1.1 Enable Data Collection
+""""""""""""""""""""""""""
 
 Enable ``data_collection`` under ``env`` in your YAML config:
 
@@ -52,14 +50,17 @@ For QwenTrend VLM rewards, RLinf also provides a ready-to-run collection config:
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_qwentrend_collect
 
 This config keeps ``reward.use_reward_model: false`` and enables data collection on the
-evaluation environment.
+evaluation environment. The saved episodes include the dual-view image observations
+used later by the VLM pipeline, such as ``main_images`` and ``extra_view_images``.
 
-Preprocess into a ResNet Reward Dataset
-"""""""""""""""""""""""""""""""""""""""
+1.2 Preprocess into a ResNet Reward Dataset
+"""""""""""""""""""""""""""""""""""""""""""
 
 Raw ``pickle`` files cannot be consumed by reward model training directly. Use
 ``examples/reward/preprocess_reward_dataset.py`` to convert collected ``.pkl`` episodes into
-``.pt`` files that can be loaded by ``RewardBinaryDataset``.
+``.pt`` files that can be loaded by ``RewardBinaryDataset``. In the current implementation,
+the script extracts ``main_images`` from observations and builds binary labels from per-step
+``info["success"]``.
 
 Example:
 
@@ -69,7 +70,15 @@ Example:
        --raw-data-path logs/xxx/collected_data \
        --output-dir logs/xxx/processed_reward_data
 
-By default, this produces ``train.pt`` and ``val.pt`` following the ``RewardDatasetPayload`` schema:
+By default, this produces:
+
+.. code-block:: text
+
+   logs/xxx/processed_reward_data/
+   ├── train.pt
+   └── val.pt
+
+The generated ``.pt`` files follow the canonical ``RewardDatasetPayload`` schema:
 
 .. code-block:: python
 
@@ -79,12 +88,21 @@ By default, this produces ``train.pt`` and ``val.pt`` following the ``RewardData
        "metadata": dict[str, Any],
    }
 
-Convert into a QwenTrend VLM Dataset
-""""""""""""""""""""""""""""""""""""
+Where:
+
+- ``images`` stores the training images.
+- ``labels`` stores the binary labels.
+- ``metadata`` stores source path, sampling arguments, split ratio, and related preprocessing info.
+
+``RewardBinaryDataset`` then loads these ``train.pt`` / ``val.pt`` files directly.
+
+1.3 Convert into a QwenTrend VLM Dataset
+""""""""""""""""""""""""""""""""""""""""
 
 QwenTrend uses short dual-view history windows rather than single images. Use
 ``examples/reward/preprocess_qwentrend_reward_dataset.py`` to slice collected
-episodes into 5-frame windows.
+episodes into 5-frame windows, extract ``main_images`` and ``extra_view_images``,
+and assign each window one of ``positive``, ``negative``, or ``unclear``.
 
 Example:
 
@@ -97,13 +115,34 @@ Example:
        --stride 1 \
        --delta-threshold 0.05
 
+By default, this produces JSONL manifests and per-sample pickle files:
+
+.. code-block:: text
+
+   logs/xxx/processed_qwentrend_reward_data/
+   ├── dataset_info.json
+   ├── train/
+   │   ├── segments.jsonl
+   │   └── pkl/
+   └── eval/
+       ├── segments.jsonl
+       └── pkl/
+
+The train/eval split is done by episode, so windows from the same episode are not
+mixed across splits.
+
 2. Reward Model Training
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
-RLinf supports two reward training paths.
+RLinf supports two reward training paths. ``examples/reward/run_reward_training.sh``
+trains the ResNet image reward model, while ``examples/sft/run_vlm_sft.sh``
+fine-tunes a VLM reward model such as QwenTrend.
 
-Fine-Tune the ResNet Reward Model
-"""""""""""""""""""""""""""""""""
+2.1 Fine-Tune the ResNet Reward Model
+"""""""""""""""""""""""""""""""""""""
+
+2.1.1 Configure ResNet Dataset Paths
+........................................
 
 Before training, edit ``examples/reward/config/reward_training.yaml`` so it points to your processed splits:
 
@@ -112,6 +151,15 @@ Before training, edit ``examples/reward/config/reward_training.yaml`` so it poin
    data:
      train_data_paths: "logs/processed_reward_data/train.pt"
      val_data_paths: "logs/processed_reward_data/val.pt"
+
+.. note::
+
+   At present, ``run_reward_training.sh`` mainly prepares the launch command and log directory.
+   The dataset paths are taken from ``reward_training.yaml``, specifically
+   ``data.train_data_paths`` and ``data.val_data_paths``.
+
+2.1.2 Configure the ResNet Model
+....................................
 
 For the ResNet path, set ``actor.model.model_type`` to ``"resnet"``:
 
@@ -124,7 +172,10 @@ For the ResNet path, set ``actor.model.model_type`` to ``"resnet"``:
        pretrained: False
        image_size: [3, 128, 128]
 
-The online reward-worker registry contains the following model types:
+If you want to continue training from existing weights, set ``model_path`` to a checkpoint.
+If you want to train from scratch, keep ``model_path: null``.
+
+The online reward-worker registry currently contains the following model types:
 
 .. code-block:: python
 
@@ -134,32 +185,70 @@ The online reward-worker registry contains the following model types:
        "history_vlm": HistoryVLMRewardModel,
    }
 
-Launch training:
+``resnet`` is the image classifier path. ``vlm`` runs a VLM on the current
+observation. ``history_vlm`` runs a VLM on history windows built by the env worker.
+
+2.1.3 Launch ResNet Training
+................................
+
+Once the dataset and model are configured, run:
 
 .. code-block:: bash
 
    bash examples/reward/run_reward_training.sh
 
-Fine-Tune the QwenTrend VLM Reward Model
-""""""""""""""""""""""""""""""""""""""""
+Training logs are written to a newly created ``logs/<timestamp>-reward_training`` directory.
+
+2.2 Fine-Tune the QwenTrend VLM Reward Model
+""""""""""""""""""""""""""""""""""""""""""""
 
 After converting collected episodes with ``preprocess_qwentrend_reward_dataset.py``,
-launch VLM SFT:
+point ``DUALVIEW_SFT_DATA_ROOT`` to the processed output root and launch VLM SFT:
 
 .. code-block:: bash
 
    export DUALVIEW_SFT_DATA_ROOT=/path/to/processed_qwentrend_reward_data
    bash examples/sft/run_vlm_sft.sh qwen3vl_sft_qwentrend
 
+The corresponding config reads the JSONL manifests and per-sample pickle files:
+
+.. code-block:: yaml
+
+   data:
+     type: vlm
+     dataset_name: "qwentrend_progress_sft"
+     train_data_paths: "${oc.env:DUALVIEW_SFT_DATA_ROOT}/train/segments.jsonl"
+     val_data_paths: "${oc.env:DUALVIEW_SFT_DATA_ROOT}/eval/segments.jsonl"
+     video_root: "${oc.env:DUALVIEW_SFT_DATA_ROOT}"
+     video_nframes: 5
+
+   actor:
+     model:
+       model_type: qwen3_vl
+       model_path: /path/to/Qwen3-VL-4B-Instruct
+       attn_implementation: flash_attention_2
+       is_lora: true
+       lora_rank: 16
+
+The trained LoRA checkpoint can then be passed to the online reward config through
+``reward.model.lora_path``.
+
 3. Reward Model Inference in RL
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-RLinf provides several example configs for integrating a reward model into RL training.
-These configs show how to enable a reward worker while keeping the policy on state observations
+RLinf provides several example configs for integrating a reward model into RL:
+
+- ``examples/embodiment/config/maniskill_ppo_mlp_resnet_reward.yaml``
+- ``examples/embodiment/config/maniskill_sac_mlp_resnet_reward_async.yaml``
+- ``examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward.yaml``
+
+These configs show how to enable a reward worker in RL training while keeping the policy on state observations
 and the reward model on image or VLM observations.
 
-Key Config Fields
-"""""""""""""""""
+3.1 Key Config Fields
+"""""""""""""""""""""
+
+Reward-model-related settings live under the ``reward`` section:
 
 .. code-block:: yaml
 
@@ -177,12 +266,13 @@ Key Config Fields
 
 Where:
 
-- ``reward_mode`` accepts ``"per_step"``, ``"terminal"``, or ``"history_buffer"``.
+- ``reward_mode`` accepts ``"per_step"``, ``"terminal"``, or ``"history_buffer"``: run inference every step, only on terminal frames, or on history windows.
 - ``reward_weight`` and ``env_reward_weight`` control how learned reward and environment reward are combined.
-- ``reward_threshold`` filters reward model probabilities.
+- ``reward_threshold`` filters reward model probabilities; values below the threshold are set to ``0``.
+- ``model_path`` points to the reward model checkpoint used for online inference.
 
-Worker Interaction During Rollout
-"""""""""""""""""""""""""""""""""
+3.2 Worker Interaction During Rollout
+"""""""""""""""""""""""""""""""""""""
 
 During online RL, the ``env``, ``rollout``, and ``reward`` workers collaborate as follows:
 
@@ -202,17 +292,25 @@ During online RL, the ``env``, ``rollout``, and ``reward`` workers collaborate a
       v
    Final reward -> stored in rollout results and used by later RL updates
 
-Final Reward Computation
-""""""""""""""""""""""""
+In the implementation, ``EnvWorker`` requests reward model outputs during rollout and then computes the final reward centrally.
 
-When the reward channel is enabled, the final reward is computed as:
+3.3 Final Reward Computation
+""""""""""""""""""""""""""""
+
+When the reward channel is enabled, ``EnvWorker`` first fetches ``reward_model_output``,
+then merges it with the original environment reward inside ``compute_bootstrap_rewards``:
 
 .. code-block:: python
 
    reward = env_reward_weight * env_reward + reward_weight * reward_model_output
 
-Deploy QwenTrend for MLP RL
-"""""""""""""""""""""""""""
+If bootstrap is enabled by the algorithm config, RLinf may also add bootstrap values to the last step reward.
+
+From a system perspective, the reward model does not replace the original bootstrap reward. Instead, it serves as
+an additional reward source inside the env worker and participates in final reward construction.
+
+3.4 Deploy QwenTrend for MLP RL
+"""""""""""""""""""""""""""""""
 
 For VLM reward inference, install embodied dependencies with VLM reward support:
 
@@ -220,7 +318,58 @@ For VLM reward inference, install embodied dependencies with VLM reward support:
 
    bash requirements/install.sh embodied --env maniskill_libero --vlm-reward
 
-Then configure the reward section to use ``history_vlm``. Launch with:
+Then configure the reward section to use ``history_vlm``. The QwenTrend example
+uses ``reward_mode: history_buffer`` so the env worker maintains per-env history
+windows and sends them to the reward worker only when a valid window is available:
+
+.. code-block:: yaml
+
+   reward:
+     use_reward_model: true
+     group_name: "RewardGroup"
+     reward_mode: history_buffer
+     history_reward_assign: true
+     reward_weight: 1.0
+     env_reward_weight: 0.0
+     model:
+       model_path: "/path/to/Qwen3-VL-4B-Instruct"
+       model_type: "history_vlm"
+       lora_path: "/path/to/qwen3-vl-lora-checkpoint"
+       gt_success_bonus: 20.0
+       precision: "bf16"
+       input_builder_name: qwentrend_input_builder
+       input_builder_params:
+         default_task_description: "Pick up the red cube and place it on the green spot on the table."
+       reward_parser_name: qwentrend_reward_parser
+       reward_parser_params:
+         positive_reward: 1.0
+         negative_reward: -0.2
+         unclear_reward: 0.0
+         invalid_reward: 0.0
+       history_buffers:
+         history_window:
+           history_size: 5
+           min_history_size: 5
+           input_interval: 1
+           history_keys:
+             - main_images
+             - extra_view_images
+           input_on_done: false
+       interval_reward: 0.0
+       infer_micro_batch_size: 64
+       max_new_tokens: 16
+       do_sample: false
+       temperature: 0.0
+       use_chat_template: true
+
+Important fields:
+
+- ``history_buffers`` defines which observation keys are cached, the window length, and the minimum valid history length.
+- ``input_builder_name`` converts the history window into dual-view VLM inputs.
+- ``reward_parser_name`` maps generated labels to scalar rewards using ``positive_reward``, ``negative_reward``, ``unclear_reward``, and ``invalid_reward``.
+- ``gt_success_bonus`` optionally adds a success bonus from environment info.
+
+Launch the MLP RL run with:
 
 .. code-block:: bash
 
@@ -230,18 +379,21 @@ Then configure the reward section to use ``history_vlm``. Launch with:
 Real-World Reward Model
 -----------------------
 
-This section describes how to collect and preprocess a reward model training dataset
+This document describes how to collect and preprocess a reward model training dataset
 directly on a real-world Franka robot. Two data collection approaches are supported:
 a **general-purpose keyboard-labeling** approach and a **fixed-pose** approach that
 uses a predetermined target pose to drive episode success/failure.
 
-Before getting started, it is strongly recommended to read:
+Before getting started, it is strongly recommended to read the following documents:
 
 1. :doc:`../../examples/embodied/franka` — to familiarize yourself with the end-to-end real-world Franka training pipeline.
-2. :doc:`../../examples/embodied/franka_reward_model` — to understand the full real-world RL pipeline that follows after you have a trained reward model.
+2. :doc:`reward_model` — to understand the canonical reward model workflow in RLinf (data collection via ``pickle``, offline preprocessing, training, RL inference).
+3. :doc:`../../examples/embodied/franka_reward_model` — to understand the full real-world RL pipeline that follows after you have a trained reward model.
 
 Workflow Overview
 ^^^^^^^^^^^^^^^^^
+
+The collection script combines data collection, labeling, and dataset generation into one end-to-end run (Approach 1) or a streamlined two-step pipeline (Approach 2).
 
 .. code-block:: text
 
@@ -266,13 +418,17 @@ Prerequisites
 Follow the **Prerequisites** and **Hardware Setup** sections in :doc:`../../examples/embodied/franka`
 up to and including the robot connection and environment validation steps.
 
+Data Collection
+^^^^^^^^^^^^^^^
+
 Approach 1: Keyboard Labeling (General-Purpose)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+"""""""""""""""""""""""""""""""""""""""""""""""
 
 This approach uses keyboard keys to manually label each frame during a live episode.
 It is task-agnostic and works for any manipulation task.
 
-**Configuration file** — ``examples/reward/config/realworld_collect_dataset.yaml``:
+**Configuration file** — ``examples/reward/config/realworld_collect_dataset.yaml``,
+inheriting environment parameters from ``env/realworld_bin_relocation.yaml``:
 
 .. code-block:: yaml
 
@@ -297,26 +453,40 @@ It is task-agnostic and works for any manipulation task.
 
    runner:
      task_type: embodied
-     num_success_frames: 50
-     num_fail_frames: 150
-     val_split: 0.2
-     fail_success_ratio: 2.0
+     logger:
+       log_path: null
+       project_name: rlinf
+       experiment_name: "collect-dataset"
+       logger_backends: ["tensorboard"]
+     num_success_frames: 50    # target number of success frames to collect
+     num_fail_frames: 150      # target number of fail frames to collect
+     val_split: 0.2            # fraction of frames reserved for validation
+     fail_success_ratio: 2.0   # downsample fail frames to 2x success frames
      random_seed: 42
 
    env:
+     group_name: "EnvGroup"
      eval:
        no_gripper: False
        use_spacemouse: True
        max_episode_steps: 10000
        keyboard_reward_wrapper: single_stage
+       override_cfg:
+         target_ee_pose: TARGET_EE_POSE
 
 **Key configuration fields:**
 
-- ``runner.num_success_frames`` / ``runner.num_fail_frames`` — target numbers of labeled frames.
-- ``runner.val_split`` — fraction of frames held out as validation.
-- ``runner.fail_success_ratio`` — downsampling factor for fail frames.
-- ``env.eval.keyboard_reward_wrapper`` — enables the keyboard labeling interface.
-- ``env.eval.use_spacemouse`` — whether SpaceMouse is used for teleoperation.
+- ``runner.num_success_frames`` / ``runner.num_fail_frames`` — target numbers of labeled
+  frames to collect. Collection stops when both thresholds are reached.
+- ``runner.val_split`` — fraction of all labeled frames held out as validation data.
+- ``runner.fail_success_ratio`` — during training-set post-processing, fail frames are
+  downsampled so that ``num_fail = num_success * fail_success_ratio``. Set to ``0`` to
+  disable downsampling.
+- ``env.eval.keyboard_reward_wrapper`` — set to ``single_stage`` (or the appropriate
+  stage key for your task) to enable the keyboard labeling interface.
+- ``env.eval.use_spacemouse`` — whether SpaceMouse is used for teleoperation (the
+  ``intervene_action`` in step info overrides the zero dummy action).
+- ``env.eval.override_cfg.target_ee_pose`` — the target end-effector pose for the task.
 
 **Launching:**
 
@@ -324,25 +494,55 @@ It is task-agnostic and works for any manipulation task.
 
    bash examples/reward/realworld_collect_process_dataset.sh
 
+Or with an explicit config name:
+
+.. code-block:: bash
+
+   bash examples/reward/realworld_collect_process_dataset.sh realworld_collect_dataset
+
+A progress bar prints live to the terminal:
+
+.. code-block:: text
+
+   success: 12/50 [############----------------]  fail: 28/150 [#####################-----------]
+
 Use the following keys during the episode:
 
 - ``c`` — label the current frame as **success**.
 - ``a`` — label the current frame as **fail**.
+- Keyboard actions from the ``keyboard_reward_wrapper`` also control whether the episode
+  continues or resets.
 
 When both ``num_success_frames`` and ``num_fail_frames`` are reached, the script
 automatically stops, splits the data, and saves the ``.pt`` files.
 
-Approach 2: Fixed-Pose (Target-Driven)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-This approach is for tasks with a **fixed target pose** (e.g., reaching a predetermined bin location).
-Instead of manual keyboard labeling, the episode automatically drives success/failure based on
-whether the robot reaches the configured ``target_ee_pose``.
+Approach 2: Fixed-Pose (Target-Driven)
+""""""""""""""""""""""""""""""""""""""
+
+This approach is specifically designed for tasks with a **fixed target pose** (e.g., reaching a
+predetermined bin location). Instead of manual keyboard labeling, the episode automatically
+drives success/failure based on whether the robot reaches the configured ``target_ee_pose``.
+``success_hold_steps`` can be set to require the robot to maintain the pose for a certain
+number of steps before declaring success, which helps collect more diverse successful samples.
+
+This approach follows the same data collection pipeline as described in
+:doc:`../../examples/embodied/franka_reward_model`, but with a simplified preprocessing step
+that uses the same script as Approach 1 (``realworld_collect_process_dataset.py``).
+
 
 Step 1: Fixed-Pose Reward Data Collection
-"""""""""""""""""""""""""""""""""""""""""
+.........................................
 
-Increase ``success_hold_steps`` to obtain more diverse successful data:
+To obtain a high-quality reward model, additional data needs to be collected for training
+and evaluation. On top of the expert trajectory collection above, make the following
+modifications to the collection script:
+
+Increase the ``success_hold_steps`` field so that, within a limited number of collection
+episodes, more diverse successful data can be obtained. The robot arm end-effector will not
+be immediately marked as successful upon reaching the target pose — it must maintain the
+target pose for a certain number of steps (``success_hold_steps``) before being marked as
+successful. If the arm exits the target zone mid-hold, the counter resets.
 
 .. code-block:: yaml
 
@@ -354,12 +554,14 @@ Increase ``success_hold_steps`` to obtain more diverse successful data:
 Collection tips:
 
 - Move the robot arm slowly to obtain more diverse failure samples.
-- When reaching the target pose, make small-range movements while maintaining the pose.
+- When reaching the target pose, make small-range movements while maintaining the pose
+  to obtain more diverse successful samples.
 
 Step 2: Preprocessing into a Reward Dataset
-"""""""""""""""""""""""""""""""""""""""""""
+...........................................
 
-Convert collected ``.pkl`` episodes into ``train.pt`` / ``val.pt``:
+The collected ``.pkl`` episodes are converted into ``train.pt`` / ``val.pt`` using
+``preprocess_reward_dataset.py``. It is recommended to increase ``fail-success-ratio`` to ``3``:
 
 .. code-block:: bash
 
@@ -367,6 +569,63 @@ Convert collected ``.pkl`` episodes into ``train.pt`` / ``val.pt``:
        --raw-data-path logs/xxx/collected_data \
        --output-dir logs/xxx/processed_reward_data \
        --fail-success-ratio 3
+
+This produces:
+
+.. code-block:: text
+
+   logs/xxx/processed_reward_data/
+   ├── train.pt
+   └── val.pt
+
+The generated ``.pt`` files follow the ``RewardDatasetPayload`` schema:
+
+.. code-block:: python
+
+   {
+       "images": list[torch.Tensor],
+       "labels": list[int],
+       "metadata": dict[str, Any],
+   }
+
+Where:
+
+- ``images`` — training images.
+- ``labels`` — binary labels (1 = success, 0 = fail).
+- ``metadata`` — source path, sampling arguments, split ratio, etc.
+
+
+Output
+""""""
+
+After collection (both approaches), the output consists of two ``.pt`` files saved to
+``runner.logger.log_path`` (defaults to the Hydra run dir):
+
+.. code-block:: text
+
+   logs/<timestamp>-collect-dataset/
+   ├── train.pt
+   └── val.pt
+   └── run_collect_process.log   # (Approach 1 only)
+
+Each ``.pt`` file follows the ``RewardDatasetPayload`` schema:
+
+.. code-block:: python
+
+   {
+       "images": list[torch.Tensor],
+       "labels": list[int],             # 1 = success, 0 = fail
+       "metadata": dict,                # collection stats and config
+   }
+
+The ``metadata`` dict includes:
+
+- ``num_success_frames`` / ``num_fail_frames`` — raw counts before ratio sampling.
+- ``fail_success_ratio`` / ``val_split`` / ``random_seed`` — sampling parameters.
+- ``num_train_samples`` / ``num_val_samples`` — final dataset sizes.
+
+These ``.pt`` files can be fed directly into ``RewardBinaryDataset`` for training,
+exactly as described in the Simulation Reward Model Section 2.
 
 Comparison of Data Collection Approaches
 """"""""""""""""""""""""""""""""""""""""
@@ -396,8 +655,17 @@ Comparison of Data Collection Approaches
 Reward Model Training
 ^^^^^^^^^^^^^^^^^^^^^
 
-After completing the above steps, continue with **2. Reward Model Training** in the
-Simulation Reward Model section above, using the generated ``train.pt`` / ``val.pt`` files.
+After completing the above steps, continue with Section 2
+(**Reward Model Training**) in the Simulation Reward Model section above using the generated
+``train.pt`` / ``val.pt`` files.
+
+After training, you can use the trained reward model in two real-world ways:
+
+- **Real-world teleoperation with live inference** (see below) — teleoperate the robot with
+  SpaceMouse while the reward model runs on a GPU node, streaming real-time success
+  probabilities to the terminal. No RL training loop is needed.
+- **Real-world RL training** (see :doc:`../../examples/embodied/franka_reward_model`) —
+  integrate the reward model into the full RL training loop on the physical Franka.
 
 Real-World Teleoperation with Live Reward Inference
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -412,11 +680,79 @@ This is useful for:
 - Collecting human-aligned success/fail data for further dataset expansion.
 - Qualitatively evaluating whether the reward model generalizes to the current scene.
 
-The teleop script requires **two nodes**: one for the Franka robot and one for the GPU.
+Cluster Configuration
+^^^^^^^^^^^^^^^^^^^^^
 
-Key fields for the reward model in teleop mode:
+The teleop script requires **two nodes**: one for the Franka robot and one for the GPU
+that runs the reward model inference:
 
 .. code-block:: yaml
+
+   cluster:
+     num_nodes: 2
+     component_placement:
+       env:
+         node_group: franka
+         placement: 0
+       reward:
+         node_group: "4090"
+         placement: 0
+     node_groups:
+       - label: "4090"
+         node_ranks: 0
+       - label: franka
+         node_ranks: 1
+         hardware:
+           type: Franka
+           configs:
+             - robot_ip: ROBOT_IP
+               node_rank: 1
+
+The reward worker is launched on the GPU node (``"4090"``) alongside the teleop worker
+on the robot node (``franka``). This is a disaggregated placement — the reward model does
+not share a node with the robot.
+
+Configuration File
+^^^^^^^^^^^^^^^^^^
+
+The default config is ``examples/reward/config/realworld_teleop.yaml``,
+which inherits environment parameters from ``env/realworld_bin_relocation.yaml``:
+
+.. code-block:: yaml
+
+   defaults:
+     - env/realworld_bin_relocation@env.eval
+     - override hydra/job_logging: stdout
+
+   cluster:
+     num_nodes: 2
+     component_placement:
+       env:
+         node_group: franka
+         placement: 0
+       reward:
+         node_group: "4090"
+         placement: 0
+     node_groups:
+       - label: "4090"
+         node_ranks: 0
+       - label: franka
+         node_ranks: 1
+         hardware:
+           type: Franka
+           configs:
+             - robot_ip: ROBOT_IP
+               node_rank: 1
+
+   env:
+     group_name: "EnvGroup"
+     eval:
+       no_gripper: True
+       use_spacemouse: True
+       max_episode_steps: 10000
+       override_cfg:
+         target_ee_pose: TARGET_EE_POSE
+         camera_serials: ["0123456789"]
 
    reward:
      use_reward_model: True
@@ -427,12 +763,43 @@ Key fields for the reward model in teleop mode:
      model:
        model_path: path/to/reward_model_checkpoint
        model_type: "resnet"
+       arch: "resnet18"
+       image_size: [3, 128, 128]
 
-Launching:
+Key fields for the reward model in teleop mode:
+
+- ``reward.use_reward_model: True`` — enable reward model inference.
+- ``reward.use_reward_prob: True`` — print raw sigmoid probabilities to the terminal each step.
+- ``reward.standalone_realworld: True`` — use the reward model to directly drive success/failure and resets.
+- ``reward.reward_threshold`` — probability below which success is suppressed. Adjust based on model calibration.
+- ``reward.model.model_path`` — path to the trained reward model checkpoint.
+
+Launching
+^^^^^^^^^
+
+Set environment variables and run:
 
 .. code-block:: bash
 
    bash examples/reward/run_realworld_teleop.sh
+
+Or with an explicit config:
+
+.. code-block:: bash
+
+   bash examples/reward/run_realworld_teleop.sh realworld_teleop
+
+The terminal prints per-step output:
+
+.. code-block:: text
+
+   [TeleopWorker] Starting teleoperation loop.
+   [TeleopWorker] EmbodiedRewardWorker ready: type=EmbodiedRewardWorker | reward_threshold=0.200
+   Step 0      | rm_reward: 0 | success: False
+   Step 1      | rm_reward: 0 | success: False
+   Step 10     | rm_reward: 0 | success: False
+   Step 123    | rm_reward: 1 | success: True
+   Step 124    | rm_reward: 1 | success: True
 
 SpaceMouse controls:
 
@@ -441,9 +808,25 @@ SpaceMouse controls:
 - **Right button** — open gripper.
 - **Ctrl+C** — stop.
 
+How It Works
+^^^^^^^^^^^^
+
+Inside ``TeleopWorker``:
+
+1. ``RealWorldEnv`` is initialized with ``use_spacemouse=True``, wrapping the gym env with
+   ``SpacemouseIntervention``. Non-zero SpaceMouse input (or a button press) overrides the
+   zero dummy action for 0.5 seconds.
+2. ``EmbodiedRewardWorker`` is launched on the GPU node via
+   ``EmbodiedRewardWorker.launch_for_realworld(...)`` and initialized once at startup.
+3. Each teleop step, the wrist camera image (``obs["main_images"]``) is extracted and sent
+   to the reward worker for inference.
+4. The raw sigmoid probability is printed to the terminal. When ``standalone_realworld=True``,
+   the reward model also directly drives success/failure and triggers environment resets.
+
 Compared with the full RL pipeline in :doc:`../../examples/embodied/franka_reward_model`,
 the teleop script runs no policy, no actor, and no rollout worker — it is purely
 human-in-the-loop evaluation of the reward model.
+
 
 Summary
 -------
