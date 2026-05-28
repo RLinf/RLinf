@@ -41,9 +41,6 @@ offering practical guidance to help you fully optimize your RL post-training wor
    selected Ray worker groups with ``nsys profile``, including how to enable,
    disable, and target worker groups for system-level traces.
 
-- :doc:`mbridge`
-   Introduces how to use Megatron-Bridge to integrate Megatron-LM training backend,
-   to support HuggingFace-format checkpoint training.
 
 - :doc:`online_scaling`
    Provides an overview of the online scaling mechanism, focusing on the design
@@ -69,7 +66,6 @@ offering practical guidance to help you fully optimize your RL post-training wor
    convertor
    weight_syncer
    nsight
-   mbridge
    online_scaling
    dynamic_scheduling
    auto_placement

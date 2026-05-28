@@ -11,6 +11,7 @@ You will learn how to:
 - Add a :doc:`new model <new_model_megatron>` using the Megatron + SGLang backend  
 - Follow a complete :doc:`reward model workflow <../embodied/reward_model>`
 - Collect a :doc:`real-world reward model dataset <../embodied/reward_model>`
+- Use :doc:`Megatron-Bridge <mbridge>` to integrate Megatron-LM training with HuggingFace checkpoints
 
 RLinf supports multiple backends for model training, each with its own initialization logic and execution flow.  
 This guide provides step-by-step instructions on how to:
@@ -62,3 +63,4 @@ this section gives you the tools to plug directly into RLinf’s modular design.
    new_model_fsdp
    new_model_megatron
    new_model_sft
+   mbridge

@@ -38,9 +38,6 @@
    介绍基于 Hydra 的 ``cluster.nsight`` 配置，用于通过 ``nsys profile``
    包装指定的 Ray worker group，并说明如何启用、关闭以及选择需要采样的 worker。
 
-- :doc:`mbridge`
-   介绍如何使用 Megatron-Bridge 集成 Megatron-LM 训练后端，
-   以支持 HuggingFace 格式的 checkpoint 训练。
 
 - :doc:`online_scaling`
    概述在线扩缩容机制，重点介绍 RLinf 自适应扩缩能力背后的设计原理。
@@ -65,7 +62,6 @@
    convertor
    weight_syncer
    nsight
-   mbridge
    online_scaling
    dynamic_scheduling
    auto_placement
