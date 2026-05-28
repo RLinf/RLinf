@@ -29,7 +29,7 @@ runner:
   save_interval: 10
 
 data:
-  train_data_paths: "/workspace/dataset/data/sft-ci-data"
+  train_data_paths: "/workspace/dataset/data/sft-ci-data/physical-intelligence/maniskill/"
 
 actor:
   group_name: "ActorGroup"
