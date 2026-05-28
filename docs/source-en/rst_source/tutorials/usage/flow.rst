@@ -145,7 +145,7 @@ It consists of four steps:
    Here, the crucial pieces are ``env_group.interact()`` and
    ``rollout_group.generate()``, which connect through two producer–consumer
    queues to implement **fine-grained pipelining** for fast rollout.
-   See :doc:`hybrid` for details.
+   See :doc:`execution_modes` for details.
 
 3. **Advantage/return computation** with
    ``actor_group.compute_advantages_and_returns()`` based on the collected

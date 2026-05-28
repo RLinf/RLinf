@@ -136,7 +136,7 @@ Worker 启动调度流程
    这里最关键的两步是 ``env_group.interact()`` 和  
    ``rollout_group.generate()``，它们通过两个生产者-消费者队列连接，  
    实现了 **细粒度流水线加速 rollout** 的能力。  
-   详见 :doc:`hybrid`。
+   详见 :doc:`execution_modes`。
 
 3. **优势值与回报计算**，通过  
    ``actor_group.compute_advantages_and_returns()``，  

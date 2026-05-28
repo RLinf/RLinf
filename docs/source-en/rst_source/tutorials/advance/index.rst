@@ -9,6 +9,10 @@ offering practical guidance to help you fully optimize your RL post-training wor
    processes, and communication across distributed nodes. Covers Ray initialization,
    node discovery, and worker allocation.
 
+- :doc:`collective`
+   Covers low-level, high-performance Python object exchange between workers,
+   using optimized point-to-point backends such as CUDA IPC and NCCL to reduce communication overhead.
+
 - :doc:`5D`
    Explains how RLinf supports Megatron-style 5D parallelism, including:
    Tensor Parallelism (TP), Data Parallelism (DP), Pipeline Parallelism (PP),
@@ -58,6 +62,7 @@ offering practical guidance to help you fully optimize your RL post-training wor
    :maxdepth: 2
 
    cluster
+   collective
    5D
    lora
    version

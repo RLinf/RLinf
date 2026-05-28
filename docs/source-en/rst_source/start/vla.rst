@@ -13,7 +13,7 @@ focusing on complex contact manipulation and embodied intelligence tasks.
 The benchmark covers multiple domains, including robotic arms, mobile manipulators, humanoid robots, and dexterous hands,  
 supporting various tasks such as grasping, assembling, drawing, and locomotion.
 
-We have also implemented system-level optimizations for the GPU simulator (see :doc:`../tutorials/usage/hybrid`).
+We have also implemented system-level optimizations for the GPU simulator (see :doc:`../tutorials/usage/execution_modes`).
 
 Launch Training
 --------------------------

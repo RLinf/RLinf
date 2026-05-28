@@ -21,23 +21,13 @@
    介绍 *Channel* 抽象，用于 Worker 之间异步的生产者-消费者通信，
    是实现跨 RL 阶段细粒度流水线的关键。
 
-- :doc:`collective`
-   介绍 Worker 之间底层、高性能的 Python 对象交换，
-   使用 CUDA IPC 和 NCCL 等优化的点对点后端以降低通信开销。
-
 - :doc:`multi_node`
    启动多机 Ray 集群，配置环境变量和代码同步，
    并通过 Ray 集群启动 RLinf 训练任务。
 
-- :doc:`collocated`
-   所有主要组件共享同一组 GPU 或节点。
-
-- :doc:`disaggregated`
-   各组件分配到不同的 GPU 或节点，实现资源专用。
-
-- :doc:`hybrid`
-   灵活组合共享式和分离式的放置与执行策略，
-   支持细粒度流水线和最优 GPU 利用率。
+- :doc:`execution_modes`
+   涵盖 RLinf 的全部三种执行模式：共享式、分离式和混合式，
+   包含各模式的示例配置和编程模式。
 
 
 .. toctree::
@@ -48,8 +38,5 @@
    placement
    flow
    channel
-   collective
    multi_node
-   collocated
-   disaggregated
-   hybrid
+   execution_modes

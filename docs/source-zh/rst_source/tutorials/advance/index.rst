@@ -8,6 +8,10 @@
    介绍全局唯一的 *Cluster* 对象，负责协调分布式训练中所有角色、
    进程和跨节点通信。涵盖 Ray 初始化、节点发现和 Worker 分配。
 
+- :doc:`collective`
+   介绍 Worker 之间底层、高性能的 Python 对象交换，
+   使用 CUDA IPC 和 NCCL 等优化的点对点后端以降低通信开销。
+
 - :doc:`5D`
    解释 RLinf 如何支持 Megatron 风格的 5D 并行，包括：
    张量并行 (TP)、数据并行 (DP)、流水线并行 (PP)、
@@ -54,6 +58,7 @@
    :maxdepth: 2
 
    cluster
+   collective
    5D
    lora
    version
