@@ -13,7 +13,7 @@ focusing on complex contact manipulation and embodied intelligence tasks.
 The benchmark covers multiple domains, including robotic arms, mobile manipulators, humanoid robots, and dexterous hands,  
 supporting various tasks such as grasping, assembling, drawing, and locomotion.
 
-We have also implemented system-level optimizations for the GPU simulator (see :doc:`../tutorials/mode/hybrid`).
+We have also implemented system-level optimizations for the GPU simulator (see :doc:`../tutorials/usage/hybrid`).
 
 Launch Training
 --------------------------
@@ -120,7 +120,7 @@ It is recommended to focus on the following metrics:
    ``cluster.component_placement`` in the configuration file.
 
    Set this item to **0-3** or **0-7** to use 4/8 GPUs according to your actual resources.
-   See :doc:`../tutorials/user/yaml` for more detailed instructions on Placement configuration.
+   See :doc:`../tutorials/configuration/yaml` for more detailed instructions on Placement configuration.
 
    .. code-block:: yaml
 

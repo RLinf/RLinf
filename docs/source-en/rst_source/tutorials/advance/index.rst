@@ -1,35 +1,26 @@
 Advanced Features
 ==============================
 
-This chapter provides a step-by-step deep dive into how RLinf achieves **highly efficient execution**,  
+This chapter provides a step-by-step deep dive into how RLinf achieves **highly efficient execution**,
 offering practical guidance to help you fully optimize your RL post-training workflows.
 
-- :doc:`5D`  
-   Explains how RLinf supports Megatron-style 5D parallelism, including:  
-   Tensor Parallelism (TP), Data Parallelism (DP), Pipeline Parallelism (PP),  
-   Sequence Parallelism (SP), and Context Parallelism (CP).  
+- :doc:`5D`
+   Explains how RLinf supports Megatron-style 5D parallelism, including:
+   Tensor Parallelism (TP), Data Parallelism (DP), Pipeline Parallelism (PP),
+   Sequence Parallelism (SP), and Context Parallelism (CP).
    Learn how to configure and combine these dimensions to scale large models efficiently.
 
-- :doc:`lora`  
-   Demonstrates how to integrate Low-Rank Adaptation (LoRA) into RLinf,  
+- :doc:`lora`
+   Demonstrates how to integrate Low-Rank Adaptation (LoRA) into RLinf,
    enabling parameter-efficient fine-tuning for large-scale models with minimal compute overhead.
 
-- :doc:`version`  
-   Describes how to dynamically switch between different SGLang versions  
+- :doc:`version`
+   Describes how to dynamically switch between different SGLang versions
    to accommodate varying compatibility needs or experimental requirements.
 
-- :doc:`resume`  
-   Covers how to resume training from saved checkpoints,  
-   ensuring fault tolerance and seamless continuation for long-running or interrupted training jobs.
-
-- :doc:`convertor`  
-   Describes how to convert a saved checkpoint file into HuggingFace safetensors format,  
+- :doc:`convertor`
+   Describes how to convert a saved checkpoint file into HuggingFace safetensors format,
    which can be used for checkpoint evaluation or uploading to the HuggingFace Hub.
-
-- :doc:`logger`  
-   Introduces how to visualize and track key metrics during your training process.  
-   Currently, we support three backends for experiment tracking and visualization: 
-   TensorBoard, Weights & Biases (wandb), and SwanLab.
 
 - :doc:`weight_syncer`
    Introduces the actor-to-rollout weight synchronization optimization used in
@@ -45,6 +36,18 @@ offering practical guidance to help you fully optimize your RL post-training wor
    Introduces how to use Megatron-Bridge to integrate Megatron-LM training backend,
    to support HuggingFace-format checkpoint training.
 
+- :doc:`online_scaling`
+   Provides an overview of the online scaling mechanism, focusing on the design
+   principles behind RLinf's adaptive scaling capabilities.
+
+- :doc:`dynamic_scheduling`
+   Details the concrete implementation of dynamic scheduling in RLinf,
+   including how to configure it properly to enable dynamic scheduling.
+
+- :doc:`auto_placement`
+   Details the concrete implementation of auto-placement in RLinf,
+   including how to configure it properly to enable auto-placement.
+
 .. toctree::
    :hidden:
    :maxdepth: 2
@@ -52,9 +55,10 @@ offering practical guidance to help you fully optimize your RL post-training wor
    5D
    lora
    version
-   resume
    convertor
-   logger
-   nsight
    weight_syncer
+   nsight
    mbridge
+   online_scaling
+   dynamic_scheduling
+   auto_placement

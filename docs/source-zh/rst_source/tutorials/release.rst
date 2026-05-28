@@ -41,13 +41,13 @@ RLinf v0.2 聚焦两个核心方向：**真实世界强化学习（Real-World RL
 
 1. 训练基础设施增强
 
-- 在数据层新增 wrapper，支持真实机器人与模拟器数据的标准化 replay buffer 采集（见 :doc:`Data collection <components/data_collection>`）
+- 在数据层新增 wrapper，支持真实机器人与模拟器数据的标准化 replay buffer 采集（见 :doc:`Data collection <embodied/data_collection>`）
 
 - 异步训练支持：将异步训练作为具身模型的一等能力，提供 :doc:`Async PPO <rlalg/async_ppo>` 工作流与易用性改进，提升高吞吐场景效率
 
 - 数据与 Replay 流水线升级：增强 buffer 预加载、更新与 checkpoint 处理能力，提升整体鲁棒性（见 :doc:`Replay buffer API <../apis/replay_buffer>`）
 
-- 运行时性能优化：引入 CUDA Graph、torch.compile、环境 offload 与 FSDP 路径优化，提升执行效率（见 :doc:`YAML configuration <user/yaml>`）
+- 运行时性能优化：引入 CUDA Graph、torch.compile、环境 offload 与 FSDP 路径优化，提升执行效率（见 :doc:`YAML configuration <configuration/yaml>`）
 
 1. 稳定性改进与可用性提升
 

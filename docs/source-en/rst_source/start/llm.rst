@@ -93,7 +93,7 @@ Recommended key metrics to focus on include:
    we recommend that you modify the parameter ``cluster.component_placement`` in the configuration file.
 
    You can set this item to **0-1**, **0-3** or **0-7** to use 2/4/8 GPUs depending on your actual resources.
-   See :doc:`../tutorials/user/yaml` for more detailed instructions on Placement configuration.
+   See :doc:`../tutorials/configuration/yaml` for more detailed instructions on Placement configuration.
 
    .. code-block:: yaml
 
