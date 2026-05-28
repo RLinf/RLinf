@@ -27,15 +27,6 @@ offering practical guidance to help you fully optimize your RL post-training wor
    Describes how to dynamically switch between different SGLang versions
    to accommodate varying compatibility needs or experimental requirements.
 
-- :doc:`convertor`
-   Describes how to convert a saved checkpoint file into HuggingFace safetensors format,
-   which can be used for checkpoint evaluation or uploading to the HuggingFace Hub.
-
-- :doc:`weight_syncer`
-   Introduces the actor-to-rollout weight synchronization optimization used in
-   embodied training, including the ``patch`` and ``bucket`` modes, their
-   configuration, recommended use cases, and performance considerations.
-
 - :doc:`nsight`
    Introduces the Hydra-based ``cluster.nsight`` configuration used to wrap
    selected Ray worker groups with ``nsys profile``, including how to enable,
@@ -63,8 +54,6 @@ offering practical guidance to help you fully optimize your RL post-training wor
    5D
    lora
    version
-   convertor
-   weight_syncer
    nsight
    online_scaling
    dynamic_scheduling

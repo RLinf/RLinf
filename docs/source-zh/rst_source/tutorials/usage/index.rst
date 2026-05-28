@@ -21,6 +21,10 @@
    介绍 *Channel* 抽象，用于 Worker 之间异步的生产者-消费者通信，
    是实现跨 RL 阶段细粒度流水线的关键。
 
+- :doc:`convertor`
+   讲解如何从保存的checkpoint文件转换到huggingface safetensors文件，
+   用于评估checkpoint性能或上传到huggingface仓库。
+
 - :doc:`multi_node`
    启动多机 Ray 集群，配置环境变量和代码同步，
    并通过 Ray 集群启动 RLinf 训练任务。
@@ -38,5 +42,6 @@
    placement
    flow
    channel
+   convertor
    multi_node
    execution_modes

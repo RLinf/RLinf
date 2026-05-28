@@ -22,6 +22,10 @@ flexible execution modes.
    Introduces the *Channel* abstraction for asynchronous producer-consumer communication
    between workers, essential for fine-grained pipelining across RL stages.
 
+- :doc:`convertor`
+   Describes how to convert a saved checkpoint file into HuggingFace safetensors format,
+   which can be used for checkpoint evaluation or uploading to the HuggingFace Hub.
+
 - :doc:`multi_node`
    Start a multi-machine Ray cluster, configure environment variables and code sync,
    and launch RLinf training tasks across nodes.
@@ -39,5 +43,6 @@ flexible execution modes.
    placement
    flow
    channel
+   convertor
    multi_node
    execution_modes

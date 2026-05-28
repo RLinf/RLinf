@@ -26,14 +26,6 @@
    描述如何在不同的 SGLang 版本之间动态切换，
    以满足不同的兼容性需求或实验要求。
 
-- :doc:`convertor`
-   讲解如何从保存的checkpoint文件转换到huggingface safetensors文件，
-   用于评估checkpoint性能或上传到huggingface仓库。
-
-- :doc:`weight_syncer`
-   介绍具身训练中 actor 到 rollout 的权重同步优化机制，
-   包括 ``patch`` 与 ``bucket`` 两种同步模式、配置方法、适用场景以及性能注意事项。
-
 - :doc:`nsight`
    介绍基于 Hydra 的 ``cluster.nsight`` 配置，用于通过 ``nsys profile``
    包装指定的 Ray worker group，并说明如何启用、关闭以及选择需要采样的 worker。
@@ -59,8 +51,6 @@
    5D
    lora
    version
-   convertor
-   weight_syncer
    nsight
    online_scaling
    dynamic_scheduling
