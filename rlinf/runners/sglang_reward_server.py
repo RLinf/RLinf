@@ -135,7 +135,9 @@ class SGLangRewardServer:
             try:
                 with urllib.request.urlopen(self.models_url, timeout=5) as response:
                     if 200 <= response.status < 300:
-                        logger.info("SGLang reward server is ready at %s", self.api_base)
+                        logger.info(
+                            "SGLang reward server is ready at %s", self.api_base
+                        )
                         return
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 last_error = exc
