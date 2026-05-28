@@ -3,7 +3,7 @@ Agentic RL Configuration
 
 This section covers configuration parameters specific to agentic and reasoning RL training
 (math reasoning, coding agents, multi-agent systems). These extend the shared
-configuration described in :doc:`gpu_cluster_config`.
+configuration described in :doc:`basic_config`.
 
 .. contents::
    :depth: 1

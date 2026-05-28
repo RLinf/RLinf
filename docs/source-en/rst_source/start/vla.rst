@@ -120,7 +120,7 @@ It is recommended to focus on the following metrics:
    ``cluster.component_placement`` in the configuration file.
 
    Set this item to **0-3** or **0-7** to use 4/8 GPUs according to your actual resources.
-   See :doc:`../tutorials/configuration/gpu_cluster_config` for more detailed instructions on Placement configuration.
+   See :doc:`../tutorials/configuration/basic_config` for more detailed instructions on Placement configuration.
 
    .. code-block:: yaml
 

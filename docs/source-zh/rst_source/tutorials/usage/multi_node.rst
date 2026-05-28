@@ -12,7 +12,7 @@
 
 * 所有节点网络互通：worker 能访问 head 的 ``<head_ip>`` 端口 ``6379`` （或你指定的端口）。
 * 各节点已安装 **相同版本** 的 Python、Ray（``ray>=2.47.0``）及 RLinf 运行依赖。
-* 在配置文件中把 ``cluster.num_nodes`` 设为集群节点总数（见 :doc:`../configuration/gpu_cluster_config`）。
+* 在配置文件中把 ``cluster.num_nodes`` 设为集群节点总数（见 :doc:`../configuration/basic_config`）。
 
 .. important::
 

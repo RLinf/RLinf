@@ -39,7 +39,7 @@ In most cases, `env`, `rollout`, and `actor` should enable offloading as below t
 .. note::
    The ``pipeline_stage_num`` configuration should be adjusted to achieve the desired pipelining effect. For embodied RL training, it is recommended to set ``pipeline_stage_num`` to ``2`` for Hybrid Mode to enable pipeline overlap between rollout and env.
   
-Refer to :doc:`../configuration/gpu_cluster_config` for compete configuration.
+Refer to :doc:`../configuration/basic_config` for compete configuration.
 
 **ComponentPlacement programming**
 

@@ -1,5 +1,5 @@
-GPU and Cluster Configuration
-==============================
+Basic Configuration
+===================
 
 Below is a complete reference for the core configuration parameters shared across all RLinf workloads.
 Every important key in the YAML is documented so that you can confidently adapt the file to your own cluster, model, or research ideas.

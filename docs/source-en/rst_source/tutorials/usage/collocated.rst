@@ -40,7 +40,7 @@ Additonally, some workers support offloading to release GPUs to other workers du
      offload_grad: True
 
 If offloading is enabled for actor, the actor is loaded into GPU memory before it runs, then it is offloaded into CPU memory after it finishes its execution. If offloading is not enabled, the collocated workers (assuming workers run on GPUs) will compete for GPU memory, which may lead to OOM error. 
-Refer to :doc:`../configuration/gpu_cluster_config` for the complete configuration.
+Refer to :doc:`../configuration/basic_config` for the complete configuration.
 
 **ComponentPlacement programming**
 

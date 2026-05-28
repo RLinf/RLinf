@@ -13,7 +13,7 @@ Before you begin, confirm that:
 
 * All nodes can reach the head at ``<head_ip>:6379`` (or your chosen port).
 * Every node has the **same versions** of Python, Ray (``ray>=2.47.0``), and RLinf dependencies.
-* ``cluster.num_nodes`` in your config matches the actual cluster size (see :doc:`../configuration/gpu_cluster_config`).
+* ``cluster.num_nodes`` in your config matches the actual cluster size (see :doc:`../configuration/basic_config`).
 
 .. important::
 

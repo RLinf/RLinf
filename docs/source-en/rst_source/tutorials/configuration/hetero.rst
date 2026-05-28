@@ -1,5 +1,5 @@
-Heterogenous Software and Hardware Setup
-==========================================
+Heterogenous Hardware Setup
+============================
 
 RLinf supports running on nodes with heterogeneous hardware and software setup, e.g., running simulators on ray tracing-capable GPUs (like RTX 4090), training on compute GPUs with larger GPU memory (like A100), search agent on CPU-only nodes, and/or robot controllers on nodes with special hardware like robotic arms.
 

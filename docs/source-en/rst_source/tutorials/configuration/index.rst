@@ -5,7 +5,7 @@ This section covers all aspects of configuring RLinf for your training workloads
 Learn how to structure YAML configuration files for GPU and cluster setup,
 embodied training, and agentic RL.
 
-- :doc:`gpu_cluster_config`
+- :doc:`basic_config`
    Comprehensive reference for GPU, cluster, runner, algorithm, rollout, and actor
    configuration shared across all task types.
 
@@ -34,7 +34,7 @@ embodied training, and agentic RL.
    :hidden:
    :maxdepth: 1
 
-   gpu_cluster_config
+   basic_config
    embodiment_config
    agentic_config
    hetero

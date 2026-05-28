@@ -3,7 +3,7 @@ Embodiment Configuration
 
 This section covers configuration parameters specific to embodied RL training
 (robot manipulation, simulators, VLA models). These extend the shared
-configuration described in :doc:`gpu_cluster_config`.
+configuration described in :doc:`basic_config`.
 
 .. contents::
    :depth: 1

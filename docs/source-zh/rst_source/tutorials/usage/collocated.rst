@@ -42,7 +42,7 @@
 
 如果为 actor 启用了卸载，actor 会在运行前被加载到 GPU 内存中，运行结束后再被卸载到 CPU 内存。
 如果没有启用卸载，共享式的 Worker（假设运行在 GPU 上）会争夺 GPU 内存，可能导致 OOM 错误。
-完整配置请参考 :doc:`../configuration/gpu_cluster_config`。
+完整配置请参考 :doc:`../configuration/basic_config`。
 
 **ComponentPlacement 编程**
 

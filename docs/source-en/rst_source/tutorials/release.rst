@@ -47,7 +47,7 @@ Embodied Intelligence
 
 - Data and Replay Pipeline Upgrade enhances data collection and replay pipelines, strengthens buffer preloading, updating, and checkpoint handling, and improves overall dataflow robustness. Refer to :doc:`Replay buffer API <../apis/replay_buffer>`.
 
-- Runtime Performance Optimizations add runtime features such as CUDA Graph, torch.compile, environment offloading, and FSDP path optimizations to improve execution efficiency for embodied training. Refer to :doc:`YAML configuration <configuration/gpu_cluster_config>`.
+- Runtime Performance Optimizations add runtime features such as CUDA Graph, torch.compile, environment offloading, and FSDP path optimizations to improve execution efficiency for embodied training. Refer to :doc:`YAML configuration <configuration/basic_config>`.
 
 1. Stability Improvements and Usability
 

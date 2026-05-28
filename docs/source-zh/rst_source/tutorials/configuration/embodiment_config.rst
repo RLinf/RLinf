@@ -2,7 +2,7 @@
 =============
 
 本节介绍具身智能 RL 训练专用的配置参数（机器人操作、模拟器、VLA 模型）。
-这些参数扩展了 :doc:`gpu_cluster_config` 中的共享配置。
+这些参数扩展了 :doc:`basic_config` 中的共享配置。
 
 .. contents::
    :depth: 1

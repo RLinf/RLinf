@@ -5,7 +5,7 @@
 学习如何编写 GPU 和集群设置的 YAML 配置文件、
 具身训练配置以及智能体 RL 配置。
 
-- :doc:`gpu_cluster_config`
+- :doc:`basic_config`
    GPU、集群、runner、算法、rollout 和 actor 的共享配置完整参考，
    适用于所有任务类型。
 
@@ -32,7 +32,7 @@
    :hidden:
    :maxdepth: 1
 
-   gpu_cluster_config
+   basic_config
    embodiment_config
    agentic_config
    hetero
