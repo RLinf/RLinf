@@ -85,6 +85,7 @@ def get_model(
     action_dim = getattr(cfg, "action_dim", ACTION_DIM)
     num_action_chunks = getattr(cfg, "num_action_chunks", 30)
     num_steps = getattr(cfg, "num_steps", 5)
+    noise_level = getattr(cfg, "noise_level", 0.5)
 
     # XR0-specific config (with defaults matching the original XR0 config)
     xr0_cfg = getattr(cfg, "xr0", cfg)
@@ -121,6 +122,12 @@ def get_model(
         action_mean = np.array(stats["mean"], dtype=np.float32)
         action_std = np.array(stats["std"], dtype=np.float32)
 
+    # TODO: When add_value_head=True, initialize ValueHead and attach
+    # to policy. See lingbotvla __init__.py for reference pattern.
+    # from rlinf.models.embodiment.modules.value_head import ValueHead
+    # if getattr(cfg, "add_value_head", False):
+    #     policy.value_head = ValueHead(input_dim=dit_hidden_size, ...)
+
     policy = XR0ForRLActionPrediction(
         xr0_model=xr0_model,
         action_dim=action_dim,
@@ -128,6 +135,7 @@ def get_model(
         num_steps=num_steps,
         action_mean=action_mean,
         action_std=action_std,
+        noise_level=noise_level,
     )
 
     return policy

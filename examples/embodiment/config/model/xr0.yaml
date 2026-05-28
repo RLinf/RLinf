@@ -34,6 +34,9 @@ low_cpu_mem_usage: True
 stats_path: null
 unnorm_key: null
 
+# Flow-matching noise level for RL training (higher = more exploration)
+noise_level: 0.5
+
 # XR0-specific config
 xr0:
   state_shape: [1, 32]
