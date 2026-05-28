@@ -7,15 +7,15 @@ QwenTrend / ``HistoryVLMRewardModel``.
 Here, QwenTrend means using a Qwen3-VL model to judge the action trend in a short
 history video and convert that judgment into a scalar reward.
 
+Simulation Reward Model
+-----------------------
+
 The full workflow has four stages:
 
 1. Data collection: collect raw episode data during RL runs.
 2. Dataset conversion: convert raw episodes into either image classification data or VLM SFT data.
 3. Reward model training: train a ResNet reward model or fine-tune a VLM reward model.
 4. Reward model inference in RL: plug the trained model into online rollout and use it in final reward computation.
-
-Simulation Reward Model
------------------------
 
 1. Data Collection
 ^^^^^^^^^^^^^^^^^^
@@ -374,6 +374,16 @@ Launch the MLP RL run with:
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_qwentrend_reward
+
+4. Summary
+^^^^^^^^^^
+
+The full workflow is:
+
+1. Enable ``data_collection`` in the environment config and save raw data in ``pickle`` format.
+2. For ResNet rewards, use ``preprocess_reward_dataset.py`` to build ``train.pt`` / ``val.pt`` and train with ``run_reward_training.sh``.
+3. For QwenTrend VLM rewards, use ``preprocess_qwentrend_reward_dataset.py`` to build dual-view history-window data and fine-tune with ``run_vlm_sft.sh``.
+4. Enable ``reward.use_reward_model=True`` in your RL YAML and plug the trained reward worker into online RL inference.
 
 
 Real-World Reward Model
@@ -826,15 +836,3 @@ Inside ``TeleopWorker``:
 Compared with the full RL pipeline in :doc:`../../examples/embodied/franka_reward_model`,
 the teleop script runs no policy, no actor, and no rollout worker — it is purely
 human-in-the-loop evaluation of the reward model.
-
-
-Summary
--------
-
-The full workflow is:
-
-1. Enable ``data_collection`` in the environment config and save raw data in ``pickle`` format.
-2. For ResNet rewards, use ``preprocess_reward_dataset.py`` to build ``train.pt`` / ``val.pt`` and train with ``run_reward_training.sh``.
-3. For QwenTrend VLM rewards, use ``preprocess_qwentrend_reward_dataset.py`` to build dual-view history-window data and fine-tune with ``run_vlm_sft.sh``.
-4. Enable ``reward.use_reward_model=True`` in your RL YAML and plug the trained reward worker into online RL inference.
-5. For real-world scenarios, use keyboard labeling or fixed-pose approaches to collect data, then train and deploy the reward model on the physical robot.

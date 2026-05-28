@@ -5,15 +5,15 @@ Reward Model 使用指南
 这类图像分类 reward，以及 QwenTrend / ``HistoryVLMRewardModel`` 这类 VLM reward。
 这里的 QwenTrend 指使用 Qwen3-VL 模型判断一段历史视频中的动作趋势，并据此转换为标量 reward。
 
+仿真场景 Reward Model
+---------------------
+
 完整流程包括四个阶段：
 
 1. 数据收集：在 RL 运行过程中采集原始 episode 数据。
 2. 数据转换：将原始 episode 转成图像分类数据或 VLM SFT 数据。
 3. Reward model 训练：训练 ResNet reward model，或微调 VLM reward model。
 4. Reward model 在 RL 中推理：将训练好的模型接入在线 rollout，参与最终 reward 计算。
-
-仿真场景 Reward Model
----------------------
 
 1. 数据收集
 ^^^^^^^^^^^
@@ -370,6 +370,16 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_qwentrend_reward
+
+4. 总结
+^^^^^^^^^^^^
+
+完整工作流如下：
+
+1. 在环境配置中开启 ``data_collection``，并将数据保存为 ``pickle`` 格式。
+2. 对于 ResNet reward，使用 ``preprocess_reward_dataset.py`` 构建 ``train.pt`` / ``val.pt``，再用 ``run_reward_training.sh`` 训练。
+3. 对于 QwenTrend VLM reward，使用 ``preprocess_qwentrend_reward_dataset.py`` 构建双视角历史窗口数据，再用 ``run_vlm_sft.sh`` 微调。
+4. 在 RL YAML 中开启 ``reward.use_reward_model=True``，并通过示例配置接入 reward worker 完成在线推理。
 
 
 真机场景 Reward Model
@@ -802,15 +812,3 @@ SpaceMouse 控制说明：
 
 与 :doc:`../../examples/embodied/franka_reward_model` 中的完整 RL 流程相比，
 遥操作脚本不运行策略、actor 或 rollout worker——它纯粹是人在回路的 reward model 评估。
-
-
-总结
-----
-
-完整工作流如下：
-
-1. 在环境配置中开启 ``data_collection``，并将数据保存为 ``pickle`` 格式。
-2. 对于 ResNet reward，使用 ``preprocess_reward_dataset.py`` 构建 ``train.pt`` / ``val.pt``，再用 ``run_reward_training.sh`` 训练。
-3. 对于 QwenTrend VLM reward，使用 ``preprocess_qwentrend_reward_dataset.py`` 构建双视角历史窗口数据，再用 ``run_vlm_sft.sh`` 微调。
-4. 在 RL YAML 中开启 ``reward.use_reward_model=True``，并通过示例配置接入 reward worker 完成在线推理。
-5. 对于真机场景，使用键盘标注或固定位姿方式采集数据，训练后在物理机器人上部署 reward model。
