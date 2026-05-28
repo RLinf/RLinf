@@ -34,4 +34,5 @@ else
     echo "Evaluation Mode: Standard LIBERO"
 fi
 
-python ${REPO_PATH}/examples/embodiment/train_embodied_agent.py --config-path ${REPO_PATH}/tests/e2e_tests/embodied --config-name ${CONFIG}
+shift 2
+python ${REPO_PATH}/examples/embodiment/train_embodied_agent.py --config-path ${REPO_PATH}/tests/e2e_tests/embodied --config-name ${CONFIG} $@
