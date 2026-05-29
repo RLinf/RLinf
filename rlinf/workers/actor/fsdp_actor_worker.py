@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
 import os
 import time
 from functools import partial
@@ -24,7 +23,6 @@ from omegaconf import DictConfig, OmegaConf
 from torch import nn
 from torch.distributed.tensor import DTensor
 from torch.multiprocessing.reductions import reduce_tensor
-from torch.utils._pytree import tree_map
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
@@ -34,6 +32,7 @@ from rlinf.algorithms.utils import (
 from rlinf.config import SupportedModel, torch_dtype_from_precision
 from rlinf.data.embodied_io_struct import Trajectory, convert_trajectories_to_batch
 from rlinf.data.io_struct import BatchResizingIterator, RolloutResult
+from rlinf.data.lerobot_paths import resolve_lerobot_repo_id
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
 )
@@ -46,7 +45,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import ForwardType
-from rlinf.scheduler import Channel, Cluster, CollectiveGroupOptions, Worker
+from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
     get_reverse_idx,
@@ -76,7 +75,6 @@ from rlinf.utils.placement import (
     HybridComponentPlacement,
     ModelParallelComponentPlacement,
 )
-from rlinf.utils.pytree import register_pytree_dataclasses
 from rlinf.utils.utils import (
     clear_memory,
     compute_entropy_from_logits,
@@ -986,13 +984,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.enable_offload = self.cfg.actor.get("enable_offload", False)
         self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "torch")
 
-        # Sync weight comm options
-        max_ctas = cfg.rollout.get("sync_weight_nccl_max_ctas", None)
-        min_ctas = cfg.rollout.get("sync_weight_nccl_min_ctas", None)
-        self._sync_weight_comm_options = CollectiveGroupOptions(
-            accel_max_ctas=max_ctas, accel_min_ctas=min_ctas
-        )
-
         self.enable_sft_co_train = cfg.actor.get("enable_sft_co_train", False)
         self.version = 0
         if self.enable_sft_co_train:
@@ -1001,24 +992,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         # create weight syncer
         weight_syncer_cfg = OmegaConf.select(cfg, "weight_syncer")
         self.weight_syncer = WeightSyncer.create(weight_syncer_cfg)
+        self._sync_weight_comm_options = self.weight_syncer.comm_options
 
-    def _setup_rollout_weight_dst_ranks(self) -> None:
-        """
-        Setup destination ranks for weight communication.
-        It can support any topology between actor and rollout workers.
-        Assuming there are M actor ranks and N rollout ranks, each actor rank
-        will send weights to most ceil(N/M) rollout ranks according to the modulo rule.
-        """
-        rollout_world_size = self._component_placement.get_world_size("rollout")
-        actor_world_size = self._world_size
-        rank = self._rank
-        self._weight_dst_rank_in_rollout = []
-        rollout_ranks_per_actor = (
-            rollout_world_size + actor_world_size - 1
-        ) // actor_world_size
-        for i in range(rollout_ranks_per_actor):
-            if i * actor_world_size + rank < rollout_world_size:
-                self._weight_dst_rank_in_rollout.append(i * actor_world_size + rank)
+        self._is_weight_sender = self._rank == 0
+        self._actor_world_size = self._world_size
+        self._rollout_all_ranks = list(
+            range(self._component_placement.get_world_size("rollout"))
+        )
 
     def init_worker(self) -> None:
         """
@@ -1030,8 +1010,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.enable_offload:
             self.offload_param_and_grad()
             self.offload_optimizer()
-
-        self._setup_rollout_weight_dst_ranks()
 
     def model_provider_func(self) -> nn.Module:
         model = get_model(self.cfg.actor.model)
@@ -1058,35 +1036,41 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         state_dict = self.get_rollout_state_dict()
 
         async def send_func(data):
-            handle = []
-            for rank in self._weight_dst_rank_in_rollout:
-                handle.append(
-                    self.send(
-                        data,
-                        dst_group_name=self._rollout_group_name,
-                        dst_rank=rank,
-                        async_op=True,
-                        options=self._sync_weight_comm_options,
-                    ).async_wait()
-                )
-            await asyncio.gather(*handle)
+            if not self._is_weight_sender:
+                return
+            await self.broadcast(
+                data,
+                groups=[
+                    (self._group_name, 0),
+                    (self._rollout_group_name, self._rollout_all_ranks),
+                ],
+                src=(self._group_name, 0),
+                async_op=True,
+                options=self._sync_weight_comm_options,
+            ).async_wait()
 
         async def recv_func():
-            handle = []
-            for rank in self._weight_dst_rank_in_rollout:
-                handle.append(
-                    self.recv(
-                        src_group_name=self._rollout_group_name,
-                        src_rank=rank,
-                        async_op=True,
-                        options=self._sync_weight_comm_options,
-                    ).async_wait()
-                )
-            metadata_list = await asyncio.gather(*handle)
-            metadata = metadata_list[0]
-            for other_metadata in metadata_list[1:]:
-                if other_metadata != metadata:
-                    raise ValueError("Patch metadata differs across rollout ranks")
+            if self._is_weight_sender:
+                metadata = await self.recv(
+                    src_group_name=self._rollout_group_name,
+                    src_rank=0,
+                    async_op=True,
+                    options=self._sync_weight_comm_options,
+                ).async_wait()
+            else:
+                metadata = None
+            if self._actor_world_size > 1:
+                metadata = await self.broadcast(
+                    metadata,
+                    groups=[
+                        (
+                            self._group_name,
+                            list(range(self._actor_world_size)),
+                        )
+                    ],
+                    src=(self._group_name, 0),
+                    async_op=True,
+                ).async_wait()
             return metadata
 
         if not self.weight_syncer.sender_initialized():
@@ -1094,6 +1078,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 state_dict=state_dict,
                 send=send_func,
                 recv=recv_func,
+                param_names_need_sync=self.param_names_need_sync,
             )
 
         await self.weight_syncer.sync(state_dict, send_func, version=self.version)
@@ -1234,9 +1219,12 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
     def _build_sft_data_loader(self):
         if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:
-            # NOTE: This must be set before importing openpi.training.data_loader
-            if self.cfg.actor.get("sft_data_path", None):
-                os.environ["HF_LEROBOT_HOME"] = self.cfg.actor.sft_data_path
+            repo_id = resolve_lerobot_repo_id(self.cfg.actor.get("sft_data_path"))
+            if repo_id is None:
+                raise ValueError(
+                    "actor.sft_data_path must be set to a local dataset path or "
+                    "LeRobot repo id when enable_sft_co_train=True."
+                )
 
             import openpi.training.data_loader as _data
 
@@ -1250,6 +1238,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             data_loader_config = get_openpi_config(
                 training_config_name,
                 model_path=self.cfg.actor.model.model_path,
+                repo_id=repo_id,
                 data_kwargs=getattr(self.cfg.actor, "openpi_data", None),
             )
             self.data_loader = _data.create_data_loader(
@@ -1280,28 +1269,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self.sft_iterator = iter(self.data_loader)
             observation, actions = next(self.sft_iterator)
 
-        register_pytree_dataclasses(observation)
-        observation = tree_map(
-            lambda x: x.to(self.device) if x is not None else x,
-            observation,
-        )
-        actions = actions.to(torch.float32)
-        actions = actions.to(self.device)
-
-        sft_losses = self.model(
-            data={"observation": observation, "actions": actions},
+        sft_loss = self.model(
+            data=(observation, actions),
             forward_type=ForwardType.SFT,
         )
-        # Ensure losses is a tensor and handle different return types
-        if isinstance(sft_losses, list | tuple):
-            sft_losses = torch.stack(sft_losses)
-        elif not isinstance(sft_losses, torch.Tensor):
-            sft_losses = torch.tensor(
-                sft_losses, device=self.device, dtype=torch.float32
-            )
-
-        sft_loss = sft_losses.mean()
-        metrics_data["sft_loss"] = sft_loss.clone().detach().item()
+        metrics_data["sft_loss"] = sft_loss.detach().item()
         total_loss = loss + self.sft_loss_weight * sft_loss
         loss = total_loss
 

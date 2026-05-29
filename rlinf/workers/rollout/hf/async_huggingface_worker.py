@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import asyncio
-import gc
 
 from omegaconf.omegaconf import DictConfig
 
@@ -108,40 +107,8 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
             self._generate_task.cancel()
 
     async def _recv_and_apply_actor_sync(self) -> int:
-        async def recv_func():
-            return await self.recv(
-                self.actor_group_name,
-                src_rank=self.actor_weight_src_rank,
-                async_op=True,
-                options=self._sync_weight_comm_options,
-            ).async_wait()
-
-        async def send_func(data):
-            await self.send(
-                data,
-                dst_group_name=self.actor_group_name,
-                dst_rank=self.actor_weight_src_rank,
-                async_op=True,
-                options=self._sync_weight_comm_options,
-            ).async_wait()
-
-        if not self.weight_syncer.receiver_initialized():
-            await self.weight_syncer.init_receiver(
-                state_dict=self.hf_model.state_dict(),
-                recv=recv_func,
-                send=send_func,
-            )
-
-        applied_version = await self.weight_syncer.apply(self.hf_model, recv_func)
-        self.version = applied_version
-        if self.finished_episodes is None:
-            self.finished_episodes = (
-                self.version * self.total_num_train_envs * self.rollout_epoch
-            )
-
-        gc.collect()
-        self.torch_platform.empty_cache()
-        return applied_version
+        await super().sync_model_from_actor()
+        return self.version
 
     def _start_background_weight_sync_if_needed(self):
         if (

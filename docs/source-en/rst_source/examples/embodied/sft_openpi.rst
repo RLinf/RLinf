@@ -87,16 +87,21 @@ RLinf provides ``toolkits/lerobot/calculate_norm_stats.py`` to calculate norm_st
 
 .. code:: bash
 
-   export HF_LEROBOT_HOME=/path/to/lerobot_root
+   # Local dataset directory (contains meta/info.json):
+   python toolkits/lerobot/calculate_norm_stats.py \
+       --config-name pi0_realworld \
+       --repo-id /path/to/realworld_franka_bin_relocation
+
+   # Or a Hugging Face repo id cached under ~/.cache/huggingface/lerobot by default:
    python toolkits/lerobot/calculate_norm_stats.py \
        --config-name pi0_realworld \
        --repo-id realworld_franka_bin_relocation
 
 Notes:
 
-- ``HF_LEROBOT_HOME`` must be set before running the script.
+- ``--repo-id`` accepts a local dataset path or a LeRobot Hugging Face repo id.
+- Optionally set ``HF_LEROBOT_HOME`` to change the cache parent for repo ids (default: ``~/.cache/huggingface/lerobot``).
 - ``config_name`` must match your custom openpi dataconfig used by training.
-- ``repo_id`` must match your lerobot-format dataset name.
 
 The script writes the generated stats under ``<assest_dir>/<exp_name>/<repo_id>/norm_stats.json``.
 

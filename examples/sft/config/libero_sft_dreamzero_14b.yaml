@@ -1,5 +1,6 @@
 defaults:
   - training_backend/fsdp@actor.fsdp_config
+  - model/dreamzero_14b@actor.model
   - override hydra/job_logging: stdout
 
 hydra:
@@ -12,7 +13,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: all
+    actor: all
 
 runner:
   task_type: sft
@@ -30,9 +31,12 @@ runner:
 
 data:
   train_data_paths: "path/to/datasets/libero"
-
-algorithm:
-  adv_type: gae
+  lazy_load: True
+  num_workers: 8
+  prefetch_factor: 8
+  video_tolerance_s: 0.1
+  parquet_cache_size: 512
+  video_backend: torchcodec # LeRobot video decoder: pyav | torchcodec
 
 actor:
   group_name: "ActorGroup"
@@ -40,26 +44,24 @@ actor:
   micro_batch_size: 1
   global_batch_size: 16
   seed: 42
-  dataloader_num_workers: 1
+
   enable_offload: False
 
   model:
     model_type: "dreamzero"
-    precision: bf16 # fp32 when fsdp cpu offload is enabled
-    model_path: "path/to/models/DreamZero-DROID"
-    tokenizer_path: "path/to/models/umt5-xxl"
-    max_seq_len: 512
-    dreamzero_action_horizon: 16
-    dreamzero_num_chunks: 4
-    dreamzero_max_action_dim: 32
-    dreamzero_max_state_dim: 64
-    cfg_mode: false
-    advantage_parquet: 
-    unconditional_prob: 0.3
-    action_loss_scale: 1.0
-    pretrained_model_path: null
-    add_value_head: false
+    precision: fp32
+    model_path: "/path/to/models/DreamZero-DROID"
+    # Dataset-generated metadata.json for normalisation statistics.
+    # Generate with: python toolkits/lerobot/generate_dreamzero_metadata.py \
+    #   --preset libero_sim --dataset-root /path/to/libero --output-metadata /path/to/metadata.json
+    # Must be explicitly specified unless it exists at model_path/experiment_cfg/metadata.json.
+    # metadata_json_path: /path/to/metadata.json
+    tokenizer_path: "/path/to/models/umt5-xxl"
+    
+    action_horizon: 16
+    state_horizon: 1
     is_lora: False
+    embodiment_tag: "libero_sim"
 
   optim:
     lr: 1.0e-5
@@ -81,8 +83,6 @@ actor:
     gradient_checkpointing: True
     limit_all_gathers: True
     reshard_after_forward: True
-    # cpu_offload: True
-    # offload_pin_memory: True
     grad_scaler:
       enabled: False
     mixed_precision:
@@ -92,9 +92,3 @@ actor:
     amp_autocast:
       enabled: false
       precision: "bf16"
-
-reward:
-  use_reward_model: false
-
-critic:
-  use_critic_model: false

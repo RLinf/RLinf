@@ -86,7 +86,6 @@ class _ManiskillEnvCore(ManiskillEnv, EnvOffloadMixin):
             "reset_state_ids": self.reset_state_ids.cpu(),
             "generator_state": self._generator.get_state(),
             "is_start": self.is_start,
-            "video_cnt": self.video_cnt,
             "_init_raw_obs": self.env.unwrapped._init_raw_obs,
             "agent_controller_state": recursive_to_device(
                 self.env.agent.controller.get_state(), "cpu"
@@ -165,9 +164,6 @@ class _ManiskillEnvCore(ManiskillEnv, EnvOffloadMixin):
         )
         for key, value in task_metric_states.items():
             setattr(self.env, key, value)
-
-        # Restore utils state
-        self.video_cnt = state["video_cnt"]
 
         if self.record_metrics and "success_once" in state:
             self.success_once = state["success_once"].to(self.device)

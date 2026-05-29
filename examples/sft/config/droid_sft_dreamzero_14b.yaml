@@ -1,5 +1,6 @@
 defaults:
   - training_backend/fsdp@actor.fsdp_config
+  - model/dreamzero_14b@actor.model
   - override hydra/job_logging: stdout
 
 hydra:
@@ -12,7 +13,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: all
+    actor: all
 
 runner:
   task_type: sft
@@ -28,7 +29,7 @@ runner:
   save_interval: 2000
   log_interval: 100
 
-  resume_dir: path/to/checkpoint
+  resume_dir: null
 
 data:
   # Root of LeRobot DROID (OXE) dataset
@@ -38,9 +39,8 @@ data:
   prefetch_factor: 8
   video_tolerance_s: 0.1
   parquet_cache_size: 512
-
-algorithm:
-  adv_type: gae
+  sampling_mode: multi_anchor
+  video_backend: torchcodec # LeRobot video decoder: pyav | torchcodec
 
 actor:
   group_name: "ActorGroup"
@@ -53,23 +53,21 @@ actor:
   model:
     model_type: "dreamzero"
     precision: fp32
-    model_path: path/to/models/DreamZero-DROID
-    tokenizer_path: path/to/models/umt5-xxl
-    max_seq_len: 512
-    # Shared DreamZero dims (also match DreamZero-DROID checkpoint config).
-    dreamzero_max_action_dim: 32
-    dreamzero_max_state_dim: 64
-    # Unified temporal knobs (branching by embodiment_tag below):
-    dreamzero_action_horizon: 24
-    dreamzero_num_chunks: 4
-    dreamzero_num_video_frames: 33
+    model_path: /path/to/models/DreamZero-DROID
+    # If ``model_path`` lacks ``config.json`` + ``experiment_cfg/``, use WAN2.1 DROID preset:
+    # dreamzero_preset: dreamzero_14b
+    # Dataset-generated metadata.json for normalisation statistics.
+    # Generate with: python toolkits/lerobot/generate_dreamzero_metadata.py \
+    #   --preset oxe_droid --dataset-root /path/to/droid --output-metadata /path/to/metadata.json
+    # Must be explicitly specified unless it exists at model_path/experiment_cfg/metadata.json.
+    # metadata_json_path: /path/to/dataset/metadata.json
+    tokenizer_path: /path/to/models/umt5-xxl
+
+    # DreamTransform per-block action steps.
+    action_horizon: 24
+    state_horizon: 1
     relative_action_keys:
       - joint_position
-    cfg_mode: False
-    unconditional_prob: 0.3
-    action_loss_scale: 1.0
-    pretrained_model_path: null
-    add_value_head: False
     is_lora: False
     embodiment_tag: "oxe_droid"
     relative_action: True
@@ -107,9 +105,3 @@ actor:
     amp_autocast:
       enabled: false
       precision: "bf16"
-
-reward:
-  use_reward_model: false
-
-critic:
-  use_critic_model: false
