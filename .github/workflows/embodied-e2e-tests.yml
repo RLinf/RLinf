@@ -1102,25 +1102,12 @@ jobs:
           export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model abot_m0 --env maniskill_libero
 
-      - name: Fix ABot-M0 checkpoint config
+      - name: Patch ABot-M0 VGGT path
         run: |
           source .venv/bin/activate
-          if [ ! -d "/workspace/dataset/Qwen3-VL-4B-Instruct-Action" ]; then
-            hf download StarVLA/Qwen3-VL-4B-Instruct-Action --local-dir /workspace/dataset/Qwen3-VL-4B-Instruct-Action
-          fi
-          if [ ! -d "/workspace/dataset/VGGT-1B" ]; then
-            hf download facebook/VGGT-1B --local-dir /workspace/dataset/VGGT-1B
-          fi
-          echo "=== Model sizes ==="
-          du -sh /workspace/dataset/Qwen3-VL-4B-Instruct-Action
-          du -sh /workspace/dataset/VGGT-1B
-          du -sh /workspace/dataset/ABot-M0-LIBERO
-          echo "==================="
-          sed -i 's|base_vlm:.*|base_vlm: /workspace/dataset/Qwen3-VL-4B-Instruct-Action|' \
-            /workspace/dataset/ABot-M0-LIBERO/config.yaml
           ABOT_PATH=$(python -c "import ABot; import os; print(os.path.dirname(ABot.__file__))")
           sed -i "s|VGGT.from_pretrained('facebook/VGGT-1B')|VGGT.from_pretrained('/workspace/dataset/VGGT-1B')|" \
-            ${ABOT_PATH}/model/framework/ABot_M0.py
+            "${ABOT_PATH}/model/framework/ABot_M0.py"
 
       - name: LIBERO ABot-M0 PPO test
         timeout-minutes: 30
@@ -1153,25 +1140,12 @@ jobs:
           export LIBERO_PLUS_PATH=/workspace/dataset/LIBERO-PLUS
           bash requirements/install.sh embodied --model abot_m0 --env liberoplus
 
-      - name: Fix ABot-M0 checkpoint config
+      - name: Patch ABot-M0 VGGT path
         run: |
           source .venv/bin/activate
-          if [ ! -d "/workspace/dataset/Qwen3-VL-4B-Instruct-Action" ]; then
-            hf download StarVLA/Qwen3-VL-4B-Instruct-Action --local-dir /workspace/dataset/Qwen3-VL-4B-Instruct-Action
-          fi
-          if [ ! -d "/workspace/dataset/VGGT-1B" ]; then
-            hf download facebook/VGGT-1B --local-dir /workspace/dataset/VGGT-1B
-          fi
-          echo "=== Model sizes ==="
-          du -sh /workspace/dataset/Qwen3-VL-4B-Instruct-Action
-          du -sh /workspace/dataset/VGGT-1B
-          du -sh /workspace/dataset/ABot-M0-LIBERO
-          echo "==================="
-          sed -i 's|base_vlm:.*|base_vlm: /workspace/dataset/Qwen3-VL-4B-Instruct-Action|' \
-            /workspace/dataset/ABot-M0-LIBERO/config.yaml
           ABOT_PATH=$(python -c "import ABot; import os; print(os.path.dirname(ABot.__file__))")
           sed -i "s|VGGT.from_pretrained('facebook/VGGT-1B')|VGGT.from_pretrained('/workspace/dataset/VGGT-1B')|" \
-            ${ABOT_PATH}/model/framework/ABot_M0.py
+            "${ABOT_PATH}/model/framework/ABot_M0.py"
 
       - name: LIBERO-Plus ABot-M0 PPO test
         timeout-minutes: 30
