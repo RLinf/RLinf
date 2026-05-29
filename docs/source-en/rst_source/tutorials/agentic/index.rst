@@ -7,14 +7,9 @@ RL training, multi-agent systems, and tool integration.
 For end-to-end examples, see the :doc:`Agentic Examples <../../examples/agentic/index>` gallery,
 which includes reasoning, coding online RL, Search-R1, rStar2, and WideSeek-R1 workflows.
 
-Key topics:
+.. note::
 
-- **FSDP + SGLang/vLLM/HuggingFace** — Train and serve agentic models with the FSDP backend.
-- **Megatron + SGLang/vLLM** — Large-scale agentic training with the Megatron backend.
-- **Reasoning RL** — GRPO and PPO training for math and code reasoning tasks.
-- **Multi-Agent RL** — Native multi-agent training support with unified data interfaces.
-- **Tool Integration** — Equip agents with external tools for search, code execution, and more.
-
-.. toctree::
-   :hidden:
-   :maxdepth: 1
+   This section is a stub. Agentic RL tutorial content is being developed.
+   For now, see the :doc:`Agentic Examples <../../examples/agentic/index>` gallery
+   for end-to-end workflows including reasoning, coding online RL, Search-R1,
+   rStar2, and WideSeek-R1.

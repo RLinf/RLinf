@@ -18,7 +18,7 @@ Collocated Mode
 
 All workers are scheduled on the *same* set of GPUs.  During any stage
 only one type of worker runs and occupies the entire devices' computation capability until that
-stage finishes. There two execution modes: residing in GPU memory simultaneously or switching residence in GPU memory with offloading/reloading.
+stage finishes. There are two execution modes: residing in GPU memory simultaneously or switching residence in GPU memory with offloading/reloading.
 
 **Pros**
 
@@ -108,7 +108,7 @@ The workers are assigned to separate GPUs. The set of GPUs is specified using gl
 .. note::
    The ``pipeline_stage_num`` configuration should be adjusted to achieve the desired pipelining effect.
 
-Refer to :doc:`../configuration/basic_config` for compete configuration.
+Refer to :doc:`../configuration/basic_config` for complete configuration.
 
 **ComponentPlacement programming**
 
@@ -156,7 +156,7 @@ In most cases, `env`, `rollout`, and `actor` should enable offloading as below t
 .. note::
    The ``pipeline_stage_num`` configuration should be adjusted to achieve the desired pipelining effect. For embodied RL training, it is recommended to set ``pipeline_stage_num`` to ``2`` for Hybrid Mode to enable pipeline overlap between rollout and env.
 
-Refer to :doc:`../configuration/basic_config` for compete configuration.
+Refer to :doc:`../configuration/basic_config` for complete configuration.
 
 **ComponentPlacement programming**
 

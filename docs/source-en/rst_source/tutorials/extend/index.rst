@@ -9,8 +9,7 @@ You will learn how to:
 - Integrate a :doc:`new environment <new_env>` into RLinf’s task system  
 - Add a :doc:`new model <new_model_fsdp>` using the FSDP + HuggingFace backend  
 - Add a :doc:`new model <new_model_megatron>` using the Megatron + SGLang backend  
-- Follow a complete :doc:`reward model workflow <../embodied/reward_model>`
-- Collect a :doc:`real-world reward model dataset <../embodied/reward_model>`
+- Follow a complete :doc:`reward model workflow <../embodied/reward_model>` (simulation and real-world)
 - Use :doc:`Megatron-Bridge <mbridge>` to integrate Megatron-LM training with HuggingFace checkpoints
 - Optimize weight transfer with :doc:`Weight Synchronization <weight_syncer>` (``patch`` and ``bucket`` modes)
 

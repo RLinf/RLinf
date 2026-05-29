@@ -8,8 +8,7 @@
 - 将一个 :doc:`新环境 <new_env>` 集成到 RLinf 的任务系统中  
 - 添加一个使用 FSDP + HuggingFace 后端的 :doc:`新模型 <new_model_fsdp>`  
 - 添加一个使用 Megatron + SGLang 后端的 :doc:`新模型 <new_model_megatron>`  
-- 参考一条完整的 :doc:`Reward Model 工作流 <../embodied/reward_model>`
-- 参考 :doc:`真机 Reward Model 数据集采集 <../embodied/reward_model>`
+- 参考一条完整的 :doc:`Reward Model 工作流 <../embodied/reward_model>`（仿真与真机）
 - 使用 :doc:`Megatron-Bridge <mbridge>` 集成 Megatron-LM 训练与 HuggingFace checkpoint
 - 通过 :doc:`权重同步 <weight_syncer>` 优化 actor 到 rollout 的权重传输（``patch`` 与 ``bucket`` 模式）
 
